@@ -123,7 +123,11 @@ pub const OPS: &[(&str, &[Field])] = &[
             optional("expected_updated", Kind::Timestamp),
         ],
     ),
+    ("claim", &[TASK]),
+    ("release", &[TASK]),
     ("move", &[TASK, required("to", Kind::Status)]),
+    ("block", &[TASK]),
+    ("archive", &[TASK]),
     ("renew", &[TASK]),
     ("take_over", &[TASK]),
     ("link_pr", &[TASK, required("pr", Kind::Pr)]),
@@ -333,6 +337,11 @@ fn build(op: &str, read: &Read<'_>) -> Result<BoardRequest, RequestError> {
             let to = read.status("to")?.expect("a required field is present");
             change(BoardOp::Move(to))
         }
+        // A move by its own name: what the tool's description calls it.
+        "claim" => change(BoardOp::Move(TaskStatus::Claimed)),
+        "release" => change(BoardOp::Move(TaskStatus::Ready)),
+        "block" => change(BoardOp::Move(TaskStatus::Blocked)),
+        "archive" => change(BoardOp::Move(TaskStatus::Archived)),
         "renew" => change(BoardOp::Renew),
         "take_over" => change(BoardOp::TakeOver),
         "link_pr" => change(BoardOp::AddPr(read.pr()?)),

@@ -361,7 +361,7 @@ pub struct CliContext {
     pub swarm_board_log: Option<swarm_board_handles::SwarmBoardOpLogBuilder>,
     /// Composition's project board builder (#2477); `quecto board`
     /// refuses to run without it.
-    pub project_board: Option<board::ProjectBoardHandlesBuilder>,
+    pub project_board: Option<crate::interface::tools::project_board::ProjectBoardHandlesBuilder>,
     /// Output reaches the real terminal (`run`, not `run_with_output`): a
     /// one-shot run writes its answer out before it settles its children.
     pub live_output: bool,
@@ -455,7 +455,7 @@ pub struct CliComposition {
     pub swarm_board_log: swarm_board_handles::SwarmBoardOpLogBuilder,
     pub claude_member: claude_member::ClaudeMemberHandlesBuilder,
     /// Composition's project board builder (#2477).
-    pub project_board: board::ProjectBoardHandlesBuilder,
+    pub project_board: crate::interface::tools::project_board::ProjectBoardHandlesBuilder,
 }
 
 /// Run the CLI with the given args and the required outer-owned builders,

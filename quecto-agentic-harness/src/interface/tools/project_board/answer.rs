@@ -5,8 +5,10 @@
 //!   after a change that may complete it, `completion`), a listing's
 //!   `head`, `tasks` and `quarantined`, or `head` alone; and `clock` when a
 //!   change was not bounded against an outside time.
-//! - Refusal: `{"ok": false, "op": …, "error": {"code", "message", …}}`.
-//!   Each [`ErrorCode`] has one shape: the same fields every time.
+//! - Refusal: `{"ok": false, "op": …, "error": {"code", "field",
+//!   "message", …}}`. `field` is the request field at fault, `null` when
+//!   the refusal is not about one. Each [`ErrorCode`] has one shape: the
+//!   same fields every time.
 //!   Messages are the error's own words (its `Display`), with any URL's
 //!   credentials redacted, at most [`MAX_MESSAGE_CHARS`] characters.
 //!
@@ -312,6 +314,7 @@ pub fn refused(
     error.insert("code".into(), Value::String(code.as_str().into()));
     error.insert("message".into(), shown_json(message));
     error.extend(fields);
+    with_field(&mut error);
     json!({"ok": false, "op": op, "error": Value::Object(error)})
 }
 
@@ -345,7 +348,13 @@ fn error_json(error: &ProjectBoardError) -> Value {
     object.insert("code".into(), Value::String(code.as_str().into()));
     object.insert("message".into(), shown_json(&error.to_string()));
     object.extend(fields);
+    with_field(&mut object);
     Value::Object(object)
+}
+
+/// Every refusal names a `field`: its own, or `null`.
+fn with_field(error: &mut Map<String, Value>) {
+    error.entry("field").or_insert(Value::Null);
 }
 
 fn fields<const N: usize>(pairs: [(&'static str, Value); N]) -> Map<String, Value> {

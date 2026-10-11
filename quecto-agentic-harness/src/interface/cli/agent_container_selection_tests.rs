@@ -134,6 +134,7 @@ fn flags() -> AgentFlags {
         web_fetch_tool_factory: None,
         // The launcher's lifecycle is composed as `main` composes it.
         kill_tool: Some(crate::composition::subagent_termination::install_termination_owners),
+        project_board: None,
         retention: Some(crate::composition::sessions::build_retention_handles),
         catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
         provider_runtime: Some(crate::composition::runtime::build_agent_provider),

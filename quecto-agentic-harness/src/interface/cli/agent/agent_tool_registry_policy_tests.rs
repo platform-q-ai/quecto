@@ -145,7 +145,9 @@ fn every_optional_tool_enabled() -> Config {
 fn every_bundled_tool_on_every_entrypoint_is_in_the_catalogue() {
     let config = every_optional_tool_enabled();
     let mut registered = std::collections::BTreeSet::new();
-    for flags in [cli_flags(), uds_workflow_flags()] {
+    for mut flags in [cli_flags(), uds_workflow_flags()] {
+        // A composed board builds the `board` tool (#2477 S2b).
+        flags.project_board = Some(crate::interface::tools::project_board::boards::memory_board);
         let (built, _) = build(&flags, &config);
         for entry in built.registry.catalogue_entries() {
             assert!(
@@ -241,4 +243,25 @@ fn a_non_stable_id_is_warned_about() {
         stderr,
         "WARNING: tools.policy: no tool has stable id 'tool.v1:uds:3:uds:client-a:weather', so its entry never applies; fix or remove it under tools.policy.entries\n"
     );
+}
+
+/// #2477 S2b: the board composition hands the CLI context reaches the
+/// agent's tools.
+#[test]
+fn the_agent_takes_the_board_its_context_composed() {
+    let mut flags = cli_flags();
+    let ctx = crate::interface::cli::CliContext {
+        project_board: Some(crate::interface::tools::project_board::boards::memory_board),
+        retention: flags.retention,
+        ..crate::interface::cli::CliContext::default()
+    };
+    flags.adopt_context(&ctx);
+    let (built, _) = build(&flags, &Config::default());
+    let names: Vec<String> = built
+        .registry
+        .catalogue_entries()
+        .iter()
+        .map(|entry| entry.name.to_string())
+        .collect();
+    assert!(names.iter().any(|name| name == "board"), "{names:?}");
 }

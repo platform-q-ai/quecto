@@ -8,7 +8,8 @@
       "op": "list",
       "error": {
         "code": "no_board",
-        "message": "the project has no board yet"
+        "message": "the project has no board yet",
+        "field": null
       }
     }
   },
@@ -145,7 +146,8 @@
         "message": "task epic changed since it was read (updated 2026-10-10T10:00:01Z, not 2026-10-10T10:00:00Z); read it again",
         "task": "epic",
         "expected": "2026-10-10T10:00:00Z",
-        "updated": "2026-10-10T10:00:01Z"
+        "updated": "2026-10-10T10:00:01Z",
+        "field": null
       }
     }
   },
@@ -207,7 +209,8 @@
         "message": "only the claim's holder may do this",
         "rule": {
           "code": "not_holder"
-        }
+        },
+        "field": null
       }
     }
   },
@@ -310,7 +313,8 @@
         "message": "the claim has not expired",
         "rule": {
           "code": "claim_live"
-        }
+        },
+        "field": null
       }
     }
   },
@@ -583,7 +587,8 @@
             "prs": [
               8
             ]
-          }
+          },
+          "field": null
         }
       }
     }
@@ -866,7 +871,8 @@
             "prs": [
               9
             ]
-          }
+          },
+          "field": null
         }
       }
     }
@@ -1017,7 +1023,8 @@
       "error": {
         "code": "not_found",
         "message": "no task nope",
-        "task": "nope"
+        "task": "nope",
+        "field": null
       }
     }
   },
@@ -1073,7 +1080,8 @@
       "error": {
         "code": "not_set_aside",
         "message": "no file is set aside at tasks/cli.json",
-        "path": "tasks/cli.json"
+        "path": "tasks/cli.json",
+        "field": null
       }
     }
   },
@@ -1137,9 +1145,9 @@
       "op": null,
       "error": {
         "code": "invalid_request",
-        "message": "op: must be one of bootstrap, list, list_ready, list_takeable, show, create, update_draft, move, renew, take_over, link_pr, unlink_pr, complete, clear_set_aside",
+        "message": "op: must be one of bootstrap, list, list_ready, list_takeable, show, create, update_draft, claim, release, move, block, archive, renew, take_over, link_pr, unlink_pr, complete, clear_set_aside",
         "field": "op",
-        "problem": "must be one of bootstrap, list, list_ready, list_takeable, show, create, update_draft, move, renew, take_over, link_pr, unlink_pr, complete, clear_set_aside"
+        "problem": "must be one of bootstrap, list, list_ready, list_takeable, show, create, update_draft, claim, release, move, block, archive, renew, take_over, link_pr, unlink_pr, complete, clear_set_aside"
       }
     }
   }

@@ -3,8 +3,9 @@
 //! read needs none); the SQLite index of the board in the repository's
 //! git directory; the clock referenced to the remote's HTTPS `Date`
 //! (#2491); and pull request states read with `gh` when the remote is on
-//! GitHub or the configured enterprise host. Built for `quecto board`,
-//! which runs on the calling thread (it blocks).
+//! GitHub or the configured enterprise host. Built per request for
+//! `quecto board`, on the calling thread, and for the agent `board` tool,
+//! on Tokio's blocking pool: it blocks.
 use std::sync::Arc;
 
 use crate::application::project_board::operations::BoardOperations;
@@ -19,7 +20,7 @@ use crate::infrastructure::persistence::project_board::index::BoardIndex;
 use crate::infrastructure::persistence::project_board::indexed_listings::IndexedBoardListings;
 use crate::infrastructure::persistence::project_board::store::GitBoardStore;
 use crate::infrastructure::time::remote_time::ReferencedBoardClock;
-use crate::interface::cli::board::{
+use crate::interface::tools::project_board::{
     Access, BuildError, ProjectBoardEnvironment, ProjectBoardHandles,
 };
 

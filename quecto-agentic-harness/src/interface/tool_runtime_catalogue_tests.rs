@@ -25,6 +25,16 @@ fn build_runtime_with_entrypoint(
     spawned: bool,
     disabled_tools: &[String],
 ) -> crate::interface::tool_runtime::ToolRuntimeBuild {
+    build_runtime_with_board(entrypoint, profile_context, spawned, disabled_tools, None)
+}
+
+fn build_runtime_with_board(
+    entrypoint: ToolEntrypoint,
+    profile_context: ToolRuntimeProfileContext,
+    spawned: bool,
+    disabled_tools: &[String],
+    project_board: Option<crate::interface::tools::project_board::ProjectBoardHandlesBuilder>,
+) -> crate::interface::tool_runtime::ToolRuntimeBuild {
     let tmp = tempfile::tempdir().expect("tempdir");
     let config = crate::infrastructure::config::Config::default();
     let client = reqwest::Client::new();
@@ -54,6 +64,7 @@ fn build_runtime_with_entrypoint(
         effort_control: None,
         container_configs: None,
         kill_tool: None,
+        project_board,
         disabled_tools,
         inherited_tool_policy: None,
         workflow: ToolRuntimeWorkflowPolicy::disabled(tmp.path(), Some(tmp.path())),
@@ -190,4 +201,42 @@ fn swarm_runtime_rejects_guards_and_bound_specs_before_loading_files() {
             "rejection must precede bound-spec consumption"
         );
     }
+}
+
+/// #2477 S2b: a composed board gives every agent, parent or child, the
+/// `board` tool, answering through the board it was composed over; none
+/// leaves it out.
+#[tokio::test]
+async fn a_composed_board_registers_the_board_tool() {
+    use crate::interface::tools::project_board::boards::memory_board;
+    for entrypoint in [ToolEntrypoint::CliAgent, ToolEntrypoint::UdsAgent] {
+        for (profile, spawned) in [
+            (ToolRuntimeProfileContext::Parent, false),
+            (ToolRuntimeProfileContext::Child, true),
+        ] {
+            let built =
+                build_runtime_with_board(entrypoint, profile, spawned, &[], Some(memory_board));
+            let entry = built
+                .catalogue_entries
+                .iter()
+                .find(|entry| entry.name == "board")
+                .expect("board is registered");
+            assert!(entry.effective_enabled, "{entrypoint:?} {profile:?}");
+            let result = built
+                .registry
+                .execute("board", r#"{"op":"show","task":"a"}"#)
+                .await
+                .unwrap();
+            assert!(!result.is_error, "{}", result.content);
+            assert!(result.content.contains(r#""id":"a""#), "{}", result.content);
+        }
+    }
+    let built = build_runtime_with_flags(ToolRuntimeProfileContext::Parent, false, &[]);
+    assert!(
+        built
+            .catalogue_entries
+            .iter()
+            .all(|entry| entry.name != "board"),
+        "no board composed, no board tool"
+    );
 }

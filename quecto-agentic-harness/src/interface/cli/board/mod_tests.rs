@@ -1,10 +1,9 @@
 use super::*;
-use crate::application::project_board::operations::query_listings::QueryListings;
-use crate::application::project_board::use_cases::QueryBoard;
-use crate::infrastructure::test_support::memory_board_store::MemoryBoardStore;
-use crate::infrastructure::time::board_clock::SystemBoardClock;
+use crate::interface::tools::project_board::ProjectBoardHandlesBuilder;
+use crate::interface::tools::project_board::boards::{
+    NO_COMMITTER, memory_board, never_built, unbuildable,
+};
 use serde_json::json;
-use std::sync::Arc;
 
 fn args(line: &[&str]) -> Vec<String> {
     line.iter().map(|arg| (*arg).to_string()).collect()
@@ -79,42 +78,6 @@ fn input_from_stdin_is_bounded_and_its_failures_are_the_requests() {
     );
 }
 
-/// A board with one ready task `a`, in memory, built afresh each run; it
-/// says which access it was built for.
-fn memory_board(environment: &ProjectBoardEnvironment) -> Result<ProjectBoardHandles, BuildError> {
-    if environment.remote == "no-committer" && environment.access == Access::Write {
-        return Err(BuildError::NoCommitter(
-            "user.name is not configured".into(),
-        ));
-    }
-    let store = MemoryBoardStore::default();
-    use crate::application::project_board::ports::ProjectBoardStore;
-    store.bootstrap().unwrap();
-    let operations = BoardOperations::new(
-        Arc::new(store.client()),
-        Arc::new(SystemBoardClock::default()),
-        Arc::new(QueryListings(QueryBoard::new(Arc::new(store.client())))),
-        Err("no pull request host in this test".into()),
-    )
-    .map_err(|error| BuildError::Unavailable(error.to_string()))?;
-    let created = run(
-        &operations,
-        &json!({"op": "create", "task": "a", "title": "A", "status": "ready"}),
-    );
-    assert_eq!(created["ok"], json!(true), "{created}");
-    Ok(ProjectBoardHandles { operations })
-}
-
-fn unbuildable(_: &ProjectBoardEnvironment) -> Result<ProjectBoardHandles, BuildError> {
-    Err(BuildError::Unavailable(
-        "https://user:hunter2@example.com/repo is unreachable".into(),
-    ))
-}
-
-fn never_built(_: &ProjectBoardEnvironment) -> Result<ProjectBoardHandles, BuildError> {
-    panic!("a request refused while being read builds nothing")
-}
-
 fn cli(builder: Option<ProjectBoardHandlesBuilder>, line: &[&str]) -> (i32, Value, String) {
     let ctx = CliContext {
         project_board: builder,
@@ -153,11 +116,11 @@ fn a_request_is_read_before_anything_is_built() {
 
 #[test]
 fn a_write_needs_a_committer_and_a_read_does_not() {
-    let (code, answer, _) = cli(Some(memory_board), &["list", "--remote", "no-committer"]);
+    let (code, answer, _) = cli(Some(memory_board), &["list", "--remote", NO_COMMITTER]);
     assert_eq!((code, &answer["ok"]), (0, &json!(true)));
     let (code, answer, _) = cli(
         Some(memory_board),
-        &["renew", "--task", "a", "--remote", "no-committer"],
+        &["renew", "--task", "a", "--remote", NO_COMMITTER],
     );
     assert_eq!(code, 1);
     assert_eq!(answer["error"]["code"], json!("no_committer"));

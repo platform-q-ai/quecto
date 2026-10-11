@@ -164,6 +164,9 @@ pub(crate) struct ToolRuntimeBuildArgs<'a> {
     /// Composition's builder of the `agent_cmd kill` owner (#1936); `None`
     /// leaves `kill` unavailable.
     pub kill_tool: Option<crate::interface::cli::KillToolBuilder>,
+    /// Composition's builder of the project board (#2477 S2b); `None`
+    /// leaves the `board` tool out.
+    pub project_board: Option<crate::interface::tools::project_board::ProjectBoardHandlesBuilder>,
     pub disabled_tools: &'a [String],
     pub inherited_tool_policy:
         Option<crate::infrastructure::tools::inherited_tool_policy::InheritedToolPolicySnapshot>,
@@ -247,6 +250,7 @@ pub(crate) fn build_tool_runtime(
         container_configs,
         environment_registry,
         kill_tool,
+        project_board,
         disabled_tools,
         inherited_tool_policy,
         workflow,
@@ -291,9 +295,16 @@ pub(crate) fn build_tool_runtime(
     // Fault injection for the #2192 process tests; not compiled in production.
     #[cfg(feature = "test-support")]
     crate::infrastructure::tools::panic_probe::register_if_requested(&mut registry);
+    // The agent's board is its working repository's (#2477 S2b).
+    let board_tool = project_board.map(|build| {
+        std::sync::Arc::new(
+            crate::interface::tools::project_board::tool::BoardTool::new(build, workspace.clone()),
+        ) as std::sync::Arc<dyn crate::application::tools::ports::Tool>
+    });
     register_bundled_native_tools_with_scope(
         &mut registry,
         build_official_tool_extensions(OfficialToolDeps {
+            board_tool,
             find_tool: crate::composition::find::build_find_tool(
                 std::sync::Arc::new(workspace.clone()),
                 std::sync::Arc::new(sandbox.clone()),

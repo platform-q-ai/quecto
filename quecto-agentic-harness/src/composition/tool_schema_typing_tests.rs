@@ -38,6 +38,10 @@ const TOOL_TYPES: &[(&str, Option<&str>)] = &[
     ("FindTool", Some("find")),
     ("DocsTool", Some("docs")),
     ("SwarmTool", Some("swarm")),
+    (
+        "BoardTool",
+        Some(crate::interface::tools::project_board::tool::BOARD_TOOL_NAME),
+    ),
     ("SpawnTool", Some("spawn")),
     ("AgentCmdTool", Some("agent_cmd")),
     (
@@ -207,6 +211,12 @@ fn built_in_definitions(workspace: &std::path::Path) -> Vec<ToolDefinition> {
         Arc::new(WorkflowTool::new(workflow_engine)),
         Arc::new(RecallTool::new(recall, "session".to_string())),
         Arc::new(PanicProbeTool),
+        Arc::new(
+            crate::interface::tools::project_board::tool::BoardTool::new(
+                super::bootstrap::project_board::build_project_board_handles,
+                workspace.to_path_buf(),
+            ),
+        ),
         super::web_fetch::build(Default::default(), 64),
     ];
     definitions.extend(others.iter().map(|tool| tool.definition()));

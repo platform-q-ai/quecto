@@ -200,6 +200,7 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
         cwd_override: None,
         web_fetch_tool_factory: None,
         kill_tool: None,
+        project_board: None,
         retention: None,
         catalogue: None,
         provider_runtime: None,

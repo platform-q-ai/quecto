@@ -38,6 +38,22 @@ fn each_op_reads_its_own_fields() {
             BoardRequest::Change(task(), BoardOp::Move(TaskStatus::InProgress)),
         ),
         (
+            json!({"op": "claim", "task": "a"}),
+            BoardRequest::Change(task(), BoardOp::Move(TaskStatus::Claimed)),
+        ),
+        (
+            json!({"op": "release", "task": "a"}),
+            BoardRequest::Change(task(), BoardOp::Move(TaskStatus::Ready)),
+        ),
+        (
+            json!({"op": "block", "task": "a"}),
+            BoardRequest::Change(task(), BoardOp::Move(TaskStatus::Blocked)),
+        ),
+        (
+            json!({"op": "archive", "task": "a"}),
+            BoardRequest::Change(task(), BoardOp::Move(TaskStatus::Archived)),
+        ),
+        (
             json!({"op": "renew", "task": "a"}),
             BoardRequest::Change(task(), BoardOp::Renew),
         ),
@@ -86,7 +102,11 @@ fn each_op_reads_its_own_fields() {
             "show",
             "create",
             "update_draft",
+            "claim",
+            "release",
             "move",
+            "block",
+            "archive",
             "renew",
             "take_over",
             "link_pr",
@@ -94,7 +114,7 @@ fn each_op_reads_its_own_fields() {
             "complete",
             "clear_set_aside"
         ],
-        "no op is named plain ready; status changes are moves"
+        "no op is named plain ready: the named changes are moves"
     );
 }
 
@@ -173,7 +193,8 @@ fn anything_but_the_ops_own_fields_of_their_own_types_is_refused() {
         (json!([]), "op"),
         (json!({}), "op"),
         (json!({"op": "delete"}), "op"),
-        (json!({"op": "claim"}), "op"),
+        (json!({"op": "claim"}), "task"),
+        (json!({"op": "release", "task": "a", "to": "ready"}), "to"),
         (json!({"op": "ready"}), "op"),
         (json!({"op": "renew"}), "task"),
         (

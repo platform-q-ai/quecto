@@ -4,7 +4,8 @@ Extensions add custom tools to Quecto beyond the built-in set. Core tools always
 present in a normal agent session include:
 
 `bash`, `read`, `write`, `edit`, `ls`, `grep`, `find`, `docs`, `recall`,
-`spawn`, `agent_cmd`, and (in UDS, unless `--no-workflow`) `workflow`.
+`board` (the repository's project board), `spawn`, `agent_cmd`, and (in UDS,
+unless `--no-workflow`) `workflow`.
 
 There are two extension mechanisms:
 
@@ -273,7 +274,7 @@ Extension tools (both native and UDS) cannot shadow tools that are already in th
 registry as non-extension (core) tools. At `register_tools` time the server
 treats every currently registered non-extension name as core — typically
 `bash`, `read`, `write`, `edit`, `ls`, `grep`, `find`, `docs`, `recall`,
-`spawn`, `agent_cmd`, and `workflow` when present. Shadowing any of those names
+`board`, `spawn`, `agent_cmd`, and `workflow` when present. Shadowing any of those names
 returns `"tool '<name>' shadows a core tool"` and registers nothing from the batch.
 
 ### Example: Rust UDS extension

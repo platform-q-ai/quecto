@@ -15,6 +15,7 @@ use super::tool_id::{parse_stable_tool_id, stable_tool_id};
 /// Every bundled tool any entrypoint may build: `(provider id, name)`.
 pub const BUNDLED_TOOLS: &[(&str, &str)] = &[
     ("quecto:official-tools", "bash"),
+    ("quecto:official-tools", "board"),
     ("quecto:official-tools", "docs"),
     ("quecto:official-tools", "edit"),
     ("quecto:official-tools", "find"),

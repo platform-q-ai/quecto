@@ -1,8 +1,7 @@
+use super::boards::Fixed;
 use super::*;
 use crate::application::project_board::operations::query_listings::QueryListings;
-use crate::application::project_board::ports::{
-    BoardClock, BoardClockError, PullRequestState, ReferenceStatus,
-};
+use crate::application::project_board::ports::PullRequestState;
 use crate::application::project_board::use_cases::QueryBoard;
 use crate::domain::project_board::entities::claim::Identity;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
@@ -11,31 +10,6 @@ use crate::infrastructure::test_support::memory_pull_requests::MemoryPullRequest
 use serde_json::json;
 use std::path::PathBuf;
 use std::sync::Arc;
-
-/// A clock reading one time, with or without an outside reference.
-struct Fixed {
-    at: Timestamp,
-    referenced: bool,
-}
-
-impl BoardClock for Fixed {
-    fn now(&self) -> Result<Timestamp, BoardClockError> {
-        Ok(self.at.clone())
-    }
-
-    fn reference(&self) -> Option<Timestamp> {
-        self.referenced.then(|| self.at.clone())
-    }
-
-    fn reference_status(&self) -> ReferenceStatus {
-        match self.referenced {
-            true => ReferenceStatus::Referenced,
-            false => ReferenceStatus::NoReference("no outside time in this test".into()),
-        }
-    }
-
-    fn pause(&self, _: usize) {}
-}
 
 fn fixture_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/project_board/operations.json")

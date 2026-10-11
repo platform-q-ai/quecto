@@ -46,6 +46,7 @@ fn spawn_capable_flags() -> AgentFlags {
         cwd_override: None,
         web_fetch_tool_factory: None,
         kill_tool: None,
+        project_board: None,
         retention: Some(crate::composition::sessions::build_retention_handles),
         catalogue: Some(crate::composition::catalogue::build_catalogue_handles),
         provider_runtime: Some(crate::composition::runtime::build_agent_provider),

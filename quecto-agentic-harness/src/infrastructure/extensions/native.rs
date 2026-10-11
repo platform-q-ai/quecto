@@ -93,6 +93,9 @@ impl Extension for NativeExtension {
 /// descriptor/policy registry path used by runtime UDS tools.
 pub struct OfficialToolDeps {
     pub find_tool: Arc<dyn crate::application::tools::ports::Tool>,
+    /// The project board's `board` tool (#2477 S2b), built by the
+    /// interface over composition's board; `None` leaves it out.
+    pub board_tool: Option<Arc<dyn crate::application::tools::ports::Tool>>,
     /// The grep tool's ranking and search-log wiring (#2136); `None` for a
     /// plain grep tool.
     pub grep: Option<crate::infrastructure::search::GrepWiring>,
@@ -112,58 +115,60 @@ pub fn build_official_tool_extensions(deps: OfficialToolDeps) -> Vec<Arc<dyn Ext
     let sandbox = Arc::new(deps.sandbox);
     let workspace = Arc::new(deps.workspace);
 
+    let mut tools: Vec<Arc<dyn crate::application::tools::ports::Tool>> = vec![
+        Arc::new(crate::infrastructure::tools::bash::ExecTool::with_options(
+            workspace.clone(),
+            sandbox.clone(),
+            deps.exec_options,
+        )),
+        Arc::new(crate::infrastructure::tools::filesystem::ReadTool::new(
+            workspace.clone(),
+            sandbox.clone(),
+        )),
+        Arc::new(crate::infrastructure::tools::filesystem::WriteTool::new(
+            workspace.clone(),
+            sandbox.clone(),
+        )),
+        Arc::new(crate::infrastructure::tools::filesystem::EditTool::new(
+            workspace.clone(),
+            sandbox.clone(),
+        )),
+        Arc::new(crate::infrastructure::tools::filesystem::LsTool::new(
+            workspace.clone(),
+            sandbox.clone(),
+        )),
+        match &deps.grep {
+            Some(wiring) => crate::infrastructure::search::build_grep_tool(
+                workspace.clone(),
+                sandbox.clone(),
+                wiring,
+            ),
+            None => Arc::new(crate::infrastructure::tools::grep::GrepTool::new(
+                workspace.clone(),
+                sandbox.clone(),
+            )),
+        },
+        Arc::new(
+            crate::infrastructure::tools::swarm::SwarmTool::new()
+                .with_context(deps.swarm_context)
+                .with_participation(deps.swarm_participation.clone())
+                .with_workflow_engine(deps.workflow_engine),
+        ),
+        deps.find_tool,
+        // Quecto operating manual, embedded in the binary. Runtime profile
+        // policy owns availability; the docs tool only receives explicit
+        // role-compatible construction; manual content is shared by all agents.
+        Arc::new(
+            crate::infrastructure::tools::docs::DocsTool::with_content_policy(
+                deps.docs_content_policy,
+            ),
+        ),
+    ];
+    tools.extend(deps.board_tool);
     vec![Arc::new(NativeExtension::with_tools(
         "quecto:official-tools",
         "Bundled Quecto tool capabilities",
-        vec![
-            Arc::new(crate::infrastructure::tools::bash::ExecTool::with_options(
-                workspace.clone(),
-                sandbox.clone(),
-                deps.exec_options,
-            )),
-            Arc::new(crate::infrastructure::tools::filesystem::ReadTool::new(
-                workspace.clone(),
-                sandbox.clone(),
-            )),
-            Arc::new(crate::infrastructure::tools::filesystem::WriteTool::new(
-                workspace.clone(),
-                sandbox.clone(),
-            )),
-            Arc::new(crate::infrastructure::tools::filesystem::EditTool::new(
-                workspace.clone(),
-                sandbox.clone(),
-            )),
-            Arc::new(crate::infrastructure::tools::filesystem::LsTool::new(
-                workspace.clone(),
-                sandbox.clone(),
-            )),
-            match &deps.grep {
-                Some(wiring) => crate::infrastructure::search::build_grep_tool(
-                    workspace.clone(),
-                    sandbox.clone(),
-                    wiring,
-                ),
-                None => Arc::new(crate::infrastructure::tools::grep::GrepTool::new(
-                    workspace.clone(),
-                    sandbox.clone(),
-                )),
-            },
-            Arc::new(
-                crate::infrastructure::tools::swarm::SwarmTool::new()
-                    .with_context(deps.swarm_context)
-                    .with_participation(deps.swarm_participation.clone())
-                    .with_workflow_engine(deps.workflow_engine),
-            ),
-            deps.find_tool,
-            // Quecto operating manual, embedded in the binary. Runtime profile
-            // policy owns availability; the docs tool only receives explicit
-            // role-compatible construction; manual content is shared by all agents.
-            Arc::new(
-                crate::infrastructure::tools::docs::DocsTool::with_content_policy(
-                    deps.docs_content_policy,
-                ),
-            ),
-        ],
+        tools,
     ))]
 }
 
@@ -373,6 +378,7 @@ pub fn build_official_tool_registry_with_context(
     register_bundled_native_tools(
         &mut registry,
         build_official_tool_extensions(OfficialToolDeps {
+            board_tool: None,
             grep: None,
             find_tool,
             swarm_participation: crate::infrastructure::tools::swarm_bridge::Participation::none(),
