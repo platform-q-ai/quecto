@@ -439,7 +439,7 @@ fn every_edit_of_a_file_is_refused_or_read_as_a_reader_reads_it() {
     let starts: Vec<usize> = (0..=EXAMPLE.len())
         .filter(|at| EXAMPLE.is_char_boundary(*at))
         .collect();
-    let mut read = 0;
+    let (mut read, mut refused) = (0, 0);
     for (index, &at) in starts.iter().enumerate() {
         let without = starts
             .get(index + 1)
@@ -454,11 +454,27 @@ fn every_edit_of_a_file_is_refused_or_read_as_a_reader_reads_it() {
                     assert_eq!(outline(&file, &document), Ok(()), "{file}");
                     assert_eq!(render(&document, &SHAPE).as_deref(), Ok(file.as_str()));
                 }
-                Err(error) => assert_ne!(error, MarkdownError::NotUtf8, "{file}"),
+                // A refusal that names a line names one of the file's.
+                Err(error) => {
+                    refused += 1;
+                    let said = error.to_string();
+                    let line = said
+                        .strip_prefix("line ")
+                        .and_then(|rest| rest.split_once(':'))
+                        .map(|(line, _)| line.parse::<usize>().unwrap());
+                    let lines = file.split('\n').count();
+                    assert!(
+                        line.is_none_or(|line| (1..=lines).contains(&line)),
+                        "{said}: {file}"
+                    );
+                }
             }
         }
     }
-    assert!(read > 500, "{read} edits read");
+    assert!(
+        read > 500 && refused > 2_000,
+        "{read} edits read, {refused} refused"
+    );
 }
 
 #[path = "markdown_oracle_tests.rs"]

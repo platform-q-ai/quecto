@@ -123,6 +123,15 @@ fn every_hostile_file_is_refused_with_its_reason() {
         ("www. after an underscore in an id", edited("| board-cli |", "| a_www.evil.example |"), |e| matches!(e, E::Cell { line: 6, .. })),
         ("an email of a dash in an id", edited("| board-cli |", "| a-@evil.example |"), |e| matches!(e, E::Cell { line: 6, .. })),
         ("emphasis by underscores in an id", edited("| board-cli |", "| _x_ |"), |e| matches!(e, E::Cell { line: 6, .. })),
+        ("a link showing a www address in code", edited(first, "see [`www.evil.example`](https://good.example)"), |e| matches!(e, E::Link { line: 11 })),
+        ("a link showing an email in code", edited(first, "see [`ada@evil.example`](https://good.example)"), |e| matches!(e, E::Link { line: 11 })),
+        ("a link showing a scheme split by emphasis", edited(first, "see [http*s:*//evil.example/login](https://good.example)"), |e| matches!(e, E::Link { line: 11 })),
+        ("a link showing a www address split by strikethrough", edited(first, "see [ww~w~.evil.example](https://good.example)"), |e| matches!(e, E::Link { line: 11 })),
+        ("a link showing an email split by emphasis", edited(first, "see [ad*a*@evil.example](https://good.example)"), |e| matches!(e, E::Link { line: 11 })),
+        ("an address with userinfo", edited("https://example.com/docs", "https://example.com@evil.example/docs"), |e| matches!(e, E::Link { line: 16 })),
+        ("an escaped task box", edited("- Every op answers one JSON line", "- \\[x] done"), |e| matches!(e, E::Structure { line: 25, .. })),
+        ("a task box", edited("- Every op answers one JSON line", "- [x] done"), |e| matches!(e, E::BlockLike { line: 25 })),
+        ("punctuation opening a line, unescaped", edited(first, "(a note)"), |e| matches!(e, E::BlockLike { line: 11 })),
         ("a table's header renamed", edited("| Item | State |", "| Item | Status |"), |e| matches!(e, E::Structure { line: 28, .. })),
     ];
     for (name, bytes, named) in cases {
