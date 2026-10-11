@@ -1,0 +1,10 @@
+//! A project's board of tasks (#2476, epic #2481): the use cases the board
+//! operations (S2) invoke, over a board store and a clock. Every change is
+//! a compare-and-swap on the board's head: a write that lost the race is
+//! read again and the change re-applied to the fresh task, a bounded number
+//! of times.
+pub mod dto;
+#[cfg(any(test, feature = "test-support"))]
+pub mod memory_store;
+pub mod ports;
+pub mod use_cases;
