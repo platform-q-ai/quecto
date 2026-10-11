@@ -138,6 +138,12 @@ fn every_hostile_file_is_refused_with_its_reason() {
         ("a link showing mailto in padded code", edited(first, "see [mailto` : `ada](https://good.example)"), |e| matches!(e, E::Link { line: 11 })),
         ("a link showing an email after an underscore in code", edited(first, "see [_`@`evil.example](https://good.example)"), |e| matches!(e, E::Link { line: 11 })),
         ("a link showing an email after an underscore in strikethrough", edited(first, "see [_~@evil.example~](https://good.example)"), |e| matches!(e, E::Link { line: 11 })),
+        ("a scheme split across a link's start", edited(first, "see https:/[/bank.example/login](https://evil.example)"), |e| matches!(e, E::Link { line: 11 })),
+        ("a www address split across a link's start", edited(first, "see ww[w.bank.example](https://evil.example)"), |e| matches!(e, E::Link { line: 11 })),
+        ("an email split across a link's start", edited(first, "see ada[@bank.example](https://evil.example)"), |e| matches!(e, E::Link { line: 11 })),
+        ("a scheme split across code and a link", edited(first, "see `https:/`[/bank.example/login](https://evil.example)"), |e| matches!(e, E::Link { line: 11 })),
+        ("a scheme split across a link's end", edited(first, "[https:](https://evil.example)//bank.example"), |e| matches!(e, E::Link { line: 11 })),
+        ("a www address split across a link and code", edited(first, "[www](https://evil.example)`.bank.example`"), |e| matches!(e, E::Link { line: 11 })),
         ("a table's header renamed", edited("| Item | State |", "| Item | Status |"), |e| matches!(e, E::Structure { line: 28, .. })),
     ];
     for (name, bytes, named) in cases {
