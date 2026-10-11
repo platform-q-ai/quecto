@@ -3,9 +3,10 @@ use crate::domain::project_board::entities::claim::{MAX_EMAIL_BYTES, MAX_NAME_CH
 use crate::domain::project_board::entities::task::{MAX_DESCRIPTION_CHARS, MAX_TEXT_BYTES};
 use crate::domain::project_board::entities::task_parts::{MAX_LINE_CHARS, PlanStep};
 use crate::domain::project_board::services::fixtures_tests::{
-    at, far_future, last_written, person, task, with_open_run, without_claim,
+    at, far_future, last_written, person, task, with_open_run, without_claim, without_prs,
 };
 use crate::domain::project_board::value_objects::slug::Slug;
+use crate::domain::project_board::value_objects::vocabulary::RunOutcome;
 
 const ALL: [TaskStatus; 8] = [
     Draft, Ready, Claimed, InProgress, Review, Blocked, Done, Archived,
@@ -51,7 +52,12 @@ const RELEASES: [(TaskStatus, TaskStatus); 4] = [
 fn only_the_table_allows_a_move_even_for_the_holder() {
     for from in ALL {
         for to in ALL {
-            let moved = move_task(&task(from), to, &person("Ada"), &at("10:00:00"));
+            let moved = move_task(
+                &without_prs(task(from)),
+                to,
+                &person("Ada"),
+                &at("10:00:00"),
+            );
             match moved {
                 Ok(next) => {
                     assert!(
@@ -126,7 +132,7 @@ fn a_claim_is_taken_kept_or_cleared_by_the_move() {
     }
     let cleared = RELEASES.iter().chain(&[(Review, Done)]);
     for (from, to) in cleared.copied() {
-        let next = move_task(&task(from), to, &person("Ada"), &now).unwrap();
+        let next = move_task(&without_prs(task(from)), to, &person("Ada"), &now).unwrap();
         assert_eq!(next.fields().claim, None, "{from:?} -> {to:?} clears it");
     }
 }
@@ -235,7 +241,7 @@ fn a_move_to_ready_done_or_archived_with_an_open_run_is_refused() {
     for (from, to) in RELEASES.iter().chain(&[(Review, Done)]).copied() {
         assert_eq!(
             move_task(
-                &with_open_run(task(from)),
+                &with_open_run(without_prs(task(from))),
                 to,
                 &person("Ada"),
                 &at("10:00:00")
@@ -244,17 +250,46 @@ fn a_move_to_ready_done_or_archived_with_an_open_run_is_refused() {
             "{from:?} -> {to:?}"
         );
     }
+}
+
+/// A merged pull request closes the task whoever holds it: a run still
+/// open can no longer report its end to a done task, so it is ended as
+/// lost, at the change's stamp, as a run that will never report is.
+#[test]
+fn completing_a_task_ends_its_open_run_as_lost() {
     let merged = BTreeSet::from([2482, 2483]);
-    assert_eq!(
-        complete_merged(&with_open_run(task(Review)), &merged, &at("10:00:00")),
-        Err(open)
-    );
+    for from in [Claimed, InProgress, Review, Blocked] {
+        let done = complete_merged(&with_open_run(task(from)), &merged, &at("10:00:00")).unwrap();
+        let run = done
+            .fields()
+            .runs
+            .iter()
+            .find(|run| run.id.as_str() == "r2")
+            .unwrap();
+        assert_eq!(
+            (
+                done.fields().status,
+                &run.ended,
+                run.outcome,
+                &done.fields().claim
+            ),
+            (Done, &Some(at("10:00:00")), Some(RunOutcome::Lost), &None),
+            "{from:?}"
+        );
+        assert_eq!(
+            done.fields().runs[0].outcome,
+            Some(RunOutcome::Succeeded),
+            "an ended run keeps its outcome"
+        );
+    }
 }
 
 #[test]
 fn a_held_task_is_done_once_all_its_prs_merge_whoever_merged_them() {
     let merged = |prs: &[u64]| prs.iter().copied().collect::<BTreeSet<u64>>();
-    for from in [Claimed, InProgress, Review, Blocked] {
+    // Ready too: a holder released it with its pull requests linked, and
+    // no one holds it when they merge.
+    for from in [Ready, Claimed, InProgress, Review, Blocked] {
         let done =
             complete_merged(&task(from), &merged(&[2482, 2483, 9]), &at("10:00:00")).unwrap();
         let fields = done.fields();
@@ -265,8 +300,8 @@ fn a_held_task_is_done_once_all_its_prs_merge_whoever_merged_them() {
         );
     }
     let partly = complete_merged(&task(Review), &merged(&[2482]), &at("10:00:00"));
-    assert_eq!(partly, Err(BoardRuleError::PrsOpen(vec![2483])));
-    for from in [Draft, Ready, Done, Archived] {
+    assert_eq!(partly, Err(BoardRuleError::PrsUnmerged(vec![2483])));
+    for from in [Draft, Done, Archived] {
         let refused = complete_merged(&task(from), &merged(&[2482, 2483]), &at("10:00:00"));
         assert_eq!(refused, Err(BoardRuleError::NotAllowed { from, to: Done }));
     }
@@ -374,5 +409,29 @@ fn a_change_that_cannot_be_spelt_is_refused_as_invalid() {
     assert!(
         matches!(&moved, Err(BoardRuleError::Invalid(error)) if error.field == "claim/expires"),
         "{moved:?}"
+    );
+}
+
+#[test]
+fn a_task_linking_pull_requests_is_done_only_when_they_merge() {
+    let review = task(Review);
+    assert_eq!(
+        move_task(&review, Done, &person("Ada"), &at("10:00:00")),
+        Err(BoardRuleError::PrsLinked(vec![2482, 2483])),
+        "its holder cannot say it is done"
+    );
+    assert_eq!(
+        BoardRuleError::PrsLinked(vec![2482, 2483]).to_string(),
+        "the task links pull requests [2482, 2483], so it is done when they merge: \
+         complete it once they have (anyone may), or unlink one first"
+    );
+    let mut unlinked = review.into_fields();
+    unlinked.prs.clear();
+    let unlinked = Task::new(unlinked).unwrap();
+    let done = move_task(&unlinked, Done, &person("Ada"), &at("10:00:00")).unwrap();
+    assert_eq!(
+        done.fields().status,
+        Done,
+        "work without pull requests is the holder's to finish"
     );
 }

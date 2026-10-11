@@ -1,8 +1,16 @@
 //! The project board's use cases (#2476).
+mod board_change;
 mod bootstrap_project_board;
+mod change_board_task;
+mod complete_merged_task;
+mod create_board_task;
 mod query_board;
 
+pub use board_change::MAX_WRITE_ATTEMPTS;
 pub use bootstrap_project_board::BootstrapProjectBoard;
+pub use change_board_task::ChangeBoardTask;
+pub use complete_merged_task::CompleteMergedTask;
+pub use create_board_task::CreateBoardTask;
 pub use query_board::QueryBoard;
 
 #[cfg(test)]

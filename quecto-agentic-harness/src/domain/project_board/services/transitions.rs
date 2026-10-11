@@ -3,6 +3,7 @@ use super::super::entities::claim::Identity;
 use super::super::entities::task::Task;
 use super::super::value_objects::rule_error::BoardRuleError;
 use super::super::value_objects::timestamp::Timestamp;
+use super::super::value_objects::vocabulary::RunOutcome;
 use super::super::value_objects::vocabulary::TaskStatus::{self, *};
 use super::claims::{held_by, held_live_by, is_live, new_claim, settle, stamp};
 use std::collections::BTreeSet;
@@ -86,6 +87,14 @@ pub fn move_task(
             }
         }
     }
+    // The holder finishes a task only when it links no pull request: one
+    // that links them is done when they merge (`complete_merged`). The
+    // holder may unlink one deliberately (`remove_pr`), and then finish.
+    match ((from, to), &task.fields().prs[..]) {
+        ((Review, Done), []) => {}
+        ((Review, Done), linked) => return Err(BoardRuleError::PrsLinked(linked.to_vec())),
+        _ => {}
+    }
     runs_may_stay_open(task, to)?;
     let at = stamp(task, now);
     let mut next = task.fields().clone();
@@ -98,10 +107,13 @@ pub fn move_task(
     settle(next, &at)
 }
 
-/// The system move behind "a merged PR moves its task to done": a held
-/// task (claimed, in progress, in review or blocked) whose linked pull
-/// requests are all in `merged` is done, whoever holds it and whoever
-/// merged them.
+/// The system move behind "a merged PR moves its task to done": a task
+/// that is ready (released with its pull requests linked) or held
+/// (claimed, in progress, in review or blocked), whose linked pull
+/// requests are all in `merged`, is done, whoever holds it and whoever
+/// merged them. Its claim is cleared, and a run still open is ended as
+/// [`RunOutcome::Lost`] at the change's stamp: it can no longer report
+/// its end to a done task, as a run whose host died cannot.
 pub fn complete_merged(
     task: &Task,
     merged: &BTreeSet<u64>,
@@ -114,14 +126,14 @@ pub fn complete_merged(
         .copied()
         .filter(|pr| !merged.contains(pr))
         .collect();
-    match (
-        fields.status.may_hold_claim(),
-        &fields.prs[..],
-        &unmerged[..],
-    ) {
+    let completable = matches!(
+        fields.status,
+        Ready | Claimed | InProgress | Review | Blocked
+    );
+    match (completable, &fields.prs[..], &unmerged[..]) {
         (true, [_, ..], []) => {}
         (true, [], _) => return Err(BoardRuleError::NoPrs),
-        (true, _, open) => return Err(BoardRuleError::PrsOpen(open.to_vec())),
+        (true, _, open) => return Err(BoardRuleError::PrsUnmerged(open.to_vec())),
         (false, _, _) => {
             return Err(BoardRuleError::NotAllowed {
                 from: fields.status,
@@ -129,11 +141,19 @@ pub fn complete_merged(
             });
         }
     }
-    runs_may_stay_open(task, Done)?;
+    let at = stamp(task, now);
     let mut next = fields.clone();
+    for run in next.runs.iter_mut().filter(|run| run.is_open()) {
+        run.ended = Some(at.clone());
+        run.outcome = Some(RunOutcome::Lost);
+    }
     next.status = Done;
     next.claim = None;
-    settle(next, &stamp(task, now))
+    assert!(
+        next.runs.iter().all(|run| !run.is_open()),
+        "a done task has no open run"
+    );
+    settle(next, &at)
 }
 
 /// A run may stay open only while the task may hold a claim; leaving for

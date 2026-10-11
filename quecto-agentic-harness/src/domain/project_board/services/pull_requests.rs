@@ -1,14 +1,36 @@
 //! The pull requests a task links. Completing a task when they merge is a
 //! status move ([`complete_merged`](super::transitions::complete_merged));
-//! unlinking one closed without merging is the holder's.
+//! linking one, or unlinking one deliberately (a wrong or abandoned pull
+//! request), is the holder's: a task with linked pull requests closes on
+//! merge, and once the holder unlinks them all, Review→Done is theirs.
 use super::super::entities::claim::Identity;
 use super::super::entities::task::Task;
 use super::super::value_objects::rule_error::BoardRuleError;
 use super::super::value_objects::timestamp::Timestamp;
 use super::claims::{held_live_by, settle, stamp};
 
-/// The task without pull request `pr`, unlinked by the holder of a live
-/// claim (a pull request closed without merging no longer delivers it).
+/// The task linking pull request `pr` too, linked by the holder of a live
+/// claim.
+pub fn add_pr(
+    task: &Task,
+    holder: &Identity,
+    pr: u64,
+    now: &Timestamp,
+) -> Result<Task, BoardRuleError> {
+    held_live_by(task, holder, now)?;
+    let mut next = task.fields().clone();
+    match next.prs.contains(&pr) {
+        true => Err(BoardRuleError::PrAlreadyLinked(pr)),
+        false => {
+            next.prs.push(pr);
+            settle(next, &stamp(task, now))
+        }
+    }
+}
+
+/// The task without pull request `pr`, unlinked deliberately by the
+/// holder of a live claim (a wrong or abandoned pull request no longer
+/// delivers it).
 pub fn remove_pr(
     task: &Task,
     holder: &Identity,
