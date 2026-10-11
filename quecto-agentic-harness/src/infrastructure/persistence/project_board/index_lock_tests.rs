@@ -3,7 +3,14 @@
 use super::*;
 
 /// A history of known ancestry; `remote_head` records whether the index's
-/// writer lock was free when it was asked.
+/// writer had taken its lock when it was asked: the lock file exists only
+/// once a writer's `lock` makes it, so a test that removes it first sees it
+/// again only if the remote is asked after the lock was taken.
+///
+/// Whether the lock is held is not asked of `flock` itself: a process
+/// another test forks (to run git) holds a copy of every open file of this
+/// process until it execs, the writer's lock file included, so a lock the
+/// writer already let go can still look held for a moment.
 struct Ancestry {
     remote: Option<String>,
     ancestors: Vec<(String, String)>,
@@ -28,12 +35,7 @@ impl Ancestry {
 impl BoardRevisions for Ancestry {
     fn remote_head(&self) -> Result<Option<String>, BoardStoreError> {
         if let Some(lock) = &self.lock {
-            let file = std::fs::OpenOptions::new()
-                .read(true)
-                .write(true)
-                .open(lock)
-                .unwrap();
-            if file.try_lock().is_err() {
+            if std::fs::symlink_metadata(lock).is_ok() {
                 *self.asked_under_lock.lock().unwrap() = true;
             }
         }
@@ -60,6 +62,8 @@ fn the_remote_is_never_asked_while_the_writer_lock_is_held() {
     let (_dir, index) = index();
     let (older, newer) = (board("a1"), moved("e2"));
     rebuild(&index, &newer).unwrap();
+    // Gone until a writer takes its lock again.
+    std::fs::remove_file(lock_path(&index)).unwrap();
     let mut revisions = Ancestry::new(Some(&head(&newer)), &[(&head(&older), &head(&newer))]);
     revisions.lock = Some(lock_path(&index));
     assert_eq!(
@@ -194,11 +198,13 @@ fn a_path_set_aside_twice_is_listed_twice() {
             path: "tasks/x.json".into(),
             id: Some(slug("x")),
             reason: "named more than once in the tree".into(),
+            object: "c".repeat(40),
         },
         QuarantinedFile {
             path: "tasks/x.json".into(),
             id: Some(slug("x")),
             reason: "named more than once in the tree".into(),
+            object: "d".repeat(40),
         },
     ];
     rebuild(&index, &snapshot).unwrap();
@@ -283,4 +289,15 @@ fn clearing_the_lock_place_never_removes_a_regular_file() {
     std::os::unix::fs::symlink(dir.path().join("elsewhere"), &lock).unwrap();
     index_file::clear_non_regular(&lock).unwrap();
     assert!(std::fs::symlink_metadata(&lock).is_err());
+}
+
+/// An object the index holds for a file set aside is an object id, or the
+/// index is corrupt.
+#[test]
+fn a_set_aside_object_that_is_no_object_id_is_corrupt() {
+    let (_dir, index) = index();
+    rebuild(&index, &board("a1")).unwrap();
+    tamper(&index, "UPDATE quarantined SET object = 'zz\u{1b}[2J';");
+    let read = index.ready();
+    assert!(matches!(read, Err(IndexError::Corrupt(_))), "{read:?}");
 }

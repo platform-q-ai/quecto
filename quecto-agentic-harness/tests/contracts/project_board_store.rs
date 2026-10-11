@@ -4,7 +4,8 @@
 //! the same checks over two clones of one remote; here they run over the
 //! in-memory store.
 use quecto::application::project_board::ports::{
-    BoardBootstrap, BoardHead, BoardStoreError, BoardWrite, ProjectBoardStore,
+    BoardBootstrap, BoardHead, BoardStoreError, BoardWrite, KeepCopy, ProjectBoardStore,
+    SetAsideClear,
 };
 use quecto::domain::project_board::entities::claim::Identity;
 use quecto::domain::project_board::entities::task::{Task, TaskFields};
@@ -12,7 +13,7 @@ use quecto::domain::project_board::value_objects::slug::Slug;
 use quecto::domain::project_board::value_objects::timestamp::Timestamp;
 use quecto::domain::project_board::value_objects::vocabulary::{TaskKind, TaskStatus};
 use quecto::infrastructure::test_support::memory_board_store::MemoryBoardStore;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Barrier;
 
 /// Two clients of one board that is not bootstrapped yet.
@@ -209,6 +210,74 @@ pub fn check_quarantine((alice, bob): Clients, spoil: impl FnOnce()) {
     assert_eq!(alice.read().unwrap().head, board.head);
 }
 
+/// A file set aside (`spoil` breaks `tasks/b.json`) is cleared in one
+/// change, only from the head that holds it: its id is free again, and the
+/// rest of the board stands. A path that is not set aside, or a copy to
+/// keep for a name listed once, is refused.
+pub fn check_clear_set_aside((alice, bob): Clients, spoil: impl FnOnce()) {
+    let clearing = |path: &str, object: &str, repeated: &[(&str, KeepCopy)]| SetAsideClear {
+        path: path.into(),
+        object: object.into(),
+        repeated: repeated
+            .iter()
+            .map(|(path, keep)| ((*path).to_string(), keep.clone()))
+            .collect(),
+    };
+    alice.bootstrap().unwrap();
+    let head = alice.read().unwrap().head;
+    let before = written(alice.write(
+        &head,
+        &[task("a", "One"), task("b", "Two")],
+        "board: add a, b",
+    ));
+    spoil();
+    let board = bob.read().unwrap();
+    let (path, object) = (
+        board.quarantined[0].path.clone(),
+        board.quarantined[0].object.clone(),
+    );
+    assert_eq!(path, "tasks/b.json");
+    let zeros = "0".repeat(object.len());
+    let seen = BTreeSet::from([object.clone()]);
+    for clear in [
+        clearing("tasks/a.json", &object, &[]),
+        clearing(&path, &zeros, &[]),
+        clearing(
+            &path,
+            &object,
+            &[(path.as_str(), KeepCopy::Drop(seen.clone()))],
+        ),
+    ] {
+        let refused = bob.clear_set_aside(&board.head, &clear, "board: clear");
+        assert!(
+            matches!(&refused, Ok(BoardWrite::Refused(why)) if !why.is_empty()),
+            "{clear:?}: {refused:?}"
+        );
+    }
+    assert_eq!(
+        alice.clear_set_aside(&before, &clearing(&path, &object, &[]), "board: clear b"),
+        Ok(BoardWrite::Lost),
+        "a clear from before the file was spoiled"
+    );
+    let invalid = bob.clear_set_aside(&board.head, &clearing(&path, &object, &[]), "two\nlines");
+    assert!(
+        matches!(invalid, Err(BoardStoreError::InvalidWrite(_))),
+        "{invalid:?}"
+    );
+    let cleared = written(bob.clear_set_aside(
+        &board.head,
+        &clearing(&path, &object, &[]),
+        "board: clear b",
+    ));
+    let after = alice.read().unwrap();
+    assert_eq!(
+        (after.head.clone(), after.quarantined, tasks(&*alice)),
+        (cleared.clone(), vec![], set(&[task("a", "One")]))
+    );
+    written(alice.write(&cleared, &[task("b", "Mended")], "board: write b"));
+    assert_eq!(tasks(&*bob), set(&[task("a", "One"), task("b", "Mended")]));
+}
+
 /// A client whose write was lost, or refused, writes again from a fresh
 /// read: no stale local state holds it back.
 pub fn check_write_after_lost_and_refused((alice, bob): Clients, refuse: impl FnOnce()) {
@@ -332,6 +401,12 @@ fn the_memory_store_refuses_invalid_writes() {
 fn the_memory_store_refuses_without_moving() {
     let (store, clients) = memory();
     check_refused(clients, || store.refuse_next_write("a hook said no"));
+}
+
+#[test]
+fn the_memory_store_clears_a_file_set_aside() {
+    let (store, clients) = memory();
+    check_clear_set_aside(clients, || store.quarantine("b", "malformed"));
 }
 
 #[test]

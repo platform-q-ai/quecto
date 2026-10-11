@@ -1229,8 +1229,10 @@ const ENVIRONMENT_REGISTRY_STORE: &str =
 /// The project board's files (#2476) that name its own `tasks/<id>.json`
 /// files on a git branch, never a session path: exempt from the `.json"`
 /// needle alone.
-const PROJECT_BOARD_JSON_NAMERS: &[&str] =
-    &["src/infrastructure/persistence/project_board/store.rs"];
+const PROJECT_BOARD_JSON_NAMERS: &[&str] = &[
+    "src/infrastructure/persistence/project_board/store.rs",
+    "src/infrastructure/persistence/project_board/board_tree.rs",
+];
 
 #[test]
 fn one_layout_owns_the_sessions_join_sanitizer_and_file_names() {

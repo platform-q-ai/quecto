@@ -166,6 +166,11 @@ pub enum ProjectBoardError {
         expected: Timestamp,
         updated: Timestamp,
     },
+    /// No file is set aside at this path.
+    NotSetAside {
+        path: String,
+        object: String,
+    },
 }
 
 impl From<BoardStoreError> for ProjectBoardError {
@@ -255,6 +260,9 @@ impl fmt::Display for ProjectBoardError {
                 updated.as_str(),
                 expected.as_str()
             ),
+            Self::NotSetAside { path, object } => {
+                write!(f, "no file is set aside at {path:?} as {object:?}")
+            }
         }
     }
 }

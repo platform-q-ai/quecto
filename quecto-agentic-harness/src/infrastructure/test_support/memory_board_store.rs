@@ -7,8 +7,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
 
 use crate::application::project_board::ports::{
-    BoardBootstrap, BoardHead, BoardSnapshot, BoardStoreError, BoardWrite, ProjectBoardStore,
-    QuarantinedFile,
+    BoardBootstrap, BoardHead, BoardSnapshot, BoardStoreError, BoardWrite, KeepCopy,
+    ProjectBoardStore, QuarantinedFile, SetAsideClear,
 };
 use crate::domain::project_board::entities::claim::Identity;
 use crate::domain::project_board::entities::task::Task;
@@ -29,6 +29,8 @@ struct Board {
     writes: usize,
     /// Who made the board at each revision a write made.
     committers: BTreeMap<u64, Identity>,
+    /// The message of each revision a write made.
+    messages: BTreeMap<u64, String>,
 }
 
 #[derive(Clone)]
@@ -103,6 +105,7 @@ impl MemoryBoardStore {
             path,
             id,
             reason: reason.into(),
+            object: format!("{:040x}", revision + 1),
         });
     }
 
@@ -124,6 +127,34 @@ impl MemoryBoardStore {
         );
         let revision = board.head.expect("a bootstrapped board");
         board.head = Some(revision + 1);
+    }
+
+    /// Lists the quarantined file of `id` twice, same path and object, as
+    /// a git board shows two names that differ only in a character no one
+    /// sees.
+    ///
+    /// # Panics
+    /// When no quarantined file has that id.
+    pub fn show_twice(&self, id: &str) {
+        let mut board = self.lock();
+        let file = board
+            .quarantined
+            .iter()
+            .find(|file| file.id.as_ref().map(Slug::as_str) == Some(id))
+            .cloned()
+            .expect("a quarantined file of that id");
+        board.quarantined.push(file);
+    }
+
+    /// The message of the change that made the board at `head`, when a
+    /// write made it.
+    pub fn message_at(&self, at: &BoardHead) -> Option<String> {
+        let board = self.lock();
+        board
+            .messages
+            .iter()
+            .find(|(revision, _)| head(**revision) == *at)
+            .map(|(_, message)| message.clone())
     }
 
     /// The committer of the board at `head`, when a write made it.
@@ -195,11 +226,12 @@ impl ProjectBoardStore for MemoryBoardStore {
         interleaved.into_iter().for_each(|change| change(self));
         let mut board = self.lock();
         let revision = board.head.ok_or(BoardStoreError::NoBoard)?;
-        if let Some(reason) = board.refusal.take() {
-            return Ok(BoardWrite::Refused(reason));
-        }
+        // As a git store judges: a stale head is lost before any refusal.
         if *expected != head(revision) {
             return Ok(BoardWrite::Lost);
+        }
+        if let Some(reason) = board.refusal.take() {
+            return Ok(BoardWrite::Refused(reason));
         }
         let set_aside = |task: &Task| {
             board
@@ -221,6 +253,68 @@ impl ProjectBoardStore for MemoryBoardStore {
         board.head = Some(revision + 1);
         board.writes += 1;
         board.committers.insert(revision + 1, self.writer.clone());
+        board.messages.insert(revision + 1, message.to_string());
+        Ok(BoardWrite::Written(head(revision + 1)))
+    }
+
+    /// A name is never listed twice in memory, so a clear that resolves a
+    /// name listed twice is refused.
+    fn clear_set_aside(
+        &self,
+        expected: &BoardHead,
+        clear: &SetAsideClear,
+        message: &str,
+    ) -> Result<BoardWrite, BoardStoreError> {
+        let path = clear.path.as_str();
+        line("message", message, 200)
+            .map_err(|error| BoardStoreError::InvalidWrite(error.to_string()))?;
+        // An object id as git spells one: lowercase hex, SHA-1 or SHA-256.
+        let hex = |text: &str| {
+            matches!(text.len(), 40 | 64)
+                && text
+                    .bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        };
+        let kept = clear.repeated.values().flat_map(|keep| match keep {
+            KeepCopy::Object { keep, seen } => std::iter::once(keep).chain(seen).collect(),
+            KeepCopy::Drop(seen) => seen.iter().collect::<Vec<_>>(),
+        });
+        if let Some(oid) = std::iter::once(&clear.object)
+            .chain(kept)
+            .find(|oid| !hex(oid))
+        {
+            return Err(BoardStoreError::InvalidWrite(format!(
+                "{oid:?} is not an object id"
+            )));
+        }
+        let interleaved = std::mem::take(&mut self.lock().interleaved);
+        interleaved.into_iter().for_each(|change| change(self));
+        let mut board = self.lock();
+        let revision = board.head.ok_or(BoardStoreError::NoBoard)?;
+        // As a git store judges: a stale head is lost before any refusal.
+        if *expected != head(revision) {
+            return Ok(BoardWrite::Lost);
+        }
+        if let Some(reason) = board.refusal.take() {
+            return Ok(BoardWrite::Refused(reason));
+        }
+        if let Some(path) = clear.repeated.keys().next() {
+            return Ok(BoardWrite::Refused(format!(
+                "{path:?} is not listed more than once"
+            )));
+        }
+        let named = |file: &QuarantinedFile| file.path == path && file.object == clear.object;
+        // Entries that share path and object are one file, as on a git
+        // board.
+        match board.quarantined.iter().any(named) {
+            true => {}
+            false => return Ok(BoardWrite::Refused(format!("{path:?} is not set aside"))),
+        }
+        board.quarantined.retain(|file| !named(file));
+        board.head = Some(revision + 1);
+        board.writes += 1;
+        board.committers.insert(revision + 1, self.writer.clone());
+        board.messages.insert(revision + 1, message.to_string());
         Ok(BoardWrite::Written(head(revision + 1)))
     }
 

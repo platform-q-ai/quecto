@@ -84,11 +84,13 @@ fn board(head: &str) -> BoardSnapshot {
                 path: "tasks/x.json".into(),
                 id: Some(slug("x")),
                 reason: "malformed".into(),
+                object: "a".repeat(40),
             },
             QuarantinedFile {
                 path: "tasks/x.txt".into(),
                 id: None,
                 reason: "not a task file".into(),
+                object: "b".repeat(40),
             },
         ],
     }
