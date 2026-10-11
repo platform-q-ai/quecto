@@ -192,3 +192,19 @@ fn a_discussions_text_is_bounded_by_its_budget() {
     full.messages[last].text.push('x');
     assert_eq!(Discussion::new(full).unwrap_err().field, "text");
 }
+
+/// The text counted is the title, who started it, and every message line
+/// with its author: a two-line message counts its author twice.
+#[test]
+fn a_discussions_text_counts_each_lines_author() {
+    let discussion = fields();
+    let ada = "Ada".len() + "ada@example.com".len();
+    let bob = "Bob".len() + "bob@example.com".len();
+    let expected = "How the store locks".len()
+        + ada
+        + "Should the store take a lease?".len()
+        + ada
+        + "Yes, with a **TTL**.\nAnd a renewal.".len()
+        + 2 * bob;
+    assert_eq!(discussion.text_bytes(), expected);
+}
