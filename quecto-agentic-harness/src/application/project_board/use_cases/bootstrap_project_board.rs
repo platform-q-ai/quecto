@@ -2,7 +2,7 @@
 use std::sync::Arc;
 
 use crate::application::project_board::dto::ProjectBoardError;
-use crate::application::project_board::ports::{Bootstrapped, ProjectBoardStore};
+use crate::application::project_board::ports::{BoardBootstrap, ProjectBoardStore};
 
 pub struct BootstrapProjectBoard {
     store: Arc<dyn ProjectBoardStore>,
@@ -15,7 +15,7 @@ impl BootstrapProjectBoard {
 
     /// # Errors
     /// The store's clash or failure.
-    pub fn execute(&self) -> Result<Bootstrapped, ProjectBoardError> {
+    pub fn execute(&self) -> Result<BoardBootstrap, ProjectBoardError> {
         Ok(self.store.bootstrap()?)
     }
 }

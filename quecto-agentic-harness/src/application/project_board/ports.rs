@@ -1,7 +1,9 @@
 //! The project board capability's ports (#2476): where the board lives
 //! (the S1d git store implements [`ProjectBoardStore`] over the
 //! repository's `quecto/board` branch) and what time it is.
+use crate::domain::project_board::entities::claim::Identity;
 use crate::domain::project_board::entities::task::Task;
+use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
 
 /// The board's head: the store's revision a write must start from (the
@@ -9,14 +11,18 @@ use crate::domain::project_board::value_objects::timestamp::Timestamp;
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct BoardHead(pub String);
 
-/// A board file the store set aside, and why.
+/// A board file the store set aside, and why. `id` is the task id its file
+/// name spells (`tasks/<id>.json`), when it spells one: no task may be
+/// written under that id until the file is mended.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct QuarantinedFile {
     pub path: String,
+    pub id: Option<Slug>,
     pub reason: String,
 }
 
 /// The board at its head: every readable task, and what was set aside.
+/// The order of either list is the store's own; read them as sets.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BoardSnapshot {
     pub head: BoardHead,
@@ -27,16 +33,19 @@ pub struct BoardSnapshot {
 /// What became of a write.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BoardWrite {
-    /// The board moved to this head.
+    /// The board moved to this head, and it holds the write.
     Written(BoardHead),
-    /// Someone else moved the board first: read it again.
+    /// The board does NOT hold this write: someone else moved it first.
+    /// Read it again. A store that cannot tell whether its write landed
+    /// answers neither this nor [`Self::Written`] but an error.
     Lost,
     /// The store refused the write, and the board did not move.
     Refused(String),
 }
 
+/// What [`ProjectBoardStore::bootstrap`] found.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Bootstrapped {
+pub enum BoardBootstrap {
     Created(BoardHead),
     Existing(BoardHead),
 }
@@ -48,7 +57,11 @@ pub enum BoardStoreError {
     NoBoard,
     /// Something in the repository keeps the board from existing.
     Clash(String),
-    /// The store could not be reached or read.
+    /// A write no store takes: no tasks, one id twice, or a message that is
+    /// not one short line. Nothing was written.
+    InvalidWrite(String),
+    /// The store could not be reached or read, or cannot tell whether a
+    /// write landed.
     Unavailable(String),
 }
 
@@ -62,10 +75,12 @@ pub trait ProjectBoardStore: Send + Sync {
     fn read(&self) -> Result<BoardSnapshot, BoardStoreError>;
 
     /// Writes `tasks` (each whole, replacing any task of the same id) in
-    /// one change, only if the board is still at `expected`.
+    /// one change, only if the board is still at `expected`. A task whose
+    /// id a quarantined file holds is [`BoardWrite::Refused`].
     ///
     /// # Errors
-    /// The store's failure; losing the race is [`BoardWrite::Lost`].
+    /// An invalid write, or the store's failure; losing the race is
+    /// [`BoardWrite::Lost`].
     fn write(
         &self,
         expected: &BoardHead,
@@ -77,10 +92,15 @@ pub trait ProjectBoardStore: Send + Sync {
     ///
     /// # Errors
     /// A clash, or the store's failure.
-    fn bootstrap(&self) -> Result<Bootstrapped, BoardStoreError>;
+    fn bootstrap(&self) -> Result<BoardBootstrap, BoardStoreError>;
+
+    /// The committer identity the store writes as: every board change is
+    /// made by it.
+    fn writer(&self) -> Identity;
 }
 
-/// What time it is, and an outside reading of it to check that against.
+/// What time it is, an outside reading of it to check that against, and
+/// the pause between attempts at a write.
 pub trait BoardClock: Send + Sync {
     /// This machine's time.
     fn now(&self) -> Timestamp;
@@ -88,4 +108,8 @@ pub trait BoardClock: Send + Sync {
     /// The time a source outside this machine reports, when one can be
     /// read; `None` when none can.
     fn reference(&self) -> Option<Timestamp>;
+
+    /// Waits before attempt `attempt` (from 2) at a write that lost the
+    /// race: a short, jittered pause, so writers that collided spread out.
+    fn pause(&self, attempt: usize);
 }

@@ -1,11 +1,20 @@
 //! What the project board's use cases answer and refuse.
 use std::fmt;
 
-use super::ports::BoardStoreError;
+use super::ports::{BoardStoreError, QuarantinedFile};
+use crate::domain::project_board::entities::task::Task;
 use crate::domain::project_board::value_objects::rule_error::BoardRuleError;
 use crate::domain::project_board::value_objects::schema_error::SchemaError;
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
+
+/// Tasks a query found, by id, and every file the board set aside, so a
+/// listing never hides that part of the board could not be read.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BoardListing {
+    pub tasks: Vec<Task>,
+    pub quarantined: Vec<QuarantinedFile>,
+}
 
 /// Why a board operation did nothing.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -44,9 +53,11 @@ impl fmt::Display for ProjectBoardError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Store(BoardStoreError::NoBoard) => f.write_str("the project has no board yet"),
-            Self::Store(BoardStoreError::Clash(why) | BoardStoreError::Unavailable(why)) => {
-                f.write_str(why)
-            }
+            Self::Store(
+                BoardStoreError::Clash(why)
+                | BoardStoreError::InvalidWrite(why)
+                | BoardStoreError::Unavailable(why),
+            ) => f.write_str(why),
             Self::Rule(error) => write!(f, "{error}"),
             Self::Invalid(error) => write!(f, "invalid task: {error}"),
             Self::NotFound(id) => write!(f, "no task {}", id.as_str()),

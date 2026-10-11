@@ -8,9 +8,10 @@
 //! ahead never locks the task for clients whose clocks are right. Whether a
 //! claim has expired is judged by the caller's real `now`, so a client
 //! whose clock runs fast sees claims expire early, and a claim stamped by
-//! such a clock lasts until its stamped expiry. S1c's clock port refuses a
-//! `now` more than 60 s ahead of an outside reference (the remote's last
-//! commit time), which bounds both.
+//! such a clock lasts until its stamped expiry. S1c's write path bounds
+//! both against an outside reading of the current time when one can be
+//! read: it refuses a `now`, or a task `updated`, more than 60 s ahead of
+//! it.
 use super::super::entities::claim::{CLAIM_TTL_SECONDS, Claim, Identity};
 use super::super::entities::task::{Task, TaskFields};
 use super::super::value_objects::rule_error::BoardRuleError;
@@ -78,7 +79,7 @@ pub(super) fn held_live_by<'a>(
 
 /// A claim is live until the moment it expires; from then on it is
 /// expired and can be taken over.
-pub(super) fn is_live(claim: &Claim, now: &Timestamp) -> bool {
+pub fn is_live(claim: &Claim, now: &Timestamp) -> bool {
     *now < claim.expires
 }
 
