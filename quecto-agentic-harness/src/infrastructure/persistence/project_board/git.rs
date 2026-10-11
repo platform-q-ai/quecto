@@ -9,9 +9,13 @@
 //! configured. Turning hooks, the filesystem monitor and maintenance off
 //! keeps board operations free of side effects in the checkout; it is not
 //! a security boundary against the repository's owner.
+use super::own_group::{Ended, end_group, exited_unreaped};
 use crate::domain::project_board::entities::claim::Identity;
 use crate::domain::project_board::value_objects::shown_text::shown_char;
 use crate::domain::redaction::{redact_secrets, redact_url_userinfo};
+use crate::infrastructure::processes::parent_death_signal::{
+    SPAWN_ARMS, own_session_dying_with_us,
+};
 use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::io::{Read, Write};
@@ -352,21 +356,13 @@ impl Git {
             }
             Reach::Network => {}
         }
-        // Its own session, so no ssh or helper it starts can reach the
-        // terminal quecto runs in, and its own process group, so the
-        // deadline ends git and everything it started.
-        // setsid(2) is async-signal-safe and touches no memory of the
-        // parent; the closure allocates nothing.
-        // SAFETY: the pre_exec closure only calls setsid.
-        unsafe {
-            std::os::unix::process::CommandExt::pre_exec(&mut command, || match libc::setsid() {
-                -1 => Err(std::io::Error::last_os_error()),
-                _ => Ok(()),
-            });
-        }
+        // A session of its own (nothing git starts reaches quecto's
+        // terminal, and its whole group can be ended), sent SIGTERM if quecto
+        // dies (on Linux): this thread forks git and waits for it.
+        own_session_dying_with_us(&mut command);
         let mut child = command
             .spawn()
-            .map_err(|error| GitError::Spawn(error.to_string()))?;
+            .map_err(|error| GitError::Spawn(format!("starting git ({SPAWN_ARMS}): {error}")))?;
         if let (Some(bytes), Some(mut stdin)) = (input, child.stdin.take()) {
             let bytes = bytes.to_vec();
             thread::spawn(move || stdin.write_all(&bytes));
@@ -386,9 +382,22 @@ impl Git {
             // SIGCHLD alone, which it does.
             Err(error) => return Err(GitError::Spawn(format!("watching git: {error}"))),
         };
-        // Whatever git started and left behind (a credential helper, an
-        // ssh master) ends with it, closing the pipes it may hold.
-        end_group(child.id());
+        // Whatever git started and left behind in its group (a credential
+        // helper, an ssh it did not wait on) ends with it, closing the pipes
+        // it may hold. A process that left the group by its own `setsid`
+        // (an ssh ControlPersist master, a credential cache daemon) is not
+        // reached, and outlives git.
+        match end_group(child.id()) {
+            Ended::Signalled => {}
+            // Something else reaped git (unreachable while this process
+            // leaves SIGCHLD alone): its group is left alone, and there is
+            // nothing to wait on.
+            Ended::NotOurs => {
+                return Err(GitError::Spawn(
+                    "git was reaped elsewhere; its group was left alone".into(),
+                ));
+            }
+        }
         let status = child
             .wait()
             .map_err(|error| GitError::Spawn(error.to_string()))?;
@@ -438,40 +447,6 @@ fn watch(pid: u32, deadline: Instant) -> std::io::Result<bool> {
         }
         thread::sleep(pause.min(deadline - now));
         pause = (pause * 2).min(LONGEST_POLL);
-    }
-}
-
-/// Whether our unreaped child `pid` has exited, observed without reaping
-/// it (`WNOWAIT`) or blocking (`WNOHANG`). An interrupted call is "not
-/// yet".
-fn exited_unreaped(pid: u32) -> std::io::Result<bool> {
-    let pid = libc::id_t::from(pid);
-    // SAFETY: zero is a valid initial siginfo_t; waitid initializes it.
-    let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
-    let options = libc::WEXITED | libc::WNOHANG | libc::WNOWAIT;
-    // SAFETY: pid is our own unreaped child and info is writable.
-    match unsafe { libc::waitid(libc::P_PID, pid, &mut info, options) } {
-        // SAFETY: a successful waitid initialized the siginfo union.
-        0 => Ok(unsafe { info.si_pid() } != 0),
-        _ => {
-            let error = std::io::Error::last_os_error();
-            match error.kind() {
-                std::io::ErrorKind::Interrupted => Ok(false),
-                _ => Err(error),
-            }
-        }
-    }
-}
-
-/// Ends the process group `leader` leads (`setsid` made the child its
-/// leader): git and whatever it started. The leader is not yet reaped, so
-/// the group is still ours.
-fn end_group(leader: u32) {
-    if let Ok(group) = i32::try_from(leader) {
-        // SAFETY: kill(2) takes plain integers and touches no memory.
-        unsafe {
-            libc::kill(-group, libc::SIGKILL);
-        }
     }
 }
 
