@@ -417,3 +417,21 @@ fn a_pull_request_is_not_linked_while_a_tasks_file_is_set_aside() {
     let renewed = change(&store, "Ada", "10:00:00").execute(&slug("a"), &BoardOp::Renew);
     assert!(renewed.is_ok(), "{renewed:?}");
 }
+
+/// A set-aside file whose task cannot be told may hold any pull request,
+/// so a link waits for it too.
+#[test]
+fn a_pull_request_is_not_linked_while_a_file_of_no_known_task_is_set_aside() {
+    let store = board();
+    seed(&store, held_by_ada(TaskStatus::Claimed));
+    store.set_aside_path("tasks/Not A Slug.json", "malformed");
+    let writes = store.writes();
+    let refused = change(&store, "Ada", "10:00:00").execute(&slug("a"), &BoardOp::AddPr(7));
+    assert_eq!(
+        refused,
+        Err(ProjectBoardError::SetAsideFile(
+            "tasks/Not A Slug.json".into()
+        ))
+    );
+    assert_eq!(store.writes(), writes);
+}

@@ -37,6 +37,7 @@ fn keys(code: ErrorCode) -> &'static [&'static str] {
         C::Contended => &["attempts"],
         C::Stale => &["task", "expected", "updated"],
         C::NotSetAside => &["path", "object"],
+        C::SetAsideFile => &["path"],
         C::NoPullRequestHost => &["reason"],
     }
 }
@@ -90,6 +91,7 @@ board_errors! {
         E::Clock(BoardClockError::OutOfRange("1969".into()))
     },
     E::Quarantined(_) => E::Quarantined(slug("a")),
+    E::SetAsideFile(_) => E::SetAsideFile("tasks/?.json".into()),
     E::UnknownReference(_) => E::UnknownReference(slug("a")),
     E::ClosesCycle { .. } => E::ClosesCycle {
         id: slug("a"),

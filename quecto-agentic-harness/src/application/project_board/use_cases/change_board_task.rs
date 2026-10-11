@@ -70,18 +70,18 @@ impl ChangeBoardTask {
 }
 
 /// The board holds what `op` must see: linking a pull request needs every
-/// task's, so while a task's file is set aside (its pull requests unknown)
-/// a link is refused rather than risk linking one twice. The other ops
-/// read only their own task.
+/// task's, so while any file is set aside (what it held unknown, whether
+/// or not its task can be told) a link is refused rather than risk linking
+/// one twice. The other ops read only their own task.
 fn board_readable_for(op: &BoardOp, board: &BoardSnapshot) -> Result<(), ProjectBoardError> {
     match op {
-        BoardOp::AddPr(_) => {
-            let set_aside = board.quarantined.iter().find_map(|file| file.id.as_ref());
-            match set_aside {
-                None => Ok(()),
+        BoardOp::AddPr(_) => match board.quarantined.first() {
+            None => Ok(()),
+            Some(file) => match &file.id {
                 Some(id) => Err(ProjectBoardError::Quarantined(id.clone())),
-            }
-        }
+                None => Err(ProjectBoardError::SetAsideFile(file.path.clone())),
+            },
+        },
         BoardOp::Renew | BoardOp::TakeOver | BoardOp::Move(_) | BoardOp::RemovePr(_) => Ok(()),
     }
 }

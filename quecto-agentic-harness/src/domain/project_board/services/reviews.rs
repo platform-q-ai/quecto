@@ -39,8 +39,9 @@ pub struct RoundDraft {
 /// its change).
 ///
 /// # Errors
-/// A change unlinked; a review of another change (`not_this_change`); a
-/// review stamped past
+/// A change unlinked; a review of another change (`not_this_change`); for
+/// a first round, a change stamped past `when`'s latest time plus the
+/// stamp's slack (`change_ahead`); a review stamped past
 /// `when`'s latest time plus the stamp's slack; or a review its schema
 /// refuses (a finding out of shape, past its limits).
 pub fn add_round(
@@ -79,6 +80,17 @@ pub fn add_round(
             (fields.clone(), now.clone().max(after))
         }
         None => {
+            // The first round is stamped no earlier than the change: a
+            // change a clock running ahead stamped would drag it ahead.
+            match within_slack(&target.updated, when.latest.as_ref()) {
+                true => {}
+                false => {
+                    return Err(BoardRuleError::ChangeAhead {
+                        change: target.number,
+                        updated: target.updated.clone(),
+                    });
+                }
+            }
             let begun = ReviewFields {
                 task: target.task.clone(),
                 change: target.number,

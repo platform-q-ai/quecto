@@ -1,6 +1,13 @@
 //! How the board names code (#2481's artifact model): a commit by its full
 //! id, a branch by a name git takes as it is, and a repository by its
 //! host's `owner/name`.
+//!
+//! A branch name is refused where git or a reader would take it for one
+//! of git's own refs. That list is a denylist by nature, since git defines
+//! the names: its boundary is the names git itself writes in `$GIT_DIR`
+//! (`HEAD`-like root refs, `refs/` and its siblings, worktree and remote
+//! namespaces). A name git adds later is caught by the rules' shape
+//! (`*_HEAD`) or added here.
 use super::schema_error::SchemaError;
 
 /// The longest branch name.
@@ -34,7 +41,15 @@ impl CommitId {
 /// take `Head` for `HEAD`. Besides these, every one-component name of
 /// letters and `_` ending in `_head` is git's ([`git_head`]):
 /// `FETCH_HEAD`, `REBASE_HEAD` and any it adds.
-const RESERVED: &[&str] = &["head", "auto_merge", "stash"];
+const RESERVED: &[&str] = &[
+    "head",
+    "auto_merge",
+    "stash",
+    "bisect_expected_rev",
+    "notes_merge_ref",
+    "notes_merge_partial",
+    "merge_autostash",
+];
 
 /// A branch as git names it (`git check-ref-format --branch`), within
 /// printable ASCII: at most [`MAX_BRANCH_BYTES`]; none of `~^:?*[\`;
@@ -93,16 +108,31 @@ fn git_branch(text: &str) -> bool {
 /// of git's own refs (`notes/commits`, `bisect/bad`, `stash`,
 /// `replace/…`), in any case.
 const REF_ROOTS: &[&str] = &[
-    "refs", "heads", "tags", "remotes", "notes", "bisect", "stash", "replace",
+    "refs",
+    "heads",
+    "tags",
+    "remotes",
+    "notes",
+    "bisect",
+    "stash",
+    "replace",
+    "main-worktree",
+    "worktrees",
+    "worktree",
+    "prefetch",
+    "rewritten",
+    "original",
+    "pull",
 ];
 
-/// A one-component name of letters and `_` ending in `_head` (lowercase):
-/// git's own, such as `fetch_head` or `rebase_head`.
+/// A one-component name of letters, `_` and `-` ending in `_head`
+/// (lowercase), as git's root refs are spelt: git's own, such as
+/// `fetch_head` or `rebase_head`, and any like them (`my_head`, `x-y_head`).
 fn git_head(lower: &str) -> bool {
     lower.ends_with("_head")
         && lower
             .bytes()
-            .all(|byte| byte.is_ascii_lowercase() || byte == b'_')
+            .all(|byte| byte.is_ascii_lowercase() || byte == b'_' || byte == b'-')
 }
 
 /// Names git takes but would read as something else, all judged in

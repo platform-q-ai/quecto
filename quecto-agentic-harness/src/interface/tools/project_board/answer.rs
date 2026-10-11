@@ -62,6 +62,8 @@ pub enum ErrorCode {
     ClockUnreadable,
     /// `task`.
     SetAside,
+    /// `path`.
+    SetAsideFile,
     /// `task`.
     UnknownReference,
     /// `task`, `by`.
@@ -104,6 +106,7 @@ impl ErrorCode {
             Self::Exists => "exists",
             Self::ClockUnreadable => "clock_unreadable",
             Self::SetAside => "set_aside",
+            Self::SetAsideFile => "set_aside_file",
             Self::UnknownReference => "unknown_reference",
             Self::ClosesCycle => "closes_cycle",
             Self::PrStateUnknown => "pr_state_unknown",
@@ -381,6 +384,7 @@ fn error_fields(error: &ProjectBoardError) -> (ErrorCode, Map<String, Value>) {
             (C::ClockUnreadable, fields([("read", shown_json(read))]))
         }
         E::Quarantined(id) => (C::SetAside, fields([("task", slug_json(id))])),
+        E::SetAsideFile(path) => (C::SetAsideFile, fields([("path", shown_json(path))])),
         E::UnknownReference(id) => (C::UnknownReference, fields([("task", slug_json(id))])),
         E::ClosesCycle { id, by } => (
             C::ClosesCycle,

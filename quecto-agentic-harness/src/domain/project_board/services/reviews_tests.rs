@@ -1,5 +1,6 @@
 use super::*;
 use crate::domain::project_board::entities::change::ChangeFields;
+use crate::domain::project_board::entities::review::MAX_ROUNDS;
 use crate::domain::project_board::services::fixtures_tests::{at, branch, change, commit, person};
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
@@ -198,6 +199,14 @@ fn a_review_stamped_ahead_is_refused() {
             updated: at("10:30:00")
         })
     );
+    assert_eq!(
+        adding("10:29:29"),
+        Err(BoardRuleError::ReviewAhead {
+            change: 1,
+            updated: at("10:30:00")
+        }),
+        "a second past the slack"
+    );
     let taken = adding("10:29:30").unwrap();
     assert_eq!(
         taken.fields().updated,
@@ -288,4 +297,66 @@ fn the_verdict_is_the_reviewers_call() {
     let rounds = &again.fields().rounds;
     assert_eq!((rounds.len(), &rounds[0].commit), (2, &rounds[1].commit));
     assert_eq!(again.state(), ReviewVerdict::ChangesRequested);
+}
+
+/// A first round is stamped no earlier than its change, so a change a
+/// clock running ahead stamped is refused once an outside time bounds the
+/// clock, and taken within the slack.
+#[test]
+fn a_first_round_on_a_change_stamped_ahead_is_refused() {
+    let mut fields = change(1, Some(7)).into_fields();
+    fields.created = at("10:30:00");
+    fields.updated = at("10:30:00");
+    let fast = Change::new(fields).unwrap();
+    let first_round = |latest: &str| {
+        let bounded = Moment {
+            now: at("10:00:00"),
+            latest: Some(at(latest)),
+        };
+        add_round(
+            &fast,
+            None,
+            draft(ReviewVerdict::Approved),
+            &person("Bob"),
+            &bounded,
+        )
+    };
+    assert_eq!(
+        first_round("10:29:29"),
+        Err(BoardRuleError::ChangeAhead {
+            change: 1,
+            updated: at("10:30:00")
+        })
+    );
+    let taken = first_round("10:29:30").unwrap();
+    assert_eq!(taken.fields().created, at("10:30:00"));
+}
+
+/// A review holds at most its most rounds: the next is refused.
+#[test]
+fn a_review_takes_no_round_past_its_most() {
+    let target = change(1, Some(7));
+    let mut review = first(&target);
+    for _ in 1..MAX_ROUNDS {
+        review = add_round(
+            &target,
+            Some(&review),
+            draft(ReviewVerdict::Approved),
+            &person("Bob"),
+            &when("10:00:00"),
+        )
+        .unwrap();
+    }
+    assert_eq!(review.fields().rounds.len(), MAX_ROUNDS);
+    let refused = add_round(
+        &target,
+        Some(&review),
+        draft(ReviewVerdict::Approved),
+        &person("Bob"),
+        &when("10:00:00"),
+    );
+    assert!(
+        matches!(&refused, Err(BoardRuleError::Invalid(error)) if error.field == "rounds"),
+        "{refused:?}"
+    );
 }

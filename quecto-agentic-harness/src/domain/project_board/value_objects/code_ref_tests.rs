@@ -102,6 +102,20 @@ fn a_branch_name_is_not_one_git_reads_as_something_else() {
         "foo.LOCK",
         "a/b.Lock",
         "Auto_Merge",
+        "BISECT_EXPECTED_REV",
+        "NOTES_MERGE_REF",
+        "NOTES_MERGE_PARTIAL",
+        "MERGE_AUTOSTASH",
+        "main-worktree/x",
+        "worktrees/x",
+        "worktree/x",
+        "prefetch/x",
+        "rewritten/x",
+        "original/x",
+        "pull/1/head",
+        "x-y_head",
+        "my_head",
+        "pr_head",
     ] {
         assert_eq!(
             BranchName::parse(name).unwrap_err().field,
@@ -120,6 +134,9 @@ fn a_branch_name_is_not_one_git_reads_as_something_else() {
         "stashed",
         "feat/stash",
         "a.locker",
+        "pulls/x",
+        "feat/pull",
+        "worktreex/y",
     ] {
         assert!(BranchName::parse(name).is_ok(), "{name}");
     }

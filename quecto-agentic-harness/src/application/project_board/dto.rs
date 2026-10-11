@@ -139,6 +139,9 @@ pub enum ProjectBoardError {
     Clock(BoardClockError),
     /// The task's file is set aside as unreadable: mend it first.
     Quarantined(Slug),
+    /// A file is set aside whose task cannot be told (no id could be read
+    /// from it): what it held is unknown until it is mended or cleared.
+    SetAsideFile(String),
     /// A new task names a parent or dependency the board does not hold.
     UnknownReference(Slug),
     /// Creating task `id` would close a cycle: its parent and
@@ -228,6 +231,11 @@ impl fmt::Display for ProjectBoardError {
             Self::Invalid(error) => write!(f, "invalid task: {error}"),
             Self::NotFound(id) => write!(f, "no task {}", id.as_str()),
             Self::Exists(id) => write!(f, "task {} already exists", id.as_str()),
+            Self::SetAsideFile(path) => write!(
+                f,
+                "the file {path:?} is set aside as unreadable and its task is unknown; mend or \
+                 clear it"
+            ),
             Self::Quarantined(id) => write!(
                 f,
                 "task {} is set aside as unreadable; mend its file",
