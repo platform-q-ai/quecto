@@ -370,6 +370,7 @@ fn a_secret_straddling_a_cap_is_redacted_whole() {
 
 /// Set for the test binary run as the parent that is killed: the
 /// repository and the `PATH` its git runs with.
+#[cfg(target_os = "linux")]
 const KILLED_PARENT: [&str; 2] = [
     "QUECTO_TEST_KILLED_PARENT_REPO",
     "QUECTO_TEST_KILLED_PARENT_PATH",

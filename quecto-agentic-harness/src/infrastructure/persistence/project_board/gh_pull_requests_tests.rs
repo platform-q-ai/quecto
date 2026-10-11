@@ -231,6 +231,7 @@ fn a_github_remote_names_its_repository_without_its_user_and_any_other_host_none
 
 /// Set for the test binary run as the parent that is killed: the `PATH`
 /// its gh runs with.
+#[cfg(target_os = "linux")]
 const KILLED_PARENT: &str = "QUECTO_TEST_KILLED_PARENT_GH_PATH";
 
 /// As the parent the next test kills: gh through the runner, hanging.

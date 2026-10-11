@@ -40,6 +40,7 @@ async fn a_zero_parent_is_refused() {
 
 /// A `std` child that arms the death signal for `parent` before it execs
 /// `sh -c script`: its exit code, or the spawn's error.
+#[cfg(target_os = "linux")]
 fn armed_for(parent: libc::pid_t, script: &str) -> std::io::Result<Option<i32>> {
     let mut command = std::process::Command::new("sh");
     command
@@ -78,6 +79,7 @@ fn a_parent_id_that_is_no_process_is_refused() {
 }
 
 /// A child of `own_session_dying_with_us` leads a session of its own.
+#[cfg(target_os = "linux")]
 #[test]
 fn own_session_dying_with_us_leads_a_session_of_its_own() {
     let mut command = std::process::Command::new("sh");
@@ -95,12 +97,14 @@ fn own_session_dying_with_us_leads_a_session_of_its_own() {
 
 /// One process a test watches: its pid and its start time, so a pid the
 /// kernel reuses is never taken for it.
+#[cfg(target_os = "linux")]
 struct Watched {
     pid: String,
     start: String,
 }
 
 /// The start time and state of process `pid`, from `/proc/<pid>/stat`.
+#[cfg(target_os = "linux")]
 fn stat(pid: &str) -> Option<(String, char)> {
     let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
     let (_, rest) = stat.rsplit_once(") ")?;
@@ -108,6 +112,7 @@ fn stat(pid: &str) -> Option<(String, char)> {
     Some((fields.get(19)?.to_string(), fields.first()?.chars().next()?))
 }
 
+#[cfg(target_os = "linux")]
 impl Watched {
     /// No such process, another one of its pid, or a zombie no one reaped.
     fn gone(&self) -> bool {
@@ -122,11 +127,13 @@ impl Watched {
 /// child test it runs starts processes that write their pids to files.
 /// Dropped, it kills the parent and every process it watches that still
 /// runs, so a failing test leaves nothing behind.
+#[cfg(target_os = "linux")]
 pub(crate) struct KilledParent {
     parent: Option<std::process::Child>,
     watched: Vec<Watched>,
 }
 
+#[cfg(target_os = "linux")]
 impl KilledParent {
     /// Runs test `child_test` of this binary alone with `vars`, and waits
     /// (at most twenty seconds) for each of `pid_files` to name a process.
@@ -182,6 +189,7 @@ impl KilledParent {
     }
 }
 
+#[cfg(target_os = "linux")]
 impl Drop for KilledParent {
     fn drop(&mut self) {
         if let Some(parent) = self.parent.as_mut() {
