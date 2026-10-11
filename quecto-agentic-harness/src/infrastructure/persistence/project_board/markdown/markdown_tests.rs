@@ -301,8 +301,12 @@ impl Seeded {
             _ => Block::Code {
                 language: [None, Some("rust".to_string()), Some("C++".to_string())][self.below(3)]
                     .clone(),
+                // Now and then a line a reader would close the fence on.
                 lines: (0..self.below(3))
-                    .map(|_| format!("  {}", self.line()))
+                    .map(|_| match self.below(30) {
+                        0 => " ```".to_string(),
+                        _ => format!("  {}", self.line()),
+                    })
                     .collect(),
             },
         }

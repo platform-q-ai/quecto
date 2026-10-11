@@ -72,6 +72,8 @@ fn hostile_documents_are_refused_when_written() {
         ("two lists in a row", with(|d| d.sections[0].body = Body::Prose(vec![Block::List(vec!["a".into()]), Block::List(vec!["b".into()])])), |e| matches!(e, E::Structure { .. })),
         ("an empty list", with(|d| d.sections[0].body = Body::Prose(vec![Block::List(vec![])])), |e| matches!(e, E::Structure { .. })),
         ("a fence's own close in code", with(|d| d.sections[0].body = Body::Prose(vec![Block::Code { language: None, lines: vec!["```".into()] }])), |e| matches!(e, E::Fence { .. })),
+        ("an indented close in code", with(|d| d.sections[0].body = Body::Prose(vec![Block::Code { language: None, lines: vec!["   ```".into()] }])), |e| matches!(e, E::Fence { .. })),
+        ("a longer indented close in code", with(|d| d.sections[0].body = Body::Prose(vec![Block::Code { language: None, lines: vec!["x".into(), " ````".into()] }])), |e| matches!(e, E::Fence { line: 12, .. })),
         ("a fence language with a space", with(|d| d.sections[0].body = Body::Prose(vec![Block::Code { language: Some("a b".into()), lines: vec![] }])), |e| matches!(e, E::Fence { .. })),
         ("a row of one cell", with(|d| d.sections[2].body = Body::Table(vec![vec!["x".into()]])), |e| matches!(e, E::Cell { .. })),
         ("a field no task has", with(|d| d.fields[0].0 = "Owner".into()), |e| matches!(e, E::UnknownField { .. })),
