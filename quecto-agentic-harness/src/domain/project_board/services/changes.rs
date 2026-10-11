@@ -395,3 +395,7 @@ fn after(change: &Change, now: &Timestamp) -> Result<Timestamp, BoardRuleError> 
 #[cfg(test)]
 #[path = "changes_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "changes_superseded_tests.rs"]
+mod superseded_tests;

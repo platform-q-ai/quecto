@@ -10,7 +10,7 @@ use crate::domain::project_board::value_objects::vocabulary::{
 const OURS: &str = "platform-q-ai/quecto";
 
 /// The fixture task in `status`, linking no pull request the old way.
-fn of(status: TaskStatus) -> Task {
+pub(super) fn of(status: TaskStatus) -> Task {
     without_prs(task(status))
 }
 
@@ -23,7 +23,7 @@ fn on(changes: &[Change]) -> Linked<'_> {
     }
 }
 
-fn now() -> Moment {
+pub(super) fn now() -> Moment {
     Moment {
         now: at("10:00:00"),
         latest: None,
@@ -40,7 +40,7 @@ fn head(name: &str, pr: Option<u64>) -> Head {
 }
 
 /// Each `(pr, branch, state)` as the host reads it, from our repository.
-fn host(prs: &[(u64, &str, PrState)]) -> HostPrs {
+pub(super) fn host(prs: &[(u64, &str, PrState)]) -> HostPrs {
     prs.iter()
         .map(|(pr, name, state)| {
             let read = HostPr {
@@ -53,7 +53,7 @@ fn host(prs: &[(u64, &str, PrState)]) -> HostPrs {
         .collect()
 }
 
-fn merged(digit: char) -> PrState {
+pub(super) fn merged(digit: char) -> PrState {
     PrState::Merged(commit(digit))
 }
 
@@ -739,19 +739,4 @@ fn changes_that_share_a_branch_or_pull_request_in_turn_agree() {
     assert!(unlink(&of(InProgress), &same_pr, 2, &open, &ada, &now()).is_ok());
     let merged_now = host(&[(7, "feat/b2", merged('b'))]);
     assert!(complete(&of(Review), &same_pr, &merged_now, &[], &now()).is_ok());
-}
-
-/// A task others took over is never done by its changes merging either.
-#[test]
-fn a_superseded_task_is_not_done_by_its_changes() {
-    let mut fields = of(Review).into_fields();
-    fields.superseded_by = vec![Slug::parse("next").unwrap()];
-    let superseded = Task::new(fields).unwrap();
-    let read = host(&[(7, "feat/b1", merged('a'))]);
-    assert_eq!(
-        complete(&superseded, &[change(1, Some(7))], &read, &[], &now()).map(|done| done.changes),
-        Err(BoardRuleError::Superseded {
-            by: vec![Slug::parse("next").unwrap()]
-        })
-    );
 }
