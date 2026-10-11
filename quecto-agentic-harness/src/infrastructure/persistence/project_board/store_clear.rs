@@ -235,7 +235,9 @@ fn named<'a>(board: &'a Board, clear: &SetAsideClear) -> Result<&'a QuarantinedF
 }
 
 /// `board` without `file`: the file carried as it is goes when it is that
-/// object, so a file of another name that shows the same path stays.
+/// object. A carried name always shows exactly as it is (the read asserts
+/// it), so the shown path finds it; a stray that shows the same path is
+/// never carried, and the write drops it.
 fn drop_file(board: &mut Board, file: &QuarantinedFile) {
     let name = file.path.strip_prefix(TASKS);
     assert!(name.is_some(), "every file set aside is under {TASKS}");

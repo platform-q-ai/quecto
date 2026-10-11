@@ -108,6 +108,27 @@ pub struct BoardListing {
 }
 
 /// Why a board operation did nothing.
+/// Why the board's remote reports no pull requests.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NoPullRequestHost {
+    /// The remote is on no host pull requests are read from.
+    NotAPullRequestHost,
+    /// The host is one, but cannot be asked (no `gh`, say): why.
+    Unreachable(String),
+}
+
+impl fmt::Display for NoPullRequestHost {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NotAPullRequestHost => f.write_str(
+                "the board remote is not on GitHub or the configured host, so no pull request \
+                 states are read",
+            ),
+            Self::Unreachable(why) => write!(f, "pull request states cannot be read: {why}"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProjectBoardError {
     Store(BoardStoreError),
@@ -159,17 +180,19 @@ pub enum ProjectBoardError {
     },
     /// The store refused the write.
     Refused(String),
+    /// No file is set aside at this path.
+    NotSetAside {
+        path: String,
+        object: String,
+    },
+    /// The board's remote reports no pull requests, so none is completed.
+    NoPullRequestHost(NoPullRequestHost),
     /// Task `id` changed since the caller read it (`expected` its
     /// `updated` then, `updated` now): read it again and decide again.
     Stale {
         id: Slug,
         expected: Timestamp,
         updated: Timestamp,
-    },
-    /// No file is set aside at this path.
-    NotSetAside {
-        path: String,
-        object: String,
     },
 }
 
@@ -249,6 +272,10 @@ impl fmt::Display for ProjectBoardError {
                 write!(f, "the board kept moving: {attempts} attempts lost")
             }
             Self::Refused(why) => write!(f, "the board refused the write: {why}"),
+            Self::NoPullRequestHost(why) => write!(f, "{why}"),
+            Self::NotSetAside { path, object } => {
+                write!(f, "no file is set aside at {path:?} as {object:?}")
+            }
             Self::Stale {
                 id,
                 expected,
@@ -260,9 +287,6 @@ impl fmt::Display for ProjectBoardError {
                 updated.as_str(),
                 expected.as_str()
             ),
-            Self::NotSetAside { path, object } => {
-                write!(f, "no file is set aside at {path:?} as {object:?}")
-            }
         }
     }
 }

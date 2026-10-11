@@ -57,6 +57,12 @@ impl QueryBoard {
 
     /// # Errors
     /// The store's.
+    pub fn all(&self) -> Result<BoardListing, ProjectBoardError> {
+        self.matching(|_, _| true)
+    }
+
+    /// # Errors
+    /// The store's.
     pub fn by_status(&self, status: TaskStatus) -> Result<BoardListing, ProjectBoardError> {
         self.matching(|task, _| task.fields().status == status)
     }

@@ -27,6 +27,7 @@ use crate::application::project_board::ports::{
 };
 use crate::domain::project_board::entities::task::Task;
 use crate::domain::project_board::services::claims::is_live;
+use crate::domain::project_board::value_objects::shown_text::shown_path;
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
 use crate::domain::project_board::value_objects::vocabulary::TaskStatus;
@@ -287,7 +288,7 @@ impl BoardIndex {
                  AND (dependency.status IS NULL OR dependency.status NOT IN ({releasing}))\
              ) ORDER BY id"
         );
-        self.listing(&query, TaskStatus::Ready.as_str(), |task, statuses| {
+        self.listing(&query, &[TaskStatus::Ready.as_str()], |task, statuses| {
             let fields = task.fields();
             let released = |id: &Slug| {
                 statuses
@@ -304,7 +305,7 @@ impl BoardIndex {
     /// The index cannot be read.
     pub fn takeable(&self, now: &Timestamp) -> Result<BoardListing, IndexError> {
         let query = "SELECT id, record FROM tasks WHERE claimed = ?1 ORDER BY id";
-        self.listing(query, "1", |task, _| {
+        self.listing(query, &["1"], |task, _| {
             let fields = task.fields();
             fields.status.may_hold_claim()
                 && fields
@@ -314,11 +315,20 @@ impl BoardIndex {
         })
     }
 
+    /// Every task on the board.
+    ///
+    /// # Errors
+    /// The index cannot be read.
+    pub fn all(&self) -> Result<BoardListing, IndexError> {
+        let query = "SELECT id, record FROM tasks ORDER BY id";
+        self.listing(query, &[], |_, _| true)
+    }
+
     /// # Errors
     /// The index cannot be read.
     pub fn by_status(&self, status: TaskStatus) -> Result<BoardListing, IndexError> {
         let query = "SELECT id, record FROM tasks WHERE status = ?1 ORDER BY id";
-        self.listing(query, status.as_str(), |task, _| {
+        self.listing(query, &[status.as_str()], |task, _| {
             task.fields().status == status
         })
     }
@@ -329,7 +339,7 @@ impl BoardIndex {
     /// The index cannot be read.
     pub fn children(&self, parent: &Slug) -> Result<BoardListing, IndexError> {
         let query = "SELECT id, record FROM tasks WHERE parent = ?1 ORDER BY id";
-        self.listing(query, parent.as_str(), |task, _| {
+        self.listing(query, &[parent.as_str()], |task, _| {
             task.fields().parent.as_ref() == Some(parent)
         })
     }
@@ -341,7 +351,7 @@ impl BoardIndex {
     pub fn dependents(&self, task: &Slug) -> Result<BoardListing, IndexError> {
         let query = "SELECT tasks.id, record FROM tasks JOIN dependencies ON dependencies.task = tasks.id \
                      WHERE dependencies.depends_on = ?1 ORDER BY tasks.id";
-        self.listing(query, task.as_str(), |candidate, _| {
+        self.listing(query, &[task.as_str()], |candidate, _| {
             candidate.fields().depends_on.contains(task)
         })
     }
@@ -352,13 +362,15 @@ impl BoardIndex {
     fn listing(
         &self,
         query: &str,
-        value: &str,
+        values: &[&str],
         wanted: impl Fn(&Task, &BTreeMap<String, TaskStatus>) -> bool,
     ) -> Result<BoardListing, IndexError> {
         let (head, rows, depended, quarantined) = self.read(|transaction| {
             let mut statement = transaction.prepare(query)?;
             let rows: Vec<(String, Vec<u8>)> = statement
-                .query_map([value], |row| Ok((row.get(0)?, row.get(1)?)))?
+                .query_map(rusqlite::params_from_iter(values), |row| {
+                    Ok((row.get(0)?, row.get(1)?))
+                })?
                 .collect::<rusqlite::Result<_>>()?;
             // Every task some task depends on, by its record: the status
             // column is only a prefilter.
@@ -408,6 +420,11 @@ impl BoardIndex {
                 match full_commit_id(&object) {
                     true => {}
                     false => return Err(corrupt(format!("object {object:?} of {path:?}"))),
+                }
+                // A path as a store shows it, or the row was planted.
+                match shown_path(&path) {
+                    true => {}
+                    false => return Err(corrupt(format!("path {path:?} no store shows"))),
                 }
                 Ok(QuarantinedFile {
                     path,

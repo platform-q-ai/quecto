@@ -307,3 +307,71 @@ fn ending_a_run_after_completion_finds_no_claim() {
     .execute(&slug("a"), &BoardOp::EndRunLost);
     assert_eq!(ended, Err(ProjectBoardError::Rule(BoardRuleError::NoClaim)));
 }
+
+/// The reads share one budget: once it is spent no further pull request
+/// is asked about, and the completion is refused as the host's failure.
+#[test]
+fn the_reads_stop_once_their_budget_is_spent() {
+    let store = seeded(&[7, 8]);
+    let host = MemoryPullRequests::default();
+    host.set(7, PullRequestState::Merged);
+    host.set(8, PullRequestState::Merged);
+    let spent = complete(&store, &host)
+        .with_read_budget(std::time::Duration::ZERO)
+        .execute(&slug("a"));
+    let Err(ProjectBoardError::PullRequests(PullRequestStatesError::Unavailable(why))) = spent
+    else {
+        panic!("{spent:?}")
+    };
+    assert!(why.contains("longer than 0 s"), "{why}");
+    assert_eq!(host.asked(), Vec::<u64>::new());
+    assert_eq!(status(&store), TaskStatus::Review);
+    let done = complete(&store, &host).execute(&slug("a"));
+    assert!(done.is_ok(), "{done:?}");
+    assert_eq!(host.asked(), vec![7, 8]);
+}
+
+/// The budget spans every attempt: a write lost to another writer is
+/// tried again, but its reads count against the same deadline, measured on
+/// the board clock's monotonic time.
+#[test]
+fn a_lost_write_does_not_restart_the_budget() {
+    let store = seeded(&[7]);
+    let host = MemoryPullRequests::default();
+    host.set(7, PullRequestState::Merged);
+    let clock = SetClock::at("10:00:00");
+    *clock.tick.lock().unwrap() = std::time::Duration::from_secs(20);
+    store.before_next_write(|store| {
+        // Another writer moves the board first.
+        let other = Task::new(TaskFields {
+            created: at("08:00:00"),
+            updated: at("08:00:00"),
+            ..fields("b")
+        })
+        .unwrap();
+        let head = store.read().unwrap().head;
+        store.write(&head, &[other], "another writer").unwrap();
+    });
+    let completion = CompleteMergedTask::new(
+        Arc::new(store.client_as(person("Bob"))),
+        clock.clone(),
+        Arc::new(host.clone()),
+    )
+    .unwrap()
+    .with_read_budget(std::time::Duration::from_secs(30));
+    let spent = completion.execute(&slug("a"));
+    assert!(
+        matches!(
+            &spent,
+            Err(ProjectBoardError::PullRequests(PullRequestStatesError::Unavailable(why)))
+                if why.contains("longer than 30 s")
+        ),
+        "{spent:?}"
+    );
+    assert_eq!(host.asked(), vec![7], "read once, on the first attempt");
+    assert_eq!(
+        clock.pauses.lock().unwrap().len(),
+        1,
+        "the write was tried again"
+    );
+}

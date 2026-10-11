@@ -193,6 +193,12 @@ pub trait BoardListings: Send + Sync {
     /// No board, or the view's or store's failure.
     fn takeable(&self, now: &Timestamp) -> Result<BoardListing, BoardStoreError>;
 
+    /// Every task on the board, from one refresh of the view.
+    ///
+    /// # Errors
+    /// No board, or the view's or store's failure.
+    fn all(&self) -> Result<BoardListing, BoardStoreError>;
+
     /// # Errors
     /// No board, or the view's or store's failure.
     fn by_status(&self, status: TaskStatus) -> Result<BoardListing, BoardStoreError>;
@@ -252,6 +258,11 @@ pub trait BoardClock: Send + Sync {
     /// race: a short, jittered pause, so writers that collided spread out.
     /// It blocks the calling thread for the pause.
     fn pause(&self, attempt: usize);
+
+    /// The time since this clock was made, on a monotonic clock: it never
+    /// runs back and does not follow this machine's wall time. Time
+    /// budgets are measured with it.
+    fn elapsed(&self) -> std::time::Duration;
 }
 
 /// Where a pull request stands, as the repository's host reports it.

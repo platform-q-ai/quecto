@@ -66,6 +66,7 @@ impl ClearSetAside {
             if let Some(unseen) = unlisted(&board.quarantined, repeated) {
                 return Err(unseen);
             }
+            keeps_another(&board.quarantined, path, object, repeated)?;
             // Built only from what the listing shows.
             let message = message(&file.path, repeated);
             match self.store.clear_set_aside(&board.head, &clear, &message)? {
@@ -112,6 +113,33 @@ fn unlisted(
             }),
         }
     })
+}
+
+/// A clear removes `object` at `path`, so it may keep that same object
+/// there only when it is the one object the path holds (copies of one
+/// file listed twice): then `object` only names the path's copies. Where
+/// the path holds others, keeping the removed object is a contradiction.
+fn keeps_another(
+    quarantined: &[QuarantinedFile],
+    path: &str,
+    object: &str,
+    repeated: &BTreeMap<String, KeepCopy>,
+) -> Result<(), ProjectBoardError> {
+    let keeps_its_own =
+        matches!(repeated.get(path), Some(KeepCopy::Object { keep, .. }) if keep == object);
+    let objects: BTreeSet<&str> = quarantined
+        .iter()
+        .filter(|file| file.path == path)
+        .map(|file| file.object.as_str())
+        .collect();
+    let only_object = objects.len() == 1 && objects.contains(object);
+    match (keeps_its_own, only_object) {
+        (false, _) | (true, true) => Ok(()),
+        (true, false) => Err(ProjectBoardError::Refused(format!(
+            "{path} keeps {object}, the object this clear removes, and holds others: name \
+             another of its objects as the clear's object to keep this one"
+        ))),
+    }
 }
 
 /// The commit message of a clear: the file it clears and, for each name

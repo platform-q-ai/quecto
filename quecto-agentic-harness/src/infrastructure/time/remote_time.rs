@@ -477,6 +477,10 @@ impl BoardClock for ReferencedBoardClock {
     fn pause(&self, attempt: usize) {
         self.clock.pause(attempt);
     }
+
+    fn elapsed(&self) -> Duration {
+        self.clock.elapsed()
+    }
 }
 
 #[cfg(test)]

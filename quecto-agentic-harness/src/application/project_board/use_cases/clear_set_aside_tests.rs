@@ -251,3 +251,49 @@ fn twins_of_one_path_and_object_are_one_file() {
         .unwrap();
     assert_eq!(store.read().unwrap().quarantined, vec![]);
 }
+
+/// Where a path holds other objects, a clear that removes `object` cannot
+/// also keep it; where the path holds that one object (a file listed twice
+/// as it is), `object` only names the path, and keeping it is the mend.
+#[test]
+fn a_clear_keeps_the_object_it_names_only_where_it_is_the_paths_one_object() {
+    let keeping = |object: &str, seen: &[&str]| {
+        BTreeMap::from([(
+            "tasks/b.json".to_string(),
+            KeepCopy::Object {
+                keep: object.to_string(),
+                seen: seen.iter().map(|object| (*object).to_string()).collect(),
+            },
+        )])
+    };
+    let store = seeded();
+    store.quarantine("b", "set aside again, other contents");
+    let objects: Vec<String> = store
+        .read()
+        .unwrap()
+        .quarantined
+        .iter()
+        .map(|file| file.object.clone())
+        .collect();
+    let before = store.read().unwrap().head;
+    let clear = ClearSetAside::new(Arc::new(store.client()), SetClock::at("10:00:00")).unwrap();
+    let both: Vec<&str> = objects.iter().map(String::as_str).collect();
+    let refused = clear.execute("tasks/b.json", &objects[0], &keeping(&objects[0], &both));
+    assert!(
+        matches!(&refused, Err(ProjectBoardError::Refused(why)) if why.contains("removes") && why.contains("name another")),
+        "{refused:?}"
+    );
+    assert_eq!(store.read().unwrap().head, before, "nothing moves");
+
+    let twins = seeded();
+    twins.show_twice("b");
+    let object = object_of(&twins, "tasks/b.json");
+    let clear = ClearSetAside::new(Arc::new(twins.client()), SetClock::at("10:00:00")).unwrap();
+    // The rule lets it through to the store (the memory store models no
+    // name listed twice; the git store's test keeps one of two twins).
+    let passed = clear.execute("tasks/b.json", &object, &keeping(&object, &[&object]));
+    assert!(
+        matches!(&passed, Err(ProjectBoardError::Refused(why)) if why.contains("not listed more than once")),
+        "{passed:?}"
+    );
+}

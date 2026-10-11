@@ -10,13 +10,14 @@
 //! keeps board operations free of side effects in the checkout; it is not
 //! a security boundary against the repository's owner.
 use crate::domain::project_board::entities::claim::Identity;
-use regex::Regex;
+use crate::domain::project_board::value_objects::shown_text::shown_char;
+use crate::domain::redaction::{redact_secrets, redact_url_userinfo};
 use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
-use std::sync::{LazyLock, mpsc};
+use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -26,7 +27,9 @@ use std::time::{Duration, Instant};
 /// works inside a container). Every program git starts (a credential
 /// helper, `ssh`, a remote helper, a configured `core.sshCommand`) inherits
 /// them in turn, `GH_TOKEN` and `GITHUB_TOKEN` included; git itself sends
-/// neither, only a credential helper that reads one does. Everything else,
+/// neither, only a credential helper that reads one does.
+/// `GIT_CEILING_DIRECTORIES` passes too: it only narrows where git looks
+/// for a repository. Everything else,
 /// `GIT_DIR`, `GIT_INDEX_FILE` and `GIT_WORK_TREE` included, is dropped.
 pub const INHERITED: &[&str] = &[
     "PATH",
@@ -37,6 +40,7 @@ pub const INHERITED: &[&str] = &[
     "GIT_SSH_COMMAND",
     "GIT_CONFIG_GLOBAL",
     "GIT_CONFIG_NOSYSTEM",
+    "GIT_CEILING_DIRECTORIES",
     "GH_TOKEN",
     "GITHUB_TOKEN",
     "GH_CONFIG_DIR",
@@ -70,6 +74,9 @@ pub const NETWORK_TIMEOUT: Duration = Duration::from_secs(120);
 pub const SHORT_OUTPUT: usize = 64 * 1024;
 /// The most standard error kept from any call.
 pub const MAX_STDERR: usize = 16 * 1024;
+/// Standard error read past [`MAX_STDERR`] so a secret the cap would cut
+/// is still whole when it is redacted; the margin is then dropped.
+const STDERR_MARGIN: usize = 4 * 1024;
 /// The most characters of git's own message an error quotes.
 pub const MAX_QUOTED_CHARS: usize = 2 * 1024;
 /// How long an exited git's output may take to drain, past its deadline
@@ -365,7 +372,7 @@ impl Git {
             thread::spawn(move || stdin.write_all(&bytes));
         }
         let stdout = drain(child.stdout.take(), limit);
-        let stderr = drain(child.stderr.take(), MAX_STDERR);
+        let stderr = drain(child.stderr.take(), MAX_STDERR + STDERR_MARGIN);
         let deadline = Instant::now() + timeout;
         let command_line = || args.join(" ");
         // Watch for git's exit without reaping it, so its group cannot be
@@ -406,11 +413,12 @@ impl Git {
                 limit,
             });
         }
-        debug_assert!(stdout.bytes.len() <= limit && stderr.bytes.len() <= MAX_STDERR);
+        let stderr = redacted_stderr(&stderr.bytes, stderr.past_limit);
+        debug_assert!(stdout.bytes.len() <= limit && stderr.len() <= MAX_STDERR);
         Ok(Output {
             status,
             stdout: stdout.bytes,
-            stderr: stderr.bytes,
+            stderr,
         })
     }
 }
@@ -505,15 +513,53 @@ fn recorded_identity(ident: &str) -> Option<(String, String)> {
     Some((name.to_string(), email.to_string()))
 }
 
-/// git's message as text fit to quote: escape sequences dropped; letters,
-/// marks, numbers, punctuation and symbols kept; anything else (spaces,
-/// controls, format characters such as bidirectional overrides, zero-width
-/// and tag characters, unassigned code points) one space between them;
-/// at most [`MAX_QUOTED_CHARS`] characters.
+/// git's standard error with credentials and secret-shaped spans redacted
+/// while whole, then cut to [`MAX_STDERR`] bytes (at a character's edge):
+/// a secret the cap would cut is never kept in part. When git printed more
+/// than was read (`past_limit`), the read itself may have cut a secret, so
+/// the raw tail after the last whitespace goes before anything is redacted.
+pub(crate) fn redacted_stderr(bytes: &[u8], past_limit: bool) -> Vec<u8> {
+    let whole = match past_limit {
+        true => {
+            let last = bytes.iter().rposition(u8::is_ascii_whitespace);
+            &bytes[..last.unwrap_or(0)]
+        }
+        false => bytes,
+    };
+    let text = String::from_utf8_lossy(whole);
+    let redacted = redact_secrets(&redact_url_userinfo(&text));
+    let mut end = redacted.len().min(MAX_STDERR);
+    while !redacted.is_char_boundary(end) {
+        end -= 1;
+    }
+    redacted.as_bytes()[..end].to_vec()
+}
+
+/// A name from git (a tree entry's, a path) as text fit to show: escape
+/// sequences dropped; letters, marks, numbers, punctuation and symbols
+/// kept; anything else (spaces, controls, format characters such as
+/// bidirectional overrides, zero-width and tag characters, unassigned code
+/// points) one space between them; at most [`MAX_QUOTED_CHARS`]
+/// characters. A name is shown as it is, never redacted: a clear names a
+/// file exactly as a listing shows it.
+pub fn shown_name(bytes: &[u8]) -> String {
+    capped(&sanitised(bytes))
+}
+
+/// git's message as text fit to quote: sanitised as [`shown_name`] is,
+/// then credentials and secret-shaped spans redacted (after the escape
+/// sequences are gone, so none splits a secret past the redaction), then
+/// capped (after, so the cap never cuts a secret).
 pub fn quoted(bytes: &[u8]) -> String {
+    capped(&redact_secrets(&redact_url_userinfo(&sanitised(bytes))))
+}
+
+/// `bytes` with escape sequences dropped and every run of characters not
+/// shown as one space between shown ones.
+fn sanitised(bytes: &[u8]) -> String {
     let text = String::from_utf8_lossy(bytes);
     let mut chars = text.chars().peekable();
-    let (mut out, mut count, mut gap) = (String::new(), 0usize, false);
+    let (mut out, mut gap) = (String::new(), false);
     while let Some(c) = chars.next() {
         if c == '\u{1b}' {
             // An escape sequence: ESC, `[`, parameters, then a final byte.
@@ -527,31 +573,30 @@ pub fn quoted(bytes: &[u8]) -> String {
             continue;
         }
         if !shown(c) {
-            gap = count > 0;
+            gap = !out.is_empty();
             continue;
-        }
-        if count + usize::from(gap) >= MAX_QUOTED_CHARS {
-            out.push_str(" …");
-            break;
         }
         if gap {
             out.push(' ');
-            count += 1;
             gap = false;
         }
         out.push(c);
-        count += 1;
     }
     out
 }
 
-/// The characters quoted as they are: letters, marks, numbers,
-/// punctuation and symbols.
-static SHOWN: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^[\p{L}\p{M}\p{N}\p{P}\p{S}]$").expect("a valid class"));
+/// At most [`MAX_QUOTED_CHARS`] characters of `text`, marked when cut.
+fn capped(text: &str) -> String {
+    match text.chars().count() > MAX_QUOTED_CHARS {
+        true => text.chars().take(MAX_QUOTED_CHARS).collect::<String>() + " …",
+        false => text.to_string(),
+    }
+}
 
+/// Whether git's character `c` is shown as it is: the board's one
+/// allowlist ([`shown_char`]).
 fn shown(c: char) -> bool {
-    SHOWN.is_match(c.encode_utf8(&mut [0; 4]))
+    shown_char(c)
 }
 
 pub fn failed(args: &[&str], output: &Output) -> GitError {

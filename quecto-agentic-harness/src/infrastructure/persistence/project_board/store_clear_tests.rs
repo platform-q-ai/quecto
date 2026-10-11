@@ -492,6 +492,117 @@ fn a_file_set_aside_once_is_cleared_without_a_copy_to_keep() {
     written(bob.write(&cleared, &[task("broken")], "board: write broken"));
 }
 
+/// A file whose name looks like a secret is listed by its name, never
+/// redacted (two such names stay two paths), and a clear by that name
+/// removes it: a read afterwards finds neither.
+#[test]
+fn a_file_whose_name_looks_like_a_secret_is_cleared_by_its_name() {
+    let (repos, bob, head) = board_of(&[
+        ("100644", "token=x.json", Object::Blob(b"{".to_vec())),
+        ("100644", "sk-abcdefgh.json", Object::Blob(b"[".to_vec())),
+        ("100644", "ok.json", json(&task("ok"))),
+    ]);
+    let board = bob.read().unwrap();
+    let mut paths: Vec<&str> = board
+        .quarantined
+        .iter()
+        .map(|file| file.path.as_str())
+        .collect();
+    paths.sort_unstable();
+    assert_eq!(paths, ["tasks/sk-abcdefgh.json", "tasks/token=x.json"]);
+    let mut at = head;
+    for (path, bytes) in [
+        ("tasks/token=x.json", &b"{"[..]),
+        ("tasks/sk-abcdefgh.json", b"["),
+    ] {
+        let object = oid_of(&repos.bob, bytes);
+        at = written(bob.clear_set_aside(&at, &clearing(path, &object, &[]), "board: clear"));
+    }
+    let after = bob.read().unwrap();
+    assert_eq!(after.head, at);
+    assert_eq!(after.quarantined, vec![], "both are gone");
+    let names = listing(&repos.remote(), &at);
+    assert!(
+        names
+            .iter()
+            .all(|name| !name.contains("token=") && !name.contains("sk-")),
+        "{names:?}"
+    );
+}
+
+/// Twins that differ only by a character no one sees show one path: the
+/// carried one (`Foo.json`) and a stray (`Foo.json\x01`) of the same
+/// object. A clear of that path and object removes both: the carried file
+/// by its name, which always shows as it is, and the stray, which no write
+/// carries.
+#[test]
+fn twins_that_show_one_path_are_cleared_together() {
+    let repos = Repos::new();
+    created(&store(&repos.alice));
+    let blob = Object::Blob(b"{".to_vec());
+    raw_board_named(
+        &repos.remote(),
+        &[
+            ("100644", b"Foo.json", &blob),
+            ("100644", b"Foo.json\x01", &blob),
+        ],
+        &[&repos.bob],
+    );
+    let bob = store(&repos.bob);
+    let head = bob.read().unwrap().head;
+    let object = oid_of(&repos.bob, b"{");
+    let paths: Vec<String> = bob
+        .read()
+        .unwrap()
+        .quarantined
+        .iter()
+        .map(|file| file.path.clone())
+        .collect();
+    assert_eq!(paths, ["tasks/Foo.json", "tasks/Foo.json"], "{paths:?}");
+    let cleared = written(bob.clear_set_aside(
+        &head,
+        &clearing("tasks/Foo.json", &object, &[]),
+        "board: clear Foo",
+    ));
+    assert_eq!(bob.read().unwrap().quarantined, vec![], "both are gone");
+    let names = listing(&repos.remote(), &cleared);
+    assert!(
+        names.iter().all(|name| !name.starts_with("Foo")),
+        "{names:?}"
+    );
+}
+
+/// A file listed twice exactly as it is (one mode, one object) is mended
+/// by keeping one copy: the clear's `object` names the path, and keeping
+/// that same object is no contradiction where it is the path's only one.
+#[test]
+fn identical_twins_are_mended_by_keeping_one_copy() {
+    let (repos, _, _) = board_of(&[
+        ("100644", "ok.json", json(&task("ok"))),
+        ("100644", "ok.json", json(&task("ok"))),
+    ]);
+    let object = oid_of(&repos.bob, &encode(&task("ok")).unwrap());
+    let bob = std::sync::Arc::new(store(&repos.bob));
+    let clear = crate::application::project_board::use_cases::ClearSetAside::new(
+        bob.clone(),
+        std::sync::Arc::new(crate::infrastructure::time::board_clock::SystemBoardClock::default()),
+    )
+    .unwrap();
+    let repeated = std::collections::BTreeMap::from([(
+        "tasks/ok.json".to_string(),
+        keep(&object, &[&object]),
+    )]);
+    let head = clear.execute("tasks/ok.json", &object, &repeated).unwrap();
+    let board = bob.read().unwrap();
+    assert_eq!(board.head, head);
+    assert_eq!(board.quarantined, vec![]);
+    assert_eq!(
+        board.tasks,
+        vec![task("ok")],
+        "one copy kept, read as the task"
+    );
+}
+
 /// A clear names what the listing shows at a repeated path: copies a
 /// write carries, a copy it drops (a mode over another type) and a twin
 /// that shows the same path. Only a carried copy may be kept.

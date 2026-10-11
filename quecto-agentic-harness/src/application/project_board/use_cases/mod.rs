@@ -8,6 +8,7 @@ mod create_board_task;
 mod line_ends;
 mod query_board;
 mod references;
+mod run_board_operation;
 mod update_draft_task;
 
 pub use board_change::MAX_WRITE_ATTEMPTS;
@@ -17,8 +18,9 @@ pub use clear_set_aside::ClearSetAside;
 pub use complete_merged_task::CompleteMergedTask;
 pub use create_board_task::CreateBoardTask;
 pub use query_board::QueryBoard;
+pub use run_board_operation::RunBoardOperation;
 pub use update_draft_task::UpdateDraftTask;
 
 #[cfg(test)]
 #[path = "fixtures_tests.rs"]
-mod fixtures_tests;
+pub(in crate::application::project_board) mod fixtures_tests;
