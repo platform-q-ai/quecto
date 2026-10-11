@@ -1,0 +1,450 @@
+//! The plan codec: the example file byte for byte, every state, a derived
+//! title, the tables' order and items, the team's rows, and the caps.
+use super::super::{CodecError, decode, encode};
+use super::*;
+use crate::domain::project_board::entities::claim::Identity;
+use crate::domain::project_board::entities::plan::{MAX_APPROACH_CHARS, MAX_PLAN_TEXT_BYTES};
+use crate::domain::project_board::entities::task_parts::{MAX_ITEMS, MAX_PER_ITEM};
+use crate::domain::project_board::entities::team::{MAX_IMAGE_BYTES, MAX_MODEL_BYTES, MAX_ROLES};
+use crate::domain::project_board::value_objects::timestamp::Timestamp;
+use crate::infrastructure::persistence::project_board::markdown::MarkdownError;
+
+const EXAMPLE: &str = r#"<!-- quecto-plan schema=1 -->
+# Plan 2 of board-cli
+
+| Field | Value |
+|---|---|
+| Task | board-cli |
+| Version | 2 |
+| State | accepted |
+| Proposed by | Ada Lovelace (ada@example.com) |
+| Edited by | Bo (bo@example.com) |
+| Accepted by | Shane (work) (shane@example.com) |
+| Accepted at | 2026-10-11T12:00:00Z |
+| Budget tokens | 2000000 |
+| Deadline | 2026-10-18T17:00:00Z |
+| Image | `ghcr.io/platform-q-ai/quecto_dev:1.2` |
+| Created | 2026-10-11T09:30:00Z |
+| Updated | 2026-10-11T12:00:00Z |
+
+## Approach
+Build the CLI on the store, one op a line.
+\# not a heading
+
+- read first
+- then write
+
+```sh
+quecto board list
+
+quecto board show board-cli
+```
+
+## Items
+| Item | Title |
+|---|---|
+| store | The store reads and writes `a\|b` |
+| cli | The CLI answers one JSON line |
+| docs | Docs |
+
+## Item dependencies
+| Item | Depends on |
+|---|---|
+| cli | store |
+| docs | store |
+| docs | cli |
+
+## Criteria
+| Item | Criterion |
+|---|---|
+| store | Round trips every kind |
+| store | Refuses hostile files |
+| cli | `quecto board list` answers |
+
+## Roles
+| Role | Model | Effort | Members | Turns |
+|---|---|---|---|---|
+| builder | `gpt-5_codex` | high | 2 | 40 |
+| reviewer | `claude-opus/4.5` | max | 1 | - |
+"#;
+
+fn slug(text: &str) -> Slug {
+    Slug::parse(text).unwrap()
+}
+
+fn at(text: &str) -> Timestamp {
+    Timestamp::parse(text).unwrap()
+}
+
+fn person(name: &str, email: &str) -> Identity {
+    Identity {
+        name: name.into(),
+        email: email.into(),
+    }
+}
+
+fn item(id: &str, title: &str, criteria: &[&str], depends_on: &[&str]) -> PlanItem {
+    PlanItem {
+        id: slug(id),
+        title: title.into(),
+        criteria: criteria.iter().map(|c| (*c).to_string()).collect(),
+        depends_on: depends_on.iter().map(|d| slug(d)).collect(),
+    }
+}
+
+fn role(name: &str, model: &str, effort: Effort, members: u16, turns: Option<u32>) -> Role {
+    Role {
+        name: slug(name),
+        model: model.into(),
+        effort,
+        limits: RoleLimits { members, turns },
+    }
+}
+
+fn example() -> PlanFields {
+    PlanFields {
+        task: slug("board-cli"),
+        version: 2,
+        state: PlanState::Accepted,
+        approach: "Build the CLI on the store, one op a line.\n# not a heading\n\n\
+                   - read first\n- then write\n\n\
+                   ```sh\nquecto board list\n\nquecto board show board-cli\n```"
+            .into(),
+        items: vec![
+            item(
+                "store",
+                "The store reads and writes `a|b`",
+                &["Round trips every kind", "Refuses hostile files"],
+                &[],
+            ),
+            item(
+                "cli",
+                "The CLI answers one JSON line",
+                &["`quecto board list` answers"],
+                &["store"],
+            ),
+            item("docs", "Docs", &[], &["store", "cli"]),
+        ],
+        team: Some(Team {
+            roles: vec![
+                role("builder", "gpt-5_codex", Effort::High, 2, Some(40)),
+                role("reviewer", "claude-opus/4.5", Effort::Max, 1, None),
+            ],
+            budget: Some(Budget { tokens: 2_000_000 }),
+            deadline: Some(at("2026-10-18T17:00:00Z")),
+            image: Some("ghcr.io/platform-q-ai/quecto_dev:1.2".into()),
+        }),
+        proposed_by: person("Ada Lovelace", "ada@example.com"),
+        edited_by: Some(person("Bo", "bo@example.com")),
+        accepted: Some((
+            person("Shane (work)", "shane@example.com"),
+            at("2026-10-11T12:00:00Z"),
+        )),
+        created: at("2026-10-11T09:30:00Z"),
+        updated: at("2026-10-11T12:00:00Z"),
+    }
+}
+
+fn plan(fields: PlanFields) -> Plan {
+    Plan::new(fields).unwrap()
+}
+
+/// The example file with `from` replaced by `to` (once).
+fn edited(from: &str, to: &str) -> String {
+    assert!(EXAMPLE.contains(from), "{from:?}");
+    EXAMPLE.replacen(from, to, 1)
+}
+
+#[test]
+fn the_example_plan_file_is_byte_exact() {
+    let example = plan(example());
+    assert_eq!(encode::<PlanCodec>(&example).unwrap(), EXAMPLE);
+    assert_eq!(decode::<PlanCodec>(EXAMPLE.as_bytes()), Ok(example));
+}
+
+#[test]
+fn every_plan_state_round_trips() {
+    let accepted = example().accepted;
+    for state in PlanState::ALL.iter().copied() {
+        let accepted = match state {
+            PlanState::Accepted | PlanState::Superseded => accepted.clone(),
+            PlanState::Draft | PlanState::Discarded => None,
+        };
+        let bare = PlanFields {
+            state,
+            accepted: accepted.clone(),
+            approach: String::new(),
+            items: vec![],
+            team: None,
+            edited_by: None,
+            ..example()
+        };
+        let lean_team = Team {
+            roles: vec![role("solo", "m", Effort::Low, 1, None)],
+            budget: None,
+            deadline: None,
+            image: None,
+        };
+        let variants = [
+            PlanFields {
+                state,
+                accepted: accepted.clone(),
+                ..example()
+            },
+            bare.clone(),
+            PlanFields {
+                team: Some(lean_team),
+                ..bare
+            },
+        ];
+        for fields in variants {
+            let plan = plan(fields);
+            let file = encode::<PlanCodec>(&plan).unwrap();
+            assert_eq!(decode::<PlanCodec>(file.as_bytes()), Ok(plan), "{file}");
+        }
+    }
+}
+
+#[test]
+fn a_plan_title_that_is_not_derived_is_refused() {
+    for title in ["# Plan 3 of board-cli", "# Plan 2 of other", "# The plan"] {
+        let file = edited("# Plan 2 of board-cli", title);
+        assert_eq!(
+            decode::<PlanCodec>(file.as_bytes()),
+            Err(CodecError::NotCanonical),
+            "{title}"
+        );
+    }
+}
+
+#[test]
+fn criteria_out_of_item_order_are_not_canonical() {
+    let criteria = "| store | Round trips every kind |\n| store | Refuses hostile files |\n| cli | `quecto board list` answers |\n";
+    let dependencies = "| cli | store |\n| docs | store |\n| docs | cli |\n";
+    for file in [
+        edited(
+            criteria,
+            "| cli | `quecto board list` answers |\n| store | Round trips every kind |\n| store | Refuses hostile files |\n",
+        ),
+        edited(
+            dependencies,
+            "| docs | store |\n| cli | store |\n| docs | cli |\n",
+        ),
+    ] {
+        assert_eq!(
+            decode::<PlanCodec>(file.as_bytes()),
+            Err(CodecError::NotCanonical),
+            "{file}"
+        );
+    }
+}
+
+#[test]
+fn a_criterion_of_an_unknown_item_is_refused() {
+    for (file, table) in [
+        (
+            edited("| cli | `quecto board list` answers |", "| nope | x |"),
+            "Criteria",
+        ),
+        (
+            edited("| docs | cli |", "| nope | cli |"),
+            "Item dependencies",
+        ),
+    ] {
+        let read = decode::<PlanCodec>(file.as_bytes());
+        assert!(
+            matches!(&read, Err(CodecError::Cell { field, .. }) if *field == table),
+            "{read:?}"
+        );
+    }
+}
+
+#[test]
+fn team_rows_without_roles_are_refused() {
+    let roles = EXAMPLE.find("\n## Roles").unwrap();
+    let without_roles = format!("{}\n", &EXAMPLE[..roles]);
+    let read = decode::<PlanCodec>(without_roles.as_bytes());
+    assert!(
+        matches!(
+            &read,
+            Err(CodecError::Cell {
+                field: "Budget tokens",
+                ..
+            })
+        ),
+        "{read:?}"
+    );
+    let image_only = without_roles
+        .replacen("| Budget tokens | 2000000 |\n", "", 1)
+        .replacen("| Deadline | 2026-10-18T17:00:00Z |\n", "", 1);
+    let read = decode::<PlanCodec>(image_only.as_bytes());
+    assert!(
+        matches!(&read, Err(CodecError::Cell { field: "Image", .. })),
+        "{read:?}"
+    );
+    // Without the rows too, it is a plan without a team.
+    let no_team = image_only.replacen(
+        "| Image | `ghcr.io/platform-q-ai/quecto_dev:1.2` |\n",
+        "",
+        1,
+    );
+    let read = decode::<PlanCodec>(no_team.as_bytes()).unwrap();
+    assert_eq!(read.fields().team, None);
+}
+
+#[test]
+fn turns_dash_reads_as_no_limit() {
+    let read = decode::<PlanCodec>(EXAMPLE.as_bytes()).unwrap();
+    let roles = &read.fields().team.as_ref().unwrap().roles;
+    assert_eq!(roles[0].limits.turns, Some(40));
+    assert_eq!(roles[1].limits.turns, None);
+    for (turns, field) in [("0", "Plan"), ("--", "Roles"), ("x", "Roles")] {
+        let file = edited("| max | 1 | - |", &format!("| max | 1 | {turns} |"));
+        let read = decode::<PlanCodec>(file.as_bytes());
+        assert!(
+            matches!(&read, Err(CodecError::Cell { field: f, .. }) if *f == field),
+            "{turns}: {read:?}"
+        );
+    }
+}
+
+/// A slug of 64 bytes, numbered.
+fn long_slug(index: usize) -> Slug {
+    slug(&format!("{}{index:03}", "a".repeat(61)))
+}
+
+/// The widest of every list the domain admits: 128 items, each with 16
+/// criteria and as many dependencies as an acyclic plan has, 16 roles,
+/// every optional field, and `approach` and `criterion` as given.
+fn widest(approach: String, criterion: impl Fn(usize, usize) -> String) -> PlanFields {
+    let items = (0..MAX_ITEMS)
+        .map(|index| PlanItem {
+            id: long_slug(index),
+            title: "|".into(),
+            criteria: (0..MAX_PER_ITEM).map(|c| criterion(index, c)).collect(),
+            depends_on: (index.saturating_sub(MAX_PER_ITEM)..index)
+                .map(long_slug)
+                .collect(),
+        })
+        .collect();
+    let name = "\u{1d538}".repeat(100);
+    let email = format!("{}@{}", "|".repeat(120), "b".repeat(133));
+    let roles = (0..MAX_ROLES)
+        .map(|index| {
+            role(
+                long_slug(index).as_str(),
+                &"m".repeat(MAX_MODEL_BYTES),
+                Effort::Medium,
+                32,
+                Some(u32::MAX),
+            )
+        })
+        .collect();
+    let image = format!("{}/{}", "a".repeat(100), "b".repeat(MAX_IMAGE_BYTES - 101));
+    PlanFields {
+        task: long_slug(999),
+        version: 999,
+        state: PlanState::Superseded,
+        approach,
+        items,
+        team: Some(Team {
+            roles,
+            budget: Some(Budget {
+                tokens: (1 << 53) - 1,
+            }),
+            deadline: Some(at("9999-12-31T23:59:59Z")),
+            image: Some(image),
+        }),
+        proposed_by: person(&name, &email),
+        edited_by: Some(person(&name, &email)),
+        accepted: Some((person(&name, &email), at("2026-10-11T12:00:00Z"))),
+        created: at("2026-10-11T09:30:00Z"),
+        updated: at("2026-10-11T12:00:00Z"),
+    }
+}
+
+#[test]
+fn the_widest_plan_fits_its_limits() {
+    // Most lines: the approach all blank lines inside a fence.
+    let fenced = format!("```{}```", "\n".repeat(MAX_APPROACH_CHARS - 6));
+    let most_lines = widest(fenced, |_, c| format!("c{c}"));
+    // Most bytes: the text budget spent on `|`, which a cell writes `\|`.
+    let budget = MAX_PLAN_TEXT_BYTES - MAX_ITEMS - MAX_ROLES * MAX_MODEL_BYTES - MAX_IMAGE_BYTES;
+    let each = budget / (MAX_ITEMS * MAX_PER_ITEM) - MAX_PER_ITEM;
+    let most_bytes = widest(String::new(), |_, c| "|".repeat(each + c));
+    // The longest line: the approach one escaped line of 4-byte letters.
+    let one_line = format!("#{}", "\u{1d538}".repeat(MAX_APPROACH_CHARS - 1));
+    let longest_line = widest(one_line, |_, c| format!("c{c}"));
+    let mut seen = (0, 0, 0);
+    for fields in [most_lines, most_bytes, longest_line] {
+        let plan = Plan::new(fields).unwrap();
+        let file = encode::<PlanCodec>(&plan).unwrap();
+        let lines = file.lines().count();
+        let longest = file.lines().map(str::len).max().unwrap();
+        seen = (
+            seen.0.max(file.len()),
+            seen.1.max(lines),
+            seen.2.max(longest),
+        );
+        assert_eq!(decode::<PlanCodec>(file.as_bytes()), Ok(plan));
+    }
+    let (bytes, lines, longest) = seen;
+    assert!(
+        bytes <= PLAN_LIMITS.file_bytes && bytes > 900_000,
+        "{bytes}"
+    );
+    // Past the plan's first estimate of 53,000: a fence's blank lines.
+    assert!(lines <= PLAN_LIMITS.lines && lines > 53_000, "{lines}");
+    assert!(
+        longest <= PLAN_LIMITS.line_bytes && longest > 260_000,
+        "{longest}"
+    );
+}
+
+#[test]
+fn one_byte_or_line_over_a_limit_is_refused() {
+    let marker = "<!-- quecto-plan schema=1 -->\n";
+    // Lines of at most a thousand bytes, so only the size is past a cap.
+    let sized = |bytes: usize| {
+        let mut file = marker.to_string();
+        while file.len() < bytes {
+            let line = (bytes - file.len()).min(1_000);
+            file.push_str(&format!("{}\n", "x".repeat(line - 1)));
+        }
+        file
+    };
+    let lined = |lines: usize| format!("{marker}{}", "x\n".repeat(lines - 1));
+    let long_line = |bytes: usize| format!("{marker}# {}\n", "x".repeat(bytes - 2));
+    use MarkdownError as E;
+    let limits = PLAN_LIMITS;
+    let cases: [(String, fn(&CodecError) -> bool); 3] = [
+        (sized(limits.file_bytes + 1), |e| {
+            matches!(e, CodecError::Markdown(E::TooLarge { .. }))
+        }),
+        (lined(limits.lines + 1), |e| {
+            matches!(e, CodecError::Markdown(E::TooManyLines { .. }))
+        }),
+        (long_line(limits.line_bytes + 1), |e| {
+            matches!(e, CodecError::Markdown(E::LineTooLong { .. }))
+        }),
+    ];
+    for (file, over) in cases {
+        let refused = decode::<PlanCodec>(file.as_bytes()).unwrap_err();
+        assert!(over(&refused), "{refused:?}");
+    }
+    // At each limit the file is refused for what it holds, not its size.
+    for file in [
+        sized(limits.file_bytes),
+        lined(limits.lines),
+        long_line(limits.line_bytes),
+    ] {
+        let refused = decode::<PlanCodec>(file.as_bytes()).unwrap_err();
+        let sized = matches!(
+            refused,
+            CodecError::Markdown(
+                E::TooLarge { .. } | E::TooManyLines { .. } | E::LineTooLong { .. }
+            )
+        );
+        assert!(!sized, "{refused:?}");
+    }
+}
