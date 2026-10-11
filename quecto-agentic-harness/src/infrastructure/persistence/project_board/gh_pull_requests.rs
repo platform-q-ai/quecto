@@ -87,11 +87,20 @@ impl GhPullRequestStates {
             return Err(unavailable(format!("{repo:?} is not host/owner/name")));
         }
         let vars: Vec<(OsString, OsString)> = vars.into_iter().collect();
-        let host = repo.split('/').next().unwrap_or_default();
+        let host = repo
+            .split('/')
+            .next()
+            .unwrap_or_default()
+            .to_ascii_lowercase();
         let configured = vars
             .iter()
-            .any(|(key, value)| key == "GH_HOST" && value.to_str() == Some(host));
-        let enterprise = host != "github.com" && configured;
+            .find(|(key, _)| key == "GH_HOST")
+            .and_then(|(_, value)| value.to_str())
+            .map(str::to_ascii_lowercase);
+        let enterprise = matches!(
+            configured.as_deref(),
+            Some(named) if named == host && host != "github.com"
+        );
         let wanted = |key: &OsStr| {
             INHERITED.iter().any(|name| OsStr::new(name) == key)
                 || (enterprise && ENTERPRISE_TOKENS.iter().any(|name| OsStr::new(name) == key))
@@ -224,8 +233,9 @@ impl PullRequestStates for GhPullRequestStates {
     }
 }
 
-/// `host/owner/name`: a host name; an owner of letters, digits and `-`
-/// starting with a letter or digit; and a name of letters, digits, `-`,
+/// `host/owner/name`: a host name; an owner of letters, digits, `-` and
+/// `_` (an enterprise-managed user's `name_short`) starting with a letter
+/// or digit; and a name of letters, digits, `-`,
 /// `_` and `.` (a leading dot too: `.github`), never `.` or `..` and never
 /// starting with `-`.
 fn repository_name(repo: &str) -> bool {
@@ -240,7 +250,7 @@ fn repository_name(repo: &str) -> bool {
     let host = |text: &str| {
         made_of(text, b".-") && text.contains('.') && starts(text, &|b| b.is_ascii_alphanumeric())
     };
-    let owner = |text: &str| made_of(text, b"-") && starts(text, &|b| b.is_ascii_alphanumeric());
+    let owner = |text: &str| made_of(text, b"-_") && starts(text, &|b| b.is_ascii_alphanumeric());
     let name = |text: &str| {
         made_of(text, b"-_.")
             && !matches!(text, "." | "..")

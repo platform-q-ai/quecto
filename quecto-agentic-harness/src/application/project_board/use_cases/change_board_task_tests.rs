@@ -264,8 +264,8 @@ fn the_holder_unlinks_a_pull_request_and_then_finishes_the_task() {
 }
 
 /// The bound on a task stamped ahead is inclusive, as the clock's own is:
-/// a task stamped exactly the reference plus 60 s is built on; a second
-/// later it is not.
+/// a task stamped exactly the reference plus 60 s plus the stamp's slack
+/// (30 s) is built on; a second later it is not.
 #[test]
 fn a_task_stamped_at_the_bound_is_built_on_and_a_second_past_it_is_not() {
     let built_on = |updated: &str| {
@@ -285,17 +285,17 @@ fn a_task_stamped_at_the_bound_is_built_on_and_a_second_past_it_is_not() {
         .unwrap()
         .execute(&slug("a"), &BoardOp::Renew)
     };
-    let at_bound = built_on("09:01:00").unwrap();
+    let at_bound = built_on("09:01:30").unwrap();
     assert_eq!(
         at_bound.fields().updated,
-        at("09:01:01"),
+        at("09:01:31"),
         "a second past the task it built on"
     );
     assert_eq!(
-        built_on("09:01:01"),
+        built_on("09:01:31"),
         Err(ProjectBoardError::TaskAhead {
             id: slug("a"),
-            updated: at("09:01:01")
+            updated: at("09:01:31")
         })
     );
 }
@@ -342,4 +342,39 @@ fn a_store_with_an_invalid_writer_is_refused_when_built() {
         super::super::CreateBoardTask::new(invalid(), SetClock::at("10:00:00")),
         Err(ProjectBoardError::InvalidWriter(_))
     ));
+}
+
+/// A client 55 s fast (inside the 60 s bound) renews a dozen times in a
+/// row; each stamp is a second past the last, edging past the bound, yet
+/// a writer whose clock is right still builds on the task.
+#[test]
+fn quick_writes_from_a_fast_clock_never_lock_out_a_right_one() {
+    let store = board();
+    let task = Task::new(TaskFields {
+        created: at("08:00:00"),
+        updated: at("09:00:00"),
+        ..held_by_ada(TaskStatus::InProgress)
+    })
+    .unwrap();
+    let head = store.read().unwrap().head;
+    store.write(&head, &[task], "seed").unwrap();
+    let fast = ChangeBoardTask::new(
+        Arc::new(store.client_as(person("Ada"))),
+        SetClock::with_reference("09:00:55", Some("09:00:00")),
+    )
+    .unwrap();
+    for _ in 0..12 {
+        fast.execute(&slug("a"), &BoardOp::Renew).unwrap();
+    }
+    assert!(
+        current(&store).updated > at("09:01:00"),
+        "past the bound itself"
+    );
+    let right = ChangeBoardTask::new(
+        Arc::new(store.client_as(person("Ada"))),
+        SetClock::with_reference("09:00:00", Some("09:00:00")),
+    )
+    .unwrap();
+    let renewed = right.execute(&slug("a"), &BoardOp::Renew);
+    assert!(renewed.is_ok(), "{renewed:?}");
 }

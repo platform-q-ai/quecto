@@ -2,9 +2,9 @@
 //! over an expired claim on a task that may hold one.
 //!
 //! **Time.** Each rule is given the caller's clock, `now`. A change is
-//! stamped with [`stamp`], `max(now, task.updated)`, a hybrid logical
-//! clock: `updated`, a new claim's `since` and `expires` and an ended
-//! run's `ended` never run backwards, and a write from a clock that ran
+//! stamped with [`stamp`], `max(now, task.updated + 1 s)`, a hybrid
+//! logical clock: `updated`, a new claim's `since` and `expires` and an
+//! ended run's `ended` always move forward, and a write from a clock that ran
 //! ahead never locks the task for clients whose clocks are right. Whether a
 //! claim has expired is judged by the caller's real `now`, so a client
 //! whose clock runs fast sees claims expire early, and a claim stamped by
@@ -16,6 +16,12 @@ use super::super::entities::claim::{CLAIM_TTL_SECONDS, Claim, Identity};
 use super::super::entities::task::{Task, TaskFields};
 use super::super::value_objects::rule_error::BoardRuleError;
 use super::super::value_objects::timestamp::Timestamp;
+
+/// The room the strictly-forward stamp needs past the latest time a
+/// write may build on: each change stamps a second past the task it read,
+/// so a run of quick changes from a clock near the bound edges past it,
+/// and the next honest writer must still build on the task.
+pub const STAMP_SLACK_SECONDS: u64 = 30;
 
 /// How far a clock may run ahead of an outside reading of the current
 /// time before the board refuses to take its time, or to build on a task
