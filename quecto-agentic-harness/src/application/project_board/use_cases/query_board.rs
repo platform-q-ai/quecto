@@ -48,8 +48,13 @@ impl QueryBoard {
     }
 
     fn matching(&self, wanted: impl Fn(&Task) -> bool) -> Result<Vec<Task>, ProjectBoardError> {
-        let mut tasks: Vec<Task> = self.store.read()?.tasks;
-        let _ = wanted;
+        let mut tasks: Vec<Task> = self
+            .store
+            .read()?
+            .tasks
+            .into_iter()
+            .filter(|task| wanted(task))
+            .collect();
         tasks.sort_by(|left, right| left.fields().id.cmp(&right.fields().id));
         Ok(tasks)
     }

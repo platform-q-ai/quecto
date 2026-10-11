@@ -16,8 +16,7 @@ impl BootstrapProjectBoard {
     /// # Errors
     /// The store's clash or failure.
     pub fn execute(&self) -> Result<Bootstrapped, ProjectBoardError> {
-        let _ = &self.store;
-        Err(ProjectBoardError::Refused("not yet".into()))
+        Ok(self.store.bootstrap()?)
     }
 }
 

@@ -85,7 +85,9 @@ impl ProjectBoardStore for MemoryBoardStore {
         interleaved.into_iter().for_each(|change| change(self));
         let mut board = self.lock();
         let revision = board.head.ok_or(BoardStoreError::NoBoard)?;
-        let _ = expected;
+        if *expected != head(revision) {
+            return Ok(BoardWrite::Lost);
+        }
         for task in tasks {
             board
                 .tasks
