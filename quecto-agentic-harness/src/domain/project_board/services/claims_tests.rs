@@ -147,3 +147,20 @@ fn a_task_at_the_last_spellable_second_takes_no_further_stamp() {
         "{moved:?}"
     );
 }
+
+/// The bound is the latest time plus the slack; where adding the slack
+/// overflows what the board can spell, it tightens to the latest time.
+#[test]
+fn the_slack_bound_tightens_to_the_latest_time_where_it_would_overflow() {
+    let time = |text: &str| Timestamp::parse(text).unwrap();
+    let latest = time("2026-10-10T10:00:00Z");
+    assert!(within_slack(&time("2026-10-10T10:00:30Z"), Some(&latest)));
+    assert!(!within_slack(&time("2026-10-10T10:00:31Z"), Some(&latest)));
+    assert!(
+        within_slack(&time("9999-12-31T23:59:59Z"), None),
+        "no reference"
+    );
+    let last = time("9999-12-31T23:59:50Z");
+    assert!(within_slack(&last, Some(&last)));
+    assert!(!within_slack(&time("9999-12-31T23:59:51Z"), Some(&last)));
+}

@@ -115,8 +115,9 @@ impl PlanItem {
 }
 
 fn validate(plan: &PlanFields) -> Result<(), SchemaError> {
-    if plan.created > plan.updated {
-        return Err(SchemaError::new("updated", "must not be before created"));
+    match plan.created <= plan.updated {
+        true => {}
+        false => return Err(SchemaError::new("updated", "must not be before created")),
     }
     match (1..=MAX_PLAN_VERSION).contains(&plan.version) {
         true => {}
@@ -135,11 +136,14 @@ fn validate(plan: &PlanFields) -> Result<(), SchemaError> {
     }
     validate_acceptance(plan)?;
     let text = plan.text_bytes();
-    if text > MAX_PLAN_TEXT_BYTES {
-        return Err(SchemaError::new(
-            "text",
-            format!("the plan's text is {text} bytes; the most is {MAX_PLAN_TEXT_BYTES}"),
-        ));
+    match text <= MAX_PLAN_TEXT_BYTES {
+        true => {}
+        false => {
+            return Err(SchemaError::new(
+                "text",
+                format!("the plan's text is {text} bytes; the most is {MAX_PLAN_TEXT_BYTES}"),
+            ));
+        }
     }
     // A deadline is informational: one already past is allowed.
     match &plan.team {
@@ -184,11 +188,14 @@ fn validate_items(items: &[PlanItem]) -> Result<(), SchemaError> {
             .depends_on
             .iter()
             .all(|dependency| *dependency != item.id && ids.contains(&dependency));
-        if !siblings {
-            return Err(SchemaError::new(
-                format!("items/{index}/depends_on"),
-                "must name other items of this plan",
-            ));
+        match siblings {
+            true => {}
+            false => {
+                return Err(SchemaError::new(
+                    format!("items/{index}/depends_on"),
+                    "must name other items of this plan",
+                ));
+            }
         }
     }
     match blocked_by_cycle(items) {

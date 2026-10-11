@@ -19,7 +19,7 @@ use super::super::value_objects::rule_error::BoardRuleError;
 use super::super::value_objects::schema_error::SchemaError;
 use super::super::value_objects::timestamp::Timestamp;
 use super::super::value_objects::vocabulary::{PlanState, TaskStatus};
-use super::claims::{STAMP_SLACK_SECONDS, held_live_by, settle, stamp};
+use super::claims::{held_live_by, settle, stamp, within_slack};
 use super::runs::open_of;
 
 /// What a plan says: its approach, items and team.
@@ -34,6 +34,7 @@ pub struct PlanContent {
 /// When a change happens: the caller's `now`, and the latest time it may
 /// build on, when an outside reference bounds the clock (a plan stamped
 /// past it, plus the stamp's slack, came from a clock running ahead).
+/// `latest: None` means there is no reference, and nothing is refused.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Moment {
     pub now: Timestamp,
@@ -47,15 +48,9 @@ impl Moment {
     /// A plan stamped past the latest time plus the stamp's slack.
     fn may_build_on(&self, plan: &Plan) -> Result<(), BoardRuleError> {
         let updated = &plan.fields().updated;
-        let bound = self.latest.as_ref().map(|latest| {
-            latest
-                .plus_seconds(STAMP_SLACK_SECONDS)
-                .unwrap_or_else(|_| latest.clone())
-        });
-        match bound {
-            None => Ok(()),
-            Some(bound) if *updated <= bound => Ok(()),
-            Some(_) => Err(BoardRuleError::PlanAhead {
+        match within_slack(updated, self.latest.as_ref()) {
+            true => Ok(()),
+            false => Err(BoardRuleError::PlanAhead {
                 version: plan.fields().version,
                 updated: updated.clone(),
             }),
@@ -150,11 +145,12 @@ pub fn edit_draft(
     as_read(plan, expected)?;
     when.may_build_on(plan)?;
     let fields = plan.fields();
-    let unchanged = fields.approach == content.approach
-        && fields.items == content.items
-        && fields.team == content.team;
-    if unchanged {
-        return Err(BoardRuleError::NoEdit);
+    let changes = fields.approach != content.approach
+        || fields.items != content.items
+        || fields.team != content.team;
+    match changes {
+        true => {}
+        false => return Err(BoardRuleError::NoEdit),
     }
     let mut next = fields.clone();
     next.approach = content.approach;
@@ -200,8 +196,9 @@ pub fn accept(
     draft(chosen)?;
     as_read(chosen, expected)?;
     decides(task, actor, now)?;
-    if let Some(run) = open_of(task, runs)? {
-        return Err(BoardRuleError::RunOpen(run.fields().number));
+    match open_of(task, runs)? {
+        None => {}
+        Some(run) => return Err(BoardRuleError::RunOpen(run.fields().number)),
     }
     let before = versions
         .iter()
@@ -281,10 +278,13 @@ fn consistent(task: &Task, versions: &[Plan]) -> Result<(), BoardRuleError> {
     of_task(task, versions)?;
     let numbers: std::collections::BTreeSet<u32> =
         versions.iter().map(|plan| plan.fields().version).collect();
-    if numbers.len() != versions.len() {
-        return Err(BoardRuleError::PlansInconsistent(
-            "a version is listed twice".into(),
-        ));
+    match numbers.len() == versions.len() {
+        true => {}
+        false => {
+            return Err(BoardRuleError::PlansInconsistent(
+                "a version is listed twice".into(),
+            ));
+        }
     }
     let accepted: Vec<u32> = versions
         .iter()
