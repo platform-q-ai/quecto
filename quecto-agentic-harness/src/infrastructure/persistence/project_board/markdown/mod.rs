@@ -343,20 +343,18 @@ impl Layout {
     }
 }
 
-/// Whether an ASCII cell holds what a reader links: any `scheme://`, a
-/// `www.` that starts the cell or follows a separator, or an `@` between
-/// word characters (an email).
-fn links(value: &str) -> bool {
+/// Whether an ASCII cell shows as written, nothing in it linked or
+/// emphasised (an allowlist): `@` only first (`@scope/pkg`), no `www.` or
+/// `://` anywhere, and each `_` between letters or digits.
+fn plain(value: &str) -> bool {
+    let bytes = value.as_bytes();
     let lower = value.to_ascii_lowercase();
-    let bytes = lower.as_bytes();
-    let word = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_';
-    let www = lower
-        .match_indices("www.")
-        .any(|(at, _)| at == 0 || !word(bytes[at - 1]));
-    let email = bytes
-        .windows(3)
-        .any(|three| three[1] == b'@' && word(three[0]) && word(three[2]));
-    lower.contains("://") || www || email
+    let word = |at: Option<&u8>| at.is_some_and(u8::is_ascii_alphanumeric);
+    let at_first = bytes.iter().skip(1).all(|byte| *byte != b'@');
+    let underscores = (0..bytes.len()).filter(|at| bytes[*at] == b'_').all(|at| {
+        word(at.checked_sub(1).and_then(|before| bytes.get(before))) && word(bytes.get(at + 1))
+    });
+    at_first && underscores && !lower.contains("www.") && !lower.contains("://")
 }
 
 /// A cell as a row holds it.
@@ -369,10 +367,12 @@ fn cell(value: &str, kind: CellKind, at: usize) -> Result<String, MarkdownError>
         (_, value) if value.starts_with(' ') || value.ends_with(' ') => {
             refused("space at a cell's edge")
         }
-        (CellKind::Ascii, value) if value.bytes().all(ascii) && links(value) => {
-            refused("an address a reader would link")
+        (CellKind::Ascii, value) if value.bytes().all(ascii) && plain(value) => {
+            Ok(value.to_string())
         }
-        (CellKind::Ascii, value) if value.bytes().all(ascii) => Ok(value.to_string()),
+        (CellKind::Ascii, value) if value.bytes().all(ascii) => {
+            refused("an address a reader would link, or an underscore it would read as emphasis")
+        }
         (CellKind::Ascii, _) => refused("an id or pointer of ASCII letters, digits and ._:/#@+-"),
         (CellKind::Text, value) => {
             inline::check_inline(value, at).map(|()| value.replace('|', "\\|"))

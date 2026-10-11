@@ -221,10 +221,13 @@ impl Seeded {
     }
 
     fn ascii(&mut self) -> String {
-        const ASCII: &[&str] = &["a", "z", "0", "9", ".", "_", ":", "/", "#", "@", "+", "-"];
+        const ASCII: &[&str] = &["a", "z", "0", "9", ".", "a_b", ":", "/", "#", "+", "-"];
         let mut cell: String = (0..1 + self.below(8)).map(|_| self.pick(ASCII)).collect();
+        if self.below(20) == 0 {
+            cell.insert(0, '@');
+        }
         if self.below(40) == 0 {
-            cell.push_str(&self.pick(&[" ", "é", "|"]));
+            cell.push_str(&self.pick(&[" ", "é", "|", "@x", "_", "www.x"]));
         }
         cell
     }

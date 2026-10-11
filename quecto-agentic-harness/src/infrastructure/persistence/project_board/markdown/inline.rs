@@ -2,8 +2,10 @@
 //! list item, a text cell). Nothing but plain text, closed code spans,
 //! emphasis and links of one form survives: no raw HTML, comment or
 //! autolink, character reference, dollar math, image, footnote, reference,
-//! wiki or bare link (any `scheme://` or `www.`), and no backslash escape
-//! (the renderer adds the only ones a file holds). A text shows something.
+//! wiki or bare link (any `scheme://`, `www.`, `mailto:`, `xmpp:` or
+//! email), and no backslash escape (the renderer adds the only ones a file
+//! holds). A text, and a link's text, shows something that is not an
+//! emphasis marker; a link's text shows no address of its own.
 //!
 //! The text is read left to right as a reader reads it, so what binds
 //! tighter than a code span (an autolink, raw HTML, a link's address) is
@@ -24,9 +26,13 @@ use std::sync::LazyLock;
 /// characters (an allowlist: no space, `<`, backtick, `$`, bracket or
 /// parenthesis), no title.
 static LINK: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"\[[^\[\]\\]+\]\(https://[A-Za-z0-9\-._~:/?#@!&'*+,;=%]+\)")
+    Regex::new(r"\[([^\[\]\\]+)\]\(https://[A-Za-z0-9\-._~:/?#@!&'*+,;=%]+\)")
         .expect("a valid pattern")
 });
+/// An email a reader would link: an `@` straight after a character an
+/// address's local part may hold.
+static EMAIL: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"[A-Za-z0-9.+_-]@").expect("a valid pattern"));
 /// What may follow a link's `]`: its address, as [`LINK`] allows it.
 static ADDRESS: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"^\(https://[A-Za-z0-9\-._~:/?#@!&'*+,;=%]+\)").expect("a valid pattern")
@@ -36,9 +42,28 @@ static REFERENCE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"&(?:#[0-9]+|#[xX][0-9A-Fa-f]+|[A-Za-z][A-Za-z0-9]*);").expect("a valid pattern")
 });
 
-/// Whether `text` opens with a link of the one form a text may hold.
+/// Whether `text`, read as a reader reads it (code spans first), opens
+/// with a link of the one form a text may hold.
 pub fn starts_with_link(text: &str) -> bool {
-    LINK.find(text).is_some_and(|link| link.start() == 0)
+    outside_code(text, 0)
+        .is_ok_and(|outside| LINK.find(&outside).is_some_and(|link| link.start() == 0))
+}
+
+/// Whether `text` shows a reader something: a character [`seen`] that is
+/// not an emphasis or strikethrough marker, which a reader may draw as
+/// nothing.
+fn shows(text: &str) -> bool {
+    text.chars().any(|c| seen(c) && !"*_~".contains(c))
+}
+
+/// Whether `text` holds an address a reader would link: any `scheme://`,
+/// `www.`, `mailto:`, `xmpp:` or an email.
+fn holds_address(text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    ["://", "www.", "mailto:", "xmpp:"]
+        .iter()
+        .any(|form| lower.contains(form))
+        || EMAIL.is_match(text)
 }
 
 /// What a closed code span holding nothing a reader sees stands for in
@@ -128,22 +153,26 @@ pub fn check_inline(text: &str, at: usize) -> Result<(), MarkdownError> {
         .any(|pair| pair[0] == b'\\' && pair[1].is_ascii_punctuation())
         || outside.ends_with('\\');
     // A link's text shows something, with no space at its edges.
-    let shown = LINK.find_iter(&outside).all(|link| {
-        let text = &link.as_str()[1..link.as_str().find("](").unwrap_or(1)];
-        text.trim() == text && text.chars().any(seen)
+    let shown = LINK.captures_iter(&outside).all(|link| {
+        let text = &link[1];
+        text.trim() == text && shows(text)
     });
+    // The text as shown: each link's address taken out, its text kept, so
+    // the address rule below reads link texts too (a link showing
+    // `www.evil.example` is refused).
+    let unaddressed = LINK.replace_all(&outside, " $1 ");
     let unlinked = LINK.replace_all(&outside, "x");
-    let lower = unlinked.to_ascii_lowercase();
-    let bare = ["](", "][", "[[", "[^", "://", "www."]
+    let bare = ["](", "][", "[[", "[^"]
         .iter()
-        .any(|form| lower.contains(form));
+        .any(|form| unlinked.contains(form))
+        || holds_address(&unaddressed);
     match () {
         () if REFERENCE.is_match(&outside) => Err(MarkdownError::CharacterReference { line: at }),
         () if math => Err(MarkdownError::Math { line: at }),
         () if outside.contains("![") => Err(MarkdownError::Image { line: at }),
         () if bare || !shown => Err(MarkdownError::Link { line: at }),
         () if escaped => Err(MarkdownError::Escape { line: at }),
-        () if !outside.chars().any(seen) => Err(MarkdownError::Invisible { line: at }),
+        () if !shows(&unaddressed) => Err(MarkdownError::Invisible { line: at }),
         () => Ok(()),
     }
 }

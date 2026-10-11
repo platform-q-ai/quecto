@@ -30,6 +30,10 @@ fn comrak_options() -> comrak::Options<'static> {
     options
 }
 
+/// A reader's outline: per top-level block its kind (with counts and
+/// links) and the text it shows, then the text each link shows.
+type Read = (Vec<String>, Vec<String>, Vec<String>);
+
 /// A link's address as a text writes it, after its `]`.
 static ADDRESS: std::sync::LazyLock<Regex> =
     std::sync::LazyLock::new(|| Regex::new(r"\]\(https://[^)\s]*\)").expect("a valid pattern"));
@@ -225,7 +229,14 @@ fn expected(document: &Document) -> (Vec<String>, Vec<String>) {
     let kinds = kinds
         .into_iter()
         .zip(&texts)
-        .map(|(kind, text)| format!("{kind}+{}", ADDRESS.find_iter(text).count()))
+        .map(|(kind, text)| {
+            // Code is verbatim: what looks like a link there is none.
+            let links = match kind.starts_with("code:") {
+                true => 0,
+                false => ADDRESS.find_iter(text).count(),
+            };
+            format!("{kind}+{links}")
+        })
         .collect();
     (kinds, texts)
 }
@@ -316,7 +327,7 @@ pub(super) fn outline(file: &str, document: &Document) -> Result<(), String> {
 /// One reader's outline (kinds, texts, link texts) against the document's.
 fn compared(
     reader: &str,
-    (shown_kinds, shown_texts, link_texts): &(Vec<String>, Vec<String>, Vec<String>),
+    (shown_kinds, shown_texts, link_texts): &Read,
     kinds: &[String],
     texts: &[String],
 ) -> Result<(), String> {
@@ -385,7 +396,7 @@ fn comrak_inline<'a>(
 }
 
 /// comrak's outline of `file`, block by block, as [`Outline`] keeps it.
-fn comrak_outline(file: &str) -> Result<(Vec<String>, Vec<String>, Vec<String>), String> {
+fn comrak_outline(file: &str) -> Result<Read, String> {
     let arena = comrak::Arena::new();
     let root = comrak::parse_document(&arena, file, &comrak_options());
     let (mut kinds, mut texts, mut link_texts) = (vec![], vec![], vec![]);
