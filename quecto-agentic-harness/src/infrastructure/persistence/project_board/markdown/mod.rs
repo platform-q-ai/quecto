@@ -216,6 +216,10 @@ pub enum MarkdownError {
     /// one error type for both sides.
     #[error("not the canonical file for what it holds")]
     NotCanonical,
+    /// A file render wrote that does not read back as its document: why
+    /// it was refused when read, or none when it read as another document.
+    #[error("the written file does not read back as its document{}", why.as_ref().map(|why| format!(": {why}")).unwrap_or_default())]
+    NotReadBack { why: Option<Box<MarkdownError>> },
 }
 
 /// A name of a field, heading or column: an ASCII capital, then letters,

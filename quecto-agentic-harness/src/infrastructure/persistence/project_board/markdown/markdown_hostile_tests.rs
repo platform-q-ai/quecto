@@ -43,7 +43,7 @@ fn every_hostile_file_is_refused_with_its_reason() {
         ("two blank lines", edited("1\\. not a list\n\n", "1\\. not a list\n\n\n"), |e| matches!(e, E::Structure { line: 15, .. })),
         ("an empty section", edited("## Acceptance\n- Every op answers one JSON line\n", "## Acceptance\n"), |e| matches!(e, E::EmptyProse { .. })),
         ("a fence left open", edited("}\n```\n", "}\n"), |e| matches!(e, E::Fence { line: 18, .. })),
-        ("a fence's language in capitals", edited("```rust", "```Rust"), |e| matches!(e, E::Fence { line: 18, .. })),
+        ("a fence's language in capitals", edited("```rust", "```Rust"), |e| matches!(e, E::Fence { line: 18, why: "a language from the list of plain highlighters" })),
         ("an indented close in code", edited("    let x = 1;", "   ```"), |e| matches!(e, E::Fence { line: 20, .. })),
         ("a longer close in code", edited("    let x = 1;", "````"), |e| matches!(e, E::Fence { line: 20, .. })),
         ("a bidi override", edited("and all.", "and a\u{202e}ll."), |e| matches!(e, E::Bidi { line: 11 })),
@@ -92,6 +92,24 @@ fn every_hostile_file_is_refused_with_its_reason() {
         ("a selector after a digit", edited("and all.", "and 1\u{fe0f} all."), |e| matches!(e, E::Invisible { line: 11 })),
         ("a subdivision flag", edited("and all.", "and \u{1f3f4}\u{e0067}\u{e0062}\u{e007f}."), |e| matches!(e, E::Invisible { line: 11 })),
         ("more lines than a file holds", format!("{EXAMPLE}{}", "x\n".repeat(200_000)).into_bytes(), |e| matches!(e, E::TooManyLines { most: 8_192, .. })),
+        ("an autolink hiding a span", edited(first, "a <1`@b.co> <!-- secret --> <img src=x> &amp; $x$ http://evil.example `"), |e| matches!(e, E::Html { line: 11 })),
+        ("a destination hiding a span", edited(first, "see [a](https://b.co/`)<!-- secret --> <b>bold</b> &#65; `)"), |e| matches!(e, E::Link { line: 11 })),
+        ("a span in a destination", edited(first, "[a](https://x.co` `http://evil.example)"), |e| matches!(e, E::Link { line: 11 })),
+        ("a title hiding a span", edited("# Boards S2a: quecto board CLI", "# a <1`@b.co> <!-- x --> `"), |e| matches!(e, E::Html { line: 2 })),
+        ("a list item hiding a span", edited("- Every op answers one JSON line", "- see [a](https://b.co/`)<b>x</b> `)"), |e| matches!(e, E::Link { line: 25 })),
+        ("a text cell hiding a span", edited("| Ada (ada@example.com) until 2026-10-11T14:00:00Z |", "| [a](https://b.co/`)<b>x</b> `) |"), |e| matches!(e, E::Link { line: 8 })),
+        ("an email autolink of a digit", edited(first, "mail <1@b.co> now"), |e| matches!(e, E::Html { line: 11 })),
+        ("an email autolink of a plus", edited(first, "<+x@b.co>"), |e| matches!(e, E::Html { line: 11 })),
+        ("an email autolink of an underscore", edited(first, "<_x@b.co>"), |e| matches!(e, E::Html { line: 11 })),
+        ("an ftp address", edited(first, "see ftp://evil.example"), |e| matches!(e, E::Link { line: 11 })),
+        ("any scheme", edited(first, "see gopher://evil.example"), |e| matches!(e, E::Link { line: 11 })),
+        ("an http address in an id", edited("| board-cli |", "| http://evil.example |"), |e| matches!(e, E::Cell { line: 6, .. })),
+        ("a www address in an id", edited("| board-cli |", "| www.evil.example |"), |e| matches!(e, E::Cell { line: 6, .. })),
+        ("an email address in an id", edited("| board-cli |", "| a@b.co |"), |e| matches!(e, E::Cell { line: 6, .. })),
+        ("a footnote", edited(first, "a note[^1]"), |e| matches!(e, E::Link { line: 11 })),
+        ("a Khitan filler", edited(first, "a\u{16fe4}b"), |e| matches!(e, E::Invisible { line: 11 })),
+        ("a line of a mark alone", edited(first, "\u{301}"), |e| matches!(e, E::Invisible { line: 11 })),
+        ("a title of hashes alone", edited("# Boards S2a: quecto board CLI", "# ###"), |e| matches!(e, E::Title)),
         ("a table's header renamed", edited("| Item | State |", "| Item | Status |"), |e| matches!(e, E::Structure { line: 28, .. })),
     ];
     for (name, bytes, named) in cases {
@@ -431,6 +449,7 @@ fn ascii_cells_keep_ids_times_and_locations() {
         let file = render(&document, &SHAPE).unwrap_or_else(|error| panic!("{id}: {error:?}"));
         assert!(file.contains(&format!("| Id | {id} |")), "{id}");
         assert_eq!(outline(&file, &document), Ok(()), "{id}");
+        assert_eq!(parse(file.as_bytes(), &SHAPE), Ok(document), "{id}");
     }
 }
 
@@ -443,6 +462,7 @@ fn a_title_may_end_in_a_hash_of_its_own() {
         document.title = title.into();
         let file = render(&document, &SHAPE).unwrap_or_else(|error| panic!("{title}: {error:?}"));
         assert_eq!(outline(&file, &document), Ok(()), "{title}");
+        assert_eq!(parse(file.as_bytes(), &SHAPE), Ok(document), "{title}");
     }
 }
 
@@ -464,6 +484,12 @@ fn every_refusal_says_what_and_where() {
         (E::TooManyLines { lines: 9, most: 8 }, "9"),
         (E::Title, "title"),
         (E::NotCanonical, "canonical"),
+        (
+            E::NotReadBack {
+                why: Some(Box::new(E::Title)),
+            },
+            "title",
+        ),
     ];
     for (refusal, says) in refusals {
         let error: &dyn std::error::Error = &refusal;
@@ -481,12 +507,18 @@ fn a_file_that_reads_back_otherwise_is_refused() {
         read_back(EXAMPLE.to_string(), &example(), &SHAPE).as_deref(),
         Ok(EXAMPLE)
     );
-    for file in [EXAMPLE.to_string(), "not a board file\n".to_string()] {
-        assert_eq!(
-            read_back(file, &other, &SHAPE),
-            Err(MarkdownError::NotCanonical)
-        );
-    }
+    // Read back as another document: no reason but that.
+    assert_eq!(
+        read_back(EXAMPLE.to_string(), &other, &SHAPE),
+        Err(MarkdownError::NotReadBack { why: None })
+    );
+    // Not read back at all: the reason it was refused is kept.
+    assert_eq!(
+        read_back("not a board file\n".to_string(), &other, &SHAPE),
+        Err(MarkdownError::NotReadBack {
+            why: Some(Box::new(MarkdownError::Marker))
+        })
+    );
 }
 
 /// A shape is checked before anything is rendered.
