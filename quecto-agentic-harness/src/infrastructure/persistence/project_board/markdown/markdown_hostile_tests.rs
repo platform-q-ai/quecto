@@ -180,6 +180,13 @@ fn hostile_documents_are_refused_when_written() {
         ("a scheme split across code and a link", render(&with_line("see `https:/`[/bank.example/login](https://evil.example)"), &SHAPE), |e| matches!(e, E::Link { line: 11 })),
         ("a scheme split across a link's end", render(&with_line("[https:](https://evil.example)//bank.example"), &SHAPE), |e| matches!(e, E::Link { line: 11 })),
         ("a www address split across a link and code", render(&with_line("[www](https://evil.example)`.bank.example`"), &SHAPE), |e| matches!(e, E::Link { line: 11 })),
+        ("a www address with a mark inside, in a link", render(&with_line("[www\u{332}.bank.example](https://evil.example)"), &SHAPE), |e| matches!(e, E::Link { line: 11 })),
+        ("a www address with a mark inside, across a link", render(&with_line("ww[w](https://evil.example)\u{332}.bank.example"), &SHAPE), |e| matches!(e, E::Link { line: 11 })),
+        ("an email with a mark inside, in a link", render(&with_line("[ada\u{332}@bank.example](https://evil.example)"), &SHAPE), |e| matches!(e, E::Link { line: 11 })),
+        // Refused by design: a full stop or a literal marker beside a link
+        // makes the run of text around it read as an address.
+        ("a link a full stop makes www.", render(&with_line("the [www](https://w3.org)."), &SHAPE), |e| matches!(e, E::Link { line: 11 })),
+        ("a link a literal marker joins to an email", render(&with_line("[ada](https://x.example)*@b.example"), &SHAPE), |e| matches!(e, E::Link { line: 11 })),
         ("a fence language with a space", with(|d| d.sections[0].body = Body::Prose(vec![Block::Code { language: Some("a b".into()), lines: vec![] }])), |e| matches!(e, E::Fence { .. })),
         ("a row of one cell", with(|d| d.sections[2].body = Body::Table(vec![vec!["x".into()]])), |e| matches!(e, E::Cell { .. })),
         ("a field no task has", with(|d| d.fields[0].0 = "Owner".into()), |e| matches!(e, E::UnknownField { .. })),
@@ -212,6 +219,7 @@ fn near_misses_are_kept() {
         "an email in code `ada@example.com` and a handle @ada",
         "a profile [here](https://example.com/@ada) and [paypal.com](https://example.com)",
         "README.md and C:\\x",
+        "_[@ada](https://github.com/ada)_ and __[@ada](https://github.com/ada)__ and snake_case",
     ] {
         let document = with_line(line);
         let file = render(&document, &SHAPE).unwrap_or_else(|error| panic!("{line:?}: {error:?}"));
@@ -221,6 +229,23 @@ fn near_misses_are_kept() {
     let file = render(&document, &SHAPE).unwrap();
     assert!(file.contains("| Claim | `C:\\x` and `a\\|b` |"), "{file}");
     assert_eq!(outline(&file, &document), Ok(()));
+}
+
+/// The text around each link is read once: many links on one long line
+/// are checked in time linear in the line.
+#[test]
+fn many_links_on_one_line_are_checked_in_linear_time() {
+    let line = "[a](https://x.example) "
+        .repeat(20_000)
+        .trim_end()
+        .to_string();
+    let started = std::time::Instant::now();
+    assert_eq!(inline::check_inline(&line, 1), Ok(()));
+    let took = started.elapsed();
+    assert!(
+        took < std::time::Duration::from_secs(2),
+        "{took:?} for 20,000 links"
+    );
 }
 
 /// A list item may open with a link, which is no task box.

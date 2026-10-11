@@ -422,11 +422,15 @@ fn compared(
 fn shows_address(text: &str) -> bool {
     static EMAIL: std::sync::LazyLock<Regex> =
         std::sync::LazyLock::new(|| Regex::new(r"[A-Za-z0-9.+_-]@").expect("a valid pattern"));
+    static MARK: std::sync::LazyLock<Regex> =
+        std::sync::LazyLock::new(|| Regex::new(r"\p{M}").expect("a valid pattern"));
+    // A combining mark inside an address hides it from a pattern, not a reader.
+    let text = MARK.replace_all(text, "");
     let lower = text.to_ascii_lowercase();
     ["://", "www.", "mailto:", "xmpp:"]
         .iter()
         .any(|form| lower.contains(form))
-        || EMAIL.is_match(text)
+        || EMAIL.is_match(&text)
 }
 
 /// The inline text `node` shows, and where each link in it starts and
