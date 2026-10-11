@@ -111,7 +111,7 @@ fn outside_code(text: &str, at: usize) -> Result<(String, Vec<(usize, String)>),
                 let (stands_for, after) = code_span(from, at)?;
                 let run = from.len() - from.trim_start_matches('`').len();
                 let code = &from[run..from.len() - after.len() - run];
-                spans.push((outside.len(), code.to_string()));
+                spans.push((outside.len(), shown_code(code).to_string()));
                 outside.push(stands_for);
                 after
             }
@@ -143,15 +143,30 @@ fn outside_code(text: &str, at: usize) -> Result<(String, Vec<(usize, String)>),
     Ok((outside, spans))
 }
 
+/// A code span's contents as a reader shows them: one space taken from
+/// each end when both ends have one and it is not spaces alone.
+fn shown_code(code: &str) -> &str {
+    let padded = code.len() > 1 && code.starts_with(' ') && code.ends_with(' ');
+    match padded && code.bytes().any(|byte| byte != b' ') {
+        true => &code[1..code.len() - 1],
+        false => code,
+    }
+}
+
 /// `range` of `outside` as a reader sees it: each code span's contents put
-/// back (`spans`, by their offset in `outside`), and emphasis and
-/// strikethrough markers dropped, so a token they split reads whole.
-fn as_read(outside: &str, spans: &[(usize, String)], range: std::ops::Range<usize>) -> String {
+/// back as shown (`spans`, by their offset in `outside`), and the markers
+/// in `dropped` taken out, so a token they split reads whole.
+fn as_read(
+    outside: &str,
+    spans: &[(usize, String)],
+    range: std::ops::Range<usize>,
+    dropped: &str,
+) -> String {
     let mut read = String::new();
     for (offset, c) in outside[range.clone()].char_indices() {
         match spans.binary_search_by_key(&(range.start + offset), |(at, _)| *at) {
             Ok(span) => read.push_str(&spans[span].1),
-            Err(_) if "*_~".contains(c) => {}
+            Err(_) if dropped.contains(c) => {}
             Err(_) => read.push(c),
         }
     }
@@ -175,10 +190,16 @@ pub fn check_inline(text: &str, at: usize) -> Result<(), MarkdownError> {
         || outside.ends_with('\\');
     // A link's text shows something, with no space at its edges, and no
     // address as a reader sees it (code put back, markers dropped).
+    // Read twice: with every marker dropped, and with `_` kept, since `_`
+    // is both a marker and a character an email holds (the only one an
+    // address pattern shares with the markers).
     let shown = LINK.captures_iter(&outside).all(|link| {
         let text = link.get(1).expect("LINK has a text group");
         let edges = text.as_str().trim() == text.as_str();
-        edges && shows(text.as_str()) && !holds_address(&as_read(&outside, &spans, text.range()))
+        let address = ["*_~", "*~"]
+            .iter()
+            .any(|dropped| holds_address(&as_read(&outside, &spans, text.range(), dropped)));
+        edges && shows(text.as_str()) && !address
     });
     // The text as shown: each link's address taken out, its text kept, so
     // the address rule below reads link texts too (a link showing

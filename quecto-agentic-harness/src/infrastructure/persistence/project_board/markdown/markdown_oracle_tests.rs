@@ -213,7 +213,8 @@ impl Outline {
                 self.shown(text);
             }
             Event::Html(_) if self.kinds.is_empty() => {}
-            Event::SoftBreak if self.open == ["paragraph"] => {
+            // Emphasis may span a line, so a break may come inside it.
+            Event::SoftBreak if self.open.first() == Some(&"paragraph") => {
                 self.count += 1;
                 self.text.push('\n');
             }
