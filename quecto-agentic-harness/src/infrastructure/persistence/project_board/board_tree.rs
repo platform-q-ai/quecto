@@ -69,6 +69,20 @@ pub fn told(error: &BoardStoreError) -> &str {
     }
 }
 
+/// What one read of a board takes at most; a write keeps within it too.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Limits {
+    /// Task-file bytes read in all.
+    pub board_bytes: usize,
+    /// The bytes of one tree.
+    pub tree_bytes: usize,
+}
+
+pub const LIMITS: Limits = Limits {
+    board_bytes: MAX_BOARD_BYTES,
+    tree_bytes: MAX_TREE_BYTES,
+};
+
 pub fn unavailable(error: GitError) -> BoardStoreError {
     BoardStoreError::Unavailable(error.to_string())
 }
@@ -198,15 +212,15 @@ fn kind_of_mode(mode: &str) -> Option<&'static str> {
 /// # Errors
 /// Objects this clone does not hold; git fails, a tree is past its bounds,
 /// or the commit is not a board (a clash).
-pub fn read_board(git: &Git, commit: &str, max_bytes: usize) -> Result<Board, Unread> {
-    let root = listed(git, &tree_of(git, commit)?)?;
+pub fn read_board(git: &Git, commit: &str, limits: Limits) -> Result<Board, Unread> {
+    let root = listed(git, &tree_of(git, commit)?, limits.tree_bytes)?;
     let kinds = objects(git, looked_up(&root))?;
     let tasks = root.iter().find(|entry| entry.name == "tasks");
     // The `tasks` tree, when it really is one, is read in the same round
     // as the root, so a partial clone fetches what both miss at once.
     let read = tasks
         .filter(|entry| is_tree(entry, &kinds))
-        .map(|entry| read_tasks(git, &entry.oid, max_bytes));
+        .map(|entry| read_tasks(git, &entry.oid, limits));
     let mut missing = missing(&root, &kinds);
     let board = match read {
         Some(Ok(board)) => Some(board),
@@ -353,8 +367,9 @@ fn disposition(entry: &Entry, found: Option<&Object>, count: usize) -> Dispositi
     }
 }
 
-fn read_tasks(git: &Git, tree: &str, max_bytes: usize) -> Result<Board, Unread> {
-    let entries = listed(git, tree)?;
+fn read_tasks(git: &Git, tree: &str, limits: Limits) -> Result<Board, Unread> {
+    let max_bytes = limits.board_bytes;
+    let entries = listed(git, tree, limits.tree_bytes)?;
     if entries.len() > MAX_TASK_ENTRIES {
         return Err(Unread::Failed(BoardStoreError::Unavailable(format!(
             "the board's tasks tree holds {} entries; the most is {MAX_TASK_ENTRIES}",
@@ -490,13 +505,13 @@ fn tree_of(git: &Git, commit: &str) -> Result<String, Unread> {
 
 /// The entries of `tree`, whose real type and size are checked before it
 /// is listed.
-fn listed(git: &Git, tree: &str) -> Result<Vec<Entry>, Unread> {
+fn listed(git: &Git, tree: &str, max_bytes: usize) -> Result<Vec<Entry>, Unread> {
     let not_read = |why: String| Unread::Failed(BoardStoreError::Unavailable(why));
     match objects(git, std::iter::once(tree))?.remove(tree) {
-        Some(Found::Present(object)) if object.kind == "tree" && object.size <= MAX_TREE_BYTES => {}
+        Some(Found::Present(object)) if object.kind == "tree" && object.size <= max_bytes => {}
         Some(Found::Present(object)) if object.kind == "tree" => {
             return Err(not_read(format!(
-                "the board tree {tree} is {} bytes; the most read is {MAX_TREE_BYTES}",
+                "the board tree {tree} is {} bytes; the most read is {max_bytes}",
                 object.size
             )));
         }

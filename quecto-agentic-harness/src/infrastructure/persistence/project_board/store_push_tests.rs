@@ -215,8 +215,12 @@ fn any_push_outcome_but_updated_is_judged_by_the_board() {
             "(cannot lock ref 'refs/heads/quecto/board': is at x but expected y)",
             Some(Pushed::Lost),
         ),
-        ("(failed to update ref)", Some(Pushed::Lost)),
         ("(incorrect old value provided)", Some(Pushed::Lost)),
+        (
+            "(cannot lock ref 'refs/heads/quecto/board': Unable to create 'x.lock': File exists.)",
+            None,
+        ),
+        ("(failed to update ref)", None),
         ("(shallow update not allowed)", None),
     ] {
         let summary = format!("[remote rejected] {reason}");
@@ -227,7 +231,10 @@ fn any_push_outcome_but_updated_is_judged_by_the_board() {
             }
             (Some(Pushed::Lost), Ok(Pushed::Lost)) => {}
             (None, Err(BoardStoreError::Unavailable(why))) => {
-                assert!(why.contains("may have moved"), "{why}")
+                assert!(
+                    why.contains("may have moved") && why.contains(reason),
+                    "{why}"
+                )
             }
             (judged, outcome) => panic!("{reason}: {outcome:?}, not {judged:?}"),
         }

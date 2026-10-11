@@ -22,7 +22,7 @@
 //! fetched with a filter before) is fetched in one call per tree level,
 //! never one object at a time.
 use super::board_tree::{
-    Board, MAX_BOARD_BYTES, MAX_SUMMARY_BYTES, MAX_TASK_ENTRIES, REGULAR_FILE, TREE, Unread,
+    Board, LIMITS, Limits, MAX_SUMMARY_BYTES, MAX_TASK_ENTRIES, REGULAR_FILE, TREE, Unread,
     contents, object_id, read_board, told, unavailable,
 };
 use super::git::{Git, GitError, SHORT_OUTPUT, failed, quoted};
@@ -55,8 +55,8 @@ pub struct GitBoardStore {
     /// The board last read, by its commit: a commit never changes, so a
     /// write from the head just read does not read the board again.
     last: Mutex<Option<(String, Arc<Board>)>>,
-    /// The most task-file bytes a read takes ([`MAX_BOARD_BYTES`]).
-    pub(super) max_board_bytes: usize,
+    /// What a read takes at most, and so a write makes ([`LIMITS`]).
+    pub(super) limits: Limits,
 }
 
 /// What became of a push.
@@ -92,7 +92,7 @@ impl GitBoardStore {
                 git,
                 remote: remote.to_string(),
                 last: Mutex::new(None),
-                max_board_bytes: MAX_BOARD_BYTES,
+                limits: LIMITS,
             }),
             Err(error) => Err(BoardStoreError::Unavailable(format!(
                 "{remote:?} is not a remote of this repository: {error}"
@@ -129,7 +129,7 @@ impl GitBoardStore {
     fn read_fetching(&self, commit: &str) -> Result<Board, BoardStoreError> {
         let mut fetched: BTreeSet<String> = BTreeSet::new();
         for round in 0..=FETCH_ROUNDS {
-            let missing = match read_board(&self.git, commit, self.max_board_bytes) {
+            let missing = match read_board(&self.git, commit, self.limits) {
                 Ok(board) => return Ok(board),
                 Err(Unread::Failed(BoardStoreError::Clash(why))) => {
                     return Err(BoardStoreError::Clash(format!(
@@ -635,7 +635,7 @@ impl ProjectBoardStore for GitBoardStore {
                 }
             })
             .collect::<Result<Vec<_>, _>>()?;
-        // A read takes at most `max_board_bytes` of task files, so no write
+        // A read takes at most `limits.board_bytes` of task files, so no write
         // makes a board that cannot be read.
         let replaced: BTreeSet<String> = ids
             .iter()
@@ -647,10 +647,10 @@ impl ProjectBoardStore for GitBoardStore {
             .filter(|(name, _)| !replaced.contains(*name));
         let bytes = carried.map(|(_, size)| size).sum::<usize>()
             + encoded.iter().map(|(_, bytes)| bytes.len()).sum::<usize>();
-        if bytes > self.max_board_bytes {
+        if bytes > self.limits.board_bytes {
             return Err(invalid(format!(
                 "the board would hold {bytes} bytes of task files; a read takes at most {}",
-                self.max_board_bytes
+                self.limits.board_bytes
             )));
         }
         let readme = self.blob(README)?;
