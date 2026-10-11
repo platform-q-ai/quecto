@@ -34,8 +34,13 @@ fn sh_with(dir: &Path, args: &[&str], input: &[u8]) -> String {
         .stderr(std::process::Stdio::piped())
         .spawn()
         .unwrap();
-    child.stdin.take().unwrap().write_all(input).unwrap();
+    // Written on its own thread: git may fill its output before it has
+    // read all its input.
+    let mut stdin = child.stdin.take().unwrap();
+    let input = input.to_vec();
+    let writer = std::thread::spawn(move || stdin.write_all(&input));
     let output = child.wait_with_output().unwrap();
+    writer.join().unwrap().unwrap();
     assert!(
         output.status.success(),
         "git {args:?}: {}",
@@ -216,6 +221,105 @@ fn a_branch_named_quecto_here_or_on_the_remote_blocks_bootstrap() {
 }
 
 #[test]
+fn branches_that_would_shadow_the_board_block_bootstrap_ignoring_case() {
+    for (local, remote) in [
+        (Some("Quecto"), None),
+        (None, Some("QUECTO/board")),
+        (None, Some("quecto/Board")),
+        (None, Some("Quecto/other")),
+    ] {
+        let repos = Repos::new();
+        if let Some(branch) = local {
+            sh(&repos.alice, &["branch", branch]);
+        }
+        if let Some(branch) = remote {
+            sh(
+                &repos.bob,
+                &["push", "-q", "origin", &format!("HEAD:refs/heads/{branch}")],
+            );
+        }
+        let bootstrap = store(&repos.alice).bootstrap();
+        assert!(
+            matches!(bootstrap, Err(BoardStoreError::Clash(_))),
+            "{local:?} {remote:?}: {bootstrap:?}"
+        );
+    }
+    let names = [
+        "refs/heads/quecto/other",
+        "refs/heads/quecto/board",
+        "refs/heads/main",
+        "refs/heads/quectoboard",
+    ];
+    assert_eq!(
+        GitBoardStore::clashing(names.into_iter(), "refs/heads/"),
+        Vec::<String>::new()
+    );
+}
+
+#[test]
+fn a_quecto_board_branch_that_is_not_a_board_blocks_bootstrap() {
+    let repos = Repos::new();
+    sh(
+        &repos.alice,
+        &["push", "-q", "origin", "HEAD:refs/heads/quecto/board"],
+    );
+    let bootstrap = store(&repos.bob).bootstrap();
+    assert!(
+        matches!(&bootstrap, Err(BoardStoreError::Clash(why)) if why.contains("not a board")),
+        "{bootstrap:?}"
+    );
+}
+
+#[test]
+fn every_write_regenerates_the_summaries_and_readme_and_drops_strays() {
+    let repos = Repos::new();
+    let alice = store(&repos.alice);
+    let head = created(&alice);
+    written(alice.write(&head, &[task("good")], "board: add good"));
+    let remote = repos.remote();
+    // As long as the right summary, so only its bytes tell them apart.
+    let mut hostile = b"<img src=https://track.example/x>".to_vec();
+    hostile.resize(summary(&task("good")).len(), b' ');
+    let hostile = sh_with(&remote, &["hash-object", "-w", "--stdin"], &hostile);
+    let head = sh(&remote, &["rev-parse", BOARD_REF]);
+    let tasks = sh(&remote, &["ls-tree", &format!("{head}:tasks")]).replace(
+        &sh(&remote, &["rev-parse", &format!("{head}:tasks/good.md")]),
+        &hostile,
+    );
+    let tasks = format!("{tasks}\n100644 blob {hostile}\torphan.md\n");
+    let tasks = sh_with(&remote, &["mktree"], tasks.as_bytes());
+    let root = format!("100644 blob {hostile}\tREADME.md\n040000 tree {tasks}\ttasks\n");
+    let root = sh_with(&remote, &["mktree"], root.as_bytes());
+    let commit = sh(
+        &remote,
+        &["commit-tree", &root, "-p", &head, "-m", "hand edit"],
+    );
+    sh(&remote, &["update-ref", BOARD_REF, &commit]);
+    let bob = store(&repos.bob);
+    let moved = written(bob.write(
+        &bob.read().unwrap().head,
+        &[task("other")],
+        "board: add other",
+    ));
+    let file = |path: &str| {
+        sh(
+            &remote,
+            &["cat-file", "blob", &format!("{}:{path}", moved.0)],
+        )
+    };
+    assert_eq!(file("tasks/good.md"), summary(&task("good")).trim_end());
+    assert_eq!(file("README.md") + "\n", String::from_utf8_lossy(README));
+    let names = sh(
+        &remote,
+        &["ls-tree", "--name-only", &format!("{}:tasks", moved.0)],
+    );
+    assert_eq!(
+        names.lines().collect::<Vec<_>>(),
+        ["good.json", "good.md", "other.json", "other.md"]
+    );
+}
+
+#[test]
 fn tasks_and_their_summaries_are_written_in_one_commit_and_read_back() {
     let repos = Repos::new();
     let alice = store(&repos.alice);
@@ -287,7 +391,7 @@ fn executable(path: &Path, script: &str) {
 }
 
 #[test]
-fn hooks_and_fsmonitor_never_run() {
+fn hooks_never_run() {
     let repos = Repos::new();
     let marker = repos.dir.path().join("hook-ran");
     let script = format!("#!/bin/sh\ntouch '{}'\nexit 1\n", marker.display());
@@ -297,21 +401,14 @@ fn hooks_and_fsmonitor_never_run() {
         "post-commit",
         "reference-transaction",
         "pre-auto-gc",
-        "fsmonitor-watchman",
     ] {
         executable(&repos.alice.join(".git/hooks").join(hook), &script);
     }
-    let monitor = repos.dir.path().join("fsmonitor");
-    executable(&monitor, &script);
-    sh(
-        &repos.alice,
-        &["config", "core.fsmonitor", monitor.to_str().unwrap()],
-    );
     let alice = store(&repos.alice);
     let head = created(&alice);
     written(alice.write(&head, &[task("a")], "board: add a"));
     alice.read().unwrap();
-    assert!(!marker.exists(), "a hook or fsmonitor ran");
+    assert!(!marker.exists(), "a hook ran");
 }
 
 #[test]
@@ -335,136 +432,6 @@ fn inherited_git_dir_index_and_work_tree_are_ignored() {
     assert_eq!(ids(&store(&repos.bob).read().unwrap()), vec!["a"]);
     assert_eq!(sh(&elsewhere, &["for-each-ref"]), "");
     assert!(!index.exists());
-}
-
-#[test]
-fn only_regular_task_files_are_read_and_the_rest_is_set_aside_by_id() {
-    let repos = Repos::new();
-    let alice = store(&repos.alice);
-    let head = created(&alice);
-    written(alice.write(&head, &[task("good")], "board: add good"));
-    let remote = repos.remote();
-    let blob = |bytes: &[u8]| {
-        format!(
-            "100644 blob {}",
-            sh_with(&remote, &["hash-object", "-w", "--stdin"], bytes)
-        )
-    };
-    let mut oversize = encode(&task("big")).unwrap();
-    oversize.resize(MAX_TASK_FILE_BYTES + 1, b' ');
-    let target = sh_with(
-        &remote,
-        &["hash-object", "-w", "--stdin"],
-        b"../../etc/passwd",
-    );
-    let commit = sh(&remote, &["rev-parse", BOARD_REF]);
-    let empty = sh_with(&remote, &["mktree"], b"");
-    hand_edit(
-        &remote,
-        &[
-            ("broken.json", blob(b"{")),
-            ("Upper.json", blob(&encode(&task("upper")).unwrap())),
-            ("named.json", blob(&encode(&task("other")).unwrap())),
-            ("big.json", blob(&oversize)),
-            ("notes.txt", blob(b"notes")),
-            (
-                "exec.json",
-                blob(&encode(&task("exec")).unwrap()).replace("100644", "100755"),
-            ),
-            ("link.json", format!("120000 blob {target}")),
-            ("module.json", format!("160000 commit {commit}")),
-            ("sub", format!("040000 tree {empty}")),
-        ],
-    );
-    let bob = store(&repos.bob);
-    let snapshot = bob.read().unwrap();
-    assert_eq!(ids(&snapshot), vec!["good"]);
-    let found: BTreeMap<&str, (Option<&str>, &str)> = snapshot
-        .quarantined
-        .iter()
-        .map(|q| {
-            (
-                q.path.as_str(),
-                (q.id.as_ref().map(Slug::as_str), q.reason.as_str()),
-            )
-        })
-        .collect();
-    let by_id: Vec<(&str, Option<&str>)> =
-        found.iter().map(|(path, (id, _))| (*path, *id)).collect();
-    assert_eq!(
-        by_id,
-        [
-            ("tasks/Upper.json", None),
-            ("tasks/big.json", Some("big")),
-            ("tasks/broken.json", Some("broken")),
-            ("tasks/exec.json", Some("exec")),
-            ("tasks/link.json", Some("link")),
-            ("tasks/module.json", Some("module")),
-            ("tasks/named.json", Some("named")),
-            ("tasks/notes.txt", None),
-            ("tasks/sub", None),
-        ]
-    );
-    assert!(found["tasks/big.json"].1.contains("bytes"), "{found:?}");
-    assert!(
-        found["tasks/named.json"].1.contains("\"other\""),
-        "{found:?}"
-    );
-    assert!(
-        found["tasks/broken.json"].1.contains("malformed"),
-        "{found:?}"
-    );
-    assert!(found["tasks/link.json"].1.contains("regular"), "{found:?}");
-
-    for id in ["broken", "link", "named"] {
-        let refused = bob.write(&snapshot.head, &[task(id)], &format!("board: write {id}"));
-        assert!(
-            matches!(refused, Ok(BoardWrite::Refused(_))),
-            "{id}: {refused:?}"
-        );
-    }
-    assert_eq!(sh(&remote, &["rev-parse", BOARD_REF]), snapshot.head.0);
-    // A write carries forward only regular task files, never links,
-    // modules, subtrees or strays.
-    let moved = written(bob.write(&snapshot.head, &[task("fresh")], "board: add fresh"));
-    let kept = sh(
-        &remote,
-        &["ls-tree", "--name-only", &format!("{}:tasks", moved.0)],
-    );
-    assert_eq!(
-        kept.lines().collect::<Vec<_>>(),
-        [
-            "big.json",
-            "broken.json",
-            "fresh.json",
-            "fresh.md",
-            "good.json",
-            "good.md",
-            "named.json"
-        ]
-    );
-}
-
-#[test]
-fn a_board_tree_past_its_entry_bound_is_not_read() {
-    let repos = Repos::new();
-    let alice = store(&repos.alice);
-    created(&alice);
-    written(alice.write(&alice.read().unwrap().head, &[task("a")], "board: add a"));
-    let blob = sh_with(&repos.remote(), &["hash-object", "-w", "--stdin"], b"x");
-    let many: Vec<(String, String)> = (0..MAX_TASK_ENTRIES)
-        .map(|n| (format!("n{n}.md"), format!("100644 blob {blob}")))
-        .collect();
-    let many: Vec<(&str, String)> = many
-        .iter()
-        .map(|(name, meta)| (name.as_str(), meta.clone()))
-        .collect();
-    hand_edit(&repos.remote(), &many);
-    let read = store(&repos.bob).read();
-    assert!(
-        matches!(&read, Err(BoardStoreError::Unavailable(why)) if why.contains("entries")),
-        "{read:?}"
-    );
 }
 
 #[test]
@@ -496,63 +463,9 @@ fn bad_arguments_are_refused_before_git_runs() {
     assert_eq!(alice.read().unwrap().head, head);
 }
 
-#[test]
-fn a_git_that_hangs_is_stopped_with_its_whole_process_group() {
-    let repos = Repos::new();
-    let bin = repos.dir.path().join("bin");
-    std::fs::create_dir(&bin).unwrap();
-    let marker = repos.dir.path().join("grandchild-lived");
-    executable(
-        &bin.join("git"),
-        &format!(
-            "#!/bin/sh\n(sleep 1; touch '{}') &\nexec sleep 30\n",
-            marker.display()
-        ),
-    );
-    let mut path = bin.into_os_string();
-    path.push(":");
-    path.push(std::env::var_os("PATH").unwrap());
-    let env = GitEnvironment::allowlisted([("PATH".into(), path)]);
-    let mut git = Git::new(&repos.alice, env, person("Ada")).unwrap();
-    git.network_timeout = std::time::Duration::from_millis(200);
-    let started = std::time::Instant::now();
-    let read = GitBoardStore::new(git, "origin").unwrap().read();
-    assert!(
-        matches!(&read, Err(BoardStoreError::Unavailable(why)) if why.contains("TimedOut")),
-        "{read:?}"
-    );
-    assert!(started.elapsed() < std::time::Duration::from_secs(5));
-    std::thread::sleep(std::time::Duration::from_millis(1500));
-    assert!(!marker.exists(), "the timed-out git's child outlived it");
-}
-
-#[test]
-fn only_allowlisted_variables_reach_git() {
-    let env = GitEnvironment::allowlisted(
-        [
-            "PATH",
-            "HOME",
-            "GIT_DIR",
-            "GIT_INDEX_FILE",
-            "GIT_WORK_TREE",
-            "GIT_SSH_COMMAND",
-            "AWS_SECRET_ACCESS_KEY",
-        ]
-        .map(|key| (OsString::from(key), OsString::from("x"))),
-    );
-    let kept = format!("{env:?}");
-    for key in ["PATH", "HOME", "GIT_SSH_COMMAND"] {
-        assert!(kept.contains(key), "{key}");
-    }
-    for key in [
-        "GIT_DIR",
-        "GIT_INDEX_FILE",
-        "GIT_WORK_TREE",
-        "AWS_SECRET_ACCESS_KEY",
-    ] {
-        assert!(!kept.contains(key), "{key}");
-    }
-}
-
+#[path = "store_hostile_tests.rs"]
+mod hostile;
 #[path = "store_push_tests.rs"]
 mod push;
+#[path = "git_runner_tests.rs"]
+mod runner;

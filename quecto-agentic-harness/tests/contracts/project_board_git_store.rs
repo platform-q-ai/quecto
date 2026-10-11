@@ -1,8 +1,10 @@
 //! The project board store's contract, run against the git store: two
 //! clones of one bare remote, each its own client.
 use super::project_board_store::{
-    Clients, check_bootstrap, check_compare_and_swap, check_invalid_writes, check_quarantine,
-    check_refused, check_write_and_read,
+    Clients, check_bootstrap, check_bootstrap_race, check_committed_as_writer,
+    check_compare_and_swap, check_invalid_writes, check_quarantine, check_refused,
+    check_write_after_lost_and_refused, check_write_and_read, check_write_before_bootstrap,
+    check_writer,
 };
 use quecto::domain::project_board::entities::claim::Identity;
 use quecto::infrastructure::persistence::project_board::git::{Git, GitEnvironment};
@@ -161,8 +163,33 @@ fn the_git_store_sets_unreadable_files_aside() {
 }
 
 #[test]
-fn the_git_store_writer_is_its_committer() {
-    use quecto::application::project_board::ports::ProjectBoardStore;
+fn the_git_store_writes_again_after_a_lost_or_refused_write() {
     let remote = Remote::new();
-    assert_eq!(remote.client(0, "Alice").writer().name, "Alice");
+    check_write_after_lost_and_refused(remote.clients(), || remote.refuse_next_push());
+}
+
+#[test]
+fn the_git_store_takes_no_write_before_it_is_bootstrapped() {
+    check_write_before_bootstrap(Remote::new().clients());
+}
+
+#[test]
+fn the_git_store_bootstraps_once_when_two_race() {
+    check_bootstrap_race(Remote::new().clients());
+}
+
+#[test]
+fn the_git_store_writes_as_a_valid_committer() {
+    check_writer(Remote::new().clients());
+}
+
+#[test]
+fn the_git_store_commits_as_its_writer() {
+    let remote = Remote::new();
+    let reader = remote.client(0, "Reader");
+    check_committed_as_writer(remote.clients(), |head| {
+        reader
+            .committed_by(&head.0)
+            .expect("the commit is on the remote")
+    });
 }

@@ -1,5 +1,5 @@
-//! How a push is judged: by its own ref status, or, when it reports none,
-//! by whether the remote board holds our commit.
+//! How a push is judged: by its own ref status when it reports our ref
+//! updated, and otherwise by whether the remote board holds our commit.
 use super::*;
 
 /// A `post-receive` hook on the remote that stacks another writer's commit
@@ -106,47 +106,94 @@ fn a_push_that_reports_nothing_and_did_not_land_is_unavailable() {
     );
     let write = alice.write(&head, &[task("a")], "board: add a");
     assert!(
-        matches!(write, Err(BoardStoreError::Unavailable(_))),
+        matches!(&write, Err(BoardStoreError::Unavailable(why)) if why.contains("may have moved")),
         "{write:?}"
     );
     assert_eq!(sh(&repos.remote(), &["rev-parse", BOARD_REF]), head.0);
 }
 
 #[test]
-fn reading_the_board_fetches_no_tags_and_prunes_nothing() {
+fn reading_the_board_fetches_no_tags() {
     let repos = Repos::new();
     let alice = store(&repos.alice);
     created(&alice);
     sh(&repos.bob, &["tag", "remote-only"]);
     sh(&repos.bob, &["push", "-q", "origin", "remote-only"]);
     sh(&repos.alice, &["tag", "local-only"]);
+    sh(&repos.alice, &["config", "remote.origin.tagOpt", "--tags"]);
+    alice.read().unwrap();
+    let tags = sh(
+        &repos.alice,
+        &["for-each-ref", "--format=%(refname)", "refs/tags"],
+    );
+    assert_eq!(tags, "refs/tags/local-only");
+}
+
+/// A commit on top of `base` that was never pushed.
+fn unpushed(repos: &Repos, base: &BoardHead) -> String {
     sh(
         &repos.alice,
-        &["update-ref", "refs/remotes/origin/gone", "HEAD"],
+        &[
+            "commit-tree",
+            &format!("{}^{{tree}}", base.0),
+            "-p",
+            &base.0,
+            "-m",
+            "unpushed",
+        ],
+    )
+}
+
+#[test]
+fn any_push_outcome_but_updated_is_judged_by_the_board() {
+    let repos = Repos::new();
+    let alice = store(&repos.alice);
+    let base = created(&alice);
+    let landed = written(alice.write(&base, &[task("a")], "board: add a"));
+    // Our commit is on the board, whatever the push reported.
+    assert_eq!(
+        alice.judge(Some(&base.0), &landed.0, Ok("[remote failure]".into())),
+        Ok(Pushed::Landed)
     );
-    for (key, value) in [
-        ("fetch.prune", "true"),
-        ("fetch.pruneTags", "true"),
-        ("remote.origin.prune", "true"),
-        ("remote.origin.tagOpt", "--tags"),
-    ] {
-        sh(&repos.alice, &["config", key, value]);
-    }
-    let refs = || {
-        sh(
-            &repos.alice,
-            &[
-                "for-each-ref",
-                "--format=%(refname)",
-                "refs/tags",
-                "refs/remotes/origin/gone",
-            ],
-        )
-    };
-    let before = refs();
-    alice.read().unwrap();
-    assert_eq!(refs(), before);
-    assert_eq!(before, "refs/remotes/origin/gone\nrefs/tags/local-only");
+    assert_eq!(
+        alice.judge(Some(&base.0), &landed.0, Err("no report".into())),
+        Ok(Pushed::Landed)
+    );
+    // The board is where we left it: a rejection refused us.
+    let ours = unpushed(&repos, &landed);
+    assert_eq!(
+        alice.judge(Some(&landed.0), &ours, Ok("[remote rejected]".into())),
+        Ok(Pushed::Refused("[remote rejected]".into()))
+    );
+    // It moved past where we started: lost.
+    let stale = unpushed(&repos, &base);
+    assert_eq!(
+        alice.judge(Some(&base.0), &stale, Ok("[rejected] (stale info)".into())),
+        Ok(Pushed::Lost)
+    );
+    // Nothing reported and the board did not move: it may still.
+    let unknown = alice.judge(Some(&landed.0), &ours, Err("the push timed out".into()));
+    assert!(
+        matches!(&unknown, Err(BoardStoreError::Unavailable(why)) if why.contains("timed out") && why.contains("may have moved")),
+        "{unknown:?}"
+    );
+}
+
+#[test]
+fn a_push_that_fails_outright_says_why() {
+    let repos = Repos::new();
+    let alice = store(&repos.alice);
+    let head = created(&alice);
+    let nowhere = repos.dir.path().join("nowhere.git");
+    sh(
+        &repos.alice,
+        &["config", "remote.origin.pushurl", nowhere.to_str().unwrap()],
+    );
+    let write = alice.write(&head, &[task("a")], "board: add a");
+    assert!(
+        matches!(&write, Err(BoardStoreError::Unavailable(why)) if why.contains("does not appear to be a git repository")),
+        "{write:?}"
+    );
 }
 
 #[test]
