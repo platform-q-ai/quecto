@@ -2,7 +2,7 @@
 use super::schema_error::SchemaError;
 use super::slug::Slug;
 use super::timestamp::Timestamp;
-use super::vocabulary::{PlanState, TaskStatus};
+use super::vocabulary::{DiscussionLimit, PlanState, TaskStatus};
 use std::fmt;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -70,8 +70,11 @@ pub enum BoardRuleError {
     /// caller's time or the outside time allows: a clock running ahead.
     MessageAhead { discussion: Slug, at: Timestamp },
     /// The discussion is full: the batch would take it past its most
-    /// messages, lines or bytes (`reason`). Begin another to go on.
-    DiscussionFull { discussion: Slug, reason: String },
+    /// messages, lines or text (`limit`). Begin another to go on.
+    DiscussionFull {
+        discussion: Slug,
+        limit: DiscussionLimit,
+    },
     /// The task links changes: it is done when they merge, through the
     /// completion anyone may run, not by its holder's say-so. The holder
     /// may unlink one deliberately first.
@@ -208,10 +211,11 @@ impl fmt::Display for BoardRuleError {
                 discussion.as_str(),
                 at.as_str()
             ),
-            Self::DiscussionFull { discussion, reason } => write!(
+            Self::DiscussionFull { discussion, limit } => write!(
                 f,
-                "discussion {} is full ({reason}): begin another to go on",
-                discussion.as_str()
+                "discussion {} has no room for more {}: begin another to go on",
+                discussion.as_str(),
+                limit.as_str()
             ),
             Self::ChangesLinked(numbers) => write!(
                 f,

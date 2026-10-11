@@ -53,6 +53,10 @@ fn the_parts_vocabularies_are_spelt_exactly() {
         "open closed"
     );
     assert_eq!(
+        spelt(DiscussionLimit::ALL.iter().map(|w| w.as_str()).collect()),
+        "messages lines text"
+    );
+    assert_eq!(
         (
             Effort::parse("xhigh"),
             Effort::parse("none"),

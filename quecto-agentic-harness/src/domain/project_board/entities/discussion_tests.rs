@@ -172,89 +172,135 @@ fn a_discussion_holds_its_widest_message_and_its_most_lines() {
     assert_eq!(Discussion::new(most).unwrap_err().field, "messages");
 }
 
-/// The bytes one message row of `author` writing `line` takes in its
-/// file, as the codec writes it (`|` escaped), with the widest message
-/// number: what `text_bytes` must never undercount.
-fn row(author: &Identity, at: &Timestamp, line: &str) -> usize {
+/// The bytes `discussion`'s message rows take in its file as the codec
+/// writes them: `"| "`, the cells joined by `" | "`, `" |"` and a
+/// newline; the cells its message number, its author as
+/// ``Name (`email`)``, its time and the line, each `|` in a cell written
+/// `\|`. What `text_bytes` must never undercount.
+fn written(discussion: &DiscussionFields) -> usize {
     let cell = |text: &str| text.replace('|', "\\|");
-    format!(
-        "| {MAX_MESSAGES} | {} ({}) | {} | {} |\n",
-        cell(&author.name),
-        cell(&author.email),
-        at.as_str(),
-        cell(line)
-    )
-    .len()
+    let row = |number: usize, message: &Message, line: &str| {
+        format!(
+            "| {number} | {} (`{}`) | {} | {} |\n",
+            cell(&message.author.name),
+            cell(&message.author.email),
+            message.at.as_str(),
+            cell(line)
+        )
+        .len()
+    };
+    discussion
+        .messages
+        .iter()
+        .enumerate()
+        .flat_map(|(index, message)| {
+            message
+                .text
+                .split('\n')
+                .map(move |line| row(index + 1, message, line))
+        })
+        .sum()
 }
 
-/// A discussion's text is bounded by what it takes in its file: the
-/// worst case, every character a `|` written `\|` and every row as short
-/// and as many as can be, fills the budget exactly, and its rows as the
-/// codec writes them fit inside the budget, so the whole file fits its
-/// cap with the reserve.
+/// Lines of `|`s (and one `x` to make the bytes even) filling exactly
+/// `left` bytes as `text_bytes` counts them, each line taking `per_line`
+/// besides its own text.
+fn pipe_lines(mut left: usize, per_line: usize) -> Vec<String> {
+    let widest = per_line + 2 * MAX_MESSAGE_LINE_CHARS;
+    let line = |cost: usize| {
+        let rest = cost - per_line;
+        format!("{}{}", "|".repeat(rest / 2), "x".repeat(rest % 2))
+    };
+    let mut lines = vec![];
+    while left > widest + per_line + 2 {
+        lines.push(line(widest));
+        left -= widest;
+    }
+    if left > widest {
+        let cost = left - (per_line + 2);
+        lines.push(line(cost));
+        left -= cost;
+    }
+    lines.push(line(left));
+    lines
+}
+
+/// A discussion's text is bounded by what it takes in its file. The
+/// widest case, every character a `|` written `\|` in lines as long as
+/// they can be, fills the budget to the byte; its rows as the codec
+/// writes them take no more than counted, so with the reserve the whole
+/// file fits its cap.
 #[test]
-fn a_discussions_text_is_bounded_by_what_its_file_takes() {
+fn a_discussions_widest_text_fits_its_file() {
     let mut full = fields();
     full.title = "|".repeat(MAX_TITLE_CHARS);
     full.messages.truncate(1);
-    let author = full.messages[0].author.clone();
-    let wide = vec!["|".repeat(MAX_MESSAGE_LINE_CHARS); MAX_MESSAGE_LINES].join("\n");
-    let per_wide = full.messages[0].clone();
-    loop {
-        let mut next = full.clone();
-        next.messages.push(Message {
-            text: wide.clone(),
+    let first = full.messages[0].clone();
+    let per_line = identity_bytes(&first.author) + ROW_OVERHEAD_BYTES;
+    let lines = pipe_lines(MAX_DISCUSSION_TEXT_BYTES - full.text_bytes(), per_line);
+    for chunk in lines.chunks(MAX_MESSAGE_LINES) {
+        full.messages.push(Message {
             at: at("09:05:00"),
-            ..per_wide.clone()
+            text: chunk.join("\n"),
+            ..first.clone()
         });
-        match next.text_bytes() <= MAX_DISCUSSION_TEXT_BYTES {
-            true => full = next,
-            false => break,
-        }
     }
-    // The rest in one message of `|`s, to the byte.
-    let per_line = identity_bytes(&author) + ROW_OVERHEAD_BYTES;
-    let mut left = MAX_DISCUSSION_TEXT_BYTES - full.text_bytes() - per_line;
-    let mut lines = vec![];
-    while left > 0 {
-        let take = (left / 2).min(MAX_MESSAGE_LINE_CHARS);
-        assert!(take > 0, "an even remainder: {left}");
-        lines.push("|".repeat(take));
-        left -= 2 * take;
-        if left > 0 {
-            left -= per_line;
-        }
-    }
-    full.messages.push(Message {
-        author: author.clone(),
-        at: at("09:05:00"),
-        text: lines.join("\n"),
-    });
     assert_eq!(
         full.text_bytes(),
         MAX_DISCUSSION_TEXT_BYTES,
         "the budget, to the byte"
     );
-    let rows: usize = full
-        .messages
-        .iter()
-        .flat_map(|message| {
-            message
-                .text
-                .split('\n')
-                .map(|line| row(&message.author, &message.at, line))
-        })
-        .sum();
+    let rows = written(&full);
     assert!(
         rows <= full.text_bytes(),
         "{rows} written > {} counted",
         full.text_bytes()
     );
-    const { assert!(MAX_DISCUSSION_TEXT_BYTES + FILE_RESERVE_BYTES <= MAX_DISCUSSION_FILE_BYTES) };
+    assert!(rows + FILE_RESERVE_BYTES <= MAX_DISCUSSION_FILE_BYTES);
     assert!(Discussion::new(full.clone()).is_ok(), "exactly the budget");
     let last = full.messages.len() - 1;
     full.messages[last].text.push('x');
     assert_eq!(Discussion::new(full).unwrap_err().field, "text");
+}
+
+/// The shortest rows as many as can be: 16,000 one-character lines over
+/// 1,024 messages, the three- and four-digit message numbers loaded
+/// (messages 1–99 one row each, 1,000–1,024 sixty-four each, the rest in
+/// 100–999), fit the file as the codec writes them.
+#[test]
+fn a_discussions_most_rows_fit_its_file() {
+    let mut many = fields();
+    let base = many.messages[0].clone();
+    let short = (MAX_DISCUSSION_LINES - 99 - 25 * MAX_MESSAGE_LINES) as u32;
+    let (each, extra) = (short / 900, short % 900);
+    many.messages = (1..=MAX_MESSAGES as u32)
+        .map(|number| {
+            let lines = match number {
+                1..=99 => 1,
+                1000.. => MAX_MESSAGE_LINES as u32,
+                _ => each + u32::from(number - 100 < extra),
+            };
+            Message {
+                text: vec!["x"; lines as usize].join("\n"),
+                ..base.clone()
+            }
+        })
+        .collect();
+    assert_eq!(
+        (many.messages.len(), many.lines()),
+        (MAX_MESSAGES, MAX_DISCUSSION_LINES)
+    );
+    let rows = written(&many);
+    assert!(
+        rows <= many.text_bytes(),
+        "{rows} written > {} counted",
+        many.text_bytes()
+    );
+    assert!(
+        rows + FILE_RESERVE_BYTES <= MAX_DISCUSSION_FILE_BYTES,
+        "{rows}"
+    );
+    assert!(Discussion::new(many).is_ok());
 }
 
 fn identity_bytes(who: &Identity) -> usize {

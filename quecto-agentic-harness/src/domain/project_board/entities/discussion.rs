@@ -25,11 +25,16 @@ pub const MAX_MESSAGE_LINE_CHARS: usize = 1_000;
 pub const MAX_DISCUSSION_LINES: usize = 16_000;
 /// The largest discussion file (the codec's cap, S13).
 pub const MAX_DISCUSSION_FILE_BYTES: usize = 1024 * 1024;
-/// The fixed bytes of one message row in its file, `| n | Name (email) |
-/// at | text |` and its newline: `| ` (2), the message number (at most 4
-/// digits, [`MAX_MESSAGES`]), ` | ` (3), ` (` and `)` around the email
-/// (3), ` | ` (3), the time (20), ` | ` (3) and ` |\n` (3): 41.
-pub const ROW_OVERHEAD_BYTES: usize = 41;
+/// The fixed bytes of one message row in its file. The codec writes a
+/// row as `"| "`, its cells joined by `" | "`, then `" |"` and a newline;
+/// the cells are the message number, its author as ``Name (`email`)``
+/// (the email in a code span), its time and the line. Besides the line
+/// and the author's name and email ([`DiscussionFields::text_bytes`]
+/// counts those), a row takes `| ` (2), the number (at most 4 digits,
+/// [`MAX_MESSAGES`]), ` | ` (3), `` (` `` and `` `) `` around the email (3
+/// and 2), ` | ` (3), the time (20), ` | ` (3) and ` |` with its newline
+/// (3): 43.
+pub const ROW_OVERHEAD_BYTES: usize = 43;
 /// Room in the file for what [`DiscussionFields::text_bytes`] does not
 /// count: the kind marker, the fields table's rows other than its title
 /// and starter (an id and a task of at most 64 bytes each, a state word,
@@ -194,10 +199,20 @@ fn validate(discussion: &DiscussionFields) -> Result<(), SchemaError> {
                 ));
             }
         }
-        message.author.validate(&format!("{field}/author"))?;
-        text(&field, message)?;
+        message_shape(&field, message)?;
     }
     Ok(())
+}
+
+/// A message's own shape, `field` naming it: its author, and its text of
+/// one to [`MAX_MESSAGE_LINES`] lines, each a single line with something
+/// visible. A batch is judged by it before the room it takes.
+///
+/// # Errors
+/// The first rule the message breaks.
+pub fn message_shape(field: &str, message: &Message) -> Result<(), SchemaError> {
+    message.author.validate(&format!("{field}/author"))?;
+    text(field, message)
 }
 
 /// A message's text: one to [`MAX_MESSAGE_LINES`] lines, each a single

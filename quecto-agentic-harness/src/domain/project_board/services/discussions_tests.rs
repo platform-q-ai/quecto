@@ -4,7 +4,9 @@ use crate::domain::project_board::entities::discussion::{
 };
 use crate::domain::project_board::services::fixtures_tests::{at, person, task};
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
-use crate::domain::project_board::value_objects::vocabulary::{DiscussionState, TaskStatus};
+use crate::domain::project_board::value_objects::vocabulary::{
+    DiscussionLimit, DiscussionState, TaskStatus,
+};
 
 fn message(who: &str, time: &str, text: &str) -> Message {
     Message {
@@ -160,13 +162,16 @@ fn a_batch_of_messages_is_added_to_an_open_discussion() {
 }
 
 /// A batch that would take a discussion past its most messages, lines or
-/// bytes is refused as full, naming which.
+/// text is refused as full, naming which; a message out of shape is named
+/// as such first, never read as the discussion being full.
 #[test]
 fn a_batch_that_would_overfill_a_discussion_is_refused_as_full() {
     let discussion = begun();
-    let full = |result: Result<Discussion, BoardRuleError>, what: &str| {
-        matches!(result, Err(BoardRuleError::DiscussionFull { discussion, reason })
-            if discussion == id() && reason.contains(what))
+    let full = |limit: DiscussionLimit| {
+        Err(BoardRuleError::DiscussionFull {
+            discussion: id(),
+            limit,
+        })
     };
     let one = |text: &str| message("Ada", "09:20:00", text);
     let at_most = vec![one("x"); MAX_MESSAGES - 2];
@@ -175,22 +180,38 @@ fn a_batch_that_would_overfill_a_discussion_is_refused_as_full() {
         "exactly the most"
     );
     let past = [at_most, vec![one("x")]].concat();
-    assert!(full(
+    assert_eq!(
         append(&discussion, past, &when("10:00:00")),
-        "messages"
-    ));
+        full(DiscussionLimit::Messages)
+    );
     let long = vec!["x"; MAX_MESSAGE_LINES].join("\n");
     let many_lines = vec![one(&long); MAX_DISCUSSION_LINES / MAX_MESSAGE_LINES];
-    assert!(full(
-        append(&discussion, many_lines, &when("10:00:00")),
-        "lines"
-    ));
+    assert_eq!(
+        append(&discussion, many_lines.clone(), &when("10:00:00")),
+        full(DiscussionLimit::Lines)
+    );
     let wide = vec!["|".repeat(MAX_MESSAGE_LINE_CHARS); MAX_MESSAGE_LINES].join("\n");
     let many_bytes = vec![one(&wide); 9];
-    assert!(full(
+    assert_eq!(
         append(&discussion, many_bytes, &when("10:00:00")),
-        "bytes"
-    ));
+        full(DiscussionLimit::Text)
+    );
+    for (bad, field) in [
+        (
+            vec!["x"; MAX_MESSAGE_LINES + 1].join("\n"),
+            "batch/250/text",
+        ),
+        ("x".repeat(MAX_MESSAGE_LINE_CHARS + 1), "batch/250/text/0"),
+        (" ".to_string(), "batch/250/text/0"),
+    ] {
+        let mut overfull = many_lines.clone();
+        overfull.push(one(&bad));
+        let refused = append(&discussion, overfull, &when("10:00:00"));
+        assert!(
+            matches!(&refused, Err(BoardRuleError::Invalid(error)) if error.field == field),
+            "{field}: {refused:?}"
+        );
+    }
 }
 
 #[test]
@@ -299,7 +320,13 @@ fn a_message_from_far_ahead_is_refused_without_an_outside_time() {
     );
     assert_eq!(begin(opening(vec![from_far]), &when("10:00:00")), refused);
     let near = message("Ada", "10:00:31", "x");
-    assert!(append(&discussion, vec![near.clone()], &when("10:00:00")).is_err());
+    assert_eq!(
+        append(&discussion, vec![near], &when("10:00:00")),
+        Err(BoardRuleError::MessageAhead {
+            discussion: id(),
+            at: at("10:00:31")
+        })
+    );
     let slack = message("Ada", "10:00:30", "x");
     let taken = append(&discussion, vec![slack], &when("10:00:00")).unwrap();
     assert_eq!(taken.fields().updated, at("10:00:30"));

@@ -494,10 +494,10 @@ fn rule_json(rule: &BoardRuleError) -> Value {
             "discussion": discussion.as_str(),
             "at": at.as_str(),
         }),
-        R::DiscussionFull { discussion, reason } => json!({
+        R::DiscussionFull { discussion, limit } => json!({
             "code": "discussion_full",
             "discussion": discussion.as_str(),
-            "reason": shown(reason),
+            "limit": limit.as_str(),
         }),
         R::ChangesLinked(changes) => json!({"code": "changes_linked", "changes": changes}),
         R::PrUnread(pr) => json!({"code": "pr_unread", "pr": pr}),

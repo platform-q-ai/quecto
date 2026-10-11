@@ -11,19 +11,24 @@
 //! later than the caller's time (or the outside time, when one bounds the
 //! clock) plus the stamp's slack.
 //!
-//! What the use cases must bring (M4): `begin` does not know the board, so
-//! the use case refuses an id a discussion already has before it begins
-//! one.
+//! What the use cases must bring (M4):
+//! - `begin` does not know the board, so the use case refuses an id a
+//!   discussion already has before it begins one;
+//! - M4 stamps live messages: the append op gives each message the board's
+//!   own time, so a client's clock never orders a discussion. Client times
+//!   are accepted only on import (comment threads brought in with the
+//!   times they were said), where a message earlier than the last is
+//!   refused as it is here.
 use super::super::entities::claim::Identity;
 use super::super::entities::discussion::{
     Discussion, DiscussionFields, MAX_DISCUSSION_LINES, MAX_DISCUSSION_TEXT_BYTES, MAX_MESSAGES,
-    Message,
+    Message, message_shape,
 };
 use super::super::entities::task::Task;
 use super::super::value_objects::rule_error::BoardRuleError;
 use super::super::value_objects::schema_error::SchemaError;
 use super::super::value_objects::slug::Slug;
-use super::super::value_objects::vocabulary::DiscussionState;
+use super::super::value_objects::vocabulary::{DiscussionLimit, DiscussionState};
 use super::claims::{after_last, within_slack};
 use super::plans::Moment;
 
@@ -78,9 +83,9 @@ pub fn begin(opening: Opening<'_>, when: &Moment) -> Result<Discussion, BoardRul
 ///
 /// # Errors
 /// A discussion closed or stamped ahead; an empty batch; a message stamped
-/// ahead; a batch that would fill the discussion past its most messages,
-/// lines or bytes; or a discussion its schema refuses (a message out of
-/// shape, or said before the last one).
+/// ahead; a message out of shape; a batch that would fill the discussion
+/// past its most messages, lines or text; or a discussion its schema
+/// refuses (a message said before the last one).
 pub fn append(
     discussion: &Discussion,
     messages: Vec<Message>,
@@ -94,24 +99,18 @@ pub fn append(
         Some(last) => last.at.clone(),
         None => return Err(BoardRuleError::NoEdit),
     };
+    // Each message's own shape first, so a message out of shape is named
+    // as such, never read as the discussion being full.
+    let mut shapes = messages.iter().enumerate();
+    shapes
+        .try_for_each(|(index, message)| message_shape(&format!("batch/{index}"), message))
+        .map_err(BoardRuleError::Invalid)?;
     let before = fields.messages.len();
-    let batch = messages.len();
     let mut next = fields.clone();
     next.updated = after_last(&fields.updated, &when.now)?.max(last);
     next.messages.extend(messages);
     room(&next)?;
-    assert_eq!(
-        next.messages.len(),
-        before + batch,
-        "the batch, every message of it"
-    );
-    let added =
-        Discussion::new(next).map_err(|error| BoardRuleError::Invalid(in_batch(error, before)))?;
-    assert!(
-        added.fields().updated > fields.updated,
-        "a change moves updated forward"
-    );
-    Ok(added)
+    Discussion::new(next).map_err(|error| BoardRuleError::Invalid(in_batch(error, before)))
 }
 
 /// `discussion` linked to `task`, written `when`: the task it is about.
@@ -201,22 +200,19 @@ fn not_ahead(id: &Slug, messages: &[Message], when: &Moment) -> Result<(), Board
 /// lines at most [`MAX_DISCUSSION_LINES`], their text at most
 /// [`MAX_DISCUSSION_TEXT_BYTES`].
 fn room(next: &DiscussionFields) -> Result<(), BoardRuleError> {
-    let (messages, lines, bytes) = (next.messages.len(), next.lines(), next.text_bytes());
-    let reason = match (
-        messages <= MAX_MESSAGES,
-        lines <= MAX_DISCUSSION_LINES,
-        bytes <= MAX_DISCUSSION_TEXT_BYTES,
+    let limit = match (
+        next.messages.len() <= MAX_MESSAGES,
+        next.lines() <= MAX_DISCUSSION_LINES,
+        next.text_bytes() <= MAX_DISCUSSION_TEXT_BYTES,
     ) {
         (true, true, true) => return Ok(()),
-        (false, _, _) => format!("{messages} messages; the most is {MAX_MESSAGES}"),
-        (true, false, _) => format!("{lines} lines; the most is {MAX_DISCUSSION_LINES}"),
-        (true, true, false) => {
-            format!("{bytes} bytes of text; the most is {MAX_DISCUSSION_TEXT_BYTES}")
-        }
+        (false, _, _) => DiscussionLimit::Messages,
+        (true, false, _) => DiscussionLimit::Lines,
+        (true, true, false) => DiscussionLimit::Text,
     };
     Err(BoardRuleError::DiscussionFull {
         discussion: next.id.clone(),
-        reason,
+        limit,
     })
 }
 

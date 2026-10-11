@@ -126,8 +126,9 @@ pub(super) fn stamp(task: &Task, now: &Timestamp) -> Result<Timestamp, BoardRule
 }
 
 /// When a change to an artifact last changed at `updated` happens: `now`,
-/// or a second past `updated` if `now` reads no later. One rule for every
-/// artifact, so each change moves its `updated` strictly forward.
+/// or a second past `updated` if `now` reads no later. The one rule the
+/// board's stamps follow (tasks, plans, changes and discussions), so each
+/// change moves its `updated` strictly forward.
 ///
 /// # Errors
 /// An artifact stamped at the last moment the board can spell.
