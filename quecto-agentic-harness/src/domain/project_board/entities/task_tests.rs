@@ -204,7 +204,7 @@ fn a_committer_is_known_by_email_whatever_its_case() {
 }
 
 #[test]
-fn identities_are_equal_exactly_when_they_are_the_same_committer() {
+fn identities_compare_whole_but_match_a_holder_by_email() {
     let ada = Identity {
         name: "Ada".into(),
         email: "ada@example.com".into(),
@@ -213,11 +213,19 @@ fn identities_are_equal_exactly_when_they_are_the_same_committer() {
         name: "Ada Lovelace".into(),
         email: "ADA@Example.COM".into(),
     };
-    let bob = Identity {
-        name: "Ada".into(),
-        email: "bob@example.com".into(),
+    assert!(ada.is(&renamed), "the same committer");
+    assert_ne!(ada, renamed, "a value with another name is another value");
+    let mut task = fields();
+    let renamed_holder = {
+        let mut next = task.clone();
+        claim(&mut next).holder.name = "Ada L.".into();
+        next
     };
-    assert_eq!(ada == renamed, ada.is(&renamed));
-    assert_eq!(ada == bob, ada.is(&bob));
-    assert!(ada == renamed && ada != bob);
+    assert_ne!(
+        Task::new(renamed_holder).unwrap(),
+        Task::new(task.clone()).unwrap(),
+        "a task whose holder changed name is a changed task"
+    );
+    claim(&mut task).holder.email = "ADA@EXAMPLE.COM".into();
+    assert_ne!(task, fields(), "an email's spelling is part of the value");
 }

@@ -184,7 +184,7 @@ fn a_task_with_every_field_at_its_cap_is_written_and_read_back() {
 fn every_schema_names_the_quecto_that_introduced_it() {
     let numbers: Vec<u32> = SCHEMAS.iter().map(|(number, _)| *number).collect();
     assert_eq!(numbers, (1..=SCHEMA_VERSION).collect::<Vec<u32>>());
-    assert_eq!(introduced_in(1), Some("0.107.250"));
+    assert_eq!(introduced_in(1), Some("0.107.251"));
     assert_eq!(introduced_in(SCHEMA_VERSION + 1), None);
 }
 
@@ -194,7 +194,7 @@ fn a_newer_schema_names_the_least_quecto_that_can_read_it() {
     let wanted = [
         "schema 2".to_string(),
         format!("needs a quecto newer than {}", env!("CARGO_PKG_VERSION")),
-        "schema 1 arrived in quecto 0.107.250".to_string(),
+        "schema 1 arrived in quecto 0.107.251".to_string(),
         "upgrade quecto".to_string(),
     ];
     for part in wanted {
