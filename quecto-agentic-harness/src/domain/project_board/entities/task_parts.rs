@@ -4,7 +4,7 @@
 //! Runs and reviews are capped. When a long-lived task reaches a cap, the
 //! swarm fold-back (S4) records a summary entry in place of older ones;
 //! until then a write past the cap is refused.
-use super::super::value_objects::schema_error::{SchemaError, distinct, line};
+use super::super::value_objects::schema_error::{SchemaError, distinct, filled_markdown, line};
 use super::super::value_objects::slug::Slug;
 use super::super::value_objects::timestamp::Timestamp;
 use super::super::value_objects::vocabulary::{Effort, ItemState, RunOutcome, Severity, Verdict};
@@ -18,15 +18,15 @@ pub const MAX_ITEMS: usize = 128;
 pub const MAX_PER_ITEM: usize = 16;
 pub const MAX_ROLES: usize = 16;
 pub const MAX_MEMBERS: u16 = 32;
-pub const MAX_RUNS: usize = 128;
-pub const MAX_REVIEWS: usize = 256;
+pub const MAX_RUNS: usize = 64;
+pub const MAX_REVIEWS: usize = 128;
 pub const MAX_LINE_CHARS: usize = 500;
 pub const MAX_OWNER_CHARS: usize = 100;
 pub const MAX_MODEL_BYTES: usize = 100;
 pub const MAX_IMAGE_BYTES: usize = 255;
-/// Red stubs.
-pub const MAX_BUDGET_TOKENS: u64 = u64::MAX - 1;
-pub const MAX_FINDING_CHARS: usize = MAX_LINE_CHARS;
+/// The largest integer a JSON reader in any language keeps exactly.
+pub const MAX_BUDGET_TOKENS: u64 = (1 << 53) - 1;
+pub const MAX_FINDING_CHARS: usize = 4_000;
 
 /// One step of the plan and how its completion is judged.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -77,7 +77,8 @@ pub struct Budget {
     pub tokens: u64,
 }
 
-/// A swarm run started from the task; `ended` and `outcome` arrive together.
+/// A swarm run started from the task; `ended` and `outcome` arrive together,
+/// no earlier than `started`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Run {
     pub id: Slug,
@@ -86,7 +87,7 @@ pub struct Run {
     pub outcome: Option<RunOutcome>,
 }
 
-/// A review finding at `path:line` or `path:line:col`.
+/// A review finding, at `path:line` or `path:line:col` when it has a place.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Review {
     pub id: Slug,
@@ -95,6 +96,7 @@ pub struct Review {
     pub at: Timestamp,
     pub severity: Severity,
     pub location: Option<String>,
+    /// Markdown.
     pub finding: String,
     pub verdict: Verdict,
     /// The test that proves a fix.
@@ -106,20 +108,29 @@ pub struct Review {
 static MODEL: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"^[A-Za-z0-9][A-Za-z0-9._:-]*(?:/[A-Za-z0-9._:][A-Za-z0-9._:-]*)*$").expect("model")
 });
-/// The OCI distribution reference grammar: `[domain[:port]/]path[:tag][@digest]`.
+/// The distribution image reference grammar, `[domain/]path[:tag][@digest]`,
+/// as container engines normalise it: the first component is a domain only
+/// when it holds a `.` or a `:` port, is `localhost`, or is a bracketed IPv6
+/// address; otherwise it is a path component, and path components are
+/// lowercase.
 static IMAGE: LazyLock<Regex> = LazyLock::new(|| {
     let label = r"[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?";
+    let port = r"(?::[0-9]+)";
+    let domain = format!(
+        r"(?:localhost{port}?|{label}(?:\.{label})+{port}?|{label}{port}|\[[0-9A-Fa-f:]+\]{port}?)"
+    );
     let component = r"[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*";
     let tag = r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}";
     let digest = r"[A-Za-z][A-Za-z0-9]*(?:[-_+.][A-Za-z][A-Za-z0-9]*)*:[0-9a-fA-F]{32,}";
-    let pattern = format!(
-        r"^(?:{label}(?:\.{label})*(?::[0-9]+)?/)?{component}(?:/{component})*(?::{tag})?(?:@{digest})?$"
-    );
+    let pattern = format!(r"^(?:{domain}/)?{component}(?:/{component})*(?::{tag})?(?:@{digest})?$");
     Regex::new(&pattern).expect("image")
 });
-/// `path:line` or `path:line:col`, numbers from 1 without leading zeros.
+/// `path:line` or `path:line:col`, numbers from 1 without leading zeros. The
+/// path is relative: it starts with neither `-` (an option to a tool) nor
+/// `/`.
 static LOCATION: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^[A-Za-z0-9._/@+-]+:[1-9][0-9]{0,8}(?::[1-9][0-9]{0,8})?$").expect("location")
+    Regex::new(r"^[A-Za-z0-9._@+][A-Za-z0-9._/@+-]*:[1-9][0-9]{0,8}(?::[1-9][0-9]{0,8})?$")
+        .expect("location")
 });
 
 /// Distinct single lines, at most `max`.
@@ -180,11 +191,11 @@ impl Team {
         let funded = self
             .budget
             .as_ref()
-            .is_none_or(|budget| matches!(budget.tokens, 1..));
+            .is_none_or(|budget| matches!(budget.tokens, 1..=MAX_BUDGET_TOKENS));
         if !funded {
             return Err(SchemaError::new(
                 format!("{field}/budget/tokens"),
-                "must be at least 1",
+                format!("must be 1 to {MAX_BUDGET_TOKENS}"),
             ));
         }
         match &self.image {
@@ -220,14 +231,15 @@ impl Role {
 }
 
 impl Run {
-    /// Open, or ended strictly after it started with an outcome.
+    /// Open, or ended with an outcome no earlier than it started (a run
+    /// can end within the second it starts).
     pub fn validate(&self, field: &str) -> Result<(), SchemaError> {
         match (&self.ended, &self.outcome) {
             (None, None) => Ok(()),
-            (Some(ended), Some(_)) if *ended > self.started => Ok(()),
+            (Some(ended), Some(_)) if *ended >= self.started => Ok(()),
             _ => Err(SchemaError::new(
                 field,
-                "an ended run has an outcome and ends after it starts",
+                "an ended run has an outcome and ends no earlier than it starts",
             )),
         }
     }
@@ -254,7 +266,11 @@ impl Review {
                 &LOCATION,
             )?;
         }
-        line(&format!("{field}/finding"), &self.finding, MAX_LINE_CHARS)?;
+        filled_markdown(
+            &format!("{field}/finding"),
+            &self.finding,
+            MAX_FINDING_CHARS,
+        )?;
         match &self.proving_test {
             Some(test) => line(&format!("{field}/proving_test"), test, MAX_LINE_CHARS),
             None => Ok(()),

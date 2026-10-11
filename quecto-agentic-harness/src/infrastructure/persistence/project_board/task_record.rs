@@ -39,8 +39,10 @@ pub const SCHEMAS: &[(u32, &str)] = &[(1, "0.107.251")];
 pub const SCHEMA_VERSION: u32 = 1;
 const _: () = assert!(SCHEMAS[SCHEMAS.len() - 1].0 == SCHEMA_VERSION);
 /// The largest task file read or written. Every task the domain admits is
-/// written well under it (the largest is about 270 KiB), so a write is
-/// never refused only because the field limits add up past the cap.
+/// written under it: the widest structure (about 300 KB) plus the whole
+/// text budget at its widest escape (2 × `MAX_TEXT_BYTES`) stays below
+/// 1 MiB, so a write is never refused only because the field limits add
+/// up past the cap (`size_tests`).
 pub const MAX_TASK_FILE_BYTES: usize = 1024 * 1024;
 
 /// The quecto release that introduced `schema`, when this quecto knows it.

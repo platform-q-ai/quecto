@@ -5,7 +5,7 @@ use super::super::value_objects::schema_error::{SchemaError, distinct, line, mar
 use super::super::value_objects::slug::Slug;
 use super::super::value_objects::timestamp::Timestamp;
 use super::super::value_objects::vocabulary::{TaskKind, TaskStatus};
-use super::claim::Claim;
+use super::claim::{Claim, Identity};
 use super::task_parts::{
     Item, MAX_ITEMS, MAX_REVIEWS, MAX_RUNS, MAX_STEPS, PlanStep, Review, Run, Team,
 };
@@ -17,8 +17,10 @@ pub const MAX_TITLE_CHARS: usize = 256;
 pub const MAX_DESCRIPTION_CHARS: usize = 65_536;
 pub const MAX_DEPENDENCIES: usize = 64;
 pub const MAX_PRS: usize = 16;
-/// Red stub.
-pub const MAX_TEXT_BYTES: usize = 1 << 40;
+/// All of a task's text together, in UTF-8 bytes. The field limits alone
+/// would add up to megabytes; this budget keeps every task the domain
+/// admits inside the file it is stored in (the record layer proves it).
+pub const MAX_TEXT_BYTES: usize = 320 * 1024;
 
 /// A task's content, unchecked: what [`Task::new`] validates.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -45,9 +47,39 @@ pub struct TaskFields {
 }
 
 impl TaskFields {
-    /// Red stub.
+    /// The UTF-8 bytes of every free text in the task: titles, markdown,
+    /// criteria, evidence, owners, models, the image, identities, review
+    /// places, findings and tests. Ids, words, numbers and times are not
+    /// text: their size is bounded by the field limits.
     pub fn text_bytes(&self) -> usize {
-        0
+        let sum = |texts: &[String]| texts.iter().map(String::len).sum::<usize>();
+        let optional = |text: &Option<String>| text.as_ref().map_or(0, String::len);
+        let identity = |who: &Identity| who.name.len() + who.email.len();
+        let plan = self
+            .plan
+            .iter()
+            .map(|step| step.title.len() + sum(&step.criteria));
+        let items = self.items.iter().map(|item| {
+            item.title.len() + sum(&item.criteria) + optional(&item.owner) + sum(&item.evidence)
+        });
+        let team = self.team.iter().map(|team| {
+            let models: usize = team.roles.iter().map(|role| role.model.len()).sum();
+            models + optional(&team.image)
+        });
+        let claim = self.claim.iter().map(|claim| identity(&claim.holder));
+        let reviews = self.reviews.iter().map(|review| {
+            identity(&review.reviewer)
+                + optional(&review.location)
+                + review.finding.len()
+                + optional(&review.proving_test)
+        });
+        let parts: usize = plan
+            .chain(items)
+            .chain(team)
+            .chain(claim)
+            .chain(reviews)
+            .sum();
+        self.title.len() + self.description.len() + parts
     }
 }
 
@@ -109,6 +141,7 @@ fn validate(task: &TaskFields) -> Result<(), SchemaError> {
     for (index, review) in task.reviews.iter().enumerate() {
         review.validate(&format!("reviews/{index}"))?;
     }
+    validate_times(task)?;
     distinct("prs", &task.prs, MAX_PRS)?;
     if let Some(index) = task.prs.iter().position(|number| !matches!(number, 1..)) {
         return Err(SchemaError::new(
@@ -116,7 +149,50 @@ fn validate(task: &TaskFields) -> Result<(), SchemaError> {
             "a pull request number starts at 1",
         ));
     }
-    Ok(())
+    let text = task.text_bytes();
+    if text <= MAX_TEXT_BYTES {
+        Ok(())
+    } else {
+        Err(SchemaError::new(
+            "text",
+            format!("the task's text is {text} bytes; the most is {MAX_TEXT_BYTES}"),
+        ))
+    }
+}
+
+/// Runs start and reviews are made once the task exists; a deadline falls
+/// after it was created.
+fn validate_times(task: &TaskFields) -> Result<(), SchemaError> {
+    let since_created = |time: &Timestamp| *time >= task.created;
+    if let Some(index) = task
+        .runs
+        .iter()
+        .position(|run| !since_created(&run.started))
+    {
+        return Err(SchemaError::new(
+            format!("runs/{index}/started"),
+            "must not be before the task was created",
+        ));
+    }
+    if let Some(index) = task
+        .reviews
+        .iter()
+        .position(|review| !since_created(&review.at))
+    {
+        return Err(SchemaError::new(
+            format!("reviews/{index}/at"),
+            "must not be before the task was created",
+        ));
+    }
+    let deadline = task.team.as_ref().and_then(|team| team.deadline.as_ref());
+    if deadline.is_none_or(|deadline| *deadline > task.created) {
+        Ok(())
+    } else {
+        Err(SchemaError::new(
+            "team/deadline",
+            "must be after the task was created",
+        ))
+    }
 }
 
 fn validate_plan_and_items(task: &TaskFields) -> Result<(), SchemaError> {
@@ -180,7 +256,8 @@ fn blocked_by_cycle(items: &[Item]) -> Option<usize> {
     }
 }
 
-/// Distinct ids; at most one open run, and only while the task is held.
+/// Distinct ids; at most one open run, and only while the task may hold a
+/// claim (claimed, in progress, review or blocked).
 fn validate_runs(task: &TaskFields) -> Result<(), SchemaError> {
     let ids: Vec<&Slug> = task.runs.iter().map(|run| &run.id).collect();
     distinct("runs", &ids, MAX_RUNS)?;
@@ -188,12 +265,12 @@ fn validate_runs(task: &TaskFields) -> Result<(), SchemaError> {
         run.validate(&format!("runs/{index}"))?;
     }
     let open = task.runs.iter().filter(|run| run.is_open()).count();
-    if open == 0 || (open == 1 && task.status.requires_claim()) {
+    if open == 0 || (open == 1 && task.status.may_hold_claim()) {
         Ok(())
     } else {
         Err(SchemaError::new(
             "runs",
-            "at most one run is open, and only while the task is claimed or in progress",
+            "at most one run is open, and only while the task may hold a claim",
         ))
     }
 }
