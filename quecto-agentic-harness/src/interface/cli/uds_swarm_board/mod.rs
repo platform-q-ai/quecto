@@ -406,5 +406,8 @@ impl Drop for AbortOnDrop {
 }
 
 #[cfg(test)]
+#[path = "../uds_swarm_board_intercept_tests.rs"]
+mod intercept_tests;
+#[cfg(test)]
 #[path = "../uds_swarm_board_tests.rs"]
 mod tests;
