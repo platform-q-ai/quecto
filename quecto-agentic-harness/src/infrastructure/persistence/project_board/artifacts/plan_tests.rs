@@ -17,9 +17,9 @@ const EXAMPLE: &str = r#"<!-- quecto-plan schema=1 -->
 | Task | board-cli |
 | Version | 2 |
 | State | accepted |
-| Proposed by | Ada Lovelace (ada@example.com) |
-| Edited by | Bo (bo@example.com) |
-| Accepted by | Shane (work) (shane@example.com) |
+| Proposed by | Ada Lovelace (`ada@example.com`) |
+| Edited by | Bo (`bo@example.com`) |
+| Accepted by | Shane (work) (`shane@example.com`) |
 | Accepted at | 2026-10-11T12:00:00Z |
 | Budget tokens | 2000000 |
 | Deadline | 2026-10-18T17:00:00Z |
@@ -328,7 +328,7 @@ fn widest(approach: String, criterion: impl Fn(usize, usize) -> String) -> PlanF
         })
         .collect();
     let name = "\u{1d538}".repeat(100);
-    let email = format!("{}@{}", "|".repeat(120), "b".repeat(133));
+    let email = format!("{}@{}", "a".repeat(120), "b".repeat(133));
     let roles = (0..MAX_ROLES)
         .map(|index| {
             role(
