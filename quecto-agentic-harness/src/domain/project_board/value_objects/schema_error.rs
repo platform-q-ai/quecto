@@ -37,19 +37,31 @@ impl fmt::Display for SchemaError {
 
 impl std::error::Error for SchemaError {}
 
-/// One visible character (Unicode L*, M*, N*, P*, S*), or an emoji tag
-/// sequence: a black flag U+1F3F4, then tag characters U+E0020 to U+E007E,
-/// ended by the cancel tag U+E007F (subdivision flags such as England's).
-const GLYPH: &str = r"(?:[\p{L}\p{M}\p{N}\p{P}\p{S}]|\x{1F3F4}[\x{E0020}-\x{E007E}]+\x{E007F})";
+/// A visible character: Unicode L*, M*, N*, P* or S*, except the default
+/// ignorables (variation selectors, the combining grapheme joiner, the
+/// Mongolian selectors, the Hangul fillers and the like, which show
+/// nothing) and the braille blank U+2800.
+const SHOWN: &str = r"[[\p{L}\p{M}\p{N}\p{P}\p{S}]--[\p{Default_Ignorable_Code_Point}\x{2800}]]";
+/// One presentation selector (U+FE0E text style, U+FE0F emoji style),
+/// allowed only straight after a visible character.
+const PRESENTATION: &str = r"[\x{FE0E}\x{FE0F}]";
+/// A subdivision flag: a black flag U+1F3F4, a two-letter country and one
+/// to four letters or digits of subdivision in lowercase tag characters,
+/// then the cancel tag U+E007F (England's `gbeng`). Tags spell nothing
+/// else, so they cannot carry hidden text.
+const FLAG: &str =
+    r"\x{1F3F4}[\x{E0061}-\x{E007A}]{2}[\x{E0030}-\x{E0039}\x{E0061}-\x{E007A}]{1,4}\x{E007F}";
 /// ZWNJ U+200C and ZWJ U+200D, each only ever between two glyphs (👩‍💻,
 /// 🏳️‍🌈, Persian ZWNJ). Every other format character (bidi marks such as
 /// LRM, RLM and ALM, the soft hyphen, zero-width spaces, the BOM), every
 /// control, private-use and unassigned character is refused.
 const JOINER: &str = r"[\x{200C}\x{200D}]";
 
-/// Glyphs, possibly joined, and the given separators.
+/// Glyphs (a visible character with its optional presentation selector,
+/// or a flag), possibly joined, and the given separators.
 fn text(separators: &str) -> Regex {
-    Regex::new(&format!("^(?:{GLYPH}(?:{JOINER}{GLYPH})*|{separators})*$")).expect("text allowlist")
+    let glyph = format!("(?:{SHOWN}{PRESENTATION}?|{FLAG})");
+    Regex::new(&format!("^(?:{glyph}(?:{JOINER}{glyph})*|{separators})*$")).expect("text allowlist")
 }
 
 /// Single-line text: glyphs and the space separators (Unicode Zs).
@@ -57,9 +69,12 @@ static ON_ONE_LINE: LazyLock<Regex> = LazyLock::new(|| text(r"\p{Zs}"));
 /// The same, plus `\n` between lines and `\t` (CRLF is converted at the
 /// board's entry).
 static MARKDOWN: LazyLock<Regex> = LazyLock::new(|| text(r"[\p{Zs}\n\t]"));
-/// Something to read: a letter, number, punctuation mark or symbol.
-static VISIBLE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"[\p{L}\p{N}\p{P}\p{S}]").expect("visible allowlist"));
+/// Something to read: a letter, number, punctuation mark or symbol that
+/// shows (not a default ignorable or the braille blank).
+static VISIBLE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"[[\p{L}\p{N}\p{P}\p{S}]--[\p{Default_Ignorable_Code_Point}\x{2800}]]")
+        .expect("visible allowlist")
+});
 
 /// Single-line text with something visible, at most `max_chars` characters.
 pub fn line(field: &str, text: &str, max_chars: usize) -> Result<(), SchemaError> {

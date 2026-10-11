@@ -25,8 +25,11 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 
 /// Each schema this quecto reads, oldest first, with the quecto release
-/// that introduced it. A new schema adds a row here.
-pub const SCHEMAS: &[(u32, &str)] = &[(1, "0.107.250")];
+/// that introduced it. A new schema adds a row here. Schema 1 is the
+/// format as the task parts complete it (#2483, 0.107.251), the last change
+/// to the record in its stack; the pull request that first ships the board
+/// store (S1d) sets this row to the release it ships in.
+pub const SCHEMAS: &[(u32, &str)] = &[(1, "0.107.251")];
 /// The schema every task file is written at: the last row of [`SCHEMAS`].
 pub const SCHEMA_VERSION: u32 = 1;
 const _: () = assert!(SCHEMAS[SCHEMAS.len() - 1].0 == SCHEMA_VERSION);

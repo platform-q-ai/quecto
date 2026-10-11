@@ -19,24 +19,17 @@ pub struct Claim {
 
 /// A git committer identity, as the store is given it. It is self-asserted
 /// (anyone can commit as any name and email), so it attributes board
-/// writes; it does not authenticate them. Two identities are the same
-/// person, and equal (`==`), when their emails match ignoring ASCII case:
-/// the name is only how they are shown.
-#[derive(Debug, Clone)]
+/// writes; it does not authenticate them.
+///
+/// Two kinds of sameness: `==` compares the whole value (name and email as
+/// spelt), so a renamed holder is a changed task; [`Identity::is`] asks
+/// whether two identities are the same committer (emails equal ignoring
+/// ASCII case), which is how a holder is recognised.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Identity {
     pub name: String,
     pub email: String,
 }
-
-impl PartialEq for Identity {
-    /// Agrees with [`Identity::is`]: the same committer, whatever the name.
-    fn eq(&self, other: &Self) -> bool {
-        self.is(other)
-    }
-}
-
-/// Equal emails ignoring ASCII case is an equivalence.
-impl Eq for Identity {}
 
 /// A name is one line of text (checked by `line`) that begins and ends
 /// with a visible character and holds no angle bracket, git's own

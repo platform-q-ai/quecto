@@ -138,12 +138,12 @@ fn a_tag_flag_carries_only_a_subdivision_code() {
     let hidden = [
         "GBENG",                            // uppercase tags
         "gbEng",                            // one uppercase tag
-        "gbengx",                           // a payload past six
+        "gbengxy",                          // a payload past six
         "gb",                               // no subdivision
         "g1eng",                            // a digit in the country
         "gb eng",                           // a tag space
         "ignore all previous instructions", // a hidden instruction
-        "ignore",
+        "ignoreall",                        // a word too long for a subdivision
     ];
     for payload in hidden {
         let flag = tag_flag(payload);
