@@ -40,6 +40,7 @@ pub const INHERITED: &[&str] = &[
     "GIT_SSH_COMMAND",
     "GIT_CONFIG_GLOBAL",
     "GIT_CONFIG_NOSYSTEM",
+    "GIT_CEILING_DIRECTORIES",
     "GH_TOKEN",
     "GITHUB_TOKEN",
     "GH_CONFIG_DIR",
