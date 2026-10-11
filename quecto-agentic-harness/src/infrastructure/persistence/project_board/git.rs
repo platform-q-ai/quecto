@@ -19,10 +19,12 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 /// The only variables a board git process inherits: where to find
-/// programs, the user's configuration and credential helpers, SSH, and an
-/// HTTPS proxy and CA bundle (so it works inside a container). `GH_TOKEN`
-/// reaches only a credential helper that reads it (`gh auth
-/// git-credential`); git itself never sends it. Everything else,
+/// programs, the user's configuration and credential helpers, SSH, the
+/// GitHub CLI's token and configuration, and proxies and a CA bundle (so it
+/// works inside a container). Every program git starts (a credential
+/// helper, `ssh`, a remote helper, a configured `core.sshCommand`) inherits
+/// them in turn, `GH_TOKEN` and `GITHUB_TOKEN` included; git itself sends
+/// neither, only a credential helper that reads one does. Everything else,
 /// `GIT_DIR`, `GIT_INDEX_FILE` and `GIT_WORK_TREE` included, is dropped.
 pub const INHERITED: &[&str] = &[
     "PATH",
@@ -34,10 +36,14 @@ pub const INHERITED: &[&str] = &[
     "GIT_CONFIG_GLOBAL",
     "GIT_CONFIG_NOSYSTEM",
     "GH_TOKEN",
+    "GITHUB_TOKEN",
+    "GH_CONFIG_DIR",
     "HTTPS_PROXY",
     "https_proxy",
     "HTTP_PROXY",
     "http_proxy",
+    "ALL_PROXY",
+    "all_proxy",
     "NO_PROXY",
     "no_proxy",
     "SSL_CERT_FILE",
@@ -57,6 +63,20 @@ const SETTINGS: &[&str] = &[
 ];
 pub const LOCAL_TIMEOUT: Duration = Duration::from_secs(30);
 pub const NETWORK_TIMEOUT: Duration = Duration::from_secs(120);
+/// The most standard output a call takes unless it names its own bound:
+/// a line of plumbing, a path, a commit's committer.
+pub const SHORT_OUTPUT: usize = 64 * 1024;
+/// The most standard error kept from any call.
+pub const MAX_STDERR: usize = 16 * 1024;
+/// The most characters of git's own message an error quotes.
+pub const MAX_QUOTED_CHARS: usize = 2 * 1024;
+/// How long an exited git's output may take to drain, past its deadline
+/// if need be: its process group is gone, so only something outside it
+/// can still hold its pipes.
+pub const DRAIN_GRACE: Duration = Duration::from_secs(1);
+/// The first and the longest pause between looks at whether git exited.
+const FIRST_POLL: Duration = Duration::from_millis(1);
+const LONGEST_POLL: Duration = Duration::from_millis(25);
 
 /// Why a git call failed.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -68,10 +88,25 @@ pub enum GitError {
     TimedOut {
         command: String,
     },
+    /// git printed more than the call takes.
+    TooMuchOutput {
+        command: String,
+        limit: usize,
+    },
     Failed {
         command: String,
+        /// git's message, bounded and stripped of control characters.
         stderr: String,
     },
+}
+
+/// Whether a call may reach the remote. A local call never fetches an
+/// object on its own (`GIT_NO_LAZY_FETCH`): in a partial clone, the store
+/// fetches what a board needs in one call instead of one per object.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Reach {
+    Local,
+    Network,
 }
 
 /// The allowlisted variables of an environment, by [`INHERITED`].
@@ -119,39 +154,75 @@ pub struct Output {
 
 impl Git {
     /// git as found on the environment's own `PATH`, absolute, committing
-    /// as `identity`: a valid identity that git records byte for byte.
+    /// as `identity`: a valid identity that this git records byte for
+    /// byte, which git itself is asked (`git var GIT_COMMITTER_IDENT`).
     ///
     /// # Errors
-    /// No git on the `PATH`, or an identity git would alter.
+    /// No git on the `PATH`, git cannot run in `repo`, or an identity git
+    /// would alter.
     pub fn new(repo: &Path, env: GitEnvironment, identity: Identity) -> Result<Self, GitError> {
         identity
             .validate("identity")
             .map_err(|error| GitError::Identity(error.to_string()))?;
-        if !kept_by_git(&identity.name) || !kept_by_git(&identity.email) {
-            return Err(GitError::Identity(format!(
-                "{identity:?}: git trims punctuation and spaces from the ends of a name or email, \
-                 so it must start and end with a letter, digit or one of ()[]{{}}_-+*&^%$#@!?~=|/"
-            )));
-        }
         let program = env
             .get("PATH")
             .and_then(|path| on_path(path, "git"))
             .ok_or(GitError::NotFound)?;
         debug_assert!(program.is_absolute());
-        let (local_timeout, network_timeout) = (LOCAL_TIMEOUT, NETWORK_TIMEOUT);
-        Ok(Self {
+        let git = Self {
             program,
             repo: repo.to_path_buf(),
             env,
             identity,
-            local_timeout,
-            network_timeout,
-        })
+            local_timeout: LOCAL_TIMEOUT,
+            network_timeout: NETWORK_TIMEOUT,
+        };
+        git.records_identity_as_given()?;
+        Ok(git)
     }
 
-    /// A local call that must succeed; its standard output.
+    /// git trims some characters from the ends of a name or email and
+    /// drops others inside, by rules that differ between its versions, so
+    /// the installed git is asked what it would record.
+    fn records_identity_as_given(&self) -> Result<(), GitError> {
+        let refused = |why: String| {
+            GitError::Identity(format!(
+                "{:?}: {why}; give the name and email exactly as git records them",
+                self.identity
+            ))
+        };
+        let ident = match self.text(&["var", "GIT_COMMITTER_IDENT"], None) {
+            Ok(ident) => ident,
+            Err(GitError::Failed { stderr, .. }) => return Err(refused(stderr)),
+            Err(error) => return Err(error),
+        };
+        match recorded_identity(&ident) {
+            Some((name, email)) if name == self.identity.name && email == self.identity.email => {
+                Ok(())
+            }
+            Some(recorded) => Err(refused(format!("git records it as {recorded:?}"))),
+            None => Err(refused(format!(
+                "git var printed {:?}",
+                quoted(ident.as_bytes())
+            ))),
+        }
+    }
+
+    /// A local call that must succeed; its standard output, at most
+    /// [`SHORT_OUTPUT`] bytes.
     pub fn ok(&self, args: &[&str], input: Option<&[u8]>) -> Result<Vec<u8>, GitError> {
-        let output = self.run(args, input, self.local_timeout)?;
+        self.ok_up_to(args, input, SHORT_OUTPUT)
+    }
+
+    /// A local call that must succeed; its standard output, at most `limit`
+    /// bytes.
+    pub fn ok_up_to(
+        &self,
+        args: &[&str],
+        input: Option<&[u8]>,
+        limit: usize,
+    ) -> Result<Vec<u8>, GitError> {
+        let output = self.local(args, input, limit)?;
         if output.status.success() {
             Ok(output.stdout)
         } else {
@@ -171,17 +242,43 @@ impl Git {
             .to_string())
     }
 
-    /// A call that reaches the remote, whatever its exit status.
-    pub fn network(&self, args: &[&str]) -> Result<Output, GitError> {
-        self.run(args, None, self.network_timeout)
-    }
-
-    pub fn run(
+    /// A local call, whatever its exit status.
+    pub fn local(
         &self,
         args: &[&str],
         input: Option<&[u8]>,
-        timeout: Duration,
+        limit: usize,
     ) -> Result<Output, GitError> {
+        self.run(args, input, limit, Reach::Local)
+    }
+
+    /// A call that reaches the remote, whatever its exit status.
+    pub fn network(&self, args: &[&str]) -> Result<Output, GitError> {
+        self.network_with(args, None, SHORT_OUTPUT)
+    }
+
+    /// A call that reaches the remote with `input`, whatever its exit
+    /// status, taking at most `limit` bytes of output.
+    pub fn network_with(
+        &self,
+        args: &[&str],
+        input: Option<&[u8]>,
+        limit: usize,
+    ) -> Result<Output, GitError> {
+        self.run(args, input, limit, Reach::Network)
+    }
+
+    fn run(
+        &self,
+        args: &[&str],
+        input: Option<&[u8]>,
+        limit: usize,
+        reach: Reach,
+    ) -> Result<Output, GitError> {
+        let timeout = match reach {
+            Reach::Local => self.local_timeout,
+            Reach::Network => self.network_timeout,
+        };
         let mut command = Command::new(&self.program);
         command
             .arg("-C")
@@ -203,6 +300,12 @@ impl Git {
             })
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        match reach {
+            Reach::Local => {
+                command.env("GIT_NO_LAZY_FETCH", "1");
+            }
+            Reach::Network => {}
+        }
         // Its own session, so no ssh or helper it starts can reach the
         // terminal quecto runs in, and its own process group, so the
         // deadline ends git and everything it started.
@@ -222,25 +325,20 @@ impl Git {
             let bytes = bytes.to_vec();
             thread::spawn(move || stdin.write_all(&bytes));
         }
-        let stdout = drain(child.stdout.take());
-        let stderr = drain(child.stderr.take());
+        let stdout = drain(child.stdout.take(), limit);
+        let stderr = drain(child.stderr.take(), MAX_STDERR);
         let deadline = Instant::now() + timeout;
-        let timed_out = || GitError::TimedOut {
-            command: args.join(" "),
-        };
+        let command_line = || args.join(" ");
         // Watch for git's exit without reaping it, so its group cannot be
         // reused before the group is ended.
-        let exited = loop {
-            match exited_unreaped(child.id()) {
-                Ok(true) => break true,
-                Ok(false) if Instant::now() < deadline => thread::sleep(Duration::from_millis(2)),
-                Ok(false) => break false,
-                Err(error) => {
-                    end_group(child.id());
-                    let _ = child.wait();
-                    return Err(GitError::Spawn(error.to_string()));
-                }
-            }
+        let exited = match watch(child.id(), deadline) {
+            Ok(exited) => exited,
+            // Whether git is still our unreaped child is unknown here
+            // (ECHILD: something else reaped it, and its pid, and so its
+            // group's, may already be reused), so nothing is signalled and
+            // nothing waited on. Unreachable while this process leaves
+            // SIGCHLD alone, which it does.
+            Err(error) => return Err(GitError::Spawn(format!("watching git: {error}"))),
         };
         // Whatever git started and left behind (a credential helper, an
         // ssh master) ends with it, closing the pipes it may hold.
@@ -249,20 +347,49 @@ impl Git {
             .wait()
             .map_err(|error| GitError::Spawn(error.to_string()))?;
         if !exited {
-            return Err(timed_out());
+            return Err(GitError::TimedOut {
+                command: command_line(),
+            });
         }
-        let left = |at: Instant| at.saturating_duration_since(Instant::now());
-        let stdout = stdout
-            .recv_timeout(left(deadline))
-            .map_err(|_| timed_out())?;
-        let stderr = stderr
-            .recv_timeout(left(deadline))
-            .map_err(|_| timed_out())?;
+        // git exited: its output drains under the deadline, or a short
+        // grace past it.
+        let drained_by = deadline.max(Instant::now() + DRAIN_GRACE);
+        let left = || drained_by.saturating_duration_since(Instant::now());
+        let timed_out = |_| GitError::TimedOut {
+            command: command_line(),
+        };
+        let stdout = stdout.recv_timeout(left()).map_err(timed_out)?;
+        let stderr = stderr.recv_timeout(left()).map_err(timed_out)?;
+        if stdout.past_limit {
+            return Err(GitError::TooMuchOutput {
+                command: command_line(),
+                limit,
+            });
+        }
+        debug_assert!(stdout.bytes.len() <= limit && stderr.bytes.len() <= MAX_STDERR);
         Ok(Output {
             status,
-            stdout,
-            stderr,
+            stdout: stdout.bytes,
+            stderr: stderr.bytes,
         })
+    }
+}
+
+/// Watches our unreaped child `pid` until it exits (`true`) or `deadline`
+/// passes (`false`), looking again after a pause that doubles up to
+/// [`LONGEST_POLL`].
+fn watch(pid: u32, deadline: Instant) -> std::io::Result<bool> {
+    let mut pause = FIRST_POLL;
+    loop {
+        if exited_unreaped(pid)? {
+            return Ok(true);
+        }
+        let now = Instant::now();
+        if now >= deadline {
+            return Ok(false);
+        }
+        thread::sleep(pause.min(deadline - now));
+        pause = (pause * 2).min(LONGEST_POLL);
     }
 }
 
@@ -300,32 +427,91 @@ fn end_group(leader: u32) {
     }
 }
 
-/// Reads a pipe to its end on its own thread; the bytes arrive on the
-/// channel, so the caller can stop waiting at its deadline.
-fn drain(pipe: Option<impl Read + Send + 'static>) -> mpsc::Receiver<Vec<u8>> {
+/// What a pipe held, up to its bound.
+struct Drained {
+    bytes: Vec<u8>,
+    past_limit: bool,
+}
+
+/// Reads a pipe to its end on its own thread, keeping at most `limit`
+/// bytes and discarding the rest, so git never blocks on a full pipe; the
+/// bytes arrive on the channel, so the caller can stop waiting at its
+/// deadline.
+fn drain(pipe: Option<impl Read + Send + 'static>, limit: usize) -> mpsc::Receiver<Drained> {
     let (sender, receiver) = mpsc::channel();
     thread::spawn(move || {
         let mut bytes = Vec::new();
+        let mut past_limit = false;
         if let Some(mut pipe) = pipe {
-            let _ = pipe.read_to_end(&mut bytes);
+            let wanted = u64::try_from(limit).unwrap_or(u64::MAX).saturating_add(1);
+            let _ = (&mut pipe).take(wanted).read_to_end(&mut bytes);
+            if bytes.len() > limit {
+                past_limit = true;
+                bytes.truncate(limit);
+                let _ = std::io::copy(&mut pipe, &mut std::io::sink());
+            }
         }
-        let _ = sender.send(bytes);
+        let _ = sender.send(Drained { bytes, past_limit });
     });
     receiver
 }
 
-/// Whether git records `text` as given: it trims spaces and some
-/// punctuation from the ends of a name or email, so each end must be one
-/// of the characters it keeps.
-fn kept_by_git(text: &str) -> bool {
-    let kept = |c: char| c.is_alphanumeric() || "()[]{}_-+*&^%$#@!?~=|/".contains(c);
-    text.chars().next().is_some_and(kept) && text.chars().next_back().is_some_and(kept)
+/// The name and email in a `git var GIT_COMMITTER_IDENT` line, `name
+/// <email> seconds zone`: git drops `<` and `>` from both, so the first `
+/// <` and the next `> ` delimit them.
+fn recorded_identity(ident: &str) -> Option<(String, String)> {
+    let (name, rest) = ident.split_once(" <")?;
+    let (email, _when) = rest.split_once("> ")?;
+    Some((name.to_string(), email.to_string()))
+}
+
+/// git's message as text fit to quote: escape sequences dropped, control
+/// characters, bidirectional overrides and runs of white space each one
+/// space, and at most [`MAX_QUOTED_CHARS`] characters.
+pub fn quoted(bytes: &[u8]) -> String {
+    let text = String::from_utf8_lossy(bytes);
+    let mut chars = text.chars().peekable();
+    let (mut out, mut count, mut gap) = (String::new(), 0usize, false);
+    while let Some(c) = chars.next() {
+        if c == '\u{1b}' {
+            // An escape sequence: ESC, `[`, parameters, then a final byte.
+            if chars.next_if_eq(&'[').is_some() {
+                for next in chars.by_ref() {
+                    if ('\u{40}'..='\u{7e}').contains(&next) {
+                        break;
+                    }
+                }
+            }
+            continue;
+        }
+        if c.is_control() || c.is_whitespace() || is_bidi_control(c) {
+            gap = count > 0;
+            continue;
+        }
+        if count + usize::from(gap) >= MAX_QUOTED_CHARS {
+            out.push_str(" …");
+            break;
+        }
+        if gap {
+            out.push(' ');
+            count += 1;
+            gap = false;
+        }
+        out.push(c);
+        count += 1;
+    }
+    out
+}
+
+/// The characters that reorder the text around them when shown.
+fn is_bidi_control(c: char) -> bool {
+    matches!(c, '\u{061c}' | '\u{200e}' | '\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')
 }
 
 pub fn failed(args: &[&str], output: &Output) -> GitError {
     GitError::Failed {
         command: args.join(" "),
-        stderr: String::from_utf8_lossy(&output.stderr).trim().to_string(),
+        stderr: quoted(&output.stderr),
     }
 }
 

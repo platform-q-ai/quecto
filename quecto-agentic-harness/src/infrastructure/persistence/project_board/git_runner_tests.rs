@@ -1,6 +1,7 @@
 //! The git runner: its environment, its session, and its one deadline for
 //! the process and its output.
 use super::*;
+use crate::infrastructure::persistence::project_board::git::SHORT_OUTPUT;
 
 #[test]
 fn a_git_that_hangs_is_stopped_with_its_whole_process_group() {
@@ -229,7 +230,7 @@ fn output_past_its_bound_is_an_error_and_never_hangs() {
     let started = std::time::Instant::now();
     let read = git.text(&["anything"], None);
     assert!(
-        read.is_err() && format!("{read:?}").contains("output"),
+        matches!(&read, Err(GitError::TooMuchOutput { limit, .. }) if *limit == SHORT_OUTPUT),
         "{:?}",
         read.map(|text| text.len())
     );

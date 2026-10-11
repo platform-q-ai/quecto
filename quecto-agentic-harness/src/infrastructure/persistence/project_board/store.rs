@@ -8,18 +8,24 @@
 //!
 //! The branch is anyone's to push, so [`board_tree`](super::board_tree)
 //! reads it as hostile. A write regenerates every summary and the README
-//! from what it writes, and carries forward only task files: the tasks it
-//! read, and task files set aside that are still regular files of their
-//! own name (a newer schema's, say), so no write loses them.
+//! from what it writes, and carries forward every task file: the tasks it
+//! read, and every task file set aside, as it is and with its own mode
+//! (one of a newer schema, say), so no write loses one. A task file named
+//! twice in one tree refuses every write instead.
 //!
 //! The board is fetched from the remote's URL and pushed to its push URL;
 //! a remote whose `pushurl` names another repository than its `url` is
 //! not a board remote, and a push to it is judged by what `url` serves.
+//!
+//! In a partial clone, the board is fetched with all its files
+//! (`--no-filter`), and what a clone still misses (a board commit it
+//! fetched with a filter before) is fetched in one call per tree level,
+//! never one object at a time.
 use super::board_tree::{
-    Board, MAX_SUMMARY_BYTES, MAX_TASK_ENTRIES, REGULAR_FILE, contents, is_board, object_id,
+    Board, MAX_SUMMARY_BYTES, MAX_TASK_ENTRIES, REGULAR_FILE, TREE, Unread, contents, object_id,
     read_board, unavailable,
 };
-use super::git::{Git, GitError, failed};
+use super::git::{Git, GitError, SHORT_OUTPUT, failed, quoted};
 use super::summary::summary;
 use super::task_record::{decode, encode};
 use crate::application::project_board::ports::{
@@ -30,11 +36,17 @@ use crate::domain::project_board::entities::task::Task;
 use crate::domain::project_board::value_objects::schema_error::line;
 use crate::domain::project_board::value_objects::slug::Slug;
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::fmt;
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 pub use super::board_tree::{MAX_TASK_ENTRIES as MAX_ENTRIES, MAX_TASKS};
 
 pub const BOARD_REF: &str = "refs/heads/quecto/board";
+/// Fetches of what a partial clone misses, one per tree level: the root,
+/// `tasks/`, then their files.
+const FETCH_ROUNDS: usize = 3;
+/// The most a listing of a repository's branches takes.
+const MAX_REF_LISTING: usize = 16 * 1024 * 1024;
 const README: &[u8] = b"# quecto board\n\nThis branch holds the project's board: one `tasks/<id>.json` per task, with a\nread-only `tasks/<id>.md` summary beside it. It is written only by quecto's\nboard operations; do not edit, merge or rebase it by hand.\n";
 
 pub struct GitBoardStore {
@@ -53,28 +65,53 @@ enum Pushed {
     Refused(String),
 }
 
+/// What a push that did not report our ref updated said: our ref's
+/// rejection, if it reported one, and git's own message.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PushReport {
+    rejected: Option<String>,
+    said: String,
+}
+
+impl fmt::Display for PushReport {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match (&self.rejected, self.said.is_empty()) {
+            (Some(rejected), true) => f.write_str(rejected),
+            (Some(rejected), false) => write!(f, "{rejected}; git said: {}", self.said),
+            (None, true) => f.write_str("no status for the board"),
+            (None, false) => f.write_str(&self.said),
+        }
+    }
+}
+
 impl GitBoardStore {
-    /// `remote` is a configured remote's name.
+    /// `remote` is the name of a remote the repository configures, so a
+    /// path or URL spelled like a name is never taken for one.
     ///
     /// # Errors
-    /// A name that is not a remote's.
+    /// A name that is not a configured remote's.
     pub fn new(git: Git, remote: &str) -> Result<Self, BoardStoreError> {
         let named = remote
             .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'));
-        match named
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
             && remote
                 .as_bytes()
                 .first()
-                .is_some_and(u8::is_ascii_alphanumeric)
-        {
-            true => Ok(Self {
+                .is_some_and(u8::is_ascii_alphanumeric);
+        if !named {
+            return Err(BoardStoreError::Unavailable(format!(
+                "{remote:?} is not a remote name"
+            )));
+        }
+        // The name was checked first, so it is never read as an option.
+        match git.ok(&["remote", "get-url", remote], None) {
+            Ok(_) => Ok(Self {
                 git,
                 remote: remote.to_string(),
                 last: Mutex::new(None),
             }),
-            false => Err(BoardStoreError::Unavailable(format!(
-                "{remote:?} is not a remote name"
+            Err(error) => Err(BoardStoreError::Unavailable(format!(
+                "{remote:?} is not a remote of this repository: {error:?}"
             ))),
         }
     }
@@ -83,16 +120,85 @@ impl GitBoardStore {
         format!("refs/remotes/{}/quecto/board", self.remote)
     }
 
-    /// The board at `commit`, read once.
+    fn last(&self) -> MutexGuard<'_, Option<(String, Arc<Board>)>> {
+        self.last.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// The board at `commit`, read once. The cache is locked only to look
+    /// and to store, never across git.
     fn board_at(&self, commit: &str) -> Result<Arc<Board>, BoardStoreError> {
-        let mut last = self.last.lock().unwrap_or_else(PoisonError::into_inner);
-        if let Some((at, board)) = last.as_ref().filter(|(at, _)| at == commit) {
-            debug_assert_eq!(at, commit);
-            return Ok(Arc::clone(board));
+        let cached = self
+            .last()
+            .as_ref()
+            .filter(|(at, _)| at == commit)
+            .map(|(_, board)| Arc::clone(board));
+        if let Some(board) = cached {
+            return Ok(board);
         }
-        let board = Arc::new(read_board(&self.git, commit)?);
-        *last = Some((commit.to_string(), Arc::clone(&board)));
+        let board = Arc::new(self.read_fetching(commit)?);
+        *self.last() = Some((commit.to_string(), Arc::clone(&board)));
         Ok(board)
+    }
+
+    /// The board at `commit`, fetching in one call per round what this
+    /// clone does not hold yet (a partial clone).
+    fn read_fetching(&self, commit: &str) -> Result<Board, BoardStoreError> {
+        let mut fetched: BTreeSet<String> = BTreeSet::new();
+        for round in 0..=FETCH_ROUNDS {
+            let missing = match read_board(&self.git, commit) {
+                Ok(board) => return Ok(board),
+                Err(Unread::Failed(BoardStoreError::Clash(why))) => {
+                    return Err(BoardStoreError::Clash(format!(
+                        "`quecto/board` on {} is a branch of its own: {why}; rename it",
+                        self.remote
+                    )));
+                }
+                Err(Unread::Failed(error)) => return Err(error),
+                Err(Unread::Missing(missing)) => missing,
+            };
+            assert!(!missing.is_empty(), "a read misses at least one object");
+            let again = missing.iter().any(|oid| fetched.contains(oid));
+            if again || round == FETCH_ROUNDS {
+                return Err(BoardStoreError::Unavailable(format!(
+                    "objects of board commit {commit} are missing here and were not fetched: {}",
+                    missing.join(" ")
+                )));
+            }
+            self.fetch_objects(&missing)?;
+            fetched.extend(missing);
+        }
+        unreachable!("the last round returns")
+    }
+
+    /// Fetches `oids` and everything under them in one call, as git's own
+    /// lazy fetch does, but with every file.
+    fn fetch_objects(&self, oids: &[String]) -> Result<(), BoardStoreError> {
+        let args = [
+            "-c",
+            "fetch.negotiationAlgorithm=noop",
+            "fetch",
+            "--quiet",
+            "--no-tags",
+            "--no-write-fetch-head",
+            "--no-recurse-submodules",
+            "--no-filter",
+            "--stdin",
+            &self.remote,
+        ];
+        let input: String = oids.iter().map(|oid| format!("{oid}\n")).collect();
+        let output = self
+            .git
+            .network_with(&args, Some(input.as_bytes()), SHORT_OUTPUT)
+            .map_err(unavailable)?;
+        match output.status.success() {
+            true => Ok(()),
+            false => Err(BoardStoreError::Unavailable(format!(
+                "objects missing here could not be fetched from {}: {}: {:?}",
+                self.remote,
+                oids.join(" "),
+                failed(&args, &output)
+            ))),
+        }
     }
 
     /// The remote's commit for `reference`, if it has one.
@@ -106,7 +212,10 @@ impl GitBoardStore {
     fn remote_heads(&self, patterns: &[&str]) -> Result<Vec<(String, String)>, BoardStoreError> {
         let mut args = vec!["ls-remote", "--refs", self.remote.as_str()];
         args.extend(patterns);
-        let output = self.git.network(&args).map_err(unavailable)?;
+        let output = self
+            .git
+            .network_with(&args, None, MAX_REF_LISTING)
+            .map_err(unavailable)?;
         if !output.status.success() {
             return Err(unavailable(failed(&args, &output)));
         }
@@ -118,7 +227,8 @@ impl GitBoardStore {
     }
 
     /// Fetches the board alone into the tracking ref (no tags, no
-    /// `FETCH_HEAD`); its commit.
+    /// `FETCH_HEAD`), with all its files even in a partial clone; its
+    /// commit.
     fn fetch(&self) -> Result<String, BoardStoreError> {
         let spec = format!("+{BOARD_REF}:{}", self.tracking());
         let args = [
@@ -127,6 +237,7 @@ impl GitBoardStore {
             "--no-tags",
             "--no-write-fetch-head",
             "--no-recurse-submodules",
+            "--no-filter",
             &self.remote,
             &spec,
         ];
@@ -145,9 +256,8 @@ impl GitBoardStore {
 
     /// Moves the remote board from `base` (absent when `None`) to `commit`.
     /// A push that reports our ref updated landed. Any other outcome (a
-    /// rejection, a failure, no report, a timeout) is judged by fetching the
-    /// board: our commit on it landed, however fast another writer stacked
-    /// on it; a board still at `base` refused it; any other board lost it.
+    /// rejection, a failure, no report, a timeout) is judged by the board
+    /// (see [`Self::judge`]).
     fn push(&self, base: Option<&str>, commit: &str) -> Result<Pushed, BoardStoreError> {
         let lease = format!("--force-with-lease={BOARD_REF}:{}", base.unwrap_or(""));
         let spec = format!("{commit}:{BOARD_REF}");
@@ -161,40 +271,60 @@ impl GitBoardStore {
             &self.remote,
             &spec,
         ];
-        let (status, stderr) = match self.git.network(&args) {
-            Ok(output) => (
-                ref_status(&output.stdout),
-                String::from_utf8_lossy(&output.stderr).trim().to_string(),
-            ),
+        let (status, said) = match self.git.network(&args) {
+            Ok(output) => (ref_status(&output.stdout), quoted(&output.stderr)),
             Err(GitError::TimedOut { .. }) => (None, "the push timed out".to_string()),
             Err(error) => return Err(unavailable(error)),
         };
-        match status {
-            Some(RefStatus::Updated) => Ok(Pushed::Landed),
-            Some(RefStatus::Rejected(reason)) => self.judge(base, commit, Ok(reason)),
-            None => self.judge(base, commit, Err(stderr)),
-        }
+        let rejected = match status {
+            Some(RefStatus::Updated) => return Ok(Pushed::Landed),
+            Some(RefStatus::Rejected(reason)) => Some(reason),
+            None => None,
+        };
+        self.judge(base, commit, &PushReport { rejected, said })
     }
 
-    /// What became of a push that did not report our ref updated: `report`
-    /// is its rejection, or why it reported nothing.
+    /// What became of a push that did not report our ref updated, judged by
+    /// the board:
+    /// - our commit on it: landed, however fast another writer stacked on
+    ///   it;
+    /// - any other board than `base`: lost;
+    /// - the board still at `base`: refused when the remote rejected it
+    ///   (`[remote rejected]`), lost when git's own lease did (`[rejected]`,
+    ///   so the board moved and moved back), and otherwise unknown (no
+    ///   report, `[remote failure]`): it may still move, so it is an error.
+    ///
+    /// The push's own report is in every error, so a push that failed
+    /// outright (no push rights, say) says why.
     fn judge(
         &self,
         base: Option<&str>,
         commit: &str,
-        report: Result<String, String>,
+        report: &PushReport,
     ) -> Result<Pushed, BoardStoreError> {
-        let head = self.fetch()?;
-        match (
-            self.is_ancestor(commit, &head)?,
-            Some(head.as_str()) == base,
-            report,
-        ) {
-            (true, _, _) => Ok(Pushed::Landed),
-            (false, false, _) => Ok(Pushed::Lost),
-            (false, true, Ok(reason)) => Ok(Pushed::Refused(reason)),
-            (false, true, Err(why)) => Err(BoardStoreError::Unavailable(format!(
-                "the push did not finish ({why}); the board may have moved since, so read it again"
+        let unread = |error: BoardStoreError| {
+            BoardStoreError::Unavailable(format!(
+                "the push did not land ({report}), and the board could not be read to check: {error:?}"
+            ))
+        };
+        let head = match self.remote_head(BOARD_REF).map_err(unread)? {
+            Some(_) => Some(self.fetch().map_err(unread)?),
+            None => None,
+        };
+        let ours = match head.as_deref() {
+            Some(head) => self.is_ancestor(commit, head)?,
+            None => false,
+        };
+        let rejected = report.rejected.as_deref().unwrap_or("");
+        match (ours, head.as_deref() == base) {
+            (true, _) => Ok(Pushed::Landed),
+            (false, false) => Ok(Pushed::Lost),
+            (false, true) if rejected.starts_with("[remote rejected]") => {
+                Ok(Pushed::Refused(report.to_string()))
+            }
+            (false, true) if rejected.starts_with("[rejected]") => Ok(Pushed::Lost),
+            (false, true) => Err(BoardStoreError::Unavailable(format!(
+                "the push did not finish ({report}); the board may have moved since, so read it again"
             ))),
         }
     }
@@ -214,7 +344,7 @@ impl GitBoardStore {
         ];
         let output = self
             .git
-            .run(&args, None, self.git.local_timeout)
+            .local(&args, None, SHORT_OUTPUT)
             .map_err(unavailable)?;
         match output.status.code() {
             Some(0) => Ok(true),
@@ -230,7 +360,13 @@ impl GitBoardStore {
     /// The commit is not on the board, or git fails.
     pub fn committed_by(&self, commit: &str) -> Result<Identity, BoardStoreError> {
         let commit = object_id(commit)?;
-        let args = ["log", "-1", "--format=%cn%x00%ce", commit.as_str()];
+        let args = [
+            "log",
+            "-1",
+            "--no-show-signature",
+            "--format=%cn%x00%ce",
+            commit.as_str(),
+        ];
         let bytes = match self.git.ok(&args, None) {
             Ok(bytes) => bytes,
             Err(GitError::Failed { .. }) => {
@@ -250,23 +386,48 @@ impl GitBoardStore {
         })
     }
 
-    /// The commit `expected` names, fetching the board when this clone does
-    /// not hold it yet (another client's head): refused as invalid unless
-    /// it is a commit of the board's, or as no board when there is none.
+    /// The commit `expected` names: the board's head or one of its
+    /// ancestors, fetching the board when this clone does not hold it yet
+    /// (another client's head). Refused as invalid when it is any other
+    /// commit, or as no board when there is none.
     fn base(&self, expected: &BoardHead) -> Result<String, BoardStoreError> {
         let invalid =
             || BoardStoreError::InvalidWrite(format!("{:?} is not a board head", expected.0));
         let base = object_id(&expected.0).map_err(|_| invalid())?;
-        if self.is_commit(&base)? {
-            return Ok(base);
+        if let Some(tip) = self.local_tip()? {
+            if self.on_board(&base, &tip)? {
+                return Ok(base);
+            }
         }
         if self.remote_head(BOARD_REF)?.is_none() {
             return Err(BoardStoreError::NoBoard);
         }
-        self.fetch()?;
-        match self.is_commit(&base)? {
+        let tip = self.fetch()?;
+        match self.on_board(&base, &tip)? {
             true => Ok(base),
             false => Err(invalid()),
+        }
+    }
+
+    /// Whether `commit` is a commit here and `tip` or one of its ancestors.
+    fn on_board(&self, commit: &str, tip: &str) -> Result<bool, BoardStoreError> {
+        Ok(self.is_commit(commit)? && self.is_ancestor(commit, tip)?)
+    }
+
+    /// The board's commit as this clone last fetched it, if it has.
+    fn local_tip(&self) -> Result<Option<String>, BoardStoreError> {
+        let commit = format!("{}^{{commit}}", self.tracking());
+        let args = ["rev-parse", "--verify", "--quiet", commit.as_str()];
+        let output = self
+            .git
+            .local(&args, None, SHORT_OUTPUT)
+            .map_err(unavailable)?;
+        match output.status.code() {
+            Some(0) => Ok(Some(object_id(
+                String::from_utf8_lossy(&output.stdout).trim_end(),
+            )?)),
+            Some(1) => Ok(None),
+            _ => Err(unavailable(failed(&args, &output))),
         }
     }
 
@@ -274,7 +435,7 @@ impl GitBoardStore {
         let args = ["cat-file", "-t", oid];
         let output = self
             .git
-            .run(&args, None, self.git.local_timeout)
+            .local(&args, None, SHORT_OUTPUT)
             .map_err(unavailable)?;
         Ok(output.status.success() && output.stdout == b"commit\n")
     }
@@ -303,14 +464,11 @@ impl GitBoardStore {
 
     /// The `tasks/` tree of `board` with `written` in place: every task's
     /// file and a summary regenerated from it (an unchanged summary keeps
-    /// its object), and the task files set aside carried forward.
+    /// its object), and the task files set aside carried forward as they
+    /// are.
     fn tasks_tree(&self, board: &Board, written: &[Task]) -> Result<String, BoardStoreError> {
         let invalid = |why: String| BoardStoreError::InvalidWrite(why);
-        let mut files: BTreeMap<String, String> = board
-            .kept
-            .iter()
-            .map(|(name, oid)| (name.clone(), format!("{REGULAR_FILE} blob {oid}")))
-            .collect();
+        let mut files: BTreeMap<String, String> = board.kept.clone();
         let written_ids: BTreeSet<&Slug> = written.iter().map(|task| &task.fields().id).collect();
         let carried: Vec<_> = board
             .tasks
@@ -323,11 +481,12 @@ impl GitBoardStore {
             .iter()
             .map(|(id, held)| (*id, summary(&held.task)))
             .collect();
-        let candidates: Vec<&str> = carried
+        let candidates: Vec<(&str, usize)> = carried
             .iter()
             .filter_map(|(id, held)| {
                 let (oid, size) = held.summary.as_ref()?;
-                (*size <= MAX_SUMMARY_BYTES && *size == expected[id].len()).then_some(oid.as_str())
+                (*size <= MAX_SUMMARY_BYTES && *size == expected[id].len())
+                    .then_some((oid.as_str(), *size))
             })
             .collect();
         let existing = contents(&self.git, &candidates)?;
@@ -343,6 +502,7 @@ impl GitBoardStore {
                 None => self.blob(text.as_bytes())?,
             };
             let id = id.as_str();
+            debug_assert!(!board.kept.contains_key(&format!("{id}.json")));
             files.insert(
                 format!("{id}.json"),
                 format!("{REGULAR_FILE} blob {}", held.json),
@@ -374,9 +534,10 @@ impl GitBoardStore {
     }
 
     /// Branches that would hide or shadow `quecto/board`, as `prefix` +
-    /// name: `quecto` itself, and any whose name matches `quecto/board`'s
-    /// or `quecto/`'s ignoring case (they collide on a case-insensitive
-    /// filesystem).
+    /// name: `quecto` itself, any under `quecto/board/` (a branch cannot be
+    /// both a file and a directory of refs), and any whose name matches
+    /// `quecto/board`'s or `quecto/`'s ignoring case (they collide on a
+    /// case-insensitive filesystem).
     fn clashing<'a>(names: impl Iterator<Item = &'a str>, prefix: &str) -> Vec<String> {
         names
             .filter_map(|name| name.strip_prefix(prefix))
@@ -384,10 +545,19 @@ impl GitBoardStore {
                 let lower = name.to_ascii_lowercase();
                 lower == "quecto"
                     || (lower == "quecto/board" && *name != "quecto/board")
+                    || lower.starts_with("quecto/board/")
                     || (lower.starts_with("quecto/") && !name.starts_with("quecto/"))
             })
             .map(|name| format!("{prefix}{name}"))
             .collect()
+    }
+
+    /// The board on the remote, fetched and read, so a branch that is not a
+    /// board clashes.
+    fn existing(&self) -> Result<BoardHead, BoardStoreError> {
+        let head = self.fetch()?;
+        self.board_at(&head)?;
+        Ok(BoardHead(head))
     }
 
     fn clash(&self) -> Result<Option<String>, BoardStoreError> {
@@ -397,7 +567,11 @@ impl GitBoardStore {
             "refs/heads/",
             "refs/remotes/",
         ];
-        let local = self.git.text(&args, None).map_err(unavailable)?;
+        let local = self
+            .git
+            .ok_up_to(&args, None, MAX_REF_LISTING)
+            .map_err(unavailable)?;
+        let local = String::from_utf8_lossy(&local);
         let tracking = format!("refs/remotes/{}/", self.remote);
         let remote = self.remote_heads(&[])?;
         let mut found = Self::clashing(local.lines(), "refs/heads/");
@@ -445,6 +619,13 @@ impl ProjectBoardStore for GitBoardStore {
         }
         let base = self.base(expected)?;
         let board = self.board_at(&base)?;
+        if let Some(name) = board.repeated.first() {
+            return Ok(BoardWrite::Refused(format!(
+                "tasks/{name} is named more than once in the board's tree. git rejects such a \
+                 tree (fsck: duplicateEntries), so no write can carry it forward, and none drops \
+                 one: mend the board by hand first"
+            )));
+        }
         if let Some(file) = ids.iter().find_map(|id| board.is_quarantined(id)) {
             return Ok(BoardWrite::Refused(format!(
                 "{} is set aside: {}",
@@ -468,7 +649,7 @@ impl ProjectBoardStore for GitBoardStore {
             ),
             (
                 "tasks".to_string(),
-                format!("040000 tree {}", self.tasks_tree(&board, tasks)?),
+                format!("{TREE} tree {}", self.tasks_tree(&board, tasks)?),
             ),
         ]);
         let tree = self.tree(&root)?;
@@ -488,20 +669,15 @@ impl ProjectBoardStore for GitBoardStore {
         }
     }
 
-    /// Creates the board with only its README, unless it exists.
+    /// Creates the board with only its README, unless it exists. An
+    /// existing branch is the board only when read and write would take it
+    /// as one.
     fn bootstrap(&self) -> Result<BoardBootstrap, BoardStoreError> {
         if let Some(clash) = self.clash()? {
             return Err(BoardStoreError::Clash(clash));
         }
         if self.remote_head(BOARD_REF)?.is_some() {
-            let head = self.fetch()?;
-            return match is_board(&self.git, &head)? {
-                true => Ok(BoardBootstrap::Existing(BoardHead(head))),
-                false => Err(BoardStoreError::Clash(format!(
-                    "`quecto/board` on {} is a branch of its own, not a board; rename it",
-                    self.remote
-                ))),
-            };
+            return self.existing().map(BoardBootstrap::Existing);
         }
         let readme = self.blob(README)?;
         let tree = self.tree(&BTreeMap::from([(
@@ -514,7 +690,12 @@ impl ProjectBoardStore for GitBoardStore {
             .map_err(unavailable)?;
         match self.push(None, &commit)? {
             Pushed::Landed => Ok(BoardBootstrap::Created(BoardHead(commit))),
-            Pushed::Lost => Ok(BoardBootstrap::Existing(BoardHead(self.fetch()?))),
+            Pushed::Lost => match self.remote_head(BOARD_REF)? {
+                Some(_) => self.existing().map(BoardBootstrap::Existing),
+                None => Err(BoardStoreError::Unavailable(
+                    "the bootstrap lost a race, yet there is no board now; bootstrap again".into(),
+                )),
+            },
             Pushed::Refused(reason) => Err(BoardStoreError::Unavailable(format!(
                 "the bootstrap push was refused: {reason}"
             ))),

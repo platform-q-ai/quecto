@@ -144,6 +144,20 @@ fn unpushed(repos: &Repos, base: &BoardHead) -> String {
     )
 }
 
+fn rejected(summary: &str) -> PushReport {
+    PushReport {
+        rejected: Some(summary.into()),
+        said: String::new(),
+    }
+}
+
+fn silent(said: &str) -> PushReport {
+    PushReport {
+        rejected: None,
+        said: said.into(),
+    }
+}
+
 #[test]
 fn any_push_outcome_but_updated_is_judged_by_the_board() {
     let repos = Repos::new();
@@ -152,11 +166,11 @@ fn any_push_outcome_but_updated_is_judged_by_the_board() {
     let landed = written(alice.write(&base, &[task("a")], "board: add a"));
     // Our commit is on the board, whatever the push reported.
     assert_eq!(
-        alice.judge(Some(&base.0), &landed.0, Ok("[remote failure]".into())),
+        alice.judge(Some(&base.0), &landed.0, &rejected("[remote failure]")),
         Ok(Pushed::Landed)
     );
     assert_eq!(
-        alice.judge(Some(&base.0), &landed.0, Err("no report".into())),
+        alice.judge(Some(&base.0), &landed.0, &silent("no report")),
         Ok(Pushed::Landed)
     );
     // The board is where we left it: only the remote's own rejection
@@ -166,7 +180,7 @@ fn any_push_outcome_but_updated_is_judged_by_the_board() {
         alice.judge(
             Some(&landed.0),
             &ours,
-            Ok("[remote rejected] (pre-receive hook declined)".into())
+            &rejected("[remote rejected] (pre-receive hook declined)")
         ),
         Ok(Pushed::Refused(
             "[remote rejected] (pre-receive hook declined)".into()
@@ -175,22 +189,22 @@ fn any_push_outcome_but_updated_is_judged_by_the_board() {
     // A stale lease is git's own rejection: another writer moved the board
     // (and it may have moved back since), so the write is lost.
     assert_eq!(
-        alice.judge(Some(&landed.0), &ours, Ok("[rejected] (stale info)".into())),
+        alice.judge(Some(&landed.0), &ours, &rejected("[rejected] (stale info)")),
         Ok(Pushed::Lost)
     );
     // It moved past where we started: lost.
     let stale = unpushed(&repos, &base);
     assert_eq!(
-        alice.judge(Some(&base.0), &stale, Ok("[rejected] (stale info)".into())),
+        alice.judge(Some(&base.0), &stale, &rejected("[rejected] (stale info)")),
         Ok(Pushed::Lost)
     );
     // Nothing reported, or a failure the remote did not explain, and the
     // board did not move: it may still.
     for report in [
-        Err("the push timed out".to_string()),
-        Ok("[remote failure] (remote failed to report status)".to_string()),
+        silent("the push timed out"),
+        rejected("[remote failure] (remote failed to report status)"),
     ] {
-        let unknown = alice.judge(Some(&landed.0), &ours, report.clone());
+        let unknown = alice.judge(Some(&landed.0), &ours, &report);
         assert!(
             matches!(&unknown, Err(BoardStoreError::Unavailable(why)) if why.contains("may have moved")),
             "{report:?}: {unknown:?}"

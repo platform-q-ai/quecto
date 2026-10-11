@@ -167,13 +167,19 @@ enum Object {
 
 /// A raw `tasks/` tree of exactly `entries` (mode, name, object), written
 /// as git would never write one, and a board commit of it on the remote.
-/// Each of `clones` gets the same objects too: git refuses to send such a
-/// tree over the wire, so only a repository that already holds it (one
-/// sharing objects, say) ever reads it.
+/// Each of `clones` gets the same objects, and its tracking ref the same
+/// board, as if it had fetched it: git refuses to send some such trees over
+/// the wire, so only a repository that already holds one (one sharing
+/// objects, say) ever reads it.
 fn raw_board(remote: &Path, entries: &[(&str, &str, Object)], clones: &[&Path]) -> BoardHead {
     let head = raw_board_in(remote, entries);
     for clone in clones {
         assert_eq!(raw_board_in(clone, entries), head);
+        // As if the clone had fetched it.
+        sh(
+            clone,
+            &["update-ref", "refs/remotes/origin/quecto/board", &head.0],
+        );
     }
     sh(remote, &["update-ref", BOARD_REF, &head.0]);
     head
