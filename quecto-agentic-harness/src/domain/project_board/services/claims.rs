@@ -1,5 +1,16 @@
 //! Claims last [`CLAIM_TTL_SECONDS`]: the holder renews, and anyone takes
 //! over an expired claim on a task that may hold one.
+//!
+//! **Time.** Each rule is given the caller's clock, `now`. A change is
+//! stamped with [`stamp`], `max(now, task.updated)`, a hybrid logical
+//! clock: `updated`, a new claim's `since` and `expires` and an ended
+//! run's `ended` never run backwards, and a write from a clock that ran
+//! ahead never locks the task for clients whose clocks are right. Whether a
+//! claim has expired is judged by the caller's real `now`, so a client
+//! whose clock runs fast sees claims expire early, and a claim stamped by
+//! such a clock lasts until its stamped expiry. S1c's clock port refuses a
+//! `now` more than 60 s ahead of an outside reference (the remote's last
+//! commit time), which bounds both.
 use super::super::entities::claim::{CLAIM_TTL_SECONDS, Claim, Identity};
 use super::super::entities::task::{Task, TaskFields};
 use super::super::value_objects::rule_error::BoardRuleError;
@@ -9,20 +20,19 @@ use super::super::value_objects::timestamp::Timestamp;
 /// claim never spans more than that, so renewing restarts its window. An
 /// expired claim is renewed too, until someone takes it over.
 pub fn renew(task: &Task, holder: &Identity, now: &Timestamp) -> Result<Task, BoardRuleError> {
-    clock_keeps_up(task, now)?;
     let claim = held_by(task, holder)?;
+    let at = stamp(task, now);
     let mut next = task.fields().clone();
     next.claim = Some(Claim {
         holder: claim.holder.clone(),
-        ..new_claim(holder, now)?
+        ..new_claim(holder, &at)?
     });
-    settle(next, now)
+    settle(next, &at)
 }
 
 /// Someone else takes an expired claim on a task that may hold one
 /// (claimed, in progress, in review or blocked).
 pub fn take_over(task: &Task, taker: &Identity, now: &Timestamp) -> Result<Task, BoardRuleError> {
-    clock_keeps_up(task, now)?;
     let fields = task.fields();
     let claim = match (&fields.claim, fields.status.may_hold_claim()) {
         (Some(claim), true) => claim,
@@ -35,9 +45,10 @@ pub fn take_over(task: &Task, taker: &Identity, now: &Timestamp) -> Result<Task,
     if is_live(claim, now) {
         return Err(BoardRuleError::ClaimLive);
     }
+    let at = stamp(task, now);
     let mut next = fields.clone();
-    next.claim = Some(new_claim(taker, now)?);
-    settle(next, now)
+    next.claim = Some(new_claim(taker, &at)?);
+    settle(next, &at)
 }
 
 /// The task's claim, when `actor` holds it (by email, ignoring case),
@@ -71,39 +82,29 @@ pub(super) fn is_live(claim: &Claim, now: &Timestamp) -> bool {
     *now < claim.expires
 }
 
-/// Every change happens at or after the task's last one, so `updated`
-/// never runs backwards.
-pub(super) fn clock_keeps_up(task: &Task, now: &Timestamp) -> Result<(), BoardRuleError> {
-    let updated = &task.fields().updated;
-    if updated <= now {
-        Ok(())
-    } else {
-        Err(BoardRuleError::ClockBehind {
-            now: now.clone(),
-            updated: updated.clone(),
-        })
-    }
+/// When a change to `task` happens: the caller's `now`, or the task's own
+/// `updated` if the caller's clock reads earlier.
+pub(super) fn stamp(task: &Task, now: &Timestamp) -> Timestamp {
+    now.max(&task.fields().updated).clone()
 }
 
-pub(super) fn new_claim(holder: &Identity, now: &Timestamp) -> Result<Claim, BoardRuleError> {
-    let expires = now
+/// A claim for `holder` from `at` (a [`stamp`]) for two hours.
+pub(super) fn new_claim(holder: &Identity, at: &Timestamp) -> Result<Claim, BoardRuleError> {
+    let expires = at
         .plus_seconds(CLAIM_TTL_SECONDS)
-        .map_err(BoardRuleError::Invalid)?;
+        .map_err(|error| BoardRuleError::Invalid(error.at("claim/expires")))?;
     Ok(Claim {
         holder: holder.clone(),
-        since: now.clone(),
+        since: at.clone(),
         expires,
     })
 }
 
-/// Stamps the change and builds the task again, so no rule leaves one
-/// that breaks the schema.
-pub(super) fn settle(mut next: TaskFields, now: &Timestamp) -> Result<Task, BoardRuleError> {
-    debug_assert!(
-        next.updated <= *now,
-        "every rule checks the clock before it changes a task"
-    );
-    next.updated = now.clone();
+/// Stamps the change at `at` (a [`stamp`]) and builds the task again, so
+/// no rule leaves one that breaks the schema.
+pub(super) fn settle(mut next: TaskFields, at: &Timestamp) -> Result<Task, BoardRuleError> {
+    debug_assert!(next.updated <= *at, "a stamp never runs backwards");
+    next.updated = at.clone();
     Task::new(next).map_err(BoardRuleError::Invalid)
 }
 

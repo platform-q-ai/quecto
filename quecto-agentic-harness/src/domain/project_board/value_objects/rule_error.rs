@@ -1,7 +1,6 @@
 //! Why the board's rules refused a move, renewal, takeover or completion.
 use super::schema_error::SchemaError;
 use super::slug::Slug;
-use super::timestamp::Timestamp;
 use super::vocabulary::TaskStatus;
 use std::fmt;
 
@@ -17,13 +16,12 @@ pub enum BoardRuleError {
     ClaimLive,
     /// The holder's claim has expired: renew it first.
     ClaimExpired,
-    /// The clock reads earlier than the task's last change.
-    ClockBehind { now: Timestamp, updated: Timestamp },
     /// This run is still going: end it before the task leaves its holder.
     RunOpen(Slug),
     /// The task has no open run to end.
     NoOpenRun,
-    /// A takeover is only of a claimed or in-progress task.
+    /// A takeover is only of a task that may hold a claim (claimed, in
+    /// progress, in review or blocked).
     NotTakeable(TaskStatus),
     /// The holder renews; a takeover is someone else's.
     AlreadyHolder,
@@ -52,12 +50,6 @@ impl fmt::Display for BoardRuleError {
             Self::NoClaim => f.write_str("the task has no claim"),
             Self::ClaimLive => f.write_str("the claim has not expired"),
             Self::ClaimExpired => f.write_str("the claim has expired; renew it first"),
-            Self::ClockBehind { now, updated } => write!(
-                f,
-                "the clock reads {} but the task changed at {}",
-                now.as_str(),
-                updated.as_str()
-            ),
             Self::RunOpen(run) => write!(f, "run {} is still open", run.as_str()),
             Self::NoOpenRun => f.write_str("the task has no open run"),
             Self::NotTakeable(status) => {

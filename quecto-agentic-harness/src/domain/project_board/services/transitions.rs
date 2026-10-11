@@ -4,7 +4,7 @@ use super::super::entities::task::Task;
 use super::super::value_objects::rule_error::BoardRuleError;
 use super::super::value_objects::timestamp::Timestamp;
 use super::super::value_objects::vocabulary::TaskStatus::{self, *};
-use super::claims::{clock_keeps_up, held_by, held_live_by, is_live, new_claim, settle};
+use super::claims::{held_by, held_live_by, is_live, new_claim, settle, stamp};
 use std::collections::BTreeSet;
 
 /// Who may make a move.
@@ -62,7 +62,6 @@ pub fn move_task(
     actor: &Identity,
     now: &Timestamp,
 ) -> Result<Task, BoardRuleError> {
-    clock_keeps_up(task, now)?;
     let from = task.fields().status;
     let (_, _, who, effect) = TRANSITIONS
         .iter()
@@ -88,14 +87,15 @@ pub fn move_task(
         }
     }
     runs_may_stay_open(task, to)?;
+    let at = stamp(task, now);
     let mut next = task.fields().clone();
     next.status = to;
     next.claim = match effect {
         ClaimEffect::Keep => next.claim,
-        ClaimEffect::Take => Some(new_claim(actor, now)?),
+        ClaimEffect::Take => Some(new_claim(actor, &at)?),
         ClaimEffect::Clear => None,
     };
-    settle(next, now)
+    settle(next, &at)
 }
 
 /// The system move behind "a merged PR moves its task to done": a held
@@ -107,7 +107,6 @@ pub fn complete_merged(
     merged: &BTreeSet<u64>,
     now: &Timestamp,
 ) -> Result<Task, BoardRuleError> {
-    clock_keeps_up(task, now)?;
     let fields = task.fields();
     let unmerged: Vec<u64> = fields
         .prs
@@ -134,7 +133,7 @@ pub fn complete_merged(
     let mut next = fields.clone();
     next.status = Done;
     next.claim = None;
-    settle(next, now)
+    settle(next, &stamp(task, now))
 }
 
 /// A run may stay open only while the task may hold a claim; leaving for
