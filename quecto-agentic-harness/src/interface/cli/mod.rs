@@ -87,6 +87,7 @@ mod uds_socket;
 mod uds_state_projection;
 #[cfg(test)]
 mod uds_state_projection_tests;
+mod uds_swarm_board;
 mod uds_swarm_control;
 mod uds_sync;
 #[cfg(test)]

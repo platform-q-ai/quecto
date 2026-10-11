@@ -7,7 +7,8 @@
 use crate::application::environments::dto::EnvironmentLiveness;
 use crate::application::environments::ports::EnvironmentProcess;
 use crate::application::environments::ports::{
-    EnvironmentProcessCommands, HostedSwarmRunInspection, HostedSwarmRunObservation, PortFuture,
+    EnvironmentProcessCommands, HostedSwarmBoard, HostedSwarmRunInspection,
+    HostedSwarmRunObservation, PortFuture,
 };
 use crate::domain::environments::entities::environment_registry::EnvironmentRecord;
 use crate::domain::environments::services::environment_retention::{
@@ -457,6 +458,35 @@ impl HostedSwarmRunObservation for HostedStoreObservation {
                     .map_err(|error| error.to_string())
             })
             .await?
+        })
+    }
+}
+
+/// The board an environment hosts, read by path from the supervising
+/// session through composition's board handles (#2478): `None` when the
+/// environment advertises no checkout with a board on this host.
+impl HostedSwarmBoard for HostedStoreObservation {
+    fn board<'a>(
+        &'a self,
+        record: &'a EnvironmentRecord,
+    ) -> PortFuture<'a, Result<Option<serde_json::Value>, String>> {
+        let store = hosted_store(record, &self.board);
+        Box::pin(async move {
+            let Some(store) = store else { return Ok(None) };
+            off_the_workers(move || store.board_projection().map_err(|error| error.to_string()))
+                .await?
+        })
+    }
+
+    fn revision<'a>(
+        &'a self,
+        record: &'a EnvironmentRecord,
+    ) -> PortFuture<'a, Result<Option<i64>, String>> {
+        let store = hosted_store(record, &self.board);
+        Box::pin(async move {
+            let Some(store) = store else { return Ok(None) };
+            off_the_workers(move || store.board_revision().map_err(|error| error.to_string()))
+                .await?
         })
     }
 }

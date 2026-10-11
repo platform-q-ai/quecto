@@ -61,6 +61,7 @@ fn rig_with(binding: ParentControlBinding, cancellation: Arc<FakeCancellation>) 
     let controller = Arc::new(SubagentTeardownController::new(prepare, execute, terminate));
     Rig {
         teardown: Arc::new(ConnectionTeardown {
+            swarm_boards: Default::default(),
             binding: Arc::new(Mutex::new(binding)),
             controller,
             fleet: fleet.fleet,

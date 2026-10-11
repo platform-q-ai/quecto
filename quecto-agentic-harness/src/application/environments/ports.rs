@@ -88,6 +88,24 @@ pub trait HostedSwarmRunObservation: Send + Sync {
     ) -> PortFuture<'a, Result<CoordinatorLoss, String>>;
 }
 
+/// The board a swarm environment hosts, read by the supervising session
+/// through the board's own adapter (#2478): no client opens the file.
+pub trait HostedSwarmBoard: Send + Sync {
+    /// The board's projection (the `_board` read), or `None` when `record`
+    /// hosts no board this session can reach.
+    fn board<'a>(
+        &'a self,
+        record: &'a EnvironmentRecord,
+    ) -> PortFuture<'a, Result<Option<serde_json::Value>, String>>;
+
+    /// The board's revision, which every board write moves, or `None` as
+    /// for [`Self::board`].
+    fn revision<'a>(
+        &'a self,
+        record: &'a EnvironmentRecord,
+    ) -> PortFuture<'a, Result<Option<i64>, String>>;
+}
+
 /// The swarm run a checkout hosts, read synchronously and without a
 /// session (round 4 M1, #2033): what [`HostedSwarmRunObservation`] learns
 /// for the finalizer, for the startup restore and the CLI collector —

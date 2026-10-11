@@ -9,6 +9,7 @@ mod initialise_standard_container;
 mod kill_environment;
 mod list_container_configs;
 mod list_environments;
+mod read_swarm_board;
 mod restore_registry;
 
 pub use box_residue::{
@@ -24,6 +25,7 @@ pub use initialise_standard_container::{InitialiseStandardContainer, STATE_DIR_N
 pub use kill_environment::{KillEnvironment, KillEnvironmentError, KilledEnvironment};
 pub use list_container_configs::ListContainerConfigs;
 pub use list_environments::ListEnvironmentsQuery;
+pub use read_swarm_board::ReadSwarmBoard;
 pub use restore_registry::{
     KILL_IN_FLIGHT, RELABELLED_BY_OLDER_BUILD, RETAINED_EXITED, RestoreRegistry,
     unfinished_run_reason,

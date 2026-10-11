@@ -170,6 +170,17 @@ pub(crate) async fn handle_client(args: ClientHandlerArgs) {
                 &line,
             );
         }
+        if super::super::uds_swarm_board::intercept(
+            &line,
+            teardown.as_deref().map(|teardown| &teardown.swarm_boards),
+            &client_tool_registry,
+            &subagent_registry,
+            client_id,
+        )
+        .await
+        {
+            continue;
+        }
         if !super::super::uds_reader_dispatch::dispatch(
             super::super::uds_reader_dispatch::ReaderDispatchCtx {
                 line,

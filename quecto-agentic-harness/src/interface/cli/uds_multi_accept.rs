@@ -63,6 +63,16 @@ pub(super) fn spawn_accept_loop(args: AcceptLoopArgs) -> tokio::task::JoinHandle
         extensions,
     } = args;
     tokio::spawn(async move {
+        // The board view's change hints (#2478) live as long as the loop.
+        let hints = teardown.as_ref().map(|teardown| {
+            let boards = teardown.swarm_boards.clone();
+            super::uds_swarm_board::spawn_change_hints(
+                boards,
+                broadcast_tx.clone(),
+                live_clients.clone(),
+            )
+        });
+        let _hints = super::uds_swarm_board::AbortOnDrop(hints);
         loop {
             match listener.accept().await {
                 Ok((mut stream, _addr)) => {

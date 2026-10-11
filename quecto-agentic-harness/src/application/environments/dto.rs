@@ -696,3 +696,24 @@ pub struct PersistedContainerConfig {
     pub path: std::path::PathBuf,
     pub created: bool,
 }
+
+/// Why a swarm's board could not be answered (#2478).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SwarmBoardRefusal {
+    /// No environment of this session has that ref.
+    UnknownSwarm(String),
+    /// The environment hosts no board this session can reach.
+    NoBoard(String),
+    /// The board could not be read.
+    Unreadable(String),
+}
+
+impl std::fmt::Display for SwarmBoardRefusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::UnknownSwarm(swarm) => write!(f, "unknown swarm {swarm}"),
+            Self::NoBoard(swarm) => write!(f, "swarm {swarm} hosts no board this session can read"),
+            Self::Unreadable(error) => write!(f, "swarm board unreadable: {error}"),
+        }
+    }
+}

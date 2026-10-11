@@ -76,6 +76,9 @@ pub struct ConnectionTeardown {
     /// The owner's exit announcement (#2070) the reader task raises on the
     /// owning TUI's exit persist and withdraws when that connection closes.
     pub owner_exit: Arc<dyn crate::application::subagents::ports::OwnerExitAnnouncement>,
+    /// The swarm boards this harness hosts (#2478): every connection's
+    /// `get_swarm_board` and the `swarm_board_changed` poll read them.
+    pub swarm_boards: crate::infrastructure::tools::agent_cmd_containers::EnvironmentControlSlot,
 }
 
 impl ConnectionTeardown {

@@ -22,7 +22,7 @@ use crate::application::environments::ports::{
 };
 use crate::application::environments::use_cases::{
     DiagnoseContainerRuntime, FinalizeEnvironmentMember, GcOrphanedEnvironments, KillEnvironment,
-    ListEnvironmentsQuery, RestoreRegistry,
+    ListEnvironmentsQuery, ReadSwarmBoard, RestoreRegistry,
 };
 use crate::domain::environments::entities::environment_registry::EnvironmentRegistry;
 use crate::infrastructure::config::container_config_lookup::SelectedConfigLookup;
@@ -77,6 +77,10 @@ pub fn build_environment_control(
 ) -> EnvironmentControl {
     EnvironmentControl {
         list: Arc::new(ListEnvironmentsQuery::new(environments.clone())),
+        boards: Arc::new(ReadSwarmBoard::new(
+            environments.clone(),
+            Arc::new(hosted_store_observation()),
+        )),
         kill: Arc::new(KillEnvironment::new(
             environments,
             member_shutdown,

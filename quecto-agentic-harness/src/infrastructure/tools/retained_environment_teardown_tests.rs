@@ -109,6 +109,16 @@ fn record(
 fn control(reg: &EnvironmentRegistry, commands: Arc<Commands>) -> EnvironmentControl {
     EnvironmentControl {
         list: Arc::new(ListEnvironmentsQuery::new(reg.clone())),
+        boards: Arc::new(
+            crate::application::environments::use_cases::ReadSwarmBoard::new(
+                reg.clone(),
+                Arc::new(
+                    crate::infrastructure::tools::environment_commands::HostedStoreObservation::new(
+                        crate::composition::swarm::swarm_board(),
+                    ),
+                ),
+            ),
+        ),
         kill: Arc::new(KillEnvironment::new(
             reg.clone(),
             Arc::new(NoMembers(AtomicUsize::new(0))),

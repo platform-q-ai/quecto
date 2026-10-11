@@ -44,10 +44,11 @@ without the documentation files being present in the container checkout.
 | Final result | A run that ended is `paused` holding `summary.outcome` (`succeeded`, `blocked`, `failed`, `budget-exhausted`) and `summary.outcome_reason`; read the final revision and criterion evidence, then resume or close it with `swarm_control` |
 | Evidence files | Ask the coordinator to export them using ordinary file/Bash tools before environment teardown |
 
-There are no dedicated public swarm creation, update, inspection or result UDS
-endpoints, and no swarm dashboard/config panel in this change. Existing UDS agent
-supervision carries prompts and reports; it does not expose the durable board as
-a structured event feed. That public interface is follow-on work.
+A supervising client reads a hosted swarm's board on its parent's socket:
+`get_swarm_board {swarm}` answers the run, its items, members and totals, and
+`swarm_board_changed {swarm, revision}` tells it when the board moved (see
+`uds-protocol.md`, #2478). There are no public swarm creation or update UDS
+endpoints, and no swarm dashboard/config panel.
 
 On a wake hint, inspect summary first. Once the run is no longer running,
 `op=summary`, `op=events` and `op=usage` remain readable but every board op is

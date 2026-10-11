@@ -921,6 +921,28 @@ Return the latest assistant report of the session and, on request, write a retai
 
 ---
 
+### `get_swarm_board`
+
+Answers the board of a swarm this harness hosts, as one snapshot (#2475, #2478). `swarm` is the environment ref (`C1`) of the container the swarm runs in, as `agent_cmd get_containers` lists it. The harness reads the board through its own adapter, membership-free and in one read transaction: no client opens the board file. Answered on the connection's reader task, so a running turn does not delay it. Add `agent_id` to ask a descendant for a board it hosts, as `swarm_control` routes.
+
+```json
+{"type":"get_swarm_board","id":"b1","swarm":"C1"}
+```
+
+`data` carries `swarm` and the snapshot:
+
+| Field | Meaning |
+|---|---|
+| `revision` | Grows with every board write the snapshot shows (the latest board event plus the usage ledger's latest row); the `swarm_board_changed` hint carries it |
+| `run` | `null` before a run is created; else `id`, `goal`, `status`, `outcome`, `outcome_reason`, `generation` (the latest pause or resume), `criteria`, `member_limit`, `deadline`, `coordinator`, `integrator` and `budget` (`token_limit`, `strict_unknown`, `warned`, `observed_tokens`, `unknown_usage_requests`) |
+| `items` | The board's tasks, by id: `id`, `title`, `criteria`, `depends_on`, `state` (`ready`, `claimed`, `blocked`, `submitted`, `completed`), `waiting` (ready, but a dependency is not completed), `owner`, `blocker`, `reserved_paths` and `evidence` |
+| `members` | `id`, `role` (`coordinator`, `integrator`, `worker`), `status`, `claims` (items held claimed, blocked or submitted) and `last_activity` (the time of its latest board event, or `null`) |
+| `evidence` | The run's criterion evidence: `criterion`, `artifact`, `revision`, `kind`, `actor`, `accepted` |
+| `totals` | Over every item and member, whatever was left out: `items`, `ready`, `waiting`, `claimed`, `blocked`, `submitted`, `completed`, `members`, `members_without_claim`, `members_dead` |
+| `truncated` | `true` when rows were left out: past 1,000 items, 2,000 reservations, 100 members or 500 evidence rows, or past 4 MiB of rows |
+
+No claim or reservation token, and no member's process, socket or launcher, is ever in it. An item's `state` maps onto a project board item's state as `ready` → `todo`, `claimed` → `doing`, `submitted` → `review`, `completed` → `done`, `blocked` → `blocked`. Errors: `swarm is required (an environment ref such as C1)`, `unknown swarm C9`, `swarm C1 hosts no board this session can read`, `swarm board unreadable: …` (a value the board never writes, contention), and `swarm boards are unavailable in this harness`.
+
 ### `get_session_stats`
 
 Return token usage and cost statistics for the current session. `sessionKey` is the active session's identity; the usage counters restart at zero whenever `new_session` or `resume_session` moves the loop to a different key, and on `clear_history` / `rewind_to`.
@@ -1533,6 +1555,14 @@ Once a launched coordinator has sent one, its parent holds each `agent_end` note
 
 ```json
 {"type":"swarm_state","wake":"finished","status":"succeeded","prompted":false}
+```
+
+### `swarm_board_changed`
+
+Pushed to every client when the board of a swarm this harness hosts moved (#2478): when a swarm's board is first read, and whenever its `revision` changes after. The harness polls each hosted board's revision once a second while a client is connected, so a swarm is hinted at most once a second. Fetch the snapshot with `get_swarm_board`; the hint carries no rows.
+
+```json
+{"type":"swarm_board_changed","swarm":"C1","revision":42}
 ```
 
 ### `reply_ready`

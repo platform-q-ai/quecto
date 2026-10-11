@@ -218,9 +218,19 @@ fn use_case_debug_is_redacted_but_present() {
 fn query_only_tool(query: Arc<ListEnvironmentsQuery>) -> super::super::agent_cmd::AgentCmdTool {
     super::super::agent_cmd::AgentCmdTool::new(super::super::subagent_registry::new_registry())
         .with_environment_control(super::EnvironmentControl {
-            list: query,
-            kill: use_case(EnvironmentRegistry::new()),
-        })
+        list: query,
+        kill: use_case(EnvironmentRegistry::new()),
+        boards: Arc::new(
+            crate::application::environments::use_cases::ReadSwarmBoard::new(
+                EnvironmentRegistry::new(),
+                Arc::new(
+                    crate::infrastructure::tools::environment_commands::HostedStoreObservation::new(
+                        crate::composition::swarm::swarm_board(),
+                    ),
+                ),
+            ),
+        ),
+    })
 }
 
 #[test]
