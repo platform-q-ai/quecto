@@ -38,7 +38,7 @@
 //! fetches them in one call and reads again.
 pub use super::cat_file::contents;
 use super::cat_file::{Found, Object, objects};
-use super::git::{Git, GitError, quoted};
+use super::git::{Git, GitError, quoted, shown_name};
 use super::task_record::{MAX_TASK_FILE_BYTES, decode};
 use crate::application::project_board::ports::{BoardStoreError, QuarantinedFile};
 use crate::domain::project_board::entities::task::Task;
@@ -147,6 +147,10 @@ pub struct Board {
     /// Files a clear keeps that a read will read as tasks, each needing a
     /// summary the next write adds: they count as two entries each.
     pub pending_summaries: usize,
+    /// Each file set aside, by its listed path and object: its name in the
+    /// tree, as [`Self::kept`] keys it. A clear finds the file by it, never
+    /// by the path as shown.
+    pub names: BTreeMap<(String, String), String>,
 }
 
 /// One copy of a name a write would carry, as its tree entry holds it.
@@ -515,8 +519,12 @@ fn read_tasks(git: &Git, tree: &str, limits: Limits) -> Result<Board, Unread> {
     let count = |entry: &Entry| counts.get(entry.raw.as_slice()).copied().unwrap_or(0);
     let mut board = Board::default();
     let set_aside = |board: &mut Board, entry: &Entry, id: Option<Slug>, reason: String| {
+        let path = format!("tasks/{}", shown_name(&entry.raw));
+        board
+            .names
+            .insert((path.clone(), entry.oid.clone()), entry.name.clone());
         board.quarantined.push(QuarantinedFile {
-            path: format!("tasks/{}", quoted(&entry.raw)),
+            path,
             id,
             reason,
             object: entry.oid.clone(),

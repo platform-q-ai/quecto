@@ -72,7 +72,7 @@ impl CompleteMergedTask {
     pub fn execute(&self, id: &Slug) -> Result<Task, ProjectBoardError> {
         let message = format!("board: {} done, its pull requests merged", id.as_str());
         // One deadline for every attempt: a lost write does not restart it.
-        let deadline = self.clock.elapsed() + self.read_budget;
+        let deadline = self.clock.elapsed().saturating_add(self.read_budget);
         let tasks = commit(&*self.store, &*self.clock, &message, |board, when| {
             let task = task_on(board, id)?;
             when.may_build_on(task)?;

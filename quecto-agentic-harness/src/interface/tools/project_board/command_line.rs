@@ -21,7 +21,8 @@ pub fn request(op: &str, flags: &[String]) -> Result<Value, RequestError> {
         problem: problem.into(),
     };
     let op = op.replace('-', "_");
-    let fields = fields_of(&op).ok_or_else(|| refused("op", &format!("no op {op}")))?;
+    // A name that is no op is never echoed back.
+    let fields = fields_of(&op).ok_or_else(|| refused("op", "is not an op of the board"))?;
     let mut object = Map::new();
     object.insert("op".into(), Value::String(op.clone()));
     let mut rest = flags.iter();
@@ -29,11 +30,12 @@ pub fn request(op: &str, flags: &[String]) -> Result<Value, RequestError> {
         let name = flag
             .strip_prefix("--")
             .map(|name| name.replace('-', "_"))
-            .ok_or_else(|| refused(flag, "expected --<field> <value>"))?;
+            .ok_or_else(|| refused("flags", "expected --<field> <value>"))?;
         let field = fields
             .iter()
             .find(|field| field.name == name)
-            .ok_or_else(|| refused(&name, &format!("{op} takes no such field")))?;
+            // A field the op does not take is never echoed back as one.
+            .ok_or_else(|| refused("flags", &format!("{op} takes no such field")))?;
         let text = rest.next().ok_or_else(|| refused(&name, "needs a value"))?;
         let value = match field.kind {
             Kind::Slugs if text.is_empty() => Value::Array(vec![]),

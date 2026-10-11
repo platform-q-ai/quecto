@@ -11,7 +11,8 @@ use super::MAX_WRITE_ATTEMPTS;
 use super::board_change::checked_writer;
 use crate::application::project_board::dto::ProjectBoardError;
 use crate::application::project_board::ports::{
-    BoardClock, BoardHead, BoardWrite, KeepCopy, ProjectBoardStore, QuarantinedFile, SetAsideClear,
+    BoardClock, BoardHead, BoardStoreError, BoardWrite, KeepCopy, ProjectBoardStore,
+    QuarantinedFile, SetAsideClear,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -43,6 +44,14 @@ impl ClearSetAside {
         object: &str,
         repeated: &BTreeMap<String, KeepCopy>,
     ) -> Result<BoardHead, ProjectBoardError> {
+        // A clear removes `object`: it cannot also keep it.
+        if let Some(KeepCopy::Object { keep, .. }) = repeated.get(path)
+            && keep == object
+        {
+            return Err(ProjectBoardError::Store(BoardStoreError::InvalidWrite(
+                format!("{path} keeps {keep}, the object this clear removes"),
+            )));
+        }
         let clear = SetAsideClear {
             path: path.to_string(),
             object: object.to_string(),
