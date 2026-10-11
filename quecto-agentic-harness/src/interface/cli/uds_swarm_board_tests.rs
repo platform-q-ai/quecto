@@ -657,7 +657,9 @@ async fn board_requests_in_flight_are_bounded_per_connection() {
             json!("get_swarm_board is busy: at most 2 requests in flight per connection")
         )
     );
-    gate.notify_waiters();
+    // One permit per waiting read: no reliance on when each one waits.
+    gate.notify_one();
+    gate.notify_one();
     for _ in 0..2 {
         assert_eq!(reply(&mut rx).await["success"], json!(true));
     }
@@ -676,18 +678,20 @@ async fn what_was_seen_is_forgotten_while_no_client_is_connected() {
     let _poll = AbortOnDrop(Some(spawn_change_hints(
         view(read_over(Arc::new(OneBoard))),
         hints.clone(),
-        tx,
+        tx.clone(),
         clients.clone(),
     )));
     tokio::time::sleep(Duration::from_millis(10)).await;
     assert_eq!(rx.try_recv().unwrap(), hint("C1", "r1", 7));
     assert_eq!(hints.connect_lines().len(), 1);
     clients.store(0, Ordering::SeqCst);
+    drop(rx);
     tokio::time::sleep(Duration::from_millis(1_000)).await;
     assert!(
         hints.connect_lines().is_empty(),
         "nobody connected: forgotten"
     );
+    let mut rx = tx.subscribe();
     clients.store(1, Ordering::SeqCst);
     tokio::time::sleep(Duration::from_millis(1_000)).await;
     assert_eq!(rx.try_recv().unwrap(), hint("C1", "r1", 7), "hinted afresh");
@@ -724,5 +728,71 @@ async fn an_answer_the_view_cannot_present_is_refused() {
             json!(false),
             json!("swarm board answer malformed: it names a swarm of its own")
         )
+    );
+}
+
+/// Verification item 2 (#2488): what was seen is forgotten under the lock,
+/// and only while nobody is subscribed: a connection that has subscribed
+/// (and been told what was seen) but is not yet counted keeps it.
+#[test]
+fn what_was_seen_is_forgotten_only_with_no_receiver() {
+    let (tx, rx) = tokio::sync::broadcast::channel::<String>(4);
+    let hints = BoardHints::default();
+    hints.publish(&tx, |_| {
+        let now = Seen::from([(
+            "C1".to_owned(),
+            HostedBoardRevision {
+                run: Some("r1".into()),
+                revision: 7,
+            },
+        )]);
+        (vec![], now)
+    });
+    hints.forget(&tx);
+    assert_eq!(hints.connect_lines().len(), 1, "a subscriber holds it");
+    drop(rx);
+    hints.forget(&tx);
+    assert!(hints.connect_lines().is_empty());
+}
+
+/// Verification item 1 (#2488): a refusal (malformed or busy) is written
+/// only when the client's channel has room, and dropped otherwise: no task
+/// waits on a client that does not read.
+#[tokio::test]
+async fn refusals_to_a_client_that_does_not_read_are_dropped() {
+    let clients = crate::interface::cli::uds_ext_protocol::new_client_tool_registry();
+    let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+    crate::interface::cli::uds_ext_protocol::register_client_writer(&clients, 7, tx.clone());
+    tx.try_send("filler\n".to_owned()).unwrap();
+    let boards = view(read_over(Arc::new(OneBoard)));
+    let none: Option<SubagentRegistry> = None;
+    let full = Arc::new(tokio::sync::Semaphore::new(0));
+    for line in [
+        r#"{"type":"get_swarm_board","id":"m","swarm":7}"#,
+        r#"{"type":"get_swarm_board","id":"b","swarm":"C1"}"#,
+    ] {
+        for _ in 0..5 {
+            assert!(intercept(
+                line,
+                BoardViewCtx {
+                    boards: Some(&boards),
+                    clients: &clients,
+                    subagents: &none,
+                    client_id: 7,
+                    in_flight: &full,
+                },
+            ));
+        }
+    }
+    for _ in 0..16 {
+        tokio::task::yield_now().await;
+    }
+    assert_eq!(rx.recv().await.unwrap(), "filler\n");
+    for _ in 0..16 {
+        tokio::task::yield_now().await;
+    }
+    assert!(
+        rx.try_recv().is_err(),
+        "nothing waited behind the full channel"
     );
 }

@@ -347,3 +347,26 @@ fn items_are_measured_before_reservations() {
     assert_eq!(rows.items.len(), 2, "the first two items fit first");
     assert!(rows.files.is_empty(), "no reservation fits after them");
 }
+
+/// Verification item 4 (#2488): the guarded scalars count in the
+/// as-stored measure: member `a` is 5 bytes of id and status and 3 of its
+/// latest event's time (`3.5`), so 7 bytes hold no member and 8 hold it.
+#[test]
+fn guarded_scalars_count_in_the_stored_measure() {
+    let (_dir, database, repository) = board();
+    within(&repository, |_| Ok(()));
+    rusqlite::Connection::open(&database)
+        .unwrap()
+        .execute_batch(
+            "INSERT INTO members (id, status) VALUES ('a','live');
+             INSERT INTO events (actor, time, action, detail) VALUES ('a', 3.5, 'claimed', '{}');",
+        )
+        .unwrap();
+    let members = |bytes| {
+        rows_within(&repository, ProjectionLimits { bytes, ..LIMITS })
+            .unwrap()
+            .members
+            .len()
+    };
+    assert_eq!((members(7), members(8)), (0, 1));
+}
