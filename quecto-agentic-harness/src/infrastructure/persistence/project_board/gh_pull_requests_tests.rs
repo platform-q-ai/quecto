@@ -234,6 +234,7 @@ fn a_github_remote_names_its_repository_without_its_user_and_any_other_host_none
 const KILLED_PARENT: &str = "QUECTO_TEST_KILLED_PARENT_GH_PATH";
 
 /// As the parent the next test kills: gh through the runner, hanging.
+#[cfg(target_os = "linux")]
 #[test]
 fn a_parent_that_runs_a_hanging_gh() {
     let Some(path) = std::env::var_os(KILLED_PARENT) else {
@@ -244,56 +245,37 @@ fn a_parent_that_runs_a_hanging_gh() {
     let _ = host.state(1);
 }
 
-/// When quecto is killed outright, the gh it was running dies with it,
-/// its own session notwithstanding.
+/// When quecto is killed outright, the gh it was running is asked to stop
+/// with SIGTERM, its own session notwithstanding.
+#[cfg(target_os = "linux")]
 #[test]
-fn a_gh_ends_when_the_quecto_running_it_is_killed() {
+fn a_gh_is_terminated_when_the_quecto_running_it_is_killed() {
+    use crate::infrastructure::processes::parent_death_signal::tests::KilledParent;
     let dir = tempfile::tempdir().unwrap();
     let bin = dir.path().join("bin");
     std::fs::create_dir(&bin).unwrap();
-    let pid_file = dir.path().join("gh-pid");
+    let (pid, signal) = (dir.path().join("pid"), dir.path().join("signal"));
     let gh = bin.join("gh");
-    std::fs::write(
-        &gh,
-        format!(
-            "#!/bin/sh\necho $$ > '{}'\nexec sleep 60\n",
-            pid_file.display()
-        ),
-    )
-    .unwrap();
+    let script = format!(
+        "#!/bin/sh\ntrap 'echo TERM > \"{}\"; kill $!; exit 0' TERM\necho $$ > '{}'\nsleep 60 &\nwait\n",
+        signal.display(),
+        pid.display()
+    );
+    std::fs::write(&gh, script).unwrap();
     use std::os::unix::fs::PermissionsExt;
     std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
     let mut path = bin.into_os_string();
     path.push(":");
     path.push(std::env::var_os("PATH").unwrap());
     let name = "infrastructure::persistence::project_board::gh_pull_requests::tests::a_parent_that_runs_a_hanging_gh";
-    let mut parent = std::process::Command::new(std::env::current_exe().unwrap())
-        .args([name, "--exact", "--test-threads=1"])
-        .env(KILLED_PARENT, &path)
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-        .unwrap();
-    let deadline = Instant::now() + Duration::from_secs(20);
-    let pid = loop {
-        match std::fs::read_to_string(&pid_file).map(|pid| pid.trim().to_string()) {
-            Ok(pid) if !pid.is_empty() => break pid,
-            _ if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(20)),
-            _ => panic!("gh never started"),
-        }
-    };
-    parent.kill().unwrap();
-    parent.wait().unwrap();
-    let gone = || {
-        std::fs::read_to_string(format!("/proc/{pid}/stat")).map_or(true, |stat| {
-            stat.rsplit_once(") ")
-                .is_some_and(|(_, rest)| rest.starts_with('Z'))
-        })
-    };
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while !gone() && Instant::now() < deadline {
-        std::thread::sleep(Duration::from_millis(20));
-    }
-    assert!(gone(), "gh {pid} outlived the quecto that ran it");
+    let mut parent = KilledParent::start(name, &[(KILLED_PARENT, path.as_os_str())], &[&pid]);
+    assert_eq!(
+        parent.kill(Duration::from_secs(5)),
+        [true],
+        "gh outlived quecto"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&signal).ok().as_deref(),
+        Some("TERM\n")
+    );
 }

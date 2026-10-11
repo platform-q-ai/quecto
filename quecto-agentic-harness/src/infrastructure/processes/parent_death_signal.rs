@@ -81,4 +81,4 @@ pub fn arm_in_child(_parent: libc::pid_t, _signal: libc::c_int) -> std::io::Resu
 
 #[cfg(test)]
 #[path = "parent_death_signal_tests.rs"]
-mod tests;
+pub(crate) mod tests;

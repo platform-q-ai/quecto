@@ -375,7 +375,8 @@ const KILLED_PARENT: [&str; 2] = [
     "QUECTO_TEST_KILLED_PARENT_PATH",
 ];
 
-/// As the parent the next test kills: git through the runner, hanging.
+/// As the parent the next tests kill: git through the runner, hanging.
+#[cfg(target_os = "linux")]
 #[test]
 fn a_parent_that_runs_a_hanging_git() {
     let (Some(repo), Some(path)) = (
@@ -389,54 +390,70 @@ fn a_parent_that_runs_a_hanging_git() {
     let _ = git.network(&["fetch"]);
 }
 
-/// Whether process `pid` is gone: no such process, or a zombie no one
-/// has reaped yet.
-fn gone(pid: &str) -> bool {
-    std::fs::read_to_string(format!("/proc/{pid}/stat")).map_or(true, |stat| {
-        stat.rsplit_once(") ")
-            .is_some_and(|(_, rest)| rest.starts_with('Z'))
-    })
-}
-
-/// When quecto is killed outright (a relay's timeout, say), the git it
-/// was running dies with it, its own session notwithstanding.
-#[test]
-fn a_git_ends_when_the_quecto_running_it_is_killed() {
-    let repos = Repos::new();
-    let pid_file = repos.dir.path().join("git-pid");
-    let script = format!(
-        "#!/bin/sh\necho $$ > '{}'\nexec sleep 60\n",
-        pid_file.display()
-    );
-    drop(shim(&repos, &script, &[]));
+/// A quecto running `script` as its git, killed outright: whether each
+/// process named in `pid_files` was gone within five seconds.
+#[cfg(target_os = "linux")]
+fn killed_with_git(repos: &Repos, script: &str, pid_files: &[&Path]) -> Vec<bool> {
+    use crate::infrastructure::processes::parent_death_signal::tests::KilledParent;
+    drop(shim(repos, script, &[]));
     let mut path = repos.dir.path().join("bin").into_os_string();
     path.push(":");
     path.push(std::env::var_os("PATH").unwrap());
     let name = "infrastructure::persistence::project_board::store::tests::runner::a_parent_that_runs_a_hanging_git";
-    let mut parent = Command::new(std::env::current_exe().unwrap())
-        .args([name, "--exact", "--test-threads=1"])
-        .env(KILLED_PARENT[0], &repos.alice)
-        .env(KILLED_PARENT[1], &path)
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-        .unwrap();
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
-    let pid = loop {
-        match std::fs::read_to_string(&pid_file).map(|pid| pid.trim().to_string()) {
-            Ok(pid) if !pid.is_empty() => break pid,
-            _ if std::time::Instant::now() < deadline => {
-                std::thread::sleep(std::time::Duration::from_millis(20));
-            }
-            _ => panic!("git never started"),
-        }
-    };
-    parent.kill().unwrap();
-    parent.wait().unwrap();
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-    while !gone(&pid) && std::time::Instant::now() < deadline {
-        std::thread::sleep(std::time::Duration::from_millis(20));
-    }
-    assert!(gone(&pid), "git {pid} outlived the quecto that ran it");
+    let vars = [
+        (KILLED_PARENT[0], repos.alice.as_os_str()),
+        (KILLED_PARENT[1], path.as_os_str()),
+    ];
+    KilledParent::start(name, &vars, pid_files).kill(std::time::Duration::from_secs(5))
+}
+
+/// When quecto is killed outright (a relay's timeout, say), the git it
+/// was running is asked to stop with SIGTERM, so it can clean up (a ref
+/// lock, the children it waits on) as it goes, its own session
+/// notwithstanding.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_git_is_terminated_when_the_quecto_running_it_is_killed() {
+    let repos = Repos::new();
+    let (pid, signal) = (
+        repos.dir.path().join("pid"),
+        repos.dir.path().join("signal"),
+    );
+    let script = format!(
+        "#!/bin/sh\ntrap 'echo TERM > \"{}\"; kill $!; exit 0' TERM\necho $$ > '{}'\nsleep 60 &\nwait\n",
+        signal.display(),
+        pid.display()
+    );
+    assert_eq!(
+        killed_with_git(&repos, &script, &[&pid]),
+        [true],
+        "git outlived quecto"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&signal).ok().as_deref(),
+        Some("TERM\n")
+    );
+}
+
+/// The limit, made explicit: the death signal reaches git alone. A process
+/// git starts and leaves running (an ssh, a credential helper) is not
+/// signalled; real git ends the children it waits on when it is
+/// terminated, which this stub does not.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_grandchild_git_leaves_running_outlives_the_killed_quecto() {
+    let repos = Repos::new();
+    let (pid, grandchild) = (
+        repos.dir.path().join("pid"),
+        repos.dir.path().join("grandchild"),
+    );
+    let script = format!(
+        "#!/bin/sh\nsh -c 'echo $$ > \"{}\"; exec sleep 60' &\necho $$ > '{}'\nwait\n",
+        grandchild.display(),
+        pid.display()
+    );
+    assert_eq!(
+        killed_with_git(&repos, &script, &[&pid, &grandchild]),
+        [true, false]
+    );
 }
