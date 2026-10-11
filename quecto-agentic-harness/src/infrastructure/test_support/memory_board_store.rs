@@ -85,6 +85,11 @@ impl MemoryBoardStore {
         });
     }
 
+    /// The committer of the board at `head`, when a write made it.
+    pub fn committed_by(&self, _head: &BoardHead) -> Option<Identity> {
+        None
+    }
+
     /// The writes the board accepted.
     pub fn writes(&self) -> usize {
         self.lock().writes

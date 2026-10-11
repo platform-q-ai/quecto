@@ -95,15 +95,30 @@ pub trait ProjectBoardStore: Send + Sync {
     fn bootstrap(&self) -> Result<BoardBootstrap, BoardStoreError>;
 
     /// The committer identity the store writes as: every board change is
-    /// made by it.
+    /// made by it. It cannot fail: a store resolves its identity, and
+    /// checks it is a valid one ([`Identity::validate`]), when it is built,
+    /// and refuses to be built without one.
     fn writer(&self) -> Identity;
 }
 
+/// Why the clock could not tell the time.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BoardClockError {
+    /// This machine's clock reads a time the board cannot spell (before
+    /// 1970, or past 9999).
+    OutOfRange(String),
+}
+
 /// What time it is, an outside reading of it to check that against, and
-/// the pause between attempts at a write.
+/// the pause between attempts at a write. Blocking: [`Self::pause`] holds
+/// the calling thread, so callers run board changes off the async workers,
+/// as they do the store's.
 pub trait BoardClock: Send + Sync {
     /// This machine's time.
-    fn now(&self) -> Timestamp;
+    ///
+    /// # Errors
+    /// A time the board cannot spell.
+    fn now(&self) -> Result<Timestamp, BoardClockError>;
 
     /// The time a source outside this machine reports, when one can be
     /// read; `None` when none can.
@@ -111,5 +126,6 @@ pub trait BoardClock: Send + Sync {
 
     /// Waits before attempt `attempt` (from 2) at a write that lost the
     /// race: a short, jittered pause, so writers that collided spread out.
+    /// It blocks the calling thread for the pause.
     fn pause(&self, attempt: usize);
 }

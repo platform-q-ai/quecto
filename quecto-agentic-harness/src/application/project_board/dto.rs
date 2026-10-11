@@ -1,7 +1,7 @@
 //! What the project board's use cases answer and refuse.
 use std::fmt;
 
-use super::ports::{BoardStoreError, QuarantinedFile};
+use super::ports::{BoardClockError, BoardStoreError, QuarantinedFile};
 use crate::domain::project_board::entities::task::Task;
 use crate::domain::project_board::value_objects::rule_error::BoardRuleError;
 use crate::domain::project_board::value_objects::schema_error::SchemaError;
@@ -26,6 +26,8 @@ pub enum ProjectBoardError {
     Invalid(SchemaError),
     NotFound(Slug),
     Exists(Slug),
+    /// This machine's clock could not tell the time.
+    Clock(BoardClockError),
     /// This machine's clock is more than [`CLOCK_AHEAD_SECONDS`] ahead of
     /// the outside reference.
     ///
@@ -48,6 +50,12 @@ impl From<BoardStoreError> for ProjectBoardError {
     }
 }
 
+impl From<BoardClockError> for ProjectBoardError {
+    fn from(error: BoardClockError) -> Self {
+        Self::Clock(error)
+    }
+}
+
 impl fmt::Display for ProjectBoardError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -58,6 +66,12 @@ impl fmt::Display for ProjectBoardError {
                 | BoardStoreError::Unavailable(why),
             ) => f.write_str(why),
             Self::Rule(error) => write!(f, "{error}"),
+            Self::Clock(BoardClockError::OutOfRange(read)) => {
+                write!(
+                    f,
+                    "this clock reads {read}, a time the board cannot spell; fix the clock"
+                )
+            }
             Self::Invalid(error) => write!(f, "invalid task: {error}"),
             Self::NotFound(id) => write!(f, "no task {}", id.as_str()),
             Self::Exists(id) => write!(f, "task {} already exists", id.as_str()),
@@ -76,3 +90,7 @@ impl fmt::Display for ProjectBoardError {
 }
 
 impl std::error::Error for ProjectBoardError {}
+
+#[cfg(test)]
+#[path = "dto_tests.rs"]
+mod tests;

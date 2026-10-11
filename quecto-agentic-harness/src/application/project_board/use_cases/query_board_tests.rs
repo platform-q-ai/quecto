@@ -4,6 +4,7 @@ use crate::application::project_board::ports::ProjectBoardStore;
 use crate::application::project_board::use_cases::fixtures_tests::{at, board, fields, slug};
 use crate::domain::project_board::entities::claim::{Claim, Identity};
 use crate::domain::project_board::entities::task::{Task, TaskFields};
+use crate::domain::project_board::services::transitions::move_task;
 use crate::domain::project_board::value_objects::vocabulary::TaskStatus;
 use std::sync::Arc;
 
@@ -109,4 +110,57 @@ fn takeable_lists_held_tasks_whose_claim_expired() {
         Vec::<String>::new()
     );
     assert_eq!(ids(query.takeable(&at("10:00:00")).unwrap()), ["f"]);
+}
+
+/// An archived dependency, finished or cancelled, no longer blocks: done
+/// then archived, and ready then archived, each let their dependent start.
+#[test]
+fn ready_counts_an_archived_dependency_as_satisfied() {
+    let store = board();
+    let ada = Identity {
+        name: "Ada".into(),
+        email: "ada@example.com".into(),
+    };
+    let task = |fields: TaskFields| {
+        Task::new(TaskFields {
+            created: at("08:00:00"),
+            updated: at("08:00:00"),
+            ..fields
+        })
+        .unwrap()
+    };
+    let archived = |from: TaskStatus, id: &str| {
+        let before = task(TaskFields {
+            status: from,
+            ..fields(id)
+        });
+        let after = move_task(&before, TaskStatus::Archived, &ada, &at("09:00:00")).unwrap();
+        assert_eq!(after.fields().status, TaskStatus::Archived);
+        after
+    };
+    let tasks = vec![
+        archived(TaskStatus::Done, "finished"),
+        archived(TaskStatus::Ready, "cancelled"),
+        task(TaskFields {
+            depends_on: vec![slug("finished")],
+            ..fields("after-finished")
+        }),
+        task(TaskFields {
+            depends_on: vec![slug("cancelled")],
+            ..fields("after-cancelled")
+        }),
+        task(TaskFields {
+            depends_on: vec![slug("finished"), slug("cancelled")],
+            ..fields("after-both")
+        }),
+    ];
+    let head = store.read().unwrap().head;
+    store.write(&head, &tasks, "seed").unwrap();
+    let ready = QueryBoard::new(Arc::new(store)).ready().unwrap();
+    let ids: Vec<_> = ready
+        .tasks
+        .iter()
+        .map(|task| task.fields().id.as_str().to_owned())
+        .collect();
+    assert_eq!(ids, ["after-both", "after-cancelled", "after-finished"]);
 }
