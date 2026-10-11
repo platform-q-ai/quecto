@@ -41,8 +41,27 @@ fn comrak_options() -> comrak::Options<'static> {
 }
 
 /// A reader's outline: per top-level block its kind (with counts and
-/// links) and the text it shows, then the text each link shows.
-type Read = (Vec<String>, Vec<String>, Vec<String>);
+/// links) and the text it shows, then the text each link shows, then the
+/// run of text around each link.
+type Read = (Vec<String>, Vec<String>, Vec<String>, Vec<String>);
+
+/// The run of non-space text around each link of `text` (each `range`), as
+/// a reader sees it run together: what precedes it up to a space, its
+/// text, and what follows it up to a space.
+fn runs(text: &str, ranges: &[std::ops::Range<usize>]) -> Vec<String> {
+    ranges
+        .iter()
+        .map(|range| {
+            let start = text[..range.start]
+                .rfind(char::is_whitespace)
+                .map_or(0, |at| at + 1);
+            let end = text[range.end..]
+                .find(char::is_whitespace)
+                .map_or(text.len(), |at| range.end + at);
+            text[start..end].to_string()
+        })
+        .collect()
+}
 
 /// A link's address as a text writes it, after its `]`.
 static ADDRESS: std::sync::LazyLock<Regex> =
@@ -101,6 +120,10 @@ struct Outline {
     /// Links of the top-level block, and the text each shows.
     links: usize,
     link_texts: Vec<String>,
+    /// Where each link of the top-level block starts and ends in `text`,
+    /// and the runs of text around the links read so far.
+    link_ranges: Vec<std::ops::Range<usize>>,
+    link_runs: Vec<String>,
 }
 
 impl Outline {
@@ -157,6 +180,7 @@ impl Outline {
             "link" => {
                 self.links += 1;
                 self.link_texts.push(String::new());
+                self.link_ranges.push(self.text.len()..self.text.len());
             }
             _ => {}
         }
@@ -166,6 +190,9 @@ impl Outline {
 
     fn end(&mut self) -> Result<(), String> {
         let closed = self.open.pop().ok_or("an end with nothing open")?;
+        if let ("link", Some(range)) = (closed, self.link_ranges.last_mut()) {
+            range.end = self.text.len();
+        }
         match closed {
             "item" => self.text.push('\n'),
             "cell" => self.text.push('\t'),
@@ -192,6 +219,8 @@ impl Outline {
                 other => other.to_string(),
             };
             self.kinds.push(format!("{kind}+{}", self.links));
+            let ranges = std::mem::take(&mut self.link_ranges);
+            self.link_runs.extend(runs(&self.text, &ranges));
             self.texts.push(std::mem::take(&mut self.text));
         }
         Ok(())
@@ -214,7 +243,9 @@ impl Outline {
             }
             Event::Html(_) if self.kinds.is_empty() => {}
             // Emphasis may span a line, so a break may come inside it.
-            Event::SoftBreak if self.open.first() == Some(&"paragraph") => {
+            Event::SoftBreak
+                if self.open.first() == Some(&"paragraph") && !self.open.contains(&"link") =>
+            {
                 self.count += 1;
                 self.text.push('\n');
             }
@@ -326,7 +357,12 @@ pub(super) fn outline(file: &str, document: &Document) -> Result<(), String> {
     for (reader, shown) in [
         (
             "pulldown-cmark",
-            &(outline.kinds, outline.texts, outline.link_texts),
+            &(
+                outline.kinds,
+                outline.texts,
+                outline.link_texts,
+                outline.link_runs,
+            ),
         ),
         ("comrak", &comrak),
     ] {
@@ -338,7 +374,7 @@ pub(super) fn outline(file: &str, document: &Document) -> Result<(), String> {
 /// One reader's outline (kinds, texts, link texts) against the document's.
 fn compared(
     reader: &str,
-    (shown_kinds, shown_texts, link_texts): &Read,
+    (shown_kinds, shown_texts, link_texts, link_runs): &Read,
     kinds: &[String],
     texts: &[String],
 ) -> Result<(), String> {
@@ -369,7 +405,12 @@ fn compared(
     if let Some(blank) = link_texts.iter().find(|text| !shows(text)) {
         return Err(format!("{reader}: a link shows nothing: {blank:?}"));
     }
-    match link_texts.iter().find(|text| shows_address(text)) {
+    // A link's text, and the run of text around it, shows no address.
+    match link_texts
+        .iter()
+        .chain(link_runs)
+        .find(|text| shows_address(text))
+    {
         Some(address) => Err(format!("{reader}: a link shows an address: {address:?}")),
         None => Ok(()),
     }
@@ -388,33 +429,38 @@ fn shows_address(text: &str) -> bool {
         || EMAIL.is_match(text)
 }
 
-/// The inline text `node` shows, and the links in it (each link's text
-/// added to `link_texts`). Only text, code, emphasis, strikethrough, soft
-/// breaks and inline https links with no title are allowed.
+/// The inline text `node` shows, and where each link in it starts and
+/// ends in that text (each link's text added to `link_texts`). Only text,
+/// code, emphasis, strikethrough, soft breaks (never in a link) and inline
+/// https links with no title are allowed.
 fn comrak_inline<'a>(
     node: &'a AstNode<'a>,
     link_texts: &mut Vec<String>,
-) -> Result<(String, usize), String> {
-    let (mut text, mut links) = (String::new(), 0);
+    in_link: bool,
+) -> Result<(String, Vec<std::ops::Range<usize>>), String> {
+    let (mut text, mut links) = (String::new(), vec![]);
     for child in node.children() {
         match &child.data.borrow().value {
             NodeValue::Text(shown) => text.push_str(shown),
             NodeValue::Code(code) => text.push_str(&code.literal),
-            NodeValue::SoftBreak => text.push('\n'),
+            NodeValue::SoftBreak if !in_link => text.push('\n'),
             NodeValue::Emph | NodeValue::Strong | NodeValue::Strikethrough => {
-                let (shown, inner) = comrak_inline(child, link_texts)?;
+                let (shown, inner) = comrak_inline(child, link_texts, in_link)?;
+                let at = text.len();
+                links.extend(
+                    inner
+                        .into_iter()
+                        .map(|range| range.start + at..range.end + at),
+                );
                 text.push_str(&shown);
-                links += inner;
             }
-            NodeValue::Link(link) if link.url.starts_with("https://") && link.title.is_empty() => {
-                let mut nested = vec![];
-                let (shown, inner) = comrak_inline(child, &mut nested)?;
-                if inner > 0 {
-                    return Err(format!("a link in a link: {shown:?}"));
-                }
+            NodeValue::Link(link)
+                if link.url.starts_with("https://") && link.title.is_empty() && !in_link =>
+            {
+                let (shown, _) = comrak_inline(child, &mut vec![], true)?;
                 link_texts.push(shown.clone());
+                links.push(text.len()..text.len() + shown.len());
                 text.push_str(&shown);
-                links += 1;
             }
             other => return Err(format!("{other:?}")),
         }
@@ -426,20 +472,27 @@ fn comrak_inline<'a>(
 fn comrak_outline(file: &str) -> Result<Read, String> {
     let arena = comrak::Arena::new();
     let root = comrak::parse_document(&arena, file, &comrak_options());
-    let (mut kinds, mut texts, mut link_texts) = (vec![], vec![], vec![]);
+    let (mut kinds, mut texts, mut link_texts, mut link_runs) = (vec![], vec![], vec![], vec![]);
+    // The inline text of `node`, and how many links it holds, the runs of
+    // text around them kept.
+    let mut inline = |node, link_texts: &mut Vec<String>| -> Result<(String, usize), String> {
+        let (text, ranges) = comrak_inline(node, link_texts, false)?;
+        link_runs.extend(runs(&text, &ranges));
+        Ok((text, ranges.len()))
+    };
     for block in root.children() {
         let (kind, text, links) = match &block.data.borrow().value {
             NodeValue::HtmlBlock(_) if kinds.is_empty() => ("marker".to_string(), String::new(), 0),
             NodeValue::Heading(heading) if heading.level == 1 && kinds.len() == 1 => {
-                let (text, links) = comrak_inline(block, &mut link_texts)?;
+                let (text, links) = inline(block, &mut link_texts)?;
                 ("h1".to_string(), text, links)
             }
             NodeValue::Heading(heading) if heading.level == 2 => {
-                let (text, links) = comrak_inline(block, &mut link_texts)?;
+                let (text, links) = inline(block, &mut link_texts)?;
                 ("h2".to_string(), text, links)
             }
             NodeValue::Paragraph => {
-                let (text, links) = comrak_inline(block, &mut link_texts)?;
+                let (text, links) = inline(block, &mut link_texts)?;
                 (
                     format!("paragraph:{}", text.matches('\n').count() + 1),
                     text,
@@ -454,7 +507,7 @@ fn comrak_outline(file: &str) -> Result<Read, String> {
                         (NodeValue::Item(_), [paragraph])
                             if matches!(paragraph.data.borrow().value, NodeValue::Paragraph) =>
                         {
-                            let (shown, inner) = comrak_inline(paragraph, &mut link_texts)?;
+                            let (shown, inner) = inline(paragraph, &mut link_texts)?;
                             text += &format!("{shown}\n");
                             links += inner;
                             items += 1;
@@ -469,19 +522,20 @@ fn comrak_outline(file: &str) -> Result<Read, String> {
                 code.literal.clone(),
                 0,
             ),
-            NodeValue::Table(_) => comrak_table(block, &mut link_texts)?,
+            NodeValue::Table(_) => comrak_table(block, &mut link_texts, &mut inline)?,
             other => return Err(format!("{other:?}")),
         };
         kinds.push(format!("{kind}+{links}"));
         texts.push(text);
     }
-    Ok((kinds, texts, link_texts))
+    Ok((kinds, texts, link_texts, link_runs))
 }
 
 /// A table's kind, text and links, as [`Outline`] keeps them.
 fn comrak_table<'a>(
     table: &'a AstNode<'a>,
     link_texts: &mut Vec<String>,
+    inline: &mut impl FnMut(&'a AstNode<'a>, &mut Vec<String>) -> Result<(String, usize), String>,
 ) -> Result<(String, String, usize), String> {
     let (mut text, mut links, mut rows, mut width, mut ragged) = (String::new(), 0, 0, None, false);
     for row in table.children() {
@@ -491,7 +545,7 @@ fn comrak_table<'a>(
         };
         let mut cells = vec![];
         for cell in row.children() {
-            let (shown, inner) = comrak_inline(cell, link_texts)?;
+            let (shown, inner) = inline(cell, link_texts)?;
             cells.push(shown);
             links += inner;
         }
