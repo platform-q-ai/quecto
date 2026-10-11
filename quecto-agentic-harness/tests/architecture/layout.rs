@@ -94,14 +94,15 @@ const MIGRATED: &[Capability<'_>] = &[
     Capability("domain/admission", &["value_objects", "services"]),
     Capability("domain/agents", &["entities", "value_objects", "services"]),
     Capability("domain/environments", &["entities", "services"]),
+    Capability("domain/project_board", &["entities", "value_objects", "services"]),
 ];
 // Wiki target-source-tree anchors define allowed future names; Transitional rows must exist.
 // https://github.com/platform-q-ai/quecto/wiki/Agentic-Harness-Target-Architecture#target-source-tree
 type Placement<'a> = (&'a str, &'a [&'a str]);
 #[rustfmt::skip]
 const PLACEMENTS: &[Placement<'_>] = &[
-    ("domain", &["conversation", "admission", "environments", "catalogue", "tool_policy", "sessions", "agents", "audit", "inference", "commander", "identity", "shared", "external_agent", "swarm", "workflow"]),
-    ("application", &["admission", "agent_turn", "audit", "catalogue", "configuration", "environments", "extensions", "external_agent", "provider_runtime", "providers", "search", "sessions", "subagents", "swarm", "tools", "workflow", "agent_commander", "shared", "agent_loop"]),
+    ("domain", &["conversation", "admission", "environments", "catalogue", "tool_policy", "sessions", "agents", "audit", "inference", "commander", "identity", "shared", "external_agent", "swarm", "workflow", "project_board"]),
+    ("application", &["admission", "agent_turn", "audit", "catalogue", "configuration", "environments", "extensions", "external_agent", "provider_runtime", "providers", "search", "sessions", "subagents", "swarm", "tools", "workflow", "agent_commander", "shared", "agent_loop", "project_board"]),
     ("interface", &["cli", "repl", "tools", "uds"]),
     ("infrastructure", &["admission", "auth", "config", "extensions", "external_agents", "http", "persistence", "processes", "providers", "search", "security", "tools", "workspace", "judgment", "observability", "time", "test_support"]),
     ("composition", &["bootstrap", "runtime", "logging", "shutdown"]),

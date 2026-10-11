@@ -31,6 +31,7 @@ pub mod workflow;
 pub mod admission;
 pub mod inference;
 
+pub mod project_board;
 pub mod swarm;
 
 pub mod state_snapshot;
