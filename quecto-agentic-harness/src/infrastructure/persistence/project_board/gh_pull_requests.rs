@@ -12,6 +12,10 @@
 //! process group is ended, so nothing it left behind outlives the call,
 //! and its pipes get [`OUTPUT_GRACE`] to deliver what it wrote. Blocking:
 //! callers run it off the async workers.
+use super::own_group::{Ended, end_group, exited_unreaped};
+use crate::infrastructure::processes::parent_death_signal::{
+    SPAWN_ARMS, own_session_dying_with_us,
+};
 use std::collections::VecDeque;
 use std::ffi::{OsStr, OsString};
 use std::io::Read;
@@ -70,6 +74,9 @@ struct Answer {
     stdout: String,
     stderr_tail: String,
 }
+
+/// Why a gh run ended without its status: something else reaped gh.
+const REAPED_ELSEWHERE: &str = "gh was reaped elsewhere; its group was left alone";
 
 impl GhPullRequestStates {
     /// The states of `repo` (`host/owner/name`), with `gh` found on
@@ -142,18 +149,13 @@ impl GhPullRequestStates {
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        // A session of its own: nothing gh starts reaches quecto's
-        // terminal, and its whole group can be ended.
-        // setsid(2) is async-signal-safe and touches no memory of the
-        // parent; the closure allocates nothing.
-        // SAFETY: the pre_exec closure only calls setsid.
-        unsafe {
-            std::os::unix::process::CommandExt::pre_exec(&mut command, || match libc::setsid() {
-                -1 => Err(std::io::Error::last_os_error()),
-                _ => Ok(()),
-            });
-        }
-        let mut child = command.spawn().map_err(|error| error.to_string())?;
+        // A session of its own (nothing gh starts reaches quecto's
+        // terminal, and its whole group can be ended), sent SIGTERM if quecto
+        // dies (on Linux): this thread forks gh and waits for it.
+        own_session_dying_with_us(&mut command);
+        let mut child = command
+            .spawn()
+            .map_err(|error| format!("starting gh ({SPAWN_ARMS}): {error}"))?;
         let pumps = pump(child.stdout.take(), Keep::Head(STDOUT_CAPACITY)).and_then(|stdout| {
             Ok((
                 stdout,
@@ -165,9 +167,14 @@ impl GhPullRequestStates {
             Err(error) => {
                 // No reader for its output: gh is ended rather than left
                 // to block on a full pipe.
-                end_group(child.id());
-                let _ = child.wait();
-                return Err(format!("gh's output could not be read: {error}"));
+                let unread = format!("gh's output could not be read: {error}");
+                return match end_group(child.id()) {
+                    Ended::Signalled => {
+                        let _ = child.wait();
+                        Err(unread)
+                    }
+                    Ended::NotOurs => Err(format!("{unread}; {REAPED_ELSEWHERE}")),
+                };
             }
         };
         let deadline = Instant::now() + self.timeout;
@@ -180,17 +187,23 @@ impl GhPullRequestStates {
                     std::thread::sleep(Duration::from_millis(5))
                 }
                 Ok(false) => break false,
-                Err(error) => {
-                    end_group(child.id());
-                    let _ = child.wait();
-                    return Err(error.to_string());
-                }
+                // Whether gh is still our unreaped child is unknown here
+                // (ECHILD: something else reaped it, and its pid, and so
+                // its group's, may already be reused), so nothing is
+                // signalled and nothing waited on. Unreachable while this
+                // process leaves SIGCHLD alone, which it does.
+                Err(error) => return Err(format!("watching gh: {error}")),
             }
         };
         // Whatever gh left behind holding its pipes ends with it, so the
         // pipes reach their end (what gh wrote stays readable) and no pump
         // thread outlives the call.
-        end_group(child.id());
+        match end_group(child.id()) {
+            Ended::Signalled => {}
+            // Something else reaped gh (unreachable while this process
+            // leaves SIGCHLD alone): nothing to wait on.
+            Ended::NotOurs => return Err(REAPED_ELSEWHERE.to_string()),
+        }
         let (stdout, stderr) = match exited {
             true => (
                 stdout.recv_timeout(OUTPUT_GRACE).unwrap_or_default(),
@@ -340,39 +353,6 @@ fn pump(
             let _ = sender.send(Vec::from(kept));
         })?;
     Ok(receiver)
-}
-
-/// Whether our unreaped child `pid` has exited, observed without reaping
-/// it (`WNOWAIT`) or blocking (`WNOHANG`). An interrupted call is "not
-/// yet".
-fn exited_unreaped(pid: u32) -> std::io::Result<bool> {
-    let pid = libc::id_t::from(pid);
-    // SAFETY: zero is a valid initial siginfo_t; waitid initializes it.
-    let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
-    let options = libc::WEXITED | libc::WNOHANG | libc::WNOWAIT;
-    // SAFETY: pid is our own unreaped child and info is writable.
-    match unsafe { libc::waitid(libc::P_PID, pid, &mut info, options) } {
-        // SAFETY: a successful waitid initialized the siginfo union.
-        0 => Ok(unsafe { info.si_pid() } != 0),
-        _ => {
-            let error = std::io::Error::last_os_error();
-            match error.kind() {
-                std::io::ErrorKind::Interrupted => Ok(false),
-                _ => Err(error),
-            }
-        }
-    }
-}
-
-/// Ends the process group `leader` leads (`setsid` made the child its
-/// leader). The leader is not yet reaped, so the group is still its own.
-fn end_group(leader: u32) {
-    if let Ok(group) = i32::try_from(leader) {
-        // SAFETY: kill(2) takes plain integers and touches no memory.
-        unsafe {
-            libc::kill(-group, libc::SIGKILL);
-        }
-    }
 }
 
 /// The first executable regular file named `program` in an absolute `PATH`
