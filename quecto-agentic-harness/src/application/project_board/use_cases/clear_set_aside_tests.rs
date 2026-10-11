@@ -237,3 +237,17 @@ fn the_memory_store_judges_as_the_git_store_does() {
         Ok(BoardWrite::Lost)
     );
 }
+
+/// Two entries of one path and one object are one file to clear, in
+/// memory as on a git board.
+#[test]
+fn twins_of_one_path_and_object_are_one_file() {
+    let store = seeded();
+    store.show_twice("b");
+    let object = object_of(&store, "tasks/b.json");
+    let clear = ClearSetAside::new(Arc::new(store.client()), SetClock::at("10:00:00")).unwrap();
+    clear
+        .execute("tasks/b.json", &object, &BTreeMap::new())
+        .unwrap();
+    assert_eq!(store.read().unwrap().quarantined, vec![]);
+}

@@ -703,3 +703,90 @@ fn mktree_board(files: &[(String, Vec<u8>)]) -> (Repos, GitBoardStore, BoardHead
     let head = bob.read().unwrap().head;
     (repos, bob, head)
 }
+
+/// A clear names what the listing shows at a repeated path: copies a
+/// write carries, a copy it drops (a mode over another type) and a twin
+/// that shows the same path. Only a carried copy may be kept.
+#[test]
+fn a_repeated_path_is_cleared_as_the_listing_shows_it() {
+    let (repos, bob, head) = board_of(&[
+        ("100644", "dup.json", Object::Blob(b"one".to_vec())),
+        ("100644", "dup.json", Object::Blob(b"two".to_vec())),
+        ("40000", "dup.json", Object::Blob(b"not a tree".to_vec())),
+        ("100644", "dup.json\u{200b}", Object::Blob(b"twin".to_vec())),
+    ]);
+    let [one, two, odd, twin] =
+        [&b"one"[..], b"two", b"not a tree", b"twin"].map(|bytes| oid_of(&repos.bob, bytes));
+    let path = "tasks/dup.json";
+    let listed: Vec<String> = bob
+        .read()
+        .unwrap()
+        .quarantined
+        .iter()
+        .filter(|file| file.path == path)
+        .map(|file| file.object.clone())
+        .collect();
+    assert_eq!(listed.len(), 4, "{listed:?}");
+    let all = [one.as_str(), two.as_str(), odd.as_str(), twin.as_str()];
+    for kept in [&odd, &twin] {
+        let why = refused(bob.clear_set_aside(
+            &head,
+            &clearing(path, &one, &[(path, keep(kept, &all))]),
+            "board: clear",
+        ));
+        assert!(
+            why.contains(kept.as_str()),
+            "only a carried copy is kept: {why}"
+        );
+    }
+    let cleared = written(bob.clear_set_aside(
+        &head,
+        &clearing(path, &odd, &[(path, keep(&two, &all))]),
+        "board: clear dup",
+    ));
+    assert_eq!(
+        listing(&repos.remote(), &cleared),
+        [format!("100644 blob {two}\tdup.json")]
+    );
+}
+
+/// The copies a clear names are bounded by what it saw, the copy it
+/// keeps not counted twice: at the bound it is judged, past it invalid.
+#[test]
+fn the_copies_a_clear_names_are_bounded_by_what_it_saw() {
+    let (repos, bob, head) = board_of(&[
+        ("100644", "dup.json", Object::Blob(b"one".to_vec())),
+        ("100644", "dup.json", Object::Blob(b"two".to_vec())),
+    ]);
+    let one = oid_of(&repos.bob, b"one");
+    let path = "tasks/dup.json";
+    let objects = |count: usize| -> Vec<String> {
+        std::iter::once(one.clone())
+            .chain((1..count).map(|n| format!("{n:040x}")))
+            .collect()
+    };
+    let at = objects(MAX_TASK_ENTRIES);
+    let at: Vec<&str> = at.iter().map(String::as_str).collect();
+    let judged = bob.clear_set_aside(
+        &head,
+        &clearing(path, &one, &[(path, keep(&one, &at))]),
+        "board: clear",
+    );
+    assert!(
+        matches!(judged, Ok(BoardWrite::Refused(_))),
+        "at the bound: {judged:?}"
+    );
+    let past = objects(MAX_TASK_ENTRIES + 1);
+    let past: Vec<&str> = past.iter().map(String::as_str).collect();
+    for resolution in [keep(&one, &past), drop_all(&past)] {
+        let invalid = bob.clear_set_aside(
+            &head,
+            &clearing(path, &one, &[(path, resolution)]),
+            "board: clear",
+        );
+        assert!(
+            matches!(invalid, Err(BoardStoreError::InvalidWrite(_))),
+            "{invalid:?}"
+        );
+    }
+}

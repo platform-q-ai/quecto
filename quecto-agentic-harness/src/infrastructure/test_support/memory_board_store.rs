@@ -129,6 +129,23 @@ impl MemoryBoardStore {
         board.head = Some(revision + 1);
     }
 
+    /// Lists the quarantined file of `id` twice, same path and object, as
+    /// a git board shows two names that differ only in a character no one
+    /// sees.
+    ///
+    /// # Panics
+    /// When no quarantined file has that id.
+    pub fn show_twice(&self, id: &str) {
+        let mut board = self.lock();
+        let file = board
+            .quarantined
+            .iter()
+            .find(|file| file.id.as_ref().map(Slug::as_str) == Some(id))
+            .cloned()
+            .expect("a quarantined file of that id");
+        board.quarantined.push(file);
+    }
+
     /// The message of the change that made the board at `head`, when a
     /// write made it.
     pub fn message_at(&self, at: &BoardHead) -> Option<String> {
