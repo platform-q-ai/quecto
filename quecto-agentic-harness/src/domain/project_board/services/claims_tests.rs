@@ -1,6 +1,6 @@
 use super::*;
 use crate::domain::project_board::services::fixtures_tests::{at, person, task, without_claim};
-use TaskStatus::*;
+use crate::domain::project_board::value_objects::vocabulary::TaskStatus::*;
 
 #[test]
 fn the_holder_renews_for_two_hours_from_now() {
