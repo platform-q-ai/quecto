@@ -103,10 +103,10 @@ pub struct Review {
     pub proving_test: Option<String>,
 }
 
-/// A model name: starts with a letter or digit; segments between `/` never
-/// start with `-`; no `..`.
+/// A model name: `/`-separated segments, each starting with a letter or
+/// digit, so none is empty, `.`, `..` or an option.
 static MODEL: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^[A-Za-z0-9][A-Za-z0-9._:-]*(?:/[A-Za-z0-9._:][A-Za-z0-9._:-]*)*$").expect("model")
+    Regex::new(r"^[A-Za-z0-9][A-Za-z0-9._:-]*(?:/[A-Za-z0-9][A-Za-z0-9._:-]*)*$").expect("model")
 });
 /// The distribution image reference grammar, `[domain/]path[:tag][@digest]`,
 /// as container engines normalise it: the first component is a domain only
@@ -125,12 +125,17 @@ static IMAGE: LazyLock<Regex> = LazyLock::new(|| {
     let pattern = format!(r"^(?:{domain}/)?{component}(?:/{component})*(?::{tag})?(?:@{digest})?$");
     Regex::new(&pattern).expect("image")
 });
-/// `path:line` or `path:line:col`, numbers from 1 without leading zeros. The
-/// path is relative: it starts with neither `-` (an option to a tool) nor
-/// `/`.
+/// `path:line` or `path:line:col`, numbers from 1 without leading zeros.
+/// The path is relative: `/`-separated segments, none empty, `.` or `..`
+/// (a segment starts with a name character, or with one `.` followed by
+/// one, as in `.github`), and the first does not start with `-` (an option
+/// to a tool).
 static LOCATION: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^[A-Za-z0-9._@+][A-Za-z0-9._/@+-]*:[1-9][0-9]{0,8}(?::[1-9][0-9]{0,8})?$")
-        .expect("location")
+    let rest = r"[A-Za-z0-9._@+-]*";
+    let first = format!(r"(?:[A-Za-z0-9_@+]{rest}|\.[A-Za-z0-9_@+-]{rest})");
+    let segment = format!(r"(?:[A-Za-z0-9_@+-]{rest}|\.[A-Za-z0-9_@+-]{rest})");
+    let pattern = format!(r"^{first}(?:/{segment})*:[1-9][0-9]{{0,8}}(?::[1-9][0-9]{{0,8}})?$");
+    Regex::new(&pattern).expect("location")
 });
 
 /// Distinct single lines, at most `max`.
@@ -141,7 +146,7 @@ fn lines(field: &str, entries: &[String], max: usize) -> Result<(), SchemaError>
 }
 
 fn shaped(field: &str, text: &str, max_bytes: usize, shape: &Regex) -> Result<(), SchemaError> {
-    if text.len() <= max_bytes && !text.contains("..") && shape.is_match(text) {
+    if text.len() <= max_bytes && shape.is_match(text) {
         Ok(())
     } else {
         Err(SchemaError::new(

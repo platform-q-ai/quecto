@@ -48,9 +48,10 @@ pub struct TaskFields {
 
 impl TaskFields {
     /// The UTF-8 bytes of every free text in the task: titles, markdown,
-    /// criteria, evidence, owners, models, the image, identities, review
-    /// places, findings and tests. Ids, words, numbers and times are not
-    /// text: their size is bounded by the field limits.
+    /// criteria, evidence, owners, models, the image, reviewers, review
+    /// places, findings and tests. Ids, words, numbers, times and the
+    /// claim's holder are not text: their size is bounded by the field
+    /// limits, so taking a claim never runs a task over its budget.
     pub fn text_bytes(&self) -> usize {
         let sum = |texts: &[String]| texts.iter().map(String::len).sum::<usize>();
         let optional = |text: &Option<String>| text.as_ref().map_or(0, String::len);
@@ -66,19 +67,13 @@ impl TaskFields {
             let models: usize = team.roles.iter().map(|role| role.model.len()).sum();
             models + optional(&team.image)
         });
-        let claim = self.claim.iter().map(|claim| identity(&claim.holder));
         let reviews = self.reviews.iter().map(|review| {
             identity(&review.reviewer)
                 + optional(&review.location)
                 + review.finding.len()
                 + optional(&review.proving_test)
         });
-        let parts: usize = plan
-            .chain(items)
-            .chain(team)
-            .chain(claim)
-            .chain(reviews)
-            .sum();
+        let parts: usize = plan.chain(items).chain(team).chain(reviews).sum();
         self.title.len() + self.description.len() + parts
     }
 }
@@ -160,28 +155,30 @@ fn validate(task: &TaskFields) -> Result<(), SchemaError> {
     }
 }
 
-/// Runs start and reviews are made once the task exists; a deadline falls
-/// after it was created.
+/// Runs and reviews happen while the task exists, by its last change:
+/// from `created` to `updated`, like a claim's `since`. A deadline falls
+/// after the task was created.
 fn validate_times(task: &TaskFields) -> Result<(), SchemaError> {
-    let since_created = |time: &Timestamp| *time >= task.created;
-    if let Some(index) = task
-        .runs
-        .iter()
-        .position(|run| !since_created(&run.started))
-    {
-        return Err(SchemaError::new(
-            format!("runs/{index}/started"),
-            "must not be before the task was created",
-        ));
-    }
-    if let Some(index) = task
+    let during = |time: &Timestamp| task.created <= *time && *time <= task.updated;
+    let mut times = task.runs.iter().enumerate().flat_map(|(index, run)| {
+        let ended = run
+            .ended
+            .iter()
+            .map(move |ended| (format!("runs/{index}/ended"), ended));
+        std::iter::once((format!("runs/{index}/started"), &run.started)).chain(ended)
+    });
+    let mut reviews = task
         .reviews
         .iter()
-        .position(|review| !since_created(&review.at))
+        .enumerate()
+        .map(|(index, review)| (format!("reviews/{index}/at"), &review.at));
+    if let Some((field, _)) = times
+        .find(|(_, time)| !during(time))
+        .or_else(|| reviews.find(|(_, time)| !during(time)))
     {
         return Err(SchemaError::new(
-            format!("reviews/{index}/at"),
-            "must not be before the task was created",
+            field,
+            "must be from when the task was created to when it was updated",
         ));
     }
     let deadline = task.team.as_ref().and_then(|team| team.deadline.as_ref());
@@ -256,8 +253,9 @@ fn blocked_by_cycle(items: &[Item]) -> Option<usize> {
     }
 }
 
-/// Distinct ids; at most one open run, and only while the task may hold a
-/// claim (claimed, in progress, review or blocked).
+/// Distinct ids; at most one open run, and only while the task holds a
+/// claim (it is claimed or in progress, or in review or blocked with its
+/// claim kept): someone answers for a run that is going.
 fn validate_runs(task: &TaskFields) -> Result<(), SchemaError> {
     let ids: Vec<&Slug> = task.runs.iter().map(|run| &run.id).collect();
     distinct("runs", &ids, MAX_RUNS)?;
@@ -265,12 +263,13 @@ fn validate_runs(task: &TaskFields) -> Result<(), SchemaError> {
         run.validate(&format!("runs/{index}"))?;
     }
     let open = task.runs.iter().filter(|run| run.is_open()).count();
-    if open == 0 || (open == 1 && task.status.may_hold_claim()) {
+    let held = task.status.may_hold_claim() && task.claim.is_some();
+    if open == 0 || (open == 1 && held) {
         Ok(())
     } else {
         Err(SchemaError::new(
             "runs",
-            "at most one run is open, and only while the task may hold a claim",
+            "at most one run is open, and only while the task holds a claim",
         ))
     }
 }
