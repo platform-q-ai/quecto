@@ -2,6 +2,7 @@ use super::*;
 use crate::domain::project_board::entities::change::ChangeFields;
 use crate::domain::project_board::services::fixtures_tests::{at, branch, change, commit, person};
 use crate::domain::project_board::value_objects::slug::Slug;
+use crate::domain::project_board::value_objects::timestamp::Timestamp;
 use crate::domain::project_board::value_objects::vocabulary::Severity;
 
 fn when(time: &str) -> Moment {
@@ -159,7 +160,7 @@ fn a_round_is_refused_on_an_unlinked_change_or_another_changes_review() {
                 &person("Bob"),
                 &when("10:00:00")
             ),
-            Err(BoardRuleError::NotThisTasks)
+            Err(BoardRuleError::NotThisChange)
         );
     }
 }
@@ -220,4 +221,71 @@ fn a_round_its_schema_refuses_is_refused() {
         matches!(&refused, Err(BoardRuleError::Invalid(error)) if error.field == "rounds/0/findings/0/text"),
         "{refused:?}"
     );
+}
+
+/// A review never predates its change: a first round from a clock behind
+/// is stamped when the change was linked.
+#[test]
+fn a_first_round_is_stamped_no_earlier_than_its_change() {
+    let target = change(1, Some(7));
+    let early = add_round(
+        &target,
+        None,
+        draft(ReviewVerdict::Approved),
+        &person("Bob"),
+        &when("08:00:00"),
+    )
+    .unwrap();
+    let fields = early.fields();
+    assert_eq!(
+        (&fields.created, &fields.updated, &fields.rounds[0].at),
+        (&at("09:00:00"), &at("09:00:00"), &at("09:00:00"))
+    );
+}
+
+/// A review last changed at the last moment the board can spell takes no
+/// later round: the overflow is refused, never wrapped.
+#[test]
+fn a_review_at_the_end_of_time_takes_no_round() {
+    let target = change(1, Some(7));
+    let end = Timestamp::parse("9999-12-31T23:59:59Z").unwrap();
+    let mut fields = first(&target).into_fields();
+    fields.created = end.clone();
+    fields.updated = end.clone();
+    fields.rounds[0].at = end;
+    let review = Review::new(fields).unwrap();
+    let refused = add_round(
+        &target,
+        Some(&review),
+        draft(ReviewVerdict::Approved),
+        &person("Bob"),
+        &when("10:00:00"),
+    );
+    assert!(
+        matches!(&refused, Err(BoardRuleError::Invalid(error)) if error.field == "updated"),
+        "{refused:?}"
+    );
+}
+
+/// The verdict is the reviewer's call: an approval may carry a critical
+/// finding, a round may follow an approval, and two rounds may judge one
+/// commit.
+#[test]
+fn the_verdict_is_the_reviewers_call() {
+    let target = change(1, Some(7));
+    let mut critical = draft(ReviewVerdict::Approved);
+    critical.findings[0].severity = Severity::Critical;
+    let approved = add_round(&target, None, critical, &person("Bob"), &when("10:00:00")).unwrap();
+    assert_eq!(approved.state(), ReviewVerdict::Approved);
+    let again = add_round(
+        &target,
+        Some(&approved),
+        draft(ReviewVerdict::ChangesRequested),
+        &person("Carol"),
+        &when("10:00:00"),
+    )
+    .unwrap();
+    let rounds = &again.fields().rounds;
+    assert_eq!((rounds.len(), &rounds[0].commit), (2, &rounds[1].commit));
+    assert_eq!(again.state(), ReviewVerdict::ChangesRequested);
 }

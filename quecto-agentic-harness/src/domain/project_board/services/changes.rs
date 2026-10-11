@@ -12,13 +12,13 @@
 //! reading of (`pr_unread`) rather than guess its state. The link use case
 //! also gives `link` everything linked on the board ([`Linked`]): every
 //! task's changes and every task's pull requests linked the old way, so a
-//! pull request is linked once whichever way; `add_pr` likewise takes the
-//! task's changes.
+//! pull request is linked once whichever way; `add_pr` likewise takes
+//! everything linked on the board ([`Linked`]).
 //!
-//! A pull request is linked to one task on the board, for good (merged
-//! ones stay linked); a branch, named by its repository and name, to one
-//! open change, so its name is free again once that change merges or is
-//! unlinked.
+//! A pull request is linked to one task on the board while a change links
+//! it (merged ones stay linked); unlinking the change frees it. A branch,
+//! named by its repository and name, is linked to one open change, so its
+//! name is free again once that change merges or is unlinked.
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::super::entities::change::{Change, ChangeFields, MAX_CHANGE_NUMBER};

@@ -449,6 +449,7 @@ fn rule_json(rule: &BoardRuleError) -> Value {
         R::RunEnded(run) => json!({"code": "run_ended", "run": run}),
         R::PlanNotDraft(state) => json!({"code": "plan_not_draft", "state": state.as_str()}),
         R::NotThisTasks => json!({"code": "not_this_tasks"}),
+        R::NotThisChange => json!({"code": "not_this_change"}),
         R::TaskFinished(status) => json!({"code": "task_finished", "status": status.as_str()}),
         R::UnknownPlanVersion(version) => {
             json!({"code": "unknown_plan_version", "version": version})

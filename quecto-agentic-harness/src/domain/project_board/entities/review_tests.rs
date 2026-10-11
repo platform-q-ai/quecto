@@ -62,6 +62,8 @@ fn fields_that_break_a_rule_build_no_review() {
         ("rounds/1/at", Box::new(|r| r.rounds[1].at = at("09:05:00"))),
         ("rounds/0/at", Box::new(|r| r.rounds[0].at = at("09:00:00"))),
         ("rounds/1/at", Box::new(|r| r.rounds[1].at = at("09:30:00"))),
+        ("rounds/0/at", Box::new(|r| r.created = at("09:05:00"))),
+        ("updated", Box::new(|r| r.updated = at("09:25:00"))),
         (
             "rounds/0/findings/0/location",
             Box::new(|r| r.rounds[0].findings[0].location = Some("../etc:1".into())),
@@ -108,29 +110,56 @@ fn fields_that_break_a_rule_build_no_review() {
 }
 
 /// A review's text is bounded: its findings and places together, exactly
-/// to the budget and not a byte past it.
+/// to the budget and not a byte past it, over as many rounds as the
+/// findings fill.
 #[test]
 fn a_reviews_text_is_bounded_by_its_budget() {
+    let full = filled();
+    assert!(
+        full.rounds.len() > 2,
+        "the findings fill more than two rounds"
+    );
+    assert!(
+        full.rounds[..full.rounds.len() - 1]
+            .iter()
+            .all(|round| round.findings.len() == MAX_FINDINGS)
+    );
+    assert_eq!(full.text_bytes(), MAX_REVIEW_TEXT_BYTES);
+    assert!(Review::new(full.clone()).is_ok(), "exactly the budget");
+    let mut over = full.clone();
+    let last = over.rounds.len() - 1;
+    over.rounds[last].findings.push(finding("x"));
+    assert_eq!(Review::new(over).unwrap_err().field, "text");
+    let mut placed = full;
+    placed.rounds[0].findings[0].location = Some("a:1".into());
+    assert_eq!(
+        Review::new(placed).unwrap_err().field,
+        "text",
+        "a finding's place alone takes it past the budget"
+    );
+}
+
+/// A review at its text budget, its findings without places, 1,000 bytes
+/// each so they fill more than two rounds of [`MAX_FINDINGS`].
+fn filled() -> ReviewFields {
     let mut full = fields();
     full.rounds.truncate(1);
     full.rounds[0].findings.clear();
     full.updated = at("09:10:00");
     let mut left = MAX_REVIEW_TEXT_BYTES;
     while left > 0 {
-        let len = left.min(MAX_FINDING_CHARS);
-        let mut entry = finding(&"x".repeat(len));
-        entry.location = None;
-        full.rounds[0].findings.push(entry);
-        left -= len;
-        if full.rounds[0].findings.len() == MAX_FINDINGS {
+        let last = full.rounds.len() - 1;
+        if full.rounds[last].findings.len() == MAX_FINDINGS {
             let mut next = full.rounds[0].clone();
             next.findings.clear();
             full.rounds.push(next);
         }
+        let len = left.min(1_000);
+        let mut entry = finding(&"x".repeat(len));
+        entry.location = None;
+        let last = full.rounds.len() - 1;
+        full.rounds[last].findings.push(entry);
+        left -= len;
     }
-    assert_eq!(full.text_bytes(), MAX_REVIEW_TEXT_BYTES);
-    assert!(Review::new(full.clone()).is_ok(), "exactly the budget");
-    let last = full.rounds.len() - 1;
-    full.rounds[last].findings.push(finding("x"));
-    assert_eq!(Review::new(full).unwrap_err().field, "text");
+    full
 }

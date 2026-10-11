@@ -31,17 +31,10 @@ impl CommitId {
 
 /// Names git keeps for itself, which a branch would shadow, in lowercase:
 /// they are refused in any case, as a case-insensitive file system would
-/// take `Head` for `HEAD`.
-const RESERVED: &[&str] = &[
-    "head",
-    "fetch_head",
-    "orig_head",
-    "merge_head",
-    "cherry_pick_head",
-    "revert_head",
-    "bisect_head",
-    "auto_merge",
-];
+/// take `Head` for `HEAD`. Besides these, every one-component name of
+/// letters and `_` ending in `_head` is git's ([`git_head`]):
+/// `FETCH_HEAD`, `REBASE_HEAD` and any it adds.
+const RESERVED: &[&str] = &["head", "auto_merge", "stash"];
 
 /// A branch as git names it (`git check-ref-format --branch`), within
 /// printable ASCII: at most [`MAX_BRANCH_BYTES`]; none of `~^:?*[\`;
@@ -49,9 +42,11 @@ const RESERVED: &[&str] = &[
 /// with `.lock`; no `..` or `@{`; not starting with `-`, not ending with
 /// `.`. Besides git's rules, the board refuses names git takes but git or
 /// a reader would take as something else: `@` (git's own short name for
-/// `HEAD`), one of git's own names (`HEAD`, `FETCH_HEAD`, …), a ref path
-/// (`refs/…`, or one starting `heads/`, `tags/` or `remotes/`), or a bare
-/// commit id; all of them in any case.
+/// `HEAD`), one of git's own names (`HEAD`, `stash`, `AUTO_MERGE`, any
+/// `*_HEAD`), a ref path or another of git's refs (one starting `refs/`,
+/// `heads/`, `tags/`, `remotes/`, `notes/`, `bisect/`, `stash/` or
+/// `replace/`), a component ending `.lock` in any case, or a bare commit
+/// id; all of them in any case.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct BranchName(String);
 
@@ -94,16 +89,35 @@ fn git_branch(text: &str) -> bool {
         && !text.ends_with('.')
 }
 
-/// The first components that make a name read as a ref path, in any case.
-const REF_ROOTS: &[&str] = &["refs", "heads", "tags", "remotes"];
+/// The first components that make a name read as a ref path or another
+/// of git's own refs (`notes/commits`, `bisect/bad`, `stash`,
+/// `replace/…`), in any case.
+const REF_ROOTS: &[&str] = &[
+    "refs", "heads", "tags", "remotes", "notes", "bisect", "stash", "replace",
+];
 
-/// Names git takes but would read as something else.
+/// A one-component name of letters and `_` ending in `_head` (lowercase):
+/// git's own, such as `fetch_head` or `rebase_head`.
+fn git_head(lower: &str) -> bool {
+    lower.ends_with("_head")
+        && lower
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte == b'_')
+}
+
+/// Names git takes but would read as something else, all judged in
+/// lowercase: `.lock` too, as a case-insensitive file system would.
 fn ours(text: &str) -> bool {
     let lower = text.to_ascii_lowercase();
     let root = lower.split('/').next().unwrap_or(&lower);
+    let unlocked = lower
+        .split('/')
+        .all(|component| !component.ends_with(".lock"));
     lower != "@"
         && !RESERVED.contains(&lower.as_str())
+        && !git_head(&lower)
         && !REF_ROOTS.contains(&root)
+        && unlocked
         && !full_hex(&lower)
 }
 

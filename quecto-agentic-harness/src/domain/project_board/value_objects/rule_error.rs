@@ -27,6 +27,8 @@ pub enum BoardRuleError {
     /// The plan or run belongs to another task, or the run to another
     /// plan version.
     NotThisTasks,
+    /// The review is of another change (of this task or another).
+    NotThisChange,
     /// A done or archived task's plans are settled: none is proposed,
     /// edited, accepted or discarded.
     TaskFinished(TaskStatus),
@@ -134,6 +136,7 @@ impl fmt::Display for BoardRuleError {
                 state.as_str()
             ),
             Self::NotThisTasks => f.write_str("it belongs to another task or plan version"),
+            Self::NotThisChange => f.write_str("the review is of another change"),
             Self::TaskFinished(status) => {
                 write!(f, "a {} task's plans are settled", status.as_str())
             }

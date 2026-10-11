@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use super::board_change::{checked_writer, commit, task_on};
 use crate::application::project_board::dto::{BoardOp, ProjectBoardError};
-use crate::application::project_board::ports::{BoardClock, ProjectBoardStore};
+use crate::application::project_board::ports::{BoardClock, BoardSnapshot, ProjectBoardStore};
 use crate::domain::project_board::entities::claim::Identity;
 use crate::domain::project_board::entities::task::Task;
 use crate::domain::project_board::services::changes::Linked;
@@ -45,7 +45,8 @@ impl ChangeBoardTask {
     /// Task `id` after `op`, made by the store's committer.
     ///
     /// # Errors
-    /// No such task, or its file quarantined; the board's rules (against
+    /// No such task, or its file quarantined; a pull request linked while
+    /// another task's file is set aside; the board's rules (against
     /// the latest task); the clock's; a board that kept moving; the
     /// store's.
     pub fn execute(&self, id: &Slug, op: &BoardOp) -> Result<Task, ProjectBoardError> {
@@ -57,6 +58,7 @@ impl ChangeBoardTask {
             |board, when| {
                 let task = task_on(board, id)?;
                 when.may_build_on(task)?;
+                board_readable_for(op, board)?;
                 Ok(vec![
                     apply(task, &board.tasks, actor, op, &when.now)
                         .map_err(ProjectBoardError::Rule)?,
@@ -64,6 +66,23 @@ impl ChangeBoardTask {
             },
         )?;
         Ok(tasks.into_iter().next().expect("a change writes its task"))
+    }
+}
+
+/// The board holds what `op` must see: linking a pull request needs every
+/// task's, so while a task's file is set aside (its pull requests unknown)
+/// a link is refused rather than risk linking one twice. The other ops
+/// read only their own task.
+fn board_readable_for(op: &BoardOp, board: &BoardSnapshot) -> Result<(), ProjectBoardError> {
+    match op {
+        BoardOp::AddPr(_) => {
+            let set_aside = board.quarantined.iter().find_map(|file| file.id.as_ref());
+            match set_aside {
+                None => Ok(()),
+                Some(id) => Err(ProjectBoardError::Quarantined(id.clone())),
+            }
+        }
+        BoardOp::Renew | BoardOp::TakeOver | BoardOp::Move(_) | BoardOp::RemovePr(_) => Ok(()),
     }
 }
 
@@ -82,8 +101,8 @@ fn apply(
         // are (M3): the task has none, so none holds it in review, and no
         // change on the board links the pull request. From then the use
         // case passes the task's runs and changes, and to `add_pr` every
-        // change on the board too. (A quarantined task's pull requests are
-        // unknown until it is mended.)
+        // change on the board too. A link waits while a task's file is set
+        // aside ([`board_readable_for`]).
         BoardOp::Move(to) => move_task(task, *to, actor, &[], &[], now),
         BoardOp::AddPr(pr) => {
             let board = Linked {

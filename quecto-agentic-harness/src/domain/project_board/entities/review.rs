@@ -3,7 +3,8 @@
 //! commit it judged, so a branch rewritten later never changes what was
 //! reviewed; it names its reviewer (a person or an agent), its verdict and
 //! its findings. A review is begun by its first round, so it always has
-//! one, and its state is its last round's verdict. It is stored in one
+//! one: it was created at its first round and last changed at its last,
+//! and its state is its last round's verdict. It is stored in one
 //! file named by its task and change (M3), so a change has no second.
 use super::super::value_objects::code_ref::CommitId;
 use super::super::value_objects::schema_error::{SchemaError, line};
@@ -68,30 +69,35 @@ impl ReviewFields {
     }
 }
 
-/// A review whose fields keep every rule of its schema.
+/// A review whose fields keep every rule of its schema, with its state:
+/// its last round's verdict, read once when it is built.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Review(ReviewFields);
+pub struct Review {
+    fields: ReviewFields,
+    state: ReviewVerdict,
+}
 
 impl Review {
     pub fn new(fields: ReviewFields) -> Result<Self, SchemaError> {
         validate(&fields)?;
-        Ok(Self(fields))
+        let state = match fields.rounds.last() {
+            Some(last) => last.verdict,
+            None => return Err(SchemaError::new("rounds", "a review begins with a round")),
+        };
+        Ok(Self { fields, state })
     }
 
     pub fn fields(&self) -> &ReviewFields {
-        &self.0
+        &self.fields
     }
 
     pub fn into_fields(self) -> ReviewFields {
-        self.0
+        self.fields
     }
 
     /// Its last round's verdict.
     pub fn state(&self) -> ReviewVerdict {
-        match self.0.rounds.last() {
-            Some(round) => round.verdict,
-            None => unreachable!("a review is built with at least one round"),
-        }
+        self.state
     }
 }
 
@@ -109,6 +115,16 @@ fn validate(review: &ReviewFields) -> Result<(), SchemaError> {
             ));
         }
     }
+    // It began with its first round, and its last change is its last.
+    match review.rounds.first().map(|first| &first.at) {
+        Some(at) if *at == review.created => {}
+        _ => {
+            return Err(SchemaError::new(
+                "rounds/0/at",
+                "must be when the review was created",
+            ));
+        }
+    }
     let mut last = &review.created;
     for (index, round) in review.rounds.iter().enumerate() {
         let field = format!("rounds/{index}");
@@ -122,6 +138,15 @@ fn validate(review: &ReviewFields) -> Result<(), SchemaError> {
                     "must follow the round before, by the review's last change",
                 ));
             }
+        }
+    }
+    match *last == review.updated {
+        true => {}
+        false => {
+            return Err(SchemaError::new(
+                "updated",
+                "must be when the last round was added",
+            ));
         }
     }
     let text = review.text_bytes();

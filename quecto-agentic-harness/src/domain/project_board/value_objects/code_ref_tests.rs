@@ -89,6 +89,19 @@ fn a_branch_name_is_not_one_git_reads_as_something_else() {
         "HEADS/x",
         "Tags/v1",
         "REMOTES/o/m",
+        "REBASE_HEAD",
+        "FOO_HEAD",
+        "_head",
+        "x_head",
+        "stash",
+        "Stash",
+        "notes/commits",
+        "bisect/bad",
+        "stash/x",
+        "replace/x",
+        "foo.LOCK",
+        "a/b.Lock",
+        "Auto_Merge",
     ] {
         assert_eq!(
             BranchName::parse(name).unwrap_err().field,
@@ -96,7 +109,18 @@ fn a_branch_name_is_not_one_git_reads_as_something_else() {
             "{name:?}: refused in any case"
         );
     }
-    for name in ["feat/heads", "tagsx/y", "headsx", "@a"] {
+    for name in [
+        "feat/heads",
+        "tagsx/y",
+        "headsx",
+        "@a",
+        "feat/x_head",
+        "x_head2",
+        "x-head",
+        "stashed",
+        "feat/stash",
+        "a.locker",
+    ] {
         assert!(BranchName::parse(name).is_ok(), "{name}");
     }
     assert!(BranchName::parse(&"a".repeat(41)).is_ok());

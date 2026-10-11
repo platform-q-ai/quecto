@@ -283,6 +283,7 @@ board_rules! {
     R::RunEnded(_) => R::RunEnded(1), "run_ended", ["run"];
     R::PlanNotDraft(_) => R::PlanNotDraft(PlanState::Accepted), "plan_not_draft", ["state"];
     R::NotThisTasks => R::NotThisTasks, "not_this_tasks", [];
+    R::NotThisChange => R::NotThisChange, "not_this_change", [];
     R::TaskFinished(_) => R::TaskFinished(TaskStatus::Done), "task_finished", ["status"];
     R::UnknownPlanVersion(_) => R::UnknownPlanVersion(3), "unknown_plan_version", ["version"];
     R::PlanChanged { .. } => R::PlanChanged { version: 2, updated: at("10:00:00") }, "plan_changed", ["version", "updated"];

@@ -394,3 +394,26 @@ fn a_pull_request_another_task_links_is_not_linked_again() {
     let linked = change(&store, "Ada", "10:00:00").execute(&slug("a"), &BoardOp::AddPr(8));
     assert_eq!(linked.map(|task| task.fields().prs.clone()), Ok(vec![8]));
 }
+
+/// While another task's file is set aside its pull requests are unknown,
+/// so a link is refused rather than risk linking one twice; the task's
+/// other ops go on.
+#[test]
+fn a_pull_request_is_not_linked_while_a_tasks_file_is_set_aside() {
+    let store = board();
+    seed(&store, held_by_ada(TaskStatus::Claimed));
+    seed(
+        &store,
+        TaskFields {
+            prs: vec![7],
+            ..fields("b")
+        },
+    );
+    store.quarantine("b", "malformed");
+    let writes = store.writes();
+    let refused = change(&store, "Ada", "10:00:00").execute(&slug("a"), &BoardOp::AddPr(7));
+    assert_eq!(refused, Err(ProjectBoardError::Quarantined(slug("b"))));
+    assert_eq!(store.writes(), writes);
+    let renewed = change(&store, "Ada", "10:00:00").execute(&slug("a"), &BoardOp::Renew);
+    assert!(renewed.is_ok(), "{renewed:?}");
+}
