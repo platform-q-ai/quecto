@@ -37,8 +37,11 @@ pub enum BoardRuleError {
     /// The task's plans contradict each other (a hand edit, a hostile
     /// push): mend them before deciding on one.
     PlansInconsistent(String),
-    /// A run opens only while its task is held.
-    NotHeld,
+    /// The task's runs contradict each other (more than one going): mend
+    /// them before acting on the task.
+    RunsInconsistent(String),
+    /// A run runs the task's accepted plan; this version is not it.
+    PlanNotAccepted(u32),
     /// A takeover is only of a task that may hold a claim (claimed, in
     /// progress, in review or blocked).
     NotTakeable(TaskStatus),
@@ -103,7 +106,10 @@ impl fmt::Display for BoardRuleError {
                 updated.as_str()
             ),
             Self::PlansInconsistent(why) => write!(f, "the task's plans contradict: {why}"),
-            Self::NotHeld => f.write_str("a run opens only while its task is held"),
+            Self::RunsInconsistent(why) => write!(f, "the task's runs contradict: {why}"),
+            Self::PlanNotAccepted(version) => {
+                write!(f, "plan version {version} is not the task's accepted plan")
+            }
             Self::NotTakeable(status) => {
                 write!(f, "a {} task cannot be taken over", status.as_str())
             }

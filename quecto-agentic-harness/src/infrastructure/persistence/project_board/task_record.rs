@@ -29,14 +29,13 @@ use std::fmt;
 
 /// Each schema this quecto reads, oldest first, with the quecto release
 /// that introduced it. A new schema adds a row here. Schema 1 is the
-/// format as the task parts complete it (#2483, 0.107.251); no board holds
-/// data yet, so the artifact model's slimmer task (#2481 M1a: its plan,
-/// items, team and runs are artifacts of their own, and it names its
-/// `accepted_plan`) keeps the number until canonical markdown replaces the
-/// record (M2).
-pub const SCHEMAS: &[(u32, &str)] = &[(1, "0.107.251")];
+/// format as the task parts complete it (#2483, 0.107.251). Schema 2 is
+/// the artifact model's slimmer task (#2481 M1a): its plan, items, team and
+/// runs are artifacts of their own, and it names its `accepted_plan`; a
+/// schema-1 file holding any of those is malformed to this reader.
+pub const SCHEMAS: &[(u32, &str)] = &[(1, "0.107.251"), (2, "0.107.274")];
 /// The schema every task file is written at: the last row of [`SCHEMAS`].
-pub const SCHEMA_VERSION: u32 = 1;
+pub const SCHEMA_VERSION: u32 = 2;
 const _: () = assert!(SCHEMAS[SCHEMAS.len() - 1].0 == SCHEMA_VERSION);
 /// The largest task file read or written. Every task the domain admits is
 /// written under it: the widest structure (about 300 KB) plus the whole

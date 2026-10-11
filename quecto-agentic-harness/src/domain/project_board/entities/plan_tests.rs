@@ -60,10 +60,6 @@ fn fields_that_break_a_rule_build_no_plan() {
             "team/roles",
             Box::new(|p| p.team.as_mut().unwrap().roles.clear()),
         ),
-        (
-            "team/deadline",
-            Box::new(|p| p.team.as_mut().unwrap().deadline = Some(at("08:30:00"))),
-        ),
     ];
     for (field, change) in cases {
         let mut broken = fields();
@@ -165,4 +161,13 @@ fn the_items_and_the_text_stop_exactly_at_their_limits() {
     assert!(exact.is_ok(), "exactly the budget: {:?}", exact.err());
     wide.items[0].title.push('x');
     assert_eq!(Plan::new(wide).unwrap_err().field, "text", "a byte past it");
+}
+
+/// A deadline is informational: one already past when the plan was made
+/// is allowed, so proposing and editing agree.
+#[test]
+fn a_past_deadline_is_allowed() {
+    let mut past = fields();
+    past.team.as_mut().unwrap().deadline = Some(at("07:00:00"));
+    assert!(Plan::new(past).is_ok());
 }

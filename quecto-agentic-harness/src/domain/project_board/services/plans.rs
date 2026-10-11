@@ -20,6 +20,7 @@ use super::super::value_objects::schema_error::SchemaError;
 use super::super::value_objects::timestamp::Timestamp;
 use super::super::value_objects::vocabulary::{PlanState, TaskStatus};
 use super::claims::{held_live_by, settle, stamp};
+use super::runs::open_of;
 
 /// What a plan says: its approach, items and team.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -30,13 +31,13 @@ pub struct PlanContent {
     pub team: Option<Team>,
 }
 
-/// A task with its plans and its run going (or last run), as the board
-/// holds them: what an acceptance is judged against.
+/// A task with all its plans and runs, as the board holds them: what an
+/// acceptance is judged against.
 #[derive(Debug, Clone, Copy)]
 pub struct TaskPlans<'a> {
     pub task: &'a Task,
     pub versions: &'a [Plan],
-    pub open: Option<&'a Run>,
+    pub runs: &'a [Run],
 }
 
 /// An acceptance: the task naming the version, that version accepted, and
@@ -90,19 +91,24 @@ pub fn propose(
 }
 
 /// The draft `plan` of `task` saying `content` instead, stamped `now`.
+/// With `expected`, the draft must still be as the caller read it (its
+/// `updated`), so a newer edit is never overwritten.
 ///
 /// # Errors
-/// A done or archived task; a plan of another task, or not a draft; an
-/// edit that changes nothing; or a plan its schema refuses.
+/// A done or archived task; a plan of another task, or not a draft, or
+/// changed since it was read; an edit that changes nothing; or a plan its
+/// schema refuses.
 pub fn edit_draft(
     task: &Task,
     plan: &Plan,
     content: PlanContent,
+    expected: Option<&Timestamp>,
     now: &Timestamp,
 ) -> Result<Plan, BoardRuleError> {
     open_to_plans(task)?;
     of_task(task, std::slice::from_ref(plan))?;
     draft(plan)?;
+    as_read(plan, expected)?;
     let fields = plan.fields();
     let unchanged = fields.approach == content.approach
         && fields.items == content.items
@@ -118,15 +124,17 @@ pub fn edit_draft(
 }
 
 /// Version `version` of the `board` task's plan accepted by `actor` at
-/// `now`: the task names it, and the version accepted before is superseded. With
-/// `expected`, the draft must still be as the caller read it (its
-/// `updated`), so the content accepted is the content reviewed.
+/// `now`: the task names it, and the version accepted before is
+/// superseded. With `expected`, the draft must still be as the caller read
+/// it (its `updated`), so the content accepted is the content reviewed.
+/// The task, both plans and the acceptance share one stamp, later than
+/// each one's last change (a proposer's clock may have run ahead).
 ///
 /// # Errors
-/// A done or archived task; plans that contradict each other; no version
-/// of that number, or one that is not a draft, or changed since it was
-/// read; an actor who may not decide for the task; or a run of the task
-/// still going (`open`), or a run of another task.
+/// A done or archived task; plans or runs that contradict each other; no
+/// version of that number, or one that is not a draft, or changed since it
+/// was read; an actor who may not decide for the task; a run of the task
+/// still going, or a run of another task.
 pub fn accept(
     board: &TaskPlans<'_>,
     version: u32,
@@ -137,7 +145,7 @@ pub fn accept(
     let TaskPlans {
         task,
         versions,
-        open,
+        runs,
     } = *board;
     open_to_plans(task)?;
     consistent(task, versions)?;
@@ -146,47 +154,51 @@ pub fn accept(
         .find(|plan| plan.fields().version == version)
         .ok_or(BoardRuleError::UnknownPlanVersion(version))?;
     draft(chosen)?;
-    if let Some(expected) = expected {
-        let updated = &chosen.fields().updated;
-        match updated == expected {
-            true => {}
-            false => {
-                return Err(BoardRuleError::PlanChanged {
-                    version,
-                    updated: updated.clone(),
-                });
-            }
-        }
-    }
+    as_read(chosen, expected)?;
     decides(task, actor, now)?;
-    if let Some(run) = open {
-        match run.fields().task == task.fields().id {
-            true => {}
-            false => return Err(BoardRuleError::NotThisTasks),
-        }
-        if run.is_open() {
-            return Err(BoardRuleError::RunOpen(run.fields().number));
-        }
+    if let Some(run) = open_of(task, runs)? {
+        return Err(BoardRuleError::RunOpen(run.fields().number));
     }
-    let at = stamp(task, now)?;
+    let before = versions
+        .iter()
+        .find(|plan| plan.fields().state == PlanState::Accepted);
+    // One stamp, after the task's, the chosen plan's and the superseded
+    // plan's last changes.
+    let mut at = stamp(task, now)?;
+    for plan in std::iter::once(chosen).chain(before) {
+        at = at.max(after(plan)?);
+    }
     let mut named = task.fields().clone();
     named.accepted_plan = Some(version);
     let task = settle(named, &at)?;
     let mut accepted = chosen.fields().clone();
     accepted.state = PlanState::Accepted;
     accepted.accepted = Some((actor.clone(), at.clone()));
-    let plan = restamped(accepted, chosen, &at)?;
-    let superseded = versions
-        .iter()
-        .find(|plan| plan.fields().state == PlanState::Accepted)
-        .map(|before| moved(before, PlanState::Superseded, &at))
+    accepted.updated = at.clone();
+    let plan = Plan::new(accepted).map_err(BoardRuleError::Invalid)?;
+    let superseded = before
+        .map(|before| {
+            let mut next = before.fields().clone();
+            next.state = PlanState::Superseded;
+            next.updated = at.clone();
+            Plan::new(next).map_err(BoardRuleError::Invalid)
+        })
         .transpose()?;
-    assert!(
-        task.fields().accepted_plan == Some(plan.fields().version)
-            && plan.fields().state == PlanState::Accepted
-            && superseded
-                .as_ref()
-                .is_none_or(|before| before.fields().state == PlanState::Superseded),
+    let result: Vec<&Plan> = versions
+        .iter()
+        .filter(|plan| plan.fields().version != version)
+        .filter(|plan| plan.fields().state != PlanState::Accepted)
+        .chain(std::iter::once(&plan))
+        .chain(superseded.as_ref())
+        .collect();
+    let accepted_now: Vec<u32> = result
+        .iter()
+        .filter(|plan| plan.fields().state == PlanState::Accepted)
+        .map(|plan| plan.fields().version)
+        .collect();
+    assert_eq!(
+        (accepted_now, task.fields().accepted_plan),
+        (vec![version], Some(version)),
         "an acceptance leaves the task naming its one accepted plan"
     );
     Ok(Accepted {
@@ -199,8 +211,8 @@ pub fn accept(
 /// The draft `plan` of `task` discarded by `actor` at `now`; it is kept.
 ///
 /// # Errors
-/// A plan of another task, or not a draft; or an actor who may not decide
-/// for the task.
+/// A done or archived task; a plan of another task, or not a draft; or an
+/// actor who may not decide for the task.
 pub fn discard(
     task: &Task,
     plan: &Plan,
@@ -234,9 +246,21 @@ fn consistent(task: &Task, versions: &[Plan]) -> Result<(), BoardRuleError> {
     match (accepted.as_slice(), task.fields().accepted_plan) {
         ([], None) => Ok(()),
         ([version], Some(named)) if *version == named => Ok(()),
-        (accepted, named) => Err(BoardRuleError::PlansInconsistent(format!(
-            "versions {accepted:?} are accepted; the task names {named:?}"
-        ))),
+        (accepted, named) => {
+            let listed: Vec<String> = accepted.iter().map(u32::to_string).collect();
+            let accepted = match listed.as_slice() {
+                [] => "no version is accepted".to_string(),
+                [one] => format!("version {one} is accepted"),
+                [..] => format!("versions {} are accepted", listed.join(", ")),
+            };
+            let named = match named {
+                Some(version) => format!("the task names version {version}"),
+                None => "the task names none".to_string(),
+            };
+            Err(BoardRuleError::PlansInconsistent(format!(
+                "{accepted}; {named}"
+            )))
+        }
     }
 }
 
@@ -265,6 +289,28 @@ fn of_task(task: &Task, versions: &[Plan]) -> Result<(), BoardRuleError> {
     }
 }
 
+/// `plan` as the caller read it: unchanged since `expected`, when given.
+fn as_read(plan: &Plan, expected: Option<&Timestamp>) -> Result<(), BoardRuleError> {
+    let updated = &plan.fields().updated;
+    match expected {
+        None => Ok(()),
+        Some(expected) if expected == updated => Ok(()),
+        Some(_) => Err(BoardRuleError::PlanChanged {
+            version: plan.fields().version,
+            updated: updated.clone(),
+        }),
+    }
+}
+
+/// A second past `plan`'s last change: the earliest stamp of a change to
+/// it.
+fn after(plan: &Plan) -> Result<Timestamp, BoardRuleError> {
+    plan.fields()
+        .updated
+        .plus_seconds(1)
+        .map_err(|error| BoardRuleError::Invalid(error.at("updated")))
+}
+
 fn draft(plan: &Plan) -> Result<(), BoardRuleError> {
     match plan.fields().state {
         PlanState::Draft => Ok(()),
@@ -290,12 +336,7 @@ fn moved(plan: &Plan, state: PlanState, now: &Timestamp) -> Result<Plan, BoardRu
 /// `next`, updated at `now` or a second past `plan`'s own `updated`,
 /// whichever is later, so every change moves it strictly forward.
 fn restamped(mut next: PlanFields, plan: &Plan, now: &Timestamp) -> Result<Plan, BoardRuleError> {
-    let after = plan
-        .fields()
-        .updated
-        .plus_seconds(1)
-        .map_err(|error| BoardRuleError::Invalid(error.at("updated")))?;
-    next.updated = now.max(&after).clone();
+    next.updated = now.max(&after(plan)?).clone();
     Plan::new(next).map_err(BoardRuleError::Invalid)
 }
 

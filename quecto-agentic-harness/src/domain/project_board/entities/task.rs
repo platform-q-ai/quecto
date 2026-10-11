@@ -113,14 +113,17 @@ fn validate(task: &TaskFields) -> Result<(), SchemaError> {
             "a task does not depend on itself",
         ));
     }
-    if task
+    match task
         .accepted_plan
-        .is_some_and(|version| !(1..=MAX_PLAN_VERSION).contains(&version))
+        .is_none_or(|version| (1..=MAX_PLAN_VERSION).contains(&version))
     {
-        return Err(SchemaError::new(
-            "accepted_plan",
-            format!("must be a plan version from 1 to {MAX_PLAN_VERSION}"),
-        ));
+        true => {}
+        false => {
+            return Err(SchemaError::new(
+                "accepted_plan",
+                format!("must be a plan version from 1 to {MAX_PLAN_VERSION}"),
+            ));
+        }
     }
     validate_claim(task)?;
     let ids: Vec<&Slug> = task.reviews.iter().map(|review| &review.id).collect();

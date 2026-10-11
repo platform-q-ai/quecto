@@ -74,9 +74,9 @@ fn apply(
     match op {
         BoardOp::Renew => renew(task, actor, now),
         BoardOp::TakeOver => take_over(task, actor, now),
-        // No run is stored before the run artifacts are (M3), so none is
-        // going; from then the use case passes the task's open run.
-        BoardOp::Move(to) => move_task(task, *to, actor, None, now),
+        // No run is stored before the run artifacts are (M3): the task has
+        // none. From then the use case passes all of the task's runs.
+        BoardOp::Move(to) => move_task(task, *to, actor, &[], now),
         BoardOp::AddPr(pr) => add_pr(task, actor, *pr, now),
         BoardOp::RemovePr(pr) => remove_pr(task, actor, *pr, now),
     }

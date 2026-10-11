@@ -20,7 +20,14 @@ fn ended(run: &Run) -> Run {
 #[test]
 fn a_run_begins_on_a_held_task_from_its_accepted_plan_one_at_a_time() {
     let accepted = plan(1, PlanState::Accepted);
-    let first = begin_run(&task(InProgress), &[], &accepted, &at("10:00:00")).unwrap();
+    let first = begin_run(
+        &task(InProgress),
+        &[],
+        &accepted,
+        &person("Ada"),
+        &at("10:00:00"),
+    )
+    .unwrap();
     assert_eq!(
         (
             first.fields().number,
@@ -34,6 +41,7 @@ fn a_run_begins_on_a_held_task_from_its_accepted_plan_one_at_a_time() {
             &task(InProgress),
             std::slice::from_ref(&first),
             &accepted,
+            &person("Ada"),
             &at("10:00:00")
         ),
         Err(BoardRuleError::RunOpen(1)),
@@ -43,24 +51,79 @@ fn a_run_begins_on_a_held_task_from_its_accepted_plan_one_at_a_time() {
         &task(InProgress),
         &[ended(&first)],
         &accepted,
+        &person("Ada"),
         &at("10:00:00"),
     )
     .unwrap();
     assert_eq!(second.fields().number, 2);
     for status in [Draft, Ready, Done, Archived] {
         assert_eq!(
-            begin_run(&task(status), &[], &accepted, &at("10:00:00")),
-            Err(BoardRuleError::NotHeld),
-            "{status:?}"
+            begin_run(
+                &task(status),
+                &[],
+                &accepted,
+                &person("Ada"),
+                &at("10:00:00")
+            ),
+            Err(BoardRuleError::NoClaim),
+            "{status:?}: nobody holds it"
         );
     }
-    for plan in [plan(1, PlanState::Draft), plan(2, PlanState::Accepted)] {
+    assert_eq!(
+        begin_run(
+            &task(InProgress),
+            &[],
+            &accepted,
+            &person("Bob"),
+            &at("10:00:00")
+        ),
+        Err(BoardRuleError::NotHolder),
+        "only its holder begins a run"
+    );
+    assert_eq!(
+        begin_run(
+            &task(InProgress),
+            &[],
+            &accepted,
+            &person("Ada"),
+            &at("11:00:00")
+        ),
+        Err(BoardRuleError::ClaimExpired)
+    );
+    for (plan, refused) in [
+        (
+            plan(1, PlanState::Draft),
+            BoardRuleError::PlanNotAccepted(1),
+        ),
+        (
+            plan(2, PlanState::Accepted),
+            BoardRuleError::PlanNotAccepted(2),
+        ),
+    ] {
         assert_eq!(
-            begin_run(&task(InProgress), &[], &plan, &at("10:00:00")),
-            Err(BoardRuleError::NotThisTasks),
+            begin_run(
+                &task(InProgress),
+                &[],
+                &plan,
+                &person("Ada"),
+                &at("10:00:00")
+            ),
+            Err(refused),
             "only the task's accepted plan runs"
         );
     }
+    let mut elsewhere = plan(1, PlanState::Accepted).into_fields();
+    elsewhere.task = Slug::parse("other").unwrap();
+    assert_eq!(
+        begin_run(
+            &task(InProgress),
+            &[],
+            &Plan::new(elsewhere).unwrap(),
+            &person("Ada"),
+            &at("10:00:00")
+        ),
+        Err(BoardRuleError::NotThisTasks)
+    );
 }
 
 #[test]
@@ -191,13 +254,84 @@ fn a_task_leaves_its_holder_only_once_its_run_has_ended() {
     let running = open_run(1, 1);
     for to in [Ready, Done, Archived] {
         assert_eq!(
-            may_move_with(&held, Some(&running), to),
+            may_move_with(&held, std::slice::from_ref(&running), to),
             Err(BoardRuleError::RunOpen(1))
         );
     }
     for to in [Claimed, InProgress, Review, Blocked] {
-        assert_eq!(may_move_with(&held, Some(&running), to), Ok(()));
+        assert_eq!(
+            may_move_with(&held, std::slice::from_ref(&running), to),
+            Ok(())
+        );
     }
-    assert_eq!(may_move_with(&held, Some(&ended(&running)), Ready), Ok(()));
-    assert_eq!(may_move_with(&held, None, Ready), Ok(()));
+    assert_eq!(may_move_with(&held, &[ended(&running)], Ready), Ok(()));
+    assert_eq!(may_move_with(&held, &[], Ready), Ok(()));
+}
+
+/// A run no live claim answers for (none, or one expired) is never
+/// stranded: anyone ends it as lost. A live claim's run is its holder's.
+#[test]
+fn a_run_no_live_claim_answers_for_is_ended_by_anyone() {
+    for status in [Ready, Draft] {
+        assert!(
+            end_lost(
+                &task(status),
+                &open_run(1, 1),
+                &person("Bob"),
+                &at("10:00:00")
+            )
+            .is_ok(),
+            "{status:?}: no claim"
+        );
+    }
+    assert!(
+        end_lost(
+            &task(InProgress),
+            &open_run(1, 1),
+            &person("Bob"),
+            &at("11:30:00")
+        )
+        .is_ok(),
+        "an expired claim"
+    );
+}
+
+/// A run ends by the task's clock rule: never before the task's last
+/// change, however far behind the caller's clock is.
+#[test]
+fn a_lost_run_ends_at_the_tasks_stamp() {
+    let ended = end_lost(
+        &task(InProgress),
+        &open_run(1, 1),
+        &person("Ada"),
+        &at("08:00:00"),
+    )
+    .unwrap();
+    assert_eq!(ended.fields().ended, Some(at("09:00:01")));
+}
+
+#[test]
+fn another_tasks_runs_and_two_going_are_refused() {
+    let mut elsewhere = open_run(1, 1).into_fields();
+    elsewhere.task = Slug::parse("other").unwrap();
+    let elsewhere = Run::new(elsewhere).unwrap();
+    assert_eq!(
+        may_move_with(&task(InProgress), std::slice::from_ref(&elsewhere), Ready),
+        Err(BoardRuleError::NotThisTasks)
+    );
+    let both = [open_run(1, 1), open_run(2, 1)];
+    assert!(matches!(
+        may_move_with(&task(InProgress), &both, Ready),
+        Err(BoardRuleError::RunsInconsistent(_))
+    ));
+    assert!(matches!(
+        begin_run(
+            &task(InProgress),
+            &both,
+            &plan(1, PlanState::Accepted),
+            &person("Ada"),
+            &at("10:00:00")
+        ),
+        Err(BoardRuleError::RunsInconsistent(_))
+    ));
 }

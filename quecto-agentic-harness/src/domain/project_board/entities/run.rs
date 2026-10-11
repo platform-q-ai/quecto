@@ -140,17 +140,23 @@ impl RunItem {
 /// outcome no earlier than it started (a run can end within the second it
 /// starts); a cost and item states only once it has ended.
 fn validate(run: &RunFields) -> Result<(), SchemaError> {
-    if !(1..=MAX_RUN_NUMBER).contains(&run.number) {
-        return Err(SchemaError::new(
-            "number",
-            format!("must be 1 to {MAX_RUN_NUMBER}"),
-        ));
+    match (1..=MAX_RUN_NUMBER).contains(&run.number) {
+        true => {}
+        false => {
+            return Err(SchemaError::new(
+                "number",
+                format!("must be 1 to {MAX_RUN_NUMBER}"),
+            ));
+        }
     }
-    if !(1..=MAX_PLAN_VERSION).contains(&run.plan_version) {
-        return Err(SchemaError::new(
-            "plan_version",
-            format!("must be 1 to {MAX_PLAN_VERSION}"),
-        ));
+    match (1..=MAX_PLAN_VERSION).contains(&run.plan_version) {
+        true => {}
+        false => {
+            return Err(SchemaError::new(
+                "plan_version",
+                format!("must be 1 to {MAX_PLAN_VERSION}"),
+            ));
+        }
     }
     let ended = match (&run.ended, &run.outcome) {
         (None, None) => false,

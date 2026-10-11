@@ -1,7 +1,7 @@
 use super::*;
 
 const FULL: &str = r#"{
-  "schema": 1,
+  "schema": 2,
   "id": "board-store",
   "title": "Board store",
   "kind": "task",
@@ -29,7 +29,7 @@ const FULL: &str = r#"{
 "#;
 
 const MINIMAL: &str = r#"{
-  "schema": 1,
+  "schema": 2,
   "id": "idea",
   "title": "An idea",
   "kind": "chore",
@@ -40,7 +40,7 @@ const MINIMAL: &str = r#"{
 "#;
 
 const PARTS: &str = r#"{
-  "schema": 1,
+  "schema": 2,
   "id": "board-store",
   "title": "Board store",
   "kind": "task",
@@ -147,18 +147,23 @@ fn malformed_files_are_refused_by_the_record() {
 
 #[test]
 fn a_newer_schema_asks_for_an_upgrade_and_an_unknown_one_is_refused() {
-    let newer = decode(&edited(FULL, "\"schema\": 1", "\"schema\": 2"));
-    assert_eq!(newer, Err(RecordError::NewerSchema { found: 2 }));
+    let newer = decode(&edited(FULL, "\"schema\": 2", "\"schema\": 3"));
+    assert_eq!(newer, Err(RecordError::NewerSchema { found: 3 }));
     assert!(newer.unwrap_err().to_string().ends_with("upgrade quecto"));
-    let newer_with_new_keys = edited(FULL, "\"schema\": 1,", "\"schema\": 2,\n  \"labels\": [],");
+    let newer_with_new_keys = edited(FULL, "\"schema\": 2,", "\"schema\": 3,\n  \"labels\": [],");
     assert_eq!(
         decode(&newer_with_new_keys),
-        Err(RecordError::NewerSchema { found: 2 })
+        Err(RecordError::NewerSchema { found: 3 })
     );
     assert_eq!(
-        decode(&edited(FULL, "\"schema\": 1", "\"schema\": 0")),
+        decode(&edited(FULL, "\"schema\": 2", "\"schema\": 0")),
         Err(RecordError::UnknownSchema { found: 0 })
     );
+    // A schema-1 file is read; one holding a part the task no longer has
+    // (its plan, say: an artifact of its own from schema 2) is malformed.
+    assert!(decode(&edited(MINIMAL, "\"schema\": 2", "\"schema\": 1")).is_ok());
+    let old_plan = edited(MINIMAL, "\"schema\": 2,", "\"schema\": 1,\n  \"plan\": [],");
+    assert!(matches!(decode(&old_plan), Err(RecordError::Malformed(_))));
 }
 
 #[test]
@@ -238,11 +243,11 @@ fn every_schema_names_the_quecto_that_introduced_it() {
 
 #[test]
 fn a_newer_schema_names_the_least_quecto_that_can_read_it() {
-    let message = RecordError::NewerSchema { found: 2 }.to_string();
+    let message = RecordError::NewerSchema { found: 3 }.to_string();
     let wanted = [
-        "schema 2".to_string(),
+        "schema 3".to_string(),
         format!("needs a quecto newer than {}", env!("CARGO_PKG_VERSION")),
-        "schema 1 arrived in quecto 0.107.251".to_string(),
+        "schema 2 arrived in quecto 0.107.274".to_string(),
         "upgrade quecto".to_string(),
     ];
     for part in wanted {

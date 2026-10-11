@@ -27,7 +27,7 @@ use crate::application::project_board::ports::{
     BoardClock, ProjectBoardStore, PullRequestState, PullRequestStates, PullRequestStatesError,
 };
 use crate::domain::project_board::entities::task::Task;
-use crate::domain::project_board::services::transitions::complete_merged;
+use crate::domain::project_board::services::transitions::{Completed, complete_merged};
 use crate::domain::project_board::value_objects::slug::Slug;
 
 /// The time a completion's pull request reads share.
@@ -80,9 +80,10 @@ impl CompleteMergedTask {
             // its pull requests merged: a draft, done or archived task, or
             // one linking none, is refused by the rule first.
             let linked: BTreeSet<u64> = task.fields().prs.iter().copied().collect();
-            // No run is stored before the run artifacts are (M3), so none
-            // is going; from then the task's open run is passed and ended.
-            complete_merged(task, &linked, None, &when.now).map_err(ProjectBoardError::Rule)?;
+            // No run is stored before the run artifacts are (M3): the task
+            // has none. From then all of its runs are passed, and the one
+            // going is written back ended.
+            complete_merged(task, &linked, &[], &when.now).map_err(ProjectBoardError::Rule)?;
             let reads = Reads {
                 host: &*self.prs,
                 clock: &*self.clock,
@@ -90,11 +91,10 @@ impl CompleteMergedTask {
                 budget: self.read_budget,
             };
             let merged = merged(&reads, &task.fields().prs)?;
-            Ok(vec![
-                complete_merged(task, &merged, None, &when.now)
-                    .map_err(ProjectBoardError::Rule)?
-                    .task,
-            ])
+            let Completed { task, run } =
+                complete_merged(task, &merged, &[], &when.now).map_err(ProjectBoardError::Rule)?;
+            assert!(run.is_none(), "no run is stored before M3");
+            Ok(vec![task])
         })?;
         Ok(tasks.into_iter().next().expect("a change writes its task"))
     }

@@ -75,7 +75,7 @@ fn a_finished_tasks_plans_are_settled() {
             Err(refused.clone())
         );
         assert_eq!(
-            edit_draft(&finished, &plan(2, PlanState::Draft), content(), &now),
+            edit_draft(&finished, &plan(2, PlanState::Draft), content(), None, &now),
             Err(refused.clone())
         );
         assert_eq!(
@@ -88,7 +88,7 @@ fn a_finished_tasks_plans_are_settled() {
                 &TaskPlans {
                     task: &finished,
                     versions: &versions,
-                    open: None
+                    runs: &[]
                 },
                 2,
                 None,
@@ -120,7 +120,7 @@ fn plans_that_contradict_each_other_are_refused_not_built_on() {
             &TaskPlans {
                 task: &held,
                 versions: &versions,
-                open: None,
+                runs: &[],
             },
             1,
             None,
@@ -145,11 +145,11 @@ fn only_a_draft_is_edited_and_only_by_an_edit_that_changes_something() {
     let mut changed = content();
     changed.team = None;
     let held = task(InProgress);
-    let edited = edit_draft(&held, &draft, changed.clone(), &at("08:30:00")).unwrap();
+    let edited = edit_draft(&held, &draft, changed.clone(), None, &at("08:30:00")).unwrap();
     assert_eq!(edited.fields().team, None);
     assert_eq!(edited.fields().updated, at("08:30:01"), "always moves on");
     assert_eq!(
-        edit_draft(&held, &draft, content(), &at("10:00:00")),
+        edit_draft(&held, &draft, content(), None, &at("10:00:00")),
         Err(BoardRuleError::NoEdit)
     );
     for state in [
@@ -158,12 +158,18 @@ fn only_a_draft_is_edited_and_only_by_an_edit_that_changes_something() {
         PlanState::Discarded,
     ] {
         assert_eq!(
-            edit_draft(&held, &plan(2, state), changed.clone(), &at("10:00:00")),
+            edit_draft(
+                &held,
+                &plan(2, state),
+                changed.clone(),
+                None,
+                &at("10:00:00")
+            ),
             Err(BoardRuleError::PlanNotDraft(state))
         );
     }
     assert_eq!(
-        edit_draft(&held, &other_tasks(2), changed, &at("10:00:00")),
+        edit_draft(&held, &other_tasks(2), changed, None, &at("10:00:00")),
         Err(BoardRuleError::NotThisTasks)
     );
 }
@@ -175,7 +181,7 @@ fn accepting_names_the_version_records_who_and_supersedes_the_one_before() {
         &TaskPlans {
             task: &task(InProgress),
             versions: &versions,
-            open: None,
+            runs: &[],
         },
         2,
         None,
@@ -204,7 +210,7 @@ fn accepting_names_the_version_records_who_and_supersedes_the_one_before() {
         &TaskPlans {
             task: &unaccepted(Draft),
             versions: &[plan(1, PlanState::Draft)],
-            open: None,
+            runs: &[],
         },
         1,
         None,
@@ -227,7 +233,7 @@ fn an_older_draft_accepted_over_a_newer_version_is_a_rollback() {
         &TaskPlans {
             task: &held,
             versions: &versions,
-            open: None,
+            runs: &[],
         },
         1,
         None,
@@ -249,7 +255,7 @@ fn the_holder_decides_for_a_held_task_and_anyone_for_an_unclaimed_one() {
                 &TaskPlans {
                     task: &held,
                     versions: &versions,
-                    open: None
+                    runs: &[]
                 },
                 2,
                 None,
@@ -265,7 +271,7 @@ fn the_holder_decides_for_a_held_task_and_anyone_for_an_unclaimed_one() {
                 &TaskPlans {
                     task: &held,
                     versions: &versions,
-                    open: None
+                    runs: &[]
                 },
                 2,
                 None,
@@ -287,7 +293,7 @@ fn the_holder_decides_for_a_held_task_and_anyone_for_an_unclaimed_one() {
                 &TaskPlans {
                     task: &task(status),
                     versions: &versions,
-                    open: None
+                    runs: &[]
                 },
                 2,
                 None,
@@ -306,12 +312,12 @@ fn an_acceptance_waits_for_a_known_unchanged_draft_and_no_run_going() {
     let ada = person("Ada");
     let now = at("10:00:00");
     let versions = [plan(1, PlanState::Accepted), plan(2, PlanState::Draft)];
-    let accept_with = |version: u32, expected: Option<&Timestamp>, open: Option<&Run>| {
+    let accept_with = |version: u32, expected: Option<&Timestamp>, runs: &[Run]| {
         accept(
             &TaskPlans {
                 task: &held,
                 versions: &versions,
-                open,
+                runs,
             },
             version,
             expected,
@@ -321,27 +327,27 @@ fn an_acceptance_waits_for_a_known_unchanged_draft_and_no_run_going() {
         .map(|a| a.plan)
     };
     assert_eq!(
-        accept_with(1, None, None),
+        accept_with(1, None, &[]),
         Err(BoardRuleError::PlanNotDraft(PlanState::Accepted))
     );
     assert_eq!(
-        accept_with(3, None, None),
+        accept_with(3, None, &[]),
         Err(BoardRuleError::UnknownPlanVersion(3))
     );
     assert_eq!(
-        accept_with(2, Some(&at("08:00:00")), None),
+        accept_with(2, Some(&at("08:00:00")), &[]),
         Err(BoardRuleError::PlanChanged {
             version: 2,
             updated: at("08:30:00"),
         })
     );
     assert!(
-        accept_with(2, Some(&at("08:30:00")), None).is_ok(),
+        accept_with(2, Some(&at("08:30:00")), &[]).is_ok(),
         "as read"
     );
     let running = open_run(1, 1);
     assert_eq!(
-        accept_with(2, None, Some(&running)),
+        accept_with(2, None, std::slice::from_ref(&running)),
         Err(BoardRuleError::RunOpen(1))
     );
     let mut ended = running.into_fields();
@@ -349,7 +355,7 @@ fn an_acceptance_waits_for_a_known_unchanged_draft_and_no_run_going() {
     ended.outcome = Some(RunOutcome::Succeeded);
     let ended = Run::new(ended).unwrap();
     assert!(
-        accept_with(2, None, Some(&ended)).is_ok(),
+        accept_with(2, None, std::slice::from_ref(&ended)).is_ok(),
         "a run that ended"
     );
     let elsewhere = Run::new(RunFields {
@@ -358,7 +364,7 @@ fn an_acceptance_waits_for_a_known_unchanged_draft_and_no_run_going() {
     })
     .unwrap();
     assert_eq!(
-        accept_with(2, None, Some(&elsewhere)),
+        accept_with(2, None, std::slice::from_ref(&elsewhere)),
         Err(BoardRuleError::NotThisTasks)
     );
 }
@@ -380,5 +386,90 @@ fn a_discarded_draft_is_kept_and_only_a_draft_is_discarded() {
     assert_eq!(
         discard(&task(Ready), &discarded, &person("Bob"), &at("10:00:00")),
         Err(BoardRuleError::PlanNotDraft(PlanState::Discarded))
+    );
+}
+
+/// A plan proposed by a clock running ahead is accepted after its own
+/// last change: the task, both plans and the acceptance share one stamp,
+/// a second past the latest of them.
+#[test]
+fn a_plan_from_a_clock_running_ahead_is_accepted_after_it() {
+    let mut ahead = plan(2, PlanState::Draft).into_fields();
+    (ahead.created, ahead.updated) = (at("12:00:00"), at("12:00:00"));
+    let versions = [plan(1, PlanState::Accepted), Plan::new(ahead).unwrap()];
+    let accepted = accept(
+        &TaskPlans {
+            task: &task(InProgress),
+            versions: &versions,
+            runs: &[],
+        },
+        2,
+        None,
+        &person("Ada"),
+        &at("10:00:00"),
+    )
+    .unwrap();
+    let stamp = at("12:00:01");
+    assert_eq!(accepted.task.fields().updated, stamp);
+    assert_eq!(accepted.plan.fields().updated, stamp);
+    assert_eq!(
+        accepted.plan.fields().accepted,
+        Some((person("Ada"), stamp.clone()))
+    );
+    assert_eq!(accepted.superseded.unwrap().fields().updated, stamp);
+}
+
+/// Runs that contradict each other (two going) are refused, never chosen
+/// between.
+#[test]
+fn runs_that_contradict_each_other_are_refused() {
+    let both = [open_run(1, 1), open_run(2, 1)];
+    let versions = [plan(1, PlanState::Accepted), plan(2, PlanState::Draft)];
+    let refused = accept(
+        &TaskPlans {
+            task: &task(InProgress),
+            versions: &versions,
+            runs: &both,
+        },
+        2,
+        None,
+        &person("Ada"),
+        &at("10:00:00"),
+    );
+    assert!(
+        matches!(&refused, Err(BoardRuleError::RunsInconsistent(why)) if why.contains("1, 2")),
+        "{refused:?}"
+    );
+}
+
+/// An edit of a draft can be pinned to the draft as read, so a newer edit
+/// is never overwritten.
+#[test]
+fn a_draft_edit_pinned_to_an_older_read_is_refused() {
+    let mut changed = content();
+    changed.team = None;
+    let draft = plan(2, PlanState::Draft);
+    assert_eq!(
+        edit_draft(
+            &task(InProgress),
+            &draft,
+            changed.clone(),
+            Some(&at("08:00:00")),
+            &at("10:00:00")
+        ),
+        Err(BoardRuleError::PlanChanged {
+            version: 2,
+            updated: at("08:30:00"),
+        })
+    );
+    assert!(
+        edit_draft(
+            &task(InProgress),
+            &draft,
+            changed,
+            Some(&at("08:30:00")),
+            &at("10:00:00")
+        )
+        .is_ok()
     );
 }

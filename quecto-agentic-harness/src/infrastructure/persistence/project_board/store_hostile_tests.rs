@@ -655,6 +655,11 @@ fn a_hostile_key_never_reaches_a_reason_or_stops_a_listing() {
         }),
         "the index holds: no rebuild loop"
     );
+    let listed = index.ready();
+    assert!(
+        listed.is_ok(),
+        "the index answers its own query: {listed:?}"
+    );
 }
 
 #[path = "store_clear_tests.rs"]

@@ -190,8 +190,6 @@ fn plan_parts_that_break_a_rule_build_no_plan() {
                 tokens: MAX_BUDGET_TOKENS + 1,
             })
         }),
-        ("team/deadline", |t| team(t).deadline = Some(at("08:00:00"))),
-        ("team/deadline", |t| team(t).deadline = Some(at("07:00:00"))),
         ("team/image", |t| team(t).image = Some("Foo/bar".into())),
         ("team/image", |t| {
             team(t).image = Some("registry/Team".into())
@@ -307,6 +305,7 @@ fn every_part_bound_admits_exactly_its_limit() {
         |t| team(t).roles[0].model = "fireworks/models/glm-4.6:thinking".into(),
         |t| team(t).roles[0].model = "gpt..5".into(),
         |t| team(t).deadline = Some(at("08:00:01")),
+        |t| team(t).deadline = Some(at("07:00:00")),
         |t| {
             team(t).budget = Some(Budget {
                 tokens: MAX_BUDGET_TOKENS,

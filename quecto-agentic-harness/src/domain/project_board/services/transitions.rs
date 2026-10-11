@@ -6,7 +6,7 @@ use super::super::value_objects::rule_error::BoardRuleError;
 use super::super::value_objects::timestamp::Timestamp;
 use super::super::value_objects::vocabulary::TaskStatus::{self, *};
 use super::claims::{held_by, held_live_by, is_live, new_claim, settle, stamp};
-use super::runs::{lost_at, may_move_with};
+use super::runs::{lost_at, may_move_with, open_of};
 use std::collections::BTreeSet;
 
 /// Who may make a move.
@@ -58,12 +58,12 @@ const TRANSITIONS: &[(TaskStatus, TaskStatus, Actor, ClaimEffect)] = &[
 ];
 
 /// `task` moved to `to` by `actor` at `now`, if the table allows it and
-/// its `open` run (the run still going, if one is) lets it leave.
+/// its `runs` (all of them, as the board holds them) let it leave.
 pub fn move_task(
     task: &Task,
     to: TaskStatus,
     actor: &Identity,
-    open: Option<&Run>,
+    runs: &[Run],
     now: &Timestamp,
 ) -> Result<Task, BoardRuleError> {
     let from = task.fields().status;
@@ -98,7 +98,7 @@ pub fn move_task(
         ((Review, Done), linked) => return Err(BoardRuleError::PrsLinked(linked.to_vec())),
         _ => {}
     }
-    may_move_with(task, open, to)?;
+    may_move_with(task, runs, to)?;
     let at = stamp(task, now)?;
     let mut next = task.fields().clone();
     next.status = to;
@@ -114,13 +114,13 @@ pub fn move_task(
 /// that is ready (released with its pull requests linked) or held
 /// (claimed, in progress, in review or blocked), whose linked pull
 /// requests are all in `merged`, is done, whoever holds it and whoever
-/// merged them. Its claim is cleared, and its `open` run, still going,
-/// is ended as lost at the change's stamp: it can no longer report its end
-/// to a done task, as a run whose host died cannot.
+/// merged them. Its claim is cleared, and its run still going, if one of
+/// its `runs` is, is ended as lost at the completion's stamp: it can no
+/// longer report its end to a done task, as a run whose host died cannot.
 pub fn complete_merged(
     task: &Task,
     merged: &BTreeSet<u64>,
-    open: Option<&Run>,
+    runs: &[Run],
     now: &Timestamp,
 ) -> Result<Completed, BoardRuleError> {
     let fields = task.fields();
@@ -146,19 +146,12 @@ pub fn complete_merged(
         }
     }
     let at = stamp(task, now)?;
-    if let Some(run) = open {
-        match run.fields().task == fields.id {
-            true => {}
-            false => return Err(BoardRuleError::NotThisTasks),
-        }
-    }
-    let run = open
-        .filter(|run| run.is_open())
-        .map(|run| lost_at(run, &at))
-        .transpose()?;
-    assert!(
-        run.as_ref().is_none_or(|run| !run.is_open()),
-        "a done task leaves no run open"
+    let open = open_of(task, runs)?;
+    let run = open.map(|run| lost_at(run, &at)).transpose()?;
+    assert_eq!(
+        open.is_some(),
+        run.as_ref().is_some_and(|run| !run.is_open()),
+        "the run going, and only it, is ended"
     );
     let mut next = fields.clone();
     next.status = Done;

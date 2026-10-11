@@ -116,11 +116,14 @@ fn validate(plan: &PlanFields) -> Result<(), SchemaError> {
     if plan.created > plan.updated {
         return Err(SchemaError::new("updated", "must not be before created"));
     }
-    if !(1..=MAX_PLAN_VERSION).contains(&plan.version) {
-        return Err(SchemaError::new(
-            "version",
-            format!("must be 1 to {MAX_PLAN_VERSION}"),
-        ));
+    match (1..=MAX_PLAN_VERSION).contains(&plan.version) {
+        true => {}
+        false => {
+            return Err(SchemaError::new(
+                "version",
+                format!("must be 1 to {MAX_PLAN_VERSION}"),
+            ));
+        }
     }
     markdown("approach", &plan.approach, MAX_APPROACH_CHARS)?;
     validate_items(&plan.items)?;
@@ -133,18 +136,9 @@ fn validate(plan: &PlanFields) -> Result<(), SchemaError> {
             format!("the plan's text is {text} bytes; the most is {MAX_PLAN_TEXT_BYTES}"),
         ));
     }
+    // A deadline is informational: one already past is allowed.
     match &plan.team {
-        Some(team) => {
-            team.validate("team")?;
-            let deadline = team.deadline.as_ref();
-            match deadline.is_none_or(|deadline| *deadline > plan.created) {
-                true => Ok(()),
-                false => Err(SchemaError::new(
-                    "team/deadline",
-                    "must be after the plan was created",
-                )),
-            }
-        }
+        Some(team) => team.validate("team"),
         None => Ok(()),
     }
 }
