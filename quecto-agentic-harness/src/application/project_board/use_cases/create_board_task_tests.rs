@@ -1,19 +1,18 @@
 use super::CreateBoardTask;
-use crate::application::project_board::dto::ProjectBoardError;
+use crate::application::project_board::dto::{NewTask, NewTaskStatus, ProjectBoardError};
 use crate::application::project_board::ports::{BoardStoreError, ProjectBoardStore};
 use crate::application::project_board::use_cases::MAX_WRITE_ATTEMPTS;
 use crate::application::project_board::use_cases::fixtures_tests::{
-    SetClock, at, board, fields, person, slug,
+    SetClock, at, board, fields, new_task, slug,
 };
-use crate::domain::project_board::entities::claim::Claim;
 use crate::domain::project_board::entities::task::{Task, TaskFields};
-use crate::domain::project_board::entities::task_parts::Run;
+use crate::domain::project_board::entities::task_parts::PlanStep;
 use crate::domain::project_board::value_objects::vocabulary::TaskStatus;
 use crate::infrastructure::test_support::memory_board_store::MemoryBoardStore;
 use std::sync::Arc;
 
 fn create(store: &MemoryBoardStore, clock: Arc<SetClock>) -> CreateBoardTask {
-    CreateBoardTask::new(Arc::new(store.client()), clock)
+    CreateBoardTask::new(Arc::new(store.client()), clock).unwrap()
 }
 
 /// Another writer's task, written straight to the store.
@@ -32,7 +31,7 @@ fn other_writes(board: &MemoryBoardStore, id: &str) {
 fn a_task_is_created_and_stamped_now() {
     let store = board();
     let task = create(&store, SetClock::at("10:00:00"))
-        .execute(fields("a"))
+        .execute(&new_task("a"))
         .unwrap();
     assert_eq!(
         (&task.fields().created, &task.fields().updated),
@@ -41,64 +40,35 @@ fn a_task_is_created_and_stamped_now() {
     assert_eq!(store.read().unwrap().tasks, vec![task]);
 }
 
+/// A new task holds only what a plan sets: it is created a draft or
+/// ready, with its plan, and no claim, runs, reviews, pull requests or
+/// items, which `NewTask` cannot carry.
 #[test]
-fn only_an_unclaimed_draft_or_ready_task_with_no_history_is_created() {
+fn a_new_task_holds_only_what_a_plan_sets() {
     let store = board();
-    let claim = Claim {
-        holder: person("Ada"),
-        since: at("10:00:00"),
-        expires: at("11:00:00"),
-    };
-    let run = Run {
-        id: slug("r1"),
-        started: at("09:00:00"),
-        ended: None,
-        outcome: None,
-    };
-    for (case, task) in [
-        (
-            "claimed",
-            TaskFields {
-                status: TaskStatus::Claimed,
-                ..fields("a")
-            },
-        ),
-        (
-            "done",
-            TaskFields {
-                status: TaskStatus::Done,
-                ..fields("a")
-            },
-        ),
-        (
-            "ready with a claim",
-            TaskFields {
-                claim: Some(claim),
-                ..fields("a")
-            },
-        ),
-        (
-            "a linked PR",
-            TaskFields {
-                prs: vec![7],
-                ..fields("a")
-            },
-        ),
-        (
-            "a run",
-            TaskFields {
-                runs: vec![run],
-                ..fields("a")
-            },
-        ),
-    ] {
-        let refused = create(&store, SetClock::at("10:00:00")).execute(task);
-        assert!(
-            matches!(refused, Err(ProjectBoardError::NotCreatable(_))),
-            "{case}: {refused:?}"
-        );
-    }
-    assert_eq!(store.writes(), 0);
+    let plan = vec![PlanStep {
+        title: "Spike".into(),
+        criteria: vec!["CAS proved".into()],
+    }];
+    let draft = create(&store, SetClock::at("10:00:00"))
+        .execute(&NewTask {
+            status: NewTaskStatus::Draft,
+            description: "Why and how.".into(),
+            plan: plan.clone(),
+            ..new_task("a")
+        })
+        .unwrap();
+    assert_eq!(
+        draft.into_fields(),
+        TaskFields {
+            status: TaskStatus::Draft,
+            description: "Why and how.".into(),
+            plan,
+            created: at("10:00:00"),
+            updated: at("10:00:00"),
+            ..fields("a")
+        }
+    );
 }
 
 /// A parent or dependency must already be on the board, so no two tasks
@@ -106,22 +76,22 @@ fn only_an_unclaimed_draft_or_ready_task_with_no_history_is_created() {
 #[test]
 fn a_parent_or_dependency_not_on_the_board_is_refused() {
     let store = board();
-    let a_on_b = TaskFields {
+    let a_on_b = NewTask {
         depends_on: vec![slug("b")],
-        ..fields("a")
+        ..new_task("a")
     };
-    let refused = create(&store, SetClock::at("10:00:00")).execute(a_on_b.clone());
+    let refused = create(&store, SetClock::at("10:00:00")).execute(&a_on_b);
     assert_eq!(refused, Err(ProjectBoardError::UnknownReference(slug("b"))));
-    let orphan = create(&store, SetClock::at("10:00:00")).execute(TaskFields {
+    let orphan = create(&store, SetClock::at("10:00:00")).execute(&NewTask {
         parent: Some(slug("p")),
-        ..fields("a")
+        ..new_task("a")
     });
     assert_eq!(orphan, Err(ProjectBoardError::UnknownReference(slug("p"))));
     create(&store, SetClock::at("10:00:00"))
-        .execute(fields("b"))
+        .execute(&new_task("b"))
         .unwrap();
     create(&store, SetClock::at("10:01:00"))
-        .execute(a_on_b)
+        .execute(&a_on_b)
         .unwrap();
 }
 
@@ -129,12 +99,12 @@ fn a_parent_or_dependency_not_on_the_board_is_refused() {
 fn an_id_held_or_set_aside_is_refused() {
     let store = board();
     create(&store, SetClock::at("10:00:00"))
-        .execute(fields("a"))
+        .execute(&new_task("a"))
         .unwrap();
-    let again = create(&store, SetClock::at("10:01:00")).execute(fields("a"));
+    let again = create(&store, SetClock::at("10:01:00")).execute(&new_task("a"));
     assert_eq!(again, Err(ProjectBoardError::Exists(slug("a"))));
     store.quarantine("q", "malformed");
-    let over = create(&store, SetClock::at("10:01:00")).execute(fields("q"));
+    let over = create(&store, SetClock::at("10:01:00")).execute(&new_task("q"));
     assert_eq!(over, Err(ProjectBoardError::Quarantined(slug("q"))));
 }
 
@@ -145,7 +115,7 @@ fn a_lost_write_is_retried_against_the_fresh_board() {
     let store = board();
     store.before_next_write(|board| other_writes(board, "b"));
     create(&store, SetClock::at("10:00:00"))
-        .execute(fields("a"))
+        .execute(&new_task("a"))
         .unwrap();
     let ids: Vec<_> = store
         .read()
@@ -161,7 +131,7 @@ fn a_lost_write_is_retried_against_the_fresh_board() {
 fn a_retry_that_finds_the_id_taken_is_refused() {
     let store = board();
     store.before_next_write(|board| other_writes(board, "a"));
-    let refused = create(&store, SetClock::at("10:00:00")).execute(fields("a"));
+    let refused = create(&store, SetClock::at("10:00:00")).execute(&new_task("a"));
     assert_eq!(refused, Err(ProjectBoardError::Exists(slug("a"))));
 }
 
@@ -183,7 +153,7 @@ fn interfered(
     let store = board();
     store.before_next_write(move |board| move_it(board, interferences));
     let clock = SetClock::at("10:00:00");
-    let created = create(&store, clock.clone()).execute(fields("a"));
+    let created = create(&store, clock.clone()).execute(&new_task("a"));
     let pauses = clock.pauses.lock().unwrap().clone();
     (created, store, pauses)
 }
@@ -223,7 +193,7 @@ fn a_clock_too_far_ahead_of_its_reference_is_refused() {
         &store,
         SetClock::with_reference("10:01:01", Some("10:00:00")),
     )
-    .execute(fields("a"));
+    .execute(&new_task("a"));
     assert!(
         matches!(ahead, Err(ProjectBoardError::ClockAhead { .. })),
         "{ahead:?}"
@@ -232,16 +202,96 @@ fn a_clock_too_far_ahead_of_its_reference_is_refused() {
         &store,
         SetClock::with_reference("10:01:00", Some("10:00:00")),
     )
-    .execute(fields("a"));
+    .execute(&new_task("a"));
     assert!(close.is_ok(), "60 s ahead is allowed");
 }
 
 #[test]
 fn a_board_not_bootstrapped_is_reported() {
     let store = MemoryBoardStore::default();
-    let refused = create(&store, SetClock::at("10:00:00")).execute(fields("a"));
+    let refused = create(&store, SetClock::at("10:00:00")).execute(&new_task("a"));
     assert_eq!(
         refused,
         Err(ProjectBoardError::Store(BoardStoreError::NoBoard))
     );
+}
+
+/// A parent or dependency whose file is set aside is reported as set
+/// aside, not as unknown.
+#[test]
+fn a_quarantined_parent_or_dependency_is_reported_as_quarantined() {
+    let store = board();
+    for id in ["p", "d"] {
+        create(&store, SetClock::at("10:00:00"))
+            .execute(&new_task(id))
+            .unwrap();
+        store.quarantine(id, "malformed");
+    }
+    let child = create(&store, SetClock::at("10:01:00")).execute(&NewTask {
+        parent: Some(slug("p")),
+        ..new_task("a")
+    });
+    assert_eq!(child, Err(ProjectBoardError::Quarantined(slug("p"))));
+    let dependent = create(&store, SetClock::at("10:01:00")).execute(&NewTask {
+        depends_on: vec![slug("d")],
+        ..new_task("a")
+    });
+    assert_eq!(dependent, Err(ProjectBoardError::Quarantined(slug("d"))));
+}
+
+/// The parent's file is spoiled between the read and the write: the
+/// write is lost, and the create, made again, finds the parent set aside.
+#[test]
+fn a_parent_quarantined_between_the_read_and_the_write_is_reported() {
+    let store = board();
+    create(&store, SetClock::at("10:00:00"))
+        .execute(&new_task("p"))
+        .unwrap();
+    store.before_next_write(|board| board.quarantine("p", "malformed"));
+    let clock = SetClock::at("10:01:00");
+    let child = create(&store, clock.clone()).execute(&NewTask {
+        parent: Some(slug("p")),
+        ..new_task("a")
+    });
+    assert_eq!(child, Err(ProjectBoardError::Quarantined(slug("p"))));
+    assert_eq!(*clock.pauses.lock().unwrap(), [2], "made again once");
+    assert_eq!(store.writes(), 1, "only p was written");
+}
+
+/// b's file was quarantined and then deleted, so a still depends on a b
+/// the board no longer holds. A new b depending on a would close a cycle:
+/// a new id any task already names is refused.
+#[test]
+fn a_new_id_another_task_already_names_is_refused() {
+    let store = board();
+    create(&store, SetClock::at("10:00:00"))
+        .execute(&new_task("b"))
+        .unwrap();
+    create(&store, SetClock::at("10:01:00"))
+        .execute(&NewTask {
+            depends_on: vec![slug("b")],
+            ..new_task("a")
+        })
+        .unwrap();
+    create(&store, SetClock::at("10:02:00"))
+        .execute(&NewTask {
+            parent: Some(slug("b")),
+            ..new_task("c")
+        })
+        .unwrap();
+    store.quarantine("b", "malformed");
+    store.delete_quarantined("b");
+    let writes = store.writes();
+    let cycle = create(&store, SetClock::at("10:03:00")).execute(&NewTask {
+        depends_on: vec![slug("a")],
+        ..new_task("b")
+    });
+    assert_eq!(
+        cycle,
+        Err(ProjectBoardError::Referenced {
+            id: slug("b"),
+            by: slug("a")
+        })
+    );
+    assert_eq!(store.writes(), writes);
 }

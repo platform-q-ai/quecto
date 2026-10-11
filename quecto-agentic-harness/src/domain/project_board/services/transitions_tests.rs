@@ -6,6 +6,7 @@ use crate::domain::project_board::services::fixtures_tests::{
     at, far_future, last_written, person, task, with_open_run, without_claim, without_prs,
 };
 use crate::domain::project_board::value_objects::slug::Slug;
+use crate::domain::project_board::value_objects::vocabulary::RunOutcome;
 
 const ALL: [TaskStatus; 8] = [
     Draft, Ready, Claimed, InProgress, Review, Blocked, Done, Archived,
@@ -249,17 +250,46 @@ fn a_move_to_ready_done_or_archived_with_an_open_run_is_refused() {
             "{from:?} -> {to:?}"
         );
     }
+}
+
+/// A merged pull request closes the task whoever holds it: a run still
+/// open can no longer report its end to a done task, so it is ended as
+/// lost, at the change's stamp, as a run that will never report is.
+#[test]
+fn completing_a_task_ends_its_open_run_as_lost() {
     let merged = BTreeSet::from([2482, 2483]);
-    assert_eq!(
-        complete_merged(&with_open_run(task(Review)), &merged, &at("10:00:00")),
-        Err(open)
-    );
+    for from in [Claimed, InProgress, Review, Blocked] {
+        let done = complete_merged(&with_open_run(task(from)), &merged, &at("10:00:00")).unwrap();
+        let run = done
+            .fields()
+            .runs
+            .iter()
+            .find(|run| run.id.as_str() == "r2")
+            .unwrap();
+        assert_eq!(
+            (
+                done.fields().status,
+                &run.ended,
+                run.outcome,
+                &done.fields().claim
+            ),
+            (Done, &Some(at("10:00:00")), Some(RunOutcome::Lost), &None),
+            "{from:?}"
+        );
+        assert_eq!(
+            done.fields().runs[0].outcome,
+            Some(RunOutcome::Succeeded),
+            "an ended run keeps its outcome"
+        );
+    }
 }
 
 #[test]
 fn a_held_task_is_done_once_all_its_prs_merge_whoever_merged_them() {
     let merged = |prs: &[u64]| prs.iter().copied().collect::<BTreeSet<u64>>();
-    for from in [Claimed, InProgress, Review, Blocked] {
+    // Ready too: a holder released it with its pull requests linked, and
+    // no one holds it when they merge.
+    for from in [Ready, Claimed, InProgress, Review, Blocked] {
         let done =
             complete_merged(&task(from), &merged(&[2482, 2483, 9]), &at("10:00:00")).unwrap();
         let fields = done.fields();
@@ -270,8 +300,8 @@ fn a_held_task_is_done_once_all_its_prs_merge_whoever_merged_them() {
         );
     }
     let partly = complete_merged(&task(Review), &merged(&[2482]), &at("10:00:00"));
-    assert_eq!(partly, Err(BoardRuleError::PrsOpen(vec![2483])));
-    for from in [Draft, Ready, Done, Archived] {
+    assert_eq!(partly, Err(BoardRuleError::PrsUnmerged(vec![2483])));
+    for from in [Draft, Done, Archived] {
         let refused = complete_merged(&task(from), &merged(&[2482, 2483]), &at("10:00:00"));
         assert_eq!(refused, Err(BoardRuleError::NotAllowed { from, to: Done }));
     }
@@ -387,7 +417,7 @@ fn a_task_linking_pull_requests_is_done_only_when_they_merge() {
     let review = task(Review);
     assert_eq!(
         move_task(&review, Done, &person("Ada"), &at("10:00:00")),
-        Err(BoardRuleError::PrsOpen(vec![2482, 2483])),
+        Err(BoardRuleError::PrsLinked(vec![2482, 2483])),
         "its holder cannot say it is done"
     );
     let mut unlinked = review.into_fields();

@@ -129,3 +129,30 @@ pub trait BoardClock: Send + Sync {
     /// It blocks the calling thread for the pause.
     fn pause(&self, attempt: usize);
 }
+
+/// Where a pull request stands, as the repository's host reports it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PullRequestState {
+    Open,
+    Merged,
+    /// Closed without merging.
+    Closed,
+    /// The host does not know this pull request.
+    Unknown,
+}
+
+/// Why the host could not tell where a pull request stands.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PullRequestStatesError {
+    Unavailable(String),
+}
+
+/// The repository host's reading of the pull requests a task links.
+/// Blocking: callers run it off the async workers.
+pub trait PullRequestStates: Send + Sync {
+    /// Where pull request `pr` stands now.
+    ///
+    /// # Errors
+    /// The host could not be reached or read.
+    fn state(&self, pr: u64) -> Result<PullRequestState, PullRequestStatesError>;
+}

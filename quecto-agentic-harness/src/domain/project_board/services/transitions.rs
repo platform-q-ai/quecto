@@ -89,7 +89,7 @@ pub fn move_task(
     // A task that links pull requests is done when they merge
     // (`complete_merged`), never by its holder's say-so.
     if (from, to) == (Review, Done) && !task.fields().prs.is_empty() {
-        return Err(BoardRuleError::PrsOpen(task.fields().prs.clone()));
+        return Err(BoardRuleError::PrsUnmerged(task.fields().prs.clone()));
     }
     runs_may_stay_open(task, to)?;
     let at = stamp(task, now);
@@ -126,7 +126,7 @@ pub fn complete_merged(
     ) {
         (true, [_, ..], []) => {}
         (true, [], _) => return Err(BoardRuleError::NoPrs),
-        (true, _, open) => return Err(BoardRuleError::PrsOpen(open.to_vec())),
+        (true, _, open) => return Err(BoardRuleError::PrsUnmerged(open.to_vec())),
         (false, _, _) => {
             return Err(BoardRuleError::NotAllowed {
                 from: fields.status,

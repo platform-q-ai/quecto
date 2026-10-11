@@ -4,11 +4,13 @@
 //! again and the change rebuilt against the fresh board, with a short
 //! jittered pause before each new attempt, for at most
 //! [`MAX_WRITE_ATTEMPTS`] attempts in all; a change no longer valid is
-//! refused.
+//! refused. The pause blocks the calling thread ([`BoardClock::pause`]),
+//! as the store's calls do: callers run a change off the async workers.
 use crate::application::project_board::dto::ProjectBoardError;
 use crate::application::project_board::ports::{
-    BoardClock, BoardHead, BoardSnapshot, BoardWrite, ProjectBoardStore,
+    BoardClock, BoardSnapshot, BoardWrite, ProjectBoardStore,
 };
+use crate::domain::project_board::entities::claim::Identity;
 use crate::domain::project_board::entities::task::Task;
 use crate::domain::project_board::services::claims::CLOCK_AHEAD_SECONDS;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
@@ -65,7 +67,7 @@ pub(super) fn commit(
     clock: &dyn BoardClock,
     message: &str,
     mut change: impl FnMut(&BoardSnapshot, &When) -> Result<Vec<Task>, ProjectBoardError>,
-) -> Result<(Vec<Task>, BoardHead), ProjectBoardError> {
+) -> Result<Vec<Task>, ProjectBoardError> {
     for attempt in 1..=MAX_WRITE_ATTEMPTS {
         if attempt > 1 {
             clock.pause(attempt);
@@ -75,7 +77,7 @@ pub(super) fn commit(
         let tasks = change(&snapshot, &when)?;
         assert!(!tasks.is_empty(), "a board change writes at least one task");
         match store.write(&snapshot.head, &tasks, message)? {
-            BoardWrite::Written(head) => return Ok((tasks, head)),
+            BoardWrite::Written(_) => return Ok(tasks),
             BoardWrite::Lost => continue,
             BoardWrite::Refused(reason) => return Err(ProjectBoardError::Refused(reason)),
         }
@@ -83,6 +85,12 @@ pub(super) fn commit(
     Err(ProjectBoardError::Contended {
         attempts: MAX_WRITE_ATTEMPTS,
     })
+}
+
+/// The identity the store commits as, checked once when a use case is
+/// built: an invalid one is refused before any change is tried.
+pub(super) fn checked_writer(store: &dyn ProjectBoardStore) -> Result<Identity, ProjectBoardError> {
+    Ok(store.writer())
 }
 
 /// The task `id` on the board as read: a quarantined file of that id is

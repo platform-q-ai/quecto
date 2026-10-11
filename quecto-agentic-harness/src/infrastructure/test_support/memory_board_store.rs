@@ -106,6 +106,26 @@ impl MemoryBoardStore {
         });
     }
 
+    /// Deletes the quarantined file of `id`, as a commit removing it
+    /// does: the head moves, and tasks naming `id` now name no task.
+    ///
+    /// # Panics
+    /// When no quarantined file has that id.
+    pub fn delete_quarantined(&self, id: &str) {
+        let mut board = self.lock();
+        let before = board.quarantined.len();
+        board
+            .quarantined
+            .retain(|file| file.id.as_ref().map(Slug::as_str) != Some(id));
+        assert_eq!(
+            board.quarantined.len() + 1,
+            before,
+            "one file of id {id} is quarantined"
+        );
+        let revision = board.head.expect("a bootstrapped board");
+        board.head = Some(revision + 1);
+    }
+
     /// The committer of the board at `head`, when a write made it.
     pub fn committed_by(&self, at: &BoardHead) -> Option<Identity> {
         let board = self.lock();

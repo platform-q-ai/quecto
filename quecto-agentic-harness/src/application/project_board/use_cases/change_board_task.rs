@@ -2,10 +2,12 @@
 //! runs against the task as last read, and a write that lost the race is
 //! rebuilt against the fresh task, so a change the latest task no longer
 //! allows is refused rather than written over another's. The actor is the
-//! committer the store writes as: no caller acts as someone else.
+//! committer the store writes as, checked when the use case is built: no
+//! caller acts as someone else. Blocking: a lost write pauses the calling
+//! thread before it is tried again.
 use std::sync::Arc;
 
-use super::board_change::{commit, task_on};
+use super::board_change::{checked_writer, commit, task_on};
 use crate::application::project_board::dto::{BoardOp, ProjectBoardError};
 use crate::application::project_board::ports::{BoardClock, ProjectBoardStore};
 use crate::domain::project_board::entities::claim::Identity;
@@ -21,11 +23,23 @@ use crate::domain::project_board::value_objects::timestamp::Timestamp;
 pub struct ChangeBoardTask {
     store: Arc<dyn ProjectBoardStore>,
     clock: Arc<dyn BoardClock>,
+    /// The store's committer, checked valid when built.
+    actor: Identity,
 }
 
 impl ChangeBoardTask {
-    pub fn new(store: Arc<dyn ProjectBoardStore>, clock: Arc<dyn BoardClock>) -> Self {
-        Self { store, clock }
+    /// # Errors
+    /// The store writes as an invalid identity.
+    pub fn new(
+        store: Arc<dyn ProjectBoardStore>,
+        clock: Arc<dyn BoardClock>,
+    ) -> Result<Self, ProjectBoardError> {
+        let actor = checked_writer(&*store)?;
+        Ok(Self {
+            store,
+            clock,
+            actor,
+        })
     }
 
     /// Task `id` after `op`, made by the store's committer.
@@ -35,8 +49,8 @@ impl ChangeBoardTask {
     /// the latest task); the clock's; a board that kept moving; the
     /// store's.
     pub fn execute(&self, id: &Slug, op: &BoardOp) -> Result<Task, ProjectBoardError> {
-        let actor = self.store.writer();
-        let (tasks, _) = commit(
+        let actor = &self.actor;
+        let tasks = commit(
             &*self.store,
             &*self.clock,
             &op.message(id),
@@ -44,7 +58,7 @@ impl ChangeBoardTask {
                 let task = task_on(board, id)?;
                 when.may_build_on(task)?;
                 Ok(vec![
-                    apply(task, &actor, op, &when.now).map_err(ProjectBoardError::Rule)?,
+                    apply(task, actor, op, &when.now).map_err(ProjectBoardError::Rule)?,
                 ])
             },
         )?;

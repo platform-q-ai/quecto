@@ -1,14 +1,17 @@
-//! Puts a new task on the board: an unclaimed draft or ready task with no
-//! pull requests, runs or reviews yet, whose parent and dependencies are
-//! already on the board (so a new task never closes a dependency cycle),
-//! stamped with the time it was created.
+//! Puts a new task on the board: only what a plan sets ([`NewTask`]), a
+//! draft or ready task with no claim, runs, reviews, pull requests or
+//! items yet, whose parent and dependencies are already on the board (so
+//! a new task never closes a dependency cycle), stamped with the time it
+//! was created. Blocking: a lost write pauses the calling thread before
+//! it is tried again.
 use std::sync::Arc;
 
-use super::board_change::commit;
-use crate::application::project_board::dto::ProjectBoardError;
+use super::board_change::{checked_writer, commit};
+use crate::application::project_board::dto::{NewTask, ProjectBoardError};
 use crate::application::project_board::ports::{BoardClock, BoardSnapshot, ProjectBoardStore};
 use crate::domain::project_board::entities::task::{Task, TaskFields};
 use crate::domain::project_board::value_objects::slug::Slug;
+use crate::domain::project_board::value_objects::timestamp::Timestamp;
 use crate::domain::project_board::value_objects::vocabulary::TaskStatus;
 
 pub struct CreateBoardTask {
@@ -17,63 +20,80 @@ pub struct CreateBoardTask {
 }
 
 impl CreateBoardTask {
-    pub fn new(store: Arc<dyn ProjectBoardStore>, clock: Arc<dyn BoardClock>) -> Self {
-        Self { store, clock }
+    /// # Errors
+    /// The store writes as an invalid identity.
+    pub fn new(
+        store: Arc<dyn ProjectBoardStore>,
+        clock: Arc<dyn BoardClock>,
+    ) -> Result<Self, ProjectBoardError> {
+        checked_writer(&*store)?;
+        Ok(Self { store, clock })
     }
 
-    /// The task `fields` describe, created and updated now.
+    /// The task `new` describes, created and updated now.
     ///
     /// # Errors
-    /// Fields a new task may not have, a parent or dependency not on the
-    /// board, the schema's refusal, an id the board holds or has set
-    /// aside, the clock's, or the store's.
-    pub fn execute(&self, fields: TaskFields) -> Result<Task, ProjectBoardError> {
-        creatable(&fields)?;
-        let message = format!("board: create {}", fields.id.as_str());
-        let (tasks, _) = commit(&*self.store, &*self.clock, &message, |board, when| {
-            free(board, &fields)?;
-            let mut created = fields.clone();
-            (created.created, created.updated) = (when.now.clone(), when.now.clone());
+    /// A parent or dependency not on the board, or set aside; an id a
+    /// task already names; the schema's refusal; an id the board holds or
+    /// has set aside; the clock's; or the store's.
+    pub fn execute(&self, new: &NewTask) -> Result<Task, ProjectBoardError> {
+        let message = format!("board: create {}", new.id.as_str());
+        let tasks = commit(&*self.store, &*self.clock, &message, |board, when| {
+            free(board, new)?;
             Ok(vec![
-                Task::new(created).map_err(ProjectBoardError::Invalid)?,
+                Task::new(created_at(new, &when.now)).map_err(ProjectBoardError::Invalid)?,
             ])
         })?;
         Ok(tasks.into_iter().next().expect("a create writes its task"))
     }
 }
 
-fn creatable(fields: &TaskFields) -> Result<(), ProjectBoardError> {
-    let refused = |why: &str| Err(ProjectBoardError::NotCreatable(why.into()));
-    match () {
-        _ if !matches!(fields.status, TaskStatus::Draft | TaskStatus::Ready) => {
-            refused("is a draft or ready")
-        }
-        _ if fields.claim.is_some() => refused("has no claim"),
-        _ if !fields.prs.is_empty() => refused("links no pull request"),
-        _ if !fields.runs.is_empty() => refused("has no runs"),
-        _ if !fields.reviews.is_empty() => refused("has no reviews"),
-        _ => Ok(()),
-    }
+/// The new task's fields, created and updated `now`, with no claim, runs,
+/// reviews, pull requests or items yet.
+fn created_at(new: &NewTask, now: &Timestamp) -> TaskFields {
+    let fields = TaskFields {
+        id: new.id.clone(),
+        title: new.title.clone(),
+        kind: new.kind,
+        description: new.description.clone(),
+        status: new.status.into(),
+        parent: new.parent.clone(),
+        depends_on: new.depends_on.clone(),
+        plan: new.plan.clone(),
+        items: vec![],
+        team: new.team.clone(),
+        claim: None,
+        runs: vec![],
+        reviews: vec![],
+        prs: vec![],
+        created: now.clone(),
+        updated: now.clone(),
+    };
+    assert!(
+        matches!(fields.status, TaskStatus::Draft | TaskStatus::Ready),
+        "a task is created a draft or ready"
+    );
+    fields
 }
 
 /// The id is free (neither held nor set aside), and the parent and every
 /// dependency are tasks on the board.
-fn free(board: &BoardSnapshot, fields: &TaskFields) -> Result<(), ProjectBoardError> {
+fn free(board: &BoardSnapshot, new: &NewTask) -> Result<(), ProjectBoardError> {
     let held = |id: &Slug| board.tasks.iter().any(|task| task.fields().id == *id);
-    if held(&fields.id) {
-        return Err(ProjectBoardError::Exists(fields.id.clone()));
+    if held(&new.id) {
+        return Err(ProjectBoardError::Exists(new.id.clone()));
     }
     if board
         .quarantined
         .iter()
-        .any(|file| file.id.as_ref() == Some(&fields.id))
+        .any(|file| file.id.as_ref() == Some(&new.id))
     {
-        return Err(ProjectBoardError::Quarantined(fields.id.clone()));
+        return Err(ProjectBoardError::Quarantined(new.id.clone()));
     }
-    match fields
+    match new
         .parent
         .iter()
-        .chain(&fields.depends_on)
+        .chain(&new.depends_on)
         .find(|id| !held(id))
     {
         Some(missing) => Err(ProjectBoardError::UnknownReference(missing.clone())),

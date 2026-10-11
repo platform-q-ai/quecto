@@ -1,17 +1,18 @@
 use super::ChangeBoardTask;
 use crate::application::project_board::dto::{BoardOp, ProjectBoardError};
-use crate::application::project_board::ports::ProjectBoardStore;
+use crate::application::project_board::ports::{ProjectBoardStore, PullRequestState};
 use crate::application::project_board::use_cases::CompleteMergedTask;
 use crate::application::project_board::use_cases::fixtures_tests::{
     SetClock, at, board, fields, person, slug,
 };
-use crate::domain::project_board::entities::claim::Claim;
+use crate::domain::project_board::entities::claim::{Claim, Identity};
 use crate::domain::project_board::entities::task::{Task, TaskFields};
 use crate::domain::project_board::entities::task_parts::Run;
 use crate::domain::project_board::value_objects::rule_error::BoardRuleError;
+use crate::domain::project_board::value_objects::timestamp::Timestamp;
 use crate::domain::project_board::value_objects::vocabulary::{RunOutcome, TaskStatus};
 use crate::infrastructure::test_support::memory_board_store::MemoryBoardStore;
-use std::collections::BTreeSet;
+use crate::infrastructure::test_support::memory_pull_requests::MemoryPullRequests;
 use std::sync::Arc;
 
 fn seed(store: &MemoryBoardStore, fields: TaskFields) {
@@ -40,7 +41,7 @@ fn held_by_ada(status: TaskStatus) -> TaskFields {
 
 /// The change use case over `store`, writing as `who`.
 fn change(store: &MemoryBoardStore, who: &str, time: &str) -> ChangeBoardTask {
-    ChangeBoardTask::new(Arc::new(store.client_as(person(who))), SetClock::at(time))
+    ChangeBoardTask::new(Arc::new(store.client_as(person(who))), SetClock::at(time)).unwrap()
 }
 
 fn current(store: &MemoryBoardStore) -> TaskFields {
@@ -70,14 +71,18 @@ fn a_task_is_claimed_worked_linked_and_completed_when_its_pr_merges() {
     let early = change(&store, "Ada", "10:16:00").execute(&a, &BoardOp::Move(TaskStatus::Done));
     assert_eq!(
         early,
-        Err(ProjectBoardError::Rule(BoardRuleError::PrsOpen(vec![7]))),
+        Err(ProjectBoardError::Rule(BoardRuleError::PrsLinked(vec![7]))),
         "a linked PR closes it, not its holder"
     );
+    let host = MemoryPullRequests::default();
+    host.set(7, PullRequestState::Merged);
     let system = CompleteMergedTask::new(
         Arc::new(store.client_as(person("Bob"))),
         SetClock::at("10:20:00"),
-    );
-    let done = system.execute(&a, &BTreeSet::from([7])).unwrap();
+        Arc::new(host),
+    )
+    .unwrap();
+    let done = system.execute(&a).unwrap();
     assert_eq!(
         (done.fields().status, done.fields().claim.clone()),
         (TaskStatus::Done, None),
@@ -154,13 +159,14 @@ fn a_lost_change_is_made_again_on_the_fresh_task() {
     let store = board();
     seed(&store, held_by_ada(TaskStatus::Claimed));
     store.before_next_write(|board| {
-        let other = ChangeBoardTask::new(Arc::new(board.client()), SetClock::at("10:10:00"));
+        let other =
+            ChangeBoardTask::new(Arc::new(board.client()), SetClock::at("10:10:00")).unwrap();
         other
             .execute(&slug("a"), &BoardOp::Move(TaskStatus::InProgress))
             .unwrap();
     });
     let clock = SetClock::at("10:20:00");
-    let renew = ChangeBoardTask::new(Arc::new(store.client()), clock.clone());
+    let renew = ChangeBoardTask::new(Arc::new(store.client()), clock.clone()).unwrap();
     let renewed = renew.execute(&slug("a"), &BoardOp::Renew).unwrap();
     assert_eq!(
         renewed.fields().status,
@@ -188,7 +194,8 @@ fn a_change_no_longer_allowed_on_the_fresh_task_is_refused() {
         let ada = ChangeBoardTask::new(
             Arc::new(board.client_as(person("Ada"))),
             SetClock::at("10:00:00"),
-        );
+        )
+        .unwrap();
         ada.execute(&slug("a"), &BoardOp::Move(TaskStatus::Claimed))
             .unwrap();
     });
@@ -211,7 +218,8 @@ fn a_task_from_the_future_and_a_refusal_are_reported() {
     let skewed = ChangeBoardTask::new(
         Arc::new(store.client()),
         SetClock::with_reference("09:00:00", Some("09:00:00")),
-    );
+    )
+    .unwrap();
     let ahead = skewed.execute(&slug("a"), &BoardOp::Renew);
     assert_eq!(
         ahead,
@@ -226,4 +234,108 @@ fn a_task_from_the_future_and_a_refusal_are_reported() {
         refused,
         Err(ProjectBoardError::Refused("a hook said no".into()))
     );
+}
+
+/// The holder unlinks a pull request deliberately (a wrong or abandoned
+/// one); with none linked, Review→Done is theirs.
+#[test]
+fn the_holder_unlinks_a_pull_request_and_then_finishes_the_task() {
+    let store = board();
+    seed(
+        &store,
+        TaskFields {
+            prs: vec![4],
+            ..held_by_ada(TaskStatus::Review)
+        },
+    );
+    let a = slug("a");
+    let early = change(&store, "Ada", "10:00:00").execute(&a, &BoardOp::Move(TaskStatus::Done));
+    assert_eq!(
+        early,
+        Err(ProjectBoardError::Rule(BoardRuleError::PrsLinked(vec![4])))
+    );
+    change(&store, "Ada", "10:01:00")
+        .execute(&a, &BoardOp::RemovePr(4))
+        .unwrap();
+    let done = change(&store, "Ada", "10:02:00")
+        .execute(&a, &BoardOp::Move(TaskStatus::Done))
+        .unwrap();
+    assert_eq!(done.fields().status, TaskStatus::Done);
+}
+
+/// The bound on a task stamped ahead is inclusive, as the clock's own is:
+/// a task stamped exactly the reference plus 60 s is built on; a second
+/// later it is not.
+#[test]
+fn a_task_stamped_at_the_bound_is_built_on_and_a_second_past_it_is_not() {
+    let built_on = |updated: &str| {
+        let store = board();
+        let task = Task::new(TaskFields {
+            created: at("08:00:00"),
+            updated: at(updated),
+            ..held_by_ada(TaskStatus::Claimed)
+        })
+        .unwrap();
+        let head = store.read().unwrap().head;
+        store.write(&head, &[task], "seed").unwrap();
+        ChangeBoardTask::new(
+            Arc::new(store.client()),
+            SetClock::with_reference("09:00:30", Some("09:00:00")),
+        )
+        .unwrap()
+        .execute(&slug("a"), &BoardOp::Renew)
+    };
+    let at_bound = built_on("09:01:00").unwrap();
+    assert_eq!(at_bound.fields().updated, at("09:01:00"));
+    assert_eq!(
+        built_on("09:01:01"),
+        Err(ProjectBoardError::TaskAhead {
+            id: slug("a"),
+            updated: at("09:01:01")
+        })
+    );
+}
+
+/// A reference the board cannot add 60 s to is refused before anything
+/// is built.
+#[test]
+fn a_reference_at_the_end_of_time_is_out_of_range() {
+    let store = board();
+    seed(&store, held_by_ada(TaskStatus::Claimed));
+    let end = Timestamp::parse("9999-12-31T23:59:30Z").unwrap();
+    let refused = ChangeBoardTask::new(
+        Arc::new(store.client()),
+        SetClock::reading(end.clone(), Some(end.clone())),
+    )
+    .unwrap()
+    .execute(&slug("a"), &BoardOp::Renew);
+    assert_eq!(refused, Err(ProjectBoardError::ClockOutOfRange(end)));
+}
+
+/// A store writing as an identity no task can name is refused when the
+/// use cases are built, before any change.
+#[test]
+fn a_store_with_an_invalid_writer_is_refused_when_built() {
+    let store = board();
+    let nobody = Identity {
+        name: " ".into(),
+        email: "not an email".into(),
+    };
+    let invalid = || Arc::new(store.client_as(nobody.clone()));
+    assert!(matches!(
+        ChangeBoardTask::new(invalid(), SetClock::at("10:00:00")),
+        Err(ProjectBoardError::InvalidWriter(_))
+    ));
+    assert!(matches!(
+        CompleteMergedTask::new(
+            invalid(),
+            SetClock::at("10:00:00"),
+            Arc::new(MemoryPullRequests::default())
+        ),
+        Err(ProjectBoardError::InvalidWriter(_))
+    ));
+    assert!(matches!(
+        super::super::CreateBoardTask::new(invalid(), SetClock::at("10:00:00")),
+        Err(ProjectBoardError::InvalidWriter(_))
+    ));
 }

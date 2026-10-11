@@ -4,6 +4,7 @@ use std::os::unix::net::UnixStream;
 
 pub mod executable;
 pub mod memory_board_store;
+pub mod memory_pull_requests;
 pub mod mock_claude;
 pub mod tool_schema_portability;
 

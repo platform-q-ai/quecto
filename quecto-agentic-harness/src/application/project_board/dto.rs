@@ -1,13 +1,49 @@
 //! What the project board's use cases answer and refuse.
 use std::fmt;
 
-use super::ports::{BoardClockError, BoardHead, BoardStoreError, QuarantinedFile};
+use super::ports::{
+    BoardClockError, BoardHead, BoardStoreError, PullRequestStatesError, QuarantinedFile,
+};
 use crate::domain::project_board::entities::task::Task;
+use crate::domain::project_board::entities::task_parts::{PlanStep, Team};
 use crate::domain::project_board::value_objects::rule_error::BoardRuleError;
 use crate::domain::project_board::value_objects::schema_error::SchemaError;
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
-use crate::domain::project_board::value_objects::vocabulary::TaskStatus;
+use crate::domain::project_board::value_objects::vocabulary::{TaskKind, TaskStatus};
+
+/// A new task: only what a plan sets. Its claim, runs, reviews, pull
+/// requests and items' progress are made by the board's later changes,
+/// so none can be supplied here.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NewTask {
+    pub id: Slug,
+    pub title: String,
+    pub kind: TaskKind,
+    /// Markdown.
+    pub description: String,
+    pub status: NewTaskStatus,
+    pub parent: Option<Slug>,
+    pub depends_on: Vec<Slug>,
+    pub plan: Vec<PlanStep>,
+    pub team: Option<Team>,
+}
+
+/// The statuses a task is created in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NewTaskStatus {
+    Draft,
+    Ready,
+}
+
+impl From<NewTaskStatus> for TaskStatus {
+    fn from(status: NewTaskStatus) -> Self {
+        match status {
+            NewTaskStatus::Draft => Self::Draft,
+            NewTaskStatus::Ready => Self::Ready,
+        }
+    }
+}
 
 /// A change to one task, made by the board's rules
 /// (`domain::project_board::services`).
@@ -22,7 +58,10 @@ pub enum BoardOp {
     Move(TaskStatus),
     /// The holder links a pull request.
     AddPr(u64),
-    /// The holder unlinks a pull request closed without merging.
+    /// The holder unlinks a pull request deliberately (a wrong or
+    /// abandoned one); a task whose pull requests all merged is closed by
+    /// `CompleteMergedTask`, and once none is linked, Review→Done is the
+    /// holder's.
     RemovePr(u64),
     /// The holder ends the task's open run as lost.
     EndRunLost,
@@ -68,11 +107,21 @@ pub enum ProjectBoardError {
     Clock(BoardClockError),
     /// The task's file is set aside as unreadable: mend it first.
     Quarantined(Slug),
-    /// A new task must be an unclaimed draft or ready task with no pull
-    /// requests, runs or reviews yet.
-    NotCreatable(String),
     /// A new task names a parent or dependency the board does not hold.
     UnknownReference(Slug),
+    /// A task on the board already names this new id as its parent or a
+    /// dependency (its own task was deleted): creating it could close a
+    /// cycle.
+    Referenced {
+        id: Slug,
+        by: Slug,
+    },
+    /// The store writes as an identity no task can name.
+    InvalidWriter(SchemaError),
+    /// The host does not know a pull request the task links.
+    PrStateUnknown(u64),
+    /// The host could not tell where the task's pull requests stand.
+    PullRequests(PullRequestStatesError),
     /// The task was stamped past the reference by a clock that ran ahead:
     /// it is not built on until real time catches up.
     TaskAhead {
@@ -137,9 +186,19 @@ impl fmt::Display for ProjectBoardError {
                 "task {} is set aside as unreadable; mend its file",
                 id.as_str()
             ),
-            Self::NotCreatable(why) => write!(f, "a new task {why}"),
             Self::UnknownReference(id) => {
                 write!(f, "no task {} on the board to refer to", id.as_str())
+            }
+            Self::Referenced { id, by } => write!(
+                f,
+                "task {} already names {} as its parent or a dependency",
+                by.as_str(),
+                id.as_str()
+            ),
+            Self::InvalidWriter(error) => write!(f, "the board's writer is invalid: {error}"),
+            Self::PrStateUnknown(pr) => write!(f, "pull request {pr} is not known to the host"),
+            Self::PullRequests(PullRequestStatesError::Unavailable(why)) => {
+                write!(f, "the pull requests' states are unavailable: {why}")
             }
             Self::TaskAhead { id, updated } => write!(
                 f,

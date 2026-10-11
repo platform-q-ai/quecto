@@ -2,6 +2,7 @@
 //! with clients, and new tasks' fields.
 use std::sync::{Arc, Mutex};
 
+use crate::application::project_board::dto::{NewTask, NewTaskStatus};
 use crate::application::project_board::ports::{BoardClock, BoardClockError, ProjectBoardStore};
 use crate::domain::project_board::entities::claim::Identity;
 use crate::domain::project_board::entities::task::TaskFields;
@@ -39,9 +40,14 @@ impl SetClock {
     }
 
     pub fn with_reference(time: &str, reference: Option<&str>) -> Arc<Self> {
+        Self::reading(at(time), reference.map(at))
+    }
+
+    /// A clock reading `now`, with `reference`, on any day.
+    pub fn reading(now: Timestamp, reference: Option<Timestamp>) -> Arc<Self> {
         Arc::new(Self {
-            now: Mutex::new(at(time)),
-            reference: reference.map(at),
+            now: Mutex::new(now),
+            reference,
             pauses: Mutex::new(Vec::new()),
         })
     }
@@ -66,6 +72,21 @@ pub fn board() -> MemoryBoardStore {
     let store = MemoryBoardStore::default();
     store.bootstrap().unwrap();
     store
+}
+
+/// A new ready task, as a plan describes it.
+pub fn new_task(id: &str) -> NewTask {
+    NewTask {
+        id: slug(id),
+        title: format!("Task {id}"),
+        kind: TaskKind::Task,
+        description: String::new(),
+        status: NewTaskStatus::Ready,
+        parent: None,
+        depends_on: vec![],
+        plan: vec![],
+        team: None,
+    }
 }
 
 /// A new task's fields: ready, unclaimed, with no parts.
