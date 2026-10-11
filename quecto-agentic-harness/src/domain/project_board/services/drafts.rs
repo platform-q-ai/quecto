@@ -26,9 +26,9 @@ pub struct DraftEdit {
 /// or sets each field to what it already holds), or a result the schema
 /// refuses.
 pub fn edit_draft(task: &Task, edit: &DraftEdit, now: &Timestamp) -> Result<Task, BoardRuleError> {
-    let status = task.fields().status;
-    if status != TaskStatus::Draft {
-        return Err(BoardRuleError::NotDraft(status));
+    match task.fields().status {
+        TaskStatus::Draft => {}
+        status => return Err(BoardRuleError::NotDraft(status)),
     }
     let mut next = task.fields().clone();
     if let Some(title) = &edit.title {

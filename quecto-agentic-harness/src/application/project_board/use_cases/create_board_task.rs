@@ -1,10 +1,11 @@
 //! Puts a new task on the board: only the task's own fields
 //! ([`NewBoardTask`]), a draft or ready task with no plan, team, claim,
-//! runs, reviews, pull requests or items yet, whose parent and dependencies are already on the board,
-//! stamped with the time it was created. It never closes a cycle: not
-//! through new references, which must exist, nor through a task still
-//! naming the id of one that was deleted. Blocking: a lost write pauses the calling thread before
-//! it is tried again.
+//! runs, reviews, pull requests or items yet, whose parent and
+//! dependencies are already on the board, stamped with the time it was
+//! created. It never closes a cycle: not through new references, which
+//! must exist, nor through a task still naming the id of one that was
+//! deleted. Blocking: a lost write pauses the calling thread before it is
+//! tried again.
 use std::sync::Arc;
 
 use super::board_change::{checked_writer, commit};
