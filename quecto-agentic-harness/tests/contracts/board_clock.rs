@@ -1,6 +1,7 @@
-//! Contract for [`BoardClock`] (#2476), on the system clock: the time to
-//! the second as the board spells it, no outside reference yet, and short
-//! growing jittered pauses between attempts.
+//! Contract for [`BoardClock`] (#2476, #2491): the system clock tells the
+//! time to the second as the board spells it, with no outside reference
+//! of its own, and short growing jittered pauses between attempts; the
+//! clock referenced to a remote's `Date` bounds a change against it.
 use quecto::application::project_board::ports::{BoardClock, BoardClockError};
 use quecto::infrastructure::time::board_clock::{SystemBoardClock, timestamp_at};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -15,6 +16,10 @@ fn the_system_clock_reads_this_machines_time_to_the_second() {
         "{before} {now:?} {after}"
     );
     assert_eq!(SystemBoardClock::default().reference(), None);
+    assert!(matches!(
+        SystemBoardClock::default().reference_status(),
+        quecto::application::project_board::ports::ReferenceStatus::NoReference(_)
+    ));
 }
 
 /// A clock set before 1970 or past 9999 is an error, not a panic.
@@ -80,4 +85,74 @@ fn pauses_for_the_same_attempt_are_jittered_within_one_step() {
         ),
         "{drawn:?}"
     );
+}
+
+/// A one-request HTTP server whose `Date` is `offset_seconds` from now.
+fn serves_date(offset_seconds: i64) -> String {
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}/", listener.local_addr().unwrap());
+    std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let _ = stream.read(&mut [0u8; 1024]);
+        let delta = Duration::from_secs(offset_seconds.unsigned_abs());
+        let date = match offset_seconds >= 0 {
+            true => SystemTime::now() + delta,
+            false => SystemTime::now() - delta,
+        };
+        let answer = format!(
+            "HTTP/1.1 200 OK\r\nDate: {}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+            httpdate::fmt_http_date(date)
+        );
+        stream.write_all(answer.as_bytes()).unwrap();
+    });
+    url
+}
+
+/// Creates a task on a fresh board with the referenced clock reading the
+/// `Date` a server `offset_seconds` from this machine answers.
+fn create_against(
+    offset_seconds: i64,
+) -> Result<
+    quecto::domain::project_board::entities::task::Task,
+    quecto::application::project_board::dto::ProjectBoardError,
+> {
+    use quecto::application::project_board::dto::{NewBoardTask, NewBoardTaskStatus};
+    use quecto::application::project_board::ports::ProjectBoardStore;
+    use quecto::application::project_board::use_cases::CreateBoardTask;
+    use quecto::domain::project_board::value_objects::slug::Slug;
+    use quecto::domain::project_board::value_objects::vocabulary::TaskKind;
+    use quecto::infrastructure::test_support::memory_board_store::MemoryBoardStore;
+    use quecto::infrastructure::time::remote_time::{
+        HttpDate, REFRESH_EVERY, ReferencedBoardClock,
+    };
+    use std::sync::Arc;
+    let store = MemoryBoardStore::default();
+    store.bootstrap().unwrap();
+    let source = HttpDate::without_proxy(serves_date(offset_seconds));
+    let clock = ReferencedBoardClock::new(Ok(Arc::new(source)), REFRESH_EVERY, |_| {});
+    let create = CreateBoardTask::new(Arc::new(store), Arc::new(clock)).unwrap();
+    create.execute(&NewBoardTask {
+        id: Slug::parse("a").unwrap(),
+        title: "A".into(),
+        kind: TaskKind::Task,
+        description: String::new(),
+        status: NewBoardTaskStatus::Ready,
+        parent: None,
+        depends_on: vec![],
+    })
+}
+
+/// #2491: a change from a clock more than a minute ahead of the remote's
+/// `Date` is refused; one behind it, or within the minute, is made.
+#[test]
+fn a_clock_ahead_of_the_remotes_date_is_refused_and_one_behind_is_not() {
+    use quecto::application::project_board::dto::ProjectBoardError;
+    let ahead = create_against(-300);
+    assert!(
+        matches!(ahead, Err(ProjectBoardError::ClockAhead { .. })),
+        "{ahead:?}"
+    );
+    assert!(create_against(300).is_ok(), "a clock behind the remote");
+    assert!(create_against(-30).is_ok(), "within the minute");
 }

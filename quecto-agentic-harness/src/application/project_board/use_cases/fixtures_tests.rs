@@ -3,7 +3,9 @@
 use std::sync::{Arc, Mutex};
 
 use crate::application::project_board::dto::{NewBoardTask, NewBoardTaskStatus};
-use crate::application::project_board::ports::{BoardClock, BoardClockError, ProjectBoardStore};
+use crate::application::project_board::ports::{
+    BoardClock, BoardClockError, ProjectBoardStore, ReferenceStatus,
+};
 use crate::domain::project_board::entities::claim::Identity;
 use crate::domain::project_board::entities::task::TaskFields;
 use crate::domain::project_board::value_objects::slug::Slug;
@@ -60,6 +62,13 @@ impl BoardClock for SetClock {
 
     fn reference(&self) -> Option<Timestamp> {
         self.reference.clone()
+    }
+
+    fn reference_status(&self) -> ReferenceStatus {
+        match self.reference {
+            Some(_) => ReferenceStatus::Referenced,
+            None => ReferenceStatus::NoReference("set without one".into()),
+        }
     }
 
     fn pause(&self, attempt: usize) {
