@@ -560,6 +560,11 @@ pub(super) const REFUSALS: &[(&str, &str, &str)] = &[
         "Invalid",
     ),
     (
+        "src/infrastructure/persistence/swarm_board/repository_projection.rs:SqliteBoard::projection_revision",
+        "board revision out of range",
+        "Store",
+    ),
+    (
         "src/infrastructure/persistence/swarm_board/repository_reservations.rs:SqliteBoard::bound_count",
         "a count answered no row",
         "Internal",

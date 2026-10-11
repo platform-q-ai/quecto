@@ -76,13 +76,12 @@ use crate::application::swarm::use_cases::{
     BootstrapMember, BootstrapRun, ClaimNotifications, ClaimTask, CloseRun, CompleteRun,
     ConfigureUsageBudget, ConfirmMemberDead, CreateRun, CreateTask, ExtendRunDeadline, JoinMember,
     JoinRun, ListFileOwners, ListTasks, LoseCoordinator, OverRepository, PauseRun,
-    QuarantineMember, ReadBoardProjection, ReadControlStatus, ReadEventCursor, ReadInbox,
-    ReadRequestAdmission, ReadRunEvents, ReadRunSnapshot, ReadRunStatus, ReadRunSummary,
-    ReadRunTotals, ReadTask, ReadUsageReport, RecordEvidence, RecordMemberLaunch,
-    RecordRequestUsage, RecoverTask, RegisterMemberSocket, ReleaseFiles, ReleaseTask,
-    ReleaseUnlaunchedMember, ReserveFiles, ResumeRun, ResumeRunExternally, RevalidateTask,
-    RevokeTask, SendMessage, SetTaskDependencies, StopRun, SubmitTask, UnblockTask, VerifyTask,
-    WithdrawMessage,
+    QuarantineMember, ReadControlStatus, ReadEventCursor, ReadInbox, ReadRequestAdmission,
+    ReadRunEvents, ReadRunSnapshot, ReadRunStatus, ReadRunSummary, ReadRunTotals, ReadTask,
+    ReadUsageReport, RecordEvidence, RecordMemberLaunch, RecordRequestUsage, RecoverTask,
+    RegisterMemberSocket, ReleaseFiles, ReleaseTask, ReleaseUnlaunchedMember, ReserveFiles,
+    ResumeRun, ResumeRunExternally, RevalidateTask, RevokeTask, SendMessage, SetTaskDependencies,
+    StopRun, SubmitTask, UnblockTask, VerifyTask, WithdrawMessage,
 };
 use crate::domain::swarm::{BoardError, BoardOpDetail, RefusalKind};
 
@@ -100,8 +99,7 @@ pub struct SwarmBoardHandles {
     pub create_run: Arc<CreateRun>,
     pub bootstrap_run: Arc<BootstrapRun>,
     pub read_run_status: Arc<ReadRunStatus>,
-    /// `_board` (#2478): the supervising session's projection.
-    pub read_board_projection: Arc<ReadBoardProjection>,
+    pub read_board_projection: Arc<crate::application::swarm::use_cases::ReadBoardProjection>,
     /// `_event_cursor` (#2279): Rust-only, the structured ops' before and
     /// after read.
     pub read_event_cursor: Arc<ReadEventCursor>,
@@ -211,6 +209,7 @@ impl std::fmt::Debug for SwarmBoardHandles {
 pub const BOARD_OPS: &[&str] = &[
     "_status",
     "_board",
+    "_board_revision",
     "_event_cursor",
     "_run_totals",
     "_snapshot",
@@ -459,6 +458,7 @@ fn serve(
     match method {
         Method::Status => host::run_status(&serving(&*handles.read_run_status, over)),
         Method::Board => host::board(&serving(&*handles.read_board_projection, over)),
+        Method::BoardRevision => host::revision(&serving(&*handles.read_board_projection, over)),
         Method::EventCursor => host::event_cursor(&serving(&*handles.read_event_cursor, over)),
         Method::Snapshot => host::run_snapshot(&serving(&*handles.read_run_snapshot, over), member),
         Method::Watch => host::run_watch(

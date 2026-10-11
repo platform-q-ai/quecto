@@ -33,6 +33,10 @@ pub enum CallOrigin {
     /// The harness's run watch (#2338): its `_watch` ticks, recorded as
     /// `host`; `unchanged` ticks are aggregated ([`WatchPolls`]).
     Watch,
+    /// The supervising session's projection reads (#2478), polled while a
+    /// client watches the board: recorded as `host` by `tracing` alone,
+    /// never as an event-log `swarm_op`, so a poll writes no record.
+    Supervisor,
 }
 
 /// The run watch's `unchanged` ticks not yet written (#2338), held with the
@@ -159,13 +163,18 @@ fn write_polls(log: &dyn BoardOpLog, records: impl IntoIterator<Item = BoardOpOb
 /// harness's alone (docs/swarm.md), so an unknown name never maps to it.
 pub(super) fn recorded_role(origin: CallOrigin, known: Option<Method>) -> Option<BoardRole> {
     let role = match (origin, known) {
-        (CallOrigin::Harness | CallOrigin::Watch, _) => Some(BoardRole::Host),
+        (CallOrigin::Harness | CallOrigin::Watch | CallOrigin::Supervisor, _) => {
+            Some(BoardRole::Host)
+        }
         (CallOrigin::Member, Some(known)) => known.role(),
         (CallOrigin::Member, None) => None,
     };
     debug_assert!(
         known.is_some()
-            || matches!(origin, CallOrigin::Harness | CallOrigin::Watch)
+            || matches!(
+                origin,
+                CallOrigin::Harness | CallOrigin::Watch | CallOrigin::Supervisor
+            )
             || role.is_none(),
         "a member's call naming no board method records no role"
     );
@@ -209,6 +218,9 @@ pub(super) fn record(
             trace(finished, measure.as_ref(), Some(&actor));
             let observation = observation(finished, actor, caller, served, measure);
             telemetry.log.record(observation);
+        }
+        (Some(_), Some(actor), CallOrigin::Supervisor) => {
+            trace(finished, measure.as_ref(), Some(&actor))
         }
         (Some(_), None, _) | (None, _, _) => trace(finished, None, None),
     }

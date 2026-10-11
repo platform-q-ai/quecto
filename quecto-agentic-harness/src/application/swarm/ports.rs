@@ -14,9 +14,9 @@ use super::dto::{
     AmendedContract, CallMeasure, CompletionState, CountedTask, DictRow, DroppedRecords, FileRow,
     LatestActivity, LaunchIdentity, MemberClaimCounts, MemberRow, MemberStatusRow, MessageRow,
     MessageTally, NewEvidence, NewMember, NewMessage, NewRequestUsage, NewReservation, NewRun,
-    NewTask, NotificationCursor, PriorEvidence, RunContract, RunOwnerRow, RunStatusRow,
-    ScopeObservation, StoredContract, StoredRequestUsage, TaskRow, TaskUpdate, UsageReport,
-    UsageRow, UsageStanding,
+    NewTask, NotificationCursor, PriorEvidence, ProjectionLimits, ProjectionRows, RunContract,
+    RunOwnerRow, RunStatusRow, ScopeObservation, StoredContract, StoredRequestUsage, TaskRow,
+    TaskUpdate, UsageReport, UsageRow, UsageStanding,
 };
 use crate::domain::error::DomainError;
 use crate::domain::swarm::{
@@ -596,6 +596,26 @@ pub trait BoardEvidence {
     fn evidence_rows(&self) -> Result<Vec<DictRow>, BoardError>;
 }
 
+/// The supervising session's projection reads (#2478): only allowlisted
+/// columns and bounded rows, by plain SELECTs. It creates and alters
+/// nothing, so it runs in a read transaction, and a board an older writer
+/// laid out, or one with no usage ledger yet, reads as it is.
+pub trait BoardProjectionReads {
+    /// The board's revision: the latest event's id plus the usage ledger's
+    /// latest row id (`0` without a ledger). Every write the projection
+    /// shows moves it.
+    ///
+    /// # Errors
+    /// The store's refusal.
+    fn projection_revision(&self) -> Result<i64, BoardError>;
+
+    /// The allowlisted columns, at most `limits` rows of each kind.
+    ///
+    /// # Errors
+    /// The store's refusal; a value no column type can hold.
+    fn projection_rows(&self, limits: ProjectionLimits) -> Result<ProjectionRows, BoardError>;
+}
+
 /// Every role over one transaction.
 pub trait BoardTransaction:
     BoardRuns
@@ -608,6 +628,7 @@ pub trait BoardTransaction:
     + BoardWakes
     + BoardUsage
     + BoardEvidence
+    + BoardProjectionReads
 {
 }
 
@@ -622,6 +643,7 @@ impl<T> BoardTransaction for T where
         + BoardWakes
         + BoardUsage
         + BoardEvidence
+        + BoardProjectionReads
         + ?Sized
 {
 }

@@ -39,6 +39,9 @@ pub(super) enum Method {
     Status,
     /// The supervising session's projection of the board (#2478).
     Board,
+    /// The board's revision alone (#2478), which the supervising session
+    /// polls.
+    BoardRevision,
     EventCursor,
     Snapshot,
     /// The run watch's tick (#2338): Rust-only.
@@ -122,6 +125,7 @@ impl Method {
         match name {
             "_status" => Some(Self::Status),
             "_board" => Some(Self::Board),
+            "_board_revision" => Some(Self::BoardRevision),
             "_event_cursor" => Some(Self::EventCursor),
             "_snapshot" => Some(Self::Snapshot),
             "_watch" => Some(Self::Watch),
@@ -191,6 +195,7 @@ impl Method {
         match self {
             Self::Status => "_status",
             Self::Board => "_board",
+            Self::BoardRevision => "_board_revision",
             Self::EventCursor => "_event_cursor",
             Self::Snapshot => "_snapshot",
             Self::Watch => "_watch",
@@ -264,6 +269,7 @@ impl Method {
             // budget warned or paused (`served_level`).
             Self::Status
             | Self::Board
+            | Self::BoardRevision
             | Self::EventCursor
             | Self::Snapshot
             | Self::Watch
@@ -335,6 +341,7 @@ impl Method {
             Self::EventCursor => Some(BoardRole::Host),
             Self::Status
             | Self::Board
+            | Self::BoardRevision
             | Self::Snapshot
             | Self::Watch
             | Self::RunTotals
@@ -418,6 +425,7 @@ impl Method {
             Self::CreateRun => true,
             Self::Status
             | Self::Board
+            | Self::BoardRevision
             | Self::EventCursor
             | Self::Snapshot
             | Self::Watch
@@ -482,6 +490,7 @@ impl Method {
             | Self::LoseCoordinator
             | Self::Status
             | Self::Board
+            | Self::BoardRevision
             | Self::EventCursor
             | Self::Snapshot
             | Self::Watch
@@ -533,7 +542,7 @@ impl Method {
     pub(super) fn answers_members_only(self) -> bool {
         match self {
             // Membership-free, like `_status` (#2279).
-            Self::Status | Self::Board | Self::EventCursor => false,
+            Self::Status | Self::Board | Self::BoardRevision | Self::EventCursor => false,
             // Through the operation gate, which refuses a caller that is
             // no member of the run (or whose death was confirmed).
             Self::Snapshot
@@ -626,6 +635,7 @@ impl Method {
         match self {
             Self::Status
             | Self::Board
+            | Self::BoardRevision
             | Self::EventCursor
             | Self::Snapshot
             | Self::RunTotals

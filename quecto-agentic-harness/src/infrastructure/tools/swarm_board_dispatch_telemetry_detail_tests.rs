@@ -82,6 +82,7 @@ pub(super) fn decided(method: Method) -> (Option<&'static str>, BoardOpDetail) {
         Method::Watch => (Some("snapshot"), BoardOpDetail::NONE),
         Method::Status
         | Method::Board
+        | Method::BoardRevision
         | Method::EventCursor
         | Method::Snapshot
         | Method::RunTotals

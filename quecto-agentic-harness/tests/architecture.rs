@@ -1328,6 +1328,12 @@ const SWARM_BOARD_DTOS: &[&str] = &[
     "RunStatusRow",
     // The supervising session's projection of the board (#2478).
     "BoardProjection",
+    "ProjectionLimits",
+    "ProjectionRows",
+    "StoredEvidenceColumns",
+    "StoredItemColumns",
+    "StoredMemberColumns",
+    "StoredRunColumns",
     // The run's totals at settle (#2313).
     "RunTotalsView",
     "MessageTally",

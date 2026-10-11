@@ -3,8 +3,9 @@
 //! run's totals the coordinator's harness reads when the run settles, for
 //! the run-wide section of its `swarm_run_summary`, and (#2338) `_watch`,
 //! the run watch's tick. Each but `_watch` answers `read`; none names a
-//! task or message. `_board` (#2478) is the supervising session's
-//! projection of the whole board, membership-free.
+//! task or message. `_board` and `_board_revision` (#2478) are the
+//! supervising session's projection of the whole board and its revision,
+//! membership-free.
 use serde_json::{Map, Value};
 
 use super::method::Parameter;
@@ -142,56 +143,97 @@ pub(super) fn board(read_board_projection: &ReadBoardProjection) -> Result<Serve
     Ok(read(projection(read_board_projection.execute()?)))
 }
 
-/// `_board`'s answer, the `get_swarm_board` snapshot's shape
-/// (`docs/uds-protocol.md`): the board's revision, the run (`null` before
-/// one is created), its items, members, criterion evidence and totals.
+/// `_board_revision` (#2478): the board's revision alone, which a
+/// supervising session polls to learn the board moved.
+pub(super) fn revision(read_board_projection: &ReadBoardProjection) -> Result<Served, BoardError> {
+    Ok(read(Value::from(read_board_projection.revision()?)))
+}
+
+fn text(value: Option<String>) -> Value {
+    value.map_or(Value::Null, Value::String)
+}
+
+/// `_board`'s answer, the shape the parent socket's `get_swarm_board`
+/// will answer: the board's revision, the run (`null` before
+/// one is created), its items, members, criterion evidence and totals, and
+/// whether rows were left out.
 pub(super) fn projection(board: BoardProjection) -> Value {
     let run = board.run.map_or(Value::Null, |run| {
+        let budget = run.budget;
         object([
-            ("id", run.id),
-            ("goal", run.goal),
-            ("status", run.status),
-            ("outcome", run.outcome),
-            ("outcome_reason", run.outcome_reason),
+            ("id", Value::String(run.id)),
+            ("goal", Value::String(run.goal)),
+            ("status", Value::String(run.status)),
+            ("outcome", text(run.outcome)),
+            ("outcome_reason", text(run.outcome_reason)),
             ("generation", Value::from(run.generation)),
             ("criteria", run.criteria),
-            ("member_limit", run.member_limit),
-            ("deadline", run.deadline),
-            ("coordinator", run.coordinator),
-            ("integrator", run.integrator),
-            ("budget", Value::Object(run.budget)),
+            ("member_limit", Value::from(run.member_limit)),
+            ("deadline", float(run.deadline).unwrap_or(Value::Null)),
+            ("coordinator", text(run.coordinator)),
+            ("integrator", text(run.integrator)),
+            (
+                "budget",
+                object([
+                    (
+                        "token_limit",
+                        budget.token_limit.map_or(Value::Null, Value::from),
+                    ),
+                    ("strict_unknown", Value::Bool(budget.strict_unknown)),
+                    ("warned", Value::Bool(budget.warned)),
+                    ("observed_tokens", Value::from(budget.observed_tokens)),
+                    (
+                        "unknown_usage_requests",
+                        Value::from(budget.unknown_usage_requests),
+                    ),
+                ]),
+            ),
         ])
     });
+    let strings = |texts: Vec<String>| Value::Array(texts.into_iter().map(Value::String).collect());
     let items = board.items.into_iter().map(|item| {
         object([
-            ("id", item.id),
-            ("title", item.title),
-            ("criteria", item.criteria),
-            ("depends_on", item.depends_on),
-            ("state", item.state),
-            ("owner", item.owner),
-            ("blocker", item.blocker),
-            ("reserved_paths", Value::Array(item.reserved_paths)),
+            ("id", Value::from(item.id)),
+            ("title", Value::String(item.title)),
+            ("criteria", strings(item.criteria)),
+            (
+                "depends_on",
+                Value::Array(item.depends_on.into_iter().map(Value::from).collect()),
+            ),
+            ("state", Value::from(item.state.as_str())),
+            ("waiting", Value::Bool(item.waiting)),
+            ("owner", text(item.owner)),
+            ("blocker", text(item.blocker)),
+            ("reserved_paths", strings(item.reserved_paths)),
             ("evidence", item.evidence),
         ])
     });
     let members = board.members.into_iter().map(|member| {
         object([
-            ("id", member.id),
+            ("id", Value::String(member.id)),
             ("role", Value::from(member.role.as_str())),
-            ("status", member.status),
-            ("claims", Value::Array(member.claims)),
-            ("last_activity", member.last_activity),
+            ("status", Value::String(member.status)),
+            (
+                "claims",
+                Value::Array(member.claims.into_iter().map(Value::from).collect()),
+            ),
+            (
+                "last_activity",
+                member
+                    .last_activity
+                    .and_then(|at| float(at).ok())
+                    .unwrap_or(Value::Null),
+            ),
         ])
     });
     let evidence = board.evidence.into_iter().map(|row| {
         object([
-            ("criterion", row.criterion),
-            ("artifact", row.artifact),
-            ("revision", row.revision),
-            ("kind", row.kind),
-            ("actor", row.actor),
-            ("accepted", row.accepted),
+            ("criterion", Value::String(row.criterion)),
+            ("artifact", text(row.artifact)),
+            ("revision", text(row.revision)),
+            ("kind", text(row.kind)),
+            ("actor", Value::String(row.actor)),
+            ("accepted", Value::Bool(row.accepted)),
         ])
     });
     let totals = board.totals;
@@ -204,17 +246,21 @@ pub(super) fn projection(board: BoardProjection) -> Value {
         (
             "totals",
             object([
+                ("items", Value::from(totals.items)),
                 ("ready", Value::from(totals.ready)),
+                ("waiting", Value::from(totals.waiting)),
                 ("claimed", Value::from(totals.claimed)),
                 ("blocked", Value::from(totals.blocked)),
                 ("submitted", Value::from(totals.submitted)),
                 ("completed", Value::from(totals.completed)),
+                ("members", Value::from(totals.members)),
                 (
                     "members_without_claim",
-                    Value::from(totals.members.members_without_claim),
+                    Value::from(totals.members_without_claim),
                 ),
-                ("members_dead", Value::from(totals.members.members_dead)),
+                ("members_dead", Value::from(totals.members_dead)),
             ]),
         ),
+        ("truncated", Value::Bool(board.truncated)),
     ])
 }

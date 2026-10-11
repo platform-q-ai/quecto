@@ -253,33 +253,49 @@ impl HostedStore {
     }
 
     /// The board's projection (#2478), as `_board` answers it, or `None`
-    /// when no store exists there. Membership-free, in one read
-    /// transaction: it never holds a member up.
+    /// when no store exists there. One read transaction of allowlisted
+    /// columns: it takes no write lock and migrates nothing. A board only
+    /// where the layout no longer places it, or another beside it, is
+    /// refused as [`Self::hosted_run`] refuses it.
     pub fn board_projection(&self) -> Result<Option<serde_json::Value>, DomainError> {
-        match self.contained()? {
-            Found::Store { .. } => {
-                let projection =
-                    self.board
-                        .call(self.location(), "supervisor", "_board", json!([]))?;
-                Ok(Some(projection))
-            }
-            Found::Nothing => Ok(None),
-        }
+        self.supervised("_board")
     }
 
-    /// The board's revision (its event cursor), which every board write
-    /// moves, or `None` when no store exists there.
+    /// The board's revision, which every write the projection shows moves
+    /// (its latest event and usage ledger row), or `None` as for
+    /// [`Self::board_projection`].
     pub fn board_revision(&self) -> Result<Option<i64>, DomainError> {
+        let Some(revision) = self.supervised("_board_revision")? else {
+            return Ok(None);
+        };
+        let revision = revision.as_i64().ok_or_else(|| {
+            DomainError::Tool(format!(
+                "swarm board revision is not an integer: {revision}"
+            ))
+        })?;
+        Ok(Some(revision))
+    }
+
+    /// `method` on the board, as the supervising session.
+    fn supervised(&self, method: &str) -> Result<Option<serde_json::Value>, DomainError> {
         match self.contained()? {
-            Found::Store { .. } => {
-                let cursor =
-                    self.board
-                        .call(self.location(), "supervisor", "_event_cursor", json!([]))?;
-                let revision = cursor.as_i64().ok_or_else(|| {
-                    DomainError::Tool(format!("swarm board revision is not an integer: {cursor}"))
-                })?;
-                Ok(Some(revision))
+            Found::Store { displaced: None } => {
+                let answer = self.board.call_as(
+                    self.location(),
+                    "supervisor",
+                    method,
+                    json!([]),
+                    super::swarm_board_dispatch::CallOrigin::Supervisor,
+                )?;
+                Ok(Some(answer))
             }
+            Found::Store {
+                displaced: Some(displaced),
+            } => Err(DomainError::Tool(format!(
+                "swarm board {} has another board beside it at {} where a member may still be running",
+                self.database().display(),
+                displaced.display()
+            ))),
             Found::Nothing => Ok(None),
         }
     }

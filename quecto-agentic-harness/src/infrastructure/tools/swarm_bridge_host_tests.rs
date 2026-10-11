@@ -100,26 +100,27 @@ fn hosted_run_reads_without_python() {
     );
 }
 
-/// The supervising session reads the whole board (#2478): the run, the
-/// items with their reserved paths, the members, the totals, at the
-/// board's revision, with no claim or reservation token, through the
-/// board's own adapter.
-#[test]
-fn the_host_reads_the_board_projection_without_tokens() {
-    let directory = tempfile::tempdir().unwrap();
-    let context = context(&directory);
-    let hosted = super::super::swarm_bridge::HostedStore::at(
+fn hosted(directory: &tempfile::TempDir) -> super::super::swarm_bridge::HostedStore {
+    super::super::swarm_bridge::HostedStore::at(
         directory.path().into(),
         crate::composition::swarm::swarm_board(),
-    );
-    assert_eq!(
-        hosted.board_projection().unwrap(),
-        None,
-        "no store, no board"
-    );
-    assert_eq!(hosted.board_revision().unwrap(), None);
+    )
+}
+
+fn sql(directory: &tempfile::TempDir, statements: &str) {
+    let database = directory.path().join(".quecto/swarm.sqlite");
+    rusqlite::Connection::open(database)
+        .unwrap()
+        .execute_batch(statements)
+        .unwrap();
+}
+
+/// A run with two items: item 1 claimed by `parent` with a reserved path,
+/// item 2 waiting on item 1. Its claim and reservation tokens.
+fn run_with_items(directory: &tempfile::TempDir) -> [String; 2] {
+    let context = context(directory);
     create(&context, 2);
-    let tokens = super::super::call_work::off_the_runtime(|| {
+    super::super::call_work::off_the_runtime(|| {
         let create = |request: &str, title: &str, depends: serde_json::Value| {
             context
                 .call("task_create", json!([request, title, ["passes"], depends]))
@@ -131,48 +132,220 @@ fn the_host_reads_the_board_projection_without_tokens() {
         let reserved = context
             .call("reserve", json!([1, claimed["token"], ["src/a.rs"]]))
             .unwrap();
-        [claimed["token"].clone(), reserved["token"].clone()]
-    });
+        [
+            claimed["token"].as_str().unwrap().to_owned(),
+            reserved["token"].as_str().unwrap().to_owned(),
+        ]
+    })
+}
+
+/// The supervising session reads the whole board (#2478) through the
+/// board's own adapter: the run, the items with their reserved paths, the
+/// members and totals at the board's revision, with no claim or
+/// reservation token and no member reservation, pid, socket or launcher.
+#[test]
+fn the_host_reads_the_board_projection_without_secrets() {
+    let directory = tempfile::tempdir().unwrap();
+    let hosted = hosted(&directory);
+    assert_eq!(
+        hosted.board_projection().unwrap(),
+        None,
+        "no store, no board"
+    );
+    assert_eq!(hosted.board_revision().unwrap(), None);
+    let tokens = run_with_items(&directory);
+    sql(
+        &directory,
+        "UPDATE members SET pid=4242, socket='secret-socket', launcher='secret-launcher'",
+    );
     let board = hosted.board_projection().unwrap().expect("a board");
     assert_eq!(board["revision"].as_i64(), hosted.board_revision().unwrap());
     assert_eq!(
         (board["run"]["goal"].clone(), board["run"]["status"].clone()),
         (json!("ship"), json!("running"))
     );
-    assert_eq!(board["items"][0]["state"], json!("claimed"));
-    assert_eq!(board["items"][0]["owner"], json!("parent"));
-    assert_eq!(board["items"][0]["reserved_paths"], json!(["src/a.rs"]));
     assert_eq!(
         (
-            board["items"][1]["state"].clone(),
+            board["items"][0]["state"].clone(),
+            board["items"][0]["owner"].clone()
+        ),
+        (json!("claimed"), json!("parent"))
+    );
+    assert_eq!(board["items"][0]["reserved_paths"], json!(["src/a.rs"]));
+    assert_eq!(board["items"][1]["state"], json!("ready"));
+    assert_eq!(
+        (
+            board["items"][1]["waiting"].clone(),
             board["items"][1]["depends_on"].clone()
         ),
-        (json!("blocked"), json!([1]))
+        (json!(true), json!([1]))
     );
-    assert_eq!(board["members"][0]["role"], json!("coordinator"));
-    assert_eq!(board["members"][0]["claims"], json!([1]));
+    assert_eq!(
+        (
+            board["members"][0]["role"].clone(),
+            board["members"][0]["claims"].clone()
+        ),
+        (json!("coordinator"), json!([1]))
+    );
     assert_eq!(
         (
             board["totals"]["claimed"].clone(),
-            board["totals"]["blocked"].clone()
+            board["totals"]["waiting"].clone()
         ),
         (json!(1), json!(1))
     );
+    assert_eq!(board["truncated"], json!(false));
     let text = board.to_string();
-    for token in tokens {
-        assert!(
-            !text.contains(token.as_str().unwrap()),
-            "a token crossed: {text}"
-        );
+    let database = directory.path().join(".quecto/swarm.sqlite");
+    let reservation: String = rusqlite::Connection::open(database)
+        .unwrap()
+        .query_row("SELECT reservation FROM members", [], |row| row.get(0))
+        .unwrap();
+    for secret in [
+        tokens[0].as_str(),
+        tokens[1].as_str(),
+        reservation.as_str(),
+        "4242",
+        "secret-",
+    ] {
+        assert!(!text.contains(secret), "{secret} crossed: {text}");
     }
+}
+
+/// H1: recording a request's usage writes no event, yet the projection
+/// shows its totals, so it moves the revision too.
+#[test]
+fn recording_usage_moves_the_revision() {
+    let directory = tempfile::tempdir().unwrap();
+    run_with_items(&directory);
+    let hosted = hosted(&directory);
     let before = hosted.board_revision().unwrap().unwrap();
+    let context = context(&directory);
     super::super::call_work::off_the_runtime(|| {
-        context
-            .call("task_create", json!(["r3", "Index", ["ok"], []]))
-            .unwrap()
+        let failed = json!({"request_id": "r9", "instrumented_attempts": 1, "outcome": "failed"});
+        context.call("_record_request", json!([failed])).unwrap();
     });
-    assert!(
-        hosted.board_revision().unwrap().unwrap() > before,
-        "a write moves the revision"
+    let after = hosted.board_revision().unwrap().unwrap();
+    assert!(after > before, "{before} -> {after}");
+    let board = hosted.board_projection().unwrap().unwrap();
+    assert_eq!(board["revision"], json!(after));
+    assert_eq!(board["run"]["budget"]["unknown_usage_requests"], json!(1));
+}
+
+/// H2: a board edited past the byte budget answers what fits and says
+/// rows were left out, far inside a socket line.
+#[test]
+fn a_board_past_the_byte_budget_is_truncated() {
+    let directory = tempfile::tempdir().unwrap();
+    run_with_items(&directory);
+    sql(
+        &directory,
+        &format!(
+            "UPDATE tasks SET title='{}' WHERE id=2",
+            "x".repeat(5 * 1024 * 1024)
+        ),
     );
+    let board = hosted(&directory).board_projection().unwrap().unwrap();
+    assert_eq!(board["truncated"], json!(true));
+    assert_eq!(board["items"].as_array().unwrap().len(), 1);
+    assert_eq!(board["totals"]["items"], json!(2));
+    assert!(board.to_string().len() < 4 * 1024 * 1024 + 4096);
+}
+
+/// M4: the projection reads named columns only: a token that is not
+/// UTF-8 or a BLOB column a later schema adds never breaks it, and a
+/// projected column that is not UTF-8 is refused by name, never echoed.
+#[test]
+fn only_named_columns_are_read_and_bad_text_is_refused_by_name() {
+    let directory = tempfile::tempdir().unwrap();
+    run_with_items(&directory);
+    sql(
+        &directory,
+        "UPDATE tasks SET token=CAST(x'ff' AS TEXT); ALTER TABLE tasks ADD COLUMN extra BLOB; UPDATE tasks SET extra=x'00ff'; ALTER TABLE members ADD COLUMN later BLOB; UPDATE members SET later=x'ff'",
+    );
+    assert!(hosted(&directory).board_projection().unwrap().is_some());
+    sql(
+        &directory,
+        "UPDATE tasks SET title=CAST(x'ff4142' AS TEXT) WHERE id=1",
+    );
+    let refused = hosted(&directory)
+        .board_projection()
+        .unwrap_err()
+        .to_string();
+    assert!(
+        refused.contains("tasks title holds text that is not UTF-8"),
+        "{refused}"
+    );
+}
+
+/// M3: the projection is a read: it reads a board an older writer laid
+/// out (no outcome columns, no usage ledger) without altering it, and it
+/// answers while a member holds the write lock.
+#[test]
+fn the_projection_migrates_nothing_and_reads_beside_a_writer() {
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(directory.path().join(".quecto")).unwrap();
+    let mut legacy = String::new();
+    for statement in crate::infrastructure::persistence::swarm_board::schema::schema_statements() {
+        legacy.push_str(statement);
+        legacy.push(';');
+    }
+    legacy.push_str("INSERT INTO run VALUES ('run-1','ship','[]','[]','parent','parent',2,9999999999.0,'running');");
+    legacy.push_str("INSERT INTO members (id, status) VALUES ('parent','live');");
+    sql(&directory, &legacy);
+    let schema = |directory: &tempfile::TempDir| -> Vec<String> {
+        let database = directory.path().join(".quecto/swarm.sqlite");
+        let connection = rusqlite::Connection::open(database).unwrap();
+        let mut statement = connection
+            .prepare("SELECT name || ':' || coalesce(sql, '') FROM sqlite_master ORDER BY name")
+            .unwrap();
+        statement
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .map(Result::unwrap)
+            .collect()
+    };
+    let before = schema(&directory);
+    let board = hosted(&directory).board_projection().unwrap().unwrap();
+    assert_eq!(
+        (
+            board["run"]["outcome"].clone(),
+            board["run"]["budget"]["observed_tokens"].clone()
+        ),
+        (json!(null), json!(0))
+    );
+    assert_eq!(schema(&directory), before, "nothing was created or altered");
+
+    let database = directory.path().join(".quecto/swarm.sqlite");
+    let writer = rusqlite::Connection::open(database).unwrap();
+    writer
+        .execute_batch("BEGIN IMMEDIATE; UPDATE run SET goal='unseen'")
+        .unwrap();
+    let during = hosted(&directory).board_projection().unwrap().unwrap();
+    assert_eq!(
+        during["run"]["goal"],
+        json!("ship"),
+        "the committed board, beside a writer"
+    );
+    writer.execute_batch("ROLLBACK").unwrap();
+}
+
+/// L9: a board beside one the layout no longer places is refused, as the
+/// run observation refuses it.
+#[test]
+fn a_board_with_a_displaced_one_beside_it_is_refused() {
+    let directory = tempfile::tempdir().unwrap();
+    run_with_items(&directory);
+    let git = directory.path().join(".git/quecto");
+    std::fs::create_dir_all(&git).unwrap();
+    std::fs::copy(
+        directory.path().join(".quecto/swarm.sqlite"),
+        git.join("swarm.sqlite"),
+    )
+    .unwrap();
+    let refused = hosted(&directory)
+        .board_projection()
+        .unwrap_err()
+        .to_string();
+    assert!(refused.contains("another board beside it"), "{refused}");
 }
