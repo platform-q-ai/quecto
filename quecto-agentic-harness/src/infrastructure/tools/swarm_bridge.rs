@@ -252,6 +252,38 @@ impl HostedStore {
         }
     }
 
+    /// The board's projection (#2478), as `_board` answers it, or `None`
+    /// when no store exists there. Membership-free, in one read
+    /// transaction: it never holds a member up.
+    pub fn board_projection(&self) -> Result<Option<serde_json::Value>, DomainError> {
+        match self.contained()? {
+            Found::Store { .. } => {
+                let projection =
+                    self.board
+                        .call(self.location(), "supervisor", "_board", json!([]))?;
+                Ok(Some(projection))
+            }
+            Found::Nothing => Ok(None),
+        }
+    }
+
+    /// The board's revision (its event cursor), which every board write
+    /// moves, or `None` when no store exists there.
+    pub fn board_revision(&self) -> Result<Option<i64>, DomainError> {
+        match self.contained()? {
+            Found::Store { .. } => {
+                let cursor =
+                    self.board
+                        .call(self.location(), "supervisor", "_event_cursor", json!([]))?;
+                let revision = cursor.as_i64().ok_or_else(|| {
+                    DomainError::Tool(format!("swarm board revision is not an integer: {cursor}"))
+                })?;
+                Ok(Some(revision))
+            }
+            Found::Nothing => Ok(None),
+        }
+    }
+
     /// Record the coordinator's loss in one store operation: a run that has
     /// already ended (or that the store's expiry check ends first) is left
     /// alone; otherwise the coordinator is quarantined exactly as an in-swarm

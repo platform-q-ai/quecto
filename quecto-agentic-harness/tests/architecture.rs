@@ -1235,6 +1235,7 @@ const SWARM_BOARD_USE_CASES: &[&str] = &[
     "JoinRun",
     "OverRepository",
     "ReadRunSnapshot",
+    "ReadBoardProjection",
     "ReadRunStatus",
     "RecordMemberLaunch",
     "RegisterMemberSocket",
@@ -1325,6 +1326,8 @@ const SWARM_BOARD_DTOS: &[&str] = &[
     "RunSnapshotView",
     "RunStatusView",
     "RunStatusRow",
+    // The supervising session's projection of the board (#2478).
+    "BoardProjection",
     // The run's totals at settle (#2313).
     "RunTotalsView",
     "MessageTally",

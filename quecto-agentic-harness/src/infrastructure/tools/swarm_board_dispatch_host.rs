@@ -3,14 +3,15 @@
 //! run's totals the coordinator's harness reads when the run settles, for
 //! the run-wide section of its `swarm_run_summary`, and (#2338) `_watch`,
 //! the run watch's tick. Each but `_watch` answers `read`; none names a
-//! task or message.
+//! task or message. `_board` (#2478) is the supervising session's
+//! projection of the whole board, membership-free.
 use serde_json::{Map, Value};
 
 use super::method::Parameter;
 use super::{Served, float, object, snapshot, status, take};
-use crate::application::swarm::dto::RunTotalsView;
+use crate::application::swarm::dto::{BoardProjection, RunTotalsView};
 use crate::application::swarm::use_cases::{
-    ReadEventCursor, ReadRunSnapshot, ReadRunStatus, ReadRunTotals,
+    ReadBoardProjection, ReadEventCursor, ReadRunSnapshot, ReadRunStatus, ReadRunTotals,
 };
 use crate::domain::swarm::watch_polls::{SNAPSHOT, UNCHANGED};
 use crate::domain::swarm::{BoardError, BoardOpDetail, RefusalKind};
@@ -135,4 +136,85 @@ fn totals(view: RunTotalsView) -> Result<Value, BoardError> {
         ),
         ("read_at", float(view.read_at)?),
     ]))
+}
+
+pub(super) fn board(read_board_projection: &ReadBoardProjection) -> Result<Served, BoardError> {
+    Ok(read(projection(read_board_projection.execute()?)))
+}
+
+/// `_board`'s answer, the `get_swarm_board` snapshot's shape
+/// (`docs/uds-protocol.md`): the board's revision, the run (`null` before
+/// one is created), its items, members, criterion evidence and totals.
+pub(super) fn projection(board: BoardProjection) -> Value {
+    let run = board.run.map_or(Value::Null, |run| {
+        object([
+            ("id", run.id),
+            ("goal", run.goal),
+            ("status", run.status),
+            ("outcome", run.outcome),
+            ("outcome_reason", run.outcome_reason),
+            ("generation", Value::from(run.generation)),
+            ("criteria", run.criteria),
+            ("member_limit", run.member_limit),
+            ("deadline", run.deadline),
+            ("coordinator", run.coordinator),
+            ("integrator", run.integrator),
+            ("budget", Value::Object(run.budget)),
+        ])
+    });
+    let items = board.items.into_iter().map(|item| {
+        object([
+            ("id", item.id),
+            ("title", item.title),
+            ("criteria", item.criteria),
+            ("depends_on", item.depends_on),
+            ("state", item.state),
+            ("owner", item.owner),
+            ("blocker", item.blocker),
+            ("reserved_paths", Value::Array(item.reserved_paths)),
+            ("evidence", item.evidence),
+        ])
+    });
+    let members = board.members.into_iter().map(|member| {
+        object([
+            ("id", member.id),
+            ("role", Value::from(member.role.as_str())),
+            ("status", member.status),
+            ("claims", Value::Array(member.claims)),
+            ("last_activity", member.last_activity),
+        ])
+    });
+    let evidence = board.evidence.into_iter().map(|row| {
+        object([
+            ("criterion", row.criterion),
+            ("artifact", row.artifact),
+            ("revision", row.revision),
+            ("kind", row.kind),
+            ("actor", row.actor),
+            ("accepted", row.accepted),
+        ])
+    });
+    let totals = board.totals;
+    object([
+        ("revision", Value::from(board.revision)),
+        ("run", run),
+        ("items", Value::Array(items.collect())),
+        ("members", Value::Array(members.collect())),
+        ("evidence", Value::Array(evidence.collect())),
+        (
+            "totals",
+            object([
+                ("ready", Value::from(totals.ready)),
+                ("claimed", Value::from(totals.claimed)),
+                ("blocked", Value::from(totals.blocked)),
+                ("submitted", Value::from(totals.submitted)),
+                ("completed", Value::from(totals.completed)),
+                (
+                    "members_without_claim",
+                    Value::from(totals.members.members_without_claim),
+                ),
+                ("members_dead", Value::from(totals.members.members_dead)),
+            ]),
+        ),
+    ])
 }

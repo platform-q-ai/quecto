@@ -81,6 +81,7 @@ pub(super) fn decided(method: Method) -> (Option<&'static str>, BoardOpDetail) {
         // #2338: the watch's tick, given no cursor, answers the snapshot.
         Method::Watch => (Some("snapshot"), BoardOpDetail::NONE),
         Method::Status
+        | Method::Board
         | Method::EventCursor
         | Method::Snapshot
         | Method::RunTotals

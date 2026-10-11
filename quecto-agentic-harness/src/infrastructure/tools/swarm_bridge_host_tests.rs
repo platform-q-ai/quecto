@@ -1,6 +1,7 @@
 //! The host's read of a board (#2278): the Rust board's alone, with no
 //! Python and no process started.
 use super::{context, create};
+use serde_json::json;
 
 /// The page faults of this process's waited-for children, from
 /// `/proc/self/stat` (`cminflt` and `cmajflt`): every child that ran and
@@ -96,5 +97,82 @@ fn hosted_run_reads_without_python() {
         output.status.success() && stdout.contains("1 passed"),
         "{stdout}{}",
         String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+/// The supervising session reads the whole board (#2478): the run, the
+/// items with their reserved paths, the members, the totals, at the
+/// board's revision, with no claim or reservation token, through the
+/// board's own adapter.
+#[test]
+fn the_host_reads_the_board_projection_without_tokens() {
+    let directory = tempfile::tempdir().unwrap();
+    let context = context(&directory);
+    let hosted = super::super::swarm_bridge::HostedStore::at(
+        directory.path().into(),
+        crate::composition::swarm::swarm_board(),
+    );
+    assert_eq!(
+        hosted.board_projection().unwrap(),
+        None,
+        "no store, no board"
+    );
+    assert_eq!(hosted.board_revision().unwrap(), None);
+    create(&context, 2);
+    let tokens = super::super::call_work::off_the_runtime(|| {
+        let create = |request: &str, title: &str, depends: serde_json::Value| {
+            context
+                .call("task_create", json!([request, title, ["passes"], depends]))
+                .unwrap()
+        };
+        create("r1", "Plumbing", json!([]));
+        create("r2", "CAS", json!([1]));
+        let claimed = context.call("claim", json!([1])).unwrap();
+        let reserved = context
+            .call("reserve", json!([1, claimed["token"], ["src/a.rs"]]))
+            .unwrap();
+        [claimed["token"].clone(), reserved["token"].clone()]
+    });
+    let board = hosted.board_projection().unwrap().expect("a board");
+    assert_eq!(board["revision"].as_i64(), hosted.board_revision().unwrap());
+    assert_eq!(
+        (board["run"]["goal"].clone(), board["run"]["status"].clone()),
+        (json!("ship"), json!("running"))
+    );
+    assert_eq!(board["items"][0]["state"], json!("claimed"));
+    assert_eq!(board["items"][0]["owner"], json!("parent"));
+    assert_eq!(board["items"][0]["reserved_paths"], json!(["src/a.rs"]));
+    assert_eq!(
+        (
+            board["items"][1]["state"].clone(),
+            board["items"][1]["depends_on"].clone()
+        ),
+        (json!("blocked"), json!([1]))
+    );
+    assert_eq!(board["members"][0]["role"], json!("coordinator"));
+    assert_eq!(board["members"][0]["claims"], json!([1]));
+    assert_eq!(
+        (
+            board["totals"]["claimed"].clone(),
+            board["totals"]["blocked"].clone()
+        ),
+        (json!(1), json!(1))
+    );
+    let text = board.to_string();
+    for token in tokens {
+        assert!(
+            !text.contains(token.as_str().unwrap()),
+            "a token crossed: {text}"
+        );
+    }
+    let before = hosted.board_revision().unwrap().unwrap();
+    super::super::call_work::off_the_runtime(|| {
+        context
+            .call("task_create", json!(["r3", "Index", ["ok"], []]))
+            .unwrap()
+    });
+    assert!(
+        hosted.board_revision().unwrap().unwrap() > before,
+        "a write moves the revision"
     );
 }

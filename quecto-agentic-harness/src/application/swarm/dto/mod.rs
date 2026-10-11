@@ -12,6 +12,7 @@ pub mod measure;
 pub mod membership;
 pub mod messages;
 pub mod notifications;
+pub mod projection;
 pub mod reads;
 pub mod run;
 pub mod submissions;
@@ -50,6 +51,10 @@ pub use messages::{
 pub use notifications::{
     AcceptWakeRequest, ClaimNotificationsRequest, NotificationBatch, NotificationCursor,
     WakeAccepted,
+};
+pub use projection::{
+    BoardProjection, EvidenceProjection, ItemProjection, MemberProjection, MemberRole,
+    RunProjection,
 };
 pub use reads::{
     BootstrapMemberRequest, BootstrappedSummary, CountedTask, DictRow, EventPage, FullSummary,
