@@ -17,29 +17,31 @@ fn fields() -> DiscussionFields {
         id: slug("store-locking"),
         title: "How the store locks".into(),
         task: None,
+        state: DiscussionState::Open,
+        started_by: person("Ada"),
         messages: vec![
             message("Ada", "09:00:00", "Should the store take a lease?"),
-            message("Bob", "09:05:00", "Yes, with a **TTL**."),
+            message("Bob", "09:05:00", "Yes, with a **TTL**.\nAnd a renewal."),
         ],
-        closed: None,
         created: at("09:00:00"),
         updated: at("09:10:00"),
     }
 }
 
+/// `count` lines of `x`.
+fn lines(count: usize) -> String {
+    vec!["x"; count].join("\n")
+}
+
 #[test]
 fn a_discussion_builds_open_linked_or_closed() {
-    let open = Discussion::new(fields()).unwrap();
-    assert_eq!(open.state(), DiscussionState::Open);
+    assert!(Discussion::new(fields()).is_ok());
     let mut linked = fields();
     linked.task = Some(slug("board-store"));
     assert!(Discussion::new(linked).is_ok());
     let mut closed = fields();
-    closed.closed = Some((person("Ada"), at("09:05:00")));
-    assert_eq!(
-        Discussion::new(closed).unwrap().state(),
-        DiscussionState::Closed
-    );
+    closed.state = DiscussionState::Closed;
+    assert!(Discussion::new(closed).is_ok());
     let mut same_second = fields();
     same_second.messages[1].at = at("09:00:00");
     assert!(
@@ -54,12 +56,26 @@ fn fields_that_break_a_rule_build_no_discussion() {
         ("updated", Box::new(|d| d.updated = at("08:00:00"))),
         ("title", Box::new(|d| d.title = " ".into())),
         ("title", Box::new(|d| d.title = "two\nlines".into())),
+        (
+            "started_by/email",
+            Box::new(|d| d.started_by.email = "ada".into()),
+        ),
         ("messages", Box::new(|d| d.messages.clear())),
         (
             "messages",
             Box::new(|d| {
                 let first = d.messages[0].clone();
                 d.messages = vec![first; MAX_MESSAGES + 1];
+            }),
+        ),
+        (
+            "messages",
+            Box::new(|d| {
+                let mut long = d.messages[1].clone();
+                long.text = lines(MAX_MESSAGE_LINES);
+                let past = MAX_DISCUSSION_LINES / MAX_MESSAGE_LINES;
+                d.messages.truncate(1);
+                d.messages.extend(std::iter::repeat_n(long, past));
             }),
         ),
         ("messages/0/at", Box::new(|d| d.created = at("08:59:59"))),
@@ -80,36 +96,28 @@ fn fields_that_break_a_rule_build_no_discussion() {
             Box::new(|d| d.messages[1].author.email = "bob".into()),
         ),
         (
-            "messages/1/text",
-            Box::new(|d| d.messages[1].text = " \n".into()),
+            "messages/1/text/0",
+            Box::new(|d| d.messages[1].text = " ".into()),
         ),
         (
-            "messages/1/text",
+            "messages/1/text/1",
+            Box::new(|d| d.messages[1].text = "a\n\nb".into()),
+        ),
+        (
+            "messages/1/text/1",
+            Box::new(|d| d.messages[1].text = "a\n".into()),
+        ),
+        (
+            "messages/1/text/0",
             Box::new(|d| d.messages[1].text = "hidden\u{200b}text".into()),
         ),
         (
+            "messages/1/text/0",
+            Box::new(|d| d.messages[1].text = "x".repeat(MAX_MESSAGE_LINE_CHARS + 1)),
+        ),
+        (
             "messages/1/text",
-            Box::new(|d| d.messages[1].text = "x".repeat(MAX_MESSAGE_CHARS + 1)),
-        ),
-        (
-            "closed/by/email",
-            Box::new(|d| {
-                d.closed = Some((
-                    Identity {
-                        name: "Ada".into(),
-                        email: "ada".into(),
-                    },
-                    at("09:06:00"),
-                ))
-            }),
-        ),
-        (
-            "closed/at",
-            Box::new(|d| d.closed = Some((person("Ada"), at("09:04:59")))),
-        ),
-        (
-            "closed/at",
-            Box::new(|d| d.closed = Some((person("Ada"), at("09:10:01")))),
+            Box::new(|d| d.messages[1].text = lines(MAX_MESSAGE_LINES + 1)),
         ),
     ];
     for (field, edit) in cases {
@@ -117,28 +125,66 @@ fn fields_that_break_a_rule_build_no_discussion() {
         edit(&mut broken);
         assert_eq!(Discussion::new(broken).unwrap_err().field, field);
     }
-    let mut longest = fields();
-    longest.messages[1].text = "x".repeat(MAX_MESSAGE_CHARS);
-    assert!(Discussion::new(longest).is_ok(), "the longest message");
 }
 
-/// A discussion's text is bounded: its title, messages and their authors
-/// together, exactly to the budget and not a byte past it.
+/// The widest message, and the most lines a discussion holds.
+#[test]
+fn a_discussion_holds_its_widest_message_and_its_most_lines() {
+    let mut longest = fields();
+    let widest = "x".repeat(MAX_MESSAGE_LINE_CHARS);
+    longest.messages[1].text = vec![widest.as_str(); MAX_MESSAGE_LINES].join("\n");
+    assert!(Discussion::new(longest).is_ok(), "the longest message");
+    let mut most = fields();
+    let mut long = most.messages[1].clone();
+    long.text = lines(MAX_MESSAGE_LINES);
+    let fill = (MAX_DISCUSSION_LINES - 1) / MAX_MESSAGE_LINES;
+    let left = MAX_DISCUSSION_LINES - 1 - fill * MAX_MESSAGE_LINES;
+    most.messages.truncate(1);
+    most.messages
+        .extend(std::iter::repeat_n(long.clone(), fill));
+    long.text = lines(left);
+    most.messages.push(long);
+    let total: usize = most
+        .messages
+        .iter()
+        .map(|m| m.text.split('\n').count())
+        .sum();
+    assert_eq!(total, MAX_DISCUSSION_LINES);
+    assert!(
+        Discussion::new(most.clone()).is_ok(),
+        "exactly the most lines"
+    );
+    let last = most.messages.len() - 1;
+    most.messages[last].text.push_str("\nx");
+    assert_eq!(Discussion::new(most).unwrap_err().field, "messages");
+}
+
+/// A discussion's text is bounded: its title, who started it, and its
+/// message lines each with its author, exactly to the budget and not a
+/// byte past it.
 #[test]
 fn a_discussions_text_is_bounded_by_its_budget() {
     let mut full = fields();
     full.messages.truncate(1);
     let mut left = MAX_DISCUSSION_TEXT_BYTES - full.text_bytes();
     let author = full.messages[0].author.clone();
-    let per_author = author.name.len() + author.email.len();
+    let per_line = author.name.len() + author.email.len();
+    // Single-line messages, the widest that leave room for one more.
     while left > 0 {
-        let len = (left - per_author).min(MAX_MESSAGE_CHARS);
+        let room = left - per_line;
+        let len = match room > MAX_MESSAGE_LINE_CHARS {
+            true if room - MAX_MESSAGE_LINE_CHARS <= per_line => {
+                MAX_MESSAGE_LINE_CHARS - per_line - 1
+            }
+            true => MAX_MESSAGE_LINE_CHARS,
+            false => room,
+        };
         full.messages.push(Message {
             author: author.clone(),
             at: at("09:05:00"),
             text: "x".repeat(len),
         });
-        left -= len + per_author;
+        left -= len + per_line;
     }
     assert_eq!(full.text_bytes(), MAX_DISCUSSION_TEXT_BYTES);
     assert!(Discussion::new(full.clone()).is_ok(), "exactly the budget");

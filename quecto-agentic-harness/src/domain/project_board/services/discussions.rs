@@ -15,16 +15,19 @@ use super::super::value_objects::rule_error::BoardRuleError;
 use super::super::value_objects::schema_error::SchemaError;
 use super::super::value_objects::slug::Slug;
 use super::super::value_objects::timestamp::Timestamp;
+use super::super::value_objects::vocabulary::DiscussionState;
 use super::claims::within_slack;
 use super::plans::Moment;
 
 /// What a discussion begins with: its id and title, the task it is about
-/// if there is one yet, and the messages said so far, oldest first.
+/// if there is one yet, who began it, and the messages said so far,
+/// oldest first.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Opening<'a> {
     pub id: Slug,
     pub title: String,
     pub task: Option<&'a Task>,
+    pub started_by: Identity,
     pub messages: Vec<Message>,
 }
 
@@ -51,8 +54,9 @@ pub fn begin(opening: Opening<'_>, when: &Moment) -> Result<Discussion, BoardRul
         id: opening.id,
         title: opening.title,
         task: opening.task.map(|task| task.fields().id.clone()),
+        state: DiscussionState::Open,
+        started_by: opening.started_by,
         messages: opening.messages,
-        closed: None,
         created,
         updated: when.now.clone().max(last),
     })
@@ -115,29 +119,24 @@ pub fn link(
     Discussion::new(next).map_err(BoardRuleError::Invalid)
 }
 
-/// `discussion` closed by `actor`, written `when`.
+/// `discussion` closed, written `when`.
 ///
 /// # Errors
 /// A discussion closed already, or stamped ahead.
-pub fn close(
-    discussion: &Discussion,
-    actor: &Identity,
-    when: &Moment,
-) -> Result<Discussion, BoardRuleError> {
+pub fn close(discussion: &Discussion, when: &Moment) -> Result<Discussion, BoardRuleError> {
     open(discussion)?;
     built_on(discussion, when)?;
-    let at = after(discussion, when)?;
     let mut next = discussion.fields().clone();
-    next.closed = Some((actor.clone(), at.clone()));
-    next.updated = at;
+    next.state = DiscussionState::Closed;
+    next.updated = after(discussion, when)?;
     Discussion::new(next).map_err(BoardRuleError::Invalid)
 }
 
 /// `discussion` is open: messages are added to it, and it is closed once.
 fn open(discussion: &Discussion) -> Result<(), BoardRuleError> {
-    match &discussion.fields().closed {
-        None => Ok(()),
-        Some(_) => Err(BoardRuleError::DiscussionClosed(
+    match discussion.fields().state {
+        DiscussionState::Open => Ok(()),
+        DiscussionState::Closed => Err(BoardRuleError::DiscussionClosed(
             discussion.fields().id.clone(),
         )),
     }

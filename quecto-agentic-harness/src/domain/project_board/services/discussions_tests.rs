@@ -33,6 +33,7 @@ fn opening(messages: Vec<Message>) -> Opening<'static> {
         id: id(),
         title: "How the store locks".into(),
         task: None,
+        started_by: person("Ada"),
         messages,
     }
 }
@@ -50,7 +51,7 @@ fn begun() -> Discussion {
 fn a_discussion_begins_with_the_messages_said_so_far() {
     let discussion = begun();
     let fields = discussion.fields();
-    assert_eq!(discussion.state(), DiscussionState::Open);
+    assert_eq!(discussion.fields().state, DiscussionState::Open);
     assert_eq!(
         (
             &fields.task,
@@ -163,7 +164,7 @@ fn a_discussion_is_linked_to_one_task_once() {
             task: about.fields().id.clone()
         })
     );
-    let closed = close(&discussion, &person("Ada"), &when("10:00:00")).unwrap();
+    let closed = close(&discussion, &when("10:00:00")).unwrap();
     assert!(
         link(&closed, &about, &when("10:00:00")).is_ok(),
         "a closed discussion is filed later"
@@ -172,12 +173,8 @@ fn a_discussion_is_linked_to_one_task_once() {
 
 #[test]
 fn a_closed_discussion_takes_no_message_and_is_closed_once() {
-    let closed = close(&begun(), &person("Ada"), &when("09:00:00")).unwrap();
-    assert_eq!(closed.state(), DiscussionState::Closed);
-    assert_eq!(
-        closed.fields().closed,
-        Some((person("Ada"), at("09:10:01")))
-    );
+    let closed = close(&begun(), &when("09:00:00")).unwrap();
+    assert_eq!(closed.fields().state, DiscussionState::Closed);
     assert_eq!(closed.fields().updated, at("09:10:01"));
     let refused = Err(BoardRuleError::DiscussionClosed(id()));
     assert_eq!(
@@ -188,7 +185,7 @@ fn a_closed_discussion_takes_no_message_and_is_closed_once() {
         ),
         refused
     );
-    assert_eq!(close(&closed, &person("Bob"), &when("10:00:00")), refused);
+    assert_eq!(close(&closed, &when("10:00:00")), refused);
 }
 
 /// A discussion, or a message, a clock running ahead stamped is refused
@@ -211,10 +208,7 @@ fn a_discussion_or_message_stamped_ahead_is_refused() {
         link(&discussion, &task(TaskStatus::Ready), &early),
         ahead("09:10:00")
     );
-    assert_eq!(
-        close(&discussion, &person("Ada"), &early),
-        ahead("09:10:00")
-    );
+    assert_eq!(close(&discussion, &early), ahead("09:10:00"));
     let now = bounded("10:00:00", "10:00:00");
     assert_eq!(
         append(&discussion, vec![message("Ada", "10:00:31", "x")], &now),
@@ -226,12 +220,5 @@ fn a_discussion_or_message_stamped_ahead_is_refused() {
         append(&discussion, vec![message("Ada", "10:00:30", "x")], &now).is_ok(),
         "within the slack"
     );
-    assert!(
-        close(
-            &discussion,
-            &person("Ada"),
-            &bounded("09:00:00", "09:09:30")
-        )
-        .is_ok()
-    );
+    assert!(close(&discussion, &bounded("09:00:00", "09:09:30")).is_ok());
 }
