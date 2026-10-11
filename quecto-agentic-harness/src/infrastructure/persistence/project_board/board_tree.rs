@@ -144,6 +144,9 @@ pub struct Board {
     /// The size of every task file a read of this board reads, by name:
     /// what a write checks against the read bound.
     pub read_bytes: BTreeMap<String, usize>,
+    /// Files a clear keeps that a read will read as tasks, each needing a
+    /// summary the next write adds: they count as two entries each.
+    pub pending_summaries: usize,
 }
 
 /// One copy of a name a write would carry, as its tree entry holds it.
@@ -167,6 +170,11 @@ impl TreeCopy {
         let read = self.mode == REGULAR_FILE && self.kind == "blob";
         (read && self.size <= MAX_TASK_FILE_BYTES).then_some(self.size)
     }
+}
+
+/// Whether `name` is a `<id>.json` a read reads as a task.
+pub fn spells_id(name: &str) -> bool {
+    matches!(task_name(name), Some((Some(_), TaskFile::Record)))
 }
 
 /// Where a board keeps its task files.
@@ -207,7 +215,7 @@ impl Board {
         let ids: BTreeSet<&Slug> = written.iter().map(|(task, _)| &task.fields().id).collect();
         let after: BTreeSet<&Slug> = self.tasks.keys().chain(ids.iter().copied()).collect();
         let copies: usize = self.repeated.iter().map(|(_, copies)| copies.len()).sum();
-        let entries = 2 * after.len() + self.kept.len() + copies;
+        let entries = 2 * after.len() + self.kept.len() + copies + self.pending_summaries;
         if entries > MAX_TASK_ENTRIES {
             return invalid(format!(
                 "the board would hold {} tasks and {} files set aside; it holds at most {MAX_TASKS} tasks",

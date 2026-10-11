@@ -214,7 +214,7 @@ fn the_memory_store_judges_as_the_git_store_does() {
         object: object.into(),
         repeated: BTreeMap::new(),
     };
-    for odd in [object.to_uppercase(), "a".repeat(41), "g".repeat(40)] {
+    for odd in ["A".repeat(40), "a".repeat(41), "g".repeat(40)] {
         let invalid = store.clear_set_aside(&head, &clearing(&odd), "board: clear");
         assert!(
             matches!(invalid, Err(BoardStoreError::InvalidWrite(_))),

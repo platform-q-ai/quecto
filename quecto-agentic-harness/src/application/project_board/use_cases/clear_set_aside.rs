@@ -13,7 +13,7 @@ use crate::application::project_board::dto::ProjectBoardError;
 use crate::application::project_board::ports::{
     BoardClock, BoardHead, BoardWrite, KeepCopy, ProjectBoardStore, QuarantinedFile, SetAsideClear,
 };
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 pub struct ClearSetAside {
     store: Arc<dyn ProjectBoardStore>,
@@ -63,6 +63,10 @@ impl ClearSetAside {
                     object: object.to_string(),
                 });
             };
+            if let Some(unseen) = unlisted(&board.quarantined, repeated) {
+                return Err(unseen);
+            }
+            // Built only from what the listing shows.
             let message = message(&file.path, repeated);
             match self.store.clear_set_aside(&board.head, &clear, &message)? {
                 BoardWrite::Written(head) => {
@@ -77,6 +81,37 @@ impl ClearSetAside {
             attempts: MAX_WRITE_ATTEMPTS,
         })
     }
+}
+
+/// The first name listed more than once, or object of one, that the
+/// board's listing does not show, as the error that says so: what a clear
+/// names comes from the listing, so anything else is checked away before
+/// anything is built from it.
+fn unlisted(
+    quarantined: &[QuarantinedFile],
+    repeated: &BTreeMap<String, KeepCopy>,
+) -> Option<ProjectBoardError> {
+    repeated.iter().find_map(|(path, keep)| {
+        let shown: BTreeSet<&str> = quarantined
+            .iter()
+            .filter(|file| file.path == *path)
+            .map(|file| file.object.as_str())
+            .collect();
+        let named: Vec<&String> = match keep {
+            KeepCopy::Object { keep, seen } => std::iter::once(keep).chain(seen).collect(),
+            KeepCopy::Drop(seen) => seen.iter().collect(),
+        };
+        let unseen = named.iter().find(|object| !shown.contains(object.as_str()));
+        match (shown.is_empty(), unseen) {
+            (false, None) => None,
+            (_, unseen) => Some(ProjectBoardError::NotSetAside {
+                path: path.clone(),
+                object: unseen
+                    .or(named.first())
+                    .map_or_else(String::new, |object| (*object).clone()),
+            }),
+        }
+    })
 }
 
 /// The commit message of a clear: the file it clears and, for each name

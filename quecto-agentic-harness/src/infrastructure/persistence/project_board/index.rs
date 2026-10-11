@@ -405,6 +405,10 @@ impl BoardIndex {
             .map(|(path, id, reason, object)| {
                 let id = id.map(|id| Slug::parse(&id)).transpose();
                 let id = id.map_err(|error| corrupt(error.to_string()))?;
+                match full_commit_id(&object) {
+                    true => {}
+                    false => return Err(corrupt(format!("object {object:?} of {path:?}"))),
+                }
                 Ok(QuarantinedFile {
                     path,
                     id,
@@ -517,7 +521,6 @@ fn rows(snapshot: &BoardSnapshot) -> Result<Vec<Row>, IndexError> {
         .collect()
 }
 
-/// The files set aside, by path: path, id and reason.
 /// One file set aside as the index holds it: path, id, reason and object.
 type SetAside = (String, Option<String>, String, String);
 

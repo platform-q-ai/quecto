@@ -209,11 +209,12 @@ impl ProjectBoardStore for MemoryBoardStore {
         interleaved.into_iter().for_each(|change| change(self));
         let mut board = self.lock();
         let revision = board.head.ok_or(BoardStoreError::NoBoard)?;
-        if let Some(reason) = board.refusal.take() {
-            return Ok(BoardWrite::Refused(reason));
-        }
+        // As a git store judges: a stale head is lost before any refusal.
         if *expected != head(revision) {
             return Ok(BoardWrite::Lost);
+        }
+        if let Some(reason) = board.refusal.take() {
+            return Ok(BoardWrite::Refused(reason));
         }
         let set_aside = |task: &Task| {
             board
@@ -250,10 +251,16 @@ impl ProjectBoardStore for MemoryBoardStore {
         let path = clear.path.as_str();
         line("message", message, 200)
             .map_err(|error| BoardStoreError::InvalidWrite(error.to_string()))?;
-        let hex = |text: &str| text.len() == 40 && text.bytes().all(|b| b.is_ascii_hexdigit());
-        let kept = clear.repeated.values().filter_map(|keep| match keep {
-            KeepCopy::Object { keep, .. } => Some(keep),
-            KeepCopy::Drop(_) => None,
+        // An object id as git spells one: lowercase hex, SHA-1 or SHA-256.
+        let hex = |text: &str| {
+            matches!(text.len(), 40 | 64)
+                && text
+                    .bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        };
+        let kept = clear.repeated.values().flat_map(|keep| match keep {
+            KeepCopy::Object { keep, seen } => std::iter::once(keep).chain(seen).collect(),
+            KeepCopy::Drop(seen) => seen.iter().collect::<Vec<_>>(),
         });
         if let Some(oid) = std::iter::once(&clear.object)
             .chain(kept)
@@ -267,11 +274,12 @@ impl ProjectBoardStore for MemoryBoardStore {
         interleaved.into_iter().for_each(|change| change(self));
         let mut board = self.lock();
         let revision = board.head.ok_or(BoardStoreError::NoBoard)?;
-        if let Some(reason) = board.refusal.take() {
-            return Ok(BoardWrite::Refused(reason));
-        }
+        // As a git store judges: a stale head is lost before any refusal.
         if *expected != head(revision) {
             return Ok(BoardWrite::Lost);
+        }
+        if let Some(reason) = board.refusal.take() {
+            return Ok(BoardWrite::Refused(reason));
         }
         if let Some(path) = clear.repeated.keys().next() {
             return Ok(BoardWrite::Refused(format!(
