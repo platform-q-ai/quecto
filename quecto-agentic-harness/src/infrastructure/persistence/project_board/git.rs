@@ -10,11 +10,13 @@
 //! keeps board operations free of side effects in the checkout; it is not
 //! a security boundary against the repository's owner.
 use crate::domain::project_board::entities::claim::Identity;
+use regex::Regex;
 use std::ffi::{OsStr, OsString};
+use std::fmt;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
-use std::sync::mpsc;
+use std::sync::{LazyLock, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -74,6 +76,10 @@ pub const MAX_QUOTED_CHARS: usize = 2 * 1024;
 /// if need be: its process group is gone, so only something outside it
 /// can still hold its pipes.
 pub const DRAIN_GRACE: Duration = Duration::from_secs(1);
+/// What git says when it refuses an identity: "name consists only of
+/// disallowed characters", "empty ident name not allowed", "unable to
+/// auto-detect email address".
+const IDENTITY_REFUSALS: &[&str] = &["disallowed characters", "ident name", "email address"];
 /// The first and the longest pause between looks at whether git exited.
 const FIRST_POLL: Duration = Duration::from_millis(1);
 const LONGEST_POLL: Duration = Duration::from_millis(25);
@@ -98,6 +104,21 @@ pub enum GitError {
         /// git's message, bounded and stripped of control characters.
         stderr: String,
     },
+}
+
+impl fmt::Display for GitError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NotFound => f.write_str("no git on the PATH"),
+            Self::Identity(why) => f.write_str(why),
+            Self::Spawn(why) => write!(f, "git could not run: {why}"),
+            Self::TimedOut { command } => write!(f, "git {command} timed out"),
+            Self::TooMuchOutput { command, limit } => {
+                write!(f, "git {command} printed more than {limit} bytes")
+            }
+            Self::Failed { command, stderr } => write!(f, "git {command} failed: {stderr}"),
+        }
+    }
 }
 
 /// Whether a call may reach the remote. A local call never fetches an
@@ -187,13 +208,19 @@ impl Git {
     fn records_identity_as_given(&self) -> Result<(), GitError> {
         let refused = |why: String| {
             GitError::Identity(format!(
-                "{:?}: {why}; give the name and email exactly as git records them",
-                self.identity
+                "{:?} <{:?}>: {why}; give the name and email exactly as git records them",
+                self.identity.name, self.identity.email
             ))
         };
+        // Only what git says of the identity refuses it; any other failure
+        // (git cannot run in the repository, say) is that failure.
+        let about_identity =
+            |stderr: &str| IDENTITY_REFUSALS.iter().any(|said| stderr.contains(said));
         let ident = match self.text(&["var", "GIT_COMMITTER_IDENT"], None) {
             Ok(ident) => ident,
-            Err(GitError::Failed { stderr, .. }) => return Err(refused(stderr)),
+            Err(GitError::Failed { stderr, .. }) if about_identity(&stderr) => {
+                return Err(refused(stderr));
+            }
             Err(error) => return Err(error),
         };
         match recorded_identity(&ident) {
@@ -351,9 +378,10 @@ impl Git {
                 command: command_line(),
             });
         }
-        // git exited: its output drains under the deadline, or a short
-        // grace past it.
-        let drained_by = deadline.max(Instant::now() + DRAIN_GRACE);
+        // git exited, and its group is gone: its output drains within a
+        // short grace, never the rest of its deadline, however long
+        // something outside the group holds the pipe.
+        let drained_by = Instant::now() + DRAIN_GRACE;
         let left = || drained_by.saturating_duration_since(Instant::now());
         let timed_out = |_| GitError::TimedOut {
             command: command_line(),
@@ -465,9 +493,11 @@ fn recorded_identity(ident: &str) -> Option<(String, String)> {
     Some((name.to_string(), email.to_string()))
 }
 
-/// git's message as text fit to quote: escape sequences dropped, control
-/// characters, bidirectional overrides and runs of white space each one
-/// space, and at most [`MAX_QUOTED_CHARS`] characters.
+/// git's message as text fit to quote: escape sequences dropped; letters,
+/// marks, numbers, punctuation and symbols kept; anything else (spaces,
+/// controls, format characters such as bidirectional overrides, zero-width
+/// and tag characters, unassigned code points) one space between them;
+/// at most [`MAX_QUOTED_CHARS`] characters.
 pub fn quoted(bytes: &[u8]) -> String {
     let text = String::from_utf8_lossy(bytes);
     let mut chars = text.chars().peekable();
@@ -484,7 +514,7 @@ pub fn quoted(bytes: &[u8]) -> String {
             }
             continue;
         }
-        if c.is_control() || c.is_whitespace() || is_bidi_control(c) {
+        if !shown(c) {
             gap = count > 0;
             continue;
         }
@@ -503,9 +533,13 @@ pub fn quoted(bytes: &[u8]) -> String {
     out
 }
 
-/// The characters that reorder the text around them when shown.
-fn is_bidi_control(c: char) -> bool {
-    matches!(c, '\u{061c}' | '\u{200e}' | '\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')
+/// The characters quoted as they are: letters, marks, numbers,
+/// punctuation and symbols.
+static SHOWN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^[\p{L}\p{M}\p{N}\p{P}\p{S}]$").expect("a valid class"));
+
+fn shown(c: char) -> bool {
+    SHOWN.is_match(c.encode_utf8(&mut [0; 4]))
 }
 
 pub fn failed(args: &[&str], output: &Output) -> GitError {

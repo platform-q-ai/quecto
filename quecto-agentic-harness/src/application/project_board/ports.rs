@@ -57,8 +57,12 @@ pub enum BoardStoreError {
     NoBoard,
     /// Something in the repository keeps the board from existing.
     Clash(String),
-    /// A write no store takes: no tasks, one id twice, or a message that is
-    /// not one short line. Nothing was written.
+    /// A write no store takes: no tasks, one id twice, a message that is
+    /// not one short line, a board past its bounds, or a head that is not
+    /// on the board. That includes a head the board held before its
+    /// history was rewritten (a force push): such a write is invalid, not
+    /// [`BoardWrite::Lost`], since no store can tell it from a head it
+    /// never held. Read the board again. Nothing was written.
     InvalidWrite(String),
     /// The store could not be reached or read, or cannot tell whether a
     /// write landed.

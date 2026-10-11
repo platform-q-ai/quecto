@@ -1,5 +1,6 @@
 //! What `git push --porcelain` reported for the board's ref, and the
 //! report a push that did not land carries into its outcome.
+use super::git::quoted;
 use super::store::BOARD_REF;
 use std::fmt;
 
@@ -42,8 +43,44 @@ pub fn ref_status(stdout: &[u8]) -> Option<RefStatus> {
         }
         match flag {
             " " | "+" | "*" | "=" => Some(RefStatus::Updated),
-            "!" => Some(RefStatus::Rejected(summary.to_string())),
+            "!" => Some(RefStatus::Rejected(quoted(summary.as_bytes()))),
             _ => None,
         }
+    })
+}
+
+/// What the remote's own rejection of a push says, by its reason.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Rejection {
+    /// A hook, a protected branch or a rule declined it: refused.
+    Declined,
+    /// It lost a race on the ref: lost.
+    Raced,
+    /// Any other reason: whether it may still land is unknown.
+    Unknown,
+}
+
+/// The reasons a remote gives when it declines a push: git's hooks
+/// ("pre-receive hook declined", "hook declined"), GitHub's protected
+/// branches ("protected branch hook declined") and rulesets ("push declined
+/// due to repository rule violations").
+const DECLINED: &[&str] = &["hook declined", "protected branch", "push declined"];
+/// The reasons a remote gives when another update of the ref won: it
+/// could not lock it, or found another value than the lease's.
+const RACED: &[&str] = &[
+    "cannot lock ref",
+    "failed to update ref",
+    "incorrect old value",
+];
+
+/// What a `[remote rejected] (<reason>)` summary says; `None` for any
+/// other summary.
+pub fn remote_rejection(summary: &str) -> Option<Rejection> {
+    let reason = summary.strip_prefix("[remote rejected]")?;
+    let said = |reasons: &[&str]| reasons.iter().any(|known| reason.contains(known));
+    Some(match (said(DECLINED), said(RACED)) {
+        (true, false) => Rejection::Declined,
+        (false, true) => Rejection::Raced,
+        _ => Rejection::Unknown,
     })
 }

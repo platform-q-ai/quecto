@@ -485,40 +485,6 @@ fn a_tasks_entry_that_is_not_a_tree_is_not_a_board() {
     );
 }
 
-/// An entry of a mode git never writes is a stray, whatever it names: it
-/// is not looked up, so even an object held nowhere never stops a read.
-#[test]
-fn an_entry_of_a_mode_git_never_writes_is_never_looked_up() {
-    let repos = Repos::new();
-    let alice = store(&repos.alice);
-    created(&alice);
-    let head = raw_board(
-        &repos.remote(),
-        &[
-            (
-                "100644",
-                "ok.json",
-                Object::Blob(encode(&task("ok")).unwrap()),
-            ),
-            ("100664", "odd.json", Object::Absent(b"odd".to_vec())),
-        ],
-        &[&repos.bob],
-    );
-    let board = store(&repos.bob).board_at(&head.0).unwrap();
-    assert_eq!(
-        board.tasks.keys().map(Slug::as_str).collect::<Vec<_>>(),
-        ["ok"]
-    );
-    assert_eq!(
-        board
-            .quarantined
-            .iter()
-            .map(|q| (q.path.as_str(), q.id.as_ref().map(Slug::as_str)))
-            .collect::<Vec<_>>(),
-        [("tasks/odd.json", Some("odd"))]
-    );
-}
-
 /// An object the tree names but no repository holds is an error, never a
 /// file set aside as "not regular".
 #[test]

@@ -23,10 +23,10 @@
 //! never one object at a time.
 use super::board_tree::{
     Board, MAX_BOARD_BYTES, MAX_SUMMARY_BYTES, MAX_TASK_ENTRIES, REGULAR_FILE, TREE, Unread,
-    contents, object_id, read_board, unavailable,
+    contents, object_id, read_board, told, unavailable,
 };
 use super::git::{Git, GitError, SHORT_OUTPUT, failed, quoted};
-use super::push_report::{PushReport, RefStatus, ref_status};
+use super::push_report::{PushReport, RefStatus, Rejection, ref_status, remote_rejection};
 use super::summary::summary;
 use super::task_record::{decode, encode};
 use crate::application::project_board::ports::{
@@ -47,7 +47,7 @@ pub const BOARD_REF: &str = "refs/heads/quecto/board";
 const FETCH_ROUNDS: usize = 3;
 /// The most a listing of a repository's branches takes.
 const MAX_REF_LISTING: usize = 16 * 1024 * 1024;
-const README: &[u8] = b"# quecto board\n\nThis branch holds the project's board: one `tasks/<id>.json` per task, with a\nread-only `tasks/<id>.md` summary beside it. It is written only by quecto's\nboard operations; do not edit, merge or rebase it by hand.\n";
+const README: &[u8] = b"# quecto board\n\nThis branch holds the project's board: one `tasks/<id>.json` per task, with a\nread-only `tasks/<id>.md` summary beside it. It is written only by quecto's\nboard operations; do not edit, merge or rebase it by hand. If a hand edit breaks it,\nmove `quecto/board` back to the commit before that edit.\n";
 
 pub struct GitBoardStore {
     git: Git,
@@ -95,7 +95,7 @@ impl GitBoardStore {
                 max_board_bytes: MAX_BOARD_BYTES,
             }),
             Err(error) => Err(BoardStoreError::Unavailable(format!(
-                "{remote:?} is not a remote of this repository: {error:?}"
+                "{remote:?} is not a remote of this repository: {error}"
             ))),
         }
     }
@@ -177,7 +177,7 @@ impl GitBoardStore {
         match output.status.success() {
             true => Ok(()),
             false => Err(BoardStoreError::Unavailable(format!(
-                "objects missing here could not be fetched from {}: {}: {:?}",
+                "objects missing here could not be fetched from {}: {}: {}",
                 self.remote,
                 oids.join(" "),
                 failed(&args, &output)
@@ -194,7 +194,7 @@ impl GitBoardStore {
 
     /// The remote's branches matching `patterns` (all of them when none).
     fn remote_heads(&self, patterns: &[&str]) -> Result<Vec<(String, String)>, BoardStoreError> {
-        let mut args = vec!["ls-remote", "--refs", self.remote.as_str()];
+        let mut args = vec!["ls-remote", "--heads", "--refs", self.remote.as_str()];
         args.extend(patterns);
         let output = self
             .git
@@ -273,10 +273,12 @@ impl GitBoardStore {
     /// - our commit on it: landed, however fast another writer stacked on
     ///   it;
     /// - any other board than `base`: lost;
-    /// - the board still at `base`: refused when the remote rejected it
-    ///   (`[remote rejected]`), lost when git's own lease did (`[rejected]`,
-    ///   so the board moved and moved back), and otherwise unknown (no
-    ///   report, `[remote failure]`): it may still move, so it is an error.
+    /// - the board still at `base`: refused when the remote declined it (a
+    ///   hook, a protected branch or a rule: see [`remote_rejection`]), lost
+    ///   when it lost a race on the ref there or git's own lease rejected
+    ///   it (`[rejected]`: the board moved and moved back), and otherwise
+    ///   unknown (no report, `[remote failure]`, any other reason): it may
+    ///   still move, so it is an error.
     ///
     /// The push's own report is in every error, so a push that failed
     /// outright (no push rights, say) says why.
@@ -288,7 +290,8 @@ impl GitBoardStore {
     ) -> Result<Pushed, BoardStoreError> {
         let unread = |error: BoardStoreError| {
             BoardStoreError::Unavailable(format!(
-                "the push did not land ({report}), and the board could not be read to check: {error:?}"
+                "the push did not land ({report}), and the board could not be read to check: {}",
+                told(&error)
             ))
         };
         let head = match self.remote_head(BOARD_REF).map_err(unread)? {
@@ -300,14 +303,14 @@ impl GitBoardStore {
             None => false,
         };
         let rejected = report.rejected.as_deref().unwrap_or("");
-        match (ours, head.as_deref() == base) {
-            (true, _) => Ok(Pushed::Landed),
-            (false, false) => Ok(Pushed::Lost),
-            (false, true) if rejected.starts_with("[remote rejected]") => {
-                Ok(Pushed::Refused(report.to_string()))
-            }
-            (false, true) if rejected.starts_with("[rejected]") => Ok(Pushed::Lost),
-            (false, true) => Err(BoardStoreError::Unavailable(format!(
+        let remote = remote_rejection(rejected);
+        match (ours, head.as_deref() == base, remote) {
+            (true, _, _) => Ok(Pushed::Landed),
+            (false, false, _) => Ok(Pushed::Lost),
+            (false, true, Some(Rejection::Declined)) => Ok(Pushed::Refused(report.to_string())),
+            (false, true, Some(Rejection::Raced)) => Ok(Pushed::Lost),
+            (false, true, None) if rejected.starts_with("[rejected]") => Ok(Pushed::Lost),
+            (false, true, _) => Err(BoardStoreError::Unavailable(format!(
                 "the push did not finish ({report}); the board may have moved since, so read it again"
             ))),
         }
@@ -450,10 +453,14 @@ impl GitBoardStore {
     /// file and a summary regenerated from it (an unchanged summary keeps
     /// its object), and the task files set aside carried forward as they
     /// are.
-    fn tasks_tree(&self, board: &Board, written: &[Task]) -> Result<String, BoardStoreError> {
-        let invalid = |why: String| BoardStoreError::InvalidWrite(why);
+    fn tasks_tree(
+        &self,
+        board: &Board,
+        written: &[(&Task, Vec<u8>)],
+    ) -> Result<String, BoardStoreError> {
         let mut files: BTreeMap<String, String> = board.kept.clone();
-        let written_ids: BTreeSet<&Slug> = written.iter().map(|task| &task.fields().id).collect();
+        let written_ids: BTreeSet<&Slug> =
+            written.iter().map(|(task, _)| &task.fields().id).collect();
         let carried: Vec<_> = board
             .tasks
             .iter()
@@ -496,13 +503,9 @@ impl GitBoardStore {
                 format!("{REGULAR_FILE} blob {summary_oid}"),
             );
         }
-        for task in written {
+        for (task, bytes) in written {
             let id = task.fields().id.as_str();
-            let bytes = encode(task).map_err(|error| invalid(format!("task {id}: {error}")))?;
-            if decode(&bytes).ok().as_ref() != Some(task) {
-                return Err(invalid(format!("task {id} does not read back as written")));
-            }
-            let json = self.blob(&bytes)?;
+            let json = self.blob(bytes)?;
             let summary_oid = self.blob(summary(task).as_bytes())?;
             files.insert(format!("{id}.json"), format!("{REGULAR_FILE} blob {json}"));
             files.insert(
@@ -603,12 +606,8 @@ impl ProjectBoardStore for GitBoardStore {
         }
         let base = self.base(expected)?;
         let board = self.board_at(&base)?;
-        if let Some(name) = board.repeated.first() {
-            return Ok(BoardWrite::Refused(format!(
-                "tasks/{name} is named more than once in the board's tree. git rejects such a \
-                 tree (fsck: duplicateEntries), so no write can carry it forward, and none drops \
-                 one: mend the board by hand first"
-            )));
+        if let Some(refusal) = board.repeated_refusal(&base) {
+            return Ok(BoardWrite::Refused(refusal));
         }
         if let Some(file) = ids.iter().find_map(|id| board.is_quarantined(id)) {
             return Ok(BoardWrite::Refused(format!(
@@ -625,6 +624,35 @@ impl ProjectBoardStore for GitBoardStore {
                 board.kept.len()
             )));
         }
+        let encoded = tasks
+            .iter()
+            .map(|task| {
+                let id = task.fields().id.as_str();
+                let bytes = encode(task).map_err(|error| invalid(format!("task {id}: {error}")))?;
+                match decode(&bytes).ok().as_ref() == Some(task) {
+                    true => Ok((task, bytes)),
+                    false => Err(invalid(format!("task {id} does not read back as written"))),
+                }
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        // A read takes at most `max_board_bytes` of task files, so no write
+        // makes a board that cannot be read.
+        let replaced: BTreeSet<String> = ids
+            .iter()
+            .map(|id| format!("{}.json", id.as_str()))
+            .collect();
+        let carried = board
+            .read_bytes
+            .iter()
+            .filter(|(name, _)| !replaced.contains(*name));
+        let bytes = carried.map(|(_, size)| size).sum::<usize>()
+            + encoded.iter().map(|(_, bytes)| bytes.len()).sum::<usize>();
+        if bytes > self.max_board_bytes {
+            return Err(invalid(format!(
+                "the board would hold {bytes} bytes of task files; a read takes at most {}",
+                self.max_board_bytes
+            )));
+        }
         let readme = self.blob(README)?;
         let root = BTreeMap::from([
             (
@@ -633,7 +661,7 @@ impl ProjectBoardStore for GitBoardStore {
             ),
             (
                 "tasks".to_string(),
-                format!("{TREE} tree {}", self.tasks_tree(&board, tasks)?),
+                format!("{TREE} tree {}", self.tasks_tree(&board, &encoded)?),
             ),
         ]);
         let tree = self.tree(&root)?;
