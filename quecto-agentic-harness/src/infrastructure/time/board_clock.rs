@@ -1,6 +1,6 @@
-//! The project board's clock (#2476): this machine's time, to the second.
-//! It has no outside reference yet: a follow-up gives it the remote's time
-//! (the HTTPS `Date` header) before board writes are exposed.
+//! The project board's clock (#2476): this machine's time, to the second,
+//! with no outside reference of its own. [`remote_time`](super::remote_time)
+//! gives it one (#2491): the board remote's HTTPS `Date`.
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
