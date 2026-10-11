@@ -250,7 +250,7 @@ fn a_discussions_text_is_bounded_by_what_its_file_takes() {
         "{rows} written > {} counted",
         full.text_bytes()
     );
-    assert!(MAX_DISCUSSION_TEXT_BYTES + FILE_RESERVE_BYTES <= MAX_DISCUSSION_FILE_BYTES);
+    const { assert!(MAX_DISCUSSION_TEXT_BYTES + FILE_RESERVE_BYTES <= MAX_DISCUSSION_FILE_BYTES) };
     assert!(Discussion::new(full.clone()).is_ok(), "exactly the budget");
     let last = full.messages.len() - 1;
     full.messages[last].text.push('x');

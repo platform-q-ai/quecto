@@ -3,6 +3,7 @@ use crate::domain::project_board::entities::discussion::{
     MAX_DISCUSSION_LINES, MAX_MESSAGE_LINE_CHARS, MAX_MESSAGE_LINES, MAX_MESSAGES,
 };
 use crate::domain::project_board::services::fixtures_tests::{at, person, task};
+use crate::domain::project_board::value_objects::timestamp::Timestamp;
 use crate::domain::project_board::value_objects::vocabulary::{DiscussionState, TaskStatus};
 
 fn message(who: &str, time: &str, text: &str) -> Message {

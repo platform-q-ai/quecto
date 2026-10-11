@@ -23,7 +23,6 @@ use super::super::entities::task::Task;
 use super::super::value_objects::rule_error::BoardRuleError;
 use super::super::value_objects::schema_error::SchemaError;
 use super::super::value_objects::slug::Slug;
-use super::super::value_objects::timestamp::Timestamp;
 use super::super::value_objects::vocabulary::DiscussionState;
 use super::claims::{after_last, within_slack};
 use super::plans::Moment;
@@ -188,7 +187,8 @@ fn not_ahead(id: &Slug, messages: &[Message], when: &Moment) -> Result<(), Board
         within_slack(&message.at, Some(&when.now))
             && within_slack(&message.at, when.latest.as_ref())
     };
-    match messages.iter().skip_while(in_time).next() {
+    let (_, ahead): (Vec<&Message>, Vec<&Message>) = messages.iter().partition(in_time);
+    match ahead.first() {
         None => Ok(()),
         Some(message) => Err(BoardRuleError::MessageAhead {
             discussion: id.clone(),
