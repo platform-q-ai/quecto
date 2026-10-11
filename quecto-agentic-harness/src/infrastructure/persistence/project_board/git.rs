@@ -10,7 +10,7 @@
 //! keeps board operations free of side effects in the checkout; it is not
 //! a security boundary against the repository's owner.
 use crate::domain::project_board::entities::claim::Identity;
-use crate::domain::project_board::value_objects::schema_error::shown_char;
+use crate::domain::project_board::value_objects::shown_text::shown_char;
 use crate::domain::redaction::{redact_secrets, redact_url_userinfo};
 use std::ffi::{OsStr, OsString};
 use std::fmt;

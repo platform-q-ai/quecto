@@ -280,7 +280,7 @@ fn a_clear_keeps_the_object_it_names_only_where_it_is_the_paths_one_object() {
     let both: Vec<&str> = objects.iter().map(String::as_str).collect();
     let refused = clear.execute("tasks/b.json", &objects[0], &keeping(&objects[0], &both));
     assert!(
-        matches!(&refused, Err(ProjectBoardError::Store(BoardStoreError::InvalidWrite(why))) if why.contains("removes")),
+        matches!(&refused, Err(ProjectBoardError::Refused(why)) if why.contains("removes") && why.contains("name another")),
         "{refused:?}"
     );
     assert_eq!(store.read().unwrap().head, before, "nothing moves");

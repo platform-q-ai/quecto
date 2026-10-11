@@ -27,7 +27,7 @@ use crate::application::project_board::ports::{
 use crate::domain::project_board::entities::claim::Identity;
 use crate::domain::project_board::entities::task::Task;
 use crate::domain::project_board::value_objects::rule_error::BoardRuleError;
-use crate::domain::project_board::value_objects::schema_error::shown_char;
+use crate::domain::project_board::value_objects::shown_text::shown_path;
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::redaction::{redact_secrets, redact_url_userinfo};
 
@@ -231,7 +231,7 @@ fn identity_json(identity: &Identity) -> Value {
 
 fn quarantined_json(file: &QuarantinedFile) -> Value {
     assert!(
-        plain_path(&file.path),
+        shown_path(&file.path),
         "a store shows every path it sets aside sanitised: {:?}",
         file.path
     );
@@ -243,13 +243,6 @@ fn quarantined_json(file: &QuarantinedFile) -> Value {
         "reason": shown(&file.reason),
         "object": file.object,
     })
-}
-
-/// Whether `path` holds only what a store shows: characters shown as they
-/// are ([`shown_char`]), the one space a store puts for a run of any
-/// other, and the `…` that marks a name it cut.
-fn plain_path(path: &str) -> bool {
-    path.chars().all(|c| shown_char(c) || c == ' ' || c == '…')
 }
 
 /// A task in the board's own field names, every field present.
