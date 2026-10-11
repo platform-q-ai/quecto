@@ -19,12 +19,15 @@ const MAX_STEPS: u32 = 10;
 #[derive(Debug)]
 pub struct SystemBoardClock {
     jitter: Mutex<StdRng>,
+    /// When the clock was made: [`BoardClock::elapsed`] counts from it.
+    origin: std::time::Instant,
 }
 
 impl Default for SystemBoardClock {
     fn default() -> Self {
         Self {
             jitter: Mutex::new(StdRng::from_entropy()),
+            origin: std::time::Instant::now(),
         }
     }
 }
@@ -35,6 +38,7 @@ impl SystemBoardClock {
     pub fn seeded(seed: u64) -> Self {
         Self {
             jitter: Mutex::new(StdRng::seed_from_u64(seed)),
+            origin: std::time::Instant::now(),
         }
     }
 
@@ -107,5 +111,9 @@ impl BoardClock for SystemBoardClock {
     /// Blocks the calling thread for [`Self::pause_for`].
     fn pause(&self, attempt: usize) {
         std::thread::sleep(self.pause_for(attempt));
+    }
+
+    fn elapsed(&self) -> Duration {
+        self.origin.elapsed()
     }
 }

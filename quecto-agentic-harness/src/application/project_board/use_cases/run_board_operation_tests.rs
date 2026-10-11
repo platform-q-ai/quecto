@@ -155,9 +155,21 @@ fn show_tells_a_task_set_aside_from_one_not_on_the_board() {
         ops.execute(&BoardRequest::Show(slug("c"))),
         Err(ProjectBoardError::NotFound(slug("c")))
     );
-    let complete = ops.execute(&BoardRequest::Complete(slug("b")));
-    assert!(
-        matches!(complete, Err(ProjectBoardError::PullRequests(_))),
-        "{complete:?}"
+    // With no pull request host, a task not on the board is answered as
+    // such before the host is.
+    assert_eq!(
+        ops.execute(&BoardRequest::Complete(slug("c"))),
+        Err(ProjectBoardError::NotFound(slug("c")))
+    );
+    assert_eq!(
+        ops.execute(&BoardRequest::Complete(slug("b"))),
+        Err(ProjectBoardError::Quarantined(slug("b")))
+    );
+    ops.execute(&ready_task("d")).unwrap();
+    assert_eq!(
+        ops.execute(&BoardRequest::Complete(slug("d"))),
+        Err(ProjectBoardError::NoPullRequestHost(
+            NoPullRequestHost::NotAPullRequestHost
+        ))
     );
 }

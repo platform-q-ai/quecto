@@ -29,11 +29,14 @@ pub fn person(name: &str) -> Identity {
 }
 
 /// A clock reading a set time, with an optional outside reference; it
-/// counts the pauses between attempts instead of waiting.
+/// counts the pauses between attempts instead of waiting, and its
+/// monotonic time moves on by `tick` each time it is read.
 pub struct SetClock {
     pub now: Mutex<Timestamp>,
     pub reference: Option<Timestamp>,
     pub pauses: Mutex<Vec<usize>>,
+    pub elapsed: Mutex<std::time::Duration>,
+    pub tick: Mutex<std::time::Duration>,
 }
 
 impl SetClock {
@@ -51,6 +54,8 @@ impl SetClock {
             now: Mutex::new(now),
             reference,
             pauses: Mutex::new(Vec::new()),
+            elapsed: Mutex::new(std::time::Duration::ZERO),
+            tick: Mutex::new(std::time::Duration::ZERO),
         })
     }
 }
@@ -73,6 +78,13 @@ impl BoardClock for SetClock {
 
     fn pause(&self, attempt: usize) {
         self.pauses.lock().unwrap().push(attempt);
+    }
+
+    fn elapsed(&self) -> std::time::Duration {
+        let mut elapsed = self.elapsed.lock().unwrap();
+        let now = *elapsed;
+        *elapsed += *self.tick.lock().unwrap();
+        now
     }
 }
 

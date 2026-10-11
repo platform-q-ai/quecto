@@ -10,6 +10,7 @@
 //! keeps board operations free of side effects in the checkout; it is not
 //! a security boundary against the repository's owner.
 use crate::domain::project_board::entities::claim::Identity;
+use crate::domain::redaction::{redact_secrets, redact_url_userinfo};
 use regex::Regex;
 use std::ffi::{OsStr, OsString};
 use std::fmt;
@@ -70,6 +71,9 @@ pub const NETWORK_TIMEOUT: Duration = Duration::from_secs(120);
 pub const SHORT_OUTPUT: usize = 64 * 1024;
 /// The most standard error kept from any call.
 pub const MAX_STDERR: usize = 16 * 1024;
+/// Standard error read past [`MAX_STDERR`] so a secret the cap would cut
+/// is still whole when it is redacted; the margin is then dropped.
+const STDERR_MARGIN: usize = 4 * 1024;
 /// The most characters of git's own message an error quotes.
 pub const MAX_QUOTED_CHARS: usize = 2 * 1024;
 /// How long an exited git's output may take to drain, past its deadline
@@ -365,7 +369,7 @@ impl Git {
             thread::spawn(move || stdin.write_all(&bytes));
         }
         let stdout = drain(child.stdout.take(), limit);
-        let stderr = drain(child.stderr.take(), MAX_STDERR);
+        let stderr = drain(child.stderr.take(), MAX_STDERR + STDERR_MARGIN);
         let deadline = Instant::now() + timeout;
         let command_line = || args.join(" ");
         // Watch for git's exit without reaping it, so its group cannot be
@@ -406,11 +410,12 @@ impl Git {
                 limit,
             });
         }
-        debug_assert!(stdout.bytes.len() <= limit && stderr.bytes.len() <= MAX_STDERR);
+        let stderr = redacted_stderr(&stderr.bytes);
+        debug_assert!(stdout.bytes.len() <= limit && stderr.len() <= MAX_STDERR);
         Ok(Output {
             status,
             stdout: stdout.bytes,
-            stderr: stderr.bytes,
+            stderr,
         })
     }
 }
@@ -505,13 +510,27 @@ fn recorded_identity(ident: &str) -> Option<(String, String)> {
     Some((name.to_string(), email.to_string()))
 }
 
+/// git's standard error with credentials and secret-shaped spans redacted
+/// while whole, then cut to [`MAX_STDERR`] bytes (at a character's edge):
+/// a secret the cap would cut is never kept in part.
+pub(crate) fn redacted_stderr(bytes: &[u8]) -> Vec<u8> {
+    let text = String::from_utf8_lossy(bytes);
+    let redacted = redact_secrets(&redact_url_userinfo(&text));
+    let mut end = redacted.len().min(MAX_STDERR);
+    while !redacted.is_char_boundary(end) {
+        end -= 1;
+    }
+    redacted.as_bytes()[..end].to_vec()
+}
+
 /// git's message as text fit to quote: escape sequences dropped; letters,
 /// marks, numbers, punctuation and symbols kept; anything else (spaces,
 /// controls, format characters such as bidirectional overrides, zero-width
 /// and tag characters, unassigned code points) one space between them;
 /// at most [`MAX_QUOTED_CHARS`] characters.
 pub fn quoted(bytes: &[u8]) -> String {
-    let text = String::from_utf8_lossy(bytes);
+    // Redacted whole, before the character cap could cut a secret.
+    let text = redact_secrets(&redact_url_userinfo(&String::from_utf8_lossy(bytes)));
     let mut chars = text.chars().peekable();
     let (mut out, mut count, mut gap) = (String::new(), 0usize, false);
     while let Some(c) = chars.next() {

@@ -234,7 +234,7 @@ fn anything_but_the_ops_own_fields_of_their_own_types_is_refused() {
             "path",
         ),
         (
-            json!({"op": "clear_set_aside", "path": "x".repeat(1025), "object": "a".repeat(40)}),
+            json!({"op": "clear_set_aside", "path": "x".repeat(9 * 1024 + 1), "object": "a".repeat(40)}),
             "path",
         ),
         (
@@ -256,6 +256,12 @@ fn anything_but_the_ops_own_fields_of_their_own_types_is_refused() {
             json!({"op": "clear_set_aside", "path": "tasks/x.json", "object": "a".repeat(40),
                    "repeated": {"tasks/y.json": {"keep": "HEAD", "seen": ["b".repeat(40)]}}}),
             "repeated/tasks/y.json/keep",
+        ),
+        (
+            // Clearing the copy it keeps: a contradiction, refused.
+            json!({"op": "clear_set_aside", "path": "tasks/x.json", "object": "a".repeat(40),
+                   "repeated": {"tasks/x.json": {"keep": "a".repeat(40), "seen": ["a".repeat(40), "b".repeat(40)]}}}),
+            "repeated/tasks/x.json/keep",
         ),
     ] {
         assert_eq!(refused(value.clone()).field, field, "{value}");
