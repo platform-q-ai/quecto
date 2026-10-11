@@ -48,25 +48,46 @@ impl OverRepository for ReadBoardProjection {
 }
 
 fn project(transaction: &dyn BoardTransaction) -> Result<BoardProjection, BoardError> {
-    let _ = (
-        item as fn(&TaskRow, &[FileRow]) -> ItemProjection,
-        evidence as fn(&DictRow) -> EvidenceProjection,
-    );
-    let _ = (
-        members,
-        budget as fn(UsageStanding) -> _,
-        TASK_BOARD_CAPACITY,
-        HELD_CLAIM,
-    );
-    let _: Option<RunProjection> = None;
-    let _ = read_task(transaction, &Value::Null);
+    let revision = transaction.event_generation()?;
+    let row = transaction.run_row()?;
+    let column = |name: &str| {
+        row.as_ref()
+            .and_then(|row| row.get(name))
+            .cloned()
+            .unwrap_or(Value::Null)
+    };
+    let (coordinator, integrator) = (column("coordinator"), column("integrator"));
+    let files = transaction.file_page(0, transaction.file_count()?)?;
+    let tasks = transaction
+        .task_ids(0, TASK_BOARD_CAPACITY)?
+        .iter()
+        .map(|id| read_task(transaction, id))
+        .collect::<Result<Vec<_>, _>>()?;
+    let members = members(transaction, &tasks, &coordinator, &integrator)?;
+    let run = match row.is_some() {
+        true => Some(RunProjection {
+            id: column("id"),
+            goal: column("goal"),
+            status: column("status"),
+            outcome: column("outcome"),
+            outcome_reason: column("outcome_reason"),
+            generation: transaction.control_generation()?,
+            criteria: column("criteria"),
+            member_limit: column("member_limit"),
+            deadline: column("deadline"),
+            budget: budget(transaction.usage_standing()?)?,
+            coordinator: coordinator.clone(),
+            integrator,
+        }),
+        false => None,
+    };
     Ok(BoardProjection {
-        revision: transaction.event_generation()?,
-        run: None,
-        items: Vec::new(),
-        members: Vec::new(),
-        evidence: Vec::new(),
-        totals: counts(transaction, None)?,
+        revision,
+        run,
+        items: tasks.iter().map(|task| item(task, &files)).collect(),
+        members,
+        evidence: transaction.evidence_rows()?.iter().map(evidence).collect(),
+        totals: counts(transaction, coordinator.as_str())?,
     })
 }
 
