@@ -153,6 +153,7 @@ const USE_CASES: &[&str] = &[
     "TrustConfigOverlay",
     "UnblockTask",
     "UninstallAuthorityService",
+    "UpdateDraftTask",
     "VerifyTask",
     "WebFetchUseCase",
     "WithdrawMessage",

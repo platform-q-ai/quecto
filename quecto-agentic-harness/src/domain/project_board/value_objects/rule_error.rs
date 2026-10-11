@@ -40,6 +40,11 @@ pub enum BoardRuleError {
     PrNotLinked(u64),
     /// The task already links this pull request.
     PrAlreadyLinked(u64),
+    /// Only a draft is edited in place; a task past its draft changes
+    /// through its moves.
+    NotDraft(TaskStatus),
+    /// The edit changes nothing.
+    NoEdit,
     /// The result would break the task schema.
     Invalid(SchemaError),
 }
@@ -74,6 +79,12 @@ impl fmt::Display for BoardRuleError {
             ),
             Self::PrNotLinked(pr) => write!(f, "the task does not link pull request {pr}"),
             Self::PrAlreadyLinked(pr) => write!(f, "the task already links pull request {pr}"),
+            Self::NotDraft(status) => write!(
+                f,
+                "a {} task is not a draft: only drafts are edited",
+                status.as_str()
+            ),
+            Self::NoEdit => f.write_str("the edit changes nothing"),
             Self::Invalid(error) => write!(f, "invalid task: {error}"),
         }
     }
