@@ -672,3 +672,67 @@ fn serde_float_parsing_would_change_python_equal() {
          caution on `call` may be relaxed"
     );
 }
+
+/// L1 (#2487 round 2): the supervising session's origin, which writes no
+/// event-log record, reaches the two projection reads and nothing else.
+#[test]
+fn the_supervisor_origin_reaches_the_projection_reads_only() {
+    use super::{CallOrigin, call_as};
+    let (_directory, handles) = board(100.0);
+    running(&handles);
+    for method in ["_board", "_board_revision"] {
+        assert!(
+            call_as(
+                &handles,
+                "supervisor",
+                method,
+                json!([]),
+                CallOrigin::Supervisor
+            )
+            .is_ok(),
+            "{method}"
+        );
+    }
+    for method in ["_status", "summary", "_lose_coordinator", "no_such_method"] {
+        let refused = call_as(
+            &handles,
+            "supervisor",
+            method,
+            json!([]),
+            CallOrigin::Supervisor,
+        )
+        .unwrap_err();
+        assert_eq!(
+            (refused.kind(), refused.message()),
+            (
+                RefusalKind::Calling,
+                format!(
+                    "the supervising session reads only _board and _board_revision, not {method}"
+                )
+                .as_str()
+            )
+        );
+    }
+}
+
+/// Round 3 L6 (#2487): a call the supervisor's origin may not make is
+/// still recorded, as every refused call is.
+#[test]
+fn a_refused_supervisor_call_is_recorded() {
+    use super::{CallOrigin, call_as};
+    let log = captured(1, |handles| {
+        call_as(
+            handles,
+            "supervisor",
+            "_status",
+            json!([]),
+            CallOrigin::Supervisor,
+        )
+        .unwrap_err();
+    });
+    assert!(
+        log.lines()
+            .any(|line| line.contains(TELEMETRY_TARGET) && line.contains("op=\"_status\"")),
+        "{log}"
+    );
+}

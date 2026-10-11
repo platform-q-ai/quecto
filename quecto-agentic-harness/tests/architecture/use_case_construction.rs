@@ -99,6 +99,7 @@ const USE_CASES: &[&str] = &[
     "ReadRequestAdmission",
     "ReadRunEvents",
     "ReadRunSnapshot",
+    "ReadBoardProjection",
     "ReadRunStatus",
     "ReadRunSummary",
     "ReadRunTotals",

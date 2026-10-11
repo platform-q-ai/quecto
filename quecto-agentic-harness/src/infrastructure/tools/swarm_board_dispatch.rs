@@ -17,10 +17,9 @@
 //! (#2270) and the harness's membership methods `_admit`, `_activate`,
 //! `_record_launch`, `_release_unlaunched` and `_socket` (#2271); later
 //! slices add methods, and `SwarmContext` and `HostedStore` call it
-//! through `swarm_bridge::SwarmBoard` (#2278). Every
-//! membership argument (member, reservation, pid, start time, socket)
-//! reaches the use case as the JSON value passed (#2271 round-1 review
-//! M1): Python binds each untyped, so the store binds it as Python's
+//! through `swarm_bridge::SwarmBoard` (#2278). Every membership argument
+//! (member, reservation, pid, start time, socket) reaches the use case as
+//! the JSON value passed (#2271 round-1 review M1): Python binds each untyped, so the store binds it as Python's
 //! `sqlite3` does and the board compares it by Python's `==`; no type is
 //! refused here. `create_run`, `bootstrap_run` and `bootstrap_join` (the
 //! transactional halves of `create` and `_bootstrap`, and `_bootstrap`'s
@@ -30,18 +29,16 @@
 //! method is listed on [`method`].
 //!
 //! The summaries keep Python's order: `create` commits and then reads the
-//! creator's summary, which can still refuse (a created run answered with
-//! a refusal); `_join` and `_bootstrap` end every branch of the join with
-//! the coordinator's summary after its writes commit, the already-live
-//! branch (which writes nothing) included, so its gate can refuse a
-//! coordinator that is nobody.
+//! creator's summary, which can still refuse; `_join` and `_bootstrap` end
+//! every branch of the join with the coordinator's summary after its
+//! writes commit (the already-live branch too), so its gate can refuse a
+//! coordinator that is nobody. The supervising session's origin reaches
+//! the projection reads only (`records::origin_refusal`).
 //!
 //! `JoinRun` runs `AdmitMember`'s and `ActivateMember`'s work by a
 //! deliberate decision (#2271 round-1 review L3): Python's `join_process`
-//! calls those two `Workbench` methods, so the use case sequences them (as
-//! shared functions over its own repository, so a metered call measures
-//! all of it, #2303), and the dispatcher still calls one use case per
-//! method.
+//! calls both, so the use case sequences them (shared functions over its
+//! own repository, all metered, #2303); the dispatcher calls one use case.
 //!
 //! Each call leaves one `tracing` record on [`TELEMETRY_TARGET`] (DEBUG
 //! for a read-only method, unless the token budget warned or paused the
@@ -99,6 +96,7 @@ pub struct SwarmBoardHandles {
     pub create_run: Arc<CreateRun>,
     pub bootstrap_run: Arc<BootstrapRun>,
     pub read_run_status: Arc<ReadRunStatus>,
+    pub read_board_projection: Arc<crate::application::swarm::use_cases::ReadBoardProjection>,
     /// `_event_cursor` (#2279): Rust-only, the structured ops' before and
     /// after read.
     pub read_event_cursor: Arc<ReadEventCursor>,
@@ -207,6 +205,8 @@ impl std::fmt::Debug for SwarmBoardHandles {
 /// Every board method this dispatcher serves, by name (#2303).
 pub const BOARD_OPS: &[&str] = &[
     "_status",
+    "_board",
+    "_board_revision",
     "_event_cursor",
     "_run_totals",
     "_snapshot",
@@ -335,8 +335,10 @@ pub fn call_deciding(
     // What a binding refusal found wrong (#2341), read only for a call the
     // binding refuses, or, for a member-facing op the board may refuse as
     // invalid, its type mismatches before binding takes the arguments.
-    let (answer, faults) = match known {
-        Some(known) => match binding::refusal(known, known.parameters(), &args) {
+    // A call its origin may not make is refused, and recorded, as any.
+    let (answer, faults) = match (records::origin_refusal(origin, known, method), known) {
+        (Some(refusal), _) => (Err(refusal), None),
+        (None, Some(known)) => match binding::refusal(known, known.parameters(), &args) {
             Some(refusal) => (Err(refusal), Some(binding::faults(known, &args))),
             None => {
                 let faults = binding::mistyped(known, &args);
@@ -348,7 +350,7 @@ pub fn call_deciding(
                 (served, Some(faults))
             }
         },
-        None => (
+        (None, None) => (
             Err(BoardError::new(
                 RefusalKind::Calling,
                 format!("swarm board has no method {method}"),
@@ -454,6 +456,8 @@ fn serve(
     let over = over.as_ref();
     match method {
         Method::Status => host::run_status(&serving(&*handles.read_run_status, over)),
+        Method::Board => host::board(&serving(&*handles.read_board_projection, over)),
+        Method::BoardRevision => host::revision(&serving(&*handles.read_board_projection, over)),
         Method::EventCursor => host::event_cursor(&serving(&*handles.read_event_cursor, over)),
         Method::Snapshot => host::run_snapshot(&serving(&*handles.read_run_snapshot, over), member),
         Method::Watch => host::run_watch(

@@ -23,12 +23,12 @@ use crate::application::swarm::use_cases::{
     BootstrapMember, BootstrapRun, ClaimNotifications, ClaimTask, CloseRun, CompleteRun,
     ConfigureUsageBudget, ConfirmMemberDead, CreateRun, CreateTask, ExtendRunDeadline, JoinMember,
     JoinRun, ListFileOwners, ListTasks, LoseCoordinator, PauseRun, QuarantineMember,
-    ReadControlStatus, ReadEventCursor, ReadInbox, ReadRequestAdmission, ReadRunEvents,
-    ReadRunSnapshot, ReadRunStatus, ReadRunSummary, ReadRunTotals, ReadTask, ReadUsageReport,
-    RecordEvidence, RecordMemberLaunch, RecordRequestUsage, RecoverTask, RegisterMemberSocket,
-    ReleaseFiles, ReleaseTask, ReleaseUnlaunchedMember, ReserveFiles, ResumeRun,
-    ResumeRunExternally, RevalidateTask, RevokeTask, SendMessage, SetTaskDependencies, StopRun,
-    SubmitTask, UnblockTask, VerifyTask, WithdrawMessage,
+    ReadBoardProjection, ReadControlStatus, ReadEventCursor, ReadInbox, ReadRequestAdmission,
+    ReadRunEvents, ReadRunSnapshot, ReadRunStatus, ReadRunSummary, ReadRunTotals, ReadTask,
+    ReadUsageReport, RecordEvidence, RecordMemberLaunch, RecordRequestUsage, RecoverTask,
+    RegisterMemberSocket, ReleaseFiles, ReleaseTask, ReleaseUnlaunchedMember, ReserveFiles,
+    ResumeRun, ResumeRunExternally, RevalidateTask, RevokeTask, SendMessage, SetTaskDependencies,
+    StopRun, SubmitTask, UnblockTask, VerifyTask, WithdrawMessage,
 };
 use crate::infrastructure::persistence::audit_log::AuditLog;
 use crate::infrastructure::persistence::board_op_log::EventLogBoardOps;
@@ -116,6 +116,7 @@ pub fn build_swarm_board_handles_with(
             ids.clone(),
         )),
         read_run_status: Arc::new(ReadRunStatus::new(repository.clone())),
+        read_board_projection: Arc::new(ReadBoardProjection::new(repository.clone())),
         read_event_cursor: Arc::new(ReadEventCursor::new(repository.clone())),
         read_run_snapshot: Arc::new(ReadRunSnapshot::new(repository.clone(), clock.clone())),
         read_run_totals: Arc::new(ReadRunTotals::new(repository.clone(), clock.clone())),

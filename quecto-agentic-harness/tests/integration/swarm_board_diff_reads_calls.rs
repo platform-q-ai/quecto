@@ -340,9 +340,16 @@ const TEST_ONLY: [&str; 4] = ["create_run", "bootstrap_run", "bootstrap_join", "
 
 /// Dispatcher methods Python's `Workbench` has no counterpart of: the
 /// structured ops' event cursor (#2279), read around a member's call, the
-/// run's totals the coordinator's harness reads at settle (#2313), and the
-/// run watch's tick (#2338).
-const RUST_ONLY: [&str; 3] = ["_event_cursor", "_run_totals", "_watch"];
+/// run's totals the coordinator's harness reads at settle (#2313), the
+/// run watch's tick (#2338), and the supervising session's board
+/// projection and its revision (#2478).
+const RUST_ONLY: [&str; 5] = [
+    "_board",
+    "_board_revision",
+    "_event_cursor",
+    "_run_totals",
+    "_watch",
+];
 
 /// The parameter names of Python's `Workbench.<method>` (`self` left out)
 /// for each method [`RUST_ONLY_ARGUMENTS`] names: frozen from the Python

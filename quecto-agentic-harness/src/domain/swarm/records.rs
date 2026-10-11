@@ -21,6 +21,15 @@ macro_rules! status_text {
             pub fn as_str(&self) -> &str {
                 &self.0
             }
+
+            /// `text` when it is one of the statuses the board writes:
+            /// an allowlist, so an edited value is never taken for one.
+            pub fn known(text: &str) -> Option<Self> {
+                match text {
+                    $($text => Some(Self::$constant),)+
+                    _ => None,
+                }
+            }
         }
     };
 }
