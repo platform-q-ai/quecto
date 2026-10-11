@@ -98,7 +98,9 @@ pub fn is_live(claim: &Claim, now: &Timestamp) -> bool {
 /// `latest` time an outside reference allows (`None`: no reference, and
 /// nothing is refused): no later than that time plus
 /// [`STAMP_SLACK_SECONDS`], the room the strictly-forward stamp needs.
-/// The bound is inclusive, as the clock's own is.
+/// The bound is inclusive, as the clock's own is. A latest time so late
+/// that adding the slack overflows what the board can spell tightens the
+/// bound to the latest time itself.
 pub fn within_slack(updated: &Timestamp, latest: Option<&Timestamp>) -> bool {
     match latest {
         None => true,
