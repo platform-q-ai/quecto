@@ -9,7 +9,7 @@ use crate::domain::project_board::value_objects::timestamp::Timestamp;
 use crate::domain::project_board::value_objects::vocabulary::TaskStatus;
 use crate::infrastructure::persistence::project_board::markdown::{
     Body, BodyShape, CellKind, Column, Limits, MarkdownError, Section, SectionShape, Shape,
-    blocks_of, parse, text_of,
+    blocks_of, text_of,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -237,6 +237,18 @@ impl Seeded {
         cell
     }
 
+    /// A code cell: the ASCII cell's characters and more punctuation, now
+    /// and then one a code cell refuses.
+    fn code(&mut self) -> String {
+        const CODE: &[&str] = &["a", "Z", "0", "<", ">", "[", "]", "*", "$", "&", "~", "!"];
+        let mut cell = self.ascii();
+        cell.extend((0..self.below(4)).map(|_| self.pick(CODE)));
+        if self.below(40) == 0 {
+            cell.push_str(&self.pick(&["`", "\\", "|"]));
+        }
+        cell
+    }
+
     fn texts(&mut self) -> Vec<String> {
         (0..1 + self.below(3)).map(|_| self.line()).collect()
     }
@@ -265,6 +277,7 @@ impl Seeded {
         match kind {
             CellKind::Text => self.line(),
             CellKind::Ascii => self.ascii(),
+            CellKind::Code => self.code(),
         }
     }
 

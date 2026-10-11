@@ -6,7 +6,11 @@
 use super::chars::check_line;
 use super::prose::{LANGUAGE_RULE, language, unescaped};
 use super::{Block, Body, BodyShape, Column, Document, MarkdownError, Section, Shape};
-use super::{check_shape, write};
+use super::{cell_value, check_shape, write};
+
+/// The longest marker line: `<!-- quecto-`, a kind of at most 24, then
+/// ` schema=`, at most ten digits and ` -->`.
+const MOST_MARKER_BYTES: usize = 12 + 24 + 8 + 10 + 4;
 
 /// The document `bytes` holds, only if writing it gives `bytes` again.
 ///
@@ -56,6 +60,17 @@ pub fn parse(bytes: &[u8], shape: &Shape<'_>) -> Result<Document, MarkdownError>
         true => Ok(document),
         false => Err(MarkdownError::NotCanonical),
     }
+}
+
+/// The schema the marker of `kind` on the first line of `bytes` names,
+/// read from that line alone (whatever follows it), so a file a newer
+/// schema wrote is told apart before anything else in it is read.
+pub fn schema_of(bytes: &[u8], kind: &str) -> Option<u32> {
+    let end = bytes
+        .iter()
+        .take(MOST_MARKER_BYTES + 1)
+        .position(|b| *b == b'\n')?;
+    marker(std::str::from_utf8(&bytes[..end]).ok()?, kind)
 }
 
 /// The schema a marker line of `kind` names, written without a leading
@@ -146,12 +161,21 @@ impl<'a> Reader<'a> {
         if let (Some(""), Some("| Field | Value |")) = (self.peek(0), self.peek(1)) {
             self.at += 2;
             self.expect("|---|---|", "the field table's separator")?;
-            for row in self.rows(2)? {
+            let first = self.line();
+            for (index, row) in self.rows(2)?.into_iter().enumerate() {
                 debug_assert_eq!(row.len(), 2, "rows(2) reads rows of two cells");
                 // A row of another width is refused by `rows`; were one
                 // let through, the file would not be the one written.
-                if let [name, value] = row.as_slice() {
-                    fields.push((name.clone(), value.clone()));
+                let mut cells = row.into_iter();
+                if let (Some(name), Some(value), None) = (cells.next(), cells.next(), cells.next())
+                {
+                    // An unknown field's cell is kept as read: writing
+                    // refuses the field.
+                    let value = match shape.fields.iter().find(|field| field.name == name) {
+                        Some(field) => cell_value(value, field.cell, first + index)?,
+                        None => value,
+                    };
+                    fields.push((name, value));
                 }
             }
         }
@@ -209,7 +233,16 @@ impl<'a> Reader<'a> {
         self.expect(&header, "the table's header")?;
         let separator = format!("|{}", "---|".repeat(columns.len()));
         self.expect(&separator, "the table's separator")?;
-        self.rows(columns.len())
+        let first = self.line();
+        let rows = self.rows(columns.len())?.into_iter().enumerate();
+        rows.map(|(index, row)| {
+            debug_assert_eq!(row.len(), columns.len(), "rows reads rows as wide as asked");
+            row.into_iter()
+                .zip(columns)
+                .map(|(read, column)| cell_value(read, column.cell, first + index))
+                .collect()
+        })
+        .collect()
     }
 
     /// Prose: blocks one blank line apart, up to the blank line before the
