@@ -40,7 +40,15 @@ use crate::infrastructure::tools::subagent_registry::SubagentRegistry;
 pub(super) const HINT_INTERVAL: Duration = Duration::from_secs(1);
 const COMMAND: &str = "get_swarm_board";
 const HINT: &str = "swarm_board_changed";
-const MALFORMED: &str = "get_swarm_board takes string fields: id, swarm and agent_id";
+pub(super) const MALFORMED: &str = "get_swarm_board takes string fields: id, swarm and agent_id";
+/// The most `get_swarm_board` requests one connection has in flight.
+const IN_FLIGHT: usize = 2;
+const BUSY: &str = "get_swarm_board is busy: at most 2 requests in flight per connection";
+
+/// One connection's board requests in flight (#2488 round 2 M3).
+pub(super) fn board_requests() -> Arc<tokio::sync::Semaphore> {
+    Arc::new(tokio::sync::Semaphore::new(IN_FLIGHT))
+}
 
 /// The board view's own handle on the session's boards (#2488 review M5):
 /// the use case, once composition has installed it; `None` before, or in a
@@ -66,6 +74,19 @@ impl SwarmBoards {
 struct Tagged<'a> {
     #[serde(rename = "type", borrow)]
     kind: Cow<'a, str>,
+    /// Read for a refusal's `id`, when it is a string.
+    #[serde(default, deserialize_with = "string_or_none")]
+    id: Option<String>,
+}
+
+/// A string, or `None` for anything else.
+fn string_or_none<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<String>, D::Error> {
+    Ok(match Value::deserialize(deserializer)? {
+        Value::String(text) => Some(text),
+        _ => None,
+    })
 }
 
 #[derive(Deserialize)]
@@ -81,6 +102,8 @@ pub(super) struct BoardViewCtx<'a> {
     pub(super) clients: &'a ClientToolRegistry,
     pub(super) subagents: &'a Option<SubagentRegistry>,
     pub(super) client_id: u64,
+    /// This connection's board requests in flight ([`board_requests`]).
+    pub(super) in_flight: &'a Arc<tokio::sync::Semaphore>,
 }
 
 /// A connection's line, taken here when it is a `get_swarm_board`: `true`
@@ -93,17 +116,33 @@ pub(super) fn intercept(line: &str, ctx: BoardViewCtx<'_>) -> bool {
     }
     let clients = ctx.clients.clone();
     let client_id = ctx.client_id;
-    let Ok(Command {
-        id,
-        swarm,
-        agent_id,
-    }) = serde_json::from_str::<Command>(line)
+    // One parse, whose depth the reader bounds: what fails it is refused
+    // (round 2 M1), and the value parsed is what is forwarded.
+    let parsed = serde_json::from_str::<Value>(line).ok();
+    let command = parsed
+        .as_ref()
+        .and_then(|value| Command::deserialize(value).ok());
+    let (
+        Some(command_value),
+        Some(Command {
+            id,
+            swarm,
+            agent_id,
+        }),
+    ) = (parsed, command)
     else {
-        let id = serde_json::from_str::<Value>(line)
+        let id = serde_json::from_str::<Tagged<'_>>(line)
             .ok()
-            .and_then(|command| command.get("id").and_then(Value::as_str).map(str::to_owned));
+            .and_then(|tagged| tagged.id);
         tokio::spawn(async move {
             let event = AgentEvent::err(id.as_deref(), COMMAND, MALFORMED);
+            write(&clients, client_id, id.as_deref(), &event).await;
+        });
+        return true;
+    };
+    let Ok(permit) = ctx.in_flight.clone().try_acquire_owned() else {
+        tokio::spawn(async move {
+            let event = AgentEvent::err(id.as_deref(), COMMAND, BUSY);
             write(&clients, client_id, id.as_deref(), &event).await;
         });
         return true;
@@ -111,16 +150,16 @@ pub(super) fn intercept(line: &str, ctx: BoardViewCtx<'_>) -> bool {
     match agent_id {
         Some(agent_id) => {
             let subagents = ctx.subagents.clone();
-            let command: Value = serde_json::from_str(line).expect("a command that parsed");
             tokio::spawn(async move {
                 let event = super::uds_busy_subagents::forward_child_command(
                     &subagents,
                     id.as_deref(),
                     &agent_id,
-                    command,
+                    command_value,
                 )
                 .await;
                 write(&clients, client_id, id.as_deref(), &event).await;
+                drop(permit);
             });
         }
         None => {
@@ -128,6 +167,7 @@ pub(super) fn intercept(line: &str, ctx: BoardViewCtx<'_>) -> bool {
             tokio::spawn(async move {
                 let event = answer(boards.as_deref(), id.as_deref(), swarm.as_deref()).await;
                 write(&clients, client_id, id.as_deref(), &event).await;
+                drop(permit);
             });
         }
     }
@@ -156,19 +196,22 @@ pub(super) async fn answer(
         return AgentEvent::err(id, COMMAND, "swarm boards are unavailable in this harness");
     };
     match boards.board(swarm).await {
-        Ok(snapshot) => {
-            let Value::Object(board) = snapshot.into_value() else {
-                unreachable!("a board snapshot is a JSON object by construction");
-            };
-            assert!(
-                !board.contains_key("swarm"),
-                "the board's projection names no swarm of its own"
-            );
-            let mut data = Map::with_capacity(board.len() + 1);
-            data.insert("swarm".into(), Value::from(swarm));
-            data.extend(board);
-            AgentEvent::ok(id, COMMAND, Some(Value::Object(data)))
-        }
+        Ok(snapshot) => match snapshot.into_value() {
+            // An object by construction, naming no swarm of its own; any
+            // other answer is refused, never a panic on a client's path.
+            Value::Object(board) if !board.contains_key("swarm") => {
+                let mut data = Map::with_capacity(board.len() + 1);
+                data.insert("swarm".into(), Value::from(swarm));
+                data.extend(board);
+                AgentEvent::ok(id, COMMAND, Some(Value::Object(data)))
+            }
+            Value::Object(_) => AgentEvent::err(
+                id,
+                COMMAND,
+                "swarm board answer malformed: it names a swarm of its own",
+            ),
+            _ => AgentEvent::err(id, COMMAND, "swarm board answer malformed: not an object"),
+        },
         Err(refusal) => AgentEvent::err(id, COMMAND, refusal.to_string()),
     }
 }
@@ -176,31 +219,69 @@ pub(super) async fn answer(
 /// The boards seen, by swarm: each one's last revision and run.
 pub(super) type Seen = BTreeMap<String, HostedBoardRevision>;
 
-/// What the poll has seen, kept by the poll and read by the accept loop to
-/// tell each new connection (#2488 review M1).
+/// What the poll has seen, kept by the poll and told to each new
+/// connection (#2488 review M1). One lock orders both (round 2 M2): the
+/// poll sends a tick's hints and keeps what it saw under it, and a
+/// connection subscribes and reads what was seen under it, so it is told
+/// each revision once and in order.
 #[derive(Clone, Default)]
 pub(crate) struct BoardHints(Arc<Mutex<Seen>>);
 
 impl BoardHints {
     /// One `swarm_board_changed` line per board already seen, ended by a
-    /// newline, for a connection just accepted.
+    /// newline.
+    #[cfg(test)]
     pub(crate) fn connect_lines(&self) -> Vec<String> {
-        self.seen()
-            .iter()
-            .map(|(swarm, revision)| changed(swarm, revision) + "\n")
-            .collect()
+        lines_of(&self.lock())
     }
 
-    fn seen(&self) -> Seen {
-        self.0
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .clone()
+    /// A new connection's broadcast receiver and the lines it is told on
+    /// connect, taken together: every hint after these reaches it.
+    pub(crate) fn subscribe(
+        &self,
+        broadcast_tx: &tokio::sync::broadcast::Sender<String>,
+    ) -> (tokio::sync::broadcast::Receiver<String>, Vec<String>) {
+        let seen = self.lock();
+        (broadcast_tx.subscribe(), lines_of(&seen))
     }
 
-    fn keep(&self, seen: Seen) {
-        *self.0.lock().unwrap_or_else(PoisonError::into_inner) = seen;
+    /// One tick: the hints `tick` makes from what was seen, sent, and what
+    /// it saw kept, under the lock. With no receiver (the last client left
+    /// mid-tick) nothing is sent or kept; a send that fails is that race,
+    /// and is let go.
+    pub(super) fn publish(
+        &self,
+        broadcast_tx: &tokio::sync::broadcast::Sender<String>,
+        tick: impl FnOnce(&Seen) -> (Vec<String>, Seen),
+    ) {
+        let mut seen = self.lock();
+        match broadcast_tx.receiver_count() {
+            0 => {}
+            _ => {
+                let (lines, now) = tick(&seen);
+                for line in lines {
+                    let _ = broadcast_tx.send(line);
+                }
+                *seen = now;
+            }
+        }
     }
+
+    /// Forgets what was seen (round 2 L5): no client is connected, so the
+    /// next one is told only what the poll sees from then on.
+    fn forget(&self) {
+        self.lock().clear();
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, Seen> {
+        self.0.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
+fn lines_of(seen: &Seen) -> Vec<String> {
+    seen.iter()
+        .map(|(swarm, revision)| changed(swarm, revision) + "\n")
+        .collect()
 }
 
 fn changed(swarm: &str, revision: &HostedBoardRevision) -> String {
@@ -263,10 +344,9 @@ pub(super) fn changes(
 }
 
 /// Polls the session's boards every [`HINT_INTERVAL`] while a client is
-/// connected and broadcasts each change. A tick that finds no receiver
-/// (the last client left mid-tick) sends nothing and takes nothing as seen;
-/// a send that fails is the same race and is let go. The poll ends only
-/// with its owner ([`AbortOnDrop`], the accept loop).
+/// connected and publishes each change ([`BoardHints::publish`]); with no
+/// client connected, what was seen is forgotten. The poll ends only with
+/// its owner ([`AbortOnDrop`], the accept loop).
 pub(super) fn spawn_change_hints(
     boards: SwarmBoards,
     hints: BoardHints,
@@ -280,18 +360,14 @@ pub(super) fn spawn_change_hints(
             ticks.tick().await;
             let read = match (live_clients.load(Ordering::SeqCst), boards.current()) {
                 (1.., Some(read)) => read,
-                (0, _) | (_, None) => continue,
-            };
-            let (lines, now) = changes(&hints.seen(), read.sightings().await);
-            match broadcast_tx.receiver_count() {
-                0 => continue,
-                _ => {
-                    for line in lines {
-                        let _ = broadcast_tx.send(line);
-                    }
-                    hints.keep(now);
+                (0, _) => {
+                    hints.forget();
+                    continue;
                 }
-            }
+                (_, None) => continue,
+            };
+            let sightings = read.sightings().await;
+            hints.publish(&broadcast_tx, |seen| changes(seen, sightings));
         }
     })
 }

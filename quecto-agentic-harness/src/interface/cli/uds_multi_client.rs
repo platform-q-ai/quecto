@@ -135,6 +135,7 @@ pub(crate) async fn handle_client(args: ClientHandlerArgs) {
     // speaking neither framing is an explicit version mismatch and the
     // connection closes — never a silent misparse or a hang.
     let mut role = ConnectionRole::default();
+    let board_requests = super::super::uds_swarm_board::board_requests();
     loop {
         let line = match read_line(&mut reader, &wire_mode, client_id).await {
             Read::Line(line) => line,
@@ -181,6 +182,7 @@ pub(crate) async fn handle_client(args: ClientHandlerArgs) {
                 clients: &client_tool_registry,
                 subagents: &subagent_registry,
                 client_id,
+                in_flight: &board_requests,
             },
         ) {
             continue;

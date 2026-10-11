@@ -55,7 +55,17 @@ impl ReadSwarmBoard {
                     SwarmBoardRefusal::Unreadable(unreadable.to_string())
                 }
             })?;
-        assert_eq!(record.environment_ref, swarm, "a ref resolves to itself");
+        // A ref resolves to itself; any other record is refused, never a
+        // panic on a client's path.
+        match record.environment_ref == swarm {
+            true => {}
+            false => {
+                return Err(SwarmBoardRefusal::Unreadable(format!(
+                    "the registry answered {} for {swarm}",
+                    record.environment_ref
+                )));
+            }
+        }
         if !is_own(&record, self.registry.session()) {
             return Err(SwarmBoardRefusal::OtherSession(swarm.to_owned()));
         }

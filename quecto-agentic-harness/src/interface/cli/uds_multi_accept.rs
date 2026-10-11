@@ -113,7 +113,9 @@ pub(super) fn spawn_accept_loop(args: AcceptLoopArgs) -> tokio::task::JoinHandle
                         client_id,
                     );
 
-                    let broadcast_rx = broadcast_tx.subscribe();
+                    // Subscribed with what the board hints have seen,
+                    // under one lock (#2488 round 2 M2).
+                    let (broadcast_rx, board_lines) = board_hints.subscribe(&broadcast_tx);
                     let workspace_line = super::protocol::AgentEvent::Workspace {
                         path: workspace_path.display().to_string(),
                     }
@@ -172,7 +174,7 @@ pub(super) fn spawn_accept_loop(args: AcceptLoopArgs) -> tokio::task::JoinHandle
                         }
                         // Every board already seen (#2488 review M1): the
                         // client is subscribed, so later moves follow.
-                        for line in board_hints.connect_lines() {
+                        for line in board_lines {
                             if let Err(e) = stream.write_all(line.as_bytes()).await {
                                 tracing::debug!("connect-time board hint not delivered: {e}");
                             }

@@ -541,34 +541,35 @@ async fn the_reader_is_not_held_while_a_board_is_read() {
 }
 
 /// Round 2 M1 (#2488): a `get_swarm_board` nested deeper than the JSON
-/// reader goes is refused as malformed (or left to the dispatch, which
-/// refuses it), never a panic on the connection's reader.
+/// reader goes (in a field the command ignores) is refused as malformed,
+/// never a panic on the connection's reader, whichever route it names.
 #[tokio::test]
 async fn a_deeply_nested_get_swarm_board_does_not_panic_the_reader() {
     let (clients, mut rx) = client();
     let boards = view(read_over(Arc::new(OneBoard)));
     let none: Option<SubagentRegistry> = None;
     let in_flight = super::board_requests();
-    let deep = format!(
-        r#"{{"type":"get_swarm_board","id":"b6","swarm":"C1","extra":{}{}}}"#,
-        "[".repeat(200),
-        "]".repeat(200)
-    );
-    let taken = intercept(
-        &deep,
-        BoardViewCtx {
-            boards: Some(&boards),
-            clients: &clients,
-            subagents: &none,
-            client_id: 7,
-            in_flight: &in_flight,
-        },
-    );
-    if taken {
+    for route in [r#","agent_id":"child-1""#, ""] {
+        let deep = format!(
+            r#"{{"type":"get_swarm_board","id":"b6","swarm":"C1"{route},"extra":{}{}}}"#,
+            "[".repeat(200),
+            "]".repeat(200)
+        );
+        assert!(intercept(
+            &deep,
+            BoardViewCtx {
+                boards: Some(&boards),
+                clients: &clients,
+                subagents: &none,
+                client_id: 7,
+                in_flight: &in_flight,
+            },
+        ));
         let refused = reply(&mut rx).await;
         assert_eq!(
             (refused["id"].clone(), refused["error"].clone()),
-            (json!("b6"), json!(MALFORMED))
+            (json!("b6"), json!(MALFORMED)),
+            "{route}"
         );
     }
 }

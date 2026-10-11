@@ -923,7 +923,7 @@ Return the latest assistant report of the session and, on request, write a retai
 
 ### `get_swarm_board`
 
-Answers the board of a swarm this session hosts, as one snapshot (#2475, #2478). `swarm` is the environment ref (`C` and digits, such as `C1`) of the container the swarm runs in, as `agent_cmd get_containers` lists it. Only this session's own environments are read, as `get_containers` lists them without `all`, and only while they are running or retained. The harness reads the board through its own adapter, membership-free and in one read transaction: no client opens the board file. The answer is made by a task of its own, so neither a running turn nor a slow board delays the connection's next line.
+Answers the board of a swarm this session hosts, as one snapshot (#2475, #2478). `swarm` is the environment ref (`C` and digits, such as `C1`) of the container the swarm runs in, as `agent_cmd get_containers` lists it. Only this session's own environments are read, as `get_containers` lists them without `all`, and only while they are running or retained. The harness reads the board through its own adapter, membership-free and in one read transaction: no client opens the board file. The answer is made by a task of its own, so neither a running turn nor a slow board delays the connection's next line. A connection has at most two `get_swarm_board` requests in flight; a third is refused as busy.
 
 Add `agent_id` to ask a descendant for a board it hosts. It is routed as `swarm_control` is: to a child directly, and to a deeper descendant through its ancestors. A descendant's `swarm_board_changed` carries the `agent_id` to ask.
 
@@ -954,7 +954,8 @@ Errors:
 - `swarm C1 hosts no board this session can read`;
 - `swarm board unreadable: …` (the registry or the board could not be read: contention, a checkout that could not be told, a value or size the board never writes);
 - `swarm boards are unavailable in this harness`;
-- `get_swarm_board takes string fields: id, swarm and agent_id`.
+- `get_swarm_board takes string fields: id, swarm and agent_id` (also a line nested too deeply to read);
+- `get_swarm_board is busy: at most 2 requests in flight per connection`.
 
 ### `get_session_stats`
 
@@ -1574,7 +1575,9 @@ Once a launched coordinator has sent one, its parent holds each `agent_end` note
 
 Pushed to every client when a board this session hosts changed (#2478): when a swarm's board is first read, whenever its `revision` or `run` changes after (another `run` is a board made again), and when it is no longer read (`removed: true`, with `run` and `revision` null: the environment stopped, went, or holds no board). The harness polls this session's running and retained environments once a second, only while a client is connected, so a swarm is hinted at most once a second. A board that cannot be read in one poll is not hinted, and what was last seen of it stands.
 
-A client that connects later is sent one hint per board already seen, on connect, after `get_state`. To read every board at once, call `agent_cmd get_containers` and then `get_swarm_board` for each swarm. Fetch the snapshot with `get_swarm_board`; the hint carries no rows. A hint from a descendant's harness carries `agent_id`, the agent hosting that board, to pass to `get_swarm_board`.
+A client that connects later is sent one hint per board of this harness's own already seen, on connect, after `get_state`. While no client is connected, nothing seen is kept, so the first poll after a connection hints every board afresh. To read every board at once, call `agent_cmd get_containers` and then `get_swarm_board` for each swarm. Fetch the snapshot with `get_swarm_board`; the hint carries no rows.
+
+A hint from a descendant's harness carries `agent_id`, the agent hosting that board, to pass to `get_swarm_board`; this harness's own hints carry none. Refs such as `C1` are each harness's own and collide across harnesses, so key boards on `(agent_id, swarm)`. A descendant's hints are forwarded as its own poll makes them: they are not part of the hints sent on connect, and the removal of a descendant's board is hinted only while that descendant runs.
 
 ```json
 {"type":"swarm_board_changed","swarm":"C1","run":"9f0c…","revision":42,"removed":false}
