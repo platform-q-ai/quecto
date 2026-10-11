@@ -290,10 +290,35 @@ fn a_deleted_task_is_made_again_when_that_closes_no_cycle() {
     assert!(again.is_ok(), "{again:?}");
 }
 
-/// A new b depending on a, which depends on b, closes a cycle; so does a
-/// new b whose parent e depends on a, through the board.
+/// Tasks written straight to the board, as a store holding older or
+/// hand-made tasks does.
+fn plant(store: &MemoryBoardStore, tasks: Vec<TaskFields>) {
+    let tasks: Vec<Task> = tasks
+        .into_iter()
+        .map(|fields| {
+            Task::new(TaskFields {
+                created: at("09:00:00"),
+                updated: at("09:00:00"),
+                ..fields
+            })
+            .unwrap()
+        })
+        .collect();
+    let head = store.read().unwrap().head;
+    store.write(&head, &tasks, "plant").unwrap();
+}
+
+fn closes(by: &str) -> Result<Task, ProjectBoardError> {
+    Err(ProjectBoardError::ClosesCycle {
+        id: slug("b"),
+        by: slug(by),
+    })
+}
+
+/// A new b depending on a, which depends on b, closes a dependency cycle;
+/// so does b depending on e, which depends on a.
 #[test]
-fn a_new_task_that_would_close_a_cycle_is_refused() {
+fn a_new_task_that_would_close_a_dependency_cycle_is_refused() {
     let store = board_missing_b();
     create(&store, SetClock::at("10:03:00"))
         .execute(&NewBoardTask {
@@ -302,24 +327,128 @@ fn a_new_task_that_would_close_a_cycle_is_refused() {
         })
         .unwrap();
     let writes = store.writes();
-    let cycle = |new: NewBoardTask| create(&store, SetClock::at("10:04:00")).execute(&new);
-    let closes = Err(ProjectBoardError::ClosesCycle {
-        id: slug("b"),
-        by: slug("a"),
-    });
-    assert_eq!(
-        cycle(NewBoardTask {
-            depends_on: vec![slug("a")],
+    let create_b = |depends_on: &[&str]| {
+        create(&store, SetClock::at("10:04:00")).execute(&NewBoardTask {
+            depends_on: depends_on.iter().map(|id| slug(id)).collect(),
             ..new_task("b")
-        }),
-        closes
-    );
-    assert_eq!(
-        cycle(NewBoardTask {
-            parent: Some(slug("e")),
-            ..new_task("b")
-        }),
-        closes
-    );
+        })
+    };
+    assert_eq!(create_b(&["a"]), closes("a"));
+    assert_eq!(create_b(&["e"]), closes("a"));
     assert_eq!(store.writes(), writes);
+}
+
+/// A new b under c, whose parent is b, closes a parent cycle; so does b
+/// under g, a child of c.
+#[test]
+fn a_new_task_that_would_close_a_parent_cycle_is_refused() {
+    let store = board_missing_b();
+    create(&store, SetClock::at("10:03:00"))
+        .execute(&NewBoardTask {
+            parent: Some(slug("c")),
+            ..new_task("g")
+        })
+        .unwrap();
+    let create_b = |parent: &str| {
+        create(&store, SetClock::at("10:04:00")).execute(&NewBoardTask {
+            parent: Some(slug(parent)),
+            ..new_task("b")
+        })
+    };
+    assert_eq!(create_b("c"), closes("c"));
+    assert_eq!(create_b("g"), closes("c"));
+}
+
+/// Parents and dependencies are separate relations: b depending on c,
+/// whose parent is b, is no cycle of either, and is made.
+#[test]
+fn a_dependency_on_a_task_naming_it_as_parent_closes_no_cycle() {
+    let store = board_missing_b();
+    let made = create(&store, SetClock::at("10:04:00")).execute(&NewBoardTask {
+        depends_on: vec![slug("c")],
+        ..new_task("b")
+    });
+    assert!(made.is_ok(), "{made:?}");
+}
+
+/// Parents and dependencies are separate relations: b under e, where e
+/// depends on a and a depends on b, is no cycle of either, and is made.
+#[test]
+fn a_parent_then_a_dependency_chain_closes_no_cycle() {
+    let store = board_missing_b();
+    create(&store, SetClock::at("10:03:00"))
+        .execute(&NewBoardTask {
+            depends_on: vec![slug("a")],
+            ..new_task("e")
+        })
+        .unwrap();
+    let made = create(&store, SetClock::at("10:04:00")).execute(&NewBoardTask {
+        parent: Some(slug("e")),
+        ..new_task("b")
+    });
+    assert!(made.is_ok(), "{made:?}");
+}
+
+/// b depending on d, which leads nowhere near b, is made.
+#[test]
+fn an_unrelated_dependency_closes_no_cycle() {
+    let store = board_missing_b();
+    create(&store, SetClock::at("10:03:00"))
+        .execute(&new_task("d"))
+        .unwrap();
+    let made = create(&store, SetClock::at("10:04:00")).execute(&NewBoardTask {
+        depends_on: vec![slug("d")],
+        ..new_task("b")
+    });
+    assert!(made.is_ok(), "{made:?}");
+}
+
+/// Two tasks would close the cycle (f and a both depend on b): the least
+/// id is named, whatever order they are reached in.
+#[test]
+fn the_least_task_closing_the_cycle_is_named() {
+    let store = board_missing_b();
+    plant(
+        &store,
+        vec![TaskFields {
+            depends_on: vec![slug("b")],
+            ..fields("f")
+        }],
+    );
+    for depends_on in [vec![slug("f"), slug("a")], vec![slug("a"), slug("f")]] {
+        let refused = create(&store, SetClock::at("10:04:00")).execute(&NewBoardTask {
+            depends_on: depends_on.clone(),
+            ..new_task("b")
+        });
+        assert_eq!(refused, closes("a"), "{depends_on:?}");
+    }
+}
+
+/// x and y depend on each other (planted by hand) and their parents form
+/// a loop too: the walks pass through them, end, and find no cycle
+/// through b.
+#[test]
+fn a_cycle_already_on_the_board_is_walked_through() {
+    let store = board_missing_b();
+    plant(
+        &store,
+        vec![
+            TaskFields {
+                parent: Some(slug("y")),
+                depends_on: vec![slug("y")],
+                ..fields("x")
+            },
+            TaskFields {
+                parent: Some(slug("x")),
+                depends_on: vec![slug("x")],
+                ..fields("y")
+            },
+        ],
+    );
+    let made = create(&store, SetClock::at("10:04:00")).execute(&NewBoardTask {
+        parent: Some(slug("x")),
+        depends_on: vec![slug("x")],
+        ..new_task("b")
+    });
+    assert!(made.is_ok(), "{made:?}");
 }
