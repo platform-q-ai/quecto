@@ -169,6 +169,10 @@ fn resolve(
         KeepCopy::Object { keep, seen } => (Some(keep), seen),
         KeepCopy::Drop(seen) => (None, seen),
     };
+    debug_assert!(
+        copies.iter().all(|copy| shown.contains(copy.oid.as_str())),
+        "every carried copy of {path} is a file set aside there"
+    );
     let saw: BTreeSet<&str> = seen.iter().map(String::as_str).collect();
     match *shown == saw {
         true => {}
