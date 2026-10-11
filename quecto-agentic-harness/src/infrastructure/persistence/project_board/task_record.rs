@@ -26,6 +26,12 @@ use std::fmt;
 
 pub const SCHEMA_VERSION: u32 = 1;
 pub const MAX_TASK_FILE_BYTES: usize = 256 * 1024;
+/// Each schema and the quecto release that introduced it (red stub).
+pub const SCHEMAS: &[(u32, &str)] = &[];
+
+pub fn introduced_in(_schema: u32) -> Option<&'static str> {
+    None
+}
 
 /// Why a task file could not be read or written.
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -75,6 +75,9 @@ fn fields_that_break_a_rule_build_no_task() {
         ("claim/since", |t| {
             (claim(t).since, claim(t).expires) = (at("07:59:59"), at("09:00:00"))
         }),
+        ("claim/since", |t| {
+            (claim(t).since, claim(t).expires) = (at("09:05:01"), at("11:00:00"))
+        }),
         ("claim/holder/name", |t| {
             claim(t).holder.name = String::new()
         }),
@@ -82,10 +85,19 @@ fn fields_that_break_a_rule_build_no_task() {
             claim(t).holder.name = "Ada <ada@x>".into()
         }),
         ("claim/holder/name", |t| {
-            claim(t).holder.name = "Ada.".into()
+            claim(t).holder.name = "Ada>".into()
         }),
         ("claim/holder/name", |t| {
             claim(t).holder.name = " Ada".into()
+        }),
+        ("claim/holder/name", |t| {
+            claim(t).holder.name = "Ada\u{a0}".into()
+        }),
+        ("claim/holder/name", |t| {
+            claim(t).holder.name = "Ada\tL".into()
+        }),
+        ("claim/holder/name", |t| {
+            claim(t).holder.name = "Ada\u{7}".into()
         }),
         ("claim/holder/name", |t| {
             claim(t).holder.name = "x".repeat(101)
@@ -132,6 +144,11 @@ fn every_bound_admits_exactly_its_limit() {
         |t| claim(t).expires = claim(t).since.plus_seconds(CLAIM_TTL_SECONDS).unwrap(),
         |t| (claim(t).since, claim(t).expires) = (at("08:00:00"), at("10:00:00")),
         |t| claim(t).holder.name = format!("A{}", "x".repeat(99)),
+        |t| claim(t).holder.name = "dependabot[bot]".into(),
+        |t| claim(t).holder.name = "Ada Lovelace Jr.".into(),
+        |t| claim(t).holder.name = "Shane (work)".into(),
+        |t| claim(t).holder.name = "-".into(),
+        |t| (claim(t).since, t.updated) = (at("09:05:00"), at("09:05:00")),
         |t| claim(t).holder.email = format!("{}@x.io", "a".repeat(249)),
         |t| t.description = String::new(),
         |t| (t.parent, t.depends_on, t.prs) = (None, vec![], vec![]),
@@ -184,4 +201,23 @@ fn a_committer_is_known_by_email_whatever_its_case() {
     };
     assert!(ada.is(&shouting));
     assert!(!ada.is(&bob));
+}
+
+#[test]
+fn identities_are_equal_exactly_when_they_are_the_same_committer() {
+    let ada = Identity {
+        name: "Ada".into(),
+        email: "ada@example.com".into(),
+    };
+    let renamed = Identity {
+        name: "Ada Lovelace".into(),
+        email: "ADA@Example.COM".into(),
+    };
+    let bob = Identity {
+        name: "Ada".into(),
+        email: "bob@example.com".into(),
+    };
+    assert_eq!(ada == renamed, ada.is(&renamed));
+    assert_eq!(ada == bob, ada.is(&bob));
+    assert!(ada == renamed && ada != bob);
 }

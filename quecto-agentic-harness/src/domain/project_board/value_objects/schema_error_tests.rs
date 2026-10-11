@@ -51,11 +51,65 @@ fn limits_count_characters_and_admit_exactly_the_bound() {
 }
 
 #[test]
-fn markdown_keeps_newlines_but_not_carriage_returns_or_tabs() {
+fn markdown_keeps_newlines_and_tabs_but_not_carriage_returns() {
     assert_eq!(markdown("description", "", 10), Ok(()));
     assert_eq!(markdown("description", "# A\n\n- b", 10), Ok(()));
-    for bad in ["a\r\nb", "a\tb", "\u{202e}"] {
+    assert_eq!(markdown("description", "\tcode\tx", 10), Ok(()));
+    for bad in ["a\r\nb", "\u{202e}", "a\u{b}b"] {
         assert!(markdown("description", bad, 10).is_err(), "{bad:?}");
+    }
+}
+
+#[test]
+fn a_tab_is_allowed_in_markdown_only() {
+    assert_eq!(markdown("description", "a\tb", 10), Ok(()));
+    assert!(line("title", "a\tb", 10).is_err());
+}
+
+/// The England flag: a black flag, the tag letters `gbeng`, a cancel tag.
+const ENGLAND: &str = "\u{1f3f4}\u{e0067}\u{e0062}\u{e0065}\u{e006e}\u{e0067}\u{e007f}";
+
+#[test]
+fn joined_emoji_tag_flags_and_persian_text_are_allowed() {
+    let joined = [
+        "\u{1f469}\u{200d}\u{1f4bb}",         // woman technologist
+        "\u{1f3f3}\u{fe0f}\u{200d}\u{1f308}", // rainbow flag
+        ENGLAND,
+        "\u{645}\u{6cc}\u{200c}\u{62e}\u{648}\u{627}\u{647}\u{645}", // Persian, with ZWNJ
+        "flag \u{1f3f4}\u{e0067}\u{e0062}\u{e0073}\u{e0063}\u{e0074}\u{e007f}!",
+    ];
+    for good in joined {
+        assert_eq!(line("title", good, 20), Ok(()), "{good:?}");
+        assert_eq!(markdown("description", good, 20), Ok(()), "{good:?}");
+    }
+}
+
+#[test]
+fn joiners_and_tags_are_refused_outside_their_places_and_other_format_characters_always() {
+    let refused = [
+        "\u{200d}",                    // a lone ZWJ
+        "a\u{200d}",                   // nothing after it
+        "\u{200c}a",                   // nothing before it
+        "a\u{200d}\u{200d}b",          // two joiners
+        "a \u{200d}b",                 // a space before it
+        "a\u{200c}\nb",                // a newline after it
+        "\u{e0067}\u{e007f}",          // tags with no black flag
+        "a\u{e0067}\u{e007f}",         // tags after another character
+        "\u{1f3f4}\u{e0067}\u{e0062}", // a tag run never cancelled
+        "\u{1f3f4}\u{e007f}",          // a cancel tag with no run
+        "\u{1f3f4}\u{e0001}\u{e007f}", // the language tag
+        "a\u{200e}b",                  // LRM
+        "a\u{200f}b",                  // RLM
+        "a\u{61c}b",                   // ALM
+        "soft\u{ad}hyphen",            // soft hyphen
+        "word\u{2060}joiner",          // word joiner
+    ];
+    for bad in refused {
+        assert!(line("title", bad, 20).is_err(), "line {bad:?}");
+        assert!(
+            markdown("description", bad, 20).is_err(),
+            "markdown {bad:?}"
+        );
     }
 }
 

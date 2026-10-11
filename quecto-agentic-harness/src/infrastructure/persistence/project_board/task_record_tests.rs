@@ -156,9 +156,48 @@ fn a_file_over_the_size_cap_is_refused_before_it_is_parsed() {
 }
 
 #[test]
-fn a_task_too_large_for_its_file_is_not_written() {
-    let mut fields = decode(MINIMAL.as_bytes()).unwrap().into_fields();
-    fields.description = "𝄞".repeat(65_536);
-    let task = Task::new(fields).expect("within the character limit");
-    assert!(matches!(encode(&task), Err(RecordError::TooLarge { .. })));
+fn a_task_with_every_field_at_its_cap_is_written_and_read_back() {
+    use crate::domain::project_board::entities::claim::{MAX_EMAIL_BYTES, MAX_NAME_CHARS};
+    use crate::domain::project_board::entities::task::{
+        MAX_DEPENDENCIES, MAX_DESCRIPTION_CHARS, MAX_PRS, MAX_TITLE_CHARS,
+    };
+    // Four bytes a character is the most any allowed text takes in JSON.
+    let wide = |count: usize| "\u{1d11e}".repeat(count);
+    let long_slug = |n: usize| Slug::parse(&format!("{n:0>64}")).unwrap();
+    let mut fields = decode(FULL.as_bytes()).unwrap().into_fields();
+    fields.id = long_slug(0);
+    fields.title = wide(MAX_TITLE_CHARS);
+    fields.description = wide(MAX_DESCRIPTION_CHARS);
+    fields.parent = Some(long_slug(1));
+    fields.depends_on = (2..MAX_DEPENDENCIES + 2).map(long_slug).collect();
+    fields.prs = (0..MAX_PRS as u64).map(|n| u64::MAX - n).collect();
+    let claim = fields.claim.as_mut().unwrap();
+    claim.holder.name = wide(MAX_NAME_CHARS);
+    claim.holder.email = format!("{}@x.io", "a".repeat(MAX_EMAIL_BYTES - 5));
+    let task = Task::new(fields).expect("every field at its cap");
+    let bytes = encode(&task).expect("a valid task is always written");
+    assert!(bytes.len() <= MAX_TASK_FILE_BYTES);
+    assert_eq!(decode(&bytes), Ok(task));
+}
+
+#[test]
+fn every_schema_names_the_quecto_that_introduced_it() {
+    let numbers: Vec<u32> = SCHEMAS.iter().map(|(number, _)| *number).collect();
+    assert_eq!(numbers, (1..=SCHEMA_VERSION).collect::<Vec<u32>>());
+    assert_eq!(introduced_in(1), Some("0.107.250"));
+    assert_eq!(introduced_in(SCHEMA_VERSION + 1), None);
+}
+
+#[test]
+fn a_newer_schema_names_the_least_quecto_that_can_read_it() {
+    let message = RecordError::NewerSchema { found: 2 }.to_string();
+    let wanted = [
+        "schema 2".to_string(),
+        format!("needs a quecto newer than {}", env!("CARGO_PKG_VERSION")),
+        "schema 1 arrived in quecto 0.107.250".to_string(),
+        "upgrade quecto".to_string(),
+    ];
+    for part in wanted {
+        assert!(message.contains(&part), "{message:?} names {part:?}");
+    }
 }
