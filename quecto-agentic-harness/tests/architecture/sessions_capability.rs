@@ -1223,9 +1223,14 @@ fn sessions_graph_nodes_are_constructed_only_in_composition() {
     }
 }
 
-/// The one persistence adapter that is not the sessions capability's.
+/// The persistence adapters that are not the sessions capability's.
 const ENVIRONMENT_REGISTRY_STORE: &str =
     "src/infrastructure/persistence/environment_registry_store.rs";
+/// The project board's files (#2476) that name its own `tasks/<id>.json`
+/// files on a git branch, never a session path: exempt from the `.json"`
+/// needle alone.
+const PROJECT_BOARD_JSON_NAMERS: &[&str] =
+    &["src/infrastructure/persistence/project_board/store.rs"];
 
 #[test]
 fn one_layout_owns_the_sessions_join_sanitizer_and_file_names() {
@@ -1246,6 +1251,9 @@ fn one_layout_owns_the_sessions_join_sanitizer_and_file_names() {
             // session projection: it names its own file and never a
             // session path.
             .filter(|path| path.as_str() != ENVIRONMENT_REGISTRY_STORE)
+            .filter(|path| {
+                needle != ".json\"" || !PROJECT_BOARD_JSON_NAMERS.contains(&path.as_str())
+            })
             .filter(|path| {
                 production_code(path)
                     .iter()

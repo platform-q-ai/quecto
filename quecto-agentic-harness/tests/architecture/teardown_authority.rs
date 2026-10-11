@@ -278,6 +278,13 @@ const PROCESS_EFFECT_ALLOWLIST: &[(&str, &[&str], &str)] = &[
          (#2173)",
     ),
     (
+        "src/infrastructure/persistence/project_board/git.rs",
+        &["kill(", "libc::kill", "libc::SIGKILL"],
+        "the project board store ending the process group of its own git \
+         Child (a session of its own, by setsid) once git exits or at its \
+         deadline, observed unreaped by waitid (#2476)",
+    ),
+    (
         "src/infrastructure/tools/grep_run.rs",
         &["start_kill", "kill_on_drop"],
         "tool invocation containment: the grep tool's own `rg` Child at its \
