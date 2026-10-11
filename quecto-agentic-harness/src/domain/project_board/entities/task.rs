@@ -7,7 +7,7 @@ use super::super::value_objects::timestamp::Timestamp;
 use super::super::value_objects::vocabulary::{Resolution, TaskKind, TaskStatus};
 use super::claim::{Claim, Identity};
 use super::plan::MAX_PLAN_VERSION;
-use super::task_parts::{MAX_REVIEWS, Review, reference};
+use super::task_parts::{MAX_ISSUE_NUMBER, MAX_REVIEWS, Review, reference};
 
 /// GitHub's issue title limit.
 pub const MAX_TITLE_CHARS: usize = 256;
@@ -167,31 +167,46 @@ fn validate(task: &TaskFields) -> Result<(), SchemaError> {
     }
 }
 
-/// Where the task came from and how it ended: its issue, its resolution
-/// (a done or archived task's only), the tasks that superseded it (never
-/// itself), and its references.
+/// Where the task came from and how it ended:
+/// - its issue, numbered from 1 to [`MAX_ISSUE_NUMBER`], and never one of
+///   its own pull requests (the host numbers both from one sequence);
+/// - its resolution: none until it is done or archived; a done task's is
+///   `completed` (or none, from an older file); an archived task's any;
+/// - `superseded` and `duplicate` name what took it over, a task in
+///   `superseded_by` or a reference (a closed issue is only a reference),
+///   and a task superseded by others is unresolved, `superseded` or
+///   `duplicate`;
+/// - the tasks that superseded it, never itself;
+/// - its references, each a pointer named once (by its key) and never its
+///   own issue.
+///
+/// The board's own checks are the importer's and M4's: no two tasks share
+/// an issue, no issue is a pull request on the board, and `superseded_by`
+/// names tasks the board holds, without cycles.
 fn validate_closure(task: &TaskFields) -> Result<(), SchemaError> {
-    match task.github_issue.is_none_or(|issue| issue >= 1) {
-        true => {}
-        false => {
+    let issue = task.github_issue;
+    match issue.map(|issue| {
+        (
+            (1..=MAX_ISSUE_NUMBER).contains(&issue),
+            task.prs.contains(&issue),
+        )
+    }) {
+        None | Some((true, false)) => {}
+        Some((false, _)) => {
             return Err(SchemaError::new(
                 "github_issue",
-                "an issue number starts at 1",
+                format!("an issue number is from 1 to {MAX_ISSUE_NUMBER}"),
             ));
         }
-    }
-    match (task.resolution, task.status) {
-        (None, _) | (Some(_), TaskStatus::Done | TaskStatus::Archived) => {}
-        (Some(_), status) => {
+        Some((true, true)) => {
             return Err(SchemaError::new(
-                "resolution",
-                format!(
-                    "a {} task is not resolved: only a done or archived one is",
-                    status.as_str()
-                ),
+                "github_issue",
+                "is one of the task's pull requests: the host numbers issues and pull requests \
+                 from one sequence",
             ));
         }
     }
+    resolution_holds(task)?;
     distinct("superseded_by", &task.superseded_by, MAX_SUPERSEDED_BY)?;
     match task
         .superseded_by
@@ -206,9 +221,50 @@ fn validate_closure(task: &TaskFields) -> Result<(), SchemaError> {
             ));
         }
     }
-    distinct("references", &task.references, MAX_REFERENCES)?;
-    let mut indexed = task.references.iter().enumerate();
-    indexed.try_for_each(|(index, text)| reference(&format!("references/{index}"), text))
+    let keys = task
+        .references
+        .iter()
+        .enumerate()
+        .map(|(index, text)| reference(&format!("references/{index}"), text))
+        .collect::<Result<Vec<String>, SchemaError>>()?;
+    distinct("references", &keys, MAX_REFERENCES)?;
+    let own = issue.map(|issue| format!("#{issue}"));
+    match keys.iter().position(|key| Some(key) == own.as_ref()) {
+        None => Ok(()),
+        Some(index) => Err(SchemaError::new(
+            format!("references/{index}"),
+            "is the task's own issue",
+        )),
+    }
+}
+
+/// The task's resolution fits its status and what superseded it.
+fn resolution_holds(task: &TaskFields) -> Result<(), SchemaError> {
+    use Resolution::{Completed, Duplicate, NotPlanned, Superseded};
+    let status = task.status;
+    let by_status = match (task.resolution, status) {
+        (None, _) | (Some(Completed), TaskStatus::Done) | (Some(_), TaskStatus::Archived) => Ok(()),
+        (Some(_), TaskStatus::Done) => Err("a done task is completed"),
+        (Some(_), _) => Err("only a done or archived task is resolved"),
+    };
+    let named = !task.superseded_by.is_empty() || !task.references.is_empty();
+    let by_successor = match (task.resolution, named, task.superseded_by.is_empty()) {
+        (Some(Superseded | Duplicate), false, _) => {
+            Err("a superseded or duplicate task names what took it over: a task or a reference")
+        }
+        (Some(Completed | NotPlanned), _, false) => {
+            Err("a task superseded by others is unresolved, superseded or duplicate")
+        }
+        (None | Some(Completed | NotPlanned), _, true) | (None, _, false) => Ok(()),
+        (Some(Superseded | Duplicate), true, _) => Ok(()),
+    };
+    match by_status.and(by_successor) {
+        Ok(()) => Ok(()),
+        Err(why) => Err(SchemaError::new(
+            "resolution",
+            format!("{why} (status {})", status.as_str()),
+        )),
+    }
 }
 
 /// Reviews happen while the task exists, by its last change: from
@@ -257,3 +313,7 @@ fn validate_claim(task: &TaskFields) -> Result<(), SchemaError> {
 #[cfg(test)]
 #[path = "task_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "task_closure_tests.rs"]
+mod closure_tests;

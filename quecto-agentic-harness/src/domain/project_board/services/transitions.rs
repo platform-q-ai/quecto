@@ -209,16 +209,29 @@ pub(super) fn finish(
     next.resolution = resolved(Done, next.resolution);
     next.claim = None;
     let task = settle(next, &at)?;
+    assert_eq!(
+        task.fields().resolution,
+        Some(Resolution::Completed),
+        "a completed task is resolved so"
+    );
     Ok((Completed { task, run }, at))
 }
 
 /// A task's resolution once it moves `to` a status: one done is
-/// completed; any other keeps what it had (an archived task its done one's,
-/// or none).
+/// completed; one archived keeps what it had (its done one's, or none);
+/// any other has none, as it had none (only a done or archived task is
+/// resolved, and neither moves back).
 fn resolved(to: TaskStatus, had: Option<Resolution>) -> Option<Resolution> {
     match to {
         Done => Some(Resolution::Completed),
-        Draft | Ready | Claimed | InProgress | Review | Blocked | Archived => had,
+        Archived => had,
+        Draft | Ready | Claimed | InProgress | Review | Blocked => {
+            assert!(
+                had.is_none(),
+                "an unresolved task moves among the open statuses"
+            );
+            None
+        }
     }
 }
 

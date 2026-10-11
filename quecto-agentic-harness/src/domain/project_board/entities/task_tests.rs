@@ -1,16 +1,15 @@
 use super::*;
 use crate::domain::project_board::entities::claim::{CLAIM_TTL_SECONDS, Identity};
-use crate::domain::project_board::entities::task_parts::MAX_REFERENCE_BYTES;
 
 fn at(time: &str) -> Timestamp {
     Timestamp::parse(&format!("2026-10-10T{time}Z")).unwrap()
 }
 
-fn slug(text: &str) -> Slug {
+pub(super) fn slug(text: &str) -> Slug {
     Slug::parse(text).unwrap()
 }
 
-fn fields() -> TaskFields {
+pub(super) fn fields() -> TaskFields {
     TaskFields {
         id: slug("board-store"),
         title: "Board store".into(),
@@ -235,118 +234,4 @@ fn identities_compare_whole_but_match_a_holder_by_email() {
     );
     claim(&mut task).holder.email = "ADA@EXAMPLE.COM".into();
     assert_ne!(task, fields(), "an email's spelling is part of the value");
-}
-
-/// A done task resolved, from an issue, superseded and pointing at work
-/// outside the board.
-fn closed() -> TaskFields {
-    TaskFields {
-        status: TaskStatus::Done,
-        claim: None,
-        github_issue: Some(2481),
-        resolution: Some(Resolution::Superseded),
-        superseded_by: vec![slug("board-store-v2")],
-        references: vec![
-            "#2470".into(),
-            "platform-q-ai/.github#7".into(),
-            "https://example.com:8443/a/b?c=d&e=f#g".into(),
-        ],
-        ..fields()
-    }
-}
-
-/// Where a task came from and how it ended: its issue, a resolution only
-/// once done or archived, the tasks that superseded it, and plain
-/// references (`#n`, `owner/repo#n`, an https URL).
-#[test]
-fn a_tasks_closure_keeps_its_rules() {
-    assert!(Task::new(closed()).is_ok());
-    let archived = TaskFields {
-        status: TaskStatus::Archived,
-        ..closed()
-    };
-    assert!(Task::new(archived).is_ok());
-    let open_with_links = TaskFields {
-        resolution: None,
-        github_issue: Some(1),
-        superseded_by: vec![slug("next")],
-        references: vec!["#1".into()],
-        ..fields()
-    };
-    assert!(
-        Task::new(open_with_links).is_ok(),
-        "only the resolution waits for the end"
-    );
-    let cases: Vec<(&str, Edit)> = vec![
-        ("github_issue", |t| t.github_issue = Some(0)),
-        ("resolution", |t| t.status = TaskStatus::Review),
-        ("superseded_by/0", |t| {
-            t.superseded_by = vec![slug("board-store")]
-        }),
-        ("superseded_by", |t| {
-            t.superseded_by = vec![slug("a"), slug("a")]
-        }),
-        ("superseded_by", |t| {
-            t.superseded_by = (0..=MAX_SUPERSEDED_BY)
-                .map(|n| slug(&format!("s{n}")))
-                .collect();
-        }),
-        ("references", |t| {
-            t.references = vec!["#1".into(), "#1".into()]
-        }),
-        ("references", |t| {
-            t.references = (1..=MAX_REFERENCES + 1).map(|n| format!("#{n}")).collect();
-        }),
-    ];
-    for (field, edit) in cases {
-        let mut broken = closed();
-        edit(&mut broken);
-        assert_eq!(Task::new(broken).unwrap_err().field, field);
-    }
-    for bad in [
-        "#0",
-        "#01",
-        "#12345678901",
-        "2470",
-        "a/b/c#1",
-        "./repo#1",
-        "owner/..#1",
-        "http://example.com",
-        "https://",
-        "https://example.com/a b",
-        "https://example.com/a|b",
-        "https://example.com/a`b",
-        "https://example.com/a\\b",
-        "https://ex\u{e4}mple.com",
-        "",
-    ] {
-        let mut broken = closed();
-        broken.references = vec![bad.into()];
-        assert_eq!(
-            Task::new(broken).unwrap_err().field,
-            "references/0",
-            "{bad:?}"
-        );
-    }
-    let mut longest = closed();
-    let url = format!(
-        "https://example.com/{}",
-        "a".repeat(MAX_REFERENCE_BYTES - 20)
-    );
-    assert_eq!(url.len(), MAX_REFERENCE_BYTES);
-    longest.references = vec![url.clone()];
-    assert!(Task::new(longest.clone()).is_ok(), "the longest reference");
-    longest.references = vec![format!("{url}a")];
-    assert_eq!(Task::new(longest).unwrap_err().field, "references/0");
-}
-
-/// References are text: they count toward the task's budget.
-#[test]
-fn a_tasks_references_count_toward_its_text() {
-    let without = TaskFields {
-        references: vec![],
-        ..closed()
-    };
-    let refs: usize = closed().references.iter().map(String::len).sum();
-    assert_eq!(closed().text_bytes(), without.text_bytes() + refs);
 }

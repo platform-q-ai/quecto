@@ -245,7 +245,10 @@ fn quarantined_json(file: &QuarantinedFile) -> Value {
     })
 }
 
-/// A task in the board's own field names, every field present.
+/// A task in the board's own field names, every field present but where
+/// it came from and how it ended (`github_issue`, `resolution`,
+/// `superseded_by`, `references`): those are held back on purpose, as
+/// showing them to agents is the owner's call (M4).
 pub fn task_json(task: &Task) -> Value {
     let task = task.fields();
     let reviews: Vec<Value> = task

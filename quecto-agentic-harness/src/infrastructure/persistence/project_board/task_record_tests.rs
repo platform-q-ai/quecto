@@ -87,13 +87,13 @@ const PARTS: &str = r#"{
 }
 "#;
 
-/// A done task with where it came from and how it ended (schema 3).
+/// An archived task with where it came from and how it ended (schema 3).
 const CLOSED: &str = r##"{
   "schema": 3,
   "id": "board-store",
   "title": "Board store",
   "kind": "task",
-  "status": "done",
+  "status": "archived",
   "github_issue": 2481,
   "resolution": "superseded",
   "superseded_by": [
@@ -373,7 +373,10 @@ fn a_tasks_closure_is_schema_3_and_keeps_the_domains_rules() {
             "resolution",
             edited(CLOSED, "\"superseded\"", "\"abandoned\""),
         ),
-        ("resolution", edited(CLOSED, "\"done\"", "\"ready\"")),
+        ("resolution", edited(CLOSED, "\"archived\"", "\"ready\"")),
+        ("resolution", edited(CLOSED, "\"archived\"", "\"done\"")),
+        ("github_issue", edited(CLOSED, "2481", "10000000000")),
+        ("references/0", edited(CLOSED, "\"#2470\"", "\"#2481\"")),
         ("github_issue", edited(CLOSED, "2481", "0")),
         (
             "superseded_by/0",
@@ -398,6 +401,39 @@ fn a_tasks_closure_is_schema_3_and_keeps_the_domains_rules() {
         assert!(
             matches!(&refused, Err(RecordError::Invalid(error)) if error.field == field),
             "{field}: {refused:?}"
+        );
+    }
+}
+
+/// The schema gate judges values, as it does for `accepted_plan`: a
+/// schema-3 key holding no value (`null` in a single value, an empty list)
+/// in an older file reads as not set, as every optional key does; a list
+/// set to `null` is malformed, as every list is.
+#[test]
+fn a_schema_3_key_holding_no_value_reads_as_not_set_in_any_schema() {
+    for empty in [
+        "\"github_issue\": null,",
+        "\"resolution\": null,",
+        "\"superseded_by\": [],",
+        "\"references\": [],",
+    ] {
+        let older = edited(
+            MINIMAL,
+            "\"schema\": 3,",
+            &format!("\"schema\": 2,\n  {empty}"),
+        );
+        let task = decode(&older);
+        assert!(task.is_ok(), "{empty}: {task:?}");
+    }
+    for list in ["superseded_by", "references"] {
+        let null = edited(
+            MINIMAL,
+            "\"schema\": 3,",
+            &format!("\"schema\": 3,\n  \"{list}\": null,"),
+        );
+        assert!(
+            matches!(decode(&null), Err(RecordError::Malformed(_))),
+            "{list}"
         );
     }
 }

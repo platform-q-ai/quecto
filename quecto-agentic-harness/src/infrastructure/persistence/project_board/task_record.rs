@@ -35,7 +35,10 @@ use std::fmt;
 /// schema-1 file holding any of those is malformed to this reader. Schema
 /// 3 adds where a task came from and how it ended (#2481 S8):
 /// `github_issue`, `resolution`, `superseded_by` and `references`; an
-/// older file holding any of them is malformed.
+/// older file holding a value in any of them is malformed. As for every
+/// optional key, `null` in a single value and an empty list hold no
+/// value: they read as not set, in any schema (a list set to `null` is
+/// malformed, as every list is).
 pub const SCHEMAS: &[(u32, &str)] = &[(1, "0.107.251"), (2, "0.107.274"), (3, "0.107.287")];
 /// The schema every task file is written at: the last row of [`SCHEMAS`].
 pub const SCHEMA_VERSION: u32 = 3;
@@ -183,9 +186,10 @@ pub fn decode(bytes: &[u8]) -> Result<Task, RecordError> {
         found => return Err(RecordError::UnknownSchema { found }),
     }
     let record: TaskRecord = serde_json::from_slice(bytes).map_err(malformed)?;
-    // Each key belongs to the schemas that have it: `accepted_plan`
+    // Each key's values belong to the schemas that have it: `accepted_plan`
     // arrived in schema 2, and where a task came from and how it ended in
-    // schema 3.
+    // schema 3. A key holding no value (`null` in a single value, an empty
+    // list) reads as not set, in any schema, as every optional key does.
     match (record.schema, &record.accepted_plan) {
         (2.., _) | (_, None) => {}
         (_, Some(_)) => {
