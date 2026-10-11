@@ -310,14 +310,17 @@ fn a_caller_finding_a_reading_in_flight_waits_for_it_within_the_read_timeout() {
     was_asked.recv_timeout(Duration::from_secs(5)).unwrap();
     let second = {
         let clock = Arc::clone(&clock);
-        std::thread::spawn(move || clock.reference())
+        std::thread::spawn(move || (clock.reference(), Instant::now()))
     };
     std::thread::sleep(Duration::from_millis(200));
+    let released = Instant::now();
     release.send(()).unwrap();
     assert!(first.join().unwrap().is_some());
+    let (served, at) = second.join().unwrap();
+    assert!(served.is_some(), "served the reading it waited for");
     assert!(
-        second.join().unwrap().is_some(),
-        "served the reading it waited for"
+        at.saturating_duration_since(released) < Duration::from_secs(1),
+        "woken when the reading ended, not at the read timeout"
     );
     assert_eq!(reads.load(Ordering::Relaxed), 1, "one reading at a time");
 }
@@ -331,7 +334,11 @@ fn no_wait_outlasts_the_read_timeout() {
     };
     was_asked.recv_timeout(Duration::from_secs(5)).unwrap();
     let started = Instant::now();
-    assert_eq!(clock.reference(), None, "still in flight at the timeout");
+    assert_eq!(
+        clock.reference(),
+        None,
+        "no reference within the read timeout"
+    );
     assert!(
         started.elapsed() < Duration::from_secs(3),
         "{:?}",
@@ -436,4 +443,45 @@ fn a_remote_with_no_reference_says_why() {
         panic!("no reference")
     };
     assert!(why.contains("neither"), "{why}");
+}
+
+/// Local clocks whose first `instant` panics: a reading that ends in a
+/// panic on the caller's own thread.
+struct PanicsOnce {
+    clocks: SetClocks,
+    panicked: AtomicBool,
+}
+
+impl LocalClocks for PanicsOnce {
+    fn instant(&self) -> Instant {
+        if !self.panicked.swap(true, Ordering::Relaxed) {
+            panic!("the local clock broke");
+        }
+        self.clocks.instant()
+    }
+
+    fn wall(&self) -> SystemTime {
+        self.clocks.wall()
+    }
+}
+
+#[test]
+fn a_reading_that_panics_on_the_callers_thread_clears_its_in_flight_mark() {
+    let clocks = SetClocks::new();
+    let outside = clocks.wall();
+    let (clock, _, _) = clock_of(Ok(outside), Duration::from_secs(3600), &clocks);
+    let clock = clock
+        .with_local_clocks(PanicsOnce {
+            clocks: clocks.clone(),
+            panicked: AtomicBool::new(false),
+        })
+        .with_read_timeout(Duration::from_secs(3));
+    let broken = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| clock.reference()));
+    assert!(broken.is_err(), "the first reading panicked");
+    let started = Instant::now();
+    assert_eq!(clock.reference(), Some(spelt(outside)));
+    assert!(
+        started.elapsed() < Duration::from_secs(1),
+        "not left waiting on a reading no one is taking"
+    );
 }
