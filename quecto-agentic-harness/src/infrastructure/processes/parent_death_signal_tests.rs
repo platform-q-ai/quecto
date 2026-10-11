@@ -116,10 +116,12 @@ fn stat(pid: &str) -> Option<(String, char)> {
 impl Watched {
     /// No such process, another one of its pid, or a zombie no one reaped.
     fn gone(&self) -> bool {
-        match stat(&self.pid) {
-            Some((start, state)) => start != self.start || state == 'Z',
-            None => true,
-        }
+        // Alive: this very process, in a state a running one is in.
+        let alive = matches!(
+            stat(&self.pid),
+            Some((start, state)) if start == self.start && "RSDTtWIPK".contains(state)
+        );
+        !alive
     }
 }
 
@@ -175,17 +177,27 @@ impl KilledParent {
     }
 
     /// Kills the parent outright, then answers, for each process watched,
-    /// whether it was gone within `bound`.
-    pub(crate) fn kill(&mut self, bound: std::time::Duration) -> Vec<bool> {
+    /// whether it is gone: as soon as that is `expected` (looked at again
+    /// after a settling pause, so a process about to go is not missed), or
+    /// at `bound`.
+    pub(crate) fn kill(&mut self, bound: std::time::Duration, expected: &[bool]) -> Vec<bool> {
         if let Some(mut parent) = self.parent.take() {
             parent.kill().unwrap();
             parent.wait().unwrap();
         }
         let deadline = std::time::Instant::now() + bound;
-        while !self.watched.iter().all(Watched::gone) && std::time::Instant::now() < deadline {
-            std::thread::sleep(std::time::Duration::from_millis(20));
+        let gone = |watched: &[Watched]| watched.iter().map(Watched::gone).collect::<Vec<_>>();
+        loop {
+            let now = gone(&self.watched);
+            match (now == expected, std::time::Instant::now() < deadline) {
+                (true, _) => {
+                    std::thread::sleep(std::time::Duration::from_millis(200));
+                    return gone(&self.watched);
+                }
+                (false, true) => std::thread::sleep(std::time::Duration::from_millis(20)),
+                (false, false) => return now,
+            }
         }
-        self.watched.iter().map(Watched::gone).collect()
     }
 }
 

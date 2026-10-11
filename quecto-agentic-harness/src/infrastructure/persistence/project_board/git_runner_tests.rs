@@ -23,6 +23,69 @@ fn a_git_that_hangs_is_stopped_with_its_whole_process_group() {
     assert!(!marker.exists(), "the timed-out git's child outlived it");
 }
 
+/// A git that cannot be started says so, naming the session and death
+/// signal its spawn arms first (a refusal to arm fails the spawn too).
+#[test]
+fn a_git_that_cannot_start_names_what_its_spawn_arms() {
+    let repos = Repos::new();
+    let git = shim(&repos, "#!/bin/sh\nexit 0\n", &[]);
+    std::fs::remove_file(repos.dir.path().join("bin").join("git")).unwrap();
+    let run = git.network(&["fetch"]).map(|_| ());
+    assert!(
+        matches!(&run, Err(GitError::Spawn(why)) if why.contains("arming the death signal")),
+        "{run:?}"
+    );
+}
+
+/// At its deadline git is asked to stop with SIGTERM first, so it can
+/// remove a ref lock as it goes.
+#[test]
+fn a_git_past_its_deadline_is_asked_to_stop_first() {
+    let repos = Repos::new();
+    let signal = repos.dir.path().join("signal");
+    let script = format!(
+        "#!/bin/sh\ntrap 'echo TERM > \"{}\"; exit 0' TERM\nsleep 30 &\nwait\n",
+        signal.display()
+    );
+    let mut git = shim(&repos, &script, &[]);
+    git.network_timeout = std::time::Duration::from_millis(200);
+    let run = git.network(&["fetch"]).map(|_| ());
+    assert!(matches!(&run, Err(GitError::TimedOut { .. })), "{run:?}");
+    assert_eq!(
+        std::fs::read_to_string(&signal).ok().as_deref(),
+        Some("TERM\n")
+    );
+}
+
+/// A git group that ignores SIGTERM is killed after a short grace, not
+/// left running.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_git_that_ignores_the_request_is_killed_after_a_grace() {
+    let repos = Repos::new();
+    let pid = repos.dir.path().join("pid");
+    let script = format!(
+        "#!/bin/sh\ntrap '' TERM\nsleep 30 &\necho $! > '{}'\nwait\n",
+        pid.display()
+    );
+    let mut git = shim(&repos, &script, &[]);
+    git.network_timeout = std::time::Duration::from_millis(200);
+    let started = std::time::Instant::now();
+    let run = git.network(&["fetch"]).map(|_| ());
+    assert!(matches!(&run, Err(GitError::TimedOut { .. })), "{run:?}");
+    assert!(started.elapsed() < std::time::Duration::from_secs(4));
+    let sleeper = std::fs::read_to_string(&pid).unwrap();
+    let stat = format!("/proc/{}/stat", sleeper.trim());
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    while std::path::Path::new(&stat).exists() && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    assert!(
+        !std::path::Path::new(&stat).exists(),
+        "the sleeper outlived git"
+    );
+}
+
 /// The real git on `PATH`.
 fn real_git() -> PathBuf {
     std::env::split_paths(&std::env::var_os("PATH").unwrap())
@@ -392,9 +455,15 @@ fn a_parent_that_runs_a_hanging_git() {
 }
 
 /// A quecto running `script` as its git, killed outright: whether each
-/// process named in `pid_files` was gone within five seconds.
+/// process named in `pid_files` was gone, once that is `expected` or
+/// within five seconds.
 #[cfg(target_os = "linux")]
-fn killed_with_git(repos: &Repos, script: &str, pid_files: &[&Path]) -> Vec<bool> {
+fn killed_with_git(
+    repos: &Repos,
+    script: &str,
+    pid_files: &[&Path],
+    expected: &[bool],
+) -> Vec<bool> {
     use crate::infrastructure::processes::parent_death_signal::tests::KilledParent;
     drop(shim(repos, script, &[]));
     let mut path = repos.dir.path().join("bin").into_os_string();
@@ -405,7 +474,7 @@ fn killed_with_git(repos: &Repos, script: &str, pid_files: &[&Path]) -> Vec<bool
         (KILLED_PARENT[0], repos.alice.as_os_str()),
         (KILLED_PARENT[1], path.as_os_str()),
     ];
-    KilledParent::start(name, &vars, pid_files).kill(std::time::Duration::from_secs(5))
+    KilledParent::start(name, &vars, pid_files).kill(std::time::Duration::from_secs(5), expected)
 }
 
 /// When quecto is killed outright (a relay's timeout, say), the git it
@@ -426,7 +495,7 @@ fn a_git_is_terminated_when_the_quecto_running_it_is_killed() {
         pid.display()
     );
     assert_eq!(
-        killed_with_git(&repos, &script, &[&pid]),
+        killed_with_git(&repos, &script, &[&pid], &[true]),
         [true],
         "git outlived quecto"
     );
@@ -454,7 +523,7 @@ fn a_grandchild_git_leaves_running_outlives_the_killed_quecto() {
         pid.display()
     );
     assert_eq!(
-        killed_with_git(&repos, &script, &[&pid, &grandchild]),
+        killed_with_git(&repos, &script, &[&pid, &grandchild], &[true, false]),
         [true, false]
     );
 }
