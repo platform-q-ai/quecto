@@ -469,6 +469,9 @@ fn a_crash_mid_rebuild_leaves_the_last_whole_index() {
         "{}",
         String::from_utf8_lossy(&output.stdout)
     );
+    // The crash is staged: on Linux it leaves no core dump behind.
+    #[cfg(target_os = "linux")]
+    assert!(!output.status.core_dumped(), "the staged crash dumped core");
     assert_eq!(index.head(), Ok(Some(board("a1").head.0)));
     assert_eq!(ids(index.ready()), ["a"]);
     let builds = || -> Vec<std::path::PathBuf> {
