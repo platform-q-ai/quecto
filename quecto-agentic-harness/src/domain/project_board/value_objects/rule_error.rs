@@ -55,6 +55,18 @@ pub enum BoardRuleError {
     /// The change was stamped by a clock running ahead of the outside
     /// time: building on it would drag the board ahead too.
     ChangeAhead { change: u32, updated: Timestamp },
+    /// The discussion is closed: nothing is added to it, and it is
+    /// closed once.
+    DiscussionClosed(Slug),
+    /// The discussion is about `task` already: it is linked once.
+    DiscussionLinked { discussion: Slug, task: Slug },
+    /// The discussion, or a message added to it, was stamped by a clock
+    /// running ahead of the outside time: building on it would drag the
+    /// board ahead too.
+    DiscussionAhead {
+        discussion: Slug,
+        updated: Timestamp,
+    },
     /// The task links changes: it is done when they merge, through the
     /// completion anyone may run, not by its holder's say-so. The holder
     /// may unlink one deliberately first.
@@ -167,6 +179,22 @@ impl fmt::Display for BoardRuleError {
             Self::ChangeAhead { change, updated } => write!(
                 f,
                 "change {change} was stamped {} by a clock that ran ahead",
+                updated.as_str()
+            ),
+            Self::DiscussionClosed(id) => write!(f, "discussion {} is closed", id.as_str()),
+            Self::DiscussionLinked { discussion, task } => write!(
+                f,
+                "discussion {} is about task {} already",
+                discussion.as_str(),
+                task.as_str()
+            ),
+            Self::DiscussionAhead {
+                discussion,
+                updated,
+            } => write!(
+                f,
+                "discussion {} was stamped {} by a clock that ran ahead",
+                discussion.as_str(),
                 updated.as_str()
             ),
             Self::ChangesLinked(numbers) => write!(

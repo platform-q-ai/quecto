@@ -75,6 +75,11 @@ vocabulary!(
     RunOutcome { Succeeded => "succeeded", Failed => "failed", Stopped => "stopped", Lost => "lost" }
 );
 
+vocabulary!(
+    /// Where a discussion stands: open until someone closes it.
+    DiscussionState { Open => "open", Closed => "closed" }
+);
+
 vocabulary!(Severity { Low => "low", Medium => "medium", High => "high", Critical => "critical" });
 
 vocabulary!(

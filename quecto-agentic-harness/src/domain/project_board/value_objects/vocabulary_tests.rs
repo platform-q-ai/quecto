@@ -49,6 +49,10 @@ fn the_parts_vocabularies_are_spelt_exactly() {
         "open fixed invalid wont_fix"
     );
     assert_eq!(
+        spelt(DiscussionState::ALL.iter().map(|w| w.as_str()).collect()),
+        "open closed"
+    );
+    assert_eq!(
         (
             Effort::parse("xhigh"),
             Effort::parse("none"),
