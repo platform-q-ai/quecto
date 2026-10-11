@@ -20,9 +20,10 @@
 //! A reader opens the path itself first, without following a link or
 //! waiting on a FIFO, and reads only a regular file. SQLite then opens the
 //! path again; something swapped in between those two opens (a FIFO, say)
-//! is not seen by the first. The directory is private to its owner, so
-//! only the owner's own processes can swap it, and the window stays open:
-//! SQLite resolves links itself, so it cannot be handed the checked file.
+//! is not seen by the first. The directory is checked to be this user's
+//! and writable by no one else ([`directory`]), so only this user's own
+//! processes can swap it, and the window stays open: SQLite resolves links
+//! itself, so it cannot be handed the checked file.
 use super::index::IndexError;
 use super::task_record::{MAX_TASK_FILE_BYTES, SCHEMA_VERSION};
 use rusqlite::limits::Limit;
@@ -35,7 +36,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime};
 
 /// The index's own layout version, in `PRAGMA user_version`.
-pub const INDEX_SCHEMA: i32 = 1;
+pub const INDEX_SCHEMA: i32 = 2;
 pub const BUSY_TIMEOUT: Duration = Duration::from_secs(2);
 /// The longest a writer waits for the writer lock.
 pub const LOCK_WAIT: Duration = Duration::from_secs(2);
@@ -62,7 +63,7 @@ CREATE INDEX tasks_status ON tasks (status);
 CREATE INDEX tasks_parent ON tasks (parent);
 CREATE TABLE dependencies (task TEXT NOT NULL, depends_on TEXT NOT NULL, PRIMARY KEY (task, depends_on));
 CREATE INDEX dependencies_on ON dependencies (depends_on);
-CREATE TABLE quarantined (path TEXT PRIMARY KEY, id TEXT, reason TEXT NOT NULL);
+CREATE TABLE quarantined (path TEXT NOT NULL, id TEXT, reason TEXT NOT NULL);
 ";
 
 type Object = (String, String, String, Option<String>);
@@ -83,29 +84,16 @@ fn objects(connection: &Connection) -> rusqlite::Result<Vec<Object>> {
     rows.collect()
 }
 
-/// A read failed in a way a rebuild mends: the file is not an index of
-/// this layout, not a database at all, or SQLite could not read it as one
-/// (a read-only rollback, an I/O error on a planted side file). A rebuild
-/// discards the file and its side files under the writer lock.
-pub(super) fn stale(error: &rusqlite::Error) -> bool {
-    matches!(
-        error.sqlite_error_code(),
-        Some(
-            ErrorCode::NotADatabase
-                | ErrorCode::DatabaseCorrupt
-                | ErrorCode::CannotOpen
-                | ErrorCode::ReadOnly
-                | ErrorCode::SystemIoFailure
-        )
-    )
-}
-
+/// A failure on the reader's path: a value over the read cap is corrupt,
+/// and any other is a file SQLite cannot read as this index (not a
+/// database, another format, a planted side file), which a rebuild mends:
+/// it replaces the file and its side files under the writer lock. A
+/// build's failures never come here ([`built`]).
 impl From<rusqlite::Error> for IndexError {
     fn from(error: rusqlite::Error) -> Self {
         match error.sqlite_error_code() {
             Some(ErrorCode::TooBig) => Self::Corrupt(format!("a value over the read cap: {error}")),
-            _ if stale(&error) => Self::NeedsRebuild,
-            _ => Self::Sqlite(error.to_string()),
+            _ => Self::NeedsRebuild,
         }
     }
 }
@@ -129,35 +117,42 @@ fn io(what: &str, path: &Path, error: &std::io::Error) -> IndexError {
     IndexError::Io(format!("{what} {}: {error}", path.display()))
 }
 
-/// The index's directory, made private if it is missing; refused if it is
-/// anything but a real directory.
+/// The index's directory, private to this user: made (with any missing
+/// parent) private if it is missing, made private again if it is this
+/// user's but others may write to it, and refused if it is a link,
+/// anything but a directory, or another user's.
 pub(super) fn directory(index: &Path) -> Result<PathBuf, IndexError> {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
     let dir = index
         .parent()
         .filter(|dir| !dir.as_os_str().is_empty())
         .ok_or_else(|| IndexError::Io(format!("{} has no directory", index.display())))?;
-    match std::fs::symlink_metadata(dir) {
-        Ok(meta) if meta.file_type().is_dir() => return Ok(dir.to_path_buf()),
-        Ok(_) => {
-            return Err(IndexError::Io(format!(
-                "{} is not a directory",
-                dir.display()
-            )));
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => return Err(io("cannot inspect", dir, &error)),
-    }
-    match DirBuilder::new().mode(0o700).create(dir) {
+    match DirBuilder::new().recursive(true).mode(0o700).create(dir) {
         Ok(()) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
         Err(error) => return Err(io("cannot create", dir, &error)),
     }
-    match std::fs::symlink_metadata(dir) {
-        Ok(meta) if meta.file_type().is_dir() => Ok(dir.to_path_buf()),
-        _ => Err(IndexError::Io(format!(
-            "{} is not a directory",
-            dir.display()
-        ))),
+    let refused = |why: &str| IndexError::Io(format!("{} {why}", dir.display()));
+    // SAFETY: geteuid(2) takes nothing and cannot fail.
+    let me = unsafe { libc::geteuid() };
+    let meta = std::fs::symlink_metadata(dir).map_err(|error| io("cannot inspect", dir, &error))?;
+    match (
+        meta.file_type().is_dir(),
+        meta.uid() == me,
+        meta.mode() & 0o022 == 0,
+    ) {
+        (true, true, true) => Ok(dir.to_path_buf()),
+        (true, true, false) => {
+            std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))
+                .map_err(|error| io("cannot make private", dir, &error))?;
+            let again = std::fs::symlink_metadata(dir)
+                .map_err(|error| io("cannot inspect", dir, &error))?;
+            match again.file_type().is_dir() && again.uid() == me && again.mode() & 0o022 == 0 {
+                true => Ok(dir.to_path_buf()),
+                false => Err(refused("did not stay private")),
+            }
+        }
+        (true, false, _) => Err(refused("belongs to another user")),
+        (false, _, _) => Err(refused("is not a directory")),
     }
 }
 
@@ -324,6 +319,12 @@ pub(super) fn publish(mut build: Build, target: &Path, dir: &Path) -> Result<(),
         Some(dir),
         "a build is published from the index's own directory"
     );
+    // A file there is replaced by the rename in one step; anything else
+    // (a directory) is removed first.
+    match std::fs::symlink_metadata(target) {
+        Ok(meta) if meta.file_type().is_dir() => remove_at(target)?,
+        Ok(_) | Err(_) => {}
+    }
     std::fs::rename(&build.path, target).map_err(|error| io("cannot publish", target, &error))?;
     build.published = true;
     remove_side_files(target)?;
@@ -339,19 +340,24 @@ fn remove_side_files(target: &Path) -> Result<(), IndexError> {
     for suffix in SIDE_FILES {
         let mut path = target.as_os_str().to_owned();
         path.push(suffix);
-        let path = PathBuf::from(path);
-        let removed = match std::fs::symlink_metadata(&path) {
-            Ok(meta) if meta.file_type().is_dir() => std::fs::remove_dir_all(&path),
-            Ok(_) => std::fs::remove_file(&path),
-            Err(error) => Err(error),
-        };
-        match removed {
-            Ok(()) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => return Err(io("cannot remove", &path, &error)),
-        }
+        remove_at(&PathBuf::from(path))?;
     }
     Ok(())
+}
+
+/// Removes whatever is at `path`, never following a link: a directory
+/// with what it holds, anything else itself.
+fn remove_at(path: &Path) -> Result<(), IndexError> {
+    let removed = match std::fs::symlink_metadata(path) {
+        Ok(meta) if meta.file_type().is_dir() => std::fs::remove_dir_all(path),
+        Ok(_) => std::fs::remove_file(path),
+        Err(error) => Err(error),
+    };
+    match removed {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(io("cannot remove", path, &error)),
+    }
 }
 
 /// Takes `file`'s lock now, or says why not (another holder included).
@@ -372,24 +378,17 @@ fn held_now(file: &File) -> std::io::Result<()> {
 /// waiting at most [`LOCK_WAIT`] for another writer to let it go.
 pub(super) fn lock(dir: &Path, name: &str) -> Result<File, IndexError> {
     let path = dir.join(format!("{name}.lock"));
-    let file = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .mode(0o600)
-        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK)
-        .open(&path)
-        .map_err(|error| io("cannot open", &path, &error))?;
-    match file.metadata() {
-        Ok(meta) if meta.file_type().is_file() => {}
-        _ => {
-            return Err(IndexError::Io(format!(
-                "{} is not a regular file",
-                path.display()
-            )));
+    // Whatever else is there (a link, a directory, a FIFO) is removed, never
+    // followed, and the lock file made again, once.
+    let file = match lock_file(&path)? {
+        Some(file) => file,
+        None => {
+            remove_at(&path)?;
+            lock_file(&path)?.ok_or_else(|| {
+                IndexError::Io(format!("{} is not a regular file", path.display()))
+            })?
         }
-    }
+    };
     let deadline = std::time::Instant::now() + LOCK_WAIT;
     loop {
         match held_now(&file) {
@@ -402,6 +401,36 @@ pub(super) fn lock(dir: &Path, name: &str) -> Result<File, IndexError> {
             }
             Err(error) => return Err(io("cannot lock", &path, &error)),
         }
+    }
+}
+
+/// The lock file at `path`, opened or made without following a link or
+/// waiting on a FIFO; `None` when something else is there.
+fn lock_file(path: &Path) -> Result<Option<File>, IndexError> {
+    let opened = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK)
+        .open(path);
+    let file = match opened {
+        Ok(file) => file,
+        Err(error)
+            if matches!(
+                error.raw_os_error(),
+                Some(libc::ELOOP | libc::EISDIR | libc::ENXIO)
+            ) =>
+        {
+            return Ok(None);
+        }
+        Err(error) => return Err(io("cannot open", path, &error)),
+    };
+    match file.metadata() {
+        Ok(meta) if meta.file_type().is_file() => Ok(Some(file)),
+        Ok(_) => Ok(None),
+        Err(error) => Err(io("cannot inspect", path, &error)),
     }
 }
 
@@ -449,10 +478,6 @@ fn unheld(path: &Path) -> bool {
 /// Removes the index at `target` (a link there is removed, not followed)
 /// and its side files.
 pub(super) fn discard(target: &Path) -> Result<(), IndexError> {
-    match std::fs::remove_file(target) {
-        Ok(()) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => return Err(io("cannot remove", target, &error)),
-    }
+    remove_at(target)?;
     remove_side_files(target)
 }

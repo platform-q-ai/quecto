@@ -54,7 +54,7 @@ fn store_error(error: IndexError) -> BoardStoreError {
         IndexError::NeedsRebuild
         | IndexError::Corrupt(_)
         | IndexError::Sqlite(_)
-        | IndexError::Io(_) => BoardStoreError::Unavailable(format!("the board index: {error:?}")),
+        | IndexError::Io(_) => BoardStoreError::Unavailable(format!("the board index: {error}")),
     }
 }
 

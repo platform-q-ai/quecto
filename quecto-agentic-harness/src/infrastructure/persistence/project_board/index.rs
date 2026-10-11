@@ -1,7 +1,8 @@
 //! The local index of a project's board. It is a SQLite cache of the board
 //! branch at one commit, kept at
-//! `<git-common-dir>/quecto/project-board-<remote>.sqlite` (one per remote,
-//! its name spelt by [`file_name`]), and it answers a listing's queries
+//! `<git-common-dir>/quecto/project-board/<remote>.sqlite` (one per remote,
+//! its name spelt by [`file_name`], in a directory of its own that only
+//! this user may write), and it answers a listing's queries
 //! without reading every task file. Anyone who can write the repository
 //! can forge it, so its listings are advice: writes go through the store's
 //! compare-and-swap.
@@ -50,7 +51,18 @@ pub enum IndexError {
 
 impl std::fmt::Display for IndexError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{self:?}")
+        match self {
+            Self::Store(BoardStoreError::NoBoard) => f.write_str("there is no board"),
+            Self::Store(
+                BoardStoreError::Clash(why)
+                | BoardStoreError::InvalidWrite(why)
+                | BoardStoreError::Unavailable(why),
+            ) => f.write_str(why),
+            Self::NeedsRebuild => f.write_str("the index needs a rebuild"),
+            Self::Corrupt(why) => write!(f, "the index is corrupt: {why}"),
+            Self::Sqlite(why) => write!(f, "the index's SQLite failed: {why}"),
+            Self::Io(why) => write!(f, "the index's files: {why}"),
+        }
     }
 }
 
@@ -122,9 +134,8 @@ impl BoardIndex {
     /// git cannot name the repository's common directory.
     pub fn of(store: &GitBoardStore) -> Result<Self, IndexError> {
         let common = store.common_dir().map_err(IndexError::Store)?;
-        Ok(Self::at(
-            common.join("quecto").join(file_name(store.remote())),
-        ))
+        let dir = common.join("quecto").join("project-board");
+        Ok(Self::at(dir.join(file_name(store.remote()))))
     }
 
     pub fn path(&self) -> &Path {
@@ -380,8 +391,9 @@ impl BoardIndex {
         let mut tasks = vec![];
         for (id, record) in rows {
             let task = decode(&record).map_err(|error| corrupt(error.to_string()))?;
-            if task.fields().id.as_str() != id {
-                return Err(corrupt(format!("row {id:?} holds another task")));
+            match task.fields().id.as_str() == id {
+                true => {}
+                false => return Err(corrupt(format!("row {id:?} holds another task"))),
             }
             if wanted(&task, &statuses) {
                 tasks.push(task);
@@ -412,7 +424,6 @@ impl BoardIndex {
         let outcome = match index_file::is_current(&transaction) {
             Ok(true) => body(&transaction).map_err(IndexError::from),
             Ok(false) => Err(IndexError::NeedsRebuild),
-            Err(error) if index_file::stale(&error) => Err(IndexError::NeedsRebuild),
             Err(error) => Err(error.into()),
         };
         transaction.finish()?;
@@ -433,21 +444,40 @@ fn behind(head: &str, stored: &str, remote: Option<&str>, revisions: &dyn BoardR
     ancestor(head, stored) && remote.is_some_and(|remote| ancestor(stored, remote))
 }
 
-/// The index's file name for `remote`: `project-board-<remote>.sqlite`,
-/// the name spelt in `a-z`, `0-9`, `-` and `_`, every other byte
-/// percent-encoded, so no two remotes share one even on a file system that
-/// ignores case.
+/// The index's file name for `remote`: `<remote>.sqlite`, the name spelt
+/// in `a-z`, `0-9`, `-` and `_`, every other byte percent-encoded, so no
+/// two remotes share one even on a file system that ignores case. A name
+/// spelt longer than [`MAX_SPELT`] keeps its first 32 bytes and a hash of
+/// the whole, so a build file's name stays far under 255 bytes.
 pub fn file_name(remote: &str) -> String {
-    let mut name = String::from("project-board-");
+    use sha2::{Digest, Sha256};
+    let mut spelt = String::new();
     for byte in remote.bytes() {
         match byte {
-            b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' => name.push(char::from(byte)),
-            _ => name.push_str(&format!("%{byte:02X}")),
+            b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' => spelt.push(char::from(byte)),
+            _ => spelt.push_str(&format!("%{byte:02X}")),
         }
     }
-    name.push_str(".sqlite");
-    name
+    let spelt = match spelt.len() <= MAX_SPELT {
+        true => spelt,
+        false => {
+            let digest = Sha256::digest(remote.as_bytes());
+            let hash: String = digest[..8]
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect();
+            format!("{}~{hash}", &spelt[..32])
+        }
+    };
+    assert!(
+        spelt.is_ascii() && spelt.len() <= MAX_SPELT,
+        "a short, plain name"
+    );
+    format!("{spelt}.sqlite")
 }
+
+/// The longest spelt remote name an index's file name holds.
+const MAX_SPELT: usize = 64;
 
 /// A full SHA-1 or SHA-256 commit id in lowercase hex.
 fn full_commit_id(text: &str) -> bool {
@@ -484,7 +514,7 @@ fn quarantined(
     transaction: &Transaction<'_>,
 ) -> rusqlite::Result<Vec<(String, Option<String>, String)>> {
     let mut statement =
-        transaction.prepare("SELECT path, id, reason FROM quarantined ORDER BY path")?;
+        transaction.prepare("SELECT path, id, reason FROM quarantined ORDER BY path, rowid")?;
     let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
     rows.collect()
 }
