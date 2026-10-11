@@ -194,15 +194,17 @@ impl ArtifactCodec for PlanCodec {
         }
         if let Some(team) = &plan.team {
             let rows = team.roles.iter().map(|role| {
-                vec![
+                let turns = role.limits.turns.map(|turns| cells::number(turns.into()));
+                Ok(vec![
                     cells::slug(&role.name),
                     role.model.clone(),
                     cells::word(role.effort.as_str()),
                     cells::number(role.limits.members.into()),
-                    cells::optional(role.limits.turns.map(|turns| cells::number(turns.into()))),
-                ]
+                    cells::optional(ROLES, turns)?,
+                ])
             });
-            sections.push(section(ROLES, Body::Table(rows.collect())));
+            let rows = rows.collect::<Result<Vec<_>, CodecError>>()?;
+            sections.push(section(ROLES, Body::Table(rows)));
         }
         Ok(Document {
             schema: Self::SCHEMA,

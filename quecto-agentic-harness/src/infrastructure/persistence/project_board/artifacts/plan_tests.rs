@@ -328,7 +328,8 @@ fn widest(approach: String, criterion: impl Fn(usize, usize) -> String) -> PlanF
         })
         .collect();
     let name = "\u{1d538}".repeat(100);
-    let email = format!("{}@{}", "a".repeat(120), "b".repeat(133));
+    // An email's `|` is written `\|`: the most bytes an email can take.
+    let email = format!("{}@{}", "|".repeat(120), "b".repeat(133));
     let roles = (0..MAX_ROLES)
         .map(|index| {
             role(
@@ -368,12 +369,20 @@ fn the_widest_plan_fits_its_limits() {
     // Most lines: the approach all blank lines inside a fence.
     let fenced = format!("```{}```", "\n".repeat(MAX_APPROACH_CHARS - 6));
     let most_lines = widest(fenced, |_, c| format!("c{c}"));
-    // Most bytes: the text budget spent on `|`, which a cell writes `\|`.
+    // Most bytes: the whole text budget spent on `|`, which a cell writes
+    // `\|`: each item's share over its criteria, distinct lengths, the last
+    // taking what is left.
     let budget = MAX_PLAN_TEXT_BYTES - MAX_ITEMS - MAX_ROLES * MAX_MODEL_BYTES - MAX_IMAGE_BYTES;
-    let each = budget / (MAX_ITEMS * MAX_PER_ITEM) - MAX_PER_ITEM;
-    let most_bytes = widest(String::new(), |_, c| "|".repeat(each + c));
-    // The longest line: the approach one escaped line of 4-byte letters.
-    let one_line = format!("#{}", "\u{1d538}".repeat(MAX_APPROACH_CHARS - 1));
+    let lengths = |index: usize, criterion: usize| {
+        let share = budget / MAX_ITEMS + usize::from(index < budget % MAX_ITEMS);
+        let steps = MAX_PER_ITEM * (MAX_PER_ITEM - 1) / 2;
+        let base = (share - steps) / MAX_PER_ITEM;
+        let left = share - (base * MAX_PER_ITEM + steps);
+        base + criterion + usize::from(criterion == MAX_PER_ITEM - 1) * left
+    };
+    let most_bytes = widest(String::new(), |index, c| "|".repeat(lengths(index, c)));
+    // The longest line: the approach one line of 4-byte letters.
+    let one_line = "\u{1d538}".repeat(MAX_APPROACH_CHARS);
     let longest_line = widest(one_line, |_, c| format!("c{c}"));
     let mut seen = (0, 0, 0);
     for fields in [most_lines, most_bytes, longest_line] {
@@ -390,13 +399,13 @@ fn the_widest_plan_fits_its_limits() {
     }
     let (bytes, lines, longest) = seen;
     assert!(
-        bytes <= PLAN_LIMITS.file_bytes && bytes > 900_000,
+        bytes <= PLAN_LIMITS.file_bytes && bytes >= 1_075_000,
         "{bytes}"
     );
     // Past the plan's first estimate of 53,000: a fence's blank lines.
     assert!(lines <= PLAN_LIMITS.lines && lines > 53_000, "{lines}");
     assert!(
-        longest <= PLAN_LIMITS.line_bytes && longest > 260_000,
+        longest <= PLAN_LIMITS.line_bytes && longest >= 4 * MAX_APPROACH_CHARS,
         "{longest}"
     );
 }
@@ -450,4 +459,48 @@ fn one_byte_or_line_over_a_limit_is_refused() {
         );
         assert!(!sized, "{refused:?}");
     }
+}
+
+/// Accepted by and Accepted at come together, or neither.
+#[test]
+fn accepted_by_and_accepted_at_come_together() {
+    for row in [
+        "| Accepted by | Shane (work) (`shane@example.com`) |\n",
+        "| Accepted at | 2026-10-11T12:00:00Z |\n",
+    ] {
+        let file = edited(row, "");
+        let read = decode::<PlanCodec>(file.as_bytes());
+        assert!(
+            matches!(
+                &read,
+                Err(CodecError::Cell {
+                    field: "Accepted by",
+                    ..
+                })
+            ),
+            "{read:?}"
+        );
+    }
+}
+
+/// A dependency on an item the plan does not have names its table.
+#[test]
+fn a_dependency_on_an_unknown_item_is_refused() {
+    let file = edited("| docs | cli |", "| docs | nope |");
+    let read = decode::<PlanCodec>(file.as_bytes());
+    assert!(
+        matches!(
+            &read,
+            Err(CodecError::Cell {
+                field: "Item dependencies",
+                ..
+            })
+        ),
+        "{read:?}"
+    );
+}
+
+#[test]
+fn the_plan_codec_kind_is_its_shapes() {
+    assert_eq!(PlanCodec::KIND, PlanCodec::SHAPE.kind);
 }
