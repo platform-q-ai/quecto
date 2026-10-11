@@ -9,7 +9,7 @@
 //! configured. Turning hooks, the filesystem monitor and maintenance off
 //! keeps board operations free of side effects in the checkout; it is not
 //! a security boundary against the repository's owner.
-use super::own_group::{end_group, exited_unreaped};
+use super::own_group::{Ended, end_group, exited_unreaped};
 use crate::domain::project_board::entities::claim::Identity;
 use crate::domain::project_board::value_objects::shown_text::shown_char;
 use crate::domain::redaction::{redact_secrets, redact_url_userinfo};
@@ -387,7 +387,17 @@ impl Git {
         // it may hold. A process that left the group by its own `setsid`
         // (an ssh ControlPersist master, a credential cache daemon) is not
         // reached, and outlives git.
-        end_group(child.id());
+        match end_group(child.id()) {
+            Ended::Signalled => {}
+            // Something else reaped git (unreachable while this process
+            // leaves SIGCHLD alone): its group is left alone, and there is
+            // nothing to wait on.
+            Ended::NotOurs => {
+                return Err(GitError::Spawn(
+                    "git was reaped elsewhere; its group was left alone".into(),
+                ));
+            }
+        }
         let status = child
             .wait()
             .map_err(|error| GitError::Spawn(error.to_string()))?;

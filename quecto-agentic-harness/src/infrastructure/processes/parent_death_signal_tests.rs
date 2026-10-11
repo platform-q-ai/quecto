@@ -122,19 +122,22 @@ impl Watched {
         Some(Self { pid, start })
     }
 
-    /// No such process, another one of its pid, or a zombie no one reaped.
-    pub(crate) fn gone(&self) -> bool {
-        // Alive: this very process, in a state a running one is in.
-        let alive = matches!(
+    /// This very process, in a state a running one is in.
+    pub(crate) fn alive(&self) -> bool {
+        matches!(
             stat(&self.pid),
             Some((start, state)) if start == self.start && "RSDTtWIPK".contains(state)
-        );
-        !alive
+        )
+    }
+
+    /// No such process, another one of its pid, or a zombie no one reaped.
+    pub(crate) fn gone(&self) -> bool {
+        !self.alive()
     }
 
     /// Kills it with SIGKILL unless it is gone already.
     pub(crate) fn end(&self) {
-        if !self.gone() {
+        if self.alive() {
             let _ = std::process::Command::new("kill")
                 .args(["-KILL", &self.pid])
                 .status();

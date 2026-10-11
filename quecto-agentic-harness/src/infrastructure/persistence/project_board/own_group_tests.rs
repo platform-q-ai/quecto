@@ -72,17 +72,39 @@ fn a_group_whose_leader_was_reaped_elsewhere_is_never_signalled() {
     );
 }
 
-/// An exited, unreaped leader's group is ended at once, with no grace.
+/// An exited, unreaped leader's group is ended at once, with no grace:
+/// what it left running in the group is killed.
+#[cfg(target_os = "linux")]
 #[test]
 fn an_exited_leaders_group_is_ended_without_a_grace() {
-    let mut command = std::process::Command::new("true");
-    crate::infrastructure::processes::parent_death_signal::own_session_dying_with_us(&mut command);
+    use crate::infrastructure::processes::parent_death_signal::own_session_dying_with_us;
+    use crate::infrastructure::processes::parent_death_signal::tests::Watched;
+    let dir = tempfile::tempdir().unwrap();
+    let pid = dir.path().join("pid");
+    let mut command = std::process::Command::new("sh");
+    command
+        .args(["-c", &format!("sleep 30 & echo $! > '{}'", pid.display())])
+        .stdin(std::process::Stdio::null());
+    own_session_dying_with_us(&mut command);
     let mut leader = command.spawn().unwrap();
     while !exited_unreaped(leader.id()).unwrap() {
         thread::sleep(Duration::from_millis(5));
     }
+    let left = Watched::named_in(&pid).expect("the leader named what it left running");
     let started = Instant::now();
-    assert_eq!(end_group(leader.id()), Ended::Signalled);
-    assert!(started.elapsed() < TERM_GRACE);
+    let ended = end_group(leader.id());
+    let took = started.elapsed();
+    let by = Instant::now() + Duration::from_secs(2);
+    while left.alive() && Instant::now() < by {
+        thread::sleep(Duration::from_millis(5));
+    }
+    let killed = left.gone();
+    left.end();
+    assert_eq!(ended, Ended::Signalled);
+    assert!(took < TERM_GRACE, "{took:?}");
+    assert!(
+        killed,
+        "what the exited leader left in its group outlived it"
+    );
     assert!(leader.wait().unwrap().success());
 }

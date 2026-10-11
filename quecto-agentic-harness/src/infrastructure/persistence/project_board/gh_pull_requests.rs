@@ -12,7 +12,7 @@
 //! process group is ended, so nothing it left behind outlives the call,
 //! and its pipes get [`OUTPUT_GRACE`] to deliver what it wrote. Blocking:
 //! callers run it off the async workers.
-use super::own_group::{end_group, exited_unreaped};
+use super::own_group::{Ended, end_group, exited_unreaped};
 use crate::infrastructure::processes::parent_death_signal::{
     SPAWN_ARMS, own_session_dying_with_us,
 };
@@ -74,6 +74,9 @@ struct Answer {
     stdout: String,
     stderr_tail: String,
 }
+
+/// Why a gh run ended without its status: something else reaped gh.
+const REAPED_ELSEWHERE: &str = "gh was reaped elsewhere; its group was left alone";
 
 impl GhPullRequestStates {
     /// The states of `repo` (`host/owner/name`), with `gh` found on
@@ -164,9 +167,14 @@ impl GhPullRequestStates {
             Err(error) => {
                 // No reader for its output: gh is ended rather than left
                 // to block on a full pipe.
-                end_group(child.id());
-                let _ = child.wait();
-                return Err(format!("gh's output could not be read: {error}"));
+                let unread = format!("gh's output could not be read: {error}");
+                return match end_group(child.id()) {
+                    Ended::Signalled => {
+                        let _ = child.wait();
+                        Err(unread)
+                    }
+                    Ended::NotOurs => Err(format!("{unread}; {REAPED_ELSEWHERE}")),
+                };
             }
         };
         let deadline = Instant::now() + self.timeout;
@@ -190,7 +198,12 @@ impl GhPullRequestStates {
         // Whatever gh left behind holding its pipes ends with it, so the
         // pipes reach their end (what gh wrote stays readable) and no pump
         // thread outlives the call.
-        end_group(child.id());
+        match end_group(child.id()) {
+            Ended::Signalled => {}
+            // Something else reaped gh (unreachable while this process
+            // leaves SIGCHLD alone): nothing to wait on.
+            Ended::NotOurs => return Err(REAPED_ELSEWHERE.to_string()),
+        }
         let (stdout, stderr) = match exited {
             true => (
                 stdout.recv_timeout(OUTPUT_GRACE).unwrap_or_default(),

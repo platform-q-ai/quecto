@@ -55,11 +55,12 @@ fn a_git_past_its_deadline_is_asked_to_stop_first() {
         signal.display(),
         ready.display()
     );
+    let git = shim(&repos, &script, &[]);
     let (run, ()) = ready_before_its_deadline(
         &[&ready, &signal],
         || ready.exists().then_some(()),
         |deadline| {
-            let mut git = shim(&repos, &script, &[]);
+            let mut git = git.clone();
             git.network_timeout = deadline;
             git.network(&["fetch"]).map(|_| ())
         },
@@ -84,11 +85,12 @@ fn a_git_that_ignores_the_request_is_killed_after_a_grace() {
         "#!/bin/sh\ntrap '' TERM\nsleep 30 &\necho $! > '{}'\nwait\n",
         pid.display()
     );
+    let git = shim(&repos, &script, &[]);
     let ((run, took, deadline), sleeper) = ready_before_its_deadline(
         &[&pid],
         || Watched::named_in(&pid),
         |deadline| {
-            let mut git = shim(&repos, &script, &[]);
+            let mut git = git.clone();
             git.network_timeout = deadline;
             let started = std::time::Instant::now();
             let run = git.network(&["fetch"]).map(|_| ());

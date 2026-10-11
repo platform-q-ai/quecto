@@ -17,7 +17,8 @@ pub(super) fn exited_unreaped(pid: u32) -> std::io::Result<bool> {
     // SAFETY: zero is a valid initial siginfo_t; waitid initializes it.
     let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
     let options = libc::WEXITED | libc::WNOHANG | libc::WNOWAIT;
-    // SAFETY: pid is our own unreaped child and info is writable.
+    // Any pid is safe to ask about: one not our unreaped child answers ECHILD.
+    // SAFETY: info is writable.
     match unsafe { libc::waitid(libc::P_PID, pid, &mut info, options) } {
         // SAFETY: a successful waitid initialized the siginfo union.
         0 => Ok(unsafe { info.si_pid() } != 0),
@@ -40,7 +41,9 @@ fn signal_group(group: libc::pid_t, signal: libc::c_int) {
     }
 }
 
-/// What [`end_group`] did.
+/// What [`end_group`] did. A caller must not go on to wait for a leader
+/// that is no longer its own.
+#[must_use]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Ended {
     /// The group was sent SIGTERM, then SIGKILL.

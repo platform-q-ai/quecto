@@ -284,10 +284,12 @@ const PROCESS_EFFECT_ALLOWLIST: &[(&str, &[&str], &str)] = &[
         "src/infrastructure/persistence/project_board/own_group.rs",
         &["kill(", "libc::kill", "libc::SIGTERM", "libc::SIGKILL"],
         "the project board's git and gh runners ending the process group of \
-         their own Child (a session of its own that dies with quecto, armed \
-         by parent_death_signal), observed unreaped by waitid, once it exits \
-         or at its deadline: SIGTERM, then SIGKILL after a short grace \
-         (#2476, #2477, #2501)",
+         their own unreaped child (its own session, which dies with quecto, \
+         armed by parent_death_signal), observed by waitid without reaping, \
+         once it exits or at its deadline: SIGTERM, then SIGKILL right after \
+         it when the leader has exited (the normal path), or after a short \
+         grace while the leader still runs; nothing more once the leader is \
+         no longer theirs to watch (#2476, #2477, #2501)",
     ),
     (
         "src/infrastructure/tools/grep_run.rs",

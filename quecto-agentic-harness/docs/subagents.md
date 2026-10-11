@@ -894,7 +894,7 @@ any other `libc::kill`, `kill(`, `start_kill`, process-group signal or
 | Bash tool invocation containment (its own process group) | `infrastructure/tools/bash/mod.rs` |
 | Signal-0 liveness observation | `infrastructure/persistence/session_ownership.rs` |
 | Container-script runner: its own script child on timeout, and the process group of a create whose spawn was cancelled | `infrastructure/processes/containers/script_stderr.rs` |
-| Project board git and `gh` runners: the process group of their own unreaped child (its own session), once it exits or at its deadline: SIGTERM, then SIGKILL right after it when the leader has exited (the normal path), or after a short grace while the leader still runs; nothing once the leader is no longer theirs to watch | `infrastructure/persistence/project_board/own_group.rs` |
+| Project board git and `gh` runners: the process group of their own unreaped child (its own session), once it exits or at its deadline: SIGTERM, then SIGKILL right after it when the leader has exited (the normal path), or after a short grace while the leader still runs; nothing more once the leader is no longer theirs to watch | `infrastructure/persistence/project_board/own_group.rs` |
 | Tool-child containment (`rg`, `fd`) | `infrastructure/tools/grep_run.rs`, `infrastructure/tools/find_fd.rs` |
 | `/proc` observation (member start time, own executable, socket table) | `infrastructure/tools/swarm_bridge.rs`, `infrastructure/runtime_identity.rs`, `interface/cli/uds_socket.rs` |
 
