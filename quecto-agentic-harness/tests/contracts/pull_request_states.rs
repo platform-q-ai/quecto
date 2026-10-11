@@ -74,14 +74,14 @@ fn fake_gh(
 
 #[test]
 fn the_gh_host_reads_each_state() {
-    use quecto::infrastructure::processes::gh_pull_requests::GhPullRequestStates;
+    use quecto::infrastructure::persistence::project_board::gh_pull_requests::GhPullRequestStates;
     let (_dir, vars) = fake_gh(true);
-    check_reads_each_state(&GhPullRequestStates::new("owner/repo", vars).unwrap());
+    check_reads_each_state(&GhPullRequestStates::new("github.com/owner/repo", vars).unwrap());
 }
 
 #[test]
 fn the_gh_host_reports_it_cannot_be_reached() {
-    use quecto::infrastructure::processes::gh_pull_requests::GhPullRequestStates;
+    use quecto::infrastructure::persistence::project_board::gh_pull_requests::GhPullRequestStates;
     let (_dir, vars) = fake_gh(false);
-    check_unreachable(&GhPullRequestStates::new("owner/repo", vars).unwrap());
+    check_unreachable(&GhPullRequestStates::new("github.com/owner/repo", vars).unwrap());
 }

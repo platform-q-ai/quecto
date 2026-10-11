@@ -278,7 +278,7 @@ const PROCESS_EFFECT_ALLOWLIST: &[(&str, &[&str], &str)] = &[
          (#2173)",
     ),
     (
-        "src/infrastructure/processes/gh_pull_requests.rs",
+        "src/infrastructure/persistence/project_board/gh_pull_requests.rs",
         &["kill(", "libc::kill", "libc::SIGKILL"],
         "the project board's pull request states ending the process group \
          of its own `gh` Child (a session of its own, by setsid) at its \

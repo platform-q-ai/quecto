@@ -5302,11 +5302,6 @@ fn processes_dependency_allowed(file: &str, path: &str) -> bool {
         | ["crate", "infrastructure", "tools", "path_utils", ..] => {
             file == "systemd_service_manager.rs"
         }
-        // The project board's pull request states over `gh` (#2477)
-        // implement that capability's port, scoped to the one adapter.
-        ["crate", "application", "project_board", "ports", ..] => {
-            file == "gh_pull_requests.rs"
-        }
         // The embedded bundle's integrity adapter (#2024 S4e) answers the
         // launch policy's port in its own verdict vocabulary.
         ["crate", "application", "subagents", "dto", "StandardScriptVerdict"] => {

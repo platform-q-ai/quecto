@@ -452,3 +452,19 @@ fn a_cycle_already_on_the_board_is_walked_through() {
     });
     assert!(made.is_ok(), "{made:?}");
 }
+
+#[test]
+fn crlf_line_ends_become_lf_before_the_schema_reads_them() {
+    let store = board();
+    let created = create(&store, SetClock::at("10:00:00"))
+        .execute(&NewBoardTask {
+            description: "Why.\r\nHow.\r\n".into(),
+            plan: vec![PlanStep {
+                title: "Spike".into(),
+                criteria: vec!["Proved".into()],
+            }],
+            ..new_task("a")
+        })
+        .unwrap();
+    assert_eq!(created.fields().description, "Why.\nHow.\n");
+}

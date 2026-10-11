@@ -21,25 +21,16 @@ pub struct DraftEdit {
     pub depends_on: Option<Vec<Slug>>,
 }
 
-impl DraftEdit {
-    /// The edit sets nothing.
-    pub fn is_empty(&self) -> bool {
-        *self == Self::default()
-    }
-}
-
 /// The draft with `edit` applied, stamped `now`.
 ///
 /// # Errors
-/// A task that is not a draft, an empty edit, or a result the schema
+/// A task that is not a draft, an edit that changes nothing (sets nothing,
+/// or sets each field to what it already holds), or a result the schema
 /// refuses.
 pub fn edit_draft(task: &Task, edit: &DraftEdit, now: &Timestamp) -> Result<Task, BoardRuleError> {
     let status = task.fields().status;
     if status != TaskStatus::Draft {
         return Err(BoardRuleError::NotDraft(status));
-    }
-    if edit.is_empty() {
-        return Err(BoardRuleError::NoEdit);
     }
     let mut next = task.fields().clone();
     if let Some(title) = &edit.title {
@@ -57,12 +48,10 @@ pub fn edit_draft(task: &Task, edit: &DraftEdit, now: &Timestamp) -> Result<Task
     if let Some(depends_on) = &edit.depends_on {
         next.depends_on = depends_on.clone();
     }
-    assert_eq!(
-        next.status,
-        TaskStatus::Draft,
-        "an edit keeps the draft a draft"
-    );
-    settle(next, &stamp(task, now))
+    match next == *task.fields() {
+        true => Err(BoardRuleError::NoEdit),
+        false => settle(next, &stamp(task, now)),
+    }
 }
 
 #[cfg(test)]

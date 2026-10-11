@@ -4,6 +4,7 @@ mod bootstrap_project_board;
 mod change_board_task;
 mod complete_merged_task;
 mod create_board_task;
+mod line_ends;
 mod query_board;
 mod references;
 mod update_draft_task;

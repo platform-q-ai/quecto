@@ -62,6 +62,17 @@ fn only_a_draft_is_edited_and_only_by_an_edit_that_changes_something() {
         edit_draft(&task(Draft), &DraftEdit::default(), &at("10:00:00")),
         Err(BoardRuleError::NoEdit)
     );
+    let same = DraftEdit {
+        title: Some(task(Draft).fields().title.clone()),
+        parent: Some(None),
+        depends_on: Some(vec![]),
+        ..DraftEdit::default()
+    };
+    assert_eq!(
+        edit_draft(&task(Draft), &same, &at("10:00:00")),
+        Err(BoardRuleError::NoEdit),
+        "setting what it already holds changes nothing"
+    );
 }
 
 #[test]
@@ -76,7 +87,7 @@ fn an_edit_the_schema_refuses_and_a_stamp_from_a_slow_clock() {
         Err(BoardRuleError::Invalid(_))
     ));
     let retitle = DraftEdit {
-        title: Some("Line\r\nbreak".into()),
+        title: Some("x".repeat(257)),
         ..DraftEdit::default()
     };
     assert!(matches!(

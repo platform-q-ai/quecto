@@ -18,6 +18,9 @@ fn fake_gh() -> (tempfile::TempDir, Vec<(OsString, OsString)>) {
          5) echo 'To get started with GitHub CLI, please run:  gh auth login' >&2; exit 4;;\n\
          6) (sleep 1; touch '{marker}') & sleep 30;;\n\
          7) echo DRAFTED;;\n\
+         8) head -c 1000000 /dev/zero | tr '\\0' x;;\n\
+         9) printf '\\033[31mfailed https://user:hunter2@github.com/x\\033[0m\\n' >&2; exit 1;;\n\
+         10) (sleep 2; touch '{marker}.held') & echo OPEN;;\n\
          esac\n",
         log = log.display(),
         marker = marker.display()
@@ -35,6 +38,7 @@ fn fake_gh() -> (tempfile::TempDir, Vec<(OsString, OsString)>) {
         ("GH_TOKEN".into(), "token".into()),
         ("AWS_SECRET_ACCESS_KEY".into(), "secret".into()),
         ("GIT_DIR".into(), "/elsewhere".into()),
+        ("GH_HOST".into(), "evil.example".into()),
     ];
     (dir, vars)
 }
@@ -42,7 +46,7 @@ fn fake_gh() -> (tempfile::TempDir, Vec<(OsString, OsString)>) {
 #[test]
 fn each_state_gh_reads_is_answered_and_a_missing_number_is_unknown() {
     let (dir, vars) = fake_gh();
-    let host = GhPullRequestStates::new("platform-q-ai/quecto", vars).unwrap();
+    let host = GhPullRequestStates::new("github.com/platform-q-ai/quecto", vars).unwrap();
     assert_eq!(host.state(1), Ok(PullRequestState::Open));
     assert_eq!(host.state(2), Ok(PullRequestState::Merged));
     assert_eq!(host.state(3), Ok(PullRequestState::Closed));
@@ -50,13 +54,13 @@ fn each_state_gh_reads_is_answered_and_a_missing_number_is_unknown() {
     let args = std::fs::read_to_string(dir.path().join("log.args")).unwrap();
     assert_eq!(
         args.trim(),
-        "pr view 4 --repo platform-q-ai/quecto --json state --jq .state"
+        "pr view 4 --repo github.com/platform-q-ai/quecto --json state --jq .state"
     );
     let env = std::fs::read_to_string(dir.path().join("log.env")).unwrap();
     for set in ["GH_TOKEN=token", "GH_PROMPT_DISABLED=1"] {
         assert!(env.lines().any(|line| line == set), "{set} missing: {env}");
     }
-    for dropped in ["AWS_SECRET_ACCESS_KEY", "GIT_DIR"] {
+    for dropped in ["AWS_SECRET_ACCESS_KEY", "GIT_DIR", "GH_HOST"] {
         assert!(!env.contains(dropped), "{dropped} reached gh");
     }
 }
@@ -64,7 +68,7 @@ fn each_state_gh_reads_is_answered_and_a_missing_number_is_unknown() {
 #[test]
 fn a_refusal_or_an_answer_gh_never_gives_is_unavailable_not_a_state() {
     let (_dir, vars) = fake_gh();
-    let host = GhPullRequestStates::new("platform-q-ai/quecto", vars).unwrap();
+    let host = GhPullRequestStates::new("github.com/platform-q-ai/quecto", vars).unwrap();
     let refused = host.state(5);
     assert!(
         matches!(&refused, Err(PullRequestStatesError::Unavailable(why)) if why.contains("gh auth login")),
@@ -79,7 +83,7 @@ fn a_refusal_or_an_answer_gh_never_gives_is_unavailable_not_a_state() {
 #[test]
 fn a_gh_that_hangs_is_ended_with_its_group_at_the_deadline() {
     let (dir, vars) = fake_gh();
-    let host = GhPullRequestStates::new("platform-q-ai/quecto", vars)
+    let host = GhPullRequestStates::new("github.com/platform-q-ai/quecto", vars)
         .unwrap()
         .with_timeout(Duration::from_millis(300));
     let started = Instant::now();
@@ -98,12 +102,58 @@ fn a_gh_that_hangs_is_ended_with_its_group_at_the_deadline() {
 #[test]
 fn a_repository_is_owner_slash_name_and_gh_must_be_on_the_path() {
     let (_dir, vars) = fake_gh();
-    for repo in ["quecto", "a/b/c", "../x", "a/.git", "-o/x", "a b/c", ""] {
+    for repo in [
+        "platform-q-ai/quecto",
+        "github.com/a/b/c",
+        "github.com/../x",
+        "github.com/a/.git",
+        "github.com/-o/x",
+        "github.com/a b/c",
+        "localhost/a/b",
+        "",
+    ] {
         assert!(
             GhPullRequestStates::new(repo, vars.clone()).is_err(),
             "{repo}"
         );
     }
     let no_gh = vec![("PATH".into(), "/nonexistent".into())];
-    assert!(GhPullRequestStates::new("a/b", no_gh).is_err());
+    assert!(GhPullRequestStates::new("github.com/a/b", no_gh).is_err());
+}
+
+#[test]
+fn gh_output_is_bounded_and_its_errors_sanitised() {
+    let (_dir, vars) = fake_gh();
+    let host = GhPullRequestStates::new("github.com/platform-q-ai/quecto", vars).unwrap();
+    let flood = host.state(8);
+    assert!(
+        matches!(&flood, Err(PullRequestStatesError::Unavailable(why)) if why.len() < 2 * STDOUT_CAPACITY),
+        "{flood:?}"
+    );
+    let Err(PullRequestStatesError::Unavailable(why)) = host.state(9) else {
+        panic!("unavailable")
+    };
+    assert!(
+        !why.contains('\u{1b}') && !why.contains("hunter2"),
+        "{why:?}"
+    );
+    assert!(why.contains("failed"), "{why:?}");
+}
+
+#[test]
+fn a_child_gh_leaves_holding_its_output_costs_the_grace_and_ends() {
+    let (dir, vars) = fake_gh();
+    let host = GhPullRequestStates::new("github.com/platform-q-ai/quecto", vars).unwrap();
+    let started = Instant::now();
+    assert_eq!(host.state(10), Ok(PullRequestState::Open));
+    assert!(
+        started.elapsed() < OUTPUT_GRACE * 4,
+        "{:?}",
+        started.elapsed()
+    );
+    std::thread::sleep(Duration::from_millis(2500));
+    assert!(
+        !dir.path().join("child-lived.held").exists(),
+        "gh's child outlived it"
+    );
 }

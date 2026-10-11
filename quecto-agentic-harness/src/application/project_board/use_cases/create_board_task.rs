@@ -8,6 +8,7 @@
 use std::sync::Arc;
 
 use super::board_change::{checked_writer, commit};
+use super::line_ends::{lf, plan_lf};
 use super::references::{References, references_hold};
 use crate::application::project_board::dto::{NewBoardTask, ProjectBoardError};
 use crate::application::project_board::ports::{BoardClock, BoardSnapshot, ProjectBoardStore};
@@ -54,13 +55,13 @@ impl CreateBoardTask {
 fn created_at(new: &NewBoardTask, now: &Timestamp) -> TaskFields {
     let fields = TaskFields {
         id: new.id.clone(),
-        title: new.title.clone(),
+        title: lf(&new.title),
         kind: new.kind,
-        description: new.description.clone(),
+        description: lf(&new.description),
         status: new.status.into(),
         parent: new.parent.clone(),
         depends_on: new.depends_on.clone(),
-        plan: new.plan.clone(),
+        plan: plan_lf(&new.plan),
         items: vec![],
         team: new.team.clone(),
         claim: None,
