@@ -184,6 +184,15 @@ pub enum BoardClockError {
     OutOfRange(String),
 }
 
+/// Whether the board clock has an outside reference.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReferenceStatus {
+    Referenced,
+    /// No outside time is read, and why: changes are not bounded against
+    /// one.
+    NoReference(String),
+}
+
 /// What time it is, an outside reading of it to check that against, and
 /// the pause between attempts at a write. Blocking: [`Self::pause`] holds
 /// the calling thread, so callers run board changes off the async workers,
@@ -196,8 +205,14 @@ pub trait BoardClock: Send + Sync {
     fn now(&self) -> Result<Timestamp, BoardClockError>;
 
     /// The time a source outside this machine reports, when one can be
-    /// read; `None` when none can.
+    /// read; `None` when none can. It may read the network (within a
+    /// bound), so it blocks the calling thread.
     fn reference(&self) -> Option<Timestamp>;
+
+    /// Whether [`Self::reference`] reads an outside time, or why it does
+    /// not, so a front end can tell its user that changes are not bounded
+    /// against one. It reads as `reference` does.
+    fn reference_status(&self) -> ReferenceStatus;
 
     /// Waits before attempt `attempt` (from 2) at a write that lost the
     /// race: a short, jittered pause, so writers that collided spread out.
