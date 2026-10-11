@@ -331,8 +331,9 @@ fn every_rendered_document_is_outlined_as_itself() {
 /// an ordered list item, reads as text in a paragraph or a list.
 #[test]
 fn block_starts_read_as_text() {
-    let starts = prose::BLOCK_STARTS
-        .chars()
+    let starts = (b'!'..=b'~')
+        .map(char::from)
+        .filter(char::is_ascii_punctuation)
         .map(|c| match c {
             '`' => "`a` x".to_string(),
             '$' => "$ x".to_string(),
@@ -341,21 +342,32 @@ fn block_starts_read_as_text() {
         })
         .chain(["1. x".into(), "2) x".into(), "3.".into()]);
     for start in starts {
+        let mut blocks = vec![Block::Paragraph(vec![start.clone(), start.clone()])];
+        // An item opens with `[` only as a link.
+        if !start.starts_with('[') {
+            blocks.push(Block::List(vec![start.clone()]));
+        }
         let document = Document {
             schema: 1,
             title: "T".into(),
             fields: vec![],
             sections: vec![Section {
                 heading: "Outcome".into(),
-                body: Body::Prose(vec![
-                    Block::Paragraph(vec![start.clone(), start.clone()]),
-                    Block::List(vec![start.clone()]),
-                ]),
+                body: Body::Prose(blocks),
             }],
         };
         let file = render(&document, &SHAPE);
         let file = file.unwrap_or_else(|error| panic!("{start:?}: {error:?}"));
         assert_eq!(outline(&file, &document), Ok(()), "{start:?}: {file}");
+        // Every ASCII punctuation a line opens with is escaped, but the
+        // backtick, whose span the line closes.
+        let punctuation = start.starts_with(|c: char| c.is_ascii_punctuation() && c != '`');
+        if punctuation {
+            assert!(
+                file.contains(&format!("\n\\{start}\n")),
+                "{start:?}: {file}"
+            );
+        }
     }
 }
 

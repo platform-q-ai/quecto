@@ -6,7 +6,8 @@
 //! (smart punctuation, heading attributes `{#id}`, `^superscript^`, and
 //! `~subscript~`, which GitHub draws as strikethrough); and comrak, a port
 //! of cmark-gfm, with GFM's tables, strikethrough and extended autolinks
-//! (a bare `www.`, `https://` or email), which pulldown-cmark does not read.
+//! (a bare `www.`, `https://` or email), which pulldown-cmark does not read,
+//! task lists, footnotes, math, alerts and the tag filter, as GitHub reads.
 use super::*;
 use comrak::nodes::{AstNode, ListType, NodeValue};
 use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, LinkType, Options, Parser, Tag};
@@ -21,12 +22,21 @@ fn options() -> Options {
         - Options::ENABLE_SUBSCRIPT
 }
 
-/// comrak's options: GFM's autolinks, tables and strikethrough.
+/// comrak's options: what GitHub reads: autolinks, tables,
+/// strikethrough, task lists, footnotes, `$` and code math, alerts, and
+/// the tag filter.
 fn comrak_options() -> comrak::Options<'static> {
     let mut options = comrak::Options::default();
-    options.extension.autolink = true;
-    options.extension.table = true;
-    options.extension.strikethrough = true;
+    let extension = &mut options.extension;
+    extension.autolink = true;
+    extension.table = true;
+    extension.strikethrough = true;
+    extension.tasklist = true;
+    extension.footnotes = true;
+    extension.math_dollars = true;
+    extension.math_code = true;
+    extension.alerts = true;
+    extension.tagfilter = true;
     options
 }
 

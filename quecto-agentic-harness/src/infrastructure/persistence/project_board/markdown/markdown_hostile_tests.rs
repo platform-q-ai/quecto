@@ -155,6 +155,19 @@ fn hostile_documents_are_refused_when_written() {
         ("an email to a dot in an id", with(|d| d.fields[0].1 = "a@.evil.example".into()), |e| matches!(e, E::Cell { line: 6, .. })),
         ("an email to a dash in an id", with(|d| d.fields[0].1 = "a@-evil.example".into()), |e| matches!(e, E::Cell { line: 6, .. })),
         ("emphasis by underscores in an id", with(|d| d.fields[0].1 = "_x_".into()), |e| matches!(e, E::Cell { line: 6, .. })),
+        ("a link showing a www address in code", render(&with_line("[`www.evil.example`](https://good.example)"), &SHAPE), |e| matches!(e, E::Link { line: 11 })),
+        ("a link showing a scheme in code", render(&with_line("[`https://evil.example`](https://good.example)"), &SHAPE), |e| matches!(e, E::Link { line: 11 })),
+        ("a link showing an email in code", render(&with_line("[`ada@evil.example`](https://good.example)"), &SHAPE), |e| matches!(e, E::Link { line: 11 })),
+        ("a link showing a www address split by emphasis", render(&with_line("[ww*w*.evil.example](https://good.example)"), &SHAPE), |e| matches!(e, E::Link { line: 11 })),
+        ("a link showing a scheme split by emphasis", render(&with_line("[http*s:*//evil.example/login](https://good.example)"), &SHAPE), |e| matches!(e, E::Link { line: 11 })),
+        ("a link showing an email split by emphasis", render(&with_line("[ad*a*@evil.example](https://good.example)"), &SHAPE), |e| matches!(e, E::Link { line: 11 })),
+        ("a link showing a www address split by strikethrough", render(&with_line("[ww~w~.evil.example](https://good.example)"), &SHAPE), |e| matches!(e, E::Link { line: 11 })),
+        ("a link showing a www address split by code", render(&with_line("[w`w`w.evil.example](https://good.example)"), &SHAPE), |e| matches!(e, E::Link { line: 11 })),
+        ("a link showing an email split by underscores", render(&with_line("[ad_a_@evil.example](https://good.example)"), &SHAPE), |e| matches!(e, E::Link { line: 11 })),
+        ("an address with userinfo", render(&with_line("[a](https://good.example@evil.example)"), &SHAPE), |e| matches!(e, E::Link { line: 11 })),
+        ("an address with userinfo and a path", render(&with_line("[a](https://good.example@evil.example/login)"), &SHAPE), |e| matches!(e, E::Link { line: 11 })),
+        ("a checked task", with(|d| d.sections[1].body = Body::Prose(vec![Block::List(vec!["[x] done".into()])])), |e| matches!(e, E::Structure { line: 25, .. })),
+        ("an open task", with(|d| d.sections[1].body = Body::Prose(vec![Block::List(vec!["[ ] to do".into()])])), |e| matches!(e, E::Structure { line: 25, .. })),
         ("a fence language with a space", with(|d| d.sections[0].body = Body::Prose(vec![Block::Code { language: Some("a b".into()), lines: vec![] }])), |e| matches!(e, E::Fence { .. })),
         ("a row of one cell", with(|d| d.sections[2].body = Body::Table(vec![vec!["x".into()]])), |e| matches!(e, E::Cell { .. })),
         ("a field no task has", with(|d| d.fields[0].0 = "Owner".into()), |e| matches!(e, E::UnknownField { .. })),
@@ -185,6 +198,8 @@ fn near_misses_are_kept() {
         "times 12:00:00 and :smile: stay as written",
         "[a `]` b](https://x.example) opens the line as a link",
         "an email in code `ada@example.com` and a handle @ada",
+        "a profile [here](https://example.com/@ada) and [paypal.com](https://example.com)",
+        "README.md and C:\\x",
     ] {
         let document = with_line(line);
         let file = render(&document, &SHAPE).unwrap_or_else(|error| panic!("{line:?}: {error:?}"));
@@ -193,6 +208,22 @@ fn near_misses_are_kept() {
     let document = with_claim("`C:\\x` and `a|b`");
     let file = render(&document, &SHAPE).unwrap();
     assert!(file.contains("| Claim | `C:\\x` and `a\\|b` |"), "{file}");
+    assert_eq!(outline(&file, &document), Ok(()));
+}
+
+/// A list item may open with a link, which is no task box.
+#[test]
+fn a_list_item_may_open_with_a_link() {
+    let mut document = example();
+    document.sections[1].body = Body::Prose(vec![Block::List(vec![
+        "[the docs](https://example.com/docs) first".into(),
+        "[x](https://example.com/x)".into(),
+    ])]);
+    let file = render(&document, &SHAPE).unwrap();
+    assert!(
+        file.contains("\n- [the docs](https://example.com/docs) first\n"),
+        "{file}"
+    );
     assert_eq!(outline(&file, &document), Ok(()));
 }
 
