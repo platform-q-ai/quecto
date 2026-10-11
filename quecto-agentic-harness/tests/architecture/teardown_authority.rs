@@ -278,6 +278,12 @@ const PROCESS_EFFECT_ALLOWLIST: &[(&str, &[&str], &str)] = &[
          (#2173)",
     ),
     (
+        "src/infrastructure/persistence/project_board/git.rs",
+        &["kill("],
+        "the project board store ending its own git Child at its deadline \
+         (#2476)",
+    ),
+    (
         "src/infrastructure/tools/grep_run.rs",
         &["start_kill", "kill_on_drop"],
         "tool invocation containment: the grep tool's own `rg` Child at its \
