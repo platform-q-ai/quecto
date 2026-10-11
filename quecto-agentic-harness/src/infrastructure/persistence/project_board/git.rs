@@ -574,3 +574,6 @@ fn on_path(path: &OsStr, program: &str) -> Option<PathBuf> {
             })
         })
 }
+
+#[path = "git_committer.rs"]
+mod committer;

@@ -233,6 +233,36 @@ impl PullRequestStates for GhPullRequestStates {
     }
 }
 
+/// The `host/owner/name` a remote URL names when its host is GitHub's
+/// (`github.com`) or the enterprise host `configured_host` names
+/// (`GH_HOST`), over https or ssh; any user in the URL is dropped, never
+/// passed on. `None` for any other host.
+pub fn github_repository(remote_url: &str, configured_host: Option<&str>) -> Option<String> {
+    let url = remote_url.trim();
+    let (authority, path) = match url
+        .strip_prefix("https://")
+        .or_else(|| url.strip_prefix("ssh://"))
+    {
+        Some(rest) => rest.split_once('/')?,
+        // git's scp-like `[user@]host:owner/name`.
+        None if !url.contains("://") => url.split_once(':')?,
+        None => return None,
+    };
+    let host = authority
+        .rsplit_once('@')
+        .map_or(authority, |(_, host)| host);
+    let host = host.split(':').next()?.to_ascii_lowercase();
+    let configured = configured_host.map(str::to_ascii_lowercase);
+    let known = host == "github.com" || configured.as_deref() == Some(host.as_str());
+    if !known {
+        return None;
+    }
+    let path = path.strip_suffix('/').unwrap_or(path);
+    let path = path.strip_suffix(".git").unwrap_or(path);
+    let repo = format!("{host}/{path}");
+    repository_name(&repo).then_some(repo)
+}
+
 /// `host/owner/name`: a host name; an owner of letters, digits, `-` and
 /// `_` (an enterprise-managed user's `name_short`) starting with a letter
 /// or digit; and a name of letters, digits, `-`,
