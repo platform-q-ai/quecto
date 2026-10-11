@@ -262,7 +262,7 @@ fn a_criterion_of_an_unknown_item_is_refused() {
 #[test]
 fn team_rows_without_roles_are_refused() {
     let roles = EXAMPLE.find("\n## Roles").unwrap();
-    let without_roles = format!("{}\n", &EXAMPLE[..roles]);
+    let without_roles = EXAMPLE[..roles].to_string();
     let read = decode::<PlanCodec>(without_roles.as_bytes());
     assert!(
         matches!(
