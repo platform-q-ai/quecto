@@ -93,7 +93,7 @@ impl From<rusqlite::Error> for IndexError {
     fn from(error: rusqlite::Error) -> Self {
         match error.sqlite_error_code() {
             Some(ErrorCode::TooBig) => Self::Corrupt(format!("a value over the read cap: {error}")),
-            _ => Self::NeedsRebuild,
+            _ => Self::NeedsRebuild(error.to_string()),
         }
     }
 }
@@ -168,16 +168,16 @@ pub(super) fn reader(path: &Path) -> Result<Connection, IndexError> {
     let file = match opened {
         Ok(file) => file,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return Err(IndexError::NeedsRebuild);
+            return Err(IndexError::NeedsRebuild("no index".into()));
         }
         Err(error) if matches!(error.raw_os_error(), Some(libc::ELOOP | libc::ENXIO)) => {
-            return Err(IndexError::NeedsRebuild);
+            return Err(IndexError::NeedsRebuild("the index is not a file".into()));
         }
         Err(error) => return Err(io("cannot open", path, &error)),
     };
     match file.metadata() {
         Ok(meta) if meta.file_type().is_file() => {}
-        Ok(_) => return Err(IndexError::NeedsRebuild),
+        Ok(_) => return Err(IndexError::NeedsRebuild("the index is not a file".into())),
         Err(error) => return Err(io("cannot inspect", path, &error)),
     }
     let flags = OpenFlags::SQLITE_OPEN_READ_ONLY
@@ -345,6 +345,11 @@ fn remove_side_files(target: &Path) -> Result<(), IndexError> {
     Ok(())
 }
 
+/// Removes what is at `path` unless it is a regular file.
+pub(super) fn clear_non_regular(path: &Path) -> Result<(), IndexError> {
+    remove_at(path)
+}
+
 /// Removes whatever is at `path`, never following a link: a directory
 /// with what it holds, anything else itself.
 fn remove_at(path: &Path) -> Result<(), IndexError> {
@@ -383,7 +388,7 @@ pub(super) fn lock(dir: &Path, name: &str) -> Result<File, IndexError> {
     let file = match lock_file(&path)? {
         Some(file) => file,
         None => {
-            remove_at(&path)?;
+            clear_non_regular(&path)?;
             lock_file(&path)?.ok_or_else(|| {
                 IndexError::Io(format!("{} is not a regular file", path.display()))
             })?

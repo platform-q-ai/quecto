@@ -33,7 +33,7 @@ fn an_index_that_is_a_link_is_never_followed_and_is_replaced() {
     let (victim, bytes) = victim(dir.path());
     std::fs::create_dir(dir.path().join("quecto")).unwrap();
     std::os::unix::fs::symlink(&victim, index.path()).unwrap();
-    assert_eq!(index.ready(), Err(IndexError::NeedsRebuild));
+    assert!(needs_rebuild(&index.ready()));
     assert_eq!(
         rebuild(&index, &board("a1")),
         Ok(Refreshed::Rebuilt {
@@ -98,8 +98,8 @@ fn planted_triggers_views_and_tables_never_survive_a_rebuild() {
         rebuild(&index, &board("a1")).unwrap();
         let fresh = objects(index.path());
         tamper(&index, plant);
-        assert_eq!(index.ready(), Err(IndexError::NeedsRebuild), "{plant}");
-        assert_eq!(index.head(), Err(IndexError::NeedsRebuild), "{plant}");
+        assert!(needs_rebuild(&index.ready()), "{plant}");
+        assert!(needs_rebuild(&index.head()), "{plant}");
         assert_eq!(
             rebuild(&index, &board("a1")),
             Ok(Refreshed::Rebuilt {

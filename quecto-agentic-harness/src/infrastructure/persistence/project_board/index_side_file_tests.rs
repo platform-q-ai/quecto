@@ -134,10 +134,7 @@ fn a_fifo_at_the_index_never_hangs_a_reader() {
     std::fs::remove_file(index.path()).unwrap();
     fifo(index.path());
     let reader = index.clone();
-    assert_eq!(
-        within(move || reader.ready()),
-        Some(Err(IndexError::NeedsRebuild))
-    );
+    assert_eq!(within(move || needs_rebuild(&reader.ready())), Some(true));
 }
 
 #[test]
@@ -189,7 +186,7 @@ fn a_file_of_an_unsupported_schema_format_is_rebuilt() {
     // The schema format number, a big-endian u32 at offset 44: 1 to 4.
     bytes[44..48].copy_from_slice(&5u32.to_be_bytes());
     std::fs::write(index.path(), bytes).unwrap();
-    assert_eq!(index.ready(), Err(IndexError::NeedsRebuild));
+    assert!(needs_rebuild(&index.ready()));
     assert_eq!(
         rebuild(&index, &board("a1")),
         Ok(Refreshed::Rebuilt {
@@ -206,7 +203,7 @@ fn a_directory_at_the_index_is_replaced() {
     std::fs::remove_file(index.path()).unwrap();
     std::fs::create_dir(index.path()).unwrap();
     std::fs::write(index.path().join("inside"), b"x").unwrap();
-    assert_eq!(index.ready(), Err(IndexError::NeedsRebuild));
+    assert!(needs_rebuild(&index.ready()));
     assert_eq!(
         rebuild(&index, &board("a1")),
         Ok(Refreshed::Rebuilt {
@@ -269,4 +266,23 @@ fn a_shared_index_directory_is_made_private_again() {
     rebuild(&index, &moved("e2")).unwrap();
     let mode = std::fs::metadata(parent).unwrap().permissions().mode() & 0o777;
     assert_eq!(mode & 0o022, 0, "{mode:o}");
+}
+
+/// Readers check the index's directory too: one this user owns but others
+/// may write to is made private again, and a link in its place is refused.
+#[test]
+fn readers_check_the_index_directory() {
+    use std::os::unix::fs::PermissionsExt;
+    let (dir, index) = index();
+    rebuild(&index, &board("a1")).unwrap();
+    let parent = index.path().parent().unwrap().to_path_buf();
+    std::fs::set_permissions(&parent, std::fs::Permissions::from_mode(0o777)).unwrap();
+    assert_eq!(ids(index.ready()), ["a"]);
+    let mode = std::fs::metadata(&parent).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode & 0o022, 0, "{mode:o}");
+    let moved_to = dir.path().join("elsewhere");
+    std::fs::rename(&parent, &moved_to).unwrap();
+    std::os::unix::fs::symlink(&moved_to, &parent).unwrap();
+    let read = index.ready();
+    assert!(matches!(&read, Err(IndexError::Io(_))), "{read:?}");
 }

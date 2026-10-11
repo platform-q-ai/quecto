@@ -36,6 +36,11 @@ fn tamper(index: &BoardIndex, sql: &str) {
     connection.execute_batch(sql).unwrap();
 }
 
+/// The index answered that it needs a rebuild, whatever the cause.
+fn needs_rebuild<T: std::fmt::Debug>(result: &Result<T, IndexError>) -> bool {
+    matches!(result, Err(IndexError::NeedsRebuild(_)))
+}
+
 fn slug(text: &str) -> Slug {
     Slug::parse(text).unwrap()
 }
@@ -312,16 +317,16 @@ fn a_snapshot_head_that_is_not_a_full_commit_id_is_refused() {
             "{head}"
         );
     }
-    assert_eq!(index.head(), Err(IndexError::NeedsRebuild));
+    assert!(needs_rebuild(&index.head()));
 }
 
 #[test]
 fn a_missing_deleted_or_foreign_index_is_rebuilt() {
     let (_dir, index) = index();
-    assert_eq!(index.ready(), Err(IndexError::NeedsRebuild));
+    assert!(needs_rebuild(&index.ready()));
     rebuild(&index, &board("a1")).unwrap();
     std::fs::remove_file(index.path()).unwrap();
-    assert_eq!(index.head(), Err(IndexError::NeedsRebuild));
+    assert!(needs_rebuild(&index.head()));
     assert_eq!(
         rebuild(&index, &board("a1")),
         Ok(Refreshed::Rebuilt {
@@ -333,7 +338,7 @@ fn a_missing_deleted_or_foreign_index_is_rebuilt() {
         b"not a database, just bytes that are long enough to be read as a header",
     )
     .unwrap();
-    assert_eq!(index.ready(), Err(IndexError::NeedsRebuild));
+    assert!(needs_rebuild(&index.ready()));
     assert_eq!(
         rebuild(&index, &board("a1")),
         Ok(Refreshed::Rebuilt {
@@ -353,7 +358,7 @@ fn another_layout_or_record_schema_is_rebuilt_even_at_the_same_commit() {
         let (_dir, index) = index();
         rebuild(&index, &board("a1")).unwrap();
         tamper(&index, sql);
-        assert_eq!(index.ready(), Err(IndexError::NeedsRebuild), "{sql}");
+        assert!(needs_rebuild(&index.ready()), "{sql}");
         assert_eq!(
             rebuild(&index, &board("a1")),
             Ok(Refreshed::Rebuilt {

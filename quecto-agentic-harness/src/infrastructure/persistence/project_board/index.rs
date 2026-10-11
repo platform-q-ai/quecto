@@ -41,7 +41,7 @@ pub enum IndexError {
     Store(BoardStoreError),
     /// No index, one of another layout or record schema, or a file that is
     /// not one: refresh it.
-    NeedsRebuild,
+    NeedsRebuild(String),
     /// The index holds something that does not read back: discard it and
     /// refresh.
     Corrupt(String),
@@ -58,7 +58,7 @@ impl std::fmt::Display for IndexError {
                 | BoardStoreError::InvalidWrite(why)
                 | BoardStoreError::Unavailable(why),
             ) => f.write_str(why),
-            Self::NeedsRebuild => f.write_str("the index needs a rebuild"),
+            Self::NeedsRebuild(why) => write!(f, "the index needs a rebuild: {why}"),
             Self::Corrupt(why) => write!(f, "the index is corrupt: {why}"),
             Self::Sqlite(why) => write!(f, "the index's SQLite failed: {why}"),
             Self::Io(why) => write!(f, "the index's files: {why}"),
@@ -165,7 +165,7 @@ impl BoardIndex {
         };
         match self.head() {
             Ok(Some(head)) if head == remote => Ok(Refreshed::Unchanged { head }),
-            Ok(Some(_) | None) | Err(IndexError::NeedsRebuild | IndexError::Corrupt(_)) => {
+            Ok(Some(_) | None) | Err(IndexError::NeedsRebuild(_) | IndexError::Corrupt(_)) => {
                 match store.read() {
                     Ok(snapshot) => self.rebuild_at(&snapshot, revisions, Some(&remote)),
                     Err(BoardStoreError::NoBoard) => self.gone(),
@@ -237,7 +237,7 @@ impl BoardIndex {
             Ok(Some(stored)) if behind(&head, &stored, remote, revisions) => {
                 Ok(Refreshed::Newer { head: stored })
             }
-            Ok(Some(_) | None) | Err(IndexError::NeedsRebuild | IndexError::Corrupt(_)) => {
+            Ok(Some(_) | None) | Err(IndexError::NeedsRebuild(_) | IndexError::Corrupt(_)) => {
                 self.publish(build, &dir, head)
             }
             Err(error) => Err(error),
@@ -423,7 +423,9 @@ impl BoardIndex {
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Deferred)?;
         let outcome = match index_file::is_current(&transaction) {
             Ok(true) => body(&transaction).map_err(IndexError::from),
-            Ok(false) => Err(IndexError::NeedsRebuild),
+            Ok(false) => Err(IndexError::NeedsRebuild(
+                "another layout or record schema".into(),
+            )),
             Err(error) => Err(error.into()),
         };
         transaction.finish()?;

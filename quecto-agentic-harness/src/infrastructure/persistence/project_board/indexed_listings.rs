@@ -38,7 +38,7 @@ impl IndexedBoardListings {
         refresh().map_err(store_error)?;
         match query(&self.index) {
             Ok(listing) => Ok(listing),
-            Err(IndexError::NeedsRebuild | IndexError::Corrupt(_)) => {
+            Err(IndexError::NeedsRebuild(_) | IndexError::Corrupt(_)) => {
                 self.index.discard().map_err(store_error)?;
                 refresh().map_err(store_error)?;
                 query(&self.index).map_err(store_error)
@@ -51,7 +51,7 @@ impl IndexedBoardListings {
 fn store_error(error: IndexError) -> BoardStoreError {
     match error {
         IndexError::Store(error) => error,
-        IndexError::NeedsRebuild
+        IndexError::NeedsRebuild(_)
         | IndexError::Corrupt(_)
         | IndexError::Sqlite(_)
         | IndexError::Io(_) => BoardStoreError::Unavailable(format!("the board index: {error}")),

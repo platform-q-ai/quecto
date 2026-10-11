@@ -150,7 +150,7 @@ fn a_board_that_is_gone_takes_the_index_with_it() {
         index.refresh(&repo.alice, &repo.alice),
         Err(IndexError::Store(BoardStoreError::NoBoard))
     );
-    assert_eq!(index.ready(), Err(IndexError::NeedsRebuild));
+    assert!(needs_rebuild(&index.ready()));
     assert!(!index.path().exists());
 }
 

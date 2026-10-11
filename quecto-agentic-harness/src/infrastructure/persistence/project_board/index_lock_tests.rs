@@ -213,6 +213,10 @@ fn a_long_remote_name_makes_a_short_index_name() {
     let (one, two) = ("r".repeat(300) + "1", "r".repeat(300) + "2");
     let (one, two) = (file_name(&one), file_name(&two));
     assert!(one.len() <= 80, "{one}");
+    assert_eq!(
+        one,
+        "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr~e953c9d30c9aadf6.sqlite"
+    );
     assert_ne!(one, two);
     assert_eq!(file_name("origin"), "origin.sqlite");
 }
@@ -224,7 +228,59 @@ fn index_errors_read_as_text() {
         "the index's SQLite failed: boom"
     );
     assert_eq!(
-        IndexError::NeedsRebuild.to_string(),
-        "the index needs a rebuild"
+        IndexError::NeedsRebuild("file is not a database".into()).to_string(),
+        "the index needs a rebuild: file is not a database"
     );
+}
+
+/// Only the failures a rebuild mends ask for one, each with SQLite's own
+/// cause: a file that is not this index, or a value of another type. Any
+/// other failure is SQLite's.
+#[test]
+fn only_the_failures_a_rebuild_mends_ask_for_one() {
+    use rusqlite::ffi;
+    let failure = |code| rusqlite::Error::SqliteFailure(ffi::Error::new(code), None);
+    for code in [
+        ffi::SQLITE_NOTADB,
+        ffi::SQLITE_CORRUPT,
+        ffi::SQLITE_ERROR,
+        ffi::SQLITE_CANTOPEN,
+    ] {
+        let error = IndexError::from(failure(code));
+        assert!(
+            matches!(&error, IndexError::NeedsRebuild(why) if !why.is_empty()),
+            "{code}: {error:?}"
+        );
+    }
+    let mistyped =
+        rusqlite::Error::InvalidColumnType(0, "status".into(), rusqlite::types::Type::Integer);
+    assert!(matches!(
+        IndexError::from(mistyped),
+        IndexError::NeedsRebuild(_)
+    ));
+    for code in [ffi::SQLITE_NOMEM, ffi::SQLITE_INTERRUPT, ffi::SQLITE_MISUSE] {
+        assert!(
+            matches!(IndexError::from(failure(code)), IndexError::Sqlite(_)),
+            "{code}"
+        );
+    }
+    assert!(matches!(
+        IndexError::from(failure(ffi::SQLITE_TOOBIG)),
+        IndexError::Corrupt(_)
+    ));
+}
+
+/// A writer that finds no lock file it can use clears only what is not a
+/// regular file there: a fresh lock file another writer just made stays.
+#[test]
+fn clearing_the_lock_place_never_removes_a_regular_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let lock = dir.path().join("index.lock");
+    std::fs::write(&lock, b"").unwrap();
+    index_file::clear_non_regular(&lock).unwrap();
+    assert!(lock.is_file(), "another writer's lock file was removed");
+    std::fs::remove_file(&lock).unwrap();
+    std::os::unix::fs::symlink(dir.path().join("elsewhere"), &lock).unwrap();
+    index_file::clear_non_regular(&lock).unwrap();
+    assert!(std::fs::symlink_metadata(&lock).is_err());
 }
