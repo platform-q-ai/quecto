@@ -556,7 +556,7 @@ pub fn quoted(bytes: &[u8]) -> String {
 
 /// `bytes` with escape sequences dropped and every run of characters not
 /// shown as one space between shown ones.
-fn sanitised(bytes: &[u8]) -> String {
+pub(super) fn sanitised(bytes: &[u8]) -> String {
     let text = String::from_utf8_lossy(bytes);
     let mut chars = text.chars().peekable();
     let (mut out, mut gap) = (String::new(), false);
