@@ -1,6 +1,8 @@
 //! The pull requests a task links. Completing a task when they merge is a
 //! status move ([`complete_merged`](super::transitions::complete_merged));
-//! linking one, or unlinking one closed without merging, is the holder's.
+//! linking one, or unlinking one deliberately (a wrong or abandoned pull
+//! request), is the holder's: a task with linked pull requests closes on
+//! merge, and once the holder unlinks them all, Review→Done is theirs.
 use super::super::entities::claim::Identity;
 use super::super::entities::task::Task;
 use super::super::value_objects::rule_error::BoardRuleError;
@@ -26,8 +28,9 @@ pub fn add_pr(
     }
 }
 
-/// The task without pull request `pr`, unlinked by the holder of a live
-/// claim (a pull request closed without merging no longer delivers it).
+/// The task without pull request `pr`, unlinked deliberately by the
+/// holder of a live claim (a wrong or abandoned pull request no longer
+/// delivers it).
 pub fn remove_pr(
     task: &Task,
     holder: &Identity,

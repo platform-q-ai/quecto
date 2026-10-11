@@ -13,7 +13,9 @@ use std::sync::Arc;
 
 use super::board_change::{checked_writer, commit, task_on};
 use crate::application::project_board::dto::ProjectBoardError;
-use crate::application::project_board::ports::{BoardClock, ProjectBoardStore, PullRequestStates};
+use crate::application::project_board::ports::{
+    BoardClock, ProjectBoardStore, PullRequestState, PullRequestStates,
+};
 use crate::domain::project_board::entities::task::Task;
 use crate::domain::project_board::services::transitions::complete_merged;
 use crate::domain::project_board::value_objects::slug::Slug;
@@ -47,14 +49,33 @@ impl CompleteMergedTask {
         let tasks = commit(&*self.store, &*self.clock, &message, |board, when| {
             let task = task_on(board, id)?;
             when.may_build_on(task)?;
-            let merged: BTreeSet<u64> = task.fields().prs.iter().copied().collect();
-            let _ = &self.prs;
+            let merged = merged(&*self.prs, &task.fields().prs)?;
             Ok(vec![
                 complete_merged(task, &merged, &when.now).map_err(ProjectBoardError::Rule)?,
             ])
         })?;
         Ok(tasks.into_iter().next().expect("a change writes its task"))
     }
+}
+
+/// The linked pull requests the host reads as merged; an open or closed
+/// one is left out, for the rule to name. One the host does not know, or
+/// a host that cannot be read, refuses the completion.
+fn merged(
+    host: &dyn PullRequestStates,
+    linked: &[u64],
+) -> Result<BTreeSet<u64>, ProjectBoardError> {
+    let mut merged = BTreeSet::new();
+    for pr in linked {
+        match host.state(*pr).map_err(ProjectBoardError::PullRequests)? {
+            PullRequestState::Merged => {
+                merged.insert(*pr);
+            }
+            PullRequestState::Open | PullRequestState::Closed => {}
+            PullRequestState::Unknown => return Err(ProjectBoardError::PrStateUnknown(*pr)),
+        }
+    }
+    Ok(merged)
 }
 
 #[cfg(test)]

@@ -175,8 +175,11 @@ mod mock_claude;
 mod overlay_trust_store;
 #[path = "contracts/project_board_store.rs"]
 mod project_board_store;
+
 #[path = "contracts/provider_runtime_factory.rs"]
 mod provider_runtime_factory;
+#[path = "contracts/pull_request_states.rs"]
+mod pull_request_states;
 #[path = "contracts/refresh_inputs_loader.rs"]
 mod refresh_inputs_loader;
 #[path = "contracts/refresh_redaction_port.rs"]

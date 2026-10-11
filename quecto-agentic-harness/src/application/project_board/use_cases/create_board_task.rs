@@ -76,29 +76,48 @@ fn created_at(new: &NewTask, now: &Timestamp) -> TaskFields {
     fields
 }
 
-/// The id is free (neither held nor set aside), and the parent and every
-/// dependency are tasks on the board.
+/// The id is free: neither held, nor set aside, nor named by any task as
+/// its parent or a dependency (a task whose own file was deleted, so a
+/// new one under that id could close a cycle). The parent and every
+/// dependency are tasks on the board; one whose file is set aside is
+/// reported as such.
 fn free(board: &BoardSnapshot, new: &NewTask) -> Result<(), ProjectBoardError> {
     let held = |id: &Slug| board.tasks.iter().any(|task| task.fields().id == *id);
+    let set_aside = |id: &Slug| {
+        board
+            .quarantined
+            .iter()
+            .any(|file| file.id.as_ref() == Some(id))
+    };
     if held(&new.id) {
         return Err(ProjectBoardError::Exists(new.id.clone()));
     }
-    if board
-        .quarantined
-        .iter()
-        .any(|file| file.id.as_ref() == Some(&new.id))
-    {
+    if set_aside(&new.id) {
         return Err(ProjectBoardError::Quarantined(new.id.clone()));
     }
-    match new
-        .parent
+    let naming = board
+        .tasks
         .iter()
-        .chain(&new.depends_on)
-        .find(|id| !held(id))
-    {
-        Some(missing) => Err(ProjectBoardError::UnknownReference(missing.clone())),
-        None => Ok(()),
+        .map(Task::fields)
+        .filter(|fields| {
+            fields.parent.as_ref() == Some(&new.id) || fields.depends_on.contains(&new.id)
+        })
+        .map(|fields| &fields.id)
+        .min();
+    if let Some(by) = naming {
+        return Err(ProjectBoardError::Referenced {
+            id: new.id.clone(),
+            by: by.clone(),
+        });
     }
+    for reference in new.parent.iter().chain(&new.depends_on) {
+        match (held(reference), set_aside(reference)) {
+            (true, _) => {}
+            (false, true) => return Err(ProjectBoardError::Quarantined(reference.clone())),
+            (false, false) => return Err(ProjectBoardError::UnknownReference(reference.clone())),
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]

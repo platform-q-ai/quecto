@@ -12,7 +12,6 @@ use crate::application::project_board::ports::{
 struct Host {
     states: BTreeMap<u64, PullRequestState>,
     failure: Option<String>,
-    reads: usize,
 }
 
 /// Clones share one host.
@@ -27,18 +26,9 @@ impl MemoryPullRequests {
         self.lock().states.insert(pr, state);
     }
 
-    /// Every read fails with `reason` until [`Self::recover`].
+    /// Every read fails with `reason` from now on.
     pub fn fail(&self, reason: &str) {
         self.lock().failure = Some(reason.into());
-    }
-
-    pub fn recover(&self) {
-        self.lock().failure = None;
-    }
-
-    /// The states read so far, failed reads included.
-    pub fn reads(&self) -> usize {
-        self.lock().reads
     }
 
     fn lock(&self) -> MutexGuard<'_, Host> {
@@ -48,8 +38,7 @@ impl MemoryPullRequests {
 
 impl PullRequestStates for MemoryPullRequests {
     fn state(&self, pr: u64) -> Result<PullRequestState, PullRequestStatesError> {
-        let mut host = self.lock();
-        host.reads += 1;
+        let host = self.lock();
         match &host.failure {
             Some(reason) => Err(PullRequestStatesError::Unavailable(reason.clone())),
             None => Ok(host

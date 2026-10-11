@@ -29,7 +29,9 @@ pub(super) struct When {
 
 impl When {
     /// Refuses to build on `task` when a clock ran ahead stamped it past
-    /// the latest time: its claims would hold everyone up.
+    /// the latest time: its claims would hold everyone up. The bound is
+    /// inclusive, as the clock's own is (`now <= latest`): a task stamped
+    /// exactly at the latest time is built on.
     pub fn may_build_on(&self, task: &Task) -> Result<(), ProjectBoardError> {
         match &self.latest {
             Some(latest) if task.fields().updated > *latest => Err(ProjectBoardError::TaskAhead {
@@ -77,7 +79,13 @@ pub(super) fn commit(
         let tasks = change(&snapshot, &when)?;
         assert!(!tasks.is_empty(), "a board change writes at least one task");
         match store.write(&snapshot.head, &tasks, message)? {
-            BoardWrite::Written(_) => return Ok(tasks),
+            BoardWrite::Written(head) => {
+                assert_ne!(
+                    head, snapshot.head,
+                    "a write the board holds moves its head"
+                );
+                return Ok(tasks);
+            }
             BoardWrite::Lost => continue,
             BoardWrite::Refused(reason) => return Err(ProjectBoardError::Refused(reason)),
         }
@@ -90,7 +98,11 @@ pub(super) fn commit(
 /// The identity the store commits as, checked once when a use case is
 /// built: an invalid one is refused before any change is tried.
 pub(super) fn checked_writer(store: &dyn ProjectBoardStore) -> Result<Identity, ProjectBoardError> {
-    Ok(store.writer())
+    let writer = store.writer();
+    writer
+        .validate("writer")
+        .map_err(ProjectBoardError::InvalidWriter)?;
+    Ok(writer)
 }
 
 /// The task `id` on the board as read: a quarantined file of that id is
