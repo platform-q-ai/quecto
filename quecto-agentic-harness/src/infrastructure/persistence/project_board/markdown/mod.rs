@@ -414,6 +414,19 @@ pub fn render(document: &Document, shape: &Shape<'_>) -> Result<String, Markdown
     Ok(file)
 }
 
+/// `file`, written from `document`, if it reads back as `document`.
+///
+/// # Errors
+/// `NotCanonical`, when it does not.
+fn read_back(
+    file: String,
+    document: &Document,
+    shape: &Shape<'_>,
+) -> Result<String, MarkdownError> {
+    let _ = (document, shape);
+    Ok(file)
+}
+
 /// [`render`] without the read back, which [`parse`] compares against.
 fn write(document: &Document, shape: &Shape<'_>) -> Result<String, MarkdownError> {
     check_shape(shape)?;

@@ -73,6 +73,25 @@ fn every_hostile_file_is_refused_with_its_reason() {
         ("an escaped pipe in an id", edited("| review |", "| rev\\|iew |"), |e| matches!(e, E::Cell { line: 7, .. })),
         ("a cell padded twice", edited("| review |", "|  review |"), |e| matches!(e, E::Cell { line: 7, .. })),
         ("a pipe left unescaped in code", edited("`a\\|b`", "`a|b`"), |e| matches!(e, E::Cell { line: 30, .. })),
+        ("a math fence", edited("```rust", "```math"), |e| matches!(e, E::Fence { line: 18, .. })),
+        ("a mermaid fence", edited("```rust", "```mermaid"), |e| matches!(e, E::Fence { line: 18, .. })),
+        ("a geojson fence", edited("```rust", "```geojson"), |e| matches!(e, E::Fence { line: 18, .. })),
+        ("a topojson fence", edited("```rust", "```topojson"), |e| matches!(e, E::Fence { line: 18, .. })),
+        ("an stl fence", edited("```rust", "```stl"), |e| matches!(e, E::Fence { line: 18, .. })),
+        ("a link of a space", edited(first, "[ ](https://example.com)"), |e| matches!(e, E::Link { line: 11 })),
+        ("a link of two spaces", edited(first, "[  ](https://example.com)"), |e| matches!(e, E::Link { line: 11 })),
+        ("a link of a blank code span", edited(first, "[` `](https://example.com)"), |e| matches!(e, E::Link { line: 11 })),
+        ("a link of a mark", edited(first, "[\u{301}](https://example.com)"), |e| matches!(e, E::Link { line: 11 })),
+        ("a link of a blank note", edited(first, "[\u{1d159}](https://example.com)"), |e| matches!(e, E::Invisible { line: 11 })),
+        ("a link with a space before", edited(first, "[ a](https://example.com)"), |e| matches!(e, E::Link { line: 11 })),
+        ("a blank note", edited("and all.", "and a\u{1d159}ll."), |e| matches!(e, E::Invisible { line: 11 })),
+        ("a Hangul filler", edited("and all.", "and a\u{3164}ll."), |e| matches!(e, E::Invisible { line: 11 })),
+        ("a halfwidth Hangul filler", edited("and all.", "and a\u{ffa0}ll."), |e| matches!(e, E::Invisible { line: 11 })),
+        ("a Hangul choseong filler", edited("and all.", "and a\u{115f}ll."), |e| matches!(e, E::Invisible { line: 11 })),
+        ("a Hangul jungseong filler", edited("and all.", "and a\u{1160}ll."), |e| matches!(e, E::Invisible { line: 11 })),
+        ("a selector after a digit", edited("and all.", "and 1\u{fe0f} all."), |e| matches!(e, E::Invisible { line: 11 })),
+        ("a subdivision flag", edited("and all.", "and \u{1f3f4}\u{e0067}\u{e0062}\u{e007f}."), |e| matches!(e, E::Invisible { line: 11 })),
+        ("more lines than a file holds", format!("{EXAMPLE}{}", "x\n".repeat(200_000)).into_bytes(), |e| matches!(e, E::TooManyLines { most: 8_192, .. })),
         ("a table's header renamed", edited("| Item | State |", "| Item | Status |"), |e| matches!(e, E::Structure { line: 28, .. })),
     ];
     for (name, bytes, named) in cases {
@@ -449,6 +468,24 @@ fn every_refusal_says_what_and_where() {
     for (refusal, says) in refusals {
         let error: &dyn std::error::Error = &refusal;
         assert!(error.to_string().contains(says), "{refusal:?}: {error}");
+    }
+}
+
+/// A file that does not read back as the document it was written from is
+/// refused, in release builds too, so it is never stored.
+#[test]
+fn a_file_that_reads_back_otherwise_is_refused() {
+    let mut other = example();
+    other.title = "Another".into();
+    assert_eq!(
+        read_back(EXAMPLE.to_string(), &example(), &SHAPE).as_deref(),
+        Ok(EXAMPLE)
+    );
+    for file in [EXAMPLE.to_string(), "not a board file\n".to_string()] {
+        assert_eq!(
+            read_back(file, &other, &SHAPE),
+            Err(MarkdownError::NotCanonical)
+        );
     }
 }
 
