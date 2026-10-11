@@ -112,7 +112,7 @@ fn the_projection_carries_the_run_items_members_evidence_and_totals() {
         (vec![1], None)
     );
 
-    let members: Vec<(&str, MemberRole, MemberState, Vec<i64>, Option<f64>)> = projection
+    let members: Vec<MemberSeen> = projection
         .members
         .iter()
         .map(|member| {
@@ -220,6 +220,9 @@ fn recording_usage_moves_the_revision() {
         });
     assert!(read.revision().unwrap().revision > before);
 }
+
+/// A member as the main projection test reads it.
+type MemberSeen<'a> = (&'a str, MemberRole, MemberState, Vec<i64>, Option<f64>);
 
 /// One change to a valid board.
 type Edit = fn(&mut BoardState);
@@ -414,4 +417,25 @@ fn a_role_outside_the_three_a_member_holds_is_an_internal_error() {
             RefusalKind::Internal
         );
     }
+}
+
+/// M1 (#2487 round 2): the budget's measure of text and JSON values is
+/// their encoded length, escapes included.
+#[test]
+fn text_and_values_are_measured_as_encoded() {
+    for text in [
+        "",
+        "plain",
+        "quote \" and \\ backslash",
+        "\u{1}\u{8}\u{c}\n\r\t\u{1f}\u{7f}",
+        "é 中 😀",
+    ] {
+        assert_eq!(
+            super::encoded_text(text),
+            json!(text).to_string().len(),
+            "{text:?}"
+        );
+    }
+    let value = json!({"a": [1, -2.5, null, true, false, "\u{1}"], "\n": {"x": "y"}});
+    assert_eq!(super::encoded_value(&value), value.to_string().len());
 }

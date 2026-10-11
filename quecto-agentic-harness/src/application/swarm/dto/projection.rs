@@ -9,18 +9,22 @@
 //!
 //! The board's "tasks" are projected as items, with the project board's
 //! item field names (`criteria`, `depends_on`, `state`, `owner`,
-//! `evidence`). `state` keeps the swarm's own vocabulary
-//! ([`ItemState`]); [`ItemState::project_board_state`] maps it onto a
-//! project board item's state.
+//! `evidence`). `state` is the swarm's own status ([`TaskState`]), one of
+//! the five the board writes.
 use serde_json::Value;
 
-/// How many rows of each kind a projection reads at most.
+use crate::domain::swarm::{MemberState, RunState, TaskState};
+
+/// How many rows of each kind a projection reads at most, and how many
+/// bytes of stored text: a row whose text would pass `bytes` is never
+/// copied out of the store, nor any after it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ProjectionLimits {
     pub items: i64,
     pub files: i64,
     pub members: i64,
     pub evidence: i64,
+    pub bytes: i64,
 }
 
 /// The allowlisted columns of a board, as stored, at one revision.
@@ -30,9 +34,13 @@ pub struct ProjectionRows {
     /// The latest pause or resume event, `0` for none.
     pub generation: i64,
     pub run: Option<StoredRunColumns>,
-    /// By id, at most the limit.
+    /// By id, at most the limit and within the bytes.
     pub items: Vec<StoredItemColumns>,
     pub item_count: i64,
+    /// Every item's state and owner, by id, at most the items limit: what
+    /// the totals, `waiting` and each member's claims are counted from,
+    /// whichever items fit.
+    pub states: Vec<StoredStateColumns>,
     /// `(path, task)`, by path, at most the limit.
     pub files: Vec<(Value, Value)>,
     pub file_count: i64,
@@ -82,6 +90,31 @@ pub struct StoredItemColumns {
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
+pub struct StoredStateColumns {
+    pub id: Value,
+    pub status: Value,
+    /// `dependencies`, JSON loaded.
+    pub depends_on: Value,
+    pub owner: Value,
+}
+
+/// The board's revision as stored, and the id of the run it counts.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct StoredRevision {
+    /// The run row's id; null before a run row exists.
+    pub run: Value,
+    pub revision: i64,
+}
+
+/// The board's revision and the run whose board it is: a recreated board
+/// starts its revision again, under another run.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BoardRevision {
+    pub run: Option<String>,
+    pub revision: i64,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct StoredMemberColumns {
     pub id: Value,
     pub status: Value,
@@ -121,7 +154,7 @@ pub struct BoardProjection {
 pub struct RunProjection {
     pub id: String,
     pub goal: String,
-    pub status: String,
+    pub status: RunState,
     pub outcome: Option<String>,
     pub outcome_reason: Option<String>,
     pub generation: i64,
@@ -143,58 +176,6 @@ pub struct BudgetProjection {
     pub unknown_usage_requests: i64,
 }
 
-/// An item's state in the swarm's vocabulary; nothing else is accepted.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ItemState {
-    Ready,
-    Claimed,
-    Blocked,
-    Submitted,
-    Completed,
-}
-
-impl ItemState {
-    pub fn parse(text: &str) -> Option<Self> {
-        match text {
-            "ready" => Some(Self::Ready),
-            "claimed" => Some(Self::Claimed),
-            "blocked" => Some(Self::Blocked),
-            "submitted" => Some(Self::Submitted),
-            "completed" => Some(Self::Completed),
-            _ => None,
-        }
-    }
-
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Ready => "ready",
-            Self::Claimed => "claimed",
-            Self::Blocked => "blocked",
-            Self::Submitted => "submitted",
-            Self::Completed => "completed",
-        }
-    }
-
-    /// The project board item state it maps to: a ready item is to do
-    /// (waiting on its dependencies or not), a claimed one in hand, a
-    /// submitted one in review, a completed one done, and a blocked one
-    /// (its owner blocked it) blocked.
-    pub fn project_board_state(self) -> &'static str {
-        match self {
-            Self::Ready => "todo",
-            Self::Claimed => "doing",
-            Self::Blocked => "blocked",
-            Self::Submitted => "review",
-            Self::Completed => "done",
-        }
-    }
-
-    /// The states in which an item's owner holds a claim.
-    pub fn holds_claim(self) -> bool {
-        matches!(self, Self::Claimed | Self::Blocked | Self::Submitted)
-    }
-}
-
 /// One item of the run's board.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ItemProjection {
@@ -204,8 +185,8 @@ pub struct ItemProjection {
     pub criteria: Vec<String>,
     /// The board's `dependencies`: other items' ids.
     pub depends_on: Vec<i64>,
-    /// As stored.
-    pub state: ItemState,
+    /// As stored: one of the five statuses the board writes.
+    pub state: TaskState,
     /// A ready item one of whose dependencies is not completed: to do, but
     /// not yet claimable. (`summary` reads it as `blocked`.)
     pub waiting: bool,
@@ -239,8 +220,9 @@ impl MemberRole {
 pub struct MemberProjection {
     pub id: String,
     pub role: MemberRole,
-    pub status: String,
-    /// The items it holds a claim on (claimed, blocked or submitted).
+    pub status: MemberState,
+    /// The items it holds a claim on (claimed, blocked or submitted),
+    /// among every item the board holds.
     pub claims: Vec<i64>,
     /// The time of its latest board event.
     pub last_activity: Option<f64>,

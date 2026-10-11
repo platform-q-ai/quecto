@@ -254,49 +254,70 @@ impl HostedStore {
 
     /// The board's projection (#2478), as `_board` answers it, or `None`
     /// when no store exists there. One read transaction of allowlisted
-    /// columns: it takes no write lock and migrates nothing. A board only
-    /// where the layout no longer places it, or another beside it, is
-    /// refused as [`Self::hosted_run`] refuses it.
+    /// columns: it takes no write lock and migrates nothing. A board with
+    /// another beside it, where the layout no longer places a board, is
+    /// refused as [`Self::hosted_run`] refuses it: while it holds no
+    /// created run (#2487 round 2, L2).
     pub fn board_projection(&self) -> Result<Option<serde_json::Value>, DomainError> {
         self.supervised("_board")
     }
 
     /// The board's revision, which every write the projection shows moves
-    /// (its latest event and usage ledger row), or `None` as for
-    /// [`Self::board_projection`].
-    pub fn board_revision(&self) -> Result<Option<i64>, DomainError> {
-        let Some(revision) = self.supervised("_board_revision")? else {
+    /// (its latest event and usage ledger row), and the id of the run it
+    /// counts; or `None` as for [`Self::board_projection`].
+    pub fn board_revision(
+        &self,
+    ) -> Result<Option<crate::application::swarm::dto::BoardRevision>, DomainError> {
+        let Some(answer) = self.supervised("_board_revision")? else {
             return Ok(None);
         };
-        let revision = revision.as_i64().ok_or_else(|| {
-            DomainError::Tool(format!(
-                "swarm board revision is not an integer: {revision}"
-            ))
-        })?;
-        Ok(Some(revision))
+        let malformed =
+            || DomainError::Tool("swarm board revision is not {run, revision}".to_owned());
+        let revision = answer["revision"].as_i64().ok_or_else(malformed)?;
+        let run = match &answer["run"] {
+            Value::Null => None,
+            Value::String(run) => Some(run.clone()),
+            _ => return Err(malformed()),
+        };
+        Ok(Some(crate::application::swarm::dto::BoardRevision {
+            run,
+            revision,
+        }))
     }
 
-    /// `method` on the board, as the supervising session.
+    /// `method` on the board, as the supervising session. A board with a
+    /// displaced one beside it is read only when it holds a created run,
+    /// the rule [`Self::hosted_run`] keeps: that board is the one its
+    /// members run on.
     fn supervised(&self, method: &str) -> Result<Option<serde_json::Value>, DomainError> {
-        match self.contained()? {
-            Found::Store { displaced: None } => {
-                let answer = self.board.call_as(
-                    self.location(),
-                    "supervisor",
-                    method,
-                    json!([]),
-                    super::swarm_board_dispatch::CallOrigin::Supervisor,
-                )?;
-                Ok(Some(answer))
-            }
-            Found::Store {
-                displaced: Some(displaced),
-            } => Err(DomainError::Tool(format!(
-                "swarm board {} has another board beside it at {} where a member may still be running",
+        let displaced = match self.contained()? {
+            Found::Store { displaced } => displaced,
+            Found::Nothing => return Ok(None),
+        };
+        let call = |method: &str| {
+            self.board.call_as(
+                self.location(),
+                "supervisor",
+                method,
+                json!([]),
+                super::swarm_board_dispatch::CallOrigin::Supervisor,
+            )
+        };
+        let Some(displaced) = displaced else {
+            return call(method).map(Some);
+        };
+        let board = call("_board")?;
+        let created = board["run"]["deadline"]
+            .as_f64()
+            .is_some_and(crate::domain::swarm::participates);
+        match (created, method) {
+            (true, "_board") => Ok(Some(board)),
+            (true, _) => call(method).map(Some),
+            (false, _) => Err(DomainError::Tool(format!(
+                "swarm board {} holds no created run, but another board exists at {} where a member may still be running",
                 self.database().display(),
                 displaced.display()
             ))),
-            Found::Nothing => Ok(None),
         }
     }
 

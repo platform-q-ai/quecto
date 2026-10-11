@@ -99,12 +99,47 @@ pub(super) fn event_page(events: &[RecordedEvent], after: u64, limit: i64) -> Ve
         .collect()
 }
 
+/// A cell's stored text, as the store measures it before copying it: a
+/// string's bytes, a JSON column's text, nothing for null.
+fn stored_bytes(values: &[&Value]) -> i64 {
+    values
+        .iter()
+        .map(|value| match value {
+            Value::Null => 0,
+            Value::String(text) => i64::try_from(text.len()).unwrap(),
+            other => i64::try_from(other.to_string().len()).unwrap(),
+        })
+        .sum()
+}
+
+/// The rows of `rows` whose stored text (`size`) stays within `bytes`,
+/// taken from it, up to the first that would pass it, as the store cuts.
+fn measured<T>(rows: Vec<T>, bytes: &mut i64, size: impl Fn(&T) -> i64) -> Vec<T> {
+    let mut kept = Vec::new();
+    for row in rows {
+        let size = size(&row);
+        if size > *bytes {
+            break;
+        }
+        *bytes -= size;
+        kept.push(row);
+    }
+    kept
+}
+
 /// The projection reads (#2478) over the in-memory board: the allowlisted
-/// columns, each kind sorted as the SQL sorts it and cut at its limit.
+/// columns, each kind sorted as the SQL sorts it, cut at its limit and at
+/// its stored bytes as the SQL cuts them (#2487 round 2).
 impl crate::application::swarm::ports::BoardProjectionReads for super::MemoryTransaction<'_> {
-    fn projection_revision(&self) -> Result<i64, crate::domain::swarm::BoardError> {
+    fn projection_revision(
+        &self,
+    ) -> Result<crate::application::swarm::dto::StoredRevision, crate::domain::swarm::BoardError>
+    {
         let state = self.state.borrow();
-        Ok(i64::try_from(state.events.len() + state.request_usage.len()).unwrap())
+        Ok(crate::application::swarm::dto::StoredRevision {
+            run: state.run.as_ref().map_or(Value::Null, |run| json!(run.id)),
+            revision: i64::try_from(state.events.len() + state.request_usage.len()).unwrap(),
+        })
     }
 
     fn projection_rows(
@@ -114,10 +149,11 @@ impl crate::application::swarm::ports::BoardProjectionReads for super::MemoryTra
     {
         use crate::application::swarm::dto::{
             ProjectionRows, StoredEvidenceColumns, StoredItemColumns, StoredMemberColumns,
-            StoredRunColumns,
+            StoredRunColumns, StoredStateColumns,
         };
         let state = self.state.borrow();
         let cut = |limit: i64| usize::try_from(limit).unwrap();
+        let mut bytes = limits.bytes;
         let run = run_row(&state).map(|row| {
             let column = |name: &str| row.get(name).cloned().unwrap_or(Value::Null);
             StoredRunColumns {
@@ -133,31 +169,77 @@ impl crate::application::swarm::ports::BoardProjectionReads for super::MemoryTra
                 outcome_reason: column("outcome_reason"),
             }
         });
-        let mut tasks = state.tasks.clone();
-        tasks.sort_by_key(|task| task.get("id").and_then(Value::as_i64));
-        let items = tasks
-            .iter()
-            .take(cut(limits.items))
-            .map(|task| {
-                let column = |name: &str| task.get(name).cloned().unwrap_or(Value::Null);
-                StoredItemColumns {
-                    id: column("id"),
-                    title: column("title"),
-                    criteria: column("acceptance"),
-                    depends_on: column("dependencies"),
-                    status: column("status"),
-                    owner: column("owner"),
-                    blocker: column("blocker"),
-                    evidence: column("evidence"),
-                }
-            })
-            .collect();
+        if let Some(run) = &run {
+            let size = stored_bytes(&[
+                &run.id,
+                &run.goal,
+                &run.criteria,
+                &run.coordinator,
+                &run.integrator,
+                &run.status,
+                &run.outcome,
+                &run.outcome_reason,
+            ]);
+            if size > bytes {
+                return Err(crate::domain::swarm::BoardError::new(
+                    crate::domain::swarm::RefusalKind::Store,
+                    "the board's run is not as the board writes it",
+                ));
+            }
+            bytes -= size;
+        }
         let mut files: Vec<(Value, Value)> = state
             .files
             .iter()
             .map(|file| (json!(file.path), json!(file.task)))
             .collect();
         files.sort_by(|left, right| left.0.as_str().cmp(&right.0.as_str()));
+        let file_count = i64::try_from(files.len()).unwrap();
+        let files = measured(
+            files.into_iter().take(cut(limits.files)).collect(),
+            &mut bytes,
+            |(path, _)| stored_bytes(&[path]),
+        );
+        let mut tasks = state.tasks.clone();
+        tasks.sort_by_key(|task| task.get("id").and_then(Value::as_i64));
+        let column = |task: &crate::application::swarm::dto::TaskRow, name: &str| {
+            task.get(name).cloned().unwrap_or(Value::Null)
+        };
+        let states = tasks
+            .iter()
+            .take(cut(limits.items))
+            .map(|task| StoredStateColumns {
+                id: column(task, "id"),
+                status: column(task, "status"),
+                depends_on: column(task, "dependencies"),
+                owner: column(task, "owner"),
+            })
+            .collect();
+        let items = tasks
+            .iter()
+            .take(cut(limits.items))
+            .map(|task| StoredItemColumns {
+                id: column(task, "id"),
+                title: column(task, "title"),
+                criteria: column(task, "acceptance"),
+                depends_on: column(task, "dependencies"),
+                status: column(task, "status"),
+                owner: column(task, "owner"),
+                blocker: column(task, "blocker"),
+                evidence: column(task, "evidence"),
+            })
+            .collect();
+        let items = measured(items, &mut bytes, |item: &StoredItemColumns| {
+            stored_bytes(&[
+                &item.title,
+                &item.criteria,
+                &item.depends_on,
+                &item.status,
+                &item.owner,
+                &item.blocker,
+                &item.evidence,
+            ])
+        });
         let mut members = state.members.clone();
         members.sort_by(|left, right| left.text("id").cmp(&right.text("id")));
         let names: Vec<&str> = members
@@ -181,6 +263,9 @@ impl crate::application::swarm::ports::BoardProjectionReads for super::MemoryTra
                 }
             })
             .collect();
+        let members = measured(members, &mut bytes, |member: &StoredMemberColumns| {
+            stored_bytes(&[&member.id, &member.status])
+        });
         let mut evidence = state.evidence.clone();
         evidence.sort_by(|left, right| {
             (left.1.criterion.as_str(), left.0.as_str())
@@ -198,6 +283,15 @@ impl crate::application::swarm::ports::BoardProjectionReads for super::MemoryTra
                 accepted: entry.accepted.clone(),
             })
             .collect();
+        let evidence = measured(evidence, &mut bytes, |row: &StoredEvidenceColumns| {
+            stored_bytes(&[
+                &row.criterion,
+                &row.artifact,
+                &row.revision,
+                &row.kind,
+                &row.actor,
+            ])
+        });
         let total = |key: &str| {
             state
                 .usage
@@ -216,8 +310,9 @@ impl crate::application::swarm::ports::BoardProjectionReads for super::MemoryTra
             run,
             items,
             item_count: i64::try_from(state.tasks.len()).unwrap(),
-            file_count: i64::try_from(files.len()).unwrap(),
-            files: files.into_iter().take(cut(limits.files)).collect(),
+            states,
+            file_count,
+            files,
             members,
             member_count: i64::try_from(state.members.len()).unwrap(),
             evidence,

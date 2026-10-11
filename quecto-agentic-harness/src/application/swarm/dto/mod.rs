@@ -53,9 +53,10 @@ pub use notifications::{
     WakeAccepted,
 };
 pub use projection::{
-    BoardProjection, BudgetProjection, EvidenceProjection, ItemProjection, ItemState,
+    BoardProjection, BoardRevision, BudgetProjection, EvidenceProjection, ItemProjection,
     MemberProjection, MemberRole, ProjectionLimits, ProjectionRows, ProjectionTotals,
-    RunProjection, StoredEvidenceColumns, StoredItemColumns, StoredMemberColumns, StoredRunColumns,
+    RunProjection, StoredEvidenceColumns, StoredItemColumns, StoredMemberColumns, StoredRevision,
+    StoredRunColumns, StoredStateColumns,
 };
 pub use reads::{
     BootstrapMemberRequest, BootstrappedSummary, CountedTask, DictRow, EventPage, FullSummary,

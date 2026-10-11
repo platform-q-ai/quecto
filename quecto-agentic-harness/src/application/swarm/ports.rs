@@ -15,8 +15,8 @@ use super::dto::{
     LatestActivity, LaunchIdentity, MemberClaimCounts, MemberRow, MemberStatusRow, MessageRow,
     MessageTally, NewEvidence, NewMember, NewMessage, NewRequestUsage, NewReservation, NewRun,
     NewTask, NotificationCursor, PriorEvidence, ProjectionLimits, ProjectionRows, RunContract,
-    RunOwnerRow, RunStatusRow, ScopeObservation, StoredContract, StoredRequestUsage, TaskRow,
-    TaskUpdate, UsageReport, UsageRow, UsageStanding,
+    RunOwnerRow, RunStatusRow, ScopeObservation, StoredContract, StoredRequestUsage,
+    StoredRevision, TaskRow, TaskUpdate, UsageReport, UsageRow, UsageStanding,
 };
 use crate::domain::error::DomainError;
 use crate::domain::swarm::{
@@ -602,17 +602,20 @@ pub trait BoardEvidence {
 /// laid out, or one with no usage ledger yet, reads as it is.
 pub trait BoardProjectionReads {
     /// The board's revision: the latest event's id plus the usage ledger's
-    /// latest row id (`0` without a ledger). Every write the projection
-    /// shows moves it.
+    /// latest row id (`0` without a ledger), which every write the
+    /// projection shows moves; and the id of the run it counts.
     ///
     /// # Errors
-    /// The store's refusal.
-    fn projection_revision(&self) -> Result<i64, BoardError>;
+    /// The store's refusal; a run id longer than the board writes.
+    fn projection_revision(&self) -> Result<StoredRevision, BoardError>;
 
-    /// The allowlisted columns, at most `limits` rows of each kind.
+    /// The allowlisted columns, at most `limits` rows of each kind. Rows
+    /// are copied only while their stored text stays within
+    /// `limits.bytes`: the store measures a row before reading it.
     ///
     /// # Errors
-    /// The store's refusal; a value no column type can hold.
+    /// The store's refusal; a value no column type can hold; a run, or an
+    /// item's state, larger than the board writes.
     fn projection_rows(&self, limits: ProjectionLimits) -> Result<ProjectionRows, BoardError>;
 }
 

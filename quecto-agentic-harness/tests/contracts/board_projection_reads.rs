@@ -153,9 +153,9 @@ fn rows_come_in_order_cut_at_their_limit_with_their_whole_count() {
 }
 
 /// M2 (#2487 round 2): rows past the byte budget are never copied out of
-/// the store. Each item's stored text is counted before it is read (22 and
-/// 23 bytes for the first two, 117 for the third), so a 64-byte budget
-/// reads the first two and stops; every item's state is still read.
+/// the store. Each item's stored text is measured before it is read (the
+/// first two hold under 32 bytes each, the third over 100), so a 64-byte
+/// budget reads the first two and stops; every item's state is still read.
 #[test]
 fn rows_past_the_byte_budget_are_never_read() {
     let (_dir, database, repository) = board();

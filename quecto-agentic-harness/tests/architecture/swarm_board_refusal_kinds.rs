@@ -565,6 +565,36 @@ pub(super) const REFUSALS: &[(&str, &str, &str)] = &[
         "Store",
     ),
     (
+        "src/infrastructure/persistence/swarm_board/repository_projection.rs:SqliteBoard::projected_states",
+        "tasks status, dependencies or owner holds more than this board writes",
+        "Store",
+    ),
+    (
+        "src/infrastructure/persistence/swarm_board/repository_projection.rs:SqliteBoard::usage",
+        "the board's usage budget is not as the board writes it",
+        "Store",
+    ),
+    (
+        "src/infrastructure/persistence/swarm_board/repository_projection.rs:edited_run",
+        "the board's run is not as the board writes it",
+        "Store",
+    ),
+    (
+        "src/application/swarm/use_cases/read_board_projection.rs:item_totals",
+        "an item state {other:?} passed the known states",
+        "Internal",
+    ),
+    (
+        "src/application/swarm/use_cases/read_board_projection.rs:member_role",
+        "a listed member was given no run role",
+        "Internal",
+    ),
+    (
+        "src/infrastructure/tools/swarm_board_dispatch.rs:call_deciding",
+        "the supervising session reads only _board and _board_revision, not {method}",
+        "Calling",
+    ),
+    (
         "src/infrastructure/persistence/swarm_board/repository_reservations.rs:SqliteBoard::bound_count",
         "a count answered no row",
         "Internal",

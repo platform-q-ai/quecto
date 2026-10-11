@@ -4,9 +4,16 @@
 //! a later schema adds is never read. Nothing is created or altered, so it
 //! runs in a read transaction: a board an older writer laid out reads its
 //! missing columns as NULL, and one with no usage ledger as zero totals.
-//! A TEXT cell that is not UTF-8 is refused naming its table and column
-//! (`tasks title`), never
-//! echoing the bytes.
+//! A TEXT cell that is not UTF-8, or a JSON cell the board could not have
+//! written, is refused naming its table and column (`tasks title`), never
+//! echoing its content.
+//!
+//! Bounded (#2487 round 2): each kind's rows are measured first
+//! (`octet_length`, which reads no content) and copied only while their
+//! stored text stays within the limits' bytes, so an edited board with
+//! huge cells is never loaded whole. Every item's state is read, under a
+//! guard on its cells' sizes, and the run is refused when its text alone
+//! passes the bytes.
 use std::collections::BTreeSet;
 
 use rusqlite::{Row, params};
@@ -16,62 +23,110 @@ use super::repository::{SqliteBoard, failed};
 use super::repository_tasks::loaded;
 use crate::application::swarm::dto::{
     ProjectionLimits, ProjectionRows, StoredEvidenceColumns, StoredItemColumns,
-    StoredMemberColumns, StoredRunColumns,
+    StoredMemberColumns, StoredRevision, StoredRunColumns, StoredStateColumns,
 };
 use crate::application::swarm::ports::{BoardEvents, BoardProjectionReads};
-use crate::domain::swarm::{BoardError, RefusalKind};
+use crate::domain::swarm::validation::MEMBER_ID_MAX_BYTES;
+use crate::domain::swarm::{BoardError, DEPENDENCIES_MAX, RefusalKind};
+
+/// The most bytes an item's stored status holds (the longest the board
+/// writes is `submitted`).
+const STATUS_BYTES: i64 = 16;
+/// The most bytes an item's stored dependencies hold: at most
+/// [`DEPENDENCIES_MAX`] ids, each at most 20 digits and a separator.
+const DEPENDENCIES_BYTES: i64 = DEPENDENCIES_MAX as i64 * 24 + 2;
+/// The most bytes a usage budget's stored settings hold.
+const BUDGET_BYTES: i64 = 4096;
+/// The most bytes a run id or a member id holds.
+const ID_BYTES: i64 = MEMBER_ID_MAX_BYTES as i64;
+
+/// The stored text of one item row, as the items read copies it.
+const ITEM_BYTES: &str = "coalesce(octet_length(title),0) + coalesce(octet_length(acceptance),0) + coalesce(octet_length(dependencies),0) + coalesce(octet_length(status),0) + coalesce(octet_length(owner),0) + coalesce(octet_length(blocker),0) + coalesce(octet_length(evidence),0)";
+const MEMBER_BYTES: &str = "coalesce(octet_length(m.id),0) + coalesce(octet_length(m.status),0)";
+const EVIDENCE_BYTES: &str = "coalesce(octet_length(criterion),0) + coalesce(octet_length(artifact),0) + coalesce(octet_length(revision),0) + coalesce(octet_length(kind),0) + coalesce(octet_length(actor),0)";
 
 impl BoardProjectionReads for SqliteBoard<'_> {
-    fn projection_revision(&self) -> Result<i64, BoardError> {
+    fn projection_revision(&self) -> Result<StoredRevision, BoardError> {
         let events = self.count("SELECT coalesce(max(id),0) FROM events")?;
         let usage = match self.table("request_usage")? {
             true => self.count("SELECT coalesce(max(rowid),0) FROM request_usage")?,
             false => 0,
         };
-        events
+        let revision = events
             .checked_add(usage)
-            .ok_or_else(|| BoardError::new(RefusalKind::Store, "board revision out of range"))
+            .ok_or_else(|| BoardError::new(RefusalKind::Store, "board revision out of range"))?;
+        Ok(StoredRevision {
+            run: self.run_id()?,
+            revision,
+        })
     }
 
     fn projection_rows(&self, limits: ProjectionLimits) -> Result<ProjectionRows, BoardError> {
         let (budget, observed_tokens, unknown_usage_requests) = self.usage()?;
+        let mut bytes = limits.bytes;
+        let run = self.projected_run(&mut bytes)?;
+        let files = self.measured(
+            "SELECT coalesce(octet_length(path),0) FROM files ORDER BY path LIMIT ?",
+            "SELECT path, task FROM files ORDER BY path LIMIT ?",
+            limits.files,
+            &mut bytes,
+            |row| Ok((cell(row, 0, "files path")?, cell(row, 1, "files task")?)),
+        )?;
+        let items = self.measured(
+            &format!("SELECT {ITEM_BYTES} FROM tasks ORDER BY id LIMIT ?"),
+            "SELECT id, title, acceptance, dependencies, status, owner, blocker, evidence FROM tasks ORDER BY id LIMIT ?",
+            limits.items,
+            &mut bytes,
+            item,
+        )?;
+        let members = self.measured(
+            &format!("SELECT {MEMBER_BYTES} FROM members m ORDER BY m.id LIMIT ?"),
+            "SELECT m.id, m.status, (SELECT max(e.time) FROM events e WHERE e.actor=m.id) FROM members m ORDER BY m.id LIMIT ?",
+            limits.members,
+            &mut bytes,
+            |row| {
+                Ok(StoredMemberColumns {
+                    id: cell(row, 0, "members id")?,
+                    status: cell(row, 1, "members status")?,
+                    last_activity: cell(row, 2, "events time")?,
+                })
+            },
+        )?;
+        let evidence = self.measured(
+            &format!("SELECT {EVIDENCE_BYTES} FROM evidence ORDER BY criterion, actor LIMIT ?"),
+            "SELECT criterion, artifact, revision, kind, actor, accepted FROM evidence ORDER BY criterion, actor LIMIT ?",
+            limits.evidence,
+            &mut bytes,
+            evidence,
+        )?;
+        debug_assert!(bytes >= 0, "no row is copied past the bytes");
+        let item_count = self.count("SELECT count(*) FROM tasks")?;
         Ok(ProjectionRows {
-            revision: self.projection_revision()?,
+            revision: self.projection_revision()?.revision,
             generation: self.control_generation()?,
-            run: self.projected_run()?,
-            items: self.projected(
-                "SELECT id, title, acceptance, dependencies, status, owner, blocker, evidence FROM tasks ORDER BY id LIMIT ?",
-                limits.items,
-                item,
-            )?,
-            item_count: self.count("SELECT count(*) FROM tasks")?,
-            files: self.projected("SELECT path, task FROM files ORDER BY path LIMIT ?", limits.files, |row| {
-                Ok((cell(row, 0, "files path")?, cell(row, 1, "files task")?))
-            })?,
+            run,
+            items,
+            item_count,
+            states: self.projected_states(item_count, limits.items)?,
+            files,
             file_count: self.count("SELECT count(*) FROM files")?,
-            members: self.projected(
-                "SELECT m.id, m.status, (SELECT max(e.time) FROM events e WHERE e.actor=m.id) FROM members m ORDER BY m.id LIMIT ?",
-                limits.members,
-                |row| {
-                    Ok(StoredMemberColumns {
-                        id: cell(row, 0, "members id")?,
-                        status: cell(row, 1, "members status")?,
-                        last_activity: cell(row, 2, "events time")?,
-                    })
-                },
-            )?,
+            members,
             member_count: self.count("SELECT count(*) FROM members")?,
-            evidence: self.projected(
-                "SELECT criterion, artifact, revision, kind, actor, accepted FROM evidence ORDER BY criterion, actor LIMIT ?",
-                limits.evidence,
-                evidence,
-            )?,
+            evidence,
             evidence_count: self.count("SELECT count(*) FROM evidence")?,
             budget,
             observed_tokens,
             unknown_usage_requests,
         })
     }
+}
+
+/// The refusal of a run the board could not have written.
+fn edited_run() -> BoardError {
+    BoardError::new(
+        RefusalKind::Store,
+        "the board's run is not as the board writes it",
+    )
 }
 
 impl SqliteBoard<'_> {
@@ -99,9 +154,92 @@ impl SqliteBoard<'_> {
         rows.collect::<rusqlite::Result<Vec<_>>>().map_err(failed)
     }
 
+    /// The rows `rows` reads, at most `limit`, while their stored text
+    /// (`sizes`, in the same order, reading no content) stays within
+    /// `bytes`, which they are taken from: rows from the first that would
+    /// pass it are never copied.
+    fn measured<T>(
+        &self,
+        sizes: &str,
+        rows: &str,
+        limit: i64,
+        bytes: &mut i64,
+        read: impl Fn(&Row<'_>) -> rusqlite::Result<T>,
+    ) -> Result<Vec<T>, BoardError> {
+        let mut fitting = 0;
+        for size in self.projected(sizes, limit, |row| row.get::<_, i64>(0))? {
+            match bytes.checked_sub(size) {
+                Some(left) if left >= 0 && size >= 0 => {
+                    *bytes = left;
+                    fitting += 1;
+                }
+                Some(_) | None => break,
+            }
+        }
+        let read = self.projected(rows, fitting, read)?;
+        debug_assert!(read.len() as i64 <= fitting, "no row past the measure");
+        Ok(read)
+    }
+
+    /// Every item's id, status, dependencies and owner, at most `limit`:
+    /// refused, unread, when one of those cells holds more than the board
+    /// writes.
+    fn projected_states(
+        &self,
+        item_count: i64,
+        limit: i64,
+    ) -> Result<Vec<StoredStateColumns>, BoardError> {
+        let bounded = self
+            .connection
+            .query_row(
+                "SELECT count(*) FROM tasks WHERE coalesce(octet_length(status),0) <= ?1 AND coalesce(octet_length(dependencies),0) <= ?2 AND coalesce(octet_length(owner),0) <= ?3",
+                params![STATUS_BYTES, DEPENDENCIES_BYTES, ID_BYTES],
+                |row| row.get::<_, i64>(0),
+            )
+            .map_err(failed)?;
+        if bounded != item_count {
+            return Err(BoardError::new(
+                RefusalKind::Store,
+                "tasks status, dependencies or owner holds more than this board writes",
+            ));
+        }
+        self.projected(
+            "SELECT id, status, dependencies, owner FROM tasks ORDER BY id LIMIT ?",
+            limit,
+            |row| {
+                Ok(StoredStateColumns {
+                    id: cell(row, 0, "tasks id")?,
+                    status: cell(row, 1, "tasks status")?,
+                    depends_on: json(row, 2, "tasks dependencies")?,
+                    owner: cell(row, 3, "tasks owner")?,
+                })
+            },
+        )
+    }
+
+    /// The run row's id, read only when it is no longer than an id the
+    /// board writes; null before a run row exists.
+    fn run_id(&self) -> Result<Value, BoardError> {
+        let mut statement = self
+            .connection
+            .prepare("SELECT coalesce(octet_length(id),0) <= ?1, CASE WHEN coalesce(octet_length(id),0) <= ?1 THEN id END FROM run LIMIT 1")
+            .map_err(failed)?;
+        let mut rows = statement
+            .query_map(params![ID_BYTES], |row| {
+                Ok((row.get::<_, bool>(0)?, cell(row, 1, "run id")?))
+            })
+            .map_err(failed)?;
+        match rows.next().transpose().map_err(failed)? {
+            None => Ok(Value::Null),
+            Some((true, id)) => Ok(id),
+            Some((false, _)) => Err(edited_run()),
+        }
+    }
+
     /// The run's allowlisted columns, the two an older writer's board
-    /// lacks read as NULL.
-    fn projected_run(&self) -> Result<Option<StoredRunColumns>, BoardError> {
+    /// lacks read as NULL: refused, unread, when its text passes `bytes`,
+    /// which it is taken from.
+    fn projected_run(&self, bytes: &mut i64) -> Result<Option<StoredRunColumns>, BoardError> {
         let mut statement = self
             .connection
             .prepare("SELECT name FROM pragma_table_info('run')")
@@ -115,10 +253,19 @@ impl SqliteBoard<'_> {
             true => name.to_owned(),
             false => "NULL".to_owned(),
         };
+        let (outcome, outcome_reason) = (optional("outcome"), optional("outcome_reason"));
+        let sizes = format!(
+            "SELECT coalesce(octet_length(id),0) + coalesce(octet_length(goal),0) + coalesce(octet_length(criteria),0) + coalesce(octet_length(coordinator),0) + coalesce(octet_length(integrator),0) + coalesce(octet_length(status),0) + coalesce(octet_length({outcome}),0) + coalesce(octet_length({outcome_reason}),0) FROM run LIMIT ?"
+        );
+        let Some(size) = self.projected(&sizes, 1, |row| row.get::<_, i64>(0))?.pop() else {
+            return Ok(None);
+        };
+        *bytes = match bytes.checked_sub(size) {
+            Some(left) if left >= 0 && size >= 0 => left,
+            Some(_) | None => return Err(edited_run()),
+        };
         let sql = format!(
-            "SELECT id, goal, criteria, coordinator, integrator, member_limit, deadline, status, {}, {} FROM run",
-            optional("outcome"),
-            optional("outcome_reason")
+            "SELECT id, goal, criteria, coordinator, integrator, member_limit, deadline, status, {outcome}, {outcome_reason} FROM run"
         );
         let mut statement = self.connection.prepare(&sql).map_err(failed)?;
         let mut rows = statement
@@ -126,7 +273,7 @@ impl SqliteBoard<'_> {
                 Ok(StoredRunColumns {
                     id: cell(row, 0, "run id")?,
                     goal: cell(row, 1, "run goal")?,
-                    criteria: json(row, 2)?,
+                    criteria: json(row, 2, "run criteria")?,
                     coordinator: cell(row, 3, "run coordinator")?,
                     integrator: cell(row, 4, "run integrator")?,
                     member_limit: cell(row, 5, "run member_limit")?,
@@ -141,16 +288,30 @@ impl SqliteBoard<'_> {
     }
 
     /// The budget's payload and the ledger's two totals: none and zero
-    /// when the tables were never made.
+    /// when the tables were never made. A payload longer than the board
+    /// writes (three settings) is refused unread.
     fn usage(&self) -> Result<(Option<Value>, Value, Value), BoardError> {
         let budget = match self.table("usage_budget")? {
             true => self
                 .projected(
-                    "SELECT payload FROM usage_budget WHERE id=1 LIMIT ?",
-                    1,
-                    |row| json(row, 0),
+                    "SELECT coalesce(octet_length(payload),0) <= ?1, CASE WHEN coalesce(octet_length(payload),0) <= ?1 THEN payload END FROM usage_budget WHERE id=1",
+                    BUDGET_BYTES,
+                    |row| {
+                        Ok((
+                            row.get::<_, bool>(0)?,
+                            json(row, 1, "usage_budget payload")?,
+                        ))
+                    },
                 )?
-                .pop(),
+                .pop()
+                .map(|(bounded, payload)| match bounded {
+                    true => Ok(payload),
+                    false => Err(BoardError::new(
+                        RefusalKind::Store,
+                        "the board's usage budget is not as the board writes it",
+                    )),
+                })
+                .transpose()?,
             false => None,
         };
         let totals = match self.table("request_usage")? {
@@ -175,12 +336,12 @@ fn item(row: &Row<'_>) -> rusqlite::Result<StoredItemColumns> {
     Ok(StoredItemColumns {
         id: cell(row, 0, "tasks id")?,
         title: cell(row, 1, "tasks title")?,
-        criteria: json(row, 2)?,
-        depends_on: json(row, 3)?,
+        criteria: json(row, 2, "tasks acceptance")?,
+        depends_on: json(row, 3, "tasks dependencies")?,
         status: cell(row, 4, "tasks status")?,
         owner: cell(row, 5, "tasks owner")?,
         blocker: cell(row, 6, "tasks blocker")?,
-        evidence: json(row, 7)?,
+        evidence: json(row, 7, "tasks evidence")?,
     })
 }
 
@@ -195,11 +356,19 @@ fn evidence(row: &Row<'_>) -> rusqlite::Result<StoredEvidenceColumns> {
     })
 }
 
-/// A JSON column the board writes as text; NULL as null.
-fn json(row: &Row<'_>, index: usize) -> rusqlite::Result<Value> {
+/// A JSON column the board writes as text; NULL as null. One the board
+/// could not have written is refused naming its column only: the decoder's
+/// own error may quote what it read (#2487 round 2, L3).
+fn json(row: &Row<'_>, index: usize, column: &str) -> rusqlite::Result<Value> {
     match row.get_ref(index)? {
         rusqlite::types::ValueRef::Null => Ok(Value::Null),
-        _ => loaded(row, index),
+        _ => loaded(row, index).map_err(|_| {
+            rusqlite::Error::FromSqlConversionFailure(
+                index,
+                rusqlite::types::Type::Text,
+                format!("{column} is not JSON this board writes").into(),
+            )
+        }),
     }
 }
 

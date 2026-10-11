@@ -143,10 +143,15 @@ pub(super) fn board(read_board_projection: &ReadBoardProjection) -> Result<Serve
     Ok(read(projection(read_board_projection.execute()?)))
 }
 
-/// `_board_revision` (#2478): the board's revision alone, which a
-/// supervising session polls to learn the board moved.
+/// `_board_revision` (#2478): `{run, revision}`, the board's revision and
+/// the id of the run it counts (null before a run row exists), which a
+/// supervising session polls to learn the board moved or was made again.
 pub(super) fn revision(read_board_projection: &ReadBoardProjection) -> Result<Served, BoardError> {
-    Ok(read(Value::from(read_board_projection.revision()?)))
+    let revision = read_board_projection.revision()?;
+    Ok(read(object([
+        ("run", text(revision.run)),
+        ("revision", Value::from(revision.revision)),
+    ])))
 }
 
 fn text(value: Option<String>) -> Value {
@@ -163,7 +168,7 @@ pub(super) fn projection(board: BoardProjection) -> Value {
         object([
             ("id", Value::String(run.id)),
             ("goal", Value::String(run.goal)),
-            ("status", Value::String(run.status)),
+            ("status", Value::from(run.status.as_str())),
             ("outcome", text(run.outcome)),
             ("outcome_reason", text(run.outcome_reason)),
             ("generation", Value::from(run.generation)),
@@ -212,7 +217,7 @@ pub(super) fn projection(board: BoardProjection) -> Value {
         object([
             ("id", Value::String(member.id)),
             ("role", Value::from(member.role.as_str())),
-            ("status", Value::String(member.status)),
+            ("status", Value::from(member.status.as_str())),
             (
                 "claims",
                 Value::Array(member.claims.into_iter().map(Value::from).collect()),

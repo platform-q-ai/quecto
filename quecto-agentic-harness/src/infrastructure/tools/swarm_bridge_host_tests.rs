@@ -371,7 +371,12 @@ fn a_board_with_a_displaced_one_beside_it_is_refused_without_a_created_run() {
     let board = hosted(&directory).board_projection().unwrap().unwrap();
     assert_eq!(board["run"]["goal"], json!("ship"));
     assert!(hosted(&directory).board_revision().unwrap().is_some());
-    sql(&directory, "UPDATE run SET deadline=0");
+    // The board the layout now places (in the git directory) is the
+    // current one; the copy left in `.quecto` is the displaced one.
+    rusqlite::Connection::open(git.join("swarm.sqlite"))
+        .unwrap()
+        .execute_batch("UPDATE run SET deadline=0")
+        .unwrap();
     for refused in [
         hosted(&directory)
             .board_projection()
