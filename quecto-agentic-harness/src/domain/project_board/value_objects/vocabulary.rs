@@ -45,9 +45,10 @@ impl TaskStatus {
         self.requires_claim() || matches!(self, Self::Review | Self::Blocked)
     }
 
-    /// A dependency in this status no longer holds its dependents back.
+    /// A dependency in this status no longer holds its dependents back:
+    /// done, or archived (finished or cancelled, either way over).
     pub fn releases_dependents(self) -> bool {
-        false
+        matches!(self, Self::Done | Self::Archived)
     }
 }
 

@@ -21,9 +21,10 @@ impl QueryBoard {
         Self { store }
     }
 
-    /// Ready tasks whose every dependency is on the board and done or
-    /// archived (finished or cancelled: either way it no longer blocks):
-    /// the ones anyone may start now. (`by_status(Ready)` lists them all.)
+    /// Ready tasks whose every dependency is on the board and releases
+    /// its dependents ([`TaskStatus::releases_dependents`]: done or
+    /// archived): the ones anyone may start now. (`by_status(Ready)` lists
+    /// them all.)
     ///
     /// # Errors
     /// The store's.
@@ -31,11 +32,7 @@ impl QueryBoard {
         self.matching(|task, board| {
             let satisfied = |id: &Slug| {
                 board.iter().any(|other| {
-                    other.fields().id == *id
-                        && matches!(
-                            other.fields().status,
-                            TaskStatus::Done | TaskStatus::Archived
-                        )
+                    other.fields().id == *id && other.fields().status.releases_dependents()
                 })
             };
             task.fields().status == TaskStatus::Ready
@@ -93,7 +90,7 @@ impl QueryBoard {
             .collect();
         tasks.sort_by(|left, right| left.fields().id.cmp(&right.fields().id));
         Ok(BoardListing {
-            head: crate::application::project_board::ports::BoardHead(String::new()),
+            head: board.head,
             tasks,
             quarantined: board.quarantined,
         })
