@@ -111,32 +111,71 @@ fn free(board: &BoardSnapshot, new: &NewBoardTask) -> Result<(), ProjectBoardErr
     }
 }
 
-/// The task that would close a cycle through the new task: one reached
-/// from its parent and dependencies, following each board task's own
-/// parent and dependencies, that names the new id (whose earlier task was
-/// deleted). The least such id, so every store order answers alike.
+/// The task that would close a cycle through the new task, its earlier
+/// task having been deleted. Parents and dependencies are separate
+/// relations, each checked on its own:
+/// - a dependency cycle: a task reached by following `depends_on` from the
+///   new task's dependencies whose own `depends_on` names the new id;
+/// - a parent cycle: a task up the new task's parent chain whose parent is
+///   the new id.
+///
+/// The least such id, so every store order answers alike.
 fn cycle_closer(board: &BoardSnapshot, new: &NewBoardTask) -> Option<Slug> {
     let on_board: BTreeMap<&Slug, &TaskFields> = board
         .tasks
         .iter()
         .map(|task| (&task.fields().id, task.fields()))
         .collect();
-    let mut reached: BTreeSet<&Slug> = BTreeSet::new();
-    let mut next: Vec<&Slug> = new.parent.iter().chain(&new.depends_on).collect();
+    let by_dependency = dependency_closers(&on_board, new);
+    let by_parent = parent_closer(&on_board, new);
+    by_dependency.into_iter().chain(by_parent).min().cloned()
+}
+
+/// Board tasks reached through `depends_on` from the new task's
+/// dependencies that depend on the new id. Each task is expanded once, so
+/// the walk ends within the board's size, cycles on the board included.
+fn dependency_closers<'b>(
+    on_board: &BTreeMap<&'b Slug, &'b TaskFields>,
+    new: &NewBoardTask,
+) -> Vec<&'b Slug> {
+    let mut expanded: BTreeSet<&Slug> = BTreeSet::new();
+    let mut next: Vec<&Slug> = new.depends_on.iter().collect();
+    let mut closers = Vec::new();
     while let Some(id) = next.pop() {
-        // Each id is followed once, and only when the board holds it.
-        if let (true, Some(fields)) = (reached.insert(id), on_board.get(id)) {
-            next.extend(fields.parent.iter().chain(&fields.depends_on));
+        if let Some((&id, fields)) = on_board.get_key_value(id)
+            && expanded.insert(id)
+        {
+            if fields.depends_on.contains(&new.id) {
+                closers.push(id);
+            }
+            next.extend(&fields.depends_on);
         }
     }
-    reached
-        .into_iter()
-        .filter_map(|id| on_board.get(id))
-        .filter(|fields| {
-            fields.parent.as_ref() == Some(&new.id) || fields.depends_on.contains(&new.id)
-        })
-        .map(|fields| fields.id.clone())
-        .min()
+    assert!(
+        expanded.len() <= on_board.len(),
+        "each task is expanded once"
+    );
+    closers
+}
+
+/// The board task up the new task's parent chain whose parent is the new
+/// id. The chain is followed while it stays on the board and new, so it
+/// ends within the board's size, a parent loop on the board included.
+fn parent_closer<'b>(
+    on_board: &BTreeMap<&'b Slug, &'b TaskFields>,
+    new: &NewBoardTask,
+) -> Option<&'b Slug> {
+    let mut seen: BTreeSet<&Slug> = BTreeSet::new();
+    let mut at = new.parent.as_ref();
+    while let Some((&id, fields)) = at.and_then(|id| on_board.get_key_value(id)) {
+        match (seen.insert(id), fields.parent.as_ref()) {
+            (true, Some(parent)) if *parent == new.id => return Some(id),
+            (true, parent) => at = parent,
+            (false, _) => break,
+        }
+    }
+    assert!(seen.len() <= on_board.len(), "each task is seen once");
+    None
 }
 
 #[cfg(test)]
