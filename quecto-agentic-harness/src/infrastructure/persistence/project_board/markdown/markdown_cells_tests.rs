@@ -73,6 +73,31 @@ fn an_ascii_cell_holds_words_with_underscores() {
     }
 }
 
+/// `_` only between two letters or digits, where a reader never takes it
+/// for emphasis: the cell shows as the text it holds.
+#[test]
+fn an_ascii_cell_refuses_an_underscore_a_reader_could_take_for_emphasis() {
+    for word in ["my_repo", "a_b_c", "x1_2y", "feat/my_repo"] {
+        let document = with_cells(word, "main");
+        let file = render(&document, &CELL_SHAPE).unwrap();
+        assert_eq!(parse(file.as_bytes(), &CELL_SHAPE), Ok(document));
+        assert_eq!(read_cell(&file, 0), [format!("text:{word}")]);
+    }
+    for refused in [
+        "_x", "x_", "_x_", "__init__", "a__b", "_", "x._y", "x_.y", "a/_b",
+    ] {
+        let rendered = render(&with_cells(refused, "main"), &CELL_SHAPE);
+        assert!(
+            matches!(rendered, Err(MarkdownError::Cell { .. })),
+            "{refused:?}: {rendered:?}"
+        );
+        // Nor is it read from a file.
+        let file = render(&with_cells("open", "main"), &CELL_SHAPE).unwrap();
+        let edited = file.replacen("| Status | open |", &format!("| Status | {refused} |"), 1);
+        assert!(parse(edited.as_bytes(), &CELL_SHAPE).is_err(), "{edited}");
+    }
+}
+
 #[test]
 fn a_code_cell_renders_in_backticks_and_reads_back() {
     for branch in ["feat/a<b>", "[::1]:5000/x", "a*b*_c_", "x"] {
