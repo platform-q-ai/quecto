@@ -49,6 +49,11 @@ impl CompleteMergedTask {
         let tasks = commit(&*self.store, &*self.clock, &message, |board, when| {
             let task = task_on(board, id)?;
             when.may_build_on(task)?;
+            // The host is asked only about a task that would complete were
+            // its pull requests merged: a draft, done or archived task, or
+            // one linking none, is refused by the rule first.
+            let linked: BTreeSet<u64> = task.fields().prs.iter().copied().collect();
+            complete_merged(task, &linked, &when.now).map_err(ProjectBoardError::Rule)?;
             let merged = merged(&*self.prs, &task.fields().prs)?;
             Ok(vec![
                 complete_merged(task, &merged, &when.now).map_err(ProjectBoardError::Rule)?,
