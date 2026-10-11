@@ -14,8 +14,8 @@ use std::path::{Path, PathBuf};
 use crate::application::environments::dto::{
     AssetOutcome, AssetState, ContainerAsset, ContainerAssetCatalogue, ContainerConfigDocument,
     ContainerConfigEntry, ContainerRuntimeTarget, CorrectionOutcome, DiagnosableContainerConfig,
-    EnvironmentLiveness, EnvironmentStateDir, PersistedContainerConfig, PreflightCheck,
-    RuntimeContainer, StateOnDisk,
+    EnvironmentLiveness, EnvironmentStateDir, HostedBoardRevision, PersistedContainerConfig,
+    PreflightCheck, RuntimeContainer, StateOnDisk, SwarmBoardSnapshot,
 };
 use crate::domain::environments::entities::environment_registry::{
     EnvironmentRecord, EnvironmentStatus,
@@ -86,6 +86,24 @@ pub trait HostedSwarmRunObservation: Send + Sync {
         record: &'a EnvironmentRecord,
         hosted: &'a HostedSwarmRun,
     ) -> PortFuture<'a, Result<CoordinatorLoss, String>>;
+}
+
+/// The board a swarm environment hosts, read by the supervising session
+/// through the board's own adapter (#2478): no client opens the file.
+pub trait HostedSwarmBoard: Send + Sync {
+    /// The board's projection (the `_board` read), or `None` when
+    /// `record` hosts no board this session can reach.
+    fn board<'a>(
+        &'a self,
+        record: &'a EnvironmentRecord,
+    ) -> PortFuture<'a, Result<Option<SwarmBoardSnapshot>, String>>;
+
+    /// The board's revision and the run it counts, or `None` as for
+    /// [`Self::board`].
+    fn revision<'a>(
+        &'a self,
+        record: &'a EnvironmentRecord,
+    ) -> PortFuture<'a, Result<Option<HostedBoardRevision>, String>>;
 }
 
 /// The swarm run a checkout hosts, read synchronously and without a

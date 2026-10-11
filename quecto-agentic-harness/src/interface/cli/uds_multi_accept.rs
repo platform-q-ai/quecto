@@ -36,6 +36,9 @@ pub(super) struct AcceptLoopArgs {
     /// This agent's configured extensions, whose connections are claimed
     /// at accept (#2446).
     pub(super) extensions: super::uds_extensions::Extensions,
+    /// The board view's handle (#2478): every connection's
+    /// `get_swarm_board`, and the `swarm_board_changed` poll.
+    pub(super) swarm_boards: Option<super::uds_swarm_board::SwarmBoards>,
 }
 
 /// Spawn the accept loop that listens for new client connections.
@@ -61,8 +64,21 @@ pub(super) fn spawn_accept_loop(args: AcceptLoopArgs) -> tokio::task::JoinHandle
         workspace_path,
         teardown,
         extensions,
+        swarm_boards,
     } = args;
     tokio::spawn(async move {
+        // The board view's change hints (#2478) live as long as the loop;
+        // what they have seen is told to each new connection.
+        let board_hints = super::uds_swarm_board::BoardHints::default();
+        let hints = swarm_boards.clone().map(|boards| {
+            super::uds_swarm_board::spawn_change_hints(
+                boards,
+                board_hints.clone(),
+                broadcast_tx.clone(),
+                live_clients.clone(),
+            )
+        });
+        let _hints = super::uds_swarm_board::AbortOnDrop(hints);
         loop {
             match listener.accept().await {
                 Ok((mut stream, _addr)) => {
@@ -97,7 +113,9 @@ pub(super) fn spawn_accept_loop(args: AcceptLoopArgs) -> tokio::task::JoinHandle
                         client_id,
                     );
 
-                    let broadcast_rx = broadcast_tx.subscribe();
+                    // Subscribed with what the board hints have seen,
+                    // under one lock (#2488 round 2 M2).
+                    let (broadcast_rx, board_lines) = board_hints.subscribe(&broadcast_tx);
                     let workspace_line = super::protocol::AgentEvent::Workspace {
                         path: workspace_path.display().to_string(),
                     }
@@ -154,6 +172,13 @@ pub(super) fn spawn_accept_loop(args: AcceptLoopArgs) -> tokio::task::JoinHandle
                                 }
                             }
                         }
+                        // Every board already seen (#2488 review M1): the
+                        // client is subscribed, so later moves follow.
+                        for line in board_lines {
+                            if let Err(e) = stream.write_all(line.as_bytes()).await {
+                                tracing::debug!("connect-time board hint not delivered: {e}");
+                            }
+                        }
                     }
 
                     let args = ClientHandlerArgs {
@@ -168,6 +193,7 @@ pub(super) fn spawn_accept_loop(args: AcceptLoopArgs) -> tokio::task::JoinHandle
                         session: session.clone(),
                         subagent_registry: subagent_registry.clone(),
                         teardown: teardown.clone(),
+                        swarm_boards: swarm_boards.clone(),
                         _guard: guard,
                     };
                     tokio::spawn(async move { handle_client(args).await });

@@ -154,7 +154,7 @@ pub fn select_listing(
 /// which this registry cannot tell apart from an unrelated session's: after
 /// a restart such an environment is another session's here (#2220,
 /// documented in `docs/container-runtimes.md`).
-fn is_own(record: &EnvironmentRecord, session: &str) -> bool {
+pub fn is_own(record: &EnvironmentRecord, session: &str) -> bool {
     match record.origin {
         EnvironmentOrigin::Created => true,
         EnvironmentOrigin::Restored => created_by_session(record, session),

@@ -421,3 +421,25 @@ fn unreadable_json_is_refused_without_its_content() {
         assert!(!refused.contains("secret"), "{refused}");
     }
 }
+
+/// Verification item 3 (#2488): the supervising session's reads are an
+/// allowlist checked before anything is looked for or called, board or
+/// no board.
+#[test]
+fn only_the_projection_reads_are_supervised() {
+    let empty = tempfile::tempdir().unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    run_with_items(&directory);
+    for directory in [&empty, &directory] {
+        let refused = hosted(directory)
+            .supervised("_status")
+            .unwrap_err()
+            .to_string();
+        assert!(
+            refused.contains(
+                "the supervising session reads only _board and _board_revision, not _status"
+            ),
+            "{refused}"
+        );
+    }
+}

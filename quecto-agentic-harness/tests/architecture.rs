@@ -1561,6 +1561,10 @@ fn application_path_allowed(path: &str) -> bool {
             // The liveness and inventory adapters (#2024 S4d)
             // answer in the capability's own records.
             | "EnvironmentLiveness"
+            // The hosted board's adapter (#2478) answers the board view's
+            // snapshot and revision.
+            | "HostedBoardRevision"
+            | "SwarmBoardSnapshot"
             // … whether a state directory is still on disk (#2134).
             | "StateOnDisk"
             | "EnvironmentStateDir"
@@ -1636,7 +1640,10 @@ fn application_path_allowed(path: &str) -> bool {
             // The spawn and agent_cmd tools (#2024 S4c) hold the
             // composed container-config listing: the description's
             // roster line and `get_container_configs` invoke it.
-            | "ListContainerConfigs",
+            | "ListContainerConfigs"
+            // The parent socket's swarm boards (#2478), held beside the
+            // listing in the environment control.
+            | "ReadSwarmBoard",
             ..,
         ] => true,
         // The launch port (#1940) is reached through
@@ -5932,6 +5939,8 @@ fn catalogue_defaults_mapping_is_pure_and_implements_both_ports() {
 const ENVIRONMENT_PORTS: &[&str] = &[
     "EnvironmentProcessCommands",
     "HostedSwarmRunObservation",
+    // The hosted board the parent socket's board view reads (#2478).
+    "HostedSwarmBoard",
     // The same store read synchronously for the restore and the collector
     // (round 4 M1, #2033): a box hosting an unfinished run is never
     // relabelled stopped or collected.

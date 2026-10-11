@@ -70,8 +70,9 @@ fn bounded(row: &Row<'_>, index: usize, column: &str) -> rusqlite::Result<Value>
 
 /// The stored text of one item row, as the items read copies it.
 const ITEM_BYTES: &str = "coalesce(octet_length(title),0) + coalesce(octet_length(acceptance),0) + coalesce(octet_length(dependencies),0) + coalesce(octet_length(status),0) + coalesce(octet_length(owner),0) + coalesce(octet_length(blocker),0) + coalesce(octet_length(evidence),0)";
-const MEMBER_BYTES: &str = "coalesce(octet_length(m.id),0) + coalesce(octet_length(m.status),0)";
-const EVIDENCE_BYTES: &str = "coalesce(octet_length(criterion),0) + coalesce(octet_length(artifact),0) + coalesce(octet_length(revision),0) + coalesce(octet_length(kind),0) + coalesce(octet_length(actor),0)";
+/// A member row's stored text, its latest event's time included.
+const MEMBER_BYTES: &str = "coalesce(octet_length(m.id),0) + coalesce(octet_length(m.status),0) + coalesce(octet_length((SELECT e.time FROM events e WHERE e.actor=m.id ORDER BY e.id DESC LIMIT 1)),0)";
+const EVIDENCE_BYTES: &str = "coalesce(octet_length(criterion),0) + coalesce(octet_length(artifact),0) + coalesce(octet_length(revision),0) + coalesce(octet_length(kind),0) + coalesce(octet_length(actor),0) + coalesce(octet_length(accepted),0)";
 
 impl BoardProjectionReads for SqliteBoard<'_> {
     fn projection_revision(&self) -> Result<StoredRevision, BoardError> {
@@ -104,7 +105,7 @@ impl BoardProjectionReads for SqliteBoard<'_> {
             item,
         )?;
         let files = self.measured(
-            "SELECT coalesce(octet_length(path),0) FROM files ORDER BY path LIMIT ?",
+            "SELECT coalesce(octet_length(path),0) + coalesce(octet_length(task),0) FROM files ORDER BY path LIMIT ?",
             &format!(
                 "SELECT path, {} FROM files ORDER BY path LIMIT ?",
                 guarded("task")
@@ -115,9 +116,11 @@ impl BoardProjectionReads for SqliteBoard<'_> {
         )?;
         let members = self.measured(
             &format!("SELECT {MEMBER_BYTES} FROM members m ORDER BY m.id LIMIT ?"),
+            // The latest event's time is looked up once per member: the
+            // listed rows are materialised, then guarded.
             &format!(
-                "SELECT m.id, m.status, {} FROM members m ORDER BY m.id LIMIT ?",
-                guarded(LATEST_EVENT_TIME)
+                "WITH listed AS MATERIALIZED (SELECT m.id AS id, m.status AS status, {LATEST_EVENT_TIME} AS latest FROM members m ORDER BY m.id LIMIT ?1) SELECT id, status, {} FROM listed ORDER BY id",
+                guarded("latest")
             ),
             limits.members,
             &mut bytes,
@@ -302,7 +305,7 @@ impl SqliteBoard<'_> {
         };
         let (outcome, outcome_reason) = (optional("outcome"), optional("outcome_reason"));
         let sizes = format!(
-            "SELECT coalesce(octet_length(id),0) + coalesce(octet_length(goal),0) + coalesce(octet_length(criteria),0) + coalesce(octet_length(coordinator),0) + coalesce(octet_length(integrator),0) + coalesce(octet_length(status),0) + coalesce(octet_length({outcome}),0) + coalesce(octet_length({outcome_reason}),0) FROM run LIMIT ?"
+            "SELECT coalesce(octet_length(id),0) + coalesce(octet_length(goal),0) + coalesce(octet_length(criteria),0) + coalesce(octet_length(coordinator),0) + coalesce(octet_length(integrator),0) + coalesce(octet_length(status),0) + coalesce(octet_length(member_limit),0) + coalesce(octet_length(deadline),0) + coalesce(octet_length({outcome}),0) + coalesce(octet_length({outcome_reason}),0) FROM run LIMIT ?"
         );
         let Some(size) = self.projected(&sizes, 1, |row| row.get::<_, i64>(0))?.pop() else {
             return Ok(None);
