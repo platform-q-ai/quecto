@@ -97,7 +97,7 @@ fn refresh_rebuilds_from_the_board_branch_only_when_it_moves() {
     assert!(
         index
             .path()
-            .ends_with("alice/.git/quecto/project-board-origin.sqlite"),
+            .ends_with("alice/.git/quecto/project-board/origin.sqlite"),
         "{at}"
     );
     assert_eq!(
@@ -209,9 +209,9 @@ fn each_remote_has_an_index_of_its_own() {
         let path = BoardIndex::of(&store).unwrap().path().to_path_buf();
         path.file_name().unwrap().to_string_lossy().into_owned()
     };
-    assert_eq!(named("origin"), "project-board-origin.sqlite");
-    assert_eq!(named("upstream"), "project-board-upstream.sqlite");
-    assert_eq!(named("Up.stream"), "project-board-%55p%2Estream.sqlite");
+    assert_eq!(named("origin"), "origin.sqlite");
+    assert_eq!(named("upstream"), "upstream.sqlite");
+    assert_eq!(named("Up.stream"), "%55p%2Estream.sqlite");
 }
 
 /// A remote that cannot be reached keeps the index as it is.

@@ -84,21 +84,9 @@ fn same_and_some(left: Result<BoardListing, BoardStoreError>, right: BoardListin
     same(left, right, what);
 }
 
-/// Before the board exists every listing answers `NoBoard`; after, each
-/// listing equals `QueryBoard`'s over the same store, a file set aside
-/// (`spoil` breaks `tasks/b.json`) included, and follows a write.
-pub fn check_listings_mean_query_board(
-    listings: &dyn BoardListings,
-    store: Arc<dyn ProjectBoardStore>,
-    spoil: impl FnOnce(),
-) {
-    assert_eq!(listings.ready(), Err(BoardStoreError::NoBoard));
-    store.bootstrap().unwrap();
-    let head = store.read().unwrap().head;
-    let seeded = store.write(&head, &cases(), "board: seed");
-    assert!(matches!(seeded, Ok(BoardWrite::Written(_))), "{seeded:?}");
-    spoil();
-    let query = QueryBoard::new(Arc::clone(&store));
+/// Every listing equals `QueryBoard`'s over the same store, each one the
+/// cases make non-empty is non-empty, and a file set aside is listed.
+fn check_parity(listings: &dyn BoardListings, query: &QueryBoard) {
     same_and_some(listings.ready(), query.ready().unwrap(), "ready");
     same_and_some(
         listings.takeable(&at("10:30:00")),
@@ -149,6 +137,49 @@ pub fn check_listings_mean_query_board(
         !listings.ready().unwrap().quarantined.is_empty(),
         "the spoilt file is listed"
     );
+}
+
+/// A board where someone listed `tasks/b.json` twice (`duplicate` does):
+/// both copies are set aside under one path, and every listing still
+/// equals `QueryBoard`'s.
+pub fn check_listings_with_a_name_listed_twice(
+    listings: &dyn BoardListings,
+    store: Arc<dyn ProjectBoardStore>,
+    duplicate: impl FnOnce(),
+) {
+    store.bootstrap().unwrap();
+    let head = store.read().unwrap().head;
+    let seeded = store.write(&head, &cases(), "board: seed");
+    assert!(matches!(seeded, Ok(BoardWrite::Written(_))), "{seeded:?}");
+    duplicate();
+    let query = QueryBoard::new(Arc::clone(&store));
+    check_parity(listings, &query);
+    let paths: Vec<String> = listings
+        .ready()
+        .unwrap()
+        .quarantined
+        .into_iter()
+        .map(|file| file.path)
+        .collect();
+    assert_eq!(paths, ["tasks/b.json", "tasks/b.json"]);
+}
+
+/// Before the board exists every listing answers `NoBoard`; after, each
+/// listing equals `QueryBoard`'s over the same store, a file set aside
+/// (`spoil` breaks `tasks/b.json`) included, and follows a write.
+pub fn check_listings_mean_query_board(
+    listings: &dyn BoardListings,
+    store: Arc<dyn ProjectBoardStore>,
+    spoil: impl FnOnce(),
+) {
+    assert_eq!(listings.ready(), Err(BoardStoreError::NoBoard));
+    store.bootstrap().unwrap();
+    let head = store.read().unwrap().head;
+    let seeded = store.write(&head, &cases(), "board: seed");
+    assert!(matches!(seeded, Ok(BoardWrite::Written(_))), "{seeded:?}");
+    spoil();
+    let query = QueryBoard::new(Arc::clone(&store));
+    check_parity(listings, &query);
     let head = store.read().unwrap().head;
     let moved = store.write(
         &head,
@@ -170,4 +201,13 @@ fn the_sqlite_index_lists_what_query_board_lists() {
     let index = BoardIndex::of(&store).unwrap();
     let listings = IndexedBoardListings::new(index, store.clone(), store.clone());
     check_listings_mean_query_board(&listings, store, || remote.spoil_b());
+}
+
+#[test]
+fn the_sqlite_index_lists_a_board_with_a_name_listed_twice() {
+    let remote = Remote::new();
+    let store: Arc<GitBoardStore> = Arc::from(remote.client(0, "Alice"));
+    let index = BoardIndex::of(&store).unwrap();
+    let listings = IndexedBoardListings::new(index, store.clone(), store.clone());
+    check_listings_with_a_name_listed_twice(&listings, store, || remote.duplicate_b());
 }

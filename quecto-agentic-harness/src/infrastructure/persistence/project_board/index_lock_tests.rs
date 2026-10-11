@@ -182,3 +182,49 @@ fn ready_checks_dependencies_by_their_records() {
     let ready = ids(index.ready());
     assert!(!ready.contains(&"b".to_string()), "{ready:?}");
 }
+
+/// Two quarantined files of one path (a name listed twice) are both kept,
+/// in board order.
+#[test]
+fn a_path_set_aside_twice_is_listed_twice() {
+    let (_dir, index) = index();
+    let mut snapshot = board("a1");
+    snapshot.quarantined = vec![
+        QuarantinedFile {
+            path: "tasks/x.json".into(),
+            id: Some(slug("x")),
+            reason: "named more than once in the tree".into(),
+        },
+        QuarantinedFile {
+            path: "tasks/x.json".into(),
+            id: Some(slug("x")),
+            reason: "named more than once in the tree".into(),
+        },
+    ];
+    rebuild(&index, &snapshot).unwrap();
+    assert_eq!(index.ready().unwrap().quarantined, snapshot.quarantined);
+}
+
+/// A remote name of any length makes an index name well under the file
+/// system's 255 bytes, with room for a build's suffix; two long names
+/// that share a prefix stay apart.
+#[test]
+fn a_long_remote_name_makes_a_short_index_name() {
+    let (one, two) = ("r".repeat(300) + "1", "r".repeat(300) + "2");
+    let (one, two) = (file_name(&one), file_name(&two));
+    assert!(one.len() <= 80, "{one}");
+    assert_ne!(one, two);
+    assert_eq!(file_name("origin"), "origin.sqlite");
+}
+
+#[test]
+fn index_errors_read_as_text() {
+    assert_eq!(
+        IndexError::Sqlite("boom".into()).to_string(),
+        "the index's SQLite failed: boom"
+    );
+    assert_eq!(
+        IndexError::NeedsRebuild.to_string(),
+        "the index needs a rebuild"
+    );
+}

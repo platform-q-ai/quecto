@@ -105,6 +105,26 @@ impl Remote {
         std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
     }
 
+    /// Someone pushes a board whose `tasks/` lists `b.json` twice (git's
+    /// `mktree` writes such a tree; only `fsck` refuses it).
+    pub fn duplicate_b(&self) {
+        let bare = &self.bare;
+        let head = sh(bare, &["rev-parse", BOARD_REF], b"");
+        let other = sh(bare, &["hash-object", "-w", "--stdin"], b"{}");
+        let listing = sh(bare, &["ls-tree", &format!("{head}:tasks")], b"");
+        let listing = format!("{listing}\n100644 blob {other}\tb.json\n");
+        let tasks = sh(bare, &["mktree"], listing.as_bytes());
+        let readme = sh(bare, &["rev-parse", &format!("{head}:README.md")], b"");
+        let root = format!("100644 blob {readme}\tREADME.md\n040000 tree {tasks}\ttasks\n");
+        let root = sh(bare, &["mktree"], root.as_bytes());
+        let commit = sh(
+            bare,
+            &["commit-tree", &root, "-p", &head, "-m", "hand edit"],
+            b"",
+        );
+        sh(bare, &["update-ref", BOARD_REF, &commit], b"");
+    }
+
     /// Someone pushes a `tasks/b.json` the store cannot read.
     pub fn spoil_b(&self) {
         let bare = &self.bare;
