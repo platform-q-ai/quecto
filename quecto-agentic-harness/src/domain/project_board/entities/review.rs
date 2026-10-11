@@ -6,7 +6,7 @@
 //! one, and its state is its last round's verdict. It is stored in one
 //! file named by its task and change (M3), so a change has no second.
 use super::super::value_objects::code_ref::CommitId;
-use super::super::value_objects::schema_error::{SchemaError, filled_markdown};
+use super::super::value_objects::schema_error::{SchemaError, line};
 use super::super::value_objects::slug::Slug;
 use super::super::value_objects::timestamp::Timestamp;
 use super::super::value_objects::vocabulary::{ReviewVerdict, Severity};
@@ -28,7 +28,8 @@ pub struct Finding {
     /// `path:line` or `path:line:col`, when it has a place.
     pub location: Option<String>,
     pub severity: Severity,
-    /// Markdown.
+    /// One line; inline markdown (its file writes each finding as one
+    /// table row).
     pub text: String,
 }
 
@@ -149,7 +150,7 @@ fn validate_round(field: &str, round: &Round) -> Result<(), SchemaError> {
         if let Some(place) = &finding.location {
             location(&format!("{at}/location"), place)?;
         }
-        filled_markdown(&format!("{at}/text"), &finding.text, MAX_FINDING_CHARS)?;
+        line(&format!("{at}/text"), &finding.text, MAX_FINDING_CHARS)?;
     }
     Ok(())
 }

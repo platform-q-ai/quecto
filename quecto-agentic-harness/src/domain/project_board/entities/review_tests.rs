@@ -71,6 +71,14 @@ fn fields_that_break_a_rule_build_no_review() {
             Box::new(|r| r.rounds[0].findings[0].text = " ".into()),
         ),
         (
+            "rounds/0/findings/0/text",
+            Box::new(|r| r.rounds[0].findings[0].text = "two\nlines".into()),
+        ),
+        (
+            "rounds/0/findings/0/text",
+            Box::new(|r| r.rounds[0].findings[0].text = "x".repeat(MAX_FINDING_CHARS + 1)),
+        ),
+        (
             "rounds/0/findings",
             Box::new(|r| r.rounds[0].findings = vec![finding("x"); MAX_FINDINGS + 1]),
         ),
