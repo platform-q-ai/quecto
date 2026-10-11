@@ -1,4 +1,5 @@
 //! What the project board's use cases answer and refuse.
+use std::collections::BTreeSet;
 use std::fmt;
 
 use super::ports::{BoardClockError, BoardHead, BoardStoreError, QuarantinedFile};
@@ -7,6 +8,46 @@ use crate::domain::project_board::value_objects::rule_error::BoardRuleError;
 use crate::domain::project_board::value_objects::schema_error::SchemaError;
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
+use crate::domain::project_board::value_objects::vocabulary::TaskStatus;
+
+/// A change to one task, made by the board's rules
+/// (`domain::project_board::services`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BoardOp {
+    /// Take a ready task (ready → claimed).
+    Claim,
+    /// The holder's claim runs two hours from now again.
+    Renew,
+    /// Take an expired claim over.
+    TakeOver,
+    /// Move the task through the transition table.
+    Move(TaskStatus),
+    /// The holder links a pull request.
+    AddPr(u64),
+    /// The holder unlinks a pull request closed without merging.
+    RemovePr(u64),
+    /// The system's move: the task is done once these merged pull requests
+    /// include every one it links, whoever acts.
+    CompleteMerged(BTreeSet<u64>),
+    /// The holder ends the task's open run as lost.
+    EndRunLost,
+}
+
+impl BoardOp {
+    /// The op's name in a board commit message.
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Claim => "claim",
+            Self::Renew => "renew",
+            Self::TakeOver => "take over",
+            Self::Move(_) => "move",
+            Self::AddPr(_) => "link pull request",
+            Self::RemovePr(_) => "unlink pull request",
+            Self::CompleteMerged(_) => "complete merged",
+            Self::EndRunLost => "end run lost",
+        }
+    }
+}
 
 /// Tasks a query found, by id, and every file the board set aside, so a
 /// listing never hides that part of the board could not be read; both as

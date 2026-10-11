@@ -31,6 +31,8 @@ pub enum BoardRuleError {
     PrsOpen(Vec<u64>),
     /// The task does not link this pull request.
     PrNotLinked(u64),
+    /// The task already links this pull request.
+    PrAlreadyLinked(u64),
     /// The result would break the task schema.
     Invalid(SchemaError),
 }
@@ -59,6 +61,7 @@ impl fmt::Display for BoardRuleError {
             Self::NoPrs => f.write_str("the task links no pull request"),
             Self::PrsOpen(open) => write!(f, "pull requests {open:?} are not merged"),
             Self::PrNotLinked(pr) => write!(f, "the task does not link pull request {pr}"),
+            Self::PrAlreadyLinked(pr) => write!(f, "the task already links pull request {pr}"),
             Self::Invalid(error) => write!(f, "invalid task: {error}"),
         }
     }

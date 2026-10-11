@@ -1,6 +1,9 @@
-//! Fixtures of the project board's use case tests: a board with clients,
-//! and new tasks' fields.
-use crate::application::project_board::ports::ProjectBoardStore;
+//! Fixtures of the project board's use case tests: a set clock, a board
+//! with clients, and new tasks' fields.
+use std::sync::{Arc, Mutex};
+
+use crate::application::project_board::ports::{BoardClock, BoardClockError, ProjectBoardStore};
+use crate::domain::project_board::entities::claim::Identity;
 use crate::domain::project_board::entities::task::TaskFields;
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
@@ -13,6 +16,40 @@ pub fn at(time: &str) -> Timestamp {
 
 pub fn slug(text: &str) -> Slug {
     Slug::parse(text).unwrap()
+}
+
+pub fn person(name: &str) -> Identity {
+    Identity {
+        name: name.into(),
+        email: format!("{}@example.com", name.to_lowercase()),
+    }
+}
+
+/// A clock reading a set time, with an optional outside reference.
+pub struct SetClock {
+    pub now: Mutex<Timestamp>,
+    pub reference: Option<Timestamp>,
+}
+
+impl SetClock {
+    pub fn at(time: &str) -> Arc<Self> {
+        Arc::new(Self {
+            now: Mutex::new(at(time)),
+            reference: None,
+        })
+    }
+}
+
+impl BoardClock for SetClock {
+    fn now(&self) -> Result<Timestamp, BoardClockError> {
+        Ok(self.now.lock().unwrap().clone())
+    }
+
+    fn reference(&self) -> Option<Timestamp> {
+        self.reference.clone()
+    }
+
+    fn pause(&self, _attempt: usize) {}
 }
 
 /// A bootstrapped, empty board.
