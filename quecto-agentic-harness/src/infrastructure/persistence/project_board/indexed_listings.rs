@@ -67,6 +67,10 @@ impl BoardListings for IndexedBoardListings {
         self.listed(|index| index.takeable(now))
     }
 
+    fn all(&self) -> Result<BoardListing, BoardStoreError> {
+        self.listed(BoardIndex::all)
+    }
+
     fn by_status(&self, status: TaskStatus) -> Result<BoardListing, BoardStoreError> {
         self.listed(|index| index.by_status(status))
     }

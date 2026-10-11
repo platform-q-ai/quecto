@@ -120,6 +120,7 @@ fn check_parity(listings: &dyn BoardListings, query: &QueryBoard) {
             status.as_str(),
         );
     }
+    same(listings.all(), query.all().unwrap(), "all");
     for id in ["epic", "r-alone", "b", "missing"] {
         let id = Slug::parse(id).unwrap();
         same(

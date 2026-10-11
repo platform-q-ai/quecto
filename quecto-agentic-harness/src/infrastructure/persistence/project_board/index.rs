@@ -314,6 +314,16 @@ impl BoardIndex {
         })
     }
 
+    /// Every task on the board.
+    ///
+    /// # Errors
+    /// The index cannot be read.
+    pub fn all(&self) -> Result<BoardListing, IndexError> {
+        // Every row: the parameter is matched by itself.
+        let query = "SELECT id, record FROM tasks WHERE ?1 = ?1 ORDER BY id";
+        self.listing(query, "all", |_, _| true)
+    }
+
     /// # Errors
     /// The index cannot be read.
     pub fn by_status(&self, status: TaskStatus) -> Result<BoardListing, IndexError> {
