@@ -466,6 +466,26 @@ fn rule_json(rule: &BoardRuleError) -> Value {
         }),
         R::RunsInconsistent(why) => json!({"code": "runs_inconsistent", "reason": shown(why)}),
         R::PlanNotAccepted(version) => json!({"code": "plan_not_accepted", "version": version}),
+        R::ChangeAlreadyLinked { task, change } => {
+            json!({"code": "change_already_linked", "task": task.as_str(), "change": change})
+        }
+        R::NoSuchChange(change) => json!({"code": "no_such_change", "change": change}),
+        R::ChangeAhead { change, updated } => json!({
+            "code": "change_ahead",
+            "change": change,
+            "updated": updated.as_str(),
+        }),
+        R::ChangesLinked(changes) => json!({"code": "changes_linked", "changes": changes}),
+        R::PrUnread(pr) => json!({"code": "pr_unread", "pr": pr}),
+        R::PrNotOpen(pr) => json!({"code": "pr_not_open", "pr": pr}),
+        R::PrHeadMismatch(pr) => json!({"code": "pr_head_mismatch", "pr": pr}),
+        R::ChangeUnlinked(change) => json!({"code": "change_unlinked", "change": change}),
+        R::ChangeMerged(change) => json!({"code": "change_merged", "change": change}),
+        R::NoChanges => json!({"code": "no_changes"}),
+        R::ChangesUnmerged(changes) => json!({"code": "changes_unmerged", "changes": changes}),
+        R::ChangesInconsistent(why) => {
+            json!({"code": "changes_inconsistent", "reason": shown(why)})
+        }
         R::NotTakeable(status) => json!({"code": "not_takeable", "status": status.as_str()}),
         R::AlreadyHolder => json!({"code": "already_holder"}),
         R::NoPrs => json!({"code": "no_prs"}),

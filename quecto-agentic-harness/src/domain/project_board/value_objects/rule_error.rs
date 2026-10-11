@@ -1,5 +1,6 @@
 //! Why the board's rules refused a move, renewal, takeover or completion.
 use super::schema_error::SchemaError;
+use super::slug::Slug;
 use super::timestamp::Timestamp;
 use super::vocabulary::{PlanState, TaskStatus};
 use std::fmt;
@@ -45,6 +46,39 @@ pub enum BoardRuleError {
     RunsInconsistent(String),
     /// A run runs the task's accepted plan; this version is not it.
     PlanNotAccepted(u32),
+    /// `task` already links the branch or pull request: by its change
+    /// `change`, or the old way when `None`. A pull request is linked to
+    /// one task, for good, and a branch to one change until it merges.
+    ChangeAlreadyLinked { task: Slug, change: Option<u32> },
+    /// The task has no change of that number.
+    NoSuchChange(u32),
+    /// The change was stamped by a clock running ahead of the outside
+    /// time: building on it would drag the board ahead too.
+    ChangeAhead { change: u32, updated: Timestamp },
+    /// The task links changes: it is done when they merge, through the
+    /// completion anyone may run, not by its holder's say-so. The holder
+    /// may unlink one deliberately first.
+    ChangesLinked(Vec<u32>),
+    /// The host's reading of this pull request was not given: the rule
+    /// does not guess its state.
+    PrUnread(u64),
+    /// The host reads this pull request as closed or merged: only an open
+    /// one is linked.
+    PrNotOpen(u64),
+    /// The host reads this pull request's head as another repository or
+    /// branch than the change names.
+    PrHeadMismatch(u64),
+    /// This change was unlinked: it delivers nothing now.
+    ChangeUnlinked(u32),
+    /// This change merged: it stays linked.
+    ChangeMerged(u32),
+    /// The task links no change to complete it.
+    NoChanges,
+    /// These linked changes have not merged.
+    ChangesUnmerged(Vec<u32>),
+    /// The task's changes contradict each other (a number twice, a
+    /// branch or pull request linked twice): mend them before acting.
+    ChangesInconsistent(String),
     /// A takeover is only of a task that may hold a claim (claimed, in
     /// progress, in review or blocked).
     NotTakeable(TaskStatus),
@@ -118,6 +152,39 @@ impl fmt::Display for BoardRuleError {
             Self::PlanNotAccepted(version) => {
                 write!(f, "plan version {version} is not the task's accepted plan")
             }
+            Self::ChangeAlreadyLinked {
+                task,
+                change: Some(change),
+            } => write!(
+                f,
+                "change {change} of task {} already links that branch or pull request",
+                task.as_str()
+            ),
+            Self::ChangeAlreadyLinked { task, change: None } => {
+                write!(f, "task {} already links that pull request", task.as_str())
+            }
+            Self::NoSuchChange(number) => write!(f, "the task has no change {number}"),
+            Self::ChangeAhead { change, updated } => write!(
+                f,
+                "change {change} was stamped {} by a clock that ran ahead",
+                updated.as_str()
+            ),
+            Self::ChangesLinked(numbers) => write!(
+                f,
+                "the task links changes {numbers:?}, so it is done when they merge: \
+                 complete it once they have (anyone may), or unlink one first"
+            ),
+            Self::PrUnread(pr) => write!(f, "the host's reading of pull request {pr} is missing"),
+            Self::PrNotOpen(pr) => write!(f, "pull request {pr} is not open"),
+            Self::PrHeadMismatch(pr) => write!(
+                f,
+                "pull request {pr}'s head is another repository or branch than the change names"
+            ),
+            Self::ChangeUnlinked(number) => write!(f, "change {number} was unlinked"),
+            Self::ChangeMerged(number) => write!(f, "change {number} merged: it stays linked"),
+            Self::NoChanges => f.write_str("the task links no change"),
+            Self::ChangesUnmerged(numbers) => write!(f, "changes {numbers:?} have not merged"),
+            Self::ChangesInconsistent(why) => write!(f, "the task's changes contradict: {why}"),
             Self::NotTakeable(status) => {
                 write!(f, "a {} task cannot be taken over", status.as_str())
             }

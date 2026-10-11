@@ -1,4 +1,5 @@
 //! Which status moves a task may make, and who may make them.
+use super::super::entities::change::Change;
 use super::super::entities::claim::Identity;
 use super::super::entities::run::Run;
 use super::super::entities::task::Task;
@@ -58,12 +59,14 @@ const TRANSITIONS: &[(TaskStatus, TaskStatus, Actor, ClaimEffect)] = &[
 ];
 
 /// `task` moved to `to` by `actor` at `now`, if the table allows it and
-/// its `runs` (all of them, as the board holds them) let it leave.
+/// its `runs` and `changes` (all of them, as the board holds them) let it
+/// leave.
 pub fn move_task(
     task: &Task,
     to: TaskStatus,
     actor: &Identity,
     runs: &[Run],
+    changes: &[Change],
     now: &Timestamp,
 ) -> Result<Task, BoardRuleError> {
     let from = task.fields().status;
@@ -90,12 +93,19 @@ pub fn move_task(
             }
         }
     }
-    // The holder finishes a task only when it links no pull request: one
-    // that links them is done when they merge (`complete_merged`). The
-    // holder may unlink one deliberately (`remove_pr`), and then finish.
-    match ((from, to), &task.fields().prs[..]) {
-        ((Review, Done), []) => {}
-        ((Review, Done), linked) => return Err(BoardRuleError::PrsLinked(linked.to_vec())),
+    // The holder finishes a task only when it links no pull request and
+    // no change: one that links them is done when they merge
+    // (`complete_merged`, `changes::complete`). The holder may unlink one
+    // deliberately (`remove_pr`, `changes::unlink`), and then finish.
+    let linked = numbers(task, changes, Change::is_linked)?;
+    match ((from, to), &task.fields().prs[..], &linked[..]) {
+        ((Review, Done), [], []) => {}
+        ((Review, Done), [_, ..], _) => {
+            return Err(BoardRuleError::PrsLinked(task.fields().prs.clone()));
+        }
+        ((Review, Done), [], numbers) => {
+            return Err(BoardRuleError::ChangesLinked(numbers.to_vec()));
+        }
         _ => {}
     }
     may_move_with(task, runs, to)?;
@@ -113,16 +123,25 @@ pub fn move_task(
 /// The system move behind "a merged PR moves its task to done": a task
 /// that is ready (released with its pull requests linked) or held
 /// (claimed, in progress, in review or blocked), whose linked pull
-/// requests are all in `merged`, is done, whoever holds it and whoever
-/// merged them. Its claim is cleared, and its run still going, if one of
-/// its `runs` is, is ended as lost at the completion's stamp: it can no
-/// longer report its end to a done task, as a run whose host died cannot.
+/// requests are all in `merged`, and which links no change still open
+/// (`changes` is the task's, as the board holds them), is done, whoever
+/// holds it and whoever merged them. Its claim is cleared, and its run
+/// still going, if one of its `runs` is, is ended as lost at the
+/// completion's stamp: it can no longer report its end to a done task, as
+/// a run whose host died cannot.
 pub fn complete_merged(
     task: &Task,
     merged: &BTreeSet<u64>,
+    changes: &[Change],
     runs: &[Run],
     now: &Timestamp,
 ) -> Result<Completed, BoardRuleError> {
+    completable(task)?;
+    let open = numbers(task, changes, Change::is_open)?;
+    match open.as_slice() {
+        [] => {}
+        open => return Err(BoardRuleError::ChangesUnmerged(open.to_vec())),
+    }
     let fields = task.fields();
     let unmerged: Vec<u64> = fields
         .prs
@@ -130,21 +149,51 @@ pub fn complete_merged(
         .copied()
         .filter(|pr| !merged.contains(pr))
         .collect();
-    let completable = matches!(
-        fields.status,
-        Ready | Claimed | InProgress | Review | Blocked
-    );
-    match (completable, &fields.prs[..], &unmerged[..]) {
-        (true, [_, ..], []) => {}
-        (true, [], _) => return Err(BoardRuleError::NoPrs),
-        (true, _, open) => return Err(BoardRuleError::PrsUnmerged(open.to_vec())),
-        (false, _, _) => {
-            return Err(BoardRuleError::NotAllowed {
-                from: fields.status,
-                to: Done,
-            });
-        }
+    match (&fields.prs[..], &unmerged[..]) {
+        ([_, ..], []) => {}
+        ([], _) => return Err(BoardRuleError::NoPrs),
+        (_, open) => return Err(BoardRuleError::PrsUnmerged(open.to_vec())),
     }
+    finish(task, runs, now).map(|(completed, _)| completed)
+}
+
+/// The numbers of the `changes` that are `kept`, every one of `changes`
+/// being `task`'s.
+fn numbers(
+    task: &Task,
+    changes: &[Change],
+    kept: fn(&Change) -> bool,
+) -> Result<Vec<u32>, BoardRuleError> {
+    match changes
+        .iter()
+        .all(|change| change.fields().task == task.fields().id)
+    {
+        true => Ok(changes
+            .iter()
+            .filter(|change| kept(change))
+            .map(|change| change.fields().number)
+            .collect()),
+        false => Err(BoardRuleError::NotThisTasks),
+    }
+}
+
+/// A task that is ready (released with what delivers it linked) or held
+/// may be completed; any other may not.
+pub(super) fn completable(task: &Task) -> Result<(), BoardRuleError> {
+    match task.fields().status {
+        Ready | Claimed | InProgress | Review | Blocked => Ok(()),
+        from @ (Draft | Done | Archived) => Err(BoardRuleError::NotAllowed { from, to: Done }),
+    }
+}
+
+/// `task` done at its stamp for `now`, its claim cleared and its run
+/// going, if one of `runs` is, ended as lost at that stamp; with the stamp.
+pub(super) fn finish(
+    task: &Task,
+    runs: &[Run],
+    now: &Timestamp,
+) -> Result<(Completed, Timestamp), BoardRuleError> {
+    let fields = task.fields();
     let at = stamp(task, now)?;
     let open = open_of(task, runs)?;
     let run = open.map(|run| lost_at(run, &at)).transpose()?;
@@ -156,10 +205,8 @@ pub fn complete_merged(
     let mut next = fields.clone();
     next.status = Done;
     next.claim = None;
-    Ok(Completed {
-        task: settle(next, &at)?,
-        run,
-    })
+    let task = settle(next, &at)?;
+    Ok((Completed { task, run }, at))
 }
 
 /// A task completed: done, and its run ended as lost if one was going.
