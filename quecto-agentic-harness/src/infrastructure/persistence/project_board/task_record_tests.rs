@@ -1,7 +1,7 @@
 use super::*;
 
 const FULL: &str = r#"{
-  "schema": 1,
+  "schema": 2,
   "id": "board-store",
   "title": "Board store",
   "kind": "task",
@@ -29,7 +29,7 @@ const FULL: &str = r#"{
 "#;
 
 const MINIMAL: &str = r#"{
-  "schema": 1,
+  "schema": 2,
   "id": "idea",
   "title": "An idea",
   "kind": "chore",
@@ -40,59 +40,12 @@ const MINIMAL: &str = r#"{
 "#;
 
 const PARTS: &str = r#"{
-  "schema": 1,
+  "schema": 2,
   "id": "board-store",
   "title": "Board store",
   "kind": "task",
   "status": "in_progress",
-  "plan": [
-    {
-      "title": "Spike",
-      "criteria": [
-        "CAS proved"
-      ]
-    }
-  ],
-  "items": [
-    {
-      "id": "plumbing",
-      "title": "Plumbing",
-      "state": "done",
-      "owner": "worker-1",
-      "evidence": [
-        "log"
-      ]
-    },
-    {
-      "id": "cas",
-      "title": "CAS",
-      "criteria": [
-        "stale lease refused"
-      ],
-      "depends_on": [
-        "plumbing"
-      ],
-      "state": "todo"
-    }
-  ],
-  "team": {
-    "roles": [
-      {
-        "name": "worker",
-        "model": "gpt-5.5",
-        "effort": "high",
-        "limits": {
-          "members": 2,
-          "turns": 200
-        }
-      }
-    ],
-    "budget": {
-      "tokens": 5000000
-    },
-    "deadline": "2026-10-11T00:00:00Z",
-    "image": "ghcr.io/platform-q-ai/quecto:0.107"
-  },
+  "accepted_plan": 3,
   "claim": {
     "holder": {
       "name": "Ada",
@@ -101,18 +54,6 @@ const PARTS: &str = r#"{
     "since": "2026-10-10T09:00:00Z",
     "expires": "2026-10-10T11:00:00Z"
   },
-  "runs": [
-    {
-      "id": "r1",
-      "started": "2026-10-10T09:01:00Z",
-      "ended": "2026-10-10T09:30:00Z",
-      "outcome": "lost"
-    },
-    {
-      "id": "r2",
-      "started": "2026-10-10T09:31:00Z"
-    }
-  ],
   "reviews": [
     {
       "id": "r1-h1",
@@ -206,17 +147,28 @@ fn malformed_files_are_refused_by_the_record() {
 
 #[test]
 fn a_newer_schema_asks_for_an_upgrade_and_an_unknown_one_is_refused() {
-    let newer = decode(&edited(FULL, "\"schema\": 1", "\"schema\": 2"));
-    assert_eq!(newer, Err(RecordError::NewerSchema { found: 2 }));
+    let newer = decode(&edited(FULL, "\"schema\": 2", "\"schema\": 3"));
+    assert_eq!(newer, Err(RecordError::NewerSchema { found: 3 }));
     assert!(newer.unwrap_err().to_string().ends_with("upgrade quecto"));
-    let newer_with_new_keys = edited(FULL, "\"schema\": 1,", "\"schema\": 2,\n  \"labels\": [],");
+    let newer_with_new_keys = edited(FULL, "\"schema\": 2,", "\"schema\": 3,\n  \"labels\": [],");
     assert_eq!(
         decode(&newer_with_new_keys),
-        Err(RecordError::NewerSchema { found: 2 })
+        Err(RecordError::NewerSchema { found: 3 })
     );
     assert_eq!(
-        decode(&edited(FULL, "\"schema\": 1", "\"schema\": 0")),
+        decode(&edited(FULL, "\"schema\": 2", "\"schema\": 0")),
         Err(RecordError::UnknownSchema { found: 0 })
+    );
+    // A schema-1 file is read; one holding a part the task no longer has
+    // (its plan, say: an artifact of its own from schema 2) is malformed.
+    assert!(decode(&edited(MINIMAL, "\"schema\": 2", "\"schema\": 1")).is_ok());
+    let old_plan = edited(MINIMAL, "\"schema\": 2,", "\"schema\": 1,\n  \"plan\": [],");
+    assert!(matches!(decode(&old_plan), Err(RecordError::Malformed(_))));
+    // A key from a later schema is refused in an earlier one's file.
+    let early = edited(PARTS, "\"schema\": 2", "\"schema\": 1");
+    assert!(
+        matches!(decode(&early), Err(RecordError::Malformed(why)) if why.contains("schema 2")),
+        "accepted_plan in a schema-1 file"
     );
 }
 
@@ -297,11 +249,11 @@ fn every_schema_names_the_quecto_that_introduced_it() {
 
 #[test]
 fn a_newer_schema_names_the_least_quecto_that_can_read_it() {
-    let message = RecordError::NewerSchema { found: 2 }.to_string();
+    let message = RecordError::NewerSchema { found: 3 }.to_string();
     let wanted = [
-        "schema 2".to_string(),
+        "schema 3".to_string(),
         format!("needs a quecto newer than {}", env!("CARGO_PKG_VERSION")),
-        "schema 1 arrived in quecto 0.107.251".to_string(),
+        "schema 2 arrived in quecto 0.107.274".to_string(),
         "upgrade quecto".to_string(),
     ];
     for part in wanted {
@@ -311,17 +263,7 @@ fn a_newer_schema_names_the_least_quecto_that_can_read_it() {
 
 #[test]
 fn every_nested_record_refuses_unknown_keys() {
-    let anchors = [
-        "\"title\": \"Spike\"",
-        "\"title\": \"Plumbing\"",
-        "\"roles\"",
-        "\"model\"",
-        "\"members\"",
-        "\"tokens\"",
-        "\"started\": \"2026-10-10T09:31:00Z\"",
-        "\"round\"",
-        "\"name\": \"Bob\"",
-    ];
+    let anchors = ["\"round\"", "\"name\": \"Bob\"", "\"name\": \"Ada\""];
     for anchor in anchors {
         let bytes = edited(PARTS, anchor, &format!("\"extra\": 1, {anchor}"));
         assert!(
@@ -334,31 +276,9 @@ fn every_nested_record_refuses_unknown_keys() {
 #[test]
 fn nested_values_the_domain_refuses_are_named_by_their_path() {
     let cases = [
-        ("items/0/state", edited(PARTS, "\"done\"", "\"finished\"")),
         (
-            "items/1/depends_on/0",
-            edited(PARTS, "\"plumbing\"\n      ]", "\"Plumbing\"\n      ]"),
-        ),
-        (
-            "team/roles/0/effort",
-            edited(
-                PARTS,
-                "\"high\",\n        \"limits\"",
-                "\"xhigh\",\n        \"limits\"",
-            ),
-        ),
-        (
-            "team/deadline",
-            edited(PARTS, "2026-10-11T00:00:00Z", "tomorrow"),
-        ),
-        ("runs/0/outcome", edited(PARTS, "\"lost\"", "\"crashed\"")),
-        (
-            "runs/1",
-            edited(
-                PARTS,
-                "\"started\": \"2026-10-10T09:31:00Z\"",
-                "\"started\": \"2026-10-10T09:31:00Z\", \"outcome\": \"failed\"",
-            ),
+            "accepted_plan",
+            edited(PARTS, "\"accepted_plan\": 3", "\"accepted_plan\": 0"),
         ),
         (
             "reviews/0/severity",

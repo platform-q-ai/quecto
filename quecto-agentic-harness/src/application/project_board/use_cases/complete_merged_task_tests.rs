@@ -9,9 +9,8 @@ use crate::application::project_board::use_cases::fixtures_tests::{
 };
 use crate::domain::project_board::entities::claim::Claim;
 use crate::domain::project_board::entities::task::{Task, TaskFields};
-use crate::domain::project_board::entities::task_parts::Run;
 use crate::domain::project_board::value_objects::rule_error::BoardRuleError;
-use crate::domain::project_board::value_objects::vocabulary::{RunOutcome, TaskStatus};
+use crate::domain::project_board::value_objects::vocabulary::TaskStatus;
 use crate::infrastructure::test_support::memory_board_store::MemoryBoardStore;
 use crate::infrastructure::test_support::memory_pull_requests::MemoryPullRequests;
 use std::sync::Arc;
@@ -144,10 +143,9 @@ fn a_released_task_is_done_when_its_pull_request_merges() {
     assert_eq!(done.fields().status, TaskStatus::Done);
 }
 
-/// Whoever holds the task, its merge closes it: the claim is cleared and
-/// a run still open is ended as lost when the task is done.
+/// Whoever holds the task, its merge closes it: the claim is cleared.
 #[test]
-fn a_merge_closes_a_held_task_and_ends_its_open_run_as_lost() {
+fn a_merge_closes_a_held_task_whoever_holds_it() {
     let store = board();
     let held = Task::new(TaskFields {
         status: TaskStatus::InProgress,
@@ -156,12 +154,6 @@ fn a_merge_closes_a_held_task_and_ends_its_open_run_as_lost() {
             since: at("09:00:00"),
             expires: at("11:00:00"),
         }),
-        runs: vec![Run {
-            id: slug("r1"),
-            started: at("09:05:00"),
-            ended: None,
-            outcome: None,
-        }],
         prs: vec![7],
         created: at("08:00:00"),
         updated: at("09:05:00"),
@@ -173,20 +165,9 @@ fn a_merge_closes_a_held_task_and_ends_its_open_run_as_lost() {
     let host = MemoryPullRequests::default();
     host.set(7, PullRequestState::Merged);
     let done = complete(&store, &host).execute(&slug("a")).unwrap();
-    let run = &done.fields().runs[0];
     assert_eq!(
-        (
-            done.fields().status,
-            done.fields().claim.clone(),
-            run.ended.clone(),
-            run.outcome
-        ),
-        (
-            TaskStatus::Done,
-            None,
-            Some(at("10:00:00")),
-            Some(RunOutcome::Lost)
-        )
+        (done.fields().status, done.fields().claim.clone()),
+        (TaskStatus::Done, None)
     );
 }
 
@@ -268,44 +249,6 @@ fn a_pull_request_linked_during_the_completion_is_asked_about() {
         (TaskStatus::Review, writes + 1),
         "only Ada's link landed"
     );
-}
-
-/// Once a merge closed the task and ended its run as lost, its former
-/// holder has no claim to end a run under.
-#[test]
-fn ending_a_run_after_completion_finds_no_claim() {
-    let store = board();
-    let held = Task::new(TaskFields {
-        status: TaskStatus::InProgress,
-        claim: Some(Claim {
-            holder: person("Ada"),
-            since: at("09:00:00"),
-            expires: at("11:00:00"),
-        }),
-        runs: vec![Run {
-            id: slug("r1"),
-            started: at("09:05:00"),
-            ended: None,
-            outcome: None,
-        }],
-        prs: vec![7],
-        created: at("08:00:00"),
-        updated: at("09:05:00"),
-        ..fields("a")
-    })
-    .unwrap();
-    let head = store.read().unwrap().head;
-    store.write(&head, &[held], "seed").unwrap();
-    let host = MemoryPullRequests::default();
-    host.set(7, PullRequestState::Merged);
-    complete(&store, &host).execute(&slug("a")).unwrap();
-    let ended = ChangeBoardTask::new(
-        Arc::new(store.client_as(person("Ada"))),
-        SetClock::at("10:05:00"),
-    )
-    .unwrap()
-    .execute(&slug("a"), &BoardOp::EndRunLost);
-    assert_eq!(ended, Err(ProjectBoardError::Rule(BoardRuleError::NoClaim)));
 }
 
 /// The reads share one budget: once it is spent no further pull request

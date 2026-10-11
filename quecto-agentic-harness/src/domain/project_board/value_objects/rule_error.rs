@@ -1,7 +1,7 @@
 //! Why the board's rules refused a move, renewal, takeover or completion.
 use super::schema_error::SchemaError;
-use super::slug::Slug;
-use super::vocabulary::TaskStatus;
+use super::timestamp::Timestamp;
+use super::vocabulary::{PlanState, TaskStatus};
 use std::fmt;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -16,10 +16,35 @@ pub enum BoardRuleError {
     ClaimLive,
     /// The holder's claim has expired: renew it first.
     ClaimExpired,
-    /// This run is still going: end it before the task leaves its holder.
-    RunOpen(Slug),
-    /// The task has no open run to end.
-    NoOpenRun,
+    /// This run is still going: end it before the task leaves its holder,
+    /// or before another plan is accepted.
+    RunOpen(u32),
+    /// The run has already ended: a run folds back once.
+    RunEnded(u32),
+    /// Only a draft plan is edited, accepted or discarded.
+    PlanNotDraft(PlanState),
+    /// The plan or run belongs to another task, or the run to another
+    /// plan version.
+    NotThisTasks,
+    /// A done or archived task's plans are settled: none is proposed,
+    /// edited, accepted or discarded.
+    TaskFinished(TaskStatus),
+    /// The task has no plan of that version.
+    UnknownPlanVersion(u32),
+    /// The plan changed since the caller read it (`updated` now): read it
+    /// again and decide again.
+    PlanChanged { version: u32, updated: Timestamp },
+    /// The plan was stamped by a clock running ahead of the outside time:
+    /// building on it would drag the task ahead too.
+    PlanAhead { version: u32, updated: Timestamp },
+    /// The task's plans contradict each other (a hand edit, a hostile
+    /// push): mend them before deciding on one.
+    PlansInconsistent(String),
+    /// The task's runs contradict each other (more than one going): mend
+    /// them before acting on the task.
+    RunsInconsistent(String),
+    /// A run runs the task's accepted plan; this version is not it.
+    PlanNotAccepted(u32),
     /// A takeover is only of a task that may hold a claim (claimed, in
     /// progress, in review or blocked).
     NotTakeable(TaskStatus),
@@ -64,8 +89,35 @@ impl fmt::Display for BoardRuleError {
             Self::NoClaim => f.write_str("the task has no claim"),
             Self::ClaimLive => f.write_str("the claim has not expired"),
             Self::ClaimExpired => f.write_str("the claim has expired; renew it first"),
-            Self::RunOpen(run) => write!(f, "run {} is still open", run.as_str()),
-            Self::NoOpenRun => f.write_str("the task has no open run"),
+            Self::RunOpen(run) => write!(f, "run {run} is still open"),
+            Self::RunEnded(run) => write!(f, "run {run} has already ended"),
+            Self::PlanNotDraft(state) => write!(
+                f,
+                "a {} plan is not a draft: only drafts are edited, accepted or discarded",
+                state.as_str()
+            ),
+            Self::NotThisTasks => f.write_str("it belongs to another task or plan version"),
+            Self::TaskFinished(status) => {
+                write!(f, "a {} task's plans are settled", status.as_str())
+            }
+            Self::UnknownPlanVersion(version) => {
+                write!(f, "the task has no plan version {version}")
+            }
+            Self::PlanChanged { version, updated } => write!(
+                f,
+                "plan version {version} changed since it was read (updated {}); read it again",
+                updated.as_str()
+            ),
+            Self::PlansInconsistent(why) => write!(f, "the task's plans contradict: {why}"),
+            Self::PlanAhead { version, updated } => write!(
+                f,
+                "plan version {version} was stamped {} by a clock that ran ahead",
+                updated.as_str()
+            ),
+            Self::RunsInconsistent(why) => write!(f, "the task's runs contradict: {why}"),
+            Self::PlanNotAccepted(version) => {
+                write!(f, "plan version {version} is not the task's accepted plan")
+            }
             Self::NotTakeable(status) => {
                 write!(f, "a {} task cannot be taken over", status.as_str())
             }

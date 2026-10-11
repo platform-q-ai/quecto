@@ -38,7 +38,7 @@
 //! fetches them in one call and reads again.
 pub use super::cat_file::contents;
 use super::cat_file::{Found, Object, objects};
-use super::git::{Git, GitError, quoted, sanitised, shown_name};
+use super::git::{Git, GitError, capped, quoted, sanitised, shown_name};
 use super::task_record::{MAX_TASK_FILE_BYTES, decode};
 use crate::application::project_board::ports::{BoardStoreError, QuarantinedFile};
 use crate::domain::project_board::entities::task::Task;
@@ -520,7 +520,7 @@ fn read_tasks(git: &Git, tree: &str, limits: Limits) -> Result<Board, Unread> {
             id,
             // A file's own text (an unknown key, say) can reach the reason:
             // only what shows as itself is kept.
-            reason: sanitised(reason.as_bytes()),
+            reason: capped(&sanitised(reason.as_bytes())),
             object: entry.oid.clone(),
         });
     };

@@ -248,53 +248,6 @@ fn quarantined_json(file: &QuarantinedFile) -> Value {
 /// A task in the board's own field names, every field present.
 pub fn task_json(task: &Task) -> Value {
     let task = task.fields();
-    let items: Vec<Value> = task
-        .items
-        .iter()
-        .map(|item| {
-            json!({
-                "id": slug_json(&item.id),
-                "title": item.title,
-                "criteria": item.criteria,
-                "depends_on": slugs_json(&item.depends_on),
-                "state": item.state.as_str(),
-                "owner": item.owner,
-                "evidence": item.evidence,
-            })
-        })
-        .collect();
-    let team = task.team.as_ref().map(|team| {
-        let roles: Vec<Value> = team
-            .roles
-            .iter()
-            .map(|role| {
-                json!({
-                    "name": slug_json(&role.name),
-                    "model": role.model,
-                    "effort": role.effort.as_str(),
-                    "limits": {"members": role.limits.members, "turns": role.limits.turns},
-                })
-            })
-            .collect();
-        json!({
-            "roles": roles,
-            "budget": team.budget.as_ref().map(|budget| json!({"tokens": budget.tokens})),
-            "deadline": team.deadline.as_ref().map(|at| at.as_str()),
-            "image": team.image,
-        })
-    });
-    let runs: Vec<Value> = task
-        .runs
-        .iter()
-        .map(|run| {
-            json!({
-                "id": slug_json(&run.id),
-                "started": run.started.as_str(),
-                "ended": run.ended.as_ref().map(|at| at.as_str()),
-                "outcome": run.outcome.map(|outcome| outcome.as_str()),
-            })
-        })
-        .collect();
     let reviews: Vec<Value> = task
         .reviews
         .iter()
@@ -312,11 +265,6 @@ pub fn task_json(task: &Task) -> Value {
             })
         })
         .collect();
-    let plan: Vec<Value> = task
-        .plan
-        .iter()
-        .map(|step| json!({"title": step.title, "criteria": step.criteria}))
-        .collect();
     json!({
         "id": slug_json(&task.id),
         "title": task.title,
@@ -325,15 +273,12 @@ pub fn task_json(task: &Task) -> Value {
         "status": task.status.as_str(),
         "parent": task.parent.as_ref().map(slug_json),
         "depends_on": slugs_json(&task.depends_on),
-        "plan": plan,
-        "items": items,
-        "team": team,
+        "accepted_plan": task.accepted_plan,
         "claim": task.claim.as_ref().map(|claim| json!({
             "holder": identity_json(&claim.holder),
             "since": claim.since.as_str(),
             "expires": claim.expires.as_str(),
         })),
-        "runs": runs,
         "reviews": reviews,
         "prs": task.prs,
         "created": task.created.as_str(),
@@ -500,8 +445,27 @@ fn rule_json(rule: &BoardRuleError) -> Value {
         R::NoClaim => json!({"code": "no_claim"}),
         R::ClaimLive => json!({"code": "claim_live"}),
         R::ClaimExpired => json!({"code": "claim_expired"}),
-        R::RunOpen(run) => json!({"code": "run_open", "run": run.as_str()}),
-        R::NoOpenRun => json!({"code": "no_open_run"}),
+        R::RunOpen(run) => json!({"code": "run_open", "run": run}),
+        R::RunEnded(run) => json!({"code": "run_ended", "run": run}),
+        R::PlanNotDraft(state) => json!({"code": "plan_not_draft", "state": state.as_str()}),
+        R::NotThisTasks => json!({"code": "not_this_tasks"}),
+        R::TaskFinished(status) => json!({"code": "task_finished", "status": status.as_str()}),
+        R::UnknownPlanVersion(version) => {
+            json!({"code": "unknown_plan_version", "version": version})
+        }
+        R::PlanChanged { version, updated } => json!({
+            "code": "plan_changed",
+            "version": version,
+            "updated": updated.as_str(),
+        }),
+        R::PlansInconsistent(why) => json!({"code": "plans_inconsistent", "reason": shown(why)}),
+        R::PlanAhead { version, updated } => json!({
+            "code": "plan_ahead",
+            "version": version,
+            "updated": updated.as_str(),
+        }),
+        R::RunsInconsistent(why) => json!({"code": "runs_inconsistent", "reason": shown(why)}),
+        R::PlanNotAccepted(version) => json!({"code": "plan_not_accepted", "version": version}),
         R::NotTakeable(status) => json!({"code": "not_takeable", "status": status.as_str()}),
         R::AlreadyHolder => json!({"code": "already_holder"}),
         R::NoPrs => json!({"code": "no_prs"}),

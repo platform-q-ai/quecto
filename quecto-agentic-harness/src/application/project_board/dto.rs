@@ -77,8 +77,6 @@ pub enum BoardOp {
     /// `CompleteMergedTask`, and once none is linked, Review→Done is the
     /// holder's.
     RemovePr(u64),
-    /// The holder ends the task's open run as lost.
-    EndRunLost,
 }
 
 impl BoardOp {
@@ -91,7 +89,6 @@ impl BoardOp {
             Self::Move(to) => format!("board: move {id} to {}", to.as_str()),
             Self::AddPr(pr) => format!("board: link pull request {pr} to {id}"),
             Self::RemovePr(pr) => format!("board: unlink pull request {pr} from {id}"),
-            Self::EndRunLost => format!("board: end {id}'s run as lost"),
         }
     }
 }

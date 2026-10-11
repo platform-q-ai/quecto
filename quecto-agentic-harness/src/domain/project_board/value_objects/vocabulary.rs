@@ -53,7 +53,15 @@ impl TaskStatus {
 }
 
 vocabulary!(
-    /// Where one item of a task's own board stands.
+    /// Where a version of a task's plan stands: a draft is edited, an
+    /// accepted one is the task's plan (never edited again), a superseded
+    /// one was replaced by a newer acceptance, and a discarded draft is kept
+    /// for history.
+    PlanState { Draft => "draft", Accepted => "accepted", Superseded => "superseded", Discarded => "discarded" }
+);
+
+vocabulary!(
+    /// Where one item of a run's board stands.
     ItemState { Todo => "todo", Doing => "doing", Review => "review", Done => "done", Blocked => "blocked" }
 );
 

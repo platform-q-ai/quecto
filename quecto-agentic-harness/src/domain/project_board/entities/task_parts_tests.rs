@@ -1,7 +1,10 @@
 use super::*;
 use crate::domain::project_board::entities::claim::Claim;
+use crate::domain::project_board::entities::plan::{Plan, PlanFields, PlanItem};
 use crate::domain::project_board::entities::task::{Task, TaskFields};
-use crate::domain::project_board::value_objects::vocabulary::{TaskKind, TaskStatus};
+use crate::domain::project_board::entities::team::*;
+use crate::domain::project_board::value_objects::vocabulary::Effort;
+use crate::domain::project_board::value_objects::vocabulary::{PlanState, TaskKind, TaskStatus};
 
 fn at(time: &str) -> Timestamp {
     Timestamp::parse(&format!("2026-10-10T{time}Z")).unwrap()
@@ -18,31 +21,22 @@ fn ada() -> Identity {
     }
 }
 
-fn item(id: &str, depends_on: &[&str]) -> Item {
-    Item {
+fn item(id: &str, depends_on: &[&str]) -> PlanItem {
+    PlanItem {
         id: slug(id),
         title: format!("Item {id}"),
         criteria: vec!["passes".into()],
         depends_on: depends_on.iter().map(|id| slug(id)).collect(),
-        state: ItemState::Todo,
-        owner: Some("worker-1".into()),
-        evidence: vec!["log".into()],
     }
 }
 
-fn fields() -> TaskFields {
-    TaskFields {
-        id: slug("board-store"),
-        title: "Board store".into(),
-        kind: TaskKind::Task,
-        description: String::new(),
-        status: TaskStatus::InProgress,
-        parent: None,
-        depends_on: vec![],
-        plan: vec![PlanStep {
-            title: "Spike".into(),
-            criteria: vec!["CAS proved".into()],
-        }],
+/// A plan with every part: the items and team a task's swarm runs.
+fn plan_fields() -> PlanFields {
+    PlanFields {
+        task: slug("board-store"),
+        version: 1,
+        state: PlanState::Draft,
+        approach: String::new(),
         items: vec![
             item("plumbing", &[]),
             item("cas", &["plumbing"]),
@@ -62,25 +56,30 @@ fn fields() -> TaskFields {
             deadline: Some(at("23:00:00")),
             image: Some("ghcr.io/platform-q-ai/quecto:0.107".into()),
         }),
+        proposed_by: ada(),
+        edited_by: None,
+        accepted: None,
+        created: at("08:00:00"),
+        updated: at("10:00:00"),
+    }
+}
+
+/// A task with its review findings.
+fn fields() -> TaskFields {
+    TaskFields {
+        id: slug("board-store"),
+        title: "Board store".into(),
+        kind: TaskKind::Task,
+        description: String::new(),
+        status: TaskStatus::InProgress,
+        parent: None,
+        depends_on: vec![],
+        accepted_plan: Some(1),
         claim: Some(Claim {
             holder: ada(),
             since: at("09:00:00"),
             expires: at("11:00:00"),
         }),
-        runs: vec![
-            Run {
-                id: slug("r1"),
-                started: at("09:01:00"),
-                ended: Some(at("09:30:00")),
-                outcome: Some(RunOutcome::Lost),
-            },
-            Run {
-                id: slug("r2"),
-                started: at("09:31:00"),
-                ended: None,
-                outcome: None,
-            },
-        ],
         reviews: vec![Review {
             id: slug("r1-h1"),
             round: 1,
@@ -100,9 +99,10 @@ fn fields() -> TaskFields {
 
 /// One change that must make valid fields invalid.
 type Edit = fn(&mut TaskFields);
+type PlanEdit = fn(&mut PlanFields);
 
-fn team(task: &mut TaskFields) -> &mut Team {
-    task.team.as_mut().unwrap()
+fn team(plan: &mut PlanFields) -> &mut Team {
+    plan.team.as_mut().unwrap()
 }
 
 fn many<T: Clone>(entry: &T, count: usize, rename: fn(&mut T, usize)) -> Vec<T> {
@@ -116,18 +116,14 @@ fn many<T: Clone>(entry: &T, count: usize, rename: fn(&mut T, usize)) -> Vec<T> 
 }
 
 #[test]
-fn the_full_task_builds() {
+fn the_full_task_and_plan_build() {
     assert!(Task::new(fields()).is_ok());
+    assert!(Plan::new(plan_fields()).is_ok());
 }
 
 #[test]
-fn parts_that_break_a_rule_build_no_task() {
-    let cases: Vec<(&str, Edit)> = vec![
-        ("plan", |t| t.plan = vec![t.plan[0].clone(); MAX_STEPS + 1]),
-        ("plan/0/title", |t| t.plan[0].title = "\t".into()),
-        ("plan/0/criteria", |t| {
-            t.plan[0].criteria = vec!["c".into(); 2]
-        }),
+fn plan_parts_that_break_a_rule_build_no_plan() {
+    let cases: Vec<(&str, PlanEdit)> = vec![
         ("items", |t| t.items[1].id = t.items[0].id.clone()),
         ("items", |t| {
             t.items = many(&t.items[0], MAX_ITEMS + 1, |i, n| {
@@ -142,10 +138,6 @@ fn parts_that_break_a_rule_build_no_task() {
         }),
         ("items/0/criteria/0", |t| {
             t.items[0].criteria = vec![" ".into()]
-        }),
-        ("items/0/owner", |t| t.items[0].owner = Some("a\nb".into())),
-        ("items/0/evidence", |t| {
-            t.items[0].evidence = vec!["same".into(), "same".into()]
         }),
         ("items/1/depends_on", |t| {
             t.items[1].depends_on = vec![slug("missing")]
@@ -199,8 +191,6 @@ fn parts_that_break_a_rule_build_no_task() {
                 tokens: MAX_BUDGET_TOKENS + 1,
             })
         }),
-        ("team/deadline", |t| team(t).deadline = Some(at("08:00:00"))),
-        ("team/deadline", |t| team(t).deadline = Some(at("07:00:00"))),
         ("team/image", |t| team(t).image = Some("Foo/bar".into())),
         ("team/image", |t| {
             team(t).image = Some("registry/Team".into())
@@ -216,29 +206,18 @@ fn parts_that_break_a_rule_build_no_task() {
         ("team/image", |t| {
             team(t).image = Some("Ghcr.io/Upper".into())
         }),
-        ("runs", |t| t.runs.push(t.runs[0].clone())),
-        ("runs", |t| {
-            t.runs[0] = Run {
-                ended: None,
-                outcome: None,
-                ..t.runs[0].clone()
-            }
-        }),
-        ("runs", |t| (t.status, t.claim) = (TaskStatus::Ready, None)),
-        ("runs", |t| (t.status, t.claim) = (TaskStatus::Done, None)),
-        ("runs", |t| {
-            (t.status, t.claim) = (TaskStatus::Archived, None)
-        }),
-        ("runs/0", |t| t.runs[0].outcome = None),
-        ("runs/1", |t| t.runs[1].outcome = Some(RunOutcome::Failed)),
-        ("runs/0", |t| t.runs[0].ended = Some(at("09:00:59"))),
-        ("runs/0/started", |t| t.runs[0].started = at("07:59:59")),
-        ("runs/1/started", |t| t.runs[1].started = at("10:00:01")),
-        ("runs/0/ended", |t| t.runs[0].ended = Some(at("10:00:01"))),
-        ("runs", |t| (t.status, t.claim) = (TaskStatus::Review, None)),
-        ("runs", |t| {
-            (t.status, t.claim) = (TaskStatus::Blocked, None)
-        }),
+    ];
+    for (field, edit) in cases {
+        let mut plan = plan_fields();
+        edit(&mut plan);
+        let error = Plan::new(plan).expect_err(field);
+        assert_eq!(error.field, field, "{error}");
+    }
+}
+
+#[test]
+fn reviews_that_break_a_rule_build_no_task() {
+    let cases: Vec<(&str, Edit)> = vec![
         ("reviews", |t| t.reviews.push(t.reviews[0].clone())),
         ("reviews/0/round", |t| t.reviews[0].round = 0),
         ("reviews/0/at", |t| t.reviews[0].at = at("07:59:59")),
@@ -305,12 +284,9 @@ fn parts_that_break_a_rule_build_no_task() {
 
 #[test]
 fn every_part_bound_admits_exactly_its_limit() {
-    let cases: Vec<Edit> = vec![
-        |t| t.plan = many(&t.plan[0], MAX_STEPS, |s, n| s.title = format!("step {n}")),
+    let plans: Vec<PlanEdit> = vec![
         |t| t.items = many(&t.items[0], MAX_ITEMS, |i, n| i.id = slug(&format!("i{n}"))),
         |t| t.items[0].criteria = (0..MAX_PER_ITEM).map(|n| n.to_string()).collect(),
-        |t| t.items[0].evidence = (0..MAX_PER_ITEM).map(|n| n.to_string()).collect(),
-        |t| t.items[0].owner = Some("x".repeat(MAX_OWNER_CHARS)),
         |t| t.items[2].title = "é".repeat(MAX_LINE_CHARS),
         |t| {
             team(t).roles = many(&team(t).roles[0], MAX_ROLES, |r, n| {
@@ -326,31 +302,11 @@ fn every_part_bound_admits_exactly_its_limit() {
         |t| team(t).roles[0].model = "m".repeat(MAX_MODEL_BYTES),
         |t| team(t).image = Some(format!("a/{}", "b".repeat(MAX_IMAGE_BYTES - 2))),
         |t| team(t).image = Some(format!("localhost:5000/x/y:v1.2@sha256:{}", "a".repeat(64))),
-        |t| (t.team, t.plan, t.items) = (None, vec![], vec![]),
-        |t| t.runs = many(&t.runs[0], MAX_RUNS, |r, n| r.id = slug(&format!("r{n}"))),
-        |t| {
-            t.reviews = many(&t.reviews[0], MAX_REVIEWS, |r, n| {
-                r.id = slug(&format!("f{n}"))
-            })
-        },
-        |t| t.reviews[0].location = Some("src/store.rs:1".into()),
-        |t| t.reviews[0].location = Some(".github/ci.yml:3".into()),
-        |t| t.reviews[0].location = Some("src/a..b.rs:1".into()),
-        |t| t.reviews[0].location = Some("a/-b.rs:1".into()),
         |t| team(t).image = Some("ghcr.io/team/app:1..2".into()),
         |t| team(t).roles[0].model = "fireworks/models/glm-4.6:thinking".into(),
         |t| team(t).roles[0].model = "gpt..5".into(),
-        |t| (t.runs[1].started, t.reviews[0].at) = (at("10:00:00"), at("10:00:00")),
-        |t| t.reviews[0].location = None,
-        |t| t.reviews[0].finding = "é".repeat(MAX_FINDING_CHARS),
-        |t| t.reviews[0].finding = "**Lease**\n\n\tnot checked".into(),
-        |t| t.reviews[0].verdict = Verdict::WontFix,
-        |t| t.reviews[0].at = at("08:00:00"),
-        |t| (t.runs[0].started, t.runs[0].ended) = (at("08:00:00"), Some(at("08:00:00"))),
-        |t| t.status = TaskStatus::Review,
-        |t| t.status = TaskStatus::Blocked,
-        |t| (t.status, t.claim, t.runs) = (TaskStatus::Review, None, vec![t.runs[0].clone()]),
         |t| team(t).deadline = Some(at("08:00:01")),
+        |t| team(t).deadline = Some(at("07:00:00")),
         |t| {
             team(t).budget = Some(Budget {
                 tokens: MAX_BUDGET_TOKENS,
@@ -362,13 +318,41 @@ fn every_part_bound_admits_exactly_its_limit() {
         |t| team(t).image = Some("registry:5000/team/app_1__b".into()),
         |t| team(t).image = Some("Registry.Example.com/team/app".into()),
         |t| team(t).image = Some("[::1]:5000/x".into()),
+        |t| (t.team, t.items) = (None, vec![]),
     ];
-    for (index, edit) in cases.into_iter().enumerate() {
+    for (index, edit) in plans.into_iter().enumerate() {
+        let mut plan = plan_fields();
+        edit(&mut plan);
+        assert!(
+            Plan::new(plan).map_err(|error| error.to_string()).is_ok(),
+            "plan case {index}"
+        );
+    }
+    let tasks: Vec<Edit> = vec![
+        |t| {
+            t.reviews = many(&t.reviews[0], MAX_REVIEWS, |r, n| {
+                r.id = slug(&format!("f{n}"))
+            })
+        },
+        |t| t.reviews[0].location = Some("src/store.rs:1".into()),
+        |t| t.reviews[0].location = Some(".github/ci.yml:3".into()),
+        |t| t.reviews[0].location = Some("src/a..b.rs:1".into()),
+        |t| t.reviews[0].location = Some("a/-b.rs:1".into()),
+        |t| t.reviews[0].location = None,
+        |t| t.reviews[0].finding = "é".repeat(MAX_FINDING_CHARS),
+        |t| t.reviews[0].finding = "**Lease**\n\n\tnot checked".into(),
+        |t| t.reviews[0].verdict = Verdict::WontFix,
+        |t| t.reviews[0].at = at("08:00:00"),
+        |t| t.status = TaskStatus::Review,
+        |t| t.status = TaskStatus::Blocked,
+        |t| (t.status, t.claim) = (TaskStatus::Review, None),
+    ];
+    for (index, edit) in tasks.into_iter().enumerate() {
         let mut task = fields();
         edit(&mut task);
         assert!(
             Task::new(task).map_err(|error| error.to_string()).is_ok(),
-            "case {index}"
+            "task case {index}"
         );
     }
 }

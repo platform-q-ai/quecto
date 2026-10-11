@@ -18,9 +18,7 @@ fn fields() -> TaskFields {
         status: TaskStatus::InProgress,
         parent: Some(slug("boards")),
         depends_on: vec![slug("task-schema")],
-        plan: vec![],
-        items: vec![],
-        team: None,
+        accepted_plan: None,
         claim: Some(Claim {
             holder: Identity {
                 name: "Ada Lovelace".into(),
@@ -29,7 +27,6 @@ fn fields() -> TaskFields {
             since: at("09:00:00"),
             expires: at("11:00:00"),
         }),
-        runs: vec![],
         reviews: vec![],
         prs: vec![2482, 2483],
         created: at("08:00:00"),

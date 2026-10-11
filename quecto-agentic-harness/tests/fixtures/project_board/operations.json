@@ -41,11 +41,8 @@
         "status": "draft",
         "parent": null,
         "depends_on": [],
-        "plan": [],
-        "items": [],
-        "team": null,
+        "accepted_plan": null,
         "claim": null,
-        "runs": [],
         "reviews": [],
         "prs": [],
         "created": "2026-10-10T10:00:00Z",
@@ -73,11 +70,8 @@
         "status": "ready",
         "parent": "epic",
         "depends_on": [],
-        "plan": [],
-        "items": [],
-        "team": null,
+        "accepted_plan": null,
         "claim": null,
-        "runs": [],
         "reviews": [],
         "prs": [],
         "created": "2026-10-10T10:00:00Z",
@@ -103,11 +97,8 @@
         "status": "draft",
         "parent": null,
         "depends_on": [],
-        "plan": [],
-        "items": [],
-        "team": null,
+        "accepted_plan": null,
         "claim": null,
-        "runs": [],
         "reviews": [],
         "prs": [],
         "created": "2026-10-10T10:00:00Z",
@@ -151,9 +142,7 @@
         "status": "claimed",
         "parent": "epic",
         "depends_on": [],
-        "plan": [],
-        "items": [],
-        "team": null,
+        "accepted_plan": null,
         "claim": {
           "holder": {
             "name": "Ada",
@@ -162,7 +151,6 @@
           "since": "2026-10-10T10:00:01Z",
           "expires": "2026-10-10T12:00:01Z"
         },
-        "runs": [],
         "reviews": [],
         "prs": [],
         "created": "2026-10-10T10:00:00Z",
@@ -206,9 +194,7 @@
         "status": "in_progress",
         "parent": "epic",
         "depends_on": [],
-        "plan": [],
-        "items": [],
-        "team": null,
+        "accepted_plan": null,
         "claim": {
           "holder": {
             "name": "Ada",
@@ -217,7 +203,6 @@
           "since": "2026-10-10T10:00:01Z",
           "expires": "2026-10-10T12:00:01Z"
         },
-        "runs": [],
         "reviews": [],
         "prs": [],
         "created": "2026-10-10T10:00:00Z",
@@ -241,9 +226,7 @@
         "status": "in_progress",
         "parent": "epic",
         "depends_on": [],
-        "plan": [],
-        "items": [],
-        "team": null,
+        "accepted_plan": null,
         "claim": {
           "holder": {
             "name": "Ada",
@@ -252,7 +235,6 @@
           "since": "2026-10-10T10:00:03Z",
           "expires": "2026-10-10T12:00:03Z"
         },
-        "runs": [],
         "reviews": [],
         "prs": [],
         "created": "2026-10-10T10:00:00Z",
@@ -296,9 +278,7 @@
         "status": "in_progress",
         "parent": "epic",
         "depends_on": [],
-        "plan": [],
-        "items": [],
-        "team": null,
+        "accepted_plan": null,
         "claim": {
           "holder": {
             "name": "Bob",
@@ -307,7 +287,6 @@
           "since": "2026-10-10T12:30:00Z",
           "expires": "2026-10-10T14:30:00Z"
         },
-        "runs": [],
         "reviews": [],
         "prs": [],
         "created": "2026-10-10T10:00:00Z",
@@ -334,9 +313,7 @@
         "status": "in_progress",
         "parent": "epic",
         "depends_on": [],
-        "plan": [],
-        "items": [],
-        "team": null,
+        "accepted_plan": null,
         "claim": {
           "holder": {
             "name": "Bob",
@@ -345,7 +322,6 @@
           "since": "2026-10-10T12:30:00Z",
           "expires": "2026-10-10T14:30:00Z"
         },
-        "runs": [],
         "reviews": [],
         "prs": [
           7
@@ -363,11 +339,8 @@
           "status": "done",
           "parent": "epic",
           "depends_on": [],
-          "plan": [],
-          "items": [],
-          "team": null,
+          "accepted_plan": null,
           "claim": null,
-          "runs": [],
           "reviews": [],
           "prs": [
             7
@@ -396,11 +369,8 @@
         "status": "ready",
         "parent": null,
         "depends_on": [],
-        "plan": [],
-        "items": [],
-        "team": null,
+        "accepted_plan": null,
         "claim": null,
-        "runs": [],
         "reviews": [],
         "prs": [],
         "created": "2026-10-10T10:00:00Z",
@@ -425,9 +395,7 @@
         "status": "claimed",
         "parent": null,
         "depends_on": [],
-        "plan": [],
-        "items": [],
-        "team": null,
+        "accepted_plan": null,
         "claim": {
           "holder": {
             "name": "Ada",
@@ -436,7 +404,6 @@
           "since": "2026-10-10T10:00:01Z",
           "expires": "2026-10-10T12:00:01Z"
         },
-        "runs": [],
         "reviews": [],
         "prs": [],
         "created": "2026-10-10T10:00:00Z",
@@ -461,9 +428,7 @@
         "status": "in_progress",
         "parent": null,
         "depends_on": [],
-        "plan": [],
-        "items": [],
-        "team": null,
+        "accepted_plan": null,
         "claim": {
           "holder": {
             "name": "Ada",
@@ -472,7 +437,6 @@
           "since": "2026-10-10T10:00:01Z",
           "expires": "2026-10-10T12:00:01Z"
         },
-        "runs": [],
         "reviews": [],
         "prs": [],
         "created": "2026-10-10T10:00:00Z",
@@ -497,9 +461,7 @@
         "status": "in_progress",
         "parent": null,
         "depends_on": [],
-        "plan": [],
-        "items": [],
-        "team": null,
+        "accepted_plan": null,
         "claim": {
           "holder": {
             "name": "Ada",
@@ -508,7 +470,6 @@
           "since": "2026-10-10T10:00:01Z",
           "expires": "2026-10-10T12:00:01Z"
         },
-        "runs": [],
         "reviews": [],
         "prs": [
           8
@@ -541,9 +502,7 @@
         "status": "in_progress",
         "parent": null,
         "depends_on": [],
-        "plan": [],
-        "items": [],
-        "team": null,
+        "accepted_plan": null,
         "claim": {
           "holder": {
             "name": "Ada",
@@ -552,7 +511,6 @@
           "since": "2026-10-10T10:00:01Z",
           "expires": "2026-10-10T12:00:01Z"
         },
-        "runs": [],
         "reviews": [],
         "prs": [],
         "created": "2026-10-10T10:00:00Z",
@@ -577,9 +535,7 @@
         "status": "blocked",
         "parent": null,
         "depends_on": [],
-        "plan": [],
-        "items": [],
-        "team": null,
+        "accepted_plan": null,
         "claim": {
           "holder": {
             "name": "Ada",
@@ -588,7 +544,6 @@
           "since": "2026-10-10T10:00:01Z",
           "expires": "2026-10-10T12:00:01Z"
         },
-        "runs": [],
         "reviews": [],
         "prs": [],
         "created": "2026-10-10T10:00:00Z",
@@ -613,11 +568,8 @@
         "status": "ready",
         "parent": null,
         "depends_on": [],
-        "plan": [],
-        "items": [],
-        "team": null,
+        "accepted_plan": null,
         "claim": null,
-        "runs": [],
         "reviews": [],
         "prs": [],
         "created": "2026-10-10T10:00:00Z",
@@ -642,11 +594,8 @@
         "status": "archived",
         "parent": null,
         "depends_on": [],
-        "plan": [],
-        "items": [],
-        "team": null,
+        "accepted_plan": null,
         "claim": null,
-        "runs": [],
         "reviews": [],
         "prs": [],
         "created": "2026-10-10T10:00:00Z",
@@ -672,11 +621,8 @@
         "status": "ready",
         "parent": null,
         "depends_on": [],
-        "plan": [],
-        "items": [],
-        "team": null,
+        "accepted_plan": null,
         "claim": null,
-        "runs": [],
         "reviews": [],
         "prs": [],
         "created": "2026-10-10T10:00:00Z",
@@ -701,9 +647,7 @@
         "status": "claimed",
         "parent": null,
         "depends_on": [],
-        "plan": [],
-        "items": [],
-        "team": null,
+        "accepted_plan": null,
         "claim": {
           "holder": {
             "name": "Ada",
@@ -712,7 +656,6 @@
           "since": "2026-10-10T10:00:01Z",
           "expires": "2026-10-10T12:00:01Z"
         },
-        "runs": [],
         "reviews": [],
         "prs": [],
         "created": "2026-10-10T10:00:00Z",
@@ -737,9 +680,7 @@
         "status": "in_progress",
         "parent": null,
         "depends_on": [],
-        "plan": [],
-        "items": [],
-        "team": null,
+        "accepted_plan": null,
         "claim": {
           "holder": {
             "name": "Ada",
@@ -748,7 +689,6 @@
           "since": "2026-10-10T10:00:01Z",
           "expires": "2026-10-10T12:00:01Z"
         },
-        "runs": [],
         "reviews": [],
         "prs": [],
         "created": "2026-10-10T10:00:00Z",
@@ -773,9 +713,7 @@
         "status": "in_progress",
         "parent": null,
         "depends_on": [],
-        "plan": [],
-        "items": [],
-        "team": null,
+        "accepted_plan": null,
         "claim": {
           "holder": {
             "name": "Ada",
@@ -784,7 +722,6 @@
           "since": "2026-10-10T10:00:01Z",
           "expires": "2026-10-10T12:00:01Z"
         },
-        "runs": [],
         "reviews": [],
         "prs": [
           9
@@ -817,11 +754,8 @@
         "status": "done",
         "parent": null,
         "depends_on": [],
-        "plan": [],
-        "items": [],
-        "team": null,
+        "accepted_plan": null,
         "claim": null,
-        "runs": [],
         "reviews": [],
         "prs": [
           9
@@ -874,11 +808,8 @@
           "status": "done",
           "parent": "epic",
           "depends_on": [],
-          "plan": [],
-          "items": [],
-          "team": null,
+          "accepted_plan": null,
           "claim": null,
-          "runs": [],
           "reviews": [],
           "prs": [
             7
@@ -907,11 +838,8 @@
         "status": "done",
         "parent": "epic",
         "depends_on": [],
-        "plan": [],
-        "items": [],
-        "team": null,
+        "accepted_plan": null,
         "claim": null,
-        "runs": [],
         "reviews": [],
         "prs": [
           7
@@ -953,11 +881,8 @@
         "status": "draft",
         "parent": null,
         "depends_on": [],
-        "plan": [],
-        "items": [],
-        "team": null,
+        "accepted_plan": null,
         "claim": null,
-        "runs": [],
         "reviews": [],
         "prs": [],
         "created": "2026-10-10T10:00:00Z",
@@ -1035,11 +960,8 @@
         "status": "draft",
         "parent": null,
         "depends_on": [],
-        "plan": [],
-        "items": [],
-        "team": null,
+        "accepted_plan": null,
         "claim": null,
-        "runs": [],
         "reviews": [],
         "prs": [],
         "created": "2026-10-10T10:00:00Z",
@@ -1218,11 +1140,8 @@
         "status": "ready",
         "parent": null,
         "depends_on": [],
-        "plan": [],
-        "items": [],
-        "team": null,
+        "accepted_plan": null,
         "claim": null,
-        "runs": [],
         "reviews": [],
         "prs": [],
         "created": "2026-10-10T10:00:00Z",
@@ -1247,9 +1166,7 @@
         "status": "claimed",
         "parent": null,
         "depends_on": [],
-        "plan": [],
-        "items": [],
-        "team": null,
+        "accepted_plan": null,
         "claim": {
           "holder": {
             "name": "Ada",
@@ -1258,7 +1175,6 @@
           "since": "2026-10-10T10:00:01Z",
           "expires": "2026-10-10T12:00:01Z"
         },
-        "runs": [],
         "reviews": [],
         "prs": [],
         "created": "2026-10-10T10:00:00Z",
@@ -1283,9 +1199,7 @@
         "status": "in_progress",
         "parent": null,
         "depends_on": [],
-        "plan": [],
-        "items": [],
-        "team": null,
+        "accepted_plan": null,
         "claim": {
           "holder": {
             "name": "Ada",
@@ -1294,7 +1208,6 @@
           "since": "2026-10-10T10:00:01Z",
           "expires": "2026-10-10T12:00:01Z"
         },
-        "runs": [],
         "reviews": [],
         "prs": [],
         "created": "2026-10-10T10:00:00Z",
@@ -1319,9 +1232,7 @@
         "status": "in_progress",
         "parent": null,
         "depends_on": [],
-        "plan": [],
-        "items": [],
-        "team": null,
+        "accepted_plan": null,
         "claim": {
           "holder": {
             "name": "Ada",
@@ -1330,7 +1241,6 @@
           "since": "2026-10-10T10:00:01Z",
           "expires": "2026-10-10T12:00:01Z"
         },
-        "runs": [],
         "reviews": [],
         "prs": [
           8
@@ -1383,9 +1293,7 @@
         "status": "in_progress",
         "parent": null,
         "depends_on": [],
-        "plan": [],
-        "items": [],
-        "team": null,
+        "accepted_plan": null,
         "claim": {
           "holder": {
             "name": "Ada",
@@ -1394,7 +1302,6 @@
           "since": "2026-10-10T10:00:01Z",
           "expires": "2026-10-10T12:00:01Z"
         },
-        "runs": [],
         "reviews": [],
         "prs": [
           8,
@@ -1435,11 +1342,8 @@
         "depends_on": [
           "epic"
         ],
-        "plan": [],
-        "items": [],
-        "team": null,
+        "accepted_plan": null,
         "claim": null,
-        "runs": [],
         "reviews": [],
         "prs": [],
         "created": "2026-10-10T10:00:00Z",

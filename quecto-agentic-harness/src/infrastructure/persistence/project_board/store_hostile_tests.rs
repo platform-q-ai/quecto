@@ -4,6 +4,7 @@
 use super::*;
 use crate::application::project_board::ports::BoardListings;
 use crate::domain::project_board::value_objects::shown_text::shown_char;
+use crate::infrastructure::persistence::project_board::git::MAX_QUOTED_CHARS;
 use crate::infrastructure::persistence::project_board::index::{BoardIndex, Refreshed};
 use crate::infrastructure::persistence::project_board::indexed_listings::IndexedBoardListings;
 use crate::infrastructure::persistence::project_board::task_record::MAX_TASK_FILE_BYTES;
@@ -655,6 +656,38 @@ fn a_hostile_key_never_reaches_a_reason_or_stops_a_listing() {
         }),
         "the index holds: no rebuild loop"
     );
+    let listed = index.ready();
+    assert!(
+        listed.is_ok(),
+        "the index answers its own query: {listed:?}"
+    );
+}
+
+/// A reason is capped as a quoted message is: a key past the cap ends the
+/// reason in " …", and the board still lists.
+#[test]
+fn a_set_aside_reason_is_capped() {
+    let repos = Repos::new();
+    let alice = store(&repos.alice);
+    created(&alice);
+    let text = String::from_utf8(encode(&task("long")).unwrap()).unwrap();
+    let key = "k".repeat(3 * 1024);
+    let planted = text.replacen('{', &format!("{{\n  \"{key}\": 1,"), 1);
+    raw_board(
+        &repos.remote(),
+        &[("100644", "long.json", Object::Blob(planted.into_bytes()))],
+        &[],
+    );
+    let bob = Arc::new(store(&repos.bob));
+    let reason = bob.read().unwrap().quarantined[0].reason.clone();
+    assert!(
+        reason.chars().count() <= MAX_QUOTED_CHARS + 2 && reason.ends_with(" …"),
+        "{} characters",
+        reason.chars().count()
+    );
+    let index = BoardIndex::of(&bob).unwrap();
+    let listings = IndexedBoardListings::new(index, bob.clone(), bob.clone());
+    assert!(listings.ready().is_ok());
 }
 
 #[path = "store_clear_tests.rs"]
