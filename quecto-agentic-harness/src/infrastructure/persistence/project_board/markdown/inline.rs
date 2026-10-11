@@ -2,7 +2,7 @@
 //! list item, a text cell). Code spans must close, and are taken as they
 //! are; everywhere else nothing but plain text, emphasis and links of one
 //! form survives: no raw HTML or comment, character reference, dollar
-//! math, image, reference or bare link, and no backslash escape (the
+//! math, image, reference, wiki or bare link, and no backslash escape (the
 //! renderer adds the only ones a file holds). Matching uses the `regex`
 //! crate alone, which never backtracks.
 use super::MarkdownError;
@@ -71,7 +71,7 @@ pub fn check_inline(text: &str, at: usize) -> Result<(), MarkdownError> {
         || outside.ends_with('\\');
     let unlinked = LINK.replace_all(&outside, "x");
     let lower = unlinked.to_ascii_lowercase();
-    let bare = ["](", "][", "http://", "https://", "www."]
+    let bare = ["](", "][", "[[", "http://", "https://", "www."]
         .iter()
         .any(|form| lower.contains(form));
     match () {
