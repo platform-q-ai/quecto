@@ -9,6 +9,7 @@
 //! carried forward exactly as it was, every entry of it, so clearing one
 //! never decides another.
 use super::*;
+use crate::application::project_board::ports::{KeepCopy, SetAsideClear};
 use crate::infrastructure::persistence::project_board::board_tree::TREE;
 
 /// A tree entry as git lists it: mode, type, object and raw name.
@@ -23,10 +24,14 @@ impl GitBoardStore {
     pub(super) fn clear(
         &self,
         expected: &BoardHead,
-        path: &str,
-        keep: Option<&str>,
+        clear: &SetAsideClear,
         message: &str,
     ) -> Result<BoardWrite, BoardStoreError> {
+        let path = clear.path.as_str();
+        let keep = match clear.repeated.get(path) {
+            Some(KeepCopy::Object(oid)) => Some(oid.as_str()),
+            Some(KeepCopy::DropAll) | None => None,
+        };
         line("message", message, 200)
             .map_err(|error| BoardStoreError::InvalidWrite(error.to_string()))?;
         let base = self.base(expected)?;

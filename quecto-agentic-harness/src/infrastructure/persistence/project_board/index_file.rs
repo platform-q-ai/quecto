@@ -38,7 +38,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime};
 
 /// The index's own layout version, in `PRAGMA user_version`.
-pub const INDEX_SCHEMA: i32 = 2;
+pub const INDEX_SCHEMA: i32 = 3;
 pub const BUSY_TIMEOUT: Duration = Duration::from_secs(2);
 /// The longest a writer waits for the writer lock.
 pub const LOCK_WAIT: Duration = Duration::from_secs(2);
@@ -65,7 +65,7 @@ CREATE INDEX tasks_status ON tasks (status);
 CREATE INDEX tasks_parent ON tasks (parent);
 CREATE TABLE dependencies (task TEXT NOT NULL, depends_on TEXT NOT NULL, PRIMARY KEY (task, depends_on));
 CREATE INDEX dependencies_on ON dependencies (depends_on);
-CREATE TABLE quarantined (path TEXT NOT NULL, id TEXT, reason TEXT NOT NULL);
+CREATE TABLE quarantined (path TEXT NOT NULL, id TEXT, reason TEXT NOT NULL, object TEXT NOT NULL);
 ";
 
 type Object = (String, String, String, Option<String>);

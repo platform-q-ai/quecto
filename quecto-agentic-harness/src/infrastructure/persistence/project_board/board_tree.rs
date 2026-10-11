@@ -439,6 +439,7 @@ fn read_tasks(git: &Git, tree: &str, limits: Limits) -> Result<Board, Unread> {
             path: format!("tasks/{}", quoted(&entry.raw)),
             id,
             reason,
+            object: entry.oid.clone(),
         });
     };
     let keep = |board: &mut Board, entry: &Entry| {

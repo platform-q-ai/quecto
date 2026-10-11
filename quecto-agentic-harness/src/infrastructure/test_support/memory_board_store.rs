@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::application::project_board::ports::{
     BoardBootstrap, BoardHead, BoardSnapshot, BoardStoreError, BoardWrite, ProjectBoardStore,
-    QuarantinedFile,
+    QuarantinedFile, SetAsideClear,
 };
 use crate::domain::project_board::entities::claim::Identity;
 use crate::domain::project_board::entities::task::Task;
@@ -29,6 +29,8 @@ struct Board {
     writes: usize,
     /// Who made the board at each revision a write made.
     committers: BTreeMap<u64, Identity>,
+    /// The message of each revision a write made.
+    messages: BTreeMap<u64, String>,
 }
 
 #[derive(Clone)]
@@ -103,6 +105,7 @@ impl MemoryBoardStore {
             path,
             id,
             reason: reason.into(),
+            object: format!("{:040x}", revision + 1),
         });
     }
 
@@ -124,6 +127,17 @@ impl MemoryBoardStore {
         );
         let revision = board.head.expect("a bootstrapped board");
         board.head = Some(revision + 1);
+    }
+
+    /// The message of the change that made the board at `head`, when a
+    /// write made it.
+    pub fn message_at(&self, at: &BoardHead) -> Option<String> {
+        let board = self.lock();
+        board
+            .messages
+            .iter()
+            .find(|(revision, _)| head(**revision) == *at)
+            .map(|(_, message)| message.clone())
     }
 
     /// The committer of the board at `head`, when a write made it.
@@ -221,6 +235,7 @@ impl ProjectBoardStore for MemoryBoardStore {
         board.head = Some(revision + 1);
         board.writes += 1;
         board.committers.insert(revision + 1, self.writer.clone());
+        board.messages.insert(revision + 1, message.to_string());
         Ok(BoardWrite::Written(head(revision + 1)))
     }
 
@@ -228,10 +243,11 @@ impl ProjectBoardStore for MemoryBoardStore {
     fn clear_set_aside(
         &self,
         expected: &BoardHead,
-        path: &str,
-        keep: Option<&str>,
+        clear: &SetAsideClear,
         message: &str,
     ) -> Result<BoardWrite, BoardStoreError> {
+        let path = clear.path.as_str();
+        let keep = clear.repeated.get(path);
         line("message", message, 200)
             .map_err(|error| BoardStoreError::InvalidWrite(error.to_string()))?;
         let interleaved = std::mem::take(&mut self.lock().interleaved);
@@ -256,6 +272,7 @@ impl ProjectBoardStore for MemoryBoardStore {
         board.head = Some(revision + 1);
         board.writes += 1;
         board.committers.insert(revision + 1, self.writer.clone());
+        board.messages.insert(revision + 1, message.to_string());
         Ok(BoardWrite::Written(head(revision + 1)))
     }
 

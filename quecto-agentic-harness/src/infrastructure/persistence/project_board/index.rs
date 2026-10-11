@@ -402,10 +402,15 @@ impl BoardIndex {
         }
         let quarantined = quarantined
             .into_iter()
-            .map(|(path, id, reason)| {
+            .map(|(path, id, reason, object)| {
                 let id = id.map(|id| Slug::parse(&id)).transpose();
                 let id = id.map_err(|error| corrupt(error.to_string()))?;
-                Ok(QuarantinedFile { path, id, reason })
+                Ok(QuarantinedFile {
+                    path,
+                    id,
+                    reason,
+                    object,
+                })
             })
             .collect::<Result<_, IndexError>>()?;
         Ok(BoardListing {
@@ -513,12 +518,15 @@ fn rows(snapshot: &BoardSnapshot) -> Result<Vec<Row>, IndexError> {
 }
 
 /// The files set aside, by path: path, id and reason.
-fn quarantined(
-    transaction: &Transaction<'_>,
-) -> rusqlite::Result<Vec<(String, Option<String>, String)>> {
-    let mut statement =
-        transaction.prepare("SELECT path, id, reason FROM quarantined ORDER BY path, rowid")?;
-    let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
+/// One file set aside as the index holds it: path, id, reason and object.
+type SetAside = (String, Option<String>, String, String);
+
+fn quarantined(transaction: &Transaction<'_>) -> rusqlite::Result<Vec<SetAside>> {
+    let mut statement = transaction
+        .prepare("SELECT path, id, reason, object FROM quarantined ORDER BY path, rowid")?;
+    let rows = statement.query_map([], |row| {
+        Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+    })?;
     rows.collect()
 }
 
@@ -557,8 +565,13 @@ fn fill(
     }
     for file in quarantined {
         transaction.execute(
-            "INSERT INTO quarantined (path, id, reason) VALUES (?1, ?2, ?3)",
-            params![file.path, file.id.as_ref().map(Slug::as_str), file.reason],
+            "INSERT INTO quarantined (path, id, reason, object) VALUES (?1, ?2, ?3, ?4)",
+            params![
+                file.path,
+                file.id.as_ref().map(Slug::as_str),
+                file.reason,
+                file.object
+            ],
         )?;
     }
     transaction.execute("INSERT INTO meta (key, value) VALUES ('head', ?1)", [head])?;

@@ -31,6 +31,7 @@ use super::summary::summary;
 use super::task_record::{decode, encode};
 use crate::application::project_board::ports::{
     BoardBootstrap, BoardHead, BoardSnapshot, BoardStoreError, BoardWrite, ProjectBoardStore,
+    SetAsideClear,
 };
 use crate::domain::project_board::entities::claim::Identity;
 use crate::domain::project_board::entities::task::Task;
@@ -709,11 +710,10 @@ impl ProjectBoardStore for GitBoardStore {
     fn clear_set_aside(
         &self,
         expected: &BoardHead,
-        path: &str,
-        keep: Option<&str>,
+        clear: &SetAsideClear,
         message: &str,
     ) -> Result<BoardWrite, BoardStoreError> {
-        self.clear(expected, path, keep, message)
+        self.clear(expected, clear, message)
     }
 
     fn writer(&self) -> Identity {
