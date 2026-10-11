@@ -1,9 +1,9 @@
 //! The project board store's contract, run against the git store: two
 //! clones of one bare remote, each its own client.
 use super::project_board_store::{
-    Clients, check_bootstrap, check_bootstrap_race, check_committed_as_writer,
-    check_compare_and_swap, check_invalid_writes, check_quarantine, check_refused,
-    check_unchanged_write, check_write_after_lost_and_refused, check_write_and_read,
+    Clients, check_bootstrap, check_bootstrap_race, check_clear_set_aside,
+    check_committed_as_writer, check_compare_and_swap, check_invalid_writes, check_quarantine,
+    check_refused, check_unchanged_write, check_write_after_lost_and_refused, check_write_and_read,
     check_write_before_bootstrap, check_writer,
 };
 use quecto::domain::project_board::entities::claim::Identity;
@@ -175,6 +175,12 @@ fn the_git_store_refuses_invalid_writes() {
 fn the_git_store_refuses_without_moving() {
     let remote = Remote::new();
     check_refused(remote.clients(), || remote.refuse_next_push());
+}
+
+#[test]
+fn the_git_store_clears_a_file_set_aside() {
+    let remote = Remote::new();
+    check_clear_set_aside(remote.clients(), || remote.spoil_b());
 }
 
 #[test]
