@@ -249,6 +249,20 @@ fn values_the_board_never_writes_are_refused() {
         ("usage budget", |state| {
             state.usage.as_mut().unwrap().budget = json!({"token_limit": "many"})
         }),
+        ("usage budget", |state| {
+            state.usage.as_mut().unwrap().budget =
+                json!({"token_limit": 1000, "strict_unknown": true})
+        }),
+        ("usage budget", |state| {
+            state.usage.as_mut().unwrap().budget = json!({"token_limit": 1000, "warned": false})
+        }),
+        ("usage budget", |state| {
+            state.usage.as_mut().unwrap().budget = json!({"strict_unknown": true, "warned": false})
+        }),
+        ("usage budget", |state| {
+            state.usage.as_mut().unwrap().budget =
+                json!({"token_limit": -1, "strict_unknown": true, "warned": false})
+        }),
         ("evidence", |state| {
             state.evidence[0].1.accepted = json!("yes")
         }),
@@ -396,11 +410,12 @@ fn the_revision_names_its_run() {
     let read = ReadBoardProjection::new(MemoryBoard::with(board()));
     let revision = read.revision().unwrap();
     assert_eq!(revision.run.as_deref(), Some("run-1"));
+    assert!(revision.created, "round 3 L3: a created run's deadline");
     assert_eq!(read.execute().unwrap().revision, revision.revision);
     let empty = ReadBoardProjection::new(MemoryBoard::with(BoardState::default()))
         .revision()
         .unwrap();
-    assert_eq!((empty.run, empty.revision), (None, 0));
+    assert_eq!((empty.run, empty.revision, empty.created), (None, 0, false));
 }
 
 /// L5 (#2487 round 2): a listed member holds one of the three roles; any

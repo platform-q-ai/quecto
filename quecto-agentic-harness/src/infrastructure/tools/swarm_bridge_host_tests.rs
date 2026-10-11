@@ -166,6 +166,7 @@ fn the_host_reads_the_board_projection_without_secrets() {
         revision.run.as_deref(),
         "L4 (#2487 round 2): the revision names its run"
     );
+    assert!(revision.created, "round 3 L3: and says it was created");
     assert_eq!(
         (board["run"]["goal"].clone(), board["run"]["status"].clone()),
         (json!("ship"), json!("running"))

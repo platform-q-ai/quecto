@@ -251,3 +251,97 @@ fn members_files_and_evidence_come_in_their_order() {
         ]
     );
 }
+
+/// Round 3 M1 (#2487): every cell is measured before it is copied. A
+/// scalar cell (an event time, a run's limit or deadline, an evidence
+/// flag, a reservation's item) longer than any number the board writes is
+/// refused naming its column, unread and unechoed.
+#[test]
+fn an_oversized_scalar_cell_is_refused_without_its_content() {
+    const HUGE: &str = "replace(hex(zeroblob(3000)), '00', '7')";
+    let run = |member_limit: &str, deadline: &str| {
+        format!(
+            "INSERT INTO run (id, goal, criteria, coordinator, integrator, member_limit, deadline, status) VALUES ('run-1','ship','[]','b','b',{member_limit},{deadline},'running');"
+        )
+    };
+    for (edit, column) in [
+        (
+            format!(
+                "INSERT INTO members (id, status) VALUES ('b','live'); INSERT INTO events (actor, time, action, detail) VALUES ('b', {HUGE}, 'claimed', '{{}}');"
+            ),
+            "events time",
+        ),
+        (run(HUGE, "5.0"), "run member_limit"),
+        (run("2", HUGE), "run deadline"),
+        (
+            format!(
+                "INSERT INTO evidence (criterion, artifact, revision, kind, actor, accepted) VALUES ('tests','x','r','command','b',{HUGE});"
+            ),
+            "evidence accepted",
+        ),
+        (
+            format!(
+                "INSERT INTO files (path, task, owner, claim, token) VALUES ('a.rs',{HUGE},'b','c','t');"
+            ),
+            "files task",
+        ),
+    ] {
+        let (_dir, database, repository) = board();
+        three_tasks(&repository);
+        rusqlite::Connection::open(&database)
+            .unwrap()
+            .execute_batch(&edit)
+            .unwrap();
+        let message = rows_within(&repository, LIMITS)
+            .unwrap_err()
+            .message()
+            .to_owned();
+        assert!(
+            message.contains(&format!("{column} holds more than this board writes")),
+            "{column}: {message}"
+        );
+        assert!(!message.contains("7777"), "{column}: {message}");
+    }
+}
+
+/// Round 3 L2 (#2487): a member's last activity is the time of its latest
+/// board event (the highest id), not the largest time it ever wrote.
+#[test]
+fn last_activity_is_the_latest_event_s_time() {
+    let (_dir, database, repository) = board();
+    within(&repository, |_| Ok(()));
+    rusqlite::Connection::open(&database)
+        .unwrap()
+        .execute_batch(
+            "INSERT INTO members (id, status) VALUES ('b','live');
+             INSERT INTO events (actor, time, action, detail) VALUES ('b', 9.0, 'claimed', '{}'), ('b', 3.5, 'released', '{}');",
+        )
+        .unwrap();
+    assert_eq!(rows(&repository).members[0].last_activity, json!(3.5));
+}
+
+/// Round 3 L4 (#2487): items are measured before reservations, so long
+/// reserved paths never starve the items they belong to.
+#[test]
+fn items_are_measured_before_reservations() {
+    let (_dir, database, repository) = board();
+    three_tasks(&repository);
+    let path = "p".repeat(40);
+    rusqlite::Connection::open(&database)
+        .unwrap()
+        .execute_batch(&format!(
+            "INSERT INTO files (path, task, owner, claim, token) VALUES ('a{path}',1,'b','c','t'), ('b{path}',2,'b','c','t');"
+        ))
+        .unwrap();
+    let rows = rows_within(
+        &repository,
+        ProjectionLimits {
+            items: 10,
+            bytes: 64,
+            ..LIMITS
+        },
+    )
+    .unwrap();
+    assert_eq!(rows.items.len(), 2, "the first two items fit first");
+    assert!(rows.files.is_empty(), "no reservation fits after them");
+}

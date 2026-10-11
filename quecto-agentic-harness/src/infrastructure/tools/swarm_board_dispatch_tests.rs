@@ -714,3 +714,25 @@ fn the_supervisor_origin_reaches_the_projection_reads_only() {
         );
     }
 }
+
+/// Round 3 L6 (#2487): a call the supervisor's origin may not make is
+/// still recorded, as every refused call is.
+#[test]
+fn a_refused_supervisor_call_is_recorded() {
+    use super::{CallOrigin, call_as};
+    let log = captured(1, |handles| {
+        call_as(
+            handles,
+            "supervisor",
+            "_status",
+            json!([]),
+            CallOrigin::Supervisor,
+        )
+        .unwrap_err();
+    });
+    assert!(
+        log.lines()
+            .any(|line| line.contains(TELEMETRY_TARGET) && line.contains("op=\"_status\"")),
+        "{log}"
+    );
+}
