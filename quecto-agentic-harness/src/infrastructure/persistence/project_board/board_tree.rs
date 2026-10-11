@@ -13,9 +13,11 @@
 //! clash).
 //!
 //! In `tasks/`, only names quecto keeps are anything but strays: UTF-8 of
-//! letters, marks, numbers, punctuation and symbols, no longer than an id
-//! and its extension ([`MAX_NAME_BYTES`]), so every name a write carries
-//! can be shown, and no write makes a tree a read refuses.
+//! letters, numbers and a few punctuation marks (no path separator),
+//! starting with a letter or number, no longer than an id and its
+//! extension ([`MAX_NAME_BYTES`]), so `mktree` takes every name a write
+//! carries, every one can be shown, and no write makes a tree a read
+//! refuses.
 //!
 //! A regular file `<id>.json` named once is a task and is read. Any other
 //! `.json` file of a kept name is set aside (under its id, when its name
@@ -35,13 +37,18 @@
 //! local call runs with `GIT_NO_LAZY_FETCH`): the read answers
 //! [`Unread::Missing`] with every object it found missing, so the store
 //! fetches them in one call and reads again.
-use super::git::{Git, GitError, failed, quoted, shown};
+pub use super::cat_file::contents;
+use super::cat_file::{Found, Object, objects};
+use super::git::{Git, GitError, quoted};
 use super::task_record::{MAX_TASK_FILE_BYTES, decode};
 use crate::application::project_board::ports::{BoardStoreError, QuarantinedFile};
 use crate::domain::project_board::entities::task::Task;
 use crate::domain::project_board::value_objects::slug::{MAX_SLUG_BYTES, Slug};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
+/// The punctuation a name kept in `tasks/` may hold besides letters and
+/// numbers.
+const NAME_PUNCTUATION: &str = "-_.~+=@,()[]{}";
 /// The longest name kept in `tasks/`: an id and its five-byte `.json`.
 pub const MAX_NAME_BYTES: usize = MAX_SLUG_BYTES + 5;
 /// The most entries the board's `tasks/` tree may hold.
@@ -54,9 +61,6 @@ pub const MAX_TREE_BYTES: usize = MAX_TASK_ENTRIES * 160;
 /// of at least 28 bytes grows by at most 53 when its object name is
 /// spelled in hex beside its type.
 const MAX_LISTING_BYTES: usize = 4 * MAX_TREE_BYTES;
-/// The most a `cat-file` header or `--batch-check` row takes: a SHA-256
-/// name, a type and a size.
-const OBJECT_ROW_BYTES: usize = 128;
 /// The most task-file bytes one read takes in all.
 pub const MAX_BOARD_BYTES: usize = 64 * 1024 * 1024;
 /// The largest summary read back to compare with the one it should be.
@@ -177,29 +181,28 @@ struct Entry {
 }
 
 impl Entry {
-    /// Whether quecto keeps this name: UTF-8 of shown characters, at most
-    /// [`MAX_NAME_BYTES`].
+    /// Whether quecto keeps this name: UTF-8 of letters, numbers and
+    /// [`NAME_PUNCTUATION`], starting with a letter or number, at most
+    /// [`MAX_NAME_BYTES`]. No path separator, so `mktree` takes every name
+    /// a write carries, and nothing a terminal would act on.
     fn kept_name(&self) -> bool {
+        let allowed = |c: char| c.is_alphanumeric() || NAME_PUNCTUATION.contains(c);
         self.raw.len() <= MAX_NAME_BYTES
-            && std::str::from_utf8(&self.raw).is_ok_and(|name| name.chars().all(shown))
+            && std::str::from_utf8(&self.raw).is_ok_and(|name| {
+                name.chars().next().is_some_and(char::is_alphanumeric) && name.chars().all(allowed)
+            })
+    }
+
+    /// Whether a write carries this entry as it is: its object is what its
+    /// mode names, a file or link over a blob or a directory over a tree.
+    fn carried(&self, kinds: &BTreeMap<String, Found>) -> bool {
+        match (kind_of_mode(&self.mode), kinds.get(&self.oid)) {
+            (Some(named @ ("blob" | "tree")), Some(Found::Present(object))) => object.kind == named,
+            _ => false,
+        }
     }
 }
 
-/// An object's real type and size, by `cat-file --batch-check`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct Object {
-    kind: String,
-    size: usize,
-}
-
-/// What `cat-file --batch-check` found for one object.
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum Found {
-    Present(Object),
-    Missing,
-}
-
-/// The two files a task has in `tasks/`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TaskFile {
     Record,
@@ -309,7 +312,7 @@ fn board_shape(root: &[Entry], kinds: &BTreeMap<String, Found>) -> Result<(), Bo
         )),
         (_, Some(entry)) => Err(BoardStoreError::Clash(format!(
             "`{}` at its root is a {} of mode {}, so it is not a board",
-            entry.name,
+            quoted(&entry.raw),
             kind(entry).unwrap_or("gitlink"),
             entry.mode
         ))),
@@ -333,12 +336,15 @@ enum Disposition {
 fn disposition(entry: &Entry, found: Option<&Object>, count: usize) -> Disposition {
     let aside =
         |id: Option<Slug>, reason: String, kept: bool| Disposition::Aside { id, reason, kept };
-    if !entry.kept_name() {
-        let reason = format!(
-            "not a name quecto keeps (UTF-8 letters, marks, numbers, punctuation and symbols, \
-             at most {MAX_NAME_BYTES} bytes); the next write drops it"
-        );
-        return aside(None, reason, false);
+    match entry.kept_name() {
+        true => {}
+        false => {
+            let reason = format!(
+                "not a name quecto keeps (letters, numbers and {NAME_PUNCTUATION}, starting \
+                 with a letter or number, at most {MAX_NAME_BYTES} bytes); the next write drops it"
+            );
+            return aside(None, reason, false);
+        }
     }
     let Some((id, file)) = task_name(&entry.name) else {
         let reason = "not a task file: only <id>.json and <id>.md belong in tasks/".into();
@@ -413,10 +419,13 @@ fn read_tasks(git: &Git, tree: &str, limits: Limits) -> Result<Board, Unread> {
     if !missing.is_empty() {
         return Err(Unread::Missing(missing));
     }
+    // Copies of each name a write would carry: a copy it drops (a gitlink,
+    // a mode over another type) makes no duplicate.
     let mut counts: BTreeMap<&[u8], usize> = BTreeMap::new();
-    for entry in &entries {
+    for entry in entries.iter().filter(|entry| entry.carried(&kinds)) {
         *counts.entry(entry.raw.as_slice()).or_default() += 1;
     }
+    let count = |entry: &Entry| counts.get(entry.raw.as_slice()).copied().unwrap_or(0);
     let mut board = Board::default();
     let set_aside = |board: &mut Board, entry: &Entry, id: Option<Slug>, reason: String| {
         board.quarantined.push(QuarantinedFile {
@@ -440,7 +449,7 @@ fn read_tasks(git: &Git, tree: &str, limits: Limits) -> Result<Board, Unread> {
             Some(Found::Present(object)) => Some(object),
             Some(Found::Missing) | None => None,
         };
-        match disposition(entry, found, counts[entry.raw.as_slice()]) {
+        match disposition(entry, found, count(entry)) {
             Disposition::Read(id) => {
                 let size = found.map_or(0, |object| object.size);
                 board.read_bytes.insert(entry.name.clone(), size);
@@ -464,7 +473,7 @@ fn read_tasks(git: &Git, tree: &str, limits: Limits) -> Result<Board, Unread> {
     let mut repeated: BTreeMap<&str, Vec<String>> = BTreeMap::new();
     for entry in &entries {
         let record = task_name(&entry.name).is_some_and(|(_, file)| file == TaskFile::Record);
-        if entry.kept_name() && record && counts[entry.raw.as_slice()] > 1 {
+        if entry.kept_name() && record && entry.carried(&kinds) && count(entry) > 1 {
             repeated
                 .entry(&entry.name)
                 .or_default()
@@ -610,107 +619,6 @@ fn tree_bytes(entries: &BTreeMap<String, String>) -> usize {
             mode.len() + 1 + name.len() + 1 + oid.len() / 2
         })
         .sum()
-}
-
-/// The real type and size of each object, or that it is missing, from one
-/// `cat-file --batch-check`; every object asked for is reported, or it is
-/// an error.
-fn objects<'a>(
-    git: &Git,
-    oids: impl Iterator<Item = &'a str>,
-) -> Result<BTreeMap<String, Found>, BoardStoreError> {
-    let wanted: BTreeSet<&str> = oids.collect();
-    if wanted.is_empty() {
-        return Ok(BTreeMap::new());
-    }
-    let input: String = wanted.iter().map(|oid| format!("{oid}\n")).collect();
-    let format = "--batch-check=%(objectname) %(objecttype) %(objectsize)";
-    let listing = git
-        .ok_up_to(
-            &["cat-file", format],
-            Some(input.as_bytes()),
-            wanted.len() * OBJECT_ROW_BYTES,
-        )
-        .map_err(unavailable)?;
-    let malformed =
-        |row: &str| BoardStoreError::Unavailable(format!("unexpected cat-file row {row:?}"));
-    let mut found = BTreeMap::new();
-    for row in String::from_utf8_lossy(&listing).lines() {
-        let (oid, object) = match row.split(' ').collect::<Vec<_>>().as_slice() {
-            [oid, "missing"] => (object_id(oid)?, Found::Missing),
-            [oid, kind, size] => (
-                object_id(oid)?,
-                Found::Present(Object {
-                    kind: (*kind).into(),
-                    size: size.parse().map_err(|_| malformed(row))?,
-                }),
-            ),
-            _ => return Err(malformed(row)),
-        };
-        found.insert(oid, object);
-    }
-    match found.keys().map(String::as_str).eq(wanted.iter().copied()) {
-        true => Ok(found),
-        false => Err(BoardStoreError::Unavailable(format!(
-            "cat-file reported {} objects for the {} asked for",
-            found.len(),
-            wanted.len()
-        ))),
-    }
-}
-
-/// The bytes of each blob, from one `cat-file --batch`; `wanted` names each
-/// blob with the size its caller checked first.
-pub fn contents(
-    git: &Git,
-    wanted: &[(&str, usize)],
-) -> Result<BTreeMap<String, Vec<u8>>, BoardStoreError> {
-    if wanted.is_empty() {
-        return Ok(BTreeMap::new());
-    }
-    let input: String = wanted.iter().map(|(oid, _)| format!("{oid}\n")).collect();
-    let limit = wanted
-        .iter()
-        .map(|(_, size)| size.saturating_add(OBJECT_ROW_BYTES))
-        .fold(0usize, usize::saturating_add);
-    let args = ["cat-file", "--batch"];
-    let output = git
-        .local(&args, Some(input.as_bytes()), limit)
-        .map_err(unavailable)?;
-    if !output.status.success() {
-        return Err(unavailable(failed(&args, &output)));
-    }
-    let malformed = || BoardStoreError::Unavailable("unexpected cat-file --batch output".into());
-    let (mut rest, mut found) = (output.stdout.as_slice(), BTreeMap::new());
-    while !rest.is_empty() {
-        let end = rest
-            .iter()
-            .position(|byte| *byte == b'\n')
-            .ok_or_else(malformed)?;
-        let header = String::from_utf8_lossy(&rest[..end]).into_owned();
-        rest = &rest[end + 1..];
-        let fields: Vec<&str> = header.split(' ').collect();
-        let [oid, "blob", size] = fields.as_slice() else {
-            return Err(BoardStoreError::Unavailable(format!(
-                "cat-file read {header:?}"
-            )));
-        };
-        let size: usize = size.parse().map_err(|_| malformed())?;
-        let body = rest.get(..size).ok_or_else(malformed)?;
-        found.insert(object_id(oid)?, body.to_vec());
-        rest = rest.get(size + 1..).ok_or_else(malformed)?;
-    }
-    for (oid, size) in wanted {
-        match found.get(*oid) {
-            Some(body) if body.len() == *size => {}
-            _ => {
-                return Err(BoardStoreError::Unavailable(format!(
-                    "cat-file did not return {oid} at its {size} bytes"
-                )));
-            }
-        }
-    }
-    Ok(found)
 }
 
 /// A full SHA-1 or SHA-256 object name.

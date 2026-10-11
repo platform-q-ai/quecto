@@ -2,7 +2,6 @@
 //! that is not a task file the store wrote is set aside, never trusted, and
 //! never stops a write.
 use super::*;
-use crate::domain::project_board::value_objects::slug::MAX_SLUG_BYTES;
 use crate::infrastructure::persistence::project_board::task_record::MAX_TASK_FILE_BYTES;
 
 /// How the README and a refusal tell someone to undo a hand edit.
@@ -506,183 +505,6 @@ fn a_tasks_entry_that_is_not_a_tree_is_not_a_board() {
     );
 }
 
-/// A gitlink under `tasks/` is a stray, whatever object it names: a write
-/// drops it, so one naming an object this clone holds as a blob (which
-/// `mktree` refuses) never stops a write.
-#[test]
-fn a_gitlink_task_file_is_a_stray_and_never_stops_a_write() {
-    let repos = Repos::new();
-    let alice = store(&repos.alice);
-    created(&alice);
-    let head = raw_board(
-        &repos.remote(),
-        &[
-            (
-                "100644",
-                "ok.json",
-                Object::Blob(encode(&task("ok")).unwrap()),
-            ),
-            ("160000", "mod.json", Object::Blob(b"held here".to_vec())),
-        ],
-        &[&repos.bob],
-    );
-    let bob = store(&repos.bob);
-    let moved = written(bob.write(&head, &[task("fresh")], "board: add fresh"));
-    assert_eq!(
-        sh(
-            &repos.remote(),
-            &["ls-tree", "--name-only", &format!("{}:tasks", moved.0)]
-        ),
-        "fresh.json\nfresh.md\nok.json\nok.md"
-    );
-    let board = bob.board_at(&head.0).unwrap();
-    assert_eq!(
-        board
-            .quarantined
-            .iter()
-            .map(|q| (q.path.as_str(), q.id.as_ref().map(Slug::as_str)))
-            .collect::<Vec<_>>(),
-        [("tasks/mod.json", None)]
-    );
-}
-
-/// Only `.json` names quecto can show and bound are carried forward: valid
-/// UTF-8 of shown characters, no longer than an id's. Any other name is a
-/// stray: dropped by the next write, never counted as a duplicate, and
-/// quoted wherever it is shown.
-#[test]
-fn only_json_names_quecto_can_show_are_carried() {
-    let repos = Repos::new();
-    let alice = store(&repos.alice);
-    created(&alice);
-    let longest = format!("{}.json", "A".repeat(MAX_SLUG_BYTES));
-    let too_long = format!("{}.json", "A".repeat(MAX_SLUG_BYTES + 1));
-    let json = |id: &str| Object::Blob(encode(&task(id)).unwrap());
-    let (ok, kept, long, odd, odder, shady) = (
-        json("ok"),
-        Object::Blob(b"kept".to_vec()),
-        Object::Blob(b"long".to_vec()),
-        Object::Blob(b"one".to_vec()),
-        Object::Blob(b"two".to_vec()),
-        Object::Blob(b"shady".to_vec()),
-    );
-    let head = raw_board_named(
-        &repos.remote(),
-        &[
-            ("100644", longest.as_bytes(), &kept),
-            ("100644", too_long.as_bytes(), &long),
-            ("100644", "Bad\u{1b}[2J\u{202e}.json".as_bytes(), &shady),
-            ("100644", b"ok.json", &ok),
-            ("100644", b"\xfe.json", &odd),
-            ("100644", b"\xff.json", &odder),
-            ("100644", b"a/b.json", &odder),
-            ("100644", b"a\\b.json", &odder),
-            ("100644", b"..json", &odder),
-        ],
-        &[&repos.bob],
-    );
-    let bob = store(&repos.bob);
-    let board = bob.board_at(&head.0).unwrap();
-    assert_eq!(
-        board.tasks.keys().map(Slug::as_str).collect::<Vec<_>>(),
-        ["ok"]
-    );
-    assert!(board.repeated.is_empty(), "{:?}", board.repeated);
-    for file in &board.quarantined {
-        assert!(!file.path.chars().any(char::is_control), "{:?}", file.path);
-        assert!(!file.path.contains('\u{202e}'), "{:?}", file.path);
-    }
-    let moved = written(bob.write(&head, &[task("fresh")], "board: add fresh"));
-    let names = sh(
-        &repos.remote(),
-        &[
-            "ls-tree",
-            "--name-only",
-            "-z",
-            &format!("{}:tasks", moved.0),
-        ],
-    );
-    let expected = [
-        longest.as_str(),
-        "fresh.json",
-        "fresh.md",
-        "ok.json",
-        "ok.md",
-    ];
-    assert_eq!(
-        names
-            .split('\0')
-            .filter(|name| !name.is_empty())
-            .collect::<Vec<_>>(),
-        expected
-    );
-}
-
-/// A name twice, one copy of which a write drops (a gitlink), is no
-/// duplicate: the copy a write carries is read, and writes go on.
-#[test]
-fn a_name_twice_where_a_write_drops_one_copy_is_no_duplicate() {
-    let repos = Repos::new();
-    let alice = store(&repos.alice);
-    created(&alice);
-    let head = raw_board(
-        &repos.remote(),
-        &[
-            (
-                "100644",
-                "dup.json",
-                Object::Blob(encode(&task("dup")).unwrap()),
-            ),
-            ("160000", "dup.json", Object::Blob(b"a gitlink".to_vec())),
-        ],
-        &[&repos.bob],
-    );
-    let bob = store(&repos.bob);
-    let board = bob.board_at(&head.0).unwrap();
-    assert!(board.repeated.is_empty(), "{:?}", board.repeated);
-    assert_eq!(
-        board.tasks.keys().map(Slug::as_str).collect::<Vec<_>>(),
-        ["dup"]
-    );
-    let moved = written(bob.write(&head, &[task("fresh")], "board: add fresh"));
-    assert_eq!(
-        sh(&repos.remote(), &["ls-tree", &format!("{}:tasks", moved.0)])
-            .lines()
-            .filter(|row| row.ends_with("\tdup.json"))
-            .count(),
-        1
-    );
-}
-
-/// A name at the root of a branch that is not a board is quoted in the
-/// clash that names it.
-#[test]
-fn a_clash_quotes_the_root_name_it_names() {
-    let repos = Repos::new();
-    let alice = store(&repos.alice);
-    created(&alice);
-    let mut heads = vec![];
-    for repo in [&repos.remote(), &repos.bob] {
-        let root = raw_tree(
-            repo,
-            &[
-                ("100644", "README.md", Object::Blob(README.to_vec())),
-                ("40000", "evil\u{1b}[2J\u{202e}", Object::EmptyTree),
-            ],
-        );
-        heads.push(raw_commit(repo, &root));
-    }
-    let read = store(&repos.bob).board_at(&heads[1].0);
-    let Err(BoardStoreError::Clash(why)) = &read else {
-        panic!("{read:?}");
-    };
-    assert!(why.contains("evil"), "{why}");
-    assert!(
-        !why.chars().any(|c| c.is_control() || c == '\u{202e}'),
-        "{why:?}"
-    );
-}
-
 /// An object the tree names but no repository holds is an error, never a
 /// file set aside as "not regular".
 #[test]
@@ -777,3 +599,6 @@ fn a_write_past_the_task_bound_is_refused_before_anything_is_built() {
         "a full board still takes changes"
     );
 }
+
+#[path = "store_names_tests.rs"]
+mod names;
