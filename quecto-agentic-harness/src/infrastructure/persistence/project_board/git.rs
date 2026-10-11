@@ -10,14 +10,14 @@
 //! keeps board operations free of side effects in the checkout; it is not
 //! a security boundary against the repository's owner.
 use crate::domain::project_board::entities::claim::Identity;
+use crate::domain::project_board::value_objects::schema_error::shown_char;
 use crate::domain::redaction::{redact_secrets, redact_url_userinfo};
-use regex::Regex;
 use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
-use std::sync::{LazyLock, mpsc};
+use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -27,7 +27,9 @@ use std::time::{Duration, Instant};
 /// works inside a container). Every program git starts (a credential
 /// helper, `ssh`, a remote helper, a configured `core.sshCommand`) inherits
 /// them in turn, `GH_TOKEN` and `GITHUB_TOKEN` included; git itself sends
-/// neither, only a credential helper that reads one does. Everything else,
+/// neither, only a credential helper that reads one does.
+/// `GIT_CEILING_DIRECTORIES` passes too: it only narrows where git looks
+/// for a repository. Everything else,
 /// `GIT_DIR`, `GIT_INDEX_FILE` and `GIT_WORK_TREE` included, is dropped.
 pub const INHERITED: &[&str] = &[
     "PATH",
@@ -38,7 +40,6 @@ pub const INHERITED: &[&str] = &[
     "GIT_SSH_COMMAND",
     "GIT_CONFIG_GLOBAL",
     "GIT_CONFIG_NOSYSTEM",
-    // Where repository discovery stops: it only narrows what git finds.
     "GIT_CEILING_DIRECTORIES",
     "GH_TOKEN",
     "GITHUB_TOKEN",
@@ -592,13 +593,10 @@ fn capped(text: &str) -> String {
     }
 }
 
-/// The characters quoted as they are: letters, marks, numbers,
-/// punctuation and symbols.
-static SHOWN: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^[\p{L}\p{M}\p{N}\p{P}\p{S}]$").expect("a valid class"));
-
+/// Whether git's character `c` is shown as it is: the board's one
+/// allowlist ([`shown_char`]).
 fn shown(c: char) -> bool {
-    SHOWN.is_match(c.encode_utf8(&mut [0; 4]))
+    shown_char(c)
 }
 
 pub fn failed(args: &[&str], output: &Output) -> GitError {

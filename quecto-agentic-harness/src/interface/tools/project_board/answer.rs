@@ -27,6 +27,7 @@ use crate::application::project_board::ports::{
 use crate::domain::project_board::entities::claim::Identity;
 use crate::domain::project_board::entities::task::Task;
 use crate::domain::project_board::value_objects::rule_error::BoardRuleError;
+use crate::domain::project_board::value_objects::schema_error::shown_char;
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::redaction::{redact_secrets, redact_url_userinfo};
 
@@ -244,18 +245,11 @@ fn quarantined_json(file: &QuarantinedFile) -> Value {
     })
 }
 
-/// Whether `path` holds only characters a store shows: no control or
-/// format characters (bidirectional overrides, zero-width and tag
-/// characters), which a path shown raw must never carry.
+/// Whether `path` holds only what a store shows: characters shown as they
+/// are ([`shown_char`]), the one space a store puts for a run of any
+/// other, and the `…` that marks a name it cut.
 fn plain_path(path: &str) -> bool {
-    path.chars().all(|c| {
-        !c.is_control()
-            && !matches!(c,
-                '\u{ad}' | '\u{600}'..='\u{605}' | '\u{61c}' | '\u{6dd}' | '\u{70f}'
-                | '\u{180e}' | '\u{200b}'..='\u{200f}' | '\u{202a}'..='\u{202e}'
-                | '\u{2060}'..='\u{2064}' | '\u{2066}'..='\u{206f}' | '\u{feff}'
-                | '\u{fff9}'..='\u{fffb}' | '\u{e0001}' | '\u{e0020}'..='\u{e007f}')
-    })
+    path.chars().all(|c| shown_char(c) || c == ' ' || c == '…')
 }
 
 /// A task in the board's own field names, every field present.

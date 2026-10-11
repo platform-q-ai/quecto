@@ -246,6 +246,7 @@ fn a_path_shown_raw_holds_no_control_or_format_character() {
     for hostile in [
         "tasks/a\u{0}.json",
         "tasks/a\u{1b}[31m.json",
+        "tasks/a\u{a0}.json",
         "tasks/a\u{202e}nosj.exe",
         "tasks/a\u{200b}.json",
         "tasks/a\u{e0041}.json",
@@ -253,4 +254,17 @@ fn a_path_shown_raw_holds_no_control_or_format_character() {
     ] {
         assert!(!plain_path(hostile), "{hostile:?}");
     }
+}
+
+/// A store never shows a path with a control or format character; an
+/// answer that would show one stops rather than pass it on.
+#[test]
+#[should_panic(expected = "shows every path it sets aside sanitised")]
+fn an_unsanitised_path_is_never_shown() {
+    let _ = quarantined_json(&QuarantinedFile {
+        path: "tasks/a\u{202e}nosj.exe".into(),
+        id: None,
+        reason: "a stray".into(),
+        object: "a".repeat(40),
+    });
 }

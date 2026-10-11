@@ -329,15 +329,6 @@ fn clear(read: &Read<'_>) -> Result<BoardRequest, RequestError> {
         None => BTreeMap::new(),
         Some(value) => repeated(value)?,
     };
-    // A clear removes `object`: it cannot also keep it.
-    if let Some(KeepCopy::Object { keep, .. }) = repeated.get(path)
-        && *keep == object
-    {
-        return Err(RequestError::new(
-            &format!("repeated/{path}/keep"),
-            "is the object this clear removes: name another copy to keep",
-        ));
-    }
     Ok(BoardRequest::Clear {
         path: path.to_string(),
         object,

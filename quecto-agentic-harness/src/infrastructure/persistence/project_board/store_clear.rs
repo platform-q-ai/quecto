@@ -235,24 +235,20 @@ fn named<'a>(board: &'a Board, clear: &SetAsideClear) -> Result<&'a QuarantinedF
 }
 
 /// `board` without `file`: the file carried as it is goes when it is that
-/// object. It is found by its name in the tree and its object, never by
-/// the path as shown, so a file of another name that shows the same path
-/// stays.
+/// object. A carried name always shows exactly as it is (the read asserts
+/// it), so the shown path finds it; a stray that shows the same path is
+/// never carried, and the write drops it.
 fn drop_file(board: &mut Board, file: &QuarantinedFile) {
-    assert!(
-        file.path.starts_with(TASKS),
-        "every file set aside is under {TASKS}"
-    );
-    let key = (file.path.clone(), file.object.clone());
-    if let Some(name) = board.names.remove(&key) {
-        let carried = board
-            .kept
-            .get(&name)
-            .and_then(|entry| entry.rsplit(' ').next());
-        if carried == Some(file.object.as_str()) {
-            board.kept.remove(&name);
-            board.read_bytes.remove(&name);
-        }
+    let name = file.path.strip_prefix(TASKS);
+    assert!(name.is_some(), "every file set aside is under {TASKS}");
+    let name = name.unwrap_or_default();
+    let carried = board
+        .kept
+        .get(name)
+        .and_then(|entry| entry.rsplit(' ').next());
+    if carried == Some(file.object.as_str()) {
+        board.kept.remove(name);
+        board.read_bytes.remove(name);
     }
     board.quarantined.retain(|other| {
         (other.path.as_str(), other.object.as_str()) != (file.path.as_str(), file.object.as_str())
