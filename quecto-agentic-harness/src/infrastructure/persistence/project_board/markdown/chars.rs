@@ -24,10 +24,10 @@ static EMOJI: LazyLock<Regex> =
 /// The most combining marks one base carries.
 pub const MOST_MARKS: usize = 4;
 const JOINER: char = '\u{200d}';
-/// Symbols drawn as nothing: the braille blank and the null notehead.
-/// (The Hangul fillers U+115F, U+1160, U+3164 and U+FFA0 are default
+/// Characters drawn as nothing: the braille blank, the null notehead and
+/// the Khitan filler. (The Hangul fillers U+115F, U+1160, U+3164 and U+FFA0 are default
 /// ignorable, refused as such.)
-const BLANK: [char; 2] = ['\u{2800}', '\u{1d159}'];
+const BLANK: [char; 3] = ['\u{2800}', '\u{1d159}', '\u{16fe4}'];
 /// What a keycap is made on: `0`-`9`, `#` and `*`.
 const KEYCAP_BASES: &str = "0123456789#*";
 const KEYCAP: char = '\u{20e3}';

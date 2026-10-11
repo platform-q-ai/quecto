@@ -13,51 +13,56 @@ use std::path::Path;
 
 use proc_macro2::{TokenStream, TokenTree};
 
-/// `(file, text)`: the only texts under `src` and `tests` that may name a
-/// Python program, each data a test classifies or reads and never runs.
+/// `(file, text, count)`: the only texts under `src` and `tests` that may
+/// name a Python program, each data a test classifies or reads and never
+/// runs, and exactly how many times each is there.
 /// The text is a string literal's whole value, or a feature file's whole
 /// line (trimmed).
-const PYTHON_AS_DATA: &[(&str, &str)] = &[
+const PYTHON_AS_DATA: &[(&str, &str, usize)] = &[
     // The command policy classifies interpreter commands; none is run.
     (
         "quecto-agentic-harness/src/infrastructure/security/denylist_tests.rs",
         "python -m pytest tests/test_reboot.py",
+        1,
     ),
     (
         "quecto-agentic-harness/src/infrastructure/security/denylist_tests.rs",
         r#"python -c "print('rm -rf /')""#,
+        1,
     ),
     (
         "quecto-agentic-harness/src/infrastructure/security/denylist_tests.rs",
         "python <<EOF\nprint('reboot')\nEOF",
+        1,
     ),
     (
         "quecto-agentic-harness/src/infrastructure/security/sandbox_escape_tests.rs",
         r#"python -c "print('halt')""#,
+        1,
     ),
     (
         "quecto-agentic-harness/tests/features/security.feature",
         r#"| python -c "print('rm -rf /')"        |"#,
+        1,
     ),
     // A fence language the board's markdown lets code blocks name for
     // highlighting (#2481); nothing is run.
     (
         "quecto-agentic-harness/src/infrastructure/persistence/project_board/markdown/prose.rs",
         "python",
-    ),
-    (
-        "quecto-agentic-harness/src/infrastructure/persistence/project_board/markdown/markdown_hostile_tests.rs",
-        "python",
+        1,
     ),
     // The docs must not teach the interpreter the board once ran in, and
     // the starter container must not offer it.
     (
         "quecto-agentic-harness/tests/docs/swarm_docs.rs",
         "python3 -I",
+        1,
     ),
     (
         "quecto-agentic-harness/tests/integration/docker_create_image_contract.rs",
         "python",
+        1,
     ),
 ];
 
@@ -289,7 +294,7 @@ fn no_python_in_the_harness() {
         for text in python_texts(path, &source) {
             match PYTHON_AS_DATA
                 .iter()
-                .position(|(file, data)| file == path && *data == text)
+                .position(|(file, data, _)| file == path && *data == text)
             {
                 Some(entry) => allowed_seen.push(entry),
                 None => named.push(format!("{path}: {text:?}")),
@@ -301,12 +306,13 @@ fn no_python_in_the_harness() {
         "the workspace starts no Python; these texts name an interpreter:\n{}",
         named.join("\n")
     );
-    // Every allowlisted text is still where it is listed: a stale entry
-    // would let a later text through.
-    for (entry, (file, data)) in PYTHON_AS_DATA.iter().enumerate() {
-        assert!(
-            allowed_seen.contains(&entry),
-            "{file}: the allowlisted {data:?} is not there any more"
+    // Every allowlisted text is where it is listed, exactly as often: a
+    // stale entry, or a second copy, would let a later text through.
+    for (entry, (file, data, count)) in PYTHON_AS_DATA.iter().enumerate() {
+        let seen = allowed_seen.iter().filter(|seen| **seen == entry).count();
+        assert_eq!(
+            seen, *count,
+            "{file}: the allowlisted {data:?} is there {seen} times, not {count}"
         );
     }
 }

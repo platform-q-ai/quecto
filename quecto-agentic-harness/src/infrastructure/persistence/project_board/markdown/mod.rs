@@ -27,6 +27,10 @@
 //! refused when it is written, never escaped into something else. Files,
 //! lines and line counts are capped by the caller's [`Limits`].
 //!
+//! One visible change is accepted: GitHub draws an emoji shortcode
+//! (`:smile:`) as its emoji. Nothing is hidden by it, and refusing it would
+//! refuse times such as `12:00:00`.
+//!
 //! The core is generic: each kind's fields and sections, in order, are the
 //! caller's [`Shape`].
 mod chars;
@@ -118,113 +122,86 @@ pub enum Block {
 }
 
 /// Why a document or file was refused. `line` is the file's line, from 1.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum MarkdownError {
-    TooLarge {
-        bytes: usize,
-        most: usize,
-    },
-    TooManyLines {
-        lines: usize,
-        most: usize,
-    },
-    LineTooLong {
-        line: usize,
-        most: usize,
-    },
+    #[error("{bytes} bytes, past the {most} a file may hold")]
+    TooLarge { bytes: usize, most: usize },
+    #[error("{lines} lines, past the {most} a file may hold")]
+    TooManyLines { lines: usize, most: usize },
+    #[error("line {line}: longer than {most} bytes")]
+    LineTooLong { line: usize, most: usize },
+    #[error("not UTF-8")]
     NotUtf8,
+    #[error("a byte order mark")]
     ByteOrderMark,
-    CarriageReturn {
-        line: usize,
-    },
+    #[error("line {line}: a carriage return")]
+    CarriageReturn { line: usize },
     /// Not exactly one LF at the end.
+    #[error("not exactly one newline at the end")]
     FinalNewline,
-    TrailingSpace {
-        line: usize,
-    },
-    Control {
-        line: usize,
-    },
-    Bidi {
-        line: usize,
-    },
+    #[error("line {line}: a space at the end")]
+    TrailingSpace { line: usize },
+    #[error("line {line}: a control character")]
+    Control { line: usize },
+    #[error("line {line}: a bidirectional control")]
+    Bidi { line: usize },
     /// A character outside the allowlist: an ignorable or invisible one
     /// (an emoji's joiner or selector aside), a separator, a private-use or
     /// unassigned one.
-    Invisible {
-        line: usize,
-    },
+    #[error("line {line}: a character a reader does not see, or nothing a reader sees")]
+    Invisible { line: usize },
     /// More combining marks on one base than [`chars::MOST_MARKS`].
-    Marks {
-        line: usize,
-    },
-    NotNfc {
-        line: usize,
-    },
-    Html {
-        line: usize,
-    },
-    CharacterReference {
-        line: usize,
-    },
-    Math {
-        line: usize,
-    },
-    Image {
-        line: usize,
-    },
+    #[error(
+        "line {line}: more than {} combining marks on one character",
+        chars::MOST_MARKS
+    )]
+    Marks { line: usize },
+    #[error("line {line}: not in Unicode NFC")]
+    NotNfc { line: usize },
+    #[error(
+        "line {line}: raw HTML, a comment or an autolink (`<` stands only before a space or at the end)"
+    )]
+    Html { line: usize },
+    #[error("line {line}: a character reference")]
+    CharacterReference { line: usize },
+    #[error("line {line}: dollar math (a `$` touching anything but a space)")]
+    Math { line: usize },
+    #[error("line {line}: an image")]
+    Image { line: usize },
     /// A link of another form than `[text](https://...)`, or a bare one.
-    Link {
-        line: usize,
-    },
-    Escape {
-        line: usize,
-    },
-    UnbalancedCode {
-        line: usize,
-    },
-    Fence {
-        line: usize,
-        why: &'static str,
-    },
+    #[error("line {line}: a link of another form than [text](https://...), or a bare address")]
+    Link { line: usize },
+    #[error("line {line}: a backslash escape")]
+    Escape { line: usize },
+    #[error("line {line}: a code span left open")]
+    UnbalancedCode { line: usize },
+    #[error("line {line}: a code fence: {why}")]
+    Fence { line: usize, why: &'static str },
     /// A prose line that starts as a block would, unescaped.
-    BlockLike {
-        line: usize,
-    },
+    #[error("line {line}: a line that starts as a block, unescaped")]
+    BlockLike { line: usize },
+    #[error("not this kind's marker line")]
     Marker,
+    #[error("not a title: one line of text, no space at its edges, no closing hashes")]
     Title,
     /// Not what the grammar has at this line.
-    Structure {
-        line: usize,
-        expected: &'static str,
-    },
-    UnknownField {
-        name: String,
-    },
-    UnknownSection {
-        heading: String,
-    },
-    Cell {
-        line: usize,
-        why: &'static str,
-    },
-    EmptyProse {
-        heading: String,
-    },
+    #[error("line {line}: expected {expected}")]
+    Structure { line: usize, expected: &'static str },
+    #[error("a field this kind does not have: {name:?}")]
+    UnknownField { name: String },
+    #[error("a section this kind does not have: {heading:?}")]
+    UnknownSection { heading: String },
+    #[error("line {line}: a cell: {why}")]
+    Cell { line: usize, why: &'static str },
+    #[error("section {heading:?} holds no prose")]
+    EmptyProse { heading: String },
     /// The caller's shape is not one a file can be.
+    #[error("a shape no file can be: {0}")]
     Shape(&'static str),
     /// Parsed, but the file is not the one rendering it gives.
+    #[error("not the canonical file for what it holds")]
     NotCanonical,
 }
-
-impl std::fmt::Display for MarkdownError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let _ = self;
-        f.write_str("")
-    }
-}
-
-impl std::error::Error for MarkdownError {}
 
 /// A name of a field, heading or column: an ASCII capital, then letters,
 /// digits and single spaces, at most forty.
@@ -298,30 +275,88 @@ fn text_bytes(document: &Document) -> usize {
     document.title.len() + fields.sum::<usize>() + sections.sum::<usize>()
 }
 
-/// The lines `document`'s file has, counted before anything is rendered
-/// (a text holding a newline is refused as it is rendered).
-fn file_lines(document: &Document) -> usize {
-    let fields = match document.fields.len() {
-        0 => 0,
-        rows => 3 + rows,
-    };
-    let sections = document.sections.iter().map(|section| {
-        2 + match &section.body {
-            Body::Table(rows) => 2 + rows.len(),
-            Body::Prose(blocks) => {
-                let between = blocks.len().saturating_sub(1);
-                between
-                    + blocks
-                        .iter()
-                        .map(|block| match block {
-                            Block::Paragraph(texts) | Block::List(texts) => texts.len(),
-                            Block::Code { lines, .. } => 2 + lines.len(),
-                        })
-                        .sum::<usize>()
+/// Where `document`'s texts land, worked out before anything is
+/// rendered: the lines its file has, and the first line whose texts alone
+/// are longer than `most` bytes (a text holding a newline is refused as it
+/// is rendered).
+struct Layout {
+    lines: usize,
+    most: usize,
+    long: Option<usize>,
+}
+
+impl Layout {
+    fn of(document: &Document, most: usize) -> Self {
+        // The marker's line.
+        let mut layout = Self {
+            lines: 1,
+            most,
+            long: None,
+        };
+        layout.line([&document.title]);
+        if !document.fields.is_empty() {
+            layout.skip(3);
+            for (name, value) in &document.fields {
+                layout.line([name, value]);
             }
         }
-    });
-    2 + fields + sections.sum::<usize>()
+        for section in &document.sections {
+            layout.skip(1);
+            layout.line([&section.heading]);
+            match &section.body {
+                Body::Table(rows) => {
+                    layout.skip(2);
+                    for row in rows {
+                        layout.line(row);
+                    }
+                }
+                Body::Prose(blocks) => {
+                    for (index, block) in blocks.iter().enumerate() {
+                        layout.skip(usize::from(index > 0));
+                        match block {
+                            Block::Paragraph(texts) | Block::List(texts) => {
+                                texts.iter().for_each(|text| layout.line([text]));
+                            }
+                            Block::Code { lines, .. } => {
+                                layout.skip(1);
+                                lines.iter().for_each(|line| layout.line([line]));
+                                layout.skip(1);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        layout
+    }
+
+    fn skip(&mut self, lines: usize) {
+        self.lines += lines;
+    }
+
+    fn line<'a>(&mut self, texts: impl IntoIterator<Item = &'a String>) {
+        self.lines += 1;
+        let bytes: usize = texts.into_iter().map(String::len).sum();
+        if self.long.is_none() && bytes > self.most {
+            self.long = Some(self.lines);
+        }
+    }
+}
+
+/// Whether an ASCII cell holds what a reader links: any `scheme://`, a
+/// `www.` that starts the cell or follows a separator, or an `@` between
+/// word characters (an email).
+fn links(value: &str) -> bool {
+    let lower = value.to_ascii_lowercase();
+    let bytes = lower.as_bytes();
+    let word = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_';
+    let www = lower
+        .match_indices("www.")
+        .any(|(at, _)| at == 0 || !word(bytes[at - 1]));
+    let email = bytes
+        .windows(3)
+        .any(|three| three[1] == b'@' && word(three[0]) && word(three[2]));
+    lower.contains("://") || www || email
 }
 
 /// A cell as a row holds it.
@@ -333,6 +368,9 @@ fn cell(value: &str, kind: CellKind, at: usize) -> Result<String, MarkdownError>
         (_, value) if value.contains('\n') => refused("a newline in a cell"),
         (_, value) if value.starts_with(' ') || value.ends_with(' ') => {
             refused("space at a cell's edge")
+        }
+        (CellKind::Ascii, value) if value.bytes().all(ascii) && links(value) => {
+            refused("an address a reader would link")
         }
         (CellKind::Ascii, value) if value.bytes().all(ascii) => Ok(value.to_string()),
         (CellKind::Ascii, _) => refused("an id or pointer of ASCII letters, digits and ._:/#@+-"),
@@ -359,11 +397,17 @@ pub fn render(document: &Document, shape: &Shape<'_>) -> Result<String, Markdown
             });
         }
     }
-    let counted = file_lines(document);
-    if counted > limits.lines {
+    let layout = Layout::of(document, limits.line_bytes);
+    if layout.lines > limits.lines {
         return Err(MarkdownError::TooManyLines {
-            lines: counted,
+            lines: layout.lines,
             most: limits.lines,
+        });
+    }
+    if let Some(line) = layout.long {
+        return Err(MarkdownError::LineTooLong {
+            line,
+            most: limits.line_bytes,
         });
     }
     let mut lines = vec![
@@ -409,7 +453,7 @@ pub fn render(document: &Document, shape: &Shape<'_>) -> Result<String, Markdown
     within(&lines, limits)?;
     debug_assert_eq!(
         lines.len(),
-        counted,
+        layout.lines,
         "the lines counted are the lines written"
     );
     Ok(lines.join("\n") + "\n")
@@ -422,11 +466,15 @@ fn out_of_order(lines: &[String], expected: &'static str) -> MarkdownError {
     }
 }
 
-/// A title: one line of text with nothing at its edges and no closing `#`
-/// (which a heading drops).
+/// A title: one line of text with nothing at its edges and no closing run
+/// of `#` (hashes alone, or after a space), which a heading drops; `C#`
+/// keeps its own.
 fn title(title: &str) -> Result<&str, MarkdownError> {
-    let edges = title.trim() != title || title.ends_with('#');
-    match title.is_empty() || title.contains('\n') || edges {
+    let edges = title.trim() != title;
+    // A closing run a heading drops: hashes alone, or after a space.
+    let open = title.trim_end_matches('#');
+    let closed = open.len() < title.len() && (open.is_empty() || open.ends_with(' '));
+    match title.is_empty() || title.contains('\n') || edges || closed {
         true => Err(MarkdownError::Title),
         false => inline::check_inline(title, 2).map(|()| title),
     }
