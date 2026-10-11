@@ -112,7 +112,13 @@ impl ArtifactCodec for ToyCodec {
             fields: vec![
                 ("Id".into(), cells::slug(&toy.id)),
                 ("Status".into(), cells::word(toy.status.as_str())),
-                ("Pr".into(), cells::optional(toy.pr.map(cells::reference))),
+                (
+                    "Pr".into(),
+                    cells::optional(
+                        "Pr",
+                        toy.pr.map(|pr| cells::reference("Pr", pr)).transpose()?,
+                    )?,
+                ),
                 ("Holder".into(), cells::identity("Holder", &toy.holder)?),
                 ("Branch".into(), toy.branch.clone()),
             ],
@@ -332,13 +338,32 @@ fn an_identity_the_inline_rules_refuse_is_refused() {
         person("[x](http://y.example)", "a@b"),
         person("ada@example.com", "a@b"),
         person("Ada mailto:x", "a@b"),
+        person("A (`", "a@b"),
+        person("$x", "a@b"),
     ] {
+        // Refused by the helper, naming the field, before any render.
+        assert!(
+            matches!(
+                cells::identity("Holder", &holder),
+                Err(CodecError::Cell {
+                    field: "Holder",
+                    ..
+                })
+            ),
+            "{holder:?}"
+        );
         let toy = Toy {
             holder: holder.clone(),
             ..toy()
         };
         assert!(
-            matches!(encode::<ToyCodec>(&toy), Err(CodecError::Markdown(_))),
+            matches!(
+                encode::<ToyCodec>(&toy),
+                Err(CodecError::Cell {
+                    field: "Holder",
+                    ..
+                })
+            ),
             "{holder:?}"
         );
     }
@@ -391,5 +416,84 @@ fn a_prose_text_the_blocks_refuse_is_refused_when_encoded() {
             matches!(encode::<ToyCodec>(&toy), Err(CodecError::Markdown(_))),
             "{note:?}"
         );
+    }
+}
+
+/// `encode` takes a value only if the file it writes gives that value
+/// back: what a cell cannot spell, or a value its codec reads otherwise,
+/// is refused when written, never stored to be refused when read.
+#[test]
+fn a_value_its_file_would_not_give_back_is_refused_when_encoded() {
+    assert_eq!(encode::<Lowercased>(&toy()), Err(CodecError::NotCanonical));
+    let unnumbered = Toy {
+        pr: Some(0),
+        ..toy()
+    };
+    assert!(matches!(
+        encode::<ToyCodec>(&unnumbered),
+        Err(CodecError::Cell { field: "Pr", .. })
+    ));
+    assert!(matches!(
+        cells::reference("Pr", 0),
+        Err(CodecError::Cell { field: "Pr", .. })
+    ));
+    assert_eq!(cells::reference("Pr", 7), Ok("#7".to_string()));
+    assert!(matches!(
+        cells::optional("Pr", Some(ABSENT.to_string())),
+        Err(CodecError::Cell { field: "Pr", .. })
+    ));
+    assert_eq!(cells::optional("Pr", None), Ok(ABSENT.to_string()));
+}
+
+/// A codec whose kind is not its shape's writes and reads nothing.
+#[test]
+fn a_codec_whose_kind_is_not_its_shapes_is_refused() {
+    struct Elsewhere;
+    impl ArtifactCodec for Elsewhere {
+        type Value = Toy;
+        const KIND: &'static str = "other";
+        const SCHEMA: u32 = ToyCodec::SCHEMA;
+        const SHAPE: Shape<'static> = ToyCodec::SHAPE;
+        fn to_document(toy: &Toy) -> Result<Document, CodecError> {
+            ToyCodec::to_document(toy)
+        }
+        fn from_document(document: &Document) -> Result<Toy, CodecError> {
+            ToyCodec::from_document(document)
+        }
+    }
+    assert_eq!(ToyCodec::KIND, ToyCodec::SHAPE.kind);
+    let file = encode::<ToyCodec>(&toy()).unwrap();
+    assert_eq!(encode::<Elsewhere>(&toy()), Err(CodecError::Schema));
+    assert_eq!(
+        decode::<Elsewhere>(file.as_bytes()),
+        Err(CodecError::Schema)
+    );
+}
+
+/// A schema past what a u32 holds was still written by something newer.
+#[test]
+fn a_schema_past_u32_reads_as_newer() {
+    let file = encode::<ToyCodec>(&toy()).unwrap();
+    let huge = file.replacen("schema=1", "schema=4294967296", 1);
+    assert_eq!(
+        decode::<ToyCodec>(huge.as_bytes()),
+        Err(CodecError::NewerSchema {
+            found: 4_294_967_296,
+            known: 1
+        })
+    );
+}
+
+/// An email is held in a code span: it may hold `|` and `\`, never a
+/// backtick (the code cell's allowlist).
+#[test]
+fn an_email_a_code_span_holds_round_trips() {
+    for email in ["a|b@x", "a\\b@x", "a\\|b@x"] {
+        let toy = Toy {
+            holder: person("Ada", email),
+            ..toy()
+        };
+        let file = encode::<ToyCodec>(&toy).unwrap();
+        assert_eq!(decode::<ToyCodec>(file.as_bytes()), Ok(toy), "{file}");
     }
 }

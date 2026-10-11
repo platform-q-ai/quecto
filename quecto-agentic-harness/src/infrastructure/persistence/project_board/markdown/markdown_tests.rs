@@ -19,6 +19,10 @@ const FIELDS: &[Column<'static>] = &[
         name: "Claim",
         cell: CellKind::Text,
     },
+    Column {
+        name: "Branch",
+        cell: CellKind::Code,
+    },
 ];
 
 const ITEMS: &[Column<'static>] = &[
@@ -240,11 +244,13 @@ impl Seeded {
     /// A code cell: the ASCII cell's characters and more punctuation, now
     /// and then one a code cell refuses.
     fn code(&mut self) -> String {
-        const CODE: &[&str] = &["a", "Z", "0", "<", ">", "[", "]", "*", "$", "&", "~", "!"];
+        const CODE: &[&str] = &[
+            "a", "Z", "0", "<", ">", "[", "]", "*", "$", "&", "~", "!", "|", "\\", "_",
+        ];
         let mut cell = self.ascii();
         cell.extend((0..self.below(4)).map(|_| self.pick(CODE)));
         if self.below(40) == 0 {
-            cell.push_str(&self.pick(&["`", "\\", "|"]));
+            cell.push_str(&self.pick(&["`", " ", "\u{e9}"]));
         }
         cell
     }

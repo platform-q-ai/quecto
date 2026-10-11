@@ -100,17 +100,32 @@ fn an_ascii_cell_refuses_an_underscore_a_reader_could_take_for_emphasis() {
 
 #[test]
 fn a_code_cell_renders_in_backticks_and_reads_back() {
-    for branch in ["feat/a<b>", "[::1]:5000/x", "a*b*_c_", "x"] {
+    for branch in [
+        "feat/a<b>",
+        "[::1]:5000/x",
+        "a*b*_c_",
+        "x",
+        // A pipe is written `\|`, as a text cell writes it; a reader shows
+        // it, and a backslash, as they are.
+        "a|b",
+        "a\\b",
+        "a\\|b",
+        "|",
+        "\\",
+        "x|",
+    ] {
         let document = with_cells("open", branch);
         let file = render(&document, &CELL_SHAPE).unwrap();
+        let written = branch.replace('|', "\\|");
         assert!(
-            file.contains(&format!("| Branch | `{branch}` |\n")),
+            file.contains(&format!("| Branch | `{written}` |\n")),
             "{file}"
         );
-        assert_eq!(parse(file.as_bytes(), &CELL_SHAPE), Ok(document));
+        assert_eq!(parse(file.as_bytes(), &CELL_SHAPE), Ok(document.clone()));
         assert_eq!(read_cell(&file, 1), [format!("code:{branch}")]);
+        assert_eq!(super::outline(&file, &document), Ok(()), "{file}");
     }
-    for refused in ["a|b", "a`b", "a\\b", "a b", "", "é", "a\tb"] {
+    for refused in ["a`b", "`", "a b", "", "é", "a\tb"] {
         let rendered = render(&with_cells("open", refused), &CELL_SHAPE);
         assert!(
             matches!(rendered, Err(MarkdownError::Cell { .. })),
