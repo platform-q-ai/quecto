@@ -98,7 +98,7 @@ fn own_session_dying_with_us_leads_a_session_of_its_own() {
 /// One process a test watches: its pid and its start time, so a pid the
 /// kernel reuses is never taken for it.
 #[cfg(target_os = "linux")]
-struct Watched {
+pub(crate) struct Watched {
     pid: String,
     start: String,
 }
@@ -114,14 +114,31 @@ fn stat(pid: &str) -> Option<(String, char)> {
 
 #[cfg(target_os = "linux")]
 impl Watched {
+    /// The process `file` names, if the pid it holds is a running
+    /// process's (an empty or partly written file names none yet).
+    pub(crate) fn named_in(file: &std::path::Path) -> Option<Self> {
+        let pid = std::fs::read_to_string(file).ok()?.trim().to_string();
+        let (start, _) = stat(&pid)?;
+        Some(Self { pid, start })
+    }
+
     /// No such process, another one of its pid, or a zombie no one reaped.
-    fn gone(&self) -> bool {
+    pub(crate) fn gone(&self) -> bool {
         // Alive: this very process, in a state a running one is in.
         let alive = matches!(
             stat(&self.pid),
             Some((start, state)) if start == self.start && "RSDTtWIPK".contains(state)
         );
         !alive
+    }
+
+    /// Kills it with SIGKILL unless it is gone already.
+    pub(crate) fn end(&self) {
+        if !self.gone() {
+            let _ = std::process::Command::new("kill")
+                .args(["-KILL", &self.pid])
+                .status();
+        }
     }
 }
 
@@ -159,12 +176,8 @@ impl KilledParent {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
         for file in pid_files {
             let watched = loop {
-                let pid = std::fs::read_to_string(file).map(|pid| pid.trim().to_string());
-                match pid
-                    .ok()
-                    .and_then(|pid| stat(&pid).map(|(start, _)| (pid, start)))
-                {
-                    Some((pid, start)) => break Watched { pid, start },
+                match Watched::named_in(file) {
+                    Some(watched) => break watched,
                     None if std::time::Instant::now() < deadline => {
                         std::thread::sleep(std::time::Duration::from_millis(20));
                     }
@@ -208,10 +221,8 @@ impl Drop for KilledParent {
             let _ = parent.kill();
             let _ = parent.wait();
         }
-        for watched in self.watched.iter().filter(|watched| !watched.gone()) {
-            let _ = std::process::Command::new("kill")
-                .args(["-KILL", &watched.pid])
-                .status();
+        for watched in &self.watched {
+            watched.end();
         }
     }
 }

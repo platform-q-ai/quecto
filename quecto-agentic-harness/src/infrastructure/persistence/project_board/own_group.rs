@@ -58,3 +58,7 @@ pub(super) fn end_group(leader: u32) {
         _ => debug_assert!(false, "a child's pid is a positive pid_t: {leader}"),
     }
 }
+
+#[cfg(test)]
+#[path = "own_group_tests.rs"]
+pub(super) mod tests;

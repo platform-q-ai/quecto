@@ -99,8 +99,8 @@ fn a_gh_that_hangs_is_ended_with_its_group_at_the_deadline() {
     );
 }
 
-/// A gh that cannot be started says so, naming the session and death
-/// signal its spawn arms first.
+/// A gh that cannot be started says so, naming the session its spawn
+/// makes first, and the death signal it arms where one is armed (Linux).
 #[test]
 fn a_gh_that_cannot_start_names_what_its_spawn_arms() {
     let (dir, vars) = fake_gh();
@@ -108,19 +108,23 @@ fn a_gh_that_cannot_start_names_what_its_spawn_arms() {
     std::fs::remove_file(dir.path().join("bin").join("gh")).unwrap();
     let refused = host.state(1);
     assert!(
-        matches!(&refused, Err(PullRequestStatesError::Unavailable(why)) if why.contains("arming the death signal")),
+        matches!(&refused, Err(PullRequestStatesError::Unavailable(why)) if names_what_its_spawn_arms(why)),
         "{refused:?}"
     );
 }
 
-/// At its deadline gh is asked to stop with SIGTERM first.
+/// At its deadline gh is asked to stop with SIGTERM first. The stub says
+/// it is ready once its trap is set, and only a run that saw that before
+/// its deadline counts.
 #[test]
 fn a_gh_past_its_deadline_is_asked_to_stop_first() {
+    use crate::infrastructure::persistence::project_board::own_group::tests::ready_before_its_deadline;
     let (dir, mut vars) = fake_gh();
-    let signal = dir.path().join("signal");
+    let (ready, signal) = (dir.path().join("ready"), dir.path().join("signal"));
     let script = format!(
-        "#!/bin/sh\ntrap 'echo TERM > \"{}\"; exit 0' TERM\nsleep 30 &\nwait\n",
-        signal.display()
+        "#!/bin/sh\ntrap 'echo TERM > \"{}\"; exit 0' TERM\necho > '{}'\nsleep 30 &\nwait\n",
+        signal.display(),
+        ready.display()
     );
     let gh = dir.path().join("only").join("gh");
     std::fs::create_dir(gh.parent().unwrap()).unwrap();
@@ -132,13 +136,20 @@ fn a_gh_past_its_deadline_is_asked_to_stop_first() {
     path.push(std::env::var_os("PATH").unwrap());
     vars.retain(|(key, _)| key != "PATH");
     vars.push(("PATH".into(), path));
-    let host = GhPullRequestStates::new("github.com/platform-q-ai/quecto", vars)
-        .unwrap()
-        .with_timeout(Duration::from_millis(300));
-    assert!(matches!(
-        host.state(1),
-        Err(PullRequestStatesError::Unavailable(_))
-    ));
+    let (answer, ()) = ready_before_its_deadline(
+        &[&ready, &signal],
+        || ready.exists().then_some(()),
+        |deadline| {
+            GhPullRequestStates::new("github.com/platform-q-ai/quecto", vars.clone())
+                .unwrap()
+                .with_timeout(deadline)
+                .state(1)
+        },
+    );
+    assert!(
+        matches!(answer, Err(PullRequestStatesError::Unavailable(_))),
+        "{answer:?}"
+    );
     assert_eq!(
         std::fs::read_to_string(&signal).ok().as_deref(),
         Some("TERM\n")
@@ -325,4 +336,11 @@ fn a_gh_is_terminated_when_the_quecto_running_it_is_killed() {
         std::fs::read_to_string(&signal).ok().as_deref(),
         Some("TERM\n")
     );
+}
+
+/// Names the session a spawn makes, and the death signal only where one is
+/// armed.
+fn names_what_its_spawn_arms(why: &str) -> bool {
+    why.contains("making its session")
+        && why.contains("arming the death signal") == cfg!(target_os = "linux")
 }

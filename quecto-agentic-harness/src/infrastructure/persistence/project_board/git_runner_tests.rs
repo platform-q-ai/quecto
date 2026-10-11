@@ -4,6 +4,7 @@ use super::*;
 use crate::infrastructure::persistence::project_board::git::{
     MAX_QUOTED_CHARS, MAX_STDERR, SHORT_OUTPUT, quoted, redacted_stderr, shown_name,
 };
+use crate::infrastructure::persistence::project_board::own_group::tests::ready_before_its_deadline;
 
 #[test]
 fn a_git_that_hangs_is_stopped_with_its_whole_process_group() {
@@ -23,8 +24,9 @@ fn a_git_that_hangs_is_stopped_with_its_whole_process_group() {
     assert!(!marker.exists(), "the timed-out git's child outlived it");
 }
 
-/// A git that cannot be started says so, naming the session and death
-/// signal its spawn arms first (a refusal to arm fails the spawn too).
+/// A git that cannot be started says so, naming the session its spawn
+/// makes first, and the death signal it arms where one is armed (Linux; a
+/// refusal to arm fails the spawn too).
 #[test]
 fn a_git_that_cannot_start_names_what_its_spawn_arms() {
     let repos = Repos::new();
@@ -32,24 +34,36 @@ fn a_git_that_cannot_start_names_what_its_spawn_arms() {
     std::fs::remove_file(repos.dir.path().join("bin").join("git")).unwrap();
     let run = git.network(&["fetch"]).map(|_| ());
     assert!(
-        matches!(&run, Err(GitError::Spawn(why)) if why.contains("arming the death signal")),
+        matches!(&run, Err(GitError::Spawn(why)) if why.contains("making its session")
+            && why.contains("arming the death signal") == cfg!(target_os = "linux")),
         "{run:?}"
     );
 }
 
 /// At its deadline git is asked to stop with SIGTERM first, so it can
-/// remove a ref lock as it goes.
+/// remove a ref lock as it goes. The stub says it is ready once its trap
+/// is set, and only a run that saw that before its deadline counts.
 #[test]
 fn a_git_past_its_deadline_is_asked_to_stop_first() {
     let repos = Repos::new();
-    let signal = repos.dir.path().join("signal");
-    let script = format!(
-        "#!/bin/sh\ntrap 'echo TERM > \"{}\"; exit 0' TERM\nsleep 30 &\nwait\n",
-        signal.display()
+    let (ready, signal) = (
+        repos.dir.path().join("ready"),
+        repos.dir.path().join("signal"),
     );
-    let mut git = shim(&repos, &script, &[]);
-    git.network_timeout = std::time::Duration::from_millis(200);
-    let run = git.network(&["fetch"]).map(|_| ());
+    let script = format!(
+        "#!/bin/sh\ntrap 'echo TERM > \"{}\"; exit 0' TERM\necho > '{}'\nsleep 30 &\nwait\n",
+        signal.display(),
+        ready.display()
+    );
+    let (run, ()) = ready_before_its_deadline(
+        &[&ready, &signal],
+        || ready.exists().then_some(()),
+        |deadline| {
+            let mut git = shim(&repos, &script, &[]);
+            git.network_timeout = deadline;
+            git.network(&["fetch"]).map(|_| ())
+        },
+    );
     assert!(matches!(&run, Err(GitError::TimedOut { .. })), "{run:?}");
     assert_eq!(
         std::fs::read_to_string(&signal).ok().as_deref(),
@@ -58,32 +72,41 @@ fn a_git_past_its_deadline_is_asked_to_stop_first() {
 }
 
 /// A git group that ignores SIGTERM is killed after a short grace, not
-/// left running.
+/// left running. The stub names its child once its trap is set, so the
+/// child is watched by its start time while it still runs.
 #[cfg(target_os = "linux")]
 #[test]
 fn a_git_that_ignores_the_request_is_killed_after_a_grace() {
+    use crate::infrastructure::processes::parent_death_signal::tests::Watched;
     let repos = Repos::new();
     let pid = repos.dir.path().join("pid");
     let script = format!(
         "#!/bin/sh\ntrap '' TERM\nsleep 30 &\necho $! > '{}'\nwait\n",
         pid.display()
     );
-    let mut git = shim(&repos, &script, &[]);
-    git.network_timeout = std::time::Duration::from_millis(200);
-    let started = std::time::Instant::now();
-    let run = git.network(&["fetch"]).map(|_| ());
+    let ((run, took, deadline), sleeper) = ready_before_its_deadline(
+        &[&pid],
+        || Watched::named_in(&pid),
+        |deadline| {
+            let mut git = shim(&repos, &script, &[]);
+            git.network_timeout = deadline;
+            let started = std::time::Instant::now();
+            let run = git.network(&["fetch"]).map(|_| ());
+            (run, started.elapsed(), deadline)
+        },
+    );
     assert!(matches!(&run, Err(GitError::TimedOut { .. })), "{run:?}");
-    assert!(started.elapsed() < std::time::Duration::from_secs(4));
-    let sleeper = std::fs::read_to_string(&pid).unwrap();
-    let stat = format!("/proc/{}/stat", sleeper.trim());
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
-    while std::path::Path::new(&stat).exists() && std::time::Instant::now() < deadline {
+    assert!(
+        took < deadline + std::time::Duration::from_secs(3),
+        "{took:?}"
+    );
+    let by = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    while !sleeper.gone() && std::time::Instant::now() < by {
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
-    assert!(
-        !std::path::Path::new(&stat).exists(),
-        "the sleeper outlived git"
-    );
+    let gone = sleeper.gone();
+    sleeper.end();
+    assert!(gone, "the sleeper outlived git");
 }
 
 /// The real git on `PATH`.
