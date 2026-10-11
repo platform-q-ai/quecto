@@ -144,13 +144,20 @@ fn main() {
 "##;
 
 /// What a CommonMark/GFM reader (every extension on) makes of `file` is
-/// exactly the outline `document` has: the marker, one H1, the field
-/// table, then per section one H2 and its paragraphs, one-level `- `
-/// lists, fenced code and tables. No HTML, math, image, footnote, quote,
-/// rule, hard break, ordered or nested list, or other link than an inline
-/// https one; and every text it decodes keeps the character rules.
+/// exactly the outline `document` has, block by block: the marker, one H1,
+/// the field table, then per section one H2 and its paragraphs (of as many
+/// lines), one-level `- ` lists (of as many items, nothing but inline text
+/// in one), fenced code (of as many lines) and tables (as many rows, each
+/// as wide as the header). No HTML, math, image, footnote, quote, rule,
+/// hard break, ordered or nested list, or other link than an inline https
+/// one; and every text it decodes keeps the character rules.
 pub(super) fn outline(file: &str, document: &Document) -> Result<(), String> {
-    let (mut top, mut depth, mut lists) = (vec![], 0usize, 0usize);
+    let mut top: Vec<String> = vec![];
+    // Open tags, outermost first; and the counts of the top-level block.
+    let mut open: Vec<&'static str> = vec![];
+    let (mut count, mut cells, mut code) = (0usize, 0usize, String::new());
+    // The header's width, and whether any row is of another.
+    let (mut width, mut ragged) = (None, false);
     for event in Parser::new_ext(file, Options::all()) {
         match &event {
             Event::Start(tag) => {
@@ -163,69 +170,101 @@ pub(super) fn outline(file: &str, document: &Document) -> Result<(), String> {
                     Tag::Heading {
                         level: HeadingLevel::H2,
                         ..
-                    } if depth == 0 => "h2",
-                    Tag::Paragraph => "paragraph",
-                    Tag::List(None) if lists == 0 => "list",
-                    Tag::Item | Tag::Emphasis | Tag::Strong | Tag::Strikethrough => "inline",
+                    } if open.is_empty() => "h2",
+                    Tag::Paragraph if open.is_empty() => "paragraph",
+                    Tag::List(None) if open.is_empty() => "list",
+                    Tag::Item if open == ["list"] => "item",
+                    Tag::CodeBlock(CodeBlockKind::Fenced(_)) if open.is_empty() => "code",
+                    Tag::Table(_) if open.is_empty() => "table",
+                    Tag::TableHead if open == ["table"] => "head",
+                    Tag::TableRow if open == ["table"] => "row",
+                    Tag::TableCell if matches!(open.as_slice(), ["table", "head" | "row"]) => {
+                        "cell"
+                    }
+                    Tag::Emphasis | Tag::Strong | Tag::Strikethrough => "inline",
                     Tag::Superscript | Tag::Subscript => "inline",
-                    Tag::CodeBlock(CodeBlockKind::Fenced(_)) => "code",
-                    Tag::Table(_) | Tag::TableHead | Tag::TableRow | Tag::TableCell => "table",
                     Tag::Link {
                         link_type: LinkType::Inline,
                         dest_url,
                         title,
                         ..
                     } if dest_url.starts_with("https://") && title.is_empty() => "inline",
-                    other => return Err(format!("{other:?}")),
+                    other => return Err(format!("{other:?} in {open:?}")),
                 };
-                if depth == 0 {
-                    top.push(kind);
+                if open.is_empty() {
+                    (count, cells, width, ragged) = (0, 0, None, false);
+                    code.clear();
                 }
-                lists += usize::from(matches!(tag, Tag::List(_)));
-                depth += 1;
+                match kind {
+                    "item" | "row" => count += 1,
+                    "cell" => cells += 1,
+                    _ => {}
+                }
+                open.push(kind);
             }
-            Event::End(end) => {
-                depth -= 1;
-                lists -= usize::from(matches!(end, pulldown_cmark::TagEnd::List(_)));
+            Event::End(_) => {
+                let closed = open.pop().ok_or("an end with nothing open")?;
+                if let "head" | "row" = closed {
+                    match width {
+                        None => width = Some(cells),
+                        Some(header) => ragged |= header != cells,
+                    }
+                    cells = 0;
+                }
+                if open.is_empty() {
+                    top.push(match closed {
+                        "paragraph" => format!("paragraph:{}", count + 1),
+                        "list" => format!("list:{count}"),
+                        "code" => format!("code:{}", code.matches('\n').count()),
+                        "table" if ragged => "table:ragged".to_string(),
+                        "table" => format!("table:{}x{count}", width.unwrap_or(0)),
+                        other => other.to_string(),
+                    });
+                }
             }
             Event::Text(text) | Event::Code(text) => {
+                if open.first() == Some(&"code") {
+                    code.push_str(text);
+                }
                 // A fragment may end before inline markup with a space: the
                 // characters are what is checked here.
                 for line in text.split('\n').map(|line| line.trim_end_matches(' ')) {
                     chars::check_line(line, 0).map_err(|error| format!("{line:?}: {error:?}"))?;
                 }
             }
-            Event::Html(_) if top == ["marker"] => {}
-            Event::SoftBreak => {}
-            other => return Err(format!("{other:?}")),
+            Event::Html(_) if top.is_empty() => {}
+            Event::SoftBreak if open == ["paragraph"] => count += 1,
+            other => return Err(format!("{other:?} in {open:?}")),
         }
     }
-    let count = |kind: &str| top.iter().filter(|top| **top == kind).count();
-    let blocks = document
-        .sections
-        .iter()
-        .flat_map(|section| match &section.body {
-            Body::Prose(blocks) => blocks
-                .iter()
-                .map(|block| match block {
-                    Block::Paragraph(_) => "paragraph",
-                    Block::List(_) => "list",
-                    Block::Code { .. } => "code",
-                })
-                .collect::<Vec<_>>(),
-            Body::Table(_) => vec!["table"],
-        });
-    let mut expected = vec!["marker", "h1"];
-    expected.extend((!document.fields.is_empty()).then_some("table"));
-    let blocks: Vec<&str> = blocks.collect();
-    expected.extend(blocks.iter().copied());
-    let headings = count("h2");
-    top.retain(|kind| *kind != "h2");
-    match (top == expected, headings == document.sections.len()) {
-        (true, true) => Ok(()),
-        _ => Err(format!(
-            "{top:?} with {headings} sections, not {expected:?}"
-        )),
+    let mut expected = vec!["marker".to_string(), "h1".to_string()];
+    if !document.fields.is_empty() {
+        expected.push(format!("table:2x{}", document.fields.len()));
+    }
+    for section in &document.sections {
+        expected.push("h2".into());
+        match &section.body {
+            Body::Prose(blocks) => expected.extend(blocks.iter().map(|block| match block {
+                Block::Paragraph(lines) => format!("paragraph:{}", lines.len()),
+                Block::List(items) => format!("list:{}", items.len()),
+                Block::Code { lines, .. } => format!("code:{}", lines.len()),
+            })),
+            Body::Table(rows) => {
+                let columns = SHAPE
+                    .sections
+                    .iter()
+                    .find(|known| known.heading == section.heading)
+                    .map_or(0, |known| match known.body {
+                        BodyShape::Table(columns) => columns.len(),
+                        BodyShape::Prose => 0,
+                    });
+                expected.push(format!("table:{columns}x{}", rows.len()));
+            }
+        }
+    }
+    match top == expected {
+        true => Ok(()),
+        false => Err(format!("{top:?}, not {expected:?}")),
     }
 }
 
@@ -301,10 +340,12 @@ impl Seeded {
             _ => Block::Code {
                 language: [None, Some("rust".to_string()), Some("C++".to_string())][self.below(3)]
                     .clone(),
-                // Now and then a line a reader would close the fence on.
+                // Now and then a line a reader would close the fence on, or
+                // one at column 0 that would start a block outside code.
                 lines: (0..self.below(3))
                     .map(|_| match self.below(30) {
                         0 => " ```".to_string(),
+                        1..=6 => self.pick(&["", "## Outcome", "- x", "# x", "| a |", "1. x"]),
                         _ => format!("  {}", self.line()),
                     })
                     .collect(),
