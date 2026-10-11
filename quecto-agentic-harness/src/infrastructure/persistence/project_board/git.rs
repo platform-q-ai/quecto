@@ -13,7 +13,9 @@ use super::own_group::{end_group, exited_unreaped};
 use crate::domain::project_board::entities::claim::Identity;
 use crate::domain::project_board::value_objects::shown_text::shown_char;
 use crate::domain::redaction::{redact_secrets, redact_url_userinfo};
-use crate::infrastructure::processes::parent_death_signal::own_session_dying_with_us;
+use crate::infrastructure::processes::parent_death_signal::{
+    SPAWN_ARMS, own_session_dying_with_us,
+};
 use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::io::{Read, Write};
@@ -22,10 +24,6 @@ use std::process::{Command, ExitStatus, Stdio};
 use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
-
-/// What a failed spawn was doing: starting git, its session made and its
-/// death signal armed first (a refusal to arm fails the spawn).
-const SPAWNING: &str = "starting git (making its session, arming the death signal)";
 
 /// The only variables a board git process inherits: where to find
 /// programs, the user's configuration and credential helpers, SSH, the
@@ -364,7 +362,7 @@ impl Git {
         own_session_dying_with_us(&mut command);
         let mut child = command
             .spawn()
-            .map_err(|error| GitError::Spawn(format!("{SPAWNING}: {error}")))?;
+            .map_err(|error| GitError::Spawn(format!("starting git ({SPAWN_ARMS}): {error}")))?;
         if let (Some(bytes), Some(mut stdin)) = (input, child.stdin.take()) {
             let bytes = bytes.to_vec();
             thread::spawn(move || stdin.write_all(&bytes));
@@ -384,8 +382,11 @@ impl Git {
             // SIGCHLD alone, which it does.
             Err(error) => return Err(GitError::Spawn(format!("watching git: {error}"))),
         };
-        // Whatever git started and left behind (a credential helper, an
-        // ssh master) ends with it, closing the pipes it may hold.
+        // Whatever git started and left behind in its group (a credential
+        // helper, an ssh it did not wait on) ends with it, closing the pipes
+        // it may hold. A process that left the group by its own `setsid`
+        // (an ssh ControlPersist master, a credential cache daemon) is not
+        // reached, and outlives git.
         end_group(child.id());
         let status = child
             .wait()

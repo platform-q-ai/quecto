@@ -13,7 +13,9 @@
 //! and its pipes get [`OUTPUT_GRACE`] to deliver what it wrote. Blocking:
 //! callers run it off the async workers.
 use super::own_group::{end_group, exited_unreaped};
-use crate::infrastructure::processes::parent_death_signal::own_session_dying_with_us;
+use crate::infrastructure::processes::parent_death_signal::{
+    SPAWN_ARMS, own_session_dying_with_us,
+};
 use std::collections::VecDeque;
 use std::ffi::{OsStr, OsString};
 use std::io::Read;
@@ -148,9 +150,9 @@ impl GhPullRequestStates {
         // terminal, and its whole group can be ended), sent SIGTERM if quecto
         // dies (on Linux): this thread forks gh and waits for it.
         own_session_dying_with_us(&mut command);
-        let mut child = command.spawn().map_err(|error| {
-            format!("starting gh (making its session, arming the death signal): {error}")
-        })?;
+        let mut child = command
+            .spawn()
+            .map_err(|error| format!("starting gh ({SPAWN_ARMS}): {error}"))?;
         let pumps = pump(child.stdout.take(), Keep::Head(STDOUT_CAPACITY)).and_then(|stdout| {
             Ok((
                 stdout,
@@ -177,11 +179,12 @@ impl GhPullRequestStates {
                     std::thread::sleep(Duration::from_millis(5))
                 }
                 Ok(false) => break false,
-                Err(error) => {
-                    end_group(child.id());
-                    let _ = child.wait();
-                    return Err(error.to_string());
-                }
+                // Whether gh is still our unreaped child is unknown here
+                // (ECHILD: something else reaped it, and its pid, and so
+                // its group's, may already be reused), so nothing is
+                // signalled and nothing waited on. Unreachable while this
+                // process leaves SIGCHLD alone, which it does.
+                Err(error) => return Err(format!("watching gh: {error}")),
             }
         };
         // Whatever gh left behind holding its pipes ends with it, so the

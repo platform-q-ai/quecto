@@ -52,7 +52,7 @@ fn a_group_whose_leader_was_reaped_elsewhere_is_never_signalled() {
         .args(["-c", &format!("sleep 30 & echo $! > '{}'", pid.display())])
         .stdin(std::process::Stdio::null());
     own_session_dying_with_us(&mut command);
-    let leader = command.spawn().unwrap();
+    let mut leader = command.spawn().unwrap();
     let leader_pid = libc::pid_t::try_from(leader.id()).unwrap();
     let mut status = 0;
     // SAFETY: reaps our own child; status is writable.
@@ -64,6 +64,8 @@ fn a_group_whose_leader_was_reaped_elsewhere_is_never_signalled() {
     let lived = !sleeper.gone();
     sleeper.end();
     assert_eq!(ended, Ended::NotOurs);
+    // Reaped elsewhere: there is nothing left for its Child to wait on.
+    assert!(leader.wait().is_err());
     assert!(
         lived,
         "a group whose leader was reaped elsewhere was signalled"

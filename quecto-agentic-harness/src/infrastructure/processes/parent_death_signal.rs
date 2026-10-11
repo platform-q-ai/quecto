@@ -106,6 +106,16 @@ pub unsafe fn arm_in_child(_parent: libc::pid_t, _signal: DeathSignal) -> std::i
     Ok(())
 }
 
+/// What [`own_session_dying_with_us`] does before the child execs, for a
+/// failed spawn to name: a session, and on Linux the death signal (a
+/// refusal to arm fails the spawn).
+#[cfg(target_os = "linux")]
+pub const SPAWN_ARMS: &str = "making its session, arming the death signal";
+/// What [`own_session_dying_with_us`] does before the child execs, for a
+/// failed spawn to name: off Linux, a session alone; nothing is armed.
+#[cfg(not(target_os = "linux"))]
+pub const SPAWN_ARMS: &str = "making its session";
+
 /// Makes `command`'s child lead a session of its own (`setsid`: nothing it
 /// starts reaches this process's terminal, and its group can be ended as
 /// one) that is sent SIGTERM when this process dies (on Linux), so a

@@ -5,7 +5,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 /// How long a group asked to stop with SIGTERM has before SIGKILL.
-pub(super) const TERM_GRACE: Duration = Duration::from_millis(500);
+const TERM_GRACE: Duration = Duration::from_millis(500);
 /// How often the leader is looked at during [`TERM_GRACE`].
 const GRACE_POLL: Duration = Duration::from_millis(5);
 
@@ -40,23 +40,57 @@ fn signal_group(group: libc::pid_t, signal: libc::c_int) {
     }
 }
 
+/// What [`end_group`] did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Ended {
+    /// The group was sent SIGTERM, then SIGKILL.
+    Signalled,
+    /// Nothing more was signalled: `leader` was no longer our unreaped
+    /// child (ECHILD: something else reaped it), so its pid, and so its
+    /// group's, may already be another's.
+    NotOurs,
+}
+
 /// Ends the process group `leader` leads (`setsid` made the child its
-/// leader; it is not yet reaped, so the group is still its own): SIGTERM
-/// first, so git can remove a ref lock as it goes, then SIGKILL to
-/// whatever is left once the leader has exited or [`TERM_GRACE`] passed.
-pub(super) fn end_group(leader: u32) {
-    match libc::pid_t::try_from(leader) {
-        Ok(group) if group > 0 => {
-            signal_group(group, libc::SIGTERM);
-            let by = Instant::now() + TERM_GRACE;
-            while Instant::now() < by && matches!(exited_unreaped(leader), Ok(false)) {
-                thread::sleep(GRACE_POLL);
-            }
-            signal_group(group, libc::SIGKILL);
-        }
+/// leader; while it is our unreaped child the group is still its own):
+/// SIGTERM first, so git can remove a ref lock as it goes, then SIGKILL to
+/// whatever is left, at once when the leader has already exited, else once
+/// it exits or [`TERM_GRACE`] passed. Each signal is sent only while the
+/// leader is seen to be still ours; a reused group is never signalled.
+pub(super) fn end_group(leader: u32) -> Ended {
+    let group = match libc::pid_t::try_from(leader) {
+        Ok(group) if group > 0 => group,
         // The kernel gives no child a pid that is not a positive pid_t.
-        _ => debug_assert!(false, "a child's pid is a positive pid_t: {leader}"),
+        _ => {
+            debug_assert!(false, "a child's pid is a positive pid_t: {leader}");
+            return Ended::NotOurs;
+        }
+    };
+    let Ok(exited) = exited_unreaped(leader) else {
+        return Ended::NotOurs;
+    };
+    signal_group(group, libc::SIGTERM);
+    match exited {
+        true => {}
+        false => match grace(leader) {
+            Ok(()) => {}
+            Err(_) => return Ended::NotOurs,
+        },
     }
+    signal_group(group, libc::SIGKILL);
+    Ended::Signalled
+}
+
+/// Waits until our unreaped child `leader` exits or [`TERM_GRACE`] passes.
+///
+/// # Errors
+/// `leader` is no longer our unreaped child.
+fn grace(leader: u32) -> std::io::Result<()> {
+    let by = Instant::now() + TERM_GRACE;
+    while !exited_unreaped(leader)? && Instant::now() < by {
+        thread::sleep(GRACE_POLL);
+    }
+    Ok(())
 }
 
 #[cfg(test)]
