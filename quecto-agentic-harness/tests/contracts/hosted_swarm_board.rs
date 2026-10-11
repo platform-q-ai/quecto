@@ -1,7 +1,8 @@
 //! Contract for [`HostedSwarmBoard`] (#2478), proven on the production
-//! store adapter: an environment hosting no board reads as none, and a
-//! created run's board answers the `get_swarm_board` snapshot's shape at
-//! the board's revision, which a write moves.
+//! store adapter: an environment hosting no board reads as none, one whose
+//! checkout cannot be told is unreadable (never "no board"), and a created
+//! run's board answers the `get_swarm_board` snapshot's shape at the
+//! board's revision, which a write moves, naming its run.
 use std::sync::Arc;
 
 use quecto::application::environments::ports::HostedSwarmBoard;
@@ -86,12 +87,7 @@ async fn a_hosted_board_answers_the_snapshot_shape_at_its_revision() {
     create_run(&context);
     let record = record(temp.path());
     let board = port().board(&record).await.unwrap().expect("a board");
-    let keys: Vec<&str> = board
-        .as_object()
-        .unwrap()
-        .keys()
-        .map(String::as_str)
-        .collect();
+    let keys: Vec<&str> = board.keys().map(String::as_str).collect();
     assert_eq!(
         keys,
         [
@@ -136,7 +132,8 @@ async fn a_hosted_board_answers_the_snapshot_shape_at_its_revision() {
     );
     assert_eq!(board["members"][0]["role"], json!("coordinator"));
     let revision = port().revision(&record).await.unwrap().expect("a revision");
-    assert_eq!(board["revision"], json!(revision));
+    assert_eq!(board["revision"], json!(revision.revision));
+    assert_eq!(board["run"]["id"].as_str(), revision.run.as_deref());
     let connection = rusqlite::Connection::open(temp.path().join(".quecto/swarm.sqlite")).unwrap();
     connection
         .execute_batch(
@@ -146,7 +143,7 @@ async fn a_hosted_board_answers_the_snapshot_shape_at_its_revision() {
         .unwrap();
     let after = port().board(&record).await.unwrap().unwrap();
     assert!(
-        port().revision(&record).await.unwrap().unwrap() > revision,
+        port().revision(&record).await.unwrap().unwrap().revision > revision.revision,
         "a write moves it"
     );
     let item: Vec<&str> = after["items"][0]
@@ -170,4 +167,18 @@ async fn a_hosted_board_answers_the_snapshot_shape_at_its_revision() {
             "evidence"
         ]
     );
+}
+
+/// L6 (#2488 review): a checkout the host cannot tell (here one advertised
+/// outside its workspace) is unreadable, never taken for "no board".
+#[tokio::test]
+async fn a_checkout_that_cannot_be_told_is_unreadable() {
+    let workspace = tempfile::tempdir().unwrap();
+    let elsewhere = tempfile::tempdir().unwrap();
+    let mut record = record(workspace.path());
+    record.metadata = json!({ "checkout": elsewhere.path().display().to_string() });
+    let board = port().board(&record).await.unwrap_err();
+    assert!(board.contains("could not be told"), "{board}");
+    let revision = port().revision(&record).await.unwrap_err();
+    assert!(revision.contains("could not be told"), "{revision}");
 }

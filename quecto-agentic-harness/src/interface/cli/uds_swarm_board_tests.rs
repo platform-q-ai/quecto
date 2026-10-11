@@ -1,48 +1,100 @@
-use super::{answer, changes};
+use super::{
+    AbortOnDrop, BoardHints, BoardViewCtx, Seen, SwarmBoards, answer, changes, intercept,
+    spawn_change_hints,
+};
+use crate::application::environments::dto::{BoardSighting, HostedBoardRevision};
 use crate::application::environments::ports::{HostedSwarmBoard, PortFuture};
 use crate::application::environments::use_cases::ReadSwarmBoard;
 use crate::domain::environments::entities::environment_registry::{
     EnvironmentOrigin, EnvironmentRecord, EnvironmentRegistry, EnvironmentStatus,
 };
-use serde_json::{Value, json};
+use crate::infrastructure::tools::subagent_registry::SubagentRegistry;
+use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicI64, AtomicU32, Ordering};
+use std::time::Duration;
 
-struct NoMembers;
-
-impl crate::application::environments::ports::EnvironmentMemberShutdown for NoMembers {
-    fn shutdown_members<'a>(
-        &'a self,
-        _members: &'a [String],
-    ) -> PortFuture<'a, crate::application::environments::ports::MemberShutdownReport> {
-        Box::pin(async {
-            crate::application::environments::ports::MemberShutdownReport {
-                settled: vec![],
-                unsettled: vec![],
-            }
-        })
-    }
-}
-
-/// A board at `C1` only.
+/// A board at `C1` only, at revision 7 of run `r1`.
 struct OneBoard;
 
 impl HostedSwarmBoard for OneBoard {
     fn board<'a>(
         &'a self,
         record: &'a EnvironmentRecord,
-    ) -> PortFuture<'a, Result<Option<Value>, String>> {
-        let board = (record.environment_ref == "C1")
-            .then(|| json!({"revision": 7, "run": null, "items": [], "truncated": false}));
+    ) -> PortFuture<'a, Result<Option<Map<String, Value>>, String>> {
+        let board = (record.environment_ref == "C1").then(|| {
+            Map::from_iter([
+                ("revision".to_owned(), json!(7)),
+                ("run".to_owned(), json!(null)),
+                ("items".to_owned(), json!([])),
+                ("truncated".to_owned(), json!(false)),
+            ])
+        });
         Box::pin(async move { Ok(board) })
     }
 
     fn revision<'a>(
         &'a self,
         record: &'a EnvironmentRecord,
-    ) -> PortFuture<'a, Result<Option<i64>, String>> {
-        let revision = (record.environment_ref == "C1").then_some(7);
+    ) -> PortFuture<'a, Result<Option<HostedBoardRevision>, String>> {
+        let revision = (record.environment_ref == "C1").then(|| HostedBoardRevision {
+            run: Some("r1".into()),
+            revision: 7,
+        });
         Box::pin(async move { Ok(revision) })
+    }
+}
+
+/// The board at `C1`, run `r1`, at the revision the test holds; each read
+/// of it moves it on by `step`.
+struct Moving {
+    revision: Arc<AtomicI64>,
+    step: i64,
+}
+
+impl HostedSwarmBoard for Moving {
+    fn board<'a>(
+        &'a self,
+        _record: &'a EnvironmentRecord,
+    ) -> PortFuture<'a, Result<Option<Map<String, Value>>, String>> {
+        Box::pin(async { Ok(Some(Map::new())) })
+    }
+
+    fn revision<'a>(
+        &'a self,
+        _record: &'a EnvironmentRecord,
+    ) -> PortFuture<'a, Result<Option<HostedBoardRevision>, String>> {
+        let revision = self.revision.fetch_add(self.step, Ordering::SeqCst);
+        Box::pin(async move {
+            Ok(Some(HostedBoardRevision {
+                run: Some("r1".into()),
+                revision,
+            }))
+        })
+    }
+}
+
+/// A board whose read waits until the test releases it.
+struct Gated(Arc<tokio::sync::Notify>);
+
+impl HostedSwarmBoard for Gated {
+    fn board<'a>(
+        &'a self,
+        _record: &'a EnvironmentRecord,
+    ) -> PortFuture<'a, Result<Option<Map<String, Value>>, String>> {
+        let gate = self.0.clone();
+        Box::pin(async move {
+            gate.notified().await;
+            Ok(Some(Map::new()))
+        })
+    }
+
+    fn revision<'a>(
+        &'a self,
+        _record: &'a EnvironmentRecord,
+    ) -> PortFuture<'a, Result<Option<HostedBoardRevision>, String>> {
+        Box::pin(async { Ok(None) })
     }
 }
 
@@ -69,20 +121,36 @@ fn record(reference: &str) -> EnvironmentRecord {
     }
 }
 
-fn boards() -> ReadSwarmBoard {
+/// The session's swarms `C1` and `C2`, read through `port`.
+fn read_over(port: Arc<dyn HostedSwarmBoard>) -> Arc<ReadSwarmBoard> {
     let registry = EnvironmentRegistry::new();
     registry.commit(record("C1"));
     registry.commit(record("C2"));
-    ReadSwarmBoard::new(registry, Arc::new(OneBoard))
+    Arc::new(ReadSwarmBoard::new(registry, port))
+}
+
+fn view(read: Arc<ReadSwarmBoard>) -> SwarmBoards {
+    SwarmBoards::new(move || Some(read.clone()))
 }
 
 fn wire(event: crate::interface::cli::protocol::AgentEvent) -> Value {
     serde_json::from_str(&event.to_json_line()).unwrap()
 }
 
+fn hint(swarm: &str, run: &str, revision: i64) -> String {
+    json!({"type": "swarm_board_changed", "swarm": swarm, "run": run, "revision": revision, "removed": false})
+        .to_string()
+}
+
+fn removal(swarm: &str) -> String {
+    json!({"type": "swarm_board_changed", "swarm": swarm, "run": null, "revision": null, "removed": true})
+        .to_string()
+}
+
 #[tokio::test]
 async fn get_swarm_board_answers_the_board_with_its_swarm() {
-    let response = wire(answer(Some(&boards()), Some("b1"), Some("C1")).await);
+    let read = read_over(Arc::new(OneBoard));
+    let response = wire(answer(Some(&read), Some("b1"), Some("C1")).await);
     assert_eq!(
         (response["type"].clone(), response["command"].clone()),
         (json!("response"), json!("get_swarm_board"))
@@ -103,14 +171,18 @@ async fn get_swarm_board_answers_the_board_with_its_swarm() {
 }
 
 #[tokio::test]
-async fn get_swarm_board_refuses_an_unknown_boardless_or_missing_swarm() {
-    let boards = boards();
+async fn get_swarm_board_refuses_an_unknown_boardless_malformed_or_missing_swarm() {
+    let read = read_over(Arc::new(OneBoard));
     for (swarm, error) in [
         (Some("C9"), "unknown swarm C9"),
         (Some("C2"), "swarm C2 hosts no board this session can read"),
+        (
+            Some("C1; echo secret"),
+            "swarm must be an environment ref such as C1",
+        ),
         (None, "swarm is required (an environment ref such as C1)"),
     ] {
-        let response = wire(answer(Some(&boards), Some("b1"), swarm).await);
+        let response = wire(answer(Some(&read), Some("b1"), swarm).await);
         assert_eq!(
             (response["success"].clone(), response["error"].clone()),
             (json!(false), json!(error)),
@@ -124,70 +196,339 @@ async fn get_swarm_board_refuses_an_unknown_boardless_or_missing_swarm() {
     );
 }
 
+fn sighting(run: &str, revision: i64) -> BoardSighting {
+    BoardSighting::Board(HostedBoardRevision {
+        run: Some(run.into()),
+        revision,
+    })
+}
+
+/// Each poll's hints against what was seen: a swarm first seen, moved or
+/// made again (another run at the same revision, L5) is hinted; one no
+/// longer read is hinted removed (L3); one that could not be read keeps
+/// what was last seen and is not hinted (L3).
 #[test]
-fn a_swarm_is_hinted_when_first_seen_and_when_its_revision_moves() {
-    let mut seen = BTreeMap::new();
-    let hint = |swarm: &str, revision: i64| {
-        json!({"type": "swarm_board_changed", "swarm": swarm, "revision": revision}).to_string()
+fn a_swarm_is_hinted_when_first_seen_when_it_moves_and_when_it_goes() {
+    let poll = |seen: &Seen, now: Vec<(&str, BoardSighting)>| {
+        changes(
+            seen,
+            now.into_iter()
+                .map(|(swarm, sighting)| (swarm.to_owned(), sighting))
+                .collect::<BTreeMap<_, _>>(),
+        )
     };
-    let first = changes(&mut seen, vec![("C1".into(), 3), ("C2".into(), 9)]);
-    assert_eq!(first, [hint("C1", 3), hint("C2", 9)]);
-    assert_eq!(
-        changes(&mut seen, vec![("C1".into(), 3), ("C2".into(), 9)]),
-        Vec::<String>::new(),
-        "unchanged: no hint"
+    let (lines, seen) = poll(
+        &Seen::new(),
+        vec![("C1", sighting("r1", 3)), ("C2", sighting("r2", 9))],
+    );
+    assert_eq!(lines, [hint("C1", "r1", 3), hint("C2", "r2", 9)]);
+    let (lines, seen) = poll(
+        &seen,
+        vec![("C1", sighting("r1", 3)), ("C2", sighting("r2", 9))],
+    );
+    assert!(lines.is_empty(), "unchanged: no hint");
+    let (lines, seen) = poll(
+        &seen,
+        vec![("C1", sighting("r1", 4)), ("C2", sighting("r2", 9))],
+    );
+    assert_eq!(lines, [hint("C1", "r1", 4)]);
+    let (lines, seen) = poll(&seen, vec![("C1", sighting("r1", 4))]);
+    assert_eq!(lines, [removal("C2")], "a board no longer read");
+    let (lines, seen) = poll(
+        &seen,
+        vec![("C1", sighting("r1", 4)), ("C2", sighting("r2", 9))],
     );
     assert_eq!(
-        changes(&mut seen, vec![("C1".into(), 4), ("C2".into(), 9)]),
-        [hint("C1", 4)]
-    );
-    assert_eq!(
-        changes(&mut seen, vec![("C1".into(), 4)]),
-        Vec::<String>::new(),
-        "a board no longer read"
-    );
-    assert_eq!(
-        changes(&mut seen, vec![("C1".into(), 4), ("C2".into(), 9)]),
-        [hint("C2", 9)],
+        lines,
+        [hint("C2", "r2", 9)],
         "is hinted again when it reads"
+    );
+    let (lines, seen) = poll(
+        &seen,
+        vec![
+            ("C1", BoardSighting::Unreadable("contended".into())),
+            ("C2", sighting("r2", 9)),
+        ],
+    );
+    assert!(lines.is_empty(), "a busy read neither forgets nor hints");
+    let (lines, seen) = poll(
+        &seen,
+        vec![("C1", sighting("r1", 4)), ("C2", sighting("r2", 9))],
+    );
+    assert!(
+        lines.is_empty(),
+        "and the board is not hinted again after it"
+    );
+    let (lines, _) = poll(
+        &seen,
+        vec![("C1", sighting("r7", 4)), ("C2", sighting("r2", 9))],
+    );
+    assert_eq!(lines, [hint("C1", "r7", 4)], "a board made again");
+}
+
+/// M6: with a board that moves on every read, a hint every poll proves
+/// the poll's rate: one at the first tick after a client connects, none
+/// 999 ms later, the next at the second; no client, no poll.
+#[tokio::test(start_paused = true)]
+async fn hints_are_polled_at_most_once_a_second_and_only_with_a_client() {
+    let revision = Arc::new(AtomicI64::new(1));
+    let read = read_over(Arc::new(Moving {
+        revision: revision.clone(),
+        step: 1,
+    }));
+    let (tx, mut rx) = tokio::sync::broadcast::channel(16);
+    let clients = Arc::new(AtomicU32::new(0));
+    let _poll = AbortOnDrop(Some(spawn_change_hints(
+        view(read),
+        BoardHints::default(),
+        tx,
+        clients.clone(),
+    )));
+    tokio::time::sleep(Duration::from_millis(2_500)).await;
+    assert!(rx.try_recv().is_err(), "no client, no poll");
+    assert_eq!(revision.load(Ordering::SeqCst), 1, "no board was read");
+    clients.store(1, Ordering::SeqCst);
+    tokio::time::sleep(Duration::from_millis(501)).await;
+    let first = rx.try_recv().expect("the first tick with a client hints");
+    assert!(first.contains("\"C1\""), "{first}");
+    assert!(rx.try_recv().is_err(), "one hint per tick");
+    tokio::time::sleep(Duration::from_millis(998)).await;
+    assert!(rx.try_recv().is_err(), "nothing 999 ms after the hint");
+    tokio::time::sleep(Duration::from_millis(2)).await;
+    assert!(rx.try_recv().is_ok(), "the next tick, a second after");
+}
+
+/// H1: a poll that finds no receiver (the last client went mid-tick)
+/// keeps polling, and takes nothing as seen while nobody hears it: the
+/// next client is told the board's revision, moved meanwhile.
+#[tokio::test(start_paused = true)]
+async fn a_client_leaving_mid_tick_does_not_end_the_hints() {
+    let revision = Arc::new(AtomicI64::new(5));
+    let read = read_over(Arc::new(Moving {
+        revision: revision.clone(),
+        step: 0,
+    }));
+    let (tx, rx) = tokio::sync::broadcast::channel(16);
+    drop(rx);
+    let hints = BoardHints::default();
+    let _poll = AbortOnDrop(Some(spawn_change_hints(
+        view(read),
+        hints.clone(),
+        tx.clone(),
+        Arc::new(AtomicU32::new(1)),
+    )));
+    tokio::time::sleep(Duration::from_millis(1_500)).await;
+    assert!(
+        hints.connect_lines().is_empty(),
+        "nothing is taken as seen while nobody hears it"
+    );
+    revision.store(6, Ordering::SeqCst);
+    let mut rx = tx.subscribe();
+    tokio::time::sleep(Duration::from_millis(1_000)).await;
+    assert_eq!(rx.try_recv().unwrap(), hint("C1", "r1", 6));
+}
+
+/// M1: a client that connects after a board was hinted is told it on
+/// connect: the boards' last-seen revisions, as connect-time lines.
+#[tokio::test(start_paused = true)]
+async fn a_late_client_is_told_every_board_already_seen() {
+    let read = read_over(Arc::new(OneBoard));
+    let (tx, mut rx) = tokio::sync::broadcast::channel(16);
+    let hints = BoardHints::default();
+    let _poll = AbortOnDrop(Some(spawn_change_hints(
+        view(read),
+        hints.clone(),
+        tx,
+        Arc::new(AtomicU32::new(1)),
+    )));
+    tokio::time::sleep(Duration::from_millis(10)).await;
+    assert_eq!(rx.try_recv().unwrap(), hint("C1", "r1", 7));
+    assert_eq!(hints.connect_lines(), [hint("C1", "r1", 7) + "\n"]);
+}
+
+/// M6: the poll ends when its owner, the accept loop, drops it.
+#[tokio::test(start_paused = true)]
+async fn the_poll_ends_with_its_owner() {
+    let (tx, _rx) = tokio::sync::broadcast::channel(16);
+    let poll = spawn_change_hints(
+        view(read_over(Arc::new(OneBoard))),
+        BoardHints::default(),
+        tx,
+        Arc::new(AtomicU32::new(1)),
+    );
+    let ended = poll.abort_handle();
+    drop(AbortOnDrop(Some(poll)));
+    for _ in 0..8 {
+        tokio::task::yield_now().await;
+    }
+    assert!(ended.is_finished());
+}
+
+/// One connected client's reply channel, as the accept loop registers it.
+fn client() -> (
+    crate::interface::cli::uds_ext_protocol::ClientToolRegistry,
+    tokio::sync::mpsc::Receiver<String>,
+) {
+    let clients = crate::interface::cli::uds_ext_protocol::new_client_tool_registry();
+    let (tx, rx) = tokio::sync::mpsc::channel(8);
+    crate::interface::cli::uds_ext_protocol::register_client_writer(&clients, 7, tx);
+    (clients, rx)
+}
+
+async fn reply(rx: &mut tokio::sync::mpsc::Receiver<String>) -> Value {
+    let line = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+        .await
+        .expect("answered")
+        .expect("a reply");
+    serde_json::from_str(line.trim_end()).unwrap()
+}
+
+/// M6: `get_swarm_board` is answered on the connection's reader, a turn
+/// running or not; any other line is left to the dispatch.
+#[tokio::test]
+async fn get_swarm_board_is_answered_on_the_reader() {
+    let (clients, mut rx) = client();
+    let boards = view(read_over(Arc::new(OneBoard)));
+    let none: Option<SubagentRegistry> = None;
+    let ctx = || BoardViewCtx {
+        boards: Some(&boards),
+        clients: &clients,
+        subagents: &none,
+        client_id: 7,
+    };
+    assert!(intercept(
+        r#"{"type":"get_swarm_board","id":"b1","swarm":"C1"}"#,
+        ctx()
+    ));
+    let answered = reply(&mut rx).await;
+    assert_eq!(
+        (
+            answered["success"].clone(),
+            answered["data"]["swarm"].clone()
+        ),
+        (json!(true), json!("C1"))
+    );
+    assert!(!intercept(r#"{"type":"get_state","id":"s1"}"#, ctx()));
+    assert!(
+        rx.try_recv().is_err(),
+        "another command is not answered here"
+    );
+    let unavailable = BoardViewCtx {
+        boards: None,
+        clients: &clients,
+        subagents: &none,
+        client_id: 7,
+    };
+    assert!(intercept(
+        r#"{"type":"get_swarm_board","id":"b2","swarm":"C1"}"#,
+        unavailable
+    ));
+    assert_eq!(
+        reply(&mut rx).await["error"],
+        json!("swarm boards are unavailable in this harness")
     );
 }
 
-#[tokio::test(start_paused = true)]
-async fn hints_are_polled_at_most_once_a_second_and_only_with_a_client() {
-    use std::sync::atomic::{AtomicU32, Ordering};
-    let slot =
-        crate::infrastructure::tools::agent_cmd_containers::EnvironmentControlSlot::default();
-    let registry = EnvironmentRegistry::new();
-    registry.commit(record("C1"));
-    let control = crate::infrastructure::tools::agent_cmd_containers::EnvironmentControl {
-        list: Arc::new(crate::application::environments::use_cases::ListEnvironmentsQuery::new(registry.clone())),
-        kill: Arc::new(crate::application::environments::use_cases::KillEnvironment::new(
-            registry.clone(),
-            Arc::new(NoMembers),
-            Arc::new(crate::infrastructure::tools::environment_commands::ScriptEnvironmentCommands::default()),
-            Arc::new(crate::infrastructure::tools::environment_commands::HostedStoreObservation::new(
-                crate::composition::swarm::swarm_board(),
-            )),
-        )),
-        boards: Arc::new(ReadSwarmBoard::new(registry, Arc::new(OneBoard))),
-    };
-    assert!(slot.install(control));
-    let (tx, mut rx) = tokio::sync::broadcast::channel(16);
-    let clients = Arc::new(AtomicU32::new(0));
-    let task = super::spawn_change_hints(slot, tx, clients.clone());
-    tokio::time::sleep(std::time::Duration::from_millis(2_500)).await;
-    assert!(rx.try_recv().is_err(), "no client, no poll");
-    clients.store(1, Ordering::SeqCst);
-    tokio::time::sleep(std::time::Duration::from_millis(1_100)).await;
+/// M6: with `agent_id`, the board is asked of that descendant, routed as
+/// `swarm_control` routes (here: no sub-agent registry to route through).
+#[tokio::test]
+async fn a_board_asked_of_a_descendant_is_routed_to_it() {
+    let (clients, mut rx) = client();
+    let boards = view(read_over(Arc::new(OneBoard)));
+    let none: Option<SubagentRegistry> = None;
+    assert!(intercept(
+        r#"{"type":"get_swarm_board","id":"b3","swarm":"C1","agent_id":"child-1"}"#,
+        BoardViewCtx {
+            boards: Some(&boards),
+            clients: &clients,
+            subagents: &none,
+            client_id: 7,
+        }
+    ));
+    let answered = reply(&mut rx).await;
     assert_eq!(
-        rx.try_recv().unwrap(),
-        json!({"type": "swarm_board_changed", "swarm": "C1", "revision": 7}).to_string()
+        (
+            answered["command"].clone(),
+            answered["id"].clone(),
+            answered["error"].clone()
+        ),
+        (
+            json!("get_swarm_board"),
+            json!("b3"),
+            json!("no sub-agent registry available")
+        )
     );
-    tokio::time::sleep(std::time::Duration::from_millis(3_000)).await;
-    assert!(
-        rx.try_recv().is_err(),
-        "an unmoved board is not hinted again"
-    );
-    task.abort();
+}
+
+/// L7: a `get_swarm_board` whose fields are not strings is refused here,
+/// at once, never queued behind the turn as a command.
+#[tokio::test]
+async fn a_malformed_get_swarm_board_is_refused_not_queued() {
+    let (clients, mut rx) = client();
+    let boards = view(read_over(Arc::new(OneBoard)));
+    let none: Option<SubagentRegistry> = None;
+    for (line, id) in [
+        (
+            r#"{"type":"get_swarm_board","id":"b4","swarm":7}"#,
+            json!("b4"),
+        ),
+        (
+            r#"{"type":"get_swarm_board","id":5,"swarm":"C1"}"#,
+            json!(null),
+        ),
+        (
+            r#"{"type":"get_swarm_board","swarm":"C1","agent_id":["x"]}"#,
+            json!(null),
+        ),
+    ] {
+        assert!(
+            intercept(
+                line,
+                BoardViewCtx {
+                    boards: Some(&boards),
+                    clients: &clients,
+                    subagents: &none,
+                    client_id: 7,
+                }
+            ),
+            "{line}"
+        );
+        let refused = reply(&mut rx).await;
+        assert_eq!(
+            (
+                refused["success"].clone(),
+                refused["id"].clone(),
+                refused["error"].clone()
+            ),
+            (
+                json!(false),
+                id,
+                json!("get_swarm_board takes string fields: id, swarm and agent_id")
+            ),
+            "{line}"
+        );
+    }
+}
+
+/// M3: the board is read off the connection's reader, which takes its
+/// next line while the read waits.
+#[tokio::test]
+async fn the_reader_is_not_held_while_a_board_is_read() {
+    let (clients, mut rx) = client();
+    let gate = Arc::new(tokio::sync::Notify::new());
+    let boards = view(read_over(Arc::new(Gated(gate.clone()))));
+    let none: Option<SubagentRegistry> = None;
+    assert!(intercept(
+        r#"{"type":"get_swarm_board","id":"b5","swarm":"C1"}"#,
+        BoardViewCtx {
+            boards: Some(&boards),
+            clients: &clients,
+            subagents: &none,
+            client_id: 7,
+        }
+    ));
+    tokio::task::yield_now().await;
+    assert!(rx.try_recv().is_err(), "the read still waits");
+    gate.notify_one();
+    assert_eq!(reply(&mut rx).await["success"], json!(true));
 }
