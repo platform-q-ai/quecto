@@ -32,6 +32,9 @@ fn at_status(status: TaskStatus) -> TaskFields {
     }
 }
 
+/// One change that must make valid fields invalid.
+type Edit = fn(&mut TaskFields);
+
 fn refused(task: TaskFields) -> String {
     Task::new(task).unwrap_err().field
 }
@@ -80,12 +83,12 @@ fn a_resolution_fits_its_status_and_what_took_the_task_over() {
                     references: if refs { vec!["#9".into()] } else { vec![] },
                     ..at_status(status)
                 };
-                let by_status = match (resolution, status) {
-                    (None, _) => true,
-                    (Some(Completed), TaskStatus::Done) => true,
-                    (Some(_), TaskStatus::Archived) => true,
-                    _ => false,
-                };
+                let by_status = matches!(
+                    (resolution, status),
+                    (None, _)
+                        | (Some(Completed), TaskStatus::Done)
+                        | (Some(_), TaskStatus::Archived)
+                );
                 let names =
                     matches!(resolution, Some(Duplicate | Superseded)).then_some(by || refs);
                 let fits = !by || matches!(resolution, None | Some(Duplicate | Superseded));
@@ -137,7 +140,7 @@ fn a_tasks_issue_is_its_own() {
 
 #[test]
 fn the_tasks_that_superseded_it_are_others_named_once() {
-    let cases: Vec<(&str, fn(&mut TaskFields))> = vec![
+    let cases: Vec<(&str, Edit)> = vec![
         ("superseded_by/0", |t| {
             t.superseded_by = vec![slug("board-store")]
         }),
