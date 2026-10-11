@@ -28,6 +28,8 @@ pub enum ProjectBoardError {
     Exists(Slug),
     /// This machine's clock is more than [`CLOCK_AHEAD_SECONDS`] ahead of
     /// the outside reference.
+    ///
+    /// [`CLOCK_AHEAD_SECONDS`]: crate::domain::project_board::services::claims::CLOCK_AHEAD_SECONDS
     ClockAhead {
         now: Timestamp,
         reference: Timestamp,
@@ -39,9 +41,6 @@ pub enum ProjectBoardError {
     /// The store refused the write.
     Refused(String),
 }
-
-/// How far ahead of the outside reference this clock may run.
-pub const CLOCK_AHEAD_SECONDS: u64 = 60;
 
 impl From<BoardStoreError> for ProjectBoardError {
     fn from(error: BoardStoreError) -> Self {

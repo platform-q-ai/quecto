@@ -3,7 +3,6 @@
 //! take two clients of one fresh board, so the git branch store (S1d) runs
 //! the same checks over two clones of one remote; here they run over the
 //! in-memory store.
-use quecto::application::project_board::memory_store::MemoryBoardStore;
 use quecto::application::project_board::ports::{
     BoardBootstrap, BoardHead, BoardStoreError, BoardWrite, ProjectBoardStore,
 };
@@ -11,6 +10,7 @@ use quecto::domain::project_board::entities::task::{Task, TaskFields};
 use quecto::domain::project_board::value_objects::slug::Slug;
 use quecto::domain::project_board::value_objects::timestamp::Timestamp;
 use quecto::domain::project_board::value_objects::vocabulary::{TaskKind, TaskStatus};
+use quecto::infrastructure::test_support::memory_board_store::MemoryBoardStore;
 use std::collections::BTreeMap;
 
 /// Two clients of one board that is not bootstrapped yet.

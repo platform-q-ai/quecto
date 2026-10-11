@@ -10,12 +10,17 @@
 //! whose clock runs fast sees claims expire early, and a claim stamped by
 //! such a clock lasts until its stamped expiry. S1c's write path bounds
 //! both against an outside reading of the current time when one can be
-//! read: it refuses a `now`, or a task `updated`, more than 60 s ahead of
-//! it.
+//! read: it refuses a `now`, or a task `updated`, more than
+//! [`CLOCK_AHEAD_SECONDS`] ahead of it.
 use super::super::entities::claim::{CLAIM_TTL_SECONDS, Claim, Identity};
 use super::super::entities::task::{Task, TaskFields};
 use super::super::value_objects::rule_error::BoardRuleError;
 use super::super::value_objects::timestamp::Timestamp;
+
+/// How far a clock may run ahead of an outside reading of the current
+/// time before the board refuses to take its time, or to build on a task
+/// it stamped.
+pub const CLOCK_AHEAD_SECONDS: u64 = 60;
 
 /// The holder's claim runs again from now for [`CLAIM_TTL_SECONDS`]: a
 /// claim never spans more than that, so renewing restarts its window. An

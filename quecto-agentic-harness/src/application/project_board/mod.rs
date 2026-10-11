@@ -4,7 +4,5 @@
 //! read again and the change re-applied to the fresh task, a bounded number
 //! of times.
 pub mod dto;
-#[cfg(any(test, feature = "test-support"))]
-pub mod memory_store;
 pub mod ports;
 pub mod use_cases;

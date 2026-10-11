@@ -1,11 +1,11 @@
 //! Fixtures of the project board's use case tests: a board with clients,
 //! and new tasks' fields.
-use crate::application::project_board::memory_store::MemoryBoardStore;
 use crate::application::project_board::ports::ProjectBoardStore;
 use crate::domain::project_board::entities::task::TaskFields;
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
 use crate::domain::project_board::value_objects::vocabulary::{TaskKind, TaskStatus};
+use crate::infrastructure::test_support::memory_board_store::MemoryBoardStore;
 
 pub fn at(time: &str) -> Timestamp {
     Timestamp::parse(&format!("2026-10-10T{time}Z")).unwrap()

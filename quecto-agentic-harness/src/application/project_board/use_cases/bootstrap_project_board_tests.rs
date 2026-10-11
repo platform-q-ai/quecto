@@ -1,6 +1,6 @@
 use super::BootstrapProjectBoard;
-use crate::application::project_board::memory_store::MemoryBoardStore;
 use crate::application::project_board::ports::{BoardBootstrap, BoardHead};
+use crate::infrastructure::test_support::memory_board_store::MemoryBoardStore;
 use std::sync::Arc;
 
 #[test]
