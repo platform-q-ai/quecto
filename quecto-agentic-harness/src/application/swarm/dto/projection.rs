@@ -103,6 +103,9 @@ pub struct StoredStateColumns {
 pub struct StoredRevision {
     /// The run row's id; null before a run row exists.
     pub run: Value,
+    /// The run row's deadline, which says whether the run was created;
+    /// null before a run row exists.
+    pub deadline: Value,
     pub revision: i64,
 }
 
@@ -112,6 +115,9 @@ pub struct StoredRevision {
 pub struct BoardRevision {
     pub run: Option<String>,
     pub revision: i64,
+    /// The run was created (its deadline participates), as
+    /// `hosted_run` decides it.
+    pub created: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]

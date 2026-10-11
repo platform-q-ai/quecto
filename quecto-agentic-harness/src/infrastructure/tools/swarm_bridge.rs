@@ -272,48 +272,56 @@ impl HostedStore {
             return Ok(None);
         };
         let malformed =
-            || DomainError::Tool("swarm board revision is not {run, revision}".to_owned());
+            || DomainError::Tool("swarm board revision is not {run, revision, created}".to_owned());
         let revision = answer["revision"].as_i64().ok_or_else(malformed)?;
         let run = match &answer["run"] {
             Value::Null => None,
             Value::String(run) => Some(run.clone()),
             _ => return Err(malformed()),
         };
+        let created = answer["created"].as_bool().ok_or_else(malformed)?;
         Ok(Some(crate::application::swarm::dto::BoardRevision {
             run,
             revision,
+            created,
         }))
     }
 
-    /// `method` on the board, as the supervising session. A board with a
-    /// displaced one beside it is read only when it holds a created run,
-    /// the rule [`Self::hosted_run`] keeps: that board is the one its
-    /// members run on.
+    /// `method` (`_board` or `_board_revision`) on the board, as the
+    /// supervising session. A board with a displaced one beside it is
+    /// answered only when it holds a created run, the rule
+    /// [`Self::hosted_run`] keeps: that board is the one its members run
+    /// on. Each answer says so itself (the run's deadline, or `created`),
+    /// so one read decides (round 3 L3).
     fn supervised(&self, method: &str) -> Result<Option<serde_json::Value>, DomainError> {
         let displaced = match self.contained()? {
             Found::Store { displaced } => displaced,
             Found::Nothing => return Ok(None),
         };
-        let call = |method: &str| {
-            self.board.call_as(
-                self.location(),
-                "supervisor",
-                method,
-                json!([]),
-                super::swarm_board_dispatch::CallOrigin::Supervisor,
-            )
-        };
+        let answer = self.board.call_as(
+            self.location(),
+            "supervisor",
+            method,
+            json!([]),
+            super::swarm_board_dispatch::CallOrigin::Supervisor,
+        )?;
         let Some(displaced) = displaced else {
-            return call(method).map(Some);
+            return Ok(Some(answer));
         };
-        let board = call("_board")?;
-        let created = board["run"]["deadline"]
-            .as_f64()
-            .is_some_and(crate::domain::swarm::participates);
-        match (created, method) {
-            (true, "_board") => Ok(Some(board)),
-            (true, _) => call(method).map(Some),
-            (false, _) => Err(DomainError::Tool(format!(
+        let created = match method {
+            "_board" => answer["run"]["deadline"]
+                .as_f64()
+                .is_some_and(crate::domain::swarm::participates),
+            "_board_revision" => answer["created"].as_bool() == Some(true),
+            other => {
+                return Err(DomainError::Tool(format!(
+                    "the supervising session reads only _board and _board_revision, not {other}"
+                )));
+            }
+        };
+        match created {
+            true => Ok(Some(answer)),
+            false => Err(DomainError::Tool(format!(
                 "swarm board {} holds no created run, but another board exists at {} where a member may still be running",
                 self.database().display(),
                 displaced.display()

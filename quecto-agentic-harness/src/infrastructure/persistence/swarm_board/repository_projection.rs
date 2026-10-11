@@ -39,6 +39,34 @@ const DEPENDENCIES_BYTES: i64 = DEPENDENCIES_MAX as i64 * 24 + 2;
 const BUDGET_BYTES: i64 = 4096;
 /// The most bytes a run id or a member id holds.
 const ID_BYTES: i64 = MEMBER_ID_MAX_BYTES as i64;
+/// The most bytes a scalar cell (a number, a flag) holds as text: far more
+/// than any number the board writes (#2487 round 3).
+const SCALAR_BYTES: i64 = 64;
+/// A member's latest board event's time: its last activity.
+const LATEST_EVENT_TIME: &str =
+    "(SELECT e.time FROM events e WHERE e.actor=m.id ORDER BY e.id DESC LIMIT 1)";
+
+/// Two result columns for the scalar `expr`: whether it is within
+/// [`SCALAR_BYTES`], and its value only when it is, so a longer one is
+/// never copied out ([`bounded`] refuses it).
+fn guarded(expr: &str) -> String {
+    format!(
+        "coalesce(octet_length({expr}),0) <= {SCALAR_BYTES}, CASE WHEN coalesce(octet_length({expr}),0) <= {SCALAR_BYTES} THEN {expr} END"
+    )
+}
+
+/// The [`guarded`] cell at `index` (its flag) and `index + 1` (its value):
+/// refused naming `column` when it was longer than the board writes.
+fn bounded(row: &Row<'_>, index: usize, column: &str) -> rusqlite::Result<Value> {
+    match row.get::<_, bool>(index)? {
+        true => cell(row, index + 1, column),
+        false => Err(rusqlite::Error::FromSqlConversionFailure(
+            index,
+            rusqlite::types::Type::Text,
+            format!("{column} holds more than this board writes").into(),
+        )),
+    }
+}
 
 /// The stored text of one item row, as the items read copies it.
 const ITEM_BYTES: &str = "coalesce(octet_length(title),0) + coalesce(octet_length(acceptance),0) + coalesce(octet_length(dependencies),0) + coalesce(octet_length(status),0) + coalesce(octet_length(owner),0) + coalesce(octet_length(blocker),0) + coalesce(octet_length(evidence),0)";
@@ -55,8 +83,10 @@ impl BoardProjectionReads for SqliteBoard<'_> {
         let revision = events
             .checked_add(usage)
             .ok_or_else(|| BoardError::new(RefusalKind::Store, "board revision out of range"))?;
+        let (run, deadline) = self.run_identity()?;
         Ok(StoredRevision {
-            run: self.run_id()?,
+            run,
+            deadline,
             revision,
         })
     }
@@ -65,13 +95,7 @@ impl BoardProjectionReads for SqliteBoard<'_> {
         let (budget, observed_tokens, unknown_usage_requests) = self.usage()?;
         let mut bytes = limits.bytes;
         let run = self.projected_run(&mut bytes)?;
-        let files = self.measured(
-            "SELECT coalesce(octet_length(path),0) FROM files ORDER BY path LIMIT ?",
-            "SELECT path, task FROM files ORDER BY path LIMIT ?",
-            limits.files,
-            &mut bytes,
-            |row| Ok((cell(row, 0, "files path")?, cell(row, 1, "files task")?)),
-        )?;
+        // Items first: their reservations never starve them (round 3 L4).
         let items = self.measured(
             &format!("SELECT {ITEM_BYTES} FROM tasks ORDER BY id LIMIT ?"),
             "SELECT id, title, acceptance, dependencies, status, owner, blocker, evidence FROM tasks ORDER BY id LIMIT ?",
@@ -79,22 +103,38 @@ impl BoardProjectionReads for SqliteBoard<'_> {
             &mut bytes,
             item,
         )?;
+        let files = self.measured(
+            "SELECT coalesce(octet_length(path),0) FROM files ORDER BY path LIMIT ?",
+            &format!(
+                "SELECT path, {} FROM files ORDER BY path LIMIT ?",
+                guarded("task")
+            ),
+            limits.files,
+            &mut bytes,
+            |row| Ok((cell(row, 0, "files path")?, bounded(row, 1, "files task")?)),
+        )?;
         let members = self.measured(
             &format!("SELECT {MEMBER_BYTES} FROM members m ORDER BY m.id LIMIT ?"),
-            "SELECT m.id, m.status, (SELECT max(e.time) FROM events e WHERE e.actor=m.id) FROM members m ORDER BY m.id LIMIT ?",
+            &format!(
+                "SELECT m.id, m.status, {} FROM members m ORDER BY m.id LIMIT ?",
+                guarded(LATEST_EVENT_TIME)
+            ),
             limits.members,
             &mut bytes,
             |row| {
                 Ok(StoredMemberColumns {
                     id: cell(row, 0, "members id")?,
                     status: cell(row, 1, "members status")?,
-                    last_activity: cell(row, 2, "events time")?,
+                    last_activity: bounded(row, 2, "events time")?,
                 })
             },
         )?;
         let evidence = self.measured(
             &format!("SELECT {EVIDENCE_BYTES} FROM evidence ORDER BY criterion, actor LIMIT ?"),
-            "SELECT criterion, artifact, revision, kind, actor, accepted FROM evidence ORDER BY criterion, actor LIMIT ?",
+            &format!(
+                "SELECT criterion, artifact, revision, kind, actor, {} FROM evidence ORDER BY criterion, actor LIMIT ?",
+                guarded("accepted")
+            ),
             limits.evidence,
             &mut bytes,
             evidence,
@@ -217,22 +257,29 @@ impl SqliteBoard<'_> {
         )
     }
 
-    /// The run row's id, read only when it is no longer than an id the
-    /// board writes; null before a run row exists.
-    fn run_id(&self) -> Result<Value, BoardError> {
+    /// The run row's id and deadline, each read only when it is no longer
+    /// than the board writes; both null before a run row exists.
+    fn run_identity(&self) -> Result<(Value, Value), BoardError> {
         let mut statement = self
             .connection
-            .prepare("SELECT coalesce(octet_length(id),0) <= ?1, CASE WHEN coalesce(octet_length(id),0) <= ?1 THEN id END FROM run LIMIT 1")
+            .prepare(&format!(
+                "SELECT coalesce(octet_length(id),0) <= ?1, CASE WHEN coalesce(octet_length(id),0) <= ?1 THEN id END, {} FROM run LIMIT 1",
+                guarded("deadline")
+            ))
             .map_err(failed)?;
         let mut rows = statement
             .query_map(params![ID_BYTES], |row| {
-                Ok((row.get::<_, bool>(0)?, cell(row, 1, "run id")?))
+                Ok((
+                    row.get::<_, bool>(0)?,
+                    cell(row, 1, "run id")?,
+                    bounded(row, 2, "run deadline")?,
+                ))
             })
             .map_err(failed)?;
         match rows.next().transpose().map_err(failed)? {
-            None => Ok(Value::Null),
-            Some((true, id)) => Ok(id),
-            Some((false, _)) => Err(edited_run()),
+            None => Ok((Value::Null, Value::Null)),
+            Some((true, id, deadline)) => Ok((id, deadline)),
+            Some((false, _, _)) => Err(edited_run()),
         }
     }
 
@@ -265,7 +312,9 @@ impl SqliteBoard<'_> {
             Some(_) | None => return Err(edited_run()),
         };
         let sql = format!(
-            "SELECT id, goal, criteria, coordinator, integrator, member_limit, deadline, status, {outcome}, {outcome_reason} FROM run"
+            "SELECT id, goal, criteria, coordinator, integrator, {}, {}, status, {outcome}, {outcome_reason} FROM run",
+            guarded("member_limit"),
+            guarded("deadline")
         );
         let mut statement = self.connection.prepare(&sql).map_err(failed)?;
         let mut rows = statement
@@ -276,11 +325,11 @@ impl SqliteBoard<'_> {
                     criteria: json(row, 2, "run criteria")?,
                     coordinator: cell(row, 3, "run coordinator")?,
                     integrator: cell(row, 4, "run integrator")?,
-                    member_limit: cell(row, 5, "run member_limit")?,
-                    deadline: cell(row, 6, "run deadline")?,
-                    status: cell(row, 7, "run status")?,
-                    outcome: cell(row, 8, "run outcome")?,
-                    outcome_reason: cell(row, 9, "run outcome_reason")?,
+                    member_limit: bounded(row, 5, "run member_limit")?,
+                    deadline: bounded(row, 7, "run deadline")?,
+                    status: cell(row, 9, "run status")?,
+                    outcome: cell(row, 10, "run outcome")?,
+                    outcome_reason: cell(row, 11, "run outcome_reason")?,
                 })
             })
             .map_err(failed)?;
@@ -352,7 +401,7 @@ fn evidence(row: &Row<'_>) -> rusqlite::Result<StoredEvidenceColumns> {
         revision: cell(row, 2, "evidence revision")?,
         kind: cell(row, 3, "evidence kind")?,
         actor: cell(row, 4, "evidence actor")?,
-        accepted: cell(row, 5, "evidence accepted")?,
+        accepted: bounded(row, 5, "evidence accepted")?,
     })
 }
 

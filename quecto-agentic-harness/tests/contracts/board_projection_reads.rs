@@ -258,7 +258,9 @@ fn members_files_and_evidence_come_in_their_order() {
 /// refused naming its column, unread and unechoed.
 #[test]
 fn an_oversized_scalar_cell_is_refused_without_its_content() {
-    const HUGE: &str = "replace(hex(zeroblob(3000)), '00', '7')";
+    // Text, not digits: a column of numeric affinity would store digits as
+    // a number.
+    const HUGE: &str = "replace(hex(zeroblob(3000)), '00', 'x')";
     let run = |member_limit: &str, deadline: &str| {
         format!(
             "INSERT INTO run (id, goal, criteria, coordinator, integrator, member_limit, deadline, status) VALUES ('run-1','ship','[]','b','b',{member_limit},{deadline},'running');"
@@ -300,7 +302,7 @@ fn an_oversized_scalar_cell_is_refused_without_its_content() {
             message.contains(&format!("{column} holds more than this board writes")),
             "{column}: {message}"
         );
-        assert!(!message.contains("7777"), "{column}: {message}");
+        assert!(!message.contains("xxxx"), "{column}: {message}");
     }
 }
 

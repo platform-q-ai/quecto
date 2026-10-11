@@ -143,14 +143,16 @@ pub(super) fn board(read_board_projection: &ReadBoardProjection) -> Result<Serve
     Ok(read(projection(read_board_projection.execute()?)))
 }
 
-/// `_board_revision` (#2478): `{run, revision}`, the board's revision and
-/// the id of the run it counts (null before a run row exists), which a
-/// supervising session polls to learn the board moved or was made again.
+/// `_board_revision` (#2478): `{run, revision, created}`, the board's
+/// revision, the id of the run it counts (null before a run row exists)
+/// and whether that run was created, which a supervising session polls to
+/// learn the board moved or was made again.
 pub(super) fn revision(read_board_projection: &ReadBoardProjection) -> Result<Served, BoardError> {
     let revision = read_board_projection.revision()?;
     Ok(read(object([
         ("run", text(revision.run)),
         ("revision", Value::from(revision.revision)),
+        ("created", Value::Bool(revision.created)),
     ])))
 }
 

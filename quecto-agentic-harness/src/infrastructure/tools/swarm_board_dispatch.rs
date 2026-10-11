@@ -321,9 +321,6 @@ pub fn call_deciding(
 ) -> (Result<Value, BoardError>, bool) {
     let started = Instant::now();
     let known = Method::parse(method);
-    if let Some(refusal) = records::origin_refusal(origin, known, method) {
-        return (Err(refusal), false);
-    }
     let role = records::recorded_role(origin, known);
     // While the event log is on: this call's own measure, which is the
     // repository it is served over, so nothing is shared with another call.
@@ -338,8 +335,10 @@ pub fn call_deciding(
     // What a binding refusal found wrong (#2341), read only for a call the
     // binding refuses, or, for a member-facing op the board may refuse as
     // invalid, its type mismatches before binding takes the arguments.
-    let (answer, faults) = match known {
-        Some(known) => match binding::refusal(known, known.parameters(), &args) {
+    // A call its origin may not make is refused, and recorded, as any.
+    let (answer, faults) = match (records::origin_refusal(origin, known, method), known) {
+        (Some(refusal), _) => (Err(refusal), None),
+        (None, Some(known)) => match binding::refusal(known, known.parameters(), &args) {
             Some(refusal) => (Err(refusal), Some(binding::faults(known, &args))),
             None => {
                 let faults = binding::mistyped(known, &args);
@@ -351,7 +350,7 @@ pub fn call_deciding(
                 (served, Some(faults))
             }
         },
-        None => (
+        (None, None) => (
             Err(BoardError::new(
                 RefusalKind::Calling,
                 format!("swarm board has no method {method}"),

@@ -27,6 +27,7 @@ use crate::application::swarm::ports::BoardRepository;
 use crate::domain::swarm::telemetry::run_role;
 use crate::domain::swarm::{
     BoardError, BoardRole, MemberState, RefusalKind, RunState, TaskState, WORK_HOLDING_STATUSES,
+    participates,
 };
 
 /// The most bytes of rows one projection carries, well inside a socket
@@ -95,9 +96,14 @@ impl ReadBoardProjection {
         let stored = read(&*self.repository, |transaction| {
             transaction.projection_revision()
         })?;
+        let created = match &stored.deadline {
+            Value::Null => false,
+            deadline => participates(deadline.as_f64().ok_or_else(|| edited("run deadline"))?),
+        };
         Ok(BoardRevision {
             run: optional_text("run", &stored.run)?,
             revision: stored.revision,
+            created,
         })
     }
 }
@@ -365,19 +371,27 @@ fn typed_run(run: &StoredRunColumns, rows: &ProjectionRows) -> Result<RunProject
 }
 
 /// The budget's three settings as the board writes them (none set: no
-/// limit, not strict, not warned) and the ledger's two totals.
+/// limit, not strict, not warned) and the ledger's two totals. A stored
+/// budget holds all three, as the board writes and requires them
+/// (`board_usage`, round 3 L5): a limit that is null or a whole number of
+/// tokens, and two flags.
 fn budget(rows: &ProjectionRows) -> Result<BudgetProjection, BoardError> {
     let (token_limit, strict_unknown, warned) = match &rows.budget {
         None => (None, false, false),
         Some(Value::Object(stored)) => {
             let flag = |name: &str| match stored.get(name) {
-                None => Ok(false),
                 Some(Value::Bool(flag)) => Ok(*flag),
-                Some(_) => Err(edited("usage budget")),
+                Some(_) | None => Err(edited("usage budget")),
             };
             let limit = match stored.get("token_limit") {
-                None | Some(Value::Null) => None,
-                Some(limit) => Some(limit.as_i64().ok_or_else(|| edited("usage budget"))?),
+                Some(Value::Null) => None,
+                Some(limit) => Some(
+                    limit
+                        .as_u64()
+                        .and_then(|limit| i64::try_from(limit).ok())
+                        .ok_or_else(|| edited("usage budget"))?,
+                ),
+                None => return Err(edited("usage budget")),
             };
             (limit, flag("strict_unknown")?, flag("warned")?)
         }

@@ -138,6 +138,10 @@ impl crate::application::swarm::ports::BoardProjectionReads for super::MemoryTra
         let state = self.state.borrow();
         Ok(crate::application::swarm::dto::StoredRevision {
             run: state.run.as_ref().map_or(Value::Null, |run| json!(run.id)),
+            deadline: state
+                .run
+                .as_ref()
+                .map_or(Value::Null, |run| json!(run.record.deadline)),
             revision: i64::try_from(state.events.len() + state.request_usage.len()).unwrap(),
         })
     }
