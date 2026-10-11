@@ -99,14 +99,13 @@ fn each_op_reads_its_own_fields() {
 }
 
 #[test]
-fn create_takes_a_plan_and_defaults_to_a_draft_task() {
+fn create_takes_the_tasks_own_fields_and_defaults_to_a_draft_task() {
     let created = parse(&json!({
         "op": "create",
         "task": "a",
         "title": "Board CLI",
         "description": "Why.\r\nHow.\r\n",
         "depends_on": ["b"],
-        "plan": [{"title": "Spike", "criteria": ["Proved"]}, {"title": "Ship"}],
     }));
     let Ok(BoardRequest::Create(new)) = created else {
         panic!("{created:?}")
@@ -118,19 +117,11 @@ fn create_takes_a_plan_and_defaults_to_a_draft_task() {
     assert_eq!(new.status, NewBoardTaskStatus::Draft);
     assert_eq!(new.kind, TaskKind::Task);
     assert_eq!(new.depends_on, vec![slug("b")]);
-    assert_eq!(
-        new.plan,
-        vec![
-            PlanStep {
-                title: "Spike".into(),
-                criteria: vec!["Proved".into()]
-            },
-            PlanStep {
-                title: "Ship".into(),
-                criteria: vec![]
-            },
-        ]
-    );
+    // A plan is its own artifact (#2481): neither op takes one.
+    for op in ["create", "update_draft"] {
+        let with_plan = json!({"op": op, "task": "a", "title": "T", "plan": []});
+        assert_eq!(refused(with_plan).field, "plan", "{op}");
+    }
 }
 
 #[test]
@@ -151,7 +142,6 @@ fn update_draft_sets_only_what_it_names_and_null_takes_the_parent_away() {
             id: slug("a"),
             title: Some("T".into()),
             description: None,
-            plan: None,
             parent: Some(None),
             depends_on: None,
             expected_updated: Some(Timestamp::parse("2026-10-10T08:00:00Z").unwrap()),
@@ -198,10 +188,6 @@ fn anything_but_the_ops_own_fields_of_their_own_types_is_refused() {
         (
             json!({"op": "create", "task": "a", "title": "T", "depends_on": ["b", "B"]}),
             "depends_on/1",
-        ),
-        (
-            json!({"op": "create", "task": "a", "title": "T", "plan": [{"title": "S", "owner": "x"}]}),
-            "plan/0/owner",
         ),
         (json!({"op": "create", "task": "a", "title": 3}), "title"),
         (

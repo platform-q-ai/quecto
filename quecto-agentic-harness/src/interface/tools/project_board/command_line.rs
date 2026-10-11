@@ -4,16 +4,15 @@
 //! tool's JSON does.
 use serde_json::{Map, Value};
 
-use super::json::strict;
 use super::request::{Kind, RequestError, fields_of};
 
 /// The request `op` and `flags` name. A list of ids is comma-separated (an
-/// empty value is the empty list); a plan is JSON; `--parent ""` takes a
-/// draft's parent away.
+/// empty value is the empty list); `--parent ""` takes a draft's parent
+/// away.
 ///
 /// # Errors
 /// An unknown op, a flag the op does not take or gives twice, a flag
-/// without a value, an empty id in a list, or a plan that is not JSON.
+/// without a value, or an empty id in a list.
 pub fn request(op: &str, flags: &[String]) -> Result<Value, RequestError> {
     let refused = |field: &str, problem: &str| RequestError {
         field: field.into(),
@@ -48,9 +47,6 @@ pub fn request(op: &str, flags: &[String]) -> Result<Value, RequestError> {
                 .parse::<u64>()
                 .map(Value::from)
                 .unwrap_or_else(|_| Value::String(text.clone())),
-            Kind::Plan => {
-                strict(text).map_err(|error| refused("plan", &format!("must be JSON: {error}")))?
-            }
             Kind::Slug
             | Kind::OptionalSlug
             | Kind::Text

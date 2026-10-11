@@ -139,12 +139,7 @@ fn a_command_line_reaches_the_same_request_as_the_tools_json() {
         ("renew", &["--task", "a", "--task", "b"][..], "task"),
         ("create", &["--depends-on", "a,,b"][..], "depends_on"),
         ("create", &["--depends-on", "a,"][..], "depends_on"),
-        ("create", &["--plan", "not json"][..], "plan"),
-        (
-            "create",
-            &["--plan", r#"[{"title": "a", "title": "b"}]"#][..],
-            "plan",
-        ),
+        ("create", &["--plan", "[]"][..], "plan"),
     ] {
         assert_eq!(line(op, flags).unwrap_err().field, field, "{op} {flags:?}");
     }
@@ -158,7 +153,7 @@ fn json_naming_a_key_twice_is_refused() {
     );
     for text in [
         r#"{"op": "move", "to": "ready", "to": "done"}"#,
-        r#"{"plan": [{"title": "a", "title": "b"}]}"#,
+        r#"{"op": "create", "depends_on": ["a"], "depends_on": ["b"]}"#,
         r#"{"op": "x"} trailing"#,
     ] {
         assert!(json::strict(text).is_err(), "{text}");

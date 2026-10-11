@@ -8,7 +8,6 @@ use crate::application::project_board::dto::{
     BoardOp, DraftUpdate, NewBoardTask, NewBoardTaskStatus, plain_board_file,
 };
 use crate::application::project_board::operations::{BoardRequest, ListFilter};
-use crate::domain::project_board::entities::task_parts::PlanStep;
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
 use crate::domain::project_board::value_objects::vocabulary::{TaskKind, TaskStatus};
@@ -51,8 +50,6 @@ pub enum Kind {
     TaskKind,
     /// A pull request number, from 1.
     Pr,
-    /// Plan steps: `[{"title": …, "criteria": […]}]`.
-    Plan,
     /// A board file's path.
     Path,
     /// A git object name.
@@ -108,7 +105,6 @@ pub const OPS: &[(&str, &[Field])] = &[
             optional("status", Kind::NewStatus),
             optional("parent", Kind::Slug),
             optional("depends_on", Kind::Slugs),
-            optional("plan", Kind::Plan),
         ],
     ),
     (
@@ -117,7 +113,6 @@ pub const OPS: &[(&str, &[Field])] = &[
             TASK,
             optional("title", Kind::Text),
             optional("description", Kind::Text),
-            optional("plan", Kind::Plan),
             optional("parent", Kind::OptionalSlug),
             optional("depends_on", Kind::Slugs),
             optional("expected_updated", Kind::Timestamp),
@@ -257,49 +252,6 @@ impl Read<'_> {
             .filter(|pr| *pr >= 1)
             .ok_or_else(refused)
     }
-
-    fn plan(&self) -> Result<Option<Vec<PlanStep>>, RequestError> {
-        let Some(value) = self.value("plan") else {
-            return Ok(None);
-        };
-        let shape =
-            || RequestError::new("plan", "must be a list of {\"title\", \"criteria\"} steps");
-        let steps = value.as_array().ok_or_else(shape)?;
-        steps
-            .iter()
-            .enumerate()
-            .map(|(index, step)| {
-                let step = step.as_object().ok_or_else(shape)?;
-                let at = |key: &str| format!("plan/{index}/{key}");
-                if let Some(stray) = step
-                    .keys()
-                    .find(|key| !matches!(key.as_str(), "title" | "criteria"))
-                {
-                    return Err(RequestError::new(
-                        &at(stray),
-                        "a plan step takes no such field",
-                    ));
-                }
-                let title = step
-                    .get("title")
-                    .ok_or_else(|| RequestError::new(&at("title"), "is required"))
-                    .and_then(|title| text(&at("title"), title))?;
-                let criteria = match step.get("criteria") {
-                    None => vec![],
-                    Some(Value::Array(items)) => items
-                        .iter()
-                        .enumerate()
-                        .map(|(n, item)| text(&format!("{}/{n}", at("criteria")), item))
-                        .collect::<Result<_, _>>()?,
-                    Some(_) => {
-                        return Err(RequestError::new(&at("criteria"), "must be a list of text"));
-                    }
-                };
-                Ok(PlanStep { title, criteria })
-            })
-            .collect::<Result<_, _>>()
-            .map(Some)
-    }
 }
 
 fn slug(name: &str, value: &Value) -> Result<Slug, RequestError> {
@@ -417,8 +369,6 @@ fn create(read: &Read<'_>) -> Result<BoardRequest, RequestError> {
         status: status.unwrap_or(NewBoardTaskStatus::Draft),
         parent: read.slug("parent")?,
         depends_on: read.slugs("depends_on")?.unwrap_or_default(),
-        plan: read.plan()?.unwrap_or_default(),
-        team: None,
     }))
 }
 
@@ -446,14 +396,12 @@ fn update_draft(read: &Read<'_>) -> Result<BoardRequest, RequestError> {
         id: read.task()?,
         title: read.text("title")?,
         description: read.text("description")?,
-        plan: read.plan()?,
         parent,
         depends_on: read.slugs("depends_on")?,
         expected_updated,
     };
     let sets_something = update.title.is_some()
         || update.description.is_some()
-        || update.plan.is_some()
         || update.parent.is_some()
         || update.depends_on.is_some();
     match sets_something {
