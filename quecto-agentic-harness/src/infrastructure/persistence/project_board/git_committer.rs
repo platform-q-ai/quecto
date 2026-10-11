@@ -20,25 +20,12 @@ impl Git {
             .get("PATH")
             .and_then(|path| on_path(path, "git"))
             .ok_or(GitError::NotFound)?;
-        // Asked of git with no identity of its own: `git config` reads
-        // none of the identity variables `run` sets.
-        let asking = Self {
-            program,
-            repo: repo.to_path_buf(),
-            env: env.clone(),
-            identity: Identity {
-                name: String::new(),
-                email: String::new(),
-            },
-            local_timeout: LOCAL_TIMEOUT,
-            network_timeout: NETWORK_TIMEOUT,
-        };
-        let configured = |key: &str| {
-            asking.text(&["config", "--get", key], None).map_err(|_| {
-                GitError::Identity(format!(
-                    "{key} is not configured: set it to write the board"
-                ))
-            })
+        let asking = Self::unidentified(program, repo, env);
+        let configured = |key: &str| match config_get(&asking, key)? {
+            Some(value) => Ok(value),
+            None => Err(GitError::Identity(format!(
+                "{key} is not configured: set it to write the board"
+            ))),
         };
         let identity = Identity {
             name: configured("user.name")?,
@@ -48,6 +35,23 @@ impl Git {
             .validate("committer")
             .map_err(|error| GitError::Identity(error.to_string()))?;
         Ok(identity)
+    }
+
+    /// git for `repo` with no identity of its own, for asking its
+    /// configuration: `git config` reads none of the identity variables
+    /// `run` sets.
+    fn unidentified(program: PathBuf, repo: &Path, env: &GitEnvironment) -> Self {
+        Self {
+            program,
+            repo: repo.to_path_buf(),
+            env: env.clone(),
+            identity: Identity {
+                name: String::new(),
+                email: String::new(),
+            },
+            local_timeout: LOCAL_TIMEOUT,
+            network_timeout: NETWORK_TIMEOUT,
+        }
     }
 
     /// git for `repo` that only reads: it carries the placeholder
@@ -66,5 +70,23 @@ impl Git {
                 email: email.into(),
             },
         )
+    }
+}
+
+/// The value `git config --get key` resolves, or `None` when nothing sets
+/// it: git's own answer for that is exit status 1 and no message. Any
+/// other failure (no repository there, a timeout, a broken configuration)
+/// is git's error, with its cause.
+fn config_get(git: &Git, key: &str) -> Result<Option<String>, GitError> {
+    let args = ["config", "--get", key];
+    let output = git.local(&args, None, SHORT_OUTPUT)?;
+    match (output.status.code(), output.stderr.is_empty()) {
+        (Some(0), _) => Ok(Some(
+            String::from_utf8_lossy(&output.stdout)
+                .trim_end()
+                .to_string(),
+        )),
+        (Some(1), true) => Ok(None),
+        (Some(_) | None, _) => Err(failed(&args, &output)),
     }
 }

@@ -1,5 +1,6 @@
 use super::*;
-use crate::application::project_board::operations::query_listings::QueryListings;
+use crate::application::project_board::operations::NoPullRequestHost;
+use crate::application::project_board::operations::query_listings::{QueryListings, assembled};
 use crate::application::project_board::use_cases::QueryBoard;
 use crate::infrastructure::test_support::memory_board_store::MemoryBoardStore;
 use crate::infrastructure::time::board_clock::SystemBoardClock;
@@ -64,7 +65,7 @@ fn the_command_line_builds_the_request_the_tool_would_send() {
 
 #[test]
 fn input_from_stdin_is_bounded_and_its_failures_are_the_requests() {
-    let big = "x".repeat(usize::try_from(MAX_REQUEST_BYTES).unwrap() + 1);
+    let big = "x".repeat(MAX_REQUEST_BYTES + 1);
     let refused = built(&["--input", "-"], &big).unwrap_err();
     assert_eq!(refused.field, "input");
     assert!(refused.problem.contains("more than"), "{}", refused.problem);
@@ -90,16 +91,16 @@ fn memory_board(environment: &ProjectBoardEnvironment) -> Result<ProjectBoardHan
     let store = MemoryBoardStore::default();
     use crate::application::project_board::ports::ProjectBoardStore;
     store.bootstrap().unwrap();
-    let operations = BoardOperations::new(
+    let operations = assembled(
         Arc::new(store.client()),
         Arc::new(SystemBoardClock::default()),
         Arc::new(QueryListings(QueryBoard::new(Arc::new(store.client())))),
-        Err("no pull request host in this test".into()),
+        Err(NoPullRequestHost::NotAPullRequestHost),
     )
     .map_err(|error| BuildError::Unavailable(error.to_string()))?;
     let created = run(
         &operations,
-        &json!({"op": "create", "task": "a", "title": "A", "status": "ready"}),
+        r#"{"op": "create", "task": "a", "title": "A", "status": "ready"}"#,
     );
     assert_eq!(created["ok"], json!(true), "{created}");
     Ok(ProjectBoardHandles { operations })
@@ -186,4 +187,91 @@ fn a_board_that_cannot_be_built_or_is_not_composed_answers_why() {
     let (code, answer, stderr) = cli(Some(memory_board), &["help"]);
     assert_eq!((code, answer), (0, Value::Null));
     assert!(stderr.starts_with("usage: quecto board"), "{stderr}");
+}
+
+#[test]
+fn input_that_is_not_utf8_is_refused_and_input_at_the_bound_is_read() {
+    let broken = bounded(&[0xff, 0xfe][..]).unwrap_err();
+    assert!(broken.to_string().contains("not UTF-8"), "{broken}");
+    let exact = " ".repeat(MAX_REQUEST_BYTES);
+    assert_eq!(bounded(exact.as_bytes()).unwrap().len(), MAX_REQUEST_BYTES);
+}
+
+/// An op is echoed back only when it is one, as on the tool's path.
+#[test]
+fn an_unknown_op_is_not_echoed_back() {
+    for line in [
+        &["no-such-op", "--task", "a"][..],
+        &["<script>", "--x", "y"][..],
+    ] {
+        let (code, answer, _) = cli(Some(never_built), line);
+        assert_eq!((code, &answer["op"]), (1, &Value::Null), "{line:?}");
+    }
+    let (_, answer, _) = cli(Some(never_built), &["renew", "--holder", "x"]);
+    assert_eq!(answer["op"], json!("renew"));
+}
+
+#[test]
+fn the_command_lines_own_flags_are_given_once_with_a_value() {
+    for (line, field) in [
+        (&["list", "--repo", "a", "--repo", "b"][..], "repo"),
+        (&["list", "--remote", "a", "--remote", "b"][..], "remote"),
+        (&["list", "--input", "{}", "--input", "{}"][..], "input"),
+        (&["list", "--repo", ""][..], "repo"),
+        (&["list", "--remote", ""][..], "remote"),
+        (&["list", "--input", ""][..], "input"),
+    ] {
+        let (code, answer, _) = cli(Some(never_built), line);
+        assert_eq!(code, 1, "{line:?}");
+        assert_eq!(
+            answer["error"]["code"],
+            json!("invalid_request"),
+            "{line:?}"
+        );
+        assert_eq!(answer["error"]["field"], json!(field), "{line:?}");
+    }
+}
+
+/// A request the parser refuses (a value of the wrong kind, a field
+/// missing from `--input`) builds nothing either.
+#[test]
+fn a_request_the_parser_refuses_builds_nothing() {
+    for (line, field) in [
+        (&["move", "--task", "a", "--to", "nowhere"][..], "to"),
+        (&["--input", r#"{"op": "renew"}"#][..], "task"),
+    ] {
+        let (code, answer, _) = cli(Some(never_built), line);
+        assert_eq!(
+            (code, &answer["error"]["field"]),
+            (1, &json!(field)),
+            "{line:?}"
+        );
+    }
+}
+
+/// `board`'s own arguments are its request's: a `--config` among them is
+/// a field, answered as JSON, never the global flag.
+#[test]
+fn a_config_flag_after_board_is_the_requests() {
+    let ctx = CliContext {
+        project_board: Some(never_built),
+        ..CliContext::default()
+    };
+    let line = ["quecto", "board", "create", "--title", "--config"];
+    let output = crate::interface::cli::run_with_output(args(&line), &ctx);
+    assert_eq!(output.exit_code, 1);
+    assert_eq!(output.stderr, "");
+    let answer: Value = serde_json::from_str(output.stdout.trim()).unwrap();
+    assert_eq!(answer["error"]["field"], json!("task"), "{answer}");
+    let global = args(&[
+        "quecto", "--config", "c.json", "board", "x", "--config", "y",
+    ]);
+    assert_eq!(
+        super::super::config_flag::extract_config_flag(&global),
+        Ok(Some(PathBuf::from("c.json")))
+    );
+    assert_eq!(
+        super::super::config_flag::strip_global_config_flag(&global),
+        args(&["quecto", "board", "x", "--config", "y"])
+    );
 }

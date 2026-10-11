@@ -15,20 +15,21 @@
 //! **Trust.** The board is cooperative: a change is attributed to the
 //! local git identity, which anyone can set, and anyone who can push the
 //! board branch could push raw commits. Branch protection or a server hook
-//! is the real control.
+//! is the real control. The identity is the repository's configured
+//! `user.name` and `user.email`: `GIT_AUTHOR_*` and `GIT_COMMITTER_*` in
+//! the environment are not honoured.
 use std::io::Read;
 use std::path::PathBuf;
 
 use serde_json::Value;
 
 use super::CliContext;
-use crate::application::project_board::operations::BoardOperations;
-use crate::interface::tools::project_board::answer::{ErrorCode, reason_refused, request_refused};
-use crate::interface::tools::project_board::request::{RequestError, op_of, parse};
-use crate::interface::tools::project_board::{command_line, json, run};
-
-/// The most bytes `--input -` reads.
-pub const MAX_REQUEST_BYTES: u64 = 1024 * 1024;
+use crate::application::project_board::use_cases::RunBoardOperation;
+use crate::interface::tools::project_board::answer::{
+    FrontEndRefusal, reason_refused, request_refused,
+};
+use crate::interface::tools::project_board::request::{RequestError, fields_of, op_of, parse};
+use crate::interface::tools::project_board::{MAX_REQUEST_BYTES, command_line, json, run};
 
 /// What a run of `quecto board` does with the board.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -50,7 +51,7 @@ pub struct ProjectBoardEnvironment {
 
 /// The board's operations, built by composition.
 pub struct ProjectBoardHandles {
-    pub operations: BoardOperations,
+    pub operations: RunBoardOperation,
 }
 
 /// Why composition could not build the board's operations.
@@ -85,20 +86,32 @@ fn read_line(args: &[String]) -> Result<Line, RequestError> {
         remote: "origin".into(),
     };
     let mut rest = args.iter();
-    let missing = |flag: &str| RequestError {
+    let invalid = |flag: &str, problem: &str| RequestError {
         field: flag.trim_start_matches('-').into(),
-        problem: "needs a value".into(),
+        problem: problem.into(),
+    };
+    // A flag of the command line's own: given once, with a value.
+    let mut given: Vec<&str> = Vec::new();
+    let mut own = |flag: &'static str, value: Option<&String>| {
+        let value = value
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| invalid(flag, "needs a value"))?;
+        match given.contains(&flag) {
+            true => Err(invalid(flag, "is given twice")),
+            false => {
+                given.push(flag);
+                Ok(value.clone())
+            }
+        }
     };
     while let Some(arg) = rest.next() {
         match arg.as_str() {
             "--json" => {}
-            "--input" => line.input = Some(rest.next().ok_or_else(|| missing("--input"))?.clone()),
-            "--repo" => {
-                line.repo = Some(PathBuf::from(rest.next().ok_or_else(|| missing("--repo"))?))
-            }
-            "--remote" => line.remote = rest.next().ok_or_else(|| missing("--remote"))?.clone(),
+            "--input" => line.input = Some(own("--input", rest.next())?),
+            "--repo" => line.repo = Some(PathBuf::from(own("--repo", rest.next())?)),
+            "--remote" => line.remote = own("--remote", rest.next())?,
             flag if flag.starts_with("--") => {
-                let value = rest.next().ok_or_else(|| missing(flag))?;
+                let value = rest.next().ok_or_else(|| invalid(flag, "needs a value"))?;
                 line.fields.extend([flag.to_string(), value.clone()]);
             }
             op if line.op.is_none() => line.op = Some(op.to_string()),
@@ -158,8 +171,9 @@ fn request(
 /// At most [`MAX_REQUEST_BYTES`] of `input`, as text.
 fn bounded(input: impl Read) -> std::io::Result<String> {
     let mut bytes = Vec::new();
-    input.take(MAX_REQUEST_BYTES + 1).read_to_end(&mut bytes)?;
-    if bytes.len() as u64 > MAX_REQUEST_BYTES {
+    let limit = u64::try_from(MAX_REQUEST_BYTES).expect("the request bound fits a u64");
+    input.take(limit + 1).read_to_end(&mut bytes)?;
+    if bytes.len() > MAX_REQUEST_BYTES {
         return Err(std::io::Error::other(format!(
             "it is more than {MAX_REQUEST_BYTES} bytes"
         )));
@@ -190,7 +204,12 @@ pub(crate) fn cmd_board(
 }
 
 fn answer(ctx: &CliContext, args: &[String]) -> Value {
-    let named = |op: &Option<String>| op.as_ref().map(|op| op.replace('-', "_"));
+    // An op is echoed back only when it is one: never a stranger's text.
+    let named = |op: &Option<String>| {
+        op.as_ref()
+            .map(|op| op.replace('-', "_"))
+            .filter(|op| fields_of(op).is_some())
+    };
     let line = match read_line(args) {
         Ok(line) => line,
         Err(error) => return request_refused(None, &error),
@@ -212,7 +231,7 @@ fn answer(ctx: &CliContext, args: &[String]) -> Value {
     let Some(build) = ctx.project_board else {
         return reason_refused(
             op.as_deref(),
-            ErrorCode::StoreUnavailable,
+            FrontEndRefusal::StoreUnavailable,
             "the project board capability is not composed",
         );
     };
@@ -232,12 +251,13 @@ fn answer(ctx: &CliContext, args: &[String]) -> Value {
         vars: std::env::vars_os().collect(),
     };
     match build(&environment) {
-        Ok(handles) => run(&handles.operations, &value),
+        // The one entry point every front end's request goes through.
+        Ok(handles) => run(&handles.operations, &value.to_string()),
         Err(BuildError::NoCommitter(why)) => {
-            reason_refused(op.as_deref(), ErrorCode::NoCommitter, &why)
+            reason_refused(op.as_deref(), FrontEndRefusal::NoCommitter, &why)
         }
         Err(BuildError::Unavailable(why)) => {
-            reason_refused(op.as_deref(), ErrorCode::StoreUnavailable, &why)
+            reason_refused(op.as_deref(), FrontEndRefusal::StoreUnavailable, &why)
         }
     }
 }

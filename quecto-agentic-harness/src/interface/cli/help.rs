@@ -66,6 +66,7 @@ pub(super) fn help_text(out: &mut String) {
     out.push_str(
         "              <op> [--<field> <value>]... [--input <json>|-] [--repo <path>] [--remote <name>]\n",
     );
+    out.push_str("                  [--json]\n");
     out.push_str(
         "                  ops: bootstrap list list-ready list-takeable show create update-draft\n",
     );
@@ -73,8 +74,9 @@ pub(super) fn help_text(out: &mut String) {
         "                  move renew take-over link-pr unlink-pr complete clear-set-aside\n",
     );
     out.push_str(
-        "                  prints one JSON answer; a write needs git's user.name and user.email.\n",
+        "                  prints one JSON answer; a write needs git's user.name and user.email\n",
     );
+    out.push_str("                  (GIT_AUTHOR_* and GIT_COMMITTER_* are not honoured).\n");
     out.push_str(
         "                  Changes are attributed to that local identity: the board is cooperative,\n",
     );

@@ -65,7 +65,7 @@ fn environment(repo: &Path, access: Access) -> ProjectBoardEnvironment {
 fn the_board_runs_end_to_end_over_git_and_the_index() {
     let (_dir, work) = repository();
     let handles = build_project_board_handles(&environment(&work, Access::Write)).unwrap();
-    let ops = |request: Value| run(&handles.operations, &request);
+    let ops = |request: Value| run(&handles.operations, &request.to_string());
     let bootstrap = ops(json!({"op": "bootstrap"}));
     assert_eq!(
         (&bootstrap["ok"], &bootstrap["created"]),
@@ -98,14 +98,14 @@ fn the_board_runs_end_to_end_over_git_and_the_index() {
 fn a_read_needs_no_committer_and_a_write_says_none_is_configured() {
     let (_dir, work) = repository();
     let writer = build_project_board_handles(&environment(&work, Access::Write)).unwrap();
-    run(&writer.operations, &json!({"op": "bootstrap"}));
+    run(&writer.operations, r#"{"op": "bootstrap"}"#);
     run(
         &writer.operations,
-        &json!({"op": "create", "task": "a", "title": "A"}),
+        r#"{"op": "create", "task": "a", "title": "A"}"#,
     );
     sh(&work, &["config", "--unset", "user.name"]);
     let reader = build_project_board_handles(&environment(&work, Access::Read)).unwrap();
-    let listed = run(&reader.operations, &json!({"op": "list"}));
+    let listed = run(&reader.operations, r#"{"op": "list"}"#);
     assert_eq!(listed["tasks"][0]["id"], json!("a"), "{listed}");
     let refused = build_project_board_handles(&environment(&work, Access::Write));
     assert!(
@@ -119,4 +119,72 @@ fn a_read_needs_no_committer_and_a_write_says_none_is_configured() {
         build_project_board_handles(&nowhere),
         Err(BuildError::Unavailable(_))
     ));
+}
+
+/// Only "not set" is a missing committer: git failing to read its
+/// configuration, or a repository git cannot run in, is the store's
+/// failure, with its cause.
+#[test]
+fn a_committer_git_cannot_read_is_not_a_missing_one() {
+    let (_dir, work) = repository();
+    let config = work.join(".git/config");
+    let kept = std::fs::read_to_string(&config).unwrap();
+    std::fs::write(&config, format!("{kept}\n[broken\n")).unwrap();
+    let broken = build_project_board_handles(&environment(&work, Access::Write));
+    assert!(
+        matches!(&broken, Err(BuildError::Unavailable(why)) if why.contains("config")),
+        "{:?}",
+        broken.as_ref().err()
+    );
+    std::fs::write(&config, kept).unwrap();
+    let mut elsewhere = environment(&work, Access::Write);
+    elsewhere.repo = work.join("no-such-directory");
+    assert!(
+        matches!(
+            build_project_board_handles(&elsewhere),
+            Err(BuildError::Unavailable(_))
+        ),
+        "a repository git cannot run in"
+    );
+    sh(&work, &["config", "user.email", "not an email"]);
+    let refused = build_project_board_handles(&environment(&work, Access::Write));
+    assert!(
+        matches!(&refused, Err(BuildError::NoCommitter(_))),
+        "{:?}",
+        refused.as_ref().err()
+    );
+}
+
+/// A board on GitHub with no `gh` to ask answers why completion cannot
+/// run: there is no gh on the PATH.
+#[test]
+fn a_github_remote_with_no_gh_says_so() {
+    let (dir, work) = repository();
+    sh(
+        &work,
+        &["remote", "set-url", "origin", "https://github.com/o/r.git"],
+    );
+    let only_git = dir.path().join("bin");
+    std::fs::create_dir(&only_git).unwrap();
+    let git = which("git");
+    std::os::unix::fs::symlink(&git, only_git.join("git")).unwrap();
+    let mut env = environment(&work, Access::Read);
+    env.vars[0].1 = only_git.into_os_string();
+    let handles = build_project_board_handles(&env).unwrap();
+    let complete = run(&handles.operations, r#"{"op": "complete", "task": "a"}"#);
+    assert_eq!(
+        complete["error"]["code"],
+        json!("pull_requests_unavailable"),
+        "{complete}"
+    );
+    let reason = complete["error"]["reason"].as_str().unwrap();
+    assert!(reason.contains("no gh on the PATH"), "{reason}");
+}
+
+/// Where `program` is on this process's PATH.
+fn which(program: &str) -> std::path::PathBuf {
+    std::env::split_paths(&std::env::var_os("PATH").unwrap())
+        .map(|dir| dir.join(program))
+        .find(|path| path.is_file())
+        .unwrap_or_else(|| panic!("no {program} on the PATH"))
 }
