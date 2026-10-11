@@ -26,7 +26,6 @@ impl Ancestry {
 }
 
 impl BoardRevisions for Ancestry {
-    #[expect(clippy::incompatible_msrv)]
     fn remote_head(&self) -> Result<Option<String>, BoardStoreError> {
         if let Some(lock) = &self.lock {
             let file = std::fs::OpenOptions::new()
@@ -123,7 +122,6 @@ fn a_held_writer_lock_is_waited_on_for_a_bounded_time() {
 }
 
 #[test]
-#[expect(clippy::incompatible_msrv)]
 fn a_build_a_live_writer_holds_is_never_swept_however_old() {
     let (dir, index) = index();
     rebuild(&index, &board("a1")).unwrap();

@@ -113,6 +113,12 @@ pub trait ProjectBoardStore: Send + Sync {
 /// and carries the head it was read at and every file set aside.
 /// Blocking: callers run it off the async workers.
 ///
+/// Listings are advice. The local view lives in the repository (the
+/// index under `.git/quecto`), so anyone who can write there, an agent
+/// included, can forge what it lists. Act on a listing only through the
+/// store: every write is a compare-and-swap against the board's real head,
+/// so a forged listing can never move the board.
+///
 /// [`QueryBoard`]: super::use_cases::QueryBoard
 pub trait BoardListings: Send + Sync {
     /// Ready tasks whose every dependency is on the board and releases its

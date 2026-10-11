@@ -97,7 +97,7 @@ fn refresh_rebuilds_from_the_board_branch_only_when_it_moves() {
     assert!(
         index
             .path()
-            .ends_with("alice/.git/quecto/project-board.sqlite"),
+            .ends_with("alice/.git/quecto/project-board-origin.sqlite"),
         "{at}"
     );
     assert_eq!(

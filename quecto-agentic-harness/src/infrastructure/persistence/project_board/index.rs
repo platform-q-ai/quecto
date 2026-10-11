@@ -1,6 +1,10 @@
 //! The local index of a project's board. It is a SQLite cache of the board
-//! branch at one commit, kept at `<git-common-dir>/quecto/project-board.sqlite`,
-//! and it answers a listing's queries without reading every task file.
+//! branch at one commit, kept at
+//! `<git-common-dir>/quecto/project-board-<remote>.sqlite` (one per remote,
+//! its name spelt by [`file_name`]), and it answers a listing's queries
+//! without reading every task file. Anyone who can write the repository
+//! can forge it, so its listings are advice: writes go through the store's
+//! compare-and-swap.
 //!
 //! It is only a cache. It records the board commit it was built from and
 //! is rebuilt from the store's read whenever the board moves. It is never
@@ -105,12 +109,16 @@ impl BoardIndex {
         Self { path: path.into() }
     }
 
-    /// The index of `store`'s repository.
+    /// The index of `store`'s repository and remote: in its common git
+    /// directory, shared by every worktree and never in a tree.
     ///
     /// # Errors
     /// git cannot name the repository's common directory.
     pub fn of(store: &GitBoardStore) -> Result<Self, IndexError> {
-        Ok(Self::at(store.index_path().map_err(IndexError::Store)?))
+        let common = store.common_dir().map_err(IndexError::Store)?;
+        Ok(Self::at(
+            common.join("quecto").join(file_name(store.remote())),
+        ))
     }
 
     pub fn path(&self) -> &Path {
@@ -142,7 +150,7 @@ impl BoardIndex {
             Ok(Some(head)) if head == remote => Ok(Refreshed::Unchanged { head }),
             Ok(Some(_) | None) | Err(IndexError::NeedsRebuild | IndexError::Corrupt(_)) => {
                 match store.read() {
-                    Ok(snapshot) => self.rebuild(&snapshot, revisions),
+                    Ok(snapshot) => self.rebuild_at(&snapshot, revisions, Some(&remote)),
                     Err(BoardStoreError::NoBoard) => self.gone(),
                     Err(error) => Err(IndexError::Store(error)),
                 }
@@ -177,6 +185,19 @@ impl BoardIndex {
         snapshot: &BoardSnapshot,
         revisions: &dyn BoardRevisions,
     ) -> Result<Refreshed, IndexError> {
+        // Asked before the writer lock is taken, never while it is held: an
+        // unreachable remote is no remote, and keeps nothing.
+        let remote = revisions.remote_head().ok().flatten();
+        self.rebuild_at(snapshot, revisions, remote.as_deref())
+    }
+
+    /// [`Self::rebuild`] with the remote board's head already known.
+    fn rebuild_at(
+        &self,
+        snapshot: &BoardSnapshot,
+        revisions: &dyn BoardRevisions,
+        remote: Option<&str>,
+    ) -> Result<Refreshed, IndexError> {
         let head = snapshot.head.0.clone();
         if !full_commit_id(&head) {
             return Err(IndexError::Corrupt(format!(
@@ -196,7 +217,7 @@ impl BoardIndex {
         index_file::sweep(&dir, &name);
         match self.head() {
             Ok(Some(stored)) if stored == head => Ok(Refreshed::Unchanged { head }),
-            Ok(Some(stored)) if self.behind(&head, &stored, revisions) => {
+            Ok(Some(stored)) if behind(&head, &stored, remote, revisions) => {
                 Ok(Refreshed::Newer { head: stored })
             }
             Ok(Some(_) | None) | Err(IndexError::NeedsRebuild | IndexError::Corrupt(_)) => {
@@ -204,14 +225,6 @@ impl BoardIndex {
             }
             Err(error) => Err(error),
         }
-    }
-
-    /// `head` is an older commit of `stored`'s history and the remote board
-    /// has not been reset to it. An unknown ancestry is not behind: the
-    /// snapshot is published and the next refresh corrects it.
-    fn behind(&self, head: &str, stored: &str, revisions: &dyn BoardRevisions) -> bool {
-        revisions.is_ancestor(head, stored).unwrap_or(false)
-            && revisions.remote_head().ok().flatten().as_deref() != Some(head)
     }
 
     fn publish(&self, build: Build, dir: &Path, head: String) -> Result<Refreshed, IndexError> {
@@ -324,19 +337,23 @@ impl BoardIndex {
         value: &str,
         wanted: impl Fn(&Task, &BTreeMap<String, TaskStatus>) -> bool,
     ) -> Result<BoardListing, IndexError> {
-        let (head, rows, statuses, quarantined) = self.read(|transaction| {
+        let (head, rows, depended, quarantined) = self.read(|transaction| {
             let mut statement = transaction.prepare(query)?;
             let rows: Vec<(String, Vec<u8>)> = statement
                 .query_map([value], |row| Ok((row.get(0)?, row.get(1)?)))?
                 .collect::<rusqlite::Result<_>>()?;
-            let mut statement = transaction.prepare("SELECT id, status FROM tasks")?;
-            let statuses: Vec<(String, String)> = statement
+            // Every task some task depends on, by its record: the status
+            // column is only a prefilter.
+            let mut statement = transaction.prepare(
+                "SELECT id, record FROM tasks WHERE id IN (SELECT depends_on FROM dependencies)",
+            )?;
+            let depended: Vec<(String, Vec<u8>)> = statement
                 .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
                 .collect::<rusqlite::Result<_>>()?;
             Ok((
                 stored_head(transaction)?,
                 rows,
-                statuses,
+                depended,
                 quarantined(transaction)?,
             ))
         })?;
@@ -344,11 +361,14 @@ impl BoardIndex {
         let head = head
             .filter(|head| full_commit_id(head))
             .ok_or_else(|| corrupt("no board commit".into()))?;
-        let statuses = statuses
+        let statuses = depended
             .into_iter()
-            .map(|(id, status)| match TaskStatus::parse(&status) {
-                Some(status) => Ok((id, status)),
-                None => Err(corrupt(format!("status {status:?} of {id:?}"))),
+            .map(|(id, record)| {
+                let task = decode(&record).map_err(|error| corrupt(error.to_string()))?;
+                match task.fields().id.as_str() == id {
+                    true => Ok((id, task.fields().status)),
+                    false => Err(corrupt(format!("row {id:?} holds another task"))),
+                }
             })
             .collect::<Result<BTreeMap<_, _>, _>>()?;
         let mut tasks = vec![];
@@ -395,6 +415,32 @@ impl BoardIndex {
             .map_err(|(_, error)| IndexError::from(error))?;
         outcome
     }
+}
+
+/// The stored head is kept over an older snapshot `head` only while the
+/// remote board still holds it: `head` is one of its ancestors, and it is
+/// the remote board's head or one of its ancestors. A head a force push
+/// abandoned, an unknown ancestry or no remote board keeps nothing: the
+/// snapshot is published and the next refresh corrects it.
+fn behind(head: &str, stored: &str, remote: Option<&str>, revisions: &dyn BoardRevisions) -> bool {
+    let ancestor = |older: &str, newer: &str| revisions.is_ancestor(older, newer).unwrap_or(false);
+    ancestor(head, stored) && remote.is_some_and(|remote| ancestor(stored, remote))
+}
+
+/// The index's file name for `remote`: `project-board-<remote>.sqlite`,
+/// the name spelt in `a-z`, `0-9`, `-` and `_`, every other byte
+/// percent-encoded, so no two remotes share one even on a file system that
+/// ignores case.
+pub fn file_name(remote: &str) -> String {
+    let mut name = String::from("project-board-");
+    for byte in remote.bytes() {
+        match byte {
+            b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' => name.push(char::from(byte)),
+            _ => name.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    name.push_str(".sqlite");
+    name
 }
 
 /// A full SHA-1 or SHA-256 commit id in lowercase hex.
@@ -453,7 +499,7 @@ fn fill(
     head: &str,
     rows: &[Row],
     quarantined: &[QuarantinedFile],
-) -> Result<(), IndexError> {
+) -> rusqlite::Result<()> {
     for row in rows {
         transaction.execute(
             "INSERT INTO tasks (id, status, parent, claimed, record) VALUES (?1, ?2, ?3, ?4, ?5)",

@@ -8,6 +8,21 @@
 //! database, or holds another schema, is never written to. A rebuild never
 //! frees pages inside a file that keeps living, so the index needs no
 //! VACUUM.
+//!
+//! Readers open the index `immutable`: a published index never changes in
+//! place (a rebuild renames a new file, a new inode, over it), so SQLite
+//! never looks for a write-ahead log, shared memory or rollback journal
+//! beside it, and nothing planted at those names (a forged log, a hot
+//! journal, a directory, a FIFO) is applied, waited on or failed for.
+//! Every publish and discard removes whatever is at those names, under
+//! the writer lock.
+//!
+//! A reader opens the path itself first, without following a link or
+//! waiting on a FIFO, and reads only a regular file. SQLite then opens the
+//! path again; something swapped in between those two opens (a FIFO, say)
+//! is not seen by the first. The directory is private to its owner, so
+//! only the owner's own processes can swap it, and the window stays open:
+//! SQLite resolves links itself, so it cannot be handed the checked file.
 use super::index::IndexError;
 use super::task_record::{MAX_TASK_FILE_BYTES, SCHEMA_VERSION};
 use rusqlite::limits::Limit;
@@ -22,6 +37,11 @@ use std::time::{Duration, SystemTime};
 /// The index's own layout version, in `PRAGMA user_version`.
 pub const INDEX_SCHEMA: i32 = 1;
 pub const BUSY_TIMEOUT: Duration = Duration::from_secs(2);
+/// The longest a writer waits for the writer lock.
+pub const LOCK_WAIT: Duration = Duration::from_secs(2);
+const LOCK_POLL: Duration = Duration::from_millis(10);
+/// The names beside the index where SQLite keeps its own files.
+const SIDE_FILES: [&str; 3] = ["-wal", "-shm", "-journal"];
 /// The longest value a reader takes: a task record at its cap, with room
 /// to spare.
 pub const MAX_VALUE_BYTES: usize = MAX_TASK_FILE_BYTES + 64 * 1024;
@@ -63,11 +83,20 @@ fn objects(connection: &Connection) -> rusqlite::Result<Vec<Object>> {
     rows.collect()
 }
 
-/// The file is not an index of this layout, or not a database at all.
+/// A read failed in a way a rebuild mends: the file is not an index of
+/// this layout, not a database at all, or SQLite could not read it as one
+/// (a read-only rollback, an I/O error on a planted side file). A rebuild
+/// discards the file and its side files under the writer lock.
 pub(super) fn stale(error: &rusqlite::Error) -> bool {
     matches!(
         error.sqlite_error_code(),
-        Some(ErrorCode::NotADatabase | ErrorCode::DatabaseCorrupt | ErrorCode::CannotOpen)
+        Some(
+            ErrorCode::NotADatabase
+                | ErrorCode::DatabaseCorrupt
+                | ErrorCode::CannotOpen
+                | ErrorCode::ReadOnly
+                | ErrorCode::SystemIoFailure
+        )
     )
 }
 
@@ -81,9 +110,19 @@ impl From<rusqlite::Error> for IndexError {
     }
 }
 
-/// A failure while building an index: never a reason to rebuild it.
+/// A failure while building an index: never a reason to rebuild it. The
+/// file system's failures are I/O; any other is SQLite's.
 pub(super) fn built(error: rusqlite::Error) -> IndexError {
-    IndexError::from(error)
+    match error.sqlite_error_code() {
+        Some(
+            ErrorCode::CannotOpen
+            | ErrorCode::SystemIoFailure
+            | ErrorCode::DiskFull
+            | ErrorCode::ReadOnly
+            | ErrorCode::PermissionDenied,
+        ) => IndexError::Io(format!("building the index: {error}")),
+        _ => IndexError::Sqlite(format!("building the index: {error}")),
+    }
 }
 
 fn io(what: &str, path: &Path, error: &std::io::Error) -> IndexError {
@@ -122,21 +161,38 @@ pub(super) fn directory(index: &Path) -> Result<PathBuf, IndexError> {
     }
 }
 
-/// A reader of the index at `path`: a regular file opened read-only and
-/// never through a link, with values capped at [`MAX_VALUE_BYTES`].
+/// A reader of the index at `path`: a regular file opened read-only,
+/// `immutable` and never through a link, with values capped at
+/// [`MAX_VALUE_BYTES`].
 pub(super) fn reader(path: &Path) -> Result<Connection, IndexError> {
-    match std::fs::symlink_metadata(path) {
-        Ok(meta) if meta.file_type().is_file() => {}
-        Ok(_) => return Err(IndexError::NeedsRebuild),
+    // Never through a link, and never waiting on a FIFO.
+    let opened = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC)
+        .open(path);
+    let file = match opened {
+        Ok(file) => file,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             return Err(IndexError::NeedsRebuild);
         }
+        Err(error) if matches!(error.raw_os_error(), Some(libc::ELOOP | libc::ENXIO)) => {
+            return Err(IndexError::NeedsRebuild);
+        }
+        Err(error) => return Err(io("cannot open", path, &error)),
+    };
+    match file.metadata() {
+        Ok(meta) if meta.file_type().is_file() => {}
+        Ok(_) => return Err(IndexError::NeedsRebuild),
         Err(error) => return Err(io("cannot inspect", path, &error)),
     }
     let flags = OpenFlags::SQLITE_OPEN_READ_ONLY
+        | OpenFlags::SQLITE_OPEN_URI
         | OpenFlags::SQLITE_OPEN_NOFOLLOW
         | OpenFlags::SQLITE_OPEN_NO_MUTEX;
-    let connection = Connection::open_with_flags(path, flags)?;
+    let uri = immutable_uri(path);
+    debug_assert!(uri.starts_with("file:") && uri.ends_with("?immutable=1"));
+    let connection = Connection::open_with_flags(&uri, flags)?;
+    drop(file);
     connection.busy_timeout(BUSY_TIMEOUT)?;
     let cap = i32::try_from(MAX_VALUE_BYTES).expect("the value cap fits an i32");
     connection.set_limit(Limit::SQLITE_LIMIT_LENGTH, cap)?;
@@ -144,11 +200,29 @@ pub(super) fn reader(path: &Path) -> Result<Connection, IndexError> {
     Ok(connection)
 }
 
+/// `path` as an SQLite URI that opens it immutable: every byte but an
+/// unreserved one or `/` percent-encoded.
+fn immutable_uri(path: &Path) -> String {
+    use std::os::unix::ffi::OsStrExt;
+    let mut uri = String::from("file:");
+    for byte in path.as_os_str().as_bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' | b'/' => {
+                uri.push(char::from(*byte));
+            }
+            _ => uri.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    uri.push_str("?immutable=1");
+    uri
+}
+
 /// The open file is an index of this layout over records of this schema:
 /// its version, its exact schema objects, and the record schema it holds.
 pub(super) fn is_current(transaction: &Transaction<'_>) -> rusqlite::Result<bool> {
     let version: i32 = transaction.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-    if version != INDEX_SCHEMA || objects(transaction)? != *EXPECTED {
+    let ours = version == INDEX_SCHEMA && objects(transaction)? == *EXPECTED;
+    if !ours {
         return Ok(false);
     }
     let mut statement =
@@ -160,10 +234,13 @@ pub(super) fn is_current(transaction: &Transaction<'_>) -> rusqlite::Result<bool
     Ok(record == Some(SCHEMA_VERSION.to_string()))
 }
 
-/// A new index being written beside the old one; removed unless published.
+/// A new index being written beside the old one; removed unless
+/// published. Its file stays locked while it lives, so no sweep takes a
+/// live writer's build however long it takes.
 pub(super) struct Build {
     path: PathBuf,
     published: bool,
+    _held: File,
 }
 
 impl Build {
@@ -189,7 +266,7 @@ static BUILDS: AtomicU64 = AtomicU64::new(0);
 pub(super) fn build(
     dir: &Path,
     name: &str,
-    fill: impl FnOnce(&Transaction<'_>) -> Result<(), IndexError>,
+    fill: impl FnOnce(&Transaction<'_>) -> rusqlite::Result<()>,
 ) -> Result<Build, IndexError> {
     let nanos = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
@@ -199,36 +276,40 @@ pub(super) fn build(
         "{name}.{}.{nanos}.{count}{BUILD_SUFFIX}",
         std::process::id()
     ));
-    OpenOptions::new()
+    let held = OpenOptions::new()
         .write(true)
         .create_new(true)
         .mode(0o600)
         .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
         .open(&path)
         .map_err(|error| io("cannot create", &path, &error))?;
+    // A file this process just created alone: nothing else holds it.
+    held_now(&held).map_err(|error| io("cannot lock", &path, &error))?;
     let build = Build {
         path,
         published: false,
+        _held: held,
     };
     let flags = OpenFlags::SQLITE_OPEN_READ_WRITE
         | OpenFlags::SQLITE_OPEN_NOFOLLOW
         | OpenFlags::SQLITE_OPEN_NO_MUTEX;
     let mut connection = Connection::open_with_flags(&build.path, flags).map_err(built)?;
-    connection.pragma_update_and_check(None, "journal_mode", "MEMORY", |row| {
-        row.get::<_, String>(0)
-    })?;
-    let transaction = connection.transaction()?;
-    transaction.execute_batch(SCHEMA)?;
-    transaction.pragma_update(None, "user_version", INDEX_SCHEMA)?;
-    transaction.execute(
-        "INSERT INTO meta (key, value) VALUES ('record_schema', ?1)",
-        [SCHEMA_VERSION.to_string()],
-    )?;
-    fill(&transaction)?;
-    transaction.commit()?;
-    connection
-        .close()
-        .map_err(|(_, error)| IndexError::from(error))?;
+    let filled = (|| {
+        connection.pragma_update_and_check(None, "journal_mode", "MEMORY", |row| {
+            row.get::<_, String>(0)
+        })?;
+        let transaction = connection.transaction()?;
+        transaction.execute_batch(SCHEMA)?;
+        transaction.pragma_update(None, "user_version", INDEX_SCHEMA)?;
+        transaction.execute(
+            "INSERT INTO meta (key, value) VALUES ('record_schema', ?1)",
+            [SCHEMA_VERSION.to_string()],
+        )?;
+        fill(&transaction)?;
+        transaction.commit()
+    })();
+    filled.map_err(built)?;
+    connection.close().map_err(|(_, error)| built(error))?;
     File::open(&build.path)
         .and_then(|file| file.sync_all())
         .map_err(|error| io("cannot flush", &build.path, &error))?;
@@ -238,18 +319,57 @@ pub(super) fn build(
 /// Moves `build` over the index at `target` (a link there is replaced, not
 /// followed) and makes the rename durable.
 pub(super) fn publish(mut build: Build, target: &Path, dir: &Path) -> Result<(), IndexError> {
+    assert_eq!(
+        build.path.parent(),
+        Some(dir),
+        "a build is published from the index's own directory"
+    );
     std::fs::rename(&build.path, target).map_err(|error| io("cannot publish", target, &error))?;
     build.published = true;
+    remove_side_files(target)?;
     File::open(dir)
         .and_then(|file| file.sync_all())
         .map_err(|error| io("cannot flush", dir, &error))
 }
 
-/// Holds the index's writer lock, a regular file beside it, while alive.
+/// Removes whatever is at the names beside `target` where SQLite keeps its
+/// own files, never following a link: a planted log, journal or shared
+/// memory, or a directory or FIFO in their place.
+fn remove_side_files(target: &Path) -> Result<(), IndexError> {
+    for suffix in SIDE_FILES {
+        let mut path = target.as_os_str().to_owned();
+        path.push(suffix);
+        let path = PathBuf::from(path);
+        let removed = match std::fs::symlink_metadata(&path) {
+            Ok(meta) if meta.file_type().is_dir() => std::fs::remove_dir_all(&path),
+            Ok(_) => std::fs::remove_file(&path),
+            Err(error) => Err(error),
+        };
+        match removed {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(io("cannot remove", &path, &error)),
+        }
+    }
+    Ok(())
+}
+
+/// Takes `file`'s lock now, or says why not (another holder included).
 //
-// `File::lock` stabilized in 1.89, the real toolchain floor (see the
+// `File::try_lock` stabilized in 1.89, the real toolchain floor (see the
 // configuration writer's `exclusive_hold`).
 #[expect(clippy::incompatible_msrv)]
+fn held_now(file: &File) -> std::io::Result<()> {
+    file.try_lock().map_err(|error| match error {
+        std::fs::TryLockError::WouldBlock => {
+            std::io::Error::new(std::io::ErrorKind::WouldBlock, "held by another writer")
+        }
+        std::fs::TryLockError::Error(error) => error,
+    })
+}
+
+/// Holds the index's writer lock, a regular file beside it, while alive,
+/// waiting at most [`LOCK_WAIT`] for another writer to let it go.
 pub(super) fn lock(dir: &Path, name: &str) -> Result<File, IndexError> {
     let path = dir.join(format!("{name}.lock"));
     let file = OpenOptions::new()
@@ -270,14 +390,25 @@ pub(super) fn lock(dir: &Path, name: &str) -> Result<File, IndexError> {
             )));
         }
     }
-    file.lock()
-        .map_err(|error| io("cannot lock", &path, &error))?;
-    Ok(file)
+    let deadline = std::time::Instant::now() + LOCK_WAIT;
+    loop {
+        match held_now(&file) {
+            Ok(()) => return Ok(file),
+            Err(error)
+                if error.kind() == std::io::ErrorKind::WouldBlock
+                    && std::time::Instant::now() < deadline =>
+            {
+                std::thread::sleep(LOCK_POLL);
+            }
+            Err(error) => return Err(io("cannot lock", &path, &error)),
+        }
+    }
 }
 
 /// Removes build files of `name` that a process left when it died mid-build:
-/// regular files older than [`ABANDONED_AFTER`]. A build in progress is
-/// younger, so it is never touched.
+/// regular files older than [`ABANDONED_AFTER`] that no live writer holds
+/// locked. A build in progress is locked by its writer however old it is,
+/// so it is never touched.
 pub(super) fn sweep(dir: &Path, name: &str) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
@@ -296,18 +427,32 @@ pub(super) fn sweep(dir: &Path, name: &str) {
                     .and_then(|at| at.elapsed().ok())
                     .is_some_and(|age| age > ABANDONED_AFTER)
         });
-        if ours && abandoned {
+        if ours && abandoned && unheld(&entry.path()) {
             // Best effort: a file another sweep removed first is gone anyway.
             let _ = std::fs::remove_file(entry.path());
         }
     }
 }
 
-/// Removes the index at `target` (a link there is removed, not followed).
+/// Whether no live writer holds the build file at `path` (a regular file,
+/// opened without following a link or waiting on a FIFO).
+fn unheld(path: &Path) -> bool {
+    let opened = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC)
+        .open(path);
+    opened.is_ok_and(|file| {
+        file.metadata().is_ok_and(|meta| meta.file_type().is_file()) && held_now(&file).is_ok()
+    })
+}
+
+/// Removes the index at `target` (a link there is removed, not followed)
+/// and its side files.
 pub(super) fn discard(target: &Path) -> Result<(), IndexError> {
     match std::fs::remove_file(target) {
-        Ok(()) => Ok(()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(io("cannot remove", target, &error)),
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(io("cannot remove", target, &error)),
     }
+    remove_side_files(target)
 }
