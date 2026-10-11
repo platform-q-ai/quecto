@@ -3,7 +3,8 @@ use crate::application::swarm::board_test_support::{
     BoardState, MemoryBoard, StoredFile, accepted, recorded, running_board, stored_member,
     stored_task, usage,
 };
-use crate::application::swarm::dto::{ItemState, MemberRole, NewRequestUsage};
+use crate::application::swarm::dto::{MemberRole, NewRequestUsage};
+use crate::domain::swarm::{BoardRole, MemberState, RefusalKind, RunState, TaskState};
 use serde_json::json;
 
 /// A running run: `parent` coordinates; `worker` holds item 1, which has a
@@ -59,8 +60,8 @@ fn the_projection_carries_the_run_items_members_evidence_and_totals() {
     let projection = project(board());
     let run = projection.run.expect("a created run");
     assert_eq!(
-        (run.id.as_str(), run.goal.as_str(), run.status.as_str()),
-        ("run-1", "goal", "running")
+        (run.id.as_str(), run.goal.as_str(), run.status),
+        ("run-1", "goal", RunState::RUNNING)
     );
     assert_eq!(
         (run.member_limit, run.deadline, run.generation),
@@ -77,18 +78,25 @@ fn the_projection_carries_the_run_items_members_evidence_and_totals() {
         (250, 1)
     );
 
-    let items: Vec<(i64, ItemState, bool, Option<&str>)> = projection
+    let items: Vec<(i64, TaskState, bool, Option<&str>)> = projection
         .items
         .iter()
-        .map(|item| (item.id, item.state, item.waiting, item.owner.as_deref()))
+        .map(|item| {
+            (
+                item.id,
+                item.state.clone(),
+                item.waiting,
+                item.owner.as_deref(),
+            )
+        })
         .collect();
     assert_eq!(
         items,
         [
-            (1, ItemState::Claimed, false, Some("worker")),
-            (2, ItemState::Ready, true, None),
-            (3, ItemState::Ready, false, None),
-            (4, ItemState::Completed, false, Some("parent")),
+            (1, TaskState::CLAIMED, false, Some("worker")),
+            (2, TaskState::READY, true, None),
+            (3, TaskState::READY, false, None),
+            (4, TaskState::COMPLETED, false, Some("parent")),
         ]
     );
     let first = &projection.items[0];
@@ -104,13 +112,14 @@ fn the_projection_carries_the_run_items_members_evidence_and_totals() {
         (vec![1], None)
     );
 
-    let members: Vec<(&str, MemberRole, Vec<i64>, Option<f64>)> = projection
+    let members: Vec<(&str, MemberRole, MemberState, Vec<i64>, Option<f64>)> = projection
         .members
         .iter()
         .map(|member| {
             (
                 member.id.as_str(),
                 member.role,
+                member.status.clone(),
                 member.claims.clone(),
                 member.last_activity,
             )
@@ -119,8 +128,20 @@ fn the_projection_carries_the_run_items_members_evidence_and_totals() {
     assert_eq!(
         members,
         [
-            ("parent", MemberRole::Coordinator, vec![], None),
-            ("worker", MemberRole::Worker, vec![1], Some(42.5))
+            (
+                "parent",
+                MemberRole::Coordinator,
+                MemberState::LIVE,
+                vec![],
+                None
+            ),
+            (
+                "worker",
+                MemberRole::Worker,
+                MemberState::LIVE,
+                vec![1],
+                Some(42.5)
+            )
         ]
     );
     assert_eq!(projection.evidence.len(), 1);
@@ -146,22 +167,6 @@ fn the_projection_carries_the_run_items_members_evidence_and_totals() {
     );
     assert_eq!((totals.members, totals.members_without_claim), (2, 1));
     assert!(!projection.truncated);
-}
-
-#[test]
-fn ready_maps_to_todo_and_each_state_to_its_project_board_state() {
-    let mapped: Vec<&str> = [
-        ItemState::Ready,
-        ItemState::Claimed,
-        ItemState::Blocked,
-        ItemState::Submitted,
-        ItemState::Completed,
-    ]
-    .iter()
-    .map(|state| state.project_board_state())
-    .collect();
-    assert_eq!(mapped, ["todo", "doing", "blocked", "review", "done"]);
-    assert_eq!(ItemState::parse("verified"), None);
 }
 
 #[test]
@@ -194,7 +199,7 @@ fn the_projection_is_one_read_transaction() {
 fn recording_usage_moves_the_revision() {
     let board = MemoryBoard::with(board());
     let read = ReadBoardProjection::new(board.clone());
-    let before = read.revision().unwrap();
+    let before = read.revision().unwrap().revision;
     assert_eq!(read.execute().unwrap().revision, before);
     board
         .state
@@ -213,42 +218,58 @@ fn recording_usage_moves_the_revision() {
             cache_read_tokens: None,
             cache_write_tokens: None,
         });
-    assert!(read.revision().unwrap() > before);
+    assert!(read.revision().unwrap().revision > before);
 }
 
 /// One change to a valid board.
 type Edit = fn(&mut BoardState);
 
+/// Each edit refused as an edited record, naming the record it found.
 #[test]
 fn values_the_board_never_writes_are_refused() {
     let edits: Vec<(&str, Edit)> = vec![
-        ("unknown state", |state| {
+        ("task status", |state| {
             state.tasks[0].columns[4].1 = json!("verified")
         }),
-        ("state not text", |state| {
+        ("task status", |state| {
             state.tasks[0].columns[4].1 = json!(3)
         }),
-        ("title not text", |state| {
+        ("task title", |state| {
             state.tasks[0].columns[1].1 = json!(["x"])
         }),
-        ("criteria not a list", |state| {
+        ("task acceptance", |state| {
             state.tasks[0].columns[2].1 = json!("pass")
         }),
-        ("dependency not an id", |state| {
+        ("task dependencies", |state| {
             state.tasks[1].columns[3].1 = json!(["one"])
         }),
-        ("budget limit not a number", |state| {
+        ("usage budget", |state| {
             state.usage.as_mut().unwrap().budget = json!({"token_limit": "many"})
         }),
-        ("accepted not a flag", |state| {
+        ("evidence", |state| {
             state.evidence[0].1.accepted = json!("yes")
         }),
+        ("run status", |state| {
+            state.run.as_mut().unwrap().record.status = Some(RunState::new("verified"))
+        }),
+        ("member status", |state| {
+            state.members[1].columns[2].1 = json!("zombie")
+        }),
     ];
-    for (case, edit) in edits {
+    for (record, edit) in edits {
         let mut state = board();
         edit(&mut state);
-        let refused = ReadBoardProjection::new(MemoryBoard::with(state)).execute();
-        assert!(refused.is_err(), "{case}: {refused:?}");
+        let refused = ReadBoardProjection::new(MemoryBoard::with(state))
+            .execute()
+            .unwrap_err();
+        assert_eq!(
+            (refused.kind(), refused.message()),
+            (
+                RefusalKind::Store,
+                format!("the board's {record} is not as the board writes it").as_str()
+            ),
+            "{record}"
+        );
     }
 }
 
@@ -283,12 +304,114 @@ fn rows_are_budgeted_by_their_encoded_length() {
 #[test]
 fn rows_past_a_row_limit_are_left_out_and_said_to_be() {
     let mut state = board();
+    let more = PROJECTION_LIMITS.members + 1;
+    for index in 0..more {
+        state.members.push(stored_member(
+            &format!("extra-{index:03}"),
+            json!(null),
+            "dead",
+            [json!(null), json!(null), json!(null), json!(null)],
+        ));
+    }
+    let projection = project(state);
+    assert_eq!(projection.members.len() as i64, PROJECTION_LIMITS.members);
+    assert_eq!(projection.totals.members, more + 2);
+    assert!(projection.truncated);
+}
+
+/// M2 (#2487 round 2): the board never holds more items than it lets be
+/// created, so every item's state is read and one past that is an edited
+/// board, refused rather than read without bound.
+#[test]
+fn a_board_holding_more_items_than_the_board_writes_is_refused() {
+    let mut state = board();
     let more = PROJECTION_LIMITS.items + 1;
     state.tasks = (1..=more)
         .map(|id| stored_task(id, "ready", json!([]), None))
         .collect();
-    let projection = project(state);
-    assert_eq!(projection.items.len() as i64, PROJECTION_LIMITS.items);
-    assert_eq!(projection.totals.items, more);
+    let refused = ReadBoardProjection::new(MemoryBoard::with(state))
+        .execute()
+        .unwrap_err();
+    assert_eq!(
+        (refused.kind(), refused.message()),
+        (
+            RefusalKind::Store,
+            "the board's tasks is not as the board writes it"
+        )
+    );
+}
+
+/// M3 (#2487 round 2): a member's claims are read from every item, so
+/// they agree with the totals when its claimed item is left out.
+#[test]
+fn a_member_s_claims_come_from_every_item_not_only_those_that_fit() {
+    let mut state = board();
+    state.tasks[0].columns[1].1 = json!("x".repeat(10_000));
+    let projection = ReadBoardProjection::new(MemoryBoard::with(state))
+        .within(5_000)
+        .unwrap();
+    assert!(projection.items.iter().all(|item| item.id != 1));
     assert!(projection.truncated);
+    let worker = projection
+        .members
+        .iter()
+        .find(|member| member.id == "worker")
+        .expect("the worker fits");
+    assert_eq!(worker.claims, [1]);
+    assert_eq!(projection.totals.claimed, 1);
+}
+
+/// M2 (#2487 round 2): the run's text counts against the budget, and a
+/// run larger than the budget itself is an edited board (the board bounds
+/// every run text far below it).
+#[test]
+fn the_run_s_text_counts_against_the_budget() {
+    let mut state = board();
+    state.run.as_mut().unwrap().record.outcome_reason = Some("x".repeat(4_000));
+    let projection = ReadBoardProjection::new(MemoryBoard::with(state.clone()))
+        .within(5_000)
+        .unwrap();
+    assert!(projection.truncated);
+    assert!(projection.items.len() < 4, "{:?}", projection.items);
+    state.run.as_mut().unwrap().record.outcome_reason = Some("x".repeat(6_000));
+    let refused = ReadBoardProjection::new(MemoryBoard::with(state))
+        .within(5_000)
+        .unwrap_err();
+    assert_eq!(
+        (refused.kind(), refused.message()),
+        (
+            RefusalKind::Store,
+            "the board's run is not as the board writes it"
+        )
+    );
+}
+
+/// L4 (#2487 round 2): the revision names the run whose board it counts,
+/// so a recreated board at the same revision is still told apart.
+#[test]
+fn the_revision_names_its_run() {
+    let read = ReadBoardProjection::new(MemoryBoard::with(board()));
+    let revision = read.revision().unwrap();
+    assert_eq!(revision.run.as_deref(), Some("run-1"));
+    assert_eq!(read.execute().unwrap().revision, revision.revision);
+    let empty = ReadBoardProjection::new(MemoryBoard::with(BoardState::default()))
+        .revision()
+        .unwrap();
+    assert_eq!((empty.run, empty.revision), (None, 0));
+}
+
+/// L5 (#2487 round 2): a listed member holds one of the three roles; any
+/// other answer is the harness's own error, never a guessed worker.
+#[test]
+fn a_role_outside_the_three_a_member_holds_is_an_internal_error() {
+    assert_eq!(
+        super::member_role(Some(BoardRole::Worker)).unwrap(),
+        MemberRole::Worker
+    );
+    for role in [Some(BoardRole::Host), None] {
+        assert_eq!(
+            super::member_role(role).unwrap_err().kind(),
+            RefusalKind::Internal
+        );
+    }
 }

@@ -159,7 +159,13 @@ fn the_host_reads_the_board_projection_without_secrets() {
         "UPDATE members SET pid=4242, socket='secret-socket', launcher='secret-launcher'",
     );
     let board = hosted.board_projection().unwrap().expect("a board");
-    assert_eq!(board["revision"].as_i64(), hosted.board_revision().unwrap());
+    let revision = hosted.board_revision().unwrap().expect("a revision");
+    assert_eq!(board["revision"].as_i64(), Some(revision.revision));
+    assert_eq!(
+        board["run"]["id"].as_str(),
+        revision.run.as_deref(),
+        "L4 (#2487 round 2): the revision names its run"
+    );
     assert_eq!(
         (board["run"]["goal"].clone(), board["run"]["status"].clone()),
         (json!("ship"), json!("running"))
@@ -219,13 +225,13 @@ fn recording_usage_moves_the_revision() {
     let directory = tempfile::tempdir().unwrap();
     run_with_items(&directory);
     let hosted = hosted(&directory);
-    let before = hosted.board_revision().unwrap().unwrap();
+    let before = hosted.board_revision().unwrap().unwrap().revision;
     let context = context(&directory);
     super::super::call_work::off_the_runtime(|| {
         let failed = json!({"request_id": "r9", "instrumented_attempts": 1, "outcome": "failed"});
         context.call("_record_request", json!([failed])).unwrap();
     });
-    let after = hosted.board_revision().unwrap().unwrap();
+    let after = hosted.board_revision().unwrap().unwrap().revision;
     assert!(after > before, "{before} -> {after}");
     let board = hosted.board_projection().unwrap().unwrap();
     assert_eq!(board["revision"], json!(after));
@@ -347,10 +353,12 @@ fn the_projection_migrates_nothing_and_reads_beside_a_writer() {
     writer.execute_batch("ROLLBACK").unwrap();
 }
 
-/// L9: a board beside one the layout no longer places is refused, as the
-/// run observation refuses it.
+/// L9, and L2 of #2487 round 2: a board beside one the layout no longer
+/// places is refused as the run observation refuses it: only while it
+/// holds no created run. One that holds a created run is the board its
+/// members run on, and is read.
 #[test]
-fn a_board_with_a_displaced_one_beside_it_is_refused() {
+fn a_board_with_a_displaced_one_beside_it_is_refused_without_a_created_run() {
     let directory = tempfile::tempdir().unwrap();
     run_with_items(&directory);
     let git = directory.path().join(".git/quecto");
@@ -360,9 +368,50 @@ fn a_board_with_a_displaced_one_beside_it_is_refused() {
         git.join("swarm.sqlite"),
     )
     .unwrap();
-    let refused = hosted(&directory)
-        .board_projection()
-        .unwrap_err()
-        .to_string();
-    assert!(refused.contains("another board beside it"), "{refused}");
+    let board = hosted(&directory).board_projection().unwrap().unwrap();
+    assert_eq!(board["run"]["goal"], json!("ship"));
+    assert!(hosted(&directory).board_revision().unwrap().is_some());
+    sql(&directory, "UPDATE run SET deadline=0");
+    for refused in [
+        hosted(&directory)
+            .board_projection()
+            .unwrap_err()
+            .to_string(),
+        hosted(&directory).board_revision().unwrap_err().to_string(),
+    ] {
+        assert!(
+            refused.contains("holds no created run, but another board exists"),
+            "{refused}"
+        );
+    }
+}
+
+/// L3 (#2487 round 2): a JSON column the board could not have written is
+/// refused by table and column, without its content: a lone surrogate in
+/// an item's criteria, or dependencies that are not JSON at all.
+#[test]
+fn unreadable_json_is_refused_without_its_content() {
+    for (edit, column) in [
+        (
+            r#"UPDATE tasks SET acceptance='["\ud800 secret"]' WHERE id=1"#,
+            "tasks acceptance",
+        ),
+        (
+            "UPDATE tasks SET dependencies='[1, secret' WHERE id=2",
+            "tasks dependencies",
+        ),
+    ] {
+        let directory = tempfile::tempdir().unwrap();
+        run_with_items(&directory);
+        sql(&directory, edit);
+        let refused = hosted(&directory)
+            .board_projection()
+            .unwrap_err()
+            .to_string();
+        assert!(
+            refused.contains(&format!("{column} is not JSON this board writes")),
+            "{refused}"
+        );
+        assert!(!refused.contains("secret"), "{refused}");
+    }
 }
