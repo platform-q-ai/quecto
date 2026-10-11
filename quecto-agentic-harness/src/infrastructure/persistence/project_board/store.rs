@@ -26,6 +26,7 @@ use super::board_tree::{
     read_board, unavailable,
 };
 use super::git::{Git, GitError, SHORT_OUTPUT, failed, quoted};
+use super::push_report::{PushReport, RefStatus, ref_status};
 use super::summary::summary;
 use super::task_record::{decode, encode};
 use crate::application::project_board::ports::{
@@ -36,7 +37,6 @@ use crate::domain::project_board::entities::task::Task;
 use crate::domain::project_board::value_objects::schema_error::line;
 use crate::domain::project_board::value_objects::slug::Slug;
 use std::collections::{BTreeMap, BTreeSet};
-use std::fmt;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 pub use super::board_tree::{MAX_TASK_ENTRIES as MAX_ENTRIES, MAX_TASKS};
@@ -63,25 +63,6 @@ enum Pushed {
     Landed,
     Lost,
     Refused(String),
-}
-
-/// What a push that did not report our ref updated said: our ref's
-/// rejection, if it reported one, and git's own message.
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct PushReport {
-    rejected: Option<String>,
-    said: String,
-}
-
-impl fmt::Display for PushReport {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match (&self.rejected, self.said.is_empty()) {
-            (Some(rejected), true) => f.write_str(rejected),
-            (Some(rejected), false) => write!(f, "{rejected}; git said: {}", self.said),
-            (None, true) => f.write_str("no status for the board"),
-            (None, false) => f.write_str(&self.said),
-        }
-    }
 }
 
 impl GitBoardStore {
@@ -705,32 +686,6 @@ impl ProjectBoardStore for GitBoardStore {
     fn writer(&self) -> Identity {
         self.git.identity().clone()
     }
-}
-
-/// Our ref's line in `git push --porcelain`: `<flag>\t<from>:<to>\t<summary>`.
-#[derive(Debug, PartialEq, Eq)]
-enum RefStatus {
-    /// ` ` fast-forward, `+` forced, `*` new, `=` already there.
-    Updated,
-    /// `!` rejected, with the summary's reason.
-    Rejected(String),
-}
-
-fn ref_status(stdout: &[u8]) -> Option<RefStatus> {
-    let text = String::from_utf8_lossy(stdout);
-    let ours = format!(":{BOARD_REF}");
-    text.lines().find_map(|row| {
-        let mut fields = row.splitn(3, '\t');
-        let (flag, refs, summary) = (fields.next()?, fields.next()?, fields.next().unwrap_or(""));
-        if !refs.ends_with(&ours) {
-            return None;
-        }
-        match flag {
-            " " | "+" | "*" | "=" => Some(RefStatus::Updated),
-            "!" => Some(RefStatus::Rejected(summary.to_string())),
-            _ => None,
-        }
-    })
 }
 
 #[cfg(test)]
