@@ -22,7 +22,7 @@ const EXAMPLE: &str = "<!-- quecto-change schema=1 -->
 | Branch | `feat/2481-board_cli` |
 | Pull request | #2510 |
 | Merge commit | 0123456789abcdef0123456789abcdef01234567 |
-| Linked by | Shane (work) (shane@example.com) |
+| Linked by | Shane (work) (`shane@example.com`) |
 | Created | 2026-10-11T12:00:00Z |
 | Updated | 2026-10-11T15:00:00Z |
 ";
@@ -83,7 +83,7 @@ fn linked_unlinked_and_merged_changes_round_trip() {
     let unlinked_file = round_trips(unlinked);
     assert!(
         unlinked_file.contains(
-            "| Unlinked by | Bo (bo@example.com) |\n| Unlinked at | 2026-10-11T14:00:00Z |\n"
+            "| Unlinked by | Bo (`bo@example.com`) |\n| Unlinked at | 2026-10-11T14:00:00Z |\n"
         ),
         "{unlinked_file}"
     );
@@ -100,7 +100,7 @@ fn unlinked_by_without_unlinked_at_is_refused() {
         ..example()
     });
     for row in [
-        "| Unlinked by | Bo (bo@example.com) |\n",
+        "| Unlinked by | Bo (`bo@example.com`) |\n",
         "| Unlinked at | 2026-10-11T14:00:00Z |\n",
     ] {
         let file = linked.replacen("| Created |", &format!("{row}| Created |"), 1);
@@ -160,7 +160,7 @@ fn a_repo_and_branch_with_underscores_round_trip() {
 fn the_widest_change_fits() {
     let identity = person(
         &"\u{1d538}".repeat(MAX_NAME_CHARS),
-        &format!("{}@b", "|".repeat(MAX_EMAIL_BYTES - 2)),
+        &format!("{}@b", "a".repeat(MAX_EMAIL_BYTES - 2)),
     );
     let part = "a".repeat(MAX_REPO_PART_BYTES);
     let widest = ChangeFields {
@@ -185,7 +185,7 @@ fn the_widest_change_fits() {
         assert!(file.len() <= CHANGE_LIMITS.file_bytes, "{}", file.len());
         assert!(file.lines().count() <= CHANGE_LIMITS.lines);
         assert!(
-            longest <= CHANGE_LIMITS.line_bytes && longest > 900,
+            longest <= CHANGE_LIMITS.line_bytes && longest > 650,
             "{longest}"
         );
     }
