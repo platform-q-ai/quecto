@@ -48,14 +48,15 @@ fn sh(dir: &Path, args: &[&str], input: &[u8]) -> String {
         .to_string()
 }
 
-struct Remote {
+/// A bare remote and two clones of it.
+pub struct Remote {
     _dir: tempfile::TempDir,
     bare: PathBuf,
     clones: [PathBuf; 2],
 }
 
 impl Remote {
-    fn new() -> Self {
+    pub fn new() -> Self {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
         sh(
@@ -72,7 +73,7 @@ impl Remote {
         }
     }
 
-    fn client(&self, clone: usize, name: &str) -> Box<GitBoardStore> {
+    pub fn client(&self, clone: usize, name: &str) -> Box<GitBoardStore> {
         let repo = &self.clones[clone];
         let vars: [(OsString, OsString); 4] = [
             ("PATH".into(), std::env::var_os("PATH").unwrap()),
@@ -88,7 +89,7 @@ impl Remote {
         Box::new(GitBoardStore::new(git, "origin").unwrap())
     }
 
-    fn clients(&self) -> Clients {
+    pub fn clients(&self) -> Clients {
         (self.client(0, "Alice"), self.client(1, "Bob"))
     }
 
@@ -105,7 +106,7 @@ impl Remote {
     }
 
     /// Someone pushes a `tasks/b.json` the store cannot read.
-    fn spoil_b(&self) {
+    pub fn spoil_b(&self) {
         let bare = &self.bare;
         let head = sh(bare, &["rev-parse", BOARD_REF], b"");
         let broken = sh(bare, &["hash-object", "-w", "--stdin"], b"{");

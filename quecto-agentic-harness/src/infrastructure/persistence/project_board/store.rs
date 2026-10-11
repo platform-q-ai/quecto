@@ -104,6 +104,25 @@ impl GitBoardStore {
         format!("refs/remotes/{}/quecto/board", self.remote)
     }
 
+    /// The remote board's commit, if the board exists: what a cached view
+    /// compares with to know whether the board moved.
+    ///
+    /// # Errors
+    /// The remote cannot be reached.
+    pub fn head(&self) -> Result<Option<String>, BoardStoreError> {
+        self.remote_head(BOARD_REF)
+    }
+
+    /// Where this repository's local index of the board lives: in its
+    /// common git directory, shared by every worktree and never in a tree.
+    ///
+    /// # Errors
+    /// git cannot name the directory.
+    pub fn index_path(&self) -> Result<std::path::PathBuf, BoardStoreError> {
+        let common = self.git.common_dir().map_err(unavailable)?;
+        Ok(common.join("quecto").join("project-board.sqlite"))
+    }
+
     fn last(&self) -> MutexGuard<'_, Option<(String, Arc<Board>)>> {
         self.last.lock().unwrap_or_else(PoisonError::into_inner)
     }

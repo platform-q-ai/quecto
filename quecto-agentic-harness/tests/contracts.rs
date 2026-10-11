@@ -49,6 +49,8 @@ mod board_events;
 mod board_evidence;
 #[path = "contracts/board_files.rs"]
 mod board_files;
+#[path = "contracts/board_listings.rs"]
+mod board_listings;
 #[path = "contracts/board_loss.rs"]
 mod board_loss;
 #[path = "contracts/board_members.rs"]

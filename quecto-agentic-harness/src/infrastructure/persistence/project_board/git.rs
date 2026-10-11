@@ -269,6 +269,18 @@ impl Git {
             .to_string())
     }
 
+    /// The repository's common git directory, shared by all its worktrees.
+    ///
+    /// # Errors
+    /// git cannot name it.
+    pub fn common_dir(&self) -> Result<PathBuf, GitError> {
+        let args = ["rev-parse", "--path-format=absolute", "--git-common-dir"];
+        let bytes = self.ok(&args, None)?;
+        let text = bytes.strip_suffix(b"\n").unwrap_or(&bytes);
+        use std::os::unix::ffi::OsStrExt;
+        Ok(PathBuf::from(OsStr::from_bytes(text)))
+    }
+
     /// A local call, whatever its exit status.
     pub fn local(
         &self,
