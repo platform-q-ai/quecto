@@ -3,6 +3,7 @@
 //! how a draft is edited, how a task's plan versions are proposed and
 //! accepted, and how a run folds back or is ended as lost. Every rule
 //! returns new artifacts, so each one's schema holds after it.
+pub mod changes;
 pub mod claims;
 pub mod drafts;
 pub mod plans;
