@@ -4,10 +4,10 @@
 use super::super::value_objects::schema_error::{SchemaError, distinct, line, markdown};
 use super::super::value_objects::slug::Slug;
 use super::super::value_objects::timestamp::Timestamp;
-use super::super::value_objects::vocabulary::{TaskKind, TaskStatus};
+use super::super::value_objects::vocabulary::{Resolution, TaskKind, TaskStatus};
 use super::claim::{Claim, Identity};
 use super::plan::MAX_PLAN_VERSION;
-use super::task_parts::{MAX_REVIEWS, Review};
+use super::task_parts::{MAX_REVIEWS, Review, reference};
 
 /// GitHub's issue title limit.
 pub const MAX_TITLE_CHARS: usize = 256;
@@ -15,6 +15,10 @@ pub const MAX_TITLE_CHARS: usize = 256;
 pub const MAX_DESCRIPTION_CHARS: usize = 65_536;
 pub const MAX_DEPENDENCIES: usize = 64;
 pub const MAX_PRS: usize = 16;
+/// The most tasks one task is superseded by.
+pub const MAX_SUPERSEDED_BY: usize = 16;
+/// The most references a task keeps.
+pub const MAX_REFERENCES: usize = 64;
 /// All of a task's text together, in UTF-8 bytes. The field limits alone
 /// would add up to megabytes; this budget keeps every task the domain
 /// admits inside the file it is stored in (the record layer proves it).
@@ -39,13 +43,24 @@ pub struct TaskFields {
     pub reviews: Vec<Review>,
     /// Every pull request delivering the task, each numbered from 1.
     pub prs: Vec<u64>,
+    /// The host issue the task came from or is mirrored by, from 1.
+    pub github_issue: Option<u64>,
+    /// How the task was resolved: only a done or archived task is.
+    pub resolution: Option<Resolution>,
+    /// The tasks that took over its work.
+    pub superseded_by: Vec<Slug>,
+    /// Plain pointers to work outside the board's tasks: closed or
+    /// out-of-board issues and pull requests (`#n`, `owner/repo#n`) and
+    /// https URLs. They are not dependencies.
+    pub references: Vec<String>,
     pub created: Timestamp,
     pub updated: Timestamp,
 }
 
 impl TaskFields {
     /// The UTF-8 bytes of every free text in the task: its title and
-    /// description, reviewers, review places, findings and tests. Ids,
+    /// description, reviewers, review places, findings and tests, and its
+    /// references. Ids,
     /// words, numbers, times and the
     /// claim's holder are not text: their size is bounded by the field
     /// limits, so taking a claim never runs a task over its budget.
@@ -62,7 +77,8 @@ impl TaskFields {
                     + optional(&review.proving_test)
             })
             .sum();
-        self.title.len() + self.description.len() + parts
+        let references: usize = self.references.iter().map(String::len).sum();
+        self.title.len() + self.description.len() + parts + references
     }
 }
 
@@ -139,6 +155,7 @@ fn validate(task: &TaskFields) -> Result<(), SchemaError> {
             "a pull request number starts at 1",
         ));
     }
+    validate_closure(task)?;
     let text = task.text_bytes();
     if text <= MAX_TEXT_BYTES {
         Ok(())
@@ -148,6 +165,50 @@ fn validate(task: &TaskFields) -> Result<(), SchemaError> {
             format!("the task's text is {text} bytes; the most is {MAX_TEXT_BYTES}"),
         ))
     }
+}
+
+/// Where the task came from and how it ended: its issue, its resolution
+/// (a done or archived task's only), the tasks that superseded it (never
+/// itself), and its references.
+fn validate_closure(task: &TaskFields) -> Result<(), SchemaError> {
+    match task.github_issue.is_none_or(|issue| issue >= 1) {
+        true => {}
+        false => {
+            return Err(SchemaError::new(
+                "github_issue",
+                "an issue number starts at 1",
+            ));
+        }
+    }
+    match (task.resolution, task.status) {
+        (None, _) | (Some(_), TaskStatus::Done | TaskStatus::Archived) => {}
+        (Some(_), status) => {
+            return Err(SchemaError::new(
+                "resolution",
+                format!(
+                    "a {} task is not resolved: only a done or archived one is",
+                    status.as_str()
+                ),
+            ));
+        }
+    }
+    distinct("superseded_by", &task.superseded_by, MAX_SUPERSEDED_BY)?;
+    match task
+        .superseded_by
+        .iter()
+        .position(|other| *other == task.id)
+    {
+        None => {}
+        Some(index) => {
+            return Err(SchemaError::new(
+                format!("superseded_by/{index}"),
+                "a task is not superseded by itself",
+            ));
+        }
+    }
+    distinct("references", &task.references, MAX_REFERENCES)?;
+    let mut indexed = task.references.iter().enumerate();
+    indexed.try_for_each(|(index, text)| reference(&format!("references/{index}"), text))
 }
 
 /// Reviews happen while the task exists, by its last change: from

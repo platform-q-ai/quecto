@@ -5,6 +5,7 @@ use super::super::entities::run::Run;
 use super::super::entities::task::Task;
 use super::super::value_objects::rule_error::BoardRuleError;
 use super::super::value_objects::timestamp::Timestamp;
+use super::super::value_objects::vocabulary::Resolution;
 use super::super::value_objects::vocabulary::TaskStatus::{self, *};
 use super::claims::{held_by, held_live_by, is_live, new_claim, settle, stamp};
 use super::runs::{lost_at, may_move_with, open_of};
@@ -112,6 +113,7 @@ pub fn move_task(
     let at = stamp(task, now)?;
     let mut next = task.fields().clone();
     next.status = to;
+    next.resolution = resolved(to, next.resolution);
     next.claim = match effect {
         ClaimEffect::Keep => next.claim,
         ClaimEffect::Take => Some(new_claim(actor, &at)?),
@@ -204,9 +206,20 @@ pub(super) fn finish(
     );
     let mut next = fields.clone();
     next.status = Done;
+    next.resolution = resolved(Done, next.resolution);
     next.claim = None;
     let task = settle(next, &at)?;
     Ok((Completed { task, run }, at))
+}
+
+/// A task's resolution once it moves `to` a status: one done is
+/// completed; any other keeps what it had (an archived task its done one's,
+/// or none).
+fn resolved(to: TaskStatus, had: Option<Resolution>) -> Option<Resolution> {
+    match to {
+        Done => Some(Resolution::Completed),
+        Draft | Ready | Claimed | InProgress | Review | Blocked | Archived => had,
+    }
 }
 
 /// A task completed: done, and its run ended as lost if one was going.

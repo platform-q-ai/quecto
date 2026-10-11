@@ -478,6 +478,33 @@ fn a_task_linking_changes_is_done_only_when_they_merge() {
     );
 }
 
+/// A task done is resolved as completed, whichever way it is done; an
+/// archived one keeps its done one's resolution, or has none.
+#[test]
+fn a_done_task_is_resolved_as_completed() {
+    let now = at("10:00:00");
+    let done = move_task(
+        &without_prs(task(Review)),
+        Done,
+        &person("Ada"),
+        &[],
+        &[],
+        &now,
+    )
+    .unwrap();
+    assert_eq!(done.fields().resolution, Some(Resolution::Completed));
+    let merged = BTreeSet::from([2482, 2483]);
+    let completed = complete_merged(&task(Review), &merged, &[], &[], &now).unwrap();
+    assert_eq!(
+        completed.task.fields().resolution,
+        Some(Resolution::Completed)
+    );
+    let archived = move_task(&done, Archived, &person("Bob"), &[], &[], &now).unwrap();
+    assert_eq!(archived.fields().resolution, Some(Resolution::Completed));
+    let dropped = move_task(&task(Ready), Archived, &person("Bob"), &[], &[], &now).unwrap();
+    assert_eq!(dropped.fields().resolution, None);
+}
+
 /// A run still going keeps its task held: moves among the held statuses
 /// pass, leaving for ready, done or archived waits until it ends.
 #[test]

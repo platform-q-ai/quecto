@@ -22,7 +22,7 @@ use crate::domain::project_board::value_objects::schema_error::SchemaError;
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
 use crate::domain::project_board::value_objects::vocabulary::{
-    Severity, TaskKind, TaskStatus, Verdict,
+    Resolution, Severity, TaskKind, TaskStatus, Verdict,
 };
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -32,10 +32,13 @@ use std::fmt;
 /// format as the task parts complete it (#2483, 0.107.251). Schema 2 is
 /// the artifact model's slimmer task (#2481 M1a): its plan, items, team and
 /// runs are artifacts of their own, and it names its `accepted_plan`; a
-/// schema-1 file holding any of those is malformed to this reader.
-pub const SCHEMAS: &[(u32, &str)] = &[(1, "0.107.251"), (2, "0.107.274")];
+/// schema-1 file holding any of those is malformed to this reader. Schema
+/// 3 adds where a task came from and how it ended (#2481 S8):
+/// `github_issue`, `resolution`, `superseded_by` and `references`; an
+/// older file holding any of them is malformed.
+pub const SCHEMAS: &[(u32, &str)] = &[(1, "0.107.251"), (2, "0.107.274"), (3, "0.107.286")];
 /// The schema every task file is written at: the last row of [`SCHEMAS`].
-pub const SCHEMA_VERSION: u32 = 2;
+pub const SCHEMA_VERSION: u32 = 3;
 const _: () = assert!(SCHEMAS[SCHEMAS.len() - 1].0 == SCHEMA_VERSION);
 /// The largest task file read or written. Every task the domain admits is
 /// written under it: the widest structure (about 300 KB) plus the whole
@@ -124,6 +127,14 @@ struct TaskRecord {
     reviews: Vec<ReviewRecord>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     prs: Vec<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    github_issue: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    resolution: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    superseded_by: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    references: Vec<String>,
     created: String,
     updated: String,
 }
@@ -173,12 +184,25 @@ pub fn decode(bytes: &[u8]) -> Result<Task, RecordError> {
     }
     let record: TaskRecord = serde_json::from_slice(bytes).map_err(malformed)?;
     // Each key belongs to the schemas that have it: `accepted_plan`
-    // arrived in schema 2.
+    // arrived in schema 2, and where a task came from and how it ended in
+    // schema 3.
     match (record.schema, &record.accepted_plan) {
         (2.., _) | (_, None) => {}
         (_, Some(_)) => {
             return Err(RecordError::Malformed(
                 "accepted_plan arrived in schema 2".into(),
+            ));
+        }
+    }
+    let closure = record.github_issue.is_some()
+        || record.resolution.is_some()
+        || !record.superseded_by.is_empty()
+        || !record.references.is_empty();
+    match (record.schema, closure) {
+        (3.., _) | (_, false) => {}
+        (_, true) => {
+            return Err(RecordError::Malformed(
+                "github_issue, resolution, superseded_by and references arrived in schema 3".into(),
             ));
         }
     }
@@ -249,6 +273,13 @@ impl TaskRecord {
             claim: self.claim.map(ClaimRecord::into_claim).transpose()?,
             reviews: indexed("reviews", self.reviews, ReviewRecord::into_review)?,
             prs: self.prs,
+            github_issue: self.github_issue,
+            resolution: self
+                .resolution
+                .map(|word_| word("resolution", &word_, Resolution::parse))
+                .transpose()?,
+            superseded_by: slugs("superseded_by", &self.superseded_by)?,
+            references: self.references,
             created: time("created", &self.created)?,
             updated: time("updated", &self.updated)?,
         })
@@ -273,6 +304,14 @@ impl TaskRecord {
             claim: task.claim.as_ref().map(ClaimRecord::from_claim),
             reviews: task.reviews.iter().map(ReviewRecord::from_review).collect(),
             prs: task.prs.clone(),
+            github_issue: task.github_issue,
+            resolution: task.resolution.map(|resolution| resolution.as_str().into()),
+            superseded_by: task
+                .superseded_by
+                .iter()
+                .map(|slug| slug.as_str().into())
+                .collect(),
+            references: task.references.clone(),
             created: task.created.as_str().into(),
             updated: task.updated.as_str().into(),
         }

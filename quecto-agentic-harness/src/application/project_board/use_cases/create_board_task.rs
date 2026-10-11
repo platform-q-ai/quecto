@@ -66,6 +66,10 @@ fn created_at(new: &NewBoardTask, now: &Timestamp) -> TaskFields {
         claim: None,
         reviews: vec![],
         prs: vec![],
+        github_issue: None,
+        resolution: None,
+        superseded_by: vec![],
+        references: vec![],
         created: now.clone(),
         updated: now.clone(),
     };

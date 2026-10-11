@@ -4,7 +4,8 @@ use super::*;
 use crate::domain::project_board::entities::claim::{MAX_EMAIL_BYTES, MAX_NAME_CHARS};
 use crate::domain::project_board::entities::plan::MAX_PLAN_VERSION;
 use crate::domain::project_board::entities::task::{
-    MAX_DEPENDENCIES, MAX_DESCRIPTION_CHARS, MAX_PRS, MAX_TEXT_BYTES, MAX_TITLE_CHARS,
+    MAX_DEPENDENCIES, MAX_DESCRIPTION_CHARS, MAX_PRS, MAX_REFERENCES, MAX_SUPERSEDED_BY,
+    MAX_TEXT_BYTES, MAX_TITLE_CHARS,
 };
 use crate::domain::project_board::entities::task_parts::{MAX_FINDING_CHARS, MAX_REVIEWS};
 use crate::domain::project_board::value_objects::slug::MAX_SLUG_BYTES;
@@ -68,6 +69,13 @@ fn widest_structure() -> TaskFields {
         }),
         reviews: (0..MAX_REVIEWS).map(review).collect(),
         prs: (0..MAX_PRS as u64).map(|n| u64::MAX - n).collect(),
+        github_issue: Some(u64::MAX),
+        // A resolved task is done or archived, so it holds no claim; the
+        // claim is the wider of the two.
+        resolution: None,
+        superseded_by: (0..MAX_SUPERSEDED_BY).map(|n| wide_id('s', n)).collect(),
+        // References are text: each its shortest here, distinct.
+        references: (1..=MAX_REFERENCES).map(|n| format!("#{n}")).collect(),
         created: at("08:00:00"),
         updated: at("09:00:00"),
     }

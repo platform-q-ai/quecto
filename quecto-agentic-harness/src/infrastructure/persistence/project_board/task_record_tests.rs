@@ -1,7 +1,7 @@
 use super::*;
 
 const FULL: &str = r#"{
-  "schema": 2,
+  "schema": 3,
   "id": "board-store",
   "title": "Board store",
   "kind": "task",
@@ -29,7 +29,7 @@ const FULL: &str = r#"{
 "#;
 
 const MINIMAL: &str = r#"{
-  "schema": 2,
+  "schema": 3,
   "id": "idea",
   "title": "An idea",
   "kind": "chore",
@@ -40,7 +40,7 @@ const MINIMAL: &str = r#"{
 "#;
 
 const PARTS: &str = r#"{
-  "schema": 2,
+  "schema": 3,
   "id": "board-store",
   "title": "Board store",
   "kind": "task",
@@ -87,6 +87,28 @@ const PARTS: &str = r#"{
 }
 "#;
 
+/// A done task with where it came from and how it ended (schema 3).
+const CLOSED: &str = r##"{
+  "schema": 3,
+  "id": "board-store",
+  "title": "Board store",
+  "kind": "task",
+  "status": "done",
+  "github_issue": 2481,
+  "resolution": "superseded",
+  "superseded_by": [
+    "board-store-v2"
+  ],
+  "references": [
+    "#2470",
+    "platform-q-ai/browser-task#18",
+    "https://example.com/notes?q=1#top"
+  ],
+  "created": "2026-10-10T08:00:00Z",
+  "updated": "2026-10-10T10:00:00Z"
+}
+"##;
+
 fn edited(text: &str, from: &str, to: &str) -> Vec<u8> {
     assert!(text.contains(from), "{from:?} is in the file");
     text.replacen(from, to, 1).into_bytes()
@@ -94,7 +116,7 @@ fn edited(text: &str, from: &str, to: &str) -> Vec<u8> {
 
 #[test]
 fn a_task_file_reads_and_writes_back_byte_for_byte_with_schema_first() {
-    for file in [FULL, MINIMAL, PARTS] {
+    for file in [FULL, MINIMAL, PARTS, CLOSED] {
         let task = decode(file.as_bytes()).expect("valid file");
         assert_eq!(String::from_utf8(encode(&task).unwrap()).unwrap(), file);
     }
@@ -147,25 +169,26 @@ fn malformed_files_are_refused_by_the_record() {
 
 #[test]
 fn a_newer_schema_asks_for_an_upgrade_and_an_unknown_one_is_refused() {
-    let newer = decode(&edited(FULL, "\"schema\": 2", "\"schema\": 3"));
-    assert_eq!(newer, Err(RecordError::NewerSchema { found: 3 }));
+    let newer = decode(&edited(FULL, "\"schema\": 3", "\"schema\": 4"));
+    assert_eq!(newer, Err(RecordError::NewerSchema { found: 4 }));
     assert!(newer.unwrap_err().to_string().ends_with("upgrade quecto"));
-    let newer_with_new_keys = edited(FULL, "\"schema\": 2,", "\"schema\": 3,\n  \"labels\": [],");
+    let newer_with_new_keys = edited(FULL, "\"schema\": 3,", "\"schema\": 4,\n  \"labels\": [],");
     assert_eq!(
         decode(&newer_with_new_keys),
-        Err(RecordError::NewerSchema { found: 3 })
+        Err(RecordError::NewerSchema { found: 4 })
     );
     assert_eq!(
-        decode(&edited(FULL, "\"schema\": 2", "\"schema\": 0")),
+        decode(&edited(FULL, "\"schema\": 3", "\"schema\": 0")),
         Err(RecordError::UnknownSchema { found: 0 })
     );
     // A schema-1 file is read; one holding a part the task no longer has
     // (its plan, say: an artifact of its own from schema 2) is malformed.
-    assert!(decode(&edited(MINIMAL, "\"schema\": 2", "\"schema\": 1")).is_ok());
-    let old_plan = edited(MINIMAL, "\"schema\": 2,", "\"schema\": 1,\n  \"plan\": [],");
+    assert!(decode(&edited(MINIMAL, "\"schema\": 3", "\"schema\": 1")).is_ok());
+    assert!(decode(&edited(PARTS, "\"schema\": 3", "\"schema\": 2")).is_ok());
+    let old_plan = edited(MINIMAL, "\"schema\": 3,", "\"schema\": 1,\n  \"plan\": [],");
     assert!(matches!(decode(&old_plan), Err(RecordError::Malformed(_))));
     // A key from a later schema is refused in an earlier one's file.
-    let early = edited(PARTS, "\"schema\": 2", "\"schema\": 1");
+    let early = edited(PARTS, "\"schema\": 3", "\"schema\": 1");
     assert!(
         matches!(decode(&early), Err(RecordError::Malformed(why)) if why.contains("schema 2")),
         "accepted_plan in a schema-1 file"
@@ -249,11 +272,11 @@ fn every_schema_names_the_quecto_that_introduced_it() {
 
 #[test]
 fn a_newer_schema_names_the_least_quecto_that_can_read_it() {
-    let message = RecordError::NewerSchema { found: 3 }.to_string();
+    let message = RecordError::NewerSchema { found: 4 }.to_string();
     let wanted = [
-        "schema 3".to_string(),
+        "schema 4".to_string(),
         format!("needs a quecto newer than {}", env!("CARGO_PKG_VERSION")),
-        "schema 2 arrived in quecto 0.107.274".to_string(),
+        "schema 3 arrived in quecto 0.107.286".to_string(),
         "upgrade quecto".to_string(),
     ];
     for part in wanted {
@@ -299,5 +322,82 @@ fn nested_values_the_domain_refuses_are_named_by_their_path() {
             Err(RecordError::Invalid(error)) => assert_eq!(error.field, field, "{error}"),
             other => panic!("{field}: {other:?}"),
         }
+    }
+}
+
+/// Where a task came from and how it ended arrived in schema 3: an older
+/// file holding any of it is malformed, and the domain's rules for it are
+/// named by their path.
+#[test]
+fn a_tasks_closure_is_schema_3_and_keeps_the_domains_rules() {
+    let task = decode(CLOSED.as_bytes()).unwrap();
+    let fields = task.fields();
+    assert_eq!(
+        (
+            fields.github_issue,
+            fields.resolution,
+            fields.references.len()
+        ),
+        (Some(2481), Some(Resolution::Superseded), 3)
+    );
+    for key in ["github_issue", "resolution", "superseded_by", "references"] {
+        let only = match key {
+            "github_issue" => edited(
+                MINIMAL,
+                "\"schema\": 3,",
+                "\"schema\": 2,\n  \"github_issue\": 7,",
+            ),
+            "resolution" => edited(
+                MINIMAL,
+                "\"schema\": 3,",
+                "\"schema\": 2,\n  \"resolution\": \"completed\",",
+            ),
+            "superseded_by" => edited(
+                MINIMAL,
+                "\"schema\": 3,",
+                "\"schema\": 2,\n  \"superseded_by\": [\"other\"],",
+            ),
+            _ => edited(
+                MINIMAL,
+                "\"schema\": 3,",
+                "\"schema\": 2,\n  \"references\": [\"#1\"],",
+            ),
+        };
+        assert!(
+            matches!(decode(&only), Err(RecordError::Malformed(why)) if why.contains("schema 3")),
+            "{key} in a schema-2 file"
+        );
+    }
+    let cases = [
+        (
+            "resolution",
+            edited(CLOSED, "\"superseded\"", "\"abandoned\""),
+        ),
+        ("resolution", edited(CLOSED, "\"done\"", "\"ready\"")),
+        ("github_issue", edited(CLOSED, "2481", "0")),
+        (
+            "superseded_by/0",
+            edited(CLOSED, "\"board-store-v2\"", "\"Bad Slug\""),
+        ),
+        (
+            "superseded_by/0",
+            edited(CLOSED, "\"board-store-v2\"", "\"board-store\""),
+        ),
+        ("references/0", edited(CLOSED, "\"#2470\"", "\"#0\"")),
+        (
+            "references/2",
+            edited(
+                CLOSED,
+                "https://example.com/notes?q=1#top",
+                "http://example.com",
+            ),
+        ),
+    ];
+    for (field, bytes) in cases {
+        let refused = decode(&bytes);
+        assert!(
+            matches!(&refused, Err(RecordError::Invalid(error)) if error.field == field),
+            "{field}: {refused:?}"
+        );
     }
 }

@@ -122,6 +122,10 @@ pub fn fields(id: &str) -> TaskFields {
         claim: None,
         reviews: vec![],
         prs: vec![],
+        github_issue: None,
+        resolution: None,
+        superseded_by: vec![],
+        references: vec![],
         created: at("00:00:00"),
         updated: at("00:00:00"),
     }

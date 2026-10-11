@@ -2,6 +2,7 @@
 //! task's review findings (until reviews become their own artifact, M1b),
 //! and the checks they share. Reviews are capped; a write past the cap is
 //! refused.
+use super::super::value_objects::code_ref::RepoName;
 use super::super::value_objects::schema_error::{SchemaError, distinct, filled_markdown, line};
 use super::super::value_objects::slug::Slug;
 use super::super::value_objects::timestamp::Timestamp;
@@ -48,6 +49,46 @@ static LOCATION: LazyLock<Regex> = LazyLock::new(|| {
     let pattern = format!(r"^{first}(?:/{segment})*:[1-9][0-9]{{0,8}}(?::[1-9][0-9]{{0,8}})?$");
     Regex::new(&pattern).expect("location")
 });
+
+/// The longest reference.
+pub const MAX_REFERENCE_BYTES: usize = 2_048;
+
+/// An issue or pull request, `#n` or `owner/repo#n`.
+static ISSUE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^(?:([A-Za-z0-9._-]{1,100}/[A-Za-z0-9._-]{1,100}))?#[1-9][0-9]{0,9}$")
+        .expect("issue reference")
+});
+
+/// An https URL: a host, an optional port, then printable ASCII with no
+/// space, `|`, backtick or `\`.
+static URL: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"^https://[A-Za-z0-9](?:[A-Za-z0-9.-]{0,252})(?::[0-9]{1,5})?(?:[/?#][\x21-\x5B\x5D-\x5F\x61-\x7B\x7D\x7E]*)?$",
+    )
+    .expect("url reference")
+});
+
+/// A plain pointer to work outside the board's tasks: `#n`,
+/// `owner/repo#n` (a repository as [`RepoName`] names it), or an https
+/// URL; at most [`MAX_REFERENCE_BYTES`].
+pub(super) fn reference(field: &str, text: &str) -> Result<(), SchemaError> {
+    let repo_ok = |repo: Option<regex::Match<'_>>| {
+        repo.is_none_or(|repo| RepoName::parse(repo.as_str()).is_ok())
+    };
+    let pointer = match ISSUE.captures(text) {
+        Some(issue) => repo_ok(issue.get(1)),
+        None => URL.is_match(text),
+    };
+    match text.len() <= MAX_REFERENCE_BYTES && pointer {
+        true => Ok(()),
+        false => Err(SchemaError::new(
+            field,
+            format!(
+                "{text:?} is not #n, owner/repo#n or an https URL of at most {MAX_REFERENCE_BYTES} bytes"
+            ),
+        )),
+    }
+}
 
 /// Distinct single lines, at most `max`.
 pub(super) fn lines(field: &str, entries: &[String], max: usize) -> Result<(), SchemaError> {

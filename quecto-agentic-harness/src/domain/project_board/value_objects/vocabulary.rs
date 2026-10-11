@@ -75,6 +75,12 @@ vocabulary!(
     RunOutcome { Succeeded => "succeeded", Failed => "failed", Stopped => "stopped", Lost => "lost" }
 );
 
+vocabulary!(
+    /// How a done or archived task was resolved (the host's words for a
+    /// closed issue, and `superseded`).
+    Resolution { Completed => "completed", NotPlanned => "not_planned", Duplicate => "duplicate", Superseded => "superseded" }
+);
+
 vocabulary!(Severity { Low => "low", Medium => "medium", High => "high", Critical => "critical" });
 
 vocabulary!(

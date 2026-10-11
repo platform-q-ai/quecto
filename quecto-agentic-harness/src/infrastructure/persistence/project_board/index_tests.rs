@@ -59,6 +59,10 @@ fn task(id: &str, status: TaskStatus, parent: Option<&str>, depends_on: &[&str])
         claim: None,
         reviews: vec![],
         prs: vec![],
+        github_issue: None,
+        resolution: None,
+        superseded_by: vec![],
+        references: vec![],
         created: at.clone(),
         updated: at,
     })
