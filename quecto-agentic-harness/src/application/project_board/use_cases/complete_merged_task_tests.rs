@@ -307,3 +307,26 @@ fn ending_a_run_after_completion_finds_no_claim() {
     .execute(&slug("a"), &BoardOp::EndRunLost);
     assert_eq!(ended, Err(ProjectBoardError::Rule(BoardRuleError::NoClaim)));
 }
+
+/// The reads share one budget: once it is spent no further pull request
+/// is asked about, and the completion is refused as the host's failure.
+#[test]
+fn the_reads_stop_once_their_budget_is_spent() {
+    let store = seeded(&[7, 8]);
+    let host = MemoryPullRequests::default();
+    host.set(7, PullRequestState::Merged);
+    host.set(8, PullRequestState::Merged);
+    let spent = complete(&store, &host)
+        .with_read_budget(std::time::Duration::ZERO)
+        .execute(&slug("a"));
+    let Err(ProjectBoardError::PullRequests(PullRequestStatesError::Unavailable(why))) = spent
+    else {
+        panic!("{spent:?}")
+    };
+    assert!(why.contains("longer than 0 s"), "{why}");
+    assert_eq!(host.asked(), Vec::<u64>::new());
+    assert_eq!(status(&store), TaskStatus::Review);
+    let done = complete(&store, &host).execute(&slug("a"));
+    assert!(done.is_ok(), "{done:?}");
+    assert_eq!(host.asked(), vec![7, 8]);
+}

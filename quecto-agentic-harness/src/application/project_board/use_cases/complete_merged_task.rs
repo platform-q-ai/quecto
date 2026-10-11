@@ -12,23 +12,31 @@
 //! any user can run it as a "complete" op.
 //!
 //! Blocking: the host's reads, and a pause before a retried write, hold
-//! the calling thread.
+//! the calling thread. The reads share one time budget
+//! ([`READ_BUDGET`]): once it is spent no further pull request is asked
+//! about, so a completion takes at most the budget plus one read's own
+//! timeout.
 use std::collections::BTreeSet;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use super::board_change::{checked_writer, commit, task_on};
 use crate::application::project_board::dto::ProjectBoardError;
 use crate::application::project_board::ports::{
-    BoardClock, ProjectBoardStore, PullRequestState, PullRequestStates,
+    BoardClock, ProjectBoardStore, PullRequestState, PullRequestStates, PullRequestStatesError,
 };
 use crate::domain::project_board::entities::task::Task;
 use crate::domain::project_board::services::transitions::complete_merged;
 use crate::domain::project_board::value_objects::slug::Slug;
 
+/// The time a completion's pull request reads share.
+pub const READ_BUDGET: Duration = Duration::from_secs(30);
+
 pub struct CompleteMergedTask {
     store: Arc<dyn ProjectBoardStore>,
     clock: Arc<dyn BoardClock>,
     prs: Arc<dyn PullRequestStates>,
+    read_budget: Duration,
 }
 
 impl CompleteMergedTask {
@@ -40,7 +48,18 @@ impl CompleteMergedTask {
         prs: Arc<dyn PullRequestStates>,
     ) -> Result<Self, ProjectBoardError> {
         checked_writer(&*store)?;
-        Ok(Self { store, clock, prs })
+        Ok(Self {
+            store,
+            clock,
+            prs,
+            read_budget: READ_BUDGET,
+        })
+    }
+
+    /// The same, its reads sharing `budget` instead of [`READ_BUDGET`].
+    pub fn with_read_budget(mut self, budget: Duration) -> Self {
+        self.read_budget = budget;
+        self
     }
 
     /// Task `id` done, when every pull request it links reads merged.
@@ -59,7 +78,7 @@ impl CompleteMergedTask {
             // one linking none, is refused by the rule first.
             let linked: BTreeSet<u64> = task.fields().prs.iter().copied().collect();
             complete_merged(task, &linked, &when.now).map_err(ProjectBoardError::Rule)?;
-            let merged = merged(&*self.prs, &task.fields().prs)?;
+            let merged = merged(&*self.prs, &task.fields().prs, self.read_budget)?;
             Ok(vec![
                 complete_merged(task, &merged, &when.now).map_err(ProjectBoardError::Rule)?,
             ])
@@ -69,14 +88,25 @@ impl CompleteMergedTask {
 }
 
 /// The linked pull requests the host reads as merged; an open or closed
-/// one is left out, for the rule to name. One the host does not know, or
-/// a host that cannot be read, refuses the completion.
+/// one is left out, for the rule to name. One the host does not know, a
+/// host that cannot be read, or reads past `budget` refuse the completion.
 fn merged(
     host: &dyn PullRequestStates,
     linked: &[u64],
+    budget: Duration,
 ) -> Result<BTreeSet<u64>, ProjectBoardError> {
+    let started = Instant::now();
     let mut merged = BTreeSet::new();
     for pr in linked {
+        if started.elapsed() >= budget {
+            return Err(ProjectBoardError::PullRequests(
+                PullRequestStatesError::Unavailable(format!(
+                    "reading {} pull requests took longer than {} s",
+                    linked.len(),
+                    budget.as_secs()
+                )),
+            ));
+        }
         match host.state(*pr).map_err(ProjectBoardError::PullRequests)? {
             PullRequestState::Merged => {
                 merged.insert(*pr);

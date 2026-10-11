@@ -2,13 +2,17 @@
 //! of a stable shape.
 //!
 //! - Success: `{"ok": true, "op": …}` plus what the op answers: `task` (and
-//!   after a change that may complete it, `completion`), a listing's
-//!   `head`, `tasks` and `quarantined`, or `head` alone; and `clock` when a
-//!   change was not bounded against an outside time.
+//!   after a change that may complete it, `completion`: `{"done": true,
+//!   "task"}`, `{"done": false, "pending": [prs]}` while some have not
+//!   merged, or `{"done": false, "error"}`), a listing's `head`, `tasks`
+//!   and `quarantined`, or `head` alone; and `clock` when a request that
+//!   reads the clock was not bounded against an outside time.
 //! - Refusal: `{"ok": false, "op": …, "error": {"code", "message", …}}`.
 //!   Each [`ErrorCode`] has one shape: the same fields every time.
-//!   Messages are the error's own words (its `Display`), with any URL's
-//!   credentials redacted, at most [`MAX_MESSAGE_CHARS`] characters.
+//!   Messages are the error's own words (its `Display`); every text an
+//!   answer carries from outside (messages, reasons, fields, problems,
+//!   paths) has credentials redacted and is at most [`MAX_MESSAGE_CHARS`]
+//!   characters.
 //!
 //! A task's shape is the board's own field names, every field always
 //! present (`null` or `[]` when unset), in a fixed order.
@@ -16,7 +20,7 @@ use serde_json::{Map, Value, json};
 
 use super::request::RequestError;
 use crate::application::project_board::dto::{BoardListing, ProjectBoardError};
-use crate::application::project_board::operations::BoardOutcome;
+use crate::application::project_board::operations::{BoardOutcome, Completion};
 use crate::application::project_board::ports::{
     BoardClockError, BoardHead, BoardStoreError, PullRequestStatesError, QuarantinedFile,
 };
@@ -24,7 +28,7 @@ use crate::domain::project_board::entities::claim::Identity;
 use crate::domain::project_board::entities::task::Task;
 use crate::domain::project_board::value_objects::rule_error::BoardRuleError;
 use crate::domain::project_board::value_objects::slug::Slug;
-use crate::domain::redaction::redact_url_userinfo;
+use crate::domain::redaction::{redact_secrets, redact_url_userinfo};
 
 /// The most characters of an error's message an answer carries.
 pub const MAX_MESSAGE_CHARS: usize = 2_000;
@@ -112,9 +116,10 @@ impl ErrorCode {
     }
 }
 
-/// Text an answer may carry: credentials in URLs redacted, bounded.
+/// Text an answer may carry: credentials in URLs and every secret-shaped
+/// span redacted, bounded.
 pub fn shown(text: &str) -> String {
-    let redacted = redact_url_userinfo(text);
+    let redacted = redact_secrets(&redact_url_userinfo(text));
     match redacted.chars().count() > MAX_MESSAGE_CHARS {
         true => redacted.chars().take(MAX_MESSAGE_CHARS).collect::<String>() + "…",
         false => redacted,
@@ -142,9 +147,12 @@ pub fn outcome(op: &str, outcome: &BoardOutcome, clock: Option<String>) -> Value
         BoardOutcome::Changed { task, completion } => {
             fields.insert("task".into(), task_json(task));
             if let Some(completion) = completion {
-                let completion = match completion.as_ref() {
-                    Ok(task) => json!({"done": true, "task": task_json(task)}),
-                    Err(error) => json!({"done": false, "error": error_json(error)}),
+                let completion = match completion {
+                    Completion::Done(task) => json!({"done": true, "task": task_json(task)}),
+                    Completion::Pending(prs) => json!({"done": false, "pending": prs}),
+                    Completion::Failed(error) => {
+                        json!({"done": false, "error": error_json(error)})
+                    }
                 };
                 fields.insert("completion".into(), completion);
             }
@@ -198,7 +206,7 @@ fn identity_json(identity: &Identity) -> Value {
 
 fn quarantined_json(file: &QuarantinedFile) -> Value {
     json!({
-        "path": file.path,
+        "path": shown(&file.path),
         "id": file.id.as_ref().map(slug_json),
         "reason": shown(&file.reason),
     })
@@ -302,12 +310,7 @@ pub fn task_json(task: &Task) -> Value {
 
 /// A refused answer to `op` (`None` when the request named no op it
 /// knows), with `code`'s own fields.
-pub fn refused(
-    op: Option<&str>,
-    code: ErrorCode,
-    message: &str,
-    fields: Map<String, Value>,
-) -> Value {
+fn refused(op: Option<&str>, code: ErrorCode, message: &str, fields: Map<String, Value>) -> Value {
     let mut error = Map::new();
     error.insert("code".into(), Value::String(code.as_str().into()));
     error.insert("message".into(), shown_json(message));
@@ -328,9 +331,21 @@ pub fn request_refused(op: Option<&str>, error: &RequestError) -> Value {
     )
 }
 
-/// A front end's own refusal with a `reason` (the store could not be
-/// built, or no committer is configured).
-pub fn reason_refused(op: Option<&str>, code: ErrorCode, reason: &str) -> Value {
+/// The refusals a front end makes itself, before the board answers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FrontEndRefusal {
+    /// A write, and the repository names no committer.
+    NoCommitter,
+    /// The board's store could not be built, or is not composed.
+    StoreUnavailable,
+}
+
+/// A front end's own refusal with a `reason`.
+pub fn reason_refused(op: Option<&str>, refusal: FrontEndRefusal, reason: &str) -> Value {
+    let code = match refusal {
+        FrontEndRefusal::NoCommitter => ErrorCode::NoCommitter,
+        FrontEndRefusal::StoreUnavailable => ErrorCode::StoreUnavailable,
+    };
     refused(op, code, reason, fields([("reason", shown_json(reason))]))
 }
 
@@ -371,15 +386,15 @@ fn error_fields(error: &ProjectBoardError) -> (ErrorCode, Map<String, Value>) {
         E::Invalid(schema) => (
             C::InvalidTask,
             fields([
-                ("field", json!(schema.field)),
-                ("problem", json!(schema.problem)),
+                ("field", shown_json(&schema.field)),
+                ("problem", shown_json(&schema.problem)),
             ]),
         ),
         E::InvalidWriter(schema) => (
             C::InvalidWriter,
             fields([
-                ("field", json!(schema.field)),
-                ("problem", json!(schema.problem)),
+                ("field", shown_json(&schema.field)),
+                ("problem", shown_json(&schema.problem)),
             ]),
         ),
         E::NotFound(id) => (C::NotFound, fields([("task", slug_json(id))])),
@@ -456,8 +471,14 @@ fn rule_json(rule: &BoardRuleError) -> Value {
         R::PrAlreadyLinked(pr) => json!({"code": "pr_already_linked", "pr": pr}),
         R::NotDraft(status) => json!({"code": "not_draft", "status": status.as_str()}),
         R::NoEdit => json!({"code": "no_edit"}),
-        R::Invalid(schema) => {
-            json!({"code": "invalid", "field": schema.field, "problem": schema.problem})
-        }
+        R::Invalid(schema) => json!({
+            "code": "invalid",
+            "field": shown(&schema.field),
+            "problem": shown(&schema.problem),
+        }),
     }
 }
+
+#[cfg(test)]
+#[path = "answer_tests.rs"]
+mod tests;

@@ -1,5 +1,5 @@
 use super::*;
-use crate::application::project_board::operations::query_listings::QueryListings;
+use crate::application::project_board::operations::query_listings::{QueryListings, assembled};
 use crate::application::project_board::ports::{
     BoardClock, BoardClockError, PullRequestState, ReferenceStatus,
 };
@@ -46,8 +46,9 @@ fn fixture_path() -> PathBuf {
 /// tool's clients. A case may run `as` another committer, `at` another
 /// time, with `no_reference` on the clock, after setting a task aside
 /// (`quarantine`) or a pull request merged (`merge`).
-/// `QUECTO_BLESS_BOARD_FIXTURES=1` rewrites the file, and fails the run so
-/// a blessed file is always looked at before it passes.
+/// `QUECTO_BLESS_BOARD_FIXTURES=1` (that value only) rewrites the file, and
+/// fails the run so a blessed file is always looked at before it passes. A
+/// request given as a JSON string is sent as that text.
 #[test]
 fn every_answer_keeps_its_stable_shape() {
     let store = MemoryBoardStore::default();
@@ -76,7 +77,7 @@ fn every_answer_keeps_its_stable_shape() {
             at: Timestamp::parse(&format!("2026-10-10T{at}Z")).unwrap(),
             referenced: case.get("no_reference").is_none(),
         };
-        let operations = BoardOperations::new(
+        let operations = assembled(
             Arc::new(client.clone()),
             Arc::new(clock),
             Arc::new(QueryListings(QueryBoard::new(Arc::new(client)))),
@@ -84,10 +85,16 @@ fn every_answer_keeps_its_stable_shape() {
         )
         .unwrap();
         let mut done = case.as_object().unwrap().clone();
-        done.insert("answer".into(), run(&operations, &case["request"]));
+        let text = match &case["request"] {
+            // A request given as text is sent as it is (a duplicate key,
+            // say, which a JSON value cannot hold).
+            Value::String(text) => text.clone(),
+            request => request.to_string(),
+        };
+        done.insert("answer".into(), run(&operations, &text));
         answered.push(Value::Object(done));
     }
-    if std::env::var_os("QUECTO_BLESS_BOARD_FIXTURES").is_some() {
+    if std::env::var("QUECTO_BLESS_BOARD_FIXTURES").as_deref() == Ok("1") {
         let text = serde_json::to_string_pretty(&answered).unwrap() + "\n";
         std::fs::write(fixture_path(), text).unwrap();
         panic!("the board answer fixtures were rewritten: look them over, then run again");
@@ -164,11 +171,29 @@ fn json_naming_a_key_twice_is_refused() {
 fn messages_are_redacted_and_bounded_and_every_code_has_its_one_shape() {
     let leaky = answer::reason_refused(
         Some("bootstrap"),
-        answer::ErrorCode::StoreUnavailable,
+        answer::FrontEndRefusal::StoreUnavailable,
         &format!("https://user:hunter2@github.com/x {}", "y".repeat(5000)),
     );
     let message = leaky["error"]["message"].as_str().unwrap();
     assert!(!message.contains("hunter2"), "{message}");
     assert!(message.chars().count() <= answer::MAX_MESSAGE_CHARS + 1);
     assert_eq!(leaky["error"]["reason"].as_str().unwrap(), message);
+}
+
+/// Every front end's request goes through one entry point that bounds it
+/// and reads it strictly before anything else.
+#[test]
+fn a_request_is_bounded_and_read_strictly_before_it_is_run() {
+    let duplicate = read(r#"{"op": "show", "task": "a", "task": "b"}"#).unwrap_err();
+    assert_eq!(duplicate.field, "request");
+    assert!(duplicate.problem.contains("twice"), "{}", duplicate.problem);
+    let padded = format!(
+        r#"{{"op": "list"}}{}"#,
+        " ".repeat(MAX_REQUEST_BYTES + 1 - 14)
+    );
+    assert_eq!(padded.len(), MAX_REQUEST_BYTES + 1);
+    let big = read(&padded).unwrap_err();
+    assert!(big.problem.contains("at most"), "{}", big.problem);
+    let fits = format!(r#"{{"op": "list"}}{}"#, " ".repeat(MAX_REQUEST_BYTES - 14));
+    assert_eq!(read(&fits), Ok(json!({"op": "list"})));
 }

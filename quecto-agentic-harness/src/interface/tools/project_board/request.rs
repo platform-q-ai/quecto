@@ -406,7 +406,10 @@ fn update_draft(read: &Read<'_>) -> Result<BoardRequest, RequestError> {
         || update.depends_on.is_some();
     match sets_something {
         true => Ok(BoardRequest::UpdateDraft(update)),
-        false => Err(RequestError::new("update_draft", "sets nothing")),
+        false => Err(RequestError::new(
+            "op",
+            "update_draft sets nothing: name a field to change",
+        )),
     }
 }
 

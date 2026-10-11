@@ -1,9 +1,18 @@
 //! [`BoardListings`] over `QueryBoard` for tests (#2477): the index's
 //! meaning (its contract holds it to `QueryBoard`), on any store, such as
-//! the in-memory one.
+//! the in-memory one; and [`assembled`], the operations over a store as
+//! composition assembles them.
+use std::sync::Arc;
+
+use super::{BoardOperationParts, NoPullRequestHost};
 use crate::application::project_board::dto::{BoardListing, ProjectBoardError};
-use crate::application::project_board::ports::{BoardListings, BoardStoreError};
-use crate::application::project_board::use_cases::QueryBoard;
+use crate::application::project_board::ports::{
+    BoardClock, BoardListings, BoardStoreError, ProjectBoardStore, PullRequestStates,
+};
+use crate::application::project_board::use_cases::{
+    BootstrapProjectBoard, ChangeBoardTask, ClearSetAside, CompleteMergedTask, CreateBoardTask,
+    QueryBoard, RunBoardOperation, UpdateDraftTask,
+};
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
 use crate::domain::project_board::value_objects::vocabulary::TaskStatus;
@@ -41,4 +50,33 @@ impl BoardListings for QueryListings {
     fn dependents(&self, task: &Slug) -> Result<BoardListing, BoardStoreError> {
         self.0.dependents(task).map_err(store_error)
     }
+}
+
+/// The operations over `store`, its `listings` and `clock`, with pull
+/// requests read from `prs` (or none, and why), as composition builds
+/// them.
+pub fn assembled(
+    store: Arc<dyn ProjectBoardStore>,
+    clock: Arc<dyn BoardClock>,
+    listings: Arc<dyn BoardListings>,
+    prs: Result<Arc<dyn PullRequestStates>, NoPullRequestHost>,
+) -> Result<RunBoardOperation, ProjectBoardError> {
+    let complete = match prs {
+        Ok(prs) => Ok(CompleteMergedTask::new(
+            Arc::clone(&store),
+            Arc::clone(&clock),
+            prs,
+        )?),
+        Err(why) => Err(why),
+    };
+    Ok(RunBoardOperation::new(BoardOperationParts {
+        bootstrap: BootstrapProjectBoard::new(Arc::clone(&store)),
+        create: CreateBoardTask::new(Arc::clone(&store), Arc::clone(&clock))?,
+        update: UpdateDraftTask::new(Arc::clone(&store), Arc::clone(&clock))?,
+        change: ChangeBoardTask::new(Arc::clone(&store), Arc::clone(&clock))?,
+        clear: ClearSetAside::new(Arc::clone(&store), Arc::clone(&clock))?,
+        complete,
+        clock,
+        listings,
+    }))
 }

@@ -135,6 +135,7 @@ const USE_CASES: &[&str] = &[
     "ResumeSavedSession",
     "RetainContext",
     "RewindConversation",
+    "RunBoardOperation",
     "SaveSession",
     "SearchSessionMetadata",
     "SelectConfig",

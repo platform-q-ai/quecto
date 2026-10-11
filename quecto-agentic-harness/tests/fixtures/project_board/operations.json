@@ -518,16 +518,9 @@
       },
       "completion": {
         "done": false,
-        "error": {
-          "code": "rule",
-          "message": "pull requests [8] are not merged",
-          "rule": {
-            "code": "prs_unmerged",
-            "prs": [
-              8
-            ]
-          }
-        }
+        "pending": [
+          8
+        ]
       }
     }
   },
@@ -801,16 +794,9 @@
       },
       "completion": {
         "done": false,
-        "error": {
-          "code": "rule",
-          "message": "pull requests [9] are not merged",
-          "rule": {
-            "code": "prs_unmerged",
-            "prs": [
-              9
-            ]
-          }
-        }
+        "pending": [
+          9
+        ]
       }
     }
   },
@@ -1069,6 +1055,336 @@
         "message": "op: must be one of bootstrap, list, list_ready, list_takeable, show, create, update_draft, move, renew, take_over, link_pr, unlink_pr, complete, clear_set_aside",
         "field": "op",
         "problem": "must be one of bootstrap, list, list_ready, list_takeable, show, create, update_draft, move, renew, take_over, link_pr, unlink_pr, complete, clear_set_aside"
+      }
+    }
+  },
+  {
+    "request": "{\"op\": \"show\", \"task\": \"cli\", \"task\": \"epic\"}",
+    "answer": {
+      "ok": false,
+      "op": null,
+      "error": {
+        "code": "invalid_request",
+        "message": "request: must be JSON: the key \"task\" is given twice at line 1 column 45",
+        "field": "request",
+        "problem": "must be JSON: the key \"task\" is given twice at line 1 column 45"
+      }
+    }
+  },
+  {
+    "request": {
+      "op": "update_draft",
+      "task": "epic"
+    },
+    "answer": {
+      "ok": false,
+      "op": "update_draft",
+      "error": {
+        "code": "invalid_request",
+        "message": "op: update_draft sets nothing: name a field to change",
+        "field": "op",
+        "problem": "update_draft sets nothing: name a field to change"
+      }
+    }
+  },
+  {
+    "request": {
+      "op": "create",
+      "task": "epic",
+      "title": "Again"
+    },
+    "answer": {
+      "ok": false,
+      "op": "create",
+      "error": {
+        "code": "exists",
+        "message": "task epic already exists",
+        "task": "epic"
+      }
+    }
+  },
+  {
+    "request": {
+      "op": "create",
+      "task": "orphan",
+      "title": "Orphan",
+      "depends_on": [
+        "missing"
+      ]
+    },
+    "answer": {
+      "ok": false,
+      "op": "create",
+      "error": {
+        "code": "unknown_reference",
+        "message": "no task missing on the board to refer to",
+        "task": "missing"
+      }
+    }
+  },
+  {
+    "request": {
+      "op": "create",
+      "task": "blank",
+      "title": ""
+    },
+    "answer": {
+      "ok": false,
+      "op": "create",
+      "error": {
+        "code": "invalid_task",
+        "message": "invalid task: title: must be 1 to 256 visible characters on one line",
+        "field": "title",
+        "problem": "must be 1 to 256 visible characters on one line"
+      }
+    }
+  },
+  {
+    "request": {
+      "op": "update_draft",
+      "task": "cli",
+      "title": "Renamed"
+    },
+    "answer": {
+      "ok": false,
+      "op": "update_draft",
+      "error": {
+        "code": "rule",
+        "message": "a done task is not a draft: only drafts are edited",
+        "rule": {
+          "code": "not_draft",
+          "status": "done"
+        }
+      }
+    },
+    "at": "13:00:00"
+  },
+  {
+    "quarantine": "late",
+    "request": {
+      "op": "show",
+      "task": "late"
+    },
+    "answer": {
+      "ok": false,
+      "op": "show",
+      "error": {
+        "code": "set_aside",
+        "message": "task late is set aside as unreadable; mend its file",
+        "task": "late"
+      }
+    }
+  },
+  {
+    "request": {
+      "op": "create",
+      "task": "t4",
+      "title": "Fourth",
+      "status": "ready"
+    },
+    "answer": {
+      "ok": true,
+      "op": "create",
+      "task": {
+        "id": "t4",
+        "title": "Fourth",
+        "kind": "task",
+        "description": "",
+        "status": "ready",
+        "parent": null,
+        "depends_on": [],
+        "plan": [],
+        "items": [],
+        "team": null,
+        "claim": null,
+        "runs": [],
+        "reviews": [],
+        "prs": [],
+        "created": "2026-10-10T10:00:00Z",
+        "updated": "2026-10-10T10:00:00Z"
+      }
+    }
+  },
+  {
+    "request": {
+      "op": "move",
+      "task": "t4",
+      "to": "claimed"
+    },
+    "answer": {
+      "ok": true,
+      "op": "move",
+      "task": {
+        "id": "t4",
+        "title": "Fourth",
+        "kind": "task",
+        "description": "",
+        "status": "claimed",
+        "parent": null,
+        "depends_on": [],
+        "plan": [],
+        "items": [],
+        "team": null,
+        "claim": {
+          "holder": {
+            "name": "Ada",
+            "email": "ada@example.com"
+          },
+          "since": "2026-10-10T10:00:01Z",
+          "expires": "2026-10-10T12:00:01Z"
+        },
+        "runs": [],
+        "reviews": [],
+        "prs": [],
+        "created": "2026-10-10T10:00:00Z",
+        "updated": "2026-10-10T10:00:01Z"
+      }
+    }
+  },
+  {
+    "request": {
+      "op": "move",
+      "task": "t4",
+      "to": "in_progress"
+    },
+    "answer": {
+      "ok": true,
+      "op": "move",
+      "task": {
+        "id": "t4",
+        "title": "Fourth",
+        "kind": "task",
+        "description": "",
+        "status": "in_progress",
+        "parent": null,
+        "depends_on": [],
+        "plan": [],
+        "items": [],
+        "team": null,
+        "claim": {
+          "holder": {
+            "name": "Ada",
+            "email": "ada@example.com"
+          },
+          "since": "2026-10-10T10:00:01Z",
+          "expires": "2026-10-10T12:00:01Z"
+        },
+        "runs": [],
+        "reviews": [],
+        "prs": [],
+        "created": "2026-10-10T10:00:00Z",
+        "updated": "2026-10-10T10:00:02Z"
+      }
+    }
+  },
+  {
+    "request": {
+      "op": "link_pr",
+      "task": "t4",
+      "pr": 8
+    },
+    "answer": {
+      "ok": true,
+      "op": "link_pr",
+      "task": {
+        "id": "t4",
+        "title": "Fourth",
+        "kind": "task",
+        "description": "",
+        "status": "in_progress",
+        "parent": null,
+        "depends_on": [],
+        "plan": [],
+        "items": [],
+        "team": null,
+        "claim": {
+          "holder": {
+            "name": "Ada",
+            "email": "ada@example.com"
+          },
+          "since": "2026-10-10T10:00:01Z",
+          "expires": "2026-10-10T12:00:01Z"
+        },
+        "runs": [],
+        "reviews": [],
+        "prs": [
+          8
+        ],
+        "created": "2026-10-10T10:00:00Z",
+        "updated": "2026-10-10T10:00:03Z"
+      },
+      "completion": {
+        "done": false,
+        "pending": [
+          8
+        ]
+      }
+    }
+  },
+  {
+    "request": {
+      "op": "complete",
+      "task": "t4"
+    },
+    "answer": {
+      "ok": false,
+      "op": "complete",
+      "error": {
+        "code": "rule",
+        "message": "pull requests [8] are not merged",
+        "rule": {
+          "code": "prs_unmerged",
+          "prs": [
+            8
+          ]
+        }
+      }
+    }
+  },
+  {
+    "request": {
+      "op": "link_pr",
+      "task": "t4",
+      "pr": 10
+    },
+    "answer": {
+      "ok": true,
+      "op": "link_pr",
+      "task": {
+        "id": "t4",
+        "title": "Fourth",
+        "kind": "task",
+        "description": "",
+        "status": "in_progress",
+        "parent": null,
+        "depends_on": [],
+        "plan": [],
+        "items": [],
+        "team": null,
+        "claim": {
+          "holder": {
+            "name": "Ada",
+            "email": "ada@example.com"
+          },
+          "since": "2026-10-10T10:00:01Z",
+          "expires": "2026-10-10T12:00:01Z"
+        },
+        "runs": [],
+        "reviews": [],
+        "prs": [
+          8,
+          10
+        ],
+        "created": "2026-10-10T10:00:00Z",
+        "updated": "2026-10-10T10:00:04Z"
+      },
+      "completion": {
+        "done": false,
+        "error": {
+          "code": "pr_state_unknown",
+          "message": "pull request 10 is not known to the host",
+          "pr": 10
+        }
       }
     }
   }

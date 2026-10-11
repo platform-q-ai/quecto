@@ -149,7 +149,7 @@ fn update_draft_sets_only_what_it_names_and_null_takes_the_parent_away() {
     );
     assert_eq!(
         refused(json!({"op": "update_draft", "task": "a"})).field,
-        "update_draft"
+        "op"
     );
     assert_eq!(
         refused(json!({"op": "update_draft", "task": "a", "title": "T", "expected_updated": "yesterday"})).field,
@@ -220,5 +220,70 @@ fn anything_but_the_ops_own_fields_of_their_own_types_is_refused() {
         ),
     ] {
         assert_eq!(refused(value.clone()).field, field, "{value}");
+    }
+}
+
+/// Two valid values of a field's kind, which read differently, and one of
+/// the wrong type.
+fn samples(kind: Kind) -> (Value, Value, Value) {
+    match kind {
+        Kind::Slug => (json!("a"), json!("b"), json!(7)),
+        Kind::OptionalSlug => (json!("a"), Value::Null, json!(7)),
+        Kind::Slugs => (json!(["a"]), json!(["b"]), json!("a")),
+        Kind::Text => (json!("x"), json!("y"), json!(7)),
+        Kind::Timestamp => (
+            json!("2026-10-10T08:00:00Z"),
+            json!("2026-10-10T09:00:00Z"),
+            json!("yesterday"),
+        ),
+        Kind::Status => (json!("ready"), json!("review"), json!("nowhere")),
+        Kind::NewStatus => (json!("draft"), json!("ready"), json!("claimed")),
+        Kind::TaskKind => (json!("epic"), json!("chore"), json!("story")),
+        Kind::Pr => (json!(1), json!(2), json!(0)),
+        Kind::Path => (json!("tasks/x.json"), json!("tasks/y.json"), json!(7)),
+        Kind::ObjectId => (json!("a".repeat(40)), json!("b".repeat(40)), json!("HEAD")),
+    }
+}
+
+/// The table and the reader cannot drift: for every op and every field
+/// the table gives it, a value of the wrong type is refused naming that
+/// field, and two valid values read as two different requests.
+#[test]
+fn every_field_in_the_table_is_read_by_its_kind() {
+    for (op, fields) in OPS {
+        let base = |except: &str| {
+            let mut object = serde_json::Map::new();
+            object.insert("op".into(), json!(op));
+            for field in fields.iter().filter(|field| field.required) {
+                object.insert(field.name.into(), samples(field.kind).0);
+            }
+            // An edit must set something besides the field under test.
+            if *op == "update_draft" {
+                let other = if except == "description" {
+                    "title"
+                } else {
+                    "description"
+                };
+                object.insert(other.into(), json!("D"));
+            }
+            object
+        };
+        for field in *fields {
+            let (one, two, wrong) = samples(field.kind);
+            let with = |value: Value| {
+                let mut object = base(field.name);
+                object.insert(field.name.into(), value);
+                Value::Object(object)
+            };
+            assert_eq!(
+                refused(with(wrong)).field,
+                field.name,
+                "{op}.{} of the wrong type",
+                field.name
+            );
+            let (first, second) = (parse(&with(one)), parse(&with(two)));
+            assert!(first.is_ok(), "{op}.{}: {first:?}", field.name);
+            assert_ne!(first, second, "{op}.{} is read", field.name);
+        }
     }
 }
