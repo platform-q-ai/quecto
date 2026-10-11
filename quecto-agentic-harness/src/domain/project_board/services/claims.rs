@@ -94,6 +94,23 @@ pub fn is_live(claim: &Claim, now: &Timestamp) -> bool {
     *now < claim.expires
 }
 
+/// Whether something stamped `updated` may be built on, given the
+/// `latest` time an outside reference allows (`None`: no reference, and
+/// nothing is refused): no later than that time plus
+/// [`STAMP_SLACK_SECONDS`], the room the strictly-forward stamp needs.
+/// The bound is inclusive, as the clock's own is.
+pub fn within_slack(updated: &Timestamp, latest: Option<&Timestamp>) -> bool {
+    match latest {
+        None => true,
+        Some(latest) => {
+            let bound = latest
+                .plus_seconds(STAMP_SLACK_SECONDS)
+                .unwrap_or_else(|_| latest.clone());
+            *updated <= bound
+        }
+    }
+}
+
 /// When a change to `task` happens: the caller's `now`, or a second past
 /// the task's own `updated` if the caller's clock reads no later. Every
 /// change moves `updated` strictly forward, so two changes in one second,

@@ -37,8 +37,9 @@ pub fn begin_run(
     // A live claim held by the actor: the task is held, by them.
     held_live_by(task, actor, now)?;
     let fields = task.fields();
-    if let Some(going) = open_of(task, runs)? {
-        return Err(BoardRuleError::RunOpen(going.fields().number));
+    match open_of(task, runs)? {
+        None => {}
+        Some(going) => return Err(BoardRuleError::RunOpen(going.fields().number)),
     }
     let planned = plan.fields();
     match planned.task == fields.id {

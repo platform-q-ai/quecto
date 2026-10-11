@@ -621,3 +621,43 @@ fn an_edit_records_its_editor_and_keeps_the_proposer() {
         (&person("Ada"), &Some(person("Bob")))
     );
 }
+
+/// The bound is the latest time plus the stamp's slack, inclusive: with
+/// the latest at 10:00:00, a plan stamped 10:00:30 is accepted and one
+/// stamped 10:00:31 is refused.
+#[test]
+fn the_plan_bound_is_the_latest_time_plus_its_slack() {
+    let stamped = |time: &str| {
+        let mut fields = plan(2, PlanState::Draft).into_fields();
+        (fields.created, fields.updated) = (at(time), at(time));
+        Plan::new(fields).unwrap()
+    };
+    let bounded = Moment {
+        now: at("10:00:00"),
+        latest: Some(at("10:00:00")),
+    };
+    let held = task(InProgress);
+    let accept_at = |time: &str| {
+        let versions = [plan(1, PlanState::Accepted), stamped(time)];
+        accept(
+            &TaskPlans {
+                task: &held,
+                versions: &versions,
+                runs: &[],
+            },
+            2,
+            None,
+            &person("Ada"),
+            &bounded,
+        )
+        .map(|accepted| accepted.plan.fields().version)
+    };
+    assert_eq!(accept_at("10:00:30"), Ok(2));
+    assert_eq!(
+        accept_at("10:00:31"),
+        Err(BoardRuleError::PlanAhead {
+            version: 2,
+            updated: at("10:00:31"),
+        })
+    );
+}

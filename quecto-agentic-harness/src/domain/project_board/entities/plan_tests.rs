@@ -99,6 +99,14 @@ fn an_acceptance_is_recorded_only_once_the_plan_was_accepted() {
             "proposed_by/email",
             Box::new(|p| p.proposed_by.email = "ada".into()),
         ),
+        (
+            "edited_by/email",
+            Box::new(|p| {
+                let mut editor = p.proposed_by.clone();
+                editor.email = "bob".into();
+                p.edited_by = Some(editor);
+            }),
+        ),
     ];
     for (field, change) in cases {
         let mut broken = fields();

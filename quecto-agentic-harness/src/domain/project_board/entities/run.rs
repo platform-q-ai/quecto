@@ -103,14 +103,18 @@ impl Run {
                 ));
             }
         }
-        if planned.task != self.0.task {
-            return Err(SchemaError::new("task", "is not the plan's task"));
-        }
-        if planned.version != self.0.plan_version {
-            return Err(SchemaError::new(
-                "plan_version",
-                "is not the plan's version",
-            ));
+        match (
+            planned.task == self.0.task,
+            planned.version == self.0.plan_version,
+        ) {
+            (true, true) => {}
+            (false, _) => return Err(SchemaError::new("task", "is not the plan's task")),
+            (true, false) => {
+                return Err(SchemaError::new(
+                    "plan_version",
+                    "is not the plan's version",
+                ));
+            }
         }
         match self
             .0
