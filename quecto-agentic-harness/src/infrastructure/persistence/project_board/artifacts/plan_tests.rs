@@ -401,6 +401,9 @@ fn the_widest_plan_fits_its_limits() {
     );
 }
 
+/// Whether an error names the cap a file is past.
+type Over = fn(&CodecError) -> bool;
+
 #[test]
 fn one_byte_or_line_over_a_limit_is_refused() {
     let marker = "<!-- quecto-plan schema=1 -->\n";
@@ -417,7 +420,7 @@ fn one_byte_or_line_over_a_limit_is_refused() {
     let long_line = |bytes: usize| format!("{marker}# {}\n", "x".repeat(bytes - 2));
     use MarkdownError as E;
     let limits = PLAN_LIMITS;
-    let cases: [(String, fn(&CodecError) -> bool); 3] = [
+    let cases: [(String, Over); 3] = [
         (sized(limits.file_bytes + 1), |e| {
             matches!(e, CodecError::Markdown(E::TooLarge { .. }))
         }),
