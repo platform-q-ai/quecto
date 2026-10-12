@@ -8,33 +8,12 @@
 //! (`HEAD`-like root refs, `refs/` and its siblings, worktree and remote
 //! namespaces), plus the hosts' ref namespaces (`pull/`). A name git adds
 //! later is caught by the rules' shape (`*_HEAD`) or added here.
+pub use super::commit_id::CommitId;
+use super::commit_id::full_hex;
 use super::schema_error::SchemaError;
 
 /// The longest branch name.
 pub const MAX_BRANCH_BYTES: usize = 255;
-
-/// A commit by its full id: 40 (SHA-1) or 64 (SHA-256) lowercase hex
-/// digits.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct CommitId(String);
-
-impl CommitId {
-    /// # Errors
-    /// Anything but a full lowercase commit id.
-    pub fn parse(text: &str) -> Result<Self, SchemaError> {
-        match full_hex(text) {
-            true => Ok(Self(text.to_string())),
-            false => Err(SchemaError::new(
-                "commit",
-                format!("{text:?} is not a full commit id"),
-            )),
-        }
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
 
 /// Names git keeps for itself, which a branch would shadow, in lowercase:
 /// they are refused in any case, as a case-insensitive file system would
@@ -285,14 +264,6 @@ pub fn is_repo_name(name: &str) -> bool {
         && name
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || b"._-".contains(&byte))
-}
-
-/// A full commit id's length, in lowercase hex.
-fn full_hex(text: &str) -> bool {
-    matches!(text.len(), 40 | 64)
-        && text
-            .bytes()
-            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
 #[cfg(test)]

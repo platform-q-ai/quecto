@@ -1,0 +1,10 @@
+use super :: schema_error :: SchemaError ;
+# [ derive ( Debug , Clone , PartialEq , Eq , PartialOrd , Ord , Hash , serde :: Serialize  )  ] # [ serde ( transparent  )  ] pub struct CommitId ( String  ) ;
+impl CommitId { pub fn parse ( text : & str  ) -> Result < Self , SchemaError > { match full_hex ( text  ) { true => Ok ( Self ( text . to_string (  )  )  ) , false => Err ( SchemaError :: new ( "commit" , format ! (
+"{text:?} is not a full commit id"
+) ,  )  ) ,  }  } pub fn as_str ( & self  ) -> & str { & self . 0  }  }
+pub ( super  ) fn full_hex ( text : & str  ) -> bool { matches ! (
+text . len (
+) ,
+40 | 64
+) && text . bytes (  ) . all ( | b | b . is_ascii_digit (  ) || ( b'a' ..= b'f'  ) . contains ( & b  )  )  }

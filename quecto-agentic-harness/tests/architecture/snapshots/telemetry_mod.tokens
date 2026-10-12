@@ -1,0 +1,67 @@
+use serde :: Serialize ;
+use super :: code_ref :: CommitId ;
+pub use leaves :: { StaticKind , TaskRef  } ;
+mod leaves ;
+macro_rules ! kinds { ( $ ( # [ $ meta : meta  ]  ) * $ name : ident { $ ( $ variant : ident => $ text : literal  ) ,+ $ ( ,  ) ?  }  ) => { $ ( # [ $ meta  ]  ) * # [ derive ( Debug , Clone , Copy , PartialEq , Eq , Serialize  )  ] pub enum $ name { $ ( # [ serde ( rename = $ text  )  ] $ variant  ) ,+  } impl $ name { pub const ALL : &'static [
+Self
+] = & [
+$ (
+Self ::$ variant
+) ,
++
+] ; pub const fn as_str ( self  ) -> &'static str { match self { $ ( Self ::$ variant => $ text  ) ,+  }  }  }  } ;  }
+kinds ! (
+OpKind {
+Bootstrap => "bootstrap" ,
+List => "list" ,
+ListReady => "list_ready" ,
+ListTakeable => "list_takeable" ,
+Show => "show" ,
+Create => "create" ,
+UpdateDraft => "update_draft" ,
+Move => "move" ,
+Renew => "renew" ,
+TakeOver => "take_over" ,
+LinkPr => "link_pr" ,
+UnlinkPr => "unlink_pr" ,
+Complete => "complete" ,
+ClearSetAside => "clear_set_aside" ,
+Unknown => "unknown" ,
+}
+) ;
+impl OpKind { pub fn named ( name : & str  ) -> Self { Self :: ALL . iter (  ) . copied (  ) . find ( | kind | * kind != Self :: Unknown && kind . as_str (  ) == name  ) . unwrap_or ( Self :: Unknown  )  }  }
+kinds ! (
+FrontEnd {
+Tool => "tool" ,
+Cli => "cli"
+}
+) ;
+kinds ! (
+Client {
+Agent => "agent" ,
+PocketRelay => "pocket_relay" ,
+Cli => "cli" ,
+Other => "other"
+}
+) ;
+kinds ! (
+Access {
+Read => "read" ,
+Write => "write"
+}
+) ;
+kinds ! (
+FaultKind {
+Missing => "missing" ,
+Unexpected => "unexpected" ,
+WrongType => "wrong_type" ,
+InvalidValue => "invalid_value" ,
+TooLarge => "too_large" ,
+NotJson => "not_json" ,
+DuplicateKey => "duplicate_key" ,
+}
+) ;
+# [ derive ( Debug , Clone , PartialEq , Eq , Serialize  )  ] # [ serde ( tag = "outcome" , rename_all = "snake_case"  )  ] pub enum OpOutcome { Ok , Refused { code : StaticKind , # [ serde ( skip_serializing_if = "Option::is_none"  )  ] rule : Option < StaticKind > ,  } ,  }
+# [ derive ( Debug , Clone , PartialEq , Eq , Serialize  )  ] pub struct RequestFault { pub field : StaticKind , pub fault : FaultKind , # [ serde ( skip_serializing_if = "Option::is_none"  )  ] pub unexpected_count : Option < u64 > ,  }
+# [ derive ( Debug , Clone , PartialEq , Eq , Serialize  )  ] pub struct BoardOpRecord { pub op : OpKind , pub front_end : FrontEnd , pub client : Client , pub access : Access , # [ serde ( flatten  )  ] pub outcome : OpOutcome , # [ serde ( flatten , skip_serializing_if = "Option::is_none"  )  ] pub fault : Option < RequestFault > , # [ serde ( skip_serializing_if = "Option::is_none"  )  ] pub task : Option < TaskRef > , # [ serde ( skip_serializing_if = "Option::is_none"  )  ] pub pr : Option < u64 > , # [ serde ( skip_serializing_if = "Option::is_none"  )  ] pub head : Option < CommitId > , pub duration_us : u64 ,  }
+# [ cfg ( test  )  ] # [ path = "mod_tests.rs"  ] mod tests ;
