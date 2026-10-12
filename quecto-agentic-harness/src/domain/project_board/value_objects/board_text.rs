@@ -1,27 +1,26 @@
 //! Board text as it enters the board (#2481, decision D4): the spelling of
-//! what a person or agent typed that the board keeps. It changes only what
-//! cannot change what a reader shows:
+//! what a person or agent typed that the board keeps. It changes only
+//! spacing a reader never shows:
 //!
 //! - line ends become one LF (a CRLF or a lone CR);
-//! - text is made Unicode NFC, only where NFC keeps the text's ASCII
-//!   punctuation exactly (composing `>` and U+0338 into `≯`, say, would
-//!   unmake a quote; U+1FEF and U+037E would become a backtick and `;`):
-//!   otherwise the text is left as written, for the codec's NFC rule to
-//!   refuse with its line. Inside code NFC may change bytes, but the glyphs
-//!   shown are canonically equal;
 //! - blank lines go from the text's start and end, the final newline
 //!   included;
-//! - trailing spaces and tabs go from a line outside fenced code only where
-//!   nothing can change: the run is a single space, or comes before a
-//!   blank line or the end (no hard break forms); the character before it
-//!   is safe (anything but a backslash, which a stripped space would turn
-//!   into a hard break); its paragraph so far holds no backtick or dollar
-//!   (a code span or math may run on across lines, showing the space); and
-//!   the line cannot be indented code (four columns of indent, or a tab).
+//! - trailing spaces and tabs go from a prose line only where nothing can
+//!   change: the run is a single space, or comes before a blank line or
+//!   the end (no hard break forms); the character before it is a safe one
+//!   (a letter, a digit, or punctuation but a backslash, which a line end
+//!   would make a hard break); its paragraph so far holds no backtick or
+//!   dollar (a code span or math may run on across lines, showing the
+//!   space) and no link title's start; and the line cannot be indented
+//!   code.
 //!
-//! Everything else (tabs, no-break and other spaces, selectors, indents,
-//! hard breaks, blank-line runs, all of fenced code) is kept as written:
-//! the board's codec then holds it, or refuses it with its field and line.
+//! No NFC is taken (it would rewrite link labels, addresses and fence
+//! info, and the Kelvin sign into an ASCII `K`): text that is not NFC is
+//! left as written, and the codec's NFC rule refuses it with its line.
+//! Text from agents and phones is NFC in practice. Everything else (tabs,
+//! no-break and other spaces, selectors, indents, hard breaks, inner
+//! blank lines, fenced code, HTML blocks) is kept as written: the board's
+//! codec then holds it, or refuses it with its field and line.
 //!
 //! The write paths take only normalised text: `Task::entered` (create) and
 //! `edit_draft` check it with [`entered_text`] and [`entered_line`], so no
@@ -29,11 +28,13 @@
 //! lenient by design, so what earlier builds stored still reads.
 //! Discussions (M4) run [`text`] before `append`.
 use super::schema_error::SchemaError;
-use unicode_normalization::UnicodeNormalization;
 
 /// Why text a write path takes is refused: it was never normalised.
 const NOT_ENTERED: &str = "must be board text as it enters (normalised: one LF between \
-     lines, NFC, no blank lines at its edges, no trailing space where no hard break forms)";
+     lines, no blank lines at its edges, no trailing space where no hard break forms)";
+/// The ASCII punctuation a trailing space may follow: all but a backslash,
+/// which a line end after it makes a hard break.
+const SAFE_PUNCTUATION: &str = "!\"#$%&'()*+,-./:;<=>?@[]^_`{|}~";
 
 /// The most spaces before a fence's closing run a reader still takes as
 /// its close.
@@ -49,15 +50,16 @@ enum Place {
     Prose { marked: bool },
     /// Inside fenced code opened at the margin, which only its close ends.
     Fenced(Fence),
-    /// After a fence opened inside a quote, a list item or an indent, which
-    /// may end with its container: the rest is kept as written.
+    /// After a fence opened inside a quote, a list item or an indent (which
+    /// may end with its container), or a line that may start an HTML block
+    /// (which keeps its lines as written): the rest is kept as written.
     Unknown,
 }
 
 /// Markdown text (a description, an approach, a message) as the board
 /// keeps it.
 pub fn text(raw: &str) -> String {
-    let unified = canonical(&raw.replace("\r\n", "\n").replace('\r', "\n"));
+    let unified = raw.replace("\r\n", "\n").replace('\r', "\n");
     let lines: Vec<&str> = unified.split('\n').collect();
     let mut kept: Vec<String> = Vec::with_capacity(lines.len());
     let mut place = Place::Prose { marked: false };
@@ -71,11 +73,12 @@ pub fn text(raw: &str) -> String {
             Place::Prose { marked } => match Fence::opened_by(line) {
                 Some(open) if open.at_margin => (Place::Fenced(open), (*line).to_string()),
                 Some(_) => (Place::Unknown, (*line).to_string()),
+                None if may_start_html_block(line) => (Place::Unknown, (*line).to_string()),
                 // A blank line ends a paragraph; its own spacing may still
                 // count (an indented blank line stays in a list item).
                 None if blank(line) => (Place::Prose { marked: false }, (*line).to_string()),
                 None => {
-                    let marked = marked || line.contains(['`', '$']);
+                    let marked = marked || line.contains(['`', '$']) || opens_link_title(line);
                     let written = match marked {
                         false => without_trailing(line, before_blank),
                         true => (*line).to_string(),
@@ -106,6 +109,10 @@ pub fn text(raw: &str) -> String {
     };
     let normal = kept[first..end.max(first)].join("\n");
     debug_assert!(!normal.contains('\r'), "one LF between lines");
+    debug_assert!(
+        unspaced(&normal).eq(unspaced(raw)),
+        "only spacing, line ends and blank lines change"
+    );
     normal
 }
 
@@ -134,24 +141,20 @@ pub fn entered_line(field: &str, held: &str) -> Result<(), SchemaError> {
 }
 
 /// One line of text (a title, a criterion, an owner) as the board keeps
-/// it: line ends and NFC as [`text`] makes them, and spaces and tabs gone
+/// it: line ends as [`text`] makes them, and spaces and tabs gone
 /// from both edges (one line has no structure for them to start).
 pub fn line(raw: &str) -> String {
-    canonical(&raw.replace("\r\n", "\n").replace('\r', "\n"))
+    raw.replace("\r\n", "\n")
+        .replace('\r', "\n")
         .trim_matches(spacing)
         .to_string()
 }
 
-/// `text` made NFC, only where NFC keeps its ASCII punctuation exactly (an
-/// allowlist): otherwise as written.
-fn canonical(text: &str) -> String {
-    let nfc: String = text.nfc().collect();
-    let punctuation =
-        |text: &str| -> Vec<char> { text.chars().filter(char::is_ascii_punctuation).collect() };
-    match punctuation(&nfc) == punctuation(text) {
-        true => nfc,
-        false => text.to_string(),
-    }
+/// `text`'s characters but spacing and line ends, in order: what the
+/// normaliser never changes.
+fn unspaced(text: &str) -> impl Iterator<Item = char> + '_ {
+    text.chars()
+        .filter(|c| !matches!(c, ' ' | '\t' | '\r' | '\n'))
 }
 
 fn spacing(c: char) -> bool {
@@ -163,14 +166,25 @@ fn blank(line: &str) -> bool {
     line.chars().all(spacing)
 }
 
-/// Whether a stripped trailing space after `c` changes nothing: anything
-/// a reader shows as itself, but a backslash (which a line end after it
-/// makes a hard break).
+/// Whether a stripped trailing space after `c` changes nothing (an
+/// allowlist): a letter, a digit, or ASCII punctuation but a backslash.
 fn safe_before_line_end(c: char) -> bool {
-    match c {
-        '\\' => false,
-        c => !spacing(c),
-    }
+    c.is_alphanumeric() || SAFE_PUNCTUATION.contains(c)
+}
+
+/// Whether `line` may start an HTML block: a `<` after spaces, quote marks
+/// or list markers (read liberally: it only keeps more lines as written).
+fn may_start_html_block(line: &str) -> bool {
+    line.trim_start_matches(container_mark).starts_with('<')
+}
+
+/// Whether `line` may open a link title that runs on across lines: a `"`,
+/// `'` or `(` after a link's `](` or a reference's `]:`.
+fn opens_link_title(line: &str) -> bool {
+    ["](", "]:"].iter().any(|start| {
+        line.match_indices(start)
+            .any(|(at, _)| line[at + start.len()..].contains(['"', '\'', '(']))
+    })
 }
 
 /// `line` without its trailing spaces and tabs where nothing can change: a
