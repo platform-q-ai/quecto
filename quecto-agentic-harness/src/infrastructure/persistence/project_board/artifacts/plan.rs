@@ -13,7 +13,7 @@
 //! A missing field row or section is "not set" or "none". The Model and
 //! Image cells are code: a model or image reference may hold a `_` an
 //! ASCII cell refuses next to punctuation.
-use super::cells;
+use super::cells::{self, column, refused};
 use super::{ArtifactCodec, CodecError};
 use crate::domain::project_board::entities::plan::{Plan, PlanFields, PlanItem};
 use crate::domain::project_board::entities::team::{Budget, Role, RoleLimits, Team};
@@ -41,10 +41,6 @@ const ITEMS: &str = "Items";
 const DEPENDENCIES: &str = "Item dependencies";
 const CRITERIA: &str = "Criteria";
 const ROLES: &str = "Roles";
-
-const fn column(name: &'static str, cell: CellKind) -> Column<'static> {
-    Column { name, cell }
-}
 
 const FIELDS: &[Column<'static>] = &[
     column(TASK, CellKind::Ascii),
@@ -165,7 +161,7 @@ impl ArtifactCodec for PlanCodec {
         fields.push((UPDATED, cells::time(&plan.updated)));
         let mut sections = vec![];
         let approach = blocks_of(&plan.approach)?;
-        if !approach.is_empty() {
+        if let Some(approach) = held(approach) {
             sections.push(section(APPROACH, Body::Prose(approach)));
         }
         let ids = |item: &PlanItem| cells::slug(&item.id);
@@ -188,7 +184,7 @@ impl ArtifactCodec for PlanCodec {
             (DEPENDENCIES, dependencies.collect()),
             (CRITERIA, criteria.collect()),
         ] {
-            if !rows.is_empty() {
+            if let Some(rows) = held(rows) {
                 sections.push(section(heading, Body::Table(rows)));
             }
         }
@@ -218,14 +214,9 @@ impl ArtifactCodec for PlanCodec {
     }
 
     fn from_document(document: &Document) -> Result<Plan, CodecError> {
-        let field = |name: &'static str| {
-            document
-                .fields
-                .iter()
-                .find(|(known, _)| known == name)
-                .map(|(_, cell)| cell.as_str())
-        };
-        let required = |name: &'static str| field(name).ok_or_else(|| refused(name, "missing"));
+        let fields = cells::Fields::of(document);
+        let field = |name: &str| fields.get(name);
+        let required = |name: &'static str| fields.required(name);
         let version = cells::read_number(VERSION, required(VERSION)?)?;
         let version = u32::try_from(version).map_err(|_| refused(VERSION, "past u32"))?;
         let accepted = match (field(ACCEPTED_BY), field(ACCEPTED_AT)) {
@@ -292,17 +283,19 @@ fn title(plan: &PlanFields) -> String {
     format!("Plan {} of {}", plan.version, plan.task.as_str())
 }
 
+/// `entries`, when it holds any: a section only for what holds something
+/// (a missing one is "none").
+fn held<T>(entries: Vec<T>) -> Option<Vec<T>> {
+    match entries.as_slice() {
+        [_, ..] => Some(entries),
+        [] => None,
+    }
+}
+
 fn section(heading: &str, body: Body) -> Section {
     Section {
         heading: heading.into(),
         body,
-    }
-}
-
-fn refused(field: &'static str, problem: impl Into<String>) -> CodecError {
-    CodecError::Cell {
-        field,
-        problem: problem.into(),
     }
 }
 
@@ -337,7 +330,16 @@ impl Read {
                         return Err(refused(DEPENDENCIES, "a row of two cells"));
                     };
                     let on = cells::read_slug(DEPENDENCIES, on)?;
-                    self.item(DEPENDENCIES, id)?.depends_on.push(on);
+                    // Items are read before their dependencies.
+                    match self.items.iter().any(|item| item.id == on) {
+                        true => self.item(DEPENDENCIES, id)?.depends_on.push(on),
+                        false => {
+                            return Err(refused(
+                                DEPENDENCIES,
+                                format!("{} is no item of the plan", on.as_str()),
+                            ));
+                        }
+                    }
                 }
             }
             (CRITERIA, Body::Table(rows)) => {

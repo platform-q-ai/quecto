@@ -2,7 +2,7 @@
 //! title, the tables' order and items, the team's rows, and the caps.
 use super::super::{CodecError, decode, encode};
 use super::*;
-use crate::domain::project_board::entities::claim::Identity;
+use crate::domain::project_board::entities::claim::{Identity, MAX_EMAIL_BYTES};
 use crate::domain::project_board::entities::plan::{MAX_APPROACH_CHARS, MAX_PLAN_TEXT_BYTES};
 use crate::domain::project_board::entities::task_parts::{MAX_ITEMS, MAX_PER_ITEM};
 use crate::domain::project_board::entities::team::{MAX_IMAGE_BYTES, MAX_MODEL_BYTES, MAX_ROLES};
@@ -329,7 +329,7 @@ fn widest(approach: String, criterion: impl Fn(usize, usize) -> String) -> PlanF
         .collect();
     let name = "\u{1d538}".repeat(100);
     // An email's `|` is written `\|`: the most bytes an email can take.
-    let email = format!("{}@{}", "|".repeat(120), "b".repeat(133));
+    let email = format!("{}@b", "|".repeat(MAX_EMAIL_BYTES - 2));
     let roles = (0..MAX_ROLES)
         .map(|index| {
             role(
@@ -398,14 +398,16 @@ fn the_widest_plan_fits_its_limits() {
         assert_eq!(decode::<PlanCodec>(file.as_bytes()), Ok(plan));
     }
     let (bytes, lines, longest) = seen;
+    // The whole budget spent: 1,075,276 bytes.
     assert!(
-        bytes <= PLAN_LIMITS.file_bytes && bytes >= 1_075_000,
+        (1_075_000..=PLAN_LIMITS.file_bytes).contains(&bytes),
         "{bytes}"
     );
     // Past the plan's first estimate of 53,000: a fence's blank lines.
     assert!(lines <= PLAN_LIMITS.lines && lines > 53_000, "{lines}");
+    // An approach of 65,536 four-byte letters: 262,144 bytes.
     assert!(
-        longest <= PLAN_LIMITS.line_bytes && longest >= 4 * MAX_APPROACH_CHARS,
+        (4 * MAX_APPROACH_CHARS..=PLAN_LIMITS.line_bytes).contains(&longest),
         "{longest}"
     );
 }
