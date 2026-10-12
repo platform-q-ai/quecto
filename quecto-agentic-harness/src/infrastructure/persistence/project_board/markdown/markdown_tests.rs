@@ -3,8 +3,13 @@
 //! `parse`, edits of a file refused or read as the oracle reads them,
 //! block starts kept as text, and the limits.
 use super::*;
-use oracle::outline;
+use oracle::outline_in;
 use pulldown_cmark::{Event, Options, Parser, Tag};
+
+/// The oracle's outline of a file of the tests' own shape.
+fn outline(file: &str, document: &Document) -> Result<(), String> {
+    outline_in(file, document, &SHAPE)
+}
 
 const FIELDS: &[Column<'static>] = &[
     Column {
@@ -529,7 +534,7 @@ fn every_edit_of_a_file_is_refused_or_read_as_a_reader_reads_it() {
 }
 
 #[path = "markdown_oracle_tests.rs"]
-mod oracle;
+pub(crate) mod oracle;
 
 #[path = "markdown_hostile_tests.rs"]
 mod hostile;
