@@ -106,3 +106,28 @@ fn text_is_entered_only_once_normalised() {
     let refused = entered_line("title", "Ship it ").unwrap_err();
     assert_eq!(refused.field, "title");
 }
+
+/// NFC that would make or unmake markdown (a `>` composed into `≯`, a
+/// Greek varia into a backtick, a Greek question mark into `;`) is not
+/// taken: the text is left as written, for the codec to refuse.
+#[test]
+fn nfc_that_changes_markdown_punctuation_is_not_taken() {
+    for raw in [">\u{338} a", "\u{1fef}x\u{1fef}", "&lt\u{37e}b"] {
+        assert_eq!(settled(text, raw), raw, "{raw:?}");
+        assert_eq!(settled(line, raw), raw, "{raw:?}");
+    }
+    // NFC that keeps the punctuation is taken.
+    assert_eq!(settled(text, "> Cafe\u{301}"), "> Caf\u{e9}");
+}
+
+/// A trailing space goes only after a safe character, and only in a
+/// paragraph with no backtick or dollar so far (a code span or math may
+/// run on across its lines).
+#[test]
+fn a_trailing_space_after_a_backslash_or_in_code_or_math_is_kept() {
+    for raw in ["a\\ \nb", "`a \nb`", "x `y` \nz", "$x \ny$", "\\`a \nb"] {
+        assert_eq!(settled(text, raw), raw, "{raw:?}");
+    }
+    // A blank line starts a new paragraph: its own lines are free again.
+    assert_eq!(settled(text, "`x`\n\na \nb"), "`x`\n\na\nb");
+}

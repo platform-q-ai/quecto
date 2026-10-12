@@ -9,11 +9,25 @@ use unicode_normalization::UnicodeNormalization;
 
 /// What GitHub shows for `text`: its HTML as comrak renders it with the
 /// oracle's GitHub options (block structure, code and code-span contents,
-/// text), made NFC.
+/// text), each text node made NFC (canonically equal text shows the
+/// same; markup is compared as written).
 fn shown(text: &str) -> String {
-    comrak::markdown_to_html(text, &super::oracle::comrak_reader::comrak_options())
-        .nfc()
-        .collect()
+    use comrak::nodes::NodeValue;
+    let options = super::oracle::comrak_reader::comrak_options();
+    let arena = comrak::Arena::new();
+    let root = comrak::parse_document(&arena, text, &options);
+    for node in root.descendants() {
+        let mut data = node.data.borrow_mut();
+        match &mut data.value {
+            NodeValue::Text(literal) => *literal = literal.nfc().collect(),
+            NodeValue::Code(code) => code.literal = code.literal.nfc().collect(),
+            NodeValue::CodeBlock(block) => block.literal = block.literal.nfc().collect(),
+            _ => {}
+        }
+    }
+    let mut html = vec![];
+    comrak::format_html(root, &options, &mut html).expect("comrak renders to memory");
+    String::from_utf8(html).expect("comrak renders UTF-8")
 }
 
 /// Pieces of text from chat, imports and editors: what D4 fixes (CR,
@@ -63,6 +77,26 @@ const PIECES: &[&str] = &[
     ".",
     "(",
     "\u{e9}",
+    // What NFC or a stripped space could make into markup: escapes, math,
+    // HTML and quotes, headings, rules, entities, and the characters NFC
+    // turns into ASCII punctuation (U+0338 over `>`, U+1FEF, U+037E).
+    "\\",
+    "$",
+    "<",
+    ">",
+    "#",
+    "***",
+    "\u{338}",
+    "\u{1fef}",
+    "\u{37e}",
+    "&",
+    "&lt",
+    "a\\ \n",
+    "`a\n# b`",
+    "`a\n- b`",
+    "`x\n> y`",
+    "$x \n",
+    "<https://a \n",
 ];
 
 /// A small deterministic generator (an LCG), so a failure replays.
@@ -87,13 +121,17 @@ impl Seeded {
 #[test]
 fn normalising_never_changes_what_a_reader_shows() {
     let mut seeded = Seeded(2481);
-    let mut checked = 0;
+    let (mut checked, mut held) = (0, 0);
+    let punctuation =
+        |text: &str| -> String { text.chars().filter(char::is_ascii_punctuation).collect() };
     for _ in 0..20_000 {
         let raw = seeded.text();
         let normal = board_text::text(&raw);
         assert_eq!(board_text::text(&normal), normal, "{raw:?}");
+        // NFC, unless NFC would change the text's ASCII punctuation.
+        let nfc: String = normal.nfc().collect();
         assert!(
-            !normal.contains('\r') && normal.nfc().eq(normal.chars()),
+            !normal.contains('\r') && (nfc == normal || punctuation(&nfc) != punctuation(&normal)),
             "{raw:?}"
         );
         if markdown("description", &normal, 65_536).is_err() {
@@ -101,8 +139,16 @@ fn normalising_never_changes_what_a_reader_shows() {
         }
         checked += 1;
         assert_eq!(shown(&raw), shown(&normal), "{raw:?} → {normal:?}");
+        // What the codec holds, it holds as the normaliser wrote it.
+        if let Ok(blocks) = blocks_of(&normal) {
+            assert_eq!(text_of(&blocks), normal, "{raw:?}");
+            held += 1;
+        }
     }
-    assert!(checked > 10_000, "{checked} checked");
+    assert!(
+        checked > 10_000 && held > 500,
+        "{checked} checked, {held} held"
+    );
 }
 
 /// Each class D4 fixes is refused by the codec as written and held once
