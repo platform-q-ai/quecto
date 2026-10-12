@@ -9,7 +9,7 @@ use serde_json::{Value, json};
 
 use super::{Recorded, board, board_with, deadline, direct, execute, masked, prepared, refused};
 use crate::domain::swarm::{
-    ArgumentFaults, BoardOpObservation, BoardOpOutcome, RefusalKind, WrongTypeArg,
+    ArgumentFaults, BoardOpObservation, BoardOpOutcome, RefusalKind, UnexpectedArgs,
 };
 use crate::infrastructure::tools::swarm_board_ops::{
     BOARD_OPS, HARNESS_OPS, ID_ALIAS, OP_ALIASES, canonical_op, tool_schema,
@@ -129,8 +129,8 @@ fn logged() -> (
 }
 
 /// The `swarm_op` records and the board's events keep the old names: an
-/// op called by its task-item name is recorded as its old one, and its
-/// argument faults name `task_id`.
+/// op called by its task-item name is recorded as its old one, and an
+/// argument fault names `task_id`, not `task_item_id`.
 #[tokio::test]
 async fn the_records_and_events_keep_the_old_names() {
     let (_directory, context, log) = logged();
@@ -148,26 +148,32 @@ async fn the_records_and_events_keep_the_old_names() {
     )
     .await;
     assert!(!claimed.is_error, "{}", claimed.content);
+    // `task_create` takes no task id: the fault names `task_id`.
     refused(
         &context,
-        &json!({"op": "task_item", "task_item_id": "one"}).to_string(),
+        &json!({"op": "task_item_create", "request": "r2", "title": "b",
+            "acceptance": ["pass"], "task_item_id": 1})
+        .to_string(),
     )
     .await;
     let records: Vec<BoardOpObservation> = log.take();
-    let ops: Vec<&str> = records.iter().map(|record| record.op.as_str()).collect();
-    for op in ["task_create", "claim", "task"] {
-        assert!(ops.contains(&op), "{op}: {ops:?}");
-    }
-    assert!(ops.iter().all(|op| !op.contains("task_item")), "{ops:?}");
-    let refusal = records
+    // The harness's own reads (`_status`, `summary`, ...) are left out.
+    let calls: Vec<&BoardOpObservation> = records
         .iter()
-        .find(|record| record.op == "task")
-        .expect("the refused task op is recorded");
+        .filter(|record| ["task_create", "claim"].contains(&record.op.as_str()))
+        .collect();
+    let ops: Vec<&str> = calls.iter().map(|record| record.op.as_str()).collect();
+    assert_eq!(ops, ["task_create", "claim", "task_create"]);
+    assert!(
+        records.iter().all(|record| !record.op.contains("item")),
+        "{records:?}"
+    );
+    let refusal = calls.last().expect("the refused op is recorded");
     assert!(
         matches!(
             refusal.outcome,
             BoardOpOutcome::Refused {
-                kind: RefusalKind::Invalid,
+                kind: RefusalKind::Calling,
                 ..
             }
         ),
@@ -177,10 +183,10 @@ async fn the_records_and_events_keep_the_old_names() {
     assert_eq!(
         *refusal.arguments,
         ArgumentFaults {
-            wrong_type_args: vec![WrongTypeArg {
-                arg: "task_id".to_owned(),
-                expected: "integer".to_owned(),
-            }],
+            unexpected_args: Some(UnexpectedArgs {
+                count: 1,
+                known: vec!["task_id".to_owned()],
+            }),
             ..ArgumentFaults::NONE
         }
     );

@@ -271,6 +271,64 @@ const HARNESS_PROPERTIES: &[(&str, &str)] = &[
     ("strict_unknown", BOOLEAN),
 ];
 
+/// The swarm's tasks are task items (#2478): each op whose name says task
+/// has its task-item name too, `(task-item name, old name)`. The tool
+/// reads a task-item name as the old one before anything else (binding,
+/// the running gate, the board, refusals, `swarm_op` records), so the
+/// board, its events and the golden fixtures keep the old names.
+pub const OP_ALIASES: &[(&str, &str)] = &[
+    ("task_item", "task"),
+    ("task_items", "tasks"),
+    ("task_item_create", "task_create"),
+    ("verify_task_item", "verify_task"),
+    ("revalidate_task_item", "revalidate_task"),
+];
+
+/// `task_id`'s task-item name, `(task-item name, old name)`: one argument
+/// under two names, on every op that takes it.
+pub const ID_ALIAS: (&str, &str) = ("task_item_id", "task_id");
+
+/// The op `name` names: the old name a task-item name stands for, or
+/// `name` itself.
+pub fn canonical_op(name: &str) -> &str {
+    match OP_ALIASES.iter().find(|(alias, _)| *alias == name) {
+        Some((_, old)) => old,
+        None => name,
+    }
+}
+
+/// The argument `name` names: `task_id` for `task_item_id`, or `name`.
+fn canonical_arg(name: &str) -> &str {
+    match name == ID_ALIAS.0 {
+        true => ID_ALIAS.1,
+        false => name,
+    }
+}
+
+/// `fields` with `task_item_id` read as `task_id`, in its place (the
+/// binding names the first unexpected field in the member's order).
+///
+/// # Errors
+/// Both names given different values: one argument cannot hold two.
+fn canonical_fields(fields: Map<String, Value>) -> Result<Map<String, Value>, String> {
+    let (alias, old) = ID_ALIAS;
+    match (fields.get(alias), fields.get(old)) {
+        (None, _) => Ok(fields),
+        (Some(given), Some(same)) if given == same => {
+            let mut fields = fields;
+            fields.shift_remove(alias);
+            Ok(fields)
+        }
+        (Some(_), Some(_)) => Err(format!(
+            "arguments: {old} and {alias} name one argument and give it two values; send one"
+        )),
+        (Some(_), None) => Ok(fields
+            .into_iter()
+            .map(|(key, value)| (canonical_arg(&key).to_owned(), value))
+            .collect()),
+    }
+}
+
 /// The op named `name` in [`BOARD_OPS`].
 pub fn op_spec(name: &str) -> Option<&'static OpSpec> {
     BOARD_OPS.iter().find(|spec| spec.name == name)
@@ -284,10 +342,12 @@ fn schema_of(text: &str) -> Value {
 /// [`BOARD_OPS`] and the harness's own fields: a field several ops share
 /// has one schema.
 pub fn tool_schema() -> Value {
+    // Every op by its old name, then each task-item name (#2478).
     let ops: Vec<&str> = HARNESS_OPS
         .iter()
         .copied()
         .chain(BOARD_OPS.iter().map(|spec| spec.name))
+        .chain(OP_ALIASES.iter().map(|(alias, _)| *alias))
         .collect();
     let mut properties = Map::new();
     properties.insert("op".to_owned(), json!({"type": "string", "enum": ops}));
@@ -305,6 +365,12 @@ pub fn tool_schema() -> Value {
             }
         }
     }
+    // `task_item_id` is `task_id` under its task-item name: one schema.
+    let id = properties
+        .get(ID_ALIAS.1)
+        .cloned()
+        .expect("some board op takes task_id");
+    properties.insert(ID_ALIAS.0.to_owned(), id);
     json!({"type": "object", "properties": properties, "required": ["op"]})
 }
 
@@ -343,7 +409,8 @@ pub(super) struct BoardOpRequest {
 /// The structured op `text` asks for, read by `wire`, when its `op` names
 /// one; `None` for any other request, which the harness ops answer.
 pub(super) fn requested(text: &str, wire: BoardWire) -> Option<BoardOpRequest> {
-    let spec = op_spec(&(wire.op)(text)?)?;
+    // A task-item name is read as the old one before anything else.
+    let spec = op_spec(canonical_op(&(wire.op)(text)?))?;
     let arguments = member_arguments(&wire, text).and_then(|value| match value {
         Value::Object(mut fields) => {
             // Keeps the member's order (#2279 final review): the binding
@@ -351,12 +418,18 @@ pub(super) fn requested(text: &str, wire: BoardWire) -> Option<BoardOpRequest> {
             // unexpected keyword; `remove` would move the last into `op`'s
             // slot.
             fields.shift_remove("op");
-            Ok(fields)
+            canonical_fields(fields)
         }
         _ => Err("arguments: not a JSON object".to_owned()),
     });
-    let arguments =
-        arguments.map_err(|refusal| (refusal, unreadable_arguments((wire.unreadable)(text))));
+    let unreadable = || {
+        (wire.unreadable)(text).map(|keys| {
+            keys.iter()
+                .map(|key| canonical_arg(key).to_owned())
+                .collect()
+        })
+    };
+    let arguments = arguments.map_err(|refusal| (refusal, unreadable_arguments(unreadable())));
     Some(BoardOpRequest {
         spec,
         arguments,
