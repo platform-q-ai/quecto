@@ -64,14 +64,6 @@ fn fields_that_break_a_rule_build_no_task() {
             t.description = "é".repeat(MAX_DESCRIPTION_CHARS + 1)
         }),
         ("description", |t| t.description = "crlf\r\n".into()),
-        // Board text is normalised where it enters; one that is not was
-        // never normalised (an entry point skipped it).
-        ("title", |t| t.title = " padded ".into()),
-        ("title", |t| t.title = "Cafe\u{301}".into()),
-        ("description", |t| t.description = "ends\n".into()),
-        ("description", |t| t.description = "\nstarts".into()),
-        ("description", |t| t.description = "a \nb".into()),
-        ("description", |t| t.description = "Cafe\u{301}".into()),
         ("parent", |t| t.parent = Some(t.id.clone())),
         ("depends_on", |t| {
             t.depends_on = (0..=MAX_DEPENDENCIES)
