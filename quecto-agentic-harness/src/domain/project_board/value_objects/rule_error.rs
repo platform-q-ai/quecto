@@ -2,7 +2,7 @@
 use super::schema_error::SchemaError;
 use super::slug::Slug;
 use super::timestamp::Timestamp;
-use super::vocabulary::{PlanState, TaskStatus};
+use super::vocabulary::{DiscussionLimit, PlanState, TaskStatus};
 use std::fmt;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -27,6 +27,8 @@ pub enum BoardRuleError {
     /// The plan or run belongs to another task, or the run to another
     /// plan version.
     NotThisTasks,
+    /// The review is of another change (of this task or another).
+    NotThisChange,
     /// A done or archived task's plans are settled: none is proposed,
     /// edited, accepted or discarded.
     TaskFinished(TaskStatus),
@@ -55,6 +57,29 @@ pub enum BoardRuleError {
     /// The change was stamped by a clock running ahead of the outside
     /// time: building on it would drag the board ahead too.
     ChangeAhead { change: u32, updated: Timestamp },
+    /// The discussion is closed: nothing is added to it, and it is
+    /// closed once.
+    DiscussionClosed(Slug),
+    /// The discussion is about `task` already: it is linked once.
+    DiscussionLinked { discussion: Slug, task: Slug },
+    /// The discussion was stamped by a clock running ahead of the outside
+    /// time: building on it would drag the board ahead too.
+    DiscussionAhead {
+        discussion: Slug,
+        updated: Timestamp,
+    },
+    /// A message to the discussion was stamped `at`, later than the
+    /// caller's time or the outside time allows: a clock running ahead.
+    MessageAhead { discussion: Slug, at: Timestamp },
+    /// The discussion is full: the batch would take it past its most
+    /// messages, lines or text (`limit`). Begin another to go on.
+    DiscussionFull {
+        discussion: Slug,
+        limit: DiscussionLimit,
+    },
+    /// The change's review was stamped by a clock running ahead of the
+    /// outside time: building on it would drag the board ahead too.
+    ReviewAhead { change: u32, updated: Timestamp },
     /// The task links changes: it is done when they merge, through the
     /// completion anyone may run, not by its holder's say-so. The holder
     /// may unlink one deliberately first.
@@ -131,6 +156,7 @@ impl fmt::Display for BoardRuleError {
                 state.as_str()
             ),
             Self::NotThisTasks => f.write_str("it belongs to another task or plan version"),
+            Self::NotThisChange => f.write_str("the review is of another change"),
             Self::TaskFinished(status) => {
                 write!(f, "a {} task's plans are settled", status.as_str())
             }
@@ -167,6 +193,39 @@ impl fmt::Display for BoardRuleError {
             Self::ChangeAhead { change, updated } => write!(
                 f,
                 "change {change} was stamped {} by a clock that ran ahead",
+                updated.as_str()
+            ),
+            Self::DiscussionClosed(id) => write!(f, "discussion {} is closed", id.as_str()),
+            Self::DiscussionLinked { discussion, task } => write!(
+                f,
+                "discussion {} is about task {} already",
+                discussion.as_str(),
+                task.as_str()
+            ),
+            Self::DiscussionAhead {
+                discussion,
+                updated,
+            } => write!(
+                f,
+                "discussion {} was stamped {} by a clock that ran ahead",
+                discussion.as_str(),
+                updated.as_str()
+            ),
+            Self::MessageAhead { discussion, at } => write!(
+                f,
+                "a message to discussion {} was stamped {} by a clock that ran ahead",
+                discussion.as_str(),
+                at.as_str()
+            ),
+            Self::DiscussionFull { discussion, limit } => write!(
+                f,
+                "discussion {} has no room for more {}: begin another to go on",
+                discussion.as_str(),
+                limit.as_str()
+            ),
+            Self::ReviewAhead { change, updated } => write!(
+                f,
+                "change {change}'s review was stamped {} by a clock that ran ahead",
                 updated.as_str()
             ),
             Self::ChangesLinked(numbers) => write!(
