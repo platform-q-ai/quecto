@@ -350,6 +350,20 @@ fn the_refusals_name_task_items() {
             "a task: missing required argument x",
             "a task: missing required argument x",
         ),
+        // A member's own key that reads like a refusal is its own: only
+        // the op is renamed.
+        (
+            "tasks: unexpected argument x: missing required argument task_id",
+            "task_items: unexpected argument x: missing required argument task_id",
+        ),
+        (
+            "claim: unexpected argument x: missing required argument task_id",
+            "claim: unexpected argument x: missing required argument task_id",
+        ),
+        (
+            "a b: missing required argument task_id",
+            "a b: missing required argument task_id",
+        ),
     ] {
         assert_eq!(task_item_refusal(board), member, "{board}");
     }
@@ -398,6 +412,14 @@ async fn the_member_reads_the_refusals_in_task_items() {
         (
             json!({"op": "task", "task_id": 1, "task_item_id": 2}),
             r#"tool error: swarm: "task_item: task_id and task_item_id name the same argument but hold different values; send only one""#,
+        ),
+        (
+            json!({"op": "task_items", "x: missing required argument task_id": 1}),
+            r#"tool error: swarm: "task_items: unexpected argument x: missing required argument task_id""#,
+        ),
+        (
+            json!({"op": "claim", "task_item_id": 1, "x: missing required argument task_id": 1}),
+            r#"tool error: swarm: "claim: unexpected argument x: missing required argument task_id""#,
         ),
     ] {
         assert_eq!(
@@ -492,6 +514,12 @@ fn only_the_top_level_task_key_of_a_detail_is_renamed() {
         (r#"{"task" : 1}"#, r#"{"task_item" : 1}"#),
         (r#"["task",1]"#, r#"["task",1]"#),
         ("not json", "not json"),
+        (r#"  {"task":1}"#, r#"  {"task_item":1}"#),
+        // Text that is no whole object: a string running past the end, a
+        // key after the object closed.
+        (r#"{"reason":"open"#, r#"{"reason":"open"#),
+        (r#"{"task\"#, r#"{"task\"#),
+        (r#"{"a":1}{"task":2}"#, r#"{"a":1}{"task":2}"#),
     ] {
         let page = task_item_harness_answer(
             "events",
@@ -510,4 +538,65 @@ fn every_presented_op_is_a_board_op() {
     for (op, _) in PRESENTED_OPS {
         assert!(BOARD_OPS.iter().any(|spec| spec.name == *op), "{op}");
     }
+}
+
+/// A detail nested deeper than `serde_json` reads (its limit is 128) is
+/// still presented: the scan reads it, not a parser.
+#[test]
+fn a_deep_detail_names_its_task_item() {
+    for depth in [125, 200] {
+        let lists = format!("{}1{}", "[".repeat(depth), "]".repeat(depth));
+        let detail = format!(r#"{{"evidence":{lists},"revision":"r","task":1}}"#);
+        let page = task_item_harness_answer(
+            "events",
+            json!({"events": [{"action": "revalidated", "detail": detail}]}),
+        );
+        assert_eq!(
+            page["events"][0]["detail"],
+            format!(r#"{{"evidence":{lists},"revision":"r","task_item":1}}"#),
+            "{depth}"
+        );
+    }
+}
+
+/// Every board op is presented (or deliberately not) as listed here, in
+/// the table's order, so a board op added without a decision fails.
+#[test]
+fn every_board_op_has_a_presentation_decided() {
+    use crate::infrastructure::tools::swarm_output::Presented::{
+        FileRows, Messages, ReleasedFiles, TaskRow, TaskRows,
+    };
+    use crate::infrastructure::tools::swarm_output::presented;
+    let decided = [
+        ("task", Some(TaskRow)),
+        ("tasks", Some(TaskRows)),
+        ("file_owners", Some(FileRows)),
+        ("task_create", Some(TaskRow)),
+        ("dependencies", Some(TaskRow)),
+        ("claim", Some(TaskRow)),
+        ("release", Some(TaskRow)),
+        ("block", Some(TaskRow)),
+        ("unblock", Some(TaskRow)),
+        ("submit", Some(TaskRow)),
+        ("reserve", None),
+        ("release_files", Some(ReleasedFiles)),
+        ("send", None),
+        ("withdraw", None),
+        ("inbox", Some(Messages)),
+        ("ack", None),
+        ("evidence", None),
+        ("amend", None),
+        ("verify_task", Some(TaskRow)),
+        ("revalidate_task", Some(TaskRow)),
+        ("recover", Some(TaskRow)),
+        ("revoke", Some(TaskRow)),
+        ("complete", None),
+        ("stop", None),
+        ("usage_report", None),
+    ];
+    let found: Vec<_> = BOARD_OPS
+        .iter()
+        .map(|spec| (spec.name, presented(spec.name)))
+        .collect();
+    assert_eq!(found, decided);
 }
