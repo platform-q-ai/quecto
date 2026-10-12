@@ -6,8 +6,18 @@
 //! functions, module scope and macro tokens alike): nothing spawns a task,
 //! a blocking job or a thread, or blocks on or enters a runtime, but the
 //! allowlisted sites, each with its reason. A `use` of a spawn form is
-//! itself a site, so an import cannot hide one. Every entry must still be
+//! itself a site, and so is a `use` that renames or globs a spawning module
+//! or type (`tokio`, `tokio::task`, `tokio::runtime`, `std::thread`,
+//! `Handle`), so an import cannot hide one. Every entry must still be
 //! needed.
+//!
+//! What syntax alone cannot see: a spawn inside a helper outside the
+//! checked trees (elsewhere in the crate, or in a dependency) that a tool
+//! calls by another name, and a spawner reached through a value whose
+//! origin is not named in the same function (a field, a parameter, a
+//! return value) unless its receiver's text names a runtime, handle,
+//! builder or thread. The checked trees' own helpers are seen, since they
+//! are checked too.
 
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -23,20 +33,70 @@ const TREES: &[&str] = &["src/infrastructure/tools", "src/interface/tools"];
 const SPAWN_WORDS: &[&str] = &[
     "spawn_blocking",
     "spawn_local",
+    "spawn_ok",
     "block_on",
     "block_in_place",
 ];
 
-/// The path segments before `spawn` that make it a task or thread spawn
-/// (`tokio::spawn`, `tokio::task::spawn`, `std::thread::spawn`,
-/// `Handle::spawn`), as a process's `Command::spawn` is not.
-const SPAWNERS: &[&str] = &["tokio", "task", "thread", "Handle", "Runtime"];
+/// The path segments before `spawn` (or `scope`) that make it a task or
+/// thread spawn (`tokio::spawn`, `tokio::task::spawn`, `std::thread::spawn`,
+/// `std::thread::scope`, `Handle::spawn`, `JoinSet::spawn`,
+/// `rayon::spawn`), as a process's `Command::spawn` is not.
+const SPAWNERS: &[&str] = &[
+    "tokio", "task", "thread", "Handle", "Runtime", "JoinSet", "rayon",
+];
+
+/// The words after a spawner that spawn: `scope` runs scoped threads.
+const SPAWNED_BY_SPAWNER: &[&str] = &["spawn", "scope"];
 
 /// What a `.spawn(..)` receiver names when it spawns a task or a thread: a
-/// runtime handle or a thread builder.
+/// runtime, its handle, a join set, or a thread builder or scope.
 const SPAWN_RECEIVERS: &[&str] = &[
-    "Handle", "handle", "runtime", "Runtime", "Builder", "thread",
+    "Handle", "handle", "runtime", "Runtime", "Builder", "builder", "thread", "JoinSet",
 ];
+
+/// A `use` that renames or globs one of these hides the spawns after it.
+const SPAWNING_MODULES: &[&[&str]] = &[
+    &["tokio"],
+    &["tokio", "task"],
+    &["tokio", "runtime"],
+    &["std", "thread"],
+];
+
+/// What a local's value names when the local then spawns (`let rt =
+/// Runtime::new()?; rt.spawn(..)`): a runtime, its handle, a join set, a
+/// builder or a thread pool.
+const SPAWNER_SOURCES: &[&str] = &["Handle", "Runtime", "JoinSet", "Builder", "ThreadPool"];
+
+/// The words of `tokens`, groups flattened.
+fn token_words(tokens: TokenStream) -> Vec<String> {
+    let mut words = vec![];
+    for tree in tokens {
+        match tree {
+            TokenTree::Group(group) => words.extend(token_words(group.stream())),
+            TokenTree::Ident(ident) => words.push(ident.to_string()),
+            TokenTree::Punct(_) | TokenTree::Literal(_) => {}
+        }
+    }
+    words
+}
+
+/// The names a pattern binds.
+fn bound_names(pat: &syn::Pat, out: &mut Vec<String>) {
+    match pat {
+        syn::Pat::Ident(ident) => out.push(ident.ident.to_string()),
+        syn::Pat::Type(typed) => bound_names(&typed.pat, out),
+        syn::Pat::Reference(reference) => bound_names(&reference.pat, out),
+        syn::Pat::Tuple(tuple) => tuple.elems.iter().for_each(|pat| bound_names(pat, out)),
+        syn::Pat::TupleStruct(tuple) => tuple.elems.iter().for_each(|pat| bound_names(pat, out)),
+        syn::Pat::Struct(fields) => fields
+            .fields
+            .iter()
+            .for_each(|field| bound_names(&field.pat, out)),
+        syn::Pat::Paren(paren) => bound_names(&paren.pat, out),
+        _ => {}
+    }
+}
 
 /// The sites that may spawn, by file and site, and why: the carrier itself,
 /// work that outlives a call by design, and work on threads and runtimes of
@@ -63,6 +123,16 @@ const ALLOWED: &[(&str, &str, &str)] = &[
         "runs a call's blocking work in place on a multi-thread worker",
     ),
     (
+        "src/infrastructure/tools/call_work.rs",
+        "fn off_the_runtime",
+        "test support only: a test's blocking setup on a scoped thread, joined, its panic resumed",
+    ),
+    (
+        "src/infrastructure/tools/call_work.rs",
+        "fn std_thread_in_call",
+        "the call's own detached thread, carried into its scope: a panic fails the call through execute_contained's backstop",
+    ),
+    (
         "src/infrastructure/tools/filesystem/fs_failure.rs",
         "fn run_write",
         "pre-existing (#2254): a panicked write is read as a fault whose leftover is unknown; moving it onto call_work changes that answer (#2517)",
@@ -80,7 +150,7 @@ const ALLOWED: &[(&str, &str, &str)] = &[
     (
         "src/infrastructure/tools/spawn_container.rs",
         "fn spawn_script_managed_child",
-        "watches a container child for its lifetime, which outlives the spawn call",
+        "runs the container create as its own task, tracked by InFlight: a create the dropped spawn call no longer claims is rolled back",
     ),
     (
         "src/infrastructure/tools/spawn_launch_guard.rs",
@@ -115,7 +185,7 @@ const ALLOWED: &[(&str, &str, &str)] = &[
     (
         "src/infrastructure/tools/subagent_cleanup.rs",
         "fn run_cleanup_jobs_sync",
-        "tears sub-agents down at exit on its own executor, when no runtime runs",
+        "tears sub-agents down on its own executor: at exit, and from inside spawn_blocking while the runtime runs (run_cleanup_jobs)",
     ),
     (
         "src/infrastructure/tools/subagent_cleanup.rs",
@@ -150,28 +220,30 @@ const ALLOWED: &[(&str, &str, &str)] = &[
     (
         "src/infrastructure/tools/swarm_lifecycle.rs",
         "fn supervise",
-        "the swarm watcher's own thread and runtime (#2278), never an async worker",
+        "the swarm watcher's own thread, which builds a fresh current-thread runtime (#2278), never an async worker",
     ),
     (
         "src/infrastructure/tools/swarm_lifecycle.rs",
         "impl Supervisor<'_>::announce",
-        "on the swarm watcher's own runtime (#2278)",
+        "builds a fresh current-thread runtime on the swarm watcher's thread (#2278)",
     ),
     (
         "src/infrastructure/tools/swarm_lifecycle.rs",
         "fn watch_until_ended",
-        "on the swarm watcher's own runtime (#2278)",
+        "blocks on the fresh current-thread runtime supervise built, on the swarm watcher's thread (#2278)",
     ),
     (
         "src/infrastructure/tools/swarm_lifecycle.rs",
         "fn settle_observed_snapshot",
-        "on the swarm watcher's own runtime (#2278)",
+        "builds a fresh current-thread runtime on the swarm watcher's thread (#2278)",
     ),
 ];
 
 struct Sites<'a> {
     file: &'a str,
     scope: Vec<String>,
+    /// Per scope, the locals whose value names a spawner.
+    spawner_locals: Vec<BTreeSet<String>>,
     found: Vec<(String, String, String)>,
 }
 
@@ -186,8 +258,25 @@ impl Sites<'_> {
 
     fn scoped(&mut self, name: String, visit: impl FnOnce(&mut Self)) {
         self.scope.push(name);
+        self.spawner_locals.push(BTreeSet::new());
         visit(self);
+        self.spawner_locals.pop();
         self.scope.pop();
+    }
+
+    /// Whether `word` is a local, in this scope or one around it, whose
+    /// value names a spawner.
+    fn spawner_local(&self, word: &str) -> bool {
+        self.spawner_locals
+            .iter()
+            .any(|locals| locals.contains(word))
+    }
+
+    /// Whether a `.spawn(..)` receiver, as words, spawns a task or thread.
+    fn spawning_receiver(&self, words: &[String]) -> bool {
+        words
+            .iter()
+            .any(|word| SPAWN_RECEIVERS.contains(&word.as_str()) || self.spawner_local(word))
     }
 
     /// A path that names a spawn form: a spawn word anywhere, or `spawn`
@@ -197,7 +286,7 @@ impl Sites<'_> {
             .iter()
             .any(|word| SPAWN_WORDS.contains(&word.as_str()));
         let spawn_after_spawner = words.iter().enumerate().any(|(index, word)| {
-            word == "spawn"
+            SPAWNED_BY_SPAWNER.contains(&word.as_str())
                 && index > 0
                 && words[..index]
                     .iter()
@@ -208,22 +297,40 @@ impl Sites<'_> {
         }
     }
 
-    /// A macro's tokens held to the same rules: a spawn word, or `spawn`
-    /// after a spawner and `::`.
+    /// A macro's tokens held to the same rules: a spawn word, `spawn` or
+    /// `scope` after a spawner and `::`, or `.spawn` on a spawning
+    /// receiver (back to the start of its expression). A group stands in
+    /// `seen` as one marker, so a lookback never joins tokens across it.
     fn tokens(&mut self, stream: TokenStream) {
         let mut seen: Vec<String> = vec![];
         for tree in stream {
             match &tree {
-                TokenTree::Group(group) => self.tokens(group.stream()),
+                TokenTree::Group(group) => {
+                    self.tokens(group.stream());
+                    seen.push("<group>".to_string());
+                }
                 TokenTree::Ident(ident) => {
                     let word = ident.to_string();
-                    let after_spawner = word == "spawn"
+                    let by_path = SPAWNED_BY_SPAWNER.contains(&word.as_str())
+                        && seen.ends_with(&[":".to_string(), ":".to_string()])
                         && seen
                             .iter()
                             .rev()
-                            .take(3)
-                            .any(|before| SPAWNERS.contains(&before.as_str()));
-                    if SPAWN_WORDS.contains(&word.as_str()) || after_spawner {
+                            .nth(2)
+                            .is_some_and(|before| SPAWNERS.contains(&before.as_str()));
+                    let by_method = word == "spawn"
+                        && seen.last().is_some_and(|before| before == ".")
+                        && self.spawning_receiver(
+                            &seen
+                                .iter()
+                                .rev()
+                                .take_while(|token| {
+                                    !matches!(token.as_str(), ";" | "," | "=" | "=>")
+                                })
+                                .cloned()
+                                .collect::<Vec<_>>(),
+                        );
+                    if SPAWN_WORDS.contains(&word.as_str()) || by_path || by_method {
                         self.record(format!("`{word}` in a macro"));
                     }
                     seen.push(word);
@@ -250,26 +357,45 @@ fn words(path: &syn::Path) -> Vec<String> {
         .collect()
 }
 
+/// A `use` leaf: its path, and whether it renames or globs a spawning
+/// module or type ([`SPAWNING_MODULES`], `Handle`).
+type UseLeaf = (Vec<String>, bool);
+
+/// Whether `path` is a spawning module or ends in `Handle`.
+fn spawning_import(path: &[String]) -> bool {
+    SPAWNING_MODULES
+        .iter()
+        .any(|module| module.iter().copied().eq(path.iter().map(String::as_str)))
+        || path.last().is_some_and(|last| last == "Handle")
+}
+
 /// The leaves of a `use` tree, each with the path before it.
-fn use_leaves(tree: &syn::UseTree, prefix: &mut Vec<String>, out: &mut Vec<Vec<String>>) {
+fn use_leaves(tree: &syn::UseTree, prefix: &mut Vec<String>, out: &mut Vec<UseLeaf>) {
     match tree {
         syn::UseTree::Path(path) => {
             prefix.push(path.ident.to_string());
             use_leaves(&path.tree, prefix, out);
             prefix.pop();
         }
-        syn::UseTree::Name(name) => {
-            out.push([prefix.clone(), vec![name.ident.to_string()]].concat())
-        }
+        syn::UseTree::Name(name) => out.push((
+            [prefix.clone(), vec![name.ident.to_string()]].concat(),
+            false,
+        )),
         syn::UseTree::Rename(rename) => {
-            out.push([prefix.clone(), vec![rename.ident.to_string()]].concat())
+            // `self as t` renames the prefix itself.
+            let path = match rename.ident == "self" {
+                true => prefix.clone(),
+                false => [prefix.clone(), vec![rename.ident.to_string()]].concat(),
+            };
+            let hides = spawning_import(&path);
+            out.push((path, hides));
         }
         syn::UseTree::Group(group) => {
             for tree in &group.items {
                 use_leaves(tree, prefix, out);
             }
         }
-        syn::UseTree::Glob(_) => {}
+        syn::UseTree::Glob(_) => out.push((prefix.clone(), spawning_import(prefix))),
     }
 }
 
@@ -323,8 +449,14 @@ impl<'ast> Visit<'ast> for Sites<'_> {
     fn visit_item_use(&mut self, item: &'ast syn::ItemUse) {
         let mut leaves = vec![];
         use_leaves(&item.tree, &mut vec![], &mut leaves);
-        for leaf in leaves {
-            self.path(&leaf);
+        for (leaf, hides) in leaves {
+            match hides {
+                true => self.record(format!(
+                    "a `use` renaming or globbing `{}`",
+                    leaf.join("::")
+                )),
+                false => self.path(&leaf),
+            }
         }
     }
 
@@ -333,11 +465,27 @@ impl<'ast> Visit<'ast> for Sites<'_> {
         syn::visit::visit_path(self, path);
     }
 
+    fn visit_local(&mut self, local: &'ast syn::Local) {
+        let names_spawner = local.init.as_ref().is_some_and(|init| {
+            token_words(init.expr.to_token_stream())
+                .iter()
+                .any(|word| SPAWNER_SOURCES.contains(&word.as_str()))
+        });
+        if names_spawner {
+            let mut names = vec![];
+            bound_names(&local.pat, &mut names);
+            if let Some(locals) = self.spawner_locals.last_mut() {
+                locals.extend(names);
+            }
+        }
+        syn::visit::visit_local(self, local);
+    }
+
     fn visit_expr_method_call(&mut self, call: &'ast syn::ExprMethodCall) {
         let method = call.method.to_string();
         let receiver = call.receiver.to_token_stream().to_string();
-        let spawns =
-            method == "spawn" && SPAWN_RECEIVERS.iter().any(|name| receiver.contains(name));
+        let spawns = method == "spawn"
+            && self.spawning_receiver(&token_words(call.receiver.to_token_stream()));
         if SPAWN_WORDS.contains(&method.as_str()) || spawns {
             self.record(format!("`.{method}(..)` on `{receiver}`"));
         }
@@ -386,6 +534,7 @@ fn spawn_sites(files: &[(String, syn::File)]) -> Vec<(String, String, String)> {
         let mut sites = Sites {
             file: path,
             scope: vec![],
+            spawner_locals: vec![BTreeSet::new()],
             found: vec![],
         };
         sites.visit_file(parsed);
@@ -462,10 +611,64 @@ fn every_spawn_form_is_seen() {
             "impl X { fn f(&self) { self.handle.spawn(async {}); } }",
             true,
         ),
+        // The bypasses #2513's third review listed.
+        ("fn f() { tokio::task::JoinSet::<()>::spawn; }", true),
+        (
+            "fn f() { let mut set = tokio::task::JoinSet::new(); set.spawn(async {}); }",
+            true,
+        ),
+        (
+            "use tokio::task::JoinSet; fn f() { let mut s = JoinSet::new(); s.spawn(async {}); }",
+            true,
+        ),
+        (
+            "fn f() { std::thread::scope(|s| { s.spawn(|| ()); }); }",
+            true,
+        ),
+        ("use std::thread; fn f() { thread::scope(|s| ()); }", true),
+        ("fn f(pool: &ThreadPool) { pool.spawn_ok(async {}); }", true),
+        ("fn f() { rayon::spawn(|| ()); }", true),
+        (
+            "fn f(builder: std::thread::Builder) { builder.spawn(|| ()).unwrap(); }",
+            true,
+        ),
+        (
+            "fn f() { let h = tokio::runtime::Handle::current(); h.spawn(async {}); }",
+            true,
+        ),
+        (
+            "fn f() { let rt = tokio::runtime::Runtime::new().unwrap(); rt.spawn(async {}); }",
+            true,
+        ),
+        ("use tokio as tk; fn f() { tk::spawn(async {}); }", true),
+        ("use tokio::task as t; fn f() { t::spawn(async {}); }", true),
+        ("use tokio::runtime as r; fn f() {}", true),
+        ("use std::thread as th; fn f() { th::spawn(|| ()); }", true),
+        ("use tokio::*; fn f() { spawn(async {}); }", true),
+        ("use tokio::task::*; fn f() { spawn(async {}); }", true),
+        ("use std::thread::*; fn f() { spawn(|| ()); }", true),
+        (
+            "use tokio::runtime::Handle as H; fn f() { H::current().spawn(async {}); }",
+            true,
+        ),
+        (
+            "fn f() { drop(format!(\"{:?}\", tokio::runtime::Handle::current().spawn(async {}))); }",
+            true,
+        ),
+        (
+            "fn f() { let rt = Runtime::new().unwrap(); drop(format!(\"{:?}\", rt.spawn(async {}))); }",
+            true,
+        ),
+        // Not spawns: a process, a scoped name elsewhere, a carried spawn.
         (
             "fn f(c: &mut std::process::Command) { c.spawn().unwrap(); }",
             false,
         ),
+        (
+            "fn f() { let mut c = std::process::Command::new(\"x\"); c.spawn().unwrap(); }",
+            false,
+        ),
+        ("use std::thread::sleep; fn f() {}", false),
         (
             "fn f() { call_work::spawn_blocking_in_call(|| ()); }",
             false,
