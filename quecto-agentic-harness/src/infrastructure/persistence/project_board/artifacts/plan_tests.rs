@@ -329,7 +329,7 @@ fn long_slug(index: usize) -> Slug {
     slug(&format!("{}{index:03}", "a".repeat(61)))
 }
 
-/// The widest of every list the domain admits: 128 items, each with 16
+/// The widest of every list the domain admits: 128 task items, each with 16
 /// criteria and as many dependencies as an acyclic plan has, 16 roles,
 /// every optional field, and `approach` and `criterion` as given.
 fn widest(approach: String, criterion: impl Fn(usize, usize) -> String) -> PlanFields {
@@ -387,9 +387,9 @@ fn the_widest_plan_fits_its_limits() {
     let fenced = format!("```{}```", "\n".repeat(MAX_APPROACH_CHARS - 6));
     let most_lines = widest(fenced, |_, c| format!("c{c}"));
     // Most bytes: the whole text budget spent on `|`, which a cell writes
-    // `\|`: each item's share over its criteria, distinct lengths, the last
+    // `\|`: each task item's share over its criteria, distinct lengths, the last
     // taking what is left.
-    // One byte each for the items' titles and the roles' models, one for
+    // One byte each for the task items' titles and the roles' models, one for
     // the image (its row is the widest, written as code), and one for an
     // approach of `#`, which brings its section and is written `\#`.
     let budget = MAX_PLAN_TEXT_BYTES - MAX_ITEMS - MAX_ROLES - 1 - 1;

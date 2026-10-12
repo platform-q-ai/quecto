@@ -193,7 +193,7 @@ fn validate_items(items: &[PlanItem]) -> Result<(), SchemaError> {
             false => {
                 return Err(SchemaError::new(
                     format!("items/{index}/depends_on"),
-                    "must name other items of this plan",
+                    "must name other task items of this plan",
                 ));
             }
         }
@@ -201,7 +201,7 @@ fn validate_items(items: &[PlanItem]) -> Result<(), SchemaError> {
     match blocked_by_cycle(items) {
         Some(index) => Err(SchemaError::new(
             format!("items/{index}/depends_on"),
-            "is on or behind a dependency cycle",
+            "is on or behind a cycle of task item dependencies",
         )),
         None => Ok(()),
     }

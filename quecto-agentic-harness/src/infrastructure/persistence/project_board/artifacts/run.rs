@@ -22,7 +22,7 @@ const STATE: &str = "State";
 const STARTED: &str = "Started";
 const ENDED: &str = "Ended";
 const COST: &str = "Cost tokens";
-const ITEMS: &str = "Task items";
+const TASK_ITEMS: &str = "Task items";
 /// The column naming a task item, in every table.
 const TASK_ITEM: &str = "Task item";
 const OWNERS: &str = "Owners";
@@ -42,7 +42,7 @@ const FIELDS: &[Column<'static>] = &[
 
 const SECTIONS: &[SectionShape<'static>] = &[
     SectionShape {
-        heading: ITEMS,
+        heading: TASK_ITEMS,
         body: BodyShape::Table(&[
             column(TASK_ITEM, CellKind::Ascii),
             column(STATE, CellKind::Ascii),
@@ -122,7 +122,7 @@ impl ArtifactCodec for RunCodec {
                 .map(move |line| vec![id(item), line.clone()])
         });
         let sections = [
-            (ITEMS, items.collect::<Vec<_>>()),
+            (TASK_ITEMS, items.collect::<Vec<_>>()),
             (OWNERS, owners.collect()),
             (EVIDENCE, evidence.collect()),
         ]
@@ -171,15 +171,15 @@ impl ArtifactCodec for RunCodec {
                     return Err(refused("Run", "a row of two cells"));
                 };
                 match section.heading.as_str() {
-                    ITEMS => items.push(RunItem {
-                        id: cells::read_slug(ITEMS, id)?,
-                        state: cells::read_word(ITEMS, cell, ItemState::parse)?,
+                    TASK_ITEMS => items.push(RunItem {
+                        id: cells::read_slug(TASK_ITEMS, id)?,
+                        state: cells::read_word(TASK_ITEMS, cell, ItemState::parse)?,
                         owner: None,
                         evidence: vec![],
                     }),
                     OWNERS => match &mut item(&mut items, OWNERS, id)?.owner {
                         owner @ None => *owner = Some(cell.clone()),
-                        Some(_) => return Err(refused(OWNERS, "one owner a task item")),
+                        Some(_) => return Err(refused(OWNERS, "one owner per task item")),
                     },
                     EVIDENCE => item(&mut items, EVIDENCE, id)?.evidence.push(cell.clone()),
                     other => return Err(refused("Run", format!("a section {other:?}"))),
@@ -206,7 +206,7 @@ impl ArtifactCodec for RunCodec {
     }
 }
 
-/// The item `id` names among those read so far.
+/// The task item `id` names among those read so far.
 fn item<'a>(
     items: &'a mut [RunItem],
     table: &'static str,

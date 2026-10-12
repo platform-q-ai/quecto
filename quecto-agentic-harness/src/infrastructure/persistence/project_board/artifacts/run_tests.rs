@@ -1,5 +1,5 @@
 //! The run codec: the example file byte for byte, a running run, the
-//! fold-back's tables in item order, and the widest run inside the caps.
+//! fold-back's tables in task item order, and the widest run inside the caps.
 use super::super::{CodecError, decode, encode};
 use super::*;
 use crate::domain::project_board::entities::run::MAX_RUN_TEXT_BYTES;
@@ -159,7 +159,7 @@ fn a_running_run_has_no_end_cost_or_items() {
          | Task | board-cli |\n| Number | 3 |\n| Plan version | 2 |\n| State | running |\n\
          | Started | 2026-10-11T12:05:00Z |\n"
     );
-    // The domain refuses a cost or items before the fold-back.
+    // The domain refuses a cost or task items before the fold-back.
     refused_at(&format!("{file}| Cost tokens | 5 |\n"), "Run");
     let items =
         format!("{file}\n## Task items\n| Task item | State |\n|---|---|\n| store | done |\n");
@@ -267,7 +267,7 @@ fn long_slug(index: usize) -> Slug {
     slug(&format!("{}{index:03}", "a".repeat(61)))
 }
 
-/// The run the domain admits at its widest: every item, owner and line of
+/// The run the domain admits at its widest: every task item, owner and line of
 /// evidence, the text budget spent as `evidence` gives it.
 fn widest(evidence: impl Fn(usize, usize) -> String) -> RunFields {
     let items = (0..MAX_ITEMS)
@@ -295,7 +295,7 @@ fn widest(evidence: impl Fn(usize, usize) -> String) -> RunFields {
 #[test]
 fn the_widest_run_fits() {
     // Most bytes and lines: the whole text budget spent on `|`, written
-    // `\|`: each item's share over its evidence, distinct lengths, the last
+    // `\|`: each task item's share over its evidence, distinct lengths, the last
     // line taking what is left.
     let budget = MAX_RUN_TEXT_BYTES - MAX_ITEMS * MAX_OWNER_CHARS;
     let lengths = |index: usize, line: usize| {

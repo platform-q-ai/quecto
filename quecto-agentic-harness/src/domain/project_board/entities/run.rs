@@ -124,7 +124,7 @@ impl Run {
         {
             Some(index) => Err(SchemaError::new(
                 format!("items/{index}/id"),
-                "is not an item of the plan",
+                "is not a task item of the plan",
             )),
             None => Ok(()),
         }
@@ -183,7 +183,7 @@ fn validate(run: &RunFields) -> Result<(), SchemaError> {
         (false, false, false) => {
             return Err(SchemaError::new(
                 "items",
-                "a run reports its items when it folds back",
+                "a run reports its task items when it folds back",
             ));
         }
     }
