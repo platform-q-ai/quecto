@@ -447,9 +447,13 @@ tokio would also quietly turn a panic in any spawned task into a
 - Release binaries are somewhat larger, because they carry unwind tables.
 - Code outside the harness's `main` (tests, embeddings) has no hook, so
   Rust's default behaviour applies there. The `panic_hook` process tests
-  re-execute the test binary to prove the installed behaviour. Every test
-  that ends a process fatally on purpose goes through one test-support
-  helper (`panic_hook::test_support::without_core_dumps`): it sets
+  re-execute the test binary to prove the installed behaviour. Every
+  harness test that ends a process fatally on purpose goes through one
+  test-support helper, `infrastructure::test_support::no_core_dumps::without_core_dumps`
+  (also reachable as `panic_hook::test_support::without_core_dumps`
+  through a glob re-export); the `quecto-fail-fast` crate, which cannot
+  depend on the harness, sets the same switch itself
+  (`quecto-fail-fast/src/lib_tests.rs`). The helper sets
   `QUECTO_TEST_NO_CORE_DUMPS=1`, so the hook of a test-support build ends
   the process with `_exit(134)` instead of `abort()`, and it sets the
   process's `RLIMIT_CORE` to zero as well. No core-dumping signal is sent,
