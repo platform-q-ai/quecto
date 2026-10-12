@@ -124,6 +124,21 @@ pub enum BoardRuleError {
     PrNotLinked(u64),
     /// The task already links this pull request.
     PrAlreadyLinked(u64),
+    /// Other tasks took this one over (`by`): it is archived as
+    /// superseded, never done.
+    Superseded { by: Vec<Slug> },
+    /// Two tasks name the same issue.
+    IssueShared { issue: u64, tasks: [Slug; 2] },
+    /// `task`'s issue is a pull request `pr_holder` links on the board
+    /// (the host numbers issues and pull requests from one sequence).
+    IssueIsPr {
+        issue: u64,
+        task: Slug,
+        pr_holder: Slug,
+    },
+    /// `task` names by `#n` the pull request its own change `change`
+    /// links.
+    OwnPrReferenced { task: Slug, pr: u64, change: u32 },
     /// Only a draft is edited in place; a task past its draft changes
     /// through its moves.
     NotDraft(TaskStatus),
@@ -263,6 +278,35 @@ impl fmt::Display for BoardRuleError {
                 status.as_str()
             ),
             Self::NoEdit => f.write_str("the edit changes nothing"),
+            Self::Superseded { by } => {
+                let by: Vec<&str> = by.iter().map(Slug::as_str).collect();
+                write!(
+                    f,
+                    "other tasks took this one over ({}): archive it as superseded instead",
+                    by.join(", ")
+                )
+            }
+            Self::IssueShared { issue, tasks } => write!(
+                f,
+                "tasks {} and {} both have issue {issue}",
+                tasks[0].as_str(),
+                tasks[1].as_str()
+            ),
+            Self::IssueIsPr {
+                issue,
+                task,
+                pr_holder,
+            } => write!(
+                f,
+                "issue {issue} of task {} is a pull request task {} links",
+                task.as_str(),
+                pr_holder.as_str()
+            ),
+            Self::OwnPrReferenced { task, pr, change } => write!(
+                f,
+                "task {} refers to #{pr}, the pull request of its own change {change}",
+                task.as_str()
+            ),
             Self::Invalid(error) => write!(f, "invalid task: {error}"),
         }
     }

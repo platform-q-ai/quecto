@@ -33,6 +33,10 @@ pub fn task(id: &str, title: &str) -> Task {
         claim: None,
         reviews: vec![],
         prs: vec![],
+        github_issue: None,
+        resolution: None,
+        superseded_by: vec![],
+        references: vec![],
         created: at.clone(),
         updated: at,
     })

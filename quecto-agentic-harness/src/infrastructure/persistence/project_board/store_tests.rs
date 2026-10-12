@@ -126,6 +126,10 @@ fn task(id: &str) -> Task {
         claim: None,
         reviews: vec![],
         prs: vec![],
+        github_issue: None,
+        resolution: None,
+        superseded_by: vec![],
+        references: vec![],
         created: at.clone(),
         updated: at,
     })
@@ -701,3 +705,19 @@ mod hostile;
 mod push;
 #[path = "git_runner_tests.rs"]
 mod runner;
+
+/// A store whose call was cancelled pushes nothing (#2513): the write is
+/// refused before its push, and the board stays where it was.
+#[test]
+fn a_cancelled_call_pushes_nothing() {
+    let repos = Repos::new();
+    let head = created(&store(&repos.alice));
+    let cancelled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let alice = store(&repos.alice).with_cancel(Some(cancelled));
+    let refused = alice.write(&head, &[task("a")], "board: add a");
+    assert!(
+        matches!(&refused, Ok(BoardWrite::Refused(why)) if why.contains("cancelled")),
+        "{refused:?}"
+    );
+    assert_eq!(store(&repos.bob).read().unwrap().head, head);
+}

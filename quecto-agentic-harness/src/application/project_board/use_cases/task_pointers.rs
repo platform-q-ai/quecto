@@ -1,5 +1,6 @@
-//! The references a task makes (its parent and dependencies) as a change
-//! is about to write them: each a task on the board, none set aside, and no
+//! The pointers a task makes to other tasks (its parent and dependencies)
+//! as a change is about to write them (not its `references`, which point
+//! anywhere and are the domain's to judge): each a task on the board, none set aside, and no
 //! cycle closed through the board, by parent or by dependency.
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -8,8 +9,8 @@ use crate::application::project_board::ports::BoardSnapshot;
 use crate::domain::project_board::entities::task::TaskFields;
 use crate::domain::project_board::value_objects::slug::Slug;
 
-/// The references task `id` is to make.
-pub(super) struct References<'a> {
+/// The pointers task `id` is to make.
+pub(super) struct Pointers<'a> {
     pub id: &'a Slug,
     pub parent: Option<&'a Slug>,
     pub depends_on: &'a [Slug],
@@ -19,9 +20,9 @@ pub(super) struct References<'a> {
 /// is set aside is reported as such), and they close no cycle through the
 /// board. Task `id`'s own entry on the board, if any, is the one being
 /// replaced, so it is not walked.
-pub(super) fn references_hold(
+pub(super) fn pointers_hold(
     board: &BoardSnapshot,
-    refs: &References<'_>,
+    refs: &Pointers<'_>,
 ) -> Result<(), ProjectBoardError> {
     let held = |id: &Slug| board.tasks.iter().any(|task| task.fields().id == *id);
     let set_aside = |id: &Slug| {
@@ -53,7 +54,7 @@ pub(super) fn references_hold(
 /// - a parent cycle: a task up `id`'s parent chain whose parent is `id`.
 ///
 /// The least such id, so every store order answers alike.
-fn cycle_closer(board: &BoardSnapshot, refs: &References<'_>) -> Option<Slug> {
+fn cycle_closer(board: &BoardSnapshot, refs: &Pointers<'_>) -> Option<Slug> {
     let on_board: BTreeMap<&Slug, &TaskFields> = board
         .tasks
         .iter()
@@ -70,7 +71,7 @@ fn cycle_closer(board: &BoardSnapshot, refs: &References<'_>) -> Option<Slug> {
 /// board's size, cycles on the board included.
 fn dependency_closers<'b>(
     on_board: &BTreeMap<&'b Slug, &'b TaskFields>,
-    refs: &References<'_>,
+    refs: &Pointers<'_>,
 ) -> Vec<&'b Slug> {
     let mut expanded: BTreeSet<&Slug> = BTreeSet::new();
     let mut next: Vec<&Slug> = refs.depends_on.iter().collect();
@@ -97,7 +98,7 @@ fn dependency_closers<'b>(
 /// board's size, a parent loop on the board included.
 fn parent_closer<'b>(
     on_board: &BTreeMap<&'b Slug, &'b TaskFields>,
-    refs: &References<'_>,
+    refs: &Pointers<'_>,
 ) -> Option<&'b Slug> {
     let mut seen: BTreeSet<&Slug> = BTreeSet::new();
     let mut at = refs.parent;

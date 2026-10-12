@@ -14,7 +14,7 @@ use quecto::domain::project_board::entities::claim::{Claim, Identity};
 use quecto::domain::project_board::entities::task::Task;
 use quecto::domain::project_board::value_objects::slug::Slug;
 use quecto::domain::project_board::value_objects::timestamp::Timestamp;
-use quecto::domain::project_board::value_objects::vocabulary::TaskStatus;
+use quecto::domain::project_board::value_objects::vocabulary::{Resolution, TaskStatus};
 use quecto::infrastructure::persistence::project_board::index::BoardIndex;
 use quecto::infrastructure::persistence::project_board::indexed_listings::IndexedBoardListings;
 use quecto::infrastructure::persistence::project_board::store::GitBoardStore;
@@ -28,6 +28,11 @@ fn at(time: &str) -> Timestamp {
 fn shaped(id: &str, status: TaskStatus, parent: Option<&str>, depends_on: &[&str]) -> Task {
     let mut fields = task(id, id).into_fields();
     fields.status = status;
+    // A done task is completed.
+    fields.resolution = match status {
+        TaskStatus::Done => Some(Resolution::Completed),
+        _ => None,
+    };
     fields.parent = parent.map(|parent| Slug::parse(parent).unwrap());
     fields.depends_on = depends_on
         .iter()

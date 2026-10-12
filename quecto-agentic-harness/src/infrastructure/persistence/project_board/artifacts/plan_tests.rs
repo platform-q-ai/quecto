@@ -9,6 +9,8 @@ use crate::domain::project_board::entities::team::{MAX_IMAGE_BYTES, MAX_MODEL_BY
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
 use crate::infrastructure::persistence::project_board::markdown::MarkdownError;
+use crate::infrastructure::persistence::project_board::markdown::parse;
+use crate::infrastructure::persistence::project_board::markdown::tests::oracle::outline_in;
 
 const EXAMPLE: &str = r#"<!-- quecto-plan schema=1 -->
 # Plan 2 of board-cli
@@ -156,11 +158,23 @@ fn edited(from: &str, to: &str) -> String {
     EXAMPLE.replacen(from, to, 1)
 }
 
+/// `file` read by both readers of the CommonMark/GFM oracle, cell by cell,
+/// as the document it parses to.
+fn read_by_the_oracle(file: &str) {
+    let document = parse(file.as_bytes(), &PlanCodec::SHAPE).unwrap();
+    assert_eq!(
+        outline_in(file, &document, &PlanCodec::SHAPE),
+        Ok(()),
+        "{file}"
+    );
+}
+
 #[test]
 fn the_example_plan_file_is_byte_exact() {
     let example = plan(example());
     assert_eq!(encode::<PlanCodec>(&example).unwrap(), EXAMPLE);
     assert_eq!(decode::<PlanCodec>(EXAMPLE.as_bytes()), Ok(example));
+    read_by_the_oracle(EXAMPLE);
 }
 
 #[test]
@@ -202,6 +216,7 @@ fn every_plan_state_round_trips() {
             let plan = plan(fields);
             let file = encode::<PlanCodec>(&plan).unwrap();
             assert_eq!(decode::<PlanCodec>(file.as_bytes()), Ok(plan), "{file}");
+            read_by_the_oracle(&file);
         }
     }
 }
@@ -397,6 +412,7 @@ fn the_widest_plan_fits_its_limits() {
     for fields in [most_lines, most_bytes, longest_line] {
         let plan = Plan::new(fields).unwrap();
         let file = encode::<PlanCodec>(&plan).unwrap();
+        read_by_the_oracle(&file);
         let lines = file.lines().count();
         let longest = file.lines().map(str::len).max().unwrap();
         seen = (
@@ -545,5 +561,6 @@ fn a_model_and_image_only_a_code_cell_holds_round_trip() {
         assert!(file.contains(&format!("| Image | `{image}` |\n")), "{file}");
         assert!(file.contains(&format!("| `{model}` |")), "{file}");
         assert_eq!(decode::<PlanCodec>(file.as_bytes()), Ok(plan));
+        read_by_the_oracle(&file);
     }
 }

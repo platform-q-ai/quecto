@@ -1,7 +1,9 @@
 use super::QueryBoard;
 use crate::application::project_board::dto::BoardListing;
 use crate::application::project_board::ports::ProjectBoardStore;
-use crate::application::project_board::use_cases::fixtures_tests::{at, board, fields, slug};
+use crate::application::project_board::use_cases::fixtures_tests::{
+    at, board, fields, finished, slug,
+};
 use crate::domain::project_board::entities::claim::{Claim, Identity};
 use crate::domain::project_board::entities::task::{Task, TaskFields};
 use crate::domain::project_board::services::transitions::move_task;
@@ -20,11 +22,11 @@ fn query() -> QueryBoard {
 fn seeded() -> MemoryBoardStore {
     let store = board();
     let task = |fields: TaskFields| {
-        Task::new(TaskFields {
+        Task::new(finished(TaskFields {
             created: at("08:00:00"),
             updated: at("08:00:00"),
             ..fields
-        })
+        }))
         .unwrap()
     };
     let ada = Identity {
@@ -128,11 +130,11 @@ fn ready_counts_an_archived_dependency_as_satisfied() {
         email: "ada@example.com".into(),
     };
     let task = |fields: TaskFields| {
-        Task::new(TaskFields {
+        Task::new(finished(TaskFields {
             created: at("08:00:00"),
             updated: at("08:00:00"),
             ..fields
-        })
+        }))
         .unwrap()
     };
     let archived = |from: TaskStatus, id: &str| {
