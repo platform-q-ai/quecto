@@ -116,8 +116,8 @@ pub fn read_word<T>(
 /// 0, which no pull request or issue is (`read_reference` refuses it).
 pub fn reference(field: &'static str, number: u64) -> Result<String, CodecError> {
     match number {
+        1.. => Ok(format!("#{number}")),
         0 => Err(refused(field, "# and a number from 1")),
-        number => Ok(format!("#{number}")),
     }
 }
 
@@ -129,8 +129,8 @@ pub fn read_reference(field: &'static str, cell: &str) -> Result<u64, CodecError
         .strip_prefix('#')
         .ok_or_else(|| refused(field, problem))?;
     match read_number(field, number)? {
+        number @ 1.. => Ok(number),
         0 => Err(refused(field, problem)),
-        number => Ok(number),
     }
 }
 
@@ -141,8 +141,9 @@ pub fn read_reference(field: &'static str, cell: &str) -> Result<u64, CodecError
 pub fn optional(field: &'static str, cell: Option<String>) -> Result<String, CodecError> {
     match cell {
         None => Ok(ABSENT.to_string()),
-        Some(held) if held == ABSENT => Err(refused(field, "a value other than -, which is none")),
-        Some(held) => Ok(held),
+        // Written only if it reads back as itself.
+        Some(held) if read_optional(&held) == Some(held.as_str()) => Ok(held),
+        Some(_) => Err(refused(field, "a value other than -, which is none")),
     }
 }
 

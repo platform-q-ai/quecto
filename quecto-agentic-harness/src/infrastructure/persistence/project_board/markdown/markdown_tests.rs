@@ -245,7 +245,36 @@ impl Seeded {
     /// and then one a code cell refuses.
     fn code(&mut self) -> String {
         const CODE: &[&str] = &[
-            "a", "Z", "0", "<", ">", "[", "]", "*", "$", "&", "~", "!", "|", "\\", "_",
+            "a",
+            "Z",
+            "0",
+            "<",
+            ">",
+            "[",
+            "]",
+            "*",
+            "$",
+            "&",
+            "~",
+            "!",
+            "|",
+            "\\",
+            "_",
+            "(",
+            ")",
+            "\"",
+            "'",
+            "{",
+            "}",
+            "^",
+            "=",
+            "?",
+            ";",
+            ",",
+            "%",
+            ":x:",
+            "https://y.example/a",
+            "[x](https://y.example)",
         ];
         let mut cell = self.ascii();
         cell.extend((0..self.below(4)).map(|_| self.pick(CODE)));

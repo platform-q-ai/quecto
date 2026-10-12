@@ -92,22 +92,95 @@ fn spanned(text: &str) -> String {
     format!("{SPAN}{text}{SPAN}")
 }
 
-/// Whether `shown` is `written` with only markup taken out: emphasis and
-/// strikethrough markers, a code span's backticks (each edge a reader
-/// marks matching one) and padding, and a link's brackets and address.
+/// `written` in pieces: text, and code (each code span's content as a
+/// reader shows it: one space at each edge taken off when both are
+/// there; a value the expected outline already marks as a span, kept).
+fn pieces(written: &str) -> Vec<(bool, String)> {
+    let (mut pieces, mut text) = (vec![], String::new());
+    let mut rest = written;
+    while let Some(c) = rest.chars().next() {
+        let span = match c {
+            SPAN => rest[SPAN.len_utf8()..].find(SPAN).map(|end| {
+                (
+                    rest[SPAN.len_utf8()..][..end].to_string(),
+                    2 * SPAN.len_utf8() + end,
+                )
+            }),
+            '`' => {
+                let run = rest.len() - rest.trim_start_matches('`').len();
+                let after = &rest[run..];
+                let fence = "`".repeat(run);
+                // The next run of exactly as many backticks closes it.
+                let close = after.match_indices(&fence).find(|(at, _)| {
+                    !after[..*at].ends_with('`') && !after[at + run..].starts_with('`')
+                });
+                close.map(|(at, _)| {
+                    let inner = &after[..at];
+                    let padded =
+                        inner.starts_with(' ') && inner.ends_with(' ') && inner.trim() != "";
+                    let shown = match padded {
+                        true => &inner[1..inner.len() - 1],
+                        false => inner,
+                    };
+                    (shown.to_string(), 2 * run + at)
+                })
+            }
+            _ => None,
+        };
+        match span {
+            Some((code, taken)) => {
+                pieces.push((false, std::mem::take(&mut text)));
+                pieces.push((true, code));
+                rest = &rest[taken..];
+            }
+            None => {
+                text.push(c);
+                rest = &rest[c.len_utf8()..];
+            }
+        }
+    }
+    pieces.push((false, text));
+    pieces
+}
+
+/// The links `written` holds outside its code spans.
+fn links_outside_code(written: &str) -> usize {
+    pieces(written)
+        .iter()
+        .filter(|(code, _)| !code)
+        .map(|(_, text)| ADDRESS.find_iter(text).count())
+        .sum()
+}
+
+/// Whether `shown` is `written` with only markup taken out: outside code,
+/// emphasis and strikethrough markers, and a link's brackets and address;
+/// a code span's text exactly, between the edges a reader marks.
 fn drops_only_markup(written: &str, shown: &str) -> bool {
-    let written = ADDRESS.replace_all(written, "]");
     let mut shown = shown.chars().peekable();
-    for c in written.chars() {
-        match (shown.peek().copied(), c) {
-            (Some(next), c) if next == c => {
-                shown.next();
+    for (code, piece) in pieces(written) {
+        match code {
+            true => {
+                let exact = std::iter::once(SPAN)
+                    .chain(piece.chars())
+                    .chain(std::iter::once(SPAN));
+                for c in exact {
+                    match shown.next() {
+                        Some(next) if next == c => {}
+                        _ => return false,
+                    }
+                }
             }
-            (Some(SPAN), '`') => {
-                shown.next();
+            false => {
+                for c in ADDRESS.replace_all(&piece, "]").chars() {
+                    match shown.peek().copied() {
+                        Some(next) if next == c => {
+                            shown.next();
+                        }
+                        _ if "*_~[] ".contains(c) => {}
+                        _ => return false,
+                    }
+                }
             }
-            (_, c) if "*_~`[] ".contains(c) => {}
-            _ => return false,
         }
     }
     shown.next().is_none()
@@ -287,7 +360,7 @@ fn expected(document: &Document) -> (Vec<String>, Vec<String>) {
             // Code is verbatim: what looks like a link there is none.
             let links = match kind.starts_with("code:") {
                 true => 0,
-                false => ADDRESS.find_iter(text).count(),
+                false => links_outside_code(text),
             };
             format!("{kind}+{links}")
         })

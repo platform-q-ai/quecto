@@ -45,8 +45,6 @@ impl From<MarkdownError> for CodecError {
 pub trait ArtifactCodec {
     /// Compared with what its file gives back.
     type Value: PartialEq;
-    /// The marker's kind, the same as [`Self::SHAPE`]'s.
-    const KIND: &'static str;
     const SCHEMA: u32;
     const SHAPE: Shape<'static>;
 
@@ -63,20 +61,11 @@ pub trait ArtifactCodec {
     fn from_document(document: &Document) -> Result<Self::Value, CodecError>;
 }
 
-/// The codec's kind is its shape's.
-fn one_kind<C: ArtifactCodec>() -> Result<(), CodecError> {
-    match C::KIND == C::SHAPE.kind {
-        true => Ok(()),
-        false => Err(CodecError::Schema),
-    }
-}
-
 /// The file `value` is.
 ///
 /// # Errors
 /// What in `value` the kind's document or a file refuses.
 pub fn encode<C: ArtifactCodec>(value: &C::Value) -> Result<String, CodecError> {
-    one_kind::<C>()?;
     let document = C::to_document(value)?;
     let file = match document.schema == C::SCHEMA {
         // `render` reads what it writes back, release builds included.
@@ -84,9 +73,12 @@ pub fn encode<C: ArtifactCodec>(value: &C::Value) -> Result<String, CodecError> 
         false => return Err(CodecError::Schema),
     };
     // The file reads back as `document`; it is taken only if that document
-    // is `value` again, so nothing is stored that `decode` would refuse or
-    // read as another value.
-    match C::from_document(&document)? == *value {
+    // reads as `value` and writes itself again (as `decode` asks), so
+    // nothing is stored that `decode` would refuse or read as another
+    // value. Both checks: a value's equality may be looser than its
+    // document (a repository's ignores case).
+    let back = C::from_document(&document)?;
+    match back == *value && C::to_document(&back)? == document {
         true => Ok(file),
         false => Err(CodecError::NotCanonical),
     }
@@ -100,8 +92,7 @@ pub fn encode<C: ArtifactCodec>(value: &C::Value) -> Result<String, CodecError> 
 /// A file of another kind or schema, one the markdown rules refuse, a
 /// document that is not a value of the kind, or `NotCanonical`.
 pub fn decode<C: ArtifactCodec>(bytes: &[u8]) -> Result<C::Value, CodecError> {
-    one_kind::<C>()?;
-    match schema_of(bytes, C::KIND) {
+    match schema_of(bytes, C::SHAPE.kind) {
         Some(found) if found == u64::from(C::SCHEMA) => {}
         Some(found) if found > u64::from(C::SCHEMA) => {
             return Err(CodecError::NewerSchema {
