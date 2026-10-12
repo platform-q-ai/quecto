@@ -200,7 +200,9 @@ impl Seeded {
             "a", "Z", "9", "1.", "2)", "#", "##", "|", ">", "=", "-", "---", "+", "*", "_", ":",
             "[x]", "<", "\\", "`code`", "`Vec<T>`", "~~~", "~", "é", "日本", "🦀", "👩🏽‍💻",
             "👨‍👩‍👧", "❤️", " ", "!", "(", ")", "\"", "'", ".", ",", "{", "}", "&", "%", "$ ",
-            "[a link](https://example.com/x)", "[a `]` b](https://x.example)", "` . `", "` @ `", "x\u{301}\u{302}",
+            "[a link](https://example.com/x)", "[a `]` b](https://x.example)", "` . `", "` @ `",
+            "__", "___", "`@`", "**", "[** x](https://x.example)", "[x **](https://x.example)",
+            "[~ x](https://x.example)", "[_y_](https://x.example)", "x\u{301}\u{302}",
         ];
         #[rustfmt::skip]
         const HOSTILE: &[&str] = &[

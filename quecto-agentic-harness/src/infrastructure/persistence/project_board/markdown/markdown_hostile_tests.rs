@@ -187,6 +187,19 @@ fn hostile_documents_are_refused_when_written() {
         // makes the run of text around it read as an address.
         ("a link a full stop makes www.", render(&with_line("the [www](https://w3.org)."), &SHAPE), |e| matches!(e, E::Link { line: 11 })),
         ("a link a literal marker joins to an email", render(&with_line("[ada](https://x.example)*@b.example"), &SHAPE), |e| matches!(e, E::Link { line: 11 })),
+        // Refused by design: an underscore around a link is read as kept, as
+        // a reader may show it.
+        ("an underscore around a link to a handle", render(&with_line("see _[@ada](https://github.com/ada)_"), &SHAPE), |e| matches!(e, E::Link { line: 11 })),
+        ("two underscores around a link to a handle", render(&with_line("see __[@ada](https://github.com/ada)__"), &SHAPE), |e| matches!(e, E::Link { line: 11 })),
+        ("runs of unequal length around a link", render(&with_line("see ___[@b.example](https://x.example)__"), &SHAPE), |e| matches!(e, E::Link { line: 11 })),
+        ("two then one underscore around a link", render(&with_line("see __[@evil.example](https://x.example)_"), &SHAPE), |e| matches!(e, E::Link { line: 11 })),
+        ("underscores around code in a link", render(&with_line("see [__`@`evil.example_](https://x.example)"), &SHAPE), |e| matches!(e, E::Link { line: 11 })),
+        ("an opener left over before a link", render(&with_line("see _a!__[@evil.example](https://x.example)"), &SHAPE), |e| matches!(e, E::Link { line: 11 })),
+        ("emphasis cancelling an underscore in a link", render(&with_line("see [*a _`@`evil.example* c_](https://x.example)"), &SHAPE), |e| matches!(e, E::Link { line: 11 })),
+        ("the rule of three in a link", render(&with_line("see [_`@`evil.example __y_ z_](https://x.example)"), &SHAPE), |e| matches!(e, E::Link { line: 11 })),
+        ("strong emphasis opening a link beside an email", render(&with_line("see ada`@`b.example[** x](https://x.example)"), &SHAPE), |e| matches!(e, E::Link { line: 11 })),
+        ("strong emphasis closing a link beside an email", render(&with_line("see [x **](https://x.example)ada`@`b.example"), &SHAPE), |e| matches!(e, E::Link { line: 11 })),
+        ("a tilde opening a link beside an email", render(&with_line("see ada`@`b.example[~ x](https://x.example)"), &SHAPE), |e| matches!(e, E::Link { line: 11 })),
         ("a fence language with a space", with(|d| d.sections[0].body = Body::Prose(vec![Block::Code { language: Some("a b".into()), lines: vec![] }])), |e| matches!(e, E::Fence { .. })),
         ("a row of one cell", with(|d| d.sections[2].body = Body::Table(vec![vec!["x".into()]])), |e| matches!(e, E::Cell { .. })),
         ("a field no task has", with(|d| d.fields[0].0 = "Owner".into()), |e| matches!(e, E::UnknownField { .. })),
@@ -219,7 +232,7 @@ fn near_misses_are_kept() {
         "an email in code `ada@example.com` and a handle @ada",
         "a profile [here](https://example.com/@ada) and [paypal.com](https://example.com)",
         "README.md and C:\\x",
-        "see _[@ada](https://github.com/ada)_ and __[@ada](https://github.com/ada)__ and snake_case",
+        "snake_case and a_b_c",
     ] {
         let document = with_line(line);
         let file = render(&document, &SHAPE).unwrap_or_else(|error| panic!("{line:?}: {error:?}"));
