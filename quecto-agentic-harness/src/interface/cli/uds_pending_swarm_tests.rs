@@ -232,7 +232,11 @@ async fn a_resume_wake_re_arms_a_provider_suspended_member() {
         .map(|m| m.content.clone())
         .collect();
     assert_eq!(prompts.len(), 1, "exactly one resume turn: {prompts:?}");
-    assert!(prompts[0].contains("resumed after a provider failure"));
+    // The approved wake text, as sent (#2478 slice B).
+    assert_eq!(
+        prompts[0],
+        crate::interface::cli::uds_swarm_control::RESUMED_WAKE
+    );
     assert!(
         !ctx.session.take_pending_resume_turn(),
         "the owed turn was consumed"
@@ -703,3 +707,6 @@ fn wake_nudges_queue_as_automatic_messages() {
 mod abort_tests;
 #[path = "uds_pending_ended_tests.rs"]
 mod ended_tests;
+
+#[path = "uds_swarm_wake_tests.rs"]
+mod wake;

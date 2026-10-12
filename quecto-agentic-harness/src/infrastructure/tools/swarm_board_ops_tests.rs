@@ -342,27 +342,41 @@ async fn every_mapped_op_returns_exactly_what_the_board_method_returns() {
         request["op"] = json!(spec.name);
         let result = execute(&by_op, &request.to_string()).await;
         match direct(&by_method, spec.name, method_args) {
-            // As the member reads it: in task-item words (#2478 slice B).
+            // As the member reads it (#2478 slice B), written out here, not
+            // through the tool's own presentation.
             Ok(expected) => {
                 assert!(!result.is_error, "{}: {}", spec.name, result.content);
                 let answer: Value = serde_json::from_str(&result.content).unwrap();
-                let expected = crate::infrastructure::tools::swarm_output::task_item_answer(
-                    spec.name, expected,
-                );
+                let expected = match (spec.name, expected) {
+                    ("file_owners", Value::Array(rows)) => Value::Array(
+                        rows.into_iter()
+                            .map(|row| renamed_key(row, "task", "task_item"))
+                            .collect(),
+                    ),
+                    ("release_files", answer) => renamed_key(answer, "task_id", "task_item_id"),
+                    (_, answer) => answer,
+                };
                 assert_eq!(masked(answer), masked(expected), "{}", spec.name);
             }
-            Err(DomainError::Tool(refusal)) => {
+            Err(refusal) => {
                 assert!(result.is_error, "{}: {}", spec.name, result.content);
-                let quoted = refusal.strip_prefix("swarm: ").expect("a board refusal");
-                let message: String = serde_json::from_str(quoted).unwrap();
-                let presented =
-                    crate::infrastructure::tools::swarm_output::task_item_refusal(&message);
-                let expected = DomainError::Tool(format!("swarm: {}", Value::String(presented)));
-                assert_eq!(result.content, expected.to_string(), "{}", spec.name);
+                assert_eq!(result.content, refusal.to_string(), "{}", spec.name);
             }
-            Err(other) => panic!("{}: {other}", spec.name),
         }
     }
+}
+
+/// `value` with its key `old` as `new`, in its place.
+fn renamed_key(value: Value, old: &str, new: &str) -> Value {
+    let Value::Object(fields) = value else {
+        panic!("{value} is no object");
+    };
+    Value::Object(
+        fields
+            .into_iter()
+            .map(|(key, value)| (if key == old { new.to_owned() } else { key }, value))
+            .collect(),
+    )
 }
 
 #[tokio::test]

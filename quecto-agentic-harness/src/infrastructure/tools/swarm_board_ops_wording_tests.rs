@@ -304,8 +304,52 @@ fn the_refusals_name_task_items() {
             "claim: missing required argument task_id",
             "claim: missing required argument task_item_id",
         ),
+        // The binding's refusals name the op as the schema advertises it.
+        (
+            "task: missing required argument task_id",
+            "task_item: missing required argument task_item_id",
+        ),
+        (
+            "task_create: missing required argument title",
+            "task_item_create: missing required argument title",
+        ),
+        (
+            "tasks: unexpected argument bogus",
+            "task_items: unexpected argument bogus",
+        ),
+        (
+            "verify_task: takes 3 arguments, 4 given",
+            "verify_task_item: takes 3 arguments, 4 given",
+        ),
+        (
+            "revalidate_task: arguments must be a JSON array or object",
+            "revalidate_task_item: arguments must be a JSON array or object",
+        ),
+        (
+            "task: task_id and task_item_id name the same argument but hold different values; send only one",
+            "task_item: task_id and task_item_id name the same argument but hold different values; send only one",
+        ),
+        (
+            "claim: unexpected argument owner",
+            "claim: unexpected argument owner",
+        ),
+        // `recover`'s hints are the coordinator's calls too.
+        (
+            "recovery requires confirmed worker death; revoke(id, reason) reassigns a live owner",
+            "recovery requires confirmed worker death; revoke(task_item_id, reason) reassigns a live owner",
+        ),
+        (
+            "reservations retained after an abrupt exit; recover(id, release_files=True) frees them, or revoke(id, reason)",
+            "reservations retained after an abrupt exit; recover(task_item_id, release_files=True) frees them, or revoke(task_item_id, reason)",
+        ),
+        // Anything else is the board's own.
         ("stale or unowned claim", "stale or unowned claim"),
         ("unknown taskmaster", "unknown taskmaster"),
+        ("task: is done", "task: is done"),
+        (
+            "a task: missing required argument x",
+            "a task: missing required argument x",
+        ),
     ] {
         assert_eq!(task_item_refusal(board), member, "{board}");
     }
@@ -326,6 +370,34 @@ async fn the_member_reads_the_refusals_in_task_items() {
         (
             json!({"op": "claim"}),
             r#"tool error: swarm: "claim: missing required argument task_item_id""#,
+        ),
+        (
+            json!({"op": "task_item"}),
+            r#"tool error: swarm: "task_item: missing required argument task_item_id""#,
+        ),
+        (
+            json!({"op": "task"}),
+            r#"tool error: swarm: "task_item: missing required argument task_item_id""#,
+        ),
+        (
+            json!({"op": "task_item_create", "request": "r"}),
+            r#"tool error: swarm: "task_item_create: missing required argument title""#,
+        ),
+        (
+            json!({"op": "verify_task_item", "task_item_id": 1, "token": "t"}),
+            r#"tool error: swarm: "verify_task_item: missing required argument revision""#,
+        ),
+        (
+            json!({"op": "revalidate_task_item", "task_item_id": 1, "revision": "r"}),
+            r#"tool error: swarm: "revalidate_task_item: missing required argument evidence""#,
+        ),
+        (
+            json!({"op": "task_items", "bogus": 1}),
+            r#"tool error: swarm: "task_items: unexpected argument bogus""#,
+        ),
+        (
+            json!({"op": "task", "task_id": 1, "task_item_id": 2}),
+            r#"tool error: swarm: "task_item: task_id and task_item_id name the same argument but hold different values; send only one""#,
         ),
     ] {
         assert_eq!(
@@ -351,5 +423,91 @@ async fn the_running_gate_names_the_advertised_op() {
             refusal.contains("so op=task_item is unavailable"),
             "{refusal}"
         );
+    }
+}
+
+/// A summary-shaped answer is presented only when it holds both keys; one
+/// without `tasks` (or with `tasks` that is no list) is answered as is.
+#[test]
+fn a_partial_summary_is_answered_as_is() {
+    for partial in [
+        json!({"task_count": 0}),
+        json!({"task_count": 0, "tasks": "none"}),
+        json!({"tasks": []}),
+    ] {
+        assert_eq!(
+            task_item_harness_answer("summary", partial.clone()),
+            partial
+        );
+    }
+}
+
+/// The revoke notice is translated only when its task id is one the board
+/// writes (a number, or plain text without spaces or punctuation).
+#[test]
+fn only_a_well_formed_revoke_notice_is_translated() {
+    for body in [
+        "claim on task  revoked by the coordinator: r",
+        "claim on task 3:x revoked by the coordinator: r",
+        "claim on task \"3\" revoked by the coordinator: r",
+    ] {
+        let inbox = task_item_answer("inbox", json!([{"body": body}]));
+        assert_eq!(inbox[0]["body"], body);
+    }
+    for (id, presented) in [
+        (
+            "10000000000000000",
+            "claim on task item 10000000000000000 revoked by the coordinator: r",
+        ),
+        (
+            "1.5",
+            "claim on task item 1.5 revoked by the coordinator: r",
+        ),
+        ("-2", "claim on task item -2 revoked by the coordinator: r"),
+    ] {
+        let body = format!("claim on task {id} revoked by the coordinator: r");
+        let inbox = task_item_answer("inbox", json!([{"body": body}]));
+        assert_eq!(inbox[0]["body"], presented);
+    }
+}
+
+/// An event detail's top-level `task` key names its task item; a `task`
+/// key nested deeper (in evidence, say) or text in a string is the board's
+/// own, and the rest of the text is unchanged.
+#[test]
+fn only_the_top_level_task_key_of_a_detail_is_renamed() {
+    for (detail, presented) in [
+        (
+            r#"{"evidence":[{"artifact":"a","revision":"r","task":9}],"revision":"r","task":1}"#,
+            r#"{"evidence":[{"artifact":"a","revision":"r","task":9}],"revision":"r","task_item":1}"#,
+        ),
+        (
+            r#"{"reason":"\"task\":1","task":2}"#,
+            r#"{"reason":"\"task\":1","task_item":2}"#,
+        ),
+        (
+            r#"{"evidence":[{"task":9}]}"#,
+            r#"{"evidence":[{"task":9}]}"#,
+        ),
+        (r#"{"task" : 1}"#, r#"{"task_item" : 1}"#),
+        (r#"["task",1]"#, r#"["task",1]"#),
+        ("not json", "not json"),
+    ] {
+        let page = task_item_harness_answer(
+            "events",
+            json!({"events": [{"action": "revalidated", "detail": detail}]}),
+        );
+        assert_eq!(page["events"][0]["detail"], presented, "{detail}");
+    }
+}
+
+/// Every op the presentation names is a board op, so a rename of the table
+/// cannot leave it presenting nothing.
+#[test]
+fn every_presented_op_is_a_board_op() {
+    use crate::infrastructure::tools::swarm_output::PRESENTED_OPS;
+    assert!(!PRESENTED_OPS.is_empty());
+    for (op, _) in PRESENTED_OPS {
+        assert!(BOARD_OPS.iter().any(|spec| spec.name == *op), "{op}");
     }
 }
