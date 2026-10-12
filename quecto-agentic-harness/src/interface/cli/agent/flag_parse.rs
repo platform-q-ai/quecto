@@ -54,6 +54,10 @@ pub(crate) struct AgentFlags {
     pub(crate) web_fetch_tool_factory: Option<super::super::WebFetchToolFactory>,
     /// Composition's `agent_cmd kill` owner builder (#1936), from CliContext.
     pub(crate) kill_tool: Option<crate::interface::cli::KillToolBuilder>,
+    /// Composition's project board builder (#2477), from CliContext: the
+    /// `board` tool's board.
+    pub(crate) project_board:
+        Option<crate::interface::tools::project_board::site::ProjectBoardHandlesBuilder>,
     /// Composition's retained-context handles builder (D9 #1978), from
     /// CliContext; the tool registry and the agent loop consume its handles.
     pub(crate) retention: Option<crate::interface::cli::RetentionHandlesBuilder>,
@@ -104,6 +108,7 @@ impl AgentFlags {
         self.cwd_override = ctx.cwd.clone();
         self.web_fetch_tool_factory = ctx.web_fetch_tool_factory;
         self.kill_tool = ctx.kill_tool;
+        self.project_board = ctx.project_board;
         self.retention = ctx.retention;
         self.catalogue = ctx.catalogue;
         self.provider_runtime = ctx.provider_runtime;

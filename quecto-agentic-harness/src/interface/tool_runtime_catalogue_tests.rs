@@ -54,6 +54,7 @@ fn build_runtime_with_entrypoint(
         effort_control: None,
         container_configs: None,
         kill_tool: None,
+        project_board: None,
         disabled_tools,
         inherited_tool_policy: None,
         workflow: ToolRuntimeWorkflowPolicy::disabled(tmp.path(), Some(tmp.path())),

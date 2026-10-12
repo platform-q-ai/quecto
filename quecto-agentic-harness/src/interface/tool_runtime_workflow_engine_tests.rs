@@ -42,6 +42,7 @@ fn build(root: &std::path::Path, launch: Launch<'_>) -> Result<ToolRuntimeBuild,
         effort_control: None,
         container_configs: None,
         kill_tool: None,
+        project_board: None,
         disabled_tools: &[],
         inherited_tool_policy: None,
         workflow: ToolRuntimeWorkflowPolicy {

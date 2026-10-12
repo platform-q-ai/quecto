@@ -10,6 +10,7 @@ use super::*;
 
 fn flags_for_wiring_test() -> AgentFlags {
     AgentFlags {
+        project_board: None,
         session_name: None,
         no_session: false,
         message: Some("hi".into()),
