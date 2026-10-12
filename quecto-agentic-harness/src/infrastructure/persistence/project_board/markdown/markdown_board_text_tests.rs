@@ -7,11 +7,15 @@ use crate::domain::project_board::value_objects::board_text;
 use crate::domain::project_board::value_objects::schema_error::markdown;
 
 /// What the codec refuses for what text means, not how it is spelt: the
-/// refusals the normaliser deliberately leaves to the codec.
+/// refusals the normaliser deliberately leaves to the codec. `Invisible`
+/// is among them only once every line keeps the character rules (checked
+/// first): then it is a line that shows nothing (`_` alone).
 fn for_meaning(error: &MarkdownError) -> bool {
     matches!(
         error,
         MarkdownError::Structure { .. }
+            | MarkdownError::Invisible { .. }
+            | MarkdownError::Fence { .. }
             | MarkdownError::UnbalancedCode { .. }
             | MarkdownError::BlockLike { .. }
             | MarkdownError::Html { .. }
@@ -95,6 +99,13 @@ fn normalised_text_the_domain_accepts_is_held_or_refused_for_its_meaning() {
             continue;
         }
         checked += 1;
+        // The spelling the normaliser exists to fix: every line keeps the
+        // character rules (no CR, tab, odd space, lone selector, trailing
+        // space; NFC).
+        for (index, line) in normal.split('\n').enumerate() {
+            let kept = chars::check_line(line, index + 1);
+            assert_eq!(kept, Ok(()), "{raw:?} → {normal:?}");
+        }
         match blocks_of(&normal) {
             Ok(blocks) => {
                 assert_eq!(text_of(&blocks), normal, "{raw:?}");
