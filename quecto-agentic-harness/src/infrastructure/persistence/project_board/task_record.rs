@@ -17,14 +17,11 @@
 //! keys. The store also checks that `id` matches the file name.
 use crate::domain::project_board::entities::claim::{Claim, Identity};
 use crate::domain::project_board::entities::task::{Task, TaskFields};
-use crate::domain::project_board::entities::task_parts::Review;
 use crate::domain::project_board::value_objects::reference::{IssueNumber, Reference};
 use crate::domain::project_board::value_objects::schema_error::SchemaError;
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
-use crate::domain::project_board::value_objects::vocabulary::{
-    Resolution, Severity, TaskKind, TaskStatus, Verdict,
-};
+use crate::domain::project_board::value_objects::vocabulary::{Resolution, TaskKind, TaskStatus};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
@@ -40,6 +37,13 @@ use std::fmt;
 /// optional key, `null` in a single value and an empty list hold no
 /// value: they read as not set, in any schema (a list set to `null` is
 /// malformed, as every list is).
+///
+/// Review findings are review artifacts of their own too (M1c): a file of
+/// any schema holding the task's old `reviews` is malformed to this
+/// reader, even `"reviews": []` (not read as "not set", as an empty list
+/// of a key the task has is). No board holds any, so the key is dropped
+/// without a new schema (a reader before this one reads every file this
+/// one writes).
 pub const SCHEMAS: &[(u32, &str)] = &[(1, "0.107.251"), (2, "0.107.274"), (3, "0.107.292")];
 /// The schema every task file is written at: the last row of [`SCHEMAS`].
 pub const SCHEMA_VERSION: u32 = 3;
@@ -128,8 +132,6 @@ struct TaskRecord {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     claim: Option<ClaimRecord>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    reviews: Vec<ReviewRecord>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     prs: Vec<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     github_issue: Option<u64>,
@@ -156,22 +158,6 @@ struct ClaimRecord {
 struct IdentityRecord {
     name: String,
     email: String,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ReviewRecord {
-    id: String,
-    round: u8,
-    reviewer: IdentityRecord,
-    at: String,
-    severity: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    location: Option<String>,
-    finding: String,
-    verdict: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    proving_test: Option<String>,
 }
 
 /// The task a file holds, or why it holds none.
@@ -288,7 +274,6 @@ impl TaskRecord {
             depends_on: slugs("depends_on", &self.depends_on)?,
             accepted_plan: self.accepted_plan,
             claim: self.claim.map(ClaimRecord::into_claim).transpose()?,
-            reviews: indexed("reviews", self.reviews, ReviewRecord::into_review)?,
             prs: self.prs,
             github_issue: self
                 .github_issue
@@ -324,7 +309,6 @@ impl TaskRecord {
                 .collect(),
             accepted_plan: task.accepted_plan,
             claim: task.claim.as_ref().map(ClaimRecord::from_claim),
-            reviews: task.reviews.iter().map(ReviewRecord::from_review).collect(),
             prs: task.prs.clone(),
             github_issue: task.github_issue.map(IssueNumber::get),
             resolution: task.resolution.map(|resolution| resolution.as_str().into()),
@@ -374,40 +358,6 @@ impl IdentityRecord {
         Self {
             name: identity.name.clone(),
             email: identity.email.clone(),
-        }
-    }
-}
-
-impl ReviewRecord {
-    fn into_review(self, field: &str) -> Result<Review, SchemaError> {
-        Ok(Review {
-            id: slug(&format!("{field}/id"), &self.id)?,
-            round: self.round,
-            reviewer: self.reviewer.into_identity(),
-            at: time(&format!("{field}/at"), &self.at)?,
-            severity: word(
-                &format!("{field}/severity"),
-                &self.severity,
-                Severity::parse,
-            )?,
-            location: self.location,
-            finding: self.finding,
-            verdict: word(&format!("{field}/verdict"), &self.verdict, Verdict::parse)?,
-            proving_test: self.proving_test,
-        })
-    }
-
-    fn from_review(review: &Review) -> Self {
-        Self {
-            id: review.id.as_str().into(),
-            round: review.round,
-            reviewer: IdentityRecord::from_identity(&review.reviewer),
-            at: review.at.as_str().into(),
-            severity: review.severity.as_str().into(),
-            location: review.location.clone(),
-            finding: review.finding.clone(),
-            verdict: review.verdict.as_str().into(),
-            proving_test: review.proving_test.clone(),
         }
     }
 }

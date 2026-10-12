@@ -64,7 +64,6 @@ fn created_at(new: &NewBoardTask, now: &Timestamp) -> TaskFields {
         depends_on: new.depends_on.clone(),
         accepted_plan: None,
         claim: None,
-        reviews: vec![],
         prs: vec![],
         github_issue: None,
         resolution: None,

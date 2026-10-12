@@ -27,7 +27,6 @@ pub(super) fn fields() -> TaskFields {
             since: at("09:00:00"),
             expires: at("11:00:00"),
         }),
-        reviews: vec![],
         prs: vec![2482, 2483],
         github_issue: None,
         resolution: None,

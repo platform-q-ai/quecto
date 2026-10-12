@@ -98,11 +98,6 @@ vocabulary!(
 
 vocabulary!(Severity { Low => "low", Medium => "medium", High => "high", Critical => "critical" });
 
-vocabulary!(
-    /// What became of a review finding.
-    Verdict { Open => "open", Fixed => "fixed", Invalid => "invalid", WontFix => "wont_fix" }
-);
-
 #[cfg(test)]
 #[path = "vocabulary_tests.rs"]
 mod tests;
