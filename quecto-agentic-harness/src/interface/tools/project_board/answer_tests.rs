@@ -44,7 +44,9 @@ fn keys(code: ErrorCode) -> &'static [&'static str] {
         // (a_set_aside_artifact_is_named_by_its_kind_task_and_number).
         C::ArtifactSetAside => &["kind", "task", "number", "path"],
         C::NoPullRequestHost => &["reason"],
-        C::Duplicate => &["artifact"],
+        // A discussion's and a task's shapes are their own
+        // (a_duplicate_artifact_is_named_by_its_kind_task_and_number).
+        C::DuplicateArtifact => &["kind", "task", "number"],
     }
 }
 
@@ -512,5 +514,48 @@ fn an_unsanitised_artifact_path_is_never_shown() {
             key: ArtifactKey::Run(slug("t"), 1),
             path: "runs/t\u{202e}.md".into(),
         },
+    );
+}
+
+/// An artifact the board holds twice answers `duplicate_artifact`, named
+/// by its key as `artifact_set_aside` names one (no path: a store holds
+/// both under one name), and says its store must be mended.
+#[test]
+fn a_duplicate_artifact_is_named_by_its_kind_task_and_number() {
+    let refused = |key: ArtifactKey| {
+        board_refused("show", &ProjectBoardError::Duplicate { key })["error"].clone()
+    };
+    let mended = "is on the board more than once; its store must be mended";
+    assert_eq!(
+        refused(ArtifactKey::Review(slug("t"), 5)),
+        json!({
+            "code": "duplicate_artifact",
+            "kind": "review",
+            "task": "t",
+            "number": 5,
+            "message": format!("review 5 of task t {mended}"),
+        })
+    );
+    assert_eq!(
+        refused(ArtifactKey::Plan(slug("t"), 2))["message"],
+        json!(format!("plan 2 of task t {mended}"))
+    );
+    assert_eq!(
+        refused(ArtifactKey::Discussion(slug("d"))),
+        json!({
+            "code": "duplicate_artifact",
+            "kind": "discussion",
+            "discussion": "d",
+            "message": format!("discussion d {mended}"),
+        })
+    );
+    assert_eq!(
+        refused(ArtifactKey::Task(slug("t"))),
+        json!({
+            "code": "duplicate_artifact",
+            "kind": "task",
+            "task": "t",
+            "message": format!("task t {mended}"),
+        })
     );
 }

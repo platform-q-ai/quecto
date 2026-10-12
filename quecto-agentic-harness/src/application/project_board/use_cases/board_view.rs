@@ -10,7 +10,7 @@
 //! view finds more than once (a store that broke its contract of one
 //! artifact per key) is refused as [`ProjectBoardError::Duplicate`], never
 //! a panic.
-use crate::application::project_board::dto::ProjectBoardError;
+use crate::application::project_board::dto::{ProjectBoardError, once};
 use crate::application::project_board::ports::{ArtifactKey, BoardSnapshot, QuarantinedFile};
 use crate::domain::project_board::entities::change::Change;
 use crate::domain::project_board::entities::plan::Plan;
@@ -39,7 +39,7 @@ pub fn task_in<'b>(
         .iter()
         .filter(|task| task.fields().id == *id)
         .collect();
-    match once(found, |task| ArtifactKey::Task(task.fields().id.clone()))?.as_slice() {
+    match once(found, ArtifactKey::of_task)?.as_slice() {
         [task] => Ok(task),
         _ => Err(ProjectBoardError::NotFound(id.clone())),
     }
@@ -55,9 +55,10 @@ pub fn plans_of<'b>(
         board,
         |key| matches!(key, ArtifactKey::Plan(task, _) if task == id),
     )?;
-    once(artifacts_of::plans_of(&board.plans, id), |plan| {
-        ArtifactKey::Plan(plan.fields().task.clone(), plan.fields().version)
-    })
+    once(
+        artifacts_of::plans_of(&board.plans, id),
+        ArtifactKey::of_plan,
+    )
 }
 
 /// Every run of the task `id`, by number. Refused while any run of it is
@@ -67,7 +68,7 @@ pub fn runs_of<'b>(board: &'b BoardSnapshot, id: &Slug) -> Result<Vec<&'b Run>, 
         board,
         |key| matches!(key, ArtifactKey::Run(task, _) if task == id),
     )?;
-    once(artifacts_of::runs_of(&board.runs, id), run_key)
+    once(artifacts_of::runs_of(&board.runs, id), ArtifactKey::of_run)
 }
 
 /// Every change of the task `id`, by number. Refused while any change of
@@ -80,7 +81,10 @@ pub fn changes_of<'b>(
         board,
         |key| matches!(key, ArtifactKey::Change(task, _) if task == id),
     )?;
-    once(artifacts_of::changes_of(&board.changes, id), change_key)
+    once(
+        artifacts_of::changes_of(&board.changes, id),
+        ArtifactKey::of_change,
+    )
 }
 
 /// Every change on the board, by task and number: what a link checks a
@@ -88,7 +92,10 @@ pub fn changes_of<'b>(
 /// Refused while any change of any task is set aside.
 pub fn all_changes(board: &BoardSnapshot) -> Result<Vec<&Change>, ProjectBoardError> {
     clear_of(board, |key| matches!(key, ArtifactKey::Change(..)))?;
-    once(artifacts_of::all_changes(&board.changes), change_key)
+    once(
+        artifacts_of::all_changes(&board.changes),
+        ArtifactKey::of_change,
+    )
 }
 
 /// The review of change `change` of the task `id`, if it has one. Refused
@@ -100,29 +107,8 @@ pub fn review_of<'b>(
 ) -> Result<Option<&'b Review>, ProjectBoardError> {
     clear_of(board, |key| *key == ArtifactKey::Review(id.clone(), change))?;
     let reviews = artifacts_of::reviews_of_change(&board.reviews, id, change);
-    let reviews = once(reviews, |review| {
-        ArtifactKey::Review(review.fields().task.clone(), review.fields().change)
-    })?;
+    let reviews = once(reviews, ArtifactKey::of_review)?;
     Ok(reviews.first().copied())
-}
-
-fn run_key(run: &Run) -> ArtifactKey {
-    ArtifactKey::Run(run.fields().task.clone(), run.fields().number)
-}
-
-fn change_key(change: &Change) -> ArtifactKey {
-    ArtifactKey::Change(change.fields().task.clone(), change.fields().number)
-}
-
-/// `items` (ordered by `key`), unless one key is there more than once.
-fn once<T>(items: Vec<&T>, key: impl Fn(&T) -> ArtifactKey) -> Result<Vec<&T>, ProjectBoardError> {
-    let keys: Vec<ArtifactKey> = items.iter().map(|item| key(item)).collect();
-    match keys.windows(2).find(|pair| pair[0] == pair[1]) {
-        Some(pair) => Err(ProjectBoardError::Duplicate {
-            key: pair[0].clone(),
-        }),
-        None => Ok(items),
-    }
 }
 
 /// Refuses with the least key in scope that a set-aside file names, so a

@@ -1468,15 +1468,9 @@ fn application_path_allowed(path: &str) -> bool {
         // layer implements. Subagent teardown (#1935) was the first.
         ["crate", "application", _, "ports", ..] => true,
         // The project board's listings port (#2476 S1e) answers the
-        // capability's own listing DTOs; the index builds them to implement
+        // capability's own listing DTO; the index builds it to implement
         // the port.
-        [
-            "crate",
-            "application",
-            "project_board",
-            "dto",
-            "BoardListing" | "ArtifactListing",
-        ] => true,
+        ["crate", "application", "project_board", "dto", "BoardListing"] => true,
         // The sessions list port takes the capability's own query
         // DTO (#1970); the file store names it to implement `list`.
         // The export port (#1974) takes the records and manifest the

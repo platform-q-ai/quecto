@@ -163,75 +163,123 @@ impl ArtifactScope {
 
 impl<T> ArtifactListing<T> {
     /// The files set aside that may hold one of the listed artifacts:
-    /// while any is, the listing may be incomplete for its scope.
+    /// while any is, the listing may be incomplete for its scope. A file
+    /// set aside whose name spells no key may hold anything, so it counts
+    /// in every scope.
     pub fn set_aside_in_scope(&self) -> Vec<&QuarantinedFile> {
         self.quarantined
             .iter()
-            .filter(|file| file.key.as_ref().is_some_and(|key| self.scope.covers(key)))
+            .filter(|file| file.key.as_ref().is_none_or(|key| self.scope.covers(key)))
             .collect()
     }
 }
 
 impl<T: Clone> ArtifactListing<T> {
     /// `items`, picked from `board` for `scope`, beside its head and
-    /// every file it set aside.
-    fn picked(board: &BoardSnapshot, scope: ArtifactScope, items: Vec<&T>) -> Self {
-        Self {
+    /// every file it set aside; refused if one key is there twice.
+    fn picked(
+        board: &BoardSnapshot,
+        scope: ArtifactScope,
+        items: Vec<&T>,
+        key: impl Fn(&T) -> ArtifactKey,
+    ) -> Result<Self, ProjectBoardError> {
+        Ok(Self {
             head: board.head.clone(),
             scope,
-            items: items.into_iter().cloned().collect(),
+            items: once(items, key)?.into_iter().cloned().collect(),
             quarantined: board.quarantined.clone(),
-        }
+        })
+    }
+}
+
+/// `items` (ordered by `key`), unless one key is there more than once: a
+/// store broke its contract of one artifact per key, so what the board
+/// holds is unknown. Every listing and board view asks here.
+pub(crate) fn once<T>(
+    items: Vec<&T>,
+    key: impl Fn(&T) -> ArtifactKey,
+) -> Result<Vec<&T>, ProjectBoardError> {
+    let keys: Vec<ArtifactKey> = items.iter().map(|item| key(item)).collect();
+    match keys.windows(2).find(|pair| pair[0] == pair[1]) {
+        Some(pair) => Err(ProjectBoardError::Duplicate {
+            key: pair[0].clone(),
+        }),
+        None => Ok(items),
     }
 }
 
 impl ArtifactListing<Plan> {
     /// Every plan of `task` on `board`, by version.
-    pub fn plans_of(board: &BoardSnapshot, task: &Slug) -> Self {
+    ///
+    /// # Errors
+    /// [`ProjectBoardError::Duplicate`] for a plan the board holds twice.
+    pub fn plans_of(board: &BoardSnapshot, task: &Slug) -> Result<Self, ProjectBoardError> {
         let scope = ArtifactScope::Plans { task: task.clone() };
-        Self::picked(board, scope, artifacts_of::plans_of(&board.plans, task))
+        let plans = artifacts_of::plans_of(&board.plans, task);
+        Self::picked(board, scope, plans, ArtifactKey::of_plan)
     }
 }
 
 impl ArtifactListing<Run> {
     /// Every run of `task` of its plan's `version` on `board`, by number.
-    pub fn runs_of_plan(board: &BoardSnapshot, task: &Slug, version: u32) -> Self {
+    ///
+    /// # Errors
+    /// [`ProjectBoardError::Duplicate`] for a run the board holds twice.
+    pub fn runs_of_plan(
+        board: &BoardSnapshot,
+        task: &Slug,
+        version: u32,
+    ) -> Result<Self, ProjectBoardError> {
         let scope = ArtifactScope::RunsOfPlan {
             task: task.clone(),
             version,
         };
         let runs = artifacts_of::runs_of_plan(&board.runs, task, version);
-        Self::picked(board, scope, runs)
+        Self::picked(board, scope, runs, ArtifactKey::of_run)
     }
 }
 
 impl ArtifactListing<Change> {
     /// Every change of `task` on `board`, by number.
-    pub fn changes_of(board: &BoardSnapshot, task: &Slug) -> Self {
+    ///
+    /// # Errors
+    /// [`ProjectBoardError::Duplicate`] for a change the board holds twice.
+    pub fn changes_of(board: &BoardSnapshot, task: &Slug) -> Result<Self, ProjectBoardError> {
         let scope = ArtifactScope::Changes { task: task.clone() };
-        Self::picked(board, scope, artifacts_of::changes_of(&board.changes, task))
+        let changes = artifacts_of::changes_of(&board.changes, task);
+        Self::picked(board, scope, changes, ArtifactKey::of_change)
     }
 }
 
 impl ArtifactListing<Review> {
-    /// The review of `task`'s change `change` on `board`: none or one
-    /// from a store that keeps its contract, every one read otherwise.
-    pub fn review_of(board: &BoardSnapshot, task: &Slug, change: u32) -> Self {
+    /// The review of `task`'s change `change` on `board`: none or one.
+    ///
+    /// # Errors
+    /// [`ProjectBoardError::Duplicate`] for a review the board holds twice.
+    pub fn review_of(
+        board: &BoardSnapshot,
+        task: &Slug,
+        change: u32,
+    ) -> Result<Self, ProjectBoardError> {
         let scope = ArtifactScope::Review {
             task: task.clone(),
             change,
         };
         let reviews = artifacts_of::reviews_of_change(&board.reviews, task, change);
-        Self::picked(board, scope, reviews)
+        Self::picked(board, scope, reviews, ArtifactKey::of_review)
     }
 }
 
 impl ArtifactListing<Discussion> {
     /// Every discussion linked to `task` on `board`, by id.
-    pub fn discussions_of(board: &BoardSnapshot, task: &Slug) -> Self {
+    ///
+    /// # Errors
+    /// [`ProjectBoardError::Duplicate`] for a discussion the board holds
+    /// twice.
+    pub fn discussions_of(board: &BoardSnapshot, task: &Slug) -> Result<Self, ProjectBoardError> {
         let scope = ArtifactScope::Discussions { task: task.clone() };
         let discussions = artifacts_of::discussions_of(&board.discussions, task);
-        Self::picked(board, scope, discussions)
+        Self::picked(board, scope, discussions, ArtifactKey::of_discussion)
     }
 }
 
@@ -383,7 +431,7 @@ impl fmt::Display for ProjectBoardError {
             // A task's message is the one agents already know.
             Self::Duplicate { key } => write!(
                 f,
-                "the board holds {key} more than once; its store must be mended"
+                "{key} is on the board more than once; its store must be mended"
             ),
             Self::Quarantined {
                 key: key @ ArtifactKey::Task(_),

@@ -2,9 +2,7 @@
 //! `QueryBoard`'s listing of the same name means over the same store,
 //! carries the head it was read at and every file set aside, and follows
 //! the board as it moves. Here it runs against the SQLite index over a git
-//! store (two clones of one bare remote). A task's plans, runs, changes,
-//! review and discussions come from the store's snapshot until the index
-//! keeps them (S12); the git store holds none of them yet (S10).
+//! store (two clones of one bare remote).
 use super::project_board_git_store::Remote;
 use super::project_board_store::task;
 use quecto::application::project_board::dto::BoardListing;
@@ -145,41 +143,6 @@ fn check_parity(listings: &dyn BoardListings, query: &QueryBoard) {
         !listings.ready().unwrap().quarantined.is_empty(),
         "the spoilt file is listed"
     );
-    check_artifact_parity(listings, query);
-}
-
-/// A task's other artifacts are listed as `QueryBoard` lists them, each
-/// with the head and every file set aside, for a task the board holds,
-/// one it does not, and any number.
-fn check_artifact_parity(listings: &dyn BoardListings, query: &QueryBoard) {
-    for id in ["b", "missing"] {
-        let id = Slug::parse(id).unwrap();
-        let plans = listings.plans_of(&id).unwrap();
-        assert!(!plans.quarantined.is_empty(), "the spoilt file is listed");
-        assert_eq!(plans, query.plans_of(&id).unwrap(), "plans of {id:?}");
-        assert_eq!(
-            listings.changes_of(&id),
-            Ok(query.changes_of(&id).unwrap()),
-            "changes of {id:?}"
-        );
-        assert_eq!(
-            listings.discussions_of(&id),
-            Ok(query.discussions_of(&id).unwrap()),
-            "discussions of {id:?}"
-        );
-        for number in [1, 2] {
-            assert_eq!(
-                listings.runs_of_plan(&id, number),
-                Ok(query.runs_of_plan(&id, number).unwrap()),
-                "runs of plan {number} of {id:?}"
-            );
-            assert_eq!(
-                listings.review_of(&id, number),
-                Ok(query.review_of(&id, number).unwrap()),
-                "review of change {number} of {id:?}"
-            );
-        }
-    }
 }
 
 /// A board where someone listed `tasks/b.json` twice (`duplicate` does):
@@ -216,12 +179,6 @@ pub fn check_listings_mean_query_board(
     spoil: impl FnOnce(),
 ) {
     assert_eq!(listings.ready(), Err(BoardStoreError::NoBoard));
-    let a = Slug::parse("a").unwrap();
-    assert_eq!(listings.plans_of(&a), Err(BoardStoreError::NoBoard));
-    assert_eq!(listings.runs_of_plan(&a, 1), Err(BoardStoreError::NoBoard));
-    assert_eq!(listings.changes_of(&a), Err(BoardStoreError::NoBoard));
-    assert_eq!(listings.review_of(&a, 1), Err(BoardStoreError::NoBoard));
-    assert_eq!(listings.discussions_of(&a), Err(BoardStoreError::NoBoard));
     store.bootstrap().unwrap();
     let head = store.read().unwrap().head;
     let seeded = store.write_tasks(&head, &cases(), "board: seed");

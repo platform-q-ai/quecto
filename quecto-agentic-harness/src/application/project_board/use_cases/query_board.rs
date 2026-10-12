@@ -95,7 +95,7 @@ impl QueryBoard {
     /// # Errors
     /// The store's.
     pub fn plans_of(&self, task: &Slug) -> Result<ArtifactListing<Plan>, ProjectBoardError> {
-        Ok(ArtifactListing::plans_of(&self.store.read()?, task))
+        ArtifactListing::plans_of(&self.store.read()?, task)
     }
 
     /// Every run of `task` of its plan's `version`, by number, whether or
@@ -108,11 +108,7 @@ impl QueryBoard {
         task: &Slug,
         version: u32,
     ) -> Result<ArtifactListing<Run>, ProjectBoardError> {
-        Ok(ArtifactListing::runs_of_plan(
-            &self.store.read()?,
-            task,
-            version,
-        ))
+        ArtifactListing::runs_of_plan(&self.store.read()?, task, version)
     }
 
     /// Every change of `task`, by number.
@@ -120,7 +116,7 @@ impl QueryBoard {
     /// # Errors
     /// The store's.
     pub fn changes_of(&self, task: &Slug) -> Result<ArtifactListing<Change>, ProjectBoardError> {
-        Ok(ArtifactListing::changes_of(&self.store.read()?, task))
+        ArtifactListing::changes_of(&self.store.read()?, task)
     }
 
     /// The review of `task`'s change `change`, if the board holds one.
@@ -132,11 +128,7 @@ impl QueryBoard {
         task: &Slug,
         change: u32,
     ) -> Result<ArtifactListing<Review>, ProjectBoardError> {
-        Ok(ArtifactListing::review_of(
-            &self.store.read()?,
-            task,
-            change,
-        ))
+        ArtifactListing::review_of(&self.store.read()?, task, change)
     }
 
     /// Every discussion linked to `task`, by id.
@@ -147,7 +139,7 @@ impl QueryBoard {
         &self,
         task: &Slug,
     ) -> Result<ArtifactListing<Discussion>, ProjectBoardError> {
-        Ok(ArtifactListing::discussions_of(&self.store.read()?, task))
+        ArtifactListing::discussions_of(&self.store.read()?, task)
     }
 
     fn matching(

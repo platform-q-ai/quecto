@@ -9,8 +9,10 @@
 //!   reads the clock was not bounded against an outside time.
 //! - Refusal: `{"ok": false, "op": …, "error": {"code", "message", …}}`.
 //!   Each [`ErrorCode`] has one shape: the same fields every time, but
-//!   `artifact_set_aside`, which names a discussion by `discussion` where
-//!   the other kinds give `task` and `number`.
+//!   `artifact_set_aside` and `duplicate_artifact`, which name an
+//!   artifact by its kind: a discussion by `discussion` where a plan, run,
+//!   change or review gives `task` and `number` (and a task, for
+//!   `duplicate_artifact`, `task` alone).
 //!   Messages are the error's own words (its `Display`); every text an
 //!   answer carries from outside (messages, reasons, fields, problems,
 //!   paths) has credentials redacted and is at most [`MAX_MESSAGE_CHARS`]
@@ -75,9 +77,12 @@ pub enum ErrorCode {
     /// version, the run's or change's number, the reviewed change's) and
     /// `path`; for a discussion, `kind`, `discussion` (its id) and `path`.
     ArtifactSetAside,
-    /// `artifact`: the board holds it more than once (its store broke its
-    /// contract); named as a message names it (`plan 2 of task t`).
-    Duplicate,
+    /// The board holds an artifact more than once (its store broke its
+    /// contract of one artifact per key), named as `artifact_set_aside`
+    /// names one, without a path: `kind`, `task`, `number` for a plan,
+    /// run, change or review; `kind`, `discussion` for a discussion;
+    /// `kind`, `task` for a task.
+    DuplicateArtifact,
     /// `path`, `object`.
     SetAsideFile,
     /// `task`.
@@ -123,7 +128,7 @@ impl ErrorCode {
             Self::ClockUnreadable => "clock_unreadable",
             Self::SetAside => "set_aside",
             Self::ArtifactSetAside => "artifact_set_aside",
-            Self::Duplicate => "duplicate",
+            Self::DuplicateArtifact => "duplicate_artifact",
             Self::SetAsideFile => "set_aside_file",
             Self::UnknownReference => "unknown_reference",
             Self::ClosesCycle => "closes_cycle",
@@ -243,40 +248,49 @@ fn slug_json(slug: &Slug) -> Value {
 }
 
 /// The artifact a refusal names: a task as `set_aside` by its id, as
-/// ever; any other kind as `artifact_set_aside` by its kind, its task and
-/// number (the plan's version, the run's or change's number, the reviewed
-/// change's), or a discussion by its id, each with its file's raw path, so
-/// a clear can name it exactly.
+/// ever; any other kind as `artifact_set_aside` by [`key_fields`] and its
+/// file's raw path, so a clear can name it exactly.
 fn set_aside_fields(key: &ArtifactKey, path: &str) -> (ErrorCode, Map<String, Value>) {
-    let numbered = |kind: &str, task: &Slug, number: u32| {
-        fields([
-            ("kind", json!(kind)),
-            ("task", slug_json(task)),
-            ("number", json!(number)),
-            ("path", json!(path)),
-        ])
-    };
-    let (folder, other) = match key {
+    let folder = match key {
         ArtifactKey::Task(id) => return (ErrorCode::SetAside, fields([("task", slug_json(id))])),
-        ArtifactKey::Plan(task, version) => ("plans", numbered("plan", task, *version)),
-        ArtifactKey::Run(task, number) => ("runs", numbered("run", task, *number)),
-        ArtifactKey::Change(task, number) => ("changes", numbered("change", task, *number)),
-        ArtifactKey::Review(task, change) => ("reviews", numbered("review", task, *change)),
-        ArtifactKey::Discussion(id) => (
-            "discussions",
-            fields([
-                ("kind", json!("discussion")),
-                ("discussion", slug_json(id)),
-                ("path", json!(path)),
-            ]),
-        ),
+        ArtifactKey::Plan(..) => "plans",
+        ArtifactKey::Run(..) => "runs",
+        ArtifactKey::Change(..) => "changes",
+        ArtifactKey::Review(..) => "reviews",
+        ArtifactKey::Discussion(_) => "discussions",
     };
     // Its own kind's folder, one name in it.
     assert!(
         shown_artifact_path(folder, path),
         "a store shows every path it sets aside sanitised: {path:?}"
     );
-    (ErrorCode::ArtifactSetAside, other)
+    let mut named = key_fields(key);
+    named.insert("path".into(), json!(path));
+    (ErrorCode::ArtifactSetAside, named)
+}
+
+/// An artifact by its key: `kind` and `task` for a task; `kind`, `task`
+/// and `number` (the plan's version, the run's or change's number, the
+/// reviewed change's) for a plan, run, change or review; `kind` and
+/// `discussion` (its id) for a discussion.
+fn key_fields(key: &ArtifactKey) -> Map<String, Value> {
+    let numbered = |kind: &str, task: &Slug, number: u32| {
+        fields([
+            ("kind", json!(kind)),
+            ("task", slug_json(task)),
+            ("number", json!(number)),
+        ])
+    };
+    match key {
+        ArtifactKey::Task(id) => fields([("kind", json!("task")), ("task", slug_json(id))]),
+        ArtifactKey::Plan(task, version) => numbered("plan", task, *version),
+        ArtifactKey::Run(task, number) => numbered("run", task, *number),
+        ArtifactKey::Change(task, number) => numbered("change", task, *number),
+        ArtifactKey::Review(task, change) => numbered("review", task, *change),
+        ArtifactKey::Discussion(id) => {
+            fields([("kind", json!("discussion")), ("discussion", slug_json(id))])
+        }
+    }
 }
 
 fn slugs_json(slugs: &[Slug]) -> Value {
@@ -432,7 +446,7 @@ fn error_fields(error: &ProjectBoardError) -> (ErrorCode, Map<String, Value>) {
             (C::ClockUnreadable, fields([("read", shown_json(read))]))
         }
         E::Quarantined { key, path } => set_aside_fields(key, path),
-        E::Duplicate { key } => (C::Duplicate, fields([("artifact", json!(key.to_string()))])),
+        E::Duplicate { key } => (C::DuplicateArtifact, key_fields(key)),
         E::SetAsideFile { path, object } => {
             assert!(
                 shown_path(path),
