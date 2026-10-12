@@ -68,9 +68,16 @@ static ADDRESS: std::sync::LazyLock<Regex> =
     std::sync::LazyLock::new(|| Regex::new(r"\]\(https://[^)\s]*\)").expect("a valid pattern"));
 
 /// Whether `text` shows a reader something: a letter, number, punctuation
-/// or symbol that is not an emphasis or strikethrough marker.
+/// or symbol that is not an emphasis or strikethrough marker, or anything
+/// seen inside a code span (between the marks a reader leaves), where a
+/// marker shows as itself.
 fn shows(text: &str) -> bool {
-    text.chars().any(|c| chars::seen(c) && !"*_~".contains(c))
+    text.split(SPAN)
+        .enumerate()
+        .any(|(index, part)| match index % 2 {
+            1 => part.chars().any(chars::seen),
+            _ => part.chars().any(|c| chars::seen(c) && !"*_~".contains(c)),
+        })
 }
 
 /// A text's characters, checked as a run (a reader splits text at a `*`,

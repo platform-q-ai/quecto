@@ -275,6 +275,9 @@ impl Seeded {
             ":x:",
             "https://y.example/a",
             "[x](https://y.example)",
+            "_",
+            "*",
+            "~",
         ];
         let mut cell = self.ascii();
         cell.extend((0..self.below(4)).map(|_| self.pick(CODE)));
