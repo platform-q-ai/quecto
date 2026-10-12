@@ -234,7 +234,7 @@ fn a_listing_shows_each_files_object_and_its_names_copies() {
         id: None,
         reason: "named more than once".into(),
         object: object.to_string().repeat(40),
-        carried: true,
+        carried: false,
     };
     let listed = quarantined_list(&[
         file("tasks/a.json", 'a'),
