@@ -33,8 +33,13 @@ use std::time::{Duration, Instant};
 /// them in turn, `GH_TOKEN` and `GITHUB_TOKEN` included; git itself sends
 /// neither, only a credential helper that reads one does.
 /// `GIT_CEILING_DIRECTORIES` passes too: it only narrows where git looks
-/// for a repository. Everything else,
-/// `GIT_DIR`, `GIT_INDEX_FILE` and `GIT_WORK_TREE` included, is dropped.
+/// for a repository. So do the identity settings (`user.name`,
+/// `user.email`) of git's command scope (`GIT_CONFIG_COUNT`,
+/// `GIT_CONFIG_KEY_<n>`, `GIT_CONFIG_VALUE_<n>`), renumbered; the scope's
+/// other settings are skipped (see `git_command_config.rs`). Everything
+/// else, `GIT_DIR`,
+/// `GIT_INDEX_FILE`, `GIT_WORK_TREE` and `GIT_CONFIG_PARAMETERS` included,
+/// is dropped.
 pub const INHERITED: &[&str] = &[
     "PATH",
     "HOME",
@@ -141,25 +146,47 @@ enum Reach {
     Network,
 }
 
-/// The allowlisted variables of an environment, by [`INHERITED`].
+/// The allowlisted variables of an environment, by [`INHERITED`], and the
+/// identity settings of its command-scope set; and what that set warns
+/// of, if anything.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct GitEnvironment(Vec<(OsString, OsString)>);
+pub struct GitEnvironment {
+    vars: Vec<(OsString, OsString)>,
+    warning: Option<CommandScopeWarning>,
+}
 
 impl GitEnvironment {
+    /// `vars`, allowlisted. A malformed command-scope set is dropped whole
+    /// and recorded, not refused, as is a set naming half an identity
+    /// (which passes): a caller that faces a user checks
+    /// [`Self::command_scope_warning`] and warns of it, since the board
+    /// then writes as (part of) the repository's own committer.
     pub fn allowlisted(vars: impl IntoIterator<Item = (OsString, OsString)>) -> Self {
+        let vars: Vec<(OsString, OsString)> = vars.into_iter().collect();
+        let scope = command_config(&vars);
         let kept = vars
             .into_iter()
             .filter(|(key, _)| INHERITED.iter().any(|name| OsStr::new(name) == key));
-        Self(kept.collect())
+        Self {
+            vars: kept.chain(scope.vars).collect(),
+            warning: scope.warning,
+        }
     }
 
-    /// This process's environment, allowlisted.
+    /// This process's environment, allowlisted; its caller checks
+    /// [`Self::command_scope_warning`] as [`Self::allowlisted`]'s does.
     pub fn of_process() -> Self {
         Self::allowlisted(std::env::vars_os())
     }
 
+    /// What the environment's command-scope set warns of: why it was
+    /// dropped, or that it names half an identity.
+    pub fn command_scope_warning(&self) -> Option<&CommandScopeWarning> {
+        self.warning.as_ref()
+    }
+
     fn get(&self, key: &str) -> Option<&OsStr> {
-        self.0
+        self.vars
             .iter()
             .find(|(name, _)| name == key)
             .map(|(_, value)| value.as_os_str())
@@ -336,7 +363,7 @@ impl Git {
             .args(SETTINGS)
             .args(args)
             .env_clear()
-            .envs(self.env.0.iter().map(|(key, value)| (key, value)))
+            .envs(self.env.vars.iter().map(|(key, value)| (key, value)))
             .env("GIT_TERMINAL_PROMPT", "0")
             .env("LC_ALL", "C")
             .env("GIT_AUTHOR_NAME", &self.identity.name)
@@ -595,5 +622,9 @@ fn on_path(path: &OsStr, program: &str) -> Option<PathBuf> {
         })
 }
 
+#[path = "git_command_config.rs"]
+mod command_config;
 #[path = "git_committer.rs"]
 mod committer;
+use command_config::command_config;
+pub use command_config::{CommandScopeWarning, MAX_COMMAND_CONFIG};

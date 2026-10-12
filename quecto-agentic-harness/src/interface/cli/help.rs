@@ -76,11 +76,25 @@ pub(super) fn help_text(out: &mut String) {
     out.push_str(
         "                  prints one JSON answer; a write needs git's user.name and user.email\n",
     );
-    out.push_str("                  (GIT_AUTHOR_* and GIT_COMMITTER_* are not honoured).\n");
     out.push_str(
-        "                  Changes are attributed to that local identity: the board is cooperative,\n",
+        "                  (GIT_AUTHOR_* and GIT_COMMITTER_* are not honoured). A user.name or\n",
     );
-    out.push_str("                  and branch protection or a server hook is the real control\n");
+    out.push_str(
+        "                  user.email set in git's command scope (GIT_CONFIG_COUNT with\n",
+    );
+    out.push_str(
+        "                  GIT_CONFIG_KEY_<n> and GIT_CONFIG_VALUE_<n>) outranks the clone's, key\n",
+    );
+    out.push_str(
+        "                  by key; the scope's other keys are skipped. A write warns on stderr of\n",
+    );
+    out.push_str(
+        "                  a malformed set, which is dropped, or of one naming half an identity.\n",
+    );
+    out.push_str(
+        "                  The board is cooperative: branch protection or a server hook is the\n",
+    );
+    out.push_str("                  real control\n");
     out.push_str("  container   Container runtimes for subagents\n");
     out.push_str(
         "              init [--project <abs dir>] [--repo <url>] [--image <tag>] [--refresh] [--dry-run]\n",

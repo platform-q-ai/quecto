@@ -552,3 +552,6 @@ fn a_grandchild_git_leaves_running_outlives_the_killed_quecto() {
         [true, false]
     );
 }
+
+#[path = "git_command_config_tests.rs"]
+mod command_config;

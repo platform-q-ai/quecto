@@ -15,6 +15,7 @@ use crate::application::project_board::use_cases::{
     BootstrapProjectBoard, ChangeBoardTask, ClearSetAside, CompleteMergedTask, CreateBoardTask,
     RunBoardOperation, UpdateDraftTask,
 };
+use crate::domain::redaction::{redact_secrets, redact_url_userinfo};
 use crate::infrastructure::persistence::project_board::gh_pull_requests::{
     GhPullRequestStates, github_repository,
 };
@@ -29,13 +30,35 @@ use crate::interface::cli::board::{
 
 /// # Errors
 /// A write with no committer configured, or one git would not record as
-/// given; no git, a repository git cannot run in, no such remote, or an
-/// index whose directory cannot be named (each with its cause).
+/// given; no git, a repository git cannot run in, no such remote, an
+/// index whose directory cannot be named (each with its cause). A write
+/// warns on standard error of a malformed git command-scope set, which it
+/// drops, or of one naming half an identity.
 pub fn build_project_board_handles(
     environment: &ProjectBoardEnvironment,
 ) -> Result<ProjectBoardHandles, BuildError> {
+    build_with_warnings(environment, &mut |line| eprintln!("{line}"))
+}
+
+/// [`build_project_board_handles`], telling `warn` each line to warn of: a
+/// write's malformed git command-scope set, dropped, and why, or one
+/// naming half an identity.
+fn build_with_warnings(
+    environment: &ProjectBoardEnvironment,
+    warn: &mut dyn FnMut(&str),
+) -> Result<ProjectBoardHandles, BuildError> {
     let unavailable = |why: String| BuildError::Unavailable(why);
     let vars = GitEnvironment::allowlisted(environment.vars.iter().cloned());
+    // Only a write names a committer, so only a write is told what the
+    // set naming one warns of. A warning names variables and the
+    // identity's keys alone; it is redacted all the same, in case one ever
+    // quotes more.
+    match (environment.access, vars.command_scope_warning()) {
+        (Access::Write, Some(warning)) => warn(&redact_secrets(&redact_url_userinfo(&format!(
+            "warning: project board: {warning}"
+        )))),
+        (Access::Write | Access::Read, None) | (Access::Read, Some(_)) => {}
+    }
     let git = match environment.access {
         Access::Write => Git::configured_committer(&environment.repo, &vars)
             .and_then(|committer| Git::new(&environment.repo, vars, committer))

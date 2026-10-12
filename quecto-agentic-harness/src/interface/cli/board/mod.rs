@@ -15,9 +15,32 @@
 //! **Trust.** The board is cooperative: a change is attributed to the
 //! local git identity, which anyone can set, and anyone who can push the
 //! board branch could push raw commits. Branch protection or a server hook
-//! is the real control. The identity is the repository's configured
-//! `user.name` and `user.email`: `GIT_AUTHOR_*` and `GIT_COMMITTER_*` in
+//! is the real control. The identity is `user.name` and `user.email` as
+//! `git config` resolves them: `GIT_AUTHOR_*` and `GIT_COMMITTER_*` in
 //! the environment are not honoured.
+//!
+//! **Command-scope identity.** A caller that writes as a bot (the pocket
+//! relay, quecto's container scripts) sets git's command-scope
+//! configuration, which outranks the clone's own `.git/config` key by
+//! key: `GIT_CONFIG_COUNT=2 GIT_CONFIG_KEY_0=user.name
+//! GIT_CONFIG_VALUE_0='quecto pocket' GIT_CONFIG_KEY_1=user.email
+//! GIT_CONFIG_VALUE_1=pocket@quecto.invalid`. A set naming only one of
+//! `user.name` and `user.email` leaves the other to the clone, and a
+//! write warns that it does. Of the set only the `user.name` and
+//! `user.email` settings reach git (matched in any case, as git matches
+//! them, and passed in lower case), renumbered; every other setting
+//! (`core.sshCommand` or `credential.helper`, which run programs;
+//! `author.*`, which the board would override; a key git would refuse,
+//! such as an empty one) is skipped, quietly, since a key can carry a
+//! credential. The caller could already reach those keys through
+//! `GIT_CONFIG_GLOBAL`, so skipping them withholds no power it lacks; it
+//! keeps the scope to what the board uses it for. The set is read more
+//! strictly than git reads it: a count that is not empty or plain decimal
+//! 0 to 16 (quecto's own cap), or a setting missing its key or value,
+//! drops the set whole, and a write warns of it once on standard error,
+//! naming the variable, never a key or a value. An environment that sets
+//! the scope for something else (a `safe.directory`, say) has those
+//! settings ignored, as before. No other `GIT_*` variable reaches git.
 use std::io::Read;
 use std::path::PathBuf;
 
