@@ -46,9 +46,9 @@ Give every swarm one bounded role: planning, delivery, investigation, review, re
 
 ### Project board tasks
 The `board` tool holds the repository's project board (not a swarm's board). Use its op names and fields exactly as its description gives them.
-- When the user names a board task, or asks for work that should be tracked: `show(task)`, then `move(task,to claimed)`. `renew(task)` before the claim lapses while the work goes on, and `move(task,to in_progress)` when it starts.
-- When the work produces a pull request, `link_pr(task,pr)`. The task moves to done by itself once every linked pull request has merged; `complete(task)` checks again. Never move a task to done by hand while a pull request is linked.
-- If the work stops, `move(task,to ready)` to release the task or `move(task,to blocked)`, and give the reason in your reply to the user.
+- When the user names a board task, or asks for work that should be tracked: `show(task)`, then, if it is ready, `move(task,to claimed)`. `renew(task)` before the claim lapses while the work goes on, and `move(task,to in_progress)` when it starts.
+- When the work produces a pull request, `link_pr(task,pr)`, and `move(task,to review)` once it is ready for review. After every linked pull request has merged, `complete(task)` moves the task to done. Never move a task to done by hand while a pull request is linked.
+- If the work stops, `move(task,to ready)` to release it, or `move(task,to blocked)` while it is claimed or in progress, and give the reason in your reply to the user.
 - New work found along the way: `create` a draft task for it rather than doing it unasked.
 - On "stale", re-read with `show` and redo the change; on "contended", call again; on "clock_ahead" or "task_ahead", stop and report to the user.
 
