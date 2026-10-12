@@ -61,7 +61,7 @@ impl Board {
             true => Ok(()),
             false => Err(BoardStoreError::InvalidWrite(format!(
                 "the board would hold {entries} task files and files set aside; it holds at \
-                 most {cap}"
+                 most {cap}: clear set-aside files to make room"
             ))),
         }
     }

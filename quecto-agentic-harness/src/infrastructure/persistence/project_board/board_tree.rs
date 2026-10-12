@@ -276,42 +276,60 @@ pub fn read_board(git: &Git, commit: &str, limits: Limits) -> Result<Board, Unre
     let read = tasks
         .filter(|entry| is_tree(entry, &kinds))
         .map(|entry| read_tasks(git, &entry.oid, limits));
-    // So is the format marker, at the same depth.
-    let marker = root
-        .iter()
-        .find(|entry| entry.name == FORMAT_TREE)
-        .filter(|entry| is_tree(entry, &kinds))
-        .map(|entry| read_format(git, &entry.oid, limits));
-    let mut missing = missing(&root, &kinds);
-    let board = match read {
-        Some(Ok(board)) => Some(board),
-        Some(Err(Unread::Missing(more))) => {
-            missing.extend(more);
-            None
-        }
-        Some(Err(failed)) => return Err(failed),
+    // So is the format marker, at the same depth. A file of its name is a
+    // stray, as on a board before the marker; none is a board before it.
+    let marker = match root.iter().find(|entry| entry.name == FORMAT_TREE) {
+        Some(entry) if is_tree(entry, &kinds) => Some(read_format(git, &entry.oid, limits)),
+        Some(entry) if is_file(entry, &kinds) => None,
+        Some(entry) => Some(Ok(Marker::Damaged(format!(
+            "format at the root is of mode {}, not a tree",
+            entry.mode
+        )))),
         None => None,
     };
-    let marked = match marker {
-        Some(Err(Unread::Missing(more))) => {
-            missing.extend(more);
-            None
-        }
-        other => other,
-    };
+    let mut missing = missing(&root, &kinds);
+    let (read, marker) = (gather(read, &mut missing), gather(marker, &mut missing));
     if !missing.is_empty() {
         missing.sort();
         missing.dedup();
         return Err(Unread::Missing(missing));
     }
+    // A newer format first: whatever else this quecto would make of the
+    // board, it asks for an upgrade.
+    let marker = marker.transpose()?;
+    if let Some(Marker::Newer(version)) = marker {
+        return Err(Unread::Failed(newer(version)));
+    }
+    let board = read.transpose()?;
     board_shape(&root, &kinds)?;
-    // No marker: a board written before it, read as it is; the next write
-    // adds it.
-    if let Some(Err(failed)) = marked {
-        return Err(failed);
+    if let Some(Marker::Damaged(why)) = marker {
+        return Err(Unread::Failed(BoardStoreError::Unavailable(format!(
+            "its format marker is damaged ({why}); quecto never writes one so, so a hand edit \
+             did: to mend the board, {RECOVERY}"
+        ))));
     }
     // No `tasks` tree yet: a board that holds no task.
     Ok(board.unwrap_or_default())
+}
+
+/// `result`, its missing objects moved to `missing`.
+fn gather<T>(
+    result: Option<Result<T, Unread>>,
+    missing: &mut Vec<String>,
+) -> Option<Result<T, Unread>> {
+    match result {
+        Some(Err(Unread::Missing(more))) => {
+            missing.extend(more);
+            None
+        }
+        other => other,
+    }
+}
+
+/// Whether `entry` is a file over a blob, as its mode names.
+fn is_file(entry: &Entry, kinds: &BTreeMap<String, Found>) -> bool {
+    kind_of_mode(&entry.mode) == Some("blob")
+        && matches!(kinds.get(&entry.oid), Some(Found::Present(object)) if object.kind == "blob")
 }
 
 fn is_tree(entry: &Entry, kinds: &BTreeMap<String, Found>) -> bool {
@@ -349,11 +367,13 @@ fn board_shape(root: &[Entry], kinds: &BTreeMap<String, Found>) -> Result<(), Bo
     };
     let file =
         |entry: &Entry| kind_of_mode(&entry.mode) == Some("blob") && kind(entry) == Some("blob");
+    // The format marker is judged on its own (`read_board`).
     let fits = |entry: &Entry| match entry.name.as_str() {
-        "tasks" | FORMAT_TREE => is_tree(entry, kinds),
+        "tasks" => is_tree(entry, kinds),
+        FORMAT_TREE => true,
         _ => file(entry),
     };
-    let ours = |entry: &Entry| matches!(entry.name.as_str(), "README.md" | "tasks" | FORMAT_TREE);
+    let ours = |entry: &Entry| matches!(entry.name.as_str(), "README.md" | "tasks");
     let marked = root.iter().any(ours);
     match (marked, root.iter().find(|entry| !fits(entry))) {
         (true, None) => Ok(()),
@@ -471,11 +491,13 @@ fn read_tasks(git: &Git, tree: &str, limits: Limits) -> Result<Board, Unread> {
         .map(|(_, entry, size)| (entry.oid.as_str(), *size))
         .collect();
     let contents = contents(git, &wanted)?;
-    // Ids with a task file in the JSON form older quecto wrote: an `.md`
-    // beside one that is no task file is the summary it wrote with it.
-    let legacy: BTreeSet<Slug> = entries
-        .iter()
-        .filter_map(|entry| match task_name(&entry.name) {
+    // Ids with a task file in the JSON form older quecto wrote, carried
+    // forward: an `.md` beside one that is no task file is the summary it
+    // wrote with it.
+    let legacy: BTreeSet<Slug> = board
+        .kept
+        .keys()
+        .filter_map(|name| match task_name(name) {
             Some((Some(id), TaskFile::LegacyJson)) => Some(id),
             Some(_) | None => None,
         })
@@ -537,7 +559,7 @@ fn read_tasks(git: &Git, tree: &str, limits: Limits) -> Result<Board, Unread> {
             path: format!("{TASKS}{name}"),
             key: Some(ArtifactKey::Task(id)),
             reason: "another file of this task is set aside, so this one is too, carried \
-                     forward as it is until that file is cleared"
+                     forward as it is until that file is cleared or dropped"
                 .into(),
             object: held.object,
             carried: true,
@@ -658,8 +680,8 @@ mod entries;
 use entries::{Disposition, TaskFile, disposition, task_name};
 #[path = "board_format.rs"]
 mod format;
-use format::read_format;
 pub use format::{FORMAT, FORMAT_FILE, FORMAT_TREE};
+use format::{Marker, newer, read_format};
 
 #[cfg(test)]
 #[path = "board_tree_tests.rs"]
