@@ -59,8 +59,9 @@ const SECTIONS: &[SectionShape<'static>] = &[
     },
 ];
 
-/// A review's file caps; the widest review the domain admits fits
-/// (`the_widest_review_fits`).
+/// A review's file caps, from the widest review the domain admits
+/// (`the_widest_review_fits`: 971,378 bytes, 8,274 lines, a 16,528-byte
+/// line), with room to spare.
 pub const REVIEW_LIMITS: Limits = Limits {
     file_bytes: 1024 * 1024,
     lines: 8_400,
@@ -80,10 +81,6 @@ impl ArtifactCodec for ReviewCodec {
     };
 
     fn to_document(review: &Review) -> Result<Document, CodecError> {
-        let stub = true;
-        if stub {
-            return Err(CodecError::Schema);
-        }
         let state = review.state();
         let review = review.fields();
         let fields = [
@@ -139,10 +136,6 @@ impl ArtifactCodec for ReviewCodec {
     }
 
     fn from_document(document: &Document) -> Result<Review, CodecError> {
-        let stub = true;
-        if stub {
-            return Err(CodecError::Schema);
-        }
         let fields = cells::Fields::of(document);
         let required = |name: &'static str| fields.required(name);
         // The State is read as a word; that it is the last verdict is the
