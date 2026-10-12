@@ -67,7 +67,8 @@ use crate::domain::project_board::value_objects::reference::{
     MAX_ISSUE_NUMBER, MAX_REFERENCE_BYTES,
 };
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
-use crate::infrastructure::persistence::project_board::markdown::MarkdownError;
+use crate::infrastructure::persistence::project_board::markdown::tests::oracle::outline_in;
+use crate::infrastructure::persistence::project_board::markdown::{MarkdownError, parse};
 
 fn slug(text: &str) -> Slug {
     Slug::parse(text).unwrap()
@@ -123,6 +124,17 @@ fn task(fields: TaskFields) -> Task {
     Task::new(fields).unwrap()
 }
 
+/// `file` read by both readers of the CommonMark/GFM oracle, cell by cell,
+/// as the document it parses to.
+fn read_by_the_oracle(file: &str) {
+    let document = parse(file.as_bytes(), &TaskCodec::SHAPE).unwrap();
+    assert_eq!(
+        outline_in(file, &document, &TaskCodec::SHAPE),
+        Ok(()),
+        "{file}"
+    );
+}
+
 /// The example file with `from` replaced by `to` (once).
 fn edited(from: &str, to: &str) -> String {
     assert!(EXAMPLE.contains(from), "{from:?}");
@@ -134,6 +146,7 @@ fn the_example_task_file_is_byte_exact() {
     let example = task(example());
     assert_eq!(encode::<TaskCodec>(&example).unwrap(), EXAMPLE);
     assert_eq!(decode::<TaskCodec>(EXAMPLE.as_bytes()), Ok(example));
+    read_by_the_oracle(EXAMPLE);
 }
 
 /// Every status (held with its claim, finished with its resolution), every
@@ -210,6 +223,7 @@ fn every_task_shape_round_trips() {
         let task = task(fields);
         let file = encode::<TaskCodec>(&task).unwrap();
         assert_eq!(decode::<TaskCodec>(file.as_bytes()), Ok(task), "{file}");
+        read_by_the_oracle(&file);
     }
 }
 
@@ -400,6 +414,7 @@ fn the_widest_task_fits_its_limits() {
         let task = task(fields);
         let file = encode::<TaskCodec>(&task).unwrap();
         assert_eq!(decode::<TaskCodec>(file.as_bytes()), Ok(task));
+        read_by_the_oracle(&file);
         let longest = file.lines().map(str::len).max().unwrap();
         (file.len(), file.lines().count(), longest)
     });
@@ -515,6 +530,7 @@ fn the_archived_task_file_is_byte_exact() {
     let archived = task(archived());
     assert_eq!(encode::<TaskCodec>(&archived).unwrap(), ARCHIVED);
     assert_eq!(decode::<TaskCodec>(ARCHIVED.as_bytes()), Ok(archived));
+    read_by_the_oracle(ARCHIVED);
 }
 
 /// A reference keeps the form it was written in, whatever its key: the
@@ -537,6 +553,7 @@ fn a_reference_keeps_its_written_form() {
     for text in written {
         assert!(file.contains(&format!("| `{text}` |\n")), "{file}");
     }
+    read_by_the_oracle(&file);
     let read = decode::<TaskCodec>(file.as_bytes()).unwrap();
     let shown: Vec<&str> = read
         .fields()
