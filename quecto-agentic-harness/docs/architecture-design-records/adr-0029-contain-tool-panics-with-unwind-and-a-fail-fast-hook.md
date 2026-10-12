@@ -449,7 +449,8 @@ tokio would also quietly turn a panic in any spawned task into a
   Rust's default behaviour applies there. The `panic_hook` process tests
   re-execute the test binary to prove the installed behaviour. Every test
   that ends a process fatally on purpose goes through one test-support
-  helper (`panic_hook::test_support::without_core_dumps`): it sets
+  helper (`infrastructure::test_support::no_core_dumps::without_core_dumps`,
+  re-exported as `panic_hook::test_support`): it sets
   `QUECTO_TEST_NO_CORE_DUMPS=1`, so the hook of a test-support build ends
   the process with `_exit(134)` instead of `abort()`, and it sets the
   process's `RLIMIT_CORE` to zero as well. No core-dumping signal is sent,
