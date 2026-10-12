@@ -370,6 +370,7 @@ fn a_ready_task_at_its_text_budget_is_claimed_by_a_holder_at_its_widest() {
     while left > 0 {
         let head = format!("https://example.com/{}/", fields.references.len());
         let len = left.min(MAX_REFERENCE_BYTES);
+        assert!(len > head.len(), "room for the last reference: {len}");
         let text = format!("{head}{}", "a".repeat(len - head.len()));
         fields.references.push(Reference::parse(&text).unwrap());
         left -= len;

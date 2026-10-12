@@ -37,11 +37,13 @@ use std::fmt;
 /// optional key, `null` in a single value and an empty list hold no
 /// value: they read as not set, in any schema (a list set to `null` is
 /// malformed, as every list is).
+///
 /// Review findings are review artifacts of their own too (M1c): a file of
 /// any schema holding the task's old `reviews` is malformed to this
 /// reader, even `"reviews": []` (not read as "not set", as an empty list
-/// of a key the task has is). No board holds any, so the key is dropped without a new schema
-/// (a reader before this one reads every file this one writes).
+/// of a key the task has is). No board holds any, so the key is dropped
+/// without a new schema (a reader before this one reads every file this
+/// one writes).
 pub const SCHEMAS: &[(u32, &str)] = &[(1, "0.107.251"), (2, "0.107.274"), (3, "0.107.292")];
 /// The schema every task file is written at: the last row of [`SCHEMAS`].
 pub const SCHEMA_VERSION: u32 = 3;

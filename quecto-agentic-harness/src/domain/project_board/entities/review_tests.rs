@@ -206,3 +206,17 @@ fn a_findings_place_is_a_relative_path_and_its_line() {
         );
     }
 }
+
+/// A finding of exactly its most characters, each of several bytes, is
+/// admitted: the limit counts characters, not bytes.
+#[test]
+fn a_finding_of_its_most_multibyte_characters_is_admitted() {
+    let mut widest = fields();
+    widest.rounds[0].findings[0].text = "é".repeat(MAX_FINDING_CHARS);
+    assert!(Review::new(widest.clone()).is_ok());
+    widest.rounds[0].findings[0].text.push('é');
+    assert_eq!(
+        Review::new(widest).unwrap_err().field,
+        "rounds/0/findings/0/text"
+    );
+}
