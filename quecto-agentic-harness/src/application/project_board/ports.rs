@@ -167,9 +167,11 @@ pub struct BoardSnapshot {
 }
 
 impl BoardSnapshot {
-    /// The snapshot, as a store hands it over: debug builds check that no
-    /// task both reads and has its file set aside, since a store sets a
-    /// task's file aside instead of reading it, never as well.
+    /// The snapshot, as a store hands it over: debug builds check the
+    /// stores' contract, that no task both reads and has its file set
+    /// aside (a store sets a task's file aside instead of reading it,
+    /// never as well), and that each artifact is held once (one file per
+    /// key, its name matching what it holds).
     #[must_use]
     pub fn asserted(self) -> Self {
         debug_assert!(
@@ -179,7 +181,38 @@ impl BoardSnapshot {
                 .all(|id| self.tasks.iter().all(|task| task.fields().id != *id)),
             "a task is set aside and read at once"
         );
+        debug_assert!(self.held_once(), "the board holds an artifact twice");
         self
+    }
+
+    /// Whether every artifact read is held under its own key once.
+    fn held_once(&self) -> bool {
+        let keys: Vec<ArtifactKey> =
+            self.tasks
+                .iter()
+                .map(|task| ArtifactKey::Task(task.fields().id.clone()))
+                .chain(self.plans.iter().map(|plan| {
+                    ArtifactKey::Plan(plan.fields().task.clone(), plan.fields().version)
+                }))
+                .chain(
+                    self.runs.iter().map(|run| {
+                        ArtifactKey::Run(run.fields().task.clone(), run.fields().number)
+                    }),
+                )
+                .chain(self.changes.iter().map(|change| {
+                    ArtifactKey::Change(change.fields().task.clone(), change.fields().number)
+                }))
+                .chain(self.reviews.iter().map(|review| {
+                    ArtifactKey::Review(review.fields().task.clone(), review.fields().change)
+                }))
+                .chain(
+                    self.discussions
+                        .iter()
+                        .map(|discussion| ArtifactKey::Discussion(discussion.fields().id.clone())),
+                )
+                .collect();
+        let distinct: std::collections::BTreeSet<&ArtifactKey> = keys.iter().collect();
+        distinct.len() == keys.len()
     }
 }
 
@@ -349,7 +382,9 @@ pub trait BoardListings: Send + Sync {
     /// No board, or the view's or store's failure.
     fn dependents(&self, task: &Slug) -> Result<BoardListing, BoardStoreError>;
 
-    /// Every plan of `task`, by version.
+    /// Every plan of `task`, by version. This and the other artifact
+    /// listings below read the store directly until the index keeps a
+    /// table per kind (S12).
     ///
     /// # Errors
     /// No board, or the view's or store's failure.

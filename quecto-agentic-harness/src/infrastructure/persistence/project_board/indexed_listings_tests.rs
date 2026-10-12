@@ -143,3 +143,40 @@ fn the_index_lists_each_plans_runs_and_each_changes_review() {
             .is_empty()
     );
 }
+
+/// Every artifact listing the index answers is `QueryBoard`'s over the
+/// same store, items, head and files set aside alike, for a task the
+/// board holds artifacts of, another, and none; with a run's file set
+/// aside and a stray beside them.
+#[test]
+fn the_index_lists_every_kind_as_query_board_does() {
+    use crate::application::project_board::ports::ArtifactKey;
+    use crate::application::project_board::use_cases::QueryBoard;
+    let store = board();
+    store.quarantine_key(ArtifactKey::Run(slug("a"), 9), "runs/a.9.md", "malformed");
+    store.set_aside_stray("notes.txt", "not a board file");
+    let (_dir, listings) = listings(Arc::clone(&store));
+    let query = QueryBoard::new(store);
+    let mut listed = 0;
+    for task in ["a", "b", "missing"].map(slug) {
+        let plans = listings.plans_of(&task).unwrap();
+        assert_eq!(plans.quarantined.len(), 2, "both files carried");
+        listed += plans.items.len();
+        assert_eq!(plans, query.plans_of(&task).unwrap(), "plans of {task:?}");
+        let changes = listings.changes_of(&task).unwrap();
+        listed += changes.items.len();
+        assert_eq!(changes, query.changes_of(&task).unwrap());
+        let discussions = listings.discussions_of(&task).unwrap();
+        listed += discussions.items.len();
+        assert_eq!(discussions, query.discussions_of(&task).unwrap());
+        for number in 1..=3 {
+            let runs = listings.runs_of_plan(&task, number).unwrap();
+            listed += runs.items.len();
+            assert_eq!(runs, query.runs_of_plan(&task, number).unwrap());
+            let review = listings.review_of(&task, number).unwrap();
+            listed += review.items.len();
+            assert_eq!(review, query.review_of(&task, number).unwrap());
+        }
+    }
+    assert_eq!(listed, 12, "every seeded artifact is listed once");
+}

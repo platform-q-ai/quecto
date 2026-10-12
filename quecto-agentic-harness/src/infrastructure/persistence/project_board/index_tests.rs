@@ -355,24 +355,32 @@ fn other_kinds_index_but_a_set_aside_one_is_refused_until_s12() {
     holding.discussions.push(discussion("d"));
     assert!(rebuild(&index, &holding).is_ok(), "other kinds held index");
     assert_eq!(ids(index.all()), ["a", "b", "c", "d"]);
-    let (_dir, index) = self::index();
-    let mut spoilt = board("a1");
-    spoilt.quarantined.push(QuarantinedFile {
-        path: "runs/a.1.md".into(),
-        key: Some(ArtifactKey::Run(slug("a"), 1)),
-        reason: "malformed".into(),
-        object: "c".repeat(40),
-        carried: true,
-    });
-    let refused = rebuild(&index, &spoilt);
-    assert!(
-        matches!(
-            &refused,
-            Err(IndexError::Store(BoardStoreError::Unavailable(why))) if why.contains("runs/a.1.md")
-        ),
-        "{refused:?}"
-    );
-    assert!(needs_rebuild(&index.head()), "nothing built");
+    for (key, path) in [
+        (ArtifactKey::Plan(slug("a"), 1), "plans/a.1.md"),
+        (ArtifactKey::Run(slug("a"), 1), "runs/a.1.md"),
+        (ArtifactKey::Change(slug("a"), 1), "changes/a.1.md"),
+        (ArtifactKey::Review(slug("a"), 1), "reviews/a.1.md"),
+        (ArtifactKey::Discussion(slug("d")), "discussions/d.md"),
+    ] {
+        let (_dir, index) = self::index();
+        let mut spoilt = board("a1");
+        spoilt.quarantined.push(QuarantinedFile {
+            path: path.into(),
+            key: Some(key),
+            reason: "malformed".into(),
+            object: "c".repeat(40),
+            carried: true,
+        });
+        let refused = rebuild(&index, &spoilt);
+        assert!(
+            matches!(
+                &refused,
+                Err(IndexError::Store(BoardStoreError::Unavailable(why))) if why.contains(path)
+            ),
+            "{path}: {refused:?}"
+        );
+        assert!(needs_rebuild(&index.head()), "{path}: nothing built");
+    }
 }
 
 #[test]

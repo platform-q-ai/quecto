@@ -6,7 +6,10 @@
 //! no view's scope, so it blocks none. A view sees keys only: a kept file
 //! set aside with no key (its artifact unknown) blocks no view, so S7's
 //! link wiring through [`all_changes`] must still refuse while one exists,
-//! as `change_board_task`'s `board_readable_for` does now.
+//! as `change_board_task`'s `board_readable_for` does now. An artifact a
+//! view finds more than once (a store that broke its contract of one
+//! artifact per key) is refused as [`ProjectBoardError::Duplicate`], never
+//! a panic.
 use crate::application::project_board::dto::ProjectBoardError;
 use crate::application::project_board::ports::{ArtifactKey, BoardSnapshot, QuarantinedFile};
 use crate::domain::project_board::entities::change::Change;
@@ -32,10 +35,14 @@ pub fn task_in<'b>(
     id: &Slug,
 ) -> Result<&'b Task, ProjectBoardError> {
     first_set_aside(quarantined, |key| *key == ArtifactKey::Task(id.clone()))?;
-    tasks
+    let found: Vec<&Task> = tasks
         .iter()
-        .find(|task| task.fields().id == *id)
-        .ok_or_else(|| ProjectBoardError::NotFound(id.clone()))
+        .filter(|task| task.fields().id == *id)
+        .collect();
+    match once(found, |task| ArtifactKey::Task(task.fields().id.clone()))?.as_slice() {
+        [task] => Ok(task),
+        _ => Err(ProjectBoardError::NotFound(id.clone())),
+    }
 }
 
 /// Every plan of the task `id`, by version. Refused while any plan of it
@@ -48,7 +55,9 @@ pub fn plans_of<'b>(
         board,
         |key| matches!(key, ArtifactKey::Plan(task, _) if task == id),
     )?;
-    Ok(artifacts_of::plans_of(&board.plans, id))
+    once(artifacts_of::plans_of(&board.plans, id), |plan| {
+        ArtifactKey::Plan(plan.fields().task.clone(), plan.fields().version)
+    })
 }
 
 /// Every run of the task `id`, by number. Refused while any run of it is
@@ -58,7 +67,7 @@ pub fn runs_of<'b>(board: &'b BoardSnapshot, id: &Slug) -> Result<Vec<&'b Run>, 
         board,
         |key| matches!(key, ArtifactKey::Run(task, _) if task == id),
     )?;
-    Ok(artifacts_of::runs_of(&board.runs, id))
+    once(artifacts_of::runs_of(&board.runs, id), run_key)
 }
 
 /// Every change of the task `id`, by number. Refused while any change of
@@ -71,7 +80,7 @@ pub fn changes_of<'b>(
         board,
         |key| matches!(key, ArtifactKey::Change(task, _) if task == id),
     )?;
-    Ok(artifacts_of::changes_of(&board.changes, id))
+    once(artifacts_of::changes_of(&board.changes, id), change_key)
 }
 
 /// Every change on the board, by task and number: what a link checks a
@@ -79,7 +88,7 @@ pub fn changes_of<'b>(
 /// Refused while any change of any task is set aside.
 pub fn all_changes(board: &BoardSnapshot) -> Result<Vec<&Change>, ProjectBoardError> {
     clear_of(board, |key| matches!(key, ArtifactKey::Change(..)))?;
-    Ok(artifacts_of::all_changes(&board.changes))
+    once(artifacts_of::all_changes(&board.changes), change_key)
 }
 
 /// The review of change `change` of the task `id`, if it has one. Refused
@@ -90,7 +99,30 @@ pub fn review_of<'b>(
     change: u32,
 ) -> Result<Option<&'b Review>, ProjectBoardError> {
     clear_of(board, |key| *key == ArtifactKey::Review(id.clone(), change))?;
-    Ok(artifacts_of::review_of(&board.reviews, id, change))
+    let reviews = artifacts_of::reviews_of_change(&board.reviews, id, change);
+    let reviews = once(reviews, |review| {
+        ArtifactKey::Review(review.fields().task.clone(), review.fields().change)
+    })?;
+    Ok(reviews.first().copied())
+}
+
+fn run_key(run: &Run) -> ArtifactKey {
+    ArtifactKey::Run(run.fields().task.clone(), run.fields().number)
+}
+
+fn change_key(change: &Change) -> ArtifactKey {
+    ArtifactKey::Change(change.fields().task.clone(), change.fields().number)
+}
+
+/// `items` (ordered by `key`), unless one key is there more than once.
+fn once<T>(items: Vec<&T>, key: impl Fn(&T) -> ArtifactKey) -> Result<Vec<&T>, ProjectBoardError> {
+    let keys: Vec<ArtifactKey> = items.iter().map(|item| key(item)).collect();
+    match keys.windows(2).find(|pair| pair[0] == pair[1]) {
+        Some(pair) => Err(ProjectBoardError::Duplicate {
+            key: pair[0].clone(),
+        }),
+        None => Ok(items),
+    }
 }
 
 /// Refuses with the least key in scope that a set-aside file names, so a

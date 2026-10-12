@@ -139,7 +139,8 @@ fn query_listings_list_every_kind_as_query_board_does() {
     let head = store.read().unwrap().head;
     let artifacts = [
         BoardArtifact::Plan(plan("a", 1)),
-        BoardArtifact::Run(run("a", 1)),
+        // Run 2 of plan 1: a number other than its plan's version.
+        BoardArtifact::Run(run("a", 2)),
         BoardArtifact::Change(change("a", 1)),
         BoardArtifact::Review(review("a", 1)),
         BoardArtifact::Discussion(linked),

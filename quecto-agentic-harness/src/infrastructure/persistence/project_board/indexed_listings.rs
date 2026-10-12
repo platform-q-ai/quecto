@@ -9,7 +9,6 @@ use crate::domain::project_board::entities::discussion::Discussion;
 use crate::domain::project_board::entities::plan::Plan;
 use crate::domain::project_board::entities::review::Review;
 use crate::domain::project_board::entities::run::Run;
-use crate::domain::project_board::services::artifacts_of;
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
 use crate::domain::project_board::value_objects::vocabulary::TaskStatus;
@@ -92,11 +91,7 @@ impl BoardListings for IndexedBoardListings {
     // The other kinds are read from the store's snapshot until the index
     // keeps a table per kind (S12).
     fn plans_of(&self, task: &Slug) -> Result<ArtifactListing<Plan>, BoardStoreError> {
-        let board = self.store.read()?;
-        Ok(ArtifactListing::picked(
-            &board,
-            artifacts_of::plans_of(&board.plans, task),
-        ))
+        Ok(ArtifactListing::plans_of(&self.store.read()?, task))
     }
 
     fn runs_of_plan(
@@ -104,19 +99,15 @@ impl BoardListings for IndexedBoardListings {
         task: &Slug,
         version: u32,
     ) -> Result<ArtifactListing<Run>, BoardStoreError> {
-        let board = self.store.read()?;
-        Ok(ArtifactListing::picked(
-            &board,
-            artifacts_of::runs_of_plan(&board.runs, task, version),
+        Ok(ArtifactListing::runs_of_plan(
+            &self.store.read()?,
+            task,
+            version,
         ))
     }
 
     fn changes_of(&self, task: &Slug) -> Result<ArtifactListing<Change>, BoardStoreError> {
-        let board = self.store.read()?;
-        Ok(ArtifactListing::picked(
-            &board,
-            artifacts_of::changes_of(&board.changes, task),
-        ))
+        Ok(ArtifactListing::changes_of(&self.store.read()?, task))
     }
 
     fn review_of(
@@ -124,21 +115,15 @@ impl BoardListings for IndexedBoardListings {
         task: &Slug,
         change: u32,
     ) -> Result<ArtifactListing<Review>, BoardStoreError> {
-        let board = self.store.read()?;
-        Ok(ArtifactListing::picked(
-            &board,
-            artifacts_of::review_of(&board.reviews, task, change)
-                .into_iter()
-                .collect(),
+        Ok(ArtifactListing::review_of(
+            &self.store.read()?,
+            task,
+            change,
         ))
     }
 
     fn discussions_of(&self, task: &Slug) -> Result<ArtifactListing<Discussion>, BoardStoreError> {
-        let board = self.store.read()?;
-        Ok(ArtifactListing::picked(
-            &board,
-            artifacts_of::discussions_of(&board.discussions, task),
-        ))
+        Ok(ArtifactListing::discussions_of(&self.store.read()?, task))
     }
 }
 

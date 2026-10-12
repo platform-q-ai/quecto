@@ -44,6 +44,7 @@ fn keys(code: ErrorCode) -> &'static [&'static str] {
         // (a_set_aside_artifact_is_named_by_its_kind_task_and_number).
         C::ArtifactSetAside => &["kind", "task", "number", "path"],
         C::NoPullRequestHost => &["reason"],
+        C::Duplicate => &["artifact"],
     }
 }
 
@@ -98,6 +99,9 @@ board_errors! {
     E::Quarantined { .. } => E::Quarantined {
         key: ArtifactKey::Task(slug("a")),
         path: "tasks/a.json".into(),
+    },
+    E::Duplicate { .. } => E::Duplicate {
+        key: ArtifactKey::Plan(slug("a"), 2),
     },
     E::SetAsideFile { .. } => E::SetAsideFile {
         path: "tasks/?.json".into(),

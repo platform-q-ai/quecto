@@ -75,6 +75,9 @@ pub enum ErrorCode {
     /// version, the run's or change's number, the reviewed change's) and
     /// `path`; for a discussion, `kind`, `discussion` (its id) and `path`.
     ArtifactSetAside,
+    /// `artifact`: the board holds it more than once (its store broke its
+    /// contract); named as a message names it (`plan 2 of task t`).
+    Duplicate,
     /// `path`, `object`.
     SetAsideFile,
     /// `task`.
@@ -120,6 +123,7 @@ impl ErrorCode {
             Self::ClockUnreadable => "clock_unreadable",
             Self::SetAside => "set_aside",
             Self::ArtifactSetAside => "artifact_set_aside",
+            Self::Duplicate => "duplicate",
             Self::SetAsideFile => "set_aside_file",
             Self::UnknownReference => "unknown_reference",
             Self::ClosesCycle => "closes_cycle",
@@ -428,6 +432,7 @@ fn error_fields(error: &ProjectBoardError) -> (ErrorCode, Map<String, Value>) {
             (C::ClockUnreadable, fields([("read", shown_json(read))]))
         }
         E::Quarantined { key, path } => set_aside_fields(key, path),
+        E::Duplicate { key } => (C::Duplicate, fields([("artifact", json!(key.to_string()))])),
         E::SetAsideFile { path, object } => {
             assert!(
                 shown_path(path),

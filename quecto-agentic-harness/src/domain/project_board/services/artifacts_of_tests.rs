@@ -1,7 +1,8 @@
 //! Each pick holds whatever order a store reads in (the in-memory store
-//! reads in key order, so its tests cannot show this), keeps only its
-//! task's (and plan's, change's) artifacts, and takes the first of two
-//! reviews of one change.
+//! reads in key order, so its tests cannot show this) and keeps only its
+//! task's (and plan's, change's) artifacts. Two reviews of one change
+//! break the stores' contract (one artifact per key); the pick returns
+//! both, never panicking, so a caller can refuse a broken board.
 use super::*;
 use crate::domain::project_board::entities::discussion::{DiscussionFields, Message};
 use crate::domain::project_board::entities::fixtures_tests::{
@@ -102,21 +103,25 @@ fn a_changes_review_is_found_by_its_task_and_change() {
         review(2, ReviewVerdict::ChangesRequested),
         review(1, ReviewVerdict::Approved),
     ];
-    let found = review_of(&reviews, &task, 1).map(Review::state);
-    assert_eq!(found, Some(ReviewVerdict::Approved));
-    assert!(review_of(&reviews, &task, 3).is_none());
-    assert!(review_of(&reviews, &slug("other"), 1).is_none());
+    let found: Vec<ReviewVerdict> = reviews_of_change(&reviews, &task, 1)
+        .into_iter()
+        .map(Review::state)
+        .collect();
+    assert_eq!(found, [ReviewVerdict::Approved]);
+    assert!(reviews_of_change(&reviews, &task, 3).is_empty());
+    assert!(reviews_of_change(&reviews, &slug("other"), 1).is_empty());
 }
 
-/// Two reviews of one change cannot come from a store; a debug build
-/// stops on them rather than pick one.
+/// Two reviews of one change cannot come from a store that keeps its
+/// contract; the pick returns both rather than choose or panic.
 #[test]
-#[cfg(debug_assertions)]
-#[should_panic(expected = "one review per task and change")]
-fn two_reviews_of_one_change_stop_a_debug_build() {
+fn two_reviews_of_one_change_are_both_returned() {
     let reviews = [
         review(1, ReviewVerdict::Approved),
         review(1, ReviewVerdict::ChangesRequested),
     ];
-    let _ = review_of(&reviews, &slug("board-store"), 1);
+    assert_eq!(
+        reviews_of_change(&reviews, &slug("board-store"), 1).len(),
+        2
+    );
 }

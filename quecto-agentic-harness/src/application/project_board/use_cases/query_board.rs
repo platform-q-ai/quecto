@@ -13,7 +13,6 @@ use crate::domain::project_board::entities::plan::Plan;
 use crate::domain::project_board::entities::review::Review;
 use crate::domain::project_board::entities::run::Run;
 use crate::domain::project_board::entities::task::Task;
-use crate::domain::project_board::services::artifacts_of;
 use crate::domain::project_board::services::claims::is_live;
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
@@ -96,11 +95,7 @@ impl QueryBoard {
     /// # Errors
     /// The store's.
     pub fn plans_of(&self, task: &Slug) -> Result<ArtifactListing<Plan>, ProjectBoardError> {
-        let board = self.store.read()?;
-        Ok(ArtifactListing::picked(
-            &board,
-            artifacts_of::plans_of(&board.plans, task),
-        ))
+        Ok(ArtifactListing::plans_of(&self.store.read()?, task))
     }
 
     /// Every run of `task` of its plan's `version`, by number, whether or
@@ -113,10 +108,10 @@ impl QueryBoard {
         task: &Slug,
         version: u32,
     ) -> Result<ArtifactListing<Run>, ProjectBoardError> {
-        let board = self.store.read()?;
-        Ok(ArtifactListing::picked(
-            &board,
-            artifacts_of::runs_of_plan(&board.runs, task, version),
+        Ok(ArtifactListing::runs_of_plan(
+            &self.store.read()?,
+            task,
+            version,
         ))
     }
 
@@ -125,11 +120,7 @@ impl QueryBoard {
     /// # Errors
     /// The store's.
     pub fn changes_of(&self, task: &Slug) -> Result<ArtifactListing<Change>, ProjectBoardError> {
-        let board = self.store.read()?;
-        Ok(ArtifactListing::picked(
-            &board,
-            artifacts_of::changes_of(&board.changes, task),
-        ))
+        Ok(ArtifactListing::changes_of(&self.store.read()?, task))
     }
 
     /// The review of `task`'s change `change`, if the board holds one.
@@ -141,12 +132,10 @@ impl QueryBoard {
         task: &Slug,
         change: u32,
     ) -> Result<ArtifactListing<Review>, ProjectBoardError> {
-        let board = self.store.read()?;
-        Ok(ArtifactListing::picked(
-            &board,
-            artifacts_of::review_of(&board.reviews, task, change)
-                .into_iter()
-                .collect(),
+        Ok(ArtifactListing::review_of(
+            &self.store.read()?,
+            task,
+            change,
         ))
     }
 
@@ -158,11 +147,7 @@ impl QueryBoard {
         &self,
         task: &Slug,
     ) -> Result<ArtifactListing<Discussion>, ProjectBoardError> {
-        let board = self.store.read()?;
-        Ok(ArtifactListing::picked(
-            &board,
-            artifacts_of::discussions_of(&board.discussions, task),
-        ))
+        Ok(ArtifactListing::discussions_of(&self.store.read()?, task))
     }
 
     fn matching(
