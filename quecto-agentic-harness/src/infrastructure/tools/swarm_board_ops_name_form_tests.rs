@@ -74,9 +74,9 @@ async fn a_record_says_which_names_the_call_used() {
         assert!(!result.is_error, "{text}: {}", result.content);
         assert_eq!(form_of(&log.take(), op), expected, "{text}");
     }
-    // Refused calls say it too: before the board (a value it cannot hold,
-    // two values for one argument), by the binding (an argument the op
-    // does not take) and by the board (a task it does not hold).
+    // Refused calls say it too: before the board (a value it cannot hold),
+    // by the binding (two values for one argument, an argument the op does
+    // not take) and by the board (a task it does not hold).
     let refusals = [
         (
             r#"{"op":"task_item","task_item_id":1e400}"#,
@@ -84,6 +84,14 @@ async fn a_record_says_which_names_the_call_used() {
             Current,
         ),
         (r#"{"op":"task","task_id":1e400}"#, "task", Legacy),
+        // Arguments the board cannot hold still say which names they used.
+        (r#"{"op":"claim","task_item_id":1e400}"#, "claim", Current),
+        (r#"{"op":"claim","task_id":1e400}"#, "claim", Legacy),
+        (
+            r#"{"op":"claim","task_id":1,"task_item_id":1e400}"#,
+            "claim",
+            Legacy,
+        ),
         (
             r#"{"op":"claim","task_id":1,"task_item_id":2}"#,
             "claim",

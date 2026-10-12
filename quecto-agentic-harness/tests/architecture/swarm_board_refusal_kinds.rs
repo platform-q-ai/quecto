@@ -650,6 +650,11 @@ pub(super) const REFUSALS: &[(&str, &str, &str)] = &[
         "Calling",
     ),
     (
+        "src/infrastructure/tools/swarm_board_dispatch_binding.rs:refusal",
+        "{name}: {old} and {alias} name the same argument but hold different values; send only one",
+        "Calling",
+    ),
+    (
         "src/infrastructure/tools/swarm_board_dispatch_host.rs:run_watch",
         "since must be an event cursor (a nonnegative integer) or null",
         "Invalid",

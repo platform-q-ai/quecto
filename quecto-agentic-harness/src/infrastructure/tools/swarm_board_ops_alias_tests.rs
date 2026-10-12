@@ -9,7 +9,7 @@ use serde_json::{Value, json};
 
 use super::{Recorded, board, board_with, deadline, direct, execute, masked, prepared, refused};
 use crate::domain::swarm::{
-    ArgumentFaults, BoardOpObservation, BoardOpOutcome, RefusalKind, UnexpectedArgs,
+    ArgumentFaults, BoardOpObservation, BoardOpOutcome, RefusalKind, UnexpectedArgs, WrongTypeArg,
 };
 use crate::infrastructure::tools::swarm_board_ops::{
     BOARD_OPS, HARNESS_OPS, ID_ALIAS, OP_ALIASES, canonical_op, tool_schema,
@@ -115,8 +115,10 @@ pub(super) const CONFLICT: &str = "tool error: swarm: \"claim: task_id and task_
 
 /// `task_id` and `task_item_id` are one argument: both, with one value,
 /// are taken; with two (`1` and `2`, `1` and `1.0`, `null` and `1`), the
-/// call is refused before the board as Python refuses an argument given
-/// twice: `calling`, its fault naming `task_id`, and nothing claimed.
+/// binding refuses the call as Python refuses an argument given twice,
+/// after the running gate as every binding refusal: `calling`, its fault
+/// naming `task_id` (and, for `null`, the type `task_id` was given), and
+/// nothing claimed.
 #[tokio::test]
 async fn task_id_and_task_item_id_disagreeing_are_refused() {
     let (_directory, context, log) = logged();
@@ -129,7 +131,19 @@ async fn task_id_and_task_item_id_disagreeing_are_refused() {
     .await;
     assert!(!both.is_error, "{}", both.content);
     log.take();
-    for (old, new) in [("1", "2"), ("1", "1.0"), ("null", "1")] {
+    let given_twice = UnexpectedArgs {
+        count: 1,
+        known: vec!["task_id".to_owned()],
+    };
+    let null_for_integer = WrongTypeArg {
+        arg: "task_id".to_owned(),
+        expected: "integer".to_owned(),
+    };
+    for (old, new, wrong_type_args) in [
+        ("1", "2", vec![]),
+        ("1", "1.0", vec![]),
+        ("null", "1", vec![null_for_integer]),
+    ] {
         let text = format!(r#"{{"op":"claim","task_id":{old},"task_item_id":{new}}}"#);
         assert_eq!(refused(&context, &text).await, CONFLICT, "{text}");
         let records = log.take();
@@ -150,10 +164,8 @@ async fn task_id_and_task_item_id_disagreeing_are_refused() {
         assert_eq!(
             *record.arguments,
             ArgumentFaults {
-                unexpected_args: Some(UnexpectedArgs {
-                    count: 1,
-                    known: vec!["task_id".to_owned()],
-                }),
+                unexpected_args: Some(given_twice.clone()),
+                wrong_type_args,
                 ..ArgumentFaults::NONE
             },
             "{text}"
@@ -164,6 +176,40 @@ async fn task_id_and_task_item_id_disagreeing_are_refused() {
         let row = direct(&context, "task", json!([id])).unwrap();
         assert_eq!(row["status"], "ready", "{row}");
     }
+}
+
+/// A conflict meets the running gate first, as every binding refusal does:
+/// on a paused run it is refused as not running, with no argument fault.
+#[tokio::test]
+async fn a_conflict_on_a_paused_run_meets_the_running_gate_first() {
+    let (_directory, context, log) = logged();
+    direct(&context, "task_create", json!(["r1", "a", ["pass"]])).unwrap();
+    crate::infrastructure::tools::call_work::off_the_runtime(|| context.pause("hold")).unwrap();
+    log.take();
+    let text = r#"{"op":"claim","task_id":1,"task_item_id":2}"#;
+    let refusal = refused(&context, text).await;
+    assert!(
+        refusal.contains("the swarm run is paused, so op=claim is unavailable"),
+        "{refusal}"
+    );
+    let records = log.take();
+    let claims: Vec<&BoardOpObservation> = records
+        .iter()
+        .filter(|record| record.op == "claim")
+        .collect();
+    assert_eq!(claims.len(), 1, "{records:?}");
+    assert_eq!(
+        claims[0].outcome,
+        BoardOpOutcome::Refused {
+            kind: RefusalKind::NotRunning,
+            committed: false,
+        }
+    );
+    assert_eq!(*claims[0].arguments, ArgumentFaults::NONE);
+    assert_eq!(
+        claims[0].name_form,
+        Some(crate::domain::swarm::NameForm::Legacy)
+    );
 }
 
 /// The `swarm_op` records and the board's events keep the old names: an
