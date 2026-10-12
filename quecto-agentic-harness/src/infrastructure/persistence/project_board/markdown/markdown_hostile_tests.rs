@@ -147,6 +147,16 @@ fn every_hostile_file_is_refused_with_its_reason() {
         ("a www address with a mark inside, in a link", edited(first, "see [www\u{332}.bank.example](https://evil.example)"), |e| matches!(e, E::Link { line: 11 })),
         ("a www address with a mark inside, across a link", edited(first, "see ww[w](https://evil.example)\u{332}.bank.example"), |e| matches!(e, E::Link { line: 11 })),
         ("an email with a mark inside, in a link", edited(first, "see [ada\u{332}@bank.example](https://evil.example)"), |e| matches!(e, E::Link { line: 11 })),
+        ("an underscore around a link to a handle", edited(first, "see _[@ada](https://github.com/ada)_"), |e| matches!(e, E::Link { line: 11 })),
+        ("runs of unequal length around a link", edited(first, "see ___[@b.example](https://x.example)__"), |e| matches!(e, E::Link { line: 11 })),
+        ("two then one underscore around a link", edited(first, "see __[@evil.example](https://x.example)_"), |e| matches!(e, E::Link { line: 11 })),
+        ("underscores around code in a link", edited(first, "see [__`@`evil.example_](https://x.example)"), |e| matches!(e, E::Link { line: 11 })),
+        ("an opener left over before a link", edited(first, "see _a!__[@evil.example](https://x.example)"), |e| matches!(e, E::Link { line: 11 })),
+        ("emphasis cancelling an underscore in a link", edited(first, "see [*a _`@`evil.example* c_](https://x.example)"), |e| matches!(e, E::Link { line: 11 })),
+        ("the rule of three in a link", edited(first, "see [_`@`evil.example __y_ z_](https://x.example)"), |e| matches!(e, E::Link { line: 11 })),
+        ("strong emphasis opening a link beside an email", edited(first, "see ada`@`b.example[** x](https://x.example)"), |e| matches!(e, E::Link { line: 11 })),
+        ("strong emphasis closing a link beside an email", edited(first, "see [x **](https://x.example)ada`@`b.example"), |e| matches!(e, E::Link { line: 11 })),
+        ("a tilde opening a link beside an email", edited(first, "see ada`@`b.example[~ x](https://x.example)"), |e| matches!(e, E::Link { line: 11 })),
         ("a table's header renamed", edited("| Item | State |", "| Item | Status |"), |e| matches!(e, E::Structure { line: 28, .. })),
     ];
     for (name, bytes, named) in cases {
