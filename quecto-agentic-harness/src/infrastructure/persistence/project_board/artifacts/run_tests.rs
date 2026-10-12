@@ -25,21 +25,21 @@ const EXAMPLE: &str = r#"<!-- quecto-run schema=1 -->
 | Ended | 2026-10-11T14:40:00Z |
 | Cost tokens | 1840000 |
 
-## Items
-| Item | State |
+## Task items
+| Task item | State |
 |---|---|
 | store | done |
 | cli | done |
 | docs | blocked |
 
 ## Owners
-| Item | Owner |
+| Task item | Owner |
 |---|---|
 | store | W1 builder |
 | cli | W2 builder |
 
 ## Evidence
-| Item | Evidence |
+| Task item | Evidence |
 |---|---|
 | store | [CI run](https://github.com/platform-q-ai/quecto/actions/runs/1) |
 | store | 26 tests pass, `a\|b` included |
@@ -152,7 +152,8 @@ fn a_running_run_has_no_end_cost_or_items() {
     );
     // The domain refuses a cost or items before the fold-back.
     refused_at(&format!("{file}| Cost tokens | 5 |\n"), "Run");
-    let items = format!("{file}\n## Items\n| Item | State |\n|---|---|\n| store | done |\n");
+    let items =
+        format!("{file}\n## Task items\n| Task item | State |\n|---|---|\n| store | done |\n");
     refused_at(&items, "Run");
     for outcome in RunOutcome::ALL {
         let ended = RunFields {

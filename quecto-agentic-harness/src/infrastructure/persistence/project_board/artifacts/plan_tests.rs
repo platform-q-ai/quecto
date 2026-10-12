@@ -43,22 +43,22 @@ quecto board list
 quecto board show board-cli
 ```
 
-## Items
-| Item | Title |
+## Task items
+| Task item | Title |
 |---|---|
 | store | The store reads and writes `a\|b` |
 | cli | The CLI answers one JSON line |
 | docs | Docs |
 
-## Item dependencies
-| Item | Depends on |
+## Task item dependencies
+| Task item | Depends on |
 |---|---|
 | cli | store |
 | docs | store |
 | docs | cli |
 
 ## Criteria
-| Item | Criterion |
+| Task item | Criterion |
 |---|---|
 | store | Round trips every kind |
 | store | Refuses hostile files |
@@ -264,7 +264,7 @@ fn a_criterion_of_an_unknown_item_is_refused() {
         ),
         (
             edited("| docs | cli |", "| nope | cli |"),
-            "Item dependencies",
+            "Task item dependencies",
         ),
     ] {
         let read = decode::<PlanCodec>(file.as_bytes());
@@ -524,7 +524,7 @@ fn a_dependency_on_an_unknown_item_is_refused() {
         matches!(
             &read,
             Err(CodecError::Cell {
-                field: "Item dependencies",
+                field: "Task item dependencies",
                 ..
             })
         ),
