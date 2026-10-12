@@ -280,12 +280,14 @@ impl Seeded {
             ":x:",
             "https://y.example/a",
             "[x](https://y.example)",
-            "_",
-            "*",
-            "~",
         ];
-        let mut cell = self.ascii();
-        cell.extend((0..self.below(4)).map(|_| self.pick(CODE)));
+        // Half start as an ASCII cell would, half straight with code's own
+        // pieces, punctuation first included.
+        let mut cell = match self.below(2) {
+            0 => self.ascii(),
+            _ => String::new(),
+        };
+        cell.extend((0..1 + self.below(4)).map(|_| self.pick(CODE)));
         if self.below(40) == 0 {
             cell.push_str(&self.pick(&["`", " ", "\u{e9}"]));
         }

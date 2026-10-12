@@ -388,7 +388,9 @@ fn the_widest_plan_fits_its_limits() {
     // Most bytes: the whole text budget spent on `|`, which a cell writes
     // `\|`: each item's share over its criteria, distinct lengths, the last
     // taking what is left.
-    let budget = MAX_PLAN_TEXT_BYTES - MAX_ITEMS - MAX_ROLES;
+    // One byte each for the items' titles and the roles' models, and one
+    // for the image (its row is the widest, written as code).
+    let budget = MAX_PLAN_TEXT_BYTES - MAX_ITEMS - MAX_ROLES - 1;
     let lengths = |index: usize, criterion: usize| {
         let share = budget / MAX_ITEMS + usize::from(index < budget % MAX_ITEMS);
         let steps = MAX_PER_ITEM * (MAX_PER_ITEM - 1) / 2;
@@ -397,13 +399,13 @@ fn the_widest_plan_fits_its_limits() {
         base + criterion + usize::from(criterion == MAX_PER_ITEM - 1) * left
     };
     let mut most_bytes = widest(String::new(), |index, c| "|".repeat(lengths(index, c)));
-    // The team's own text cut to the least (one-byte models, no image),
+    // The team's own text cut to the least (one-byte models and image),
     // so the budget goes to cells that write it twice.
     if let Some(team) = most_bytes.team.as_mut() {
         team.roles
             .iter_mut()
             .for_each(|role| role.model = "m".into());
-        team.image = None;
+        team.image = Some("a".into());
     }
     // The longest line: the approach one line of 4-byte letters.
     let one_line = "\u{1d538}".repeat(MAX_APPROACH_CHARS);
@@ -423,9 +425,9 @@ fn the_widest_plan_fits_its_limits() {
         assert_eq!(decode::<PlanCodec>(file.as_bytes()), Ok(plan));
     }
     let (bytes, lines, longest) = seen;
-    // The whole budget spent on cells that write it twice.
+    // The whole budget spent on cells that write it twice: 1,077,114 bytes.
     assert!(
-        (1_077_000..=PLAN_LIMITS.file_bytes).contains(&bytes),
+        (1_077_114..=PLAN_LIMITS.file_bytes).contains(&bytes),
         "{bytes}"
     );
     // Past the plan's first estimate of 53,000: a fence's blank lines.
