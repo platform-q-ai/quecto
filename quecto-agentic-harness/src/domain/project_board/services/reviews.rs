@@ -21,7 +21,7 @@ use super::super::entities::review::{Finding, Review, ReviewFields, Round};
 use super::super::value_objects::code_ref::CommitId;
 use super::super::value_objects::rule_error::BoardRuleError;
 use super::super::value_objects::vocabulary::ReviewVerdict;
-use super::claims::within_slack;
+use super::claims::{after_last, within_slack};
 use super::plans::Moment;
 
 /// What a round says: the commit judged, the verdict and the findings.
@@ -73,11 +73,7 @@ pub fn add_round(
                     });
                 }
             }
-            let after = fields
-                .updated
-                .plus_seconds(1)
-                .map_err(|error| BoardRuleError::Invalid(error.at("updated")))?;
-            (fields.clone(), now.clone().max(after))
+            (fields.clone(), after_last(&fields.updated, now)?)
         }
         None => {
             // The first round is stamped no earlier than the change: a

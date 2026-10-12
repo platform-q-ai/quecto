@@ -31,7 +31,7 @@ use super::super::value_objects::code_ref::{BranchName, CommitId, RepoName};
 use super::super::value_objects::rule_error::BoardRuleError;
 use super::super::value_objects::schema_error::SchemaError;
 use super::super::value_objects::timestamp::Timestamp;
-use super::claims::{held_live_by, within_slack};
+use super::claims::{after_last, held_live_by, within_slack};
 use super::plans::Moment;
 use super::transitions::{Completed, completable, finish};
 
@@ -387,12 +387,7 @@ fn not_ahead(changes: &[Change], when: &Moment) -> Result<(), BoardRuleError> {
 
 /// `now`, or a second past `change`'s last change if that is later.
 fn after(change: &Change, now: &Timestamp) -> Result<Timestamp, BoardRuleError> {
-    let next = change
-        .fields()
-        .updated
-        .plus_seconds(1)
-        .map_err(|error| BoardRuleError::Invalid(error.at("updated")))?;
-    Ok(now.clone().max(next))
+    after_last(&change.fields().updated, now)
 }
 
 #[cfg(test)]
