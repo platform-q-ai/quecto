@@ -438,7 +438,7 @@ fn unlinked_expected(document: &Document, shape: &Shape<'_>) -> (Vec<String>, Ve
 /// footnote, quote, rule, hard break, ordered or nested list, or other link
 /// than an inline https one. Every text it shows keeps the character rules,
 /// and is the document's own with only markup taken out (code exactly).
-/// Each codec's tests check every cell of its files with it.
+/// Codec tests use it to check every cell of the files they write.
 pub(crate) fn outline_in(file: &str, document: &Document, shape: &Shape<'_>) -> Result<(), String> {
     let mut outline = Outline::default();
     for event in Parser::new_ext(file, options()) {
