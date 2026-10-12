@@ -1,8 +1,6 @@
-//! The spawn check as #2513 merged it (`d8c77440c`), kept as it was: the
-//! baseline the reader must cover (`the_reader_catches_all_the_merged_check_caught`).
-//! Every form this catches, the reader catches, but the false positives
-//! it was written to leave (a `Command` named `runtime` or `builder`, and
-//! `Client::builder()`).
+//! The spawn check as #2513 merged it (`d8c77440c`), kept as it was: one
+//! half of the check, whose sites are flagged alongside the reader's
+//! (`spawn_sites`), so no form it caught is ever missed.
 
 use std::collections::BTreeSet;
 

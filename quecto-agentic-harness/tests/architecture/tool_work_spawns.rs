@@ -67,7 +67,13 @@ mod master;
 /// and what), of the check as merged with #2513 and the reader: whatever
 /// either flags is flagged.
 fn spawn_sites(files: &[(String, syn::File)]) -> Vec<(String, String, String)> {
-    reader_sites(files)
+    let mut sites = reader_sites(files);
+    for site in master::master_sites(files) {
+        if !sites.contains(&site) {
+            sites.push(site);
+        }
+    }
+    sites
 }
 
 /// The checked trees.

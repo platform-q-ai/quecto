@@ -1,5 +1,7 @@
 //! What a value, a type or a binding holds, for the spawn check's reader:
-//! a spawner, positively none, or not known ([`State`]).
+//! a spawner, positively none, or not known ([`State`]). Where the reader
+//! takes a value for none, the merged check run alongside it still reads
+//! it by its words, so the union flags what either does.
 
 use std::collections::BTreeSet;
 

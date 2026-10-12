@@ -25,6 +25,16 @@ const SPAWN_WORDS: &[&str] = &[
     "spawn_with_handle",
     "spawn_obj",
     "spawn_local_obj",
+    "spawn_fifo",
+    "spawn_pinned",
+    "scope_fifo",
+    "in_place_scope",
+    "in_place_scope_fifo",
+    "run_until",
+    "par_iter",
+    "par_iter_mut",
+    "into_par_iter",
+    "par_bridge",
     "block_on",
     "block_on_stream",
     "block_in_place",
@@ -46,6 +56,9 @@ pub(super) const SPAWNERS: &[&str] = &[
     "smol",
     "async_std",
     "TaskTracker",
+    "crossbeam",
+    "actix_rt",
+    "async_global_executor",
 ];
 
 /// The words after a spawner, or methods on a spawning receiver, that
@@ -676,6 +689,15 @@ impl<'ast> Visit<'ast> for Sites<'_> {
         }
     }
 
+    fn visit_attribute(&mut self, attr: &'ast syn::Attribute) {
+        // `#[tokio::main]` builds a runtime and blocks on it.
+        let path = words(attr.path());
+        if path == ["tokio", "main"] {
+            self.record("`#[tokio::main]`".to_string());
+        }
+        syn::visit::visit_attribute(self, attr);
+    }
+
     fn visit_macro(&mut self, mac: &'ast syn::Macro) {
         // `thread_local!` holding a spawner: a static of a spawner type.
         let thread_local = mac
@@ -691,7 +713,7 @@ impl<'ast> Visit<'ast> for Sites<'_> {
     }
 }
 
-/// Every spawn site of `files`: (file, site, what).
+/// Every spawn site the reader finds in `files`: (file, site, what).
 pub(super) fn reader_sites(files: &[(String, syn::File)]) -> Vec<(String, String, String)> {
     let mut found = vec![];
     for (path, parsed) in files {
