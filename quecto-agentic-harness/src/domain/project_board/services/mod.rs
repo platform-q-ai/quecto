@@ -10,6 +10,7 @@ pub mod discussions;
 pub mod drafts;
 pub mod plans;
 pub mod pull_requests;
+pub mod reviews;
 pub mod runs;
 pub mod transitions;
 

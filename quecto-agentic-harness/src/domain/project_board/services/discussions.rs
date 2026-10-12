@@ -94,14 +94,10 @@ pub fn append(
     let fields = discussion.fields();
     open(discussion)?;
     built_on(discussion, when)?;
-    not_ahead(&fields.id, &messages, when)?;
-    let last = match messages.last() {
-        Some(last) => last.at.clone(),
-        None => return Err(BoardRuleError::NoEdit),
-    };
-    // The count first, before any message is read; then each message's
-    // own shape, so a message out of shape is named as such, never read
-    // as the discussion being full of lines or text; then that room.
+    // The count first, before any message is read (its time or its
+    // shape); then each message's time and own shape, so a message out of
+    // shape is named as such, never read as the discussion being full of
+    // lines or text; then that room.
     let before = fields.messages.len();
     match before + messages.len() <= MAX_MESSAGES {
         true => {}
@@ -112,6 +108,11 @@ pub fn append(
             });
         }
     }
+    not_ahead(&fields.id, &messages, when)?;
+    let last = match messages.last() {
+        Some(last) => last.at.clone(),
+        None => return Err(BoardRuleError::NoEdit),
+    };
     let mut shapes = messages.iter().enumerate();
     shapes
         .try_for_each(|(index, message)| message_shape(&format!("batch/{index}"), message))

@@ -333,12 +333,14 @@ fn a_message_from_far_ahead_is_refused_without_an_outside_time() {
 }
 
 /// A batch past the most messages is refused by its count before any of
-/// its messages is read: one out of shape past the cap is never reached.
+/// its messages is read: one out of shape or stamped ahead past the cap is
+/// never reached.
 #[test]
 fn a_batch_past_the_most_messages_is_refused_before_its_messages_are_read() {
     let discussion = begun();
     let mut batch = vec![message("Ada", "09:20:00", "x"); MAX_MESSAGES - 2];
     batch.push(message("Ada", "09:20:00", " "));
+    batch.push(message("Ada", "11:00:00", "stamped ahead too"));
     assert_eq!(
         append(&discussion, batch, &when("10:00:00")),
         Err(BoardRuleError::DiscussionFull {

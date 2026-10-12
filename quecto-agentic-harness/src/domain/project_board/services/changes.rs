@@ -12,13 +12,15 @@
 //! reading of (`pr_unread`) rather than guess its state. The link use case
 //! also gives `link` everything linked on the board ([`Linked`]): every
 //! task's changes and every task's pull requests linked the old way, so a
-//! pull request is linked once whichever way; `add_pr` likewise takes the
-//! task's changes.
+//! pull request is linked once whichever way; `add_pr` likewise takes
+//! everything linked on the board ([`Linked`]). M4's `link` use case must
+//! fail closed like `AddPr` while a kept file is set aside: what that file
+//! holds is unknown.
 //!
-//! A pull request is linked to one task on the board, for good (merged
-//! ones stay linked); a branch, named by its repository and name, to one
-//! open change, so its name is free again once that change merges or is
-//! unlinked.
+//! A pull request is linked to one task on the board while a change links
+//! it (merged ones stay linked); unlinking the change frees it. A branch,
+//! named by its repository and name, is linked to one open change, so its
+//! name is free again once that change merges or is unlinked.
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::super::entities::change::{Change, ChangeFields, MAX_CHANGE_NUMBER};
@@ -59,7 +61,7 @@ pub type HostPrs = BTreeMap<u64, HostPr>;
 
 /// Everything on the board a link must not clash with: every task's
 /// changes, and every task's pull requests linked the old way.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct Linked<'a> {
     pub changes: &'a [Change],
     pub tasks: &'a [Task],
@@ -287,24 +289,25 @@ pub fn complete(
         [] => {}
         open => return Err(BoardRuleError::PrsUnmerged(open.to_vec())),
     }
-    let unmerged: Vec<u32> = linked
-        .iter()
-        .filter(|change| merge(change.fields().pr).is_none())
-        .map(|change| change.fields().number)
-        .collect();
+    let mut commits = Vec::with_capacity(linked.len());
+    let mut unmerged = Vec::new();
+    for change in &linked {
+        match merge(change.fields().pr) {
+            Some(commit) => commits.push(commit),
+            None => unmerged.push(change.fields().number),
+        }
+    }
     match (linked.as_slice(), unmerged.as_slice()) {
         ([_, ..], []) => {}
         ([], _) => return Err(BoardRuleError::NoChanges),
         (_, open) => return Err(BoardRuleError::ChangesUnmerged(open.to_vec())),
     }
-    let mut commits = Vec::with_capacity(linked.len());
-    for change in &linked {
-        let fields = change.fields();
-        match (fields.merged.is_none(), merge(fields.pr)) {
-            (true, Some(commit)) => commits.push(commit),
-            (false, _) => return Err(BoardRuleError::ChangeMerged(fields.number)),
-            (true, None) => unreachable!("every linked change has merged"),
-        }
+    let recorded = linked
+        .iter()
+        .find(|change| change.fields().merged.is_some());
+    match recorded {
+        None => {}
+        Some(change) => return Err(BoardRuleError::ChangeMerged(change.fields().number)),
     }
     assert_eq!(
         commits.len(),

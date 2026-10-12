@@ -23,6 +23,8 @@ struct Board {
     head: Option<u64>,
     tasks: BTreeMap<String, Task>,
     quarantined: Vec<QuarantinedFile>,
+    /// The paths of the files set aside that every write carries forward.
+    kept: BTreeSet<String>,
     interleaved: Vec<Interleaved>,
     after_read: Vec<Interleaved>,
     refusal: Option<String>,
@@ -101,6 +103,7 @@ impl MemoryBoardStore {
         board.tasks.remove(id);
         let id = Slug::parse(id).ok();
         let path = format!("tasks/{}.json", id.as_ref().map_or("?", Slug::as_str));
+        board.kept.insert(path.clone());
         board.quarantined.push(QuarantinedFile {
             path,
             id,
@@ -109,15 +112,32 @@ impl MemoryBoardStore {
         });
     }
 
-    /// Sets aside a stray file at `path` (a name that spells no task id),
-    /// as a commit adding it does: the head moves.
+    /// Sets aside a task file at `path` whose name spells no task id, as
+    /// a commit adding it does: the head moves, and every write carries it
+    /// forward.
     ///
     /// # Panics
     /// Before the board is bootstrapped.
     pub fn set_aside_path(&self, path: &str, reason: &str) {
+        self.set_aside(path, reason, true);
+    }
+
+    /// Sets aside a stray at `path` (not a task file), as a commit adding
+    /// it does: the head moves, and the next write drops it.
+    ///
+    /// # Panics
+    /// Before the board is bootstrapped.
+    pub fn set_aside_stray(&self, path: &str, reason: &str) {
+        self.set_aside(path, reason, false);
+    }
+
+    fn set_aside(&self, path: &str, reason: &str, kept: bool) {
         let mut board = self.lock();
         let revision = board.head.expect("a bootstrapped board");
         board.head = Some(revision + 1);
+        if kept {
+            board.kept.insert(path.into());
+        }
         board.quarantined.push(QuarantinedFile {
             path: path.into(),
             id: None,
@@ -225,6 +245,7 @@ impl ProjectBoardStore for MemoryBoardStore {
                 head: head(revision),
                 tasks: board.tasks.values().cloned().collect(),
                 quarantined: board.quarantined.clone(),
+                kept: board.kept.clone(),
             };
             (snapshot, std::mem::take(&mut board.after_read))
         };
