@@ -214,14 +214,18 @@ fn the_checked_in_schema_is_the_rendering_of_board_ops() {
         .iter()
         .map(|op| op.as_str().unwrap())
         .collect();
+    // Each op and argument by the name the schema advertises (#2478).
+    use crate::infrastructure::tools::swarm_board_ops::{advertised_arg, advertised_op};
     for spec in BOARD_OPS {
-        assert!(ops.contains(&spec.name), "{}", spec.name);
+        assert!(ops.contains(&advertised_op(spec.name)), "{}", spec.name);
         for arg in spec.args {
             let rendered: Value = serde_json::from_str(arg.json_type).unwrap();
             assert_eq!(
-                checked_in["properties"][arg.name], rendered,
+                checked_in["properties"][advertised_arg(arg.name)],
+                rendered,
                 "{}.{}",
-                spec.name, arg.name
+                spec.name,
+                arg.name
             );
         }
     }

@@ -648,3 +648,6 @@ mod binding;
 
 #[path = "swarm_board_ops_alias_tests.rs"]
 mod aliases;
+
+#[path = "swarm_board_ops_wording_tests.rs"]
+mod wording;

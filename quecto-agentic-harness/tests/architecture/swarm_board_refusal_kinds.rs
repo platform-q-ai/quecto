@@ -401,7 +401,7 @@ pub(super) const REFUSALS: &[(&str, &str, &str)] = &[
     ),
     (
         "src/domain/swarm/policy.rs:require_unsubmitted",
-        "task status '{unknown}' is not a known status; no revision permitted",
+        "task item status '{unknown}' is not a known status; no revision permitted",
         "WrongState",
     ),
     (

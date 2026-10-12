@@ -7,7 +7,9 @@ use serde_json::{Map, Value};
 
 use super::lookup_doc;
 use crate::domain::swarm::owner::OWNER_IDLE_AFTER;
-use crate::infrastructure::tools::swarm_board_ops::{ArgSpec, BOARD_OPS, OpSpec};
+use crate::infrastructure::tools::swarm_board_ops::{
+    ArgSpec, BOARD_OPS, OpSpec, advertised_arg, advertised_op,
+};
 
 fn embed() -> &'static str {
     lookup_doc("swarm").expect("the swarm embed")
@@ -36,7 +38,7 @@ fn the_swarm_embed_teaches_only_structured_ops() {
             "the swarm embed still teaches `{retired}`"
         );
     }
-    for op in ["claim", "submit", "send", "verify_task"] {
+    for op in ["claim", "submit", "send", "verify_task_item"] {
         let example = format!("\"op\":\"{op}\"");
         assert!(embed.contains(&example), "the swarm embed misses {example}");
     }
@@ -145,17 +147,23 @@ fn the_swarm_embed_lists_every_member_op() {
     let embed = embed();
     let mut problems = Vec::new();
     for spec in BOARD_OPS {
-        let Some(example) = example_of(embed, spec.name) else {
+        // Each op by the name the schema advertises (#2478 slice B).
+        let op = advertised_op(spec.name);
+        let Some(example) = example_of(embed, op) else {
             problems.push(format!(
-                "{}: no `{{\"op\":\"{}\",...}}` example",
-                spec.name, spec.name
+                "{}: no `{{\"op\":\"{op}\",...}}` example",
+                spec.name
             ));
             continue;
         };
         let fields = example.as_object().expect("an example is an object");
         let mut named: Vec<&str> = fields.keys().map(String::as_str).collect();
         named.sort_unstable();
-        let mut expected: Vec<&str> = spec.args.iter().map(|arg| arg.name).collect();
+        let mut expected: Vec<&str> = spec
+            .args
+            .iter()
+            .map(|arg| advertised_arg(arg.name))
+            .collect();
         expected.push("op");
         expected.sort_unstable();
         if named != expected {
@@ -174,11 +182,13 @@ fn the_swarm_embed_lists_every_member_op() {
 fn type_problems(spec: &OpSpec, fields: &Map<String, Value>) -> Vec<String> {
     spec.args
         .iter()
-        .filter_map(|arg| match fields.get(arg.name) {
+        .filter_map(|arg| match fields.get(advertised_arg(arg.name)) {
             Some(value) if argument_conforms(arg, value) => None,
             Some(value) => Some(format!(
                 "{}.{}: {value} is not {}",
-                spec.name, arg.name, arg.json_type
+                spec.name,
+                advertised_arg(arg.name),
+                arg.json_type
             )),
             None => None,
         })
@@ -198,7 +208,7 @@ fn fenced_board_ops(embed: &str) -> Vec<(&'static OpSpec, Map<String, Value>)> {
                 panic!("fenced line `{line}` is no JSON object");
             };
             let op = fields["op"].as_str().expect("a fenced op names its op");
-            if let Some(spec) = BOARD_OPS.iter().find(|spec| spec.name == op) {
+            if let Some(spec) = BOARD_OPS.iter().find(|spec| advertised_op(spec.name) == op) {
                 found.push((spec, fields));
             }
         }
@@ -213,14 +223,25 @@ fn fenced_problems(spec: &OpSpec, fields: &Map<String, Value>) -> Vec<String> {
     let mut problems: Vec<String> = fields
         .keys()
         .filter(|key| key.as_str() != "op")
-        .filter(|key| !spec.args.iter().any(|arg| arg.name == key.as_str()))
+        .filter(|key| {
+            !spec
+                .args
+                .iter()
+                .any(|arg| advertised_arg(arg.name) == key.as_str())
+        })
         .map(|key| format!("{}: takes no field {key}", spec.name))
         .collect();
     problems.extend(
         spec.args
             .iter()
-            .filter(|arg| arg.required && !fields.contains_key(arg.name))
-            .map(|arg| format!("{}: misses required {}", spec.name, arg.name)),
+            .filter(|arg| arg.required && !fields.contains_key(advertised_arg(arg.name)))
+            .map(|arg| {
+                format!(
+                    "{}: misses required {}",
+                    spec.name,
+                    advertised_arg(arg.name)
+                )
+            }),
     );
     problems.extend(type_problems(spec, fields));
     problems
@@ -241,7 +262,7 @@ fn the_swarm_embed_fenced_sequences_match_the_schema() {
 
 #[test]
 fn the_fenced_check_tells_a_wrong_call_apart() {
-    let sample = "```json\n{\"op\":\"claim\",\"task_id\":true}\n\
+    let sample = "```json\n{\"op\":\"claim\",\"task_item_id\":true}\n\
                   {\"op\":\"claim\",\"id\":1}\n{\"op\":\"summary\"}\n```\n";
     let ops = fenced_board_ops(sample);
     assert_eq!(ops.len(), 2, "the harness op `summary` is left out");
@@ -250,12 +271,12 @@ fn the_fenced_check_tells_a_wrong_call_apart() {
         .flat_map(|(spec, fields)| fenced_problems(spec, fields))
         .collect();
     assert_eq!(problems.len(), 3, "{problems:?}");
-    assert!(problems.iter().any(|p| p.contains("task_id: true")));
+    assert!(problems.iter().any(|p| p.contains("task_item_id: true")));
     assert!(problems.iter().any(|p| p.contains("takes no field id")));
     assert!(
         problems
             .iter()
-            .any(|p| p.contains("misses required task_id"))
+            .any(|p| p.contains("misses required task_item_id"))
     );
 }
 
@@ -326,5 +347,41 @@ fn the_swarm_docs_name_only_real_agent_cmd_commands() {
                 "{page} names `agent_cmd {command}`, which is not a command"
             );
         }
+    }
+}
+
+/// #2478 slice B: the embed teaches task items, as the owner approved:
+/// the sentence on the older names, and the ops and fields by their
+/// task-item names only.
+#[test]
+fn the_swarm_embed_teaches_task_items() {
+    let embed = embed();
+    for approved in [
+        "The board's units of work are task items. Older names (task, tasks, task_create, \
+         verify_task, revalidate_task, task_id) are still accepted and mean the same.",
+        "an op that changes a task item answers the task item's row as it now stands",
+        "(`claim: missing required argument task_item_id`)",
+        "Read one task item. A claimed, blocked or submitted row (also from `task_items` and the \
+         summary) adds",
+        "answers `{task_item_id, reservation, released}`",
+        "In a later turn, read the task item again for its claim token.",
+        "A blocked **task item** retains its claim and can be unblocked",
+        "Wake delivery checks current unread messages and claimable task items,",
+    ] {
+        let flat = embed.split_whitespace().collect::<Vec<_>>().join(" ");
+        assert!(
+            flat.contains(approved),
+            "the swarm embed misses {approved:?}"
+        );
+    }
+    for old in [
+        "\"task_id\"",
+        "{\"op\":\"task\"",
+        "{\"op\":\"tasks\"",
+        "{\"op\":\"task_create\"",
+        "{\"op\":\"verify_task\"",
+        "{\"op\":\"revalidate_task\"",
+    ] {
+        assert!(!embed.contains(old), "the swarm embed still teaches {old}");
     }
 }

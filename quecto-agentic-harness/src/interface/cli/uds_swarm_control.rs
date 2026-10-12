@@ -525,3 +525,7 @@ pub(super) fn store_failure(error: &crate::domain::error::DomainError) -> StoreF
         StoreFailure::Durable
     }
 }
+
+#[cfg(test)]
+#[path = "uds_swarm_control_tests.rs"]
+mod tests;

@@ -12,7 +12,7 @@ use crate::domain::swarm::{
     ArgumentFaults, BoardOpObservation, BoardOpOutcome, RefusalKind, UnexpectedArgs, WrongTypeArg,
 };
 use crate::infrastructure::tools::swarm_board_ops::{
-    BOARD_OPS, HARNESS_OPS, ID_ALIAS, OP_ALIASES, canonical_op, tool_schema,
+    BOARD_OPS, HARNESS_OPS, ID_ALIAS, OP_ALIASES, canonical_op,
 };
 
 /// `request` with each old name (the op's, `task_id`) under its
@@ -329,34 +329,6 @@ async fn an_unreadable_task_item_id_is_recorded_as_it_binds() {
             "{text}"
         );
     }
-}
-
-/// The schema takes either name: its `op` enum lists each task-item name
-/// after the old ones, and `task_item_id` has `task_id`'s schema.
-#[test]
-fn the_schema_takes_either_name() {
-    let schema = tool_schema();
-    let ops: Vec<&str> = schema["properties"]["op"]["enum"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|op| op.as_str().unwrap())
-        .collect();
-    assert_eq!(ops.len(), 9 + 25 + 5, "{ops:?}");
-    assert_eq!(
-        ops[34..],
-        [
-            "task_item",
-            "task_items",
-            "task_item_create",
-            "verify_task_item",
-            "revalidate_task_item",
-        ]
-    );
-    assert_eq!(
-        schema["properties"][ID_ALIAS.0],
-        schema["properties"][ID_ALIAS.1]
-    );
 }
 
 #[path = "swarm_board_ops_name_form_tests.rs"]
