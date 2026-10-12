@@ -169,8 +169,9 @@ fn summary(task: &Value) -> Value {
 }
 
 /// `answer`, a listing's tasks as summaries and the files it shows set
-/// aside, as many of each as fit in [`MAX_LISTING_BYTES`], each list
-/// ending with what was left out; any other answer exactly as it is.
+/// aside, as many of each as fit in [`MAX_LISTING_BYTES`] (its tasks
+/// first, the files in what is left), each list ending with what was left
+/// out; any other answer exactly as it is.
 fn summarised(mut answer: Value) -> Value {
     let listing = answer["ok"] == json!(true)
         && answer["op"]
@@ -187,7 +188,7 @@ fn summarised(mut answer: Value) -> Value {
     // The files set aside, when the listing shows them (always a list).
     let quarantined = match answer.get_mut("quarantined") {
         Some(Value::Array(files)) => Some(std::mem::take(files)),
-        _ => None,
+        Some(_) | None => None,
     };
     // Room for both lists within the cap, the markers of what was left out
     // set aside at their widest.
@@ -202,7 +203,14 @@ fn summarised(mut answer: Value) -> Value {
     }
     let mut room =
         MAX_LISTING_BYTES.saturating_sub(answer.to_string().len() + markers.to_string().len());
-    // What was set aside first: the board's own trouble, then its tasks.
+    // The tasks first, what the listing is for; the files set aside in
+    // what is left, so they never crowd a task out.
+    let shown = fitted(tasks, &mut room);
+    let (count, more) = (shown.len(), all_tasks - shown.len());
+    answer["tasks"] = Value::Array(shown);
+    if more > 0 {
+        answer["truncated"] = json!({"shown": count, "more": more});
+    }
     if let Some(files) = quarantined {
         let shown = fitted(files, &mut room);
         let more = all_files - shown.len();
@@ -210,12 +218,6 @@ fn summarised(mut answer: Value) -> Value {
         if more > 0 {
             answer["quarantined_more"] = json!(more);
         }
-    }
-    let shown = fitted(tasks, &mut room);
-    let (count, more) = (shown.len(), all_tasks - shown.len());
-    answer["tasks"] = Value::Array(shown);
-    if more > 0 {
-        answer["truncated"] = json!({"shown": count, "more": more});
     }
     assert!(
         answer.to_string().len() <= MAX_LISTING_BYTES,
