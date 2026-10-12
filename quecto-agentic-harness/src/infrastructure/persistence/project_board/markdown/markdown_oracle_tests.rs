@@ -724,3 +724,19 @@ fn a_code_value_that_looks_like_a_link_is_code() {
     let file = render(&document, &SHAPE).unwrap();
     assert_eq!(outline(&file, &document), Ok(()), "{file}");
 }
+
+/// A code span shows what it holds, a lone marker included: a reader sees
+/// the `_` in `` [`_`](…) ``, so the link shows something.
+#[test]
+fn a_code_span_of_a_marker_shows_it() {
+    for claim in ["[`_`](https://y.example/a)", "see `*` and `~~`"] {
+        let document = Document {
+            schema: 1,
+            title: "Code".into(),
+            fields: vec![("Claim".into(), claim.into())],
+            sections: vec![],
+        };
+        let file = render(&document, &SHAPE).unwrap();
+        assert_eq!(outline(&file, &document), Ok(()), "{file}");
+    }
+}
