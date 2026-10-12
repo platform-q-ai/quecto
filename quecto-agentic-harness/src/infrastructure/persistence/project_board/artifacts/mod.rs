@@ -8,6 +8,7 @@ pub mod cells;
 pub mod change;
 pub mod plan;
 pub mod run;
+pub mod task;
 
 use super::markdown::{Document, MarkdownError, Shape, parse, render, schema_of};
 
