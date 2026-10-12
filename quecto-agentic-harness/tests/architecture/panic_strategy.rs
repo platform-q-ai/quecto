@@ -205,9 +205,10 @@ fn carried_work_is_joined() {
 
 /// The functions that may catch a panic by hand, by file, and why.
 /// Anywhere else a tool call's code handles a panic through
-/// `tool_panic_scope::catch_in_call`, which ends the contained unwind and
-/// forgets the handled panic; a raw catch would leave both behind (#2192
-/// F1). Checked per function (#2192 review): a whole file is never
+/// `tool_panic_scope::catch_in_call` or `catch_in_call_site` (#2517), both
+/// over the one sanctioned catch, `catch_forgetting`, which ends the
+/// contained unwind and forgets the handled panic; a raw catch would leave
+/// both behind (#2192 F1). Checked per function (#2192 review): a whole file is never
 /// sanctioned.
 const SANCTIONED_CATCHES: &[(&str, &str, &str)] = &[
     (

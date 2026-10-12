@@ -548,8 +548,10 @@ pub struct HandledPanic {
 /// [`catch_in_call`] for code that answers the panic itself (#2517): the
 /// panic comes back as a [`HandledPanic`], its message shown (secret shapes
 /// redacted, bounded), and leaves the `error` event a contained panic
-/// leaves ([`on_handled`]). The hook recorded its location; without a hook
-/// the payload gives the message alone.
+/// leaves, only when the process's panic hook is installed (it registers
+/// the writer, [`on_handled`]; without it no event is written). The hook
+/// recorded its location; without a hook the payload gives the message
+/// alone.
 pub fn catch_in_call_site<T>(
     f: impl FnOnce() -> T + std::panic::UnwindSafe,
 ) -> Result<T, HandledPanic> {
