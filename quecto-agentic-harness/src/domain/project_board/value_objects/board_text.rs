@@ -11,15 +11,17 @@
 //!   (a letter, a digit, or punctuation but a backslash, which a line end
 //!   would make a hard break); its paragraph so far holds no backtick or
 //!   dollar (a code span or math may run on across lines, showing the
-//!   space) and no link title's start; and the line cannot be indented
-//!   code.
+//!   space), no `<` (inline HTML may span lines) and no link or
+//!   reference (`](`, `]:`: a title or label may span lines); and the line
+//!   cannot be indented code.
 //!
 //! No NFC is taken (it would rewrite link labels, addresses and fence
 //! info, and the Kelvin sign into an ASCII `K`): text that is not NFC is
 //! left as written, and the codec's NFC rule refuses it with its line.
 //! Text from agents and phones is NFC in practice. Everything else (tabs,
 //! no-break and other spaces, selectors, indents, hard breaks, inner
-//! blank lines, fenced code, HTML blocks) is kept as written: the board's
+//! blank lines, fenced code, HTML blocks, footnote definitions) is kept as
+//! written: the board's
 //! codec then holds it, or refuses it with its field and line.
 //!
 //! The write paths take only normalised text: `Task::entered` (create) and
@@ -73,12 +75,14 @@ pub fn text(raw: &str) -> String {
             Place::Prose { marked } => match Fence::opened_by(line) {
                 Some(open) if open.at_margin => (Place::Fenced(open), (*line).to_string()),
                 Some(_) => (Place::Unknown, (*line).to_string()),
-                None if may_start_html_block(line) => (Place::Unknown, (*line).to_string()),
+                None if may_start_html_block(line) || defines_footnote(line) => {
+                    (Place::Unknown, (*line).to_string())
+                }
                 // A blank line ends a paragraph; its own spacing may still
                 // count (an indented blank line stays in a list item).
                 None if blank(line) => (Place::Prose { marked: false }, (*line).to_string()),
                 None => {
-                    let marked = marked || line.contains(['`', '$']) || opens_link_title(line);
+                    let marked = marked || line.contains(['`', '$', '<']) || links(line);
                     let written = match marked {
                         false => without_trailing(line, before_blank),
                         true => (*line).to_string(),
@@ -178,13 +182,18 @@ fn may_start_html_block(line: &str) -> bool {
     line.trim_start_matches(container_mark).starts_with('<')
 }
 
-/// Whether `line` may open a link title that runs on across lines: a `"`,
-/// `'` or `(` after a link's `](` or a reference's `]:`.
-fn opens_link_title(line: &str) -> bool {
-    ["](", "]:"].iter().any(|start| {
-        line.match_indices(start)
-            .any(|(at, _)| line[at + start.len()..].contains(['"', '\'', '(']))
-    })
+/// Whether `line` holds a link or a reference definition (`](` or `]:`):
+/// its title may start on the next line, or its label span lines.
+fn links(line: &str) -> bool {
+    line.contains("](") || line.contains("]:")
+}
+
+/// Whether `line` defines a footnote (`[^n]:` after any container marks):
+/// a container whose lines may be code or HTML, so the rest is kept as
+/// written.
+fn defines_footnote(line: &str) -> bool {
+    let rest = line.trim_start_matches(container_mark);
+    rest.starts_with("[^") && rest.contains("]:")
 }
 
 /// `line` without its trailing spaces and tabs where nothing can change: a

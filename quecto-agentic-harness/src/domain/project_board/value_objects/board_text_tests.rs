@@ -175,15 +175,23 @@ fn links_inline_html_and_footnotes_are_kept_as_written() {
         "[l]: /u \n\"t \nx\"\n\n[l]",
         "[a](/u \n\"t \nx\")",
         "[a](\n/u \"t \nx\")",
-        "[a \nb](/u)",
         "a <span title=\"x \ny\">b</span>",
         "a <!-- x \ny -->",
         "a <?x y \nz ?>",
         "a <![CDATA[ x \ny ]]>",
         "[^1]: <pre> a \n\n[^1]",
-        "[^1]: x\n\n    ```\n    code \n",
+        "[^1]: x\n\n    ```\n    code ",
         "- [^n]: a \n  b",
     ] {
         assert_eq!(settled(text, raw), raw, "{raw:?}");
     }
+    // Code in a footnote running to the end keeps its spaces; only the
+    // final line end, which no reader shows, goes.
+    assert_eq!(
+        settled(text, "[^1]: x\n\n    ```\n    code \n"),
+        "[^1]: x\n\n    ```\n    code "
+    );
+    // A label that only closes on a later line: its space before the
+    // line end shows as nothing either way, and goes.
+    assert_eq!(settled(text, "[a \nb](/u)"), "[a\nb](/u)");
 }
