@@ -273,7 +273,7 @@ impl Tool for BoardTool {
                 .as_ref()
                 .map(|value| value["op"].as_str().map(str::to_owned));
             let answer = match named {
-                Err(error) => request_refused(None, &error),
+                Err(error) => request_refused(None, error),
                 // Only the tool's ops run, the schema's: creating a board
                 // is not one, and an op it does not take is refused naming
                 // the ones it does.
