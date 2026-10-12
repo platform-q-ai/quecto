@@ -133,11 +133,6 @@ const ALLOWED: &[(&str, &str, &str)] = &[
         "the call's own detached thread, carried into its scope: a panic fails the call through execute_contained's backstop",
     ),
     (
-        "src/infrastructure/tools/filesystem/fs_failure.rs",
-        "fn run_write",
-        "pre-existing (#2254): a panicked write is read as a fault whose leftover is unknown; moving it onto call_work changes that answer (#2517)",
-    ),
-    (
         "src/infrastructure/tools/find_fd.rs",
         "impl FdFindPaths::find",
         "drives its own current-thread runtime on the find owner's thread (call_work::std_thread_in_call), never a worker",
