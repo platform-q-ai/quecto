@@ -14,7 +14,7 @@ use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, LinkType, Options, Pars
 use regex::Regex;
 
 #[path = "markdown_oracle_comrak_tests.rs"]
-mod comrak_reader;
+pub(super) mod comrak_reader;
 
 /// pulldown-cmark's options: every extension but the four named above.
 fn options() -> Options {

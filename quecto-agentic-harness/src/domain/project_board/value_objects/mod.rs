@@ -1,3 +1,4 @@
+pub mod board_text;
 pub mod code_ref;
 pub mod reference;
 pub mod rule_error;

@@ -7,7 +7,7 @@ use comrak::nodes::{AstNode, ListType, NodeValue};
 /// comrak's options: what GitHub reads: autolinks, tables,
 /// strikethrough, task lists, footnotes, `$` and code math, alerts, and
 /// the tag filter.
-fn comrak_options() -> comrak::Options<'static> {
+pub(in super::super) fn comrak_options() -> comrak::Options<'static> {
     let mut options = comrak::Options::default();
     let extension = &mut options.extension;
     extension.autolink = true;

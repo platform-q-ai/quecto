@@ -14,12 +14,12 @@
 use std::sync::Arc;
 
 use super::board_change::{checked_writer, commit, task_on};
-use super::line_ends::lf;
 use super::task_pointers::{Pointers, pointers_hold};
 use crate::application::project_board::dto::{DraftUpdate, ProjectBoardError};
 use crate::application::project_board::ports::{BoardClock, ProjectBoardStore};
 use crate::domain::project_board::entities::task::Task;
 use crate::domain::project_board::services::drafts::{DraftEdit, edit_draft};
+use crate::domain::project_board::value_objects::board_text;
 
 pub struct UpdateDraftTask {
     store: Arc<dyn ProjectBoardStore>,
@@ -47,8 +47,8 @@ impl UpdateDraftTask {
     pub fn execute(&self, update: &DraftUpdate) -> Result<Task, ProjectBoardError> {
         let id = &update.id;
         let edit = DraftEdit {
-            title: update.title.as_deref().map(lf),
-            description: update.description.as_deref().map(lf),
+            title: update.title.as_deref().map(board_text::line),
+            description: update.description.as_deref().map(board_text::text),
             parent: update.parent.clone(),
             depends_on: update.depends_on.clone(),
         };

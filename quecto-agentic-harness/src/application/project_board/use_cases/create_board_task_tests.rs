@@ -447,13 +447,15 @@ fn a_cycle_already_on_the_board_is_walked_through() {
 }
 
 #[test]
-fn crlf_line_ends_become_lf_before_the_schema_reads_them() {
+fn board_text_is_normalised_before_the_schema_reads_it() {
     let store = board();
     let created = create(&store, SetClock::at("10:00:00"))
         .execute(&NewBoardTask {
-            description: "Why.\r\nHow.\r\n".into(),
+            title: "\tShip it ".into(),
+            description: "Why. \r\nHow so.\r\n".into(),
             ..new_task("a")
         })
         .unwrap();
-    assert_eq!(created.fields().description, "Why.\nHow.\n");
+    assert_eq!(created.fields().title, "Ship it");
+    assert_eq!(created.fields().description, "Why.\nHow so.");
 }

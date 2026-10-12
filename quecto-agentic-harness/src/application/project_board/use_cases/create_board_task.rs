@@ -9,11 +9,11 @@
 use std::sync::Arc;
 
 use super::board_change::{checked_writer, commit};
-use super::line_ends::lf;
 use super::task_pointers::{Pointers, pointers_hold};
 use crate::application::project_board::dto::{NewBoardTask, ProjectBoardError};
 use crate::application::project_board::ports::{BoardClock, BoardSnapshot, ProjectBoardStore};
 use crate::domain::project_board::entities::task::{Task, TaskFields};
+use crate::domain::project_board::value_objects::board_text;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
 use crate::domain::project_board::value_objects::vocabulary::TaskStatus;
 
@@ -44,7 +44,7 @@ impl CreateBoardTask {
         let tasks = commit(&*self.store, &*self.clock, &message, |board, when| {
             free(board, new)?;
             Ok(vec![
-                Task::new(created_at(new, &when.now)).map_err(ProjectBoardError::Invalid)?,
+                Task::entered(created_at(new, &when.now)).map_err(ProjectBoardError::Invalid)?,
             ])
         })?;
         Ok(tasks.into_iter().next().expect("a create writes its task"))
@@ -56,9 +56,9 @@ impl CreateBoardTask {
 fn created_at(new: &NewBoardTask, now: &Timestamp) -> TaskFields {
     let fields = TaskFields {
         id: new.id.clone(),
-        title: lf(&new.title),
+        title: board_text::line(&new.title),
         kind: new.kind,
-        description: lf(&new.description),
+        description: board_text::text(&new.description),
         status: new.status.into(),
         parent: new.parent.clone(),
         depends_on: new.depends_on.clone(),
