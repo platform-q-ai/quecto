@@ -629,6 +629,32 @@ const CASES: &[(&str, &[&str])] = &[
         r#"fn f() { let c = std::process::Command::new("x"); drop(format!("{:?}", c.spawn())); }"#,
         &[],
     ),
+    // A declared type never hides a spawner name: an alias the reader
+    // cannot see (`type H = Handle` elsewhere) stays a spawner by name.
+    (
+        r#"fn f() { let handle: H = make(); handle.spawn(1); }"#,
+        &[r#"`.spawn(..)` on `handle`"#],
+    ),
+    (
+        r#"fn f(handle: H) { handle.spawn(1); }"#,
+        &[r#"`.spawn(..)` on `handle`"#],
+    ),
+    (
+        r#"fn f(runtime: &mut Rt) { runtime.enter(); }"#,
+        &[r#"`.enter(..)` on `runtime`"#],
+    ),
+    (
+        r#"fn f(builder: B) { builder.spawn(|| ()); }"#,
+        &[r#"`.spawn(..)` on `builder`"#],
+    ),
+    (
+        r#"fn f(x: X) { let handle: crate::rt::H = x.into(); handle.spawn(1); }"#,
+        &[r#"`.spawn(..)` on `handle`"#],
+    ),
+    (
+        r#"fn f() { let thread = Worker::new(); thread.spawn(1); }"#,
+        &[r#"`.spawn(..)` on `thread`"#],
+    ),
 ];
 
 /// The forms the merged check flagged that hold no spawner: a process's
