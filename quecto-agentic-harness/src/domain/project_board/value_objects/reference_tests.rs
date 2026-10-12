@@ -171,3 +171,20 @@ fn a_refusal_echoes_a_capped_reference() {
     let short = Reference::parse("nope").unwrap_err().problem;
     assert!(short.starts_with("\"nope\""), "{short}");
 }
+
+/// The key spelt out: what an index or an import compares.
+#[test]
+fn a_references_key_is_spelt_normalised() {
+    for (text, key) in [
+        ("https://EXAMPLE.com", "https://example.com/"),
+        ("https://a:0443/b/./c/../d?#", "https://a/b/d"),
+        (
+            "https://a:08080/%7e%2f?q=%41#F",
+            "https://a:8080/~%2F?q=A#F",
+        ),
+        ("Owner/Repo#7", "owner/repo#7"),
+        ("#7", "#7"),
+    ] {
+        assert_eq!(Reference::parse(text).unwrap().key(), key, "{text}");
+    }
+}
