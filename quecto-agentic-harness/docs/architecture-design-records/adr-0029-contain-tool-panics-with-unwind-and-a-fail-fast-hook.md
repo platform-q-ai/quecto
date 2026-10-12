@@ -160,9 +160,18 @@ tokio would also quietly turn a panic in any spawned task into a
    panic never resumes in the call. It is still recorded on the call's
    scope, and the agent loop's backstop fails a call that returned
    normally after a panic was recorded in its scope. A panic in carried
-   work can therefore never be read as "no output". Grep, grep-rank, the bash capture and saved
-   output, environment commands, the spawn tool's launch reservation and
-   the swarm tool's own blocking work are carried (the swarm admission
+   work can therefore never be read as "no output". The other exception
+   is caught work, `spawn_blocking_caught_in_call` (#2517): it runs in the
+   call's scope and catches its own panic on its thread through
+   `tool_panic_scope::catch_in_call_site`, which forgets the panic as
+   handled, shows its message as a contained panic's is (redacted, at
+   most 1 KiB) and writes the same `tool_panic` `error` event. The call
+   answers the panic itself: the write and edit tools' file write answers
+   an internal fault whose leftover is not known (#2254). Only `call_work`
+   catches outside the application (`carried_work_is_joined`). Grep, grep-rank, the bash capture and saved
+   output, environment commands, the spawn tool's launch reservation,
+   the write and edit tools' file write and the swarm tool's own blocking
+   work are carried (the swarm admission
    check carries too, but runs before any scope, so its panic is fatal).
    Work that outlives its call is not: a swarm background job, reapers,
    cleanup and request accounting. A panic in them is fatal, deliberately.

@@ -538,8 +538,8 @@ impl SessionRecords {
 #[path = "crash_record_target.rs"]
 mod target;
 pub use target::{
-    Armed, CrashTarget, arm_prepared, claimed, follow, prepare, record_fatal, record_provisional,
-    withdraw,
+    Armed, CrashTarget, arm_prepared, claimed, follow, prepare, record_event, record_fatal,
+    record_provisional, withdraw,
 };
 
 #[cfg(test)]

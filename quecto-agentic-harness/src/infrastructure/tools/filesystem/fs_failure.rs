@@ -10,7 +10,7 @@ use crate::domain::tool::ToolResult;
 use crate::infrastructure::file_replace::{
     FileState, InPlace, WriteFailure, Written, replace_contents,
 };
-use crate::infrastructure::tools::call_work::{CaughtPanic, spawn_blocking_caught_in_call};
+use crate::infrastructure::tools::call_work::spawn_blocking_caught_in_call;
 use crate::infrastructure::tools::truncate::format_size;
 
 use super::shell_escape_single;
@@ -324,14 +324,26 @@ pub(super) async fn write_file(path: PathBuf, bytes: Vec<u8>) -> Result<Written,
 /// process's hook contains a panic instead of aborting. A write that
 /// panicked is caught on its own thread and is an internal fault: what it
 /// left is not known, and is said so in #2254's words (`the write task
-/// failed: task N panicked with message "…"`), as when the write ran
-/// outside the scope.
+/// failed: task N panicked with message "…"`), the message shown as a
+/// contained panic's is (secret shapes redacted, at most 1 KiB). It is
+/// logged and leaves the `error` event a contained panic does.
 async fn run_write(
-    write: impl FnOnce() -> Result<Written, WriteFailure> + Send + 'static,
+    write: impl FnOnce() -> Result<Written, WriteFailure> + Send + std::panic::UnwindSafe + 'static,
 ) -> Result<Written, WriteFailure> {
     match spawn_blocking_caught_in_call(write).await {
         Ok(Ok(written)) => written,
-        Ok(Err(panic)) => Err(internal_fault(&panicked(&panic))),
+        Ok(Err(panic)) => {
+            tracing::error!(
+                target: "tool_exec",
+                panic = panic.handled.site.message.as_str(),
+                location = panic.handled.site.location.as_deref().unwrap_or("unknown"),
+                "a write panicked; its call answers an internal fault"
+            );
+            Err(internal_fault(&format!(
+                "task {} panicked with message {:?}",
+                panic.task, panic.handled.site.message
+            )))
+        }
         // Cancelled with its runtime: still not known what it left.
         Err(error) => Err(internal_fault(&error.to_string())),
     }
@@ -344,25 +356,6 @@ fn internal_fault(why: &str) -> WriteFailure {
         error: std::io::Error::other(format!("the write task failed: {why}")),
         file: FileState::Unknown,
         leftover: None,
-    }
-}
-
-/// A panicked write in the words tokio gives a panicked task
-/// (`JoinError`'s), so the answer is #2254's: the task's id, and the
-/// panic's text when it has one (a `String` or a `&'static str`).
-fn panicked(panic: &CaughtPanic) -> String {
-    let payload = panic.payload.as_ref();
-    let task = match panic.task {
-        Some(id) => format!("task {id}"),
-        None => "task".to_string(),
-    };
-    let text = payload
-        .downcast_ref::<String>()
-        .map(String::as_str)
-        .or_else(|| payload.downcast_ref::<&'static str>().copied());
-    match text {
-        Some(text) => format!("{task} panicked with message {text:?}"),
-        None => format!("{task} panicked"),
     }
 }
 

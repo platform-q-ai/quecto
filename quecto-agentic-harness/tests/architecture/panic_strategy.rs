@@ -141,6 +141,20 @@ fn carried_work_is_joined() {
         [PathBuf::from("src/infrastructure/tools/call_work.rs")],
         "only call_work carries a call's scope, and it joins what it spawns"
     );
+    // Outside application code, only call_work catches a call's panic
+    // (#2517): its caught blocking work, whose call answers the panic.
+    let catchers: Vec<PathBuf> = sources(&crate_root.join("src/infrastructure"))
+        .into_iter()
+        .chain(sources(&crate_root.join("src/interface")))
+        .chain(sources(&crate_root.join("src/composition")))
+        .filter(|(_, text)| text.contains("catch_in_call"))
+        .map(|(path, _)| path.strip_prefix(crate_root).unwrap().to_path_buf())
+        .collect();
+    assert_eq!(
+        catchers,
+        [PathBuf::from("src/infrastructure/tools/call_work.rs")],
+        "only call_work catches a call's panic outside the application"
+    );
     let call_work =
         std::fs::read_to_string(crate_root.join("src/infrastructure/tools/call_work.rs")).unwrap();
     assert!(
@@ -198,8 +212,8 @@ fn carried_work_is_joined() {
 const SANCTIONED_CATCHES: &[(&str, &str, &str)] = &[
     (
         "src/application/tool_panic_scope.rs",
-        "catch_in_call",
-        "the sanctioned catch itself",
+        "catch_forgetting",
+        "the sanctioned catch itself, behind catch_in_call and catch_in_call_site",
     ),
     (
         "src/application/agent_loop_tool_exec.rs",

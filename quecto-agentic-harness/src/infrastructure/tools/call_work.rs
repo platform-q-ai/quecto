@@ -3,7 +3,10 @@
 //! resumes a panic it raised in the call itself — where the agent loop's
 //! containment turns it into that call's internal error. Swallowing the
 //! panic instead (reading a `JoinError` as "no output") would answer the
-//! model with a wrong result that looks like success.
+//! model with a wrong result that looks like success. The exception is
+//! caught work ([`spawn_blocking_caught_in_call`], #2517): its panic is
+//! caught on its own thread and handed back for the call to answer itself
+//! (the write tools' internal-fault answer), never swallowed.
 //!
 //! This is the only place infrastructure carries a call's scope: every
 //! carried tokio task is spawned here and can only be joined through
@@ -17,7 +20,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
-use crate::application::tool_panic_scope::{carry, carry_future, catch_in_call};
+use crate::application::tool_panic_scope::{HandledPanic, carry, carry_future, catch_in_call_site};
 
 /// A carried task's handle. Awaiting it yields the task's value, or the
 /// `JoinError` of a task that was cancelled; a task that panicked resumes
@@ -70,28 +73,32 @@ where
 }
 
 /// A panic a call's blocking work raised and caught itself
-/// ([`spawn_blocking_caught_in_call`]): the task it ran as, and what it
-/// panicked with.
+/// ([`spawn_blocking_caught_in_call`]): the task it ran as, and the panic
+/// as the call may answer it.
+#[derive(Debug)]
 pub struct CaughtPanic {
-    pub task: Option<tokio::task::Id>,
-    pub payload: Box<dyn std::any::Any + Send>,
+    pub task: tokio::task::Id,
+    pub handled: HandledPanic,
 }
 
 /// Run `job` on the blocking pool as the calling tool call's own work
 /// (#2517), catching a panic in it on its own thread, in the call's scope
-/// (`catch_in_call`, so the panic is forgotten as handled): for a call
-/// that answers its work's panic itself rather than failing with it.
+/// (`catch_in_call_site`: the panic is forgotten as handled, its message
+/// shown bounded and redacted, and its `error` event written): for a call
+/// that answers its work's panic itself rather than failing with it. The
+/// exception to joining resuming a panic. A panic after the call has ended
+/// (the call cancelled, its work left running) is outside any scope, and
+/// fatal, as for any carried work.
 pub fn spawn_blocking_caught_in_call<T, F>(job: F) -> CarriedJoin<Result<T, CaughtPanic>>
 where
-    F: FnOnce() -> T + Send + 'static,
+    F: FnOnce() -> T + Send + std::panic::UnwindSafe + 'static,
     T: Send + 'static,
 {
     spawn_blocking_in_call(move || {
-        // The job is consumed by the catch and nothing of it is used after
-        // a panic: no broken state is observed.
-        catch_in_call(std::panic::AssertUnwindSafe(job)).map_err(|payload| CaughtPanic {
-            task: tokio::task::try_id(),
-            payload,
+        catch_in_call_site(job).map_err(|handled| CaughtPanic {
+            // `spawn_blocking_in_call` always runs it as a task.
+            task: tokio::task::id(),
+            handled,
         })
     })
 }

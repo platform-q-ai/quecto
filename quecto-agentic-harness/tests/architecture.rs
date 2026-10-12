@@ -1455,12 +1455,13 @@ fn application_path_allowed(path: &str) -> bool {
         ["crate", "application", "ports", ..] => true,
         // A tool call's own work carries its panic scope (#2192, ADR-0029):
         // only `call_work`, which joins what it spawns (`carried_work_is_joined`),
-        // and catches a panic of work whose call answers it itself (#2517).
+        // and catches a panic of work whose call answers it itself (#2517;
+        // `carried_work_is_joined` pins the catch to `call_work` too).
         [
             "crate",
             "application",
             "tool_panic_scope",
-            "carry" | "carry_future" | "catch_in_call",
+            "carry" | "carry_future" | "catch_in_call_site" | "HandledPanic",
         ] => true,
         // Ports are capability-local (#1934, #1960): every
         // `application/<capability>/ports.rs` is a contract this
