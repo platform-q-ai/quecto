@@ -2,6 +2,12 @@
 //! "swarm is setup" or "unknown op stop" flailed and gave up; each message
 //! here says what is allowed now and how to move on.
 
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+use serde_json::Value;
+
+use crate::domain::swarm::RefusalKind;
+
 /// Every op the swarm tool names in its guidance: the harness's own, then
 /// the structured board ops (#2279), each by its old name, both read from
 /// the one op table (`swarm_board_ops`), so the two cannot drift. The
@@ -84,6 +90,39 @@ pub(super) fn unknown_op(op: &str) -> String {
          or user.",
         valid_ops().join(", ")
     )
+}
+
+/// The running gate of a structured board op (`op=run`'s until #2282
+/// removed it; #2478 moved it here, beside its guidance): the refusal's
+/// kind, the gate's name and the guidance, unless the run is running within
+/// its deadline.
+pub(crate) fn running_gate(
+    op: &str,
+    status: &Value,
+) -> Option<(RefusalKind, &'static str, String)> {
+    let guide = op_refused;
+    match status["status"].as_str() {
+        Some("running") => {
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or(Duration::ZERO)
+                .as_secs_f64();
+            match status["deadline"].as_f64() {
+                Some(deadline) if deadline > now => None,
+                Some(_) | None => Some((
+                    RefusalKind::BudgetExhausted,
+                    "deadline",
+                    op_deadline_passed(op),
+                )),
+            }
+        }
+        Some(other) => Some((
+            RefusalKind::NotRunning,
+            "not_running",
+            guide(op, Some(other)),
+        )),
+        None => Some((RefusalKind::Store, "unreadable", guide(op, None))),
+    }
 }
 
 #[cfg(test)]

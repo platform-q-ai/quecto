@@ -1,8 +1,8 @@
 //! Binding a board call's arguments to its method's signature (#2270), as
 //! Python binds a call, and what a refusal raised while binding them found
-//! wrong, for the call's records (#2341); and the task-item names a
-//! structured op and its task id are also taken by (#2478,
-//! [`task_item_names`]).
+//! wrong, for the call's records (#2341). A structured op's `task_item_id`
+//! (#2478) reaches the binding only beside a `task_id` of another value:
+//! one argument given twice, which the binding refuses as Python does.
 //!
 //! The records name arguments by the `swarm` tool's schema only
 //! ([`BOARD_OPS`]): every name recorded is a [`SchemaField`], the table's
@@ -18,8 +18,7 @@ use std::sync::OnceLock;
 
 use serde_json::Value;
 
-use self::task_item_names::ID_ALIAS;
-use super::super::swarm_board_ops::{BOARD_OPS, op_spec};
+use super::super::swarm_board_ops::{BOARD_OPS, ID_ALIAS, op_spec};
 use super::method::{Method, Parameter};
 use crate::domain::swarm::{ArgumentFaults, BoardError, RefusalKind, UnexpectedArgs, WrongTypeArg};
 
@@ -68,10 +67,19 @@ pub(super) fn refusal(
         Value::Object(fields) => {
             let position = |key: &str| parameters.iter().position(|p| p.name == key);
             if let Some(key) = fields.keys().find(|key| position(key).is_none()) {
-                return Some(BoardError::new(
-                    RefusalKind::Calling,
-                    format!("{name}: unexpected argument {key}"),
-                ));
+                let (alias, old) = ID_ALIAS;
+                return Some(match given_twice(parameters, fields, key) {
+                    true => BoardError::new(
+                        RefusalKind::Calling,
+                        format!(
+                            "{name}: {old} and {alias} name the same argument but hold different values; send only one"
+                        ),
+                    ),
+                    false => BoardError::new(
+                        RefusalKind::Calling,
+                        format!("{name}: unexpected argument {key}"),
+                    ),
+                });
             }
             parameters
                 .iter()
@@ -362,7 +370,11 @@ pub(super) fn faults(method: Method, args: &Value) -> BindingFaults {
             for (key, value) in fields {
                 match parameters.iter().position(|p| p.name == key) {
                     Some(index) => bound(&mut faults, index, value),
-                    None => unexpected(&mut faults, schema_field(key)),
+                    // `task_id` given twice (#2478) is recorded as itself.
+                    None => match given_twice(parameters, fields, key) {
+                        true => unexpected(&mut faults, schema_field(ID_ALIAS.1)),
+                        false => unexpected(&mut faults, schema_field(key)),
+                    },
                 }
             }
         }
@@ -393,16 +405,17 @@ fn unexpected(faults: &mut BindingFaults, known: Option<SchemaField>) {
     faults.unexpected_known.extend(known);
 }
 
-/// The faults of a call that gave `field` twice, under two names with two
-/// values (#2478: `task_id` and `task_item_id`), as Python's binding
-/// refuses an argument given twice: one argument more than the op takes,
-/// `field`.
-pub fn given_twice(field: SchemaField) -> BindingFaults {
-    BindingFaults {
-        unexpected: 1,
-        unexpected_known: vec![field],
-        ..BindingFaults::NONE
-    }
+/// Whether `key`, which no parameter takes, gives `task_id` again
+/// (#2478): `task_item_id` beside a `task_id` to a method that takes one.
+/// The tool reads a lone `task_item_id` (or one equal to `task_id`) as
+/// `task_id` before the board, so only two values reach the binding.
+fn given_twice(
+    parameters: &[Parameter],
+    fields: &serde_json::Map<String, Value>,
+    key: &str,
+) -> bool {
+    let (alias, old) = ID_ALIAS;
+    key == alias && fields.contains_key(old) && parameters.iter().any(|p| p.name == old)
 }
 
 /// The faults of member text the board's value type cannot hold (#2341),
@@ -522,139 +535,6 @@ pub(super) fn expected_type(name: &str) -> Option<&'static Expected> {
                 .collect()
         })
         .get(name)
-}
-
-/// The swarm's tasks are task items (#2478). Each op whose name says task
-/// has its task-item name too ([`OP_ALIASES`]), and `task_id` is also
-/// taken as `task_item_id` ([`ID_ALIAS`]). The tool reads a task-item name
-/// as the old one before anything else (binding, the running gate, the
-/// board, refusals, `swarm_op` records), so the board, its events and the
-/// golden fixtures keep the old names; each call's records say which names
-/// it used ([`name_form`]).
-pub mod task_item_names {
-    use serde_json::{Map, Value};
-
-    use super::{BindingFaults, given_twice, schema_field};
-    use crate::domain::swarm::NameForm;
-    use crate::infrastructure::tools::swarm_board_ops::OpSpec;
-
-    /// `(task-item name, old name)` for each op whose name says task.
-    pub const OP_ALIASES: &[(&str, &str)] = &[
-        ("task_item", "task"),
-        ("task_items", "tasks"),
-        ("task_item_create", "task_create"),
-        ("verify_task_item", "verify_task"),
-        ("revalidate_task_item", "revalidate_task"),
-    ];
-
-    /// `task_id`'s task-item name, `(task-item name, old name)`: one argument
-    /// under two names, on every op that takes it.
-    pub const ID_ALIAS: (&str, &str) = ("task_item_id", "task_id");
-
-    /// The op `name` names: the old name a task-item name stands for, or
-    /// `name` itself.
-    pub fn canonical_op(name: &str) -> &str {
-        match OP_ALIASES.iter().find(|(alias, _)| *alias == name) {
-            Some((_, old)) => old,
-            None => name,
-        }
-    }
-
-    /// Whether `spec` takes `task_id`.
-    pub fn takes_task_id(spec: &OpSpec) -> bool {
-        spec.args.iter().any(|arg| arg.name == ID_ALIAS.1)
-    }
-
-    /// The argument `key`, given to `spec`, binds as: `task_id` for
-    /// `task_item_id` when `spec` takes `task_id`; any other key (and
-    /// `task_item_id` sent to an op that takes no task id, which the binding
-    /// then refuses under the name it was sent as) as itself.
-    pub fn canonical_key<'key>(spec: &OpSpec, key: &'key str) -> &'key str {
-        match key == ID_ALIAS.0 && takes_task_id(spec) {
-            true => ID_ALIAS.1,
-            false => key,
-        }
-    }
-
-    /// A call that gave `task_id` and `task_item_id` different values: one
-    /// argument given twice, which Python's binding refuses as a call error.
-    pub struct GivenTwice {
-        op: &'static str,
-    }
-
-    impl GivenTwice {
-        /// The refusal's text, shaped as the binding's own (`<op>: ...`).
-        pub fn text(&self) -> String {
-            let (alias, old) = ID_ALIAS;
-            format!(
-                "{}: {old} and {alias} name the same argument but hold different values; send only one",
-                self.op
-            )
-        }
-
-        /// What the refusal found wrong: `task_id` given once more than the op
-        /// takes it.
-        pub fn faults(&self) -> BindingFaults {
-            let field = schema_field(ID_ALIAS.1).expect("task_id is a schema field");
-            given_twice(field)
-        }
-    }
-
-    /// `fields`, given to `spec`, with `task_item_id` read as `task_id` in its
-    /// place (the binding names the first unexpected field in the member's
-    /// order), when `spec` takes `task_id`; as given otherwise.
-    ///
-    /// # Errors
-    /// Both names given different values (`1` and `1.0` differ, as `null` and
-    /// `1` do): one argument cannot hold two.
-    pub fn canonical_fields(
-        spec: &'static OpSpec,
-        fields: Map<String, Value>,
-    ) -> Result<Map<String, Value>, GivenTwice> {
-        let (alias, old) = ID_ALIAS;
-        match (takes_task_id(spec), fields.get(alias), fields.get(old)) {
-            (false, _, _) | (true, None, _) => Ok(fields),
-            (true, Some(given), Some(same)) if given == same => {
-                let mut fields = fields;
-                fields.shift_remove(alias);
-                Ok(fields)
-            }
-            (true, Some(_), Some(_)) => Err(GivenTwice { op: spec.name }),
-            (true, Some(_), None) => Ok(fields
-                .into_iter()
-                .map(|(key, value)| (canonical_key(spec, &key).to_owned(), value))
-                .collect()),
-        }
-    }
-
-    /// Which names a call used, where any applies (#2478): `asked`, the op
-    /// name it gave for `spec`, when `spec` was renamed, and `task_id` or
-    /// `task_item_id` among `fields` (its arguments, when they were read as an
-    /// object). [`NameForm::Legacy`] when it used any old name, so a call that
-    /// would fail once the old names are retired counts as one;
-    /// [`NameForm::Current`] when it used task-item names only; `None` when it
-    /// used neither.
-    pub fn name_form(
-        asked: &str,
-        spec: &OpSpec,
-        fields: Option<&Map<String, Value>>,
-    ) -> Option<NameForm> {
-        let renamed = OP_ALIASES.iter().any(|(_, old)| *old == spec.name);
-        let op = renamed.then_some(match asked == spec.name {
-            true => NameForm::Legacy,
-            false => NameForm::Current,
-        });
-        let given = |name: &str| fields.is_some_and(|fields| fields.contains_key(name));
-        let old_id = given(ID_ALIAS.1).then_some(NameForm::Legacy);
-        let new_id = given(ID_ALIAS.0).then_some(NameForm::Current);
-        [op, old_id, new_id]
-            .into_iter()
-            .flatten()
-            .reduce(|first, second| match (first, second) {
-                (NameForm::Current, NameForm::Current) => NameForm::Current,
-                (NameForm::Legacy, _) | (_, NameForm::Legacy) => NameForm::Legacy,
-            })
-    }
 }
 
 #[cfg(test)]

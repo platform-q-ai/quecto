@@ -168,6 +168,14 @@ a bare `null` (#2394). Otherwise only the calling syntax changed,
 (`BOARD_OPS`) is the one table of them; the tool schema and the dispatcher's
 argument binding are rendered from and held to it.
 
+The swarm's tasks are being renamed task items (#2478). The tool also takes
+`task_item`, `task_items`, `task_item_create`, `verify_task_item` and
+`revalidate_task_item` for the ops below named by their old names (the
+`OP_ALIASES` table beside `BOARD_OPS`), and `task_item_id` for `task_id` on
+every op that takes it; a call giving both `task_id` and `task_item_id` with
+different values is refused (`calling`). Board text, events and records keep
+the old names.
+
 | Op | Fields (JSON types; defaults) | Result | Who |
 |---|---|---|---|
 | `task` | `task_id` integer | task, with owner liveness | any member |
@@ -859,7 +867,7 @@ body, evidence, reason, path or other board text:
 | `fast_path_defeated` | For a `summary` given the board's own cursor, whether an owner turned idle by the clock alone since it, which defeats the `unchanged` answer |
 | `placeholder_created` | For `_bootstrap`, whether it wrote the container's placeholder run; its `decision` is the join's branch (`admitted`, `already_live`, `reactivated`), as `_join`'s is, or `placeholder` for a `committed` refusal met before the join took a branch; `create`'s is `fresh` or `over_setup` |
 | `missing_args` | For a `calling` or `invalid` refusal (#2341), the required arguments the call left out, by their schema names, every one (not only the first the refusal's text names); a parameter no `swarm` op's schema has (a harness-internal method's) is left out. Left out when there are none |
-| `unexpected_args` | For a `calling` or `invalid` refusal, `{"count": N, "known": [...]}`: how many keys (or positional values) the op's signature has no parameter for, and, in `known`, those that are a schema field of some other op (a field sent to the wrong op). Any other key is counted only, never named, so no text a member typed as a key reaches the log. `known` is left out when empty, the field when there are none |
+| `unexpected_args` | For a `calling` or `invalid` refusal, `{"count": N, "known": [...]}`: how many keys (or positional values) the op's signature has no parameter for, and, in `known`, those that are a schema field of some other op (a field sent to the wrong op), or, for #2478's conflict, `task_id` given twice under two names (`task_id` and `task_item_id` with different values, `1` and `1.0` or `null` and `1` included, refused by the binding after the running gate as Python refuses an argument given twice: `{"count": 1, "known": ["task_id"]}`). Any other key is counted only, never named, so no text a member typed as a key reaches the log. `known` is left out when empty, the field when there are none |
 | `wrong_type_args` | For a `calling` or `invalid` refusal of a member-facing op, `[{"arg": ..., "expected": ...}]`: each argument given a value of another JSON type than its schema's, and that type (`integer`, `string`, `boolean`, `null_or_string`, `null_or_integer`, `array_of_string`, `array_of_object`, `null_or_array_of_integer`; `null` first when it is allowed). An array whose items are of another type counts; an item's own properties are not checked (an `evidence` item need only be an object). It compares with the schema, not with the board's own checks, and is kept for any `invalid` refusal, the board's own validation included, so it can name a field that is not the refusal's cause: `task_create` with an empty `acceptance` list and a numeric `request` is refused for the list, and records `request` (which the board binds untyped, as Python does). Left out when there are none |
 | `unreadable_args` | For member input refused before the board as `invalid` (#2341): the schema field whose value the board's JSON value cannot hold (`1e400`, an integer beyond i64 and u64, a string holding a lone surrogate, or nesting more than 128 levels deep, counting the object itself as one level), or `arguments` for the text as a whole. `arguments` covers: text the tool cannot read as JSON (the `unknown` op's record: text that is no JSON, and JSON the serde reader refuses where no structured op was read, such as a harness op or a call with no op holding `1e400`); such a value under a key no schema field names; and, for the harness's own calls only, arguments that are no array or object (a member's JSON array or scalar names no op, so it is refused as op `unknown` with kind `calling` and no argument fields). Left out otherwise |
 | `polls` | For the run watch's `_watch` aggregate (#2338, decision `unchanged`), the unchanged ticks it accounts for; left out of every record of one call (see [The run watch](#the-run-watch-2338)) |
@@ -1059,7 +1067,6 @@ the board is still recorded as the op's own `swarm_op`, with no run read
 | Refused at | `kind` |
 |---|---|
 | Member input (a value the board's JSON value cannot hold: `1e400`, an integer beyond i64 and u64, a lone surrogate), its field in `unreadable_args` (`task_id` for a `task_item_id` given to an op that takes a task id) | `invalid` |
-| Member input giving `task_id` and `task_item_id` different values (#2478; `1` and `1.0` differ, as `null` and `1` do), as Python refuses an argument given twice: `unexpected_args` `{"count": 1, "known": ["task_id"]}` | `calling` |
 | The running gate, when the run is not `running` | `not_running` |
 | The running gate, when the running run's deadline has passed, is missing or is not a number | `budget_exhausted` |
 | The running gate, when the `_status` call failed, the status read is not text, or a mutating op's first `_event_cursor` call failed (gate `unreadable`) | `store` |

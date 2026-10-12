@@ -38,14 +38,10 @@
 //! [`TELEMETRY_TARGET`]: the op, the gate, whether the cursor moved, what
 //! the lifecycle did, the warnings counted and the answer's size, never
 //! argument text.
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 use serde_json::{Map, Value, json};
 
-use super::swarm_board_dispatch::binding::task_item_names as names;
-pub use super::swarm_board_dispatch::binding::task_item_names::{
-    ID_ALIAS, OP_ALIASES, canonical_op,
-};
 use super::swarm_board_dispatch::{
     BindingFaults, BoardWire, TELEMETRY_TARGET, unreadable_arguments,
 };
@@ -261,6 +257,105 @@ pub const HARNESS_OPS: &[&str] = &[
     "usage_budget",
 ];
 
+/// The swarm's tasks are task items (#2478): `(task-item name, old name)`
+/// for each op whose name says task. A task-item name is read as the old
+/// one before anything else, so the board, its events, the golden fixtures
+/// and every record keep the old names; each record says which names the
+/// call used ([`name_form`]).
+pub const OP_ALIASES: &[(&str, &str)] = &[
+    ("task_item", "task"),
+    ("task_items", "tasks"),
+    ("task_item_create", "task_create"),
+    ("verify_task_item", "verify_task"),
+    ("revalidate_task_item", "revalidate_task"),
+];
+
+/// `task_id`'s task-item name, `(task-item name, old name)`: one argument
+/// under two names, on every op that takes it.
+pub const ID_ALIAS: (&str, &str) = ("task_item_id", "task_id");
+
+/// The op `name` names: the old name a task-item name stands for, or
+/// `name` itself.
+pub fn canonical_op(name: &str) -> &str {
+    match OP_ALIASES.iter().find(|(alias, _)| *alias == name) {
+        Some((_, old)) => old,
+        None => name,
+    }
+}
+
+fn takes_task_id(spec: &OpSpec) -> bool {
+    spec.args.iter().any(|arg| arg.name == ID_ALIAS.1)
+}
+
+/// The name `key`, given to `spec`, binds as: `task_id` for `task_item_id`
+/// when `spec` takes `task_id`, else `key` (an op that takes no task id
+/// refuses `task_item_id` under the name it was sent as).
+fn canonical_key<'key>(spec: &OpSpec, key: &'key str) -> &'key str {
+    match key == ID_ALIAS.0 && takes_task_id(spec) {
+        true => ID_ALIAS.1,
+        false => key,
+    }
+}
+
+/// `fields`, given to `spec`, with `task_item_id` read as `task_id` in its
+/// place (the binding names the first unexpected field in the member's
+/// order) or dropped when it equals `task_id`; two values (`1` and `1.0`
+/// differ, as `null` and `1` do) are left for the binding to refuse, after
+/// the running gate, as an argument given twice.
+fn canonical_fields(spec: &OpSpec, fields: Map<String, Value>) -> Map<String, Value> {
+    let (alias, old) = ID_ALIAS;
+    let mapped = match (takes_task_id(spec), fields.get(alias), fields.get(old)) {
+        (true, Some(given), Some(same)) if given == same => {
+            let mut fields = fields;
+            fields.shift_remove(alias);
+            fields
+        }
+        (true, Some(_), None) => fields
+            .into_iter()
+            .map(|(key, value)| (canonical_key(spec, &key).to_owned(), value))
+            .collect(),
+        (false, _, _) | (true, None, _) | (true, Some(_), Some(_)) => fields,
+    };
+    debug_assert!(
+        !takes_task_id(spec) || !mapped.contains_key(alias) || mapped.contains_key(old),
+        "task_item_id is left only beside a task_id of another value"
+    );
+    mapped
+}
+
+/// Which names a call used (#2478): `asked`, the op name it gave for
+/// `spec`, when `spec` was renamed, and `task_id` or `task_item_id` among
+/// `keys`, its arguments' names. [`NameForm::Legacy`] when it used any old
+/// name (a call that would fail once they are retired),
+/// [`NameForm::Current`] when it used task-item names only, `None` when it
+/// used neither.
+fn name_form(asked: &str, spec: &OpSpec, keys: &[String]) -> Option<NameForm> {
+    let renamed = OP_ALIASES.iter().any(|(_, old)| *old == spec.name);
+    let op = renamed.then_some(match asked == spec.name {
+        true => NameForm::Legacy,
+        false => NameForm::Current,
+    });
+    let given = |name: &str| keys.iter().any(|key| key == name);
+    let old_id = given(ID_ALIAS.1).then_some(NameForm::Legacy);
+    let new_id = given(ID_ALIAS.0).then_some(NameForm::Current);
+    [op, old_id, new_id]
+        .into_iter()
+        .flatten()
+        .reduce(|first, second| match (first, second) {
+            (NameForm::Current, NameForm::Current) => NameForm::Current,
+            (NameForm::Legacy, _) | (_, NameForm::Legacy) => NameForm::Legacy,
+        })
+}
+
+/// The top-level keys of `text`, read without their values, so arguments
+/// the board cannot hold (`1e400`) still name their fields; none for text
+/// that is no JSON object.
+fn keys_of(text: &str) -> Vec<String> {
+    serde_json::from_str::<std::collections::BTreeMap<String, serde::de::IgnoredAny>>(text)
+        .map(|fields| fields.into_keys().collect())
+        .unwrap_or_default()
+}
+
 /// The harness ops' fields no board op has, with their JSON schemas.
 const HARNESS_PROPERTIES: &[(&str, &str)] = &[
     (
@@ -346,20 +441,13 @@ pub fn wire_text(wire: &BoardWire, value: &Value) -> Result<String, String> {
 /// and the codec its answer is written with.
 pub(super) struct BoardOpRequest {
     spec: &'static OpSpec,
-    /// The arguments, or why they were refused before the board.
-    arguments: Result<Map<String, Value>, ArgumentsRefused>,
+    /// The arguments, or why the text was refused and which fields it
+    /// could not hold (#2341).
+    arguments: Result<Map<String, Value>, (String, BindingFaults)>,
     wire: BoardWire,
     /// Which names the call used where the swarm's tasks were renamed
     /// task items (#2478); `None` where none applies.
     name_form: Option<NameForm>,
-}
-
-/// Arguments refused before the board: the refusal's text, its kind, and
-/// what it found wrong in them (#2341).
-struct ArgumentsRefused {
-    text: String,
-    kind: RefusalKind,
-    faults: BindingFaults,
 }
 
 /// The structured op `text` asks for, read by `wire`, when its `op` names
@@ -370,46 +458,31 @@ pub(super) fn requested(text: &str, wire: BoardWire) -> Option<BoardOpRequest> {
     let asked = (wire.op)(text)?;
     let spec = op_spec(canonical_op(&asked))?;
     let read = member_arguments(&wire, text);
-    let given = match &read {
-        Ok(Value::Object(fields)) => Some(fields),
-        Ok(_) | Err(_) => None,
+    let keys: Vec<String> = match &read {
+        Ok(Value::Object(fields)) => fields.keys().cloned().collect(),
+        Ok(_) => Vec::new(),
+        Err(_) => keys_of(text),
     };
-    let name_form = names::name_form(&asked, spec, given);
-    let unreadable = |refusal: String| {
-        let keys = (wire.unreadable)(text);
-        ArgumentsRefused {
-            text: refusal,
-            kind: RefusalKind::Invalid,
-            faults: unreadable_arguments(keys.map(|keys| {
-                keys.iter()
-                    .map(|key| names::canonical_key(spec, key).to_owned())
-                    .collect()
-            })),
-        }
-    };
-    let arguments = match read {
-        Ok(Value::Object(mut fields)) => {
+    let name_form = name_form(&asked, spec, &keys);
+    let arguments = read.and_then(|value| match value {
+        Value::Object(mut fields) => {
             // Keeps the member's order (#2279 final review): the binding
             // names the first unexpected field, as Python names the first
             // unexpected keyword; `remove` would move the last into `op`'s
             // slot.
             fields.shift_remove("op");
-            names::canonical_fields(spec, fields).map_err(|twice| ArgumentsRefused {
-                text: twice.text(),
-                kind: RefusalKind::Calling,
-                faults: twice.faults(),
-            })
+            Ok(canonical_fields(spec, fields))
         }
-        Ok(_) => Err(unreadable("arguments: not a JSON object".to_owned())),
-        Err(refusal) => Err(unreadable(refusal)),
-    };
-    debug_assert!(
-        match (&arguments, names::takes_task_id(spec)) {
-            (Ok(fields), true) => !fields.contains_key(ID_ALIAS.0),
-            (Ok(_), false) | (Err(_), _) => true,
-        },
-        "an op that takes task_id is given task_item_id as task_id"
-    );
+        _ => Err("arguments: not a JSON object".to_owned()),
+    });
+    let arguments = arguments.map_err(|refusal| {
+        let keys = (wire.unreadable)(text).map(|keys| {
+            keys.iter()
+                .map(|key| canonical_key(spec, key).to_owned())
+                .collect()
+        });
+        (refusal, unreadable_arguments(keys))
+    });
     Some(BoardOpRequest {
         spec,
         arguments,
@@ -490,12 +563,11 @@ async fn serve(
     let op = request.spec.name;
     let arguments = match request.arguments {
         Ok(arguments) => arguments,
-        Err(refused) => {
+        Err((refusal, faults)) => {
             record.gate = "arguments";
             // Shaped as every board refusal reaches the member.
-            let text =
-                DomainError::Tool(format!("swarm: {}", Value::String(refused.text))).to_string();
-            let refusal = (refused.kind, refused.faults);
+            let text = DomainError::Tool(format!("swarm: {}", Value::String(refusal))).to_string();
+            let refusal = (RefusalKind::Invalid, faults);
             return refuse(context, record, refusal, started, text).await;
         }
     };
@@ -504,7 +576,7 @@ async fn serve(
         Ok(status) => status,
         Err(error) => return unreadable(context, record, started, &error).await,
     };
-    if let Some((kind, gate, text)) = gated(op, &status) {
+    if let Some((kind, gate, text)) = super::swarm::swarm_guidance::running_gate(op, &status) {
         record.gate = gate;
         return refuse(context, record, (kind, BindingFaults::NONE), started, text).await;
     }
@@ -537,35 +609,6 @@ async fn unreadable(
     record.gate = "unreadable";
     let refusal = (RefusalKind::Store, BindingFaults::NONE);
     refuse(context, record, refusal, started, error.to_string()).await
-}
-
-/// The running gate (`op=run`'s until #2282 removed it): the refusal's
-/// kind, the gate's name and the guidance, unless the run is running within
-/// its deadline.
-fn gated(op: &str, status: &Value) -> Option<(RefusalKind, &'static str, String)> {
-    let guide = super::swarm::swarm_guidance::op_refused;
-    match status["status"].as_str() {
-        Some("running") => {
-            let now = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or(Duration::ZERO)
-                .as_secs_f64();
-            match status["deadline"].as_f64() {
-                Some(deadline) if deadline > now => None,
-                Some(_) | None => Some((
-                    RefusalKind::BudgetExhausted,
-                    "deadline",
-                    super::swarm::swarm_guidance::op_deadline_passed(op),
-                )),
-            }
-        }
-        Some(other) => Some((
-            RefusalKind::NotRunning,
-            "not_running",
-            guide(op, Some(other)),
-        )),
-        None => Some((RefusalKind::Store, "unreadable", guide(op, None))),
-    }
 }
 
 /// The board's event cursor, `_event_cursor`.

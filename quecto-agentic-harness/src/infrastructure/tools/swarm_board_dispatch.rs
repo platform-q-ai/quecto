@@ -669,7 +669,7 @@ fn take<const N: usize>(arguments: Vec<Value>) -> Result<[Value; N], BoardError>
 }
 
 #[path = "swarm_board_dispatch_binding.rs"]
-pub(super) mod binding;
+mod binding;
 
 #[path = "swarm_board_dispatch_records.rs"]
 mod records;
