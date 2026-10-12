@@ -167,12 +167,26 @@ fn a_repository_is_owner_slash_name_and_gh_must_be_on_the_path() {
         "github.com/a/..",
         "github.com/a/-x",
         "github.com/-o/x",
+        // The domain's owner grammar: one `_shortcode`, never at an edge.
+        "github.com/a_/b",
+        "github.com/a__b/c",
+        "github.com/_a/b",
         "github.com/a b/c",
         "localhost/a/b",
         "",
     ] {
         assert!(
             GhPullRequestStates::new(repo, vars.clone()).is_err(),
+            "{repo}"
+        );
+    }
+    for repo in [
+        "github.com/a-/b",
+        "github.com/ada_corp/x",
+        "github.com/a/.github",
+    ] {
+        assert!(
+            GhPullRequestStates::new(repo, vars.clone()).is_ok(),
             "{repo}"
         );
     }

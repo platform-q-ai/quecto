@@ -231,3 +231,32 @@ fn identities_compare_whole_but_match_a_holder_by_email() {
     claim(&mut task).holder.email = "ADA@EXAMPLE.COM".into();
     assert_ne!(task, fields(), "an email's spelling is part of the value");
 }
+
+/// An email holds what a board file shows as it is in a code span: no
+/// backtick (the span's edge), nor `<>` (git's delimiter around it).
+#[test]
+fn an_email_holds_only_what_a_board_file_shows() {
+    let person = |email: &str| Identity {
+        name: "Ada".into(),
+        email: email.into(),
+    };
+    for email in [
+        "ada@example.com",
+        "a.b+c_d@x",
+        "o'neil@x",
+        "a!#$%&*/=?^{}~-@x",
+        "\"a,b;c:d\"@x",
+        "a@[127.0.0.1]",
+        "a(b)@x)",
+        // In a code span a reader shows these as they are (`|` written
+        // `\|` in a table).
+        "a|b@x",
+        "a\\b@x",
+    ] {
+        assert!(person(email).validate("holder").is_ok(), "{email}");
+    }
+    for email in ["a`b@x", "a<b@x", "a>b@x", "a b@x"] {
+        let refused = person(email).validate("holder").unwrap_err();
+        assert_eq!(refused.field, "holder/email", "{email}");
+    }
+}
