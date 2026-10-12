@@ -96,3 +96,13 @@ fn a_line_is_trimmed_of_spaces_and_tabs_at_both_edges() {
         assert_eq!(settled(line, raw), kept, "{raw:?}");
     }
 }
+
+#[test]
+fn text_is_entered_only_once_normalised() {
+    assert_eq!(entered_text("description", "Why.\nHow."), Ok(()));
+    assert_eq!(entered_line("title", "Ship it"), Ok(()));
+    let refused = entered_text("description", "Why.\r\n").unwrap_err();
+    assert_eq!(refused.field, "description");
+    let refused = entered_line("title", "Ship it ").unwrap_err();
+    assert_eq!(refused.field, "title");
+}

@@ -266,3 +266,31 @@ fn an_email_holds_only_what_a_board_file_shows() {
         assert_eq!(refused.field, "holder/email", "{email}");
     }
 }
+
+/// A task built from text as it enters (`Task::entered`, the write path)
+/// takes only normalised board text; one read back (`Task::new`) takes
+/// what earlier builds stored, a final line end included.
+#[test]
+fn a_task_entered_holds_only_normalised_text_and_one_read_back_more() {
+    let entered = |edit: fn(&mut TaskFields)| {
+        let mut fields = fields();
+        edit(&mut fields);
+        Task::entered(fields)
+    };
+    assert!(entered(|_| {}).is_ok());
+    for (field, edit) in [
+        (
+            "title",
+            (|t: &mut TaskFields| t.title = " padded ".into()) as fn(&mut TaskFields),
+        ),
+        ("title", |t| t.title = "Cafe\u{301}".into()),
+        ("description", |t| t.description = "ends\n".into()),
+        ("description", |t| t.description = "a \nb".into()),
+    ] {
+        let refused = entered(edit).unwrap_err();
+        assert_eq!(refused.field, field);
+    }
+    let mut stored = fields();
+    stored.description = "stored by an earlier build\n".into();
+    assert!(Task::new(stored).is_ok());
+}

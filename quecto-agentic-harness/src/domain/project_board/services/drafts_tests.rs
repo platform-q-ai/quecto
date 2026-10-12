@@ -11,14 +11,14 @@ fn a_draft_takes_a_new_title_description_and_references() {
     let draft = task(Draft);
     let edit = DraftEdit {
         title: Some("Board store, again".into()),
-        description: Some("Why.\n".into()),
+        description: Some("Why.".into()),
         parent: Some(Some(slug("epic"))),
         depends_on: Some(vec![slug("schema")]),
     };
     let edited = edit_draft(&draft, &edit, &at("10:00:00")).unwrap();
     let mut expected = draft.fields().clone();
     expected.title = "Board store, again".into();
-    expected.description = "Why.\n".into();
+    expected.description = "Why.".into();
     expected.parent = Some(slug("epic"));
     expected.depends_on = vec![slug("schema")];
     expected.updated = at("10:00:00");
@@ -98,4 +98,45 @@ fn an_edit_the_schema_refuses_and_a_stamp_from_a_slow_clock() {
         at("09:00:01"),
         "never backwards"
     );
+}
+
+/// An edit's text is board text as it enters (normalised by whoever took
+/// it in); one that is not was never normalised, and is refused.
+#[test]
+fn an_edit_whose_text_was_never_normalised_is_refused() {
+    for (field, edit) in [
+        (
+            "title",
+            DraftEdit {
+                title: Some(" padded ".into()),
+                description: None,
+                parent: None,
+                depends_on: None,
+            },
+        ),
+        (
+            "description",
+            DraftEdit {
+                title: None,
+                description: Some("ends\n".into()),
+                parent: None,
+                depends_on: None,
+            },
+        ),
+        (
+            "description",
+            DraftEdit {
+                title: None,
+                description: Some("Cafe\u{301}".into()),
+                parent: None,
+                depends_on: None,
+            },
+        ),
+    ] {
+        let refused = edit_draft(&task(Draft), &edit, &at("10:00:00"));
+        assert!(
+            matches!(&refused, Err(BoardRuleError::Invalid(error)) if error.field == field),
+            "{refused:?}"
+        );
+    }
 }
