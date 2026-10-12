@@ -48,7 +48,8 @@ mod inline;
 mod parse;
 mod prose;
 
-pub use parse::parse;
+pub use parse::{parse, schema_of};
+pub use prose::{blocks_of, text_of};
 
 /// How large a file, how many lines and how long a line may be: the
 /// caller's.
@@ -59,12 +60,48 @@ pub struct Limits {
     pub line_bytes: usize,
 }
 
-/// What a cell holds: text, or an id or pointer of ASCII letters, digits
-/// and `._:/#@+-` (a slug, a commit, a time, an address).
+/// What a cell holds: text; an id or pointer of ASCII letters, digits and
+/// `._:/#@+_-`, a `_` only between two letters or digits (a slug, a word,
+/// a commit, a time, an address); or code, shown in backticks (a branch,
+/// an image, a reference).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CellKind {
     Text,
     Ascii,
+    /// Printable ASCII but a backtick ([`CODE_PUNCTUATION`]), never empty
+    /// ([`code_cell_holds`]): nothing in it can end its code span, a `|`
+    /// is written `\|` as a text cell writes it, and a reader shows the
+    /// rest as it is.
+    Code,
+}
+
+/// The punctuation an ASCII cell may hold besides letters and digits.
+const ASCII_PUNCTUATION: &[u8] = b"._:/#@+_-";
+
+/// The punctuation a code cell may hold besides letters and digits: every
+/// printable ASCII one but a backtick, which would end its span.
+const CODE_PUNCTUATION: &[u8] = b"!\"#$%&'()*+,-./:;<=>?@[\\]^_{|}~";
+
+/// Whether a code span in a board file holds `value` as it is: printable
+/// ASCII but a backtick, never empty (an allowlist). A code cell, and an
+/// identity's email, hold only such values.
+pub fn code_cell_holds(value: &str) -> bool {
+    !value.is_empty()
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || CODE_PUNCTUATION.contains(&b))
+}
+
+/// Whether a text cell holds `value`: what a cell holds at all, the inline
+/// rules and the character rules, checked as it would be written. A
+/// codec's helper checks a cell it builds before any render, so its error
+/// names the field.
+///
+/// # Errors
+/// The rule the cell breaks, at line 1.
+pub fn check_text_cell(value: &str) -> Result<(), MarkdownError> {
+    let written = cell(value, CellKind::Text, 1)?;
+    chars::check_line(&written, 1)
 }
 
 /// A field or a table's column: its name and what its cells hold.
@@ -382,7 +419,7 @@ fn plain(value: &str) -> bool {
 /// A cell as a row holds it.
 fn cell(value: &str, kind: CellKind, at: usize) -> Result<String, MarkdownError> {
     let refused = |why| Err(MarkdownError::Cell { line: at, why });
-    let ascii = |b: u8| b.is_ascii_alphanumeric() || b"._:/#@+-".contains(&b);
+    let ascii = |b: u8| b.is_ascii_alphanumeric() || ASCII_PUNCTUATION.contains(&b);
     match (kind, value) {
         (_, "") => refused("an empty cell"),
         (_, value) if value.contains('\n') => refused("a newline in a cell"),
@@ -395,10 +432,33 @@ fn cell(value: &str, kind: CellKind, at: usize) -> Result<String, MarkdownError>
         (CellKind::Ascii, value) if value.bytes().all(ascii) => {
             refused("an address a reader would link, or an underscore it would read as emphasis")
         }
-        (CellKind::Ascii, _) => refused("an id or pointer of ASCII letters, digits and ._:/#@+-"),
+        (CellKind::Ascii, _) => refused("an id or pointer of ASCII letters, digits and ._:/#@+_-"),
+        (CellKind::Code, value) if code_cell_holds(value) => {
+            Ok(format!("`{}`", value.replace('|', "\\|")))
+        }
+        (CellKind::Code, _) => refused("code of printable ASCII but a backtick"),
         (CellKind::Text, value) => {
             inline::check_inline(value, at).map(|()| value.replace('|', "\\|"))
         }
+    }
+}
+
+/// The value a cell of `kind` holds, from the cell as a row reads it: a
+/// code cell's backticks taken off.
+///
+/// # Errors
+/// A code cell not in one pair of backticks.
+fn cell_value(read: String, kind: CellKind, at: usize) -> Result<String, MarkdownError> {
+    match kind {
+        CellKind::Text | CellKind::Ascii => Ok(read),
+        CellKind::Code => read
+            .strip_prefix('`')
+            .and_then(|inner| inner.strip_suffix('`'))
+            .map(str::to_string)
+            .ok_or(MarkdownError::Cell {
+                line: at,
+                why: "code in backticks",
+            }),
     }
 }
 

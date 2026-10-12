@@ -3,6 +3,7 @@
 //! or a list item that opens with ASCII punctuation (the backtick aside),
 //! or as an ordered marker, is escaped with a backslash, so it reads as
 //! text; an item opens with `[` only as a link, never a task box.
+use super::chars::check_line;
 use super::inline::{check_inline, starts_with_link};
 use super::{Block, MarkdownError};
 
@@ -168,4 +169,121 @@ pub fn render(
         }
     }
     Ok(())
+}
+
+/// A domain's markdown text as blocks: chunks one blank line apart, each
+/// fenced code (its blank lines kept), a list when every line of it starts
+/// `- `, else a paragraph of its lines verbatim. The empty text is no
+/// blocks (its section left out). [`text_of`] gives the text back.
+///
+/// # Errors
+/// Text the blocks cannot hold as it is: a blank line at an edge or two in
+/// a row (a final newline among them), a fence left open or a line straight
+/// after one, and what the blocks' own rules (two lists in a row, a line of
+/// prose a space starts, a language off the list) and the character rules
+/// (a tab, a no-break space) refuse. A line is the text's, from 1.
+pub fn blocks_of(text: &str) -> Result<Vec<Block>, MarkdownError> {
+    if text.is_empty() {
+        return Ok(vec![]);
+    }
+    let lines: Vec<&str> = text.split('\n').collect();
+    let apart = |at: usize| MarkdownError::Structure {
+        line: at + 1,
+        expected: "blocks one blank line apart, none at an edge",
+    };
+    let (mut blocks, mut at) = (vec![], 0);
+    loop {
+        let first = match lines.get(at) {
+            Some(first) if !first.is_empty() => *first,
+            _ => return Err(apart(at)),
+        };
+        // A fence as a reader opens one: its info holds no backtick.
+        let (block, next) = match first.strip_prefix("```").filter(|info| !info.contains('`')) {
+            Some(info) => code_of(&lines, at, info)?,
+            None => {
+                let end = lines[at..]
+                    .iter()
+                    .position(|line| line.is_empty())
+                    .map_or(lines.len(), |length| at + length);
+                let chunk = &lines[at..end];
+                let items: Option<Vec<String>> = chunk
+                    .iter()
+                    .map(|line| line.strip_prefix("- ").map(str::to_string))
+                    .collect();
+                let block = match items {
+                    Some(items) => Block::List(items),
+                    None => Block::Paragraph(chunk.iter().map(|line| line.to_string()).collect()),
+                };
+                (block, end)
+            }
+        };
+        blocks.push(block);
+        match (lines.get(next), lines.get(next + 1)) {
+            (None, _) => break,
+            (Some(&""), Some(after)) if !after.is_empty() => at = next + 1,
+            _ => return Err(apart(next)),
+        }
+    }
+    // The blocks' own rules and the characters', on the very lines a file
+    // would hold (one for each of the text's).
+    let mut rendered = vec![];
+    render(&mut rendered, "text", &blocks)?;
+    debug_assert_eq!(
+        rendered.len(),
+        lines.len(),
+        "a line of the file per line of text"
+    );
+    for (index, line) in rendered.iter().enumerate() {
+        check_line(line, index + 1)?;
+    }
+    // Every chunk is kept whole (a paragraph's lines verbatim, a list's
+    // items after their `- `, a fence's lines and info), one blank line
+    // apart, so writing the blocks back gives the text.
+    debug_assert_eq!(text_of(&blocks), text, "blocks give their text back");
+    Ok(blocks)
+}
+
+/// The fenced code `lines[at]` opens with `info`, and the line after its
+/// closing fence.
+fn code_of(lines: &[&str], at: usize, info: &str) -> Result<(Block, usize), MarkdownError> {
+    let inner = &lines[at + 1..];
+    let close = inner
+        .iter()
+        .position(|line| *line == "```")
+        .ok_or(MarkdownError::Fence {
+            line: at + 1,
+            why: "a fence left open",
+        })?;
+    let language = match info {
+        "" => None,
+        name => Some(name.to_string()),
+    };
+    let code = inner[..close].iter().map(|line| line.to_string()).collect();
+    let block = Block::Code {
+        language,
+        lines: code,
+    };
+    Ok((block, at + close + 2))
+}
+
+/// The text `blocks` hold, one blank line between them: what
+/// [`blocks_of`] reads them from.
+pub fn text_of(blocks: &[Block]) -> String {
+    let block = |block: &Block| match block {
+        Block::Paragraph(lines) => lines.join("\n"),
+        Block::List(items) => items
+            .iter()
+            .map(|item| format!("- {item}"))
+            .collect::<Vec<_>>()
+            .join("\n"),
+        Block::Code { language, lines } => {
+            let open = format!("```{}", language.as_deref().unwrap_or(""));
+            std::iter::once(open)
+                .chain(lines.iter().cloned())
+                .chain(std::iter::once("```".to_string()))
+                .collect::<Vec<_>>()
+                .join("\n")
+        }
+    };
+    blocks.iter().map(block).collect::<Vec<_>>().join("\n\n")
 }
