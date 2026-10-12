@@ -19,6 +19,10 @@ const FIELDS: &[Column<'static>] = &[
         name: "Claim",
         cell: CellKind::Text,
     },
+    Column {
+        name: "Branch",
+        cell: CellKind::Code,
+    },
 ];
 
 const ITEMS: &[Column<'static>] = &[
@@ -237,6 +241,52 @@ impl Seeded {
         cell
     }
 
+    /// A code cell: the ASCII cell's characters and more punctuation, now
+    /// and then one a code cell refuses.
+    fn code(&mut self) -> String {
+        const CODE: &[&str] = &[
+            "a",
+            "Z",
+            "0",
+            "<",
+            ">",
+            "[",
+            "]",
+            "*",
+            "$",
+            "&",
+            "~",
+            "!",
+            "|",
+            "\\",
+            "_",
+            "(",
+            ")",
+            "\"",
+            "'",
+            "{",
+            "}",
+            "^",
+            "=",
+            "?",
+            ";",
+            ",",
+            "%",
+            ":x:",
+            "https://y.example/a",
+            "[x](https://y.example)",
+            "_",
+            "*",
+            "~",
+        ];
+        let mut cell = self.ascii();
+        cell.extend((0..self.below(4)).map(|_| self.pick(CODE)));
+        if self.below(40) == 0 {
+            cell.push_str(&self.pick(&["`", " ", "\u{e9}"]));
+        }
+        cell
+    }
+
     fn texts(&mut self) -> Vec<String> {
         (0..1 + self.below(3)).map(|_| self.line()).collect()
     }
@@ -265,6 +315,7 @@ impl Seeded {
         match kind {
             CellKind::Text => self.line(),
             CellKind::Ascii => self.ascii(),
+            CellKind::Code => self.code(),
         }
     }
 
@@ -482,3 +533,6 @@ mod oracle;
 
 #[path = "markdown_hostile_tests.rs"]
 mod hostile;
+
+#[path = "markdown_cells_tests.rs"]
+mod cells;
