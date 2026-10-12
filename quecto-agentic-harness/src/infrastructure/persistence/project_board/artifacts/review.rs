@@ -111,20 +111,6 @@ impl ArtifactCodec for ReviewCodec {
                 ]);
             }
         }
-        debug_assert_eq!(rounds.len(), review.rounds.len(), "a row per round");
-        debug_assert_eq!(
-            findings.len(),
-            review
-                .rounds
-                .iter()
-                .map(|round| round.findings.len())
-                .sum::<usize>(),
-            "a row per finding"
-        );
-        debug_assert!(
-            rounds.iter().chain(&findings).all(|row| row.len() == 5),
-            "every row as wide as its table"
-        );
         let sections = [(ROUNDS, rounds), (FINDINGS, findings)]
             .into_iter()
             // A table only for what holds rows (no Findings is "none").
@@ -193,6 +179,19 @@ impl ArtifactCodec for ReviewCodec {
                 }
             }
         }
+        // Every row read went to its round: the rounds and findings are as
+        // many as the tables' rows.
+        debug_assert_eq!(
+            (
+                rounds.len(),
+                rounds
+                    .iter()
+                    .map(|round| round.findings.len())
+                    .sum::<usize>()
+            ),
+            (table_rows(document, ROUNDS), table_rows(document, FINDINGS)),
+            "every row placed"
+        );
         let fields = ReviewFields {
             task: cells::read_slug(TASK, required(TASK)?)?,
             change: u32::try_from(cells::read_number(CHANGE, required(CHANGE)?)?)
@@ -204,6 +203,19 @@ impl ArtifactCodec for ReviewCodec {
         Review::new(fields)
             .map_err(|error| refused("Review", format!("{}: {}", error.field, error.problem)))
     }
+}
+
+/// How many rows the table under `heading` holds (none without one).
+fn table_rows(document: &Document, heading: &str) -> usize {
+    document
+        .sections
+        .iter()
+        .filter(|section| section.heading == heading)
+        .map(|section| match &section.body {
+            Body::Table(rows) => rows.len(),
+            Body::Prose(_) => 0,
+        })
+        .sum()
 }
 
 /// The findings of the round `round` names, which the finding numbered
@@ -223,10 +235,6 @@ fn next_finding<'a>(
         .and_then(|index| index.checked_sub(1))
         .filter(|at| *at < rounds.len() && latest.is_none_or(|latest| latest <= *at))
         .ok_or_else(|| refused(FINDINGS, "a round of the review's, in round order"))?;
-    debug_assert!(
-        at < rounds.len() && latest.is_none_or(|latest| latest <= at),
-        "a finding goes to a round read, at or after the last with findings"
-    );
     let findings = &mut rounds[at].findings;
     match number == (findings.len() + 1) as u64 {
         true => Ok(findings),
