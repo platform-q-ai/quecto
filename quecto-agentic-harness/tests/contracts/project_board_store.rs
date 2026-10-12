@@ -31,7 +31,6 @@ pub fn task(id: &str, title: &str) -> Task {
         depends_on: vec![],
         accepted_plan: None,
         claim: None,
-        reviews: vec![],
         prs: vec![],
         created: at.clone(),
         updated: at,

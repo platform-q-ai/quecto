@@ -120,7 +120,6 @@ pub fn fields(id: &str) -> TaskFields {
         depends_on: vec![],
         accepted_plan: None,
         claim: None,
-        reviews: vec![],
         prs: vec![],
         created: at("00:00:00"),
         updated: at("00:00:00"),

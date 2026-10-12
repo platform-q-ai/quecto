@@ -6,7 +6,6 @@ use crate::domain::project_board::entities::plan::MAX_PLAN_VERSION;
 use crate::domain::project_board::entities::task::{
     MAX_DEPENDENCIES, MAX_DESCRIPTION_CHARS, MAX_PRS, MAX_TEXT_BYTES, MAX_TITLE_CHARS,
 };
-use crate::domain::project_board::entities::task_parts::{MAX_FINDING_CHARS, MAX_REVIEWS};
 use crate::domain::project_board::value_objects::slug::MAX_SLUG_BYTES;
 
 fn at(time: &str) -> Timestamp {
@@ -41,17 +40,6 @@ fn person() -> Identity {
 /// holder at its widest, and each text a single character. A new field fails to build here until it
 /// is set.
 fn widest_structure() -> TaskFields {
-    let review = |n: usize| Review {
-        id: wide_id('v', n),
-        round: u8::MAX,
-        reviewer: person(),
-        at: at("09:00:00"),
-        severity: Severity::Critical,
-        location: Some("a:1".into()),
-        finding: "a".into(),
-        verdict: Verdict::WontFix,
-        proving_test: Some("a".into()),
-    };
     TaskFields {
         id: wide_id('t', 0),
         title: "a".into(),
@@ -66,7 +54,6 @@ fn widest_structure() -> TaskFields {
             since: at("09:00:00"),
             expires: at("11:00:00"),
         }),
-        reviews: (0..MAX_REVIEWS).map(review).collect(),
         prs: (0..MAX_PRS as u64).map(|n| u64::MAX - n).collect(),
         created: at("08:00:00"),
         updated: at("09:00:00"),
@@ -96,47 +83,37 @@ fn the_widest_structure_with_its_whole_text_budget_escaped_fits_the_file_cap() {
     );
 }
 
-/// Spends what is left of the text budget on `"`s.
-fn fill_text_budget(fields: &mut TaskFields) {
-    let mut left = MAX_TEXT_BYTES - fields.text_bytes();
-    left -= widen(&mut fields.title, MAX_TITLE_CHARS, left);
-    left -= widen(&mut fields.description, MAX_DESCRIPTION_CHARS, left);
-    for review in &mut fields.reviews {
-        left -= widen(&mut review.finding, MAX_FINDING_CHARS, left);
-    }
-    assert_eq!(left, 0, "the budget is spent");
+/// Spends the title and description to their limits on `"`s, the
+/// widest text a task has (within its budget).
+fn fill_text(fields: &mut TaskFields) {
+    let left = MAX_TEXT_BYTES - fields.text_bytes();
+    let left = left - widen(&mut fields.title, MAX_TITLE_CHARS, left);
+    widen(&mut fields.description, MAX_DESCRIPTION_CHARS, left);
+    assert_eq!(
+        (
+            fields.title.chars().count(),
+            fields.description.chars().count()
+        ),
+        (MAX_TITLE_CHARS, MAX_DESCRIPTION_CHARS),
+        "the title and description fit the budget whole"
+    );
 }
 
 #[test]
-fn a_task_filled_to_its_text_budget_with_quotes_is_written_and_read_back() {
+fn a_task_of_the_widest_text_in_quotes_is_written_and_read_back() {
     let mut fields = widest_structure();
-    fill_text_budget(&mut fields);
-    assert_eq!(fields.text_bytes(), MAX_TEXT_BYTES);
-    let task = Task::new(fields).expect("exactly the text budget");
+    fill_text(&mut fields);
+    let task = Task::new(fields).expect("within the text budget");
     let bytes = encode(&task).expect("a valid task is always written");
     assert!(bytes.len() <= MAX_TASK_FILE_BYTES, "{} bytes", bytes.len());
     assert_eq!(decode(&bytes), Ok(task));
 }
 
 #[test]
-fn a_task_over_its_text_budget_is_refused_by_the_domain() {
-    let mut fields = widest_structure();
-    fill_text_budget(&mut fields);
-    let short = fields
-        .reviews
-        .iter_mut()
-        .find(|review| review.finding.chars().count() < MAX_FINDING_CHARS)
-        .expect("a finding with room left");
-    short.finding.push('x');
-    let error = Task::new(fields).expect_err("one byte over the budget");
-    assert_eq!(error.field, "text", "{error}");
-}
-
-#[test]
-fn a_task_at_its_text_budget_takes_a_holder_at_its_widest() {
+fn a_task_of_the_widest_text_takes_a_holder_at_its_widest() {
     let mut fields = widest_structure();
     fields.claim.as_mut().unwrap().holder = person();
-    fill_text_budget(&mut fields);
+    fill_text(&mut fields);
     fields.claim.as_mut().unwrap().holder = widest_holder();
     let task = Task::new(fields).expect("a holder is not text");
     let bytes = encode(&task).expect("a valid task is always written");

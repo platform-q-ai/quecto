@@ -57,7 +57,6 @@ fn task(id: &str, status: TaskStatus, parent: Option<&str>, depends_on: &[&str])
         depends_on: depends_on.iter().map(|id| slug(id)).collect(),
         accepted_plan: None,
         claim: None,
-        reviews: vec![],
         prs: vec![],
         created: at.clone(),
         updated: at,

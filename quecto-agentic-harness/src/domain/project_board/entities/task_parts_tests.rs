@@ -1,8 +1,11 @@
 use super::*;
 use crate::domain::project_board::entities::claim::Claim;
+use crate::domain::project_board::entities::claim::Identity;
 use crate::domain::project_board::entities::plan::{Plan, PlanFields, PlanItem};
 use crate::domain::project_board::entities::task::{Task, TaskFields};
 use crate::domain::project_board::entities::team::*;
+use crate::domain::project_board::value_objects::slug::Slug;
+use crate::domain::project_board::value_objects::timestamp::Timestamp;
 use crate::domain::project_board::value_objects::vocabulary::Effort;
 use crate::domain::project_board::value_objects::vocabulary::{PlanState, TaskKind, TaskStatus};
 
@@ -64,7 +67,7 @@ fn plan_fields() -> PlanFields {
     }
 }
 
-/// A task with its review findings.
+/// A task with every part.
 fn fields() -> TaskFields {
     TaskFields {
         id: slug("board-store"),
@@ -80,17 +83,6 @@ fn fields() -> TaskFields {
             since: at("09:00:00"),
             expires: at("11:00:00"),
         }),
-        reviews: vec![Review {
-            id: slug("r1-h1"),
-            round: 1,
-            reviewer: ada(),
-            at: at("10:00:00"),
-            severity: Severity::High,
-            location: Some("src/store.rs:42:7".into()),
-            finding: "Lease not checked".into(),
-            verdict: Verdict::Fixed,
-            proving_test: Some("stale_lease_is_refused".into()),
-        }],
         prs: vec![2482],
         created: at("08:00:00"),
         updated: at("10:00:00"),
@@ -216,73 +208,6 @@ fn plan_parts_that_break_a_rule_build_no_plan() {
 }
 
 #[test]
-fn reviews_that_break_a_rule_build_no_task() {
-    let cases: Vec<(&str, Edit)> = vec![
-        ("reviews", |t| t.reviews.push(t.reviews[0].clone())),
-        ("reviews/0/round", |t| t.reviews[0].round = 0),
-        ("reviews/0/at", |t| t.reviews[0].at = at("07:59:59")),
-        ("reviews/0/at", |t| t.reviews[0].at = at("10:00:01")),
-        ("reviews/0/reviewer/email", |t| {
-            t.reviews[0].reviewer.email = "ada".into()
-        }),
-        ("reviews/0/location", |t| {
-            t.reviews[0].location = Some("src/store.rs".into())
-        }),
-        ("reviews/0/location", |t| {
-            t.reviews[0].location = Some("src/store.rs:0".into())
-        }),
-        ("reviews/0/location", |t| {
-            t.reviews[0].location = Some("src/store.rs:042".into())
-        }),
-        ("reviews/0/location", |t| {
-            t.reviews[0].location = Some("src/store.rs:4:0".into())
-        }),
-        ("reviews/0/location", |t| {
-            t.reviews[0].location = Some("src/a b.rs:4".into())
-        }),
-        ("reviews/0/location", |t| {
-            t.reviews[0].location = Some("../etc/passwd:1".into())
-        }),
-        ("reviews/0/location", |t| {
-            t.reviews[0].location = Some("-rf.rs:1".into())
-        }),
-        ("reviews/0/location", |t| {
-            t.reviews[0].location = Some("./a.rs:1".into())
-        }),
-        ("reviews/0/location", |t| {
-            t.reviews[0].location = Some("a/./b.rs:1".into())
-        }),
-        ("reviews/0/location", |t| {
-            t.reviews[0].location = Some("a//b.rs:1".into())
-        }),
-        ("reviews/0/location", |t| {
-            t.reviews[0].location = Some("a/:1".into())
-        }),
-        ("reviews/0/location", |t| {
-            t.reviews[0].location = Some("/etc/passwd:1".into())
-        }),
-        ("reviews/0/finding", |t| {
-            t.reviews[0].finding = String::new()
-        }),
-        ("reviews/0/finding", |t| {
-            t.reviews[0].finding = "\n\t".into()
-        }),
-        ("reviews/0/finding", |t| {
-            t.reviews[0].finding = "x".repeat(MAX_FINDING_CHARS + 1)
-        }),
-        ("reviews/0/proving_test", |t| {
-            t.reviews[0].proving_test = Some(" ".into())
-        }),
-    ];
-    for (field, edit) in cases {
-        let mut task = fields();
-        edit(&mut task);
-        let error = Task::new(task).expect_err(field);
-        assert_eq!(error.field, field, "{error}");
-    }
-}
-
-#[test]
 fn every_part_bound_admits_exactly_its_limit() {
     let plans: Vec<PlanEdit> = vec![
         |t| t.items = many(&t.items[0], MAX_ITEMS, |i, n| i.id = slug(&format!("i{n}"))),
@@ -329,20 +254,6 @@ fn every_part_bound_admits_exactly_its_limit() {
         );
     }
     let tasks: Vec<Edit> = vec![
-        |t| {
-            t.reviews = many(&t.reviews[0], MAX_REVIEWS, |r, n| {
-                r.id = slug(&format!("f{n}"))
-            })
-        },
-        |t| t.reviews[0].location = Some("src/store.rs:1".into()),
-        |t| t.reviews[0].location = Some(".github/ci.yml:3".into()),
-        |t| t.reviews[0].location = Some("src/a..b.rs:1".into()),
-        |t| t.reviews[0].location = Some("a/-b.rs:1".into()),
-        |t| t.reviews[0].location = None,
-        |t| t.reviews[0].finding = "é".repeat(MAX_FINDING_CHARS),
-        |t| t.reviews[0].finding = "**Lease**\n\n\tnot checked".into(),
-        |t| t.reviews[0].verdict = Verdict::WontFix,
-        |t| t.reviews[0].at = at("08:00:00"),
         |t| t.status = TaskStatus::Review,
         |t| t.status = TaskStatus::Blocked,
         |t| (t.status, t.claim) = (TaskStatus::Review, None),

@@ -45,10 +45,6 @@ fn the_parts_vocabularies_are_spelt_exactly() {
         "low medium high critical"
     );
     assert_eq!(
-        spelt(Verdict::ALL.iter().map(|w| w.as_str()).collect()),
-        "open fixed invalid wont_fix"
-    );
-    assert_eq!(
         spelt(DiscussionState::ALL.iter().map(|w| w.as_str()).collect()),
         "open closed"
     );
@@ -60,7 +56,7 @@ fn the_parts_vocabularies_are_spelt_exactly() {
         (
             Effort::parse("xhigh"),
             Effort::parse("none"),
-            Verdict::parse("wont-fix")
+            Severity::parse("blocker")
         ),
         (None, None, None)
     );

@@ -165,3 +165,44 @@ fn filled() -> ReviewFields {
     }
     full
 }
+
+/// A finding's place is a relative path and a line (and column), numbers
+/// from 1 without leading zeros: one rule for every artifact's findings.
+#[test]
+fn a_findings_place_is_a_relative_path_and_its_line() {
+    let placed = |place: Option<&str>| {
+        let mut review = fields();
+        review.rounds[0].findings[0].location = place.map(String::from);
+        Review::new(review)
+    };
+    for place in [
+        None,
+        Some("src/store.rs:1"),
+        Some("src/store.rs:42:7"),
+        Some(".github/ci.yml:3"),
+        Some("src/a..b.rs:1"),
+        Some("a/-b.rs:1"),
+    ] {
+        assert!(placed(place).is_ok(), "{place:?}");
+    }
+    for place in [
+        "src/store.rs",
+        "src/store.rs:0",
+        "src/store.rs:042",
+        "src/store.rs:4:0",
+        "src/a b.rs:4",
+        "../etc/passwd:1",
+        "-rf.rs:1",
+        "./a.rs:1",
+        "a/./b.rs:1",
+        "a//b.rs:1",
+        "a/:1",
+        "/etc/passwd:1",
+    ] {
+        assert_eq!(
+            placed(Some(place)).unwrap_err().field,
+            "rounds/0/findings/0/location",
+            "{place}"
+        );
+    }
+}

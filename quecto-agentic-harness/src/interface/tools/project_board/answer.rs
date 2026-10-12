@@ -251,23 +251,6 @@ fn quarantined_json(file: &QuarantinedFile) -> Value {
 /// A task in the board's own field names, every field present.
 pub fn task_json(task: &Task) -> Value {
     let task = task.fields();
-    let reviews: Vec<Value> = task
-        .reviews
-        .iter()
-        .map(|review| {
-            json!({
-                "id": slug_json(&review.id),
-                "round": review.round,
-                "reviewer": identity_json(&review.reviewer),
-                "at": review.at.as_str(),
-                "severity": review.severity.as_str(),
-                "location": review.location,
-                "finding": review.finding,
-                "verdict": review.verdict.as_str(),
-                "proving_test": review.proving_test,
-            })
-        })
-        .collect();
     json!({
         "id": slug_json(&task.id),
         "title": task.title,
@@ -282,7 +265,6 @@ pub fn task_json(task: &Task) -> Value {
             "since": claim.since.as_str(),
             "expires": claim.expires.as_str(),
         })),
-        "reviews": reviews,
         "prs": task.prs,
         "created": task.created.as_str(),
         "updated": task.updated.as_str(),

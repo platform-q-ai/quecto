@@ -27,7 +27,6 @@ fn fields() -> TaskFields {
             since: at("09:00:00"),
             expires: at("11:00:00"),
         }),
-        reviews: vec![],
         prs: vec![2482, 2483],
         created: at("08:00:00"),
         updated: at("09:05:00"),
