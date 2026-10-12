@@ -206,3 +206,25 @@ fn which(program: &str) -> std::path::PathBuf {
         .find(|path| path.is_file())
         .unwrap_or_else(|| panic!("no {program} on the PATH"))
 }
+
+/// The call's cancel flag reaches the composed git store (#2513): a write
+/// of a cancelled call pushes nothing.
+#[test]
+fn a_cancelled_calls_write_lands_nothing() {
+    let (_dir, work) = repository();
+    let writer = build_project_board_handles(&environment(&work, Access::Write)).unwrap();
+    run(&writer.operations, r#"{"op": "bootstrap"}"#);
+    let mut cancelled = environment(&work, Access::Write);
+    cancelled.cancelled = Some(std::sync::Arc::new(std::sync::atomic::AtomicBool::new(
+        true,
+    )));
+    let handles = build_project_board_handles(&cancelled).unwrap();
+    let refused = run(
+        &handles.operations,
+        r#"{"op": "create", "task": "a", "title": "A"}"#,
+    );
+    assert_eq!(refused["ok"], json!(false), "{refused}");
+    assert!(refused.to_string().contains("cancelled"), "{refused}");
+    let listed = run(&writer.operations, r#"{"op": "list"}"#);
+    assert_eq!(listed["tasks"], json!([]), "{listed}");
+}

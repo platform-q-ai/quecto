@@ -557,6 +557,7 @@ fn a_parent_only_tool_a_child_lacks_is_no_warning() {
     reg.set_execution_profile_context(ToolProfileContext::Child);
     let snapshot = InheritedToolPolicySnapshot::new(BTreeMap::from([
         ("board".to_string(), ProfileAvailabilityScope::Parent),
+        ("gone".to_string(), ProfileAvailabilityScope::None),
         ("nope".to_string(), ProfileAvailabilityScope::Both),
     ]));
     assert_eq!(

@@ -16,8 +16,8 @@ use futures::FutureExt;
 /// text"), with only the changes the PR lists to match the ops on master.
 const STORED: &str = r#"Project board for this repo: the shared list of tasks people and agents plan, claim and finish. Tasks live on the repo's quecto/board branch and are written only through this tool, never by editing the branch. Each op is one call, {"op":"<name>", ...named fields}, answering JSON: {"ok":true,...} or {"ok":false,"error":{"code","field","message"}}. Ids are slugs (a-z, 0-9, -). Statuses: draft, ready, claimed, in_progress, review, blocked, done, archived.
 Read: list(status|parent|dependents_of, at most one filter), show(task), list_ready (ready tasks whose dependencies are done or archived), list_takeable (held tasks whose claim expired). Listings show a summary per task; show(task) gives the whole task. Listings are advice; every change is checked against the board when it is written.
-Plan: create(task,title,kind,description,status draft|ready,parent,depends_on); update_draft(task, any of title,description,parent,depends_on, expected_updated) edits a draft only; pass the updated you read as expected_updated so a newer edit is never overwritten. Anyone may create, edit a draft, move it to ready, or archive a draft, ready or done task with move(task,to archived).
-Work: move(task,to claimed) takes a ready task for 2 hours; renew(task) before it lapses while you work; take_over(task) only once a claim has expired; move(task,to ready) hands it back to ready. Only the claim holder moves a held task: claimed to in_progress|blocked|ready, in_progress to review|blocked|ready, review to in_progress (or done when no pull request is linked), blocked to in_progress. Once its claim has expired, anyone may move a review or blocked task to ready. link_pr(task,pr) and unlink_pr(task,pr) are the holder's. A task with linked pull requests is done only when all of them have merged: link_pr and moving to review check this automatically, and complete(task) asks again (anyone may call it). Never move a task to done by hand while a pull request is linked.
+Plan: create(task,title,kind,description,status draft|ready,parent,depends_on); update_draft(task, any of title,description,parent,depends_on, expected_updated) edits a draft only; pass the updated you read as expected_updated so a newer edit is never overwritten. Anyone may create, edit a draft, move it to ready, or archive a draft, ready or done task with move(task,to archived). Anyone may move a ready task back to draft.
+Work: move(task,to claimed) takes a ready task for 2 hours; renew(task) before it lapses while you work; take_over(task) only once a claim has expired; move(task,to ready) hands it back to ready. Only the claim holder moves a held task: claimed to in_progress|blocked|ready, in_progress to review|blocked|ready, review to in_progress|ready (or done when no pull request is linked), blocked to in_progress|ready. Once its claim has expired, or a task has none, anyone may move a review or blocked task to ready. link_pr(task,pr) and unlink_pr(task,pr) are the holder's. A task with linked pull requests is done only when all of them have merged: link_pr and moving to review check this automatically, and complete(task) asks again (anyone may call it). Never move a task to done by hand while a pull request is linked.
 Repair: clear_set_aside(path, object, repeated) removes a file the board could not read (listed under quarantined, with its object); repeated, for a task file that appears twice, maps its path to {"keep":object,"seen":[objects]} or {"drop":[objects]}, the objects its copies list. Use it only when told to.
 On "stale" re-read with show and redo your change; on "contended" call again; on "clock_ahead" or "task_ahead" stop and report: this machine's clock is wrong. A "clock" note on an answer means writes ran without an outside time check."#;
 
@@ -186,4 +186,104 @@ fn the_schema_is_the_parsers() {
     assert_eq!(schema["properties"]["status"]["enum"], json!(statuses));
     let kinds: Vec<&str> = TaskKind::ALL.iter().map(|kind| kind.as_str()).collect();
     assert_eq!(schema["properties"]["kind"]["enum"], json!(kinds));
+}
+
+/// A non-listing answer is the shared path's, unchanged: no key added.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_non_listing_answer_is_the_shared_paths() {
+    let text = r#"{"op":"show","task":"nope"}"#;
+    let tool = BoardTool::new(site(Some(memory_board)));
+    let shown: Value = serde_json::from_str(&tool.execute(text).await.unwrap().content).unwrap();
+    let shared = crate::interface::tools::project_board::run(
+        &memory_board(&environment()).unwrap().operations,
+        text,
+    );
+    assert_eq!(shown, shared);
+}
+
+/// An op the tool does not take is refused with the ones it does, never
+/// named.
+#[tokio::test]
+async fn an_op_the_tool_does_not_take_is_refused_with_its_ops() {
+    let tool = BoardTool::new(site(Some(memory_board)));
+    for op in ["nope", "bootstrap"] {
+        let refused = tool.execute(&json!({"op": op}).to_string()).await.unwrap();
+        let answer: Value = serde_json::from_str(&refused.content).unwrap();
+        assert!(refused.is_error, "{answer}");
+        assert_eq!(answer["error"]["field"], json!("op"));
+        let message = answer["error"]["message"].as_str().unwrap();
+        assert!(
+            message.contains("list_takeable") && !message.contains("bootstrap"),
+            "{message}"
+        );
+    }
+}
+
+/// A board with many files set aside, each with a long path.
+fn quarantined_board(_: &ProjectBoardEnvironment) -> Result<ProjectBoardHandles, BuildError> {
+    let store = MemoryBoardStore::default();
+    store.bootstrap().unwrap();
+    for index in 0..300 {
+        store.set_aside_stray(
+            &format!("tasks/stray-{index}-{}", "p".repeat(200)),
+            "a stray",
+        );
+    }
+    let operations = assembled(
+        Arc::new(store.client()),
+        Arc::new(SystemBoardClock::default()),
+        Arc::new(QueryListings(QueryBoard::new(Arc::new(store.client())))),
+        Err(NoPullRequestHost::NotAPullRequestHost),
+    )
+    .map_err(|error| BuildError::Unavailable(error.to_string()))?;
+    Ok(ProjectBoardHandles { operations })
+}
+
+/// The files a listing shows set aside are within the cap too, ending with
+/// how many more there are.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_listing_caps_what_it_shows_set_aside() {
+    let tool = BoardTool::new(site(Some(quarantined_board)));
+    let listed = tool.execute(r#"{"op":"list"}"#).await.unwrap();
+    assert!(
+        listed.content.len() <= MAX_LISTING_BYTES,
+        "{}",
+        listed.content.len()
+    );
+    let answer: Value = serde_json::from_str(&listed.content).unwrap();
+    let shown = answer["quarantined"].as_array().unwrap().len();
+    assert!(shown > 10, "{shown}");
+    assert_eq!(answer["quarantined_more"], json!(300 - shown));
+}
+
+static SEEN_CANCEL: std::sync::Mutex<Option<Arc<std::sync::atomic::AtomicBool>>> =
+    std::sync::Mutex::new(None);
+
+/// Board work that waits, holding the call's cancel flag, until it is set.
+fn waiting_board(environment: &ProjectBoardEnvironment) -> Result<ProjectBoardHandles, BuildError> {
+    let flag = environment
+        .cancelled
+        .clone()
+        .expect("the tool passes a cancel flag");
+    *SEEN_CANCEL.lock().unwrap() = Some(Arc::clone(&flag));
+    let until = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !flag.load(std::sync::atomic::Ordering::SeqCst) && std::time::Instant::now() < until {
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    Err(BuildError::Unavailable("cancelled".into()))
+}
+
+/// A call dropped while its work runs (its turn interrupted) sets the flag
+/// the board's store checks before it pushes.
+#[tokio::test(flavor = "multi_thread")]
+async fn dropping_a_call_sets_its_cancel_flag() {
+    let tool = BoardTool::new(site(Some(waiting_board)));
+    let call = tool.execute(r#"{"op":"list"}"#);
+    let early = tokio::time::timeout(std::time::Duration::from_millis(200), call).await;
+    assert!(early.is_err(), "the call was still running");
+    let flag = SEEN_CANCEL.lock().unwrap().clone().expect("the work ran");
+    assert!(
+        flag.load(std::sync::atomic::Ordering::SeqCst),
+        "dropping the call set the flag"
+    );
 }
