@@ -189,7 +189,17 @@ async fn the_answers_name_task_items() {
         .filter(|event| event["action"] == "task_item_created")
         .collect();
     assert_eq!(created.len(), 1, "{events:?}");
-    assert_eq!(created[0]["detail"], r#"{"task_item": 1}"#, "{events:?}");
+    assert_eq!(created[0]["detail"], r#"{"task_item":1}"#, "{events:?}");
+    // A detail naming its task among other keys (sorted, as the board
+    // writes them) names its task item in the same place.
+    let reserved: Vec<&Value> = events
+        .iter()
+        .filter(|event| event["action"] == "files_reserved")
+        .collect();
+    assert_eq!(
+        reserved[0]["detail"], r#"{"paths":["src/a.rs"],"task_item":1}"#,
+        "{events:?}"
+    );
     for event in events {
         assert_ne!(event["action"], "task_created", "{event}");
         let detail = event["detail"].as_str().unwrap_or_default();

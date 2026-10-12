@@ -168,13 +168,19 @@ a bare `null` (#2394). Otherwise only the calling syntax changed,
 (`BOARD_OPS`) is the one table of them; the tool schema and the dispatcher's
 argument binding are rendered from and held to it.
 
-The swarm's tasks are being renamed task items (#2478). The tool also takes
-`task_item`, `task_items`, `task_item_create`, `verify_task_item` and
-`revalidate_task_item` for the ops below named by their old names (the
-`OP_ALIASES` table beside `BOARD_OPS`), and `task_item_id` for `task_id` on
-every op that takes it; a call giving both `task_id` and `task_item_id` with
-different values is refused (`calling`). Board text, events and records keep
-the old names.
+The swarm's tasks are task items (#2478). The tool advertises `task_item`,
+`task_items`, `task_item_create`, `verify_task_item` and `revalidate_task_item`
+for the ops below named by their old names (the `OP_ALIASES` table beside
+`BOARD_OPS`), and `task_item_id` for `task_id` on every op that takes it; the
+old names are still accepted and mean the same. A call giving both `task_id`
+and `task_item_id` with different values is refused (`calling`). Agents read
+task items (slice B): the tool presents the board's answers and refusals in
+those words (`summary`'s `task_item_count` and `task_items`, a file row's
+`task_item`, `release_files`' `task_item_id`, the events' `task_item_created`
+with `{"task_item": N}`, recovery hints as calls such as
+`revoke(task_item_id, reason)`, `unknown task item`), while the board file, its
+events, its refusals, the `swarm_op` records and the golden fixtures keep the
+old names. The table below names the board's own methods.
 
 | Op | Fields (JSON types; defaults) | Result | Who |
 |---|---|---|---|
@@ -324,7 +330,7 @@ member, `idle` meaning it has written no board event for 300 seconds; and
 `unknown` for anything else, including an owner id that is not text (only a board edited from outside holds one). An `active` or `idle` owner is named as a `send`
 recipient in `contact` (`{"op":"send","request":...,"recipient":"<owner id>","body":...}`); for every
 other owner `contact` is null and `recovery` says how the coordinator moves the
-work (`recover(task) or revoke(task, reason)` for a dead owner; resume the run,
+work (`recover(task_item_id) or revoke(task_item_id, reason)` for a dead owner, as the tool presents the board's `recover(task) or revoke(task, reason)`; resume the run,
 then `revoke`, for a lost one). Board activity is the only liveness the store
 sees: an idle owner may be mid-turn running a long command, so `idle` is a
 prompt to look (or `send`), not proof of a stall, and nothing follows from it
@@ -613,7 +619,7 @@ sub-agents, workflows, a resumed coordinator, and a worker's own helpers.
   the board (`_status`, `_run_totals`, `tasks`). While the run is live, it
   reports a task claimed by a worker that is not starting or in a turn, and
   ready work while no worker is working: "Swarm work is stranded … N claimed
-  task(s) held by workers not working, M ready task(s) with no worker
+  task item(s) held by workers not working, M ready task item(s) with no worker
   working". The coordinator's own claims never count, and a board read older
   than one already applied is dropped. It isn't reported again until it grows
   (a new claim or more ready work), or a worker it names (any worker, for

@@ -6,6 +6,13 @@ use serde::Deserialize;
 /// Type name of the harness's own wake nudges: never a human instruction.
 pub(super) const SWARM_WAKE: &str = "swarm_wake";
 
+/// The wake a member re-armed after a provider failure reads (#1721), in
+/// task-item words (#2478 slice B, owner-approved 2026-10-12).
+const RESUMED_WAKE: &str = "The swarm was resumed after a provider failure interrupted your turn. Continue your interrupted work: inspect summary using your last event_cursor, read and acknowledge relevant durable inbox messages, work only on actionable task items and yield when none remain.";
+
+/// The wake a member reads when swarm work changed (#2478 slice B wording).
+const CHANGED_WAKE: &str = "Swarm work changed. Inspect summary using your last event_cursor, then read and acknowledge relevant durable inbox messages. Work only on actionable task items; yield when none remain.";
+
 #[derive(Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum Action {
@@ -344,17 +351,27 @@ pub(super) async fn handle_wake(ctx: &mut super::uds::DispatchCtx<'_>, generatio
             let runnable = matches!(receipt.status, RunStatus::Setup | RunStatus::Running);
             let resume_turn = runnable && ctx.session.take_pending_resume_turn();
             if resume_turn {
-                super::uds::handle_prompt(ctx, super::uds::PromptCommand {
-                    id: None, type_name: SWARM_WAKE.into(),
-                    message: "The swarm was resumed after a provider failure interrupted your turn. Continue your interrupted work: inspect summary using your last event_cursor, read and acknowledge relevant durable inbox messages, work only on actionable tasks and yield when none remain.".into(),
-                    streaming_behavior: None,
-                }).await;
+                super::uds::handle_prompt(
+                    ctx,
+                    super::uds::PromptCommand {
+                        id: None,
+                        type_name: SWARM_WAKE.into(),
+                        message: RESUMED_WAKE.into(),
+                        streaming_behavior: None,
+                    },
+                )
+                .await;
             } else if receipt.wake_allowed {
-                super::uds::handle_prompt(ctx, super::uds::PromptCommand {
-                    id: None, type_name: SWARM_WAKE.into(),
-                    message: "Swarm work changed. Inspect summary using your last event_cursor, then read and acknowledge relevant durable inbox messages. Work only on actionable tasks; yield when none remain.".into(),
-                    streaming_behavior: None,
-                }).await;
+                super::uds::handle_prompt(
+                    ctx,
+                    super::uds::PromptCommand {
+                        id: None,
+                        type_name: SWARM_WAKE.into(),
+                        message: CHANGED_WAKE.into(),
+                        streaming_behavior: None,
+                    },
+                )
+                .await;
             }
         }
         Err(error) => match store_failure(&error) {

@@ -367,7 +367,7 @@ pub fn require_unsubmitted(status: &str) -> Result<(), BoardError> {
         )),
         unknown => Err(BoardError::new(
             RefusalKind::WrongState,
-            format!("task status '{unknown}' is not a known status; no revision permitted"),
+            format!("task item status '{unknown}' is not a known status; no revision permitted"),
         )),
     }
 }

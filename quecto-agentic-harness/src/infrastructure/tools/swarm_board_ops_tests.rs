@@ -342,15 +342,25 @@ async fn every_mapped_op_returns_exactly_what_the_board_method_returns() {
         request["op"] = json!(spec.name);
         let result = execute(&by_op, &request.to_string()).await;
         match direct(&by_method, spec.name, method_args) {
+            // As the member reads it: in task-item words (#2478 slice B).
             Ok(expected) => {
                 assert!(!result.is_error, "{}: {}", spec.name, result.content);
                 let answer: Value = serde_json::from_str(&result.content).unwrap();
+                let expected = crate::infrastructure::tools::swarm_output::task_item_answer(
+                    spec.name, expected,
+                );
                 assert_eq!(masked(answer), masked(expected), "{}", spec.name);
             }
-            Err(refusal) => {
+            Err(DomainError::Tool(refusal)) => {
                 assert!(result.is_error, "{}: {}", spec.name, result.content);
-                assert_eq!(result.content, refusal.to_string(), "{}", spec.name);
+                let quoted = refusal.strip_prefix("swarm: ").expect("a board refusal");
+                let message: String = serde_json::from_str(quoted).unwrap();
+                let presented =
+                    crate::infrastructure::tools::swarm_output::task_item_refusal(&message);
+                let expected = DomainError::Tool(format!("swarm: {}", Value::String(presented)));
+                assert_eq!(result.content, expected.to_string(), "{}", spec.name);
             }
+            Err(other) => panic!("{}: {other}", spec.name),
         }
     }
 }
@@ -384,7 +394,7 @@ async fn a_missing_argument_names_the_op_and_field() {
     let (_directory, context) = board();
     let text = refused(&context, r#"{"op":"claim"}"#).await;
     assert!(
-        text.contains("claim: missing required argument task_id"),
+        text.contains("claim: missing required argument task_item_id"),
         "{text}"
     );
     let text = refused(&context, r#"{"op":"release","task_id":1}"#).await;
@@ -599,7 +609,8 @@ async fn inbox_and_ack_are_refused_while_paused() {
     for (op, arguments) in [
         ("inbox", r#"{"op":"inbox"}"#),
         ("ack", r#"{"op":"ack","message_id":1}"#),
-        ("tasks", r#"{"op":"tasks"}"#),
+        // Named as the schema advertises it (#2478 slice B).
+        ("task_items", r#"{"op":"tasks"}"#),
     ] {
         let text = refused(&context, arguments).await;
         assert!(
