@@ -43,7 +43,7 @@ fn an_ended_or_unreadable_run_says_what_to_do() {
 #[test]
 fn an_unknown_op_lists_the_valid_ones_and_how_to_end_a_run() {
     let message = unknown_op("stop");
-    for op in VALID_OPS {
+    for op in valid_ops() {
         assert!(message.contains(op), "{op}: {message}");
     }
     assert!(
@@ -77,7 +77,7 @@ fn the_valid_ops_are_the_harness_ops_and_the_board_ops() {
     )
     .collect();
     assert_eq!(expected.len(), 9 + 25, "the harness's ops and the table's");
-    let mut ops = VALID_OPS.to_vec();
+    let mut ops = valid_ops();
     expected.sort_unstable();
     ops.sort_unstable();
     assert_eq!(ops, expected);
@@ -119,7 +119,14 @@ fn the_valid_ops_are_exactly_the_schema_enum() {
         .iter()
         .map(|op| op.as_str().unwrap())
         .collect();
-    let mut ops = VALID_OPS.to_vec();
+    // The schema also takes each op's task-item name (#2478), which the
+    // guidance does not list yet.
+    let aliases: Vec<&str> = crate::infrastructure::tools::swarm_board_ops::OP_ALIASES
+        .iter()
+        .map(|(alias, _)| *alias)
+        .collect();
+    schema_ops.retain(|op| !aliases.contains(op));
+    let mut ops = valid_ops();
     schema_ops.sort_unstable();
     ops.sort_unstable();
     assert_eq!(ops, schema_ops);
@@ -228,7 +235,7 @@ async fn removed_ops_are_unknown_and_name_the_structured_alternative() {
         assert!(!directory.path().join("ran").exists(), "{request} ran code");
     }
     for removed in ["run", "status", "output", "cancel"] {
-        assert!(!VALID_OPS.contains(&removed), "{removed} is still valid");
+        assert!(!valid_ops().contains(&removed), "{removed} is still valid");
     }
 }
 
@@ -307,7 +314,7 @@ fn an_op_not_a_string_lists_every_valid_op() {
         message.starts_with("op must be a string naming one of: "),
         "{message}"
     );
-    for op in VALID_OPS {
+    for op in valid_ops() {
         assert!(message.contains(op), "{op}: {message}");
     }
 }
