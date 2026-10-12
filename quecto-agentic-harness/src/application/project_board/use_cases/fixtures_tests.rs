@@ -25,7 +25,7 @@ pub fn slug(text: &str) -> Slug {
 pub fn set_aside_task(id: &str) -> crate::application::project_board::dto::ProjectBoardError {
     crate::application::project_board::dto::ProjectBoardError::Quarantined {
         key: crate::application::project_board::ports::ArtifactKey::Task(slug(id)),
-        path: format!("tasks/{id}.json"),
+        path: format!("tasks/{id}.md"),
     }
 }
 

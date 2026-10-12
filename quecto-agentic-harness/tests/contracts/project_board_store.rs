@@ -403,7 +403,7 @@ pub fn check_carried_set_aside(
         change.execute(&Slug::parse("a").unwrap(), &BoardOp::AddPr(7)),
         Err(ProjectBoardError::Quarantined {
             key: ArtifactKey::Task(Slug::parse("b").unwrap()),
-            path: "tasks/b.json".into(),
+            path: "tasks/b.md".into(),
         })
     );
     let head = alice.read().unwrap().head;

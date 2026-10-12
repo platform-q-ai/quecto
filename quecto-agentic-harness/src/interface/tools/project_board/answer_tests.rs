@@ -100,7 +100,7 @@ board_errors! {
     },
     E::Quarantined { .. } => E::Quarantined {
         key: ArtifactKey::Task(slug("a")),
-        path: "tasks/a.json".into(),
+        path: "tasks/a.md".into(),
     },
     E::Duplicate { .. } => E::Duplicate {
         key: ArtifactKey::Plan(slug("a"), 2),
@@ -439,7 +439,7 @@ fn a_set_aside_artifact_is_named_by_its_kind_task_and_number() {
         board_refused("show", &error)["error"].clone()
     };
     assert_eq!(
-        refused(ArtifactKey::Task(slug("t")), "tasks/t.json"),
+        refused(ArtifactKey::Task(slug("t")), "tasks/t.md"),
         json!({
             "code": "set_aside",
             "task": "t",
