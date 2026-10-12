@@ -21,12 +21,6 @@ fn line_ends_become_one_lf_and_edge_blank_lines_go() {
     }
 }
 
-#[test]
-fn text_is_made_nfc() {
-    assert_eq!(settled(text, "e\u{301}t\u{e9}"), "\u{e9}t\u{e9}");
-    assert_eq!(settled(text, "\u{212b}"), "\u{c5}");
-}
-
 /// A trailing space or tab goes only where no hard break can form: a
 /// single space, or before a blank line or the end.
 #[test]
@@ -89,7 +83,6 @@ fn a_line_is_trimmed_of_spaces_and_tabs_at_both_edges() {
     for (raw, kept) in [
         ("  Title \t", "Title"),
         ("\tFix the build ", "Fix the build"),
-        ("Cafe\u{301}", "Caf\u{e9}"),
         // Only spaces and tabs: a no-break space or a selector is kept.
         ("\u{a0}Ship it\u{fe0f}", "\u{a0}Ship it\u{fe0f}"),
     ] {
@@ -107,17 +100,57 @@ fn text_is_entered_only_once_normalised() {
     assert_eq!(refused.field, "title");
 }
 
-/// NFC that would make or unmake markdown (a `>` composed into `≯`, a
-/// Greek varia into a backtick, a Greek question mark into `;`) is not
-/// taken: the text is left as written, for the codec to refuse.
+/// No NFC is taken: text written decomposed, or with characters NFC
+/// would turn into markup (`>` and U+0338, U+1FEF, U+037E, the Kelvin
+/// sign), is left as written, for the codec's NFC rule to refuse with its
+/// line.
 #[test]
-fn nfc_that_changes_markdown_punctuation_is_not_taken() {
-    for raw in [">\u{338} a", "\u{1fef}x\u{1fef}", "&lt\u{37e}b"] {
+fn nfc_is_never_taken() {
+    for raw in [
+        "Cafe\u{301}",
+        "\u{212b}",
+        ">\u{338} a",
+        "\u{1fef}x\u{1fef}",
+        "&lt\u{37e}b",
+        "<\u{212a}bd>",
+        "[cafe\u{301}]",
+    ] {
         assert_eq!(settled(text, raw), raw, "{raw:?}");
         assert_eq!(settled(line, raw), raw, "{raw:?}");
     }
-    // NFC that keeps the punctuation is taken.
-    assert_eq!(settled(text, "> Cafe\u{301}"), "> Caf\u{e9}");
+}
+
+/// From a line that may start an HTML block on, the text is kept as
+/// written: an HTML block keeps its lines' spaces.
+#[test]
+fn from_an_html_block_on_the_text_is_kept_as_written() {
+    for raw in [
+        "<!-- a \nb -->",
+        "<div>\nx \ny\n</div>",
+        "  <pre>\na \n</pre>",
+        "a\n\n<p>b \nc",
+    ] {
+        assert_eq!(settled(text, raw), raw, "{raw:?}");
+    }
+    // Before it, prose is normalised.
+    assert_eq!(
+        settled(text, "a \nb\n\n<div>\nx \ny"),
+        "a\nb\n\n<div>\nx \ny"
+    );
+}
+
+/// A link title may run on across lines, showing a line's trailing space:
+/// a paragraph with a title's start after `](` or `]:` is kept as written.
+#[test]
+fn a_paragraph_with_a_link_title_is_kept_as_written() {
+    for raw in [
+        "[a](/u \"t \nx\")",
+        "[a](/u 't \nx')",
+        "[a](/u (t \nx))",
+        "[a]: /u \"t \nx\"",
+    ] {
+        assert_eq!(settled(text, raw), raw, "{raw:?}");
+    }
 }
 
 /// A trailing space goes only after a safe character, and only in a

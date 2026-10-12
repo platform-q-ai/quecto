@@ -123,15 +123,6 @@ fn an_edit_whose_text_was_never_normalised_is_refused() {
                 depends_on: None,
             },
         ),
-        (
-            "description",
-            DraftEdit {
-                title: None,
-                description: Some("Cafe\u{301}".into()),
-                parent: None,
-                depends_on: None,
-            },
-        ),
     ] {
         let refused = edit_draft(&task(Draft), &edit, &at("10:00:00"));
         assert!(

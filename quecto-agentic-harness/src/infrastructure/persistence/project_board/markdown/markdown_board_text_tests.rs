@@ -1,34 +1,27 @@
 //! The board text normaliser against a reader (#2481 D4): normalising
 //! text the domain accepts never changes what GitHub shows. comrak, with
-//! the oracle's GitHub options, renders the text before and after: the
-//! two agree once both are NFC (canonically equal text shows the same).
+//! the oracle's GitHub options and raw HTML rendered, renders the text
+//! before and after, and the two agree exactly.
 use super::*;
 use crate::domain::project_board::value_objects::board_text;
 use crate::domain::project_board::value_objects::schema_error::markdown;
-use unicode_normalization::UnicodeNormalization;
 
 /// What GitHub shows for `text`: its HTML as comrak renders it with the
-/// oracle's GitHub options (block structure, code and code-span contents,
-/// text), each text node made NFC (canonically equal text shows the
-/// same; markup is compared as written).
+/// oracle's GitHub options, raw HTML rendered as written (so an HTML
+/// block that moves shows), comparing block structure, code and code-span
+/// contents, and text.
 fn shown(text: &str) -> String {
-    use comrak::nodes::NodeValue;
-    let options = super::oracle::comrak_reader::comrak_options();
-    let arena = comrak::Arena::new();
-    let root = comrak::parse_document(&arena, text, &options);
-    for node in root.descendants() {
-        let mut data = node.data.borrow_mut();
-        match &mut data.value {
-            NodeValue::Text(literal) => *literal = literal.nfc().collect(),
-            NodeValue::Code(code) => code.literal = code.literal.nfc().collect(),
-            NodeValue::CodeBlock(block) => block.literal = block.literal.nfc().collect(),
-            NodeValue::Math(math) => math.literal = math.literal.nfc().collect(),
-            _ => {}
-        }
-    }
-    let mut html = vec![];
-    comrak::format_html(root, &options, &mut html).expect("comrak renders to memory");
-    String::from_utf8(html).expect("comrak renders UTF-8")
+    let mut options = super::oracle::comrak_reader::comrak_options();
+    options.render.unsafe_ = true;
+    comrak::markdown_to_html(text, &options)
+}
+
+/// What the normaliser may change: spacing, line ends and blank lines;
+/// every other character, in order, is the text's own.
+fn content(text: &str) -> String {
+    text.chars()
+        .filter(|c| !matches!(c, ' ' | '\t' | '\r' | '\n'))
+        .collect()
 }
 
 /// Pieces of text from chat, imports and editors: what D4 fixes (CR,
@@ -98,6 +91,12 @@ const PIECES: &[&str] = &[
     "`x\n> y`",
     "$x \n",
     "<https://a \n",
+    "<!-- ",
+    "\n<div>\n",
+    "\n<pre>\n",
+    "\u{212a}",
+    "[a](/u \"t \n",
+    "]: /u 't \n",
 ];
 
 /// A small deterministic generator (an LCG), so a failure replays.
@@ -123,18 +122,14 @@ impl Seeded {
 fn normalising_never_changes_what_a_reader_shows() {
     let mut seeded = Seeded(2481);
     let (mut checked, mut held) = (0, 0);
-    let punctuation =
-        |text: &str| -> String { text.chars().filter(char::is_ascii_punctuation).collect() };
     for _ in 0..20_000 {
         let raw = seeded.text();
         let normal = board_text::text(&raw);
         assert_eq!(board_text::text(&normal), normal, "{raw:?}");
-        // NFC, unless NFC would change the text's ASCII punctuation.
-        let nfc: String = normal.nfc().collect();
-        assert!(
-            !normal.contains('\r') && (nfc == normal || punctuation(&nfc) != punctuation(&normal)),
-            "{raw:?}"
-        );
+        // Only spacing, line ends and blank lines change: no NFC, so text
+        // written decomposed comes back as written.
+        assert!(!normal.contains('\r'), "{raw:?}");
+        assert_eq!(content(&normal), content(&raw), "{raw:?}");
         if markdown("description", &normal, 65_536).is_err() {
             continue;
         }
@@ -160,7 +155,6 @@ fn each_class_d4_fixes_is_held_once_normalised() {
         "Why.\r\nHow.\r\n",
         "a single \nspace",
         "trailing at the end  ",
-        "Cafe\u{301}",
         "abc\n",
         "\n\nedges\n\n",
     ] {

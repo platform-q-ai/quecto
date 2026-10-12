@@ -283,7 +283,6 @@ fn a_task_entered_holds_only_normalised_text_and_one_read_back_more() {
             "title",
             (|t: &mut TaskFields| t.title = " padded ".into()) as fn(&mut TaskFields),
         ),
-        ("title", |t| t.title = "Cafe\u{301}".into()),
         ("description", |t| t.description = "ends\n".into()),
         ("description", |t| t.description = "a \nb".into()),
     ] {
