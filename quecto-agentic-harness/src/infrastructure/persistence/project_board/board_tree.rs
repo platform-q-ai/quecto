@@ -40,7 +40,7 @@ pub use super::cat_file::contents;
 use super::cat_file::{Found, Object, objects};
 use super::git::{Git, GitError, capped, quoted, sanitised, shown_name};
 use super::task_record::{MAX_TASK_FILE_BYTES, decode};
-use crate::application::project_board::ports::{BoardStoreError, QuarantinedFile};
+use crate::application::project_board::ports::{ArtifactKey, BoardStoreError, QuarantinedFile};
 use crate::domain::project_board::entities::task::Task;
 use crate::domain::project_board::value_objects::slug::{MAX_SLUG_BYTES, Slug};
 use std::collections::{BTreeMap, BTreeSet};
@@ -243,9 +243,7 @@ impl Board {
     }
 
     pub fn is_quarantined(&self, id: &Slug) -> Option<&QuarantinedFile> {
-        self.quarantined
-            .iter()
-            .find(|file| file.id.as_ref() == Some(id))
+        self.quarantined.iter().find(|file| file.id() == Some(id))
     }
 }
 
@@ -518,7 +516,7 @@ fn read_tasks(git: &Git, tree: &str, limits: Limits) -> Result<Board, Unread> {
         |board: &mut Board, entry: &Entry, id: Option<Slug>, reason: String, carried: bool| {
             board.quarantined.push(QuarantinedFile {
                 path: format!("tasks/{}", shown_name(&entry.raw)),
-                id,
+                key: id.map(ArtifactKey::Task),
                 // A file's own text can reach the reason: keep what shows.
                 reason: capped(&sanitised(reason.as_bytes())),
                 object: entry.oid.clone(),

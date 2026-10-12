@@ -1,4 +1,5 @@
 use super::*;
+use crate::application::project_board::ports::ArtifactKey;
 use crate::application::project_board::ports::{BoardBootstrap, BoardHead, BoardWrite};
 use crate::domain::project_board::entities::claim::{Claim, Identity};
 use crate::domain::project_board::entities::task::TaskFields;
@@ -82,17 +83,22 @@ fn board(head: &str) -> BoardSnapshot {
             task("c", TaskStatus::Draft, Some("a"), &[]),
             task("d", TaskStatus::Done, None, &["a", "b"]),
         ],
+        plans: vec![],
+        runs: vec![],
+        changes: vec![],
+        reviews: vec![],
+        discussions: vec![],
         quarantined: vec![
             QuarantinedFile {
                 path: "tasks/x.json".into(),
-                id: Some(slug("x")),
+                key: Some(ArtifactKey::Task(slug("x"))),
                 reason: "malformed".into(),
                 object: "a".repeat(40),
                 carried: true,
             },
             QuarantinedFile {
                 path: "tasks/x.txt".into(),
-                id: None,
+                key: None,
                 reason: "not a task file".into(),
                 object: "b".repeat(40),
                 carried: false,
@@ -172,6 +178,11 @@ fn ready_needs_every_dependency_released_and_takeable_an_expired_claim() {
     let snapshot = BoardSnapshot {
         head: BoardHead("c".repeat(40)),
         tasks: listings_board(),
+        plans: vec![],
+        runs: vec![],
+        changes: vec![],
+        reviews: vec![],
+        discussions: vec![],
         quarantined: board("a1").quarantined,
     };
     rebuild(&index, &snapshot).unwrap();
@@ -207,7 +218,7 @@ fn the_index_lists_what_query_board_lists() {
     let memory = MemoryBoardStore::default();
     memory.bootstrap().unwrap();
     let head = memory.read().unwrap().head;
-    let written = memory.write(&head, &listings_board(), "board: seed");
+    let written = memory.write_tasks(&head, &listings_board(), "board: seed");
     assert!(matches!(written, Ok(BoardWrite::Written(_))), "{written:?}");
     memory.quarantine("q-first", "malformed");
     memory.quarantine("q-second", "holds another task");
@@ -325,6 +336,59 @@ fn a_snapshot_head_that_is_not_a_full_commit_id_is_refused() {
         );
     }
     assert!(needs_rebuild(&index.head()));
+}
+
+/// One change to a snapshot.
+type Edit = Box<dyn Fn(&mut BoardSnapshot)>;
+
+/// Until the index keeps every kind (S12), a board holding any kind but
+/// tasks, or a file set aside under such a key, is refused: never listed
+/// as if it held tasks only, nor its file as a stray.
+#[test]
+fn a_board_with_other_kinds_is_refused_until_the_index_keeps_them() {
+    use crate::infrastructure::test_support::board_artifacts::{
+        change, discussion, plan, review, run,
+    };
+    let (_dir, index) = index();
+    let edits: Vec<(&str, Edit)> = vec![
+        ("plans", Box::new(|b| b.plans.push(plan("a", 1)))),
+        ("runs", Box::new(|b| b.runs.push(run("a", 1)))),
+        ("changes", Box::new(|b| b.changes.push(change("a", 1)))),
+        ("reviews", Box::new(|b| b.reviews.push(review("a", 1)))),
+        (
+            "discussions",
+            Box::new(|b| b.discussions.push(discussion("d"))),
+        ),
+        (
+            "runs/a.1.md",
+            Box::new(|b| {
+                b.quarantined.push(QuarantinedFile {
+                    path: "runs/a.1.md".into(),
+                    key: Some(ArtifactKey::Run(slug("a"), 1)),
+                    reason: "malformed".into(),
+                    object: "c".repeat(40),
+                    carried: true,
+                })
+            }),
+        ),
+    ];
+    for (what, edit) in edits {
+        let mut snapshot = board("a1");
+        edit(&mut snapshot);
+        let refused = rebuild(&index, &snapshot);
+        assert!(
+            matches!(
+                &refused,
+                Err(IndexError::Store(BoardStoreError::Unavailable(why))) if why.contains(what)
+            ),
+            "{what}: {refused:?}"
+        );
+        assert!(needs_rebuild(&index.head()), "{what}: nothing built");
+    }
+    assert!(
+        rebuild(&index, &board("a1")).is_ok(),
+        "tasks and strays index"
+    );
 }
 
 #[test]

@@ -22,7 +22,7 @@ fn seed(store: &MemoryBoardStore, fields: TaskFields) {
     })
     .unwrap();
     let head = store.read().unwrap().head;
-    store.write(&head, &[task], "seed").unwrap();
+    store.write_tasks(&head, &[task], "seed").unwrap();
 }
 
 fn held_by_ada(status: TaskStatus) -> TaskFields {
@@ -265,7 +265,7 @@ fn a_task_stamped_at_the_bound_is_built_on_and_a_second_past_it_is_not() {
         })
         .unwrap();
         let head = store.read().unwrap().head;
-        store.write(&head, &[task], "seed").unwrap();
+        store.write_tasks(&head, &[task], "seed").unwrap();
         ChangeBoardTask::new(
             Arc::new(store.client()),
             SetClock::with_reference("09:00:30", Some("09:00:00")),
@@ -345,7 +345,7 @@ fn quick_writes_from_a_fast_clock_never_lock_out_a_right_one() {
     })
     .unwrap();
     let head = store.read().unwrap().head;
-    store.write(&head, &[task], "seed").unwrap();
+    store.write_tasks(&head, &[task], "seed").unwrap();
     let fast = ChangeBoardTask::new(
         Arc::new(store.client_as(person("Ada"))),
         SetClock::with_reference("09:00:55", Some("09:00:00")),

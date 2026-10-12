@@ -66,7 +66,7 @@ fn seeded() -> MemoryBoardStore {
         }),
     ];
     let head = store.read().unwrap().head;
-    store.write(&head, &tasks, "seed").unwrap();
+    store.write_tasks(&head, &tasks, "seed").unwrap();
     store.quarantine("g", "malformed");
     store
 }
@@ -171,7 +171,7 @@ fn ready_counts_an_archived_dependency_as_satisfied() {
         }),
     ];
     let head = store.read().unwrap().head;
-    store.write(&head, &tasks, "seed").unwrap();
+    store.write_tasks(&head, &tasks, "seed").unwrap();
     let ready = QueryBoard::new(Arc::new(store)).ready().unwrap();
     let ids: Vec<_> = ready
         .tasks
@@ -208,7 +208,7 @@ fn every_listing_names_the_head_its_tasks_were_read_at() {
                 ..fields("z")
             })
             .unwrap();
-            board.write(&head, &[z], "board: add z").unwrap();
+            board.write_tasks(&head, &[z], "board: add z").unwrap();
         });
         let found = listing(&QueryBoard::new(Arc::new(store.client())));
         assert_eq!(found.head, read_at);

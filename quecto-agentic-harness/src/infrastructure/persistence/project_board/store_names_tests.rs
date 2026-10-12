@@ -25,7 +25,7 @@ fn a_gitlink_task_file_is_a_stray_and_never_stops_a_write() {
         &[&repos.bob],
     );
     let bob = store(&repos.bob);
-    let moved = written(bob.write(&head, &[task("fresh")], "board: add fresh"));
+    let moved = written(bob.write_tasks(&head, &[task("fresh")], "board: add fresh"));
     assert_eq!(
         sh(
             &repos.remote(),
@@ -38,7 +38,7 @@ fn a_gitlink_task_file_is_a_stray_and_never_stops_a_write() {
         board
             .quarantined
             .iter()
-            .map(|q| (q.path.as_str(), q.id.as_ref().map(Slug::as_str)))
+            .map(|q| (q.path.as_str(), q.id().map(Slug::as_str)))
             .collect::<Vec<_>>(),
         [("tasks/mod.json", None)]
     );
@@ -93,7 +93,7 @@ fn only_json_names_quecto_can_show_are_carried() {
         assert!(!file.path.chars().any(char::is_control), "{:?}", file.path);
         assert!(!file.path.contains('\u{202e}'), "{:?}", file.path);
     }
-    let moved = written(bob.write(&head, &[task("fresh")], "board: add fresh"));
+    let moved = written(bob.write_tasks(&head, &[task("fresh")], "board: add fresh"));
     let names = sh(
         &repos.remote(),
         &[
@@ -145,7 +145,7 @@ fn a_name_twice_where_a_write_drops_one_copy_is_no_duplicate() {
         board.tasks.keys().map(Slug::as_str).collect::<Vec<_>>(),
         ["dup"]
     );
-    let moved = written(bob.write(&head, &[task("fresh")], "board: add fresh"));
+    let moved = written(bob.write_tasks(&head, &[task("fresh")], "board: add fresh"));
     assert_eq!(
         sh(&repos.remote(), &["ls-tree", &format!("{}:tasks", moved.0)])
             .lines()
@@ -219,10 +219,10 @@ fn a_name_twice_where_one_copy_disagrees_with_its_mode_is_read_once() {
             "{mode}"
         );
         assert!(
-            board.quarantined.iter().all(|file| file.id.is_none()),
+            board.quarantined.iter().all(|file| file.id().is_none()),
             "{mode}: {:?}",
             board.quarantined
         );
-        written(bob.write(&head, &[task("fresh")], "board: add fresh"));
+        written(bob.write_tasks(&head, &[task("fresh")], "board: add fresh"));
     }
 }

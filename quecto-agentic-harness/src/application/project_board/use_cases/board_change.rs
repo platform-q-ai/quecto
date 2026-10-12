@@ -91,7 +91,7 @@ pub(super) fn commit(
         let when = checked_now(clock)?;
         let tasks = change(&snapshot, &when)?;
         assert!(!tasks.is_empty(), "a board change writes at least one task");
-        match store.write(&snapshot.head, &tasks, message)? {
+        match store.write_tasks(&snapshot.head, &tasks, message)? {
             BoardWrite::Written(head) => {
                 assert_ne!(
                     head, snapshot.head,
@@ -127,11 +127,7 @@ pub(super) fn task_on<'b>(
     if let Some(task) = board.tasks.iter().find(|task| task.fields().id == *id) {
         return Ok(task);
     }
-    match board
-        .quarantined
-        .iter()
-        .any(|file| file.id.as_ref() == Some(id))
-    {
+    match board.quarantined.iter().any(|file| file.id() == Some(id)) {
         true => Err(ProjectBoardError::Quarantined(id.clone())),
         false => Err(ProjectBoardError::NotFound(id.clone())),
     }

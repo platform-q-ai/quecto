@@ -18,7 +18,7 @@ fn seeded() -> MemoryBoardStore {
         Task::new(fields("a")).unwrap(),
         Task::new(fields("b")).unwrap(),
     ];
-    store.write(&head, &tasks, "seed").unwrap();
+    store.write_tasks(&head, &tasks, "seed").unwrap();
     store.quarantine("b", "malformed");
     store
 }
@@ -180,7 +180,7 @@ fn a_lost_race_is_read_again_and_a_refusal_reported() {
     store.before_next_write(move |_| {
         let head = other.read().unwrap().head;
         other
-            .write(&head, &[Task::new(fields("c")).unwrap()], "other")
+            .write_tasks(&head, &[Task::new(fields("c")).unwrap()], "other")
             .unwrap();
     });
     let clock = SetClock::at("10:00:00");
@@ -229,7 +229,7 @@ fn the_memory_store_judges_as_the_git_store_does() {
     let stale = head;
     let fresh = store.read().unwrap().head;
     store
-        .write(&fresh, &[Task::new(fields("c")).unwrap()], "other")
+        .write_tasks(&fresh, &[Task::new(fields("c")).unwrap()], "other")
         .unwrap();
     store.refuse_next_write("a hook said no");
     assert_eq!(

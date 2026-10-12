@@ -13,11 +13,11 @@ fn a_write_past_the_read_bound_is_invalid_and_one_at_it_is_written() {
     let mut alice = store(&repos.alice);
     alice.limits.board_bytes = size("a") + size("b");
     let head = created(&alice);
-    let full = written(alice.write(&head, &[task("a"), task("b")], "board: add a, b"));
+    let full = written(alice.write_tasks(&head, &[task("a"), task("b")], "board: add a, b"));
     let mut bob = store(&repos.bob);
     bob.limits = alice.limits;
     assert_eq!(ids(&bob.read().unwrap()), ["a", "b"]);
-    let refused = alice.write(&full, &[task("c")], "board: add c");
+    let refused = alice.write_tasks(&full, &[task("c")], "board: add c");
     assert!(
         matches!(&refused, Err(BoardStoreError::InvalidWrite(why)) if why.contains("bytes")),
         "{refused:?}"
@@ -25,12 +25,12 @@ fn a_write_past_the_read_bound_is_invalid_and_one_at_it_is_written() {
     let mut longer = task("a").into_fields();
     longer.title.push('!');
     let longer = Task::new(longer).unwrap();
-    let refused = alice.write(&full, &[longer], "board: rename a");
+    let refused = alice.write_tasks(&full, &[longer], "board: rename a");
     assert!(
         matches!(&refused, Err(BoardStoreError::InvalidWrite(_))),
         "{refused:?}"
     );
-    written(alice.write(&full, &[task("a")], "board: write a again"));
+    written(alice.write_tasks(&full, &[task("a")], "board: write a again"));
 }
 
 /// Only task files a read reads count toward the read bound: files set
@@ -41,7 +41,7 @@ fn only_task_files_a_read_reads_count_toward_the_read_bound() {
     let repos = Repos::new();
     let alice = store(&repos.alice);
     let head = created(&alice);
-    written(alice.write(&head, &[task("a")], "board: add a"));
+    written(alice.write_tasks(&head, &[task("a")], "board: add a"));
     let remote = repos.remote();
     let blob = |bytes: &[u8]| sh_with(&remote, &["hash-object", "-w", "--stdin"], bytes);
     let mut oversize = encode(&task("big")).unwrap();
@@ -62,7 +62,7 @@ fn only_task_files_a_read_reads_count_toward_the_read_bound() {
     for (bound, fits) in [(at_bound, true), (at_bound - 1, false)] {
         let mut bob = store(&repos.bob);
         bob.limits.board_bytes = bound;
-        let write = bob.write(&edited, &[task("b")], "board: add b");
+        let write = bob.write_tasks(&edited, &[task("b")], "board: add b");
         match fits {
             true => assert!(
                 matches!(write, Ok(BoardWrite::Written(_))),
@@ -83,7 +83,7 @@ fn a_write_past_the_tree_bound_is_invalid_and_one_at_it_is_written() {
     let repos = Repos::new();
     let alice = store(&repos.alice);
     let head = created(&alice);
-    let one = written(alice.write(&head, &[task("a")], "board: add a"));
+    let one = written(alice.write_tasks(&head, &[task("a")], "board: add a"));
     // The larger of the board's two trees, its root and `tasks/`.
     let size = [format!("{}^{{tree}}", one.0), format!("{}:tasks", one.0)]
         .iter()
@@ -96,8 +96,8 @@ fn a_write_past_the_tree_bound_is_invalid_and_one_at_it_is_written() {
         .unwrap();
     let mut bob = store(&repos.bob);
     bob.limits.tree_bytes = size;
-    let again = written(bob.write(&one, &[task("a")], "board: write a again"));
-    let refused = bob.write(&again, &[task("b")], "board: add b");
+    let again = written(bob.write_tasks(&one, &[task("a")], "board: write a again"));
+    let refused = bob.write_tasks(&again, &[task("b")], "board: add b");
     assert!(
         matches!(&refused, Err(BoardStoreError::InvalidWrite(why)) if why.contains("tree")),
         "{refused:?}"

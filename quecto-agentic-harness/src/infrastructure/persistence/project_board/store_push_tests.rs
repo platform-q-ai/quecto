@@ -27,7 +27,7 @@ fn a_push_that_landed_is_written_though_another_writer_stacked_on_it_at_once() {
     let alice = store(&repos.alice);
     let head = created(&alice);
     stack_after_next_push(&repos, "");
-    let ours = written(alice.write(&head, &[task("a")], "board: add a"));
+    let ours = written(alice.write_tasks(&head, &[task("a")], "board: add a"));
     stacked_on(&repos, &ours);
 }
 
@@ -45,7 +45,7 @@ fn a_push_that_landed_but_timed_out_is_written() {
     let head = created(&alice);
     stack_after_next_push(&repos, "sleep 30");
     let started = std::time::Instant::now();
-    let ours = written(alice.write(&head, &[task("a")], "board: add a"));
+    let ours = written(alice.write_tasks(&head, &[task("a")], "board: add a"));
     assert!(started.elapsed() < std::time::Duration::from_secs(20));
     stacked_on(&repos, &ours);
 }
@@ -59,7 +59,7 @@ fn a_push_the_remote_declines_is_refused_and_the_board_stays() {
         &repos.remote().join("hooks/pre-receive"),
         "#!/bin/sh\nrm -- \"$0\"\necho no >&2\nexit 1\n",
     );
-    let refused = alice.write(&head, &[task("a")], "board: add a");
+    let refused = alice.write_tasks(&head, &[task("a")], "board: add a");
     assert!(
         matches!(&refused, Ok(BoardWrite::Refused(why)) if why.contains("declined")),
         "{refused:?}"
@@ -73,9 +73,9 @@ fn a_write_from_a_stale_head_is_lost_and_refetches() {
     let (alice, bob) = (store(&repos.alice), store(&repos.bob));
     let stale = created(&alice);
     bob.read().unwrap();
-    let won = written(alice.write(&stale, &[task("a")], "board: add a"));
+    let won = written(alice.write_tasks(&stale, &[task("a")], "board: add a"));
     assert_eq!(
-        bob.write(&stale, &[task("b")], "board: add b"),
+        bob.write_tasks(&stale, &[task("b")], "board: add b"),
         Ok(BoardWrite::Lost)
     );
     assert_eq!(
@@ -104,7 +104,7 @@ fn a_push_that_reports_nothing_and_did_not_land_is_unavailable() {
         &repos.remote().join("hooks/pre-receive"),
         "#!/bin/sh\nrm -- \"$0\"\nsleep 30\n",
     );
-    let write = alice.write(&head, &[task("a")], "board: add a");
+    let write = alice.write_tasks(&head, &[task("a")], "board: add a");
     assert!(
         matches!(&write, Err(BoardStoreError::Unavailable(why)) if why.contains("may have moved")),
         "{write:?}"
@@ -163,7 +163,7 @@ fn any_push_outcome_but_updated_is_judged_by_the_board() {
     let repos = Repos::new();
     let alice = store(&repos.alice);
     let base = created(&alice);
-    let landed = written(alice.write(&base, &[task("a")], "board: add a"));
+    let landed = written(alice.write_tasks(&base, &[task("a")], "board: add a"));
     // Our commit is on the board, whatever the push reported.
     assert_eq!(
         alice.judge(Some(&base.0), &landed.0, &rejected("[remote failure]")),
@@ -280,7 +280,7 @@ fn a_push_that_fails_outright_says_why() {
         &repos.alice,
         &["config", "remote.origin.pushurl", nowhere.to_str().unwrap()],
     );
-    let write = alice.write(&head, &[task("a")], "board: add a");
+    let write = alice.write_tasks(&head, &[task("a")], "board: add a");
     assert!(
         matches!(&write, Err(BoardStoreError::Unavailable(why)) if why.contains("does not appear to be a git repository") && !why.contains("Failed {") && !why.contains("stderr:")),
         "{write:?}"

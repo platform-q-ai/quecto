@@ -22,7 +22,8 @@ use super::request::RequestError;
 use crate::application::project_board::dto::{BoardListing, ProjectBoardError};
 use crate::application::project_board::operations::{BoardOutcome, Completion};
 use crate::application::project_board::ports::{
-    BoardClockError, BoardHead, BoardStoreError, PullRequestStatesError, QuarantinedFile,
+    ArtifactKey, BoardClockError, BoardHead, BoardStoreError, PullRequestStatesError,
+    QuarantinedFile,
 };
 use crate::domain::project_board::entities::claim::Identity;
 use crate::domain::project_board::entities::task::Task;
@@ -233,6 +234,14 @@ fn identity_json(identity: &Identity) -> Value {
 }
 
 fn quarantined_json(file: &QuarantinedFile) -> Value {
+    // An answer names a file set aside by its task's id only: until the
+    // answer names every kind's key, any other kind stops it rather than
+    // show the file as a stray.
+    assert!(
+        matches!(file.key, None | Some(ArtifactKey::Task(_))),
+        "an answer names a task's file or a stray only: {:?}",
+        file.key
+    );
     assert!(
         shown_path(&file.path),
         "a store shows every path it sets aside sanitised: {:?}",
@@ -242,7 +251,7 @@ fn quarantined_json(file: &QuarantinedFile) -> Value {
         // Raw: the store allowlists or quotes every name it sets aside,
         // a path is no secret, and a clear names it exactly as shown.
         "path": file.path,
-        "id": file.id.as_ref().map(slug_json),
+        "id": file.id().map(slug_json),
         "reason": shown(&file.reason),
         "object": file.object,
     })

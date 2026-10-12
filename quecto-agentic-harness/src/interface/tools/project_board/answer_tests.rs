@@ -205,7 +205,7 @@ fn text_from_outside_is_redacted_wherever_it_is_shown() {
         ),
         json!({"quarantined": quarantined_json(&QuarantinedFile {
             path: "tasks/x.json".into(),
-            id: None,
+            key: None,
             reason: format!("api_key: {secret}"),
             object: "a".repeat(40),
             carried: true,
@@ -217,7 +217,7 @@ fn text_from_outside_is_redacted_wherever_it_is_shown() {
     let path = format!("tasks/{secret}.json");
     let shown = quarantined_json(&QuarantinedFile {
         path: path.clone(),
-        id: None,
+        key: None,
         reason: "a stray".into(),
         object: "a".repeat(40),
         carried: false,
@@ -231,7 +231,7 @@ fn text_from_outside_is_redacted_wherever_it_is_shown() {
 fn a_listing_shows_each_files_object_and_its_names_copies() {
     let file = |path: &str, object: char| QuarantinedFile {
         path: path.into(),
-        id: None,
+        key: None,
         reason: "named more than once".into(),
         object: object.to_string().repeat(40),
         carried: false,
@@ -258,10 +258,24 @@ fn a_listing_shows_each_files_object_and_its_names_copies() {
 fn an_unsanitised_path_is_never_shown() {
     let _ = quarantined_json(&QuarantinedFile {
         path: "tasks/a\u{202e}nosj.exe".into(),
-        id: None,
+        key: None,
         reason: "a stray".into(),
         object: "a".repeat(40),
         carried: false,
+    });
+}
+
+/// A file set aside under another kind's key is never shown as a stray:
+/// the answer stops until it can name that kind.
+#[test]
+#[should_panic(expected = "names a task's file or a stray only")]
+fn a_set_aside_file_of_another_kind_is_never_shown() {
+    let _ = quarantined_json(&QuarantinedFile {
+        path: "runs/a.1.md".into(),
+        key: Some(ArtifactKey::Run(slug("a"), 1)),
+        reason: "malformed".into(),
+        object: "a".repeat(40),
+        carried: true,
     });
 }
 

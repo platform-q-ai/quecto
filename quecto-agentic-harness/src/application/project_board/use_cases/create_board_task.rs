@@ -86,7 +86,7 @@ fn free(board: &BoardSnapshot, new: &NewBoardTask) -> Result<(), ProjectBoardErr
     let set_aside = board
         .quarantined
         .iter()
-        .any(|file| file.id.as_ref() == Some(&new.id));
+        .any(|file| file.id() == Some(&new.id));
     match (held, set_aside) {
         (true, _) => Err(ProjectBoardError::Exists(new.id.clone())),
         (false, true) => Err(ProjectBoardError::Quarantined(new.id.clone())),

@@ -112,11 +112,7 @@ impl RunBoardOperation {
                 head: board.head.clone(),
                 task: task.clone(),
             }),
-            None if board
-                .quarantined
-                .iter()
-                .any(|file| file.id.as_ref() == Some(id)) =>
-            {
+            None if board.quarantined.iter().any(|file| file.id() == Some(id)) => {
                 Err(ProjectBoardError::Quarantined(id.clone()))
             }
             None => Err(ProjectBoardError::NotFound(id.clone())),

@@ -7,11 +7,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
 
 use crate::application::project_board::ports::{
-    BoardBootstrap, BoardHead, BoardSnapshot, BoardStoreError, BoardWrite, KeepCopy,
-    ProjectBoardStore, QuarantinedFile, SetAsideClear,
+    ArtifactKey, BoardArtifact, BoardBootstrap, BoardHead, BoardSnapshot, BoardStoreError,
+    BoardWrite, KeepCopy, ProjectBoardStore, QuarantinedFile, SetAsideClear,
 };
 use crate::domain::project_board::entities::claim::Identity;
-use crate::domain::project_board::entities::task::Task;
 use crate::domain::project_board::value_objects::schema_error::line;
 use crate::domain::project_board::value_objects::slug::Slug;
 
@@ -21,7 +20,8 @@ type Interleaved = Box<dyn FnOnce(&MemoryBoardStore) + Send>;
 struct Board {
     /// `None` until bootstrapped.
     head: Option<u64>,
-    tasks: BTreeMap<String, Task>,
+    /// Every artifact of every kind, by its key.
+    artifacts: BTreeMap<ArtifactKey, BoardArtifact>,
     quarantined: Vec<QuarantinedFile>,
     interleaved: Vec<Interleaved>,
     after_read: Vec<Interleaved>,
@@ -98,12 +98,35 @@ impl MemoryBoardStore {
             .head
             .expect("a bootstrapped board to quarantine a file of");
         board.head = Some(revision + 1);
-        board.tasks.remove(id);
         let id = Slug::parse(id).ok();
         let path = format!("tasks/{}.json", id.as_ref().map_or("?", Slug::as_str));
+        let key = id.map(ArtifactKey::Task);
+        if let Some(key) = &key {
+            board.artifacts.remove(key);
+        }
         board.quarantined.push(QuarantinedFile {
             path,
-            id,
+            key,
+            reason: reason.into(),
+            object: format!("{:040x}", revision + 1),
+            carried: true,
+        });
+    }
+
+    /// Sets the file of the artifact `key` aside (at `path`), as a store
+    /// that found it unreadable does: it is no longer read, and every write
+    /// carries it forward. The head moves.
+    ///
+    /// # Panics
+    /// Before the board is bootstrapped.
+    pub fn quarantine_key(&self, key: ArtifactKey, path: &str, reason: &str) {
+        let mut board = self.lock();
+        let revision = board.head.expect("a bootstrapped board");
+        board.head = Some(revision + 1);
+        board.artifacts.remove(&key);
+        board.quarantined.push(QuarantinedFile {
+            path: path.into(),
+            key: Some(key),
             reason: reason.into(),
             object: format!("{:040x}", revision + 1),
             carried: true,
@@ -135,7 +158,7 @@ impl MemoryBoardStore {
         board.head = Some(revision + 1);
         board.quarantined.push(QuarantinedFile {
             path: path.into(),
-            id: None,
+            key: None,
             reason: reason.into(),
             object: format!("{:040x}", revision + 1),
             carried,
@@ -152,7 +175,7 @@ impl MemoryBoardStore {
         let before = board.quarantined.len();
         board
             .quarantined
-            .retain(|file| file.id.as_ref().map(Slug::as_str) != Some(id));
+            .retain(|file| file.id().map(Slug::as_str) != Some(id));
         assert_eq!(
             board.quarantined.len() + 1,
             before,
@@ -173,7 +196,7 @@ impl MemoryBoardStore {
         let file = board
             .quarantined
             .iter()
-            .find(|file| file.id.as_ref().map(Slug::as_str) == Some(id))
+            .find(|file| file.id().map(Slug::as_str) == Some(id))
             .cloned()
             .expect("a quarantined file of that id");
         board.quarantined.push(file);
@@ -216,20 +239,28 @@ fn head(revision: u64) -> BoardHead {
     BoardHead(format!("r{revision}"))
 }
 
-/// One or more tasks, each id once, and a message of one short line.
-fn checked(tasks: &[Task], message: &str) -> Result<(), BoardStoreError> {
-    let ids: BTreeSet<&Slug> = tasks.iter().map(|task| &task.fields().id).collect();
+/// One or more artifacts, each key once, and a message of one short line.
+fn checked(artifacts: &[BoardArtifact], message: &str) -> Result<(), BoardStoreError> {
+    let keys: BTreeSet<ArtifactKey> = artifacts.iter().map(BoardArtifact::key).collect();
     let message = line("message", message, 200)
         .map_err(|error| BoardStoreError::InvalidWrite(error.to_string()));
-    match (tasks.is_empty(), ids.len() == tasks.len()) {
+    match (artifacts.is_empty(), keys.len() == artifacts.len()) {
         (false, true) => message,
         (true, _) => Err(BoardStoreError::InvalidWrite(
-            "a write holds one or more tasks".into(),
+            "a write holds one or more artifacts".into(),
         )),
         (false, false) => Err(BoardStoreError::InvalidWrite(
-            "a write holds each task once".into(),
+            "a write holds each artifact once".into(),
         )),
     }
+}
+
+/// Every artifact of `artifacts` that `pick` takes, in key order.
+fn of_kind<'a, T: Clone + 'a>(
+    artifacts: &'a BTreeMap<ArtifactKey, BoardArtifact>,
+    pick: impl Fn(&'a BoardArtifact) -> Option<&'a T>,
+) -> Vec<T> {
+    artifacts.values().filter_map(pick).cloned().collect()
 }
 
 impl ProjectBoardStore for MemoryBoardStore {
@@ -239,7 +270,30 @@ impl ProjectBoardStore for MemoryBoardStore {
             let revision = board.head.ok_or(BoardStoreError::NoBoard)?;
             let snapshot = BoardSnapshot {
                 head: head(revision),
-                tasks: board.tasks.values().cloned().collect(),
+                tasks: of_kind(&board.artifacts, |artifact| match artifact {
+                    BoardArtifact::Task(task) => Some(task),
+                    _ => None,
+                }),
+                plans: of_kind(&board.artifacts, |artifact| match artifact {
+                    BoardArtifact::Plan(plan) => Some(plan),
+                    _ => None,
+                }),
+                runs: of_kind(&board.artifacts, |artifact| match artifact {
+                    BoardArtifact::Run(run) => Some(run),
+                    _ => None,
+                }),
+                changes: of_kind(&board.artifacts, |artifact| match artifact {
+                    BoardArtifact::Change(change) => Some(change),
+                    _ => None,
+                }),
+                reviews: of_kind(&board.artifacts, |artifact| match artifact {
+                    BoardArtifact::Review(review) => Some(review),
+                    _ => None,
+                }),
+                discussions: of_kind(&board.artifacts, |artifact| match artifact {
+                    BoardArtifact::Discussion(discussion) => Some(discussion),
+                    _ => None,
+                }),
                 quarantined: board.quarantined.clone(),
             };
             (snapshot, std::mem::take(&mut board.after_read))
@@ -251,10 +305,10 @@ impl ProjectBoardStore for MemoryBoardStore {
     fn write(
         &self,
         expected: &BoardHead,
-        tasks: &[Task],
+        artifacts: &[BoardArtifact],
         message: &str,
     ) -> Result<BoardWrite, BoardStoreError> {
-        checked(tasks, message)?;
+        checked(artifacts, message)?;
         let interleaved = std::mem::take(&mut self.lock().interleaved);
         interleaved.into_iter().for_each(|change| change(self));
         let mut board = self.lock();
@@ -266,22 +320,21 @@ impl ProjectBoardStore for MemoryBoardStore {
         if let Some(reason) = board.refusal.take() {
             return Ok(BoardWrite::Refused(reason));
         }
-        let set_aside = |task: &Task| {
+        let set_aside = |key: &ArtifactKey| {
             board
                 .quarantined
                 .iter()
-                .any(|file| file.id.as_ref() == Some(&task.fields().id))
+                .find(|file| file.key.as_ref() == Some(key))
+                .map(|file| file.path.clone())
         };
-        if let Some(task) = tasks.iter().find(|task| set_aside(task)) {
-            return Ok(BoardWrite::Refused(format!(
-                "tasks/{}.json is quarantined",
-                task.fields().id.as_str()
-            )));
+        if let Some(path) = artifacts
+            .iter()
+            .find_map(|artifact| set_aside(&artifact.key()))
+        {
+            return Ok(BoardWrite::Refused(format!("{path} is quarantined")));
         }
-        for task in tasks {
-            board
-                .tasks
-                .insert(task.fields().id.as_str().to_owned(), task.clone());
+        for artifact in artifacts {
+            board.artifacts.insert(artifact.key(), artifact.clone());
         }
         // As a git write: a stray set aside is dropped, a carried file kept.
         board.quarantined.retain(|file| file.carried);

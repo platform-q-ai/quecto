@@ -1,6 +1,7 @@
 //! The writer lock: bounded, never held across the network, and the build
 //! files of live writers are never swept.
 use super::*;
+use crate::application::project_board::ports::ArtifactKey;
 
 /// A history of known ancestry; `remote_head` records whether the index's
 /// writer had taken its lock when it was asked: the lock file exists only
@@ -196,14 +197,14 @@ fn a_path_set_aside_twice_is_listed_twice() {
     snapshot.quarantined = vec![
         QuarantinedFile {
             path: "tasks/x.json".into(),
-            id: Some(slug("x")),
+            key: Some(ArtifactKey::Task(slug("x"))),
             reason: "named more than once in the tree".into(),
             object: "c".repeat(40),
             carried: false,
         },
         QuarantinedFile {
             path: "tasks/x.json".into(),
-            id: Some(slug("x")),
+            key: Some(ArtifactKey::Task(slug("x"))),
             reason: "named more than once in the tree".into(),
             object: "d".repeat(40),
             carried: false,

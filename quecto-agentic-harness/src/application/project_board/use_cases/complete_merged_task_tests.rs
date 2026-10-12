@@ -32,7 +32,7 @@ fn seeded(prs: &[u64]) -> MemoryBoardStore {
     })
     .unwrap();
     let head = store.read().unwrap().head;
-    store.write(&head, &[task], "seed").unwrap();
+    store.write_tasks(&head, &[task], "seed").unwrap();
     store
 }
 
@@ -136,7 +136,7 @@ fn a_released_task_is_done_when_its_pull_request_merges() {
     })
     .unwrap();
     let head = store.read().unwrap().head;
-    store.write(&head, &[ready], "seed").unwrap();
+    store.write_tasks(&head, &[ready], "seed").unwrap();
     let host = MemoryPullRequests::default();
     host.set(7, PullRequestState::Merged);
     let done = complete(&store, &host).execute(&slug("a")).unwrap();
@@ -161,7 +161,7 @@ fn a_merge_closes_a_held_task_whoever_holds_it() {
     })
     .unwrap();
     let head = store.read().unwrap().head;
-    store.write(&head, &[held], "seed").unwrap();
+    store.write_tasks(&head, &[held], "seed").unwrap();
     let host = MemoryPullRequests::default();
     host.set(7, PullRequestState::Merged);
     let done = complete(&store, &host).execute(&slug("a")).unwrap();
@@ -187,7 +187,7 @@ fn a_task_that_cannot_complete_is_refused_before_the_host_is_read() {
     })
     .unwrap();
     let head = store.read().unwrap().head;
-    store.write(&head, &[done], "seed").unwrap();
+    store.write_tasks(&head, &[done], "seed").unwrap();
     let host = MemoryPullRequests::default();
     host.fail("must not be asked");
     assert_eq!(
@@ -294,7 +294,9 @@ fn a_lost_write_does_not_restart_the_budget() {
         })
         .unwrap();
         let head = store.read().unwrap().head;
-        store.write(&head, &[other], "another writer").unwrap();
+        store
+            .write_tasks(&head, &[other], "another writer")
+            .unwrap();
     });
     let completion = CompleteMergedTask::new(
         Arc::new(store.client_as(person("Bob"))),
