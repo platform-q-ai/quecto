@@ -522,7 +522,44 @@ fn full_commit_id(text: &str) -> bool {
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
+/// Whether the index can hold all of `snapshot`: until it keeps a table
+/// per kind (S12) it holds tasks only, so a board holding any other kind,
+/// or a file set aside under any other kind's key, fails closed rather
+/// than be listed without it.
+fn tasks_only(snapshot: &BoardSnapshot) -> Result<(), IndexError> {
+    let others = [
+        ("plans", snapshot.plans.len()),
+        ("runs", snapshot.runs.len()),
+        ("changes", snapshot.changes.len()),
+        ("reviews", snapshot.reviews.len()),
+        ("discussions", snapshot.discussions.len()),
+    ];
+    let held = others.iter().find(|(_, count)| *count > 0);
+    let keyed = snapshot
+        .quarantined
+        .iter()
+        .find(|file| !task_or_stray(file));
+    match (held, keyed) {
+        (None, None) => Ok(()),
+        (Some((kind, _)), _) => Err(not_indexed(format!("the board holds {kind}"))),
+        (None, Some(file)) => Err(not_indexed(format!("{} is set aside", file.path))),
+    }
+}
+
+fn not_indexed(what: String) -> IndexError {
+    IndexError::Store(BoardStoreError::Unavailable(format!(
+        "the board index keeps tasks only for now, and {what}"
+    )))
+}
+
+/// A file set aside as a task's, or as no artifact's: all the index's
+/// `quarantined` table can name until S12.
+fn task_or_stray(file: &QuarantinedFile) -> bool {
+    matches!(file.key, None | Some(ArtifactKey::Task(_)))
+}
+
 fn rows(snapshot: &BoardSnapshot) -> Result<Vec<Row>, IndexError> {
+    tasks_only(snapshot)?;
     snapshot
         .tasks
         .iter()
@@ -607,6 +644,7 @@ fn fill(
         }
     }
     for file in quarantined {
+        assert!(task_or_stray(file), "rows refused {:?}", file.key);
         transaction.execute(
             "INSERT INTO quarantined (path, id, reason, object, carried) VALUES (?1, ?2, ?3, ?4, ?5)",
             params![

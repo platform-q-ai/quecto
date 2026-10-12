@@ -91,18 +91,23 @@ pub fn check_write_and_read_every_kind((alice, bob): Clients) {
     assert_eq!(held(&*alice), both);
 }
 
-/// A write naming one artifact twice, of any kind, is invalid, as is a
-/// write of nothing: refused before anything moves.
-pub fn check_one_key_twice_is_invalid((alice, _bob): Clients) {
+/// A write naming one artifact twice is invalid, as is a write of
+/// nothing: refused before anything moves. A store that keeps `every_kind`
+/// is held to it for each kind; one that keeps tasks only (the git store
+/// until S10) refuses the other kinds for that alone, which would hide
+/// whether it checks their keys, so it is held to tasks.
+pub fn check_one_key_twice_is_invalid((alice, _bob): Clients, every_kind: bool) {
     alice.bootstrap().unwrap();
     let head = alice.read().unwrap().head;
     let twice = |a: BoardArtifact, b: BoardArtifact| vec![a, b];
-    for artifacts in [
+    let tasks = [
         vec![],
         twice(
             BoardArtifact::Task(task("a", "One")),
             BoardArtifact::Task(task("a", "Two")),
         ),
+    ];
+    let others = [
         twice(
             BoardArtifact::Plan(plan("a", 1)),
             BoardArtifact::Plan(plan("a", 1)),
@@ -123,7 +128,12 @@ pub fn check_one_key_twice_is_invalid((alice, _bob): Clients) {
             BoardArtifact::Discussion(discussion("d")),
             BoardArtifact::Discussion(discussion("d")),
         ),
-    ] {
+    ];
+    let held = match every_kind {
+        true => others.len(),
+        false => 0,
+    };
+    for artifacts in tasks.into_iter().chain(others.into_iter().take(held)) {
         let refused = alice.write(&head, &artifacts, "board: twice");
         assert!(
             matches!(refused, Err(BoardStoreError::InvalidWrite(_))),
@@ -159,7 +169,10 @@ pub fn check_set_aside_key_refuses_only_its_write(
     ] {
         let refused = bob.write(&spoiled, &artifacts, "board: write run 1");
         assert!(matches!(refused, Ok(BoardWrite::Refused(_))), "{refused:?}");
-        assert_eq!(alice.read().unwrap().head, spoiled);
+        let board = alice.read().unwrap();
+        assert_eq!(board.head, spoiled);
+        let runs: Vec<u32> = board.runs.iter().map(|run| run.fields().number).collect();
+        assert_eq!(runs, [2], "no part of a refused write lands");
     }
     let next = written(bob.write(
         &spoiled,
@@ -198,20 +211,20 @@ fn the_memory_store_writes_and_reads_every_kind() {
 
 #[test]
 fn the_memory_store_refuses_one_key_twice() {
-    check_one_key_twice_is_invalid(memory().1);
+    check_one_key_twice_is_invalid(memory().1, true);
 }
 
 #[test]
 fn the_memory_store_refuses_only_the_write_of_a_set_aside_key() {
     let (store, clients) = memory();
     check_set_aside_key_refuses_only_its_write(clients, |key| {
-        store.quarantine_key(key, "runs/a/1.md", "malformed")
+        store.quarantine_key(key, "runs/a.1.md", "malformed")
     });
 }
 
 #[test]
 fn the_git_store_refuses_one_key_twice() {
-    check_one_key_twice_is_invalid(Remote::new().clients());
+    check_one_key_twice_is_invalid(Remote::new().clients(), false);
 }
 
 /// Until the git store keeps the other kinds (S10), a write holding any of

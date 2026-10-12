@@ -34,8 +34,9 @@ pub enum ArtifactKey {
 }
 
 impl ArtifactKey {
-    /// The task it is the task file of.
-    pub fn task_id(&self) -> Option<&Slug> {
+    /// The task's id, when it is a task's own key (not the task a plan,
+    /// run, change or review belongs to).
+    pub fn as_task(&self) -> Option<&Slug> {
         match self {
             Self::Task(id) => Some(id),
             Self::Plan(..)
@@ -118,7 +119,7 @@ pub struct QuarantinedFile {
 impl QuarantinedFile {
     /// The task id its name spells, when it names a task file.
     pub fn id(&self) -> Option<&Slug> {
-        self.key.as_ref().and_then(ArtifactKey::task_id)
+        self.key.as_ref().and_then(ArtifactKey::as_task)
     }
 }
 

@@ -265,6 +265,20 @@ fn an_unsanitised_path_is_never_shown() {
     });
 }
 
+/// A file set aside under another kind's key is never shown as a stray:
+/// the answer stops until it can name that kind.
+#[test]
+#[should_panic(expected = "names a task's file or a stray only")]
+fn a_set_aside_file_of_another_kind_is_never_shown() {
+    let _ = quarantined_json(&QuarantinedFile {
+        path: "runs/a.1.md".into(),
+        key: Some(ArtifactKey::Run(slug("a"), 1)),
+        reason: "malformed".into(),
+        object: "a".repeat(40),
+        carried: true,
+    });
+}
+
 /// Every board rule, once: the pattern that matches it, a rule of it, its
 /// code and the keys its answer carries. The test's match is exhaustive,
 /// so a new rule fails to compile until it has its row here.
