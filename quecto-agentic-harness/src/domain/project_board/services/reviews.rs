@@ -35,8 +35,8 @@ pub struct RoundDraft {
 /// `change`'s `review` (or a new one, the change's first) with a round of
 /// `draft` by `reviewer` added `when`: at its `now`, or, if later, a
 /// second past the review's last change (so rounds stay in order) or, for
-/// the first round, when the change was linked (a review never predates
-/// its change).
+/// the first round, when the change last changed (a review never predates
+/// the change it judges, as its slack check reads).
 ///
 /// # Errors
 /// A change unlinked; a review of another change (`not_this_change`); for
@@ -94,7 +94,7 @@ pub fn add_round(
                 created: now.clone(),
                 updated: now.clone(),
             };
-            (begun, now.clone().max(target.created.clone()))
+            (begun, now.clone().max(target.updated.clone()))
         }
     };
     let round = Round {

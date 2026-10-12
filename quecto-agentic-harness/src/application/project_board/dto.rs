@@ -235,10 +235,10 @@ impl fmt::Display for ProjectBoardError {
             Self::Invalid(error) => write!(f, "invalid task: {error}"),
             Self::NotFound(id) => write!(f, "no task {}", id.as_str()),
             Self::Exists(id) => write!(f, "task {} already exists", id.as_str()),
-            Self::SetAsideFile { path, .. } => write!(
+            Self::SetAsideFile { path, object } => write!(
                 f,
-                "the file {path:?} is set aside as unreadable and its task is unknown; mend or \
-                 clear it"
+                "the file {path:?} (object {object}) is set aside as unreadable and its task is \
+                 unknown; mend or clear it"
             ),
             Self::Quarantined(id) => write!(
                 f,

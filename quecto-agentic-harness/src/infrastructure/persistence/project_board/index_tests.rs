@@ -88,15 +88,16 @@ fn board(head: &str) -> BoardSnapshot {
                 id: Some(slug("x")),
                 reason: "malformed".into(),
                 object: "a".repeat(40),
+                carried: true,
             },
             QuarantinedFile {
                 path: "tasks/x.txt".into(),
                 id: None,
                 reason: "not a task file".into(),
                 object: "b".repeat(40),
+                carried: false,
             },
         ],
-        kept: std::collections::BTreeSet::new(),
     }
 }
 
@@ -172,7 +173,6 @@ fn ready_needs_every_dependency_released_and_takeable_an_expired_claim() {
         head: BoardHead("c".repeat(40)),
         tasks: listings_board(),
         quarantined: board("a1").quarantined,
-        kept: board("a1").kept,
     };
     rebuild(&index, &snapshot).unwrap();
     assert_eq!(

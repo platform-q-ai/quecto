@@ -1,7 +1,7 @@
 //! The project board store's contract, run against the git store: two
 //! clones of one bare remote, each its own client.
 use super::project_board_store::{
-    Clients, check_bootstrap, check_bootstrap_race, check_clear_set_aside,
+    Clients, check_bootstrap, check_bootstrap_race, check_carried_set_aside, check_clear_set_aside,
     check_committed_as_writer, check_compare_and_swap, check_invalid_writes, check_quarantine,
     check_refused, check_unchanged_write, check_write_after_lost_and_refused, check_write_and_read,
     check_write_before_bootstrap, check_writer,
@@ -125,6 +125,25 @@ impl Remote {
         sh(bare, &["update-ref", BOARD_REF, &commit], b"");
     }
 
+    /// Someone pushes a stray `tasks/notes.txt` (not a task file).
+    pub fn add_stray(&self) {
+        let bare = &self.bare;
+        let head = sh(bare, &["rev-parse", BOARD_REF], b"");
+        let notes = sh(bare, &["hash-object", "-w", "--stdin"], b"notes");
+        let listing = sh(bare, &["ls-tree", &format!("{head}:tasks")], b"");
+        let listing = format!("{listing}\n100644 blob {notes}\tnotes.txt\n");
+        let tasks = sh(bare, &["mktree"], listing.as_bytes());
+        let readme = sh(bare, &["rev-parse", &format!("{head}:README.md")], b"");
+        let root = format!("100644 blob {readme}\tREADME.md\n040000 tree {tasks}\ttasks\n");
+        let root = sh(bare, &["mktree"], root.as_bytes());
+        let commit = sh(
+            bare,
+            &["commit-tree", &root, "-p", &head, "-m", "stray"],
+            b"",
+        );
+        sh(bare, &["update-ref", BOARD_REF, &commit], b"");
+    }
+
     /// Someone pushes a `tasks/b.json` the store cannot read.
     pub fn spoil_b(&self) {
         let bare = &self.bare;
@@ -224,4 +243,15 @@ fn the_git_store_commits_as_its_writer() {
             .committed_by(&head.0)
             .expect("the commit is on the remote")
     });
+}
+
+#[test]
+fn the_git_store_carries_a_task_file_set_aside_and_drops_a_stray() {
+    let remote = Remote::new();
+    check_carried_set_aside(
+        remote.clients(),
+        || remote.spoil_b(),
+        || remote.add_stray(),
+        "tasks/notes.txt",
+    );
 }
