@@ -358,8 +358,8 @@ fn table_text<'a>(header: impl Iterator<Item = &'a str>, rows: &[Vec<String>]) -
 
 /// `document`'s outline: per top-level block its kind and counts, and its
 /// text as written.
-fn expected(document: &Document) -> (Vec<String>, Vec<String>) {
-    let (kinds, texts) = unlinked_expected(document);
+fn expected(document: &Document, shape: &Shape<'_>) -> (Vec<String>, Vec<String>) {
+    let (kinds, texts) = unlinked_expected(document, shape);
     let kinds = kinds
         .into_iter()
         .zip(&texts)
@@ -376,7 +376,7 @@ fn expected(document: &Document) -> (Vec<String>, Vec<String>) {
 }
 
 /// [`expected`] without the links each block holds.
-fn unlinked_expected(document: &Document) -> (Vec<String>, Vec<String>) {
+fn unlinked_expected(document: &Document, shape: &Shape<'_>) -> (Vec<String>, Vec<String>) {
     let mut kinds = vec!["marker".to_string(), "h1".to_string()];
     let mut texts = vec![String::new(), document.title.clone()];
     if !document.fields.is_empty() {
@@ -384,7 +384,7 @@ fn unlinked_expected(document: &Document) -> (Vec<String>, Vec<String>) {
             .fields
             .iter()
             .map(|(name, value)| {
-                let kind = SHAPE.fields.iter().find(|field| field.name == name);
+                let kind = shape.fields.iter().find(|field| field.name == name);
                 vec![
                     name.clone(),
                     shown_cell(value, kind.map(|field| field.cell)),
@@ -418,7 +418,7 @@ fn unlinked_expected(document: &Document) -> (Vec<String>, Vec<String>) {
                 }
             }
             Body::Table(rows) => {
-                let columns = SHAPE
+                let columns = shape
                     .sections
                     .iter()
                     .find(|known| known.heading == section.heading)
@@ -453,13 +453,14 @@ fn unlinked_expected(document: &Document) -> (Vec<String>, Vec<String>) {
 /// footnote, quote, rule, hard break, ordered or nested list, or other link
 /// than an inline https one. Every text it shows keeps the character rules,
 /// and is the document's own with only markup taken out (code exactly).
-pub(super) fn outline(file: &str, document: &Document) -> Result<(), String> {
+/// Each codec's tests check every cell of its files with it.
+pub(crate) fn outline_in(file: &str, document: &Document, shape: &Shape<'_>) -> Result<(), String> {
     let mut outline = Outline::default();
     for event in Parser::new_ext(file, options()) {
         outline.event(&event)?;
     }
     checked(&outline.run)?;
-    let (kinds, texts) = expected(document);
+    let (kinds, texts) = expected(document, shape);
     let comrak = comrak_outline(file).map_err(|error| format!("comrak: {error}"))?;
     for (reader, shown) in [
         (
