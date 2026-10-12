@@ -164,3 +164,26 @@ fn a_trailing_space_after_a_backslash_or_in_code_or_math_is_kept() {
     // A blank line starts a new paragraph: its own lines are free again.
     assert_eq!(settled(text, "`x`\n\na \nb"), "`x`\n\na\nb");
 }
+
+/// Round 4: a link or reference anywhere in a paragraph (its title may
+/// start on the next line, its label span lines), inline HTML (a tag, a
+/// comment, a processing instruction or CDATA may span lines), and a
+/// footnote definition (a container) keep what follows as written.
+#[test]
+fn links_inline_html_and_footnotes_are_kept_as_written() {
+    for raw in [
+        "[l]: /u \n\"t \nx\"\n\n[l]",
+        "[a](/u \n\"t \nx\")",
+        "[a](\n/u \"t \nx\")",
+        "[a \nb](/u)",
+        "a <span title=\"x \ny\">b</span>",
+        "a <!-- x \ny -->",
+        "a <?x y \nz ?>",
+        "a <![CDATA[ x \ny ]]>",
+        "[^1]: <pre> a \n\n[^1]",
+        "[^1]: x\n\n    ```\n    code \n",
+        "- [^n]: a \n  b",
+    ] {
+        assert_eq!(settled(text, raw), raw, "{raw:?}");
+    }
+}

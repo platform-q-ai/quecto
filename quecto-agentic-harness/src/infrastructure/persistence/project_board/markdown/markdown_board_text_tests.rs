@@ -97,6 +97,16 @@ const PIECES: &[&str] = &[
     "\u{212a}",
     "[a](/u \"t \n",
     "]: /u 't \n",
+    // Round 4: titles and labels across lines, inline HTML across lines,
+    // footnote definitions.
+    "[l]: /u \n\"t \n",
+    "[a](\n",
+    "[a \nb](/u)",
+    "<span title=\"x \n",
+    "<?x \n",
+    "<![CDATA[ x \n",
+    "[^1]: ",
+    "\n[^1]\n",
 ];
 
 /// A small deterministic generator (an LCG), so a failure replays.
