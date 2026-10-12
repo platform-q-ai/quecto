@@ -226,8 +226,8 @@ pub(crate) fn build_tool_runtime(
     use crate::infrastructure::extensions::native::{
         AgentControlToolDeps, OfficialToolDeps, SessionToolDeps,
         build_agent_control_tool_extensions, build_official_tool_extensions,
-        build_session_tool_extensions, register_bundled_native_tools,
-        register_bundled_native_tools_with_scope,
+        build_project_board_tool_extension, build_session_tool_extensions,
+        register_bundled_native_tools, register_bundled_native_tools_with_scope,
     };
 
     let ToolRuntimeBuildArgs {
@@ -293,6 +293,7 @@ pub(crate) fn build_tool_runtime(
     let mut policy_state = ToolRuntimePolicyState::for_entrypoint(entrypoint);
     policy_state.workflow_supported &= !swarm_agent;
     policy_state.inherited_tool_policy = inherited_tool_policy.clone();
+    let board_repo = workspace.clone();
     let mut registry = crate::infrastructure::tools::registry::ToolRegistryImpl::new();
     // Fault injection for the #2192 process tests; not compiled in production.
     #[cfg(feature = "test-support")]
@@ -389,7 +390,22 @@ pub(crate) fn build_tool_runtime(
     register_bundled_native_tools_with_scope(&mut registry, agent_control.extensions, None);
     let notify_rx = agent_control.notification_rx;
     let _ = agent_control.notification_tx;
-    let _ = project_board;
+    // The project board (#2477): a parent's tool, on the repository of the
+    // workspace it works in.
+    if let (ToolRuntimeProfileContext::Parent, Some(build)) = (profile_context, project_board) {
+        let board = crate::interface::tools::project_board::tool::BoardTool::new(
+            crate::interface::tools::project_board::site::BoardSite {
+                repo: board_repo,
+                remote: "origin".into(),
+                build: Some(build),
+            },
+        );
+        register_bundled_native_tools_with_scope(
+            &mut registry,
+            build_project_board_tool_extension(std::sync::Arc::new(board)),
+            Some(ProfileAvailabilityScope::Parent),
+        );
+    }
     let subagent_registry_for_protocol = agent_control.subagent_registry;
     let harness_lifecycle = agent_control.harness_lifecycle;
     if !policy_state.agent_control_default_enabled {

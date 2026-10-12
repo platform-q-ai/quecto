@@ -10,7 +10,7 @@ use std::sync::Arc;
 use serde_json::{Map, Value, json};
 
 use super::request::{Kind, OPS};
-use super::site::BoardSite;
+use super::site::{self, BoardSite};
 use crate::application::tools::ports::Tool;
 use crate::domain::error::DomainError;
 use crate::domain::tool::{ToolDefinition, ToolResult};
@@ -18,8 +18,14 @@ use crate::domain::tool::{ToolDefinition, ToolResult};
 /// The tool's name.
 pub const BOARD_TOOL_NAME: &str = "board";
 
-/// The tool's description, as approved.
-pub const BOARD_TOOL_DESCRIPTION: &str = "";
+/// The tool's description: the approved text, with only the changes the
+/// ops on master need (#2477 S2b; listed in its pull request).
+pub const BOARD_TOOL_DESCRIPTION: &str = r#"Project board for this repo: the shared list of tasks people and agents plan, claim and finish. Tasks live on the repo's quecto/board branch and are written only through this tool, never by editing the branch. Each op is one call, {"op":"<name>", ...named fields}, answering JSON: {"ok":true,...} or {"ok":false,"error":{"code","field","message"}}. Ids are slugs (a-z, 0-9, -). Statuses: draft, ready, claimed, in_progress, review, blocked, done, archived.
+Read: list(status|parent|dependents_of, at most one filter), show(task), list_ready (ready tasks whose dependencies are done or archived), list_takeable (held tasks whose claim expired). Listings are advice; every change is checked against the board when it is written.
+Plan: create(task,title,kind,description,status draft|ready,parent,depends_on); update_draft(task, any of title,description,parent,depends_on, expected_updated) edits a draft only; pass the updated you read as expected_updated so a newer edit is never overwritten. Anyone may create, edit a draft, or move it to ready.
+Work: move(task,to claimed) takes a ready task for 2 hours; renew(task) before it lapses while you work; take_over(task) only once a claim has expired; move(task,to ready) hands it back to ready. Only the claim holder moves a claimed task: move(task,to in_progress|review|blocked|ready). link_pr(task,pr) and unlink_pr(task,pr) are the holder's. A task with linked pull requests is done only when all of them have merged: link_pr and moving to review check this automatically, and complete(task) asks again (anyone may call it). Never move a task to done by hand while a pull request is linked.
+Repair: clear_set_aside(path, object, repeated) removes a file the board could not read (listed under quarantined, with its object); repeated names the copy to keep when a task file appears twice. Use it only when told to.
+On "stale" re-read with show and redo your change; on "contended" call again; on "clock_ahead" or "task_ahead" stop and report: this machine's clock is wrong. A "clock" note on an answer means writes ran without an outside time check."#;
 
 /// The agent `board` tool over one repository's board.
 pub struct BoardTool {
@@ -107,8 +113,20 @@ impl Tool for BoardTool {
     ) -> Pin<Box<dyn Future<Output = Result<ToolResult, DomainError>> + Send + '_>> {
         let (site, text) = (Arc::clone(&self.site), arguments.to_owned());
         Box::pin(async move {
-            let _ = (site, text);
-            Err(DomainError::Tool("the board tool is not built yet".into()))
+            // The board's git and host reads block: off the async workers.
+            let answer = tokio::task::spawn_blocking(move || site::answer(&site, &text))
+                .await
+                .map_err(|error| {
+                    DomainError::Tool(format!("the board call did not finish: {error}"))
+                })?;
+            // A refusal is the model's to act on (re-read, call again, stop).
+            let ok = answer.get("ok") == Some(&Value::Bool(true));
+            Ok(ToolResult {
+                content: answer.to_string(),
+                is_error: !ok,
+                image_blocks: vec![],
+                delivery_metadata: None,
+            })
         })
     }
 }
