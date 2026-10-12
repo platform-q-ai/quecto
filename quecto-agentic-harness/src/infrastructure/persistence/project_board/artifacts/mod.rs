@@ -5,6 +5,7 @@
 //! as writes the very document it was read from: anything else is refused,
 //! never taken as something near it.
 pub mod cells;
+pub mod plan;
 
 use super::markdown::{Document, MarkdownError, Shape, parse, render, schema_of};
 
