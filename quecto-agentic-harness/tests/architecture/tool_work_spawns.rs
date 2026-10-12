@@ -1,23 +1,37 @@
 //! ADR-0029 rule 5 (#2513 review): a tool call's own work leaves the async
 //! workers only through `call_work`, in the call's panic scope, so a panic
-//! in it fails the call instead of aborting the process. Proven over every
-//! function of every production file under `src/infrastructure/tools` and
-//! `src/interface/tools` (free functions, impls, trait bodies, nested
-//! functions, module scope and macro tokens alike): nothing spawns a task,
-//! a blocking job or a thread, or blocks on or enters a runtime, but the
-//! allowlisted sites, each with its reason. A `use` of a spawn form is
-//! itself a site, and so is a `use` that renames or globs a spawning module
-//! or type (`tokio`, `tokio::task`, `tokio::runtime`, `std::thread`,
-//! `Handle`), so an import cannot hide one. Every entry must still be
-//! needed.
+//! in it fails the call instead of aborting the process. A test-only guard
+//! against accidents, checked over every function of every production file
+//! under `src/infrastructure/tools` and `src/interface/tools` (free
+//! functions, impls, trait bodies, nested functions, module scope and macro
+//! tokens alike). Outside the allowlisted sites, each with its reason, it
+//! finds:
 //!
-//! What syntax alone cannot see: a spawn inside a helper outside the
-//! checked trees (elsewhere in the crate, or in a dependency) that a tool
-//! calls by another name, and a spawner reached through a value whose
-//! origin is not named in the same function (a field, a parameter, a
-//! return value) unless its receiver's text names a runtime, handle,
-//! builder or thread. The checked trees' own helpers are seen, since they
-//! are checked too.
+//! - a spawn word named anywhere (the reader's `SPAWN_WORDS`:
+//!   `spawn_blocking`, `spawn_local`, `spawn_on`, `block_on`,
+//!   `block_in_place`, ...);
+//! - `spawn`, `scope` or `enter` after a spawner in a path
+//!   (`tokio::spawn`, `std::thread::scope`, `<Handle>::spawn`,
+//!   `JoinSet::<()>::spawn`, `rayon::spawn`), in a macro too;
+//! - `.spawn`, `.scope` or `.enter` on a receiver that names a spawner
+//!   (`Handle::current().spawn(..)`, `self.handle.spawn(..)`) or is a local
+//!   bound to one: by `let` (from its value or its type), `if let`,
+//!   `while let`, a `match` arm, a parameter's type, a closure passed to a
+//!   spawner's method, or a copy of another such local. The receiver's own
+//!   path is read, never its call arguments (`Command::new(runtime)` is no
+//!   spawner), and a local bound to anything else is no spawner whatever
+//!   its name;
+//! - a `use` of a spawn form, and any `use` or `extern crate` that renames
+//!   or globs a spawner or a spawning module, or a `type` alias of a
+//!   spawner: a name that could hide a spawn is itself a site.
+//!
+//! Every entry must still be needed. What it cannot see, syntax alone not
+//! following calls or types: a spawn inside a helper outside the checked
+//! trees (elsewhere in the crate, or in a dependency); a spawner reached
+//! through a value whose origin it does not see (a field or a return value
+//! whose path names no spawner, an untyped closure parameter of a plain
+//! function); and a local bound inside a macro (a macro's `.spawn` is
+//! read by its receiver's words, and the locals bound outside it).
 
 use std::collections::BTreeSet;
 use std::path::Path;
