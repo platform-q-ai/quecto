@@ -60,7 +60,7 @@ const SECTIONS: &[SectionShape<'static>] = &[
 ];
 
 /// A review's file caps, from the widest review the domain admits
-/// (`the_widest_review_fits`: 971,378 bytes, 8,274 lines, a 16,528-byte
+/// (`the_widest_review_fits`: 984,178 bytes, 8,274 lines, a 16,531-byte
 /// line), with room to spare.
 pub const REVIEW_LIMITS: Limits = Limits {
     file_bytes: 1024 * 1024,
@@ -111,6 +111,20 @@ impl ArtifactCodec for ReviewCodec {
                 ]);
             }
         }
+        debug_assert_eq!(rounds.len(), review.rounds.len(), "a row per round");
+        debug_assert_eq!(
+            findings.len(),
+            review
+                .rounds
+                .iter()
+                .map(|round| round.findings.len())
+                .sum::<usize>(),
+            "a row per finding"
+        );
+        debug_assert!(
+            rounds.iter().chain(&findings).all(|row| row.len() == 5),
+            "every row as wide as its table"
+        );
         let sections = [(ROUNDS, rounds), (FINDINGS, findings)]
             .into_iter()
             // A table only for what holds rows (no Findings is "none").
@@ -209,6 +223,10 @@ fn next_finding<'a>(
         .and_then(|index| index.checked_sub(1))
         .filter(|at| *at < rounds.len() && latest.is_none_or(|latest| latest <= *at))
         .ok_or_else(|| refused(FINDINGS, "a round of the review's, in round order"))?;
+    debug_assert!(
+        at < rounds.len() && latest.is_none_or(|latest| latest <= at),
+        "a finding goes to a round read, at or after the last with findings"
+    );
     let findings = &mut rounds[at].findings;
     match number == (findings.len() + 1) as u64 {
         true => Ok(findings),

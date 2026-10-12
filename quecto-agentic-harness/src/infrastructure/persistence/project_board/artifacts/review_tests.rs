@@ -212,8 +212,9 @@ fn widest(
     location: impl Fn(usize, usize) -> Option<String>,
 ) -> ReviewFields {
     let pipes = |count: usize| "|".repeat(count);
+    // The widest name: 4-byte letters, each written as it is.
     let reviewer = Identity {
-        name: pipes(100),
+        name: "\u{1d538}".repeat(100),
         email: format!("{}@{}", pipes(126), pipes(127)),
     };
     let rounds = (0..MAX_ROUNDS)
@@ -243,20 +244,22 @@ fn widest(
 #[test]
 fn the_widest_review_fits() {
     // Most bytes and lines: every finding, the whole text budget spent on
-    // `|`, written `\|`; the reviewer's name and email all `|` too.
+    // `|`, written `\|`; the reviewer's name 4-byte letters and email all
+    // `|`, written `\|`.
     let findings = MAX_ROUNDS * MAX_FINDINGS;
     let share = MAX_REVIEW_TEXT_BYTES / findings;
     let most = widest(|_, _| "|".repeat(share), |_, _| None);
     assert_eq!(most.text_bytes(), MAX_REVIEW_TEXT_BYTES);
     // The longest line: one finding of 4-byte letters at its longest, at
-    // the longest place.
+    // the longest place, numbered widest (round 64, finding 128).
     let place = format!("{}:999999999:999999999", "a".repeat(MAX_LINE_CHARS - 20));
+    let last = (MAX_ROUNDS - 1, MAX_FINDINGS - 1);
     let longest_line = widest(
-        |round, finding| match (round, finding) {
-            (0, 0) => "\u{1d538}".repeat(MAX_FINDING_CHARS),
-            _ => "e".into(),
+        |round, finding| match (round, finding) == last {
+            true => "\u{1d538}".repeat(MAX_FINDING_CHARS),
+            false => "e".into(),
         },
-        |round, finding| (round, finding).eq(&(0, 0)).then(|| place.clone()),
+        |round, finding| ((round, finding) == last).then(|| place.clone()),
     );
     let mut seen = (0, 0, 0);
     for fields in [most, longest_line] {
@@ -270,9 +273,10 @@ fn the_widest_review_fits() {
     }
     let (bytes, lines, longest) = seen;
     // Pinned, so a change to the codec's rows is seen: 64 rounds of 128
-    // findings, 8,274 lines; the budget as `\|`, 971,378 bytes; the
-    // longest finding at the longest place, a 16,528-byte line.
-    assert_eq!((bytes, lines, longest), (971_378, 8_274, 16_528));
+    // findings, 8,274 lines; the budget as `\|`, 984,178 bytes; the
+    // longest finding at the longest place in round 64's finding 128, a
+    // 16,531-byte line.
+    assert_eq!((bytes, lines, longest), (984_178, 8_274, 16_531));
     assert!(bytes <= REVIEW_LIMITS.file_bytes, "{bytes}");
     assert!(lines <= REVIEW_LIMITS.lines, "{lines}");
     assert!(longest <= REVIEW_LIMITS.line_bytes, "{longest}");
