@@ -361,6 +361,66 @@ pub fn check_committed_as_writer(
     assert_eq!(committed_by(&by_bob), bob.writer());
 }
 
+/// A task file set aside (`spoil` breaks `tasks/b.json`) is carried
+/// forward, a stray beside it (`add_stray`) is not: the store says which,
+/// a link waits on the carried one (its pull requests unknown), the next
+/// write drops the stray and keeps the carried file, and a clear (a write
+/// too) drops a stray beside the file it clears.
+pub fn check_carried_set_aside(
+    (alice, _bob): Clients,
+    spoil: impl FnOnce(),
+    add_stray: impl Fn(),
+    stray: &str,
+) {
+    use quecto::application::project_board::dto::{BoardOp, ProjectBoardError};
+    use quecto::application::project_board::use_cases::ChangeBoardTask;
+    use quecto::infrastructure::time::board_clock::SystemBoardClock;
+    use std::sync::Arc;
+    alice.bootstrap().unwrap();
+    let head = alice.read().unwrap().head;
+    written(alice.write(
+        &head,
+        &[task("a", "One"), task("b", "Two")],
+        "board: add a, b",
+    ));
+    spoil();
+    add_stray();
+    let carried = |store: &dyn ProjectBoardStore| -> Vec<(String, bool)> {
+        let board = store.read().unwrap();
+        board
+            .quarantined
+            .into_iter()
+            .map(|file| (file.path, file.carried))
+            .collect()
+    };
+    let both = [
+        ("tasks/b.json".to_string(), true),
+        (stray.to_string(), false),
+    ];
+    assert_eq!(carried(&*alice), both);
+    let alice: Arc<dyn ProjectBoardStore> = Arc::from(alice);
+    let change =
+        ChangeBoardTask::new(alice.clone(), Arc::new(SystemBoardClock::default())).unwrap();
+    assert_eq!(
+        change.execute(&Slug::parse("a").unwrap(), &BoardOp::AddPr(7)),
+        Err(ProjectBoardError::Quarantined(Slug::parse("b").unwrap()))
+    );
+    let head = alice.read().unwrap().head;
+    written(alice.write(&head, &[task("c", "Three")], "board: add c"));
+    assert_eq!(carried(&*alice), [("tasks/b.json".to_string(), true)]);
+    add_stray();
+    assert_eq!(carried(&*alice), both);
+    let board = alice.read().unwrap();
+    let object = board.quarantined[0].object.clone();
+    let clear = SetAsideClear {
+        path: "tasks/b.json".into(),
+        object,
+        repeated: BTreeMap::new(),
+    };
+    written(alice.clear_set_aside(&board.head, &clear, "board: clear b"));
+    assert_eq!(carried(&*alice), [], "the clear drops the stray beside b");
+}
+
 /// Two clients of one fresh in-memory board, writing as Ada and Bob.
 fn memory() -> (MemoryBoardStore, Clients) {
     let store = MemoryBoardStore::default();
@@ -442,4 +502,15 @@ fn the_memory_store_commits_as_its_writer() {
     check_committed_as_writer(clients, |head| {
         store.committed_by(head).expect("a commit at this head")
     });
+}
+
+#[test]
+fn the_memory_store_carries_a_task_file_set_aside_and_drops_a_stray() {
+    let (store, clients) = memory();
+    check_carried_set_aside(
+        clients,
+        || store.quarantine("b", "malformed"),
+        || store.set_aside_stray("tasks/notes.txt", "not a task file"),
+        "tasks/notes.txt",
+    );
 }

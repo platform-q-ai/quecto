@@ -621,11 +621,6 @@ impl ProjectBoardStore for GitBoardStore {
             head: BoardHead(head),
             tasks: board.tasks.values().map(|held| held.task.clone()).collect(),
             quarantined: board.quarantined.clone(),
-            kept: board
-                .kept
-                .keys()
-                .map(|name| format!("tasks/{name}"))
-                .collect(),
         })
     }
 

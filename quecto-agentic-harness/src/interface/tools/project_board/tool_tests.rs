@@ -324,12 +324,6 @@ async fn a_listing_caps_what_it_shows_set_aside() {
 fn mixed_board(_: &ProjectBoardEnvironment) -> Result<ProjectBoardHandles, BuildError> {
     let store = MemoryBoardStore::default();
     store.bootstrap().unwrap();
-    for index in 0..300 {
-        store.set_aside_stray(
-            &format!("tasks/stray-{index}-{}", "p".repeat(200)),
-            "a stray",
-        );
-    }
     let operations = assembled(
         Arc::new(store.client()),
         Arc::new(SystemBoardClock::default()),
@@ -343,6 +337,13 @@ fn mixed_board(_: &ProjectBoardEnvironment) -> Result<ProjectBoardHandles, Build
         let created =
             crate::interface::tools::project_board::run(&operations, &request.to_string());
         assert_eq!(created["ok"], json!(true), "{created}");
+    }
+    // After the creates: a write drops the strays set aside before it.
+    for index in 0..300 {
+        store.set_aside_stray(
+            &format!("tasks/stray-{index}-{}", "p".repeat(200)),
+            "a stray",
+        );
     }
     Ok(ProjectBoardHandles { operations })
 }
@@ -362,11 +363,12 @@ async fn a_listing_shows_its_tasks_before_what_was_set_aside() {
             "{op}: {answer}"
         );
         assert_eq!(answer.get("truncated"), None, "{op}");
-        if let Some(files) = answer.get("quarantined") {
-            let shown = files.as_array().unwrap().len();
-            assert!(shown > 10, "{op}: {shown}");
-            assert_eq!(answer["quarantined_more"], json!(300 - shown), "{op}");
-        }
+        let files = answer
+            .get("quarantined")
+            .unwrap_or_else(|| panic!("{op} shows what was set aside: {answer}"));
+        let shown = files.as_array().unwrap().len();
+        assert!(shown > 10, "{op}: {shown}");
+        assert_eq!(answer["quarantined_more"], json!(300 - shown), "{op}");
     }
 }
 

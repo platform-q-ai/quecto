@@ -329,3 +329,58 @@ fn another_group_is_given_back() {
     assert_eq!(std::fs::metadata(&target).unwrap().gid(), other);
     assert_eq!(std::fs::read(&target).unwrap(), b"new");
 }
+
+/// #2519 review: a panic while the temporary file exists (an unwind
+/// through the write) removes it; the file is as it was.
+#[test]
+fn a_panic_mid_write_removes_its_temporary_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("f");
+    std::fs::write(&path, "old").unwrap();
+    let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        replace_contents_with(
+            &path,
+            b"new",
+            with_after_temp(|_| panic!("a panic mid-write (injected)")),
+        )
+    }));
+    assert!(caught.is_err(), "the write panicked");
+    assert_eq!(names(dir.path()), ["f"]);
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "old");
+}
+
+/// #2519 review: a panic after the rename landed, with a file not ours
+/// put at the temporary name since: the write is kept and that file is
+/// left alone (it is not the temporary file the guard removes), whether
+/// the target existed or was created.
+#[test]
+fn a_panic_after_the_rename_keeps_the_write_and_a_foreign_file() {
+    for existed in [true, false] {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("f");
+        if existed {
+            std::fs::write(&path, "old").unwrap();
+        }
+        let steps = Steps {
+            rename: |from, to| {
+                std::fs::rename(from, to)?;
+                std::fs::write(from, "foreign")?;
+                panic!("a panic after the rename (injected)")
+            },
+            ..Steps::real()
+        };
+        let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            replace_contents_with(&path, b"new", steps)
+        }));
+        assert!(caught.is_err(), "the write panicked");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "new", "{existed}");
+        let names = names(dir.path());
+        assert_eq!(names.len(), 2, "{existed}: {names:?}");
+        let foreign = names.iter().find(|name| *name != "f").unwrap();
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join(foreign)).unwrap(),
+            "foreign",
+            "{existed}"
+        );
+    }
+}

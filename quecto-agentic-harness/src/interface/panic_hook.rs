@@ -169,6 +169,7 @@ pub fn install() {
         #[cfg(any(test, feature = "test-support"))]
         let end = test_support::fatal_end(end);
         tool_panic_scope::on_call_end(crash_record::withdraw);
+        tool_panic_scope::on_handled(record_handled);
         let previous = std::panic::take_hook();
         std::panic::set_hook(Box::new(move |info| {
             let scope = tool_panic_scope::current();
@@ -220,6 +221,21 @@ pub fn install() {
             }
         }));
     });
+}
+
+/// A panic a tool's code caught and answered itself (#2517) leaves the
+/// `error` event a contained panic does: source `tool_panic`, the call's
+/// tool, the shown message and the location.
+fn record_handled(handled: &tool_panic_scope::HandledPanic) {
+    crash_record::record_event(
+        handled.turn,
+        crate::domain::audit::AuditEvent::Error {
+            source: tool_panic_scope::TOOL_PANIC_SOURCE.to_string(),
+            tool: handled.tool.clone(),
+            message: handled.site.message.clone(),
+            location: handled.site.location.clone(),
+        },
+    );
 }
 
 /// Leave the provisional record of `scope`'s kept panic: `write` it, note

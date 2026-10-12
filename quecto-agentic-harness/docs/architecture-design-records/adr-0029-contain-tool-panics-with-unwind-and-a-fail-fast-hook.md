@@ -160,9 +160,18 @@ tokio would also quietly turn a panic in any spawned task into a
    panic never resumes in the call. It is still recorded on the call's
    scope, and the agent loop's backstop fails a call that returned
    normally after a panic was recorded in its scope. A panic in carried
-   work can therefore never be read as "no output". Grep, grep-rank, the bash capture and saved
-   output, environment commands, the spawn tool's launch reservation and
-   the swarm tool's own blocking work are carried (the swarm admission
+   work can therefore never be read as "no output". The other exception
+   is caught work, `spawn_blocking_caught_in_call` (#2517): it runs in the
+   call's scope and catches its own panic on its thread through
+   `tool_panic_scope::catch_in_call_site`, which forgets the panic as
+   handled, shows its message as a contained panic's is (redacted, at
+   most 1 KiB) and writes the same `tool_panic` `error` event. The call
+   answers the panic itself: the write and edit tools' file write answers
+   an internal fault whose leftover is not known (#2254). Only `call_work`
+   catches outside the application (`carried_work_is_joined`). Grep, grep-rank, the bash capture and saved
+   output, environment commands, the spawn tool's launch reservation,
+   the write and edit tools' file write and the swarm tool's own blocking
+   work are carried (the swarm admission
    check carries too, but runs before any scope, so its panic is fatal).
    Work that outlives its call is not: a swarm background job, reapers,
    cleanup and request accounting. A panic in them is fatal, deliberately.
@@ -438,9 +447,13 @@ tokio would also quietly turn a panic in any spawned task into a
 - Release binaries are somewhat larger, because they carry unwind tables.
 - Code outside the harness's `main` (tests, embeddings) has no hook, so
   Rust's default behaviour applies there. The `panic_hook` process tests
-  re-execute the test binary to prove the installed behaviour. Every test
-  that ends a process fatally on purpose goes through one test-support
-  helper (`panic_hook::test_support::without_core_dumps`): it sets
+  re-execute the test binary to prove the installed behaviour. Every
+  harness test that ends a process fatally on purpose goes through one
+  test-support helper, `infrastructure::test_support::no_core_dumps::without_core_dumps`
+  (also reachable as `panic_hook::test_support::without_core_dumps`
+  through a glob re-export); the `quecto-fail-fast` crate, which cannot
+  depend on the harness, sets the same switch itself
+  (`quecto-fail-fast/src/lib_tests.rs`). The helper sets
   `QUECTO_TEST_NO_CORE_DUMPS=1`, so the hook of a test-support build ends
   the process with `_exit(134)` instead of `abort()`, and it sets the
   process's `RLIMIT_CORE` to zero as well. No core-dumping signal is sent,

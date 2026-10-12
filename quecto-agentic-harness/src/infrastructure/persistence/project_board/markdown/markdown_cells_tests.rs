@@ -250,4 +250,10 @@ fn the_longest_marker_is_read_and_one_byte_more_is_not() {
     assert_eq!(schema_of(longest.as_bytes(), kind), Some(4_294_967_296));
     let longer = format!("<!-- quecto-{kind} schema=42949672960 -->\n");
     assert_eq!(schema_of(longer.as_bytes(), kind), None);
+    // A kind one letter past the 24 a shape allows, with ten digits: 59
+    // bytes, past the longest marker.
+    let wide = "abcdefghijklmnopqrstuvwxy";
+    let past = format!("<!-- quecto-{wide} schema=4294967296 -->\n");
+    assert_eq!(past.len() - 1, 59);
+    assert_eq!(schema_of(past.as_bytes(), wide), None);
 }

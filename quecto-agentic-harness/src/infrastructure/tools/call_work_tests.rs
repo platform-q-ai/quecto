@@ -142,3 +142,29 @@ fn work_run_here_outside_any_runtime_runs_here() {
     let caller = std::thread::current().id();
     assert_eq!(block_here(|| std::thread::current().id()), caller);
 }
+
+/// #2517: work whose call answers its panic itself is caught on its own
+/// thread, in the call's scope, with the task it ran as and the call it
+/// was in; its message as it may leave the process.
+#[tokio::test]
+async fn caught_blocking_work_runs_in_the_call_and_hands_back_its_panic() {
+    let caught = scoped(ToolScope::in_turn("write", 4), async {
+        spawn_blocking_caught_in_call(|| -> () {
+            panic!("in {:?} with sk-livedeadbeef0001", tool_now())
+        })
+        .await
+        .unwrap()
+    })
+    .await;
+    let Err(panic) = caught else {
+        panic!("the work panicked");
+    };
+    assert_eq!(
+        panic.handled.site.message,
+        r#"in Some("write") with [REDACTED]"#
+    );
+    assert_eq!(panic.handled.tool.as_deref(), Some("write"));
+    assert_eq!(panic.handled.turn, 4);
+    let fine = spawn_blocking_caught_in_call(|| 7).await.unwrap();
+    assert!(matches!(fine, Ok(7)));
+}

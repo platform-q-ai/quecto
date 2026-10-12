@@ -78,10 +78,7 @@ impl ChangeBoardTask {
 fn board_readable_for(op: &BoardOp, board: &BoardSnapshot) -> Result<(), ProjectBoardError> {
     match op {
         BoardOp::AddPr(_) => {
-            let carried = board
-                .quarantined
-                .iter()
-                .find(|file| board.kept.contains(&file.path));
+            let carried = board.quarantined.iter().find(|file| file.carried);
             match carried {
                 None => Ok(()),
                 Some(file) => match &file.id {
