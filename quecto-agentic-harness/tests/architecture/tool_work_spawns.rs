@@ -4,49 +4,61 @@
 //! against accidents, checked over every function of every production file
 //! under `src/infrastructure/tools` and `src/interface/tools` (free
 //! functions, impls, trait bodies, nested functions, module scope and macro
-//! tokens alike). Outside the allowlisted sites, each with its reason, it
-//! finds:
+//! tokens alike). It catches every form the check as merged with #2513
+//! caught (kept as `tool_work_spawns_master.rs` and held to it on the real
+//! tree and the whole corpus, `tool_work_spawns_cases.rs`), but the false
+//! positives it was written to leave: a process's `Command` named
+//! `runtime` or `builder`, and `Client::builder()`. Outside the allowlisted sites,
+//! each with its reason, it finds:
 //!
 //! - a spawn word named anywhere (the reader's `SPAWN_WORDS`:
-//!   `spawn_blocking`, `spawn_local`, `spawn_on`, `block_on`,
-//!   `block_in_place`, ...);
+//!   `spawn_blocking`, `spawn_local`, `spawn_on`, `spawn_scoped`,
+//!   `spawn_with_handle`, `block_on`, `block_on_stream`, `block_in_place`,
+//!   ...);
 //! - `spawn`, `scope` or `enter` after a spawner in a path
 //!   (`tokio::spawn`, `std::thread::scope`, `<Handle>::spawn`,
-//!   `JoinSet::<()>::spawn`, `rayon::spawn`), in a macro too;
+//!   `JoinSet::<()>::spawn`, `rayon::spawn`, `smol::spawn`,
+//!   `async_std::task::spawn`), in a macro too;
 //! - `.spawn`, `.scope` or `.enter` on a value that holds a spawner. A
-//!   value holds one when its own path names one: a path's base that is a
-//!   spawner type or name (`Handle::current()`) or a local bound to a
-//!   spawner (only the base is looked up as a local, so `self.handle` is
-//!   no local `handle`), a later segment that is a spawner type, a field
-//!   named for one (`self.handle`), or `.handle()`; or when its call
-//!   arguments hold a spawner type or such a local
-//!   (`Arc::new(Handle::current())`, `Some(h)`, `identity(h)`). A mere
-//!   name in an argument is no spawner (`Command::new(runtime)`), nor is a
-//!   path segment that is not a type (`Client::builder()`);
-//! - locals bound to a spawner: by `let` (from such a value or a spawner
-//!   type), a later assignment (`let h; h = Handle::current()`), `if let`,
-//!   `while let`, a `match` arm or a `for` loop over such a value, a
-//!   parameter or closure parameter of a spawner type, an untyped
-//!   parameter of a closure handed to a spawner's method, or a struct
-//!   pattern's field named for one (`S { handle, .. }`). A local bound to
-//!   anything else is no spawner whatever its name. Each block, closure,
-//!   arm and `if`/`while` has its own scope, so an inner binding never
-//!   hides an outer spawner;
+//!   value holds one when any of its words does, call arguments, turbofish
+//!   and cast types, and block, `if` and `match` tails included: a spawner
+//!   type (`Handle`, `Runtime`, `JoinSet`, `Builder`, `ThreadPool`,
+//!   `Scope`, `TaskTracker`), a name ever bound to a spawner in the item,
+//!   or a spawner's name (`handle`, `runtime`, `builder`, `thread`: a
+//!   field, a method such as `.runtime()`, a call such as `handle()`).
+//!   Two exceptions, each positively no spawner: a path's first segment
+//!   that is a local known to hold none (only first segments are looked
+//!   up as locals, so `self.handle` is never the local `handle`); and
+//!   `builder` after a type that is no spawner (`Client::builder()`);
+//! - what a local holds: a spawner, positively none, or not known. It is
+//!   none only for a literal, a concrete declared type that names no
+//!   spawner (no generic, `impl`, `dyn`, `Self` or `_`), or a constructor
+//!   (`new`, `new_*`, `with_*`, `from`) of such a type whose arguments hold
+//!   none (`Command::new("x")`); a value of none of these is not known,
+//!   and is read by its name, as the merged check read every value. It is
+//!   bound by `let`, `if let`, `while let`, a `match` arm, a `for` loop, a
+//!   parameter, a closure parameter (a spawner when the closure is handed
+//!   to a spawner's method, else not known), a struct pattern's field
+//!   named for a spawner, or a `name @` subpattern; an assignment only
+//!   raises it. Each block, closure, arm, `if`, `while` and `for` has its
+//!   own scope, and
+//!   an `if let`'s names are not seen in its `else`;
 //! - a `use` of a spawn form, and any `use` or `extern crate` that renames
-//!   or globs a spawner or a spawning module, or a `type` alias, `static`
-//!   or `const` of a spawner type (`LazyLock<Runtime>`): a name that could
-//!   hide a spawn is itself a site.
+//!   or globs a spawner or a spawning module; and a `type` alias,
+//!   `static`, `const` (associated ones included), `thread_local!` or
+//!   generic default of a spawner type: a name that could hide a spawn is
+//!   itself a site.
 //!
-//! Raw identifiers (`r#spawn`) are read as written without `r#`. Every
-//! entry must still be needed. What it cannot see, syntax alone not
-//! following calls or types: a spawn inside a helper outside the checked
-//! trees (elsewhere in the crate, or in a dependency); a spawner reached
-//! through a value whose origin it does not see (a field, a collection or
-//! a return value whose path names no spawner, such as
-//! `for h in self.pool.iter()` or `make().spawn(..)`; an untyped closure
-//! parameter of a plain function); and a local bound inside a macro (a
-//! macro's `.spawn` is read by its receiver's words, and the locals bound
-//! outside it).
+//! Raw identifiers (`r#spawn`) are read without `r#`. Every entry must
+//! still be needed. What it cannot see, syntax alone not following calls
+//! or types: a spawn inside a helper outside the checked trees (elsewhere
+//! in the crate, or in a dependency); a spawner reached through a value
+//! none of whose words names one (`self.pool.get().spawn(..)`,
+//! `for h in self.handles.iter()`), or held by a local whose declared
+//! concrete type names none (an alias defined outside the trees); an
+//! identifier a macro splices together (`paste!`); and a local bound
+//! inside a macro (a macro's `.spawn` is read by its receiver's words and
+//! the locals bound outside it).
 
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -54,6 +66,10 @@ use std::path::Path;
 #[path = "tool_work_spawns_visitor.rs"]
 mod visitor;
 use visitor::spawn_sites;
+#[path = "tool_work_spawns_cases.rs"]
+mod cases;
+#[path = "tool_work_spawns_master.rs"]
+mod master;
 
 /// The checked trees.
 const TREES: &[&str] = &["src/infrastructure/tools", "src/interface/tools"];
@@ -254,302 +270,19 @@ fn tool_work_is_spawned_only_through_call_work() {
     assert!(violations.is_empty(), "{}", violations.join("\n"));
 }
 
-/// The checker sees every spawn form, however it is reached.
+/// On the real tree too, every site the check as merged (#2513) finds,
+/// the reader finds.
 #[test]
-fn every_spawn_form_is_seen() {
-    for (source, seen) in [
-        ("fn f() { tokio::task::spawn_blocking(|| ()); }", true),
-        (
-            "use tokio::task::spawn_blocking; fn f() { spawn_blocking(|| ()); }",
-            true,
-        ),
-        (
-            "use tokio::task::{self as t}; fn f() { t::spawn_blocking(|| ()); }",
-            true,
-        ),
-        ("fn f() { std::thread::spawn(|| ()); }", true),
-        ("use std::thread; fn f() { thread::spawn(|| ()); }", true),
-        (
-            "fn f() { tokio::runtime::Handle::current().spawn(async {}); }",
-            true,
-        ),
-        (
-            "fn f(h: tokio::runtime::Handle) { h.block_on(async {}); }",
-            true,
-        ),
-        ("fn f() { tokio::task::spawn_local(async {}); }", true),
-        (
-            "fn f() { std::thread::Builder::new().spawn(|| ()).unwrap(); }",
-            true,
-        ),
-        ("fn f() { tokio::spawn(async {}); }", true),
-        (
-            "fn f() { let _ = format!(\"{:?}\", tokio::spawn(async {})); }",
-            true,
-        ),
-        (
-            "impl X { fn f(&self) { self.handle.spawn(async {}); } }",
-            true,
-        ),
-        // The bypasses #2513's third review listed.
-        ("fn f() { tokio::task::JoinSet::<()>::spawn; }", true),
-        (
-            "fn f() { let mut set = tokio::task::JoinSet::new(); set.spawn(async {}); }",
-            true,
-        ),
-        (
-            "use tokio::task::JoinSet; fn f() { let mut s = JoinSet::new(); s.spawn(async {}); }",
-            true,
-        ),
-        (
-            "fn f() { std::thread::scope(|s| { s.spawn(|| ()); }); }",
-            true,
-        ),
-        ("use std::thread; fn f() { thread::scope(|s| ()); }", true),
-        ("fn f(pool: &ThreadPool) { pool.spawn_ok(async {}); }", true),
-        ("fn f() { rayon::spawn(|| ()); }", true),
-        (
-            "fn f(builder: std::thread::Builder) { builder.spawn(|| ()).unwrap(); }",
-            true,
-        ),
-        (
-            "fn f() { let h = tokio::runtime::Handle::current(); h.spawn(async {}); }",
-            true,
-        ),
-        (
-            "fn f() { let rt = tokio::runtime::Runtime::new().unwrap(); rt.spawn(async {}); }",
-            true,
-        ),
-        ("use tokio as tk; fn f() { tk::spawn(async {}); }", true),
-        ("use tokio::task as t; fn f() { t::spawn(async {}); }", true),
-        ("use tokio::runtime as r; fn f() {}", true),
-        ("use std::thread as th; fn f() { th::spawn(|| ()); }", true),
-        ("use tokio::*; fn f() { spawn(async {}); }", true),
-        ("use tokio::task::*; fn f() { spawn(async {}); }", true),
-        ("use std::thread::*; fn f() { spawn(|| ()); }", true),
-        (
-            "use tokio::runtime::Handle as H; fn f() { H::current().spawn(async {}); }",
-            true,
-        ),
-        (
-            "fn f() { drop(format!(\"{:?}\", tokio::runtime::Handle::current().spawn(async {}))); }",
-            true,
-        ),
-        (
-            "fn f() { let rt = Runtime::new().unwrap(); drop(format!(\"{:?}\", rt.spawn(async {}))); }",
-            true,
-        ),
-        // The probes of #2513's round-3 verify.
-        (
-            "fn f() { if let Ok(h) = tokio::runtime::Handle::try_current() { h.spawn(async {}); } }",
-            true,
-        ),
-        (
-            "fn f() { while let Some(h) = Handle::try_current().ok() { h.spawn(async {}); } }",
-            true,
-        ),
-        (
-            "fn f() { match Handle::try_current() { Ok(h) => { h.spawn(async {}); } Err(_) => {} } }",
-            true,
-        ),
-        (
-            "fn f() { Handle::try_current().map(|h| h.spawn(async {})); }",
-            true,
-        ),
-        ("fn f() { let g = |h: Handle| h.spawn(async {}); }", true),
-        ("use tokio::runtime::Runtime as R; fn f() {}", true),
-        ("use tokio::task::JoinSet as Set; fn f() {}", true),
-        ("use std::thread::Builder as B; fn f() {}", true),
-        (
-            "use tokio::runtime::{Builder as B, Handle}; fn f() {}",
-            true,
-        ),
-        ("type H = tokio::runtime::Handle; fn f() {}", true),
-        ("fn f() { type S = JoinSet<()>; }", true),
-        ("extern crate tokio as tk; fn f() {}", true),
-        ("extern crate rayon as r; fn f() {}", true),
-        (
-            "fn f(h: Handle) { let h2 = h.clone(); h2.spawn(async {}); }",
-            true,
-        ),
-        (
-            "impl X { fn f(&self) { let h = self.handle.clone(); h.spawn(async {}); } }",
-            true,
-        ),
-        (
-            "impl X { fn f(&self) { let r = self.rt.clone(); let s = r; s.spawn(async {}); } fn g(rt: Runtime) { let a = rt; a.spawn(async {}); } }",
-            true,
-        ),
-        (
-            "fn f(set: &mut JoinSet<()>) { set.spawn_on(async {}, &h); }",
-            true,
-        ),
-        (
-            "fn f() { tokio::task::spawn_blocking_on(|| (), &h); }",
-            true,
-        ),
-        (
-            "fn f() { tokio::task::spawn_local_on(async {}, &h); }",
-            true,
-        ),
-        ("fn f() { <Handle>::spawn(&h, async {}); }", true),
-        (
-            "fn f() { <tokio::runtime::Handle>::current(); <Handle as Clone>::clone(&h).spawn(async {}); }",
-            true,
-        ),
-        (
-            "fn f() { let mut s: JoinSet<()> = Default::default(); s.spawn(async {}); }",
-            true,
-        ),
-        (
-            "fn f() { drop(format!(\"{:?}\", tokio::task::JoinSet::<()>::spawn)); }",
-            true,
-        ),
-        (
-            "fn f() { drop(format!(\"{:?}\", JoinSet::<Vec<()>>::new().spawn(async {}))); }",
-            true,
-        ),
-        ("fn f(h: &Handle) { let _g = h.enter(); }", true),
-        (
-            "fn f() { let _g = tokio::runtime::Handle::current().enter(); }",
-            true,
-        ),
-        // The probes of #2523's first review.
-        (
-            "fn f() { let h = std::sync::Arc::new(tokio::runtime::Handle::current()); h.spawn(async {}); }",
-            true,
-        ),
-        (
-            "fn f() { let h = Box::new(Handle::current()); h.spawn(async {}); }",
-            true,
-        ),
-        (
-            "fn f() { let h = Some(Handle::current()); h.unwrap().spawn(async {}); }",
-            true,
-        ),
-        (
-            "fn f() -> std::io::Result<()> { let rt = std::sync::Arc::new(tokio::runtime::Runtime::new()?); rt.spawn(async {}); Ok(()) }",
-            true,
-        ),
-        (
-            "fn f(h: Handle) { let g = identity(h); g.spawn(async {}); }",
-            true,
-        ),
-        (
-            "fn f() { std::sync::Arc::new(Handle::current()).spawn(async {}); }",
-            true,
-        ),
-        (
-            "impl X { fn f(&self, handle: &str) { self.handle.spawn(async {}); } }",
-            true,
-        ),
-        (
-            "fn f() { let h = Handle::current(); { let h = 1; } h.spawn(async {}); }",
-            true,
-        ),
-        (
-            "fn f() { let h = Handle::current(); let g = |h: u8| h; h.spawn(async {}); }",
-            true,
-        ),
-        (
-            "fn f(x: Option<u8>) { let h = Handle::current(); match x { Some(h) => {} None => {} } h.spawn(async {}); }",
-            true,
-        ),
-        (
-            "fn f(x: Option<u8>) { let h = Handle::current(); if let Some(h) = x {} h.spawn(async {}); }",
-            true,
-        ),
-        (
-            "fn f(x: Option<u8>) { let h = Handle::current(); while let Some(h) = x {} h.spawn(async {}); }",
-            true,
-        ),
-        ("fn f() { tokio::r#spawn(async {}); }", true),
-        ("fn f() { tokio::task::r#spawn_blocking(|| ()); }", true),
-        ("fn f(h: Handle) { h.r#spawn(async {}); }", true),
-        (
-            "fn f() { drop(format!(\"{:?}\", tokio::r#spawn(async {}))); }",
-            true,
-        ),
-        (
-            "fn f() { let h; h = Handle::current(); h.spawn(async {}); }",
-            true,
-        ),
-        (
-            "fn f(handles: Vec<Handle>) { for h in &handles { h.spawn(async {}); } }",
-            true,
-        ),
-        (
-            "fn f(s: S) { let S { handle, .. } = s; handle.spawn(async {}); }",
-            true,
-        ),
-        (
-            "fn f(s: S) { let S { runtime: r, .. } = s; r.spawn(async {}); }",
-            true,
-        ),
-        (
-            "static RT: std::sync::LazyLock<tokio::runtime::Runtime> = std::sync::LazyLock::new(make); fn f() {}",
-            true,
-        ),
-        ("const H: Option<Handle> = None; fn f() {}", true),
-        (
-            "static P: OnceLock<ThreadPool> = OnceLock::new(); fn f() {}",
-            true,
-        ),
-        (
-            "fn f(b: std::thread::Builder) { b.spawn_scoped(s, || ()).unwrap(); }",
-            true,
-        ),
-        (
-            "fn f(b: std::thread::Builder) { drop(b.spawn_unchecked(|| ())); }",
-            true,
-        ),
-        // Not spawns: a process, a scoped name elsewhere, a carried spawn.
-        (
-            "fn f() { let client = reqwest::Client::builder().build().unwrap(); client.spawn(1); }",
-            false,
-        ),
-        ("fn f() { Client::builder().spawn(); }", false),
-        (
-            "fn f() { let h = Handle::current(); drop(h); let h = 1; h.spawn(); }",
-            false,
-        ),
-        (
-            "fn f(runtime: &str) { std::process::Command::new(runtime).spawn().unwrap(); }",
-            false,
-        ),
-        (
-            "fn f() { let mut builder = std::process::Command::new(\"x\"); builder.spawn().unwrap(); }",
-            false,
-        ),
-        (
-            "fn f(builder: &mut std::process::Command) { builder.spawn().unwrap(); }",
-            false,
-        ),
-        (
-            "fn f() { let handle = std::process::Command::new(\"x\").spawn().unwrap(); handle.wait(); }",
-            false,
-        ),
-        ("use std::process::Command as C; fn f() {}", false),
-        (
-            "fn f(c: &mut std::process::Command) { c.spawn().unwrap(); }",
-            false,
-        ),
-        (
-            "fn f() { let mut c = std::process::Command::new(\"x\"); c.spawn().unwrap(); }",
-            false,
-        ),
-        ("use std::thread::sleep; fn f() {}", false),
-        (
-            "fn f() { call_work::spawn_blocking_in_call(|| ()); }",
-            false,
-        ),
-        (
-            "#[cfg(test)] mod tests { fn f() { tokio::spawn(async {}); } }",
-            false,
-        ),
-    ] {
-        let file = syn::parse_file(source).unwrap();
-        let sites = spawn_sites(&[("x.rs".to_string(), file)]);
-        assert_eq!(!sites.is_empty(), seen, "{source}: {sites:?}");
-    }
+fn the_reader_finds_every_site_the_merged_check_finds() {
+    let files = checked_files();
+    let read: BTreeSet<(String, String)> = spawn_sites(&files)
+        .into_iter()
+        .map(|(file, site, _)| (file, site))
+        .collect();
+    let missed: Vec<(String, String)> = master::master_sites(&files)
+        .into_iter()
+        .map(|(file, site, _)| (file, site))
+        .filter(|site| !read.contains(site))
+        .collect();
+    assert!(missed.is_empty(), "{missed:?}");
 }
