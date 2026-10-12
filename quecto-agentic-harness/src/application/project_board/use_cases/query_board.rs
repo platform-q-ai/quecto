@@ -1,11 +1,17 @@
 //! The board's listings, read from the store's snapshot: ready tasks,
 //! takeable tasks, tasks by status, a task's children and its dependents,
-//! each by id, beside every file the board set aside. (S1e's index may
-//! answer them faster later, behind this use case.)
+//! each by id, and a task's plans, runs, changes, review and discussions,
+//! each beside every file the board set aside. (S1e's index may answer
+//! them faster later, behind this use case.)
 use std::sync::Arc;
 
-use crate::application::project_board::dto::{BoardListing, ProjectBoardError};
+use crate::application::project_board::dto::{ArtifactListing, BoardListing, ProjectBoardError};
 use crate::application::project_board::ports::ProjectBoardStore;
+use crate::domain::project_board::entities::change::Change;
+use crate::domain::project_board::entities::discussion::Discussion;
+use crate::domain::project_board::entities::plan::Plan;
+use crate::domain::project_board::entities::review::Review;
+use crate::domain::project_board::entities::run::Run;
 use crate::domain::project_board::entities::task::Task;
 use crate::domain::project_board::services::claims::is_live;
 use crate::domain::project_board::value_objects::slug::Slug;
@@ -83,6 +89,64 @@ impl QueryBoard {
         self.matching(|candidate, _| candidate.fields().depends_on.contains(task))
     }
 
+    /// Every plan of `task`, by version, a plan of a task the board no
+    /// longer holds included.
+    ///
+    /// # Errors
+    /// The store's, or [`ProjectBoardError::Duplicate`] for an artifact in
+    /// its scope the board holds twice.
+    pub fn plans_of(&self, task: &Slug) -> Result<ArtifactListing<Plan>, ProjectBoardError> {
+        ArtifactListing::plans_of(&self.store.read()?, task)
+    }
+
+    /// Every run of `task` of its plan's `version`, by number, whether or
+    /// not that plan is on the board.
+    ///
+    /// # Errors
+    /// The store's, or [`ProjectBoardError::Duplicate`] for an artifact in
+    /// its scope the board holds twice.
+    pub fn runs_of_plan(
+        &self,
+        task: &Slug,
+        version: u32,
+    ) -> Result<ArtifactListing<Run>, ProjectBoardError> {
+        ArtifactListing::runs_of_plan(&self.store.read()?, task, version)
+    }
+
+    /// Every change of `task`, by number.
+    ///
+    /// # Errors
+    /// The store's, or [`ProjectBoardError::Duplicate`] for an artifact in
+    /// its scope the board holds twice.
+    pub fn changes_of(&self, task: &Slug) -> Result<ArtifactListing<Change>, ProjectBoardError> {
+        ArtifactListing::changes_of(&self.store.read()?, task)
+    }
+
+    /// The review of `task`'s change `change`, if the board holds one.
+    ///
+    /// # Errors
+    /// The store's, or [`ProjectBoardError::Duplicate`] for an artifact in
+    /// its scope the board holds twice.
+    pub fn review_of(
+        &self,
+        task: &Slug,
+        change: u32,
+    ) -> Result<ArtifactListing<Review>, ProjectBoardError> {
+        ArtifactListing::review_of(&self.store.read()?, task, change)
+    }
+
+    /// Every discussion linked to `task`, by id.
+    ///
+    /// # Errors
+    /// The store's, or [`ProjectBoardError::Duplicate`] for an artifact in
+    /// its scope the board holds twice.
+    pub fn discussions_of(
+        &self,
+        task: &Slug,
+    ) -> Result<ArtifactListing<Discussion>, ProjectBoardError> {
+        ArtifactListing::discussions_of(&self.store.read()?, task)
+    }
+
     fn matching(
         &self,
         wanted: impl Fn(&Task, &[Task]) -> bool,
@@ -106,3 +170,7 @@ impl QueryBoard {
 #[cfg(test)]
 #[path = "query_board_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "query_board_artifacts_tests.rs"]
+mod artifacts_tests;

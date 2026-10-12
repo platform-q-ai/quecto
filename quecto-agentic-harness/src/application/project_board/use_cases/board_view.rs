@@ -6,14 +6,18 @@
 //! no view's scope, so it blocks none. A view sees keys only: a kept file
 //! set aside with no key (its artifact unknown) blocks no view, so S7's
 //! link wiring through [`all_changes`] must still refuse while one exists,
-//! as `change_board_task`'s `board_readable_for` does now.
-use crate::application::project_board::dto::ProjectBoardError;
+//! as `change_board_task`'s `board_readable_for` does now. An artifact a
+//! view finds more than once (a store that broke its contract of one
+//! artifact per key) is refused as [`ProjectBoardError::Duplicate`], never
+//! a panic.
+use crate::application::project_board::dto::{ProjectBoardError, once};
 use crate::application::project_board::ports::{ArtifactKey, BoardSnapshot, QuarantinedFile};
 use crate::domain::project_board::entities::change::Change;
 use crate::domain::project_board::entities::plan::Plan;
 use crate::domain::project_board::entities::review::Review;
 use crate::domain::project_board::entities::run::Run;
 use crate::domain::project_board::entities::task::Task;
+use crate::domain::project_board::services::artifacts_of;
 use crate::domain::project_board::value_objects::slug::Slug;
 
 /// The task `id`. Refused while its file is set aside, even if another
@@ -31,10 +35,14 @@ pub fn task_in<'b>(
     id: &Slug,
 ) -> Result<&'b Task, ProjectBoardError> {
     first_set_aside(quarantined, |key| *key == ArtifactKey::Task(id.clone()))?;
-    tasks
+    let found: Vec<&Task> = tasks
         .iter()
-        .find(|task| task.fields().id == *id)
-        .ok_or_else(|| ProjectBoardError::NotFound(id.clone()))
+        .filter(|task| task.fields().id == *id)
+        .collect();
+    match once(found, ArtifactKey::of_task)?.as_slice() {
+        [task] => Ok(task),
+        _ => Err(ProjectBoardError::NotFound(id.clone())),
+    }
 }
 
 /// Every plan of the task `id`, by version. Refused while any plan of it
@@ -47,13 +55,10 @@ pub fn plans_of<'b>(
         board,
         |key| matches!(key, ArtifactKey::Plan(task, _) if task == id),
     )?;
-    let mut plans: Vec<&Plan> = board
-        .plans
-        .iter()
-        .filter(|plan| plan.fields().task == *id)
-        .collect();
-    plans.sort_by_key(|plan| plan.fields().version);
-    Ok(plans)
+    once(
+        artifacts_of::plans_of(&board.plans, id),
+        ArtifactKey::of_plan,
+    )
 }
 
 /// Every run of the task `id`, by number. Refused while any run of it is
@@ -63,13 +68,7 @@ pub fn runs_of<'b>(board: &'b BoardSnapshot, id: &Slug) -> Result<Vec<&'b Run>, 
         board,
         |key| matches!(key, ArtifactKey::Run(task, _) if task == id),
     )?;
-    let mut runs: Vec<&Run> = board
-        .runs
-        .iter()
-        .filter(|run| run.fields().task == *id)
-        .collect();
-    runs.sort_by_key(|run| run.fields().number);
-    Ok(runs)
+    once(artifacts_of::runs_of(&board.runs, id), ArtifactKey::of_run)
 }
 
 /// Every change of the task `id`, by number. Refused while any change of
@@ -82,13 +81,10 @@ pub fn changes_of<'b>(
         board,
         |key| matches!(key, ArtifactKey::Change(task, _) if task == id),
     )?;
-    let mut changes: Vec<&Change> = board
-        .changes
-        .iter()
-        .filter(|change| change.fields().task == *id)
-        .collect();
-    changes.sort_by_key(|change| change.fields().number);
-    Ok(changes)
+    once(
+        artifacts_of::changes_of(&board.changes, id),
+        ArtifactKey::of_change,
+    )
 }
 
 /// Every change on the board, by task and number: what a link checks a
@@ -96,11 +92,10 @@ pub fn changes_of<'b>(
 /// Refused while any change of any task is set aside.
 pub fn all_changes(board: &BoardSnapshot) -> Result<Vec<&Change>, ProjectBoardError> {
     clear_of(board, |key| matches!(key, ArtifactKey::Change(..)))?;
-    let mut changes: Vec<&Change> = board.changes.iter().collect();
-    changes.sort_by(|a, b| {
-        (&a.fields().task, a.fields().number).cmp(&(&b.fields().task, b.fields().number))
-    });
-    Ok(changes)
+    once(
+        artifacts_of::all_changes(&board.changes),
+        ArtifactKey::of_change,
+    )
 }
 
 /// The review of change `change` of the task `id`, if it has one. Refused
@@ -111,10 +106,9 @@ pub fn review_of<'b>(
     change: u32,
 ) -> Result<Option<&'b Review>, ProjectBoardError> {
     clear_of(board, |key| *key == ArtifactKey::Review(id.clone(), change))?;
-    Ok(board
-        .reviews
-        .iter()
-        .find(|review| review.fields().task == *id && review.fields().change == change))
+    let reviews = artifacts_of::reviews_of_change(&board.reviews, id, change);
+    let reviews = once(reviews, ArtifactKey::of_review)?;
+    Ok(reviews.first().copied())
 }
 
 /// Refuses with the least key in scope that a set-aside file names, so a

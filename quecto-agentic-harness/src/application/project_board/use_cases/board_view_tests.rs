@@ -2,7 +2,7 @@ use super::*;
 use crate::application::project_board::ports::{BoardHead, QuarantinedFile};
 use crate::application::project_board::use_cases::fixtures_tests::{fields, slug};
 use crate::domain::project_board::entities::task::Task;
-use crate::infrastructure::test_support::board_artifacts::{change, plan, review, run};
+use crate::infrastructure::test_support::board_artifacts::{change, discussion, plan, review, run};
 
 fn a_task(id: &str) -> Task {
     Task::new(fields(id)).unwrap()
@@ -234,4 +234,82 @@ fn a_set_aside_discussion_blocks_no_task_view() {
 #[should_panic(expected = "a task is set aside and read at once")]
 fn a_store_never_reads_a_task_it_set_aside() {
     let _ = board(vec![keyed(ArtifactKey::Task(slug("a")))]).asserted();
+}
+
+/// The board with one more copy of an artifact of `kind` that it holds
+/// already: what a store that broke its contract (one artifact per key)
+/// would hand over.
+fn twice(kind: &str) -> (BoardSnapshot, ArtifactKey) {
+    let mut board = board(vec![]);
+    let key = match kind {
+        "task" => {
+            board.tasks.push(a_task("a"));
+            ArtifactKey::Task(slug("a"))
+        }
+        "plan" => {
+            board.plans.push(plan("a", 2));
+            ArtifactKey::Plan(slug("a"), 2)
+        }
+        "run" => {
+            board.runs.push(run("a", 2));
+            ArtifactKey::Run(slug("a"), 2)
+        }
+        "change" => {
+            board.changes.push(change("a", 2));
+            ArtifactKey::Change(slug("a"), 2)
+        }
+        "review" => {
+            board.reviews.push(review("a", 1));
+            ArtifactKey::Review(slug("a"), 1)
+        }
+        _ => {
+            board.discussions = vec![discussion("d"), discussion("d")];
+            ArtifactKey::Discussion(slug("d"))
+        }
+    };
+    (board, key)
+}
+
+const KINDS: [&str; 6] = ["task", "plan", "run", "change", "review", "discussion"];
+
+/// No store hands over an artifact twice, of any kind: the check every
+/// store's read makes stops one in a debug build.
+#[test]
+#[cfg(debug_assertions)]
+fn a_store_never_reads_an_artifact_twice() {
+    assert!(std::panic::catch_unwind(|| board(vec![]).asserted()).is_ok());
+    for kind in KINDS {
+        let (board, _) = twice(kind);
+        let stopped = std::panic::catch_unwind(|| board.asserted());
+        let message = stopped
+            .expect_err(kind)
+            .downcast::<&str>()
+            .map(|message| message.to_string())
+            .unwrap_or_default();
+        assert_eq!(message, "the board holds an artifact twice", "{kind}");
+    }
+}
+
+/// A view that finds an artifact twice refuses, naming it, rather than
+/// pick one or panic; another task's view is not refused.
+#[test]
+fn a_view_refuses_an_artifact_found_twice() {
+    let a = slug("a");
+    let duplicate = |key: ArtifactKey| Err(ProjectBoardError::Duplicate { key });
+    let (board, key) = twice("task");
+    assert_eq!(task(&board, &a).map(|_| ()), duplicate(key));
+    assert!(task(&board, &slug("b")).is_ok());
+    let (board, key) = twice("plan");
+    assert_eq!(plans_of(&board, &a).map(|_| ()), duplicate(key));
+    assert!(plans_of(&board, &slug("b")).is_ok());
+    let (board, key) = twice("run");
+    assert_eq!(runs_of(&board, &a).map(|_| ()), duplicate(key));
+    assert!(runs_of(&board, &slug("b")).is_ok());
+    let (board, key) = twice("change");
+    assert_eq!(changes_of(&board, &a).map(|_| ()), duplicate(key.clone()));
+    assert_eq!(all_changes(&board).map(|_| ()), duplicate(key));
+    assert!(changes_of(&board, &slug("b")).is_ok());
+    let (board, key) = twice("review");
+    assert_eq!(review_of(&board, &a, 1).map(|_| ()), duplicate(key));
+    assert!(review_of(&board, &slug("b"), 1).is_ok());
 }

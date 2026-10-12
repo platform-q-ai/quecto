@@ -2,10 +2,16 @@
 use std::fmt;
 
 use super::ports::{
-    ArtifactKey, BoardClockError, BoardHead, BoardStoreError, PullRequestStatesError,
-    QuarantinedFile,
+    ArtifactKey, BoardClockError, BoardHead, BoardSnapshot, BoardStoreError,
+    PullRequestStatesError, QuarantinedFile,
 };
+use crate::domain::project_board::entities::change::Change;
+use crate::domain::project_board::entities::discussion::Discussion;
+use crate::domain::project_board::entities::plan::Plan;
+use crate::domain::project_board::entities::review::Review;
+use crate::domain::project_board::entities::run::Run;
 use crate::domain::project_board::entities::task::Task;
+use crate::domain::project_board::services::artifacts_of;
 use crate::domain::project_board::value_objects::rule_error::BoardRuleError;
 use crate::domain::project_board::value_objects::schema_error::SchemaError;
 use crate::domain::project_board::value_objects::slug::Slug;
@@ -105,6 +111,194 @@ pub struct BoardListing {
     pub quarantined: Vec<QuarantinedFile>,
 }
 
+/// One kind of artifact a query found, in the query's order, and every
+/// file the board set aside (of any kind, a stray included), so a listing
+/// never hides that part of the board could not be read; both as the
+/// board stood at `head`. An item may point at what the board does not
+/// hold (a plan of a task that is gone): each file is judged on its own.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ArtifactListing<T> {
+    /// The head the listing was read at.
+    pub head: BoardHead,
+    /// Which artifacts it lists.
+    pub scope: ArtifactScope,
+    pub items: Vec<T>,
+    pub quarantined: Vec<QuarantinedFile>,
+}
+
+/// Which artifacts a listing of a task's other artifacts lists.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ArtifactScope {
+    Plans { task: Slug },
+    RunsOfPlan { task: Slug, version: u32 },
+    Changes { task: Slug },
+    Review { task: Slug, change: u32 },
+    Discussions { task: Slug },
+}
+
+impl ArtifactScope {
+    /// Whether a file set aside under `key` may hold one of the listed
+    /// artifacts. A run's key names no plan version, and a discussion's
+    /// no task, so any of the task's runs, or any discussion, may.
+    pub fn covers(&self, key: &ArtifactKey) -> bool {
+        match (self, key) {
+            (Self::Plans { task }, ArtifactKey::Plan(of, _))
+            | (Self::RunsOfPlan { task, .. }, ArtifactKey::Run(of, _))
+            | (Self::Changes { task }, ArtifactKey::Change(of, _)) => of == task,
+            (Self::Review { task, change }, ArtifactKey::Review(of, number)) => {
+                of == task && number == change
+            }
+            (Self::Discussions { .. }, ArtifactKey::Discussion(_)) => true,
+            (
+                Self::Plans { .. }
+                | Self::RunsOfPlan { .. }
+                | Self::Changes { .. }
+                | Self::Review { .. }
+                | Self::Discussions { .. },
+                _,
+            ) => false,
+        }
+    }
+}
+
+impl<T> ArtifactListing<T> {
+    /// The files set aside that may hold one of the listed artifacts:
+    /// while any is, the listing may be incomplete for its scope. A kept
+    /// file set aside whose name spells no key may hold anything, so it
+    /// counts in every scope; a stray (not kept) holds nothing that stays,
+    /// so it counts in none.
+    pub fn set_aside_in_scope(&self) -> Vec<&QuarantinedFile> {
+        self.quarantined
+            .iter()
+            .filter(|file| {
+                file.key
+                    .as_ref()
+                    .map_or(file.carried, |key| self.scope.covers(key))
+            })
+            .collect()
+    }
+}
+
+impl<T: Clone> ArtifactListing<T> {
+    /// `items`, picked from `board` for `scope`, beside its head and
+    /// every file it set aside; refused if one key is there twice.
+    fn picked(
+        board: &BoardSnapshot,
+        scope: ArtifactScope,
+        items: Vec<&T>,
+        key: impl Fn(&T) -> ArtifactKey,
+    ) -> Result<Self, ProjectBoardError> {
+        Ok(Self {
+            head: board.head.clone(),
+            scope,
+            items: once(items, key)?.into_iter().cloned().collect(),
+            quarantined: board.quarantined.clone(),
+        })
+    }
+}
+
+/// `items` (ordered by `key`), unless one key is there more than once: a
+/// store broke its contract of one artifact per key, so what the board
+/// holds is unknown. Every listing and board view asks here.
+pub(crate) fn once<T>(
+    items: Vec<&T>,
+    key: impl Fn(&T) -> ArtifactKey,
+) -> Result<Vec<&T>, ProjectBoardError> {
+    let keys: Vec<ArtifactKey> = items.iter().map(|item| key(item)).collect();
+    match keys.windows(2).find(|pair| pair[0] == pair[1]) {
+        Some(pair) => Err(ProjectBoardError::Duplicate {
+            key: pair[0].clone(),
+        }),
+        None => Ok(items),
+    }
+}
+
+impl ArtifactListing<Plan> {
+    /// Every plan of `task` on `board`, by version.
+    ///
+    /// # Errors
+    /// [`ProjectBoardError::Duplicate`] for a plan the board holds twice.
+    pub fn plans_of(board: &BoardSnapshot, task: &Slug) -> Result<Self, ProjectBoardError> {
+        let scope = ArtifactScope::Plans { task: task.clone() };
+        let plans = artifacts_of::plans_of(&board.plans, task);
+        Self::picked(board, scope, plans, ArtifactKey::of_plan)
+    }
+}
+
+impl ArtifactListing<Run> {
+    /// Every run of `task` of its plan's `version` on `board`, by number.
+    ///
+    /// # Errors
+    /// [`ProjectBoardError::Duplicate`] for a run the board holds twice.
+    pub fn runs_of_plan(
+        board: &BoardSnapshot,
+        task: &Slug,
+        version: u32,
+    ) -> Result<Self, ProjectBoardError> {
+        let scope = ArtifactScope::RunsOfPlan {
+            task: task.clone(),
+            version,
+        };
+        // Each run once by its key first: a copy of another plan version
+        // is still a duplicate.
+        let runs = once(
+            artifacts_of::runs_of(&board.runs, task),
+            ArtifactKey::of_run,
+        )?;
+        let runs = artifacts_of::of_plan_version(runs, version);
+        Self::picked(board, scope, runs, ArtifactKey::of_run)
+    }
+}
+
+impl ArtifactListing<Change> {
+    /// Every change of `task` on `board`, by number.
+    ///
+    /// # Errors
+    /// [`ProjectBoardError::Duplicate`] for a change the board holds twice.
+    pub fn changes_of(board: &BoardSnapshot, task: &Slug) -> Result<Self, ProjectBoardError> {
+        let scope = ArtifactScope::Changes { task: task.clone() };
+        let changes = artifacts_of::changes_of(&board.changes, task);
+        Self::picked(board, scope, changes, ArtifactKey::of_change)
+    }
+}
+
+impl ArtifactListing<Review> {
+    /// The review of `task`'s change `change` on `board`: none or one.
+    ///
+    /// # Errors
+    /// [`ProjectBoardError::Duplicate`] for a review the board holds twice.
+    pub fn review_of(
+        board: &BoardSnapshot,
+        task: &Slug,
+        change: u32,
+    ) -> Result<Self, ProjectBoardError> {
+        let scope = ArtifactScope::Review {
+            task: task.clone(),
+            change,
+        };
+        let reviews = artifacts_of::reviews_of_change(&board.reviews, task, change);
+        Self::picked(board, scope, reviews, ArtifactKey::of_review)
+    }
+}
+
+impl ArtifactListing<Discussion> {
+    /// Every discussion linked to `task` on `board`, by id.
+    ///
+    /// # Errors
+    /// [`ProjectBoardError::Duplicate`] for a discussion the board holds
+    /// twice.
+    pub fn discussions_of(board: &BoardSnapshot, task: &Slug) -> Result<Self, ProjectBoardError> {
+        let scope = ArtifactScope::Discussions { task: task.clone() };
+        // Each discussion once by its key first: a copy linked to another
+        // task is still a duplicate.
+        let mut every: Vec<&Discussion> = board.discussions.iter().collect();
+        every.sort_by(|a, b| a.fields().id.cmp(&b.fields().id));
+        once(every, ArtifactKey::of_discussion)?;
+        let discussions = artifacts_of::discussions_of(&board.discussions, task);
+        Self::picked(board, scope, discussions, ArtifactKey::of_discussion)
+    }
+}
+
 /// Why a board operation did nothing.
 /// Why the board's remote reports no pull requests.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -143,6 +337,11 @@ pub enum ProjectBoardError {
     Quarantined {
         key: ArtifactKey,
         path: String,
+    },
+    /// The board holds the artifact `key` more than once: its store broke
+    /// the contract of one artifact per key, so what it holds is unknown.
+    Duplicate {
+        key: ArtifactKey,
     },
     /// A file every write carries is set aside whose task cannot be told
     /// (no id could be read from it): what it holds is unknown until it is
@@ -244,6 +443,10 @@ impl fmt::Display for ProjectBoardError {
                 f,
                 "the file {path:?} (object {object}) is set aside as unreadable and its task is \
                  unknown; mend or clear it"
+            ),
+            Self::Duplicate { key } => write!(
+                f,
+                "{key} is on the board more than once; its store must be mended"
             ),
             // A task's message is the one agents already know.
             Self::Quarantined {

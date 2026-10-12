@@ -34,6 +34,30 @@ pub enum ArtifactKey {
 }
 
 impl ArtifactKey {
+    pub fn of_task(task: &Task) -> Self {
+        Self::Task(task.fields().id.clone())
+    }
+
+    pub fn of_plan(plan: &Plan) -> Self {
+        Self::Plan(plan.fields().task.clone(), plan.fields().version)
+    }
+
+    pub fn of_run(run: &Run) -> Self {
+        Self::Run(run.fields().task.clone(), run.fields().number)
+    }
+
+    pub fn of_change(change: &Change) -> Self {
+        Self::Change(change.fields().task.clone(), change.fields().number)
+    }
+
+    pub fn of_review(review: &Review) -> Self {
+        Self::Review(review.fields().task.clone(), review.fields().change)
+    }
+
+    pub fn of_discussion(discussion: &Discussion) -> Self {
+        Self::Discussion(discussion.fields().id.clone())
+    }
+
     /// The task's id, when it is a task's own key (not the task a plan,
     /// run, change or review belongs to).
     pub fn as_task(&self) -> Option<&Slug> {
@@ -78,18 +102,12 @@ impl BoardArtifact {
     /// The key its file is named by.
     pub fn key(&self) -> ArtifactKey {
         match self {
-            Self::Task(task) => ArtifactKey::Task(task.fields().id.clone()),
-            Self::Plan(plan) => {
-                ArtifactKey::Plan(plan.fields().task.clone(), plan.fields().version)
-            }
-            Self::Run(run) => ArtifactKey::Run(run.fields().task.clone(), run.fields().number),
-            Self::Change(change) => {
-                ArtifactKey::Change(change.fields().task.clone(), change.fields().number)
-            }
-            Self::Review(review) => {
-                ArtifactKey::Review(review.fields().task.clone(), review.fields().change)
-            }
-            Self::Discussion(discussion) => ArtifactKey::Discussion(discussion.fields().id.clone()),
+            Self::Task(task) => ArtifactKey::of_task(task),
+            Self::Plan(plan) => ArtifactKey::of_plan(plan),
+            Self::Run(run) => ArtifactKey::of_run(run),
+            Self::Change(change) => ArtifactKey::of_change(change),
+            Self::Review(review) => ArtifactKey::of_review(review),
+            Self::Discussion(discussion) => ArtifactKey::of_discussion(discussion),
         }
     }
 }
@@ -167,9 +185,11 @@ pub struct BoardSnapshot {
 }
 
 impl BoardSnapshot {
-    /// The snapshot, as a store hands it over: debug builds check that no
-    /// task both reads and has its file set aside, since a store sets a
-    /// task's file aside instead of reading it, never as well.
+    /// The snapshot, as a store hands it over: debug builds check the
+    /// stores' contract, that no task both reads and has its file set
+    /// aside (a store sets a task's file aside instead of reading it,
+    /// never as well), and that each artifact is held once (no two read
+    /// under one key).
     #[must_use]
     pub fn asserted(self) -> Self {
         debug_assert!(
@@ -179,7 +199,24 @@ impl BoardSnapshot {
                 .all(|id| self.tasks.iter().all(|task| task.fields().id != *id)),
             "a task is set aside and read at once"
         );
+        debug_assert!(self.held_once(), "the board holds an artifact twice");
         self
+    }
+
+    /// Whether every artifact read is held under its own key once.
+    fn held_once(&self) -> bool {
+        let keys: Vec<ArtifactKey> = self
+            .tasks
+            .iter()
+            .map(ArtifactKey::of_task)
+            .chain(self.plans.iter().map(ArtifactKey::of_plan))
+            .chain(self.runs.iter().map(ArtifactKey::of_run))
+            .chain(self.changes.iter().map(ArtifactKey::of_change))
+            .chain(self.reviews.iter().map(ArtifactKey::of_review))
+            .chain(self.discussions.iter().map(ArtifactKey::of_discussion))
+            .collect();
+        let distinct: std::collections::BTreeSet<&ArtifactKey> = keys.iter().collect();
+        distinct.len() == keys.len()
     }
 }
 

@@ -522,33 +522,26 @@ fn full_commit_id(text: &str) -> bool {
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
-/// Whether the index can hold all of `snapshot`: until it keeps a table
-/// per kind (S12) it holds tasks only, so a board holding any other kind,
-/// or a file set aside under any other kind's key, fails closed rather
-/// than be listed without it.
-fn tasks_only(snapshot: &BoardSnapshot) -> Result<(), IndexError> {
-    let others = [
-        ("plans", snapshot.plans.len()),
-        ("runs", snapshot.runs.len()),
-        ("changes", snapshot.changes.len()),
-        ("reviews", snapshot.reviews.len()),
-        ("discussions", snapshot.discussions.len()),
-    ];
-    let held = others.iter().find(|(_, count)| *count > 0);
-    let keyed = snapshot
+/// Whether the index can hold what `snapshot` sets aside: until it keeps
+/// a table per kind (S12) its `quarantined` table names a task's file or a
+/// stray only, so a file set aside under any other kind's key fails closed
+/// rather than be listed as a stray. Other kinds the board holds are no
+/// bar: their listings are read from the store's snapshot until S12, and
+/// task listings go on.
+fn set_aside_indexable(snapshot: &BoardSnapshot) -> Result<(), IndexError> {
+    match snapshot
         .quarantined
         .iter()
-        .find(|file| !task_or_stray(file));
-    match (held, keyed) {
-        (None, None) => Ok(()),
-        (Some((kind, _)), _) => Err(not_indexed(format!("the board holds {kind}"))),
-        (None, Some(file)) => Err(not_indexed(format!("{} is set aside", file.path))),
+        .find(|file| !task_or_stray(file))
+    {
+        None => Ok(()),
+        Some(file) => Err(not_indexed(format!("{} is set aside", file.path))),
     }
 }
 
 fn not_indexed(what: String) -> IndexError {
     IndexError::Store(BoardStoreError::Unavailable(format!(
-        "the board index keeps tasks only for now, and {what}"
+        "the board index names set-aside task files only for now, and {what}"
     )))
 }
 
@@ -559,7 +552,7 @@ fn task_or_stray(file: &QuarantinedFile) -> bool {
 }
 
 fn rows(snapshot: &BoardSnapshot) -> Result<Vec<Row>, IndexError> {
-    tasks_only(snapshot)?;
+    set_aside_indexable(snapshot)?;
     snapshot
         .tasks
         .iter()
