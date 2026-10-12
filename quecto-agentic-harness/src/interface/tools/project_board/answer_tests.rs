@@ -4,7 +4,9 @@ use super::*;
 use crate::domain::project_board::value_objects::schema_error::SchemaError;
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
-use crate::domain::project_board::value_objects::vocabulary::{PlanState, TaskStatus};
+use crate::domain::project_board::value_objects::vocabulary::{
+    DiscussionLimit, PlanState, TaskStatus,
+};
 
 fn slug(text: &str) -> Slug {
     Slug::parse(text).unwrap()
@@ -307,6 +309,11 @@ board_rules! {
     R::ChangeAlreadyLinked { .. } => R::ChangeAlreadyLinked { task: Slug::parse("board-store").unwrap(), change: Some(1) }, "change_already_linked", ["task", "change"];
     R::NoSuchChange(_) => R::NoSuchChange(4), "no_such_change", ["change"];
     R::ChangeAhead { .. } => R::ChangeAhead { change: 1, updated: at("10:00:00") }, "change_ahead", ["change", "updated"];
+    R::DiscussionClosed(_) => R::DiscussionClosed(Slug::parse("chat").unwrap()), "discussion_closed", ["discussion"];
+    R::DiscussionLinked { .. } => R::DiscussionLinked { discussion: Slug::parse("chat").unwrap(), task: Slug::parse("board-store").unwrap() }, "discussion_linked", ["discussion", "task"];
+    R::DiscussionAhead { .. } => R::DiscussionAhead { discussion: Slug::parse("chat").unwrap(), updated: at("10:00:00") }, "discussion_ahead", ["discussion", "updated"];
+    R::MessageAhead { .. } => R::MessageAhead { discussion: Slug::parse("chat").unwrap(), at: at("10:00:00") }, "message_ahead", ["discussion", "at"];
+    R::DiscussionFull { .. } => R::DiscussionFull { discussion: Slug::parse("chat").unwrap(), limit: DiscussionLimit::Lines }, "discussion_full", ["discussion", "limit"];
     R::ReviewAhead { .. } => R::ReviewAhead { change: 1, updated: at("10:00:00") }, "review_ahead", ["change", "updated"];
     R::ChangesLinked(_) => R::ChangesLinked(vec![1]), "changes_linked", ["changes"];
     R::PrUnread(_) => R::PrUnread(7), "pr_unread", ["pr"];

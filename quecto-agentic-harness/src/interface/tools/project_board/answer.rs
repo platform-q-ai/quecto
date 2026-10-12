@@ -490,6 +490,30 @@ fn rule_json(rule: &BoardRuleError) -> Value {
             "change": change,
             "updated": updated.as_str(),
         }),
+        R::DiscussionClosed(id) => json!({"code": "discussion_closed", "discussion": id.as_str()}),
+        R::DiscussionLinked { discussion, task } => json!({
+            "code": "discussion_linked",
+            "discussion": discussion.as_str(),
+            "task": task.as_str(),
+        }),
+        R::DiscussionAhead {
+            discussion,
+            updated,
+        } => json!({
+            "code": "discussion_ahead",
+            "discussion": discussion.as_str(),
+            "updated": updated.as_str(),
+        }),
+        R::MessageAhead { discussion, at } => json!({
+            "code": "message_ahead",
+            "discussion": discussion.as_str(),
+            "at": at.as_str(),
+        }),
+        R::DiscussionFull { discussion, limit } => json!({
+            "code": "discussion_full",
+            "discussion": discussion.as_str(),
+            "limit": limit.as_str(),
+        }),
         R::ReviewAhead { change, updated } => json!({
             "code": "review_ahead",
             "change": change,
