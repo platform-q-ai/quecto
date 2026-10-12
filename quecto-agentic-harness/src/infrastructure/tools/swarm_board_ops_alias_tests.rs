@@ -47,6 +47,14 @@ fn the_task_item_names_are_the_ones_asked_for() {
         assert!(BOARD_OPS.iter().any(|spec| spec.name == *old), "{old}");
     }
     assert_eq!(canonical_op("claim"), "claim");
+    // An alias is no op's own name, and names one op only.
+    let names: Vec<&str> = OP_ALIASES.iter().map(|(alias, _)| *alias).collect();
+    for alias in &names {
+        assert!(!HARNESS_OPS.contains(alias), "{alias}");
+        assert!(BOARD_OPS.iter().all(|spec| spec.name != *alias), "{alias}");
+        assert_eq!(names.iter().filter(|name| *name == alias).count(), 1);
+    }
+    assert!(BOARD_OPS.iter().all(|spec| spec.name != ID_ALIAS.0));
 }
 
 /// Each op under its task-item names on one board, under its old names on
@@ -89,33 +97,6 @@ async fn every_task_item_name_reaches_the_op_of_its_old_name() {
     assert_eq!((aliased_ops, aliased_ids), (5, 13));
 }
 
-/// `task_id` and `task_item_id` are one argument: both, with one value,
-/// are taken; with two, the call is refused before the board.
-#[tokio::test]
-async fn task_id_and_task_item_id_disagreeing_are_refused() {
-    let (_directory, context) = board();
-    direct(&context, "task_create", json!(["r1", "a", ["pass"]])).unwrap();
-    direct(&context, "task_create", json!(["r2", "b", ["pass"]])).unwrap();
-    let both = execute(
-        &context,
-        &json!({"op": "task", "task_id": 1, "task_item_id": 1}).to_string(),
-    )
-    .await;
-    assert!(!both.is_error, "{}", both.content);
-    let refusal = refused(
-        &context,
-        &json!({"op": "claim", "task_id": 1, "task_item_id": 2}).to_string(),
-    )
-    .await;
-    assert!(
-        refusal.contains("task_id") && refusal.contains("task_item_id"),
-        "{refusal}"
-    );
-    // Nothing was claimed.
-    let row = direct(&context, "task", json!([1])).unwrap();
-    assert_eq!(row["status"], "ready", "{row}");
-}
-
 /// A coordinator's board recording in its event log.
 fn logged() -> (
     tempfile::TempDir,
@@ -128,9 +109,66 @@ fn logged() -> (
     (directory, context, log)
 }
 
+/// The refusal of `claim` given `task_id` and `task_item_id` with two
+/// values.
+pub(super) const CONFLICT: &str = "swarm: \"claim: task_id and task_item_id name the same argument but hold different values; send only one\"";
+
+/// `task_id` and `task_item_id` are one argument: both, with one value,
+/// are taken; with two (`1` and `2`, `1` and `1.0`, `null` and `1`), the
+/// call is refused before the board as Python refuses an argument given
+/// twice: `calling`, its fault naming `task_id`, and nothing claimed.
+#[tokio::test]
+async fn task_id_and_task_item_id_disagreeing_are_refused() {
+    let (_directory, context, log) = logged();
+    direct(&context, "task_create", json!(["r1", "a", ["pass"]])).unwrap();
+    direct(&context, "task_create", json!(["r2", "b", ["pass"]])).unwrap();
+    let both = execute(
+        &context,
+        &json!({"op": "task", "task_id": 1, "task_item_id": 1}).to_string(),
+    )
+    .await;
+    assert!(!both.is_error, "{}", both.content);
+    log.take();
+    for (old, new) in [("1", "2"), ("1", "1.0"), ("null", "1")] {
+        let text = format!(r#"{{"op":"claim","task_id":{old},"task_item_id":{new}}}"#);
+        assert_eq!(refused(&context, &text).await, CONFLICT, "{text}");
+        let records = log.take();
+        let claims: Vec<&BoardOpObservation> = records
+            .iter()
+            .filter(|record| record.op == "claim")
+            .collect();
+        assert_eq!(claims.len(), 1, "{text}: {records:?}");
+        let record = claims[0];
+        assert_eq!(
+            record.outcome,
+            BoardOpOutcome::Refused {
+                kind: RefusalKind::Calling,
+                committed: false,
+            },
+            "{text}"
+        );
+        assert_eq!(
+            *record.arguments,
+            ArgumentFaults {
+                unexpected_args: Some(UnexpectedArgs {
+                    count: 1,
+                    known: vec!["task_id".to_owned()],
+                }),
+                ..ArgumentFaults::NONE
+            },
+            "{text}"
+        );
+    }
+    // Neither task was claimed.
+    for id in [1, 2] {
+        let row = direct(&context, "task", json!([id])).unwrap();
+        assert_eq!(row["status"], "ready", "{row}");
+    }
+}
+
 /// The `swarm_op` records and the board's events keep the old names: an
-/// op called by its task-item name is recorded as its old one, and an
-/// argument fault names `task_id`, not `task_item_id`.
+/// op called by its task-item name is recorded as its old one; an argument
+/// sent to an op that does not take it is named as it was sent.
 #[tokio::test]
 async fn the_records_and_events_keep_the_old_names() {
     let (_directory, context, log) = logged();
@@ -148,14 +186,19 @@ async fn the_records_and_events_keep_the_old_names() {
     )
     .await;
     assert!(!claimed.is_error, "{}", claimed.content);
-    // `task_create` takes no task id: the fault names `task_id`.
-    refused(
+    // `task_create` takes no task id: the refusal and its fault name the
+    // argument as it was sent.
+    let wrong_op = refused(
         &context,
         &json!({"op": "task_item_create", "request": "r2", "title": "b",
             "acceptance": ["pass"], "task_item_id": 1})
         .to_string(),
     )
     .await;
+    assert_eq!(
+        wrong_op,
+        r#"swarm: "task_create: unexpected argument task_item_id""#
+    );
     let records: Vec<BoardOpObservation> = log.take();
     // The harness's own reads (`_status`, `summary`, ...) are left out.
     let calls: Vec<&BoardOpObservation> = records
@@ -185,7 +228,7 @@ async fn the_records_and_events_keep_the_old_names() {
         ArgumentFaults {
             unexpected_args: Some(UnexpectedArgs {
                 count: 1,
-                known: vec!["task_id".to_owned()],
+                known: vec!["task_item_id".to_owned()],
             }),
             ..ArgumentFaults::NONE
         }
@@ -197,19 +240,55 @@ async fn the_records_and_events_keep_the_old_names() {
         .iter()
         .filter_map(|event| event["action"].as_str())
         .collect();
-    assert!(actions.contains(&"task_created"), "{actions:?}");
-    assert!(
-        actions.iter().all(|action| !action.contains("item")),
+    assert_eq!(
+        actions
+            .iter()
+            .filter(|action| **action == "task_created")
+            .count(),
+        1,
         "{actions:?}"
     );
 }
 
-/// The schema takes either name: its op enum lists each task-item name
-/// beside the old ones, and `task_item_id` has `task_id`'s schema. The
-/// valid-ops guidance still lists only the old names (slice B changes
-/// what agents read).
+/// A `task_item_id` value the board cannot hold is recorded under the
+/// argument it binds as, `task_id`, for an op that takes it; under its
+/// own name for one that does not.
+#[tokio::test]
+async fn an_unreadable_task_item_id_is_recorded_as_it_binds() {
+    let (_directory, context, log) = logged();
+    for (text, op, field) in [
+        (
+            r#"{"op":"task_item","task_item_id":1e400}"#,
+            "task",
+            "task_id",
+        ),
+        (
+            r#"{"op":"inbox","task_item_id":1e400}"#,
+            "inbox",
+            "task_item_id",
+        ),
+    ] {
+        refused(&context, text).await;
+        let records = log.take();
+        let record = records
+            .iter()
+            .find(|record| record.op == op)
+            .unwrap_or_else(|| panic!("{text}: {records:?}"));
+        assert_eq!(
+            *record.arguments,
+            ArgumentFaults {
+                unreadable_args: vec![field.to_owned()],
+                ..ArgumentFaults::NONE
+            },
+            "{text}"
+        );
+    }
+}
+
+/// The schema takes either name: its `op` enum lists each task-item name
+/// after the old ones, and `task_item_id` has `task_id`'s schema.
 #[test]
-fn the_schema_takes_either_name_and_the_guidance_is_unchanged() {
+fn the_schema_takes_either_name() {
     let schema = tool_schema();
     let ops: Vec<&str> = schema["properties"]["op"]["enum"]
         .as_array()
@@ -217,19 +296,22 @@ fn the_schema_takes_either_name_and_the_guidance_is_unchanged() {
         .iter()
         .map(|op| op.as_str().unwrap())
         .collect();
-    let old: Vec<&str> = HARNESS_OPS
-        .iter()
-        .copied()
-        .chain(BOARD_OPS.iter().map(|spec| spec.name))
-        .collect();
-    let aliases: Vec<&str> = OP_ALIASES.iter().map(|(alias, _)| *alias).collect();
-    assert_eq!(ops, [old.clone(), aliases].concat());
+    assert_eq!(ops.len(), 9 + 25 + 5, "{ops:?}");
+    assert_eq!(
+        ops[34..],
+        [
+            "task_item",
+            "task_items",
+            "task_item_create",
+            "verify_task_item",
+            "revalidate_task_item",
+        ]
+    );
     assert_eq!(
         schema["properties"][ID_ALIAS.0],
         schema["properties"][ID_ALIAS.1]
     );
-    assert_eq!(
-        crate::infrastructure::tools::swarm::swarm_guidance::valid_ops(),
-        old
-    );
 }
+
+#[path = "swarm_board_ops_name_form_tests.rs"]
+mod name_form;
