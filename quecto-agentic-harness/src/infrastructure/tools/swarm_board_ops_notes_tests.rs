@@ -59,8 +59,9 @@ async fn an_object_answer_carries_the_wake_warnings() {
 fn a_non_object_answer_rides_beside_the_notes_as_its_result() {
     let mut notes = serde_json::Map::new();
     notes.insert("notification_warnings".to_owned(), json!(["w"]));
-    let result = crate::infrastructure::tools::swarm_board_ops::answered(
+    let result = crate::infrastructure::tools::swarm_output::answered(
         &crate::composition::swarm::board_wire(),
+        "ack",
         Ok(Value::Null),
         notes,
     )
@@ -148,8 +149,9 @@ fn a_refusal_keeps_the_lifecycle_notes() {
     );
     notes.insert("coordination_error".to_owned(), json!("tool error: gone"));
     let refusal = crate::domain::error::DomainError::Tool(r#"swarm: "unknown task""#.to_owned());
-    let result = super::super::answered(
+    let result = crate::infrastructure::tools::swarm_output::answered(
         &crate::composition::swarm::board_wire(),
+        "task",
         Err(refusal),
         notes,
     )
@@ -158,25 +160,27 @@ fn a_refusal_keeps_the_lifecycle_notes() {
     assert_eq!(
         result.content,
         concat!(
-            r#"tool error: swarm: "unknown task""#,
+            r#"tool error: swarm: "unknown task item""#,
             "\n",
             r#"{"notification_warnings": ["wake hint failed for worker; durable board is authoritative"], "coordination_error": "tool error: gone"}"#
         )
     );
 }
 
-/// Without notes a refusal is exactly the board's.
+/// Without notes a refusal is exactly the board's, in task-item words
+/// (#2478 slice B).
 #[test]
 fn a_refusal_without_notes_is_the_boards() {
     let refusal = crate::domain::error::DomainError::Tool(r#"swarm: "unknown task""#.to_owned());
-    let result = super::super::answered(
+    let result = crate::infrastructure::tools::swarm_output::answered(
         &crate::composition::swarm::board_wire(),
+        "task",
         Err(refusal),
         serde_json::Map::new(),
     )
     .unwrap();
     assert!(result.is_error);
-    assert_eq!(result.content, r#"tool error: swarm: "unknown task""#);
+    assert_eq!(result.content, r#"tool error: swarm: "unknown task item""#);
 }
 
 /// Each record's op and role, taken from `log`.

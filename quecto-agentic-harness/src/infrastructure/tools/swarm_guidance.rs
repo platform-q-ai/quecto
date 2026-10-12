@@ -9,16 +9,16 @@ use serde_json::Value;
 use crate::domain::swarm::RefusalKind;
 
 /// Every op the swarm tool names in its guidance: the harness's own, then
-/// the structured board ops (#2279), each by its old name, both read from
-/// the one op table (`swarm_board_ops`), so the two cannot drift. The
-/// tool also takes each op's task-item name (#2478,
-/// `swarm_board_ops::OP_ALIASES`), which the guidance does not list yet.
+/// the structured board ops (#2279), each by the name the schema
+/// advertises (#2478 slice B: a task item's in place of a task's; the old
+/// names are still taken), both read from the one op table
+/// (`swarm_board_ops`), so the two cannot drift.
 pub(crate) fn valid_ops() -> Vec<&'static str> {
-    use super::super::swarm_board_ops::{BOARD_OPS, HARNESS_OPS};
+    use super::super::swarm_board_ops::{BOARD_OPS, HARNESS_OPS, advertised_op};
     HARNESS_OPS
         .iter()
         .copied()
-        .chain(BOARD_OPS.iter().map(|spec| spec.name))
+        .chain(BOARD_OPS.iter().map(|spec| advertised_op(spec.name)))
         .collect()
 }
 

@@ -55,8 +55,8 @@ fn an_unknown_op_lists_the_valid_ones_and_how_to_end_a_run() {
 }
 
 /// #2279: every structured board op is a valid op, after the harness's
-/// own, each by its old name (#2478: the task-item names are not listed
-/// yet), in the order the refusals list them. Written out by hand, so it
+/// own, each by the name it is advertised by (#2478 slice B: a task item's
+/// in place of a task's), in the order the refusals list them. Written out by hand, so it
 /// cannot drift with the table it is checked against.
 #[test]
 fn the_valid_ops_are_the_harness_ops_and_the_board_ops() {
@@ -70,10 +70,10 @@ fn the_valid_ops_are_the_harness_ops_and_the_board_ops() {
         "events",
         "usage",
         "usage_budget",
-        "task",
-        "tasks",
+        "task_item",
+        "task_items",
         "file_owners",
-        "task_create",
+        "task_item_create",
         "dependencies",
         "claim",
         "release",
@@ -88,8 +88,8 @@ fn the_valid_ops_are_the_harness_ops_and_the_board_ops() {
         "ack",
         "evidence",
         "amend",
-        "verify_task",
-        "revalidate_task",
+        "verify_task_item",
+        "revalidate_task_item",
         "recover",
         "revoke",
         "complete",
@@ -135,13 +135,8 @@ fn the_valid_ops_are_exactly_the_schema_enum() {
         .iter()
         .map(|op| op.as_str().unwrap())
         .collect();
-    // The schema lists the valid ops, then each op's task-item name
-    // (#2478), which the guidance does not list yet.
-    let aliases = crate::infrastructure::tools::swarm_board_ops::OP_ALIASES
-        .iter()
-        .map(|(alias, _)| *alias);
-    let listed: Vec<&str> = valid_ops().into_iter().chain(aliases).collect();
-    assert_eq!(schema_ops, listed);
+    // Both advertise the task-item names only (#2478 slice B).
+    assert_eq!(schema_ops, valid_ops());
 }
 
 #[test]

@@ -283,6 +283,24 @@ pub fn canonical_op(name: &str) -> &str {
     }
 }
 
+/// The name the tool advertises the op `name` (an old name) by: its
+/// task-item name, or `name` itself (#2478 slice B).
+pub fn advertised_op(name: &str) -> &str {
+    match OP_ALIASES.iter().find(|(_, old)| *old == name) {
+        Some((alias, _)) => alias,
+        None => name,
+    }
+}
+
+/// The name the tool advertises the argument `name` by: `task_item_id`
+/// for `task_id`, or `name` itself (#2478 slice B).
+pub fn advertised_arg(name: &str) -> &str {
+    match name == ID_ALIAS.1 {
+        true => ID_ALIAS.0,
+        false => name,
+    }
+}
+
 fn takes_task_id(spec: &OpSpec) -> bool {
     spec.args.iter().any(|arg| arg.name == ID_ALIAS.1)
 }
@@ -383,20 +401,23 @@ fn schema_of(text: &str) -> Value {
 /// [`BOARD_OPS`] and the harness's own fields: a field several ops share
 /// has one schema.
 pub fn tool_schema() -> Value {
-    // Every op by its old name, then each task-item name (#2478).
+    // Every op by the name it is advertised by: a task item's in place of
+    // a task's (#2478 slice B); the old names are still taken, not shown.
     let ops: Vec<&str> = HARNESS_OPS
         .iter()
         .copied()
-        .chain(BOARD_OPS.iter().map(|spec| spec.name))
-        .chain(OP_ALIASES.iter().map(|(alias, _)| *alias))
+        .chain(BOARD_OPS.iter().map(|spec| advertised_op(spec.name)))
         .collect();
     let mut properties = Map::new();
     properties.insert("op".to_owned(), json!({"type": "string", "enum": ops}));
-    let fields = HARNESS_PROPERTIES.iter().copied().chain(
-        BOARD_OPS
-            .iter()
-            .flat_map(|spec| spec.args.iter().map(|arg| (arg.name, arg.json_type))),
-    );
+    let fields = HARNESS_PROPERTIES
+        .iter()
+        .copied()
+        .chain(BOARD_OPS.iter().flat_map(|spec| {
+            spec.args
+                .iter()
+                .map(|arg| (advertised_arg(arg.name), arg.json_type))
+        }));
     for (name, text) in fields {
         let schema = schema_of(text);
         match properties.get(name) {
@@ -406,12 +427,6 @@ pub fn tool_schema() -> Value {
             }
         }
     }
-    // `task_item_id` is `task_id` under its task-item name: one schema.
-    let id = properties
-        .get(ID_ALIAS.1)
-        .cloned()
-        .expect("some board op takes task_id");
-    properties.insert(ID_ALIAS.0.to_owned(), id);
     json!({"type": "object", "properties": properties, "required": ["op"]})
 }
 
@@ -576,7 +591,9 @@ async fn serve(
         Ok(status) => status,
         Err(error) => return unreadable(context, record, started, &error).await,
     };
-    if let Some((kind, gate, text)) = super::swarm::swarm_guidance::running_gate(op, &status) {
+    if let Some((kind, gate, text)) =
+        super::swarm::swarm_guidance::running_gate(advertised_op(op), &status)
+    {
         record.gate = gate;
         return refuse(context, record, (kind, BindingFaults::NONE), started, text).await;
     }
@@ -594,7 +611,7 @@ async fn serve(
     if let Some(before) = before {
         lifecycle(context, before, record, &mut notes).await?;
     }
-    answered(&request.wire, answer, notes)
+    super::swarm_output::answered(&request.wire, op, answer, notes)
 }
 
 /// The gate's `_status` read or the first `_event_cursor` read failed
@@ -656,50 +673,6 @@ async fn lifecycle(
         }
     }
     Ok(())
-}
-
-/// The board's answer, with the lifecycle's notes: added to an answer that
-/// is an object, else beside it as `{"result": answer, …}` (only when there
-/// are notes, so an answer is otherwise exactly the board method's). A
-/// refusal is answered as the board refused it, the notes (when there are
-/// any) on the line after it (#2279 review L4: the notes are kept whatever
-/// the outcome, as the removed `op=run` kept them).
-fn answered(
-    wire: &BoardWire,
-    answer: Result<Value, DomainError>,
-    notes: Map<String, Value>,
-) -> Result<ToolResult, DomainError> {
-    let value = match (answer, notes.is_empty()) {
-        (Ok(value), _) => value,
-        (Err(refusal), true) => return tool_err(refusal.to_string()),
-        (Err(refusal), false) => {
-            let written = wire_text(wire, &Value::Object(notes))
-                .unwrap_or_else(|error| format!("the notes cannot be written: {error}"));
-            return tool_err(format!("{refusal}\n{written}"));
-        }
-    };
-    let value = match (value, notes.is_empty()) {
-        (value, true) => value,
-        (Value::Object(mut fields), false) => {
-            fields.extend(notes);
-            Value::Object(fields)
-        }
-        (other, false) => {
-            let mut fields = Map::new();
-            fields.insert("result".to_owned(), other);
-            fields.extend(notes);
-            Value::Object(fields)
-        }
-    };
-    match wire_text(wire, &value) {
-        Ok(content) => Ok(ToolResult {
-            content,
-            is_error: false,
-            image_blocks: vec![],
-            delivery_metadata: None,
-        }),
-        Err(error) => tool_err(format!("swarm: the answer cannot be written: {error}")),
-    }
 }
 
 fn micros(duration: Duration) -> u64 {

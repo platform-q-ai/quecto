@@ -127,7 +127,7 @@ async fn a_worker_that_stops_holding_its_claim_is_reported_while_another_works()
     assert_eq!(notes, vec![stranded("a", 1, 0)]);
     assert_eq!(
         notes[0].to_message(),
-        "Swarm work is stranded ('a' ended a turn last): 1 claimed task(s) held by workers not working, 0 ready task(s) with no worker working; check the board: swarm op=summary."
+        "Swarm work is stranded ('a' ended a turn last): 1 claimed task item(s) held by workers not working, 0 ready task item(s) with no worker working; check the board: swarm op=summary."
     );
 }
 

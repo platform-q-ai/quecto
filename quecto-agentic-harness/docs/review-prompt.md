@@ -7,7 +7,7 @@ Setup and rules:
 - Form your own conclusions from the issue (and epic), the project's architecture reference and rules (<PROJECT_RULES, e.g. the target-architecture wiki page, AGENTS.md, CONTRIBUTIONS.md>) and the source — before reading the PR description or any earlier review reasoning.
 
 How to run it — fan out, then try to refute:
-1. Finders. The coordinator creates one board task per review angle, and each member claims one angle. Scale the fan-out to the diff: a small diff merges angles into 2–3 finders; only a large or risky diff runs the full set. Angles:
+1. Finders. The coordinator creates one task item per review angle, and each member claims one angle. Scale the fan-out to the diff: a small diff merges angles into 2–3 finders; only a large or risky diff runs the full set. Angles:
    - hunk scan: every changed hunk, line by line;
    - removed behaviour: for each deleted or changed line, name the invariant it enforced and where it is now re-established;
    - cross-file tracer: callers and callees of every changed symbol, including configuration, wiring and docs;

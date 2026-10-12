@@ -601,7 +601,7 @@ fn unknown_statuses_found_in_a_file_are_refused_affirmatively() {
     );
     assert_eq!(
         message(require_unsubmitted("odd")),
-        "task status 'odd' is not a known status; no revision permitted"
+        "task item status 'odd' is not a known status; no revision permitted"
     );
     assert_eq!(
         message(admission(

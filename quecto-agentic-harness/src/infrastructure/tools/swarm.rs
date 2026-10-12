@@ -1,4 +1,4 @@
-use super::swarm_output::{ok_json, tool_err};
+use super::swarm_output::{ok_json, task_item_harness_answer, tool_err};
 use std::future::Future;
 use std::pin::Pin;
 
@@ -104,7 +104,8 @@ impl Tool for SwarmTool {
                     )
                     .await
                     {
-                        Ok(value) => ok_json(value, false),
+                        // In task-item words (#2478 slice B).
+                        Ok(value) => ok_json(task_item_harness_answer(op, value), false),
                         Err(error) => tool_err(error.to_string()),
                     }
                 }
