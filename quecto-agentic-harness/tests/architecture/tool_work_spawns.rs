@@ -399,7 +399,105 @@ fn every_spawn_form_is_seen() {
             "fn f() { let _g = tokio::runtime::Handle::current().enter(); }",
             true,
         ),
+        // The probes of #2523's first review.
+        (
+            "fn f() { let h = std::sync::Arc::new(tokio::runtime::Handle::current()); h.spawn(async {}); }",
+            true,
+        ),
+        (
+            "fn f() { let h = Box::new(Handle::current()); h.spawn(async {}); }",
+            true,
+        ),
+        (
+            "fn f() { let h = Some(Handle::current()); h.unwrap().spawn(async {}); }",
+            true,
+        ),
+        (
+            "fn f() -> std::io::Result<()> { let rt = std::sync::Arc::new(tokio::runtime::Runtime::new()?); rt.spawn(async {}); Ok(()) }",
+            true,
+        ),
+        (
+            "fn f(h: Handle) { let g = identity(h); g.spawn(async {}); }",
+            true,
+        ),
+        (
+            "fn f() { std::sync::Arc::new(Handle::current()).spawn(async {}); }",
+            true,
+        ),
+        (
+            "impl X { fn f(&self, handle: &str) { self.handle.spawn(async {}); } }",
+            true,
+        ),
+        (
+            "fn f() { let h = Handle::current(); { let h = 1; } h.spawn(async {}); }",
+            true,
+        ),
+        (
+            "fn f() { let h = Handle::current(); let g = |h: u8| h; h.spawn(async {}); }",
+            true,
+        ),
+        (
+            "fn f(x: Option<u8>) { let h = Handle::current(); match x { Some(h) => {} None => {} } h.spawn(async {}); }",
+            true,
+        ),
+        (
+            "fn f(x: Option<u8>) { let h = Handle::current(); if let Some(h) = x {} h.spawn(async {}); }",
+            true,
+        ),
+        (
+            "fn f(x: Option<u8>) { let h = Handle::current(); while let Some(h) = x {} h.spawn(async {}); }",
+            true,
+        ),
+        ("fn f() { tokio::r#spawn(async {}); }", true),
+        ("fn f() { tokio::task::r#spawn_blocking(|| ()); }", true),
+        ("fn f(h: Handle) { h.r#spawn(async {}); }", true),
+        (
+            "fn f() { drop(format!(\"{:?}\", tokio::r#spawn(async {}))); }",
+            true,
+        ),
+        (
+            "fn f() { let h; h = Handle::current(); h.spawn(async {}); }",
+            true,
+        ),
+        (
+            "fn f(handles: Vec<Handle>) { for h in &handles { h.spawn(async {}); } }",
+            true,
+        ),
+        (
+            "fn f(s: S) { let S { handle, .. } = s; handle.spawn(async {}); }",
+            true,
+        ),
+        (
+            "fn f(s: S) { let S { runtime: r, .. } = s; r.spawn(async {}); }",
+            true,
+        ),
+        (
+            "static RT: std::sync::LazyLock<tokio::runtime::Runtime> = std::sync::LazyLock::new(make); fn f() {}",
+            true,
+        ),
+        ("const H: Option<Handle> = None; fn f() {}", true),
+        (
+            "static P: OnceLock<ThreadPool> = OnceLock::new(); fn f() {}",
+            true,
+        ),
+        (
+            "fn f(b: std::thread::Builder) { b.spawn_scoped(s, || ()).unwrap(); }",
+            true,
+        ),
+        (
+            "fn f(b: std::thread::Builder) { drop(b.spawn_unchecked(|| ())); }",
+            true,
+        ),
         // Not spawns: a process, a scoped name elsewhere, a carried spawn.
+        (
+            "fn f() { let client = reqwest::Client::builder().build().unwrap(); client.spawn(1); }",
+            false,
+        ),
+        ("fn f() { Client::builder().spawn(); }", false),
+        (
+            "fn f() { let h = Handle::current(); drop(h); let h = 1; h.spawn(); }",
+            false,
+        ),
         (
             "fn f(runtime: &str) { std::process::Command::new(runtime).spawn().unwrap(); }",
             false,
