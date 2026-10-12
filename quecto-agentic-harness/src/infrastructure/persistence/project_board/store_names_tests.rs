@@ -17,10 +17,10 @@ fn a_gitlink_task_file_is_a_stray_and_never_stops_a_write() {
         &[
             (
                 "100644",
-                "ok.json",
+                "ok.md",
                 Object::Blob(encode(&task("ok")).unwrap()),
             ),
-            ("160000", "mod.json", Object::Blob(b"held here".to_vec())),
+            ("160000", "mod.md", Object::Blob(b"held here".to_vec())),
         ],
         &[&repos.bob],
     );
@@ -31,7 +31,7 @@ fn a_gitlink_task_file_is_a_stray_and_never_stops_a_write() {
             &repos.remote(),
             &["ls-tree", "--name-only", &format!("{}:tasks", moved.0)]
         ),
-        "fresh.json\nfresh.md\nok.json\nok.md"
+        "fresh.md\nok.md"
     );
     let board = bob.board_at(&head.0).unwrap();
     assert_eq!(
@@ -40,21 +40,23 @@ fn a_gitlink_task_file_is_a_stray_and_never_stops_a_write() {
             .iter()
             .map(|q| (q.path.as_str(), q.id().map(Slug::as_str)))
             .collect::<Vec<_>>(),
-        [("tasks/mod.json", None)]
+        [("tasks/mod.md", None)]
     );
 }
 
-/// Only `.json` names quecto can show and bound are carried forward: valid
+/// Only task file names quecto can show and bound are carried forward: valid
 /// UTF-8 of shown characters, no longer than an id's. Any other name is a
 /// stray: dropped by the next write, never counted as a duplicate, and
 /// quoted wherever it is shown.
 #[test]
-fn only_json_names_quecto_can_show_are_carried() {
+fn only_names_quecto_can_show_are_carried() {
     let repos = Repos::new();
     let alice = store(&repos.alice);
     created(&alice);
-    let longest = format!("{}.json", "A".repeat(MAX_SLUG_BYTES));
-    let too_long = format!("{}.json", "A".repeat(MAX_SLUG_BYTES + 1));
+    let longest = format!("{}.md", "A".repeat(MAX_SLUG_BYTES));
+    // One byte past the longest name kept: an id of the most bytes and the
+    // five bytes of `.json`, the longer task file extension.
+    let too_long = format!("{}.md", "A".repeat(MAX_SLUG_BYTES + 3));
     let json = |id: &str| Object::Blob(encode(&task(id)).unwrap());
     let (ok, kept, long, odd, odder, shady) = (
         json("ok"),
@@ -69,16 +71,16 @@ fn only_json_names_quecto_can_show_are_carried() {
         &[
             ("100644", longest.as_bytes(), &kept),
             ("100644", too_long.as_bytes(), &long),
-            ("100644", "Bad\u{1b}[2J\u{202e}.json".as_bytes(), &shady),
-            ("100644", b"ok.json", &ok),
-            ("100644", b"\xfe.json", &odd),
-            ("100644", b"\xff.json", &odder),
-            ("100644", b"a/b.json", &odder),
-            ("100644", b"a\\b.json", &odder),
-            ("100644", b"..json", &odder),
-            ("100644", b"a[x](y).json", &odder),
-            ("100644", "\u{3164}.json".as_bytes(), &odder),
-            ("100644", "e\u{301}.json".as_bytes(), &odder),
+            ("100644", "Bad\u{1b}[2J\u{202e}.md".as_bytes(), &shady),
+            ("100644", b"ok.md", &ok),
+            ("100644", b"\xfe.md", &odd),
+            ("100644", b"\xff.md", &odder),
+            ("100644", b"a/b.md", &odder),
+            ("100644", b"a\\b.md", &odder),
+            ("100644", b"..md", &odder),
+            ("100644", b"a[x](y).md", &odder),
+            ("100644", "\u{3164}.md".as_bytes(), &odder),
+            ("100644", "e\u{301}.md".as_bytes(), &odder),
         ],
         &[&repos.bob],
     );
@@ -103,13 +105,7 @@ fn only_json_names_quecto_can_show_are_carried() {
             &format!("{}:tasks", moved.0),
         ],
     );
-    let expected = [
-        longest.as_str(),
-        "fresh.json",
-        "fresh.md",
-        "ok.json",
-        "ok.md",
-    ];
+    let expected = [longest.as_str(), "fresh.md", "ok.md"];
     assert_eq!(
         names
             .split('\0')
@@ -131,10 +127,10 @@ fn a_name_twice_where_a_write_drops_one_copy_is_no_duplicate() {
         &[
             (
                 "100644",
-                "dup.json",
+                "dup.md",
                 Object::Blob(encode(&task("dup")).unwrap()),
             ),
-            ("160000", "dup.json", Object::Blob(b"a gitlink".to_vec())),
+            ("160000", "dup.md", Object::Blob(b"a gitlink".to_vec())),
         ],
         &[&repos.bob],
     );
@@ -149,7 +145,7 @@ fn a_name_twice_where_a_write_drops_one_copy_is_no_duplicate() {
     assert_eq!(
         sh(&repos.remote(), &["ls-tree", &format!("{}:tasks", moved.0)])
             .lines()
-            .filter(|row| row.ends_with("\tdup.json"))
+            .filter(|row| row.ends_with("\tdup.md"))
             .count(),
         1
     );
@@ -204,10 +200,10 @@ fn a_name_twice_where_one_copy_disagrees_with_its_mode_is_read_once() {
             &[
                 (
                     "100644",
-                    "dup.json",
+                    "dup.md",
                     Object::Blob(encode(&task("dup")).unwrap()),
                 ),
-                (mode, "dup.json", object),
+                (mode, "dup.md", object),
             ],
             &[&repos.bob],
         );
@@ -225,4 +221,50 @@ fn a_name_twice_where_one_copy_disagrees_with_its_mode_is_read_once() {
         );
         written(bob.write_tasks(&head, &[task("fresh")], "board: add fresh"));
     }
+}
+
+/// The longest name kept is an id of the most bytes and `.json` (69
+/// bytes): a legacy task file of the longest id is set aside under it and
+/// carried, so the id stays blocked; one byte longer is a stray a write
+/// drops.
+#[test]
+fn a_legacy_name_of_the_longest_id_is_kept_and_one_byte_more_dropped() {
+    let repos = Repos::new();
+    let alice = store(&repos.alice);
+    created(&alice);
+    let longest = format!("{}.json", "a".repeat(MAX_SLUG_BYTES));
+    let past = format!("{}.json", "b".repeat(MAX_SLUG_BYTES + 1));
+    assert_eq!((longest.len(), past.len()), (69, 70));
+    let legacy = Object::Blob(b"{}".to_vec());
+    let head = raw_board_named(
+        &repos.remote(),
+        &[
+            ("100644", longest.as_bytes(), &legacy),
+            ("100644", past.as_bytes(), &legacy),
+        ],
+        &[&repos.bob],
+    );
+    let bob = store(&repos.bob);
+    let board = bob.board_at(&head.0).unwrap();
+    let id = "a".repeat(MAX_SLUG_BYTES);
+    let found: Vec<(String, Option<&str>)> = board
+        .quarantined
+        .iter()
+        .map(|file| (file.path.clone(), file.id().map(Slug::as_str)))
+        .collect();
+    assert_eq!(
+        found,
+        [
+            (format!("tasks/{longest}"), Some(id.as_str())),
+            (format!("tasks/{past}"), None),
+        ]
+    );
+    let moved = written(bob.write_tasks(&head, &[task("fresh")], "board: add fresh"));
+    assert_eq!(
+        sh(
+            &repos.remote(),
+            &["ls-tree", "--name-only", &format!("{}:tasks", moved.0)]
+        ),
+        format!("{longest}\nfresh.md")
+    );
 }

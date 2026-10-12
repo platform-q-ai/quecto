@@ -196,14 +196,14 @@ fn a_path_set_aside_twice_is_listed_twice() {
     let mut snapshot = board("a1");
     snapshot.quarantined = vec![
         QuarantinedFile {
-            path: "tasks/x.json".into(),
+            path: "tasks/x.md".into(),
             key: Some(ArtifactKey::Task(slug("x"))),
             reason: "named more than once in the tree".into(),
             object: "c".repeat(40),
             carried: false,
         },
         QuarantinedFile {
-            path: "tasks/x.json".into(),
+            path: "tasks/x.md".into(),
             key: Some(ArtifactKey::Task(slug("x"))),
             reason: "named more than once in the tree".into(),
             object: "d".repeat(40),

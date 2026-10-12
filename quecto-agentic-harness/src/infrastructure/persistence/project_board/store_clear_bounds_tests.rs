@@ -1,52 +1,30 @@
-//! The bounds a clear keeps: those every write keeps, a copy kept with
-//! the summary it will need, and how much a clear may name and a refusal
-//! may list.
+//! The bounds a clear keeps: those every write keeps, a board at its
+//! entry bound, and how much a clear may name and a refusal may list.
 use super::*;
+use crate::infrastructure::persistence::project_board::board_tree::MAX_READ_ENTRIES;
 
 /// A clear keeps every bound a write keeps, and is refused as invalid
-/// past one, never panicking: the entries a tree may hold, the bytes of a
-/// tree, and the task-file bytes a read takes.
+/// past one, never panicking: the bytes of a tree and the task-file bytes
+/// a read takes. (A clear never adds an entry, so a board a read takes
+/// keeps within the entry bound once cleared.)
 #[test]
 fn a_clear_keeps_every_bound_a_write_keeps() {
-    // Task files with no summaries: a clear would add one for each.
-    let (repos, bob, head) = mktree_board(
-        &(0..MAX_TASKS + 52)
-            .map(|n| {
-                (
-                    format!("t{n}.json"),
-                    encode(&task(&format!("t{n}"))).unwrap(),
-                )
-            })
-            .chain([("notes.txt".to_string(), b"stray".to_vec())])
-            .collect::<Vec<_>>(),
-    );
-    let notes = oid_of(&repos.bob, b"stray");
-    let past = bob.clear_set_aside(
-        &head,
-        &clearing("tasks/notes.txt", &notes, &[]),
-        "board: clear",
-    );
-    assert!(
-        matches!(&past, Err(BoardStoreError::InvalidWrite(why)) if why.contains("at most")),
-        "{past:?}"
-    );
-
     // The bytes of a tree, and the task-file bytes a read takes.
     let (repos, mut bob, head) = board_of(&[
-        ("100644", "a.json", json(&task("a"))),
-        ("100644", "b.json", json(&task("b"))),
-        ("100644", "broken.json", Object::Blob(b"{".to_vec())),
-        ("100644", "dup.json", json(&task("dup"))),
-        ("100644", "dup.json", json(&other("dup"))),
+        ("100644", "a.md", task_blob(&task("a"))),
+        ("100644", "b.md", task_blob(&task("b"))),
+        ("100644", "broken.md", Object::Blob(b"{".to_vec())),
+        ("100644", "dup.md", task_blob(&task("dup"))),
+        ("100644", "dup.md", task_blob(&other("dup"))),
     ]);
     let dup = oid_of(&repos.bob, &encode(&task("dup")).unwrap());
     let dup2 = oid_of(&repos.bob, &encode(&other("dup")).unwrap());
     let broken = oid_of(&repos.bob, b"{");
     let size = |task: &Task| encode(task).unwrap().len();
     let keeping = clearing(
-        "tasks/broken.json",
+        "tasks/broken.md",
         &broken,
-        &[("tasks/dup.json", keep(&dup, &[&dup, &dup2]))],
+        &[("tasks/dup.md", keep(&dup, &[&dup, &dup2]))],
     );
     bob.limits.board_bytes = size(&task("a")) + size(&task("b")) + size(&task("dup")) - 1;
     let past = bob.clear_set_aside(&head, &keeping, "board: clear");
@@ -57,7 +35,7 @@ fn a_clear_keeps_every_bound_a_write_keeps() {
     bob.limits.board_bytes += 1;
     // The tasks tree the clear makes: each entry its mode, a space, its
     // name, a NUL and a 20-byte object name.
-    let cleared: usize = ["a.json", "a.md", "b.json", "b.md", "dup.json"]
+    let cleared: usize = ["a.md", "b.md", "dup.md"]
         .iter()
         .map(|name| "100644".len() + 1 + name.len() + 1 + 20)
         .sum();
@@ -71,53 +49,31 @@ fn a_clear_keeps_every_bound_a_write_keeps() {
     written(bob.clear_set_aside(&head, &keeping, "board: clear broken"));
 }
 
-/// A copy a clear keeps that a read will read as a task needs a summary
-/// the next write adds, so it counts as two entries: at the bound the
-/// clear is written, past it refused.
+/// A board at its entry bound (its tasks, one file each, and a name listed
+/// twice) is cleared, and the copy kept counts as one entry: a write then
+/// fills the board to its bound and no further.
 #[test]
-fn a_copy_kept_counts_with_the_summary_it_will_need() {
-    let tasks: Vec<(String, Vec<u8>)> = (0..MAX_TASKS - 1)
-        .flat_map(|n| {
+fn a_board_at_its_entry_bound_is_cleared_and_written_up_to_it() {
+    let mut files: Vec<(String, Vec<u8>)> = (0..MAX_TASK_ENTRIES - 2)
+        .map(|n| {
             let task = task(&format!("t{n}"));
-            [
-                (format!("t{n}.json"), encode(&task).unwrap()),
-                (format!("t{n}.md"), summary(&task).into_bytes()),
-            ]
+            (format!("t{n}.md"), encode(&task).unwrap())
         })
         .collect();
-    let dup = |tasks: &[(String, Vec<u8>)], extra: &[(String, Vec<u8>)]| {
-        let mut files = tasks.to_vec();
-        files.push(("dup.json".into(), encode(&task("dup")).unwrap()));
-        files.push(("dup.json".into(), encode(&other("dup")).unwrap()));
-        files.extend(extra.iter().cloned());
-        mktree_board(&files)
-    };
-    let (repos, bob, head) = dup(&tasks, &[]);
+    files.push(("dup.md".into(), encode(&task("dup")).unwrap()));
+    files.push(("dup.md".into(), encode(&other("dup")).unwrap()));
+    let (repos, bob, head) = mktree_board(&files);
     let one = oid_of(&repos.bob, &encode(&task("dup")).unwrap());
     let two = oid_of(&repos.bob, &encode(&other("dup")).unwrap());
-    let path = "tasks/dup.json";
+    let path = "tasks/dup.md";
     let keeping = clearing(path, &one, &[(path, keep(&one, &[&one, &two]))]);
-    written(bob.clear_set_aside(&head, &keeping, "board: clear dup"));
-    // One task without its summary yet and one file carried as it is: the
-    // tree still holds 4,096 entries, and the copy kept takes the board
-    // past them only when it counts with its summary.
-    let without = format!("t{}.md", MAX_TASKS - 2);
-    let fewer: Vec<(String, Vec<u8>)> = tasks
-        .iter()
-        .filter(|(name, _)| *name != without)
-        .cloned()
-        .collect();
-    let (_repos, bob, head) = dup(&fewer, &[("odd.json".into(), b"{".to_vec())]);
-    let past = bob.clear_set_aside(&head, &keeping, "board: clear dup");
+    let cleared = written(bob.clear_set_aside(&head, &keeping, "board: clear dup"));
+    let full = written(bob.write_tasks(&cleared, &[task("last")], "board: add last"));
+    let past = bob.write_tasks(&full, &[task("over")], "board: add over");
     assert!(
         matches!(&past, Err(BoardStoreError::InvalidWrite(why)) if why.contains("at most")),
         "{past:?}"
     );
-    written(bob.clear_set_aside(
-        &head,
-        &clearing(path, &one, &[(path, drop_all(&[&one, &two]))]),
-        "board: drop dup",
-    ));
 }
 
 /// What a clear may name is bounded, and a refusal lists a bounded number
@@ -131,7 +87,7 @@ fn a_clear_and_its_refusals_are_bounded() {
                 bytes.push(b'0' + n);
                 (
                     "100644".to_string(),
-                    format!("d{n}.json"),
+                    format!("d{n}.md"),
                     Object::Blob(bytes),
                 )
             })
@@ -150,20 +106,16 @@ fn a_clear_and_its_refusals_are_bounded() {
     let (repos, bob, head) = board_of(&entries);
     let one = oid_of(&repos.bob, b"one0");
     let why =
-        refused(bob.clear_set_aside(&head, &clearing("tasks/d0.json", &one, &[]), "board: clear"));
+        refused(bob.clear_set_aside(&head, &clearing("tasks/d0.md", &one, &[]), "board: clear"));
     assert!(why.contains("and 2 more"), "{why}");
-    let many: Vec<(String, KeepCopy)> = (0..=MAX_TASK_ENTRIES / 2)
-        .map(|n| (format!("tasks/n{n}.json"), drop_all(&[])))
+    let many: Vec<(String, KeepCopy)> = (0..=MAX_READ_ENTRIES / 2)
+        .map(|n| (format!("tasks/n{n}.md"), drop_all(&[])))
         .collect();
     let many: Vec<(&str, KeepCopy)> = many
         .iter()
         .map(|(path, keep)| (path.as_str(), keep.clone()))
         .collect();
-    let invalid = bob.clear_set_aside(
-        &head,
-        &clearing("tasks/d0.json", &one, &many),
-        "board: clear",
-    );
+    let invalid = bob.clear_set_aside(&head, &clearing("tasks/d0.md", &one, &many), "board: clear");
     assert!(
         matches!(invalid, Err(BoardStoreError::InvalidWrite(_))),
         "{invalid:?}"
@@ -175,17 +127,17 @@ fn a_clear_and_its_refusals_are_bounded() {
 #[test]
 fn the_copies_a_clear_names_are_bounded_by_what_it_saw() {
     let (repos, bob, head) = board_of(&[
-        ("100644", "dup.json", Object::Blob(b"one".to_vec())),
-        ("100644", "dup.json", Object::Blob(b"two".to_vec())),
+        ("100644", "dup.md", Object::Blob(b"one".to_vec())),
+        ("100644", "dup.md", Object::Blob(b"two".to_vec())),
     ]);
     let one = oid_of(&repos.bob, b"one");
-    let path = "tasks/dup.json";
+    let path = "tasks/dup.md";
     let objects = |count: usize| -> Vec<String> {
         std::iter::once(one.clone())
             .chain((1..count).map(|n| format!("{n:040x}")))
             .collect()
     };
-    let at = objects(MAX_TASK_ENTRIES);
+    let at = objects(MAX_READ_ENTRIES);
     let at: Vec<&str> = at.iter().map(String::as_str).collect();
     let judged = bob.clear_set_aside(
         &head,
@@ -196,7 +148,7 @@ fn the_copies_a_clear_names_are_bounded_by_what_it_saw() {
         matches!(judged, Ok(BoardWrite::Refused(_))),
         "at the bound: {judged:?}"
     );
-    let past = objects(MAX_TASK_ENTRIES + 1);
+    let past = objects(MAX_READ_ENTRIES + 1);
     let past: Vec<&str> = past.iter().map(String::as_str).collect();
     for resolution in [keep(&one, &past), drop_all(&past)] {
         let invalid = bob.clear_set_aside(
@@ -212,7 +164,8 @@ fn the_copies_a_clear_names_are_bounded_by_what_it_saw() {
 }
 
 /// A board whose `tasks/` tree holds exactly `files` (name, bytes; a name
-/// may repeat), made with `mktree`, on the remote; bob's store of it.
+/// may repeat), made with `mktree`, on the remote; bob's store of it. Its
+/// root is a legacy one, without the format marker.
 fn mktree_board(files: &[(String, Vec<u8>)]) -> (Repos, GitBoardStore, BoardHead) {
     let repos = Repos::new();
     created(&store(&repos.alice));
@@ -261,13 +214,13 @@ fn mktree_board(files: &[(String, Vec<u8>)]) -> (Repos, GitBoardStore, BoardHead
 #[test]
 fn a_copy_kept_under_a_name_that_is_no_id_counts_no_read_bytes() {
     let (repos, mut bob, head) = board_of(&[
-        ("100644", "a.json", json(&task("a"))),
-        ("100644", "Upper.json", Object::Blob(b"one".to_vec())),
-        ("100644", "Upper.json", Object::Blob(b"two".to_vec())),
+        ("100644", "a.md", task_blob(&task("a"))),
+        ("100644", "Upper.md", Object::Blob(b"one".to_vec())),
+        ("100644", "Upper.md", Object::Blob(b"two".to_vec())),
     ]);
     let [one, two] = [&b"one"[..], b"two"].map(|bytes| oid_of(&repos.bob, bytes));
     bob.limits.board_bytes = encode(&task("a")).unwrap().len();
-    let path = "tasks/Upper.json";
+    let path = "tasks/Upper.md";
     written(bob.clear_set_aside(
         &head,
         &clearing(path, &one, &[(path, keep(&two, &[&one, &two]))]),

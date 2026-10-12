@@ -12,15 +12,17 @@
 //! moved back to an older commit of the same history. Its listings mean
 //! what the capability's `QueryBoard` listings mean, and a parity test
 //! holds them to that. Every listing carries the commit it was read at and
-//! the files set aside. SQL only narrows the rows: each decoded task is
-//! checked again in Rust.
+//! the files set aside. Each task's record is its canonical markdown file
+//! (the task codec's, #2481 S8). SQL only narrows the rows: each decoded
+//! task is checked again in Rust.
 //!
 //! [`index_file`](super::index_file) keeps it on disk. Each rebuild is a
 //! fresh file renamed over the old one, so a reader sees one whole board,
 //! and a crash mid-rebuild leaves the last whole index in place.
+use super::artifacts::task::TaskCodec;
+use super::artifacts::{decode, encode};
 use super::index_file::{self, Build};
 use super::store::GitBoardStore;
-use super::task_record::{decode, encode};
 use crate::application::project_board::dto::BoardListing;
 use crate::application::project_board::ports::{
     ArtifactKey, BoardHead, BoardSnapshot, BoardStoreError, ProjectBoardStore, QuarantinedFile,
@@ -394,7 +396,8 @@ impl BoardIndex {
         let statuses = depended
             .into_iter()
             .map(|(id, record)| {
-                let task = decode(&record).map_err(|error| corrupt(error.to_string()))?;
+                let task =
+                    decode::<TaskCodec>(&record).map_err(|error| corrupt(error.to_string()))?;
                 match task.fields().id.as_str() == id {
                     true => Ok((id, task.fields().status)),
                     false => Err(corrupt(format!("row {id:?} holds another task"))),
@@ -403,7 +406,7 @@ impl BoardIndex {
             .collect::<Result<BTreeMap<_, _>, _>>()?;
         let mut tasks = vec![];
         for (id, record) in rows {
-            let task = decode(&record).map_err(|error| corrupt(error.to_string()))?;
+            let task = decode::<TaskCodec>(&record).map_err(|error| corrupt(error.to_string()))?;
             match task.fields().id.as_str() == id {
                 true => {}
                 false => return Err(corrupt(format!("row {id:?} holds another task"))),
@@ -563,7 +566,9 @@ fn rows(snapshot: &BoardSnapshot) -> Result<Vec<Row>, IndexError> {
                 status: fields.status.as_str(),
                 parent: fields.parent.as_ref().map(|parent| parent.as_str().into()),
                 claimed: fields.claim.is_some(),
-                record: encode(task).map_err(|error| IndexError::Corrupt(error.to_string()))?,
+                record: encode::<TaskCodec>(task)
+                    .map_err(|error| IndexError::Corrupt(error.to_string()))?
+                    .into_bytes(),
                 depends_on: fields
                     .depends_on
                     .iter()

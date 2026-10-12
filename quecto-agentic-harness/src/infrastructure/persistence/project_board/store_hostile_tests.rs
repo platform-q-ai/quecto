@@ -4,10 +4,12 @@
 use super::*;
 use crate::application::project_board::ports::BoardListings;
 use crate::domain::project_board::value_objects::shown_text::shown_char;
+use crate::infrastructure::persistence::project_board::board_tree::{
+    MAX_READ_ENTRIES, MAX_TASK_FILE_BYTES,
+};
 use crate::infrastructure::persistence::project_board::git::MAX_QUOTED_CHARS;
 use crate::infrastructure::persistence::project_board::index::{BoardIndex, Refreshed};
 use crate::infrastructure::persistence::project_board::indexed_listings::IndexedBoardListings;
-use crate::infrastructure::persistence::project_board::task_record::MAX_TASK_FILE_BYTES;
 use std::sync::Arc;
 
 /// How the README and a refusal tell someone to undo a hand edit.
@@ -38,17 +40,17 @@ fn only_regular_task_files_are_read_and_the_rest_is_set_aside_by_id() {
     hand_edit(
         &remote,
         &[
-            ("broken.json", blob(b"{")),
-            ("Upper.json", blob(&encode(&task("upper")).unwrap())),
-            ("named.json", blob(&encode(&task("other")).unwrap())),
-            ("big.json", blob(&oversize)),
+            ("broken.md", blob(b"{")),
+            ("Upper.md", blob(&encode(&task("upper")).unwrap())),
+            ("named.md", blob(&encode(&task("other")).unwrap())),
+            ("big.md", blob(&oversize)),
             ("notes.txt", blob(b"notes")),
             (
-                "exec.json",
+                "exec.md",
                 blob(&encode(&task("exec")).unwrap()).replace("100644", "100755"),
             ),
-            ("link.json", format!("120000 blob {target}")),
-            ("module.json", format!("160000 commit {commit}")),
+            ("link.md", format!("120000 blob {target}")),
+            ("module.md", format!("160000 commit {commit}")),
             ("sub", format!("040000 tree {empty}")),
         ],
     );
@@ -70,27 +72,21 @@ fn only_regular_task_files_are_read_and_the_rest_is_set_aside_by_id() {
     assert_eq!(
         by_id,
         [
-            ("tasks/Upper.json", None),
-            ("tasks/big.json", Some("big")),
-            ("tasks/broken.json", Some("broken")),
-            ("tasks/exec.json", Some("exec")),
-            ("tasks/link.json", Some("link")),
-            ("tasks/module.json", None),
-            ("tasks/named.json", Some("named")),
+            ("tasks/Upper.md", None),
+            ("tasks/big.md", Some("big")),
+            ("tasks/broken.md", Some("broken")),
+            ("tasks/exec.md", Some("exec")),
+            ("tasks/link.md", Some("link")),
+            ("tasks/module.md", None),
+            ("tasks/named.md", Some("named")),
             ("tasks/notes.txt", None),
             ("tasks/sub", None),
         ]
     );
-    assert!(found["tasks/big.json"].1.contains("bytes"), "{found:?}");
-    assert!(
-        found["tasks/named.json"].1.contains("\"other\""),
-        "{found:?}"
-    );
-    assert!(
-        found["tasks/broken.json"].1.contains("malformed"),
-        "{found:?}"
-    );
-    assert!(found["tasks/link.json"].1.contains("regular"), "{found:?}");
+    assert!(found["tasks/big.md"].1.contains("bytes"), "{found:?}");
+    assert!(found["tasks/named.md"].1.contains("\"other\""), "{found:?}");
+    assert!(found["tasks/broken.md"].1.contains("marker"), "{found:?}");
+    assert!(found["tasks/link.md"].1.contains("regular"), "{found:?}");
 
     for id in ["broken", "link", "named", "exec"] {
         let refused = bob.write_tasks(&snapshot.head, &[task(id)], &format!("board: write {id}"));
@@ -100,7 +96,7 @@ fn only_regular_task_files_are_read_and_the_rest_is_set_aside_by_id() {
         );
     }
     assert_eq!(sh(&remote, &["rev-parse", BOARD_REF]), snapshot.head.0);
-    // A write carries forward every `.json` file it did not read, as it is
+    // A write carries forward every task file it did not read, as it is
     // and with its own mode: links, executables and names a later quecto
     // may take as ids included. Strays (other names, subtrees, gitlinks)
     // are dropped.
@@ -118,30 +114,28 @@ fn only_regular_task_files_are_read_and_the_rest_is_set_aside_by_id() {
     assert_eq!(
         after.keys().map(String::as_str).collect::<Vec<_>>(),
         [
-            "Upper.json",
-            "big.json",
-            "broken.json",
-            "exec.json",
-            "fresh.json",
+            "Upper.md",
+            "big.md",
+            "broken.md",
+            "exec.md",
             "fresh.md",
-            "good.json",
             "good.md",
-            "link.json",
-            "named.json"
+            "link.md",
+            "named.md"
         ]
     );
     for name in [
-        "Upper.json",
-        "big.json",
-        "broken.json",
-        "exec.json",
-        "link.json",
-        "named.json",
+        "Upper.md",
+        "big.md",
+        "broken.md",
+        "exec.md",
+        "link.md",
+        "named.md",
     ] {
         assert_eq!(after[name], before[name], "{name} carried as it was");
     }
-    assert!(after["exec.json"].starts_with("100755 blob "));
-    assert!(after["link.json"].starts_with("120000 blob "));
+    assert!(after["exec.md"].starts_with("100755 blob "));
+    assert!(after["link.md"].starts_with("120000 blob "));
 }
 
 #[test]
@@ -151,7 +145,7 @@ fn a_board_tree_past_its_entry_bound_is_not_read() {
     created(&alice);
     written(alice.write_tasks(&alice.read().unwrap().head, &[task("a")], "board: add a"));
     let blob = sh_with(&repos.remote(), &["hash-object", "-w", "--stdin"], b"x");
-    let many: Vec<(String, String)> = (0..MAX_TASK_ENTRIES)
+    let many: Vec<(String, String)> = (0..MAX_READ_ENTRIES)
         .map(|n| (format!("n{n}.md"), format!("100644 blob {blob}")))
         .collect();
     let many: Vec<(&str, String)> = many
@@ -207,6 +201,8 @@ fn raw_board_named(
     head
 }
 
+/// A board commit of a legacy root, the README and `tasks` without the
+/// format marker (`store_format_tests` makes marked roots).
 fn raw_board_in(repo: &Path, entries: &[(&str, &[u8], &Object)]) -> BoardHead {
     let tasks = raw_tree_named(repo, entries);
     let readme = sh_with(repo, &["hash-object", "-w", "--stdin"], README);
@@ -292,9 +288,7 @@ fn paths(snapshot: &BoardSnapshot) -> Vec<(&str, Option<&str>)> {
 /// mode, but is not a blob"), so it reaches a store only through objects
 /// it already holds; the store still never trusts a mode over a type. A
 /// task file of that shape is set aside and dropped by the next write
-/// (carrying it would make a board no one can fetch); a summary of that
-/// shape is a stray, regenerated by the next write, and never sets its task
-/// aside.
+/// (carrying it would make a board no one can fetch).
 #[test]
 fn a_file_mode_over_a_tree_object_is_set_aside_and_never_stops_a_write() {
     let repos = Repos::new();
@@ -304,9 +298,8 @@ fn a_file_mode_over_a_tree_object_is_set_aside_and_never_stops_a_write() {
     let head = raw_board(
         &repos.remote(),
         &[
-            ("100644", "good.json", Object::Blob(good)),
-            ("100644", "good.md", Object::EmptyTree),
-            ("100644", "tree.json", Object::EmptyTree),
+            ("100644", "good.md", Object::Blob(good.clone())),
+            ("100644", "tree.md", Object::EmptyTree),
         ],
         &[&repos.bob],
     );
@@ -317,11 +310,10 @@ fn a_file_mode_over_a_tree_object_is_set_aside_and_never_stops_a_write() {
         .iter()
         .map(|q| (q.path.as_str(), q.id().map(Slug::as_str)))
         .collect();
-    assert_eq!(paths, [("tasks/tree.json", Some("tree"))]);
+    assert_eq!(paths, [("tasks/tree.md", Some("tree"))]);
     assert_eq!(
         board.tasks.keys().map(Slug::as_str).collect::<Vec<_>>(),
-        ["good"],
-        "a bad summary never sets its task aside"
+        ["good"]
     );
     let refused = bob.write_tasks(&head, &[task("tree")], "board: write tree");
     assert!(matches!(refused, Ok(BoardWrite::Refused(_))), "{refused:?}");
@@ -338,9 +330,8 @@ fn a_file_mode_over_a_tree_object_is_set_aside_and_never_stops_a_write() {
         kept,
         [
             ("README.md", "100644 blob "),
-            ("tasks/fresh.json", "100644 blob "),
+            ("format/board", "100644 blob "),
             ("tasks/fresh.md", "100644 blob "),
-            ("tasks/good.json", "100644 blob "),
             ("tasks/good.md", "100644 blob "),
         ]
     );
@@ -348,70 +339,9 @@ fn a_file_mode_over_a_tree_object_is_set_aside_and_never_stops_a_write() {
         sh(
             &repos.remote(),
             &["cat-file", "blob", &format!("{}:tasks/good.md", moved.0)]
-        ),
-        summary(&task("good")).trim_end()
+        ) + "\n",
+        String::from_utf8(good).unwrap()
     );
-}
-
-/// A summary is derived, so one that is not a regular file of its own
-/// name (an executable, a link, a name listed twice) is a stray: its task
-/// is read, and the next write regenerates it.
-#[test]
-fn a_bad_summary_never_sets_its_task_aside_and_is_regenerated() {
-    let repos = Repos::new();
-    let alice = store(&repos.alice);
-    created(&alice);
-    let summary_of = |id: &str| Object::Blob(summary(&task(id)).into_bytes());
-    let json = |id: &str| Object::Blob(encode(&task(id)).unwrap());
-    let head = raw_board(
-        &repos.remote(),
-        &[
-            ("100644", "dup.json", json("dup")),
-            ("100644", "dup.md", summary_of("dup")),
-            ("100644", "dup.md", Object::Blob(b"other".to_vec())),
-            ("100644", "exec.json", json("exec")),
-            ("100755", "exec.md", summary_of("exec")),
-            ("100644", "link.json", json("link")),
-            ("120000", "link.md", Object::Blob(b"../README.md".to_vec())),
-        ],
-        &[&repos.bob],
-    );
-    let bob = store(&repos.bob);
-    let board = bob.board_at(&head.0).unwrap();
-    assert_eq!(board.quarantined, vec![]);
-    assert_eq!(
-        board.tasks.keys().map(Slug::as_str).collect::<Vec<_>>(),
-        ["dup", "exec", "link"]
-    );
-    let moved = written(bob.write_tasks(&head, &[task("exec")], "board: write exec"));
-    let listing = sh(&repos.remote(), &["ls-tree", &format!("{}:tasks", moved.0)]);
-    let names: Vec<(&str, &str)> = listing
-        .lines()
-        .map(|row| {
-            let (meta, name) = row.split_once('\t').unwrap();
-            (name, &meta[..12])
-        })
-        .collect();
-    assert_eq!(
-        names,
-        [
-            ("dup.json", "100644 blob "),
-            ("dup.md", "100644 blob "),
-            ("exec.json", "100644 blob "),
-            ("exec.md", "100644 blob "),
-            ("link.json", "100644 blob "),
-            ("link.md", "100644 blob "),
-        ]
-    );
-    for id in ["dup", "exec", "link"] {
-        assert_eq!(
-            sh(
-                &repos.remote(),
-                &["cat-file", "blob", &format!("{}:tasks/{id}.md", moved.0)]
-            ),
-            summary(&task(id)).trim_end()
-        );
-    }
 }
 
 /// A task file named twice in one tree: git itself rejects such a tree
@@ -433,13 +363,13 @@ fn a_task_file_named_twice_refuses_every_write_and_drops_neither() {
         &[
             (
                 "100644",
-                "dup.json",
+                "dup.md",
                 Object::Blob(encode(&task("dup")).unwrap()),
             ),
-            ("100644", "dup.json", Object::Blob(encode(&other).unwrap())),
+            ("100644", "dup.md", Object::Blob(encode(&other).unwrap())),
             (
                 "100644",
-                "ok.json",
+                "ok.md",
                 Object::Blob(encode(&task("ok")).unwrap()),
             ),
         ],
@@ -450,10 +380,7 @@ fn a_task_file_named_twice_refuses_every_write_and_drops_neither() {
     assert_eq!(ids(&snapshot), ["ok"]);
     assert_eq!(
         paths(&snapshot),
-        [
-            ("tasks/dup.json", Some("dup")),
-            ("tasks/dup.json", Some("dup"))
-        ]
+        [("tasks/dup.md", Some("dup")), ("tasks/dup.md", Some("dup"))]
     );
     let blobs: Vec<String> = [encode(&task("dup")).unwrap(), encode(&other).unwrap()]
         .iter()
@@ -465,7 +392,7 @@ fn a_task_file_named_twice_refuses_every_write_and_drops_neither() {
             panic!("{id}: {refused:?}");
         };
         assert!(
-            why.contains("tasks/dup.json") && why.contains("more than once"),
+            why.contains("tasks/dup.md") && why.contains("more than once"),
             "{why}"
         );
         // Both copies, so whoever mends the board can choose, and how to.
@@ -525,10 +452,10 @@ fn an_object_missing_everywhere_is_an_error_not_a_file_set_aside() {
         &[
             (
                 "100644",
-                "ok.json",
+                "ok.md",
                 Object::Blob(encode(&task("ok")).unwrap()),
             ),
-            ("100644", "gone.json", Object::Absent(absent)),
+            ("100644", "gone.md", Object::Absent(absent)),
         ],
         &[&repos.bob],
     );
@@ -548,15 +475,10 @@ fn a_write_past_the_task_bound_is_refused_before_anything_is_built() {
     let files = repos.dir.path().join("files");
     std::fs::create_dir(&files).unwrap();
     let mut paths = vec![];
-    for n in 0..MAX_TASKS {
-        let task = task(&format!("t{n}"));
-        for (name, bytes) in [
-            (format!("t{n}.json"), encode(&task).unwrap()),
-            (format!("t{n}.md"), summary(&task).into_bytes()),
-        ] {
-            std::fs::write(files.join(&name), bytes).unwrap();
-            paths.push(name);
-        }
+    for n in 0..MAX_TASK_ENTRIES {
+        let name = format!("t{n}.md");
+        std::fs::write(files.join(&name), encode(&task(&format!("t{n}"))).unwrap()).unwrap();
+        paths.push(name);
     }
     let oids = sh_with(
         &remote,
@@ -587,7 +509,7 @@ fn a_write_past_the_task_bound_is_refused_before_anything_is_built() {
     sh(&remote, &["update-ref", BOARD_REF, &commit]);
     let bob = store(&repos.bob);
     let full = bob.read().unwrap();
-    assert_eq!(full.tasks.len(), MAX_TASKS);
+    assert_eq!(full.tasks.len(), MAX_TASK_ENTRIES);
     let refused = bob.write_tasks(&full.head, &[task("one-more")], "board: add one more");
     assert!(
         matches!(&refused, Err(BoardStoreError::InvalidWrite(why)) if why.contains("at most")),
@@ -606,47 +528,53 @@ fn a_write_past_the_task_bound_is_refused_before_anything_is_built() {
     );
 }
 
-/// A task file whose unknown key holds an escape sequence, a right-to-left
-/// override or an ideographic space is set aside with a reason that shows
-/// only what shows as itself, so the index takes the reason and every
-/// listing answers, with no rebuild after the first.
+/// A task file whose cell holds an escape sequence, a right-to-left
+/// override, an ideographic space or a long run of text is set aside with
+/// a reason that never quotes the file: only what shows as itself, short,
+/// so the index takes the reason and every listing answers, with no
+/// rebuild after the first.
 #[test]
-fn a_hostile_key_never_reaches_a_reason_or_stops_a_listing() {
+fn a_hostile_cell_never_reaches_a_reason_or_stops_a_listing() {
     let repos = Repos::new();
     let alice = store(&repos.alice);
     let head = created(&alice);
     written(alice.write_tasks(&head, &[task("good")], "board: add good"));
-    let hostile = |id: &str, key: &str| {
+    let long = "k".repeat(3 * 1024);
+    let hostile = |id: &str, word: &str| {
         let text = String::from_utf8(encode(&task(id)).unwrap()).unwrap();
-        let planted = text.replacen('{', &format!("{{\n  \"{key}\": 1,"), 1);
+        let planted = text.replacen("| Status | ready |", &format!("| Status | {word} |"), 1);
+        assert_ne!(planted, text, "the status cell is planted");
         Object::Blob(planted.into_bytes())
     };
     let good = Object::Blob(encode(&task("good")).unwrap());
     raw_board(
         &repos.remote(),
         &[
-            ("100644", "good.json", good),
-            ("100644", "esc.json", hostile("esc", "x\\u001b[31m")),
-            ("100644", "rtl.json", hostile("rtl", "x\\u202ey")),
-            ("100644", "wide.json", hostile("wide", "x\\u3000y")),
+            ("100644", "good.md", good),
+            ("100644", "esc.md", hostile("esc", "x\u{1b}[31m")),
+            ("100644", "long.md", hostile("long", &long)),
+            ("100644", "rtl.md", hostile("rtl", "x\u{202e}y")),
+            ("100644", "wide.md", hostile("wide", "x\u{3000}y")),
         ],
         &[],
     );
     let bob = Arc::new(store(&repos.bob));
     let snapshot = bob.read().unwrap();
-    assert_eq!(snapshot.quarantined.len(), 3, "{snapshot:?}");
+    assert_eq!(snapshot.quarantined.len(), 4, "{snapshot:?}");
     for file in &snapshot.quarantined {
         assert!(
             file.reason.chars().all(|c| shown_char(c) || c == ' '),
             "{:?}",
             file.reason
         );
+        assert!(!file.reason.contains("kkkk"), "{:?}", file.reason);
+        assert!(file.reason.chars().count() <= MAX_QUOTED_CHARS + 2);
     }
     let index = BoardIndex::of(&bob).unwrap();
     let listings = IndexedBoardListings::new(index, bob.clone(), bob.clone());
     for _ in 0..2 {
         let ready = listings.ready().unwrap();
-        assert_eq!(ready.quarantined.len(), 3);
+        assert_eq!(ready.quarantined.len(), 4);
     }
     let index = BoardIndex::of(&bob).unwrap();
     assert_eq!(
@@ -663,34 +591,11 @@ fn a_hostile_key_never_reaches_a_reason_or_stops_a_listing() {
     );
 }
 
-/// A reason is capped as a quoted message is: a key past the cap ends the
-/// reason in " …", and the board still lists.
-#[test]
-fn a_set_aside_reason_is_capped() {
-    let repos = Repos::new();
-    let alice = store(&repos.alice);
-    created(&alice);
-    let text = String::from_utf8(encode(&task("long")).unwrap()).unwrap();
-    let key = "k".repeat(3 * 1024);
-    let planted = text.replacen('{', &format!("{{\n  \"{key}\": 1,"), 1);
-    raw_board(
-        &repos.remote(),
-        &[("100644", "long.json", Object::Blob(planted.into_bytes()))],
-        &[],
-    );
-    let bob = Arc::new(store(&repos.bob));
-    let reason = bob.read().unwrap().quarantined[0].reason.clone();
-    assert!(
-        reason.chars().count() <= MAX_QUOTED_CHARS + 2 && reason.ends_with(" …"),
-        "{} characters",
-        reason.chars().count()
-    );
-    let index = BoardIndex::of(&bob).unwrap();
-    let listings = IndexedBoardListings::new(index, bob.clone(), bob.clone());
-    assert!(listings.ready().is_ok());
-}
-
 #[path = "store_clear_tests.rs"]
 mod clear;
+#[path = "store_format_tests.rs"]
+mod format;
+#[path = "store_legacy_tests.rs"]
+mod legacy;
 #[path = "store_names_tests.rs"]
 mod names;

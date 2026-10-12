@@ -145,7 +145,7 @@ fn check_parity(listings: &dyn BoardListings, query: &QueryBoard) {
     );
 }
 
-/// A board where someone listed `tasks/b.json` twice (`duplicate` does):
+/// A board where someone listed `tasks/b.md` twice (`duplicate` does):
 /// both copies are set aside under one path, and every listing still
 /// equals `QueryBoard`'s.
 pub fn check_listings_with_a_name_listed_twice(
@@ -167,12 +167,12 @@ pub fn check_listings_with_a_name_listed_twice(
         .into_iter()
         .map(|file| file.path)
         .collect();
-    assert_eq!(paths, ["tasks/b.json", "tasks/b.json"]);
+    assert_eq!(paths, ["tasks/b.md", "tasks/b.md"]);
 }
 
 /// Before the board exists every listing answers `NoBoard`; after, each
 /// listing equals `QueryBoard`'s over the same store, a file set aside
-/// (`spoil` breaks `tasks/b.json`) included, and follows a write.
+/// (`spoil` breaks `tasks/b.md`) included, and follows a write.
 pub fn check_listings_mean_query_board(
     listings: &dyn BoardListings,
     store: Arc<dyn ProjectBoardStore>,

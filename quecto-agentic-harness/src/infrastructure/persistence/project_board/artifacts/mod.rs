@@ -37,6 +37,30 @@ pub enum CodecError {
     NotCanonical,
 }
 
+/// What a refusal says: a file set aside shows it as its reason, and a
+/// refused write names it.
+impl std::fmt::Display for CodecError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Markdown(error) => write!(f, "{error}"),
+            Self::Cell { field, problem } => write!(f, "{field}: {problem}"),
+            Self::Schema => write!(f, "not a file of its kind (no marker of the kind opens it)"),
+            Self::NewerSchema { found, known } => write!(
+                f,
+                "schema {found}, written by a newer quecto; this quecto reads schema {known}: \
+                 upgrade quecto to read it"
+            ),
+            Self::UnknownSchema { found } => write!(f, "schema {found}, which no quecto reads"),
+            Self::NotCanonical => write!(
+                f,
+                "not the file quecto writes for what it holds (edited by hand?)"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for CodecError {}
+
 impl From<MarkdownError> for CodecError {
     fn from(error: MarkdownError) -> Self {
         match error {

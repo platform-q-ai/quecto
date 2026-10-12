@@ -59,9 +59,9 @@ fn each_op_reads_its_own_fields() {
             BoardRequest::Complete(task()),
         ),
         (
-            json!({"op": "clear_set_aside", "path": "tasks/x.json", "object": "a".repeat(40)}),
+            json!({"op": "clear_set_aside", "path": "tasks/x.md", "object": "a".repeat(40)}),
             BoardRequest::Clear {
-                path: "tasks/x.json".into(),
+                path: "tasks/x.md".into(),
                 object: "a".repeat(40),
                 repeated: BTreeMap::new(),
             },
@@ -69,26 +69,26 @@ fn each_op_reads_its_own_fields() {
         (
             json!({
                 "op": "clear_set_aside",
-                "path": "tasks/x.json",
+                "path": "tasks/x.md",
                 "object": "a".repeat(40),
                 "repeated": {
-                    "tasks/y.json": {"keep": "b".repeat(40), "seen": ["b".repeat(40), "c".repeat(40)]},
-                    "tasks/z.json": {"drop": ["d".repeat(40)]},
+                    "tasks/y.md": {"keep": "b".repeat(40), "seen": ["b".repeat(40), "c".repeat(40)]},
+                    "tasks/z.md": {"drop": ["d".repeat(40)]},
                 },
             }),
             BoardRequest::Clear {
-                path: "tasks/x.json".into(),
+                path: "tasks/x.md".into(),
                 object: "a".repeat(40),
                 repeated: BTreeMap::from([
                     (
-                        "tasks/y.json".to_string(),
+                        "tasks/y.md".to_string(),
                         KeepCopy::Object {
                             keep: "b".repeat(40),
                             seen: BTreeSet::from(["b".repeat(40), "c".repeat(40)]),
                         },
                     ),
                     (
-                        "tasks/z.json".to_string(),
+                        "tasks/z.md".to_string(),
                         KeepCopy::Drop(BTreeSet::from(["d".repeat(40)])),
                     ),
                 ]),
@@ -222,11 +222,11 @@ fn anything_but_the_ops_own_fields_of_their_own_types_is_refused() {
             "dependents_of",
         ),
         (
-            json!({"op": "clear_set_aside", "path": "tasks/x.json", "object": "HEAD"}),
+            json!({"op": "clear_set_aside", "path": "tasks/x.md", "object": "HEAD"}),
             "object",
         ),
         (
-            json!({"op": "clear_set_aside", "path": "tasks/x.json"}),
+            json!({"op": "clear_set_aside", "path": "tasks/x.md"}),
             "object",
         ),
         (
@@ -238,24 +238,24 @@ fn anything_but_the_ops_own_fields_of_their_own_types_is_refused() {
             "path",
         ),
         (
-            json!({"op": "clear_set_aside", "path": "tasks/x.json", "object": "a".repeat(40),
-                   "repeated": {"tasks/y.json": {"keep": "b".repeat(40)}}}),
-            "repeated/tasks/y.json/",
+            json!({"op": "clear_set_aside", "path": "tasks/x.md", "object": "a".repeat(40),
+                   "repeated": {"tasks/y.md": {"keep": "b".repeat(40)}}}),
+            "repeated/tasks/y.md/",
         ),
         (
-            json!({"op": "clear_set_aside", "path": "tasks/x.json", "object": "a".repeat(40),
-                   "repeated": {"tasks/y.json": {"drop": []}}}),
-            "repeated/tasks/y.json/drop",
+            json!({"op": "clear_set_aside", "path": "tasks/x.md", "object": "a".repeat(40),
+                   "repeated": {"tasks/y.md": {"drop": []}}}),
+            "repeated/tasks/y.md/drop",
         ),
         (
-            json!({"op": "clear_set_aside", "path": "tasks/x.json", "object": "a".repeat(40),
-                   "repeated": {"tasks/y.json": {"drop": ["b".repeat(40), "b".repeat(40)]}}}),
-            "repeated/tasks/y.json/drop/1",
+            json!({"op": "clear_set_aside", "path": "tasks/x.md", "object": "a".repeat(40),
+                   "repeated": {"tasks/y.md": {"drop": ["b".repeat(40), "b".repeat(40)]}}}),
+            "repeated/tasks/y.md/drop/1",
         ),
         (
-            json!({"op": "clear_set_aside", "path": "tasks/x.json", "object": "a".repeat(40),
-                   "repeated": {"tasks/y.json": {"keep": "HEAD", "seen": ["b".repeat(40)]}}}),
-            "repeated/tasks/y.json/keep",
+            json!({"op": "clear_set_aside", "path": "tasks/x.md", "object": "a".repeat(40),
+                   "repeated": {"tasks/y.md": {"keep": "HEAD", "seen": ["b".repeat(40)]}}}),
+            "repeated/tasks/y.md/keep",
         ),
     ] {
         assert_eq!(refused(value.clone()).field, field, "{value}");
@@ -279,12 +279,12 @@ fn samples(kind: Kind) -> (Value, Value, Value) {
         Kind::NewStatus => (json!("draft"), json!("ready"), json!("claimed")),
         Kind::TaskKind => (json!("epic"), json!("chore"), json!("story")),
         Kind::Pr => (json!(1), json!(2), json!(0)),
-        Kind::Path => (json!("tasks/x.json"), json!("tasks/y.json"), json!(7)),
+        Kind::Path => (json!("tasks/x.md"), json!("tasks/y.md"), json!(7)),
         Kind::ObjectId => (json!("a".repeat(40)), json!("b".repeat(40)), json!("HEAD")),
         Kind::Repeated => (
-            json!({"tasks/a.json": {"drop": ["a".repeat(40)]}}),
-            json!({"tasks/b.json": {"drop": ["a".repeat(40)]}}),
-            json!("tasks/a.json"),
+            json!({"tasks/a.md": {"drop": ["a".repeat(40)]}}),
+            json!({"tasks/b.md": {"drop": ["a".repeat(40)]}}),
+            json!("tasks/a.md"),
         ),
     }
 }
