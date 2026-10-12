@@ -5,6 +5,7 @@ use super::*;
 
 fn flags(model: &str, spawned: bool) -> AgentFlags {
     AgentFlags {
+        project_board: None,
         session_name: None,
         no_session: false,
         message: Some("hi".into()),

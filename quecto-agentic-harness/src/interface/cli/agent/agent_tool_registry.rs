@@ -159,6 +159,7 @@ pub(super) fn build_tool_registry(args: ToolRegistryArgs<'_>) -> Result<ToolRegi
             container_configs: Some(container_configs),
             environment_registry,
             kill_tool: flags.kill_tool,
+            project_board: flags.project_board,
             disabled_tools: &flags.disabled_tools,
             inherited_tool_policy: flags.inherited_tool_policy.clone(),
             workflow: crate::interface::shared::ToolRuntimeWorkflowPolicy {

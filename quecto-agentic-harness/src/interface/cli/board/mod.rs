@@ -24,46 +24,14 @@ use std::path::PathBuf;
 use serde_json::Value;
 
 use super::CliContext;
-use crate::application::project_board::use_cases::RunBoardOperation;
-use crate::interface::tools::project_board::answer::{
-    FrontEndRefusal, reason_refused, request_refused,
+use crate::interface::tools::project_board::answer::request_refused;
+use crate::interface::tools::project_board::request::{RequestError, fields_of};
+use crate::interface::tools::project_board::site::{self, BoardSite};
+use crate::interface::tools::project_board::{MAX_REQUEST_BYTES, command_line, json};
+
+pub use crate::interface::tools::project_board::site::{
+    Access, BuildError, ProjectBoardEnvironment, ProjectBoardHandles, ProjectBoardHandlesBuilder,
 };
-use crate::interface::tools::project_board::request::{RequestError, fields_of, op_of, parse};
-use crate::interface::tools::project_board::{MAX_REQUEST_BYTES, command_line, json, run};
-
-/// What a run of `quecto board` does with the board.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Access {
-    /// Reads only: no committer is needed.
-    Read,
-    /// Writes: the repository's configured committer writes.
-    Write,
-}
-
-/// What composition is given to build the board's operations.
-pub struct ProjectBoardEnvironment {
-    pub repo: PathBuf,
-    pub remote: String,
-    pub access: Access,
-    /// The process environment, which composition allowlists for git.
-    pub vars: Vec<(std::ffi::OsString, std::ffi::OsString)>,
-}
-
-/// The board's operations, built by composition.
-pub struct ProjectBoardHandles {
-    pub operations: RunBoardOperation,
-}
-
-/// Why composition could not build the board's operations.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum BuildError {
-    /// A write, with no committer configured.
-    NoCommitter(String),
-    Unavailable(String),
-}
-
-pub type ProjectBoardHandlesBuilder =
-    fn(&ProjectBoardEnvironment) -> Result<ProjectBoardHandles, BuildError>;
 
 const USAGE: &str = "usage: quecto board <op> [--<field> <value>]... [--input <json>|-] \
                      [--repo <path>] [--remote <name>] [--json]\n";
@@ -226,44 +194,18 @@ fn answer(ctx: &CliContext, args: &[String]) -> Value {
         Ok(value) => value,
         Err(error) => return request_refused(named(&line.op).as_deref(), &error),
     };
-    // Read first: a request refused here builds nothing.
-    let op = op_of(&value);
-    let parsed = match parse(&value) {
-        Ok(parsed) => parsed,
-        Err(error) => return request_refused(op.as_deref(), &error),
-    };
-    let Some(build) = ctx.project_board else {
-        return reason_refused(
-            op.as_deref(),
-            FrontEndRefusal::StoreUnavailable,
-            "the project board capability is not composed",
-        );
-    };
     let repo = line
         .repo
         .clone()
         .or_else(|| ctx.cwd.clone())
         .or_else(|| std::env::current_dir().ok())
         .unwrap_or_else(|| PathBuf::from("."));
-    let environment = ProjectBoardEnvironment {
+    let site = BoardSite {
         repo,
         remote: line.remote.clone(),
-        access: match parsed.writes() {
-            true => Access::Write,
-            false => Access::Read,
-        },
-        vars: std::env::vars_os().collect(),
+        build: ctx.project_board,
     };
-    match build(&environment) {
-        // The one entry point every front end's request goes through.
-        Ok(handles) => run(&handles.operations, &value.to_string()),
-        Err(BuildError::NoCommitter(why)) => {
-            reason_refused(op.as_deref(), FrontEndRefusal::NoCommitter, &why)
-        }
-        Err(BuildError::Unavailable(why)) => {
-            reason_refused(op.as_deref(), FrontEndRefusal::StoreUnavailable, &why)
-        }
-    }
+    site::answer(&site, &value.to_string(), None)
 }
 
 #[cfg(test)]

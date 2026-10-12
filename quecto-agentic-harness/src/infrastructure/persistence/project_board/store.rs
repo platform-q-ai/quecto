@@ -58,6 +58,8 @@ pub struct GitBoardStore {
     last: Mutex<Option<(String, Arc<Board>)>>,
     /// What a read takes at most, and so a write makes ([`LIMITS`]).
     pub(super) limits: Limits,
+    /// Set when the call this store serves was cancelled.
+    cancelled: Option<Arc<std::sync::atomic::AtomicBool>>,
 }
 
 /// What became of a push.
@@ -94,6 +96,7 @@ impl GitBoardStore {
                 remote: remote.to_string(),
                 last: Mutex::new(None),
                 limits: LIMITS,
+                cancelled: None,
             }),
             Err(error) => Err(BoardStoreError::Unavailable(format!(
                 "{remote:?} is not a remote of this repository: {error}"
@@ -261,11 +264,28 @@ impl GitBoardStore {
         )
     }
 
+    /// This store, pushing nothing once `cancelled` is set.
+    #[must_use]
+    pub fn with_cancel(mut self, cancelled: Option<Arc<std::sync::atomic::AtomicBool>>) -> Self {
+        self.cancelled = cancelled;
+        self
+    }
+
     /// Moves the remote board from `base` (absent when `None`) to `commit`.
     /// A push that reports our ref updated landed. Any other outcome (a
     /// rejection, a failure, no report, a timeout) is judged by the board
     /// (see [`Self::judge`]).
     fn push(&self, base: Option<&str>, commit: &str) -> Result<Pushed, BoardStoreError> {
+        // A cancelled call's write never lands after it (#2513).
+        let cancelled = self
+            .cancelled
+            .as_ref()
+            .is_some_and(|flag| flag.load(std::sync::atomic::Ordering::SeqCst));
+        if cancelled {
+            return Ok(Pushed::Refused(
+                "the call was cancelled before its write".into(),
+            ));
+        }
         let lease = format!("--force-with-lease={BOARD_REF}:{}", base.unwrap_or(""));
         let spec = format!("{commit}:{BOARD_REF}");
         let args = [
