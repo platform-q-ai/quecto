@@ -27,6 +27,8 @@ pub enum BoardRuleError {
     /// The plan or run belongs to another task, or the run to another
     /// plan version.
     NotThisTasks,
+    /// The review is of another change (of this task or another).
+    NotThisChange,
     /// A done or archived task's plans are settled: none is proposed,
     /// edited, accepted or discarded.
     TaskFinished(TaskStatus),
@@ -55,6 +57,9 @@ pub enum BoardRuleError {
     /// The change was stamped by a clock running ahead of the outside
     /// time: building on it would drag the board ahead too.
     ChangeAhead { change: u32, updated: Timestamp },
+    /// The change's review was stamped by a clock running ahead of the
+    /// outside time: building on it would drag the board ahead too.
+    ReviewAhead { change: u32, updated: Timestamp },
     /// The task links changes: it is done when they merge, through the
     /// completion anyone may run, not by its holder's say-so. The holder
     /// may unlink one deliberately first.
@@ -131,6 +136,7 @@ impl fmt::Display for BoardRuleError {
                 state.as_str()
             ),
             Self::NotThisTasks => f.write_str("it belongs to another task or plan version"),
+            Self::NotThisChange => f.write_str("the review is of another change"),
             Self::TaskFinished(status) => {
                 write!(f, "a {} task's plans are settled", status.as_str())
             }
@@ -167,6 +173,11 @@ impl fmt::Display for BoardRuleError {
             Self::ChangeAhead { change, updated } => write!(
                 f,
                 "change {change} was stamped {} by a clock that ran ahead",
+                updated.as_str()
+            ),
+            Self::ReviewAhead { change, updated } => write!(
+                f,
+                "change {change}'s review was stamped {} by a clock that ran ahead",
                 updated.as_str()
             ),
             Self::ChangesLinked(numbers) => write!(

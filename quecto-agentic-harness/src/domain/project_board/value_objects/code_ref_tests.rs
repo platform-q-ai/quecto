@@ -65,7 +65,6 @@ fn a_branch_name_is_not_one_git_reads_as_something_else() {
         "ORIG_HEAD",
         "MERGE_HEAD",
         "refs/heads/x",
-        "refs",
         "heads/x",
         "tags/v1",
         "remotes/origin/main",
@@ -81,8 +80,70 @@ fn a_branch_name_is_not_one_git_reads_as_something_else() {
             "{name:?}"
         );
     }
-    assert!(BranchName::parse("head").is_ok(), "git's names are exact");
-    for name in ["feat/heads", "tagsx/y", "headsx", "@a"] {
+    for name in [
+        "head",
+        "Head",
+        "fetch_head",
+        "Refs/x",
+        "HEADS/x",
+        "Tags/v1",
+        "REMOTES/o/m",
+        "REBASE_HEAD",
+        "FOO_HEAD",
+        "_head",
+        "x_head",
+        "stash",
+        "Stash",
+        "notes/commits",
+        "bisect/bad",
+        "stash/x",
+        "replace/x",
+        "foo.LOCK",
+        "a/b.Lock",
+        "Auto_Merge",
+        "BISECT_EXPECTED_REV",
+        "NOTES_MERGE_REF",
+        "NOTES_MERGE_PARTIAL",
+        "MERGE_AUTOSTASH",
+        "main-worktree/x",
+        "worktrees/x",
+        "worktree/x",
+        "prefetch/x",
+        "rewritten/x",
+        "original/x",
+        "pull/1/head",
+        "x-y_head",
+        "my_head",
+        "pr_head",
+    ] {
+        assert_eq!(
+            BranchName::parse(name).unwrap_err().field,
+            "branch",
+            "{name:?}: refused in any case"
+        );
+    }
+    for name in [
+        "feat/heads",
+        "tagsx/y",
+        "headsx",
+        "@a",
+        "feat/x_head",
+        "x_head2",
+        "x-head",
+        "stashed",
+        "feat/stash",
+        "a.locker",
+        "pulls/x",
+        "feat/pull",
+        "worktreex/y",
+        "refs",
+        "notes",
+        "prefetch",
+        "replace",
+        "bisect",
+        "rewritten",
+        "pull",
+    ] {
         assert!(BranchName::parse(name).is_ok(), "{name}");
     }
     assert!(BranchName::parse(&"a".repeat(41)).is_ok());

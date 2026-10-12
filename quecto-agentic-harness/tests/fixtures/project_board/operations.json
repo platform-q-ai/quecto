@@ -1222,6 +1222,34 @@
       "pr": 8
     },
     "answer": {
+      "ok": false,
+      "op": "link_pr",
+      "error": {
+        "code": "set_aside",
+        "message": "task late is set aside as unreadable; mend its file",
+        "task": "late"
+      }
+    }
+  },
+  {
+    "request": {
+      "op": "clear_set_aside",
+      "path": "tasks/late.json",
+      "object": "000000000000000000000000000000000000001c"
+    },
+    "answer": {
+      "ok": true,
+      "op": "clear_set_aside",
+      "head": "r32"
+    }
+  },
+  {
+    "request": {
+      "op": "link_pr",
+      "task": "t4",
+      "pr": 8
+    },
+    "answer": {
       "ok": true,
       "op": "link_pr",
       "task": {
