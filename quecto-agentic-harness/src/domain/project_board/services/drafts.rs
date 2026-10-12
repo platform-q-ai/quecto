@@ -8,6 +8,7 @@ use super::super::value_objects::slug::Slug;
 use super::super::value_objects::timestamp::Timestamp;
 use super::super::value_objects::vocabulary::TaskStatus;
 use super::claims::{settle, stamp};
+use crate::domain::project_board::value_objects::board_text;
 
 /// What an edit sets; `None` keeps the field as it is. `parent:
 /// Some(None)` takes the parent away.
@@ -29,6 +30,14 @@ pub fn edit_draft(task: &Task, edit: &DraftEdit, now: &Timestamp) -> Result<Task
     match task.fields().status {
         TaskStatus::Draft => {}
         status => return Err(BoardRuleError::NotDraft(status)),
+    }
+    // The edit's text as it enters the board: normalised by whoever took
+    // it in, or refused.
+    if let Some(title) = &edit.title {
+        board_text::entered_line("title", title).map_err(BoardRuleError::Invalid)?;
+    }
+    if let Some(description) = &edit.description {
+        board_text::entered_text("description", description).map_err(BoardRuleError::Invalid)?;
     }
     let mut next = task.fields().clone();
     if let Some(title) = &edit.title {

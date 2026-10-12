@@ -215,14 +215,16 @@ fn a_draft_changed_since_it_was_read_is_refused_as_stale() {
 }
 
 #[test]
-fn crlf_line_ends_become_lf_before_the_schema_reads_them() {
+fn board_text_is_normalised_before_the_schema_reads_it() {
     let store = holding(&[("a", TaskStatus::Draft, None, &[])]);
     let edit = DraftUpdate {
-        description: Some("Why.\r\nHow.\r\n".into()),
+        title: Some(" New title\t".into()),
+        description: Some("Why. \r\nHow so.\r\n".into()),
         ..of("a")
     };
     let edited = update(&store).execute(&edit).unwrap();
-    assert_eq!(edited.fields().description, "Why.\nHow.\n");
+    assert_eq!(edited.fields().title, "New title");
+    assert_eq!(edited.fields().description, "Why.\nHow so.");
 }
 
 #[test]
