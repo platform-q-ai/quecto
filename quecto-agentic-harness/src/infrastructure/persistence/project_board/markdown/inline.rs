@@ -12,6 +12,12 @@
 //! met before a backtick inside it could open one: `<` stands only before a
 //! space or at the end, and `](` only before an allowed address.
 //!
+//! An address must not show in or around a link, read with the markers
+//! dropped and again with every underscore kept: which underscores a reader
+//! takes for emphasis is not guessed, so `_[@ada](..)_` and a full stop or
+//! a literal marker that joins a link's word into an address are refused
+//! by design.
+//!
 //! Emoji shortcodes (`:smile:`) are kept as written: GitHub draws them as
 //! the emoji, a visible change that hides nothing, and refusing them would
 //! refuse times such as `12:00:00`.
@@ -162,89 +168,13 @@ fn shown_code(code: &str) -> &str {
 enum Markers {
     /// Every `*`, `_` and `~` taken out.
     Dropped,
-    /// `*` and `~` taken out, and each `_` a reader takes for emphasis;
-    /// every other `_` (inside a word, or left unpaired) kept, since `_` is
-    /// also a character an email holds.
-    LiteralUnderscores,
-}
-
-/// What a character beside a run of `_` is, for GFM's flanking rules.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Beside {
-    Space,
-    Punctuation,
-    Other,
-}
-
-/// Which characters of `chars` are underscores a reader takes for
-/// emphasis: a run of `_` that can open, paired with a later run that can
-/// close, by GFM's flanking rules, within each link's text and outside the
-/// links (an address is no text). An approximation (the rule of three and
-/// the interplay with `*` aside); what it misjudges, the oracle's readers
-/// catch in the tests. Linear in `chars`.
-fn paired_underscores(
-    chars: &[(usize, char)],
-    spans: &[(usize, String)],
-    links: &[(usize, std::ops::Range<usize>, usize)],
-) -> Vec<bool> {
-    let beside = |at: Option<usize>| match at.and_then(|at| chars.get(at)) {
-        None | Some((_, ' ')) => Beside::Space,
-        // A code span stands for its backticks.
-        Some((offset, _)) if spans.binary_search_by_key(offset, |(at, _)| *at).is_ok() => {
-            Beside::Punctuation
-        }
-        Some((_, c)) if c.is_ascii_punctuation() || seen_punctuation(*c) => Beside::Punctuation,
-        Some(_) => Beside::Other,
-    };
-    let mut paired = vec![false; chars.len()];
-    let (mut outer, mut inner, mut link, mut at) = (vec![], vec![], 0, 0);
-    while at < chars.len() {
-        let offset = chars[at].0;
-        while links.get(link).is_some_and(|(_, _, end)| offset >= *end) {
-            (link, inner) = (link + 1, vec![]);
-        }
-        let run = chars[at..].iter().take_while(|(_, c)| *c == '_').count();
-        let place = links.get(link).map_or(0, |(open, text, end)| match offset {
-            offset if offset > *open && offset < text.end => 1,
-            offset if offset >= text.end && offset < *end => 2,
-            _ => 0,
-        });
-        if run == 0 || place == 2 {
-            at += run.max(1);
-            continue;
-        }
-        let (before, after) = (beside(at.checked_sub(1)), beside(Some(at + run)));
-        let left =
-            after != Beside::Space && (after != Beside::Punctuation || before != Beside::Other);
-        let right =
-            before != Beside::Space && (before != Beside::Punctuation || after != Beside::Other);
-        let can_open = left && (!right || before == Beside::Punctuation);
-        let can_close = right && (!left || after == Beside::Punctuation);
-        let stack = match place {
-            1 => &mut inner,
-            _ => &mut outer,
-        };
-        match (can_close, stack.pop()) {
-            (true, Some(opener)) => {
-                let opener: std::ops::Range<usize> = opener;
-                paired[opener].fill(true);
-                paired[at..at + run].fill(true);
-            }
-            (_, unpaired) => {
-                stack.extend(unpaired);
-                if can_open {
-                    stack.push(at..at + run);
-                }
-            }
-        }
-        at += run;
-    }
-    paired
-}
-
-/// Whether `c` is Unicode punctuation outside ASCII (for flanking).
-fn seen_punctuation(c: char) -> bool {
-    !c.is_ascii() && seen(c) && !c.is_alphanumeric()
+    /// `*` and `~` taken out, and every `_` kept, since `_` is also a
+    /// character an email holds. Which underscores a reader takes for
+    /// emphasis is not guessed: an approximation of GFM's pairing missed
+    /// shapes (runs of unequal length, the rule of three, other markers
+    /// between, a leftover opener), so an underscore around a link is read
+    /// as shown, and `_[@ada](..)_` is refused by design.
+    UnderscoresKept,
 }
 
 /// The words a reader sees in and around each link of `outside`, each
@@ -262,19 +192,10 @@ fn link_words(outside: &str, spans: &[(usize, String)], markers: Markers) -> Vec
             (whole.start(), text.range(), whole.end())
         })
         .collect();
-    let chars: Vec<(usize, char)> = outside.char_indices().collect();
-    let paired = match markers {
-        Markers::Dropped => vec![],
-        Markers::LiteralUnderscores => paired_underscores(&chars, spans, &links),
-    };
-    let dropped = |at: usize, c: char| match (markers, c) {
-        (_, '*' | '~') | (Markers::Dropped, '_') => true,
-        (Markers::LiteralUnderscores, '_') => paired[at],
-        _ => false,
-    };
+    let dropped = |c: char| matches!((markers, c), (_, '*' | '~') | (Markers::Dropped, '_'));
     let (mut words, mut word, mut touched) = (vec![], String::new(), false);
     let (mut next, mut skip_to) = (0, 0);
-    for (at, &(offset, c)) in chars.iter().enumerate() {
+    for (offset, c) in outside.char_indices() {
         match links.get(next) {
             _ if offset < skip_to => continue,
             Some((open, _, _)) if offset == *open => continue,
@@ -284,12 +205,14 @@ fn link_words(outside: &str, spans: &[(usize, String)], markers: Markers) -> Vec
             }
             _ => {}
         }
-        let in_text = links
+        // A link's text marks its word even where it opens or closes with
+        // a marker, which the reading drops.
+        touched |= links
             .get(next)
             .is_some_and(|(open, text, _)| offset > *open && offset < text.end);
         match spans.binary_search_by_key(&offset, |(at, _)| *at) {
             Ok(span) => word.push_str(&spans[span].1),
-            Err(_) if dropped(at, c) => continue,
+            Err(_) if dropped(c) => continue,
             Err(_) if c == ' ' => {
                 match touched {
                     true => words.push(std::mem::take(&mut word)),
@@ -300,7 +223,6 @@ fn link_words(outside: &str, spans: &[(usize, String)], markers: Markers) -> Vec
             }
             Err(_) => word.push(c),
         }
-        touched |= in_text;
     }
     if touched {
         words.push(word);
@@ -329,10 +251,10 @@ pub fn check_inline(text: &str, at: usize) -> Result<(), MarkdownError> {
         text.trim() == text && shows(text)
     });
     // No address shows in or around a link, read twice: with every marker
-    // dropped, and with every underscore a reader shows kept, since `_` is
-    // both a marker and a character an email holds (the only one an address
-    // pattern shares with them).
-    let around = [Markers::Dropped, Markers::LiteralUnderscores]
+    // dropped, and with every underscore kept, since `_` is both a marker
+    // and a character an email holds (the only one an address pattern
+    // shares with them).
+    let around = [Markers::Dropped, Markers::UnderscoresKept]
         .into_iter()
         .any(|markers| {
             link_words(&outside, &spans, markers)
