@@ -414,7 +414,7 @@ impl BoardIndex {
         }
         let quarantined = quarantined
             .into_iter()
-            .map(|(path, id, reason, object)| {
+            .map(|(path, id, reason, object, carried)| {
                 let id = id.map(|id| Slug::parse(&id)).transpose();
                 let id = id.map_err(|error| corrupt(error.to_string()))?;
                 match full_commit_id(&object) {
@@ -436,6 +436,7 @@ impl BoardIndex {
                     id,
                     reason,
                     object,
+                    carried,
                 })
             })
             .collect::<Result<_, IndexError>>()?;
@@ -544,13 +545,20 @@ fn rows(snapshot: &BoardSnapshot) -> Result<Vec<Row>, IndexError> {
 }
 
 /// One file set aside as the index holds it: path, id, reason and object.
-type SetAside = (String, Option<String>, String, String);
+type SetAside = (String, Option<String>, String, String, bool);
 
 fn quarantined(transaction: &Transaction<'_>) -> rusqlite::Result<Vec<SetAside>> {
-    let mut statement = transaction
-        .prepare("SELECT path, id, reason, object FROM quarantined ORDER BY path, rowid")?;
+    let mut statement = transaction.prepare(
+        "SELECT path, id, reason, object, carried FROM quarantined ORDER BY path, rowid",
+    )?;
     let rows = statement.query_map([], |row| {
-        Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+        Ok((
+            row.get(0)?,
+            row.get(1)?,
+            row.get(2)?,
+            row.get(3)?,
+            row.get(4)?,
+        ))
     })?;
     rows.collect()
 }
@@ -599,12 +607,13 @@ fn fill(
     }
     for file in quarantined {
         transaction.execute(
-            "INSERT INTO quarantined (path, id, reason, object) VALUES (?1, ?2, ?3, ?4)",
+            "INSERT INTO quarantined (path, id, reason, object, carried) VALUES (?1, ?2, ?3, ?4, ?5)",
             params![
                 file.path,
                 file.id.as_ref().map(Slug::as_str),
                 file.reason,
-                file.object
+                file.object,
+                file.carried
             ],
         )?;
     }

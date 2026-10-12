@@ -514,16 +514,17 @@ fn read_tasks(git: &Git, tree: &str, limits: Limits) -> Result<Board, Unread> {
     }
     let count = |entry: &Entry| counts.get(entry.raw.as_slice()).copied().unwrap_or(0);
     let mut board = Board::default();
-    let set_aside = |board: &mut Board, entry: &Entry, id: Option<Slug>, reason: String| {
-        board.quarantined.push(QuarantinedFile {
-            path: format!("tasks/{}", shown_name(&entry.raw)),
-            id,
-            // A file's own text (an unknown key, say) can reach the reason:
-            // only what shows as itself is kept.
-            reason: capped(&sanitised(reason.as_bytes())),
-            object: entry.oid.clone(),
-        });
-    };
+    let set_aside =
+        |board: &mut Board, entry: &Entry, id: Option<Slug>, reason: String, carried: bool| {
+            board.quarantined.push(QuarantinedFile {
+                path: format!("tasks/{}", shown_name(&entry.raw)),
+                id,
+                // A file's own text can reach the reason: keep what shows.
+                reason: capped(&sanitised(reason.as_bytes())),
+                object: entry.oid.clone(),
+                carried,
+            });
+        };
     let keep = |board: &mut Board, entry: &Entry| {
         // A clear finds a kept name by the path the listing shows.
         let shown = shown_name(&entry.raw);
@@ -556,7 +557,7 @@ fn read_tasks(git: &Git, tree: &str, limits: Limits) -> Result<Board, Unread> {
                 if kept {
                     keep(&mut board, entry);
                 }
-                set_aside(&mut board, entry, id, reason);
+                set_aside(&mut board, entry, id, reason, kept);
             }
             Disposition::Stray => {}
         }
@@ -624,7 +625,7 @@ fn read_tasks(git: &Git, tree: &str, limits: Limits) -> Result<Board, Unread> {
             }
             Err(reason) => {
                 keep(&mut board, entry);
-                set_aside(&mut board, entry, Some(id), reason);
+                set_aside(&mut board, entry, Some(id), reason, true);
             }
         }
     }

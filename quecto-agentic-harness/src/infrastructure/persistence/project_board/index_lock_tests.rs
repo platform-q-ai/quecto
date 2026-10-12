@@ -199,12 +199,14 @@ fn a_path_set_aside_twice_is_listed_twice() {
             id: Some(slug("x")),
             reason: "named more than once in the tree".into(),
             object: "c".repeat(40),
+            carried: true,
         },
         QuarantinedFile {
             path: "tasks/x.json".into(),
             id: Some(slug("x")),
             reason: "named more than once in the tree".into(),
             object: "d".repeat(40),
+            carried: true,
         },
     ];
     rebuild(&index, &snapshot).unwrap();

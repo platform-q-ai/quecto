@@ -331,7 +331,11 @@ fn a_first_round_on_a_change_stamped_ahead_is_refused() {
         })
     );
     let taken = first_round("10:29:30").unwrap();
-    assert_eq!(taken.fields().created, at("10:00:00"));
+    assert_eq!(
+        taken.fields().created,
+        at("10:30:00"),
+        "no earlier than the change's last change"
+    );
 }
 
 /// A review holds at most its most rounds: the next is refused.

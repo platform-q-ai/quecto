@@ -23,8 +23,6 @@ struct Board {
     head: Option<u64>,
     tasks: BTreeMap<String, Task>,
     quarantined: Vec<QuarantinedFile>,
-    /// The paths of the files set aside that every write carries forward.
-    kept: BTreeSet<String>,
     interleaved: Vec<Interleaved>,
     after_read: Vec<Interleaved>,
     refusal: Option<String>,
@@ -103,12 +101,12 @@ impl MemoryBoardStore {
         board.tasks.remove(id);
         let id = Slug::parse(id).ok();
         let path = format!("tasks/{}.json", id.as_ref().map_or("?", Slug::as_str));
-        board.kept.insert(path.clone());
         board.quarantined.push(QuarantinedFile {
             path,
             id,
             reason: reason.into(),
             object: format!("{:040x}", revision + 1),
+            carried: true,
         });
     }
 
@@ -131,18 +129,16 @@ impl MemoryBoardStore {
         self.set_aside(path, reason, false);
     }
 
-    fn set_aside(&self, path: &str, reason: &str, kept: bool) {
+    fn set_aside(&self, path: &str, reason: &str, carried: bool) {
         let mut board = self.lock();
         let revision = board.head.expect("a bootstrapped board");
         board.head = Some(revision + 1);
-        if kept {
-            board.kept.insert(path.into());
-        }
         board.quarantined.push(QuarantinedFile {
             path: path.into(),
             id: None,
             reason: reason.into(),
             object: format!("{:040x}", revision + 1),
+            carried,
         });
     }
 
@@ -245,7 +241,6 @@ impl ProjectBoardStore for MemoryBoardStore {
                 head: head(revision),
                 tasks: board.tasks.values().cloned().collect(),
                 quarantined: board.quarantined.clone(),
-                kept: board.kept.clone(),
             };
             (snapshot, std::mem::take(&mut board.after_read))
         };
@@ -288,6 +283,8 @@ impl ProjectBoardStore for MemoryBoardStore {
                 .tasks
                 .insert(task.fields().id.as_str().to_owned(), task.clone());
         }
+        // As a git write: a stray set aside is dropped, a carried file kept.
+        board.quarantined.retain(|file| file.carried);
         board.head = Some(revision + 1);
         board.writes += 1;
         board.committers.insert(revision + 1, self.writer.clone());
@@ -349,6 +346,8 @@ impl ProjectBoardStore for MemoryBoardStore {
             false => return Ok(BoardWrite::Refused(format!("{path:?} is not set aside"))),
         }
         board.quarantined.retain(|file| !named(file));
+        // A clear is a write: a stray set aside is dropped with it.
+        board.quarantined.retain(|file| file.carried);
         board.head = Some(revision + 1);
         board.writes += 1;
         board.committers.insert(revision + 1, self.writer.clone());

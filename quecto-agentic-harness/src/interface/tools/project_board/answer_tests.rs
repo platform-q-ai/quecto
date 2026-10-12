@@ -208,6 +208,7 @@ fn text_from_outside_is_redacted_wherever_it_is_shown() {
             id: None,
             reason: format!("api_key: {secret}"),
             object: "a".repeat(40),
+            carried: true,
         })}),
     ] {
         let text = answer.to_string();
@@ -219,6 +220,7 @@ fn text_from_outside_is_redacted_wherever_it_is_shown() {
         id: None,
         reason: "a stray".into(),
         object: "a".repeat(40),
+        carried: true,
     });
     assert_eq!(shown["path"], json!(path), "a path is shown as it is");
 }
@@ -232,6 +234,7 @@ fn a_listing_shows_each_files_object_and_its_names_copies() {
         id: None,
         reason: "named more than once".into(),
         object: object.to_string().repeat(40),
+        carried: true,
     };
     let listed = quarantined_list(&[
         file("tasks/a.json", 'a'),
@@ -258,6 +261,7 @@ fn an_unsanitised_path_is_never_shown() {
         id: None,
         reason: "a stray".into(),
         object: "a".repeat(40),
+        carried: true,
     });
 }
 
