@@ -151,7 +151,10 @@ fn written(write: Result<BoardWrite, BoardStoreError>) -> BoardHead {
 }
 
 /// Moves the remote board to a commit of `tasks/` entries `extra` (name,
-/// `mode type oid`) beside the ones at the head.
+/// `mode type oid`) beside the ones at the head. The root it makes is a
+/// legacy one, the README and `tasks` without the format marker: a board
+/// written before the marker, read as it is (`store_format_tests` covers
+/// marked roots).
 fn hand_edit(remote: &Path, extra: &[(&str, String)]) -> BoardHead {
     let head = sh(remote, &["rev-parse", BOARD_REF]);
     let mut listing = sh(remote, &["ls-tree", &format!("{head}:tasks")]);

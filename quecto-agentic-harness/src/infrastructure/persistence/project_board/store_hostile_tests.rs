@@ -201,6 +201,8 @@ fn raw_board_named(
     head
 }
 
+/// A board commit of a legacy root, the README and `tasks` without the
+/// format marker (`store_format_tests` makes marked roots).
 fn raw_board_in(repo: &Path, entries: &[(&str, &[u8], &Object)]) -> BoardHead {
     let tasks = raw_tree_named(repo, entries);
     let readme = sh_with(repo, &["hash-object", "-w", "--stdin"], README);
@@ -591,6 +593,8 @@ fn a_hostile_cell_never_reaches_a_reason_or_stops_a_listing() {
 
 #[path = "store_clear_tests.rs"]
 mod clear;
+#[path = "store_format_tests.rs"]
+mod format;
 #[path = "store_legacy_tests.rs"]
 mod legacy;
 #[path = "store_names_tests.rs"]

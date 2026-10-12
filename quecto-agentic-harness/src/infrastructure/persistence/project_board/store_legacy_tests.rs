@@ -1,12 +1,10 @@
-//! Boards written before the task files became markdown, and the format
-//! marker that keeps older builds off a markdown board (#2527 review): a
+//! Boards written before the task files became markdown (#2527 review): a
 //! task file beside a file set aside under its id is set aside with it and
 //! freed by clearing that file; a board read past what a write leaves is
-//! cleared, never grown; a root without the marker is read as it is and
-//! gains it on the next write; a newer marker asks for an upgrade.
+//! cleared, never grown; a reason that quotes a file is capped.
 use super::*;
 use crate::application::project_board::ports::{KeepCopy, SetAsideClear};
-use crate::infrastructure::persistence::project_board::board_tree::{FORMAT, MAX_READ_ENTRIES};
+use crate::infrastructure::persistence::project_board::board_tree::MAX_READ_ENTRIES;
 use std::collections::BTreeSet;
 
 fn clearing(path: &str, object: &str, repeated: &[(&str, KeepCopy)]) -> SetAsideClear {
@@ -170,116 +168,4 @@ fn a_set_aside_reason_is_capped() {
         "{} characters",
         reason.chars().count()
     );
-}
-
-/// A board root of `format` (a marker of these bytes, or none) beside the
-/// README and an empty `tasks`, pushed over the board.
-fn marked(repos: &Repos, format: Option<&[u8]>) {
-    let remote = repos.remote();
-    let tip = sh(&remote, &["rev-parse", BOARD_REF]);
-    let readme = sh(&remote, &["rev-parse", &format!("{tip}:README.md")]);
-    let mut root = format!("100644 blob {readme}\tREADME.md\n");
-    if let Some(bytes) = format {
-        let marker = sh_with(&remote, &["hash-object", "-w", "--stdin"], bytes);
-        let tree = sh_with(
-            &remote,
-            &["mktree"],
-            format!("100644 blob {marker}\tboard\n").as_bytes(),
-        );
-        root += &format!("040000 tree {tree}\tformat\n");
-    }
-    let root = sh_with(&remote, &["mktree"], root.as_bytes());
-    let commit = sh(
-        &remote,
-        &["commit-tree", &root, "-p", &tip, "-m", "hand edit"],
-    );
-    sh(&remote, &["update-ref", BOARD_REF, &commit]);
-}
-
-#[test]
-fn a_board_without_a_format_marker_is_read_and_the_next_write_adds_it() {
-    let repos = Repos::new();
-    created(&store(&repos.alice));
-    marked(&repos, None);
-    let bob = store(&repos.bob);
-    let snapshot = bob.read().unwrap();
-    let moved = written(bob.write_tasks(&snapshot.head, &[task("a")], "board: add a"));
-    assert_eq!(
-        sh(
-            &repos.remote(),
-            &["cat-file", "blob", &format!("{}:format/board", moved.0)]
-        ) + "\n",
-        String::from_utf8_lossy(FORMAT)
-    );
-}
-
-#[test]
-fn a_newer_format_asks_for_an_upgrade_and_a_malformed_one_clashes() {
-    let repos = Repos::new();
-    created(&store(&repos.alice));
-    marked(&repos, Some(b"quecto-board 3\n"));
-    let read = store(&repos.bob).read();
-    assert!(
-        matches!(&read, Err(BoardStoreError::Unavailable(why)) if why.contains("upgrade quecto")),
-        "{read:?}"
-    );
-    for odd in [
-        &b"quecto-board 1\n"[..],
-        b"quecto-board 02\n",
-        b"board",
-        b"",
-    ] {
-        marked(&repos, Some(odd));
-        let read = store(&repos.bob).read();
-        assert!(
-            matches!(&read, Err(BoardStoreError::Clash(_))),
-            "{odd:?}: {read:?}"
-        );
-    }
-    marked(&repos, Some(FORMAT));
-    assert!(store(&repos.bob).read().is_ok());
-}
-
-/// The board shape the check as merged before the marker took (master
-/// `0723d9ee6`, `board_tree.rs` `board_shape`): a root entry is a file, or
-/// the `tasks` tree; the root holds a README or `tasks`. Kept here so the
-/// marker's promise stays checked: that quecto takes a marked root for a
-/// clash, so it never reads, and never writes over, a board whose tasks it
-/// would not see.
-fn merged_board_shape(root: &[(&str, &str)]) -> Result<(), String> {
-    let fits = |(name, kind): &(&str, &str)| match *name {
-        "tasks" => *kind == "tree",
-        _ => *kind == "blob",
-    };
-    let ours = |(name, _): &(&str, &str)| matches!(*name, "README.md" | "tasks");
-    match (
-        root.iter().any(ours),
-        root.iter().find(|entry| !fits(entry)),
-    ) {
-        (true, None) => Ok(()),
-        (false, None) => Err("neither a README.md nor a tasks tree".into()),
-        (_, Some((name, kind))) => Err(format!("`{name}` is a {kind}: a clash")),
-    }
-}
-
-#[test]
-fn the_merged_board_shape_takes_a_marked_root_for_a_clash() {
-    let legacy = [("README.md", "blob"), ("tasks", "tree")];
-    assert_eq!(merged_board_shape(&legacy), Ok(()));
-    let marked = [("README.md", "blob"), ("format", "tree"), ("tasks", "tree")];
-    assert!(merged_board_shape(&marked).is_err());
-    // And a write of this quecto leaves such a root.
-    let repos = Repos::new();
-    let alice = store(&repos.alice);
-    let head = created(&alice);
-    let moved = written(alice.write_tasks(&head, &[task("a")], "board: add a"));
-    let root = sh(&repos.remote(), &["ls-tree", &moved.0]);
-    let root: Vec<(&str, &str)> = root
-        .lines()
-        .map(|row| {
-            let (meta, name) = row.split_once('\t').unwrap();
-            (name, meta.split(' ').nth(1).unwrap())
-        })
-        .collect();
-    assert_eq!(root, marked);
 }

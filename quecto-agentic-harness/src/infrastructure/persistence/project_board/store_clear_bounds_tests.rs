@@ -164,7 +164,8 @@ fn the_copies_a_clear_names_are_bounded_by_what_it_saw() {
 }
 
 /// A board whose `tasks/` tree holds exactly `files` (name, bytes; a name
-/// may repeat), made with `mktree`, on the remote; bob's store of it.
+/// may repeat), made with `mktree`, on the remote; bob's store of it. Its
+/// root is a legacy one, without the format marker.
 fn mktree_board(files: &[(String, Vec<u8>)]) -> (Repos, GitBoardStore, BoardHead) {
     let repos = Repos::new();
     created(&store(&repos.alice));
