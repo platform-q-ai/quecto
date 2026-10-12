@@ -220,7 +220,7 @@ fn text_from_outside_is_redacted_wherever_it_is_shown() {
         id: None,
         reason: "a stray".into(),
         object: "a".repeat(40),
-        carried: true,
+        carried: false,
     });
     assert_eq!(shown["path"], json!(path), "a path is shown as it is");
 }
@@ -261,7 +261,7 @@ fn an_unsanitised_path_is_never_shown() {
         id: None,
         reason: "a stray".into(),
         object: "a".repeat(40),
-        carried: true,
+        carried: false,
     });
 }
 
@@ -378,4 +378,18 @@ fn a_set_aside_file_is_named_by_its_raw_path_and_object() {
     });
     assert_eq!(shown["path"], json!("tasks/token=x.json"));
     assert_eq!(shown["object"], json!("a".repeat(40)));
+    // The wording an agent reads (approved overnight, #2521).
+    let object = "a".repeat(40);
+    let named = ProjectBoardError::SetAsideFile {
+        path: "tasks/Not A Slug.json".into(),
+        object: object.clone(),
+    };
+    assert_eq!(
+        named.to_string(),
+        format!(
+            "the file \"tasks/Not A Slug.json\" (object {object}) is set aside as unreadable and \
+             its task is unknown; mend or clear it"
+        )
+    );
+    assert_eq!(error_json(&named)["message"], json!(named.to_string()));
 }

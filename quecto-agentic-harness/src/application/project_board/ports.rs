@@ -27,7 +27,10 @@ pub struct QuarantinedFile {
     pub object: String,
     /// Every write carries it forward as it is (a task file the store
     /// could not read): what it holds stays on the board. A file not
-    /// carried (a stray) is dropped by the next write.
+    /// carried (a stray) is dropped by the next write. The one exception:
+    /// the copies of a name listed more than once are not carried, yet not
+    /// dropped either: every write is refused until a clear resolves them
+    /// (it names the copy kept, or that none is).
     pub carried: bool,
 }
 

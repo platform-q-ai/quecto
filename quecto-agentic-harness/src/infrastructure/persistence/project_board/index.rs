@@ -544,7 +544,8 @@ fn rows(snapshot: &BoardSnapshot) -> Result<Vec<Row>, IndexError> {
         .collect()
 }
 
-/// One file set aside as the index holds it: path, id, reason and object.
+/// One file set aside as the index holds it: path, id, reason, object and
+/// whether every write carries it.
 type SetAside = (String, Option<String>, String, String, bool);
 
 fn quarantined(transaction: &Transaction<'_>) -> rusqlite::Result<Vec<SetAside>> {

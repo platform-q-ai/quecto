@@ -250,10 +250,8 @@ fn the_git_store_carries_a_task_file_set_aside_and_drops_a_stray() {
     let remote = Remote::new();
     check_carried_set_aside(
         remote.clients(),
-        || {
-            remote.spoil_b();
-            remote.add_stray();
-        },
+        || remote.spoil_b(),
+        || remote.add_stray(),
         "tasks/notes.txt",
     );
 }
