@@ -488,6 +488,24 @@ async fn a_write_runs_in_its_calls_panic_scope() {
     assert!(answer.is_match(&text), "{text}");
 }
 
+/// #2519 review: a panicked write's message reaches the model as a
+/// contained panic's does: secret shapes redacted, cut to 1 KiB.
+#[tokio::test]
+async fn a_written_panic_message_is_redacted_and_bounded() {
+    use crate::application::tool_panic_scope::{ToolScope, scoped};
+    let failure = scoped(ToolScope::new("write"), async {
+        run_write(|| panic!("key sk-livedeadbeef0001 then {}", "x".repeat(5_000)))
+            .await
+            .unwrap_err()
+    })
+    .await;
+    let text = write_failure("f", &failure);
+    assert!(!text.contains("sk-livedeadbeef0001"), "{text}");
+    assert!(text.contains("key [REDACTED] then xxx"), "{text}");
+    assert!(text.contains("x…\"), so"), "{text}");
+    assert!(text.len() < 1_400, "{}", text.len());
+}
+
 /// The environment variable that turns [`write_panic_child`] into the
 /// process the test below runs.
 const WRITE_PANIC_CHILD: &str = "QUECTO_2517_WRITE_PANIC_CHILD";
@@ -527,6 +545,12 @@ fn a_panic_inside_a_write_fails_the_call_and_does_not_abort() {
         "{stdout}"
     );
     assert!(stdout.contains("RECORDED None"), "{stdout}");
+    // The handled panic leaves the `error` event a contained one does.
+    assert!(
+        stdout.contains("EVENT turn=3 tool=write message=injected write panic location=")
+            && stdout.contains("fs_failure_tests.rs:"),
+        "{stdout}"
+    );
 }
 
 /// The child side of the test above: a no-op in an ordinary run.
@@ -536,13 +560,24 @@ fn write_panic_child() {
         return;
     }
     use crate::application::tool_panic_scope::{ToolScope, scoped};
+    use crate::infrastructure::persistence::audit_log::AuditLog;
+    use crate::infrastructure::persistence::crash_record;
     crate::interface::panic_hook::install();
+    let base = tempfile::tempdir().unwrap();
+    crash_record::prepare(crash_record::CrashTarget {
+        base_dir: Some(base.path().to_path_buf()),
+        session_key: Some("cli:child".into()),
+        event_log: AuditLog::open_sync(base.path(), "cli:child")
+            .unwrap()
+            .crash_line(),
+    });
+    crash_record::arm_prepared();
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
         .enable_all()
         .build()
         .unwrap();
-    let scope = ToolScope::new("write");
+    let scope = ToolScope::in_turn("write", 3);
     let failure = runtime
         .block_on(scoped(scope.clone(), async {
             run_write(|| panic!("injected write panic")).await
@@ -550,6 +585,21 @@ fn write_panic_child() {
         .unwrap_err();
     println!("ANSWER {}", write_failure("f", &failure));
     println!("RECORDED {:?}", scope.recorded_panic());
+    let log =
+        std::fs::read_to_string(AuditLog::file_path(base.path(), "cli:child")).unwrap_or_default();
+    for event in log
+        .lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .filter(|event| event["event"] == "error" && event["source"] == "tool_panic")
+    {
+        println!(
+            "EVENT turn={} tool={} message={} location={}",
+            event["turn"],
+            event["tool"].as_str().unwrap_or("-"),
+            event["message"].as_str().unwrap_or("-"),
+            event["location"].as_str().unwrap_or("-"),
+        );
+    }
 }
 
 /// Re-review: a two-link cycle is named as a loop.

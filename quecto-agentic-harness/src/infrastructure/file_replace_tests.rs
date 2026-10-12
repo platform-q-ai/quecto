@@ -329,3 +329,22 @@ fn another_group_is_given_back() {
     assert_eq!(std::fs::metadata(&target).unwrap().gid(), other);
     assert_eq!(std::fs::read(&target).unwrap(), b"new");
 }
+
+/// #2519 review: a panic while the temporary file exists (an unwind
+/// through the write) removes it; the file is as it was.
+#[test]
+fn a_panic_mid_write_removes_its_temporary_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("f");
+    std::fs::write(&path, "old").unwrap();
+    let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        replace_contents_with(
+            &path,
+            b"new",
+            with_after_temp(|_| panic!("a panic mid-write (injected)")),
+        )
+    }));
+    assert!(caught.is_err(), "the write panicked");
+    assert_eq!(names(dir.path()), ["f"]);
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "old");
+}
