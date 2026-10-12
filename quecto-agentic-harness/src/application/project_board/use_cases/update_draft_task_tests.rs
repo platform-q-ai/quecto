@@ -218,8 +218,8 @@ fn a_draft_changed_since_it_was_read_is_refused_as_stale() {
 fn board_text_is_normalised_before_the_schema_reads_it() {
     let store = holding(&[("a", TaskStatus::Draft, None, &[])]);
     let edit = DraftUpdate {
-        title: Some("\u{a0}New\ttitle ".into()),
-        description: Some("Why.\r\nHow\u{a0}so.\r\n".into()),
+        title: Some(" New title\t".into()),
+        description: Some("Why. \r\nHow so.\r\n".into()),
         ..of("a")
     };
     let edited = update(&store).execute(&edit).unwrap();

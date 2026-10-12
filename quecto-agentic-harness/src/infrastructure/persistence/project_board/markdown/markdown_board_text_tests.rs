@@ -1,38 +1,26 @@
-//! The board text normaliser against the codec (#2481 D4): text the
-//! domain accepts, once normalised, is held by the codec's prose, or is
-//! refused for what it means (its structure or inline markup), never for
-//! what the normaliser exists to fix.
+//! The board text normaliser against a reader (#2481 D4): normalising
+//! text the domain accepts never changes what GitHub shows. comrak, with
+//! the oracle's GitHub options, renders the text before and after: the
+//! two agree once both are NFC (canonically equal text shows the same).
 use super::*;
 use crate::domain::project_board::value_objects::board_text;
 use crate::domain::project_board::value_objects::schema_error::markdown;
+use unicode_normalization::UnicodeNormalization;
 
-/// What the codec refuses for what text means, not how it is spelt: the
-/// refusals the normaliser deliberately leaves to the codec. `Invisible`
-/// is among them only once every line keeps the character rules (checked
-/// first): then it is a line that shows nothing (`_` alone).
-fn for_meaning(error: &MarkdownError) -> bool {
-    matches!(
-        error,
-        MarkdownError::Structure { .. }
-            | MarkdownError::Invisible { .. }
-            | MarkdownError::Fence { .. }
-            | MarkdownError::UnbalancedCode { .. }
-            | MarkdownError::BlockLike { .. }
-            | MarkdownError::Html { .. }
-            | MarkdownError::Link { .. }
-            | MarkdownError::Escape { .. }
-            | MarkdownError::Math { .. }
-            | MarkdownError::CharacterReference { .. }
-            | MarkdownError::Image { .. }
-            | MarkdownError::Marks { .. }
-    )
+/// What GitHub shows for `text`: its HTML as comrak renders it with the
+/// oracle's GitHub options (block structure, code and code-span contents,
+/// text), made NFC.
+fn shown(text: &str) -> String {
+    comrak::markdown_to_html(text, &super::oracle::comrak_reader::comrak_options())
+        .nfc()
+        .collect()
 }
 
-/// Pieces of text from chat, imports and editors: what the domain lets
-/// through and the codec refuses as spelt (CR, tabs, no-break and wide
-/// spaces, lone selectors, decomposed letters, edge and doubled blank
-/// lines), among ordinary text and markdown. No fence: inside one the
-/// normaliser changes only what shows as nothing, by design.
+/// Pieces of text from chat, imports and editors: what D4 fixes (CR,
+/// trailing spaces, decomposed letters, edge blank lines) among what it
+/// must leave alone (fences of backticks or tildes and longer ones,
+/// indents, tabs, no-break and wide spaces, selectors, hard breaks, list
+/// continuations, code spans, quotes).
 const PIECES: &[&str] = &[
     "a",
     "Z",
@@ -41,7 +29,6 @@ const PIECES: &[&str] = &[
     "  ",
     "\t",
     "\u{a0}",
-    "\u{2003}",
     "\u{3000}",
     "\r\n",
     "\r",
@@ -49,22 +36,32 @@ const PIECES: &[&str] = &[
     "\n\n",
     "\n\n\n",
     "\u{fe0f}",
-    "\u{fe0e}",
     "\u{1f600}",
-    "\u{2764}\u{fe0f}",
-    "1\u{fe0f}\u{20e3}",
     "e\u{301}",
     "\u{212b}",
     "- ",
+    "  ",
+    "    ",
     "# ",
+    "> ",
+    "1. ",
     "*",
     "_",
     "`",
     "`x`",
+    "`\t`",
+    "`a\u{a0}b`",
+    "\n```\n",
+    "\n```rust\n",
+    "\n~~~\n",
+    "\n````\n",
+    "\n  ```\n",
+    "line  \nnext",
+    "- a\n  b",
+    "- a\n\n  b",
+    "\n\u{a0}\n",
     ".",
-    ",",
     "(",
-    ")",
     "\u{e9}",
 ];
 
@@ -88,56 +85,56 @@ impl Seeded {
 }
 
 #[test]
-fn normalised_text_the_domain_accepts_is_held_or_refused_for_its_meaning() {
+fn normalising_never_changes_what_a_reader_shows() {
     let mut seeded = Seeded(2481);
-    let (mut held, mut checked) = (0, 0);
+    let mut checked = 0;
     for _ in 0..20_000 {
         let raw = seeded.text();
         let normal = board_text::text(&raw);
         assert_eq!(board_text::text(&normal), normal, "{raw:?}");
+        assert!(
+            !normal.contains('\r') && normal.nfc().eq(normal.chars()),
+            "{raw:?}"
+        );
         if markdown("description", &normal, 65_536).is_err() {
             continue;
         }
         checked += 1;
-        // The spelling the normaliser exists to fix: every line keeps the
-        // character rules (no CR, tab, odd space, lone selector, trailing
-        // space; NFC).
-        for (index, line) in normal.split('\n').enumerate() {
-            let kept = chars::check_line(line, index + 1);
-            assert_eq!(kept, Ok(()), "{raw:?} → {normal:?}");
-        }
-        match blocks_of(&normal) {
-            Ok(blocks) => {
-                assert_eq!(text_of(&blocks), normal, "{raw:?}");
-                held += 1;
-            }
-            Err(error) => assert!(for_meaning(&error), "{raw:?} → {normal:?}: {error:?}"),
-        }
+        assert_eq!(shown(&raw), shown(&normal), "{raw:?} → {normal:?}");
     }
-    assert!(
-        checked > 10_000 && held > 3_000,
-        "{checked} checked, {held} held"
-    );
+    assert!(checked > 10_000, "{checked} checked");
 }
 
-/// Each class of text the domain accepts and the codec refuses as spelt
-/// is held once normalised.
+/// Each class D4 fixes is refused by the codec as written and held once
+/// normalised.
 #[test]
-fn each_class_the_codec_refuses_as_spelt_is_held_once_normalised() {
+fn each_class_d4_fixes_is_held_once_normalised() {
     for raw in [
         "Why.\r\nHow.\r\n",
-        "trailing  \nspaces\t",
-        "no\u{a0}break",
-        "a\ttab",
-        "A\u{fe0f} after a letter",
+        "a single \nspace",
+        "trailing at the end  ",
         "Cafe\u{301}",
         "abc\n",
         "\n\nedges\n\n",
-        "one\n\n\n\nblank",
     ] {
-        assert!(blocks_of(raw).is_err(), "{raw:?} is refused as spelt");
+        assert!(blocks_of(raw).is_err(), "{raw:?} is refused as written");
         let normal = board_text::text(raw);
         let blocks = blocks_of(&normal).unwrap_or_else(|error| panic!("{raw:?}: {error:?}"));
         assert_eq!(text_of(&blocks), normal);
+        assert_eq!(shown(raw), shown(&normal), "{raw:?}");
+    }
+}
+
+/// What the normaliser leaves as written, the codec refuses with its line
+/// (or holds as written): a hard break, a tab, a no-break space.
+#[test]
+fn what_d4_leaves_is_refused_by_the_codec_with_its_line() {
+    for (raw, line) in [("line  \nnext", 1), ("a\tb", 1), ("a\n\nb\u{a0}c", 3)] {
+        assert_eq!(board_text::text(raw), raw);
+        let refused = blocks_of(raw).unwrap_err();
+        assert!(
+            format!("{refused}").contains(&format!("line {line}")),
+            "{raw:?}: {refused}"
+        );
     }
 }

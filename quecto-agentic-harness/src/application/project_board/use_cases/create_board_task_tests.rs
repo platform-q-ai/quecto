@@ -451,8 +451,8 @@ fn board_text_is_normalised_before_the_schema_reads_it() {
     let store = board();
     let created = create(&store, SetClock::at("10:00:00"))
         .execute(&NewBoardTask {
-            title: "Ship\u{a0}it\u{fe0f} ".into(),
-            description: "Why.\r\nHow\tso.\r\n".into(),
+            title: "\tShip it ".into(),
+            description: "Why. \r\nHow so.\r\n".into(),
             ..new_task("a")
         })
         .unwrap();

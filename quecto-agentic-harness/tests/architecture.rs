@@ -3201,7 +3201,7 @@ fn normal_build_excludes_removed_tool_installer_archive_dependencies() {
 /// normaliser, which makes text NFC where it enters (#2481 D4). Nothing
 /// else may take it up.
 #[test]
-fn text_normalization_serves_only_macos_paths_and_the_board_markdown() {
+fn text_normalization_serves_only_macos_paths_the_board_markdown_and_its_normaliser() {
     let manifest = fs::read_to_string("Cargo.toml").expect("read Cargo.toml");
     let normal_dependencies = cargo_toml_section(&manifest, "dependencies");
     assert!(

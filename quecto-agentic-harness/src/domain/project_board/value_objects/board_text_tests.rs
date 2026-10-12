@@ -13,40 +13,9 @@ fn line_ends_become_one_lf_and_edge_blank_lines_go() {
         ("Why.\r\nHow.\r\n", "Why.\nHow."),
         ("a\rb", "a\nb"),
         ("abc\n", "abc"),
-        ("\n\n  \nabc\n \n", "abc"),
+        ("\n\n  \n\t\nabc\n \n", "abc"),
         ("", ""),
         (" \n\t\n", ""),
-    ] {
-        assert_eq!(settled(text, raw), kept, "{raw:?}");
-    }
-}
-
-#[test]
-fn trailing_whitespace_goes_from_every_line() {
-    assert_eq!(settled(text, "a  \nb\t\nc\u{a0}"), "a\nb\nc");
-}
-
-#[test]
-fn spaces_a_reader_shows_as_one_become_one_in_prose() {
-    for (raw, kept) in [
-        ("a\u{a0}b", "a b"),
-        ("a\u{2003}b\u{3000}c", "a b c"),
-        ("a\tb", "a b"),
-        // Inner runs are kept: the normaliser never collapses spaces.
-        ("a  `x  y`  b", "a  `x  y`  b"),
-    ] {
-        assert_eq!(settled(text, raw), kept, "{raw:?}");
-    }
-}
-
-#[test]
-fn a_lone_presentation_selector_goes_and_an_emojis_stays() {
-    for (raw, kept) in [
-        ("A\u{fe0f}", "A"),
-        ("a\u{fe0e}b", "ab"),
-        ("\u{2764}\u{fe0f}", "\u{2764}\u{fe0f}"),
-        ("1\u{fe0f}\u{20e3}", "1\u{fe0f}\u{20e3}"),
-        ("\u{1f44d}\u{fe0f}", "\u{1f44d}\u{fe0f}"),
     ] {
         assert_eq!(settled(text, raw), kept, "{raw:?}");
     }
@@ -58,43 +27,71 @@ fn text_is_made_nfc() {
     assert_eq!(settled(text, "\u{212b}"), "\u{c5}");
 }
 
+/// A trailing space or tab goes only where no hard break can form: a
+/// single space, or before a blank line or the end.
 #[test]
-fn blank_line_runs_outside_code_become_one() {
-    assert_eq!(settled(text, "a\n\n\n\nb"), "a\n\nb");
-}
-
-/// Up to three spaces before a block's first line show as nothing; four
-/// start indented code, and a line inside a block keeps its spaces, so
-/// those are left for the codec to refuse rather than change meaning.
-#[test]
-fn spaces_before_a_blocks_first_line_go_up_to_three() {
+fn trailing_spaces_go_only_where_no_hard_break_forms() {
     for (raw, kept) in [
-        ("   a", "a"),
-        ("a\n\n  - b", "a\n\n- b"),
-        ("    a", "    a"),
-        ("- a\n  b", "- a\n  b"),
+        ("a \nb", "a\nb"),
+        ("a  \n\nb", "a\n\nb"),
+        ("a\t\n\nb", "a\n\nb"),
+        ("end  ", "end"),
+        ("end \t ", "end"),
+        // Two spaces before a line: a hard break, kept for the codec.
+        ("line  \nnext", "line  \nnext"),
+        ("line\t\nnext", "line\t\nnext"),
     ] {
         assert_eq!(settled(text, raw), kept, "{raw:?}");
     }
 }
 
-/// Inside a fence only what shows as nothing changes: trailing
-/// whitespace, line ends and NFC. Tabs, no-break spaces, selectors and
-/// blank lines are left as written.
+/// Inside a fence (```, ~~~, or longer) every line is kept as written.
 #[test]
-fn fenced_code_keeps_what_it_shows() {
-    let raw = "```go\r\nfunc a() {\r\n\tx :=\u{a0}1  \r\n\r\n\r\n\ty\u{fe0f}\r\n}\r\n```\r\n\r\nafter\u{a0}it";
-    let kept = "```go\nfunc a() {\n\tx :=\u{a0}1\n\n\n\ty\u{fe0f}\n}\n```\n\nafter it";
-    assert_eq!(settled(text, raw), kept);
+fn fenced_code_is_kept_as_written() {
+    for raw in [
+        "```\ncode  \n\nmore \n```",
+        "~~~\ncode \n~~~",
+        "````\n```\ncode \n````",
+        "```\na\u{a0}\n```",
+        "  ```\n  code \n  ```",
+    ] {
+        assert_eq!(settled(text, raw), raw, "{raw:?}");
+    }
+    // After a fence closes, prose is normalised again.
+    assert_eq!(
+        settled(text, "~~~\nx \n~~~\nafter \nnext"),
+        "~~~\nx \n~~~\nafter\nnext"
+    );
+}
+
+/// What the review found a wider normaliser changed in what GitHub shows
+/// is left as written, for the codec to store or refuse.
+#[test]
+fn what_a_reader_shows_differently_is_left_as_written() {
+    for raw in [
+        "\tcode",
+        "- a\n\n  b",
+        "a\n\u{a0}\nb",
+        "`a\tb` `a\u{a0}b` `a\u{3000}b` `x\u{fe0f}`",
+        "line  \nnext",
+        "\u{a0}- a",
+        "A\u{fe0f} and a\tb and c\u{a0}d",
+        "a\n\n\n\nb",
+        "   a",
+        "    a \nb",
+    ] {
+        assert_eq!(settled(text, raw), raw, "{raw:?}");
+    }
 }
 
 #[test]
-fn a_line_is_trimmed_at_both_edges_and_fixed_inside() {
+fn a_line_is_trimmed_of_spaces_and_tabs_at_both_edges() {
     for (raw, kept) in [
-        ("  Title\u{a0}", "Title"),
-        ("\u{a0}Fix\tthe\u{2003}build ", "Fix the build"),
-        ("Ship it\u{fe0f}", "Ship it"),
+        ("  Title \t", "Title"),
+        ("\tFix the build ", "Fix the build"),
         ("Cafe\u{301}", "Caf\u{e9}"),
+        // Only spaces and tabs: a no-break space or a selector is kept.
+        ("\u{a0}Ship it\u{fe0f}", "\u{a0}Ship it\u{fe0f}"),
     ] {
         assert_eq!(settled(line, raw), kept, "{raw:?}");
     }
