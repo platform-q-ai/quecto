@@ -48,8 +48,8 @@ impl ArtifactKey {
     }
 }
 
-/// How a message names it: `task x`, `plan 2 of task x`, `the review of
-/// change 3 of task x`, `discussion d`.
+/// How a message names it: `task x`, `plan 2 of task x`, `review 3 of
+/// task x` (the review of its change 3), `discussion d`.
 impl std::fmt::Display for ArtifactKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -57,9 +57,7 @@ impl std::fmt::Display for ArtifactKey {
             Self::Plan(id, version) => write!(f, "plan {version} of task {}", id.as_str()),
             Self::Run(id, number) => write!(f, "run {number} of task {}", id.as_str()),
             Self::Change(id, number) => write!(f, "change {number} of task {}", id.as_str()),
-            Self::Review(id, change) => {
-                write!(f, "the review of change {change} of task {}", id.as_str())
-            }
+            Self::Review(id, change) => write!(f, "review {change} of task {}", id.as_str()),
             Self::Discussion(id) => write!(f, "discussion {}", id.as_str()),
         }
     }
@@ -166,6 +164,23 @@ pub struct BoardSnapshot {
     pub reviews: Vec<Review>,
     pub discussions: Vec<Discussion>,
     pub quarantined: Vec<QuarantinedFile>,
+}
+
+impl BoardSnapshot {
+    /// The snapshot, as a store hands it over: debug builds check that no
+    /// task both reads and has its file set aside, since a store sets a
+    /// task's file aside instead of reading it, never as well.
+    #[must_use]
+    pub fn asserted(self) -> Self {
+        debug_assert!(
+            self.quarantined
+                .iter()
+                .filter_map(QuarantinedFile::id)
+                .all(|id| self.tasks.iter().all(|task| task.fields().id != *id)),
+            "a task is set aside and read at once"
+        );
+        self
+    }
 }
 
 /// What became of a write.

@@ -74,15 +74,25 @@ impl ChangeBoardTask {
 /// unknown, whether or not its task can be told) a link is refused rather
 /// than risk linking one twice. A stray the next write drops holds nothing
 /// that stays, so it blocks nothing. The other ops read only their own
-/// task.
+/// task. Of several such files the least is named (one whose artifact is
+/// unknown first, then by key and path), whatever the store's order.
+/// S7's wiring through `board_view::all_changes` must keep failing closed
+/// on a kept file with no key, as this does: a view sees only keys.
 fn board_readable_for(op: &BoardOp, board: &BoardSnapshot) -> Result<(), ProjectBoardError> {
     match op {
         BoardOp::AddPr(_) => {
-            let carried = board.quarantined.iter().find(|file| file.carried);
+            let carried = board
+                .quarantined
+                .iter()
+                .filter(|file| file.carried)
+                .min_by(|a, b| (&a.key, &a.path, &a.object).cmp(&(&b.key, &b.path, &b.object)));
             match carried {
                 None => Ok(()),
-                Some(file) => match file.id() {
-                    Some(id) => Err(ProjectBoardError::Quarantined(id.clone())),
+                Some(file) => match &file.key {
+                    Some(key) => Err(ProjectBoardError::Quarantined {
+                        key: key.clone(),
+                        path: file.path.clone(),
+                    }),
                     None => Err(ProjectBoardError::SetAsideFile {
                         path: file.path.clone(),
                         object: file.object.clone(),

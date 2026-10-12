@@ -9,6 +9,7 @@
 //!
 //! Blocking: the store, the listings, the clock and the host all block, so
 //! callers run operations off the async workers.
+use super::board_view;
 use crate::application::project_board::dto::{BoardListing, BoardOp, ProjectBoardError};
 use crate::application::project_board::operations::{
     BoardOperationParts, BoardOutcome, BoardRequest, Completion, ListFilter,
@@ -107,16 +108,11 @@ impl RunBoardOperation {
 
     fn show(&self, id: &Slug) -> Result<BoardOutcome, ProjectBoardError> {
         let board = self.parts.listings.all()?;
-        match board.tasks.iter().find(|task| task.fields().id == *id) {
-            Some(task) => Ok(BoardOutcome::Shown {
-                head: board.head.clone(),
-                task: task.clone(),
-            }),
-            None if board.quarantined.iter().any(|file| file.id() == Some(id)) => {
-                Err(ProjectBoardError::Quarantined(id.clone()))
-            }
-            None => Err(ProjectBoardError::NotFound(id.clone())),
-        }
+        let task = board_view::task_in(&board.tasks, &board.quarantined, id)?;
+        Ok(BoardOutcome::Shown {
+            head: board.head.clone(),
+            task: task.clone(),
+        })
     }
 }
 

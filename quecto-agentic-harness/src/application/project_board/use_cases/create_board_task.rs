@@ -9,6 +9,7 @@
 use std::sync::Arc;
 
 use super::board_change::{checked_writer, commit};
+use super::board_view;
 use super::task_pointers::{Pointers, pointers_hold};
 use crate::application::project_board::dto::{NewBoardTask, ProjectBoardError};
 use crate::application::project_board::ports::{BoardClock, BoardSnapshot, ProjectBoardStore};
@@ -82,15 +83,9 @@ fn created_at(new: &NewBoardTask, now: &Timestamp) -> TaskFields {
 /// The id is free (neither held nor set aside), and the references hold
 /// ([`pointers_hold`]).
 fn free(board: &BoardSnapshot, new: &NewBoardTask) -> Result<(), ProjectBoardError> {
-    let held = board.tasks.iter().any(|task| task.fields().id == new.id);
-    let set_aside = board
-        .quarantined
-        .iter()
-        .any(|file| file.id() == Some(&new.id));
-    match (held, set_aside) {
-        (true, _) => Err(ProjectBoardError::Exists(new.id.clone())),
-        (false, true) => Err(ProjectBoardError::Quarantined(new.id.clone())),
-        (false, false) => pointers_hold(
+    match board_view::task(board, &new.id) {
+        Ok(_) => Err(ProjectBoardError::Exists(new.id.clone())),
+        Err(ProjectBoardError::NotFound(_)) => pointers_hold(
             board,
             &Pointers {
                 id: &new.id,
@@ -98,6 +93,7 @@ fn free(board: &BoardSnapshot, new: &NewBoardTask) -> Result<(), ProjectBoardErr
                 depends_on: &new.depends_on,
             },
         ),
+        Err(refused) => Err(refused),
     }
 }
 

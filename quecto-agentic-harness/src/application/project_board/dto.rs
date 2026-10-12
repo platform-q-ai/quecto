@@ -2,7 +2,8 @@
 use std::fmt;
 
 use super::ports::{
-    BoardClockError, BoardHead, BoardStoreError, PullRequestStatesError, QuarantinedFile,
+    ArtifactKey, BoardClockError, BoardHead, BoardStoreError, PullRequestStatesError,
+    QuarantinedFile,
 };
 use crate::domain::project_board::entities::task::Task;
 use crate::domain::project_board::value_objects::rule_error::BoardRuleError;
@@ -137,8 +138,12 @@ pub enum ProjectBoardError {
     Exists(Slug),
     /// This machine's clock could not tell the time.
     Clock(BoardClockError),
-    /// The task's file is set aside as unreadable: mend it first.
-    Quarantined(Slug),
+    /// The artifact's file (at `path`) is set aside as unreadable: mend
+    /// or clear it first.
+    Quarantined {
+        key: ArtifactKey,
+        path: String,
+    },
     /// A file every write carries is set aside whose task cannot be told
     /// (no id could be read from it): what it holds is unknown until it is
     /// mended or cleared (by `path` and `object`).
@@ -240,11 +245,14 @@ impl fmt::Display for ProjectBoardError {
                 "the file {path:?} (object {object}) is set aside as unreadable and its task is \
                  unknown; mend or clear it"
             ),
-            Self::Quarantined(id) => write!(
-                f,
-                "task {} is set aside as unreadable; mend its file",
-                id.as_str()
-            ),
+            // A task's message is the one agents already know.
+            Self::Quarantined {
+                key: key @ ArtifactKey::Task(_),
+                ..
+            } => write!(f, "{key} is set aside as unreadable; mend its file"),
+            Self::Quarantined { key, path } => {
+                write!(f, "{key} is set aside as unreadable; mend or clear {path}")
+            }
             Self::UnknownReference(id) => {
                 write!(f, "no task {} on the board to refer to", id.as_str())
             }

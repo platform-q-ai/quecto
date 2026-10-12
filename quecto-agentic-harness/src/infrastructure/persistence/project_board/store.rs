@@ -626,11 +626,11 @@ impl ProjectBoardStore for GitBoardStore {
             reviews: vec![],
             discussions: vec![],
             quarantined: board.quarantined.clone(),
-        })
+        }
+        .asserted())
     }
 
-    /// Writes `tasks` and every summary on top of `expected` in one commit
-    /// and pushes it only if the board is still there.
+    /// Writes the tasks and summaries on `expected` in one commit, pushed only if it stands.
     fn write(
         &self,
         expected: &BoardHead,

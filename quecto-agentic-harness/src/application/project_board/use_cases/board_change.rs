@@ -119,16 +119,10 @@ pub(super) fn checked_writer(store: &dyn ProjectBoardStore) -> Result<Identity, 
 }
 
 /// The task `id` on the board as read: a quarantined file of that id is
-/// told apart from no task at all.
+/// told apart from no task at all ([`super::board_view::task`]).
 pub(super) fn task_on<'b>(
     board: &'b BoardSnapshot,
     id: &crate::domain::project_board::value_objects::slug::Slug,
 ) -> Result<&'b Task, ProjectBoardError> {
-    if let Some(task) = board.tasks.iter().find(|task| task.fields().id == *id) {
-        return Ok(task);
-    }
-    match board.quarantined.iter().any(|file| file.id() == Some(id)) {
-        true => Err(ProjectBoardError::Quarantined(id.clone())),
-        false => Err(ProjectBoardError::NotFound(id.clone())),
-    }
+    super::board_view::task(board, id)
 }

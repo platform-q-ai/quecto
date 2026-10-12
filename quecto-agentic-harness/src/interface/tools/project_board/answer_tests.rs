@@ -40,6 +40,9 @@ fn keys(code: ErrorCode) -> &'static [&'static str] {
         C::Stale => &["task", "expected", "updated"],
         C::NotSetAside => &["path", "object"],
         C::SetAsideFile => &["path", "object"],
+        // A discussion's shape is its own: `kind`, `discussion`, `path`
+        // (a_set_aside_artifact_is_named_by_its_kind_task_and_number).
+        C::ArtifactSetAside => &["kind", "task", "number", "path"],
         C::NoPullRequestHost => &["reason"],
     }
 }
@@ -92,7 +95,10 @@ board_errors! {
     E::Clock(BoardClockError::OutOfRange(_)) => {
         E::Clock(BoardClockError::OutOfRange("1969".into()))
     },
-    E::Quarantined(_) => E::Quarantined(slug("a")),
+    E::Quarantined { .. } => E::Quarantined {
+        key: ArtifactKey::Task(slug("a")),
+        path: "tasks/a.json".into(),
+    },
     E::SetAsideFile { .. } => E::SetAsideFile {
         path: "tasks/?.json".into(),
         object: "a".repeat(40),
@@ -142,7 +148,12 @@ fn every_board_error_answers_its_codes_one_shape() {
         "every_error builds every variant, each once"
     );
     assert_eq!(errors.len(), VARIANTS);
-    for error in &errors {
+    // A plan's file set aside answers the other code `Quarantined` has.
+    let plan_set_aside = ProjectBoardError::Quarantined {
+        key: ArtifactKey::Plan(slug("a"), 1),
+        path: "plans/a.1.md".into(),
+    };
+    for error in errors.iter().chain([&plan_set_aside]) {
         let answer = board_refused("show", error);
         assert_eq!(answer["ok"], json!(false));
         let object = answer["error"].as_object().unwrap();
@@ -406,4 +417,96 @@ fn a_set_aside_file_is_named_by_its_raw_path_and_object() {
         )
     );
     assert_eq!(error_json(&named)["message"], json!(named.to_string()));
+}
+
+/// A task set aside answers `set_aside` by its id, as ever; a plan, run,
+/// change or review answers `artifact_set_aside` by kind, task, number and
+/// raw path, and a discussion by kind, id and path; the message names the
+/// file to mend or clear.
+#[test]
+fn a_set_aside_artifact_is_named_by_its_kind_task_and_number() {
+    let refused = |key: ArtifactKey, path: &str| {
+        let error = ProjectBoardError::Quarantined {
+            key,
+            path: path.into(),
+        };
+        board_refused("show", &error)["error"].clone()
+    };
+    assert_eq!(
+        refused(ArtifactKey::Task(slug("t")), "tasks/t.json"),
+        json!({
+            "code": "set_aside",
+            "task": "t",
+            "message": "task t is set aside as unreadable; mend its file",
+        })
+    );
+    let numbered = [
+        (ArtifactKey::Plan(slug("t"), 2), "plan", 2, "plans/t.2.md"),
+        (ArtifactKey::Run(slug("t"), 3), "run", 3, "runs/t.3.md"),
+        (
+            ArtifactKey::Change(slug("t"), 4),
+            "change",
+            4,
+            "changes/t.4.md",
+        ),
+        (
+            ArtifactKey::Review(slug("t"), 5),
+            "review",
+            5,
+            "reviews/t.5.md",
+        ),
+    ];
+    for (key, kind, number, path) in numbered {
+        assert_eq!(
+            refused(key, path),
+            json!({
+                "code": "artifact_set_aside",
+                "kind": kind,
+                "task": "t",
+                "number": number,
+                "path": path,
+                "message": format!(
+                    "{kind} {number} of task t is set aside as unreadable; mend or clear {path}"
+                ),
+            }),
+            "{kind}"
+        );
+    }
+    assert_eq!(
+        refused(ArtifactKey::Discussion(slug("d")), "discussions/d.md"),
+        json!({
+            "code": "artifact_set_aside",
+            "kind": "discussion",
+            "discussion": "d",
+            "path": "discussions/d.md",
+            "message": "discussion d is set aside as unreadable; mend or clear discussions/d.md",
+        })
+    );
+}
+
+/// A path in another kind's folder stops the answer, as a store never
+/// shows a run's file under `plans/`.
+#[test]
+#[should_panic(expected = "shows every path it sets aside sanitised")]
+fn an_artifact_path_in_another_kinds_folder_is_never_shown() {
+    let _ = board_refused(
+        "show",
+        &ProjectBoardError::Quarantined {
+            key: ArtifactKey::Run(slug("t"), 1),
+            path: "plans/t.1.md".into(),
+        },
+    );
+}
+
+/// An artifact's path a store would never show stops the answer.
+#[test]
+#[should_panic(expected = "shows every path it sets aside sanitised")]
+fn an_unsanitised_artifact_path_is_never_shown() {
+    let _ = board_refused(
+        "show",
+        &ProjectBoardError::Quarantined {
+            key: ArtifactKey::Run(slug("t"), 1),
+            path: "runs/t\u{202e}.md".into(),
+        },
+    );
 }

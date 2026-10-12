@@ -3,7 +3,7 @@ use crate::application::project_board::dto::{BoardOp, ProjectBoardError};
 use crate::application::project_board::ports::{ProjectBoardStore, PullRequestState};
 use crate::application::project_board::use_cases::CompleteMergedTask;
 use crate::application::project_board::use_cases::fixtures_tests::{
-    SetClock, at, board, fields, person, slug,
+    SetClock, at, board, fields, person, set_aside_task, slug,
 };
 use crate::domain::project_board::entities::claim::{Claim, Identity};
 use crate::domain::project_board::entities::task::{Task, TaskFields};
@@ -136,7 +136,7 @@ fn a_change_the_rules_refuse_writes_nothing() {
     let missing = change(&store, "Ada", "10:00:00").execute(&slug("zz"), &BoardOp::Renew);
     assert_eq!(missing, Err(ProjectBoardError::NotFound(slug("zz"))));
     let set_aside = change(&store, "Ada", "10:00:00").execute(&slug("q"), &BoardOp::Renew);
-    assert_eq!(set_aside, Err(ProjectBoardError::Quarantined(slug("q"))));
+    assert_eq!(set_aside, Err(set_aside_task("q")));
     assert_eq!(store.writes(), writes);
 }
 
@@ -412,10 +412,29 @@ fn a_pull_request_is_not_linked_while_a_tasks_file_is_set_aside() {
     store.quarantine("b", "malformed");
     let writes = store.writes();
     let refused = change(&store, "Ada", "10:00:00").execute(&slug("a"), &BoardOp::AddPr(7));
-    assert_eq!(refused, Err(ProjectBoardError::Quarantined(slug("b"))));
+    assert_eq!(refused, Err(set_aside_task("b")));
     assert_eq!(store.writes(), writes);
     let renewed = change(&store, "Ada", "10:00:00").execute(&slug("a"), &BoardOp::Renew);
     assert!(renewed.is_ok(), "{renewed:?}");
+}
+
+/// Of several carried files set aside, a link names the least, whatever
+/// the store's order: one whose task cannot be told first, then by key.
+#[test]
+fn a_refused_link_names_the_least_carried_file_set_aside() {
+    let store = board();
+    seed(&store, held_by_ada(TaskStatus::Claimed));
+    seed(&store, fields("c"));
+    seed(&store, fields("b"));
+    store.quarantine("c", "malformed");
+    store.quarantine("b", "malformed");
+    let link = || change(&store, "Ada", "10:00:00").execute(&slug("a"), &BoardOp::AddPr(7));
+    assert_eq!(link(), Err(set_aside_task("b")));
+    store.set_aside_path("tasks/Z Not A Slug.json", "malformed");
+    assert!(
+        matches!(link(), Err(ProjectBoardError::SetAsideFile { path, .. }) if path == "tasks/Z Not A Slug.json"),
+        "a file of no known task is named first"
+    );
 }
 
 /// A set-aside file every write carries whose task cannot be told may

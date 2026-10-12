@@ -16,12 +16,37 @@ pub fn shown_char(c: char) -> bool {
     SHOWN_CHAR.is_match(c.encode_utf8(&mut [0; 4]))
 }
 
-/// Whether `path` is a set-aside file's path as a store shows it: under
-/// `tasks/`, every character shown as it is, the one space a store puts
-/// for a run of any other, or the `…` that marks a name it cut.
+/// The folders the files of plans, runs, changes, reviews and
+/// discussions live in, one per kind.
+pub const ARTIFACT_FOLDERS: [&str; 5] = ["plans", "runs", "changes", "reviews", "discussions"];
+
+/// Whether `path` is a set-aside file's path as a store shows it: one name
+/// directly under `tasks/`, every character shown as it is, the one space
+/// a store puts for a run of any other, or the `…` that marks a name it
+/// cut.
 pub fn shown_path(path: &str) -> bool {
     path.strip_prefix("tasks/")
-        .is_some_and(|name| name.chars().all(|c| shown_char(c) || c == ' ' || c == '…'))
+        .is_some_and(|name| one_name(name) && shown_name(name))
+}
+
+/// [`shown_path`] for the file of a plan, run, change, review or
+/// discussion: one name directly under `folder` (one of
+/// [`ARTIFACT_FOLDERS`], its kind's), holding no `..`.
+pub fn shown_artifact_path(folder: &str, path: &str) -> bool {
+    ARTIFACT_FOLDERS.contains(&folder)
+        && path
+            .strip_prefix(folder)
+            .and_then(|rest| rest.strip_prefix('/'))
+            .is_some_and(|name| one_name(name) && !name.contains("..") && shown_name(name))
+}
+
+/// One path segment: not empty, no `/`, and neither `.` nor `..`.
+fn one_name(name: &str) -> bool {
+    !name.is_empty() && !name.contains('/') && name != "." && name != ".."
+}
+
+fn shown_name(name: &str) -> bool {
+    name.chars().all(|c| shown_char(c) || c == ' ' || c == '…')
 }
 
 #[cfg(test)]
