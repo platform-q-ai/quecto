@@ -310,7 +310,99 @@ fn every_spawn_form_is_seen() {
             "fn f() { let rt = Runtime::new().unwrap(); drop(format!(\"{:?}\", rt.spawn(async {}))); }",
             true,
         ),
+        // The probes of #2513's round-3 verify.
+        (
+            "fn f() { if let Ok(h) = tokio::runtime::Handle::try_current() { h.spawn(async {}); } }",
+            true,
+        ),
+        (
+            "fn f() { while let Some(h) = Handle::try_current().ok() { h.spawn(async {}); } }",
+            true,
+        ),
+        (
+            "fn f() { match Handle::try_current() { Ok(h) => { h.spawn(async {}); } Err(_) => {} } }",
+            true,
+        ),
+        (
+            "fn f() { Handle::try_current().map(|h| h.spawn(async {})); }",
+            true,
+        ),
+        ("fn f() { let g = |h: Handle| h.spawn(async {}); }", true),
+        ("use tokio::runtime::Runtime as R; fn f() {}", true),
+        ("use tokio::task::JoinSet as Set; fn f() {}", true),
+        ("use std::thread::Builder as B; fn f() {}", true),
+        (
+            "use tokio::runtime::{Builder as B, Handle}; fn f() {}",
+            true,
+        ),
+        ("type H = tokio::runtime::Handle; fn f() {}", true),
+        ("fn f() { type S = JoinSet<()>; }", true),
+        ("extern crate tokio as tk; fn f() {}", true),
+        ("extern crate rayon as r; fn f() {}", true),
+        (
+            "fn f(h: Handle) { let h2 = h.clone(); h2.spawn(async {}); }",
+            true,
+        ),
+        (
+            "impl X { fn f(&self) { let h = self.handle.clone(); h.spawn(async {}); } }",
+            true,
+        ),
+        (
+            "impl X { fn f(&self) { let r = self.rt.clone(); let s = r; s.spawn(async {}); } fn g(rt: Runtime) { let a = rt; a.spawn(async {}); } }",
+            true,
+        ),
+        (
+            "fn f(set: &mut JoinSet<()>) { set.spawn_on(async {}, &h); }",
+            true,
+        ),
+        (
+            "fn f() { tokio::task::spawn_blocking_on(|| (), &h); }",
+            true,
+        ),
+        (
+            "fn f() { tokio::task::spawn_local_on(async {}, &h); }",
+            true,
+        ),
+        ("fn f() { <Handle>::spawn(&h, async {}); }", true),
+        (
+            "fn f() { <tokio::runtime::Handle>::current(); <Handle as Clone>::clone(&h).spawn(async {}); }",
+            true,
+        ),
+        (
+            "fn f() { let mut s: JoinSet<()> = Default::default(); s.spawn(async {}); }",
+            true,
+        ),
+        (
+            "fn f() { drop(format!(\"{:?}\", tokio::task::JoinSet::<()>::spawn)); }",
+            true,
+        ),
+        (
+            "fn f() { drop(format!(\"{:?}\", JoinSet::<Vec<()>>::new().spawn(async {}))); }",
+            true,
+        ),
+        ("fn f(h: &Handle) { let _g = h.enter(); }", true),
+        (
+            "fn f() { let _g = tokio::runtime::Handle::current().enter(); }",
+            true,
+        ),
         // Not spawns: a process, a scoped name elsewhere, a carried spawn.
+        (
+            "fn f(runtime: &str) { std::process::Command::new(runtime).spawn().unwrap(); }",
+            false,
+        ),
+        (
+            "fn f() { let mut builder = std::process::Command::new(\"x\"); builder.spawn().unwrap(); }",
+            false,
+        ),
+        (
+            "fn f(builder: &mut std::process::Command) { builder.spawn().unwrap(); }",
+            false,
+        ),
+        (
+            "fn f() { let handle = std::process::Command::new(\"x\").spawn().unwrap(); handle.wait(); }",
+            false,
+        ),
+        ("use std::process::Command as C; fn f() {}", false),
         (
             "fn f(c: &mut std::process::Command) { c.spawn().unwrap(); }",
             false,

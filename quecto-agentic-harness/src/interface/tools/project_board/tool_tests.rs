@@ -362,11 +362,12 @@ async fn a_listing_shows_its_tasks_before_what_was_set_aside() {
             "{op}: {answer}"
         );
         assert_eq!(answer.get("truncated"), None, "{op}");
-        if let Some(files) = answer.get("quarantined") {
-            let shown = files.as_array().unwrap().len();
-            assert!(shown > 10, "{op}: {shown}");
-            assert_eq!(answer["quarantined_more"], json!(300 - shown), "{op}");
-        }
+        let files = answer
+            .get("quarantined")
+            .unwrap_or_else(|| panic!("{op} shows what was set aside: {answer}"));
+        let shown = files.as_array().unwrap().len();
+        assert!(shown > 10, "{op}: {shown}");
+        assert_eq!(answer["quarantined_more"], json!(300 - shown), "{op}");
     }
 }
 
