@@ -361,7 +361,7 @@ pub fn check_committed_as_writer(
     assert_eq!(committed_by(&by_bob), bob.writer());
 }
 
-/// A task file set aside (`spoil` breaks `tasks/b.json`) is carried
+/// A task file set aside (`spoil` breaks `tasks/b.md`) is carried
 /// forward, a stray beside it (`add_stray`) is not: the store says which,
 /// a link waits on the carried one (its pull requests unknown), the next
 /// write drops the stray and keeps the carried file, and a clear (a write
@@ -394,10 +394,7 @@ pub fn check_carried_set_aside(
             .map(|file| (file.path, file.carried))
             .collect()
     };
-    let both = [
-        ("tasks/b.json".to_string(), true),
-        (stray.to_string(), false),
-    ];
+    let both = [("tasks/b.md".to_string(), true), (stray.to_string(), false)];
     assert_eq!(carried(&*alice), both);
     let alice: Arc<dyn ProjectBoardStore> = Arc::from(alice);
     let change =
@@ -411,13 +408,13 @@ pub fn check_carried_set_aside(
     );
     let head = alice.read().unwrap().head;
     written(alice.write_tasks(&head, &[task("c", "Three")], "board: add c"));
-    assert_eq!(carried(&*alice), [("tasks/b.json".to_string(), true)]);
+    assert_eq!(carried(&*alice), [("tasks/b.md".to_string(), true)]);
     add_stray();
     assert_eq!(carried(&*alice), both);
     let board = alice.read().unwrap();
     let object = board.quarantined[0].object.clone();
     let clear = SetAsideClear {
-        path: "tasks/b.json".into(),
+        path: "tasks/b.md".into(),
         object,
         repeated: BTreeMap::new(),
     };

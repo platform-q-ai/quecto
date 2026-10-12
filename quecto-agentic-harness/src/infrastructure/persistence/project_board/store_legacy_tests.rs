@@ -57,9 +57,10 @@ fn a_task_file_beside_its_legacy_json_is_set_aside_until_that_is_cleared() {
         aside(&snapshot),
         [("tasks/b.json", Some("b")), ("tasks/b.md", Some("b"))]
     );
-    assert_eq!(
-        snapshot.kept.iter().map(String::as_str).collect::<Vec<_>>(),
-        ["tasks/b.json", "tasks/b.md"]
+    assert!(
+        snapshot.quarantined.iter().all(|file| file.carried),
+        "{:?}",
+        snapshot.quarantined
     );
     let refused = bob.write_tasks(&head, &[task("b")], "board: write b");
     assert!(matches!(refused, Ok(BoardWrite::Refused(_))), "{refused:?}");

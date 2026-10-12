@@ -46,7 +46,7 @@ fn aside<'a>(snapshot: &'a BoardSnapshot, path: &str) -> (&'a QuarantinedFile, b
         .filter(|file| file.path == path)
         .collect();
     assert_eq!(files.len(), 1, "{:?}", snapshot.quarantined);
-    (files[0], snapshot.kept.iter().any(|kept| kept == path))
+    (files[0], files[0].carried)
 }
 
 /// A write of another task carries the file at `path` as it is, and a
