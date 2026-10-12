@@ -9,7 +9,7 @@ use crate::domain::project_board::entities::task_parts::Review;
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
 use crate::domain::project_board::value_objects::vocabulary::{
-    Severity, TaskKind, TaskStatus, Verdict,
+    Resolution, Severity, TaskKind, TaskStatus, Verdict,
 };
 
 pub fn at(time: &str) -> Timestamp {
@@ -51,6 +51,14 @@ pub fn task(status: TaskStatus) -> Task {
             proving_test: None,
         }],
         prs: vec![2482, 2483],
+        github_issue: None,
+        // A done task is completed.
+        resolution: match status {
+            TaskStatus::Done => Some(Resolution::Completed),
+            _ => None,
+        },
+        superseded_by: vec![],
+        references: vec![],
         created: at("08:00:00"),
         updated: at("09:00:00"),
     })

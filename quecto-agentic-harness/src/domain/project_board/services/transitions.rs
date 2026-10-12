@@ -5,6 +5,7 @@ use super::super::entities::run::Run;
 use super::super::entities::task::Task;
 use super::super::value_objects::rule_error::BoardRuleError;
 use super::super::value_objects::timestamp::Timestamp;
+use super::super::value_objects::vocabulary::Resolution;
 use super::super::value_objects::vocabulary::TaskStatus::{self, *};
 use super::claims::{held_by, held_live_by, is_live, new_claim, settle, stamp};
 use super::runs::{lost_at, may_move_with, open_of};
@@ -93,6 +94,11 @@ pub fn move_task(
             }
         }
     }
+    // A task others took over is never done, whatever it links.
+    match to {
+        Done => not_superseded(task)?,
+        Draft | Ready | Claimed | InProgress | Review | Blocked | Archived => {}
+    }
     // The holder finishes a task only when it links no pull request and
     // no change: one that links them is done when they merge
     // (`complete_merged`, `changes::complete`). The holder may unlink one
@@ -112,6 +118,7 @@ pub fn move_task(
     let at = stamp(task, now)?;
     let mut next = task.fields().clone();
     next.status = to;
+    next.resolution = resolved(to, next.resolution, !next.superseded_by.is_empty());
     next.claim = match effect {
         ClaimEffect::Keep => next.claim,
         ClaimEffect::Take => Some(new_claim(actor, &at)?),
@@ -181,8 +188,17 @@ fn numbers(
 /// may be completed; any other may not.
 pub(super) fn completable(task: &Task) -> Result<(), BoardRuleError> {
     match task.fields().status {
-        Ready | Claimed | InProgress | Review | Blocked => Ok(()),
+        Ready | Claimed | InProgress | Review | Blocked => not_superseded(task),
         from @ (Draft | Done | Archived) => Err(BoardRuleError::NotAllowed { from, to: Done }),
+    }
+}
+
+/// `task` is not superseded: a task others took over is archived as
+/// superseded, never done.
+fn not_superseded(task: &Task) -> Result<(), BoardRuleError> {
+    match task.fields().superseded_by.as_slice() {
+        [] => Ok(()),
+        by => Err(BoardRuleError::Superseded { by: by.to_vec() }),
     }
 }
 
@@ -204,9 +220,40 @@ pub(super) fn finish(
     );
     let mut next = fields.clone();
     next.status = Done;
+    assert!(
+        fields.superseded_by.is_empty(),
+        "a task others took over is never completed"
+    );
+    next.resolution = resolved(Done, next.resolution, false);
     next.claim = None;
     let task = settle(next, &at)?;
+    assert_eq!(
+        task.fields().resolution,
+        Some(Resolution::Completed),
+        "a completed task is resolved so"
+    );
     Ok((Completed { task, run }, at))
+}
+
+/// A task's resolution once it moves `to` a status: one done is
+/// completed; one archived keeps what it had (its done one's), or is
+/// `superseded` when others took it over (`superseded`), or has none; any
+/// other has none, as it had none (only a done or archived task is
+/// resolved, and neither moves back).
+fn resolved(to: TaskStatus, had: Option<Resolution>, superseded: bool) -> Option<Resolution> {
+    match (to, had, superseded) {
+        (Done, _, _) => Some(Resolution::Completed),
+        (Archived, Some(had), _) => Some(had),
+        (Archived, None, true) => Some(Resolution::Superseded),
+        (Archived, None, false) => None,
+        (Draft | Ready | Claimed | InProgress | Review | Blocked, _, _) => {
+            assert!(
+                had.is_none(),
+                "an unresolved task moves among the open statuses"
+            );
+            None
+        }
+    }
 }
 
 /// A task completed: done, and its run ended as lost if one was going.

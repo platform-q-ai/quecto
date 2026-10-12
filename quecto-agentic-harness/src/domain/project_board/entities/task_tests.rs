@@ -5,11 +5,11 @@ fn at(time: &str) -> Timestamp {
     Timestamp::parse(&format!("2026-10-10T{time}Z")).unwrap()
 }
 
-fn slug(text: &str) -> Slug {
+pub(super) fn slug(text: &str) -> Slug {
     Slug::parse(text).unwrap()
 }
 
-fn fields() -> TaskFields {
+pub(super) fn fields() -> TaskFields {
     TaskFields {
         id: slug("board-store"),
         title: "Board store".into(),
@@ -29,6 +29,10 @@ fn fields() -> TaskFields {
         }),
         reviews: vec![],
         prs: vec![2482, 2483],
+        github_issue: None,
+        resolution: None,
+        superseded_by: vec![],
+        references: vec![],
         created: at("08:00:00"),
         updated: at("09:05:00"),
     }
@@ -182,6 +186,9 @@ fn a_claim_is_carried_only_while_the_task_is_held() {
         task.status = status;
         if !claimed {
             task.claim = None;
+        }
+        if status == Done {
+            task.resolution = Some(Resolution::Completed);
         }
         assert!(Task::new(task).is_ok(), "{status:?} claimed={claimed}");
     }
