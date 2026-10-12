@@ -366,3 +366,85 @@ fn quick_writes_from_a_fast_clock_never_lock_out_a_right_one() {
     let renewed = right.execute(&slug("a"), &BoardOp::Renew);
     assert!(renewed.is_ok(), "{renewed:?}");
 }
+
+/// A pull request another task on the board links is not linked again.
+#[test]
+fn a_pull_request_another_task_links_is_not_linked_again() {
+    let store = board();
+    seed(&store, held_by_ada(TaskStatus::Claimed));
+    seed(
+        &store,
+        TaskFields {
+            prs: vec![7],
+            ..fields("b")
+        },
+    );
+    let writes = store.writes();
+    let refused = change(&store, "Ada", "10:00:00").execute(&slug("a"), &BoardOp::AddPr(7));
+    assert_eq!(
+        refused,
+        Err(ProjectBoardError::Rule(
+            BoardRuleError::ChangeAlreadyLinked {
+                task: slug("b"),
+                change: None
+            }
+        ))
+    );
+    assert_eq!(store.writes(), writes);
+    let linked = change(&store, "Ada", "10:00:00").execute(&slug("a"), &BoardOp::AddPr(8));
+    assert_eq!(linked.map(|task| task.fields().prs.clone()), Ok(vec![8]));
+}
+
+/// While another task's file is set aside its pull requests are unknown,
+/// so a link is refused rather than risk linking one twice; the task's
+/// other ops go on.
+#[test]
+fn a_pull_request_is_not_linked_while_a_tasks_file_is_set_aside() {
+    let store = board();
+    seed(&store, held_by_ada(TaskStatus::Claimed));
+    seed(
+        &store,
+        TaskFields {
+            prs: vec![7],
+            ..fields("b")
+        },
+    );
+    store.quarantine("b", "malformed");
+    let writes = store.writes();
+    let refused = change(&store, "Ada", "10:00:00").execute(&slug("a"), &BoardOp::AddPr(7));
+    assert_eq!(refused, Err(ProjectBoardError::Quarantined(slug("b"))));
+    assert_eq!(store.writes(), writes);
+    let renewed = change(&store, "Ada", "10:00:00").execute(&slug("a"), &BoardOp::Renew);
+    assert!(renewed.is_ok(), "{renewed:?}");
+}
+
+/// A set-aside file every write carries whose task cannot be told may
+/// hold any pull request, so a link waits for it too; a stray the next
+/// write drops blocks nothing.
+#[test]
+fn a_pull_request_is_not_linked_while_a_carried_file_of_no_known_task_is_set_aside() {
+    let store = board();
+    seed(&store, held_by_ada(TaskStatus::Claimed));
+    store.set_aside_stray("tasks/notes.txt", "not a task file");
+    let linked = change(&store, "Ada", "10:00:00").execute(&slug("a"), &BoardOp::AddPr(6));
+    assert!(linked.is_ok(), "a stray blocks nothing: {linked:?}");
+    store.set_aside_path("tasks/Not A Slug.json", "malformed");
+    let object = store
+        .read()
+        .unwrap()
+        .quarantined
+        .last()
+        .unwrap()
+        .object
+        .clone();
+    let writes = store.writes();
+    let refused = change(&store, "Ada", "10:00:00").execute(&slug("a"), &BoardOp::AddPr(7));
+    assert_eq!(
+        refused,
+        Err(ProjectBoardError::SetAsideFile {
+            path: "tasks/Not A Slug.json".into(),
+            object
+        })
+    );
+    assert_eq!(store.writes(), writes);
+}
