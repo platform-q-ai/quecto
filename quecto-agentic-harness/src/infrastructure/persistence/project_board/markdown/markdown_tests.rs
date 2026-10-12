@@ -283,11 +283,14 @@ impl Seeded {
         ];
         // Half start as an ASCII cell would, half straight with code's own
         // pieces, punctuation first included.
-        let mut cell = match self.below(2) {
-            0 => self.ascii(),
-            _ => String::new(),
+        // An ASCII cell's start may take no more pieces (so a code value
+        // may end as an ASCII cell does, in `.`, `/`, `#`, `+` or `-`); an
+        // empty start takes at least one.
+        let (mut cell, least) = match self.below(2) {
+            0 => (self.ascii(), 0),
+            _ => (String::new(), 1),
         };
-        cell.extend((0..1 + self.below(4)).map(|_| self.pick(CODE)));
+        cell.extend((0..least + self.below(4)).map(|_| self.pick(CODE)));
         if self.below(40) == 0 {
             cell.push_str(&self.pick(&["`", " ", "\u{e9}"]));
         }
