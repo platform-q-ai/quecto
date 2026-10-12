@@ -4,6 +4,7 @@
 //! accepted, how a run folds back or is ended as lost, and how a
 //! discussion is begun, added to, linked and closed. Every rule
 //! returns new artifacts, so each one's schema holds after it.
+pub mod artifacts_of;
 pub mod changes;
 pub mod claims;
 pub mod discussions;

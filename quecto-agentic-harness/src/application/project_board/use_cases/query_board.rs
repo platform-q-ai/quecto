@@ -5,7 +5,6 @@
 //! them faster later, behind this use case.)
 use std::sync::Arc;
 
-use crate::application::project_board::artifact_listings;
 use crate::application::project_board::dto::{ArtifactListing, BoardListing, ProjectBoardError};
 use crate::application::project_board::ports::ProjectBoardStore;
 use crate::domain::project_board::entities::change::Change;
@@ -14,6 +13,7 @@ use crate::domain::project_board::entities::plan::Plan;
 use crate::domain::project_board::entities::review::Review;
 use crate::domain::project_board::entities::run::Run;
 use crate::domain::project_board::entities::task::Task;
+use crate::domain::project_board::services::artifacts_of;
 use crate::domain::project_board::services::claims::is_live;
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
@@ -96,7 +96,11 @@ impl QueryBoard {
     /// # Errors
     /// The store's.
     pub fn plans_of(&self, task: &Slug) -> Result<ArtifactListing<Plan>, ProjectBoardError> {
-        Ok(artifact_listings::plans_of(self.store.read()?, task))
+        let board = self.store.read()?;
+        Ok(ArtifactListing::picked(
+            &board,
+            artifacts_of::plans_of(&board.plans, task),
+        ))
     }
 
     /// Every run of `task` of its plan's `version`, by number, whether or
@@ -109,10 +113,10 @@ impl QueryBoard {
         task: &Slug,
         version: u32,
     ) -> Result<ArtifactListing<Run>, ProjectBoardError> {
-        Ok(artifact_listings::runs_of_plan(
-            self.store.read()?,
-            task,
-            version,
+        let board = self.store.read()?;
+        Ok(ArtifactListing::picked(
+            &board,
+            artifacts_of::runs_of_plan(&board.runs, task, version),
         ))
     }
 
@@ -121,7 +125,11 @@ impl QueryBoard {
     /// # Errors
     /// The store's.
     pub fn changes_of(&self, task: &Slug) -> Result<ArtifactListing<Change>, ProjectBoardError> {
-        Ok(artifact_listings::changes_of(self.store.read()?, task))
+        let board = self.store.read()?;
+        Ok(ArtifactListing::picked(
+            &board,
+            artifacts_of::changes_of(&board.changes, task),
+        ))
     }
 
     /// The review of `task`'s change `change`, if the board holds one.
@@ -133,10 +141,12 @@ impl QueryBoard {
         task: &Slug,
         change: u32,
     ) -> Result<ArtifactListing<Review>, ProjectBoardError> {
-        Ok(artifact_listings::review_of(
-            self.store.read()?,
-            task,
-            change,
+        let board = self.store.read()?;
+        Ok(ArtifactListing::picked(
+            &board,
+            artifacts_of::review_of(&board.reviews, task, change)
+                .into_iter()
+                .collect(),
         ))
     }
 
@@ -148,7 +158,11 @@ impl QueryBoard {
         &self,
         task: &Slug,
     ) -> Result<ArtifactListing<Discussion>, ProjectBoardError> {
-        Ok(artifact_listings::discussions_of(self.store.read()?, task))
+        let board = self.store.read()?;
+        Ok(ArtifactListing::picked(
+            &board,
+            artifacts_of::discussions_of(&board.discussions, task),
+        ))
     }
 
     fn matching(

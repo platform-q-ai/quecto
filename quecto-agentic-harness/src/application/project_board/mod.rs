@@ -3,7 +3,6 @@
 //! a compare-and-swap on the board's head: a write that lost the race is
 //! read again and the change re-applied to the fresh task, a bounded number
 //! of times.
-pub mod artifact_listings;
 pub mod dto;
 pub mod operations;
 pub mod ports;

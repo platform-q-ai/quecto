@@ -14,6 +14,7 @@ use crate::domain::project_board::entities::plan::Plan;
 use crate::domain::project_board::entities::review::Review;
 use crate::domain::project_board::entities::run::Run;
 use crate::domain::project_board::entities::task::Task;
+use crate::domain::project_board::services::artifacts_of;
 use crate::domain::project_board::value_objects::slug::Slug;
 
 /// The task `id`. Refused while its file is set aside, even if another
@@ -47,13 +48,7 @@ pub fn plans_of<'b>(
         board,
         |key| matches!(key, ArtifactKey::Plan(task, _) if task == id),
     )?;
-    let mut plans: Vec<&Plan> = board
-        .plans
-        .iter()
-        .filter(|plan| plan.fields().task == *id)
-        .collect();
-    plans.sort_by_key(|plan| plan.fields().version);
-    Ok(plans)
+    Ok(artifacts_of::plans_of(&board.plans, id))
 }
 
 /// Every run of the task `id`, by number. Refused while any run of it is
@@ -63,13 +58,7 @@ pub fn runs_of<'b>(board: &'b BoardSnapshot, id: &Slug) -> Result<Vec<&'b Run>, 
         board,
         |key| matches!(key, ArtifactKey::Run(task, _) if task == id),
     )?;
-    let mut runs: Vec<&Run> = board
-        .runs
-        .iter()
-        .filter(|run| run.fields().task == *id)
-        .collect();
-    runs.sort_by_key(|run| run.fields().number);
-    Ok(runs)
+    Ok(artifacts_of::runs_of(&board.runs, id))
 }
 
 /// Every change of the task `id`, by number. Refused while any change of
@@ -82,13 +71,7 @@ pub fn changes_of<'b>(
         board,
         |key| matches!(key, ArtifactKey::Change(task, _) if task == id),
     )?;
-    let mut changes: Vec<&Change> = board
-        .changes
-        .iter()
-        .filter(|change| change.fields().task == *id)
-        .collect();
-    changes.sort_by_key(|change| change.fields().number);
-    Ok(changes)
+    Ok(artifacts_of::changes_of(&board.changes, id))
 }
 
 /// Every change on the board, by task and number: what a link checks a
@@ -96,11 +79,7 @@ pub fn changes_of<'b>(
 /// Refused while any change of any task is set aside.
 pub fn all_changes(board: &BoardSnapshot) -> Result<Vec<&Change>, ProjectBoardError> {
     clear_of(board, |key| matches!(key, ArtifactKey::Change(..)))?;
-    let mut changes: Vec<&Change> = board.changes.iter().collect();
-    changes.sort_by(|a, b| {
-        (&a.fields().task, a.fields().number).cmp(&(&b.fields().task, b.fields().number))
-    });
-    Ok(changes)
+    Ok(artifacts_of::all_changes(&board.changes))
 }
 
 /// The review of change `change` of the task `id`, if it has one. Refused
@@ -111,10 +90,7 @@ pub fn review_of<'b>(
     change: u32,
 ) -> Result<Option<&'b Review>, ProjectBoardError> {
     clear_of(board, |key| *key == ArtifactKey::Review(id.clone(), change))?;
-    Ok(board
-        .reviews
-        .iter()
-        .find(|review| review.fields().task == *id && review.fields().change == change))
+    Ok(artifacts_of::review_of(&board.reviews, id, change))
 }
 
 /// Refuses with the least key in scope that a set-aside file names, so a

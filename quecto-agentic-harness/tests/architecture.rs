@@ -1477,10 +1477,6 @@ fn application_path_allowed(path: &str) -> bool {
             "dto",
             "BoardListing" | "ArtifactListing",
         ] => true,
-        // Until the index keeps a table per kind (#2481 S12), it answers a
-        // task's other artifacts from the store's snapshot, picked as
-        // `QueryBoard` picks them; S12 answers them in SQL and drops this.
-        ["crate", "application", "project_board", "artifact_listings"] => true,
         // The sessions list port takes the capability's own query
         // DTO (#1970); the file store names it to implement `list`.
         // The export port (#1974) takes the records and manifest the

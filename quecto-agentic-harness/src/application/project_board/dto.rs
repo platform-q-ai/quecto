@@ -2,8 +2,8 @@
 use std::fmt;
 
 use super::ports::{
-    ArtifactKey, BoardClockError, BoardHead, BoardStoreError, PullRequestStatesError,
-    QuarantinedFile,
+    ArtifactKey, BoardClockError, BoardHead, BoardSnapshot, BoardStoreError,
+    PullRequestStatesError, QuarantinedFile,
 };
 use crate::domain::project_board::entities::task::Task;
 use crate::domain::project_board::value_objects::rule_error::BoardRuleError;
@@ -116,6 +116,18 @@ pub struct ArtifactListing<T> {
     pub head: BoardHead,
     pub items: Vec<T>,
     pub quarantined: Vec<QuarantinedFile>,
+}
+
+impl<T: Clone> ArtifactListing<T> {
+    /// `items`, picked from `board`, beside its head and every file it set
+    /// aside.
+    pub fn picked(board: &BoardSnapshot, items: Vec<&T>) -> Self {
+        Self {
+            head: board.head.clone(),
+            items: items.into_iter().cloned().collect(),
+            quarantined: board.quarantined.clone(),
+        }
+    }
 }
 
 /// Why a board operation did nothing.

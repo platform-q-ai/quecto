@@ -338,57 +338,41 @@ fn a_snapshot_head_that_is_not_a_full_commit_id_is_refused() {
     assert!(needs_rebuild(&index.head()));
 }
 
-/// One change to a snapshot.
-type Edit = Box<dyn Fn(&mut BoardSnapshot)>;
-
-/// Until the index keeps every kind (S12), a board holding any kind but
-/// tasks, or a file set aside under such a key, is refused: never listed
-/// as if it held tasks only, nor its file as a stray.
+/// Until the index keeps every kind (S12), a board holding other kinds
+/// still indexes and lists its tasks, but a file set aside under another
+/// kind's key is refused: never listed as a stray.
 #[test]
-fn a_board_with_other_kinds_is_refused_until_the_index_keeps_them() {
+fn other_kinds_index_but_a_set_aside_one_is_refused_until_s12() {
     use crate::infrastructure::test_support::board_artifacts::{
         change, discussion, plan, review, run,
     };
     let (_dir, index) = index();
-    let edits: Vec<(&str, Edit)> = vec![
-        ("plans", Box::new(|b| b.plans.push(plan("a", 1)))),
-        ("runs", Box::new(|b| b.runs.push(run("a", 1)))),
-        ("changes", Box::new(|b| b.changes.push(change("a", 1)))),
-        ("reviews", Box::new(|b| b.reviews.push(review("a", 1)))),
-        (
-            "discussions",
-            Box::new(|b| b.discussions.push(discussion("d"))),
-        ),
-        (
-            "runs/a.1.md",
-            Box::new(|b| {
-                b.quarantined.push(QuarantinedFile {
-                    path: "runs/a.1.md".into(),
-                    key: Some(ArtifactKey::Run(slug("a"), 1)),
-                    reason: "malformed".into(),
-                    object: "c".repeat(40),
-                    carried: true,
-                })
-            }),
-        ),
-    ];
-    for (what, edit) in edits {
-        let mut snapshot = board("a1");
-        edit(&mut snapshot);
-        let refused = rebuild(&index, &snapshot);
-        assert!(
-            matches!(
-                &refused,
-                Err(IndexError::Store(BoardStoreError::Unavailable(why))) if why.contains(what)
-            ),
-            "{what}: {refused:?}"
-        );
-        assert!(needs_rebuild(&index.head()), "{what}: nothing built");
-    }
+    let mut holding = board("a1");
+    holding.plans.push(plan("a", 1));
+    holding.runs.push(run("a", 1));
+    holding.changes.push(change("a", 1));
+    holding.reviews.push(review("a", 1));
+    holding.discussions.push(discussion("d"));
+    assert!(rebuild(&index, &holding).is_ok(), "other kinds held index");
+    assert_eq!(ids(index.all()), ["a", "b", "c", "d"]);
+    let (_dir, index) = self::index();
+    let mut spoilt = board("a1");
+    spoilt.quarantined.push(QuarantinedFile {
+        path: "runs/a.1.md".into(),
+        key: Some(ArtifactKey::Run(slug("a"), 1)),
+        reason: "malformed".into(),
+        object: "c".repeat(40),
+        carried: true,
+    });
+    let refused = rebuild(&index, &spoilt);
     assert!(
-        rebuild(&index, &board("a1")).is_ok(),
-        "tasks and strays index"
+        matches!(
+            &refused,
+            Err(IndexError::Store(BoardStoreError::Unavailable(why))) if why.contains("runs/a.1.md")
+        ),
+        "{refused:?}"
     );
+    assert!(needs_rebuild(&index.head()), "nothing built");
 }
 
 #[test]
