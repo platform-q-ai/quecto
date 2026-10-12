@@ -4,12 +4,12 @@
 //! block starts kept as text, and the limits.
 use super::*;
 use oracle::outline_in;
+use pulldown_cmark::{Event, Options, Parser, Tag};
 
 /// The oracle's outline of a file of the tests' own shape.
 fn outline(file: &str, document: &Document) -> Result<(), String> {
     outline_in(file, document, &SHAPE)
 }
-use pulldown_cmark::{Event, Options, Parser, Tag};
 
 const FIELDS: &[Column<'static>] = &[
     Column {
