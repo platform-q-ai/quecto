@@ -77,9 +77,15 @@ fn each_pick_is_its_tasks_in_order_whatever_the_stores_order() {
     let runs = [open_run(3, 1), open_run(2, 2), open_run(1, 1), elsewhere(4)];
     let number = |run: &Run| run.fields().number;
     assert_eq!(numbers(runs_of(&runs, &task), number), [1, 2, 3]);
-    assert_eq!(numbers(runs_of_plan(&runs, &task, 1), number), [1, 3]);
-    assert_eq!(numbers(runs_of_plan(&runs, &task, 2), number), [2]);
-    assert!(runs_of_plan(&runs, &task, 9).is_empty());
+    assert_eq!(
+        numbers(of_plan_version(runs_of(&runs, &task), 1), number),
+        [1, 3]
+    );
+    assert_eq!(
+        numbers(of_plan_version(runs_of(&runs, &task), 2), number),
+        [2]
+    );
+    assert!(of_plan_version(runs_of(&runs, &task), 9).is_empty());
     let changes = [change(2, None), change(1, None)];
     let number = |change: &Change| change.fields().number;
     assert_eq!(numbers(changes_of(&changes, &task), number), [1, 2]);

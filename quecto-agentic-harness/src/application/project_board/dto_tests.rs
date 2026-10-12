@@ -60,15 +60,15 @@ fn slug(text: &str) -> crate::domain::project_board::value_objects::slug::Slug {
 /// a caller can tell it may be incomplete: a plan's file for the task's
 /// plans, any run of the task for one plan's runs (a run's name gives no
 /// plan version), the change's own review, any discussion (its name gives
-/// no task), and in every scope a file whose name spells no key (it may
-/// hold anything); never another task's file or another kind's.
+/// no task), and in every scope a kept file whose name spells no key (it
+/// may hold anything); never another task's file or another kind's.
 #[test]
 fn a_listing_names_the_set_aside_files_in_its_scope() {
     use super::{ArtifactListing, ArtifactScope};
     use crate::application::project_board::ports::{ArtifactKey, QuarantinedFile};
     let file = |key: Option<ArtifactKey>, path: &str| QuarantinedFile {
         path: path.into(),
-        carried: key.is_some(),
+        carried: true,
         key,
         reason: "malformed".into(),
         object: "0".repeat(40),
@@ -177,4 +177,80 @@ fn a_listing_refuses_an_artifact_found_twice() {
         "another task's"
     );
     assert!(ArtifactListing::review_of(&board, &a, 2).is_ok());
+}
+
+/// A duplicate is found by its key, before the listing narrows by a field
+/// outside it: run 3 of task a held twice (of plans 1 and 2), or
+/// discussion d held twice (linked to a and to b), refuses even the
+/// listing that would hold one copy, in a release build too.
+#[test]
+fn a_duplicate_outside_the_narrowed_items_is_still_refused() {
+    use super::{ArtifactListing, ProjectBoardError};
+    use crate::application::project_board::ports::ArtifactKey;
+    use crate::domain::project_board::entities::discussion::{Discussion, DiscussionFields};
+    use crate::domain::project_board::entities::run::{Run, RunFields};
+    use crate::infrastructure::test_support::board_artifacts::{discussion, run};
+    let a = slug("a");
+    let run_3_of = |version: u32| {
+        Run::new(RunFields {
+            plan_version: version,
+            ..run("a", 3).into_fields()
+        })
+        .unwrap()
+    };
+    let d_on = |task: &str| {
+        Discussion::new(DiscussionFields {
+            task: Some(slug(task)),
+            ..discussion("d").into_fields()
+        })
+        .unwrap()
+    };
+    let mut board = snapshot(vec![]);
+    board.runs = vec![run_3_of(1), run_3_of(2)];
+    board.discussions = vec![d_on("a"), d_on("b")];
+    assert_eq!(
+        ArtifactListing::runs_of_plan(&board, &a, 1).map(|_| ()),
+        Err(ProjectBoardError::Duplicate {
+            key: ArtifactKey::Run(a.clone(), 3)
+        })
+    );
+    assert_eq!(
+        ArtifactListing::discussions_of(&board, &a).map(|_| ()),
+        Err(ProjectBoardError::Duplicate {
+            key: ArtifactKey::Discussion(slug("d"))
+        })
+    );
+}
+
+/// A file set aside whose name spells no key counts in every scope only
+/// while it is kept: a stray the next write drops holds nothing that
+/// stays, so it leaves no listing incomplete.
+#[test]
+fn a_kept_keyless_file_counts_in_every_scope_and_a_stray_in_none() {
+    use super::ArtifactListing;
+    use crate::application::project_board::ports::QuarantinedFile;
+    let file = |path: &str, carried: bool| QuarantinedFile {
+        path: path.into(),
+        key: None,
+        reason: "malformed".into(),
+        object: "0".repeat(40),
+        carried,
+    };
+    let board = snapshot(vec![
+        file("tasks/Not A Slug.md", true),
+        file("notes.txt", false),
+    ]);
+    let a = slug("a");
+    let listing = ArtifactListing::plans_of(&board, &a).unwrap();
+    let paths: Vec<&str> = listing
+        .set_aside_in_scope()
+        .into_iter()
+        .map(|file| file.path.as_str())
+        .collect();
+    assert_eq!(paths, ["tasks/Not A Slug.md"]);
+    assert_eq!(
+        listing.quarantined.len(),
+        2,
+        "both are carried in the listing"
+    );
 }

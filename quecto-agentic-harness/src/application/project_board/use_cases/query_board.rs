@@ -93,7 +93,8 @@ impl QueryBoard {
     /// longer holds included.
     ///
     /// # Errors
-    /// The store's.
+    /// The store's, or [`ProjectBoardError::Duplicate`] for an artifact in
+    /// its scope the board holds twice.
     pub fn plans_of(&self, task: &Slug) -> Result<ArtifactListing<Plan>, ProjectBoardError> {
         ArtifactListing::plans_of(&self.store.read()?, task)
     }
@@ -102,7 +103,8 @@ impl QueryBoard {
     /// not that plan is on the board.
     ///
     /// # Errors
-    /// The store's.
+    /// The store's, or [`ProjectBoardError::Duplicate`] for an artifact in
+    /// its scope the board holds twice.
     pub fn runs_of_plan(
         &self,
         task: &Slug,
@@ -114,7 +116,8 @@ impl QueryBoard {
     /// Every change of `task`, by number.
     ///
     /// # Errors
-    /// The store's.
+    /// The store's, or [`ProjectBoardError::Duplicate`] for an artifact in
+    /// its scope the board holds twice.
     pub fn changes_of(&self, task: &Slug) -> Result<ArtifactListing<Change>, ProjectBoardError> {
         ArtifactListing::changes_of(&self.store.read()?, task)
     }
@@ -122,7 +125,8 @@ impl QueryBoard {
     /// The review of `task`'s change `change`, if the board holds one.
     ///
     /// # Errors
-    /// The store's.
+    /// The store's, or [`ProjectBoardError::Duplicate`] for an artifact in
+    /// its scope the board holds twice.
     pub fn review_of(
         &self,
         task: &Slug,
@@ -134,7 +138,8 @@ impl QueryBoard {
     /// Every discussion linked to `task`, by id.
     ///
     /// # Errors
-    /// The store's.
+    /// The store's, or [`ProjectBoardError::Duplicate`] for an artifact in
+    /// its scope the board holds twice.
     pub fn discussions_of(
         &self,
         task: &Slug,

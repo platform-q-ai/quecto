@@ -26,13 +26,13 @@ pub fn runs_of<'a>(runs: &'a [Run], task: &Slug) -> Vec<&'a Run> {
     )
 }
 
-/// Every run of `task` of its plan's `version`, by number.
-pub fn runs_of_plan<'a>(runs: &'a [Run], task: &Slug, version: u32) -> Vec<&'a Run> {
-    sorted(
-        runs.iter()
-            .filter(|run| run.fields().task == *task && run.fields().plan_version == version),
-        |a, b| a.fields().number.cmp(&b.fields().number),
-    )
+/// Those of `runs` (a task's, by number) of its plan's `version`, in
+/// their order: narrowed after each is known to be held once, since a
+/// copy of another version is still the same run.
+pub fn of_plan_version(runs: Vec<&Run>, version: u32) -> Vec<&Run> {
+    runs.into_iter()
+        .filter(|run| run.fields().plan_version == version)
+        .collect()
 }
 
 /// Every change of `task`, by number.

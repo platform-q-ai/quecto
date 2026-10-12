@@ -163,13 +163,18 @@ impl ArtifactScope {
 
 impl<T> ArtifactListing<T> {
     /// The files set aside that may hold one of the listed artifacts:
-    /// while any is, the listing may be incomplete for its scope. A file
-    /// set aside whose name spells no key may hold anything, so it counts
-    /// in every scope.
+    /// while any is, the listing may be incomplete for its scope. A kept
+    /// file set aside whose name spells no key may hold anything, so it
+    /// counts in every scope; a stray (not kept) holds nothing that stays,
+    /// so it counts in none.
     pub fn set_aside_in_scope(&self) -> Vec<&QuarantinedFile> {
         self.quarantined
             .iter()
-            .filter(|file| file.key.as_ref().is_none_or(|key| self.scope.covers(key)))
+            .filter(|file| {
+                file.key
+                    .as_ref()
+                    .map_or(file.carried, |key| self.scope.covers(key))
+            })
             .collect()
     }
 }
@@ -234,7 +239,13 @@ impl ArtifactListing<Run> {
             task: task.clone(),
             version,
         };
-        let runs = artifacts_of::runs_of_plan(&board.runs, task, version);
+        // Each run once by its key first: a copy of another plan version
+        // is still a duplicate.
+        let runs = once(
+            artifacts_of::runs_of(&board.runs, task),
+            ArtifactKey::of_run,
+        )?;
+        let runs = artifacts_of::of_plan_version(runs, version);
         Self::picked(board, scope, runs, ArtifactKey::of_run)
     }
 }
@@ -278,6 +289,11 @@ impl ArtifactListing<Discussion> {
     /// twice.
     pub fn discussions_of(board: &BoardSnapshot, task: &Slug) -> Result<Self, ProjectBoardError> {
         let scope = ArtifactScope::Discussions { task: task.clone() };
+        // Each discussion once by its key first: a copy linked to another
+        // task is still a duplicate.
+        let mut every: Vec<&Discussion> = board.discussions.iter().collect();
+        every.sort_by(|a, b| a.fields().id.cmp(&b.fields().id));
+        once(every, ArtifactKey::of_discussion)?;
         let discussions = artifacts_of::discussions_of(&board.discussions, task);
         Self::picked(board, scope, discussions, ArtifactKey::of_discussion)
     }
@@ -428,11 +444,11 @@ impl fmt::Display for ProjectBoardError {
                 "the file {path:?} (object {object}) is set aside as unreadable and its task is \
                  unknown; mend or clear it"
             ),
-            // A task's message is the one agents already know.
             Self::Duplicate { key } => write!(
                 f,
                 "{key} is on the board more than once; its store must be mended"
             ),
+            // A task's message is the one agents already know.
             Self::Quarantined {
                 key: key @ ArtifactKey::Task(_),
                 ..
