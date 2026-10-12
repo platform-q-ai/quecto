@@ -24,12 +24,45 @@ const SPAWNER_TYPES: &[&str] = &[
 /// taken for a spawner unless it is a local known to hold none.
 const SPAWNER_NAMES: &[&str] = &["handle", "runtime", "builder", "thread"];
 
+/// The types known to hold no spawner, by their last path segment: a
+/// process's command, an HTTP client and its builder, text, paths and
+/// numbers. Only a type on this list is read as holding none, so an alias
+/// of a spawner the reader never sees (`type H = Handle` elsewhere) stays
+/// not known, and is read by its name.
+const NON_SPAWNER_TYPES: &[&str] = &[
+    "Command",
+    "Client",
+    "ClientBuilder",
+    "str",
+    "String",
+    "OsStr",
+    "OsString",
+    "Path",
+    "PathBuf",
+    "bool",
+    "char",
+    "u8",
+    "u16",
+    "u32",
+    "u64",
+    "u128",
+    "usize",
+    "i8",
+    "i16",
+    "i32",
+    "i64",
+    "i128",
+    "isize",
+    "f32",
+    "f64",
+];
+
 /// What a local, a parameter or a value holds. Ordered: an assignment
 /// only ever raises it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) enum State {
-    /// Positively no spawner: a literal, a concrete type that names none,
-    /// or a constructor of such a type.
+    /// Positively no spawner: a literal, a type on [`NON_SPAWNER_TYPES`], or
+    /// a constructor of such a type.
     KnownNot,
     /// Not known: read by its name, as the merged check read every value.
     Unknown,
@@ -71,34 +104,58 @@ pub(super) fn names_spawner_type(ty: &syn::Type) -> bool {
 }
 
 /// What a value of type `ty` holds: a spawner when it names one, none
-/// when it is concrete (no `impl`, `dyn`, `Self`, `_` or generic parameter
-/// in it), else not known.
+/// when it is (a reference to) a type on [`NON_SPAWNER_TYPES`], else not
+/// known, whatever else it is: an alias it cannot see through stays not
+/// known.
 pub(super) fn type_state(ty: &syn::Type, generic: &dyn Fn(&str) -> bool) -> State {
-    let words = token_words(ty.to_token_stream());
-    let open = matches!(ty, syn::Type::Infer(_))
-        || words
-            .iter()
-            .any(|word| matches!(word.as_str(), "impl" | "dyn" | "Self" | "_") || generic(word));
-    match (names_spawner_type(ty), open) {
+    match (names_spawner_type(ty), known_non_spawner(ty, generic)) {
         (true, _) => State::Spawner,
-        (false, true) => State::Unknown,
-        (false, false) => State::KnownNot,
+        (false, true) => State::KnownNot,
+        (false, false) => State::Unknown,
     }
 }
 
-/// Whether `word` names a concrete type that is no spawner: a type name
-/// (capitalised), not a spawner's, `Self` or a generic parameter.
-fn plain_type(word: &str, generic: &dyn Fn(&str) -> bool) -> bool {
-    word.starts_with(|c: char| c.is_ascii_uppercase())
-        && !is_type(word)
-        && word != "Self"
-        && !generic(word)
+/// Whether `ty` is a type on [`NON_SPAWNER_TYPES`], plainly (no generic
+/// arguments), behind any references or parentheses.
+fn known_non_spawner(ty: &syn::Type, generic: &dyn Fn(&str) -> bool) -> bool {
+    match ty {
+        syn::Type::Reference(inner) => known_non_spawner(&inner.elem, generic),
+        syn::Type::Paren(inner) => known_non_spawner(&inner.elem, generic),
+        syn::Type::Group(inner) => known_non_spawner(&inner.elem, generic),
+        syn::Type::Path(path) => {
+            path.qself.is_none()
+                && path.path.segments.last().is_some_and(|last| {
+                    matches!(last.arguments, syn::PathArguments::None)
+                        && non_spawner_type(&word(&last.ident), generic)
+                })
+        }
+        // Any other type may hold a spawner, or is not plain: not known.
+        syn::Type::Array(_)
+        | syn::Type::BareFn(_)
+        | syn::Type::ImplTrait(_)
+        | syn::Type::Infer(_)
+        | syn::Type::Macro(_)
+        | syn::Type::Never(_)
+        | syn::Type::Ptr(_)
+        | syn::Type::Slice(_)
+        | syn::Type::TraitObject(_)
+        | syn::Type::Tuple(_)
+        | syn::Type::Verbatim(_) => false,
+        // syn's `Type` is non-exhaustive: a form it adds later is not known.
+        _ => false,
+    }
+}
+
+/// Whether `word` is a type on [`NON_SPAWNER_TYPES`] (not a generic
+/// parameter of the same name).
+fn non_spawner_type(word: &str, generic: &dyn Fn(&str) -> bool) -> bool {
+    NON_SPAWNER_TYPES.contains(&word) && !generic(word)
 }
 
 /// Whether `expr` positively holds no spawner: a literal, a local known to
-/// hold none, a constructor (`new`, `new_*`, `with_*`, `from`) of a plain
-/// type (`Command::new("x")`) whose arguments hold none, or a cast to a
-/// concrete plain type.
+/// hold none, a constructor (`new`, `new_*`, `with_*`, `from`) of a type on
+/// [`NON_SPAWNER_TYPES`] (`Command::new("x")`) whose arguments hold none,
+/// or a cast to such a type.
 pub(super) fn known_not(
     expr: &syn::Expr,
     local: &dyn Fn(&str) -> Option<State>,
@@ -124,7 +181,7 @@ pub(super) fn known_not(
                     || made == "from"
                     || made.starts_with("new_")
                     || made.starts_with("with_");
-                constructs && plain_type(&owner, generic) && all(call.args.iter())
+                constructs && non_spawner_type(&owner, generic) && all(call.args.iter())
             }
             _ => false,
         },

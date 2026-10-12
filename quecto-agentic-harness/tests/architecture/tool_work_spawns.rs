@@ -31,18 +31,20 @@
 //!   up as locals, so `self.handle` is never the local `handle`); and
 //!   `builder` after a type that is no spawner (`Client::builder()`);
 //! - what a local holds: a spawner, positively none, or not known. It is
-//!   none only for a literal, a concrete declared type that names no
-//!   spawner (no generic, `impl`, `dyn`, `Self` or `_`), or a constructor
-//!   (`new`, `new_*`, `with_*`, `from`) of such a type whose arguments hold
-//!   none (`Command::new("x")`); a value of none of these is not known,
-//!   and is read by its name, as the merged check read every value. It is
-//!   bound by `let`, `if let`, `while let`, a `match` arm, a `for` loop, a
-//!   parameter, a closure parameter (a spawner when the closure is handed
-//!   to a spawner's method, else not known), a struct pattern's field
-//!   named for a spawner, or a `name @` subpattern; an assignment only
-//!   raises it. Each block, closure, arm, `if`, `while` and `for` has its
-//!   own scope, and
-//!   an `if let`'s names are not seen in its `else`;
+//!   none only for a literal, a declared type on the reader's explicit
+//!   list of types known to hold no spawner (`Command`, `Client`,
+//!   `ClientBuilder`, text, paths, numbers; plainly, behind references), or
+//!   a constructor (`new`, `new_*`, `with_*`, `from`) of such a type whose
+//!   arguments hold none (`Command::new("x")`). Anything else is not
+//!   known, and is read by its name, as the merged check read every value:
+//!   a declared type off the list (an alias the reader cannot see, `H`)
+//!   never hides a spawner's name. It is bound by `let`, `if let`,
+//!   `while let`, a `match` arm, a `for` loop, a parameter, a closure
+//!   parameter (a spawner when the closure is handed to a spawner's
+//!   method, else not known), a struct pattern's field named for a
+//!   spawner, or a `name @` subpattern; an assignment only raises it. Each
+//!   block, closure, arm, `if`, `while` and `for` has its own scope, and an
+//!   `if let`'s names are not seen in its `else`;
 //! - a `use` of a spawn form, and any `use` or `extern crate` that renames
 //!   or globs a spawner or a spawning module; and a `type` alias,
 //!   `static`, `const` (associated ones included), `thread_local!` or
@@ -54,11 +56,10 @@
 //! or types: a spawn inside a helper outside the checked trees (elsewhere
 //! in the crate, or in a dependency); a spawner reached through a value
 //! none of whose words names one (`self.pool.get().spawn(..)`,
-//! `for h in self.handles.iter()`), or held by a local whose declared
-//! concrete type names none (an alias defined outside the trees); an
-//! identifier a macro splices together (`paste!`); and a local bound
-//! inside a macro (a macro's `.spawn` is read by its receiver's words and
-//! the locals bound outside it).
+//! `for h in self.handles.iter()`); an identifier a macro splices
+//! together (`paste!`); and a local bound inside a macro (a macro's
+//! `.spawn` is read by its receiver's words and the locals bound outside
+//! it).
 
 use std::collections::BTreeSet;
 use std::path::Path;
