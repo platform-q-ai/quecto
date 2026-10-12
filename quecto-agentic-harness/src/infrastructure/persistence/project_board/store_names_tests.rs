@@ -54,7 +54,8 @@ fn only_names_quecto_can_show_are_carried() {
     let alice = store(&repos.alice);
     created(&alice);
     let longest = format!("{}.md", "A".repeat(MAX_SLUG_BYTES));
-    // Past the longest name kept, an id and the five bytes of `.md`.
+    // One byte past the longest name kept: an id of the most bytes and the
+    // five bytes of `.json`, the longer task file extension.
     let too_long = format!("{}.md", "A".repeat(MAX_SLUG_BYTES + 3));
     let json = |id: &str| Object::Blob(encode(&task(id)).unwrap());
     let (ok, kept, long, odd, odder, shady) = (
@@ -220,4 +221,50 @@ fn a_name_twice_where_one_copy_disagrees_with_its_mode_is_read_once() {
         );
         written(bob.write_tasks(&head, &[task("fresh")], "board: add fresh"));
     }
+}
+
+/// The longest name kept is an id of the most bytes and `.json` (69
+/// bytes): a legacy task file of the longest id is set aside under it and
+/// carried, so the id stays blocked; one byte longer is a stray a write
+/// drops.
+#[test]
+fn a_legacy_name_of_the_longest_id_is_kept_and_one_byte_more_dropped() {
+    let repos = Repos::new();
+    let alice = store(&repos.alice);
+    created(&alice);
+    let longest = format!("{}.json", "a".repeat(MAX_SLUG_BYTES));
+    let past = format!("{}.json", "b".repeat(MAX_SLUG_BYTES + 1));
+    assert_eq!((longest.len(), past.len()), (69, 70));
+    let legacy = Object::Blob(b"{}".to_vec());
+    let head = raw_board_named(
+        &repos.remote(),
+        &[
+            ("100644", longest.as_bytes(), &legacy),
+            ("100644", past.as_bytes(), &legacy),
+        ],
+        &[&repos.bob],
+    );
+    let bob = store(&repos.bob);
+    let board = bob.board_at(&head.0).unwrap();
+    let id = "a".repeat(MAX_SLUG_BYTES);
+    let found: Vec<(String, Option<&str>)> = board
+        .quarantined
+        .iter()
+        .map(|file| (file.path.clone(), file.id().map(Slug::as_str)))
+        .collect();
+    assert_eq!(
+        found,
+        [
+            (format!("tasks/{longest}"), Some(id.as_str())),
+            (format!("tasks/{past}"), None),
+        ]
+    );
+    let moved = written(bob.write_tasks(&head, &[task("fresh")], "board: add fresh"));
+    assert_eq!(
+        sh(
+            &repos.remote(),
+            &["ls-tree", "--name-only", &format!("{}:tasks", moved.0)]
+        ),
+        format!("{longest}\nfresh.md")
+    );
 }

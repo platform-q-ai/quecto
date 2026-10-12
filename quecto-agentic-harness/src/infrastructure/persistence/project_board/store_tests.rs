@@ -190,7 +190,7 @@ fn ids(snapshot: &BoardSnapshot) -> Vec<&str> {
 }
 
 #[test]
-fn bootstrap_creates_the_board_once_with_only_its_readme() {
+fn bootstrap_creates_the_board_once_with_its_readme_and_format_marker() {
     let repos = Repos::new();
     assert_eq!(store(&repos.alice).read(), Err(BoardStoreError::NoBoard));
     let head = created(&store(&repos.alice));
@@ -203,8 +203,20 @@ fn bootstrap_creates_the_board_once_with_only_its_readme() {
         Ok(BoardBootstrap::Existing(head.clone()))
     );
     assert_eq!(
-        sh(&repos.remote(), &["ls-tree", "--name-only", BOARD_REF]),
-        "README.md"
+        sh(
+            &repos.remote(),
+            &["ls-tree", "-r", "--name-only", BOARD_REF]
+        ),
+        "README.md\nformat/board"
+    );
+    assert_eq!(
+        sh(
+            &repos.remote(),
+            &["cat-file", "blob", &format!("{BOARD_REF}:format/board")]
+        ) + "\n",
+        String::from_utf8_lossy(
+            crate::infrastructure::persistence::project_board::board_tree::FORMAT
+        )
     );
     let snapshot = store(&repos.bob).read().unwrap();
     assert_eq!(
@@ -316,7 +328,7 @@ fn bootstrap_read_and_write_agree_on_what_a_board_is() {
     let moved = written(bob.write_tasks(&snapshot.head, &[task("b")], "board: add b"));
     assert_eq!(
         sh(&remote, &["ls-tree", "--name-only", &moved.0]),
-        "README.md\ntasks"
+        "README.md\nformat\ntasks"
     );
 
     // Someone's code pushed over the board.

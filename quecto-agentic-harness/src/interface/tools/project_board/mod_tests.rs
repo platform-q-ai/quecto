@@ -219,7 +219,7 @@ fn a_request_is_bounded_and_read_strictly_before_it_is_run() {
 /// is, and cleared by that name.
 #[test]
 fn a_file_whose_name_looks_like_a_secret_is_listed_and_cleared_as_it_is() {
-    for path in ["tasks/sk-abcdefgh.json", "tasks/token=x.json"] {
+    for path in ["tasks/sk-abcdefgh.md", "tasks/token=x.md"] {
         let store = MemoryBoardStore::default();
         use crate::application::project_board::ports::ProjectBoardStore;
         store.bootstrap().unwrap();

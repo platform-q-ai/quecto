@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn a_path_shown_holds_no_control_or_format_character() {
-    assert!(shown_path("tasks/token=x.json"));
+    assert!(shown_path("tasks/token=x.md"));
     assert!(shown_path("tasks/é ✓ ….json"));
     for hostile in [
         "README.md",

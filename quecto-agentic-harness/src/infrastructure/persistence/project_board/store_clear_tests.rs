@@ -215,8 +215,7 @@ fn every_name_listed_twice_is_resolved_in_one_clear_a_checking_remote_takes() {
         .iter()
         .map(|row| row.split_once('\t').unwrap().1.to_string())
         .collect();
-    // The copies kept are carried as they are; the next write regenerates
-    // their summaries.
+    // The copies kept are carried as they are, and read as tasks again.
     assert_eq!(names, ["dup.md", "two.md"]);
     let board = bob.read().unwrap();
     assert_eq!(board.quarantined, vec![]);

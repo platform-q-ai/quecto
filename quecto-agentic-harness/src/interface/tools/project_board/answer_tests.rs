@@ -106,7 +106,7 @@ board_errors! {
         key: ArtifactKey::Plan(slug("a"), 2),
     },
     E::SetAsideFile { .. } => E::SetAsideFile {
-        path: "tasks/?.json".into(),
+        path: "tasks/?.md".into(),
         object: "a".repeat(40),
     },
     E::UnknownReference(_) => E::UnknownReference(slug("a")),
@@ -131,7 +131,7 @@ board_errors! {
     E::Contended { .. } => E::Contended { attempts: 5 },
     E::Refused(_) => E::Refused("protected".into()),
     E::NotSetAside { .. } => E::NotSetAside {
-        path: "tasks/x.json".into(),
+        path: "tasks/x.md".into(),
         object: "a".repeat(40),
     },
     E::NoPullRequestHost(_) => E::NoPullRequestHost(
@@ -221,7 +221,7 @@ fn text_from_outside_is_redacted_wherever_it_is_shown() {
             &format!("password={secret}"),
         ),
         json!({"quarantined": quarantined_json(&QuarantinedFile {
-            path: "tasks/x.json".into(),
+            path: "tasks/x.md".into(),
             key: None,
             reason: format!("api_key: {secret}"),
             object: "a".repeat(40),
@@ -254,11 +254,11 @@ fn a_listing_shows_each_files_object_and_its_names_copies() {
         carried: false,
     };
     let listed = quarantined_list(&[
-        file("tasks/a.json", 'a'),
-        file("tasks/a.json", 'b'),
-        file("tasks/c.json", 'c'),
+        file("tasks/a.md", 'a'),
+        file("tasks/a.md", 'b'),
+        file("tasks/c.md", 'c'),
         // Two entries of one object (names no one can tell apart).
-        file("tasks/c.json", 'c'),
+        file("tasks/c.md", 'c'),
     ]);
     let (a, b) = ("a".repeat(40), "b".repeat(40));
     assert_eq!(listed[0]["object"], json!(a));
@@ -404,10 +404,10 @@ fn every_rule_answers_its_code_and_its_own_keys() {
 #[test]
 fn a_set_aside_file_is_named_by_its_raw_path_and_object() {
     let shown = error_json(&ProjectBoardError::SetAsideFile {
-        path: "tasks/token=x.json".into(),
+        path: "tasks/token=x.md".into(),
         object: "a".repeat(40),
     });
-    assert_eq!(shown["path"], json!("tasks/token=x.json"));
+    assert_eq!(shown["path"], json!("tasks/token=x.md"));
     assert_eq!(shown["object"], json!("a".repeat(40)));
     // The wording an agent reads (approved overnight, #2521).
     let object = "a".repeat(40);

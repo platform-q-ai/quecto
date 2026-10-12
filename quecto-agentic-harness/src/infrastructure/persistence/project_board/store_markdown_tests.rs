@@ -4,7 +4,7 @@
 //! that id and carried forward as it is, a task file of the JSON form older
 //! quecto wrote included, so its id stays blocked until it is cleared.
 use super::*;
-use crate::application::project_board::ports::{ArtifactKey, QuarantinedFile};
+use crate::application::project_board::ports::{ArtifactKey, QuarantinedFile, SetAsideClear};
 use crate::infrastructure::persistence::project_board::artifacts::task::TaskCodec;
 use crate::infrastructure::persistence::project_board::artifacts::{self, ArtifactCodec};
 
@@ -129,16 +129,46 @@ fn a_newer_schema_task_file_is_set_aside_with_upgrade_reason_and_carried() {
     carried_and_blocking(&repos, &snapshot, &task_path("a"), "a");
 }
 
+/// A board older quecto wrote holds each task as `<id>.json` and a
+/// read-only `<id>.md` summary beside it: both are set aside under the id
+/// and carried, the summary named as one, and clearing both frees the id.
 #[test]
 fn a_legacy_json_task_file_is_set_aside_kept_and_blocks_its_id() {
     let legacy = br#"{"schema": 3, "id": "old", "title": "Old"}"#.to_vec();
-    let (repos, snapshot) = hand_edited(&[("old.json", legacy)]);
+    let summary = b"# Old\n\n**old** \xc2\xb7 task \xc2\xb7 ready\n".to_vec();
+    let (repos, snapshot) = hand_edited(&[("old.json", legacy), ("old.md", summary)]);
     assert_eq!(ids(&snapshot), vec!["b"]);
-    let (file, kept) = aside(&snapshot, "tasks/old.json");
-    assert_eq!(file.id().map(Slug::as_str), Some("old"));
-    assert!(file.reason.contains("JSON"), "{}", file.reason);
+    let (json, kept) = aside(&snapshot, "tasks/old.json");
+    assert_eq!(json.id().map(Slug::as_str), Some("old"));
+    assert!(json.reason.contains("JSON"), "{}", json.reason);
+    assert!(kept);
+    let (md, kept) = aside(&snapshot, &task_path("old"));
+    assert_eq!(md.id().map(Slug::as_str), Some("old"));
+    assert!(
+        md.reason
+            .contains("a summary older quecto wrote beside its JSON record"),
+        "{}",
+        md.reason
+    );
     assert!(kept);
     carried_and_blocking(&repos, &snapshot, "tasks/old.json", "old");
+    // Clearing both, one by one, frees the id.
+    let bob = store(&repos.bob);
+    let mut head = bob.read().unwrap().head;
+    for path in ["tasks/old.json", "tasks/old.md"] {
+        let board = bob.read().unwrap();
+        let (file, _) = aside(&board, path);
+        head = written(bob.clear_set_aside(
+            &head,
+            &SetAsideClear {
+                path: path.into(),
+                object: file.object.clone(),
+                repeated: Default::default(),
+            },
+            "board: clear old",
+        ));
+    }
+    written(bob.write_tasks(&head, &[task("old")], "board: add old"));
 }
 
 #[test]

@@ -57,6 +57,11 @@ pub const MAX_NAME_BYTES: usize = MAX_SLUG_BYTES + 5;
 /// The most entries the board's `tasks/` tree may hold: its tasks, one
 /// file each, and the files set aside.
 pub const MAX_TASK_ENTRIES: usize = 2_048;
+/// The most entries a read takes in `tasks/` (red: not yet apart from a
+/// write's).
+pub const MAX_READ_ENTRIES: usize = 2 * MAX_TASK_ENTRIES;
+/// The board's format marker (red: not yet written or read).
+pub const FORMAT: &[u8] = b"quecto-board 2\n";
 /// The largest task file read or written: the task codec's cap.
 pub const MAX_TASK_FILE_BYTES: usize = TASK_LIMITS.file_bytes;
 /// The largest tree read: [`MAX_TASK_ENTRIES`] entries with long names.

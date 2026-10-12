@@ -4,7 +4,9 @@
 use super::*;
 use crate::application::project_board::ports::BoardListings;
 use crate::domain::project_board::value_objects::shown_text::shown_char;
-use crate::infrastructure::persistence::project_board::board_tree::MAX_TASK_FILE_BYTES;
+use crate::infrastructure::persistence::project_board::board_tree::{
+    MAX_READ_ENTRIES, MAX_TASK_FILE_BYTES,
+};
 use crate::infrastructure::persistence::project_board::git::MAX_QUOTED_CHARS;
 use crate::infrastructure::persistence::project_board::index::{BoardIndex, Refreshed};
 use crate::infrastructure::persistence::project_board::indexed_listings::IndexedBoardListings;
@@ -143,7 +145,7 @@ fn a_board_tree_past_its_entry_bound_is_not_read() {
     created(&alice);
     written(alice.write_tasks(&alice.read().unwrap().head, &[task("a")], "board: add a"));
     let blob = sh_with(&repos.remote(), &["hash-object", "-w", "--stdin"], b"x");
-    let many: Vec<(String, String)> = (0..MAX_TASK_ENTRIES)
+    let many: Vec<(String, String)> = (0..MAX_READ_ENTRIES)
         .map(|n| (format!("n{n}.md"), format!("100644 blob {blob}")))
         .collect();
     let many: Vec<(&str, String)> = many
@@ -326,6 +328,7 @@ fn a_file_mode_over_a_tree_object_is_set_aside_and_never_stops_a_write() {
         kept,
         [
             ("README.md", "100644 blob "),
+            ("format/board", "100644 blob "),
             ("tasks/fresh.md", "100644 blob "),
             ("tasks/good.md", "100644 blob "),
         ]
@@ -588,5 +591,7 @@ fn a_hostile_cell_never_reaches_a_reason_or_stops_a_listing() {
 
 #[path = "store_clear_tests.rs"]
 mod clear;
+#[path = "store_legacy_tests.rs"]
+mod legacy;
 #[path = "store_names_tests.rs"]
 mod names;

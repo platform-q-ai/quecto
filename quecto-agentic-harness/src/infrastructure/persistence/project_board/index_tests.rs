@@ -90,7 +90,7 @@ fn board(head: &str) -> BoardSnapshot {
         discussions: vec![],
         quarantined: vec![
             QuarantinedFile {
-                path: "tasks/x.json".into(),
+                path: "tasks/x.md".into(),
                 key: Some(ArtifactKey::Task(slug("x"))),
                 reason: "malformed".into(),
                 object: "a".repeat(40),

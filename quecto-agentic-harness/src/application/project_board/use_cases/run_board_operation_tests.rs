@@ -127,7 +127,7 @@ fn a_clock_note_only_for_requests_that_read_the_clock_with_no_outside_time() {
         BoardRequest::Bootstrap,
         BoardRequest::ListReady,
         BoardRequest::Clear {
-            path: "tasks/x.json".into(),
+            path: "tasks/x.md".into(),
             object: "a".repeat(40),
             repeated: Default::default(),
         },
