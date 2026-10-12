@@ -351,7 +351,7 @@ fn references_of(mut bytes: usize) -> Vec<Reference> {
 /// of four-byte letters and an email of `|`s, which a cell writes `\|`.
 fn widest(title: String, description: String) -> TaskFields {
     let name = "\u{1d538}".repeat(MAX_NAME_CHARS);
-    let email = format!("{}@b", "|".repeat(MAX_EMAIL_BYTES - 2));
+    let email = format!("{}@|", "|".repeat(MAX_EMAIL_BYTES - 2));
     let mut fields = TaskFields {
         id: long_slug(999),
         title,
@@ -421,7 +421,8 @@ fn the_widest_task_fits_its_limits() {
     let [most_lines, longest_line, most_bytes] = measured;
     assert_eq!(most_lines.1, 65_725, "the most lines");
     assert_eq!(longest_line.2, 262_144, "the longest line");
-    assert_eq!(most_bytes.0, 346_705, "the most bytes");
+    assert_eq!(most_bytes.0, 346_706, "the most bytes");
+    assert_eq!(longest_line.0, 335_389, "the longest line's file");
     let limits = TASK_LIMITS;
     for (bytes, lines, longest) in measured {
         assert!(
@@ -569,7 +570,16 @@ fn a_reference_keeps_its_written_form() {
 /// reference, dollar math.
 #[test]
 fn a_title_its_heading_cannot_hold_is_refused() {
-    for title in ["a #", " a", "a\u{a0}", "a <b>", "a &amp;", "$x$"] {
+    for title in [
+        "a #",
+        " a",
+        "a\u{a0}",
+        "a <b>",
+        "a &amp;",
+        "$x$",
+        "a\u{2003}b",
+        "a\u{fe0f}",
+    ] {
         let titled = TaskFields {
             title: title.into(),
             ..example()

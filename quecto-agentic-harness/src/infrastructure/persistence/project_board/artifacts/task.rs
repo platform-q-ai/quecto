@@ -91,7 +91,7 @@ const SECTIONS: &[SectionShape<'static>] = &[
 ///   lines inside a fence, and every table at its fullest;
 /// - the longest line, 262,144 bytes: that description as one line of
 ///   four-byte letters;
-/// - the most bytes, 346,705: the whole text budget with 11,093
+/// - the most bytes, 346,706: the whole text budget with 11,093
 ///   description lines starting `#`, each written `\#` (one more line and
 ///   the references can no longer make the budget up).
 pub const TASK_LIMITS: Limits = Limits {

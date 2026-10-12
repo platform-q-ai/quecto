@@ -19,7 +19,7 @@ use crate::domain::project_board::entities::discussion::{
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
 use crate::domain::project_board::value_objects::vocabulary::DiscussionState;
 use crate::infrastructure::persistence::project_board::markdown::{
-    Body, BodyShape, CellKind, Column, Document, Limits, Section, SectionShape, Shape,
+    Body, BodyShape, CellKind, Column, Document, Limits, Section, SectionShape, Shape, check_title,
 };
 
 const ID: &str = "Id";
@@ -71,6 +71,8 @@ impl ArtifactCodec for DiscussionCodec {
 
     fn to_document(discussion: &Discussion) -> Result<Document, CodecError> {
         let discussion = discussion.fields();
+        // The heading's rules, here, so the error names the title.
+        check_title(&discussion.title).map_err(|error| refused("Title", error.to_string()))?;
         let mut fields = vec![(ID, cells::slug(&discussion.id))];
         if let Some(task) = &discussion.task {
             fields.push((TASK, cells::slug(task)));
