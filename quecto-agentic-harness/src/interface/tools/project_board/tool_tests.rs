@@ -188,17 +188,81 @@ fn the_schema_is_the_parsers() {
     assert_eq!(schema["properties"]["kind"]["enum"], json!(kinds));
 }
 
-/// A non-listing answer is the shared path's, unchanged: no key added.
+/// A clock reading one time, with no outside reference.
+struct Fixed;
+
+impl crate::application::project_board::ports::BoardClock for Fixed {
+    fn now(
+        &self,
+    ) -> Result<
+        crate::domain::project_board::value_objects::timestamp::Timestamp,
+        crate::application::project_board::ports::BoardClockError,
+    > {
+        Ok(
+            crate::domain::project_board::value_objects::timestamp::Timestamp::parse(
+                "2026-10-12T00:00:00Z",
+            )
+            .unwrap(),
+        )
+    }
+
+    fn reference(
+        &self,
+    ) -> Option<crate::domain::project_board::value_objects::timestamp::Timestamp> {
+        None
+    }
+
+    fn reference_status(&self) -> crate::application::project_board::ports::ReferenceStatus {
+        crate::application::project_board::ports::ReferenceStatus::NoReference(
+            "no outside time in this test".into(),
+        )
+    }
+
+    fn pause(&self, _: usize) {}
+
+    fn elapsed(&self) -> std::time::Duration {
+        std::time::Duration::ZERO
+    }
+}
+
+/// A board in memory at a fixed time holding one ready task, `a`, built
+/// afresh for each request: two such boards answer a request alike.
+fn seeded_board(_: &ProjectBoardEnvironment) -> Result<ProjectBoardHandles, BuildError> {
+    let store = MemoryBoardStore::default();
+    store.bootstrap().unwrap();
+    let operations = assembled(
+        Arc::new(store.client()),
+        Arc::new(Fixed),
+        Arc::new(QueryListings(QueryBoard::new(Arc::new(store.client())))),
+        Err(NoPullRequestHost::NotAPullRequestHost),
+    )
+    .map_err(|error| BuildError::Unavailable(error.to_string()))?;
+    let created = crate::interface::tools::project_board::run(
+        &operations,
+        r#"{"op":"create","task":"a","title":"A","status":"ready"}"#,
+    );
+    assert_eq!(created["ok"], json!(true), "{created}");
+    Ok(ProjectBoardHandles { operations })
+}
+
+/// A non-listing answer is the shared path's, unchanged: no key added, a
+/// refusal and a success alike.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_non_listing_answer_is_the_shared_paths() {
-    let text = r#"{"op":"show","task":"nope"}"#;
-    let tool = BoardTool::new(site(Some(memory_board)));
-    let shown: Value = serde_json::from_str(&tool.execute(text).await.unwrap().content).unwrap();
-    let shared = crate::interface::tools::project_board::run(
-        &memory_board(&environment()).unwrap().operations,
-        text,
-    );
-    assert_eq!(shown, shared);
+    let tool = BoardTool::new(site(Some(seeded_board)));
+    for text in [
+        r#"{"op":"show","task":"nope"}"#,
+        r#"{"op":"show","task":"a"}"#,
+        r#"{"op":"create","task":"b","title":"B","description":"d","status":"draft"}"#,
+    ] {
+        let answer: Value =
+            serde_json::from_str(&tool.execute(text).await.unwrap().content).unwrap();
+        let shared = crate::interface::tools::project_board::run(
+            &seeded_board(&environment()).unwrap().operations,
+            text,
+        );
+        assert_eq!(answer, shared, "{text}");
+    }
 }
 
 /// An op the tool does not take is refused with the ones it does, never
@@ -256,8 +320,62 @@ async fn a_listing_caps_what_it_shows_set_aside() {
     assert_eq!(answer["quarantined_more"], json!(300 - shown));
 }
 
+/// A board with a few ready tasks and many long files set aside.
+fn mixed_board(_: &ProjectBoardEnvironment) -> Result<ProjectBoardHandles, BuildError> {
+    let store = MemoryBoardStore::default();
+    store.bootstrap().unwrap();
+    for index in 0..300 {
+        store.set_aside_stray(
+            &format!("tasks/stray-{index}-{}", "p".repeat(200)),
+            "a stray",
+        );
+    }
+    let operations = assembled(
+        Arc::new(store.client()),
+        Arc::new(SystemBoardClock::default()),
+        Arc::new(QueryListings(QueryBoard::new(Arc::new(store.client())))),
+        Err(NoPullRequestHost::NotAPullRequestHost),
+    )
+    .map_err(|error| BuildError::Unavailable(error.to_string()))?;
+    for index in 0..5 {
+        let request =
+            json!({"op": "create", "task": format!("t{index}"), "title": "T", "status": "ready"});
+        let created =
+            crate::interface::tools::project_board::run(&operations, &request.to_string());
+        assert_eq!(created["ok"], json!(true), "{created}");
+    }
+    Ok(ProjectBoardHandles { operations })
+}
+
+/// Tasks take the room first: files set aside never crowd a listing's
+/// tasks out; they get what is left, ending with how many more there are.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_listing_shows_its_tasks_before_what_was_set_aside() {
+    let tool = BoardTool::new(site(Some(mixed_board)));
+    for op in ["list", "list_ready"] {
+        let listed = tool.execute(&json!({"op": op}).to_string()).await.unwrap();
+        assert!(listed.content.len() <= MAX_LISTING_BYTES, "{op}");
+        let answer: Value = serde_json::from_str(&listed.content).unwrap();
+        assert_eq!(
+            answer["tasks"].as_array().unwrap().len(),
+            5,
+            "{op}: {answer}"
+        );
+        assert_eq!(answer.get("truncated"), None, "{op}");
+        if let Some(files) = answer.get("quarantined") {
+            let shown = files.as_array().unwrap().len();
+            assert!(shown > 10, "{op}: {shown}");
+            assert_eq!(answer["quarantined_more"], json!(300 - shown), "{op}");
+        }
+    }
+}
+
 static SEEN_CANCEL: std::sync::Mutex<Option<Arc<std::sync::atomic::AtomicBool>>> =
     std::sync::Mutex::new(None);
+
+/// Signalled once the waiting board's work has its flag (a stored permit
+/// if nothing waits yet).
+static WORK_STARTED: tokio::sync::Notify = tokio::sync::Notify::const_new();
 
 /// Board work that waits, holding the call's cancel flag, until it is set.
 fn waiting_board(environment: &ProjectBoardEnvironment) -> Result<ProjectBoardHandles, BuildError> {
@@ -266,6 +384,7 @@ fn waiting_board(environment: &ProjectBoardEnvironment) -> Result<ProjectBoardHa
         .clone()
         .expect("the tool passes a cancel flag");
     *SEEN_CANCEL.lock().unwrap() = Some(Arc::clone(&flag));
+    WORK_STARTED.notify_one();
     let until = std::time::Instant::now() + std::time::Duration::from_secs(10);
     while !flag.load(std::sync::atomic::Ordering::SeqCst) && std::time::Instant::now() < until {
         std::thread::sleep(std::time::Duration::from_millis(5));
@@ -279,8 +398,11 @@ fn waiting_board(environment: &ProjectBoardEnvironment) -> Result<ProjectBoardHa
 async fn dropping_a_call_sets_its_cancel_flag() {
     let tool = BoardTool::new(site(Some(waiting_board)));
     let call = tool.execute(r#"{"op":"list"}"#);
-    let early = tokio::time::timeout(std::time::Duration::from_millis(200), call).await;
-    assert!(early.is_err(), "the call was still running");
+    // Run the call until its work has started, then drop it.
+    tokio::select! {
+        ended = call => panic!("the call ended before it was dropped: {ended:?}"),
+        () = WORK_STARTED.notified() => {}
+    }
     let flag = SEEN_CANCEL.lock().unwrap().clone().expect("the work ran");
     assert!(
         flag.load(std::sync::atomic::Ordering::SeqCst),
