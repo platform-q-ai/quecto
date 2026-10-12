@@ -19,7 +19,7 @@ use super::super::value_objects::rule_error::BoardRuleError;
 use super::super::value_objects::schema_error::SchemaError;
 use super::super::value_objects::timestamp::Timestamp;
 use super::super::value_objects::vocabulary::{PlanState, TaskStatus};
-use super::claims::{held_live_by, settle, stamp, within_slack};
+use super::claims::{after_last, held_live_by, settle, stamp, within_slack};
 use super::runs::open_of;
 
 /// What a plan says: its approach, items and team.
@@ -211,7 +211,7 @@ pub fn accept(
     // plan's last changes.
     let mut at = stamp(task, now)?;
     for plan in std::iter::once(chosen).chain(before) {
-        at = at.max(after(plan)?);
+        at = after_last(&plan.fields().updated, &at)?;
     }
     let mut named = task.fields().clone();
     named.accepted_plan = Some(version);
@@ -350,15 +350,6 @@ fn as_read(plan: &Plan, expected: Option<&Timestamp>) -> Result<(), BoardRuleErr
     }
 }
 
-/// A second past `plan`'s last change: the earliest stamp of a change to
-/// it.
-fn after(plan: &Plan) -> Result<Timestamp, BoardRuleError> {
-    plan.fields()
-        .updated
-        .plus_seconds(1)
-        .map_err(|error| BoardRuleError::Invalid(error.at("updated")))
-}
-
 fn draft(plan: &Plan) -> Result<(), BoardRuleError> {
     match plan.fields().state {
         PlanState::Draft => Ok(()),
@@ -384,7 +375,7 @@ fn moved(plan: &Plan, state: PlanState, now: &Timestamp) -> Result<Plan, BoardRu
 /// `next`, updated at `now` or a second past `plan`'s own `updated`,
 /// whichever is later, so every change moves it strictly forward.
 fn restamped(mut next: PlanFields, plan: &Plan, now: &Timestamp) -> Result<Plan, BoardRuleError> {
-    next.updated = now.max(&after(plan)?).clone();
+    next.updated = after_last(&plan.fields().updated, now)?;
     Plan::new(next).map_err(BoardRuleError::Invalid)
 }
 

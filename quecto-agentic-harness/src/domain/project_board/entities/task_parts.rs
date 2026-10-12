@@ -1,5 +1,6 @@
 //! The structured parts the board's artifacts share: their limits, a
-//! task's review findings (until reviews become their own artifact, M1b),
+//! task's review findings (kept until the task's own review list is
+//! dropped, D2, now that reviews are an artifact of their own, M1c),
 //! and the checks they share. Reviews are capped; a write past the cap is
 //! refused.
 use super::super::value_objects::schema_error::{SchemaError, distinct, filled_markdown, line};
@@ -70,6 +71,12 @@ pub(super) fn shaped(
             format!("{text:?} is not an allowed reference of at most {max_bytes} bytes"),
         ))
     }
+}
+
+/// A finding's place, `path:line` or `path:line:col`: one rule for the
+/// task's findings and a review's.
+pub(super) fn location(field: &str, text: &str) -> Result<(), SchemaError> {
+    shaped(field, text, MAX_LINE_CHARS, &LOCATION)
 }
 
 impl Review {

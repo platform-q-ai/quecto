@@ -4,7 +4,9 @@ use super::*;
 use crate::domain::project_board::value_objects::schema_error::SchemaError;
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
-use crate::domain::project_board::value_objects::vocabulary::{PlanState, TaskStatus};
+use crate::domain::project_board::value_objects::vocabulary::{
+    DiscussionLimit, PlanState, TaskStatus,
+};
 
 fn slug(text: &str) -> Slug {
     Slug::parse(text).unwrap()
@@ -37,6 +39,7 @@ fn keys(code: ErrorCode) -> &'static [&'static str] {
         C::Contended => &["attempts"],
         C::Stale => &["task", "expected", "updated"],
         C::NotSetAside => &["path", "object"],
+        C::SetAsideFile => &["path", "object"],
         C::NoPullRequestHost => &["reason"],
     }
 }
@@ -90,6 +93,10 @@ board_errors! {
         E::Clock(BoardClockError::OutOfRange("1969".into()))
     },
     E::Quarantined(_) => E::Quarantined(slug("a")),
+    E::SetAsideFile { .. } => E::SetAsideFile {
+        path: "tasks/?.json".into(),
+        object: "a".repeat(40),
+    },
     E::UnknownReference(_) => E::UnknownReference(slug("a")),
     E::ClosesCycle { .. } => E::ClosesCycle {
         id: slug("a"),
@@ -283,6 +290,7 @@ board_rules! {
     R::RunEnded(_) => R::RunEnded(1), "run_ended", ["run"];
     R::PlanNotDraft(_) => R::PlanNotDraft(PlanState::Accepted), "plan_not_draft", ["state"];
     R::NotThisTasks => R::NotThisTasks, "not_this_tasks", [];
+    R::NotThisChange => R::NotThisChange, "not_this_change", [];
     R::TaskFinished(_) => R::TaskFinished(TaskStatus::Done), "task_finished", ["status"];
     R::UnknownPlanVersion(_) => R::UnknownPlanVersion(3), "unknown_plan_version", ["version"];
     R::PlanChanged { .. } => R::PlanChanged { version: 2, updated: at("10:00:00") }, "plan_changed", ["version", "updated"];
@@ -305,6 +313,12 @@ board_rules! {
     R::ChangeAlreadyLinked { .. } => R::ChangeAlreadyLinked { task: Slug::parse("board-store").unwrap(), change: Some(1) }, "change_already_linked", ["task", "change"];
     R::NoSuchChange(_) => R::NoSuchChange(4), "no_such_change", ["change"];
     R::ChangeAhead { .. } => R::ChangeAhead { change: 1, updated: at("10:00:00") }, "change_ahead", ["change", "updated"];
+    R::DiscussionClosed(_) => R::DiscussionClosed(Slug::parse("chat").unwrap()), "discussion_closed", ["discussion"];
+    R::DiscussionLinked { .. } => R::DiscussionLinked { discussion: Slug::parse("chat").unwrap(), task: Slug::parse("board-store").unwrap() }, "discussion_linked", ["discussion", "task"];
+    R::DiscussionAhead { .. } => R::DiscussionAhead { discussion: Slug::parse("chat").unwrap(), updated: at("10:00:00") }, "discussion_ahead", ["discussion", "updated"];
+    R::MessageAhead { .. } => R::MessageAhead { discussion: Slug::parse("chat").unwrap(), at: at("10:00:00") }, "message_ahead", ["discussion", "at"];
+    R::DiscussionFull { .. } => R::DiscussionFull { discussion: Slug::parse("chat").unwrap(), limit: DiscussionLimit::Lines }, "discussion_full", ["discussion", "limit"];
+    R::ReviewAhead { .. } => R::ReviewAhead { change: 1, updated: at("10:00:00") }, "review_ahead", ["change", "updated"];
     R::ChangesLinked(_) => R::ChangesLinked(vec![1]), "changes_linked", ["changes"];
     R::PrUnread(_) => R::PrUnread(7), "pr_unread", ["pr"];
     R::PrNotOpen(_) => R::PrNotOpen(7), "pr_not_open", ["pr"];
@@ -347,4 +361,17 @@ fn every_rule_answers_its_code_and_its_own_keys() {
         old_way.to_string(),
         "task board-store already links that pull request"
     );
+}
+
+/// A set-aside file of no known task is named by its path as the listing
+/// shows it, raw, with its object, so a clear can name it exactly: a name
+/// that looks like a secret is no secret in a path.
+#[test]
+fn a_set_aside_file_is_named_by_its_raw_path_and_object() {
+    let shown = error_json(&ProjectBoardError::SetAsideFile {
+        path: "tasks/token=x.json".into(),
+        object: "a".repeat(40),
+    });
+    assert_eq!(shown["path"], json!("tasks/token=x.json"));
+    assert_eq!(shown["object"], json!("a".repeat(40)));
 }

@@ -75,6 +75,9 @@ urlencoding = "2"
 # Secret redaction in surfaced subagent error causes (#752). Already present
 # transitively via tracing-subscriber's env-filter.
 regex = "1"
+# NFC for the board's canonical markdown (#2481) on every target, and NFD
+# for macOS path matching.
+unicode-normalization = "0.1"
 
 # Direct process-group signalling on abort (#895). Already in the tree
 # transitively; promoted to a direct dep so the abort reaper can SIGKILL a
@@ -82,9 +85,6 @@ regex = "1"
 # `kill` (dash and bash parse `kill -- -<pgid>` differently).
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
-
-[target.'cfg(target_os = "macos")'.dependencies]
-unicode-normalization = "0.1"
 
 [features]
 default = []
@@ -109,6 +109,12 @@ wiremock = "0.6"
 # SSE pumps against a chunk boundary no server can be relied on to keep.
 http = "1"
 regex = "1"
+# The markdown codec's oracle: what a CommonMark/GFM reader makes of a
+# rendered board file (#2481).
+pulldown-cmark = { version = "0.13", default-features = false }
+# A second reader for the board markdown oracle (#2481): a port of cmark-gfm,
+# with GFM's extended autolinks, which pulldown-cmark does not read.
+comrak = { version = "0.39", default-features = false }
 filetime = "0.2"
 serial_test = "3"
 rcgen = "0.13"

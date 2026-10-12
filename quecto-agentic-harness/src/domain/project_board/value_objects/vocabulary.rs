@@ -61,6 +61,11 @@ vocabulary!(
 );
 
 vocabulary!(
+    /// What a review round concluded of the change at its commit.
+    ReviewVerdict { Approved => "approved", ChangesRequested => "changes_requested" }
+);
+
+vocabulary!(
     /// Where one item of a run's board stands.
     ItemState { Todo => "todo", Doing => "doing", Review => "review", Done => "done", Blocked => "blocked" }
 );
@@ -79,6 +84,16 @@ vocabulary!(
     /// How a done or archived task was resolved (the host's words for a
     /// closed issue, and `superseded`).
     Resolution { Completed => "completed", NotPlanned => "not_planned", Duplicate => "duplicate", Superseded => "superseded" }
+);
+
+vocabulary!(
+    /// Where a discussion stands: open until someone closes it.
+    DiscussionState { Open => "open", Closed => "closed" }
+);
+
+vocabulary!(
+    /// What a full discussion has no more room for.
+    DiscussionLimit { Messages => "messages", Lines => "lines", Text => "text" }
 );
 
 vocabulary!(Severity { Low => "low", Medium => "medium", High => "high", Critical => "critical" });

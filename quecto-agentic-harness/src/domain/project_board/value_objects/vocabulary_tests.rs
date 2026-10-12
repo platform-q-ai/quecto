@@ -53,6 +53,14 @@ fn the_parts_vocabularies_are_spelt_exactly() {
         "completed not_planned duplicate superseded"
     );
     assert_eq!(
+        spelt(DiscussionState::ALL.iter().map(|w| w.as_str()).collect()),
+        "open closed"
+    );
+    assert_eq!(
+        spelt(DiscussionLimit::ALL.iter().map(|w| w.as_str()).collect()),
+        "messages lines text"
+    );
+    assert_eq!(
         (
             Effort::parse("xhigh"),
             Effort::parse("none"),

@@ -62,6 +62,8 @@ pub enum ErrorCode {
     ClockUnreadable,
     /// `task`.
     SetAside,
+    /// `path`, `object`.
+    SetAsideFile,
     /// `task`.
     UnknownReference,
     /// `task`, `by`.
@@ -104,6 +106,7 @@ impl ErrorCode {
             Self::Exists => "exists",
             Self::ClockUnreadable => "clock_unreadable",
             Self::SetAside => "set_aside",
+            Self::SetAsideFile => "set_aside_file",
             Self::UnknownReference => "unknown_reference",
             Self::ClosesCycle => "closes_cycle",
             Self::PrStateUnknown => "pr_state_unknown",
@@ -384,6 +387,17 @@ fn error_fields(error: &ProjectBoardError) -> (ErrorCode, Map<String, Value>) {
             (C::ClockUnreadable, fields([("read", shown_json(read))]))
         }
         E::Quarantined(id) => (C::SetAside, fields([("task", slug_json(id))])),
+        E::SetAsideFile { path, object } => {
+            assert!(
+                shown_path(path),
+                "a store shows every path it sets aside sanitised: {path:?}"
+            );
+            // Raw, as a listing shows it: a clear names the file exactly.
+            (
+                C::SetAsideFile,
+                fields([("path", json!(path)), ("object", json!(object))]),
+            )
+        }
         E::UnknownReference(id) => (C::UnknownReference, fields([("task", slug_json(id))])),
         E::ClosesCycle { id, by } => (
             C::ClosesCycle,
@@ -452,6 +466,7 @@ fn rule_json(rule: &BoardRuleError) -> Value {
         R::RunEnded(run) => json!({"code": "run_ended", "run": run}),
         R::PlanNotDraft(state) => json!({"code": "plan_not_draft", "state": state.as_str()}),
         R::NotThisTasks => json!({"code": "not_this_tasks"}),
+        R::NotThisChange => json!({"code": "not_this_change"}),
         R::TaskFinished(status) => json!({"code": "task_finished", "status": status.as_str()}),
         R::UnknownPlanVersion(version) => {
             json!({"code": "unknown_plan_version", "version": version})
@@ -475,6 +490,35 @@ fn rule_json(rule: &BoardRuleError) -> Value {
         R::NoSuchChange(change) => json!({"code": "no_such_change", "change": change}),
         R::ChangeAhead { change, updated } => json!({
             "code": "change_ahead",
+            "change": change,
+            "updated": updated.as_str(),
+        }),
+        R::DiscussionClosed(id) => json!({"code": "discussion_closed", "discussion": id.as_str()}),
+        R::DiscussionLinked { discussion, task } => json!({
+            "code": "discussion_linked",
+            "discussion": discussion.as_str(),
+            "task": task.as_str(),
+        }),
+        R::DiscussionAhead {
+            discussion,
+            updated,
+        } => json!({
+            "code": "discussion_ahead",
+            "discussion": discussion.as_str(),
+            "updated": updated.as_str(),
+        }),
+        R::MessageAhead { discussion, at } => json!({
+            "code": "message_ahead",
+            "discussion": discussion.as_str(),
+            "at": at.as_str(),
+        }),
+        R::DiscussionFull { discussion, limit } => json!({
+            "code": "discussion_full",
+            "discussion": discussion.as_str(),
+            "limit": limit.as_str(),
+        }),
+        R::ReviewAhead { change, updated } => json!({
+            "code": "review_ahead",
             "change": change,
             "updated": updated.as_str(),
         }),
