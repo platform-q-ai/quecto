@@ -1,11 +1,12 @@
 //! A run's file (`quecto-run`, epic #2481 M2c-1). Its title is derived,
 //! `Run {number} of {task}`. Its State is `running` while the run goes,
 //! else the outcome it folded back with; Ended and Cost tokens rows come
-//! only with the fold-back, as do its sections, each in item order:
+//! only with the fold-back, as do its sections, each in task item order:
 //!
-//! - Items `[Item | State]`, every item the run reports;
-//! - Owners `[Item | Owner]`, only the items that have one;
-//! - Evidence `[Item | Evidence]`, one row per line, grouped by item.
+//! - Task items `[Task item | State]`, every task item the run reports;
+//! - Owners `[Task item | Owner]`, only the task items that have one;
+//! - Evidence `[Task item | Evidence]`, one row per line, grouped by task
+//!   item.
 use super::cells::{self, column, refused};
 use super::{ArtifactCodec, CodecError};
 use crate::domain::project_board::entities::run::{Run, RunFields, RunItem};
@@ -21,7 +22,9 @@ const STATE: &str = "State";
 const STARTED: &str = "Started";
 const ENDED: &str = "Ended";
 const COST: &str = "Cost tokens";
-const ITEMS: &str = "Items";
+const ITEMS: &str = "Task items";
+/// The column naming a task item, in every table.
+const TASK_ITEM: &str = "Task item";
 const OWNERS: &str = "Owners";
 const EVIDENCE: &str = "Evidence";
 /// The State of a run that has not folded back.
@@ -41,21 +44,21 @@ const SECTIONS: &[SectionShape<'static>] = &[
     SectionShape {
         heading: ITEMS,
         body: BodyShape::Table(&[
-            column("Item", CellKind::Ascii),
+            column(TASK_ITEM, CellKind::Ascii),
             column(STATE, CellKind::Ascii),
         ]),
     },
     SectionShape {
         heading: OWNERS,
         body: BodyShape::Table(&[
-            column("Item", CellKind::Ascii),
+            column(TASK_ITEM, CellKind::Ascii),
             column("Owner", CellKind::Text),
         ]),
     },
     SectionShape {
         heading: EVIDENCE,
         body: BodyShape::Table(&[
-            column("Item", CellKind::Ascii),
+            column(TASK_ITEM, CellKind::Ascii),
             column(EVIDENCE, CellKind::Text),
         ]),
     },
@@ -176,7 +179,7 @@ impl ArtifactCodec for RunCodec {
                     }),
                     OWNERS => match &mut item(&mut items, OWNERS, id)?.owner {
                         owner @ None => *owner = Some(cell.clone()),
-                        Some(_) => return Err(refused(OWNERS, "one owner an item")),
+                        Some(_) => return Err(refused(OWNERS, "one owner a task item")),
                     },
                     EVIDENCE => item(&mut items, EVIDENCE, id)?.evidence.push(cell.clone()),
                     other => return Err(refused("Run", format!("a section {other:?}"))),
@@ -213,7 +216,7 @@ fn item<'a>(
     items
         .iter_mut()
         .find(|item| item.id == id)
-        .ok_or_else(|| refused(table, format!("{} is no item of the run", id.as_str())))
+        .ok_or_else(|| refused(table, format!("{} is no task item of the run", id.as_str())))
 }
 
 fn narrow(field: &'static str, number: u64) -> Result<u32, CodecError> {

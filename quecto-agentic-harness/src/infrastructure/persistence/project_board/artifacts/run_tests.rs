@@ -310,7 +310,7 @@ fn the_widest_run_fits() {
         );
     }
     let (bytes, lines, longest) = seen;
-    // The whole budget spent: 691,567 bytes.
+    // The whole budget spent: 691,587 bytes.
     assert!(
         (691_000..=RUN_LIMITS.file_bytes).contains(&bytes),
         "{bytes}"

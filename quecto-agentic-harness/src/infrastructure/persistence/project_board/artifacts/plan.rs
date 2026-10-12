@@ -2,10 +2,10 @@
 //! `Plan {version} of {task}`; its fields and tables hold the rest, every
 //! list in the plan's own order:
 //!
-//! - Items `[Item | Title]`, in item order;
-//! - Item dependencies `[Item | Depends on]`, one row per edge, in item
-//!   order then dependency order;
-//! - Criteria `[Item | Criterion]`, grouped in item order;
+//! - Task items `[Task item | Title]`, in task item order;
+//! - Task item dependencies `[Task item | Depends on]`, one row per edge,
+//!   in task item order then dependency order;
+//! - Criteria `[Task item | Criterion]`, grouped in task item order;
 //! - Roles `[Role | Model | Effort | Members | Turns]`, present exactly
 //!   when the plan names a team (Turns `-` for no limit). The team's
 //!   budget, deadline and image rows are taken only with Roles.
@@ -36,9 +36,11 @@ const IMAGE: &str = "Image";
 const CREATED: &str = "Created";
 const UPDATED: &str = "Updated";
 const APPROACH: &str = "Approach";
-const ITEMS: &str = "Items";
-const DEPENDENCIES: &str = "Item dependencies";
+const ITEMS: &str = "Task items";
+const DEPENDENCIES: &str = "Task item dependencies";
 const CRITERIA: &str = "Criteria";
+/// The column naming a task item, in every table that has one.
+const TASK_ITEM: &str = "Task item";
 const ROLES: &str = "Roles";
 
 const FIELDS: &[Column<'static>] = &[
@@ -57,15 +59,15 @@ const FIELDS: &[Column<'static>] = &[
 ];
 
 const ITEM_COLUMNS: &[Column<'static>] = &[
-    column("Item", CellKind::Ascii),
+    column(TASK_ITEM, CellKind::Ascii),
     column("Title", CellKind::Text),
 ];
 const DEPENDENCY_COLUMNS: &[Column<'static>] = &[
-    column("Item", CellKind::Ascii),
+    column(TASK_ITEM, CellKind::Ascii),
     column("Depends on", CellKind::Ascii),
 ];
 const CRITERION_COLUMNS: &[Column<'static>] = &[
-    column("Item", CellKind::Ascii),
+    column(TASK_ITEM, CellKind::Ascii),
     column("Criterion", CellKind::Text),
 ];
 const ROLE_COLUMNS: &[Column<'static>] = &[
@@ -353,7 +355,7 @@ impl Read {
                         false => {
                             return Err(refused(
                                 DEPENDENCIES,
-                                format!("{} is no item of the plan", on.as_str()),
+                                format!("{} is no task item of the plan", on.as_str()),
                             ));
                         }
                     }
@@ -382,7 +384,12 @@ impl Read {
         self.items
             .iter_mut()
             .find(|item| item.id == id)
-            .ok_or_else(|| refused(table, format!("{} is no item of the plan", id.as_str())))
+            .ok_or_else(|| {
+                refused(
+                    table,
+                    format!("{} is no task item of the plan", id.as_str()),
+                )
+            })
     }
 }
 

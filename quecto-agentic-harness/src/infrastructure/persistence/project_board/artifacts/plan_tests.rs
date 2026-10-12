@@ -428,9 +428,9 @@ fn the_widest_plan_fits_its_limits() {
     }
     let (bytes, lines, longest) = seen;
     // The whole budget spent on cells that write it twice: at least
-    // 1,077,131 bytes (a lower bound; no search proves it the domain's most).
+    // 1,077,156 bytes (a lower bound; no search proves it the domain's most).
     assert!(
-        (1_077_131..=PLAN_LIMITS.file_bytes).contains(&bytes),
+        (1_077_156..=PLAN_LIMITS.file_bytes).contains(&bytes),
         "{bytes}"
     );
     // Past the plan's first estimate of 53,000: a fence's blank lines.
