@@ -566,6 +566,15 @@ fn stored_head(transaction: &Transaction<'_>) -> rusqlite::Result<Option<String>
 #[cfg(test)]
 pub const ABORT_IN_FILL: &str = "QUECTO_BOARD_INDEX_ABORT_IN_FILL";
 
+/// Test-only: ends the process at once, as a crash does (no destructor
+/// runs, so the build is left half made). A child its test runs with
+/// `without_core_dumps` ends with `_exit(134)` (#2192's convention), so no
+/// core dump is written for the crash the test stages; otherwise it aborts.
+#[cfg(test)]
+fn end_as_a_crash() -> ! {
+    crate::infrastructure::test_support::no_core_dumps::fatal_end(std::process::abort)()
+}
+
 fn fill(
     transaction: &Transaction<'_>,
     head: &str,
@@ -579,7 +588,7 @@ fn fill(
         )?;
         #[cfg(test)]
         if std::env::var_os(ABORT_IN_FILL).is_some() {
-            std::process::abort();
+            end_as_a_crash();
         }
         for dependency in &row.depends_on {
             transaction.execute(

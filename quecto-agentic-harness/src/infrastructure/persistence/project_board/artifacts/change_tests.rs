@@ -5,11 +5,10 @@ use super::super::{CodecError, decode, encode};
 use super::*;
 use crate::domain::project_board::entities::claim::{Identity, MAX_EMAIL_BYTES, MAX_NAME_CHARS};
 use crate::domain::project_board::value_objects::code_ref::{
-    MAX_BRANCH_BYTES, MAX_REPO_PART_BYTES,
+    MAX_BRANCH_BYTES, MAX_OWNER_BYTES, MAX_REPO_PART_BYTES,
 };
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
-use crate::infrastructure::persistence::project_board::markdown::MarkdownError;
 
 const EXAMPLE: &str = "<!-- quecto-change schema=1 -->
 # Change 2 of board-cli
@@ -134,21 +133,13 @@ fn a_branch_with_a_pipe_round_trips() {
     }
 }
 
-/// A backtick no code span holds: refused when written, at its line.
+/// A backtick no code span holds: the domain refuses such a branch, so
+/// no change can carry one to the codec.
 #[test]
 fn a_branch_with_a_backtick_is_refused() {
-    let change = Change::new(ChangeFields {
-        branch: BranchName::parse("feat`x").unwrap(),
-        ..example()
-    })
-    .unwrap();
-    assert_eq!(
-        encode::<ChangeCodec>(&change),
-        Err(CodecError::Markdown(MarkdownError::Cell {
-            line: 9,
-            why: "code of printable ASCII but a backtick"
-        }))
-    );
+    let refused = BranchName::parse("feat`x").unwrap_err();
+    assert_eq!(refused.field, "branch");
+    assert!(refused.problem.contains("backtick"), "{}", refused.problem);
 }
 
 /// GitHub names repositories without regard to case; the file keeps the
@@ -170,7 +161,7 @@ fn a_mixed_case_repository_keeps_its_case() {
 #[test]
 fn a_repo_and_branch_with_underscores_round_trip() {
     for (repo, branch) in [
-        ("_org_/__init__", "_x_/__y__"),
+        ("my_org/__init__", "_x_/__y__"),
         ("org/www.site", "www.example/a@b"),
         ("my_org/my_repo", "feat/a<b>#1"),
     ] {
@@ -193,11 +184,12 @@ fn the_widest_change_fits() {
         // An email's `|` is written `\|`: the most bytes an email can take.
         &format!("{}@b", "|".repeat(MAX_EMAIL_BYTES - 2)),
     );
-    let part = "a".repeat(MAX_REPO_PART_BYTES);
+    // GitHub's longest owner (39 bytes) and name (100).
+    let (owner, name) = ("o".repeat(MAX_OWNER_BYTES), "n".repeat(MAX_REPO_PART_BYTES));
     let widest = ChangeFields {
         task: Slug::parse(&"a".repeat(64)).unwrap(),
         number: 999,
-        head_repo: RepoName::parse(&format!("{part}/{part}")).unwrap(),
+        head_repo: RepoName::parse(&format!("{owner}/{name}")).unwrap(),
         // Every `|` written `\|`: the most bytes a branch can take.
         branch: BranchName::parse(&"|".repeat(MAX_BRANCH_BYTES)).unwrap(),
         pr: Some(u64::MAX),
@@ -223,8 +215,9 @@ fn the_widest_change_fits() {
             "{longest}"
         );
     }
-    // The unlinked one, its branch of `|`: 2,990 bytes.
-    assert!(most >= 2_990, "{most}");
+    // The unlinked one, its branch of `|` and GitHub's longest owner: 2,929
+    // bytes.
+    assert!(most >= 2_929, "{most}");
 }
 
 /// A file that spells a mixed-case repository in lower case reads back as

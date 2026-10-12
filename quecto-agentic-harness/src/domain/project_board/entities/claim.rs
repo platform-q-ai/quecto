@@ -8,6 +8,11 @@ use std::sync::LazyLock;
 pub const CLAIM_TTL_SECONDS: u64 = 2 * 60 * 60;
 pub const MAX_NAME_CHARS: usize = 100;
 pub const MAX_EMAIL_BYTES: usize = 254;
+/// The punctuation an email may hold besides letters and digits: every
+/// printable ASCII one but `<>` (git's delimiter around it) and a
+/// backtick, which would end the code span a board file shows it in (a
+/// `|` is written `\|` there, and it and `\` are shown as they are).
+const EMAIL_PUNCTUATION: &[u8] = b"!\"#$%&'()*+,-./:;=?@[\\]^_{|}~";
 
 /// Who holds the task, from when, until when.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -74,13 +79,14 @@ impl Identity {
         let shaped = self.email.split_once('@').is_some_and(|(local, domain)| {
             !local.is_empty() && !domain.is_empty() && !domain.contains('@')
         });
-        let allowed = |b: u8| b.is_ascii_graphic() && !matches!(b, b'<' | b'>');
+        let allowed = |b: u8| b.is_ascii_alphanumeric() || EMAIL_PUNCTUATION.contains(&b);
         if shaped && self.email.len() <= MAX_EMAIL_BYTES && self.email.bytes().all(allowed) {
             Ok(())
         } else {
             Err(SchemaError::new(
                 format!("{field}/email"),
-                "must be local@domain in printable ASCII",
+                "must be local@domain of ASCII letters, digits and punctuation \
+                 but <, > and a backtick",
             ))
         }
     }
