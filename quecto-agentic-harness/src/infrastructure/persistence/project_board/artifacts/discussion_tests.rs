@@ -207,10 +207,11 @@ fn discussion(
     }
 }
 
-/// The widest discussion: every message, the whole text budget spent on
-/// `|` (written `\|`), its title, starter and authors all `|` too. The row
-/// overhead and reserve the domain counts are what the codec writes, byte
-/// for byte, and the file fits its cap.
+/// A discussion at the domain's whole budget: every message, the whole
+/// text budget spent on `|` (written `\|`), its title, starter and authors
+/// all `|` too. One example at the budget, not the largest file the domain
+/// admits. The row overhead and reserve the domain counts are what the
+/// codec writes, byte for byte, and the file fits its cap.
 #[test]
 fn the_widest_discussion_fits_byte_for_byte() {
     let who = Identity {
@@ -248,12 +249,16 @@ fn the_widest_discussion_fits_byte_for_byte() {
     assert!(file.lines().map(str::len).max().unwrap() <= DISCUSSION_LIMITS.line_bytes);
 }
 
-/// The most rows: 16,000 lines over every message, 3- and 4-digit message
-/// numbers, each row as short as a row is. The same identity holds: each
-/// row is its line, its author and the domain's 43 bytes.
+/// The most rows: 16,000 lines over every message (numbered 1 to 1024,
+/// 1 to 4 digits), each a one-byte line by the shortest author, `A`
+/// (`a@b`). The same identity holds: each row is its line, its author and
+/// the domain's 43 bytes.
 #[test]
 fn sixteen_thousand_short_rows_fit_byte_for_byte() {
-    let who = person("A");
+    let who = Identity {
+        name: "A".into(),
+        email: "a@b".into(),
+    };
     let lines = |index: usize| {
         let base = MAX_DISCUSSION_LINES / MAX_MESSAGES;
         base + usize::from(index < MAX_DISCUSSION_LINES % MAX_MESSAGES)
@@ -270,7 +275,7 @@ fn sixteen_thousand_short_rows_fit_byte_for_byte() {
     assert_eq!(rows, MAX_DISCUSSION_LINES);
     assert_eq!(
         (file.len(), file.lines().count(), reserve),
-        (911_054, 16_015, 392)
+        (751_044, 16_015, 392)
     );
     assert!(reserve <= FILE_RESERVE_BYTES);
     assert!(file.lines().count() <= DISCUSSION_LIMITS.lines);
@@ -281,27 +286,36 @@ fn sixteen_thousand_short_rows_fit_byte_for_byte() {
         .unwrap();
     assert_eq!(
         row.len() + 1,
-        ROW_OVERHEAD_BYTES + "x".len() + "A".len() + "a@example.com".len()
+        ROW_OVERHEAD_BYTES + "x".len() + "A".len() + "a@b".len()
     );
 }
 
 /// The longest line: a message line of 4-byte letters at its longest, by
-/// the widest author.
+/// the widest author (a name of 4-byte letters, an email of `|` written
+/// `\|`), in the last message, numbered 1024.
 #[test]
 fn the_longest_row_fits_its_line_cap() {
     let who = Identity {
-        name: "|".repeat(100),
+        name: "\u{1d538}".repeat(100),
         email: format!("{}@{}", "|".repeat(126), "|".repeat(127)),
     };
     let longest = discussion(
-        1,
+        MAX_MESSAGES,
         |_| 1,
-        |_, _| "\u{1d538}".repeat(MAX_MESSAGE_LINE_CHARS),
+        |index, _| match index == MAX_MESSAGES - 1 {
+            true => "\u{1d538}".repeat(MAX_MESSAGE_LINE_CHARS),
+            false => "x".into(),
+        },
         &who,
         "T".into(),
     );
     let file = round_trips(longest);
     let line = file.lines().map(str::len).max().unwrap();
-    assert_eq!(line, 4_746);
+    assert!(
+        file.lines()
+            .any(|row| row.len() == line && row.starts_with("| 1024 | ")),
+        "the longest row is message 1024's"
+    );
+    assert_eq!(line, 4_949);
     assert!(line <= DISCUSSION_LIMITS.line_bytes);
 }

@@ -98,6 +98,15 @@ impl ArtifactCodec for DiscussionCodec {
                 ]);
             }
         }
+        debug_assert_eq!(
+            rows.len(),
+            discussion
+                .messages
+                .iter()
+                .map(Message::lines)
+                .sum::<usize>(),
+            "a row per line of every message"
+        );
         Ok(Document {
             schema: Self::SCHEMA,
             title: discussion.title.clone(),
@@ -178,6 +187,7 @@ fn next_line(
                 at,
                 text: line.to_string(),
             });
+            debug_assert_eq!(messages.len() as u64, number, "messages numbered from 1");
             Ok(())
         }
         _ => Err(refused(
