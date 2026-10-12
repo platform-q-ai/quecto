@@ -144,6 +144,9 @@ fn every_hostile_file_is_refused_with_its_reason() {
         ("a scheme split across code and a link", edited(first, "see `https:/`[/bank.example/login](https://evil.example)"), |e| matches!(e, E::Link { line: 11 })),
         ("a scheme split across a link's end", edited(first, "[https:](https://evil.example)//bank.example"), |e| matches!(e, E::Link { line: 11 })),
         ("a www address split across a link and code", edited(first, "[www](https://evil.example)`.bank.example`"), |e| matches!(e, E::Link { line: 11 })),
+        ("a www address with a mark inside, in a link", edited(first, "see [www\u{332}.bank.example](https://evil.example)"), |e| matches!(e, E::Link { line: 11 })),
+        ("a www address with a mark inside, across a link", edited(first, "see ww[w](https://evil.example)\u{332}.bank.example"), |e| matches!(e, E::Link { line: 11 })),
+        ("an email with a mark inside, in a link", edited(first, "see [ada\u{332}@bank.example](https://evil.example)"), |e| matches!(e, E::Link { line: 11 })),
         ("a table's header renamed", edited("| Item | State |", "| Item | Status |"), |e| matches!(e, E::Structure { line: 28, .. })),
     ];
     for (name, bytes, named) in cases {
