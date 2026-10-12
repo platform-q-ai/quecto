@@ -231,7 +231,7 @@ impl RepoName {
                 format!(
                     "{text:?} is not GitHub's owner/name: an owner of letters, digits and \
                      hyphens, not starting with one, then at most one _shortcode of 1 to \
-                     {MAX_SHORTCODE_BYTES}, {MAX_OWNER_BYTES} in all; a name of letters, digits, \
+                     {MAX_SHORTCODE_BYTES} letters or digits, {MAX_OWNER_BYTES} in all; a name of letters, digits, \
                      ., _ and -, not starting with -, nor . or .."
                 ),
             )),
