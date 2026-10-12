@@ -297,9 +297,14 @@ fn a_task_holds_no_review_findings() {
         matches!(&refused, Err(RecordError::Malformed(why)) if why.contains("reviews")),
         "{refused:?}"
     );
-    let task = decode(FULL.as_bytes()).unwrap();
-    let written = String::from_utf8(encode(&task).unwrap()).unwrap();
-    assert!(!written.contains("reviews"), "{written}");
+    // Not read as "not set", as an empty list of a key the task has is:
+    // the key is not the task's at all.
+    let empty = PARTS.replace("  \"created\"", "  \"reviews\": [],\n  \"created\"");
+    let refused = decode(empty.as_bytes());
+    assert!(
+        matches!(&refused, Err(RecordError::Malformed(why)) if why.contains("reviews")),
+        "{refused:?}"
+    );
 }
 
 /// Where a task came from and how it ended arrived in schema 3: an older

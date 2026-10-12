@@ -1,9 +1,12 @@
 use super::*;
 use crate::domain::project_board::entities::claim::{MAX_EMAIL_BYTES, MAX_NAME_CHARS};
-use crate::domain::project_board::entities::task::{MAX_DESCRIPTION_CHARS, MAX_TITLE_CHARS};
+use crate::domain::project_board::entities::task::{
+    MAX_DESCRIPTION_CHARS, MAX_TEXT_BYTES, MAX_TITLE_CHARS,
+};
 use crate::domain::project_board::services::fixtures_tests::{
     at, change, commit, far_future, last_written, person, task, without_claim, without_prs,
 };
+use crate::domain::project_board::value_objects::reference::{MAX_REFERENCE_BYTES, Reference};
 use crate::domain::project_board::value_objects::slug::Slug;
 
 const ALL: [TaskStatus; 8] = [
@@ -356,13 +359,23 @@ fn the_same_committer_under_another_name_moves_the_task_and_keeps_the_claim() {
 }
 
 #[test]
-fn a_ready_task_of_the_widest_text_is_claimed_by_a_holder_at_its_widest() {
+fn a_ready_task_at_its_text_budget_is_claimed_by_a_holder_at_its_widest() {
     let mut fields = task(Ready).into_fields();
     // The title and description at their limits in four-byte characters,
-    // the task's widest text.
+    // and references for the rest of the budget, to the byte: a holder
+    // counted as text would take the task over it.
     fields.title = "\u{1d11e}".repeat(MAX_TITLE_CHARS);
     fields.description = "\u{1d11e}".repeat(MAX_DESCRIPTION_CHARS);
-    let full = Task::new(fields).expect("the widest text");
+    let mut left = MAX_TEXT_BYTES - fields.text_bytes();
+    while left > 0 {
+        let head = format!("https://example.com/{}/", fields.references.len());
+        let len = left.min(MAX_REFERENCE_BYTES);
+        let text = format!("{head}{}", "a".repeat(len - head.len()));
+        fields.references.push(Reference::parse(&text).unwrap());
+        left -= len;
+    }
+    assert_eq!(fields.text_bytes(), MAX_TEXT_BYTES);
+    let full = Task::new(fields).expect("exactly the text budget");
     let widest = Identity {
         name: "\u{1d11e}".repeat(MAX_NAME_CHARS),
         email: format!("{}@x.io", "a".repeat(MAX_EMAIL_BYTES - 5)),

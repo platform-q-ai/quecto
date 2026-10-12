@@ -122,11 +122,18 @@ fn a_task_of_the_widest_text_in_quotes_is_written_and_read_back() {
     assert_eq!(decode(&bytes), Ok(task));
 }
 
+/// A task at its text budget (four-byte title and description, then
+/// references to the byte) takes a holder at its widest: a holder is not
+/// text, so counting it would refuse this task.
 #[test]
-fn a_task_of_the_widest_text_takes_a_holder_at_its_widest() {
+fn a_task_at_its_text_budget_takes_a_holder_at_its_widest() {
     let mut fields = widest_structure();
     fields.claim.as_mut().unwrap().holder = person();
-    fill_text(&mut fields);
+    fields.references = vec![];
+    fields.title = "\u{1d11e}".repeat(MAX_TITLE_CHARS);
+    fields.description = "\u{1d11e}".repeat(MAX_DESCRIPTION_CHARS);
+    fields.references = references_of(MAX_TEXT_BYTES - fields.text_bytes());
+    assert_eq!(fields.text_bytes(), MAX_TEXT_BYTES);
     fields.claim.as_mut().unwrap().holder = widest_holder();
     let task = Task::new(fields).expect("a holder is not text");
     let bytes = encode(&task).expect("a valid task is always written");
