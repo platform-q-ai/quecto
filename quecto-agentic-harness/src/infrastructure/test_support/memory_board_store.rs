@@ -85,7 +85,7 @@ impl MemoryBoardStore {
         self.lock().refusal = Some(reason.into());
     }
 
-    /// Sets the file `tasks/<id>.json` aside, as a store that found it
+    /// Sets the file `tasks/<id>.md` aside, as a store that found it
     /// unreadable does: its task is no longer read. Spoiling the file is a
     /// change to the board, so the head moves, as a commit moves the git
     /// store's.
@@ -99,7 +99,7 @@ impl MemoryBoardStore {
             .expect("a bootstrapped board to quarantine a file of");
         board.head = Some(revision + 1);
         let id = Slug::parse(id).ok();
-        let path = format!("tasks/{}.json", id.as_ref().map_or("?", Slug::as_str));
+        let path = format!("tasks/{}.md", id.as_ref().map_or("?", Slug::as_str));
         let key = id.map(ArtifactKey::Task);
         if let Some(key) = &key {
             board.artifacts.remove(key);

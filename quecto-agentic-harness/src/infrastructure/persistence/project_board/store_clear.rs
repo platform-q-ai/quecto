@@ -196,7 +196,6 @@ fn resolve(
             // A read reads it, as a task, only when its name spells an id.
             if let (Some(size), true) = (copy.read_size(), spells_id(name)) {
                 after.read_bytes.insert(name.to_string(), size);
-                after.pending_summaries += 1;
             }
             Ok(())
         }

@@ -26,8 +26,9 @@
 //! (`.git/quecto`, which the swarm store shares) could still swap the whole
 //! directory between the check and SQLite's open. The window stays open:
 //! SQLite resolves links itself, so it cannot be handed the checked file.
+use super::artifacts::ArtifactCodec;
+use super::artifacts::task::{TASK_LIMITS, TaskCodec};
 use super::index::IndexError;
-use super::task_record::{MAX_TASK_FILE_BYTES, SCHEMA_VERSION};
 use rusqlite::limits::Limit;
 use rusqlite::{Connection, ErrorCode, OpenFlags, Transaction};
 use std::fs::{DirBuilder, File, OpenOptions};
@@ -47,7 +48,14 @@ const LOCK_POLL: Duration = Duration::from_millis(10);
 const SIDE_FILES: [&str; 3] = ["-wal", "-shm", "-journal"];
 /// The longest value a reader takes: a task record at its cap, with room
 /// to spare.
-pub const MAX_VALUE_BYTES: usize = MAX_TASK_FILE_BYTES + 64 * 1024;
+pub const MAX_VALUE_BYTES: usize = TASK_LIMITS.file_bytes + 64 * 1024;
+
+/// What the records are: the task codec's markdown at its schema (#2481
+/// S8). An index of other records (the task JSON of schema `3` before) is
+/// rebuilt, never read.
+fn record_schema() -> String {
+    format!("task={}", TaskCodec::SCHEMA)
+}
 /// A build file older than this was left by a process that died mid-build.
 const ABANDONED_AFTER: Duration = Duration::from_secs(10 * 60);
 const BUILD_SUFFIX: &str = ".build";
@@ -295,7 +303,7 @@ pub(super) fn is_current(transaction: &Transaction<'_>) -> rusqlite::Result<bool
         .query_map([], |row| row.get(0))?
         .next()
         .transpose()?;
-    Ok(record == Some(SCHEMA_VERSION.to_string()))
+    Ok(record == Some(record_schema()))
 }
 
 /// A new index being written beside the old one; removed unless
@@ -367,7 +375,7 @@ pub(super) fn build(
         transaction.pragma_update(None, "user_version", INDEX_SCHEMA)?;
         transaction.execute(
             "INSERT INTO meta (key, value) VALUES ('record_schema', ?1)",
-            [SCHEMA_VERSION.to_string()],
+            [record_schema()],
         )?;
         fill(&transaction)?;
         transaction.commit()

@@ -50,7 +50,7 @@ fn written(write: Result<BoardWrite, BoardStoreError>) -> BoardHead {
 }
 
 /// A board's tasks as a set: the store's own order is not part of the
-/// contract (git trees sort `a-b.json` before `a.json`).
+/// contract (git trees sort `a-b.md` before `a.md`).
 fn tasks(store: &dyn ProjectBoardStore) -> BTreeMap<String, Task> {
     let board = store.read().unwrap();
     board
@@ -178,7 +178,7 @@ pub fn check_refused((alice, bob): Clients, refuse: impl FnOnce()) {
     );
 }
 
-/// A task file the store cannot read (`spoil` breaks `tasks/b.json`, as
+/// A task file the store cannot read (`spoil` breaks `tasks/b.md`, as
 /// a commit to the board does) is set aside under its id, never read as a
 /// task, and never written over. Spoiling the file moves the head, so a
 /// write from the head before it is lost.
@@ -210,7 +210,7 @@ pub fn check_quarantine((alice, bob): Clients, spoil: impl FnOnce()) {
     assert_eq!(alice.read().unwrap().head, board.head);
 }
 
-/// A file set aside (`spoil` breaks `tasks/b.json`) is cleared in one
+/// A file set aside (`spoil` breaks `tasks/b.md`) is cleared in one
 /// change, only from the head that holds it: its id is free again, and the
 /// rest of the board stands. A path that is not set aside, or a copy to
 /// keep for a name listed once, is refused.
@@ -236,11 +236,11 @@ pub fn check_clear_set_aside((alice, bob): Clients, spoil: impl FnOnce()) {
         board.quarantined[0].path.clone(),
         board.quarantined[0].object.clone(),
     );
-    assert_eq!(path, "tasks/b.json");
+    assert_eq!(path, "tasks/b.md");
     let zeros = "0".repeat(object.len());
     let seen = BTreeSet::from([object.clone()]);
     for clear in [
-        clearing("tasks/a.json", &object, &[]),
+        clearing("tasks/a.md", &object, &[]),
         clearing(&path, &zeros, &[]),
         clearing(
             &path,

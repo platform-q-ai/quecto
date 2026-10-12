@@ -1,7 +1,7 @@
 //! The bounds a read takes, kept by every write: task-file bytes and tree
 //! bytes.
 use super::*;
-use crate::infrastructure::persistence::project_board::task_record::MAX_TASK_FILE_BYTES;
+use crate::infrastructure::persistence::project_board::board_tree::MAX_TASK_FILE_BYTES;
 
 /// A write that would hold more task-file bytes than a read takes is
 /// refused before anything is built, so no valid write leaves a board no
@@ -49,12 +49,12 @@ fn only_task_files_a_read_reads_count_toward_the_read_bound() {
     let edited = hand_edit(
         &remote,
         &[
-            ("big.json", format!("100644 blob {}", blob(&oversize))),
+            ("big.md", format!("100644 blob {}", blob(&oversize))),
             (
-                "exec.json",
+                "exec.md",
                 format!("100755 blob {}", blob(&encode(&task("exec")).unwrap())),
             ),
-            ("broken.json", format!("100644 blob {}", blob(b"{"))),
+            ("broken.md", format!("100644 blob {}", blob(b"{"))),
         ],
     );
     let size = |id: &str| encode(&task(id)).unwrap().len();
@@ -83,7 +83,12 @@ fn a_write_past_the_tree_bound_is_invalid_and_one_at_it_is_written() {
     let repos = Repos::new();
     let alice = store(&repos.alice);
     let head = created(&alice);
-    let one = written(alice.write_tasks(&head, &[task("a")], "board: add a"));
+    // Tasks enough that `tasks/` is the larger of the board's two trees.
+    let one = written(alice.write_tasks(
+        &head,
+        &[task("a"), task("b"), task("c")],
+        "board: add a, b, c",
+    ));
     // The larger of the board's two trees, its root and `tasks/`.
     let size = [format!("{}^{{tree}}", one.0), format!("{}:tasks", one.0)]
         .iter()
@@ -97,7 +102,7 @@ fn a_write_past_the_tree_bound_is_invalid_and_one_at_it_is_written() {
     let mut bob = store(&repos.bob);
     bob.limits.tree_bytes = size;
     let again = written(bob.write_tasks(&one, &[task("a")], "board: write a again"));
-    let refused = bob.write_tasks(&again, &[task("b")], "board: add b");
+    let refused = bob.write_tasks(&again, &[task("d")], "board: add d");
     assert!(
         matches!(&refused, Err(BoardStoreError::InvalidWrite(why)) if why.contains("tree")),
         "{refused:?}"

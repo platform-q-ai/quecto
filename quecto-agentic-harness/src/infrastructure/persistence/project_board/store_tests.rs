@@ -118,7 +118,7 @@ fn task(id: &str) -> Task {
         id: Slug::parse(id).unwrap(),
         title: format!("Task {id}"),
         kind: TaskKind::Task,
-        description: "Do it.\n".into(),
+        description: "Do it.".into(),
         status: TaskStatus::Ready,
         parent: None,
         depends_on: vec![],
@@ -172,6 +172,13 @@ fn hand_edit(remote: &Path, extra: &[(&str, String)]) -> BoardHead {
 /// Where the board keeps task `id`.
 fn task_path(id: &str) -> String {
     format!("tasks/{id}.md")
+}
+
+/// The file the store writes for `task`: its canonical markdown.
+fn encode(
+    task: &Task,
+) -> Result<Vec<u8>, crate::infrastructure::persistence::project_board::artifacts::CodecError> {
+    super::encode::<TaskCodec>(task).map(String::into_bytes)
 }
 
 fn ids(snapshot: &BoardSnapshot) -> Vec<&str> {
@@ -509,22 +516,20 @@ exec git-upload-pack \"$@\"\n",
 }
 
 #[test]
-fn every_write_regenerates_the_summaries_and_readme_and_drops_strays() {
+fn every_write_regenerates_the_readme_and_drops_strays() {
     let repos = Repos::new();
     let alice = store(&repos.alice);
     let head = created(&alice);
     written(alice.write_tasks(&head, &[task("good")], "board: add good"));
     let remote = repos.remote();
-    // As long as the right summary, so only its bytes tell them apart.
-    let mut hostile = b"<img src=https://track.example/x>".to_vec();
-    hostile.resize(summary(&task("good")).len(), b' ');
-    let hostile = sh_with(&remote, &["hash-object", "-w", "--stdin"], &hostile);
-    let head = sh(&remote, &["rev-parse", BOARD_REF]);
-    let tasks = sh(&remote, &["ls-tree", &format!("{head}:tasks")]).replace(
-        &sh(&remote, &["rev-parse", &format!("{head}:tasks/good.md")]),
-        &hostile,
+    let hostile = sh_with(
+        &remote,
+        &["hash-object", "-w", "--stdin"],
+        b"<img src=https://track.example/x>",
     );
-    let tasks = format!("{tasks}\n100644 blob {hostile}\torphan.md\n");
+    let head = sh(&remote, &["rev-parse", BOARD_REF]);
+    let tasks = sh(&remote, &["ls-tree", &format!("{head}:tasks")]);
+    let tasks = format!("{tasks}\n100644 blob {hostile}\tnotes.txt\n");
     let tasks = sh_with(&remote, &["mktree"], tasks.as_bytes());
     let root = format!("100644 blob {hostile}\tREADME.md\n040000 tree {tasks}\ttasks\n");
     let root = sh_with(&remote, &["mktree"], root.as_bytes());
@@ -545,20 +550,20 @@ fn every_write_regenerates_the_summaries_and_readme_and_drops_strays() {
             &["cat-file", "blob", &format!("{}:{path}", moved.0)],
         )
     };
-    assert_eq!(file("tasks/good.md"), summary(&task("good")).trim_end());
+    assert_eq!(
+        file(&task_path("good")) + "\n",
+        String::from_utf8(encode(&task("good")).unwrap()).unwrap()
+    );
     assert_eq!(file("README.md") + "\n", String::from_utf8_lossy(README));
     let names = sh(
         &remote,
         &["ls-tree", "--name-only", &format!("{}:tasks", moved.0)],
     );
-    assert_eq!(
-        names.lines().collect::<Vec<_>>(),
-        ["good.json", "good.md", "other.json", "other.md"]
-    );
+    assert_eq!(names.lines().collect::<Vec<_>>(), ["good.md", "other.md"]);
 }
 
 #[test]
-fn tasks_and_their_summaries_are_written_in_one_commit_and_read_back() {
+fn tasks_are_written_in_one_commit_and_read_back() {
     let repos = Repos::new();
     let alice = store(&repos.alice);
     let head = created(&alice);
@@ -573,10 +578,9 @@ fn tasks_and_their_summaries_are_written_in_one_commit_and_read_back() {
         )
     };
     assert_eq!(
-        file("tasks/a.json") + "\n",
+        file(&task_path("a")) + "\n",
         String::from_utf8(encode(&task("a")).unwrap()).unwrap()
     );
-    assert_eq!(file("tasks/a.md"), summary(&task("a")).trim_end());
     let log = sh(
         &repos.remote(),
         &["log", "--format=%an <%ae>|%cn|%P|%s", BOARD_REF],

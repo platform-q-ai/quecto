@@ -7,11 +7,13 @@
 //! the remote branch only by a compare-and-swap push.
 //!
 //! The branch is anyone's to push, so [`board_tree`](super::board_tree)
-//! reads it as hostile. A write regenerates every summary and the README
-//! from what it writes, and carries forward every task file: the tasks it
-//! read, and every task file set aside, as it is and with its own mode
-//! (one of a newer schema, say), so no write loses one. A task file named
-//! twice in one tree refuses every write instead.
+//! reads it as hostile. Each task is its canonical markdown file,
+//! `tasks/<id>.md` (the task codec's). A write regenerates the README,
+//! writes the tasks it is given, and carries forward every other task file
+//! by its object: the tasks it read, and every task file set aside, as it
+//! is and with its own mode (one of a newer schema, or the JSON form older
+//! quecto wrote, say), so no write loses one. A task file named twice in
+//! one tree refuses every write instead.
 //!
 //! The board is fetched from the remote's URL and pushed to its push URL;
 //! a remote whose `pushurl` names another repository than its `url` is
@@ -21,14 +23,14 @@
 //! (`--no-filter`), and what a clone still misses (a board commit it
 //! fetched with a filter before) is fetched in one call per tree level,
 //! never one object at a time.
+use super::artifacts::task::TaskCodec;
+use super::artifacts::{decode, encode};
 use super::board_tree::{
-    Board, LIMITS, Limits, MAX_SUMMARY_BYTES, MAX_TASK_ENTRIES, REGULAR_FILE, TREE, Unread,
-    contents, object_id, read_board, told, unavailable, within,
+    Board, LIMITS, Limits, MAX_TASK_ENTRIES, REGULAR_FILE, TREE, Unread, object_id, read_board,
+    task_file, told, unavailable, within,
 };
 use super::git::{Git, GitError, SHORT_OUTPUT, failed, quoted};
 use super::push_report::{PushReport, RefStatus, Rejection, ref_status, remote_rejection};
-use super::summary::summary;
-use super::task_record::{decode, encode};
 use crate::application::project_board::ports::{
     BoardArtifact, BoardBootstrap, BoardHead, BoardSnapshot, BoardStoreError, BoardWrite,
     ProjectBoardStore, SetAsideClear,
@@ -40,7 +42,7 @@ use crate::domain::project_board::value_objects::slug::Slug;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
-pub use super::board_tree::{MAX_TASK_ENTRIES as MAX_ENTRIES, MAX_TASKS};
+pub use super::board_tree::MAX_TASK_ENTRIES as MAX_ENTRIES;
 
 pub const BOARD_REF: &str = "refs/heads/quecto/board";
 /// Fetches of what a partial clone misses, one per tree level: the root,
@@ -48,7 +50,7 @@ pub const BOARD_REF: &str = "refs/heads/quecto/board";
 const FETCH_ROUNDS: usize = 3;
 /// The most a listing of a repository's branches takes.
 const MAX_REF_LISTING: usize = 16 * 1024 * 1024;
-const README: &[u8] = b"# quecto board\n\nThis branch holds the project's board: one `tasks/<id>.json` per task, with a\nread-only `tasks/<id>.md` summary beside it. It is written only by quecto's\nboard operations; do not edit, merge or rebase it by hand. If a hand edit breaks it,\nmove `quecto/board` back to the commit before that edit.\n";
+const README: &[u8] = b"# quecto board\n\nThis branch holds the project's board: one `tasks/<id>.md` per task. It is\nwritten only by quecto's board operations; do not edit, merge or rebase it by hand.\nIf a hand edit breaks it, move `quecto/board` back to the commit before that edit.\n";
 
 pub struct GitBoardStore {
     git: Git,
@@ -462,10 +464,9 @@ impl GitBoardStore {
         )
     }
 
-    /// The `tasks/` tree of `board` with `written` in place: every task's
-    /// file and a summary regenerated from it (an unchanged summary keeps
-    /// its object), and the task files set aside carried forward as they
-    /// are.
+    /// The `tasks/` tree of `board` with `written` in place: each task
+    /// written as its file, every other task carried by its object, and
+    /// the task files set aside carried forward as they are.
     fn tasks_tree(
         &self,
         board: &Board,
@@ -474,56 +475,19 @@ impl GitBoardStore {
         let mut files: BTreeMap<String, String> = board.kept.clone();
         let written_ids: BTreeSet<&Slug> =
             written.iter().map(|(task, _)| &task.fields().id).collect();
-        let carried: Vec<_> = board
-            .tasks
-            .iter()
-            .filter(|(id, _)| !written_ids.contains(id))
-            .collect();
-        // Summaries of carried tasks that may already be right, read back in
-        // one call and compared.
-        let expected: BTreeMap<&Slug, String> = carried
-            .iter()
-            .map(|(id, held)| (*id, summary(&held.task)))
-            .collect();
-        let candidates: Vec<(&str, usize)> = carried
-            .iter()
-            .filter_map(|(id, held)| {
-                let (oid, size) = held.summary.as_ref()?;
-                (*size <= MAX_SUMMARY_BYTES && *size == expected[id].len())
-                    .then_some((oid.as_str(), *size))
-            })
-            .collect();
-        let existing = contents(&self.git, &candidates)?;
-        for (id, held) in &carried {
-            let text = &expected[id];
-            let same = held
-                .summary
-                .as_ref()
-                .and_then(|(oid, _)| existing.get(oid).map(|bytes| (oid, bytes)))
-                .filter(|(_, bytes)| bytes.as_slice() == text.as_bytes());
-            let summary_oid = match same {
-                Some((oid, _)) => oid.clone(),
-                None => self.blob(text.as_bytes())?,
-            };
-            let id = id.as_str();
-            debug_assert!(!board.kept.contains_key(&format!("{id}.json")));
-            files.insert(
-                format!("{id}.json"),
-                format!("{REGULAR_FILE} blob {}", held.json),
-            );
-            files.insert(
-                format!("{id}.md"),
-                format!("{REGULAR_FILE} blob {summary_oid}"),
-            );
+        for (id, held) in &board.tasks {
+            if written_ids.contains(id) {
+                continue;
+            }
+            let name = task_file(id);
+            debug_assert!(!board.kept.contains_key(&name), "a task read is never kept");
+            files.insert(name, format!("{REGULAR_FILE} blob {}", held.object));
         }
         for (task, bytes) in written {
-            let id = task.fields().id.as_str();
-            let json = self.blob(bytes)?;
-            let summary_oid = self.blob(summary(task).as_bytes())?;
-            files.insert(format!("{id}.json"), format!("{REGULAR_FILE} blob {json}"));
+            let object = self.blob(bytes)?;
             files.insert(
-                format!("{id}.md"),
-                format!("{REGULAR_FILE} blob {summary_oid}"),
+                task_file(&task.fields().id),
+                format!("{REGULAR_FILE} blob {object}"),
             );
         }
         assert!(
@@ -630,7 +594,9 @@ impl ProjectBoardStore for GitBoardStore {
         .asserted())
     }
 
-    /// Writes the tasks and summaries on `expected` in one commit, pushed only if it stands.
+    /// Writes `tasks`, each as its canonical markdown file, on top of
+    /// `expected` in one commit and pushes it only if the board is still
+    /// there.
     fn write(
         &self,
         expected: &BoardHead,
@@ -674,8 +640,10 @@ impl ProjectBoardStore for GitBoardStore {
             .iter()
             .map(|task| {
                 let id = task.fields().id.as_str();
-                let bytes = encode(task).map_err(|error| invalid(format!("task {id}: {error}")))?;
-                match decode(&bytes).ok().as_ref() == Some(task) {
+                let file = encode::<TaskCodec>(task)
+                    .map_err(|error| invalid(format!("task {id}: {error}")))?;
+                let bytes = file.into_bytes();
+                match decode::<TaskCodec>(&bytes).ok().as_ref() == Some(task) {
                     true => Ok((task, bytes)),
                     false => Err(invalid(format!("task {id} does not read back as written"))),
                 }

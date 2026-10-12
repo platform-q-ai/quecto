@@ -70,21 +70,21 @@ fn board_of(entries: &[(&str, &str, Object)]) -> (Repos, GitBoardStore, BoardHea
     (repos, bob, head)
 }
 
-fn json(task: &Task) -> Object {
+fn task_blob(task: &Task) -> Object {
     Object::Blob(encode(task).unwrap())
 }
 
 #[test]
 fn a_name_listed_twice_is_cleared_by_naming_the_copy_to_keep() {
     let (repos, bob, head) = board_of(&[
-        ("100644", "dup.json", json(&task("dup"))),
-        ("100644", "dup.json", json(&other("dup"))),
-        ("100644", "ok.json", json(&task("ok"))),
+        ("100644", "dup.md", task_blob(&task("dup"))),
+        ("100644", "dup.md", task_blob(&other("dup"))),
+        ("100644", "ok.md", task_blob(&task("ok"))),
     ]);
     let first = oid_of(&repos.bob, &encode(&task("dup")).unwrap());
     let second = oid_of(&repos.bob, &encode(&other("dup")).unwrap());
     let both = [first.as_str(), second.as_str()];
-    let path = "tasks/dup.json";
+    let path = "tasks/dup.md";
     let why = refused(bob.clear_set_aside(&head, &clearing(path, &first, &[]), "board: clear"));
     assert!(
         why.contains(&first) && why.contains(&second),
@@ -110,9 +110,9 @@ fn a_name_listed_twice_is_cleared_by_naming_the_copy_to_keep() {
     );
     let dup: Vec<String> = listing(&repos.remote(), &cleared)
         .into_iter()
-        .filter(|row| row.ends_with("\tdup.json"))
+        .filter(|row| row.ends_with("\tdup.md"))
         .collect();
-    assert_eq!(dup, [format!("100644 blob {second}\tdup.json")]);
+    assert_eq!(dup, [format!("100644 blob {second}\tdup.md")]);
     assert_eq!(bob.committed_by(&cleared.0).unwrap(), bob.writer());
     assert_eq!(
         sh(&repos.remote(), &["log", "-1", "--format=%s", &cleared.0]),
@@ -125,12 +125,12 @@ fn a_name_listed_twice_is_cleared_by_naming_the_copy_to_keep() {
 #[test]
 fn a_copy_the_caller_never_saw_is_never_dropped() {
     let (repos, bob, head) = board_of(&[
-        ("100644", "dup.json", Object::Blob(b"one".to_vec())),
-        ("100644", "dup.json", Object::Blob(b"two".to_vec())),
-        ("100644", "dup.json", Object::Blob(b"three".to_vec())),
+        ("100644", "dup.md", Object::Blob(b"one".to_vec())),
+        ("100644", "dup.md", Object::Blob(b"two".to_vec())),
+        ("100644", "dup.md", Object::Blob(b"three".to_vec())),
     ]);
     let [one, two, three] = [&b"one"[..], b"two", b"three"].map(|bytes| oid_of(&repos.bob, bytes));
-    let path = "tasks/dup.json";
+    let path = "tasks/dup.md";
     let gone = oid_of(&repos.bob, b"gone");
     for resolution in [
         drop_all(&[&one, &two]),
@@ -157,11 +157,11 @@ fn a_copy_the_caller_never_saw_is_never_dropped() {
 #[test]
 fn every_name_listed_twice_is_resolved_in_one_clear_a_checking_remote_takes() {
     let (repos, bob, head) = board_of(&[
-        ("100644", "broken.json", Object::Blob(b"{".to_vec())),
-        ("100644", "dup.json", json(&task("dup"))),
-        ("100644", "dup.json", json(&other("dup"))),
-        ("100644", "two.json", json(&task("two"))),
-        ("100644", "two.json", json(&other("two"))),
+        ("100644", "broken.md", Object::Blob(b"{".to_vec())),
+        ("100644", "dup.md", task_blob(&task("dup"))),
+        ("100644", "dup.md", task_blob(&other("dup"))),
+        ("100644", "two.md", task_blob(&task("two"))),
+        ("100644", "two.md", task_blob(&other("two"))),
     ]);
     sh(&repos.remote(), &["config", "receive.fsckObjects", "true"]);
     let oid = |task: &Task| oid_of(&repos.bob, &encode(task).unwrap());
@@ -175,42 +175,38 @@ fn every_name_listed_twice_is_resolved_in_one_clear_a_checking_remote_takes() {
     let dups = [dup.as_str(), dup2.as_str()];
     let twos = [two.as_str(), two2.as_str()];
     for partial in [
+        clearing("tasks/dup.md", &dup, &[("tasks/dup.md", keep(&dup, &dups))]),
         clearing(
-            "tasks/dup.json",
-            &dup,
-            &[("tasks/dup.json", keep(&dup, &dups))],
-        ),
-        clearing(
-            "tasks/broken.json",
+            "tasks/broken.md",
             &broken,
-            &[("tasks/dup.json", keep(&dup, &dups))],
+            &[("tasks/dup.md", keep(&dup, &dups))],
         ),
     ] {
         let why = refused(bob.clear_set_aside(&head, &partial, "board: clear"));
-        assert!(why.contains("tasks/two.json"), "{why}");
+        assert!(why.contains("tasks/two.md"), "{why}");
     }
     let why = refused(bob.clear_set_aside(
         &head,
         &clearing(
-            "tasks/broken.json",
+            "tasks/broken.md",
             &broken,
             &[
-                ("tasks/dup.json", keep(&dup, &dups)),
-                ("tasks/two.json", drop_all(&twos)),
-                ("tasks/ok.json", drop_all(&[])),
+                ("tasks/dup.md", keep(&dup, &dups)),
+                ("tasks/two.md", drop_all(&twos)),
+                ("tasks/ok.md", drop_all(&[])),
             ],
         ),
         "board: clear",
     ));
-    assert!(why.contains("tasks/ok.json"), "not listed twice: {why}");
+    assert!(why.contains("tasks/ok.md"), "not listed twice: {why}");
     let cleared = written(bob.clear_set_aside(
         &head,
         &clearing(
-            "tasks/broken.json",
+            "tasks/broken.md",
             &broken,
             &[
-                ("tasks/dup.json", keep(&dup, &dups)),
-                ("tasks/two.json", keep(&two2, &twos)),
+                ("tasks/dup.md", keep(&dup, &dups)),
+                ("tasks/two.md", keep(&two2, &twos)),
             ],
         ),
         "board: clear broken",
@@ -221,7 +217,7 @@ fn every_name_listed_twice_is_resolved_in_one_clear_a_checking_remote_takes() {
         .collect();
     // The copies kept are carried as they are; the next write regenerates
     // their summaries.
-    assert_eq!(names, ["dup.json", "two.json"]);
+    assert_eq!(names, ["dup.md", "two.md"]);
     let board = bob.read().unwrap();
     assert_eq!(board.quarantined, vec![]);
     written(bob.write_tasks(&board.head, &[task("fresh")], "board: add fresh"));
@@ -232,21 +228,21 @@ fn every_name_listed_twice_is_resolved_in_one_clear_a_checking_remote_takes() {
 #[test]
 fn a_copy_kept_keeps_its_mode_and_directories_can_be_cleared() {
     let (repos, bob, head) = board_of(&[
-        ("100755", "run.json", Object::Blob(b"one".to_vec())),
-        ("100755", "run.json", Object::Blob(b"two".to_vec())),
-        ("40000", "dir.json", Object::EmptyTree),
-        ("40000", "dir.json", Object::EmptyTree),
+        ("100755", "run.md", Object::Blob(b"one".to_vec())),
+        ("100755", "run.md", Object::Blob(b"two".to_vec())),
+        ("40000", "dir.md", Object::EmptyTree),
+        ("40000", "dir.md", Object::EmptyTree),
     ]);
     let (run1, run) = (oid_of(&repos.bob, b"one"), oid_of(&repos.bob, b"two"));
     let tree = sh_with(&repos.bob, &["mktree"], b"");
     let cleared = written(bob.clear_set_aside(
         &head,
         &clearing(
-            "tasks/run.json",
+            "tasks/run.md",
             &run,
             &[
-                ("tasks/run.json", keep(&run, &[&run1, &run])),
-                ("tasks/dir.json", keep(&tree, &[&tree])),
+                ("tasks/run.md", keep(&run, &[&run1, &run])),
+                ("tasks/dir.md", keep(&tree, &[&tree])),
             ],
         ),
         "board: clear run",
@@ -254,20 +250,20 @@ fn a_copy_kept_keeps_its_mode_and_directories_can_be_cleared() {
     assert_eq!(
         listing(&repos.remote(), &cleared),
         [
-            format!("040000 tree {tree}\tdir.json"),
-            format!("100755 blob {run}\trun.json")
+            format!("040000 tree {tree}\tdir.md"),
+            format!("100755 blob {run}\trun.md")
         ]
     );
     let (_repos, bob, head) = board_of(&[
-        ("40000", "dir.json", Object::EmptyTree),
-        ("40000", "dir.json", Object::EmptyTree),
+        ("40000", "dir.md", Object::EmptyTree),
+        ("40000", "dir.md", Object::EmptyTree),
     ]);
     let dropped = written(bob.clear_set_aside(
         &head,
         &clearing(
-            "tasks/dir.json",
+            "tasks/dir.md",
             &tree,
-            &[("tasks/dir.json", drop_all(&[&tree]))],
+            &[("tasks/dir.md", drop_all(&[&tree]))],
         ),
         "board: clear dir",
     ));
@@ -280,11 +276,11 @@ fn a_copy_kept_keeps_its_mode_and_directories_can_be_cleared() {
 #[test]
 fn an_object_naming_copies_of_different_modes_is_never_kept() {
     let (repos, bob, head) = board_of(&[
-        ("100644", "x.json", Object::Blob(b"same".to_vec())),
-        ("100755", "x.json", Object::Blob(b"same".to_vec())),
+        ("100644", "x.md", Object::Blob(b"same".to_vec())),
+        ("100755", "x.md", Object::Blob(b"same".to_vec())),
     ]);
     let same = oid_of(&repos.bob, b"same");
-    let path = "tasks/x.json";
+    let path = "tasks/x.md";
     let why = refused(bob.clear_set_aside(
         &head,
         &clearing(path, &same, &[(path, keep(&same, &[&same]))]),
@@ -306,10 +302,10 @@ fn a_path_two_files_share_is_cleared_by_object_alone() {
     let (repos, bob, head) = board_of(&[
         (
             "100644",
-            "x.json",
+            "x.md",
             Object::Blob(b"{\"schema\": 999}".to_vec()),
         ),
-        ("100644", "x.json\u{200b}", Object::Blob(b"stray".to_vec())),
+        ("100644", "x.md\u{200b}", Object::Blob(b"stray".to_vec())),
     ]);
     let (carried, stray) = (
         oid_of(&repos.bob, b"{\"schema\": 999}"),
@@ -321,28 +317,24 @@ fn a_path_two_files_share_is_cleared_by_object_alone() {
         .iter()
         .map(|file| file.path.as_str())
         .collect();
-    assert_eq!(shown, ["tasks/x.json", "tasks/x.json"]);
+    assert_eq!(shown, ["tasks/x.md", "tasks/x.md"]);
     let cleared = written(bob.clear_set_aside(
         &head,
-        &clearing("tasks/x.json", &stray, &[]),
+        &clearing("tasks/x.md", &stray, &[]),
         "board: clear the stray",
     ));
     assert_eq!(
         listing(&repos.remote(), &cleared),
-        [format!("100644 blob {carried}\tx.json")],
+        [format!("100644 blob {carried}\tx.md")],
         "the carried file stays"
     );
     // Any write drops strays, so the twins are a board of their own.
     let (repos, bob, head) = board_of(&[
-        ("100644", "y.json\u{200b}", Object::Blob(b"twin".to_vec())),
-        ("100644", "y.json\u{200c}", Object::Blob(b"twin".to_vec())),
+        ("100644", "y.md\u{200b}", Object::Blob(b"twin".to_vec())),
+        ("100644", "y.md\u{200c}", Object::Blob(b"twin".to_vec())),
     ]);
     let twin = oid_of(&repos.bob, b"twin");
-    written(bob.clear_set_aside(
-        &head,
-        &clearing("tasks/y.json", &twin, &[]),
-        "board: clear y",
-    ));
+    written(bob.clear_set_aside(&head, &clearing("tasks/y.md", &twin, &[]), "board: clear y"));
 }
 
 /// The object of a file to clear is one of its copies, also when its
@@ -350,12 +342,12 @@ fn a_path_two_files_share_is_cleared_by_object_alone() {
 #[test]
 fn the_object_of_a_name_listed_twice_is_one_of_its_copies() {
     let (repos, bob, head) = board_of(&[
-        ("100644", "dup.json", Object::Blob(b"one".to_vec())),
-        ("100644", "dup.json", Object::Blob(b"two".to_vec())),
+        ("100644", "dup.md", Object::Blob(b"one".to_vec())),
+        ("100644", "dup.md", Object::Blob(b"two".to_vec())),
     ]);
     let [one, two] = [&b"one"[..], b"two"].map(|bytes| oid_of(&repos.bob, bytes));
     let other = oid_of(&repos.bob, b"other");
-    let path = "tasks/dup.json";
+    let path = "tasks/dup.md";
     let why = refused(bob.clear_set_aside(
         &head,
         &clearing(path, &other, &[(path, drop_all(&[&one, &two]))]),
@@ -369,26 +361,26 @@ fn the_object_of_a_name_listed_twice_is_one_of_its_copies() {
 #[test]
 fn a_clear_quotes_what_it_echoes_and_checks_objects_first() {
     let (repos, bob, head) = board_of(&[
-        ("100644", "dup.json", json(&task("dup"))),
-        ("100644", "dup.json", json(&other("dup"))),
+        ("100644", "dup.md", task_blob(&task("dup"))),
+        ("100644", "dup.md", task_blob(&other("dup"))),
     ]);
     let dup = oid_of(&repos.bob, &encode(&task("dup")).unwrap());
     for object in ["nope\u{1b}[2J", "HEAD", &"0".repeat(39), &"A".repeat(40)] {
         for clear in [
             clearing(
-                "tasks/dup.json",
+                "tasks/dup.md",
                 &dup,
-                &[("tasks/dup.json", keep(object, &[object]))],
+                &[("tasks/dup.md", keep(object, &[object]))],
             ),
             clearing(
-                "tasks/dup.json",
+                "tasks/dup.md",
                 object,
-                &[("tasks/dup.json", drop_all(&[&dup]))],
+                &[("tasks/dup.md", drop_all(&[&dup]))],
             ),
             clearing(
-                "tasks/dup.json",
+                "tasks/dup.md",
                 &dup,
-                &[("tasks/dup.json", drop_all(&[object]))],
+                &[("tasks/dup.md", drop_all(&[object]))],
             ),
         ] {
             let invalid = bob.clear_set_aside(&head, &clear, "board: clear");
@@ -400,7 +392,7 @@ fn a_clear_quotes_what_it_echoes_and_checks_objects_first() {
     }
     let why = refused(bob.clear_set_aside(
         &head,
-        &clearing("tasks/\u{1b}[2Jgone.json\u{202e}", &dup, &[]),
+        &clearing("tasks/\u{1b}[2Jgone.md\u{202e}", &dup, &[]),
         "board: clear",
     ));
     assert!(
@@ -414,10 +406,10 @@ fn a_clear_quotes_what_it_echoes_and_checks_objects_first() {
 #[test]
 fn a_clear_from_a_stale_head_is_lost_before_anything_else_is_judged() {
     let (repos, bob, stale) = board_of(&[
-        ("100644", "broken.json", Object::Blob(b"{".to_vec())),
-        ("100644", "dup.json", json(&task("dup"))),
-        ("100644", "dup.json", json(&other("dup"))),
-        ("100644", "ok.json", json(&task("ok"))),
+        ("100644", "broken.md", Object::Blob(b"{".to_vec())),
+        ("100644", "dup.md", task_blob(&task("dup"))),
+        ("100644", "dup.md", task_blob(&other("dup"))),
+        ("100644", "ok.md", task_blob(&task("ok"))),
     ]);
     let alice = store(&repos.alice);
     let moved = alice.read().unwrap().head;
@@ -429,30 +421,30 @@ fn a_clear_from_a_stale_head_is_lost_before_anything_else_is_judged() {
     written(alice.clear_set_aside(
         &moved,
         &clearing(
-            "tasks/broken.json",
+            "tasks/broken.md",
             &broken,
-            &[("tasks/dup.json", keep(&dup, &dups))],
+            &[("tasks/dup.md", keep(&dup, &dups))],
         ),
         "board: alice clears broken",
     ));
     let zeros = "0".repeat(dup.len());
     for clear in [
         clearing(
-            "tasks/broken.json",
+            "tasks/broken.md",
             &broken,
-            &[("tasks/dup.json", keep(&dup, &dups))],
+            &[("tasks/dup.md", keep(&dup, &dups))],
         ),
         clearing(
-            "tasks/ok.json",
+            "tasks/ok.md",
             &broken,
-            &[("tasks/dup.json", keep(&dup, &dups))],
+            &[("tasks/dup.md", keep(&dup, &dups))],
         ),
         clearing(
-            "tasks/dup.json",
+            "tasks/dup.md",
             &dup,
-            &[("tasks/dup.json", keep(&zeros, &[&zeros]))],
+            &[("tasks/dup.md", keep(&zeros, &[&zeros]))],
         ),
-        clearing("tasks/dup.json", &dup, &[]),
+        clearing("tasks/dup.md", &dup, &[]),
     ] {
         assert_eq!(
             bob.clear_set_aside(&stale, &clear, "board: clear"),
@@ -465,30 +457,26 @@ fn a_clear_from_a_stale_head_is_lost_before_anything_else_is_judged() {
 #[test]
 fn a_file_set_aside_once_is_cleared_without_a_copy_to_keep() {
     let (repos, bob, head) = board_of(&[
-        ("100644", "broken.json", Object::Blob(b"{".to_vec())),
-        ("100644", "ok.json", json(&task("ok"))),
+        ("100644", "broken.md", Object::Blob(b"{".to_vec())),
+        ("100644", "ok.md", task_blob(&task("ok"))),
     ]);
     let broken = oid_of(&repos.bob, b"{");
     let why = refused(bob.clear_set_aside(
         &head,
         &clearing(
-            "tasks/broken.json",
+            "tasks/broken.md",
             &broken,
-            &[("tasks/broken.json", drop_all(&[&broken]))],
+            &[("tasks/broken.md", drop_all(&[&broken]))],
         ),
         "board: clear broken",
     ));
-    assert!(why.contains("tasks/broken.json"), "{why}");
+    assert!(why.contains("tasks/broken.md"), "{why}");
     let cleared = written(bob.clear_set_aside(
         &head,
-        &clearing("tasks/broken.json", &broken, &[]),
+        &clearing("tasks/broken.md", &broken, &[]),
         "board: clear broken",
     ));
-    assert_eq!(
-        listing(&repos.remote(), &cleared).len(),
-        2,
-        "ok.json and its summary"
-    );
+    assert_eq!(listing(&repos.remote(), &cleared).len(), 1, "ok.md alone");
     written(bob.write_tasks(&cleared, &[task("broken")], "board: write broken"));
 }
 
@@ -498,9 +486,9 @@ fn a_file_set_aside_once_is_cleared_without_a_copy_to_keep() {
 #[test]
 fn a_file_whose_name_looks_like_a_secret_is_cleared_by_its_name() {
     let (repos, bob, head) = board_of(&[
-        ("100644", "token=x.json", Object::Blob(b"{".to_vec())),
-        ("100644", "sk-abcdefgh.json", Object::Blob(b"[".to_vec())),
-        ("100644", "ok.json", json(&task("ok"))),
+        ("100644", "token=x.md", Object::Blob(b"{".to_vec())),
+        ("100644", "sk-abcdefgh.md", Object::Blob(b"[".to_vec())),
+        ("100644", "ok.md", task_blob(&task("ok"))),
     ]);
     let board = bob.read().unwrap();
     let mut paths: Vec<&str> = board
@@ -509,11 +497,11 @@ fn a_file_whose_name_looks_like_a_secret_is_cleared_by_its_name() {
         .map(|file| file.path.as_str())
         .collect();
     paths.sort_unstable();
-    assert_eq!(paths, ["tasks/sk-abcdefgh.json", "tasks/token=x.json"]);
+    assert_eq!(paths, ["tasks/sk-abcdefgh.md", "tasks/token=x.md"]);
     let mut at = head;
     for (path, bytes) in [
-        ("tasks/token=x.json", &b"{"[..]),
-        ("tasks/sk-abcdefgh.json", b"["),
+        ("tasks/token=x.md", &b"{"[..]),
+        ("tasks/sk-abcdefgh.md", b"["),
     ] {
         let object = oid_of(&repos.bob, bytes);
         at = written(bob.clear_set_aside(&at, &clearing(path, &object, &[]), "board: clear"));
@@ -531,7 +519,7 @@ fn a_file_whose_name_looks_like_a_secret_is_cleared_by_its_name() {
 }
 
 /// Twins that differ only by a character no one sees show one path: the
-/// carried one (`Foo.json`) and a stray (`Foo.json\x01`) of the same
+/// carried one (`Foo.md`) and a stray (`Foo.md\x01`) of the same
 /// object. A clear of that path and object removes both: the carried file
 /// by its name, which always shows as it is, and the stray, which no write
 /// carries.
@@ -543,8 +531,8 @@ fn twins_that_show_one_path_are_cleared_together() {
     raw_board_named(
         &repos.remote(),
         &[
-            ("100644", b"Foo.json", &blob),
-            ("100644", b"Foo.json\x01", &blob),
+            ("100644", b"Foo.md", &blob),
+            ("100644", b"Foo.md\x01", &blob),
         ],
         &[&repos.bob],
     );
@@ -558,10 +546,10 @@ fn twins_that_show_one_path_are_cleared_together() {
         .iter()
         .map(|file| file.path.clone())
         .collect();
-    assert_eq!(paths, ["tasks/Foo.json", "tasks/Foo.json"], "{paths:?}");
+    assert_eq!(paths, ["tasks/Foo.md", "tasks/Foo.md"], "{paths:?}");
     let cleared = written(bob.clear_set_aside(
         &head,
-        &clearing("tasks/Foo.json", &object, &[]),
+        &clearing("tasks/Foo.md", &object, &[]),
         "board: clear Foo",
     ));
     assert_eq!(bob.read().unwrap().quarantined, vec![], "both are gone");
@@ -578,8 +566,8 @@ fn twins_that_show_one_path_are_cleared_together() {
 #[test]
 fn identical_twins_are_mended_by_keeping_one_copy() {
     let (repos, _, _) = board_of(&[
-        ("100644", "ok.json", json(&task("ok"))),
-        ("100644", "ok.json", json(&task("ok"))),
+        ("100644", "ok.md", task_blob(&task("ok"))),
+        ("100644", "ok.md", task_blob(&task("ok"))),
     ]);
     let object = oid_of(&repos.bob, &encode(&task("ok")).unwrap());
     let bob = std::sync::Arc::new(store(&repos.bob));
@@ -588,11 +576,9 @@ fn identical_twins_are_mended_by_keeping_one_copy() {
         std::sync::Arc::new(crate::infrastructure::time::board_clock::SystemBoardClock::default()),
     )
     .unwrap();
-    let repeated = std::collections::BTreeMap::from([(
-        "tasks/ok.json".to_string(),
-        keep(&object, &[&object]),
-    )]);
-    let head = clear.execute("tasks/ok.json", &object, &repeated).unwrap();
+    let repeated =
+        std::collections::BTreeMap::from([("tasks/ok.md".to_string(), keep(&object, &[&object]))]);
+    let head = clear.execute("tasks/ok.md", &object, &repeated).unwrap();
     let board = bob.read().unwrap();
     assert_eq!(board.head, head);
     assert_eq!(board.quarantined, vec![]);
@@ -609,14 +595,14 @@ fn identical_twins_are_mended_by_keeping_one_copy() {
 #[test]
 fn a_repeated_path_is_cleared_as_the_listing_shows_it() {
     let (repos, bob, head) = board_of(&[
-        ("100644", "dup.json", Object::Blob(b"one".to_vec())),
-        ("100644", "dup.json", Object::Blob(b"two".to_vec())),
-        ("40000", "dup.json", Object::Blob(b"not a tree".to_vec())),
-        ("100644", "dup.json\u{200b}", Object::Blob(b"twin".to_vec())),
+        ("100644", "dup.md", Object::Blob(b"one".to_vec())),
+        ("100644", "dup.md", Object::Blob(b"two".to_vec())),
+        ("40000", "dup.md", Object::Blob(b"not a tree".to_vec())),
+        ("100644", "dup.md\u{200b}", Object::Blob(b"twin".to_vec())),
     ]);
     let [one, two, odd, twin] =
         [&b"one"[..], b"two", b"not a tree", b"twin"].map(|bytes| oid_of(&repos.bob, bytes));
-    let path = "tasks/dup.json";
+    let path = "tasks/dup.md";
     let listed: Vec<String> = bob
         .read()
         .unwrap()
@@ -645,7 +631,7 @@ fn a_repeated_path_is_cleared_as_the_listing_shows_it() {
     ));
     assert_eq!(
         listing(&repos.remote(), &cleared),
-        [format!("100644 blob {two}\tdup.json")]
+        [format!("100644 blob {two}\tdup.md")]
     );
 }
 

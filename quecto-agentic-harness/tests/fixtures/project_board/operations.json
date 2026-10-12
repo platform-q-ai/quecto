@@ -877,7 +877,7 @@
       "tasks": [],
       "quarantined": [
         {
-          "path": "tasks/ghost.json",
+          "path": "tasks/ghost.md",
           "id": "ghost",
           "reason": "malformed",
           "object": "0000000000000000000000000000000000000019",
@@ -891,7 +891,7 @@
   {
     "request": {
       "op": "clear_set_aside",
-      "path": "tasks/ghost.json",
+      "path": "tasks/ghost.md",
       "object": "0000000000000000000000000000000000000019"
     },
     "answer": {
@@ -903,7 +903,7 @@
   {
     "request": {
       "op": "clear_set_aside",
-      "path": "tasks/cli.json",
+      "path": "tasks/cli.md",
       "object": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     },
     "answer": {
@@ -911,8 +911,8 @@
       "op": "clear_set_aside",
       "error": {
         "code": "not_set_aside",
-        "message": "no file is set aside at \"tasks/cli.json\" as \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"",
-        "path": "tasks/cli.json",
+        "message": "no file is set aside at \"tasks/cli.md\" as \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"",
+        "path": "tasks/cli.md",
         "object": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
       }
     }
@@ -1205,7 +1205,7 @@
   {
     "request": {
       "op": "clear_set_aside",
-      "path": "tasks/late.json",
+      "path": "tasks/late.md",
       "object": "000000000000000000000000000000000000001c"
     },
     "answer": {
