@@ -18,7 +18,7 @@ fn only_regular_task_files_are_read_and_the_rest_is_set_aside_by_id() {
     let repos = Repos::new();
     let alice = store(&repos.alice);
     let head = created(&alice);
-    written(alice.write(&head, &[task("good")], "board: add good"));
+    written(alice.write_tasks(&head, &[task("good")], "board: add good"));
     let remote = repos.remote();
     let blob = |bytes: &[u8]| {
         format!(
@@ -61,7 +61,7 @@ fn only_regular_task_files_are_read_and_the_rest_is_set_aside_by_id() {
         .map(|q| {
             (
                 q.path.as_str(),
-                (q.id.as_ref().map(Slug::as_str), q.reason.as_str()),
+                (q.id().map(Slug::as_str), q.reason.as_str()),
             )
         })
         .collect();
@@ -93,7 +93,7 @@ fn only_regular_task_files_are_read_and_the_rest_is_set_aside_by_id() {
     assert!(found["tasks/link.json"].1.contains("regular"), "{found:?}");
 
     for id in ["broken", "link", "named", "exec"] {
-        let refused = bob.write(&snapshot.head, &[task(id)], &format!("board: write {id}"));
+        let refused = bob.write_tasks(&snapshot.head, &[task(id)], &format!("board: write {id}"));
         assert!(
             matches!(refused, Ok(BoardWrite::Refused(_))),
             "{id}: {refused:?}"
@@ -104,7 +104,7 @@ fn only_regular_task_files_are_read_and_the_rest_is_set_aside_by_id() {
     // and with its own mode: links, executables and names a later quecto
     // may take as ids included. Strays (other names, subtrees, gitlinks)
     // are dropped.
-    let moved = written(bob.write(&snapshot.head, &[task("fresh")], "board: add fresh"));
+    let moved = written(bob.write_tasks(&snapshot.head, &[task("fresh")], "board: add fresh"));
     let listing = |commit: &str| {
         sh(&remote, &["ls-tree", &format!("{commit}:tasks")])
             .lines()
@@ -149,7 +149,7 @@ fn a_board_tree_past_its_entry_bound_is_not_read() {
     let repos = Repos::new();
     let alice = store(&repos.alice);
     created(&alice);
-    written(alice.write(&alice.read().unwrap().head, &[task("a")], "board: add a"));
+    written(alice.write_tasks(&alice.read().unwrap().head, &[task("a")], "board: add a"));
     let blob = sh_with(&repos.remote(), &["hash-object", "-w", "--stdin"], b"x");
     let many: Vec<(String, String)> = (0..MAX_TASK_ENTRIES)
         .map(|n| (format!("n{n}.md"), format!("100644 blob {blob}")))
@@ -284,7 +284,7 @@ fn paths(snapshot: &BoardSnapshot) -> Vec<(&str, Option<&str>)> {
     snapshot
         .quarantined
         .iter()
-        .map(|q| (q.path.as_str(), q.id.as_ref().map(Slug::as_str)))
+        .map(|q| (q.path.as_str(), q.id().map(Slug::as_str)))
         .collect()
 }
 
@@ -315,7 +315,7 @@ fn a_file_mode_over_a_tree_object_is_set_aside_and_never_stops_a_write() {
     let paths: Vec<(&str, Option<&str>)> = board
         .quarantined
         .iter()
-        .map(|q| (q.path.as_str(), q.id.as_ref().map(Slug::as_str)))
+        .map(|q| (q.path.as_str(), q.id().map(Slug::as_str)))
         .collect();
     assert_eq!(paths, [("tasks/tree.json", Some("tree"))]);
     assert_eq!(
@@ -323,9 +323,9 @@ fn a_file_mode_over_a_tree_object_is_set_aside_and_never_stops_a_write() {
         ["good"],
         "a bad summary never sets its task aside"
     );
-    let refused = bob.write(&head, &[task("tree")], "board: write tree");
+    let refused = bob.write_tasks(&head, &[task("tree")], "board: write tree");
     assert!(matches!(refused, Ok(BoardWrite::Refused(_))), "{refused:?}");
-    let moved = written(bob.write(&head, &[task("fresh")], "board: add fresh"));
+    let moved = written(bob.write_tasks(&head, &[task("fresh")], "board: add fresh"));
     let kept = sh(&repos.remote(), &["ls-tree", "-r", &moved.0]);
     let kept: Vec<(&str, &str)> = kept
         .lines()
@@ -383,7 +383,7 @@ fn a_bad_summary_never_sets_its_task_aside_and_is_regenerated() {
         board.tasks.keys().map(Slug::as_str).collect::<Vec<_>>(),
         ["dup", "exec", "link"]
     );
-    let moved = written(bob.write(&head, &[task("exec")], "board: write exec"));
+    let moved = written(bob.write_tasks(&head, &[task("exec")], "board: write exec"));
     let listing = sh(&repos.remote(), &["ls-tree", &format!("{}:tasks", moved.0)]);
     let names: Vec<(&str, &str)> = listing
         .lines()
@@ -460,7 +460,7 @@ fn a_task_file_named_twice_refuses_every_write_and_drops_neither() {
         .map(|bytes| sh_with(&repos.bob, &["hash-object", "--stdin"], bytes))
         .collect();
     for id in ["dup", "ok", "fresh"] {
-        let refused = bob.write(&snapshot.head, &[task(id)], &format!("board: write {id}"));
+        let refused = bob.write_tasks(&snapshot.head, &[task(id)], &format!("board: write {id}"));
         let Ok(BoardWrite::Refused(why)) = &refused else {
             panic!("{id}: {refused:?}");
         };
@@ -588,7 +588,7 @@ fn a_write_past_the_task_bound_is_refused_before_anything_is_built() {
     let bob = store(&repos.bob);
     let full = bob.read().unwrap();
     assert_eq!(full.tasks.len(), MAX_TASKS);
-    let refused = bob.write(&full.head, &[task("one-more")], "board: add one more");
+    let refused = bob.write_tasks(&full.head, &[task("one-more")], "board: add one more");
     assert!(
         matches!(&refused, Err(BoardStoreError::InvalidWrite(why)) if why.contains("at most")),
         "{refused:?}"
@@ -598,7 +598,7 @@ fn a_write_past_the_task_bound_is_refused_before_anything_is_built() {
         fields.title = "Renamed".into();
         Task::new(fields).unwrap()
     };
-    let moved = written(bob.write(&full.head, &[renamed], "board: rename t0"));
+    let moved = written(bob.write_tasks(&full.head, &[renamed], "board: rename t0"));
     assert_eq!(
         store(&repos.alice).read().unwrap().head,
         moved,
@@ -615,7 +615,7 @@ fn a_hostile_key_never_reaches_a_reason_or_stops_a_listing() {
     let repos = Repos::new();
     let alice = store(&repos.alice);
     let head = created(&alice);
-    written(alice.write(&head, &[task("good")], "board: add good"));
+    written(alice.write_tasks(&head, &[task("good")], "board: add good"));
     let hostile = |id: &str, key: &str| {
         let text = String::from_utf8(encode(&task(id)).unwrap()).unwrap();
         let planted = text.replacen('{', &format!("{{\n  \"{key}\": 1,"), 1);

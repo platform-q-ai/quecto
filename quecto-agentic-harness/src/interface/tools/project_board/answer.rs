@@ -242,7 +242,7 @@ fn quarantined_json(file: &QuarantinedFile) -> Value {
         // Raw: the store allowlists or quotes every name it sets aside,
         // a path is no secret, and a clear names it exactly as shown.
         "path": file.path,
-        "id": file.id.as_ref().map(slug_json),
+        "id": file.id().map(slug_json),
         "reason": shown(&file.reason),
         "object": file.object,
     })

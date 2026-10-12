@@ -30,8 +30,8 @@ use super::push_report::{PushReport, RefStatus, Rejection, ref_status, remote_re
 use super::summary::summary;
 use super::task_record::{decode, encode};
 use crate::application::project_board::ports::{
-    BoardBootstrap, BoardHead, BoardSnapshot, BoardStoreError, BoardWrite, ProjectBoardStore,
-    SetAsideClear,
+    BoardArtifact, BoardBootstrap, BoardHead, BoardSnapshot, BoardStoreError, BoardWrite,
+    ProjectBoardStore, SetAsideClear,
 };
 use crate::domain::project_board::entities::claim::Identity;
 use crate::domain::project_board::entities::task::Task;
@@ -620,6 +620,11 @@ impl ProjectBoardStore for GitBoardStore {
         Ok(BoardSnapshot {
             head: BoardHead(head),
             tasks: board.tasks.values().map(|held| held.task.clone()).collect(),
+            plans: vec![],
+            runs: vec![],
+            changes: vec![],
+            reviews: vec![],
+            discussions: vec![],
             quarantined: board.quarantined.clone(),
         })
     }
@@ -629,11 +634,27 @@ impl ProjectBoardStore for GitBoardStore {
     fn write(
         &self,
         expected: &BoardHead,
-        tasks: &[Task],
+        artifacts: &[BoardArtifact],
         message: &str,
     ) -> Result<BoardWrite, BoardStoreError> {
         let invalid = |why: String| BoardStoreError::InvalidWrite(why);
         line("message", message, 200).map_err(|error| invalid(error.to_string()))?;
+        // Tasks alone until the store keeps the other kinds (S10); reads hold none.
+        let tasks = artifacts
+            .iter()
+            .map(|artifact| match artifact {
+                BoardArtifact::Task(task) => Ok(task.clone()),
+                BoardArtifact::Plan(_)
+                | BoardArtifact::Run(_)
+                | BoardArtifact::Change(_)
+                | BoardArtifact::Review(_)
+                | BoardArtifact::Discussion(_) => Err(invalid(format!(
+                    "{}: the git store keeps tasks only, for now",
+                    artifact.key()
+                ))),
+            })
+            .collect::<Result<Vec<Task>, _>>()?;
+        let tasks = tasks.as_slice();
         let ids: BTreeSet<&Slug> = tasks.iter().map(|task| &task.fields().id).collect();
         if ids.len() != tasks.len() || tasks.is_empty() {
             return Err(invalid("write one or more tasks, each once".into()));

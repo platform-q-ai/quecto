@@ -282,7 +282,7 @@ fn bootstrap_read_and_write_agree_on_what_a_board_is() {
     let repos = Repos::new();
     let alice = store(&repos.alice);
     let head = created(&alice);
-    written(alice.write(&head, &[task("a")], "board: add a"));
+    written(alice.write_tasks(&head, &[task("a")], "board: add a"));
     let remote = repos.remote();
     let tip = sh(&remote, &["rev-parse", BOARD_REF]);
     let stray = sh_with(&remote, &["hash-object", "-w", "--stdin"], b"notes");
@@ -301,7 +301,7 @@ fn bootstrap_read_and_write_agree_on_what_a_board_is() {
     );
     let snapshot = bob.read().unwrap();
     assert_eq!(ids(&snapshot), ["a"]);
-    let moved = written(bob.write(&snapshot.head, &[task("b")], "board: add b"));
+    let moved = written(bob.write_tasks(&snapshot.head, &[task("b")], "board: add b"));
     assert_eq!(
         sh(&remote, &["ls-tree", "--name-only", &moved.0]),
         "README.md\ntasks"
@@ -322,7 +322,7 @@ fn bootstrap_read_and_write_agree_on_what_a_board_is() {
     let clashes = |result: &str| result.starts_with("Err(Clash(");
     assert!(clashes(&format!("{:?}", bob.bootstrap())));
     assert!(clashes(&format!("{:?}", bob.read())));
-    let write = bob.write(&BoardHead(code.clone()), &[task("c")], "board: add c");
+    let write = bob.write_tasks(&BoardHead(code.clone()), &[task("c")], "board: add c");
     assert!(clashes(&format!("{write:?}")), "{write:?}");
     assert_eq!(sh(&remote, &["rev-parse", BOARD_REF]), code);
 }
@@ -365,7 +365,7 @@ fn a_board_without_its_readme_is_still_a_board() {
     let repos = Repos::new();
     let alice = store(&repos.alice);
     let head = created(&alice);
-    written(alice.write(&head, &[task("a")], "board: add a"));
+    written(alice.write_tasks(&head, &[task("a")], "board: add a"));
     let remote = repos.remote();
     let tip = sh(&remote, &["rev-parse", BOARD_REF]);
     let tasks = sh(&remote, &["rev-parse", &format!("{tip}:tasks")]);
@@ -386,7 +386,7 @@ fn a_board_without_its_readme_is_still_a_board() {
     );
     let snapshot = bob.read().unwrap();
     assert_eq!(ids(&snapshot), ["a"]);
-    let moved = written(bob.write(&snapshot.head, &[task("b")], "board: add b"));
+    let moved = written(bob.write_tasks(&snapshot.head, &[task("b")], "board: add b"));
     assert_eq!(
         sh(
             &remote,
@@ -416,7 +416,7 @@ fn a_write_from_a_commit_that_is_not_on_the_board_is_invalid() {
         ],
     );
     for base in [main, unpushed] {
-        let write = alice.write(&BoardHead(base.clone()), &[task("a")], "board: add a");
+        let write = alice.write_tasks(&BoardHead(base.clone()), &[task("a")], "board: add a");
         assert!(
             matches!(&write, Err(BoardStoreError::InvalidWrite(_))),
             "{base}: {write:?}"
@@ -458,7 +458,7 @@ fn a_partial_clone_fetches_the_board_once_and_reads_and_writes_it() {
     let alice = store(&repos.alice);
     let head = created(&alice);
     let many: Vec<Task> = (0..8).map(|n| task(&format!("t{n}"))).collect();
-    written(alice.write(&head, &many, "board: add eight"));
+    written(alice.write_tasks(&head, &many, "board: add eight"));
     let url = format!("file://{}", repos.remote().display());
     sh(
         repos.dir.path(),
@@ -497,7 +497,7 @@ exec git-upload-pack \"$@\"\n",
         "{} upload-pack runs to read the board",
         fetches()
     );
-    let moved = written(partial.write(&snapshot.head, &[task("carol")], "board: add carol"));
+    let moved = written(partial.write_tasks(&snapshot.head, &[task("carol")], "board: add carol"));
     let read = store(&repos.bob).read().unwrap();
     assert_eq!(read.head, moved);
     assert_eq!(read.tasks.len(), 9);
@@ -508,7 +508,7 @@ fn every_write_regenerates_the_summaries_and_readme_and_drops_strays() {
     let repos = Repos::new();
     let alice = store(&repos.alice);
     let head = created(&alice);
-    written(alice.write(&head, &[task("good")], "board: add good"));
+    written(alice.write_tasks(&head, &[task("good")], "board: add good"));
     let remote = repos.remote();
     // As long as the right summary, so only its bytes tell them apart.
     let mut hostile = b"<img src=https://track.example/x>".to_vec();
@@ -529,7 +529,7 @@ fn every_write_regenerates_the_summaries_and_readme_and_drops_strays() {
     );
     sh(&remote, &["update-ref", BOARD_REF, &commit]);
     let bob = store(&repos.bob);
-    let moved = written(bob.write(
+    let moved = written(bob.write_tasks(
         &bob.read().unwrap().head,
         &[task("other")],
         "board: add other",
@@ -557,7 +557,7 @@ fn tasks_and_their_summaries_are_written_in_one_commit_and_read_back() {
     let repos = Repos::new();
     let alice = store(&repos.alice);
     let head = created(&alice);
-    let moved = written(alice.write(&head, &[task("a"), task("b")], "board: add a and b"));
+    let moved = written(alice.write_tasks(&head, &[task("a"), task("b")], "board: add a and b"));
     let snapshot = store(&repos.bob).read().unwrap();
     assert_eq!((&snapshot.head, ids(&snapshot)), (&moved, vec!["a", "b"]));
     assert_eq!(snapshot.tasks, vec![task("a"), task("b")]);
@@ -603,7 +603,7 @@ fn the_checkout_keeps_its_index_head_branches_and_fetch_head() {
     let index = std::fs::read(repos.alice.join(".git/index")).unwrap();
     let alice = store(&repos.alice);
     let head = created(&alice);
-    written(alice.write(&head, &[task("a")], "board: add a"));
+    written(alice.write_tasks(&head, &[task("a")], "board: add a"));
     alice.read().unwrap();
     assert_eq!(state(), before);
     assert_eq!(
@@ -639,7 +639,7 @@ fn hooks_never_run() {
     }
     let alice = store(&repos.alice);
     let head = created(&alice);
-    written(alice.write(&head, &[task("a")], "board: add a"));
+    written(alice.write_tasks(&head, &[task("a")], "board: add a"));
     alice.read().unwrap();
     assert!(!marker.exists(), "a hook ran");
 }
@@ -661,7 +661,7 @@ fn inherited_git_dir_index_and_work_tree_are_ignored() {
         .collect();
     let alice = store_with(&repos.alice, vars(&repos.alice, &extra));
     let head = created(&alice);
-    written(alice.write(&head, &[task("a")], "board: add a"));
+    written(alice.write_tasks(&head, &[task("a")], "board: add a"));
     assert_eq!(ids(&store(&repos.bob).read().unwrap()), vec!["a"]);
     assert_eq!(sh(&elsewhere, &["for-each-ref"]), "");
     assert!(!index.exists());
@@ -687,7 +687,7 @@ fn bad_arguments_are_refused_before_git_runs() {
         (head.0.as_str(), vec![task("a"), task("a")], "ok"),
         (head.0.as_str(), vec![], "ok"),
     ] {
-        let refused = alice.write(&BoardHead(base.into()), &tasks, message);
+        let refused = alice.write_tasks(&BoardHead(base.into()), &tasks, message);
         assert!(
             matches!(refused, Err(BoardStoreError::InvalidWrite(_))),
             "{base} {message:?}: {refused:?}"
@@ -713,7 +713,7 @@ fn a_cancelled_call_pushes_nothing() {
     let head = created(&store(&repos.alice));
     let cancelled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
     let alice = store(&repos.alice).with_cancel(Some(cancelled));
-    let refused = alice.write(&head, &[task("a")], "board: add a");
+    let refused = alice.write_tasks(&head, &[task("a")], "board: add a");
     assert!(
         matches!(&refused, Ok(BoardWrite::Refused(why)) if why.contains("cancelled")),
         "{refused:?}"

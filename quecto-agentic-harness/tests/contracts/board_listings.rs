@@ -155,7 +155,7 @@ pub fn check_listings_with_a_name_listed_twice(
 ) {
     store.bootstrap().unwrap();
     let head = store.read().unwrap().head;
-    let seeded = store.write(&head, &cases(), "board: seed");
+    let seeded = store.write_tasks(&head, &cases(), "board: seed");
     assert!(matches!(seeded, Ok(BoardWrite::Written(_))), "{seeded:?}");
     duplicate();
     let query = QueryBoard::new(Arc::clone(&store));
@@ -181,13 +181,13 @@ pub fn check_listings_mean_query_board(
     assert_eq!(listings.ready(), Err(BoardStoreError::NoBoard));
     store.bootstrap().unwrap();
     let head = store.read().unwrap().head;
-    let seeded = store.write(&head, &cases(), "board: seed");
+    let seeded = store.write_tasks(&head, &cases(), "board: seed");
     assert!(matches!(seeded, Ok(BoardWrite::Written(_))), "{seeded:?}");
     spoil();
     let query = QueryBoard::new(Arc::clone(&store));
     check_parity(listings, &query);
     let head = store.read().unwrap().head;
-    let moved = store.write(
+    let moved = store.write_tasks(
         &head,
         &[shaped("late", TaskStatus::Ready, None, &[])],
         "board: add late",

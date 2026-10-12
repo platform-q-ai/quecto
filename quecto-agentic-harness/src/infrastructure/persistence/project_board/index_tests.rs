@@ -1,4 +1,5 @@
 use super::*;
+use crate::application::project_board::ports::ArtifactKey;
 use crate::application::project_board::ports::{BoardBootstrap, BoardHead, BoardWrite};
 use crate::domain::project_board::entities::claim::{Claim, Identity};
 use crate::domain::project_board::entities::task::TaskFields;
@@ -82,17 +83,22 @@ fn board(head: &str) -> BoardSnapshot {
             task("c", TaskStatus::Draft, Some("a"), &[]),
             task("d", TaskStatus::Done, None, &["a", "b"]),
         ],
+        plans: vec![],
+        runs: vec![],
+        changes: vec![],
+        reviews: vec![],
+        discussions: vec![],
         quarantined: vec![
             QuarantinedFile {
                 path: "tasks/x.json".into(),
-                id: Some(slug("x")),
+                key: Some(ArtifactKey::Task(slug("x"))),
                 reason: "malformed".into(),
                 object: "a".repeat(40),
                 carried: true,
             },
             QuarantinedFile {
                 path: "tasks/x.txt".into(),
-                id: None,
+                key: None,
                 reason: "not a task file".into(),
                 object: "b".repeat(40),
                 carried: false,
@@ -172,6 +178,11 @@ fn ready_needs_every_dependency_released_and_takeable_an_expired_claim() {
     let snapshot = BoardSnapshot {
         head: BoardHead("c".repeat(40)),
         tasks: listings_board(),
+        plans: vec![],
+        runs: vec![],
+        changes: vec![],
+        reviews: vec![],
+        discussions: vec![],
         quarantined: board("a1").quarantined,
     };
     rebuild(&index, &snapshot).unwrap();
@@ -207,7 +218,7 @@ fn the_index_lists_what_query_board_lists() {
     let memory = MemoryBoardStore::default();
     memory.bootstrap().unwrap();
     let head = memory.read().unwrap().head;
-    let written = memory.write(&head, &listings_board(), "board: seed");
+    let written = memory.write_tasks(&head, &listings_board(), "board: seed");
     assert!(matches!(written, Ok(BoardWrite::Written(_))), "{written:?}");
     memory.quarantine("q-first", "malformed");
     memory.quarantine("q-second", "holds another task");

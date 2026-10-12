@@ -28,7 +28,7 @@ fn holding(tasks: &[(&str, TaskStatus, Option<&str>, &[&str])]) -> MemoryBoardSt
             .unwrap()
         })
         .collect();
-    store.write(&head, &tasks, "seed").unwrap();
+    store.write_tasks(&head, &tasks, "seed").unwrap();
     store
 }
 

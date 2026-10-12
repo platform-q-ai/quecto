@@ -76,7 +76,7 @@ impl Repo {
 
     fn add(&self, id: &str) -> BoardSnapshot {
         let head = self.alice.read().unwrap().head;
-        let written = self.alice.write(
+        let written = self.alice.write_tasks(
             &head,
             &[task(id, TaskStatus::Ready, None, &[])],
             &format!("board: add {id}"),

@@ -93,13 +93,13 @@ pub fn check_write_and_read((alice, bob): Clients) {
     alice.bootstrap().unwrap();
     let head = alice.read().unwrap().head;
     let first = [task("a", "First"), task("a-b", "Second")];
-    let moved = written(alice.write(&head, &first, "board: add a, a-b"));
+    let moved = written(alice.write_tasks(&head, &first, "board: add a, a-b"));
     assert_ne!(moved, head);
     assert_eq!(
         (bob.read().unwrap().head, tasks(&*bob)),
         (moved.clone(), set(&first))
     );
-    written(bob.write(&moved, &[task("a", "Renamed")], "board: rename a"));
+    written(bob.write_tasks(&moved, &[task("a", "Renamed")], "board: rename a"));
     assert_eq!(
         tasks(&*alice),
         set(&[task("a", "Renamed"), task("a-b", "Second")])
@@ -112,8 +112,8 @@ pub fn check_write_and_read((alice, bob): Clients) {
 pub fn check_unchanged_write((alice, bob): Clients) {
     alice.bootstrap().unwrap();
     let head = alice.read().unwrap().head;
-    let first = written(alice.write(&head, &[task("a", "One")], "board: add a"));
-    let again = written(bob.write(&first, &[task("a", "One")], "board: add a again"));
+    let first = written(alice.write_tasks(&head, &[task("a", "One")], "board: add a"));
+    let again = written(bob.write_tasks(&first, &[task("a", "One")], "board: add a again"));
     assert_ne!(again, first, "an unchanged write moves the head");
     assert_eq!(
         (alice.read().unwrap().head, tasks(&*alice)),
@@ -126,9 +126,9 @@ pub fn check_unchanged_write((alice, bob): Clients) {
 pub fn check_compare_and_swap((alice, bob): Clients) {
     alice.bootstrap().unwrap();
     let stale = bob.read().unwrap().head;
-    let won = written(alice.write(&stale, &[task("a", "Alice's")], "board: add a"));
+    let won = written(alice.write_tasks(&stale, &[task("a", "Alice's")], "board: add a"));
     assert_eq!(
-        bob.write(
+        bob.write_tasks(
             &stale,
             &[task("a", "Bob's"), task("b", "Bob's")],
             "board: add a, b"
@@ -153,7 +153,7 @@ pub fn check_invalid_writes((alice, _bob): Clients) {
         (vec![task("a", "One")], "two\nlines"),
         (vec![task("a", "One")], ""),
     ] {
-        let refused = alice.write(&head, &tasks, message);
+        let refused = alice.write_tasks(&head, &tasks, message);
         assert!(
             matches!(refused, Err(BoardStoreError::InvalidWrite(_))),
             "{message:?}: {refused:?}"
@@ -169,7 +169,7 @@ pub fn check_refused((alice, bob): Clients, refuse: impl FnOnce()) {
     let head = alice.read().unwrap().head;
     refuse();
     assert!(matches!(
-        alice.write(&head, &[task("a", "One")], "board: add a"),
+        alice.write_tasks(&head, &[task("a", "One")], "board: add a"),
         Ok(BoardWrite::Refused(_))
     ));
     assert_eq!(
@@ -185,7 +185,7 @@ pub fn check_refused((alice, bob): Clients, refuse: impl FnOnce()) {
 pub fn check_quarantine((alice, bob): Clients, spoil: impl FnOnce()) {
     alice.bootstrap().unwrap();
     let head = alice.read().unwrap().head;
-    let before = written(alice.write(
+    let before = written(alice.write_tasks(
         &head,
         &[task("a", "One"), task("b", "Two")],
         "board: add a, b",
@@ -197,15 +197,15 @@ pub fn check_quarantine((alice, bob): Clients, spoil: impl FnOnce()) {
     let ids: Vec<_> = board
         .quarantined
         .iter()
-        .map(|file| file.id.clone())
+        .map(|file| file.id().cloned())
         .collect();
     assert_eq!(ids, [Some(Slug::parse("b").unwrap())]);
     assert_eq!(
-        alice.write(&before, &[task("a", "Stale")], "board: rename a"),
+        alice.write_tasks(&before, &[task("a", "Stale")], "board: rename a"),
         Ok(BoardWrite::Lost),
         "a write from before the file was spoiled"
     );
-    let refused = bob.write(&board.head, &[task("b", "Mended")], "board: write b");
+    let refused = bob.write_tasks(&board.head, &[task("b", "Mended")], "board: write b");
     assert!(matches!(refused, Ok(BoardWrite::Refused(_))), "{refused:?}");
     assert_eq!(alice.read().unwrap().head, board.head);
 }
@@ -225,7 +225,7 @@ pub fn check_clear_set_aside((alice, bob): Clients, spoil: impl FnOnce()) {
     };
     alice.bootstrap().unwrap();
     let head = alice.read().unwrap().head;
-    let before = written(alice.write(
+    let before = written(alice.write_tasks(
         &head,
         &[task("a", "One"), task("b", "Two")],
         "board: add a, b",
@@ -274,7 +274,7 @@ pub fn check_clear_set_aside((alice, bob): Clients, spoil: impl FnOnce()) {
         (after.head.clone(), after.quarantined, tasks(&*alice)),
         (cleared.clone(), vec![], set(&[task("a", "One")]))
     );
-    written(alice.write(&cleared, &[task("b", "Mended")], "board: write b"));
+    written(alice.write_tasks(&cleared, &[task("b", "Mended")], "board: write b"));
     assert_eq!(tasks(&*bob), set(&[task("a", "One"), task("b", "Mended")]));
 }
 
@@ -283,21 +283,21 @@ pub fn check_clear_set_aside((alice, bob): Clients, spoil: impl FnOnce()) {
 pub fn check_write_after_lost_and_refused((alice, bob): Clients, refuse: impl FnOnce()) {
     alice.bootstrap().unwrap();
     let stale = bob.read().unwrap().head;
-    written(alice.write(&stale, &[task("a", "Alice's")], "board: add a"));
+    written(alice.write_tasks(&stale, &[task("a", "Alice's")], "board: add a"));
     assert_eq!(
-        bob.write(&stale, &[task("b", "Bob's")], "board: add b"),
+        bob.write_tasks(&stale, &[task("b", "Bob's")], "board: add b"),
         Ok(BoardWrite::Lost)
     );
     let fresh = bob.read().unwrap().head;
-    let after_lost = written(bob.write(&fresh, &[task("b", "Bob's")], "board: add b"));
+    let after_lost = written(bob.write_tasks(&fresh, &[task("b", "Bob's")], "board: add b"));
     refuse();
     assert!(matches!(
-        bob.write(&after_lost, &[task("c", "Bob's")], "board: add c"),
+        bob.write_tasks(&after_lost, &[task("c", "Bob's")], "board: add c"),
         Ok(BoardWrite::Refused(_))
     ));
     let head = bob.read().unwrap().head;
     assert_eq!(head, after_lost, "a refusal leaves the board where it was");
-    written(bob.write(&head, &[task("c", "Bob's")], "board: add c"));
+    written(bob.write_tasks(&head, &[task("c", "Bob's")], "board: add c"));
     assert_eq!(
         tasks(&*alice),
         set(&[task("a", "Alice's"), task("b", "Bob's"), task("c", "Bob's")])
@@ -309,7 +309,7 @@ pub fn check_write_after_lost_and_refused((alice, bob): Clients, refuse: impl Fn
 pub fn check_write_before_bootstrap((alice, bob): Clients) {
     let anywhere = BoardHead("0".repeat(40));
     assert_eq!(
-        alice.write(&anywhere, &[task("a", "One")], "board: add a"),
+        alice.write_tasks(&anywhere, &[task("a", "One")], "board: add a"),
         Err(BoardStoreError::NoBoard)
     );
     assert_eq!(bob.read(), Err(BoardStoreError::NoBoard));
@@ -355,9 +355,9 @@ pub fn check_committed_as_writer(
 ) {
     alice.bootstrap().unwrap();
     let head = alice.read().unwrap().head;
-    let by_alice = written(alice.write(&head, &[task("a", "One")], "board: add a"));
+    let by_alice = written(alice.write_tasks(&head, &[task("a", "One")], "board: add a"));
     assert_eq!(committed_by(&by_alice), alice.writer());
-    let by_bob = written(bob.write(&by_alice, &[task("b", "Two")], "board: add b"));
+    let by_bob = written(bob.write_tasks(&by_alice, &[task("b", "Two")], "board: add b"));
     assert_eq!(committed_by(&by_bob), bob.writer());
 }
 
@@ -378,7 +378,7 @@ pub fn check_carried_set_aside(
     use std::sync::Arc;
     alice.bootstrap().unwrap();
     let head = alice.read().unwrap().head;
-    written(alice.write(
+    written(alice.write_tasks(
         &head,
         &[task("a", "One"), task("b", "Two")],
         "board: add a, b",
@@ -406,7 +406,7 @@ pub fn check_carried_set_aside(
         Err(ProjectBoardError::Quarantined(Slug::parse("b").unwrap()))
     );
     let head = alice.read().unwrap().head;
-    written(alice.write(&head, &[task("c", "Three")], "board: add c"));
+    written(alice.write_tasks(&head, &[task("c", "Three")], "board: add c"));
     assert_eq!(carried(&*alice), [("tasks/b.json".to_string(), true)]);
     add_stray();
     assert_eq!(carried(&*alice), both);

@@ -224,7 +224,7 @@ fn every_name_listed_twice_is_resolved_in_one_clear_a_checking_remote_takes() {
     assert_eq!(names, ["dup.json", "two.json"]);
     let board = bob.read().unwrap();
     assert_eq!(board.quarantined, vec![]);
-    written(bob.write(&board.head, &[task("fresh")], "board: add fresh"));
+    written(bob.write_tasks(&board.head, &[task("fresh")], "board: add fresh"));
 }
 
 /// A copy kept stays as it was, mode and type; a name listed twice as
@@ -489,7 +489,7 @@ fn a_file_set_aside_once_is_cleared_without_a_copy_to_keep() {
         2,
         "ok.json and its summary"
     );
-    written(bob.write(&cleared, &[task("broken")], "board: write broken"));
+    written(bob.write_tasks(&cleared, &[task("broken")], "board: write broken"));
 }
 
 /// A file whose name looks like a secret is listed by its name, never

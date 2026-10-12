@@ -2,6 +2,7 @@
 
 use std::os::unix::net::UnixStream;
 
+pub mod board_artifacts;
 pub mod executable;
 pub mod memory_board_store;
 pub mod memory_pull_requests;

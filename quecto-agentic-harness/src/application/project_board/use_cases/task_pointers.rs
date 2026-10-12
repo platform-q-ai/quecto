@@ -25,12 +25,7 @@ pub(super) fn pointers_hold(
     refs: &Pointers<'_>,
 ) -> Result<(), ProjectBoardError> {
     let held = |id: &Slug| board.tasks.iter().any(|task| task.fields().id == *id);
-    let set_aside = |id: &Slug| {
-        board
-            .quarantined
-            .iter()
-            .any(|file| file.id.as_ref() == Some(id))
-    };
+    let set_aside = |id: &Slug| board.quarantined.iter().any(|file| file.id() == Some(id));
     for reference in refs.parent.into_iter().chain(refs.depends_on) {
         match (held(reference), set_aside(reference)) {
             (true, _) => {}

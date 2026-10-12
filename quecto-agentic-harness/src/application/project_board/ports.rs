@@ -3,7 +3,12 @@
 //! repository's `quecto/board` branch), its listings from a local view of
 //! it (the S1e index implements [`BoardListings`]) and what time it is.
 use super::dto::BoardListing;
+use crate::domain::project_board::entities::change::Change;
 use crate::domain::project_board::entities::claim::Identity;
+use crate::domain::project_board::entities::discussion::Discussion;
+use crate::domain::project_board::entities::plan::Plan;
+use crate::domain::project_board::entities::review::Review;
+use crate::domain::project_board::entities::run::Run;
 use crate::domain::project_board::entities::task::Task;
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
@@ -14,13 +19,89 @@ use crate::domain::project_board::value_objects::vocabulary::TaskStatus;
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct BoardHead(pub String);
 
-/// A board file the store set aside, and why. `id` is the task id its file
-/// name spells (`tasks/<id>.json`), when it spells one: no task may be
-/// written under that id until the file is mended.
+/// Which artifact a board file holds (#2481's artifact model): what names
+/// it on the board, one file each. A task by its id; a plan, run or change
+/// by its task and number; a review by its task and its change's number; a
+/// discussion by its id.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum ArtifactKey {
+    Task(Slug),
+    Plan(Slug, u32),
+    Run(Slug, u32),
+    Change(Slug, u32),
+    Review(Slug, u32),
+    Discussion(Slug),
+}
+
+impl ArtifactKey {
+    /// The task it is the task file of.
+    pub fn task_id(&self) -> Option<&Slug> {
+        match self {
+            Self::Task(id) => Some(id),
+            Self::Plan(..)
+            | Self::Run(..)
+            | Self::Change(..)
+            | Self::Review(..)
+            | Self::Discussion(_) => None,
+        }
+    }
+}
+
+/// How a message names it: `task x`, `plan 2 of task x`, `the review of
+/// change 3 of task x`, `discussion d`.
+impl std::fmt::Display for ArtifactKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Task(id) => write!(f, "task {}", id.as_str()),
+            Self::Plan(id, version) => write!(f, "plan {version} of task {}", id.as_str()),
+            Self::Run(id, number) => write!(f, "run {number} of task {}", id.as_str()),
+            Self::Change(id, number) => write!(f, "change {number} of task {}", id.as_str()),
+            Self::Review(id, change) => {
+                write!(f, "the review of change {change} of task {}", id.as_str())
+            }
+            Self::Discussion(id) => write!(f, "discussion {}", id.as_str()),
+        }
+    }
+}
+
+/// One artifact as a write gives it, whole.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BoardArtifact {
+    Task(Task),
+    Plan(Plan),
+    Run(Run),
+    Change(Change),
+    Review(Review),
+    Discussion(Discussion),
+}
+
+impl BoardArtifact {
+    /// The key its file is named by.
+    pub fn key(&self) -> ArtifactKey {
+        match self {
+            Self::Task(task) => ArtifactKey::Task(task.fields().id.clone()),
+            Self::Plan(plan) => {
+                ArtifactKey::Plan(plan.fields().task.clone(), plan.fields().version)
+            }
+            Self::Run(run) => ArtifactKey::Run(run.fields().task.clone(), run.fields().number),
+            Self::Change(change) => {
+                ArtifactKey::Change(change.fields().task.clone(), change.fields().number)
+            }
+            Self::Review(review) => {
+                ArtifactKey::Review(review.fields().task.clone(), review.fields().change)
+            }
+            Self::Discussion(discussion) => ArtifactKey::Discussion(discussion.fields().id.clone()),
+        }
+    }
+}
+
+/// A board file the store set aside, and why. `key` is the artifact its
+/// file name spells, when it spells one: none may be written under that key
+/// until the file is mended.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct QuarantinedFile {
     pub path: String,
-    pub id: Option<Slug>,
+    pub key: Option<ArtifactKey>,
     pub reason: String,
     /// The store's name for the file's contents (an object id): with
     /// `path`, which file this is, since two files may show the same path.
@@ -32,6 +113,13 @@ pub struct QuarantinedFile {
     /// dropped either: every write is refused until a clear resolves them
     /// (it names the copy kept, or that none is).
     pub carried: bool,
+}
+
+impl QuarantinedFile {
+    /// The task id its name spells, when it names a task file.
+    pub fn id(&self) -> Option<&Slug> {
+        self.key.as_ref().and_then(ArtifactKey::task_id)
+    }
 }
 
 /// What a clear does with a name listed more than once. Each names every
@@ -64,12 +152,18 @@ pub struct SetAsideClear {
     pub repeated: std::collections::BTreeMap<String, KeepCopy>,
 }
 
-/// The board at its head: every readable task, and what was set aside.
-/// The order of either list is the store's own; read them as sets.
+/// The board at its head: every readable artifact of each kind, and what
+/// was set aside. The order of each list is the store's own; read them as
+/// sets.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BoardSnapshot {
     pub head: BoardHead,
     pub tasks: Vec<Task>,
+    pub plans: Vec<Plan>,
+    pub runs: Vec<Run>,
+    pub changes: Vec<Change>,
+    pub reviews: Vec<Review>,
+    pub discussions: Vec<Discussion>,
     pub quarantined: Vec<QuarantinedFile>,
 }
 
@@ -100,7 +194,8 @@ pub enum BoardStoreError {
     NoBoard,
     /// Something in the repository keeps the board from existing.
     Clash(String),
-    /// A write no store takes: no tasks, one id twice, a message that is
+    /// A write no store takes: no artifacts, one key twice, a kind the
+    /// store does not keep yet, a value its codec refuses, a message that is
     /// not one short line, a board past its bounds, or a head that is not
     /// on the board. That includes a head the board held before its
     /// history was rewritten (a force push): such a write is invalid, not
@@ -121,19 +216,35 @@ pub trait ProjectBoardStore: Send + Sync {
     /// No board, or the store's failure.
     fn read(&self) -> Result<BoardSnapshot, BoardStoreError>;
 
-    /// Writes `tasks` (each whole, replacing any task of the same id) in
-    /// one change, only if the board is still at `expected`. A task whose
-    /// id a quarantined file holds is [`BoardWrite::Refused`].
+    /// Writes `artifacts` (each whole, replacing any of the same key) in
+    /// one change, only if the board is still at `expected`. An artifact
+    /// whose key a file set aside holds is [`BoardWrite::Refused`].
     ///
     /// # Errors
-    /// An invalid write, or the store's failure; losing the race is
+    /// An invalid write (no artifacts, a key twice, a kind the store does
+    /// not keep yet), or the store's failure; losing the race is
     /// [`BoardWrite::Lost`].
     fn write(
         &self,
         expected: &BoardHead,
-        tasks: &[Task],
+        artifacts: &[BoardArtifact],
         message: &str,
     ) -> Result<BoardWrite, BoardStoreError>;
+
+    /// [`Self::write`] of tasks alone.
+    ///
+    /// # Errors
+    /// As [`Self::write`].
+    fn write_tasks(
+        &self,
+        expected: &BoardHead,
+        tasks: &[Task],
+        message: &str,
+    ) -> Result<BoardWrite, BoardStoreError> {
+        let artifacts: Vec<BoardArtifact> =
+            tasks.iter().cloned().map(BoardArtifact::Task).collect();
+        self.write(expected, &artifacts, message)
+    }
 
     /// Removes the file set aside that `clear` names (a
     /// [`QuarantinedFile`] of the board at `expected`, by path and, when

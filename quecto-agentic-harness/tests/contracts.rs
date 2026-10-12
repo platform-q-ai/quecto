@@ -177,6 +177,8 @@ mod mock_claude;
 mod overlay_trust_store;
 #[path = "contracts/project_board_git_store.rs"]
 mod project_board_git_store;
+#[path = "contracts/project_board_kinds.rs"]
+mod project_board_kinds;
 #[path = "contracts/project_board_store.rs"]
 mod project_board_store;
 

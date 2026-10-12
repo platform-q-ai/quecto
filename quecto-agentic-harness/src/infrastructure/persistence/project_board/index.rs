@@ -23,7 +23,7 @@ use super::store::GitBoardStore;
 use super::task_record::{decode, encode};
 use crate::application::project_board::dto::BoardListing;
 use crate::application::project_board::ports::{
-    BoardHead, BoardSnapshot, BoardStoreError, ProjectBoardStore, QuarantinedFile,
+    ArtifactKey, BoardHead, BoardSnapshot, BoardStoreError, ProjectBoardStore, QuarantinedFile,
 };
 use crate::domain::project_board::entities::task::Task;
 use crate::domain::project_board::services::claims::is_live;
@@ -433,7 +433,7 @@ impl BoardIndex {
                 }
                 Ok(QuarantinedFile {
                     path,
-                    id,
+                    key: id.map(ArtifactKey::Task),
                     reason,
                     object,
                     carried,
@@ -611,7 +611,7 @@ fn fill(
             "INSERT INTO quarantined (path, id, reason, object, carried) VALUES (?1, ?2, ?3, ?4, ?5)",
             params![
                 file.path,
-                file.id.as_ref().map(Slug::as_str),
+                file.id().map(Slug::as_str),
                 file.reason,
                 file.object,
                 file.carried

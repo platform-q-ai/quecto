@@ -23,7 +23,7 @@ fn other_writes(board: &MemoryBoardStore, id: &str) {
         ..fields(id)
     })
     .unwrap();
-    board.write(&head, &[task], "other").unwrap();
+    board.write_tasks(&head, &[task], "other").unwrap();
 }
 
 #[test]
@@ -298,7 +298,7 @@ fn plant(store: &MemoryBoardStore, tasks: Vec<TaskFields>) {
         })
         .collect();
     let head = store.read().unwrap().head;
-    store.write(&head, &tasks, "plant").unwrap();
+    store.write_tasks(&head, &tasks, "plant").unwrap();
 }
 
 fn closes(by: &str) -> Result<Task, ProjectBoardError> {
