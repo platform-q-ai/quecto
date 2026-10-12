@@ -115,14 +115,19 @@ fn ours(text: &str) -> bool {
 
 /// The most bytes in a repository's name.
 pub const MAX_REPO_PART_BYTES: usize = 100;
-/// The most bytes in a repository owner's name (GitHub's limit).
+/// The most bytes in a repository owner's name, a `_shortcode` included
+/// (GitHub's limit).
 pub const MAX_OWNER_BYTES: usize = 39;
+/// The most bytes in an enterprise-managed user's shortcode.
+pub const MAX_SHORTCODE_BYTES: usize = 8;
 
-/// A repository as GitHub names it, `owner/name`: the owner letters,
-/// digits and hyphens, at most [`MAX_OWNER_BYTES`], not starting or ending
-/// with a hyphen; the name letters, digits, `.`, `_` and `-`, at most
-/// [`MAX_REPO_PART_BYTES`], neither `.` nor `..`. A change names the one
-/// its branch lives in, which a fork makes another than the board's.
+/// A repository as GitHub names it, `owner/name`, by the board's one
+/// grammar ([`is_owner`], [`is_repo_name`]): the owner letters, digits and
+/// hyphens, not starting with a hyphen (an old account may end with one),
+/// then at most one `_shortcode`, at most [`MAX_OWNER_BYTES`] in all; the
+/// name letters, digits, `.`, `_` and `-`, at most [`MAX_REPO_PART_BYTES`],
+/// not starting with `-`, neither `.` nor `..`. A change names the one its
+/// branch lives in, which a fork makes another than the board's.
 ///
 /// The host names repositories without regard to case, so two names that
 /// differ only in case are the same repository: equality, order and hash
@@ -176,9 +181,9 @@ impl RepoName {
                 "repo",
                 format!(
                     "{text:?} is not GitHub's owner/name: an owner of letters, digits and \
-                     hyphens, not starting with one, at most {MAX_OWNER_BYTES}, then at most one \
-                     _shortcode; a name of letters, digits, ., _ and -, not starting with -, \
-                     nor . or .."
+                     hyphens, not starting with one, then at most one _shortcode of 1 to \
+                     {MAX_SHORTCODE_BYTES}, {MAX_OWNER_BYTES} in all; a name of letters, digits, \
+                     ., _ and -, not starting with -, nor . or .."
                 ),
             )),
         }
@@ -192,15 +197,16 @@ impl RepoName {
 
 /// A GitHub owner, the one grammar the board and its host adapter keep:
 /// letters, digits and hyphens, starting with a letter or digit (an old
-/// account may end with a hyphen, or hold `--`), at most
-/// [`MAX_OWNER_BYTES`]; then, for an enterprise-managed user, one `_` and
-/// a short code of letters and digits, at most as long.
+/// account may end with a hyphen, or hold `--`); then, for an
+/// enterprise-managed user, one `_` and a shortcode of 1 to
+/// [`MAX_SHORTCODE_BYTES`] letters and digits; at most [`MAX_OWNER_BYTES`]
+/// in all.
 pub fn is_owner(owner: &str) -> bool {
     let (handle, short_code) = match owner.split_once('_') {
         Some((handle, short_code)) => (handle, Some(short_code)),
         None => (owner, None),
     };
-    let handle_kept = (1..=MAX_OWNER_BYTES).contains(&handle.len())
+    let handle_kept = !handle.is_empty()
         && handle
             .bytes()
             .next()
@@ -209,10 +215,10 @@ pub fn is_owner(owner: &str) -> bool {
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || b == b'-');
     let short_code_kept = short_code.is_none_or(|code| {
-        (1..=MAX_OWNER_BYTES).contains(&code.len())
+        (1..=MAX_SHORTCODE_BYTES).contains(&code.len())
             && code.bytes().all(|b| b.is_ascii_alphanumeric())
     });
-    handle_kept && short_code_kept
+    owner.len() <= MAX_OWNER_BYTES && handle_kept && short_code_kept
 }
 
 /// A GitHub repository's name, the one grammar the board and its host
