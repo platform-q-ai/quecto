@@ -1,12 +1,16 @@
 use super::CreateBoardTask;
 use crate::application::project_board::dto::{NewBoardTask, NewBoardTaskStatus, ProjectBoardError};
-use crate::application::project_board::ports::{BoardStoreError, ProjectBoardStore};
+use crate::application::project_board::ports::{
+    ArtifactKey, BoardArtifact, BoardStoreError, ProjectBoardStore,
+};
 use crate::application::project_board::use_cases::MAX_WRITE_ATTEMPTS;
 use crate::application::project_board::use_cases::fixtures_tests::{
     SetClock, at, board, fields, new_task, set_aside_task, slug,
 };
+use crate::domain::project_board::entities::discussion::{Discussion, DiscussionFields};
 use crate::domain::project_board::entities::task::{Task, TaskFields};
 use crate::domain::project_board::value_objects::vocabulary::TaskStatus;
+use crate::infrastructure::test_support::board_artifacts;
 use crate::infrastructure::test_support::memory_board_store::MemoryBoardStore;
 use std::sync::Arc;
 
@@ -458,4 +462,58 @@ fn board_text_is_normalised_before_the_schema_reads_it() {
         .unwrap();
     assert_eq!(created.fields().title, "Ship it");
     assert_eq!(created.fields().description, "Why.\nHow so.");
+}
+
+/// An id the board's other artifacts already name (a plan, run, change or
+/// review of a task by that id, or a discussion about it) is refused,
+/// naming the least of them, whatever the store's order: a new task would
+/// take over what they say. One of them set aside is refused as set aside.
+#[test]
+fn an_id_other_artifacts_name_is_refused() {
+    let about_x = Discussion::new(DiscussionFields {
+        task: Some(slug("x")),
+        ..board_artifacts::discussion("chat").fields().clone()
+    })
+    .unwrap();
+    let store = board();
+    for (artifact, least) in [
+        (
+            BoardArtifact::Discussion(about_x),
+            ArtifactKey::Discussion(slug("chat")),
+        ),
+        (
+            BoardArtifact::Review(board_artifacts::review("x", 3)),
+            ArtifactKey::Review(slug("x"), 3),
+        ),
+        (
+            BoardArtifact::Plan(board_artifacts::plan("x", 2)),
+            ArtifactKey::Plan(slug("x"), 2),
+        ),
+    ] {
+        let head = store.read().unwrap().head;
+        store.write(&head, &[artifact], "seed").unwrap();
+        let writes = store.writes();
+        assert_eq!(
+            create(&store, SetClock::at("10:00:00")).execute(&new_task("x")),
+            Err(ProjectBoardError::IdInUse {
+                id: slug("x"),
+                by: least
+            })
+        );
+        assert_eq!(store.writes(), writes);
+    }
+    assert!(
+        create(&store, SetClock::at("10:00:00"))
+            .execute(&new_task("y"))
+            .is_ok(),
+        "they name x alone"
+    );
+    store.quarantine_key(ArtifactKey::Run(slug("x"), 1), "runs/x.1.md", "malformed");
+    assert_eq!(
+        create(&store, SetClock::at("10:00:00")).execute(&new_task("x")),
+        Err(ProjectBoardError::Quarantined {
+            key: ArtifactKey::Run(slug("x"), 1),
+            path: "runs/x.1.md".into()
+        })
+    );
 }

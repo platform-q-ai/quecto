@@ -31,7 +31,7 @@ fn keys(code: ErrorCode) -> &'static [&'static str] {
         C::Rule => &["rule"],
         C::NotFound | C::Exists | C::SetAside | C::UnknownReference => &["task"],
         C::ClockUnreadable => &["read"],
-        C::ClosesCycle => &["task", "by"],
+        C::ClosesCycle | C::IdInUse => &["task", "by"],
         C::PrStateUnknown => &["pr"],
         C::TaskAhead => &["task", "updated"],
         C::ClockOutOfRange => &["reference"],
@@ -95,6 +95,10 @@ board_errors! {
     E::Invalid(_) => E::Invalid(SchemaError::new("title", "is empty")),
     E::NotFound(_) => E::NotFound(slug("a")),
     E::Exists(_) => E::Exists(slug("a")),
+    E::IdInUse { .. } => E::IdInUse {
+        id: slug("a"),
+        by: ArtifactKey::Run(slug("a"), 1),
+    },
     E::Clock(BoardClockError::OutOfRange(_)) => {
         E::Clock(BoardClockError::OutOfRange("1969".into()))
     },

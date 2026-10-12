@@ -68,6 +68,9 @@ pub enum ErrorCode {
     NotFound,
     /// `task`.
     Exists,
+    /// `task` (the id asked for) and `by`: the artifact already naming it,
+    /// as `duplicate_artifact` names one.
+    IdInUse,
     /// `read`.
     ClockUnreadable,
     /// `task`.
@@ -125,6 +128,7 @@ impl ErrorCode {
             Self::InvalidWriter => "invalid_writer",
             Self::NotFound => "not_found",
             Self::Exists => "exists",
+            Self::IdInUse => "id_in_use",
             Self::ClockUnreadable => "clock_unreadable",
             Self::SetAside => "set_aside",
             Self::ArtifactSetAside => "artifact_set_aside",
@@ -442,6 +446,13 @@ fn error_fields(error: &ProjectBoardError) -> (ErrorCode, Map<String, Value>) {
         ),
         E::NotFound(id) => (C::NotFound, fields([("task", slug_json(id))])),
         E::Exists(id) => (C::Exists, fields([("task", slug_json(id))])),
+        E::IdInUse { id, by } => (
+            C::IdInUse,
+            fields([
+                ("task", slug_json(id)),
+                ("by", Value::Object(key_fields(by))),
+            ]),
+        ),
         E::Clock(BoardClockError::OutOfRange(read)) => {
             (C::ClockUnreadable, fields([("read", shown_json(read))]))
         }

@@ -108,6 +108,7 @@ const KNOWN_KINDS: &[&str] = &[
     "stale",
     "not_set_aside",
     "no_pull_request_host",
+    "id_in_use",
     // Rule codes.
     "not_allowed",
     "not_holder",

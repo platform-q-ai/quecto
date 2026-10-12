@@ -21,10 +21,12 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::time::Duration;
 
-use super::board_change::{checked_writer, commit, task_on};
+use super::board_change::{checked_writer, commit, owned, task_on, written_task};
+use super::board_view;
 use crate::application::project_board::dto::ProjectBoardError;
 use crate::application::project_board::ports::{
-    BoardClock, ProjectBoardStore, PullRequestState, PullRequestStates, PullRequestStatesError,
+    BoardArtifact, BoardClock, ProjectBoardStore, PullRequestState, PullRequestStates,
+    PullRequestStatesError,
 };
 use crate::domain::project_board::entities::task::Task;
 use crate::domain::project_board::services::transitions::{Completed, complete_merged};
@@ -63,7 +65,9 @@ impl CompleteMergedTask {
         self
     }
 
-    /// Task `id` done, when every pull request it links reads merged.
+    /// Task `id` done, when every pull request it links reads merged and
+    /// no change of it is open; its run going, if one is, is ended as lost
+    /// in the same write.
     ///
     /// # Errors
     /// A pull request the host does not know, or the host's failure; a
@@ -73,18 +77,22 @@ impl CompleteMergedTask {
         let message = format!("board: {} done, its pull requests merged", id.as_str());
         // One deadline for every attempt: a lost write does not restart it.
         let deadline = self.clock.elapsed().saturating_add(self.read_budget);
-        let tasks = commit(&*self.store, &*self.clock, &message, |board, when| {
+        let written = commit(&*self.store, &*self.clock, &message, |board, when| {
             let task = task_on(board, id)?;
             when.may_build_on(task)?;
+            // All of the task's changes and runs, as the board holds them:
+            // an open change holds the completion, and the run going is
+            // written back ended. What a set-aside one held is unknown, so
+            // the completion waits for it.
+            let changes = owned(board_view::changes_of(board, id)?);
+            let runs = owned(board_view::runs_of(board, id)?);
             // The host is asked only about a task that would complete were
-            // its pull requests merged: a draft, done or archived task, or
-            // one linking none, is refused by the rule first.
+            // its pull requests merged: a draft, done or archived task, one
+            // linking none, or one an open change holds, is refused by the
+            // rule first.
             let linked: BTreeSet<u64> = task.fields().prs.iter().copied().collect();
-            // No run or change is stored before the run and change
-            // artifacts are (M3): the task has none, so no open change holds
-            // this completion. From then all of its runs and changes are
-            // passed, and the run going is written back ended.
-            complete_merged(task, &linked, &[], &[], &when.now).map_err(ProjectBoardError::Rule)?;
+            complete_merged(task, &linked, &changes, &runs, &when.now)
+                .map_err(ProjectBoardError::Rule)?;
             let reads = Reads {
                 host: &*self.prs,
                 clock: &*self.clock,
@@ -92,12 +100,15 @@ impl CompleteMergedTask {
                 budget: self.read_budget,
             };
             let merged = merged(&reads, &task.fields().prs)?;
-            let Completed { task, run } = complete_merged(task, &merged, &[], &[], &when.now)
-                .map_err(ProjectBoardError::Rule)?;
-            assert!(run.is_none(), "no run is stored before M3");
-            Ok(vec![task])
+            let Completed { task, run } =
+                complete_merged(task, &merged, &changes, &runs, &when.now)
+                    .map_err(ProjectBoardError::Rule)?;
+            // The task and the run it ended, in one change.
+            let mut written = vec![BoardArtifact::Task(task)];
+            written.extend(run.map(BoardArtifact::Run));
+            Ok(written)
         })?;
-        Ok(tasks.into_iter().next().expect("a change writes its task"))
+        Ok(written_task(written))
     }
 }
 

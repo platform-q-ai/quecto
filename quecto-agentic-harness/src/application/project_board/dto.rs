@@ -330,6 +330,13 @@ pub enum ProjectBoardError {
     Invalid(SchemaError),
     NotFound(Slug),
     Exists(Slug),
+    /// No task `id` is on the board, but the artifact `by` (a plan, run,
+    /// change or review of a task by that id, or a discussion about it)
+    /// already names it: a new task would take over what it says.
+    IdInUse {
+        id: Slug,
+        by: ArtifactKey,
+    },
     /// This machine's clock could not tell the time.
     Clock(BoardClockError),
     /// The artifact's file (at `path`) is set aside as unreadable: mend
@@ -439,6 +446,11 @@ impl fmt::Display for ProjectBoardError {
             Self::Invalid(error) => write!(f, "invalid task: {error}"),
             Self::NotFound(id) => write!(f, "no task {}", id.as_str()),
             Self::Exists(id) => write!(f, "task {} already exists", id.as_str()),
+            Self::IdInUse { id, by } => write!(
+                f,
+                "the id {} is already in use: {by} names it; choose another",
+                id.as_str()
+            ),
             Self::SetAsideFile { path, object } => write!(
                 f,
                 "the file {path:?} (object {object}) is set aside as unreadable and its task is \

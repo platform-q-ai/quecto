@@ -80,6 +80,7 @@ const KNOWN_KINDS : & [
 "stale" ,
 "not_set_aside" ,
 "no_pull_request_host" ,
+"id_in_use" ,
 "not_allowed" ,
 "not_holder" ,
 "no_claim" ,

@@ -1,15 +1,19 @@
 use super::ChangeBoardTask;
 use crate::application::project_board::dto::{BoardOp, ProjectBoardError};
-use crate::application::project_board::ports::{ProjectBoardStore, PullRequestState};
+use crate::application::project_board::ports::{
+    ArtifactKey, BoardArtifact, ProjectBoardStore, PullRequestState,
+};
 use crate::application::project_board::use_cases::CompleteMergedTask;
 use crate::application::project_board::use_cases::fixtures_tests::{
     SetClock, at, board, fields, person, set_aside_task, slug,
 };
+use crate::domain::project_board::entities::change::{Change, ChangeFields};
 use crate::domain::project_board::entities::claim::{Claim, Identity};
 use crate::domain::project_board::entities::task::{Task, TaskFields};
 use crate::domain::project_board::value_objects::rule_error::BoardRuleError;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
 use crate::domain::project_board::value_objects::vocabulary::TaskStatus;
+use crate::infrastructure::test_support::board_artifacts;
 use crate::infrastructure::test_support::memory_board_store::MemoryBoardStore;
 use crate::infrastructure::test_support::memory_pull_requests::MemoryPullRequests;
 use std::sync::Arc;
@@ -466,4 +470,117 @@ fn a_pull_request_is_not_linked_while_a_carried_file_of_no_known_task_is_set_asi
         })
     );
     assert_eq!(store.writes(), writes);
+}
+
+/// Writes `artifacts` onto `store`'s board as they are.
+fn seed_artifacts(store: &MemoryBoardStore, artifacts: Vec<BoardArtifact>) {
+    let head = store.read().unwrap().head;
+    store.write(&head, &artifacts, "seed").unwrap();
+}
+
+/// Change `number` of `task`, linking pull request `pr`.
+fn linking(task: &str, number: u32, pr: u64) -> Change {
+    Change::new(ChangeFields {
+        pr: Some(pr),
+        ..board_artifacts::change(task, number).fields().clone()
+    })
+    .unwrap()
+}
+
+/// A move reads the task's runs as the board holds them: the holder
+/// releasing a task whose run is going is refused, and nothing written.
+#[test]
+fn a_task_whose_run_is_going_is_not_released() {
+    let store = board();
+    seed(&store, held_by_ada(TaskStatus::InProgress));
+    seed_artifacts(
+        &store,
+        vec![BoardArtifact::Run(board_artifacts::run("a", 1))],
+    );
+    let writes = store.writes();
+    let released =
+        change(&store, "Ada", "10:00:00").execute(&slug("a"), &BoardOp::Move(TaskStatus::Ready));
+    assert_eq!(
+        released,
+        Err(ProjectBoardError::Rule(BoardRuleError::RunOpen(1)))
+    );
+    assert_eq!(store.writes(), writes);
+}
+
+/// A move reads the task's changes as the board holds them: a task a
+/// change still links is done when it merges, not by its holder.
+#[test]
+fn a_task_a_change_links_is_not_finished_by_its_holder() {
+    let store = board();
+    seed(&store, held_by_ada(TaskStatus::Review));
+    seed_artifacts(
+        &store,
+        vec![BoardArtifact::Change(board_artifacts::change("a", 1))],
+    );
+    let finished =
+        change(&store, "Ada", "10:00:00").execute(&slug("a"), &BoardOp::Move(TaskStatus::Done));
+    assert_eq!(
+        finished,
+        Err(ProjectBoardError::Rule(BoardRuleError::ChangesLinked(
+            vec![1]
+        )))
+    );
+}
+
+/// What the task's run or change files held is unknown while one is set
+/// aside, so a move waits for it; another task's blocks nothing.
+#[test]
+fn a_move_waits_while_a_run_or_change_of_its_task_is_set_aside() {
+    for (key, path) in [
+        (ArtifactKey::Run(slug("a"), 1), "runs/a.1.md"),
+        (ArtifactKey::Change(slug("a"), 2), "changes/a.2.md"),
+    ] {
+        let store = board();
+        seed(&store, held_by_ada(TaskStatus::InProgress));
+        store.quarantine_key(ArtifactKey::Run(slug("b"), 1), "runs/b.1.md", "malformed");
+        let other = change(&store, "Ada", "10:00:00")
+            .execute(&slug("a"), &BoardOp::Move(TaskStatus::Blocked));
+        assert!(
+            other.is_ok(),
+            "another task's file blocks nothing: {other:?}"
+        );
+        store.quarantine_key(key.clone(), path, "malformed");
+        let moved = change(&store, "Ada", "10:01:00")
+            .execute(&slug("a"), &BoardOp::Move(TaskStatus::InProgress));
+        assert_eq!(
+            moved,
+            Err(ProjectBoardError::Quarantined {
+                key,
+                path: path.into()
+            })
+        );
+    }
+}
+
+/// A pull request is linked once board-wide, whichever way: one another
+/// task's change links is refused, naming that change; once the change is
+/// unlinked the pull request is free again.
+#[test]
+fn a_pull_request_another_tasks_change_links_is_not_linked_again() {
+    let store = board();
+    seed(&store, held_by_ada(TaskStatus::InProgress));
+    seed_artifacts(&store, vec![BoardArtifact::Change(linking("b", 1, 7))]);
+    let link = |time: &str| change(&store, "Ada", time).execute(&slug("a"), &BoardOp::AddPr(7));
+    assert_eq!(
+        link("10:00:00"),
+        Err(ProjectBoardError::Rule(
+            BoardRuleError::ChangeAlreadyLinked {
+                task: slug("b"),
+                change: Some(1)
+            }
+        ))
+    );
+    let unlinked = Change::new(ChangeFields {
+        unlinked: Some((person("Bob"), at("09:30:00"))),
+        updated: at("09:30:00"),
+        ..linking("b", 1, 7).fields().clone()
+    })
+    .unwrap();
+    seed_artifacts(&store, vec![BoardArtifact::Change(unlinked)]);
+    assert_eq!(link("10:01:00").unwrap().fields().prs, vec![7]);
 }

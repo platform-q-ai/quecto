@@ -7,16 +7,18 @@
 //! thread before it is tried again.
 use std::sync::Arc;
 
-use super::board_change::{checked_writer, commit, task_on};
+use super::board_change::{checked_writer, commit, owned, task_on, written_task};
+use super::board_view;
 use crate::application::project_board::dto::{BoardOp, ProjectBoardError};
-use crate::application::project_board::ports::{BoardClock, BoardSnapshot, ProjectBoardStore};
+use crate::application::project_board::ports::{
+    BoardArtifact, BoardClock, BoardSnapshot, ProjectBoardStore,
+};
 use crate::domain::project_board::entities::claim::Identity;
 use crate::domain::project_board::entities::task::Task;
 use crate::domain::project_board::services::changes::Linked;
 use crate::domain::project_board::services::claims::{renew, take_over};
 use crate::domain::project_board::services::pull_requests::{add_pr, remove_pr};
 use crate::domain::project_board::services::transitions::move_task;
-use crate::domain::project_board::value_objects::rule_error::BoardRuleError;
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
 
@@ -45,13 +47,14 @@ impl ChangeBoardTask {
     /// Task `id` after `op`, made by the store's committer.
     ///
     /// # Errors
-    /// No such task, or its file quarantined; a pull request linked while
-    /// another task's file is set aside; the board's rules (against
-    /// the latest task); the clock's; a board that kept moving; the
-    /// store's.
+    /// No such task, or its file quarantined; a move while a run or
+    /// change of the task is set aside; a pull request linked while a file
+    /// every write carries is set aside; the board's rules (against the
+    /// latest task, its runs and changes, and every change on the board);
+    /// the clock's; a board that kept moving; the store's.
     pub fn execute(&self, id: &Slug, op: &BoardOp) -> Result<Task, ProjectBoardError> {
         let actor = &self.actor;
-        let tasks = commit(
+        let written = commit(
             &*self.store,
             &*self.clock,
             &op.message(id),
@@ -59,13 +62,11 @@ impl ChangeBoardTask {
                 let task = task_on(board, id)?;
                 when.may_build_on(task)?;
                 board_readable_for(op, board)?;
-                Ok(vec![
-                    apply(task, &board.tasks, actor, op, &when.now)
-                        .map_err(ProjectBoardError::Rule)?,
-                ])
+                let changed = apply(task, board, actor, op, &when.now)?;
+                Ok(vec![BoardArtifact::Task(changed)])
             },
         )?;
-        Ok(tasks.into_iter().next().expect("a change writes its task"))
+        Ok(written_task(written))
     }
 }
 
@@ -76,8 +77,9 @@ impl ChangeBoardTask {
 /// that stays, so it blocks nothing. The other ops read only their own
 /// task. Of several such files the least is named (one whose artifact is
 /// unknown first, then by key and path), whatever the store's order.
-/// S7's wiring through `board_view::all_changes` must keep failing closed
-/// on a kept file with no key, as this does: a view sees only keys.
+/// It runs before [`board_view::all_changes`], which sees only keys: a
+/// kept file with no key blocks no view, so this is what keeps a link
+/// failing closed on one.
 fn board_readable_for(op: &BoardOp, board: &BoardSnapshot) -> Result<(), ProjectBoardError> {
     match op {
         BoardOp::AddPr(_) => {
@@ -104,33 +106,38 @@ fn board_readable_for(op: &BoardOp, board: &BoardSnapshot) -> Result<(), Project
     }
 }
 
-/// `op` on `task`, one of the board's `tasks`.
+/// `op` on `task`, as `board` holds it. A move takes the task's runs and
+/// changes, so a run going or a change linked holds it, and waits while
+/// one of their files is set aside ([`board_view::runs_of`],
+/// [`board_view::changes_of`]); a link takes every change on the board and
+/// every task, so a pull request is linked once whichever way.
 fn apply(
     task: &Task,
-    tasks: &[Task],
+    board: &BoardSnapshot,
     actor: &Identity,
     op: &BoardOp,
     now: &Timestamp,
-) -> Result<Task, BoardRuleError> {
-    match op {
+) -> Result<Task, ProjectBoardError> {
+    let id = &task.fields().id;
+    let ruled = match op {
         BoardOp::Renew => renew(task, actor, now),
         BoardOp::TakeOver => take_over(task, actor, now),
-        // No run or change is stored before the run and change artifacts
-        // are (M3): the task has none, so none holds it in review, and no
-        // change on the board links the pull request. From then the use
-        // case passes the task's runs and changes, and to `add_pr` every
-        // change on the board too. A link waits while a task's file is set
-        // aside ([`board_readable_for`]).
-        BoardOp::Move(to) => move_task(task, *to, actor, &[], &[], now),
+        BoardOp::Move(to) => {
+            let runs = owned(board_view::runs_of(board, id)?);
+            let changes = owned(board_view::changes_of(board, id)?);
+            move_task(task, *to, actor, &runs, &changes, now)
+        }
         BoardOp::AddPr(pr) => {
-            let board = Linked {
-                changes: &[],
-                tasks,
+            let changes = owned(board_view::all_changes(board)?);
+            let linked = Linked {
+                changes: &changes,
+                tasks: &board.tasks,
             };
-            add_pr(task, actor, *pr, board, now)
+            add_pr(task, actor, *pr, linked, now)
         }
         BoardOp::RemovePr(pr) => remove_pr(task, actor, *pr, now),
-    }
+    };
+    ruled.map_err(ProjectBoardError::Rule)
 }
 
 #[cfg(test)]

@@ -1,7 +1,7 @@
 use super::CompleteMergedTask;
 use crate::application::project_board::dto::{BoardOp, ProjectBoardError};
 use crate::application::project_board::ports::{
-    ProjectBoardStore, PullRequestState, PullRequestStatesError,
+    ArtifactKey, BoardArtifact, ProjectBoardStore, PullRequestState, PullRequestStatesError,
 };
 use crate::application::project_board::use_cases::ChangeBoardTask;
 use crate::application::project_board::use_cases::fixtures_tests::{
@@ -10,7 +10,8 @@ use crate::application::project_board::use_cases::fixtures_tests::{
 use crate::domain::project_board::entities::claim::Claim;
 use crate::domain::project_board::entities::task::{Task, TaskFields};
 use crate::domain::project_board::value_objects::rule_error::BoardRuleError;
-use crate::domain::project_board::value_objects::vocabulary::{Resolution, TaskStatus};
+use crate::domain::project_board::value_objects::vocabulary::{Resolution, RunOutcome, TaskStatus};
+use crate::infrastructure::test_support::board_artifacts;
 use crate::infrastructure::test_support::memory_board_store::MemoryBoardStore;
 use crate::infrastructure::test_support::memory_pull_requests::MemoryPullRequests;
 use std::sync::Arc;
@@ -320,4 +321,79 @@ fn a_lost_write_does_not_restart_the_budget() {
         1,
         "the write was tried again"
     );
+}
+
+/// Writes `artifacts` onto `store`'s board as they are.
+fn seed_artifacts(store: &MemoryBoardStore, artifacts: Vec<BoardArtifact>) {
+    let head = store.read().unwrap().head;
+    store.write(&head, &artifacts, "seed").unwrap();
+}
+
+/// The task's run still going can no longer report its end to a done
+/// task: it is ended as lost at the completion's stamp, in the same write
+/// as the task.
+#[test]
+fn a_completion_ends_the_run_going_as_lost_in_the_same_write() {
+    let store = seeded(&[7]);
+    seed_artifacts(
+        &store,
+        vec![BoardArtifact::Run(board_artifacts::run("a", 1))],
+    );
+    let host = MemoryPullRequests::default();
+    host.set(7, PullRequestState::Merged);
+    let writes = store.writes();
+    let done = complete(&store, &host).execute(&slug("a")).unwrap();
+    assert_eq!(done.fields().status, TaskStatus::Done);
+    let board = store.read().unwrap();
+    let run = board.runs[0].fields();
+    assert_eq!(
+        (run.ended.clone(), run.outcome, store.writes()),
+        (Some(at("10:00:00")), Some(RunOutcome::Lost), writes + 1),
+        "the run ends lost at the task's stamp, in one write"
+    );
+    assert_eq!(board.tasks, vec![done]);
+}
+
+/// A change of the task still open holds its completion, refused before
+/// the host is asked; nothing is written.
+#[test]
+fn an_open_change_of_the_task_holds_its_completion() {
+    let store = seeded(&[7]);
+    seed_artifacts(
+        &store,
+        vec![BoardArtifact::Change(board_artifacts::change("a", 2))],
+    );
+    let host = MemoryPullRequests::default();
+    host.fail("must not be asked");
+    let writes = store.writes();
+    assert_eq!(
+        complete(&store, &host).execute(&slug("a")),
+        Err(ProjectBoardError::Rule(BoardRuleError::ChangesUnmerged(
+            vec![2]
+        )))
+    );
+    assert_eq!((host.asked(), store.writes()), (vec![], writes));
+}
+
+/// What a set-aside run or change of the task held is unknown (a run
+/// going, a change open), so its completion waits for the file.
+#[test]
+fn a_completion_waits_while_a_run_or_change_of_its_task_is_set_aside() {
+    for (key, path) in [
+        (ArtifactKey::Run(slug("a"), 1), "runs/a.1.md"),
+        (ArtifactKey::Change(slug("a"), 1), "changes/a.1.md"),
+    ] {
+        let store = seeded(&[7]);
+        store.quarantine_key(key.clone(), path, "malformed");
+        let host = MemoryPullRequests::default();
+        host.set(7, PullRequestState::Merged);
+        assert_eq!(
+            complete(&store, &host).execute(&slug("a")),
+            Err(ProjectBoardError::Quarantined {
+                key,
+                path: path.into()
+            })
+        );
+        assert_eq!(status(&store), TaskStatus::Review);
+    }
 }
