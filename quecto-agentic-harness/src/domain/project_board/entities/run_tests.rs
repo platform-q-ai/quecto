@@ -67,10 +67,11 @@ fn fields_that_break_a_rule_build_no_run() {
     );
     let mut early = open_run(1, 1).into_fields();
     early.items = ended().items;
+    let waiting = Run::new(early).unwrap_err();
+    assert_eq!(waiting.field, "items", "items wait for the end");
     assert_eq!(
-        Run::new(early).unwrap_err().field,
-        "items",
-        "items wait for the end"
+        waiting.problem,
+        "a run reports its task items when it folds back"
     );
     let mut far = open_run(1, 1).into_fields();
     far.plan_version = MAX_PLAN_VERSION + 1;
@@ -131,12 +132,10 @@ fn a_run_ran_its_own_plan_version_and_its_items() {
     let mut stranger = ended();
     stranger.items[0].id = slug("ghost");
     let stranger = Run::new(stranger).unwrap();
+    let strange = stranger.ran(&plan(1, PlanState::Accepted)).unwrap_err();
     assert_eq!(
-        stranger
-            .ran(&plan(1, PlanState::Accepted))
-            .unwrap_err()
-            .field,
-        "items/0/id"
+        (strange.field.as_str(), strange.problem.as_str()),
+        ("items/0/id", "is not a task item of the plan")
     );
     let mut elsewhere = ended();
     elsewhere.task = slug("other");

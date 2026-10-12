@@ -128,6 +128,15 @@ fn edited(from: &str, to: &str) -> String {
     EXAMPLE.replacen(from, to, 1)
 }
 
+/// `file` is refused at `at` with exactly `problem`.
+fn refused_with(file: &str, at: &str, problem: &str) {
+    let read = decode::<RunCodec>(file.as_bytes());
+    assert!(
+        matches!(&read, Err(CodecError::Cell { field, problem: said }) if *field == at && said == problem),
+        "{read:?}\n{file}"
+    );
+}
+
 fn refused_at(file: &str, at: &str) {
     let read = decode::<RunCodec>(file.as_bytes());
     assert!(
@@ -194,7 +203,7 @@ fn owners_and_evidence_round_trip() {
         !bare.contains("## Owners") && !bare.contains("## Evidence"),
         "{bare}"
     );
-    // Out of item order, or of an item the run does not report.
+    // Out of task item order, or of a task item the run does not report.
     let swapped = edited(
         "| store | W1 builder |\n| cli | W2 builder |",
         "| cli | W2 builder |\n| store | W1 builder |",
@@ -203,20 +212,23 @@ fn owners_and_evidence_round_trip() {
         decode::<RunCodec>(swapped.as_bytes()),
         Err(CodecError::NotCanonical)
     );
-    refused_at(
+    refused_with(
         &edited("| cli | W2 builder |", "| nope | W2 builder |"),
         "Owners",
+        "nope is no task item of the run",
     );
-    refused_at(
+    refused_with(
         &edited("| cli | W2 builder |", "| store | W2 builder |"),
         "Owners",
+        "one owner per task item",
     );
-    refused_at(
+    refused_with(
         &edited(
             "| cli | `quecto board list`",
             "| nope | `quecto board list`",
         ),
         "Evidence",
+        "nope is no task item of the run",
     );
 }
 
@@ -310,11 +322,10 @@ fn the_widest_run_fits() {
         );
     }
     let (bytes, lines, longest) = seen;
-    // The whole budget spent: 691,587 bytes.
-    assert!(
-        (691_000..=RUN_LIMITS.file_bytes).contains(&bytes),
-        "{bytes}"
-    );
+    // The whole budget spent: 691,587 bytes, pinned so a change to the
+    // codec's rows is seen.
+    assert_eq!(bytes, 691_587);
+    assert!(bytes <= RUN_LIMITS.file_bytes, "{bytes}");
     assert!(lines <= RUN_LIMITS.lines && lines > 2_300, "{lines}");
     assert!(
         longest <= RUN_LIMITS.line_bytes && longest > 2_000,

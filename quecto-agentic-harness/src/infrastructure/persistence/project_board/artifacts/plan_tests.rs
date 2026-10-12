@@ -256,7 +256,7 @@ fn criteria_out_of_item_order_are_not_canonical() {
 }
 
 #[test]
-fn a_criterion_of_an_unknown_item_is_refused() {
+fn a_criterion_of_an_unknown_task_item_is_refused() {
     for (file, table) in [
         (
             edited("| cli | `quecto board list` answers |", "| nope | x |"),
@@ -269,7 +269,7 @@ fn a_criterion_of_an_unknown_item_is_refused() {
     ] {
         let read = decode::<PlanCodec>(file.as_bytes());
         assert!(
-            matches!(&read, Err(CodecError::Cell { field, .. }) if *field == table),
+            matches!(&read, Err(CodecError::Cell { field, problem }) if *field == table && problem == "nope is no task item of the plan"),
             "{read:?}"
         );
     }
@@ -515,9 +515,9 @@ fn accepted_by_and_accepted_at_come_together() {
     }
 }
 
-/// A dependency on an item the plan does not have names its table.
+/// A dependency on a task item the plan does not have names its table.
 #[test]
-fn a_dependency_on_an_unknown_item_is_refused() {
+fn a_dependency_on_an_unknown_task_item_is_refused() {
     let file = edited("| docs | cli |", "| docs | nope |");
     let read = decode::<PlanCodec>(file.as_bytes());
     assert!(
@@ -525,8 +525,8 @@ fn a_dependency_on_an_unknown_item_is_refused() {
             &read,
             Err(CodecError::Cell {
                 field: "Task item dependencies",
-                ..
-            })
+                problem,
+            }) if problem == "nope is no task item of the plan"
         ),
         "{read:?}"
     );

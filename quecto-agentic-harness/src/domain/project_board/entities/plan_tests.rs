@@ -69,6 +69,24 @@ fn fields_that_break_a_rule_build_no_plan() {
     }
 }
 
+/// The dependency refusals a person or agent reads say "task items".
+#[test]
+fn dependency_refusals_name_task_items() {
+    let refusal = |change: Change| {
+        let mut broken = fields();
+        change(&mut broken);
+        Plan::new(broken).unwrap_err().problem
+    };
+    assert_eq!(
+        refusal(Box::new(|p| p.items[1].depends_on = vec![slug("ghost")])),
+        "must name other task items of this plan"
+    );
+    assert_eq!(
+        refusal(Box::new(|p| p.items[0].depends_on = vec![slug("api")])),
+        "is on or behind a cycle of task item dependencies"
+    );
+}
+
 #[test]
 fn every_bound_admits_exactly_its_limit() {
     let mut widest = fields();
