@@ -13,25 +13,40 @@
 //! - `spawn`, `scope` or `enter` after a spawner in a path
 //!   (`tokio::spawn`, `std::thread::scope`, `<Handle>::spawn`,
 //!   `JoinSet::<()>::spawn`, `rayon::spawn`), in a macro too;
-//! - `.spawn`, `.scope` or `.enter` on a receiver that names a spawner
-//!   (`Handle::current().spawn(..)`, `self.handle.spawn(..)`) or is a local
-//!   bound to one: by `let` (from its value or its type), `if let`,
-//!   `while let`, a `match` arm, a parameter's type, a closure passed to a
-//!   spawner's method, or a copy of another such local. The receiver's own
-//!   path is read, never its call arguments (`Command::new(runtime)` is no
-//!   spawner), and a local bound to anything else is no spawner whatever
-//!   its name;
+//! - `.spawn`, `.scope` or `.enter` on a value that holds a spawner. A
+//!   value holds one when its own path names one: a path's base that is a
+//!   spawner type or name (`Handle::current()`) or a local bound to a
+//!   spawner (only the base is looked up as a local, so `self.handle` is
+//!   no local `handle`), a later segment that is a spawner type, a field
+//!   named for one (`self.handle`), or `.handle()`; or when its call
+//!   arguments hold a spawner type or such a local
+//!   (`Arc::new(Handle::current())`, `Some(h)`, `identity(h)`). A mere
+//!   name in an argument is no spawner (`Command::new(runtime)`), nor is a
+//!   path segment that is not a type (`Client::builder()`);
+//! - locals bound to a spawner: by `let` (from such a value or a spawner
+//!   type), a later assignment (`let h; h = Handle::current()`), `if let`,
+//!   `while let`, a `match` arm or a `for` loop over such a value, a
+//!   parameter or closure parameter of a spawner type, an untyped
+//!   parameter of a closure handed to a spawner's method, or a struct
+//!   pattern's field named for one (`S { handle, .. }`). A local bound to
+//!   anything else is no spawner whatever its name. Each block, closure,
+//!   arm and `if`/`while` has its own scope, so an inner binding never
+//!   hides an outer spawner;
 //! - a `use` of a spawn form, and any `use` or `extern crate` that renames
-//!   or globs a spawner or a spawning module, or a `type` alias of a
-//!   spawner: a name that could hide a spawn is itself a site.
+//!   or globs a spawner or a spawning module, or a `type` alias, `static`
+//!   or `const` of a spawner type (`LazyLock<Runtime>`): a name that could
+//!   hide a spawn is itself a site.
 //!
-//! Every entry must still be needed. What it cannot see, syntax alone not
+//! Raw identifiers (`r#spawn`) are read as written without `r#`. Every
+//! entry must still be needed. What it cannot see, syntax alone not
 //! following calls or types: a spawn inside a helper outside the checked
 //! trees (elsewhere in the crate, or in a dependency); a spawner reached
-//! through a value whose origin it does not see (a field or a return value
-//! whose path names no spawner, an untyped closure parameter of a plain
-//! function); and a local bound inside a macro (a macro's `.spawn` is
-//! read by its receiver's words, and the locals bound outside it).
+//! through a value whose origin it does not see (a field, a collection or
+//! a return value whose path names no spawner, such as
+//! `for h in self.pool.iter()` or `make().spawn(..)`; an untyped closure
+//! parameter of a plain function); and a local bound inside a macro (a
+//! macro's `.spawn` is read by its receiver's words, and the locals bound
+//! outside it).
 
 use std::collections::BTreeSet;
 use std::path::Path;

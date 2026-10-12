@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 
 use proc_macro2::{TokenStream, TokenTree};
 use quote::ToTokens;
+use syn::ext::IdentExt;
 use syn::visit::Visit;
 
 /// Words that spawn, block on or enter a runtime wherever they are named.
@@ -15,6 +16,8 @@ const SPAWN_WORDS: &[&str] = &[
     "spawn_on",
     "spawn_blocking_on",
     "spawn_local_on",
+    "spawn_scoped",
+    "spawn_unchecked",
     "block_on",
     "block_in_place",
 ];
@@ -43,9 +46,13 @@ const SPAWNER_TYPES: &[&str] = &[
     "Scope",
 ];
 
-/// What a receiver's words name when it is a spawner by name: a spawner
-/// type, or the names such values go by.
+/// The names a spawner goes by, as a path's base or a field: a value of
+/// one of these names is taken for a spawner unless it is a local bound to
+/// something else.
 const SPAWNER_NAMES: &[&str] = &["handle", "runtime", "builder", "thread"];
+
+/// The methods that answer a spawner (`runtime.handle()`).
+const SPAWNER_METHODS: &[&str] = &["handle"];
 
 /// The crates and modules that spawn: renaming or globbing one hides the
 /// spawns after it.
@@ -57,68 +64,124 @@ const SPAWNING_MODULES: &[&[&str]] = &[
     &["rayon"],
 ];
 
-/// The words of `tokens`, groups flattened.
+/// An identifier as written, `r#` taken off.
+fn word(ident: &proc_macro2::Ident) -> String {
+    ident.unraw().to_string()
+}
+
+/// The words of `tokens`, groups flattened, raw identifiers unrawed.
 fn token_words(tokens: TokenStream) -> Vec<String> {
     let mut words = vec![];
     for tree in tokens {
         match tree {
             TokenTree::Group(group) => words.extend(token_words(group.stream())),
-            TokenTree::Ident(ident) => words.push(ident.to_string()),
+            TokenTree::Ident(ident) => words.push(word(&ident)),
             TokenTree::Punct(_) | TokenTree::Literal(_) => {}
         }
     }
     words
 }
 
-/// The words of `expr`'s own path to its value, never its call arguments:
-/// a path's segments (a qualified self's type too), a field's base and
-/// name, a method call's receiver and method, a call's function. Any other
-/// expression gives all its words, as it may hold a spawner anywhere.
-fn spine(expr: &syn::Expr, out: &mut Vec<String>) {
+/// One part of an expression's own path to its value.
+enum Part {
+    /// The first segment of a path: a local, or a type or module.
+    Base(String),
+    /// A later segment of a path (`Handle` in `tokio::runtime::Handle`).
+    Segment(String),
+    /// A field (`handle` in `self.handle`).
+    Field(String),
+    /// A method called on the value so far.
+    Method(String),
+}
+
+/// `expr`'s own path to its value ([`Part`]s): a path's segments (a
+/// qualified self's type too), a field's base and name, a method call's
+/// receiver and method, a call's function; and, apart, the words of its
+/// call arguments and of any other expression (`args`).
+fn spine(expr: &syn::Expr, parts: &mut Vec<Part>, args: &mut Vec<String>) {
     match expr {
         syn::Expr::Path(path) => {
             if let Some(qself) = &path.qself {
-                out.extend(token_words(qself.ty.to_token_stream()));
+                parts.extend(
+                    token_words(qself.ty.to_token_stream())
+                        .into_iter()
+                        .map(Part::Segment),
+                );
             }
-            out.extend(words(&path.path));
+            for (index, segment) in words(&path.path).into_iter().enumerate() {
+                parts.push(match (index, &path.qself) {
+                    (0, None) => Part::Base(segment),
+                    (_, _) => Part::Segment(segment),
+                });
+            }
         }
         syn::Expr::Field(field) => {
-            spine(&field.base, out);
+            spine(&field.base, parts, args);
             if let syn::Member::Named(name) = &field.member {
-                out.push(name.to_string());
+                parts.push(Part::Field(word(name)));
             }
         }
         syn::Expr::MethodCall(call) => {
-            spine(&call.receiver, out);
-            out.push(call.method.to_string());
+            spine(&call.receiver, parts, args);
+            parts.push(Part::Method(word(&call.method)));
+            for arg in &call.args {
+                args.extend(token_words(arg.to_token_stream()));
+            }
         }
-        syn::Expr::Call(call) => spine(&call.func, out),
-        syn::Expr::Reference(inner) => spine(&inner.expr, out),
-        syn::Expr::Paren(inner) => spine(&inner.expr, out),
-        syn::Expr::Group(inner) => spine(&inner.expr, out),
-        syn::Expr::Try(inner) => spine(&inner.expr, out),
-        syn::Expr::Await(inner) => spine(&inner.base, out),
-        syn::Expr::Unary(inner) => spine(&inner.expr, out),
-        syn::Expr::Cast(inner) => spine(&inner.expr, out),
-        other => out.extend(token_words(other.to_token_stream())),
+        syn::Expr::Call(call) => {
+            spine(&call.func, parts, args);
+            for arg in &call.args {
+                args.extend(token_words(arg.to_token_stream()));
+            }
+        }
+        syn::Expr::Reference(inner) => spine(&inner.expr, parts, args),
+        syn::Expr::Paren(inner) => spine(&inner.expr, parts, args),
+        syn::Expr::Group(inner) => spine(&inner.expr, parts, args),
+        syn::Expr::Try(inner) => spine(&inner.expr, parts, args),
+        syn::Expr::Await(inner) => spine(&inner.base, parts, args),
+        syn::Expr::Unary(inner) => spine(&inner.expr, parts, args),
+        syn::Expr::Cast(inner) => spine(&inner.expr, parts, args),
+        other => args.extend(token_words(other.to_token_stream())),
     }
 }
 
-/// The names a pattern binds.
-fn bound_names(pat: &syn::Pat, out: &mut Vec<String>) {
+/// The names a pattern binds, each with whether it holds a spawner:
+/// `spawner` for the whole value, or the binding's own type, or a struct
+/// field that names one (`S { handle, .. }`).
+fn bound_names(pat: &syn::Pat, spawner: bool, out: &mut Vec<(String, bool)>) {
     match pat {
-        syn::Pat::Ident(ident) => out.push(ident.ident.to_string()),
-        syn::Pat::Type(typed) => bound_names(&typed.pat, out),
-        syn::Pat::Reference(reference) => bound_names(&reference.pat, out),
-        syn::Pat::Tuple(tuple) => tuple.elems.iter().for_each(|pat| bound_names(pat, out)),
-        syn::Pat::TupleStruct(tuple) => tuple.elems.iter().for_each(|pat| bound_names(pat, out)),
-        syn::Pat::Struct(fields) => fields
-            .fields
+        syn::Pat::Ident(ident) => out.push((word(&ident.ident), spawner)),
+        syn::Pat::Type(typed) => {
+            bound_names(&typed.pat, spawner || names_spawner_type(&typed.ty), out)
+        }
+        syn::Pat::Reference(reference) => bound_names(&reference.pat, spawner, out),
+        syn::Pat::Tuple(tuple) => tuple
+            .elems
             .iter()
-            .for_each(|field| bound_names(&field.pat, out)),
-        syn::Pat::Paren(paren) => bound_names(&paren.pat, out),
-        syn::Pat::Or(or) => or.cases.iter().for_each(|pat| bound_names(pat, out)),
-        syn::Pat::Slice(slice) => slice.elems.iter().for_each(|pat| bound_names(pat, out)),
+            .for_each(|pat| bound_names(pat, spawner, out)),
+        syn::Pat::TupleStruct(tuple) => tuple
+            .elems
+            .iter()
+            .for_each(|pat| bound_names(pat, spawner, out)),
+        syn::Pat::Struct(fields) => fields.fields.iter().for_each(|field| {
+            let named = match &field.member {
+                syn::Member::Named(name) => {
+                    let name = word(name);
+                    SPAWNER_NAMES.contains(&name.as_str()) || SPAWNER_TYPES.contains(&name.as_str())
+                }
+                syn::Member::Unnamed(_) => false,
+            };
+            bound_names(&field.pat, spawner || named, out)
+        }),
+        syn::Pat::Paren(paren) => bound_names(&paren.pat, spawner, out),
+        syn::Pat::Or(or) => or
+            .cases
+            .iter()
+            .for_each(|pat| bound_names(pat, spawner, out)),
+        syn::Pat::Slice(slice) => slice
+            .elems
+            .iter()
+            .for_each(|pat| bound_names(pat, spawner, out)),
         _ => {}
     }
 }
@@ -141,8 +204,12 @@ fn declared_type(pat: &syn::Pat) -> Option<&syn::Type> {
 struct Sites<'a> {
     file: &'a str,
     scope: Vec<String>,
-    /// Per scope, the locals bound in it: whether each holds a spawner.
+    /// Per scope (a function, block, closure, arm or `if let`), the
+    /// locals bound in it: whether each holds a spawner.
     locals: Vec<BTreeMap<String, bool>>,
+    /// Set just before a closure handed to a spawner's method is visited:
+    /// its untyped parameters are spawners.
+    spawner_closure: bool,
     found: Vec<(String, String, String)>,
 }
 
@@ -157,10 +224,16 @@ impl Sites<'_> {
 
     fn scoped(&mut self, name: String, visit: impl FnOnce(&mut Self)) {
         self.scope.push(name);
+        self.with_locals(visit);
+        self.scope.pop();
+    }
+
+    /// Visit with a scope of locals of its own: what is bound in it is
+    /// gone after, never hiding an outer binding.
+    fn with_locals(&mut self, visit: impl FnOnce(&mut Self)) {
         self.locals.push(BTreeMap::new());
         visit(self);
         self.locals.pop();
-        self.scope.pop();
     }
 
     /// Whether `word` is a local, innermost scope first, and holds a
@@ -175,17 +248,26 @@ impl Sites<'_> {
     /// Bind `pat`'s names in the current scope, as spawners or not.
     fn bind(&mut self, pat: &syn::Pat, spawner: bool) {
         let mut names = vec![];
-        bound_names(pat, &mut names);
+        bound_names(pat, spawner, &mut names);
         if let Some(locals) = self.locals.last_mut() {
-            for name in names {
-                locals.insert(name, spawner);
-            }
+            locals.extend(names);
         }
     }
 
-    /// Whether `words` (a receiver's or a value's) name a spawner: a local
-    /// bound to one, or a spawner's type or name that is not a local bound
-    /// to something else.
+    /// Assign to the local `name` (`h = Handle::current()` after `let h;`):
+    /// where it is bound, or here when it is no local seen.
+    fn assign(&mut self, name: String, spawner: bool) {
+        let at = self
+            .locals
+            .iter()
+            .rposition(|locals| locals.contains_key(&name))
+            .unwrap_or(self.locals.len() - 1);
+        self.locals[at].insert(name, spawner);
+    }
+
+    /// Whether macro tokens, as words, name a spawner: a local bound to
+    /// one, or a spawner's type or name that is not a local bound to
+    /// something else.
     fn names_spawner(&self, words: &[String]) -> bool {
         words.iter().any(|word| match self.local(word) {
             Some(spawner) => spawner,
@@ -195,11 +277,28 @@ impl Sites<'_> {
         })
     }
 
-    /// Whether `expr`'s own path ([`spine`]) names a spawner.
-    fn expr_names_spawner(&self, expr: &syn::Expr) -> bool {
-        let mut words = vec![];
-        spine(expr, &mut words);
-        self.names_spawner(&words)
+    /// Whether `expr` holds a spawner: its own path names one (a path's
+    /// base only is looked up as a local; a later segment counts when it is
+    /// a spawner type, a field when it is a spawner's type or name, a method
+    /// when it answers a spawner), or its call arguments hold a spawner
+    /// type or a local bound to one (`Arc::new(Handle::current())`,
+    /// `identity(h)`), never by a mere name (`Command::new(runtime)`).
+    fn holds_spawner(&self, expr: &syn::Expr) -> bool {
+        let (mut parts, mut args) = (vec![], vec![]);
+        spine(expr, &mut parts, &mut args);
+        let is_type = |word: &str| SPAWNER_TYPES.contains(&word);
+        let is_name = |word: &str| SPAWNER_NAMES.contains(&word);
+        parts.iter().any(|part| match part {
+            Part::Base(word) => match self.local(word) {
+                Some(spawner) => spawner,
+                None => is_type(word) || is_name(word),
+            },
+            Part::Segment(word) => is_type(word),
+            Part::Field(word) => is_type(word) || is_name(word),
+            Part::Method(word) => SPAWNER_METHODS.contains(&word.as_str()),
+        }) || args
+            .iter()
+            .any(|word| is_type(word) || self.local(word) == Some(true))
     }
 
     /// Bind a function's typed parameters by their types.
@@ -244,7 +343,7 @@ impl Sites<'_> {
                     seen.push("<group>".to_string());
                 }
                 TokenTree::Ident(ident) => {
-                    let word = ident.to_string();
+                    let word = word(ident);
                     let spawns = SPAWNED_BY_SPAWNER.contains(&word.as_str());
                     let by_path = spawns
                         && segment_before(&seen)
@@ -314,7 +413,7 @@ fn is_test(attrs: &[syn::Attribute]) -> bool {
 fn words(path: &syn::Path) -> Vec<String> {
     path.segments
         .iter()
-        .map(|segment| segment.ident.to_string())
+        .map(|segment| word(&segment.ident))
         .collect()
 }
 
@@ -342,19 +441,18 @@ fn hidden_by_rename(path: &[String]) -> bool {
 fn use_leaves(tree: &syn::UseTree, prefix: &mut Vec<String>, out: &mut Vec<UseLeaf>) {
     match tree {
         syn::UseTree::Path(path) => {
-            prefix.push(path.ident.to_string());
+            prefix.push(word(&path.ident));
             use_leaves(&path.tree, prefix, out);
             prefix.pop();
         }
-        syn::UseTree::Name(name) => out.push((
-            [prefix.clone(), vec![name.ident.to_string()]].concat(),
-            false,
-        )),
+        syn::UseTree::Name(name) => {
+            out.push(([prefix.clone(), vec![word(&name.ident)]].concat(), false))
+        }
         syn::UseTree::Rename(rename) => {
             // `self as t` renames the prefix itself.
             let path = match rename.ident == "self" {
                 true => prefix.clone(),
-                false => [prefix.clone(), vec![rename.ident.to_string()]].concat(),
+                false => [prefix.clone(), vec![word(&rename.ident)]].concat(),
             };
             let hides = hidden_by_rename(&path);
             out.push((path, hides));
@@ -433,7 +531,7 @@ impl<'ast> Visit<'ast> for Sites<'_> {
     }
 
     fn visit_item_extern_crate(&mut self, item: &'ast syn::ItemExternCrate) {
-        let name = vec![item.ident.to_string()];
+        let name = vec![word(&item.ident)];
         if item.rename.is_some() && hidden_by_rename(&name) {
             self.record(format!("`extern crate {}` renamed", item.ident));
         }
@@ -445,6 +543,20 @@ impl<'ast> Visit<'ast> for Sites<'_> {
             self.record(format!("`type {}`, an alias of a spawner", item.ident));
         }
         syn::visit::visit_item_type(self, item);
+    }
+
+    fn visit_item_static(&mut self, item: &'ast syn::ItemStatic) {
+        if names_spawner_type(&item.ty) {
+            self.record(format!("`static {}` of a spawner type", item.ident));
+        }
+        syn::visit::visit_item_static(self, item);
+    }
+
+    fn visit_item_const(&mut self, item: &'ast syn::ItemConst) {
+        if names_spawner_type(&item.ty) {
+            self.record(format!("`const {}` of a spawner type", item.ident));
+        }
+        syn::visit::visit_item_const(self, item);
     }
 
     fn visit_path(&mut self, path: &'ast syn::Path) {
@@ -462,63 +574,98 @@ impl<'ast> Visit<'ast> for Sites<'_> {
         syn::visit::visit_expr_path(self, path);
     }
 
+    fn visit_block(&mut self, block: &'ast syn::Block) {
+        self.with_locals(|sites| syn::visit::visit_block(sites, block));
+    }
+
     fn visit_local(&mut self, local: &'ast syn::Local) {
-        let typed = declared_type(&local.pat).is_some_and(names_spawner_type);
         let valued = local
             .init
             .as_ref()
-            .is_some_and(|init| self.expr_names_spawner(&init.expr));
+            .is_some_and(|init| self.holds_spawner(&init.expr));
         // Visit the value first: it is read before the names are bound.
         syn::visit::visit_local(self, local);
-        self.bind(&local.pat, typed || valued);
+        self.bind(&local.pat, valued);
+    }
+
+    fn visit_expr_assign(&mut self, assign: &'ast syn::ExprAssign) {
+        syn::visit::visit_expr_assign(self, assign);
+        if let syn::Expr::Path(path) = &*assign.left
+            && path.qself.is_none()
+            && path.path.segments.len() == 1
+        {
+            let spawner = self.holds_spawner(&assign.right);
+            self.assign(word(&path.path.segments[0].ident), spawner);
+        }
     }
 
     fn visit_expr_let(&mut self, expr: &'ast syn::ExprLet) {
-        let spawner = self.expr_names_spawner(&expr.expr)
-            || declared_type(&expr.pat).is_some_and(names_spawner_type);
-        self.bind(&expr.pat, spawner);
+        let spawner = self.holds_spawner(&expr.expr);
         syn::visit::visit_expr_let(self, expr);
+        self.bind(&expr.pat, spawner);
+    }
+
+    fn visit_expr_if(&mut self, expr: &'ast syn::ExprIf) {
+        // An `if let`'s names live only in the `if`.
+        self.with_locals(|sites| syn::visit::visit_expr_if(sites, expr));
+    }
+
+    fn visit_expr_while(&mut self, expr: &'ast syn::ExprWhile) {
+        self.with_locals(|sites| syn::visit::visit_expr_while(sites, expr));
+    }
+
+    fn visit_expr_for_loop(&mut self, expr: &'ast syn::ExprForLoop) {
+        self.visit_expr(&expr.expr);
+        let spawner = self.holds_spawner(&expr.expr);
+        self.with_locals(|sites| {
+            sites.bind(&expr.pat, spawner);
+            sites.visit_pat(&expr.pat);
+            sites.visit_block(&expr.body);
+        });
     }
 
     fn visit_expr_match(&mut self, expr: &'ast syn::ExprMatch) {
-        let spawner = self.expr_names_spawner(&expr.expr);
+        self.visit_expr(&expr.expr);
+        let spawner = self.holds_spawner(&expr.expr);
         for arm in &expr.arms {
-            self.bind(&arm.pat, spawner);
+            self.with_locals(|sites| {
+                sites.bind(&arm.pat, spawner);
+                sites.visit_arm(arm);
+            });
         }
-        syn::visit::visit_expr_match(self, expr);
     }
 
     fn visit_expr_closure(&mut self, closure: &'ast syn::ExprClosure) {
-        // A typed parameter is what its type says; an untyped one keeps
-        // whatever the method it is passed to bound it as.
-        for input in &closure.inputs {
-            if let Some(ty) = declared_type(input) {
-                self.bind(input, names_spawner_type(ty));
+        // A typed parameter is what its type says; an untyped one is a
+        // spawner when the closure is handed to a spawner's method.
+        let handed = std::mem::take(&mut self.spawner_closure);
+        self.with_locals(|sites| {
+            for input in &closure.inputs {
+                sites.bind(input, handed && declared_type(input).is_none());
             }
-        }
-        syn::visit::visit_expr_closure(self, closure);
+            syn::visit::visit_expr_closure(sites, closure);
+        });
     }
 
     fn visit_expr_method_call(&mut self, call: &'ast syn::ExprMethodCall) {
-        let method = call.method.to_string();
+        let method = word(&call.method);
         let receiver = call.receiver.to_token_stream().to_string();
-        let on_spawner = self.expr_names_spawner(&call.receiver);
+        let on_spawner = self.holds_spawner(&call.receiver);
         let spawns = SPAWNED_BY_SPAWNER.contains(&method.as_str()) && on_spawner;
         if SPAWN_WORDS.contains(&method.as_str()) || spawns {
             self.record(format!("`.{method}(..)` on `{receiver}`"));
         }
-        // A closure handed to a spawner's method gets the spawner (or
-        // what it gives) as its untyped parameters.
-        if on_spawner {
-            for arg in &call.args {
-                if let syn::Expr::Closure(closure) = arg {
-                    for input in &closure.inputs {
-                        self.bind(input, true);
-                    }
-                }
-            }
+        self.visit_expr(&call.receiver);
+        if let Some(turbofish) = &call.turbofish {
+            self.visit_angle_bracketed_generic_arguments(turbofish);
         }
-        syn::visit::visit_expr_method_call(self, call);
+        for arg in &call.args {
+            // A closure handed to a spawner's method gets the spawner (or
+            // what it gives) as its untyped parameters.
+            self.spawner_closure = on_spawner && matches!(arg, syn::Expr::Closure(_));
+            self.visit_expr(arg);
+            self.spawner_closure = false;
+        }
     }
 
     fn visit_macro(&mut self, mac: &'ast syn::Macro) {
@@ -535,6 +682,7 @@ pub(super) fn spawn_sites(files: &[(String, syn::File)]) -> Vec<(String, String,
             file: path,
             scope: vec![],
             locals: vec![BTreeMap::new()],
+            spawner_closure: false,
             found: vec![],
         };
         sites.visit_file(parsed);
