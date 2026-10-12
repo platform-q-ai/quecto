@@ -450,7 +450,7 @@ fn crash_mid_rebuild_child() {
 
 #[test]
 fn a_crash_mid_rebuild_leaves_the_last_whole_index() {
-    use crate::interface::panic_hook::test_support::{FATAL_EXIT_CODE, without_core_dumps};
+    use crate::infrastructure::test_support::no_core_dumps::{FATAL_EXIT_CODE, without_core_dumps};
     let (dir, index) = index();
     rebuild(&index, &board("a1")).unwrap();
     let output = without_core_dumps(&mut Command::new(std::env::current_exe().unwrap()))
@@ -463,7 +463,6 @@ fn a_crash_mid_rebuild_leaves_the_last_whole_index() {
         .env(ABORT_IN_FILL, "1")
         .output()
         .unwrap();
-    use std::os::unix::process::ExitStatusExt;
     let shown = format!(
         "{:?}\nstdout:\n{}\nstderr:\n{}",
         output.status,
@@ -471,11 +470,9 @@ fn a_crash_mid_rebuild_leaves_the_last_whole_index() {
         String::from_utf8_lossy(&output.stderr)
     );
     // Ended at once mid-fill, as a crash ends it, with the status the
-    // core-dump-free end gives (an abort's, 134), never by a signal.
+    // core-dump-free end gives (an abort's, 134), never by a signal: so no
+    // core dump was written.
     assert_eq!(output.status.code(), Some(FATAL_EXIT_CODE), "{shown}");
-    // Bites only on a host whose core_pattern pipes to a handler (such as
-    // systemd-coredump), where an abort would have written a dump.
-    assert!(!output.status.core_dumped(), "{shown}");
     assert_eq!(index.head(), Ok(Some(board("a1").head.0)));
     assert_eq!(ids(index.ready()), ["a"]);
     let builds = || -> Vec<std::path::PathBuf> {

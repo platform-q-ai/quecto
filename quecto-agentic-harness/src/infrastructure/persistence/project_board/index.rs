@@ -572,7 +572,7 @@ pub const ABORT_IN_FILL: &str = "QUECTO_BOARD_INDEX_ABORT_IN_FILL";
 /// core dump is written for the crash the test stages; otherwise it aborts.
 #[cfg(test)]
 fn end_as_a_crash() -> ! {
-    crate::interface::panic_hook::test_support::fatal_end(std::process::abort)()
+    crate::infrastructure::test_support::no_core_dumps::fatal_end(std::process::abort)()
 }
 
 fn fill(
