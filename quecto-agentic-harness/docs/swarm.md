@@ -1,7 +1,7 @@
 # Swarm coordination
 
 `swarm` is a compiled native tool: members coordinate through structured board
-ops (`{"op":"claim","task_id":3}`), each served in-process by the Rust board
+ops (`{"op":"claim","task_item_id":3}`), each served in-process by the Rust board
 over the run's SQLite file (ADR-0030). Members use the `bash` tool for Git,
 builds, tests and any other computation.
 
@@ -39,7 +39,7 @@ without the documentation files being present in the container checkout.
 |---|---|
 | Agent/container status | Existing TUI agent views or `agent_cmd` inventory/state commands |
 | Goal, criteria, task progress, blockers and evidence | Ask the coordinator to call `swarm {"op":"summary"}` and report the result |
-| Detailed live task/file pages | Coordinator uses `swarm {"op":"tasks"}` / `swarm {"op":"file_owners"}` (`offset`, `limit`) while the run is running |
+| Detailed live task/file pages | Coordinator uses `swarm {"op":"task_items"}` / `swarm {"op":"file_owners"}` (`offset`, `limit`) while the run is running |
 | Coordinator report | Master reads `agent_cmd.get_messages` using the coordinator's returned agent UUID |
 | Final result | A run that ended is `paused` holding `summary.outcome` (`succeeded`, `blocked`, `failed`, `budget-exhausted`) and `summary.outcome_reason`; read the final revision and criterion evidence, then resume or close it with `swarm_control` |
 | Evidence files | Ask the coordinator to export them using ordinary file/Bash tools before environment teardown |
@@ -164,7 +164,7 @@ named JSON fields, with the same defaults) and the same JSON result, except
 where Python answered `null`: an op that changes a task answers the task's row
 as it now stands, and every other op answers what it changed, so no op answers
 a bare `null` (#2394). Otherwise only the calling syntax changed,
-`{"op":"claim","task_id":3}`. `swarm_board_ops.rs`
+`{"op":"claim","task_item_id":3}`. `swarm_board_ops.rs`
 (`BOARD_OPS`) is the one table of them; the tool schema and the dispatcher's
 argument binding are rendered from and held to it.
 
@@ -286,10 +286,10 @@ A worked sequence, one call per line:
 
 ```json
 {"op":"summary"}
-{"op":"task_create","request":"implement-v1","title":"Implement the behavior","acceptance":["Acceptance tests pass"],"dependencies":[]}
-{"op":"claim","task_id":1}
-{"op":"reserve","task_id":1,"token":"<claim token>","paths":["src/feature.rs","tests/feature.rs"]}
-{"op":"submit","task_id":1,"token":"<claim token>","evidence":[{"artifact":"evidence/acceptance.log","revision":"the-exact-commit-or-artifact-digest"}]}
+{"op":"task_item_create","request":"implement-v1","title":"Implement the behavior","acceptance":["Acceptance tests pass"],"dependencies":[]}
+{"op":"claim","task_item_id":1}
+{"op":"reserve","task_item_id":1,"token":"<claim token>","paths":["src/feature.rs","tests/feature.rs"]}
+{"op":"submit","task_item_id":1,"token":"<claim token>","evidence":[{"artifact":"evidence/acceptance.log","revision":"the-exact-commit-or-artifact-digest"}]}
 ```
 
 Between `reserve` and `submit`, implement and test with the existing tools,
@@ -675,7 +675,7 @@ a bound spec) is not torn down, so create the run before spawning members. A
 host-local master may still use a workflow to supervise the swarm.
 
 For a clarification or approval, keep the run **running**, mark the affected task
-with `{"op":"block","task_id":<id>,"token":"<claim token>","reason":"<question>"}`,
+with `{"op":"block","task_item_id":<id>,"token":"<claim token>","reason":"<question>"}`,
 report the exact question to the master and yield the turn. Do not sleep/poll.
 `{"op":"stop","status":"blocked","reason":"..."}` ends
 the run: it becomes a pause holding `blocked` that only the master can resume or
@@ -802,7 +802,7 @@ handled below the model) and, only if a member is still stuck, steer it. When a
 member holds a claim it will not finish, the coordinator has three tools and
 no prescribed order: an explicit `agent_cmd` `steer` or `follow_up` re-arms a
 member suspended by a provider failure (#1712); `agent_cmd` `set_model` moves
-it off a failing provider; `{"op":"revoke","task_id":<id>,"reason":"..."}` reassigns its work
+it off a failing provider; `{"op":"revoke","task_item_id":<id>,"reason":"..."}` reassigns its work
 so another member can claim it. `recover` applies once the member's
 death is confirmed (its harness exited under the coordinator's own
 observation, for instance after `agent_cmd kill`). A run paused because a
@@ -1055,7 +1055,7 @@ already running keep the setting they started with.
 
 ### Structured ops
 
-A structured op a member sends (`{"op":"claim","task_id":3}`) is served
+A structured op a member sends (`{"op":"claim","task_item_id":3}`) is served
 through the same dispatcher, so it leaves the `swarm_op` records above: the
 op's own record (with its `task_id` or `message_id` and, for a refusal, its
 `kind`), plus one per harness-internal call it made, each with role `host`:

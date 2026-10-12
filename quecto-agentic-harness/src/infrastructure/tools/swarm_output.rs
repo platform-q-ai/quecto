@@ -78,57 +78,60 @@ pub(super) fn answered(
     }
 }
 
-/// How one answer is presented to a member.
-pub(crate) type Presentation = fn(Value) -> Value;
+/// How a structured op's answer is presented to a member: one task's row,
+/// a list of task rows, file rows or messages, or `release_files`' answer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Presented {
+    TaskRow,
+    TaskRows,
+    FileRows,
+    Messages,
+    ReleasedFiles,
+}
 
-/// How each structured op's answer is presented, by the op's old name
-/// (every one a board op, which a test holds it to): one task's row, a
-/// list of task rows, file rows or messages, or `release_files`' answer.
-/// Any other op is answered as the board answered it.
-pub(crate) const PRESENTED_OPS: &[(&str, Presentation)] = &[
-    ("task", task_row),
-    ("task_create", task_row),
-    ("dependencies", task_row),
-    ("claim", task_row),
-    ("release", task_row),
-    ("block", task_row),
-    ("unblock", task_row),
-    ("submit", task_row),
-    ("verify_task", task_row),
-    ("revalidate_task", task_row),
-    ("recover", task_row),
-    ("revoke", task_row),
-    ("tasks", task_rows),
-    ("file_owners", file_rows),
-    ("inbox", message_rows),
-    ("release_files", released_files),
+/// How each structured op's answer is presented, by the op's old name; a
+/// test pins every board op's entry (or its absence: answered as the board
+/// answered it), so a new board op needs a decision.
+pub(crate) const PRESENTED_OPS: &[(&str, Presented)] = &[
+    ("task", Presented::TaskRow),
+    ("task_create", Presented::TaskRow),
+    ("dependencies", Presented::TaskRow),
+    ("claim", Presented::TaskRow),
+    ("release", Presented::TaskRow),
+    ("block", Presented::TaskRow),
+    ("unblock", Presented::TaskRow),
+    ("submit", Presented::TaskRow),
+    ("verify_task", Presented::TaskRow),
+    ("revalidate_task", Presented::TaskRow),
+    ("recover", Presented::TaskRow),
+    ("revoke", Presented::TaskRow),
+    ("tasks", Presented::TaskRows),
+    ("file_owners", Presented::FileRows),
+    ("inbox", Presented::Messages),
+    ("release_files", Presented::ReleasedFiles),
 ];
+
+/// How the structured op `op` (its old name) is presented, if it is.
+pub(crate) fn presented(op: &str) -> Option<Presented> {
+    PRESENTED_OPS
+        .iter()
+        .find(|(name, _)| *name == op)
+        .map(|(_, kind)| *kind)
+}
 
 /// The answer of the structured op `op` (its old name) as a member reads
 /// it ([`PRESENTED_OPS`]): a task row's recovery hint as the coordinator's
 /// call, a file row's `task` as `task_item`, `release_files`' `task_id` as
 /// `task_item_id`, and the coordinator's revoke notice as a task item's.
 pub(crate) fn task_item_answer(op: &str, value: Value) -> Value {
-    match PRESENTED_OPS.iter().find(|(name, _)| *name == op) {
-        Some((_, present)) => present(value),
+    match presented(op) {
+        Some(Presented::TaskRow) => task_row(value),
+        Some(Presented::TaskRows) => rows(value, task_row),
+        Some(Presented::FileRows) => rows(value, file_row),
+        Some(Presented::Messages) => rows(value, message_row),
+        Some(Presented::ReleasedFiles) => renamed(value, "task_id", "task_item_id"),
         None => value,
     }
-}
-
-fn task_rows(value: Value) -> Value {
-    rows(value, task_row)
-}
-
-fn file_rows(value: Value) -> Value {
-    rows(value, file_row)
-}
-
-fn message_rows(value: Value) -> Value {
-    rows(value, message_row)
-}
-
-fn released_files(value: Value) -> Value {
-    renamed(value, "task_id", "task_item_id")
 }
 
 /// The answer of the harness op `op` as a member reads it: a summary's
@@ -205,10 +208,6 @@ pub(crate) fn task_item_refusal(message: &str) -> String {
             "task item acceptance criteria required: ",
         ),
     ];
-    const MISSING_ID: (&str, &str) = (
-        ": missing required argument task_id",
-        ": missing required argument task_item_id",
-    );
     if let Some((_, member)) = EXACT.iter().find(|(board, _)| *board == message) {
         return (*member).to_owned();
     }
@@ -218,10 +217,7 @@ pub(crate) fn task_item_refusal(message: &str) -> String {
     {
         return format!("{member}{rest}");
     }
-    match message.strip_suffix(MISSING_ID.0) {
-        Some(op) => binding_refusal(&format!("{op}{}", MISSING_ID.1)),
-        None => binding_refusal(message),
-    }
+    binding_refusal(message)
 }
 
 /// A binding refusal, `<op>: <one of the binding's own texts>`, naming
@@ -244,9 +240,18 @@ fn binding_refusal(message: &str) -> String {
         && op
             .bytes()
             .all(|byte| byte.is_ascii_lowercase() || byte == b'_');
-    match method && BINDING.iter().any(|text| rest.starts_with(text)) {
-        true => format!("{}: {rest}", advertised_op(op)),
-        false => message.to_owned(),
+    // A missing `task_id`, and only that whole text, names the argument
+    // as advertised; a member's own key that reads like it is its own.
+    const MISSING_ID: (&str, &str) = (
+        "missing required argument task_id",
+        "missing required argument task_item_id",
+    );
+    match (method, rest == MISSING_ID.0) {
+        (true, true) => format!("{}: {}", advertised_op(op), MISSING_ID.1),
+        (true, false) if BINDING.iter().any(|text| rest.starts_with(text)) => {
+            format!("{}: {rest}", advertised_op(op))
+        }
+        (true, false) | (false, _) => message.to_owned(),
     }
 }
 
@@ -267,7 +272,7 @@ fn task_item_error(error: DomainError) -> DomainError {
 }
 
 /// `value`'s items, each as `row` presents it, when `value` is a list.
-fn rows(value: Value, row: Presentation) -> Value {
+fn rows(value: Value, row: fn(Value) -> Value) -> Value {
     match value {
         Value::Array(items) => Value::Array(items.into_iter().map(row).collect()),
         other => other,
@@ -339,21 +344,27 @@ fn event_row(mut value: Value) -> Value {
 
 /// Where `text`, a JSON object, holds the key `name` at its top level: the
 /// byte range of its quoted key, found by scanning the text (strings and
-/// their escapes skipped, depth counted) so nothing else is reparsed or
-/// rewritten; `None` for text that is no JSON object, or holds no such key.
+/// their escapes skipped, depth counted) so nothing else is read as JSON or
+/// rewritten, however deeply it nests. `None` when the text does not begin
+/// with `{` (after spaces), a string runs past its end, the object closes
+/// before such a key, or there is none.
 fn top_level_key(text: &str, name: &str) -> Option<std::ops::Range<usize>> {
-    serde_json::from_str::<Map<String, Value>>(text)
-        .ok()
-        .filter(|fields| fields.contains_key(name))?;
     let bytes = text.as_bytes();
-    let (mut depth, mut at) = (0usize, 0usize);
+    let mut at = bytes.iter().position(|byte| !byte.is_ascii_whitespace())?;
+    if bytes[at] != b'{' {
+        return None;
+    }
+    let mut depth = 0usize;
     while at < bytes.len() {
         match bytes[at] {
             b'"' => {
                 let start = at;
                 at += 1;
-                while bytes[at] != b'"' {
+                while at < bytes.len() && bytes[at] != b'"' {
                     at += if bytes[at] == b'\\' { 2 } else { 1 };
+                }
+                if at >= bytes.len() {
+                    return None;
                 }
                 let quoted = start..at + 1;
                 let colon = text[at + 1..].trim_start().starts_with(':');
@@ -362,7 +373,12 @@ fn top_level_key(text: &str, name: &str) -> Option<std::ops::Range<usize>> {
                 }
             }
             b'{' | b'[' => depth += 1,
-            b'}' | b']' => depth = depth.saturating_sub(1),
+            b'}' | b']' => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    return None;
+                }
+            }
             _ => {}
         }
         at += 1;
