@@ -27,7 +27,15 @@ impl ToolRegistryImpl {
                     .then(|| policy_id.clone())
             }) else {
                 // #2446: an extension's tool registers later, not a typo.
-                match crate::domain::tool_policy::registers_after_startup(policy_id) {
+                // #2513: a tool the parent keeps from children (the
+                // parent-only `board`) is none of a child's to build.
+                let kept_from_children = matches!(
+                    scope,
+                    ProfileAvailabilityScope::Parent | ProfileAvailabilityScope::None
+                );
+                match crate::domain::tool_policy::registers_after_startup(policy_id)
+                    || kept_from_children
+                {
                     true => {}
                     false => warnings.push(policy_id.clone()),
                 }

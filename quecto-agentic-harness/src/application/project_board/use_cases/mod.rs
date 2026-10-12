@@ -7,8 +7,8 @@ mod complete_merged_task;
 mod create_board_task;
 mod line_ends;
 mod query_board;
-mod references;
 mod run_board_operation;
+mod task_pointers;
 mod update_draft_task;
 
 pub use board_change::MAX_WRITE_ATTEMPTS;

@@ -8,6 +8,7 @@ pub mod changes;
 pub mod claims;
 pub mod discussions;
 pub mod drafts;
+pub mod issue_numbers;
 pub mod plans;
 pub mod pull_requests;
 pub mod reviews;

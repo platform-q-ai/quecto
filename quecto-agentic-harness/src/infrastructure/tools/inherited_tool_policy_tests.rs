@@ -547,3 +547,21 @@ fn built_workflow_records_its_effective_scope_over_its_persisted_preference() {
         Some(&ProfileAvailabilityScope::Parent)
     );
 }
+
+/// #2513: a tool the parent's policy keeps from children (the parent-only
+/// `board`) is none of a child's to build, so a child that lacks it gives
+/// no warning; any other missing tool still does.
+#[test]
+fn a_parent_only_tool_a_child_lacks_is_no_warning() {
+    let (mut reg, _tmp) = test_registry();
+    reg.set_execution_profile_context(ToolProfileContext::Child);
+    let snapshot = InheritedToolPolicySnapshot::new(BTreeMap::from([
+        ("board".to_string(), ProfileAvailabilityScope::Parent),
+        ("gone".to_string(), ProfileAvailabilityScope::None),
+        ("nope".to_string(), ProfileAvailabilityScope::Both),
+    ]));
+    assert_eq!(
+        reg.apply_inherited_tool_policy_snapshot(&snapshot),
+        vec!["nope".to_string()]
+    );
+}

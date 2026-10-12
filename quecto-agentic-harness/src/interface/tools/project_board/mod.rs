@@ -10,6 +10,8 @@ pub mod answer;
 pub mod command_line;
 pub mod json;
 pub mod request;
+pub mod site;
+pub mod tool;
 
 use serde_json::Value;
 

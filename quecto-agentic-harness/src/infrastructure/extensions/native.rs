@@ -167,6 +167,16 @@ pub fn build_official_tool_extensions(deps: OfficialToolDeps) -> Vec<Arc<dyn Ext
     ))]
 }
 
+/// The project board's bundled extension (#2477): the `board` tool the
+/// interface builds over composition's board.
+pub fn build_project_board_tool_extension(board: Arc<dyn Tool>) -> Vec<Arc<dyn Extension>> {
+    vec![Arc::new(NativeExtension::new(
+        "quecto:project-board",
+        "The project board",
+        board,
+    ))]
+}
+
 pub struct SessionToolDeps {
     /// The recall use case the `recall` tool adapts (D9 #1978).
     pub recall: Arc<crate::application::sessions::use_cases::RecallContext>,
