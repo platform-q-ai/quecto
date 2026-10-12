@@ -55,6 +55,10 @@ pub struct Remote {
     clones: [PathBuf; 2],
 }
 
+/// The hand edits below rebuild the board's root from its README and
+/// `tasks` alone: unmarked roots, as a board written before the format
+/// marker had (the store reads them as such, and its next write adds the
+/// marker).
 impl Remote {
     pub fn new() -> Self {
         let dir = tempfile::tempdir().unwrap();

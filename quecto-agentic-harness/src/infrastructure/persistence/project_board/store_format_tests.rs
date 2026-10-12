@@ -39,6 +39,8 @@ enum Root {
     /// A row of this mode over a blob of these bytes (a mode git never
     /// writes over one).
     ModeOverBlob(&'static str, &'static str, Vec<u8>),
+    /// An empty tree under this name.
+    EmptyTree(&'static str),
 }
 
 /// The board's head moved to a root of the README, `tasks` (holding task
@@ -75,6 +77,7 @@ fn board_with(repos: &Repos, tasks: bool, rows: &[Root]) -> BoardHead {
                 Root::File(mode, name, bytes) | Root::ModeOverBlob(mode, name, bytes) => {
                     (*mode, *name, blob_in(&repo, bytes))
                 }
+                Root::EmptyTree(name) => ("40000", *name, raw_rows(&repo, &[])),
             });
         }
         root.sort_by_key(|(mode, name, _)| match *mode {
@@ -109,7 +112,7 @@ fn read(repos: &Repos, head: &BoardHead) -> Result<Arc<Board>, BoardStoreError> 
 }
 
 #[test]
-fn this_quectos_marker_is_read_and_every_write_leaves_it() {
+fn this_quectos_marker_is_read() {
     let repos = Repos::new();
     created(&store(&repos.alice));
     let head = board_with(&repos, true, &[marker(board_file(FORMAT))]);
@@ -164,6 +167,19 @@ fn a_newer_format_asks_for_an_upgrade_before_anything_else() {
             "{read:?}"
         );
     }
+    // Past what a u64 holds, it is still newer.
+    let head = board_with(
+        &repos,
+        true,
+        &[marker(board_file(
+            b"quecto-board 99999999999999999999999\n",
+        ))],
+    );
+    let read = read(&repos, &head);
+    assert!(
+        matches!(&read, Err(BoardStoreError::Unavailable(why)) if why.contains("upgrade quecto")),
+        "{read:?}"
+    );
     // Before a task read refuses too: past the task-file bytes it takes.
     let head = board_with(&repos, true, &[marker(board_file(b"quecto-board 3\n"))]);
     let mut bob = store(&repos.bob);
@@ -223,6 +239,26 @@ fn a_damaged_marker_asks_for_the_board_to_be_moved_back() {
             "a leading zero",
             vec![marker(board_file(b"quecto-board 02\n"))],
         ),
+        (
+            "a leading zero before a newer number",
+            vec![marker(board_file(b"quecto-board 03\n"))],
+        ),
+        ("a sign", vec![marker(board_file(b"quecto-board +3\n"))]),
+        (
+            "two format trees",
+            vec![marker(board_file(FORMAT)), marker(board_file(FORMAT))],
+        ),
+        (
+            "a format file beside the tree",
+            vec![
+                marker(board_file(FORMAT)),
+                Root::File("100644", "format", FORMAT.to_vec()),
+            ],
+        ),
+        (
+            "tasks twice",
+            vec![marker(board_file(FORMAT)), Root::EmptyTree("tasks")],
+        ),
         ("no format", vec![marker(board_file(b"board"))]),
         (
             "a tree mode over a blob",
@@ -235,7 +271,7 @@ fn a_damaged_marker_asks_for_the_board_to_be_moved_back() {
         let head = board_with(&repos, true, &rows);
         let read = read(&repos, &head);
         assert!(
-            matches!(&read, Err(BoardStoreError::Unavailable(why)) if why.contains("damaged") && why.contains(RECOVERY)),
+            matches!(&read, Err(BoardStoreError::Unavailable(why)) if why.contains("hand edit") && why.contains(RECOVERY)),
             "{case}: {read:?}"
         );
     }
@@ -318,4 +354,56 @@ fn the_merged_board_shape_takes_a_marked_root_for_a_clash() {
         })
         .collect();
     assert_eq!(root, marked);
+}
+
+/// A marker larger than this quecto reads to find its first line (64
+/// KiB) may be a newer quecto's or a hand edit's: the refusal names both.
+#[test]
+fn a_marker_past_what_is_read_names_an_upgrade_and_a_mend() {
+    let repos = Repos::new();
+    created(&store(&repos.alice));
+    let mut huge = b"quecto-board 3\n".to_vec();
+    huge.resize(65 * 1024, b'x');
+    let head = board_with(&repos, true, &[marker(board_file(&huge))]);
+    let read = read(&repos, &head);
+    assert!(
+        matches!(&read, Err(BoardStoreError::Unavailable(why)) if why.contains("upgrade quecto") && why.contains(RECOVERY)),
+        "{read:?}"
+    );
+}
+
+/// A board this quecto does not read (a newer format, a damaged marker)
+/// is never written, cleared or bootstrapped over.
+#[test]
+fn a_marker_this_quecto_does_not_read_refuses_every_change() {
+    for bytes in [&b"quecto-board 3\n"[..], b"quecto-board 1\n"] {
+        let repos = Repos::new();
+        created(&store(&repos.alice));
+        let head = board_with(&repos, true, &[marker(board_file(bytes))]);
+        let bob = store(&repos.bob);
+        let write = bob.write_tasks(&head, &[task("b")], "board: add b");
+        assert!(
+            matches!(write, Err(BoardStoreError::Unavailable(_))),
+            "{write:?}"
+        );
+        let clear = bob.clear_set_aside(
+            &head,
+            &crate::application::project_board::ports::SetAsideClear {
+                path: "tasks/a.md".into(),
+                object: "0".repeat(40),
+                repeated: Default::default(),
+            },
+            "board: clear",
+        );
+        assert!(
+            matches!(clear, Err(BoardStoreError::Unavailable(_))),
+            "{clear:?}"
+        );
+        let bootstrap = bob.bootstrap();
+        assert!(
+            matches!(bootstrap, Err(BoardStoreError::Unavailable(_))),
+            "{bootstrap:?}"
+        );
+        assert_eq!(sh(&repos.remote(), &["rev-parse", BOARD_REF]), head.0);
+    }
 }
