@@ -63,6 +63,8 @@
 use std::collections::BTreeSet;
 use std::path::Path;
 
+#[path = "tool_work_spawns_values.rs"]
+mod values;
 #[path = "tool_work_spawns_visitor.rs"]
 mod visitor;
 use visitor::spawn_sites;
