@@ -55,7 +55,6 @@ pub struct ChangeCodec;
 
 impl ArtifactCodec for ChangeCodec {
     type Value = Change;
-    const KIND: &'static str = "change";
     const SCHEMA: u32 = 1;
     const SHAPE: Shape<'static> = Shape {
         kind: "change",
@@ -66,6 +65,8 @@ impl ArtifactCodec for ChangeCodec {
 
     fn to_document(change: &Change) -> Result<Document, CodecError> {
         let change = change.fields();
+        // A merged change stays linked: never both rows sets at once.
+        debug_assert!(change.unlinked.is_none() || change.merged.is_none());
         let mut fields = vec![
             (TASK, cells::slug(&change.task)),
             (NUMBER, cells::number(change.number.into())),

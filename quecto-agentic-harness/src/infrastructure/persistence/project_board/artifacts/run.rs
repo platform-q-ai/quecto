@@ -73,7 +73,6 @@ pub struct RunCodec;
 
 impl ArtifactCodec for RunCodec {
     type Value = Run;
-    const KIND: &'static str = "run";
     const SCHEMA: u32 = 1;
     const SHAPE: Shape<'static> = Shape {
         kind: "run",
@@ -84,6 +83,13 @@ impl ArtifactCodec for RunCodec {
 
     fn to_document(run: &Run) -> Result<Document, CodecError> {
         let run = run.fields();
+        // What the State and Ended rows rest on: an outcome exactly when
+        // the run ended, and none spelt `running`.
+        debug_assert_eq!(run.outcome.is_some(), run.ended.is_some());
+        debug_assert!(
+            run.outcome
+                .is_none_or(|outcome| outcome.as_str() != RUNNING)
+        );
         let state = run.outcome.map_or(RUNNING, RunOutcome::as_str);
         let mut fields = vec![
             (TASK, cells::slug(&run.task)),

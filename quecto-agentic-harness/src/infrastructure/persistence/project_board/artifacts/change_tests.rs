@@ -168,11 +168,6 @@ fn a_mixed_case_repository_keeps_its_case() {
 }
 
 #[test]
-fn the_change_codec_kind_is_its_shapes() {
-    assert_eq!(ChangeCodec::KIND, ChangeCodec::SHAPE.kind);
-}
-
-#[test]
 fn a_repo_and_branch_with_underscores_round_trip() {
     for (repo, branch) in [
         ("_org_/__init__", "_x_/__y__"),
@@ -203,7 +198,8 @@ fn the_widest_change_fits() {
         task: Slug::parse(&"a".repeat(64)).unwrap(),
         number: 999,
         head_repo: RepoName::parse(&format!("{part}/{part}")).unwrap(),
-        branch: BranchName::parse(&"b".repeat(MAX_BRANCH_BYTES)).unwrap(),
+        // Every `|` written `\|`: the most bytes a branch can take.
+        branch: BranchName::parse(&"|".repeat(MAX_BRANCH_BYTES)).unwrap(),
         pr: Some(u64::MAX),
         merged: None,
         linked_by: identity.clone(),
@@ -215,9 +211,11 @@ fn the_widest_change_fits() {
         merged: Some(CommitId::parse(&"a".repeat(64)).unwrap()),
         ..widest.clone()
     };
+    let mut most = 0;
     for fields in [widest, merged] {
         let file = round_trips(fields);
         let longest = file.lines().map(str::len).max().unwrap();
+        most = most.max(file.len());
         assert!(file.len() <= CHANGE_LIMITS.file_bytes, "{}", file.len());
         assert!(file.lines().count() <= CHANGE_LIMITS.lines);
         assert!(
@@ -225,4 +223,21 @@ fn the_widest_change_fits() {
             "{longest}"
         );
     }
+    // The unlinked one, its branch of `|`: 2,990 bytes.
+    assert!(most >= 2_990, "{most}");
+}
+
+/// A file that spells a mixed-case repository in lower case reads back as
+/// its own spelling: the value keeps the case the file has, so a case-only
+/// change is a change.
+#[test]
+fn a_repository_reads_back_in_the_case_its_file_has() {
+    let file = round_trips(ChangeFields {
+        head_repo: RepoName::parse("Platform-Q-AI/Quecto").unwrap(),
+        ..example()
+    });
+    let lower = file.replacen("`Platform-Q-AI/Quecto`", "`platform-q-ai/quecto`", 1);
+    let read = decode::<ChangeCodec>(lower.as_bytes()).unwrap();
+    assert_eq!(read.fields().head_repo.as_str(), "platform-q-ai/quecto");
+    assert_eq!(encode::<ChangeCodec>(&read).unwrap(), lower);
 }

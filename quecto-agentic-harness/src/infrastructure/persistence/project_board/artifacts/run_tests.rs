@@ -307,7 +307,13 @@ fn the_widest_run_fits() {
     );
 }
 
+/// No outcome is spelt `running`: the State cell tells a running run from
+/// an ended one by that word alone.
 #[test]
-fn the_run_codec_kind_is_its_shapes() {
-    assert_eq!(RunCodec::KIND, RunCodec::SHAPE.kind);
+fn no_outcome_is_spelt_running() {
+    assert!(
+        RunOutcome::ALL
+            .iter()
+            .all(|outcome| outcome.as_str() != "running")
+    );
 }
