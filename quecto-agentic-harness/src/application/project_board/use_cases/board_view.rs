@@ -3,9 +3,12 @@
 //! is set aside: what that file held is unknown, so an answer without it
 //! could be wrong (a run's number reused, a change's pull request linked
 //! twice). A file set aside whose name spells no artifact (a stray) is in
-//! no view's scope, so it blocks none.
+//! no view's scope, so it blocks none. A view sees keys only: a kept file
+//! set aside with no key (its artifact unknown) blocks no view, so S7's
+//! link wiring through [`all_changes`] must still refuse while one exists,
+//! as `change_board_task`'s `board_readable_for` does now.
 use crate::application::project_board::dto::ProjectBoardError;
-use crate::application::project_board::ports::{ArtifactKey, BoardSnapshot};
+use crate::application::project_board::ports::{ArtifactKey, BoardSnapshot, QuarantinedFile};
 use crate::domain::project_board::entities::change::Change;
 use crate::domain::project_board::entities::plan::Plan;
 use crate::domain::project_board::entities::review::Review;
@@ -14,11 +17,21 @@ use crate::domain::project_board::entities::task::Task;
 use crate::domain::project_board::value_objects::slug::Slug;
 
 /// The task `id`. Refused while its file is set aside, even if another
-/// copy reads; [`ProjectBoardError::NotFound`] when the board holds none.
+/// copy reads (no store answers both: each checks it as it reads);
+/// [`ProjectBoardError::NotFound`] when the board holds none. Every use
+/// case asking whether a task is there asks here, so all answer alike.
 pub fn task<'b>(board: &'b BoardSnapshot, id: &Slug) -> Result<&'b Task, ProjectBoardError> {
-    clear_of(board, |key| *key == ArtifactKey::Task(id.clone()))?;
-    board
-        .tasks
+    task_in(&board.tasks, &board.quarantined, id)
+}
+
+/// [`task`] over a listing's `tasks` and the files it set aside.
+pub fn task_in<'b>(
+    tasks: &'b [Task],
+    quarantined: &[QuarantinedFile],
+    id: &Slug,
+) -> Result<&'b Task, ProjectBoardError> {
+    first_set_aside(quarantined, |key| *key == ArtifactKey::Task(id.clone()))?;
+    tasks
         .iter()
         .find(|task| task.fields().id == *id)
         .ok_or_else(|| ProjectBoardError::NotFound(id.clone()))
@@ -110,14 +123,23 @@ fn clear_of(
     board: &BoardSnapshot,
     in_scope: impl Fn(&ArtifactKey) -> bool,
 ) -> Result<(), ProjectBoardError> {
-    let blocking = board
-        .quarantined
+    first_set_aside(&board.quarantined, in_scope)
+}
+
+fn first_set_aside(
+    quarantined: &[QuarantinedFile],
+    in_scope: impl Fn(&ArtifactKey) -> bool,
+) -> Result<(), ProjectBoardError> {
+    let blocking = quarantined
         .iter()
-        .filter_map(|file| file.key.as_ref())
-        .filter(|key| in_scope(key))
+        .filter_map(|file| file.key.as_ref().map(|key| (key, &file.path)))
+        .filter(|(key, _)| in_scope(key))
         .min();
     match blocking {
-        Some(key) => Err(ProjectBoardError::Quarantined(key.clone())),
+        Some((key, path)) => Err(ProjectBoardError::Quarantined {
+            key: key.clone(),
+            path: path.clone(),
+        }),
         None => Ok(()),
     }
 }

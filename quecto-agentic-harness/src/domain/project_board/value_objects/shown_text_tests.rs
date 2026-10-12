@@ -17,3 +17,25 @@ fn a_path_shown_holds_no_control_or_format_character() {
         assert!(!shown_path(hostile), "{hostile:?}");
     }
 }
+
+#[test]
+fn an_artifact_path_shown_is_under_its_kinds_folder() {
+    for shown in [
+        "plans/a.1.md",
+        "runs/a.1.md",
+        "changes/a.1.md",
+        "reviews/a.1.md",
+        "discussions/d.md",
+    ] {
+        assert!(shown_artifact_path(shown), "{shown:?}");
+    }
+    for hostile in [
+        "tasks/a.md",
+        "archive/a.md",
+        "runs",
+        "runs/a\u{202e}.md",
+        "runs/a\u{0}.md",
+    ] {
+        assert!(!shown_artifact_path(hostile), "{hostile:?}");
+    }
+}

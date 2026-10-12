@@ -1,8 +1,8 @@
 use super::UpdateDraftTask;
 use crate::application::project_board::dto::{DraftUpdate, ProjectBoardError};
-use crate::application::project_board::ports::{ArtifactKey, ProjectBoardStore};
+use crate::application::project_board::ports::ProjectBoardStore;
 use crate::application::project_board::use_cases::fixtures_tests::{
-    SetClock, at, board, fields, slug,
+    SetClock, at, board, fields, set_aside_task, slug,
 };
 use crate::domain::project_board::entities::task::{Task, TaskFields};
 use crate::domain::project_board::value_objects::rule_error::BoardRuleError;
@@ -106,7 +106,7 @@ fn references_must_be_on_the_board_and_not_set_aside() {
     );
     assert_eq!(
         update(&store).execute(&references("a", Some(Some("x")), None)),
-        Err(ProjectBoardError::Quarantined(ArtifactKey::Task(slug("x"))))
+        Err(set_aside_task("x"))
     );
 }
 

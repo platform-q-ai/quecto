@@ -373,6 +373,7 @@ pub fn check_carried_set_aside(
     stray: &str,
 ) {
     use quecto::application::project_board::dto::{BoardOp, ProjectBoardError};
+    use quecto::application::project_board::ports::ArtifactKey;
     use quecto::application::project_board::use_cases::ChangeBoardTask;
     use quecto::infrastructure::time::board_clock::SystemBoardClock;
     use std::sync::Arc;
@@ -403,7 +404,10 @@ pub fn check_carried_set_aside(
         ChangeBoardTask::new(alice.clone(), Arc::new(SystemBoardClock::default())).unwrap();
     assert_eq!(
         change.execute(&Slug::parse("a").unwrap(), &BoardOp::AddPr(7)),
-        Err(ProjectBoardError::Quarantined(Slug::parse("b").unwrap()))
+        Err(ProjectBoardError::Quarantined {
+            key: ArtifactKey::Task(Slug::parse("b").unwrap()),
+            path: "tasks/b.json".into(),
+        })
     );
     let head = alice.read().unwrap().head;
     written(alice.write_tasks(&head, &[task("c", "Three")], "board: add c"));

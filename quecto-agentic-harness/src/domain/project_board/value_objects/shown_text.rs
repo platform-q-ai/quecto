@@ -20,8 +20,19 @@ pub fn shown_char(c: char) -> bool {
 /// `tasks/`, every character shown as it is, the one space a store puts
 /// for a run of any other, or the `…` that marks a name it cut.
 pub fn shown_path(path: &str) -> bool {
-    path.strip_prefix("tasks/")
-        .is_some_and(|name| name.chars().all(|c| shown_char(c) || c == ' ' || c == '…'))
+    path.strip_prefix("tasks/").is_some_and(shown_name)
+}
+
+/// [`shown_path`] for the file of a plan, run, change, review or
+/// discussion: under its kind's folder, shown the same way.
+pub fn shown_artifact_path(path: &str) -> bool {
+    ["plans/", "runs/", "changes/", "reviews/", "discussions/"]
+        .iter()
+        .any(|folder| path.strip_prefix(folder).is_some_and(shown_name))
+}
+
+fn shown_name(name: &str) -> bool {
+    name.chars().all(|c| shown_char(c) || c == ' ' || c == '…')
 }
 
 #[cfg(test)]

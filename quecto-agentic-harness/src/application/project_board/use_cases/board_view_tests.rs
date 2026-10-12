@@ -30,21 +30,41 @@ fn board(set_aside: Vec<QuarantinedFile>) -> BoardSnapshot {
         reviews: vec![review("b", 1), review("a", 1)],
         discussions: vec![],
         quarantined: set_aside,
-        kept: Default::default(),
     }
 }
 
 fn set_aside(key: Option<ArtifactKey>, path: &str) -> QuarantinedFile {
     QuarantinedFile {
         path: path.into(),
+        // A file of a known artifact is carried; a stray is not.
+        carried: key.is_some(),
         key,
         reason: "malformed".into(),
         object: "0".repeat(40),
     }
 }
 
+/// The file of `key`, by the plan's names.
+fn path_of(key: &ArtifactKey) -> String {
+    match key {
+        ArtifactKey::Task(id) => format!("tasks/{}.md", id.as_str()),
+        ArtifactKey::Plan(id, n) => format!("plans/{}.{n}.md", id.as_str()),
+        ArtifactKey::Run(id, n) => format!("runs/{}.{n}.md", id.as_str()),
+        ArtifactKey::Change(id, n) => format!("changes/{}.{n}.md", id.as_str()),
+        ArtifactKey::Review(id, n) => format!("reviews/{}.{n}.md", id.as_str()),
+        ArtifactKey::Discussion(id) => format!("discussions/{}.md", id.as_str()),
+    }
+}
+
+/// The file of `key` set aside.
+fn keyed(key: ArtifactKey) -> QuarantinedFile {
+    let path = path_of(&key);
+    set_aside(Some(key), &path)
+}
+
 fn refused(key: ArtifactKey) -> ProjectBoardError {
-    ProjectBoardError::Quarantined(key)
+    let path = path_of(&key);
+    ProjectBoardError::Quarantined { key, path }
 }
 
 fn numbers<T>(items: &[&T], number: impl Fn(&T) -> (String, u32)) -> Vec<(String, u32)> {
@@ -103,10 +123,7 @@ fn every_view_answers_its_own_scope_in_order() {
 
 #[test]
 fn a_task_set_aside_is_refused_even_with_a_copy_read() {
-    let board = board(vec![set_aside(
-        Some(ArtifactKey::Task(slug("a"))),
-        "tasks/a.json",
-    )]);
+    let board = board(vec![keyed(ArtifactKey::Task(slug("a")))]);
     assert_eq!(
         task(&board, &slug("a")),
         Err(refused(ArtifactKey::Task(slug("a"))))
@@ -122,10 +139,7 @@ fn a_task_set_aside_is_refused_even_with_a_copy_read() {
 
 #[test]
 fn runs_of_refuses_while_a_run_of_the_task_is_set_aside() {
-    let board = board(vec![set_aside(
-        Some(ArtifactKey::Run(slug("a"), 3)),
-        "runs/a/3.md",
-    )]);
+    let board = board(vec![keyed(ArtifactKey::Run(slug("a"), 3))]);
     assert_eq!(
         runs_of(&board, &slug("a")),
         Err(refused(ArtifactKey::Run(slug("a"), 3)))
@@ -140,10 +154,10 @@ fn runs_of_refuses_while_a_run_of_the_task_is_set_aside() {
 #[test]
 fn another_tasks_set_aside_run_does_not_block() {
     let board = board(vec![
-        set_aside(Some(ArtifactKey::Run(slug("b"), 1)), "runs/b/1.md"),
-        set_aside(Some(ArtifactKey::Plan(slug("b"), 1)), "plans/b/1.md"),
-        set_aside(Some(ArtifactKey::Change(slug("b"), 1)), "changes/b/1.md"),
-        set_aside(Some(ArtifactKey::Review(slug("b"), 1)), "reviews/b/1.md"),
+        keyed(ArtifactKey::Run(slug("b"), 1)),
+        keyed(ArtifactKey::Plan(slug("b"), 1)),
+        keyed(ArtifactKey::Change(slug("b"), 1)),
+        keyed(ArtifactKey::Review(slug("b"), 1)),
     ]);
     let a = slug("a");
     assert_eq!(runs_of(&board, &a).unwrap().len(), 2);
@@ -173,9 +187,9 @@ fn another_tasks_set_aside_run_does_not_block() {
 #[test]
 fn all_changes_refuses_while_any_change_is_set_aside() {
     let board = board(vec![
-        set_aside(Some(ArtifactKey::Run(slug("a"), 9)), "runs/a/9.md"),
-        set_aside(Some(ArtifactKey::Change(slug("b"), 9)), "changes/b/9.md"),
-        set_aside(Some(ArtifactKey::Change(slug("b"), 4)), "changes/b/4.md"),
+        keyed(ArtifactKey::Run(slug("a"), 9)),
+        keyed(ArtifactKey::Change(slug("b"), 9)),
+        keyed(ArtifactKey::Change(slug("b"), 4)),
     ]);
     // The least key in scope names the refusal, whatever the store's order.
     assert_eq!(
@@ -188,8 +202,8 @@ fn all_changes_refuses_while_any_change_is_set_aside() {
 #[test]
 fn a_stray_blocks_nothing() {
     let board = board(vec![
-        set_aside(None, "runs/a/x.md"),
-        set_aside(None, "changes/a/1.json"),
+        set_aside(None, "runs/a.x.md"),
+        set_aside(None, "changes/a.1.json"),
         set_aside(None, "stray.txt"),
     ]);
     let a = slug("a");
@@ -203,14 +217,21 @@ fn a_stray_blocks_nothing() {
 
 #[test]
 fn a_set_aside_discussion_blocks_no_task_view() {
-    let board = board(vec![set_aside(
-        Some(ArtifactKey::Discussion(slug("a"))),
-        "discussions/a.md",
-    )]);
+    let board = board(vec![keyed(ArtifactKey::Discussion(slug("a")))]);
     let a = slug("a");
     assert!(task(&board, &a).is_ok());
     assert!(plans_of(&board, &a).is_ok());
     assert!(runs_of(&board, &a).is_ok());
+    assert!(changes_of(&board, &a).is_ok());
     assert!(all_changes(&board).is_ok());
     assert!(review_of(&board, &a, 1).is_ok());
+}
+
+/// No store hands over a task both read and set aside: the check every
+/// store's read makes stops one in a debug build.
+#[test]
+#[cfg(debug_assertions)]
+#[should_panic(expected = "a task is set aside and read at once")]
+fn a_store_never_reads_a_task_it_set_aside() {
+    let _ = board(vec![keyed(ArtifactKey::Task(slug("a")))]).asserted();
 }

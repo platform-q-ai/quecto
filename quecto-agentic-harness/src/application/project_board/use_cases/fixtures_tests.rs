@@ -21,6 +21,14 @@ pub fn slug(text: &str) -> Slug {
     Slug::parse(text).unwrap()
 }
 
+/// The refusal of task `id`, whose file the in-memory store set aside.
+pub fn set_aside_task(id: &str) -> crate::application::project_board::dto::ProjectBoardError {
+    crate::application::project_board::dto::ProjectBoardError::Quarantined {
+        key: crate::application::project_board::ports::ArtifactKey::Task(slug(id)),
+        path: format!("tasks/{id}.json"),
+    }
+}
+
 pub fn person(name: &str) -> Identity {
     Identity {
         name: name.into(),

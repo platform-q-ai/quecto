@@ -299,7 +299,7 @@ impl ProjectBoardStore for MemoryBoardStore {
             (snapshot, std::mem::take(&mut board.after_read))
         };
         after.into_iter().for_each(|change| change(self));
-        Ok(snapshot)
+        Ok(snapshot.asserted())
     }
 
     fn write(

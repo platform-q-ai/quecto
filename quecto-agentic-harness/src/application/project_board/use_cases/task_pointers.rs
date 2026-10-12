@@ -4,8 +4,9 @@
 //! cycle closed through the board, by parent or by dependency.
 use std::collections::{BTreeMap, BTreeSet};
 
+use super::board_view;
 use crate::application::project_board::dto::ProjectBoardError;
-use crate::application::project_board::ports::{ArtifactKey, BoardSnapshot};
+use crate::application::project_board::ports::BoardSnapshot;
 use crate::domain::project_board::entities::task::TaskFields;
 use crate::domain::project_board::value_objects::slug::Slug;
 
@@ -24,17 +25,13 @@ pub(super) fn pointers_hold(
     board: &BoardSnapshot,
     refs: &Pointers<'_>,
 ) -> Result<(), ProjectBoardError> {
-    let held = |id: &Slug| board.tasks.iter().any(|task| task.fields().id == *id);
-    let set_aside = |id: &Slug| board.quarantined.iter().any(|file| file.id() == Some(id));
     for reference in refs.parent.into_iter().chain(refs.depends_on) {
-        match (held(reference), set_aside(reference)) {
-            (true, _) => {}
-            (false, true) => {
-                return Err(ProjectBoardError::Quarantined(ArtifactKey::Task(
-                    reference.clone(),
-                )));
+        match board_view::task(board, reference) {
+            Ok(_) => {}
+            Err(ProjectBoardError::NotFound(_)) => {
+                return Err(ProjectBoardError::UnknownReference(reference.clone()));
             }
-            (false, false) => return Err(ProjectBoardError::UnknownReference(reference.clone())),
+            Err(refused) => return Err(refused),
         }
     }
     match cycle_closer(board, refs) {

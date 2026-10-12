@@ -28,7 +28,7 @@ use crate::application::project_board::ports::{
 use crate::domain::project_board::entities::claim::Identity;
 use crate::domain::project_board::entities::task::Task;
 use crate::domain::project_board::value_objects::rule_error::BoardRuleError;
-use crate::domain::project_board::value_objects::shown_text::shown_path;
+use crate::domain::project_board::value_objects::shown_text::{shown_artifact_path, shown_path};
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::redaction::{redact_secrets, redact_url_userinfo};
 
@@ -63,11 +63,10 @@ pub enum ErrorCode {
     ClockUnreadable,
     /// `task`.
     SetAside,
-    /// `kind`, `id`, `number`: a file of an artifact other than a task is
-    /// set aside. `kind` is `plan`, `run`, `change`, `review` or
-    /// `discussion`; `id` is the task's id (the discussion's own for a
-    /// discussion); `number` is the plan's version, the run's or change's
-    /// number, the reviewed change's number, or null for a discussion.
+    /// A file of an artifact other than a task is set aside: `kind`
+    /// (`plan`, `run`, `change` or `review`), `task`, `number` (the plan's
+    /// version, the run's or change's number, the reviewed change's) and
+    /// `path`; for a discussion, `kind`, `discussion` (its id) and `path`.
     ArtifactSetAside,
     /// `path`, `object`.
     SetAsideFile,
@@ -233,26 +232,36 @@ fn slug_json(slug: &Slug) -> Value {
 }
 
 /// The artifact a refusal names: a task as `set_aside` by its id, as
-/// ever; any other kind as `artifact_set_aside`, one shape for all five.
-fn set_aside_fields(key: &ArtifactKey) -> (ErrorCode, Map<String, Value>) {
-    let other = |kind: &str, id: &Slug, number: Option<u32>| {
-        (
-            ErrorCode::ArtifactSetAside,
-            fields([
-                ("kind", json!(kind)),
-                ("id", slug_json(id)),
-                ("number", json!(number)),
-            ]),
-        )
+/// ever; any other kind as `artifact_set_aside` by its kind, its task and
+/// number (the plan's version, the run's or change's number, the reviewed
+/// change's), or a discussion by its id, each with its file's raw path, so
+/// a clear can name it exactly.
+fn set_aside_fields(key: &ArtifactKey, path: &str) -> (ErrorCode, Map<String, Value>) {
+    let numbered = |kind: &str, task: &Slug, number: u32| {
+        fields([
+            ("kind", json!(kind)),
+            ("task", slug_json(task)),
+            ("number", json!(number)),
+            ("path", json!(path)),
+        ])
     };
-    match key {
-        ArtifactKey::Task(id) => (ErrorCode::SetAside, fields([("task", slug_json(id))])),
-        ArtifactKey::Plan(id, version) => other("plan", id, Some(*version)),
-        ArtifactKey::Run(id, number) => other("run", id, Some(*number)),
-        ArtifactKey::Change(id, number) => other("change", id, Some(*number)),
-        ArtifactKey::Review(id, change) => other("review", id, Some(*change)),
-        ArtifactKey::Discussion(id) => other("discussion", id, None),
-    }
+    let other = match key {
+        ArtifactKey::Task(id) => return (ErrorCode::SetAside, fields([("task", slug_json(id))])),
+        ArtifactKey::Plan(task, version) => numbered("plan", task, *version),
+        ArtifactKey::Run(task, number) => numbered("run", task, *number),
+        ArtifactKey::Change(task, number) => numbered("change", task, *number),
+        ArtifactKey::Review(task, change) => numbered("review", task, *change),
+        ArtifactKey::Discussion(id) => fields([
+            ("kind", json!("discussion")),
+            ("discussion", slug_json(id)),
+            ("path", json!(path)),
+        ]),
+    };
+    assert!(
+        shown_artifact_path(path),
+        "a store shows every path it sets aside sanitised: {path:?}"
+    );
+    (ErrorCode::ArtifactSetAside, other)
 }
 
 fn slugs_json(slugs: &[Slug]) -> Value {
@@ -407,7 +416,7 @@ fn error_fields(error: &ProjectBoardError) -> (ErrorCode, Map<String, Value>) {
         E::Clock(BoardClockError::OutOfRange(read)) => {
             (C::ClockUnreadable, fields([("read", shown_json(read))]))
         }
-        E::Quarantined(key) => set_aside_fields(key),
+        E::Quarantined { key, path } => set_aside_fields(key, path),
         E::SetAsideFile { path, object } => {
             assert!(
                 shown_path(path),
