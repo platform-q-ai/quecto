@@ -9,10 +9,10 @@ pub const CLAIM_TTL_SECONDS: u64 = 2 * 60 * 60;
 pub const MAX_NAME_CHARS: usize = 100;
 pub const MAX_EMAIL_BYTES: usize = 254;
 /// The punctuation an email may hold besides letters and digits: every
-/// printable ASCII one but `<>` (git's delimiter around it) and those no
-/// board file shows as they are in a code span: a backtick (the span's
-/// edge), `|` (a table cell's) and `\`.
-const EMAIL_PUNCTUATION: &[u8] = b"!\"#$%&'()*+,-./:;=?@[]^_{}~";
+/// printable ASCII one but `<>` (git's delimiter around it) and a
+/// backtick, which would end the code span a board file shows it in (a
+/// `|` is written `\|` there, and it and `\` are shown as they are).
+const EMAIL_PUNCTUATION: &[u8] = b"!\"#$%&'()*+,-./:;=?@[\\]^_{|}~";
 
 /// Who holds the task, from when, until when.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -86,7 +86,7 @@ impl Identity {
             Err(SchemaError::new(
                 format!("{field}/email"),
                 "must be local@domain of ASCII letters, digits and punctuation \
-                 but <, >, |, \\ and a backtick",
+                 but <, > and a backtick",
             ))
         }
     }

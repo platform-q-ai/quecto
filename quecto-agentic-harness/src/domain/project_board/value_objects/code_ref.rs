@@ -42,8 +42,8 @@ const RESERVED: &[&str] = &[
 ];
 
 /// A branch as git names it (`git check-ref-format --branch`), within
-/// printable ASCII: at most [`MAX_BRANCH_BYTES`]; none of `~^:?*[\`, and
-/// none of `|` and a backtick, which no board file holds;
+/// printable ASCII: at most [`MAX_BRANCH_BYTES`]; none of `~^:?*[\`, nor
+/// a backtick, which no board file holds;
 /// `/`-separated components, none empty, none starting with `.` or ending
 /// with `.lock`; no `..` or `@{`; not starting with `-`, not ending with
 /// `.`. Besides git's rules, the board refuses names git takes but git or
@@ -62,7 +62,11 @@ impl BranchName {
             true => Ok(Self(text.to_string())),
             false => Err(SchemaError::new(
                 "branch",
-                format!("{text:?} is not a branch name of at most {MAX_BRANCH_BYTES} bytes"),
+                format!(
+                    "{text:?} is not a branch name: at most {MAX_BRANCH_BYTES} bytes of printable \
+                     ASCII but ~^:?*[\\ (git's) and a backtick (no board file holds one), in \
+                     /-separated parts git takes"
+                ),
             )),
         }
     }
@@ -74,9 +78,9 @@ impl BranchName {
 
 /// The punctuation a branch may hold besides letters and digits: every
 /// printable ASCII one git takes in a ref name (not `~^:?*[\`), less the
-/// two no board file holds as text: `|`, a table cell's edge, and a
-/// backtick, a code span's.
-const BRANCH_PUNCTUATION: &[u8] = b"!\"#$%&'()+,-./;<=>@]_{}";
+/// one no board file holds: a backtick, a code span's edge (a `|` is
+/// written `\|` there, and shown as it is).
+const BRANCH_PUNCTUATION: &[u8] = b"!\"#$%&'()+,-./;<=>@]_{|}";
 
 /// git's own rules for a branch name, within the characters a board file
 /// holds ([`BRANCH_PUNCTUATION`]).
@@ -160,7 +164,7 @@ impl RepoName {
     /// Anything but `owner/name` in those characters.
     pub fn parse(text: &str) -> Result<Self, SchemaError> {
         let named = match text.split('/').collect::<Vec<_>>().as_slice() {
-            [owner, name] => owner_name(owner) && repo_name(name),
+            [owner, name] => is_owner(owner) && is_repo_name(name),
             _ => false,
         };
         match named {
@@ -170,7 +174,12 @@ impl RepoName {
             }),
             false => Err(SchemaError::new(
                 "repo",
-                format!("{text:?} is not a repository's owner/name"),
+                format!(
+                    "{text:?} is not GitHub's owner/name: an owner of letters, digits and \
+                     hyphens, not starting with one, at most {MAX_OWNER_BYTES}, then at most one \
+                     _shortcode; a name of letters, digits, ., _ and -, not starting with -, \
+                     nor . or .."
+                ),
             )),
         }
     }
@@ -181,23 +190,42 @@ impl RepoName {
     }
 }
 
-/// A GitHub owner: letters, digits and hyphens, at most
-/// [`MAX_OWNER_BYTES`], a letter or digit at each edge.
-fn owner_name(owner: &str) -> bool {
-    let edge = |byte: Option<&u8>| byte.is_some_and(u8::is_ascii_alphanumeric);
-    let bytes = owner.as_bytes();
-    (1..=MAX_OWNER_BYTES).contains(&bytes.len())
-        && edge(bytes.first())
-        && edge(bytes.last())
-        && bytes
-            .iter()
-            .all(|b| b.is_ascii_alphanumeric() || *b == b'-')
+/// A GitHub owner, the one grammar the board and its host adapter keep:
+/// letters, digits and hyphens, starting with a letter or digit (an old
+/// account may end with a hyphen, or hold `--`), at most
+/// [`MAX_OWNER_BYTES`]; then, for an enterprise-managed user, one `_` and
+/// a short code of letters and digits, at most as long.
+pub fn is_owner(owner: &str) -> bool {
+    let (handle, short_code) = match owner.split_once('_') {
+        Some((handle, short_code)) => (handle, Some(short_code)),
+        None => (owner, None),
+    };
+    let handle_kept = (1..=MAX_OWNER_BYTES).contains(&handle.len())
+        && handle
+            .bytes()
+            .next()
+            .is_some_and(|b| b.is_ascii_alphanumeric())
+        && handle
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-');
+    let short_code_kept = short_code.is_none_or(|code| {
+        (1..=MAX_OWNER_BYTES).contains(&code.len())
+            && code.bytes().all(|b| b.is_ascii_alphanumeric())
+    });
+    handle_kept && short_code_kept
 }
 
-/// A GitHub repository's name: letters, digits, `.`, `_` and `-`, at most
-/// [`MAX_REPO_PART_BYTES`], neither `.` nor `..`.
-fn repo_name(name: &str) -> bool {
+/// A GitHub repository's name, the one grammar the board and its host
+/// adapter keep: letters, digits, `.`, `_` and `-`, at most
+/// [`MAX_REPO_PART_BYTES`], not starting with `-` (an option to a tool),
+/// neither `.` nor `..`.
+pub fn is_repo_name(name: &str) -> bool {
+    let first = name
+        .bytes()
+        .next()
+        .is_some_and(|b| b.is_ascii_alphanumeric() || b"._".contains(&b));
     (1..=MAX_REPO_PART_BYTES).contains(&name.len())
+        && first
         && !matches!(name, "." | "..")
         && name
             .bytes()

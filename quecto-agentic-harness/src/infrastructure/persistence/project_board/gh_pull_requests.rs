@@ -13,6 +13,7 @@
 //! and its pipes get [`OUTPUT_GRACE`] to deliver what it wrote. Blocking:
 //! callers run it off the async workers.
 use super::own_group::{Ended, end_group, exited_unreaped};
+use crate::domain::project_board::value_objects::code_ref::{is_owner, is_repo_name};
 use crate::infrastructure::processes::parent_death_signal::{
     SPAWN_ARMS, own_session_dying_with_us,
 };
@@ -276,34 +277,23 @@ pub fn github_repository(remote_url: &str, configured_host: Option<&str>) -> Opt
     repository_name(&repo).then_some(repo)
 }
 
-/// `host/owner/name`: a host name; an owner of letters, digits, `-` and
-/// `_` (an enterprise-managed user's `name_short`) starting with a letter
-/// or digit; and a name of letters, digits, `-`,
-/// `_` and `.` (a leading dot too: `.github`), never `.` or `..` and never
-/// starting with `-`.
+/// `host/owner/name`: a host name, then GitHub's owner and repository
+/// name as the board's domain keeps them ([`is_owner`], [`is_repo_name`]),
+/// so the two cannot drift.
 fn repository_name(repo: &str) -> bool {
-    let made_of = |text: &str, extra: &[u8]| {
-        !text.is_empty()
+    let host = |text: &str| {
+        text.contains('.')
             && text
                 .bytes()
-                .all(|b| b.is_ascii_alphanumeric() || extra.contains(&b))
-    };
-    let starts =
-        |text: &str, allowed: &dyn Fn(u8) -> bool| text.bytes().next().is_some_and(allowed);
-    let host = |text: &str| {
-        made_of(text, b".-") && text.contains('.') && starts(text, &|b| b.is_ascii_alphanumeric())
-    };
-    let owner = |text: &str| made_of(text, b"-_") && starts(text, &|b| b.is_ascii_alphanumeric());
-    let name = |text: &str| {
-        made_of(text, b"-_.")
-            && !matches!(text, "." | "..")
-            && starts(text, &|b| {
-                b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_')
-            })
+                .next()
+                .is_some_and(|b| b.is_ascii_alphanumeric())
+            && text
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b".-".contains(&b))
     };
     matches!(
         repo.split('/').collect::<Vec<_>>().as_slice(),
-        [h, o, n] if host(h) && owner(o) && name(n)
+        [h, o, n] if host(h) && is_owner(o) && is_repo_name(n)
     )
 }
 
