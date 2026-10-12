@@ -2,7 +2,7 @@
 //! (the S1d git store implements [`ProjectBoardStore`] over the
 //! repository's `quecto/board` branch), its listings from a local view of
 //! it (the S1e index implements [`BoardListings`]) and what time it is.
-use super::dto::BoardListing;
+use super::dto::{ArtifactListing, BoardListing};
 use crate::domain::project_board::entities::change::Change;
 use crate::domain::project_board::entities::claim::Identity;
 use crate::domain::project_board::entities::discussion::Discussion;
@@ -348,6 +348,44 @@ pub trait BoardListings: Send + Sync {
     /// # Errors
     /// No board, or the view's or store's failure.
     fn dependents(&self, task: &Slug) -> Result<BoardListing, BoardStoreError>;
+
+    /// Every plan of `task`, by version.
+    ///
+    /// # Errors
+    /// No board, or the view's or store's failure.
+    fn plans_of(&self, task: &Slug) -> Result<ArtifactListing<Plan>, BoardStoreError>;
+
+    /// Every run of `task` of its plan's `version`, by number.
+    ///
+    /// # Errors
+    /// No board, or the view's or store's failure.
+    fn runs_of_plan(
+        &self,
+        task: &Slug,
+        version: u32,
+    ) -> Result<ArtifactListing<Run>, BoardStoreError>;
+
+    /// Every change of `task`, by number.
+    ///
+    /// # Errors
+    /// No board, or the view's or store's failure.
+    fn changes_of(&self, task: &Slug) -> Result<ArtifactListing<Change>, BoardStoreError>;
+
+    /// The review of `task`'s change `change`: none or one.
+    ///
+    /// # Errors
+    /// No board, or the view's or store's failure.
+    fn review_of(
+        &self,
+        task: &Slug,
+        change: u32,
+    ) -> Result<ArtifactListing<Review>, BoardStoreError>;
+
+    /// Every discussion linked to `task`, by id.
+    ///
+    /// # Errors
+    /// No board, or the view's or store's failure.
+    fn discussions_of(&self, task: &Slug) -> Result<ArtifactListing<Discussion>, BoardStoreError>;
 }
 
 /// Why the clock could not tell the time.

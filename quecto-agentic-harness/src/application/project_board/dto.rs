@@ -105,6 +105,19 @@ pub struct BoardListing {
     pub quarantined: Vec<QuarantinedFile>,
 }
 
+/// One kind of artifact a query found, in the query's order, and every
+/// file the board set aside (of any kind, a stray included), so a listing
+/// never hides that part of the board could not be read; both as the
+/// board stood at `head`. An item may point at what the board does not
+/// hold (a plan of a task that is gone): each file is judged on its own.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ArtifactListing<T> {
+    /// The head the listing was read at.
+    pub head: BoardHead,
+    pub items: Vec<T>,
+    pub quarantined: Vec<QuarantinedFile>,
+}
+
 /// Why a board operation did nothing.
 /// Why the board's remote reports no pull requests.
 #[derive(Debug, Clone, PartialEq, Eq)]
