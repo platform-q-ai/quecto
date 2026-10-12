@@ -169,12 +169,12 @@ pub fn identity(field: &'static str, identity: &Identity) -> Result<String, Code
         !identity.email.contains(' '),
         "a valid email holds no space"
     );
-    if !code_cell_holds(&identity.email) {
-        return Err(refused(
-            field,
-            "an email a code span holds, without a backtick",
-        ));
-    }
+    // The domain's email allowlist leaves out a backtick, so a code span
+    // always holds a valid identity's email.
+    debug_assert!(
+        code_cell_holds(&identity.email),
+        "a valid email is one a code span holds"
+    );
     let cell = format!("{} (`{}`)", identity.name, identity.email);
     // The inline rules, here, so the error names the field.
     check_text_cell(&cell).map_err(|error| refused(field, error.to_string()))?;
