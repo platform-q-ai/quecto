@@ -1,4 +1,6 @@
 use super::*;
+use crate::domain::project_board::entities::change::Change;
+use crate::domain::project_board::services::changes::Linked;
 use crate::domain::project_board::services::fixtures_tests::{
     at, change, far_future, last_written, person, task, without_claim,
 };
@@ -57,7 +59,14 @@ fn unlinking_behind_the_task_stamps_the_task_s_own_time() {
 #[test]
 fn the_holder_links_a_pull_request() {
     for status in [Claimed, InProgress, Review, Blocked] {
-        let linked = add_pr(&task(status), &person("Ada"), 2490, &[], &at("10:00:00")).unwrap();
+        let linked = add_pr(
+            &task(status),
+            &person("Ada"),
+            2490,
+            Linked::default(),
+            &at("10:00:00"),
+        )
+        .unwrap();
         assert_eq!(linked.fields().prs, [2482, 2483, 2490], "{status:?}");
         assert_eq!(linked.fields().updated, at("10:00:00"));
     }
@@ -67,19 +76,43 @@ fn the_holder_links_a_pull_request() {
 fn only_the_holder_of_a_live_claim_links_a_new_pull_request() {
     let claimed = task(Claimed);
     assert_eq!(
-        add_pr(&claimed, &person("Bob"), 2490, &[], &at("10:00:00")),
+        add_pr(
+            &claimed,
+            &person("Bob"),
+            2490,
+            Linked::default(),
+            &at("10:00:00")
+        ),
         Err(BoardRuleError::NotHolder)
     );
     assert_eq!(
-        add_pr(&claimed, &person("Ada"), 2490, &[], &at("12:00:00")),
+        add_pr(
+            &claimed,
+            &person("Ada"),
+            2490,
+            Linked::default(),
+            &at("12:00:00")
+        ),
         Err(BoardRuleError::ClaimExpired)
     );
     assert_eq!(
-        add_pr(&claimed, &person("Ada"), 2482, &[], &at("10:00:00")),
+        add_pr(
+            &claimed,
+            &person("Ada"),
+            2482,
+            Linked::default(),
+            &at("10:00:00")
+        ),
         Err(BoardRuleError::PrAlreadyLinked(2482))
     );
     assert!(matches!(
-        add_pr(&claimed, &person("Ada"), 0, &[], &at("10:00:00")),
+        add_pr(
+            &claimed,
+            &person("Ada"),
+            0,
+            Linked::default(),
+            &at("10:00:00")
+        ),
         Err(BoardRuleError::Invalid(_))
     ));
     assert_eq!(
@@ -87,7 +120,7 @@ fn only_the_holder_of_a_live_claim_links_a_new_pull_request() {
             &without_claim(task(Review)),
             &person("Ada"),
             2490,
-            &[],
+            Linked::default(),
             &at("10:00:00")
         ),
         Err(BoardRuleError::NoClaim)
@@ -97,11 +130,24 @@ fn only_the_holder_of_a_live_claim_links_a_new_pull_request() {
 #[test]
 fn a_task_nobody_holds_links_no_pull_request_and_a_behind_clock_stamps_forward() {
     for status in [Ready, Done] {
-        let refused = add_pr(&task(status), &person("Ada"), 2490, &[], &at("10:00:00"));
+        let refused = add_pr(
+            &task(status),
+            &person("Ada"),
+            2490,
+            Linked::default(),
+            &at("10:00:00"),
+        );
         assert_eq!(refused, Err(BoardRuleError::NoClaim), "{status:?}");
     }
     let written = last_written(task(Claimed), &at("10:30:00"));
-    let linked = add_pr(&written, &person("Ada"), 2490, &[], &at("10:00:00")).unwrap();
+    let linked = add_pr(
+        &written,
+        &person("Ada"),
+        2490,
+        Linked::default(),
+        &at("10:00:00"),
+    )
+    .unwrap();
     assert_eq!(
         linked.fields().updated,
         at("10:30:01"),
@@ -109,32 +155,63 @@ fn a_task_nobody_holds_links_no_pull_request_and_a_behind_clock_stamps_forward()
     );
 }
 
-/// A pull request is linked once whichever way: one a change of the task
-/// links is not linked the old way too; one an unlinked change named is.
+/// A pull request is linked to one task once, whichever way and in
+/// whichever order: one a linked change anywhere on the board holds, or
+/// another task links the old way, is not linked the old way too; one an
+/// unlinked change named is.
 #[test]
-fn a_pull_request_a_change_links_is_not_linked_the_old_way() {
+fn a_pull_request_linked_elsewhere_is_not_linked_the_old_way() {
     let claimed = task(Claimed);
     let mut gone = change(2, Some(2491)).into_fields();
     gone.unlinked = Some((person("Ada"), at("09:00:00")));
-    let changes = [change(1, Some(2490)), Change::new(gone).unwrap()];
+    let mut theirs = change(1, Some(2492)).into_fields();
+    theirs.task = Slug::parse("other").unwrap();
+    let changes = [
+        change(1, Some(2490)),
+        Change::new(gone).unwrap(),
+        Change::new(theirs).unwrap(),
+    ];
+    let board = Linked {
+        changes: &changes,
+        tasks: &[],
+    };
+    let adding =
+        |pr: u64, board: Linked<'_>| add_pr(&claimed, &person("Ada"), pr, board, &at("10:00:00"));
     assert_eq!(
-        add_pr(&claimed, &person("Ada"), 2490, &changes, &at("10:00:00")),
+        adding(2490, board),
         Err(BoardRuleError::ChangeAlreadyLinked {
             task: claimed.fields().id.clone(),
             change: Some(1)
         })
     );
-    assert!(add_pr(&claimed, &person("Ada"), 2491, &changes, &at("10:00:00")).is_ok());
-    let mut theirs = change(1, None).into_fields();
-    theirs.task = Slug::parse("other").unwrap();
     assert_eq!(
-        add_pr(
-            &claimed,
-            &person("Ada"),
-            2492,
-            &[Change::new(theirs).unwrap()],
-            &at("10:00:00")
-        ),
-        Err(BoardRuleError::NotThisTasks)
+        adding(2492, board),
+        Err(BoardRuleError::ChangeAlreadyLinked {
+            task: Slug::parse("other").unwrap(),
+            change: Some(1)
+        }),
+        "a change first, then the old way"
+    );
+    assert!(adding(2491, board).is_ok(), "an unlinked change frees it");
+    let mut other = task(Claimed).into_fields();
+    other.id = Slug::parse("other").unwrap();
+    other.prs = vec![2493];
+    let tasks = [claimed.clone(), Task::new(other).unwrap()];
+    let old_ways = Linked {
+        changes: &[],
+        tasks: &tasks,
+    };
+    assert_eq!(
+        adding(2493, old_ways),
+        Err(BoardRuleError::ChangeAlreadyLinked {
+            task: Slug::parse("other").unwrap(),
+            change: None
+        }),
+        "another task's, the old way"
+    );
+    assert_eq!(
+        adding(2482, old_ways),
+        Err(BoardRuleError::PrAlreadyLinked(2482)),
+        "its own"
     );
 }

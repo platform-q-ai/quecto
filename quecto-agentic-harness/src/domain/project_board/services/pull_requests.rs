@@ -3,39 +3,38 @@
 //! linking one, or unlinking one deliberately (a wrong or abandoned pull
 //! request), is the holder's: a task with linked pull requests closes on
 //! merge, and once the holder unlinks them all, Review→Done is theirs.
-use super::super::entities::change::Change;
 use super::super::entities::claim::Identity;
 use super::super::entities::task::Task;
 use super::super::value_objects::rule_error::BoardRuleError;
 use super::super::value_objects::timestamp::Timestamp;
+use super::changes::Linked;
 use super::claims::{held_live_by, settle, stamp};
 
 /// The task linking pull request `pr` too, linked by the holder of a live
-/// claim. `changes` are the task's (as the board holds them): a pull
-/// request one of them links is not linked the old way too.
+/// claim. `board` is everything linked on the board: a pull request is
+/// linked to one task once, whichever way, so one a linked change holds,
+/// or another task links the old way, is refused.
 pub fn add_pr(
     task: &Task,
     holder: &Identity,
     pr: u64,
-    changes: &[Change],
+    board: Linked<'_>,
     now: &Timestamp,
 ) -> Result<Task, BoardRuleError> {
     held_live_by(task, holder, now)?;
-    let own = changes
+    let by_change = board
+        .changes
         .iter()
-        .all(|change| change.fields().task == task.fields().id);
-    let linking = changes
+        .find(|change| change.is_linked() && change.fields().pr == Some(pr))
+        .map(|change| (change.fields().task.clone(), Some(change.fields().number)));
+    let by_task = board
+        .tasks
         .iter()
-        .find(|change| change.is_linked() && change.fields().pr == Some(pr));
-    match (own, linking) {
-        (true, None) => {}
-        (false, _) => return Err(BoardRuleError::NotThisTasks),
-        (true, Some(change)) => {
-            return Err(BoardRuleError::ChangeAlreadyLinked {
-                task: task.fields().id.clone(),
-                change: Some(change.fields().number),
-            });
-        }
+        .find(|other| other.fields().id != task.fields().id && other.fields().prs.contains(&pr))
+        .map(|other| (other.fields().id.clone(), None));
+    match by_change.or(by_task) {
+        None => {}
+        Some((task, change)) => return Err(BoardRuleError::ChangeAlreadyLinked { task, change }),
     }
     let mut next = task.fields().clone();
     match next.prs.contains(&pr) {

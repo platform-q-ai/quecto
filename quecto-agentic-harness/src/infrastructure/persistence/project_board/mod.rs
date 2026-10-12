@@ -6,6 +6,7 @@ pub mod git;
 pub mod index;
 mod index_file;
 pub mod indexed_listings;
+pub mod markdown;
 mod own_group;
 mod push_report;
 pub mod store;
