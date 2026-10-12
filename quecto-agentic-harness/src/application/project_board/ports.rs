@@ -64,6 +64,11 @@ pub struct BoardSnapshot {
     pub head: BoardHead,
     pub tasks: Vec<Task>,
     pub quarantined: Vec<QuarantinedFile>,
+    /// The paths of the files set aside that every write carries forward
+    /// as they are (a task file the store could not read): what they hold
+    /// stays on the board. Any other file set aside (a stray) is dropped
+    /// by the next write.
+    pub kept: std::collections::BTreeSet<String>,
 }
 
 /// What became of a write.
