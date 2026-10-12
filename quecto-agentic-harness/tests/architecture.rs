@@ -3186,22 +3186,31 @@ fn normal_build_excludes_removed_tool_installer_archive_dependencies() {
     );
 }
 
+/// `unicode-normalization` serves two users only: macOS path matching
+/// (filenames there are NFD) and the board's canonical markdown, which
+/// refuses text that is not NFC on every platform (#2481). Nothing else
+/// may take it up.
 #[test]
-fn macos_only_text_normalization_dependency_is_not_unconditional() {
+fn text_normalization_serves_only_macos_paths_and_the_board_markdown() {
     let manifest = fs::read_to_string("Cargo.toml").expect("read Cargo.toml");
     let normal_dependencies = cargo_toml_section(&manifest, "dependencies");
     assert!(
-        !cargo_toml_section_contains_dependency(normal_dependencies, "unicode-normalization"),
-        "unicode-normalization should not be pulled into non-macOS normal builds"
+        cargo_toml_section_contains_dependency(normal_dependencies, "unicode-normalization"),
+        "the board markdown's NFC check needs unicode-normalization on every platform"
     );
-
-    let macos_dependencies = cargo_toml_section(
-        &manifest,
-        "target.'cfg(target_os = \"macos\")'.dependencies",
-    );
-    assert!(
-        cargo_toml_section_contains_dependency(macos_dependencies, "unicode-normalization"),
-        "macOS path normalization should retain its unicode-normalization dependency"
+    let users: Vec<String> = teardown_authority::production_files()
+        .into_iter()
+        .filter(|path| {
+            fs::read_to_string(path).is_ok_and(|source| source.contains("unicode_normalization"))
+        })
+        .collect();
+    assert_eq!(
+        users,
+        [
+            "src/infrastructure/persistence/project_board/markdown/chars.rs",
+            "src/infrastructure/tools/path_utils.rs",
+        ],
+        "unicode-normalization serves macOS paths and the board markdown alone"
     );
 }
 

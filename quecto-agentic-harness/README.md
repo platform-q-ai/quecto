@@ -1044,7 +1044,7 @@ Human guides (full reference). The agent `docs` tool embeds a short **operating 
 For contribution requirements, follow the root [`CONTRIBUTIONS.md`](../CONTRIBUTIONS.md). Before requesting review, run the built-in Quecto workflow through at least two complete adversarial-review loops on your change and include the workflow evidence in the PR description.
 
 ## Tech stack
-Rust 2024, Tokio, reqwest+rustls, serde/serde_json, uuid, tracing, dirs, thiserror, similar, base64, sha2, rand, urlencoding, macOS unicode-normalization. Dev: cucumber 0.21, futures, tempfile, wiremock 0.6, regex.
+Rust 2024, Tokio, reqwest+rustls, serde/serde_json, uuid, tracing, dirs, thiserror, similar, base64, sha2, rand, urlencoding, unicode-normalization (macOS paths, board markdown NFC). Dev: cucumber 0.21, futures, tempfile, wiremock 0.6, regex, pulldown-cmark (the board markdown's oracle).
 
 ## License
 
