@@ -8,11 +8,18 @@
 //!   and `quarantined`, or `head` alone; and `clock` when a request that
 //!   reads the clock was not bounded against an outside time.
 //! - Refusal: `{"ok": false, "op": …, "error": {"code", "message", …}}`.
-//!   Each [`ErrorCode`] has one shape: the same fields every time.
+//!   Each [`ErrorCode`] has one shape: the same fields every time, but
+//!   `artifact_set_aside`, which names a discussion by `discussion` where
+//!   the other kinds give `task` and `number`.
 //!   Messages are the error's own words (its `Display`); every text an
 //!   answer carries from outside (messages, reasons, fields, problems,
 //!   paths) has credentials redacted and is at most [`MAX_MESSAGE_CHARS`]
 //!   characters.
+//!
+//! Until S9 reads the other folders, a set-aside file in a listing
+//! (`quarantined_json`) and a carried file of no known task
+//! (`set_aside_file`) must lie directly under `tasks/` ([`shown_path`]);
+//! S9 widens both checks to every folder it reads.
 //!
 //! A task's shape is the board's own field names, every field always
 //! present (`null` or `[]` when unset), in a fixed order.
@@ -245,20 +252,24 @@ fn set_aside_fields(key: &ArtifactKey, path: &str) -> (ErrorCode, Map<String, Va
             ("path", json!(path)),
         ])
     };
-    let other = match key {
+    let (folder, other) = match key {
         ArtifactKey::Task(id) => return (ErrorCode::SetAside, fields([("task", slug_json(id))])),
-        ArtifactKey::Plan(task, version) => numbered("plan", task, *version),
-        ArtifactKey::Run(task, number) => numbered("run", task, *number),
-        ArtifactKey::Change(task, number) => numbered("change", task, *number),
-        ArtifactKey::Review(task, change) => numbered("review", task, *change),
-        ArtifactKey::Discussion(id) => fields([
-            ("kind", json!("discussion")),
-            ("discussion", slug_json(id)),
-            ("path", json!(path)),
-        ]),
+        ArtifactKey::Plan(task, version) => ("plans", numbered("plan", task, *version)),
+        ArtifactKey::Run(task, number) => ("runs", numbered("run", task, *number)),
+        ArtifactKey::Change(task, number) => ("changes", numbered("change", task, *number)),
+        ArtifactKey::Review(task, change) => ("reviews", numbered("review", task, *change)),
+        ArtifactKey::Discussion(id) => (
+            "discussions",
+            fields([
+                ("kind", json!("discussion")),
+                ("discussion", slug_json(id)),
+                ("path", json!(path)),
+            ]),
+        ),
     };
+    // Its own kind's folder, one name in it.
     assert!(
-        shown_artifact_path(path),
+        shown_artifact_path(folder, path),
         "a store shows every path it sets aside sanitised: {path:?}"
     );
     (ErrorCode::ArtifactSetAside, other)

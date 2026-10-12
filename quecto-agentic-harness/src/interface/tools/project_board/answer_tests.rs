@@ -148,7 +148,12 @@ fn every_board_error_answers_its_codes_one_shape() {
         "every_error builds every variant, each once"
     );
     assert_eq!(errors.len(), VARIANTS);
-    for error in &errors {
+    // A plan's file set aside answers the other code `Quarantined` has.
+    let plan_set_aside = ProjectBoardError::Quarantined {
+        key: ArtifactKey::Plan(slug("a"), 1),
+        path: "plans/a.1.md".into(),
+    };
+    for error in errors.iter().chain([&plan_set_aside]) {
         let answer = board_refused("show", error);
         assert_eq!(answer["ok"], json!(false));
         let object = answer["error"].as_object().unwrap();
@@ -476,6 +481,20 @@ fn a_set_aside_artifact_is_named_by_its_kind_task_and_number() {
             "path": "discussions/d.md",
             "message": "discussion d is set aside as unreadable; mend or clear discussions/d.md",
         })
+    );
+}
+
+/// A path in another kind's folder stops the answer, as a store never
+/// shows a run's file under `plans/`.
+#[test]
+#[should_panic(expected = "shows every path it sets aside sanitised")]
+fn an_artifact_path_in_another_kinds_folder_is_never_shown() {
+    let _ = board_refused(
+        "show",
+        &ProjectBoardError::Quarantined {
+            key: ArtifactKey::Run(slug("t"), 1),
+            path: "plans/t.1.md".into(),
+        },
     );
 }
 
