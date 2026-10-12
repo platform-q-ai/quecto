@@ -372,7 +372,7 @@ fn the_widest_plan_fits_its_limits() {
     // Most bytes: the whole text budget spent on `|`, which a cell writes
     // `\|`: each item's share over its criteria, distinct lengths, the last
     // taking what is left.
-    let budget = MAX_PLAN_TEXT_BYTES - MAX_ITEMS - MAX_ROLES * MAX_MODEL_BYTES - MAX_IMAGE_BYTES;
+    let budget = MAX_PLAN_TEXT_BYTES - MAX_ITEMS - MAX_ROLES;
     let lengths = |index: usize, criterion: usize| {
         let share = budget / MAX_ITEMS + usize::from(index < budget % MAX_ITEMS);
         let steps = MAX_PER_ITEM * (MAX_PER_ITEM - 1) / 2;
@@ -380,7 +380,15 @@ fn the_widest_plan_fits_its_limits() {
         let left = share - (base * MAX_PER_ITEM + steps);
         base + criterion + usize::from(criterion == MAX_PER_ITEM - 1) * left
     };
-    let most_bytes = widest(String::new(), |index, c| "|".repeat(lengths(index, c)));
+    let mut most_bytes = widest(String::new(), |index, c| "|".repeat(lengths(index, c)));
+    // The team's own text cut to the least (one-byte models, no image),
+    // so the budget goes to cells that write it twice.
+    if let Some(team) = most_bytes.team.as_mut() {
+        team.roles
+            .iter_mut()
+            .for_each(|role| role.model = "m".into());
+        team.image = None;
+    }
     // The longest line: the approach one line of 4-byte letters.
     let one_line = "\u{1d538}".repeat(MAX_APPROACH_CHARS);
     let longest_line = widest(one_line, |_, c| format!("c{c}"));
@@ -398,9 +406,9 @@ fn the_widest_plan_fits_its_limits() {
         assert_eq!(decode::<PlanCodec>(file.as_bytes()), Ok(plan));
     }
     let (bytes, lines, longest) = seen;
-    // The whole budget spent: 1,075,276 bytes.
+    // The whole budget spent on cells that write it twice.
     assert!(
-        (1_075_000..=PLAN_LIMITS.file_bytes).contains(&bytes),
+        (1_077_000..=PLAN_LIMITS.file_bytes).contains(&bytes),
         "{bytes}"
     );
     // Past the plan's first estimate of 53,000: a fence's blank lines.
@@ -502,7 +510,39 @@ fn a_dependency_on_an_unknown_item_is_refused() {
     );
 }
 
+/// An approach the blocks refuse names its field and its line there.
 #[test]
-fn the_plan_codec_kind_is_its_shapes() {
-    assert_eq!(PlanCodec::KIND, PlanCodec::SHAPE.kind);
+fn an_approach_the_blocks_refuse_names_its_field() {
+    for (approach, line) in [("abc\n", "2"), ("a\n\n\nb", "3"), ("- a\n\n- b", "3")] {
+        let plan = plan(PlanFields {
+            approach: approach.into(),
+            ..example()
+        });
+        let refused = encode::<PlanCodec>(&plan);
+        assert!(
+            matches!(&refused, Err(CodecError::Cell { field: "Approach", problem }) if problem.contains(line)),
+            "{approach:?}: {refused:?}"
+        );
+    }
+}
+
+/// A model or image only a code cell holds: an ASCII cell would refuse
+/// its underscores or its brackets.
+#[test]
+fn a_model_and_image_only_a_code_cell_holds_round_trip() {
+    for (model, image) in [
+        ("a__b_", "localhost/a__b:_x"),
+        ("gpt_5", "[::1]:5000/foo:tag"),
+    ] {
+        let mut fields = example();
+        if let Some(team) = fields.team.as_mut() {
+            team.roles[0].model = model.into();
+            team.image = Some(image.into());
+        }
+        let plan = plan(fields);
+        let file = encode::<PlanCodec>(&plan).unwrap();
+        assert!(file.contains(&format!("| Image | `{image}` |\n")), "{file}");
+        assert!(file.contains(&format!("| `{model}` |")), "{file}");
+        assert_eq!(decode::<PlanCodec>(file.as_bytes()), Ok(plan));
+    }
 }

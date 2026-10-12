@@ -114,7 +114,6 @@ pub struct PlanCodec;
 
 impl ArtifactCodec for PlanCodec {
     type Value = Plan;
-    const KIND: &'static str = "plan";
     const SCHEMA: u32 = 1;
     const SHAPE: Shape<'static> = Shape {
         kind: "plan",
