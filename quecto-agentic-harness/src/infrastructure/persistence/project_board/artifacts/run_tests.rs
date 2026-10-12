@@ -314,6 +314,6 @@ fn no_outcome_is_spelt_running() {
     assert!(
         RunOutcome::ALL
             .iter()
-            .all(|outcome| outcome.as_str() != "running")
+            .all(|outcome| outcome.as_str() != RUNNING)
     );
 }
