@@ -1,6 +1,8 @@
 //! Binding a board call's arguments to its method's signature (#2270), as
 //! Python binds a call, and what a refusal raised while binding them found
-//! wrong, for the call's records (#2341).
+//! wrong, for the call's records (#2341). A structured op's `task_item_id`
+//! (#2478) reaches the binding only beside a `task_id` of another value:
+//! one argument given twice, which the binding refuses as Python does.
 //!
 //! The records name arguments by the `swarm` tool's schema only
 //! ([`BOARD_OPS`]): every name recorded is a [`SchemaField`], the table's
@@ -16,7 +18,7 @@ use std::sync::OnceLock;
 
 use serde_json::Value;
 
-use super::super::swarm_board_ops::{BOARD_OPS, op_spec};
+use super::super::swarm_board_ops::{BOARD_OPS, ID_ALIAS, op_spec};
 use super::method::{Method, Parameter};
 use crate::domain::swarm::{ArgumentFaults, BoardError, RefusalKind, UnexpectedArgs, WrongTypeArg};
 
@@ -65,10 +67,19 @@ pub(super) fn refusal(
         Value::Object(fields) => {
             let position = |key: &str| parameters.iter().position(|p| p.name == key);
             if let Some(key) = fields.keys().find(|key| position(key).is_none()) {
-                return Some(BoardError::new(
-                    RefusalKind::Calling,
-                    format!("{name}: unexpected argument {key}"),
-                ));
+                let (alias, old) = ID_ALIAS;
+                return Some(match given_twice(parameters, fields, key) {
+                    true => BoardError::new(
+                        RefusalKind::Calling,
+                        format!(
+                            "{name}: {old} and {alias} name the same argument but hold different values; send only one"
+                        ),
+                    ),
+                    false => BoardError::new(
+                        RefusalKind::Calling,
+                        format!("{name}: unexpected argument {key}"),
+                    ),
+                });
             }
             parameters
                 .iter()
@@ -168,14 +179,16 @@ impl SchemaField {
     }
 }
 
-/// The field `key` names in some board op's schema: the table's own name,
-/// so a record names it and never the text it was given as; `None` for
-/// any other key.
+/// The field `key` names in the `swarm` tool's schema: some board op's
+/// (the table's own name), or `task_item_id`, the schema's task-item name
+/// for `task_id` (#2478, [`ID_ALIAS`]), so a record names it and never the
+/// text it was given as; `None` for any other key.
 pub fn schema_field(key: &str) -> Option<SchemaField> {
     BOARD_OPS
         .iter()
         .flat_map(|spec| spec.args.iter())
         .map(|arg| arg.name)
+        .chain([ID_ALIAS.0])
         .find(|name| *name == key)
         .map(SchemaField)
 }
@@ -357,7 +370,11 @@ pub(super) fn faults(method: Method, args: &Value) -> BindingFaults {
             for (key, value) in fields {
                 match parameters.iter().position(|p| p.name == key) {
                     Some(index) => bound(&mut faults, index, value),
-                    None => unexpected(&mut faults, schema_field(key)),
+                    // `task_id` given twice (#2478) is recorded as itself.
+                    None => match given_twice(parameters, fields, key) {
+                        true => unexpected(&mut faults, schema_field(ID_ALIAS.1)),
+                        false => unexpected(&mut faults, schema_field(key)),
+                    },
                 }
             }
         }
@@ -386,6 +403,19 @@ pub(super) fn mistyped(method: Method, args: &Value) -> BindingFaults {
 fn unexpected(faults: &mut BindingFaults, known: Option<SchemaField>) {
     faults.unexpected += 1;
     faults.unexpected_known.extend(known);
+}
+
+/// Whether `key`, which no parameter takes, gives `task_id` again
+/// (#2478): `task_item_id` beside a `task_id` to a method that takes one.
+/// The tool reads a lone `task_item_id` (or one equal to `task_id`) as
+/// `task_id` before the board, so only two values reach the binding.
+fn given_twice(
+    parameters: &[Parameter],
+    fields: &serde_json::Map<String, Value>,
+    key: &str,
+) -> bool {
+    let (alias, old) = ID_ALIAS;
+    key == alias && fields.contains_key(old) && parameters.iter().any(|p| p.name == old)
 }
 
 /// The faults of member text the board's value type cannot hold (#2341),

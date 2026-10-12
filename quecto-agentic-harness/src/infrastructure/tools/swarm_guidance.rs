@@ -2,44 +2,25 @@
 //! "swarm is setup" or "unknown op stop" flailed and gave up; each message
 //! here says what is allowed now and how to move on.
 
-/// Every op the swarm tool accepts (pinned to the schema's `op` enum).
-pub(super) const VALID_OPS: &[&str] = &[
-    "create",
-    "summary",
-    "reconcile",
-    "cancel_run",
-    "pause",
-    "resume",
-    "events",
-    "usage",
-    "usage_budget",
-    // The structured board ops (#2279), `swarm_board_ops::BOARD_OPS`.
-    "task",
-    "tasks",
-    "file_owners",
-    "task_create",
-    "dependencies",
-    "claim",
-    "release",
-    "block",
-    "unblock",
-    "submit",
-    "reserve",
-    "release_files",
-    "send",
-    "withdraw",
-    "inbox",
-    "ack",
-    "evidence",
-    "amend",
-    "verify_task",
-    "revalidate_task",
-    "recover",
-    "revoke",
-    "complete",
-    "stop",
-    "usage_report",
-];
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+use serde_json::Value;
+
+use crate::domain::swarm::RefusalKind;
+
+/// Every op the swarm tool names in its guidance: the harness's own, then
+/// the structured board ops (#2279), each by its old name, both read from
+/// the one op table (`swarm_board_ops`), so the two cannot drift. The
+/// tool also takes each op's task-item name (#2478,
+/// `swarm_board_ops::OP_ALIASES`), which the guidance does not list yet.
+pub(crate) fn valid_ops() -> Vec<&'static str> {
+    use super::super::swarm_board_ops::{BOARD_OPS, HARNESS_OPS};
+    HARNESS_OPS
+        .iter()
+        .copied()
+        .chain(BOARD_OPS.iter().map(|spec| spec.name))
+        .collect()
+}
 
 /// The harness op `usage` as a refusal allows it (#2279 review N9): not
 /// its board-op alias `usage_report`, which the running gate refuses.
@@ -88,7 +69,7 @@ pub(super) const REMOVED_OPS: &[&str] = &["run", "status", "output", "cancel"];
 /// The refusal for a call that names no op (#2282: a call without one no
 /// longer runs Python).
 pub(super) fn op_required() -> String {
-    format!("op is required; valid ops: {}.", VALID_OPS.join(", "))
+    format!("op is required; valid ops: {}.", valid_ops().join(", "))
 }
 
 /// The refusal for a call whose op is present but not a string (a number,
@@ -96,7 +77,7 @@ pub(super) fn op_required() -> String {
 pub(super) fn op_not_a_string() -> String {
     format!(
         "op must be a string naming one of: {}.",
-        VALID_OPS.join(", ")
+        valid_ops().join(", ")
     )
 }
 
@@ -107,8 +88,41 @@ pub(super) fn unknown_op(op: &str) -> String {
         "unknown op {op}; valid ops: {}. To end a run, the coordinator calls op=stop \
          (status, reason) or op=complete (revision); op=cancel_run cancels it for the parent \
          or user.",
-        VALID_OPS.join(", ")
+        valid_ops().join(", ")
     )
+}
+
+/// The running gate of a structured board op (`op=run`'s until #2282
+/// removed it; #2478 moved it here, beside its guidance): the refusal's
+/// kind, the gate's name and the guidance, unless the run is running within
+/// its deadline.
+pub(crate) fn running_gate(
+    op: &str,
+    status: &Value,
+) -> Option<(RefusalKind, &'static str, String)> {
+    let guide = op_refused;
+    match status["status"].as_str() {
+        Some("running") => {
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or(Duration::ZERO)
+                .as_secs_f64();
+            match status["deadline"].as_f64() {
+                Some(deadline) if deadline > now => None,
+                Some(_) | None => Some((
+                    RefusalKind::BudgetExhausted,
+                    "deadline",
+                    op_deadline_passed(op),
+                )),
+            }
+        }
+        Some(other) => Some((
+            RefusalKind::NotRunning,
+            "not_running",
+            guide(op, Some(other)),
+        )),
+        None => Some((RefusalKind::Store, "unreadable", guide(op, None))),
+    }
 }
 
 #[cfg(test)]

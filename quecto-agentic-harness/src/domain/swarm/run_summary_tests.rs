@@ -15,6 +15,7 @@ const RUN: &str = "0123456789abcdef0123456789abcdef";
 fn record(op: &str, decision: Option<&str>, duration_us: u64) -> BoardOpObservation {
     BoardOpObservation {
         op: op.into(),
+        name_form: None,
         actor_ref: "worker".into(),
         role: Some(BoardRole::Worker),
         run_id: Some(RUN.into()),
@@ -460,4 +461,33 @@ fn a_summary_without_calls_reads_back() {
     line.as_object_mut().unwrap().remove("calls");
     let read: AuditEvent = serde_json::from_value(line).unwrap();
     assert!(matches!(read, AuditEvent::SwarmRunSummary(summary) if summary.calls == 0));
+}
+
+/// #2478: per op, the calls by the names they used where the swarm's tasks
+/// were renamed task items: `name_forms` counts `legacy` and `current`, and
+/// is left out for an op whose records carry no form.
+#[test]
+fn an_op_counts_the_name_forms_its_calls_used() {
+    let named = |form| BoardOpObservation {
+        name_form: Some(form),
+        ..record("claim", Some("claimed"), 10)
+    };
+    let summary = folded(&[
+        named(NameForm::Legacy),
+        named(NameForm::Current),
+        named(NameForm::Current),
+        record("claim", Some("claimed"), 10),
+        record("send", Some("sent"), 10),
+    ]);
+    assert_eq!(
+        summary.ops["claim"].name_forms,
+        std::collections::BTreeMap::from([(NameForm::Legacy, 1), (NameForm::Current, 2)])
+    );
+    assert!(summary.ops["send"].name_forms.is_empty());
+    let line = serde_json::to_value(&summary).unwrap();
+    assert_eq!(
+        line["ops"]["claim"]["name_forms"],
+        json!({"legacy": 1, "current": 2})
+    );
+    assert_eq!(line["ops"]["send"].get("name_forms"), None, "{line}");
 }

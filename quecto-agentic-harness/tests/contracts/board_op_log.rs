@@ -13,6 +13,7 @@ use quecto::infrastructure::persistence::board_op_log::EventLogBoardOps;
 fn observation() -> BoardOpObservation {
     BoardOpObservation {
         op: "_snapshot".into(),
+        name_form: None,
         actor_ref: Redacted::from("worker-1"),
         role: Some(BoardRole::Host),
         run_id: None,

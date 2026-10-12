@@ -645,3 +645,6 @@ mod notes;
 
 #[path = "swarm_board_ops_binding_tests.rs"]
 mod binding;
+
+#[path = "swarm_board_ops_alias_tests.rs"]
+mod aliases;

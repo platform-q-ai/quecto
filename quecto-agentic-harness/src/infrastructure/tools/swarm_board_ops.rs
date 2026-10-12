@@ -38,7 +38,7 @@
 //! [`TELEMETRY_TARGET`]: the op, the gate, whether the cursor moved, what
 //! the lifecycle did, the warnings counted and the answer's size, never
 //! argument text.
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 use serde_json::{Map, Value, json};
 
@@ -49,7 +49,7 @@ use super::swarm_bridge::SwarmContext;
 use super::swarm_control::AfterExecution;
 use super::swarm_output::tool_err;
 use crate::domain::error::DomainError;
-use crate::domain::swarm::RefusalKind;
+use crate::domain::swarm::{NameForm, RefusalKind};
 use crate::domain::tool::ToolResult;
 
 /// One argument of a board op: its name, its JSON schema (as JSON text),
@@ -257,6 +257,105 @@ pub const HARNESS_OPS: &[&str] = &[
     "usage_budget",
 ];
 
+/// The swarm's tasks are task items (#2478): `(task-item name, old name)`
+/// for each op whose name says task. A task-item name is read as the old
+/// one before anything else, so the board, its events, the golden fixtures
+/// and every record keep the old names; each record says which names the
+/// call used ([`name_form`]).
+pub const OP_ALIASES: &[(&str, &str)] = &[
+    ("task_item", "task"),
+    ("task_items", "tasks"),
+    ("task_item_create", "task_create"),
+    ("verify_task_item", "verify_task"),
+    ("revalidate_task_item", "revalidate_task"),
+];
+
+/// `task_id`'s task-item name, `(task-item name, old name)`: one argument
+/// under two names, on every op that takes it.
+pub const ID_ALIAS: (&str, &str) = ("task_item_id", "task_id");
+
+/// The op `name` names: the old name a task-item name stands for, or
+/// `name` itself.
+pub fn canonical_op(name: &str) -> &str {
+    match OP_ALIASES.iter().find(|(alias, _)| *alias == name) {
+        Some((_, old)) => old,
+        None => name,
+    }
+}
+
+fn takes_task_id(spec: &OpSpec) -> bool {
+    spec.args.iter().any(|arg| arg.name == ID_ALIAS.1)
+}
+
+/// The name `key`, given to `spec`, binds as: `task_id` for `task_item_id`
+/// when `spec` takes `task_id`, else `key` (an op that takes no task id
+/// refuses `task_item_id` under the name it was sent as).
+fn canonical_key<'key>(spec: &OpSpec, key: &'key str) -> &'key str {
+    match key == ID_ALIAS.0 && takes_task_id(spec) {
+        true => ID_ALIAS.1,
+        false => key,
+    }
+}
+
+/// `fields`, given to `spec`, with `task_item_id` read as `task_id` in its
+/// place (the binding names the first unexpected field in the member's
+/// order) or dropped when it equals `task_id`; two values (`1` and `1.0`
+/// differ, as `null` and `1` do) are left for the binding to refuse, after
+/// the running gate, as an argument given twice.
+fn canonical_fields(spec: &OpSpec, fields: Map<String, Value>) -> Map<String, Value> {
+    let (alias, old) = ID_ALIAS;
+    let mapped = match (takes_task_id(spec), fields.get(alias), fields.get(old)) {
+        (true, Some(given), Some(same)) if given == same => {
+            let mut fields = fields;
+            fields.shift_remove(alias);
+            fields
+        }
+        (true, Some(_), None) => fields
+            .into_iter()
+            .map(|(key, value)| (canonical_key(spec, &key).to_owned(), value))
+            .collect(),
+        (false, _, _) | (true, None, _) | (true, Some(_), Some(_)) => fields,
+    };
+    debug_assert!(
+        !takes_task_id(spec) || !mapped.contains_key(alias) || mapped.contains_key(old),
+        "task_item_id is left only beside a task_id of another value"
+    );
+    mapped
+}
+
+/// Which names a call used (#2478): `asked`, the op name it gave for
+/// `spec`, when `spec` was renamed, and `task_id` or `task_item_id` among
+/// `keys`, its arguments' names. [`NameForm::Legacy`] when it used any old
+/// name (a call that would fail once they are retired),
+/// [`NameForm::Current`] when it used task-item names only, `None` when it
+/// used neither.
+fn name_form(asked: &str, spec: &OpSpec, keys: &[String]) -> Option<NameForm> {
+    let renamed = OP_ALIASES.iter().any(|(_, old)| *old == spec.name);
+    let op = renamed.then_some(match asked == spec.name {
+        true => NameForm::Legacy,
+        false => NameForm::Current,
+    });
+    let given = |name: &str| keys.iter().any(|key| key == name);
+    let old_id = given(ID_ALIAS.1).then_some(NameForm::Legacy);
+    let new_id = given(ID_ALIAS.0).then_some(NameForm::Current);
+    [op, old_id, new_id]
+        .into_iter()
+        .flatten()
+        .reduce(|first, second| match (first, second) {
+            (NameForm::Current, NameForm::Current) => NameForm::Current,
+            (NameForm::Legacy, _) | (_, NameForm::Legacy) => NameForm::Legacy,
+        })
+}
+
+/// The top-level keys of `text`, read without their values, so arguments
+/// the board cannot hold (`1e400`) still name their fields; none for text
+/// that is no JSON object.
+fn keys_of(text: &str) -> Vec<String> {
+    serde_json::from_str::<std::collections::BTreeMap<String, serde::de::IgnoredAny>>(text)
+        .map(|fields| fields.into_keys().collect())
+        .unwrap_or_default()
+}
+
 /// The harness ops' fields no board op has, with their JSON schemas.
 const HARNESS_PROPERTIES: &[(&str, &str)] = &[
     (
@@ -284,10 +383,12 @@ fn schema_of(text: &str) -> Value {
 /// [`BOARD_OPS`] and the harness's own fields: a field several ops share
 /// has one schema.
 pub fn tool_schema() -> Value {
+    // Every op by its old name, then each task-item name (#2478).
     let ops: Vec<&str> = HARNESS_OPS
         .iter()
         .copied()
         .chain(BOARD_OPS.iter().map(|spec| spec.name))
+        .chain(OP_ALIASES.iter().map(|(alias, _)| *alias))
         .collect();
     let mut properties = Map::new();
     properties.insert("op".to_owned(), json!({"type": "string", "enum": ops}));
@@ -305,6 +406,12 @@ pub fn tool_schema() -> Value {
             }
         }
     }
+    // `task_item_id` is `task_id` under its task-item name: one schema.
+    let id = properties
+        .get(ID_ALIAS.1)
+        .cloned()
+        .expect("some board op takes task_id");
+    properties.insert(ID_ALIAS.0.to_owned(), id);
     json!({"type": "object", "properties": properties, "required": ["op"]})
 }
 
@@ -338,29 +445,49 @@ pub(super) struct BoardOpRequest {
     /// could not hold (#2341).
     arguments: Result<Map<String, Value>, (String, BindingFaults)>,
     wire: BoardWire,
+    /// Which names the call used where the swarm's tasks were renamed
+    /// task items (#2478); `None` where none applies.
+    name_form: Option<NameForm>,
 }
 
 /// The structured op `text` asks for, read by `wire`, when its `op` names
 /// one; `None` for any other request, which the harness ops answer.
 pub(super) fn requested(text: &str, wire: BoardWire) -> Option<BoardOpRequest> {
-    let spec = op_spec(&(wire.op)(text)?)?;
-    let arguments = member_arguments(&wire, text).and_then(|value| match value {
+    // A task-item name is read as the old one before anything else
+    // (#2478), and which names the call used is kept for its records.
+    let asked = (wire.op)(text)?;
+    let spec = op_spec(canonical_op(&asked))?;
+    let read = member_arguments(&wire, text);
+    let keys: Vec<String> = match &read {
+        Ok(Value::Object(fields)) => fields.keys().cloned().collect(),
+        Ok(_) => Vec::new(),
+        Err(_) => keys_of(text),
+    };
+    let name_form = name_form(&asked, spec, &keys);
+    let arguments = read.and_then(|value| match value {
         Value::Object(mut fields) => {
             // Keeps the member's order (#2279 final review): the binding
             // names the first unexpected field, as Python names the first
             // unexpected keyword; `remove` would move the last into `op`'s
             // slot.
             fields.shift_remove("op");
-            Ok(fields)
+            Ok(canonical_fields(spec, fields))
         }
         _ => Err("arguments: not a JSON object".to_owned()),
     });
-    let arguments =
-        arguments.map_err(|refusal| (refusal, unreadable_arguments((wire.unreadable)(text))));
+    let arguments = arguments.map_err(|refusal| {
+        let keys = (wire.unreadable)(text).map(|keys| {
+            keys.iter()
+                .map(|key| canonical_key(spec, key).to_owned())
+                .collect()
+        });
+        (refusal, unreadable_arguments(keys))
+    });
     Some(BoardOpRequest {
         spec,
         arguments,
         wire,
+        name_form,
     })
 }
 
@@ -372,6 +499,8 @@ struct OpRecord {
     cursor_moved: Option<bool>,
     lifecycle: &'static str,
     warnings: usize,
+    /// Which names the call used (#2478); `None` where none applies.
+    name_form: Option<NameForm>,
 }
 
 /// Serves `request` through `context`'s board: see the module docs.
@@ -393,6 +522,7 @@ pub(super) async fn board_op(
         cursor_moved: None,
         lifecycle: "none",
         warnings: 0,
+        name_form: request.name_form,
     };
     let result = serve(&context, request, &mut record, started).await;
     trace(&record, &result, started.elapsed());
@@ -407,17 +537,20 @@ async fn blocking<T: Send + 'static>(
         .map_err(|error| DomainError::Tool(error.to_string()))
 }
 
-/// Records `op` as refused with `kind` before the board, with what it
-/// found wrong in the arguments (#2341), then answers `text`.
+/// Records `record`'s op as refused with `kind` before the board, with
+/// what it found wrong in the arguments (#2341) and which names the call
+/// used (#2478), then answers `text`.
 async fn refuse(
     context: &SwarmContext,
-    (op, kind, faults): (&'static str, RefusalKind, BindingFaults),
+    record: &OpRecord,
+    (kind, faults): (RefusalKind, BindingFaults),
     started: Instant,
     text: String,
 ) -> Result<ToolResult, DomainError> {
     let ctx = context.clone();
+    let (op, name_form) = (record.op, record.name_form);
     let elapsed = started.elapsed();
-    blocking(move || ctx.refused(op, kind, faults, elapsed)).await?;
+    blocking(move || ctx.refused(op, kind, faults, name_form, elapsed)).await?;
     tool_err(text)
 }
 
@@ -434,28 +567,29 @@ async fn serve(
             record.gate = "arguments";
             // Shaped as every board refusal reaches the member.
             let text = DomainError::Tool(format!("swarm: {}", Value::String(refusal))).to_string();
-            let kind = RefusalKind::Invalid;
-            return refuse(context, (op, kind, faults), started, text).await;
+            let refusal = (RefusalKind::Invalid, faults);
+            return refuse(context, record, refusal, started, text).await;
         }
     };
     let ctx = context.clone();
     let status = match blocking(move || ctx.call("_status", json!([]))).await? {
         Ok(status) => status,
-        Err(error) => return unreadable(context, op, record, started, &error).await,
+        Err(error) => return unreadable(context, record, started, &error).await,
     };
-    if let Some((kind, gate, text)) = gated(op, &status) {
+    if let Some((kind, gate, text)) = super::swarm::swarm_guidance::running_gate(op, &status) {
         record.gate = gate;
-        return refuse(context, (op, kind, BindingFaults::NONE), started, text).await;
+        return refuse(context, record, (kind, BindingFaults::NONE), started, text).await;
     }
     let before = match record.read_only {
         true => None,
         false => match cursor(context).await? {
             Ok(cursor) => Some(cursor),
-            Err(error) => return unreadable(context, op, record, started, &error).await,
+            Err(error) => return unreadable(context, record, started, &error).await,
         },
     };
     let ctx = context.clone();
-    let answer = blocking(move || ctx.call(op, Value::Object(arguments))).await?;
+    let name_form = record.name_form;
+    let answer = blocking(move || ctx.call_named(op, Value::Object(arguments), name_form)).await?;
     let mut notes = Map::new();
     if let Some(before) = before {
         lifecycle(context, before, record, &mut notes).await?;
@@ -468,43 +602,13 @@ async fn serve(
 /// text, recorded as its own store refusal, its gate `unreadable`.
 async fn unreadable(
     context: &SwarmContext,
-    op: &'static str,
     record: &mut OpRecord,
     started: Instant,
     error: &DomainError,
 ) -> Result<ToolResult, DomainError> {
     record.gate = "unreadable";
-    let refusal = (op, RefusalKind::Store, BindingFaults::NONE);
-    refuse(context, refusal, started, error.to_string()).await
-}
-
-/// The running gate (`op=run`'s until #2282 removed it): the refusal's
-/// kind, the gate's name and the guidance, unless the run is running within
-/// its deadline.
-fn gated(op: &str, status: &Value) -> Option<(RefusalKind, &'static str, String)> {
-    let guide = super::swarm::swarm_guidance::op_refused;
-    match status["status"].as_str() {
-        Some("running") => {
-            let now = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or(Duration::ZERO)
-                .as_secs_f64();
-            match status["deadline"].as_f64() {
-                Some(deadline) if deadline > now => None,
-                Some(_) | None => Some((
-                    RefusalKind::BudgetExhausted,
-                    "deadline",
-                    super::swarm::swarm_guidance::op_deadline_passed(op),
-                )),
-            }
-        }
-        Some(other) => Some((
-            RefusalKind::NotRunning,
-            "not_running",
-            guide(op, Some(other)),
-        )),
-        None => Some((RefusalKind::Store, "unreadable", guide(op, None))),
-    }
+    let refusal = (RefusalKind::Store, BindingFaults::NONE);
+    refuse(context, record, refusal, started, error.to_string()).await
 }
 
 /// The board's event cursor, `_event_cursor`.
@@ -616,17 +720,20 @@ fn trace(record: &OpRecord, result: &Result<ToolResult, DomainError>, elapsed: D
         cursor_moved,
         lifecycle,
         warnings,
+        name_form,
         ..
     } = *record;
     let duration_us = micros(elapsed);
+    // Left out of the line where no renamed name applies.
+    let name_form = name_form.map(NameForm::as_str);
     match record.read_only {
         true => tracing::debug!(
             target: TELEMETRY_TARGET, op, gate, outcome, ?cursor_moved, lifecycle, warnings,
-            result_bytes, duration_us, "swarm structured op"
+            name_form, result_bytes, duration_us, "swarm structured op"
         ),
         false => tracing::info!(
             target: TELEMETRY_TARGET, op, gate, outcome, ?cursor_moved, lifecycle, warnings,
-            result_bytes, duration_us, "swarm structured op"
+            name_form, result_bytes, duration_us, "swarm structured op"
         ),
     }
 }

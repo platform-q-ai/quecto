@@ -19,6 +19,7 @@ fn snapshot(duration_us: u64) -> BoardOpObservation {
 fn poll(duration_us: u64) -> BoardOpObservation {
     BoardOpObservation {
         op: WATCH_POLL_OP.into(),
+        name_form: None,
         actor_ref: "worker".into(),
         role: Some(BoardRole::Host),
         run_id: Some(RUN.into()),

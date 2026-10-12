@@ -21,8 +21,8 @@ use serde_json::Value;
 use crate::application::swarm::dto::BoardLocation;
 use crate::application::swarm::ports::{BoardOpLog, SessionOpLog};
 use crate::domain::error::DomainError;
-use crate::domain::swarm::RefusalKind;
 use crate::domain::swarm::watch::Nudge;
+use crate::domain::swarm::{NameForm, RefusalKind};
 use crate::infrastructure::persistence::audit_log::AuditLog;
 use crate::infrastructure::tools::swarm_board_dispatch::{
     self, BindingFaults, BoardWire, CallOrigin, SwarmBoardHandles, TELEMETRY_TARGET,
@@ -471,6 +471,25 @@ impl SwarmBoard {
         self.call_as(location, member, method, args, CallOrigin::Member)
     }
 
+    /// [`Self::call`] for a structured op (#2478), its record carrying
+    /// `name_form`, which names the member's call used.
+    pub(super) fn call_named(
+        &self,
+        location: BoardLocation,
+        member: &str,
+        method: &str,
+        args: Value,
+        name_form: Option<NameForm>,
+    ) -> Result<Value, DomainError> {
+        self.call_with(
+            location,
+            member,
+            method,
+            args,
+            (CallOrigin::Member, name_form),
+        )
+    }
+
     /// [`Self::call`], made for `origin` (#2279 S15 final review: the
     /// harness's own reads on a member's behalf are recorded as `host`).
     pub(super) fn call_as(
@@ -480,6 +499,18 @@ impl SwarmBoard {
         method: &str,
         args: Value,
         origin: CallOrigin,
+    ) -> Result<Value, DomainError> {
+        self.call_with(location, member, method, args, (origin, None))
+    }
+
+    /// [`Self::call_as`], its record carrying `name_form` (#2478).
+    fn call_with(
+        &self,
+        location: BoardLocation,
+        member: &str,
+        method: &str,
+        args: Value,
+        (origin, name_form): (CallOrigin, Option<NameForm>),
     ) -> Result<Value, DomainError> {
         // A board call blocks (a contended transaction waits up to the
         // store's busy timeout): every caller makes it on the blocking pool
@@ -500,8 +531,13 @@ impl SwarmBoard {
             (true, None) | (false, _) => None,
         };
         let handles = self.handles(location);
-        let (answer, controls_run) =
-            swarm_board_dispatch::call_deciding(&handles, member, method, args, origin);
+        let (answer, controls_run) = swarm_board_dispatch::call_deciding(
+            &handles,
+            member,
+            method,
+            args,
+            (origin, name_form),
+        );
         match (in_flight, watched, controls_run) {
             (Some(op), _, changed) => op.finish(changed),
             (None, Some(nudges), true) => nudges.nudge(Nudge::Local),
@@ -518,17 +554,18 @@ impl SwarmBoard {
     /// Records `method`, called by `member` on the file at `location`, as
     /// refused with `kind` before it reached the board (#2279: a structured
     /// op's argument text or its running gate), with what it found wrong in
-    /// the arguments (#2341), `elapsed` after it began.
+    /// the arguments (#2341) and which names the call used (#2478),
+    /// `elapsed` after it began.
     pub(super) fn refused(
         &self,
         location: BoardLocation,
         member: &str,
         method: &str,
-        (kind, arguments): (RefusalKind, BindingFaults),
+        refusal: (RefusalKind, BindingFaults, Option<NameForm>),
         elapsed: Duration,
     ) {
         let handles = self.handles(location);
-        swarm_board_dispatch::refused(&handles, member, method, kind, arguments, elapsed);
+        swarm_board_dispatch::refused(&handles, member, method, refusal, elapsed);
     }
 
     /// How structured ops read and write member text (#2279):

@@ -146,6 +146,30 @@ pub enum BoardOpOutcome {
     },
 }
 
+/// Which names a call used where the swarm's tasks were renamed task
+/// items (#2478): the ops `task`, `tasks`, `task_create`, `verify_task` and
+/// `revalidate_task` (each also taken by its task-item name) and the
+/// argument `task_id` (also taken as `task_item_id`). Recorded so the old
+/// names' use can be watched until they are retired.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NameForm {
+    /// The call used at least one old name.
+    Legacy,
+    /// The call used task-item names only.
+    Current,
+}
+
+impl NameForm {
+    /// The form as the records write it.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Legacy => "legacy",
+            Self::Current => "current",
+        }
+    }
+}
+
 /// One board op, as the event log's `swarm_op` record holds it. The
 /// envelope's `turn` is `null`: a board op is not filed under the agent's
 /// turn (the dispatcher is called without one).
@@ -153,6 +177,12 @@ pub enum BoardOpOutcome {
 pub struct BoardOpObservation {
     /// The board method's name.
     pub op: String,
+    /// Which names the call used where the swarm's tasks were renamed task
+    /// items (#2478): written for a structured op that was renamed, or a
+    /// call that gave `task_id` or `task_item_id`; left out otherwise (the
+    /// harness's own calls, and records written before the field existed).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name_form: Option<NameForm>,
     /// The caller's board identity (`members.id`): the member id the
     /// caller chose, bounded by the board, and redacted when it is shaped
     /// like a credential.

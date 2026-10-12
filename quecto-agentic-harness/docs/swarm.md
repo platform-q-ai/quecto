@@ -168,6 +168,14 @@ a bare `null` (#2394). Otherwise only the calling syntax changed,
 (`BOARD_OPS`) is the one table of them; the tool schema and the dispatcher's
 argument binding are rendered from and held to it.
 
+The swarm's tasks are being renamed task items (#2478). The tool also takes
+`task_item`, `task_items`, `task_item_create`, `verify_task_item` and
+`revalidate_task_item` for the ops below named by their old names (the
+`OP_ALIASES` table beside `BOARD_OPS`), and `task_item_id` for `task_id` on
+every op that takes it; a call giving both `task_id` and `task_item_id` with
+different values is refused (`calling`). Board text, events and records keep
+the old names.
+
 | Op | Fields (JSON types; defaults) | Result | Who |
 |---|---|---|---|
 | `task` | `task_id` integer | task, with owner liveness | any member |
@@ -833,7 +841,8 @@ body, evidence, reason, path or other board text:
 | Field | Meaning |
 |---|---|
 | `turn` | Always `null`: a board op is not filed under an agent turn (the board is called without one) |
-| `op` | The board method (`unknown` for a name that is none) |
+| `op` | The board method (`unknown` for a name that is none). An op called by its task-item name (#2478: `task_item`, `task_items`, `task_item_create`, `verify_task_item`, `revalidate_task_item`) is recorded by its old name (`task`, `tasks`, `task_create`, `verify_task`, `revalidate_task`) |
+| `name_form` | For a structured op (#2478), which names the call used where the swarm's tasks were renamed task items: `legacy` when it used any old name (one of those five ops by its old name, or `task_id`), `current` when it used task-item names only (`task_item_id` included). Left out for a call that used neither (an op not renamed, given no task id), for the harness's own calls, and in records written before #2478. Counting `legacy` shows whether the old names are still in use; the run summary counts both per op (`name_forms`) |
 | `actor_ref` | The caller's member id: the id the caller chose for itself on the board (`members.id`), redacted if it looks like a credential, and cut to its first 128 characters (a refused call can name any id) |
 | `role` | `host` for the harness's own ops, including the `summary` the harness reads for itself to judge a run after an op or when it settles one; for a member's own `summary` or `reconcile`, and for a member-facing op (`task_create`, `claim`, ...), when the board answered it as a member's, or refused it only after the operation gate authorised the caller as a member (a stale claim token, a task in the wrong state, a refusal after the op's writes committed), the caller's role in the run as the op read it: `coordinator`, `integrator`, or `worker` for any other member; `null` for a refusal before or by the gate itself (`not_member`, `not_coordinator`, `run_missing`, or a run that permits no new work), or when the op read no run (the board holds none). A stranger is never recorded as `worker`. A member whose death was confirmed still holds its role in the run: the gate admits it to read-only ops, so its reads (`summary`, `events`, ...) record `worker` (or its other role), and only its mutations, which the gate refuses as `not_member`, record `null` (#2313) |
 | `run_id` | The run the op found, when it found one and its id is one the board generates (32 lowercase hex digits); `null` otherwise, so an id edited into the board from outside is never recorded |
@@ -858,7 +867,7 @@ body, evidence, reason, path or other board text:
 | `fast_path_defeated` | For a `summary` given the board's own cursor, whether an owner turned idle by the clock alone since it, which defeats the `unchanged` answer |
 | `placeholder_created` | For `_bootstrap`, whether it wrote the container's placeholder run; its `decision` is the join's branch (`admitted`, `already_live`, `reactivated`), as `_join`'s is, or `placeholder` for a `committed` refusal met before the join took a branch; `create`'s is `fresh` or `over_setup` |
 | `missing_args` | For a `calling` or `invalid` refusal (#2341), the required arguments the call left out, by their schema names, every one (not only the first the refusal's text names); a parameter no `swarm` op's schema has (a harness-internal method's) is left out. Left out when there are none |
-| `unexpected_args` | For a `calling` or `invalid` refusal, `{"count": N, "known": [...]}`: how many keys (or positional values) the op's signature has no parameter for, and, in `known`, those that are a schema field of some other op (a field sent to the wrong op). Any other key is counted only, never named, so no text a member typed as a key reaches the log. `known` is left out when empty, the field when there are none |
+| `unexpected_args` | For a `calling` or `invalid` refusal, `{"count": N, "known": [...]}`: how many keys (or positional values) the op's signature has no parameter for, and, in `known`, those that are a schema field of some other op (a field sent to the wrong op), or, for #2478's conflict, `task_id` given twice under two names (`task_id` and `task_item_id` with different values, `1` and `1.0` or `null` and `1` included, refused by the binding after the running gate as Python refuses an argument given twice: `{"count": 1, "known": ["task_id"]}`). Any other key is counted only, never named, so no text a member typed as a key reaches the log. `known` is left out when empty, the field when there are none |
 | `wrong_type_args` | For a `calling` or `invalid` refusal of a member-facing op, `[{"arg": ..., "expected": ...}]`: each argument given a value of another JSON type than its schema's, and that type (`integer`, `string`, `boolean`, `null_or_string`, `null_or_integer`, `array_of_string`, `array_of_object`, `null_or_array_of_integer`; `null` first when it is allowed). An array whose items are of another type counts; an item's own properties are not checked (an `evidence` item need only be an object). It compares with the schema, not with the board's own checks, and is kept for any `invalid` refusal, the board's own validation included, so it can name a field that is not the refusal's cause: `task_create` with an empty `acceptance` list and a numeric `request` is refused for the list, and records `request` (which the board binds untyped, as Python does). Left out when there are none |
 | `unreadable_args` | For member input refused before the board as `invalid` (#2341): the schema field whose value the board's JSON value cannot hold (`1e400`, an integer beyond i64 and u64, a string holding a lone surrogate, or nesting more than 128 levels deep, counting the object itself as one level), or `arguments` for the text as a whole. `arguments` covers: text the tool cannot read as JSON (the `unknown` op's record: text that is no JSON, and JSON the serde reader refuses where no structured op was read, such as a harness op or a call with no op holding `1e400`); such a value under a key no schema field names; and, for the harness's own calls only, arguments that are no array or object (a member's JSON array or scalar names no op, so it is refused as op `unknown` with kind `calling` and no argument fields). Left out otherwise |
 | `polls` | For the run watch's `_watch` aggregate (#2338, decision `unchanged`), the unchanged ticks it accounts for; left out of every record of one call (see [The run watch](#the-run-watch-2338)) |
@@ -866,7 +875,10 @@ body, evidence, reason, path or other board text:
 
 Every name in `missing_args`, `unexpected_args.known`, `wrong_type_args` and
 `unreadable_args` is a field name of the `swarm` tool's schema (the board ops'
-table, `BOARD_OPS`), or `arguments`. This holds by type: the dispatcher records
+table, `BOARD_OPS`, or `task_item_id`, the schema's task-item name for
+`task_id`, #2478), or `arguments`. A `task_item_id` is recorded as `task_id`
+for an op that takes a task id, and by its own name for one that does not
+(sent to the wrong op). This holds by type: the dispatcher records
 only a `SchemaField`, the table's own `&'static str`, which nothing but the
 table lookup (`schema_field`) can construct, so no member text (nor any other
 string) can become a recorded name, in a release build too; debug builds also
@@ -1054,7 +1066,7 @@ the board is still recorded as the op's own `swarm_op`, with no run read
 
 | Refused at | `kind` |
 |---|---|
-| Member input (a value the board's JSON value cannot hold: `1e400`, an integer beyond i64 and u64, a lone surrogate), its field in `unreadable_args` | `invalid` |
+| Member input (a value the board's JSON value cannot hold: `1e400`, an integer beyond i64 and u64, a lone surrogate), its field in `unreadable_args` (`task_id` for a `task_item_id` given to an op that takes a task id) | `invalid` |
 | The running gate, when the run is not `running` | `not_running` |
 | The running gate, when the running run's deadline has passed, is missing or is not a number | `budget_exhausted` |
 | The running gate, when the `_status` call failed, the status read is not text, or a mutating op's first `_event_cursor` call failed (gate `unreadable`) | `store` |
@@ -1073,6 +1085,7 @@ not the event log is on. It carries no argument text:
 | `cursor_moved` | For a mutating op that reached the board, whether the event cursor moved (`Some(true)` or `Some(false)`); `None` otherwise, including when the second cursor read failed |
 | `lifecycle` | What the post-call step did: `none` (not run), `unchanged`, `notified`, `settled` or `failed` |
 | `warnings` | How many wake hints could not be delivered |
+| `name_form` | `legacy` or `current`, as the op's `swarm_op` record has it (#2478); left out of the line when neither applies |
 | `result_bytes` | The size of the answer text the member received |
 | `duration_us` | The whole op, in microseconds |
 
@@ -1126,7 +1139,7 @@ records:
 | `scope` | Always `process`: the fields below, up to `run`, are this harness's own calls |
 | `records` | The run's `swarm_op` records this process folded |
 | `calls` | The board calls those records account for: one per record, but a run-watch aggregate (`polls`, #2338) accounts for each tick it holds. Each op's `ok` and `refused` counts are calls, so `_watch`'s `ok` is every tick the watch made, recorded alone or aggregated |
-| `ops` | Per op: `ok` (answered), `refused` (by `kind`, left out when none), the nearest-rank `p50` and `p95` and the exact `max` of `duration_us`, `lock_wait_us`, `busy_wait_us` and `commit_us` (#2340: the time the op's `COMMIT`s took; a record that did not measure a wait or a commit time is left out of its percentiles and counted in its `unmeasured`, and a `0` commit time, an op that ran no `COMMIT`, is a measure; a summary written before #2340 has no `commit_us`; a run-watch aggregate, #2338, adds one sample, its slowest tick's, for all the ticks it holds, so `_watch`'s p50 and p95 lean high), `busy` (records whose busy handler fired), and `unsampled` (the percentiles are taken from a uniform sample of at most 4096 of an op's records, drawn over the whole run; the records not held are counted here, and left out when none) |
+| `ops` | Per op: `ok` (answered), `refused` (by `kind`, left out when none), the nearest-rank `p50` and `p95` and the exact `max` of `duration_us`, `lock_wait_us`, `busy_wait_us` and `commit_us` (#2340: the time the op's `COMMIT`s took; a record that did not measure a wait or a commit time is left out of its percentiles and counted in its `unmeasured`, and a `0` commit time, an op that ran no `COMMIT`, is a measure; a summary written before #2340 has no `commit_us`; a run-watch aggregate, #2338, adds one sample, its slowest tick's, for all the ticks it holds, so `_watch`'s p50 and p95 lean high), `busy` (records whose busy handler fired), `name_forms` (#2478: the calls by their records' `name_form`, `{"legacy": N, "current": M}`, left out for an op whose records carry none), and `unsampled` (the percentiles are taken from a uniform sample of at most 4096 of an op's records, drawn over the whole run; the records not held are counted here, and left out when none) |
 | `busy` | Records whose busy handler fired, over every op |
 | `tasks` | Tasks `created`, `claimed`, `released`, `blocked`, `submitted` and `accepted` (verified) by this process's answered ops, by their decisions |
 | `messages` | Messages `sent`, `acked` (consumed) and `withdrawn` by this process's ops, likewise |

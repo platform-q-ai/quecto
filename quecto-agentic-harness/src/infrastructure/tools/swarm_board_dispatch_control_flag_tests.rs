@@ -11,7 +11,8 @@ use super::{CallOrigin, SwarmBoardHandles, call, call_deciding, may_control_run}
 /// Whether `member`'s call of `op` changed the run's control state; the
 /// call must be answered (or refused after its writes committed).
 fn controls(handles: &SwarmBoardHandles, member: &str, op: &str, args: Value) -> bool {
-    let (answer, controls_run) = call_deciding(handles, member, op, args, CallOrigin::Member);
+    let (answer, controls_run) =
+        call_deciding(handles, member, op, args, (CallOrigin::Member, None));
     if let Err(refusal) = &answer {
         assert!(!controls_run, "{op} refused: {}", refusal.message());
     }

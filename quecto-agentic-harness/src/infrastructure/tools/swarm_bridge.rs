@@ -75,6 +75,18 @@ impl SwarmContext {
         self.rpc(method, args)
     }
 
+    /// [`Self::call`] for a structured op (#2478): its record carries
+    /// `name_form`, which names the member's call used. Blocking.
+    pub(crate) fn call_named(
+        &self,
+        method: &str,
+        args: Value,
+        name_form: Option<crate::domain::swarm::NameForm>,
+    ) -> Result<Value, DomainError> {
+        self.board
+            .call_named(self.location(), &self.member, method, args, name_form)
+    }
+
     /// How structured ops read a member's text and write their answers on
     /// this context's board (#2279): no board call, no file resolved, so
     /// it is read on the async worker (#2279 review L5).
@@ -83,19 +95,21 @@ impl SwarmContext {
     }
 
     /// Records `method` as refused with `kind` before it reached the board
-    /// (#2279), `elapsed` after the op began.
+    /// (#2279), `elapsed` after the op began, with which names the call
+    /// used (#2478; `None` where none applies).
     pub(crate) fn refused(
         &self,
         method: &str,
         kind: crate::domain::swarm::RefusalKind,
         arguments: super::swarm_board_dispatch::BindingFaults,
+        name_form: Option<crate::domain::swarm::NameForm>,
         elapsed: std::time::Duration,
     ) {
         self.board.refused(
             self.location(),
             &self.member,
             method,
-            (kind, arguments),
+            (kind, arguments, name_form),
             elapsed,
         );
     }

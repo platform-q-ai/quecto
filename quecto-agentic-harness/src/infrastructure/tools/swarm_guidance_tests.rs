@@ -43,7 +43,7 @@ fn an_ended_or_unreadable_run_says_what_to_do() {
 #[test]
 fn an_unknown_op_lists_the_valid_ones_and_how_to_end_a_run() {
     let message = unknown_op("stop");
-    for op in VALID_OPS {
+    for op in valid_ops() {
         assert!(message.contains(op), "{op}: {message}");
     }
     assert!(
@@ -54,11 +54,13 @@ fn an_unknown_op_lists_the_valid_ones_and_how_to_end_a_run() {
     assert!(!message.contains("board."), "no Python call: {message}");
 }
 
-/// #2279: every structured board op is a valid op, beside the harness's
-/// own.
+/// #2279: every structured board op is a valid op, after the harness's
+/// own, each by its old name (#2478: the task-item names are not listed
+/// yet), in the order the refusals list them. Written out by hand, so it
+/// cannot drift with the table it is checked against.
 #[test]
 fn the_valid_ops_are_the_harness_ops_and_the_board_ops() {
-    let mut expected: Vec<&str> = [
+    let expected = [
         "create",
         "summary",
         "reconcile",
@@ -68,19 +70,33 @@ fn the_valid_ops_are_the_harness_ops_and_the_board_ops() {
         "events",
         "usage",
         "usage_budget",
-    ]
-    .into_iter()
-    .chain(
-        crate::infrastructure::tools::swarm_board_ops::BOARD_OPS
-            .iter()
-            .map(|spec| spec.name),
-    )
-    .collect();
-    assert_eq!(expected.len(), 9 + 25, "the harness's ops and the table's");
-    let mut ops = VALID_OPS.to_vec();
-    expected.sort_unstable();
-    ops.sort_unstable();
-    assert_eq!(ops, expected);
+        "task",
+        "tasks",
+        "file_owners",
+        "task_create",
+        "dependencies",
+        "claim",
+        "release",
+        "block",
+        "unblock",
+        "submit",
+        "reserve",
+        "release_files",
+        "send",
+        "withdraw",
+        "inbox",
+        "ack",
+        "evidence",
+        "amend",
+        "verify_task",
+        "revalidate_task",
+        "recover",
+        "revoke",
+        "complete",
+        "stop",
+        "usage_report",
+    ];
+    assert_eq!(valid_ops(), expected);
 }
 
 /// #2279: a structured op refused by the running gate names itself, and
@@ -113,16 +129,19 @@ fn the_valid_ops_are_exactly_the_schema_enum() {
     // other would make the unknown-op guidance lie.
     let schema: serde_json::Value =
         serde_json::from_str(include_str!("swarm_assets/tool_schema.json")).unwrap();
-    let mut schema_ops: Vec<&str> = schema["properties"]["op"]["enum"]
+    let schema_ops: Vec<&str> = schema["properties"]["op"]["enum"]
         .as_array()
         .unwrap()
         .iter()
         .map(|op| op.as_str().unwrap())
         .collect();
-    let mut ops = VALID_OPS.to_vec();
-    schema_ops.sort_unstable();
-    ops.sort_unstable();
-    assert_eq!(ops, schema_ops);
+    // The schema lists the valid ops, then each op's task-item name
+    // (#2478), which the guidance does not list yet.
+    let aliases = crate::infrastructure::tools::swarm_board_ops::OP_ALIASES
+        .iter()
+        .map(|(alias, _)| *alias);
+    let listed: Vec<&str> = valid_ops().into_iter().chain(aliases).collect();
+    assert_eq!(schema_ops, listed);
 }
 
 #[test]
@@ -228,7 +247,7 @@ async fn removed_ops_are_unknown_and_name_the_structured_alternative() {
         assert!(!directory.path().join("ran").exists(), "{request} ran code");
     }
     for removed in ["run", "status", "output", "cancel"] {
-        assert!(!VALID_OPS.contains(&removed), "{removed} is still valid");
+        assert!(!valid_ops().contains(&removed), "{removed} is still valid");
     }
 }
 
@@ -307,7 +326,7 @@ fn an_op_not_a_string_lists_every_valid_op() {
         message.starts_with("op must be a string naming one of: "),
         "{message}"
     );
-    for op in VALID_OPS {
+    for op in valid_ops() {
         assert!(message.contains(op), "{op}: {message}");
     }
 }
