@@ -331,3 +331,47 @@ fn every_field_in_the_table_is_read_by_its_kind() {
         }
     }
 }
+
+/// A value of `kind` every op accepts.
+fn sample(kind: Kind) -> Value {
+    match kind {
+        Kind::Slug => json!("a"),
+        Kind::OptionalSlug => Value::Null,
+        Kind::Slugs => json!([]),
+        Kind::Text => json!("t"),
+        Kind::Timestamp => json!("2026-10-10T08:00:00Z"),
+        Kind::Status => json!("review"),
+        Kind::NewStatus => json!("draft"),
+        Kind::TaskKind => json!("task"),
+        Kind::Pr => json!(1),
+        Kind::Path => json!("p"),
+        Kind::ObjectId => json!("0".repeat(40)),
+        Kind::Repeated => json!({}),
+    }
+}
+
+/// Epic #2481 T1: every op of `OPS`, read from its least valid request
+/// (its required fields, then one optional field at a time until it
+/// reads), records the op kind of its own name.
+#[test]
+fn every_op_records_its_own_op_kind() {
+    use crate::application::project_board::telemetry::op_kind;
+    for (name, fields) in OPS {
+        let required = fields.iter().filter(|field| field.required);
+        let mut request = json!({"op": name});
+        for field in required {
+            request[field.name] = sample(field.kind);
+        }
+        let optional = fields.iter().filter(|field| !field.required);
+        let candidates = std::iter::once(request.clone()).chain(optional.map(|field| {
+            let mut with = request.clone();
+            with[field.name] = sample(field.kind);
+            with
+        }));
+        let read = candidates
+            .filter_map(|candidate| parse(&candidate).ok())
+            .next()
+            .unwrap_or_else(|| panic!("{name} reads from no minimal request"));
+        assert_eq!(op_kind(&read).as_str(), *name);
+    }
+}

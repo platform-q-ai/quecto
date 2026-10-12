@@ -37,6 +37,10 @@ mod hook_scripts_worktree;
 mod no_python;
 #[path = "architecture/panic_strategy.rs"]
 mod panic_strategy;
+/// A `board_op` record holds no text by type, and every board op has its
+/// kind (epic #2481 T1).
+#[path = "architecture/project_board_telemetry.rs"]
+mod project_board_telemetry;
 /// Sessions capability (#1968, D1 #1970): plural capability, one
 /// construction site, one layout owner, retirement of the singular path.
 #[path = "architecture/sessions_capability.rs"]
@@ -1936,7 +1940,29 @@ fn public_ports_have_contract_tests() {
     }
 
     let contract_modules = active_contract_modules();
-    let allowlisted: BTreeSet<&str> = BTreeSet::new();
+    // Ports declared ahead of their adapters (epic #2481 T1): each entry
+    // goes when its contract suite lands on the production adapter (the
+    // op log's with T2), and fails here once any contract module names
+    // it, whatever the module is called.
+    let allowlisted: BTreeSet<&str> = BTreeSet::from(["ProjectBoardOpLog"]);
+    for port in &allowlisted {
+        assert!(
+            ports.contains(*port),
+            "{port} is allowlisted but is no port"
+        );
+        let naming: Vec<&String> = contract_modules
+            .iter()
+            .filter(|module| {
+                let suite = fs::read_to_string(format!("tests/contracts/{module}.rs"))
+                    .expect("an active contract module");
+                dependency_scan::forbidden_hit(&suite, &[port]).is_err()
+            })
+            .collect();
+        assert!(
+            naming.is_empty(),
+            "{port} has a contract suite ({naming:?}): take it off the allowlist"
+        );
+    }
     let missing: Vec<_> = ports
         .into_iter()
         .filter(|port| !allowlisted.contains(port.as_str()))

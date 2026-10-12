@@ -11,6 +11,7 @@ use crate::domain::project_board::entities::review::Review;
 use crate::domain::project_board::entities::run::Run;
 use crate::domain::project_board::entities::task::Task;
 use crate::domain::project_board::value_objects::slug::Slug;
+use crate::domain::project_board::value_objects::telemetry::BoardOpRecord;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
 use crate::domain::project_board::value_objects::vocabulary::TaskStatus;
 
@@ -461,4 +462,18 @@ pub trait PullRequestStates: Send + Sync {
     /// # Errors
     /// The host could not be reached or read.
     fn state(&self, pr: u64) -> Result<PullRequestState, PullRequestStatesError>;
+}
+
+/// Port: where each board request's `board_op` record goes (epic #2481):
+/// the event log (a session's, or the CLI's daily `board-cli_<date>`
+/// log) and `tracing`. It is held only inside a
+/// [`BoardRecording`](super::telemetry::BoardRecording), which exists only
+/// while `telemetry.event_log.enabled` is on, so with it off nothing is
+/// recorded.
+pub trait ProjectBoardOpLog: Send + Sync {
+    /// Appends `record` synchronously, from the request's own blocking
+    /// thread: never on an async runtime, never panicking. A failed or
+    /// dropped write is the adapter's to count and report, and never
+    /// changes the request's answer.
+    fn record(&self, record: BoardOpRecord);
 }

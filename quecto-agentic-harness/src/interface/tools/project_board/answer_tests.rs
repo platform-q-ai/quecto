@@ -559,3 +559,43 @@ fn a_duplicate_artifact_is_named_by_its_kind_task_and_number() {
         })
     );
 }
+
+/// Epic #2481 T1 (#2532 round-4 review): every code the board answers, by
+/// the exhaustive `every_error` and `every_rule` tables and the front
+/// ends' own refusals, is a known telemetry kind, so a record names it
+/// rather than `other`.
+#[test]
+fn every_code_the_board_answers_is_a_known_kind() {
+    use crate::domain::project_board::value_objects::telemetry::StaticKind;
+    let code = |answer: &Value| answer["error"]["code"].as_str().unwrap().to_owned();
+    let mut codes: Vec<String> = every_error()
+        .iter()
+        .map(|error| code(&board_refused("show", error)))
+        .collect();
+    let plan_set_aside = ProjectBoardError::Quarantined {
+        key: ArtifactKey::Plan(slug("a"), 1),
+        path: "plans/a.1.md".into(),
+    };
+    codes.push(code(&board_refused("show", &plan_set_aside)));
+    for refusal in [
+        FrontEndRefusal::NoCommitter,
+        FrontEndRefusal::StoreUnavailable,
+    ] {
+        codes.push(code(&reason_refused(Some("list"), refusal, "why")));
+    }
+    let request = RequestError {
+        field: "op".into(),
+        problem: "must name an op".into(),
+    };
+    codes.push(code(&request_refused(None, &request)));
+    let rules = every_rule().into_iter().map(|(rule, ..)| rule_json(&rule));
+    codes.extend(rules.map(|rule| rule["code"].as_str().unwrap().to_owned()));
+    let unknown: Vec<&String> = codes
+        .iter()
+        .filter(|code| StaticKind::new(code).as_str() != code.as_str())
+        .collect();
+    assert!(
+        unknown.is_empty(),
+        "codes missing from KNOWN_KINDS: {unknown:?}"
+    );
+}

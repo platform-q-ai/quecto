@@ -1,9 +1,11 @@
 pub mod board_text;
 pub mod code_ref;
+mod commit_id;
 pub mod reference;
 pub mod rule_error;
 pub mod schema_error;
 pub mod shown_text;
 pub mod slug;
+pub mod telemetry;
 pub mod timestamp;
 pub mod vocabulary;
