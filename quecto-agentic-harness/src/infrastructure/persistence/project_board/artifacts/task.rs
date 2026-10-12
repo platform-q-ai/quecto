@@ -21,9 +21,10 @@ use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::vocabulary::{Resolution, TaskKind, TaskStatus};
 use crate::infrastructure::persistence::project_board::markdown::{
     Body, BodyShape, CellKind, Column, Document, Limits, Section, SectionShape, Shape, blocks_of,
-    text_of,
+    check_title, text_of,
 };
 
+const TITLE: &str = "Title";
 const ID: &str = "Id";
 const KIND: &str = "Kind";
 const STATUS: &str = "Status";
@@ -84,12 +85,15 @@ const SECTIONS: &[SectionShape<'static>] = &[
     },
 ];
 
-/// A task's file caps: the widest task the domain admits fits
-/// (`the_widest_task_fits_its_limits`). A description of 65,536
-/// characters may be that many lines inside a fence, so the line cap is
-/// the description's lines and every table at its fullest; the longest
-/// line is that description as one line of four-byte letters; the most
-/// bytes, the whole text budget with the widest structure beside it.
+/// A task's file caps: the widest task the domain admits fits, measured
+/// in `the_widest_task_fits_its_limits` beside the widest structure:
+/// - the most lines, 65,725: a description of 65,536 characters as blank
+///   lines inside a fence, and every table at its fullest;
+/// - the longest line, 262,144 bytes: that description as one line of
+///   four-byte letters;
+/// - the most bytes, 346,705: the whole text budget with 11,093
+///   description lines starting `#`, each written `\#` (one more line and
+///   the references can no longer make the budget up).
 pub const TASK_LIMITS: Limits = Limits {
     file_bytes: 512 * 1024,
     lines: 66_000,
@@ -110,6 +114,8 @@ impl ArtifactCodec for TaskCodec {
 
     fn to_document(task: &Task) -> Result<Document, CodecError> {
         let task = task.fields();
+        // The heading's rules, here, so the error names the title.
+        check_title(&task.title).map_err(|error| refused(TITLE, error.to_string()))?;
         let mut fields = vec![
             (ID, cells::slug(&task.id)),
             (KIND, cells::word(task.kind.as_str())),

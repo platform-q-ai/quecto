@@ -156,9 +156,10 @@ fn every_task_shape_round_trips() {
     };
     let mut shapes = vec![];
     for status in TaskStatus::ALL.iter().copied() {
-        let held = match status {
-            TaskStatus::Claimed | TaskStatus::InProgress => claim.clone(),
-            _ => None,
+        // Every status that may hold a claim holds one here.
+        let held = match status.may_hold_claim() {
+            true => claim.clone(),
+            false => None,
         };
         let resolution = match status {
             TaskStatus::Done => Some(Resolution::Completed),
@@ -214,52 +215,66 @@ fn every_task_shape_round_trips() {
 
 #[test]
 fn a_hand_edited_task_file_is_refused() {
+    use MarkdownError as E;
+    let structure =
+        |line: usize, expected: &'static str| CodecError::Markdown(E::Structure { line, expected });
     let cases = [
         // Rows out of the shape's order.
-        edited(
-            "| Kind | task |\n| Status | in_progress |\n",
-            "| Status | in_progress |\n| Kind | task |\n",
+        (
+            edited(
+                "| Kind | task |\n| Status | in_progress |\n",
+                "| Status | in_progress |\n| Kind | task |\n",
+            ),
+            structure(8, "fields in the kind's order"),
         ),
         // No blank line before a section.
-        edited("```\n\n## Depends on", "```\n## Depends on"),
-        // A status as a reader might spell it.
-        edited("| Status | in_progress |", "| Status | In progress |"),
-        // A table with no rows: a missing section is "none".
-        edited(
-            "## Depends on\n| Task |\n|---|\n| store |\n| schema |\n",
-            "## Depends on\n| Task |\n|---|\n",
+        (
+            edited("```\n\n## Depends on", "```\n## Depends on"),
+            structure(30, "a blank line between blocks"),
+        ),
+        // A status as a reader might spell it: no ASCII cell holds a space.
+        (
+            edited("| Status | in_progress |", "| Status | In progress |"),
+            CodecError::Markdown(E::Cell {
+                line: 8,
+                why: "an id or pointer of ASCII letters, digits and ._:/#@+_-",
+            }),
+        ),
+        // A table with no rows: a missing section is "none", so a file
+        // writing one is not the task's own.
+        (
+            edited(
+                "## Depends on\n| Task |\n|---|\n| store |\n| schema |\n",
+                "## Depends on\n| Task |\n|---|\n",
+            ),
+            CodecError::NotCanonical,
         ),
         // Sections out of order: Superseded by after References.
-        format!(
-            "{}\n## Superseded by\n| Task |\n|---|\n| board-cli-v2 |\n",
-            edited(
-                "## Superseded by\n| Task |\n|---|\n| board-cli-v2 |\n\n",
-                ""
-            )
+        (
+            format!(
+                "{}\n## Superseded by\n| Task |\n|---|\n| board-cli-v2 |\n",
+                edited(
+                    "## Superseded by\n| Task |\n|---|\n| board-cli-v2 |\n\n",
+                    ""
+                )
+            ),
+            structure(49, "sections in the kind's order"),
         ),
         // A section the kind has not got: the task's old review findings.
-        format!("{EXAMPLE}\n## Reviews\n| Task |\n|---|\n| r1 |\n"),
+        (
+            format!("{EXAMPLE}\n## Reviews\n| Task |\n|---|\n| r1 |\n"),
+            CodecError::Markdown(E::UnknownSection {
+                heading: "Reviews".into(),
+            }),
+        ),
     ];
-    for (index, file) in cases.iter().enumerate() {
-        assert!(
-            decode::<TaskCodec>(file.as_bytes()).is_err(),
-            "case {index}: {file}"
+    for (index, (file, refusal)) in cases.into_iter().enumerate() {
+        assert_eq!(
+            decode::<TaskCodec>(file.as_bytes()),
+            Err(refusal),
+            "case {index}"
         );
     }
-    let spelt = decode::<TaskCodec>(
-        edited("| Status | in_progress |", "| Status | In progress |").as_bytes(),
-    );
-    assert!(
-        matches!(
-            &spelt,
-            Err(CodecError::Markdown(_)
-                | CodecError::Cell {
-                    field: "Status",
-                    ..
-                })
-        ),
-        "{spelt:?}"
-    );
 }
 
 #[test]
@@ -357,38 +372,47 @@ fn the_widest_task_fits_its_limits() {
     // Most lines: the description all blank lines inside a fence.
     let fenced = format!("```{}```", "\n".repeat(MAX_DESCRIPTION_CHARS - 6));
     let most_lines = widest("t".into(), fenced);
-    // Most bytes and the longest line: the title and description at their
-    // widest in four-byte letters, the references taking the rest of the
-    // budget.
-    let most_bytes = widest(letters(MAX_TITLE_CHARS), letters(MAX_DESCRIPTION_CHARS));
-    assert_eq!(most_bytes.text_bytes(), MAX_TEXT_BYTES, "the whole budget");
-    let mut seen = (0, 0, 0);
-    for fields in [most_lines, most_bytes] {
+    // The longest line: the title and description at their widest in
+    // four-byte letters, the references taking the rest of the budget.
+    let longest_line = widest(letters(MAX_TITLE_CHARS), letters(MAX_DESCRIPTION_CHARS));
+    // Most bytes: as many description lines as can start with `#` (each
+    // written `\#`, a byte more) while the budget is still spent whole:
+    // `#` lines take 2 characters and 2 bytes each, letters 1 and 4, so
+    // each `#` line gives up 6 bytes of letters and the references (at
+    // most 64 × 2,048) must make them up.
+    let escaped_lines = |escaped: usize| {
+        let description = format!(
+            "{}{}",
+            "#\n".repeat(escaped),
+            letters(MAX_DESCRIPTION_CHARS - 2 * escaped)
+        );
+        widest(letters(MAX_TITLE_CHARS), description)
+    };
+    let most_bytes = escaped_lines(11_093);
+    assert!(
+        escaped_lines(11_094).text_bytes() < MAX_TEXT_BYTES,
+        "one more `#` line and the references cannot make the budget up"
+    );
+    for fields in [&longest_line, &most_bytes] {
+        assert_eq!(fields.text_bytes(), MAX_TEXT_BYTES, "the whole budget");
+    }
+    let measured = [most_lines, longest_line, most_bytes].map(|fields| {
         let task = task(fields);
         let file = encode::<TaskCodec>(&task).unwrap();
-        let lines = file.lines().count();
-        let longest = file.lines().map(str::len).max().unwrap();
-        seen = (
-            seen.0.max(file.len()),
-            seen.1.max(lines),
-            seen.2.max(longest),
-        );
         assert_eq!(decode::<TaskCodec>(file.as_bytes()), Ok(task));
+        let longest = file.lines().map(str::len).max().unwrap();
+        (file.len(), file.lines().count(), longest)
+    });
+    let [most_lines, longest_line, most_bytes] = measured;
+    assert_eq!(most_lines.1, 65_725, "the most lines");
+    assert_eq!(longest_line.2, 262_144, "the longest line");
+    assert_eq!(most_bytes.0, 346_705, "the most bytes");
+    let limits = TASK_LIMITS;
+    for (bytes, lines, longest) in measured {
+        assert!(
+            bytes <= limits.file_bytes && lines <= limits.lines && longest <= limits.line_bytes
+        );
     }
-    let (bytes, lines, longest) = seen;
-    eprintln!("widest task file: {bytes} bytes, {lines} lines, longest line {longest} bytes");
-    assert!(
-        (MAX_TEXT_BYTES..=TASK_LIMITS.file_bytes).contains(&bytes),
-        "{bytes}"
-    );
-    assert!(
-        (MAX_DESCRIPTION_CHARS - 6..=TASK_LIMITS.lines).contains(&lines),
-        "{lines}"
-    );
-    assert!(
-        (4 * MAX_DESCRIPTION_CHARS..=TASK_LIMITS.line_bytes).contains(&longest),
-        "{longest}"
-    );
 }
 
 /// Whether an error names the cap a file is past.
@@ -439,5 +463,104 @@ fn one_byte_or_line_over_a_limit_is_refused() {
             )
         );
         assert!(!sized, "{refused:?}");
+    }
+}
+
+/// An archived task others took over: no claim, its resolution row.
+fn archived() -> TaskFields {
+    TaskFields {
+        status: TaskStatus::Archived,
+        claim: None,
+        resolution: Some(Resolution::Superseded),
+        description: "Moved to the v2 CLI.".into(),
+        depends_on: vec![],
+        prs: vec![],
+        references: vec![Reference::parse("#2470").unwrap()],
+        updated: at("2026-10-12T08:00:00Z"),
+        ..example()
+    }
+}
+
+const ARCHIVED: &str = r#"<!-- quecto-task schema=1 -->
+# The board CLI answers in `JSON`
+
+| Field | Value |
+|---|---|
+| Id | board-cli |
+| Kind | task |
+| Status | archived |
+| Parent | boards |
+| Accepted plan | 2 |
+| GitHub issue | #2481 |
+| Resolution | superseded |
+| Created | 2026-10-11T09:30:00Z |
+| Updated | 2026-10-12T08:00:00Z |
+
+## Description
+Moved to the v2 CLI.
+
+## Superseded by
+| Task |
+|---|
+| board-cli-v2 |
+
+## References
+| Reference |
+|---|
+| `#2470` |
+"#;
+
+#[test]
+fn the_archived_task_file_is_byte_exact() {
+    let archived = task(archived());
+    assert_eq!(encode::<TaskCodec>(&archived).unwrap(), ARCHIVED);
+    assert_eq!(decode::<TaskCodec>(ARCHIVED.as_bytes()), Ok(archived));
+}
+
+/// A reference keeps the form it was written in, whatever its key: the
+/// repository's case, a URL's host, port, dot segments, escapes and empty
+/// query or fragment.
+#[test]
+fn a_reference_keeps_its_written_form() {
+    let written = [
+        "Platform-Q-AI/Browser_Task#18",
+        "https://EXAMPLE.com:443/a/./b/%7e?#",
+    ];
+    let fields = TaskFields {
+        references: written
+            .iter()
+            .map(|text| Reference::parse(text).unwrap())
+            .collect(),
+        ..example()
+    };
+    let file = encode::<TaskCodec>(&task(fields)).unwrap();
+    for text in written {
+        assert!(file.contains(&format!("| `{text}` |\n")), "{file}");
+    }
+    let read = decode::<TaskCodec>(file.as_bytes()).unwrap();
+    let shown: Vec<&str> = read
+        .fields()
+        .references
+        .iter()
+        .map(Reference::as_str)
+        .collect();
+    assert_eq!(shown, written);
+}
+
+/// A title its heading cannot hold is refused when written, naming the
+/// title: closing hashes, a space at an edge, raw HTML, a character
+/// reference, dollar math.
+#[test]
+fn a_title_its_heading_cannot_hold_is_refused() {
+    for title in ["a #", " a", "a\u{a0}", "a <b>", "a &amp;", "$x$"] {
+        let titled = TaskFields {
+            title: title.into(),
+            ..example()
+        };
+        let refused = encode::<TaskCodec>(&task(titled));
+        assert!(
+            matches!(&refused, Err(CodecError::Cell { field: "Title", .. })),
+            "{title:?}: {refused:?}"
+        );
     }
 }

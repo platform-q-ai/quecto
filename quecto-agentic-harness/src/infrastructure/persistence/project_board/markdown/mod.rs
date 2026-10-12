@@ -104,6 +104,18 @@ pub fn check_text_cell(value: &str) -> Result<(), MarkdownError> {
     chars::check_line(&written, 1)
 }
 
+/// Whether a title holds `value`: one line of text with nothing at its
+/// edges and no closing run of `#`, the inline rules and the character
+/// rules, checked as its heading line is written. A codec checks a title
+/// before any render, so its error names the field.
+///
+/// # Errors
+/// The rule the title breaks.
+pub fn check_title(value: &str) -> Result<(), MarkdownError> {
+    title(value)?;
+    chars::check_line(&format!("# {value}"), 2)
+}
+
 /// A field or a table's column: its name and what its cells hold.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Column<'a> {
