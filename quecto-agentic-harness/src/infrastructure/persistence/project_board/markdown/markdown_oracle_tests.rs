@@ -68,9 +68,16 @@ static ADDRESS: std::sync::LazyLock<Regex> =
     std::sync::LazyLock::new(|| Regex::new(r"\]\(https://[^)\s]*\)").expect("a valid pattern"));
 
 /// Whether `text` shows a reader something: a letter, number, punctuation
-/// or symbol that is not an emphasis or strikethrough marker.
+/// or symbol that is not an emphasis or strikethrough marker, or anything
+/// seen inside a code span (between the marks a reader leaves), where a
+/// marker shows as itself.
 fn shows(text: &str) -> bool {
-    text.chars().any(|c| chars::seen(c) && !"*_~".contains(c))
+    text.split(SPAN)
+        .enumerate()
+        .any(|(index, part)| match index % 2 {
+            1 => part.chars().any(chars::seen),
+            _ => part.chars().any(|c| chars::seen(c) && !"*_~".contains(c)),
+        })
 }
 
 /// A text's characters, checked as a run (a reader splits text at a `*`,
@@ -83,19 +90,104 @@ fn checked(text: &str) -> Result<(), String> {
         })
 }
 
-/// Whether `shown` is `written` with only markup taken out: emphasis and
-/// strikethrough markers, a code span's backticks and padding, and a
-/// link's brackets and address.
-fn drops_only_markup(written: &str, shown: &str) -> bool {
-    let written = ADDRESS.replace_all(written, "]");
-    let mut shown = shown.chars().peekable();
-    for c in written.chars() {
-        match shown.peek() == Some(&c) {
-            true => {
-                shown.next();
+/// What a reader shows at each edge of a code span: so a code cell (whose
+/// expected text carries it) must be shown as code, never as plain text.
+const SPAN: char = '\u{1}';
+
+/// `text` as a code span shows it, its edges marked.
+fn spanned(text: &str) -> String {
+    format!("{SPAN}{text}{SPAN}")
+}
+
+/// `written` in pieces: text, and code (each code span's content as a
+/// reader shows it: one space at each edge taken off when both are
+/// there; a value the expected outline already marks as a span, kept).
+fn pieces(written: &str) -> Vec<(bool, String)> {
+    let (mut pieces, mut text) = (vec![], String::new());
+    let mut rest = written;
+    while let Some(c) = rest.chars().next() {
+        let span = match c {
+            SPAN => rest[SPAN.len_utf8()..].find(SPAN).map(|end| {
+                (
+                    rest[SPAN.len_utf8()..][..end].to_string(),
+                    2 * SPAN.len_utf8() + end,
+                )
+            }),
+            '`' => {
+                let run = rest.len() - rest.trim_start_matches('`').len();
+                let after = &rest[run..];
+                let fence = "`".repeat(run);
+                // The next run of exactly as many backticks closes it.
+                let close = after.match_indices(&fence).find(|(at, _)| {
+                    !after[..*at].ends_with('`') && !after[at + run..].starts_with('`')
+                });
+                close.map(|(at, _)| {
+                    let inner = &after[..at];
+                    let padded =
+                        inner.starts_with(' ') && inner.ends_with(' ') && inner.trim() != "";
+                    let shown = match padded {
+                        true => &inner[1..inner.len() - 1],
+                        false => inner,
+                    };
+                    (shown.to_string(), 2 * run + at)
+                })
             }
-            false if "*_~`[] ".contains(c) => {}
-            false => return false,
+            _ => None,
+        };
+        match span {
+            Some((code, taken)) => {
+                pieces.push((false, std::mem::take(&mut text)));
+                pieces.push((true, code));
+                rest = &rest[taken..];
+            }
+            None => {
+                text.push(c);
+                rest = &rest[c.len_utf8()..];
+            }
+        }
+    }
+    pieces.push((false, text));
+    pieces
+}
+
+/// The links `written` holds outside its code spans.
+fn links_outside_code(written: &str) -> usize {
+    pieces(written)
+        .iter()
+        .filter(|(code, _)| !code)
+        .map(|(_, text)| ADDRESS.find_iter(text).count())
+        .sum()
+}
+
+/// Whether `shown` is `written` with only markup taken out: outside code,
+/// emphasis and strikethrough markers, and a link's brackets and address;
+/// a code span's text exactly, between the edges a reader marks.
+fn drops_only_markup(written: &str, shown: &str) -> bool {
+    let mut shown = shown.chars().peekable();
+    for (code, piece) in pieces(written) {
+        match code {
+            true => {
+                let exact = std::iter::once(SPAN)
+                    .chain(piece.chars())
+                    .chain(std::iter::once(SPAN));
+                for c in exact {
+                    match shown.next() {
+                        Some(next) if next == c => {}
+                        _ => return false,
+                    }
+                }
+            }
+            false => {
+                for c in ADDRESS.replace_all(&piece, "]").chars() {
+                    match shown.peek().copied() {
+                        Some(next) if next == c => {
+                            shown.next();
+                        }
+                        _ if "*_~[] ".contains(c) => {}
+                        _ => return false,
+                    }
+                }
+            }
         }
     }
     shown.next().is_none()
@@ -239,7 +331,7 @@ impl Outline {
             }
             Event::Code(text) => {
                 checked(text)?;
-                self.shown(text);
+                self.shown(&spanned(text));
             }
             Event::Html(_) if self.kinds.is_empty() => {}
             // Emphasis may span a line, so a break may come inside it.
@@ -275,7 +367,7 @@ fn expected(document: &Document) -> (Vec<String>, Vec<String>) {
             // Code is verbatim: what looks like a link there is none.
             let links = match kind.starts_with("code:") {
                 true => 0,
-                false => ADDRESS.find_iter(text).count(),
+                false => links_outside_code(text),
             };
             format!("{kind}+{links}")
         })
@@ -291,7 +383,13 @@ fn unlinked_expected(document: &Document) -> (Vec<String>, Vec<String>) {
         let rows: Vec<Vec<String>> = document
             .fields
             .iter()
-            .map(|(name, value)| vec![name.clone(), value.clone()])
+            .map(|(name, value)| {
+                let kind = SHAPE.fields.iter().find(|field| field.name == name);
+                vec![
+                    name.clone(),
+                    shown_cell(value, kind.map(|field| field.cell)),
+                ]
+            })
             .collect();
         kinds.push(format!("table:2x{}", rows.len()));
         texts.push(table_text(["Field", "Value"].into_iter(), &rows));
@@ -329,7 +427,16 @@ fn unlinked_expected(document: &Document) -> (Vec<String>, Vec<String>) {
                         BodyShape::Prose => &[],
                     });
                 kinds.push(format!("table:{}x{}", columns.len(), rows.len()));
-                texts.push(table_text(columns.iter().map(|column| column.name), rows));
+                let rows: Vec<Vec<String>> = rows
+                    .iter()
+                    .map(|row| {
+                        row.iter()
+                            .zip(columns)
+                            .map(|(value, column)| shown_cell(value, Some(column.cell)))
+                            .collect()
+                    })
+                    .collect();
+                texts.push(table_text(columns.iter().map(|column| column.name), &rows));
             }
         }
     }
@@ -446,7 +553,7 @@ fn comrak_inline<'a>(
     for child in node.children() {
         match &child.data.borrow().value {
             NodeValue::Text(shown) => text.push_str(shown),
-            NodeValue::Code(code) => text.push_str(&code.literal),
+            NodeValue::Code(code) => text.push_str(&spanned(&code.literal)),
             NodeValue::SoftBreak if !in_link => text.push('\n'),
             NodeValue::Emph | NodeValue::Strong | NodeValue::Strikethrough => {
                 let (shown, inner) = comrak_inline(child, link_texts, in_link)?;
@@ -565,4 +672,78 @@ fn comrak_table<'a>(
         false => format!("table:{}x{rows}", width.unwrap_or(0)),
     };
     Ok((kind, text, links))
+}
+
+/// A cell's text as a reader must show it: a code cell as a code span.
+fn shown_cell(value: &str, kind: Option<CellKind>) -> String {
+    match kind {
+        Some(CellKind::Code) => spanned(value),
+        Some(CellKind::Text | CellKind::Ascii) | None => value.to_string(),
+    }
+}
+
+/// A code cell shown as plain text is caught: its expected text is a span.
+#[test]
+fn a_code_cell_a_reader_shows_as_text_is_caught() {
+    let document = Document {
+        schema: 1,
+        title: "Code".into(),
+        fields: vec![("Branch".into(), "main".into())],
+        sections: vec![],
+    };
+    let file = render(&document, &SHAPE).unwrap();
+    assert_eq!(outline(&file, &document), Ok(()));
+    let plain = file.replacen("`main`", "main", 1);
+    assert!(outline(&plain, &document).is_err(), "{plain}");
+}
+
+/// Inside a code span the text is compared exactly: no markup is taken
+/// out there, so a reader showing `ab` for a written `a*b` is caught.
+#[test]
+fn a_code_span_is_compared_exactly() {
+    let document = Document {
+        schema: 1,
+        title: "Code".into(),
+        fields: vec![("Branch".into(), "a*b_c[d]".into())],
+        sections: vec![],
+    };
+    let file = render(&document, &SHAPE).unwrap();
+    assert_eq!(outline(&file, &document), Ok(()));
+    for shown in ["`ab_c[d]`", "`a*bc[d]`", "`a*b_cd]`", "`a*b_c[d`"] {
+        let edited = file.replacen("`a*b_c[d]`", shown, 1);
+        assert!(outline(&edited, &document).is_err(), "{edited}");
+    }
+}
+
+/// What looks like a link inside a code span is code: no address is taken
+/// out and no link is counted, by the oracle or by a reader.
+#[test]
+fn a_code_value_that_looks_like_a_link_is_code() {
+    let document = Document {
+        schema: 1,
+        title: "Code".into(),
+        fields: vec![
+            ("Claim".into(), "see `[x](https://y.example)` here".into()),
+            ("Branch".into(), "[x](https://y.example)".into()),
+        ],
+        sections: vec![],
+    };
+    let file = render(&document, &SHAPE).unwrap();
+    assert_eq!(outline(&file, &document), Ok(()), "{file}");
+}
+
+/// A code span shows what it holds, a lone marker included: a reader sees
+/// the `_` in `` [`_`](…) ``, so the link shows something.
+#[test]
+fn a_code_span_of_a_marker_shows_it() {
+    for claim in ["[`_`](https://y.example/a)", "see `*` and `~~`"] {
+        let document = Document {
+            schema: 1,
+            title: "Code".into(),
+            fields: vec![("Claim".into(), claim.into())],
+            sections: vec![],
+        };
+        let file = render(&document, &SHAPE).unwrap();
+        assert_eq!(outline(&file, &document), Ok(()), "{file}");
+    }
 }
