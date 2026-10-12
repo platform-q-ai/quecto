@@ -3,19 +3,31 @@
 //! cannot change what a reader shows:
 //!
 //! - line ends become one LF (a CRLF or a lone CR);
-//! - text is made Unicode NFC (canonically equal, so shown the same);
+//! - text is made Unicode NFC, only where NFC keeps the text's ASCII
+//!   punctuation exactly (composing `>` and U+0338 into `≯`, say, would
+//!   unmake a quote; U+1FEF and U+037E would become a backtick and `;`):
+//!   otherwise the text is left as written, for the codec's NFC rule to
+//!   refuse with its line. Inside code NFC may change bytes, but the glyphs
+//!   shown are canonically equal;
 //! - blank lines go from the text's start and end, the final newline
 //!   included;
-//! - trailing spaces and tabs go from a line outside fenced code, only
-//!   where no hard break can form there: a single space, or a run before a
-//!   blank line or the end. A line that may be indented code (four columns
-//!   of indent, or a tab, before its content) is left alone.
+//! - trailing spaces and tabs go from a line outside fenced code only where
+//!   nothing can change: the run is a single space, or comes before a
+//!   blank line or the end (no hard break forms); the character before it
+//!   is safe (anything but a backslash, which a stripped space would turn
+//!   into a hard break); its paragraph so far holds no backtick or dollar
+//!   (a code span or math may run on across lines, showing the space); and
+//!   the line cannot be indented code (four columns of indent, or a tab).
 //!
 //! Everything else (tabs, no-break and other spaces, selectors, indents,
 //! hard breaks, blank-line runs, all of fenced code) is kept as written:
 //! the board's codec then holds it, or refuses it with its field and line.
-//! Task validation takes only normalised text, so no entry point skips
-//! this. Discussions (M4) run it before `append`.
+//!
+//! The write paths take only normalised text: `Task::entered` (create) and
+//! `edit_draft` check it with [`entered_text`] and [`entered_line`], so no
+//! entry point skips normalising. Reading a task back (`Task::new`) stays
+//! lenient by design, so what earlier builds stored still reads.
+//! Discussions (M4) run [`text`] before `append`.
 use super::schema_error::SchemaError;
 use unicode_normalization::UnicodeNormalization;
 
@@ -32,8 +44,9 @@ const CODE_INDENT: usize = 4;
 /// Where a line stands, as far as this reads markdown.
 #[derive(Clone, Copy)]
 enum Place {
-    /// Prose, outside any fence.
-    Prose,
+    /// Prose, outside any fence; `marked` once its paragraph so far holds
+    /// a backtick or a dollar.
+    Prose { marked: bool },
     /// Inside fenced code opened at the margin, which only its close ends.
     Fenced(Fence),
     /// After a fence opened inside a quote, a list item or an indent, which
@@ -44,42 +57,32 @@ enum Place {
 /// Markdown text (a description, an approach, a message) as the board
 /// keeps it.
 pub fn text(raw: &str) -> String {
-    let unified: String = raw
-        .replace("\r\n", "\n")
-        .replace('\r', "\n")
-        .nfc()
-        .collect();
+    let unified = canonical(&raw.replace("\r\n", "\n").replace('\r', "\n"));
     let lines: Vec<&str> = unified.split('\n').collect();
     let mut kept: Vec<String> = Vec::with_capacity(lines.len());
-    let mut place = Place::Prose;
-    // The backtick run of a code span open at the end of the last line: a
-    // span may run on across lines of one paragraph, its line ends shown
-    // as spaces, so the spaces before them are its own.
-    let mut span: Option<usize> = None;
+    let mut place = Place::Prose { marked: false };
     for (at, line) in lines.iter().enumerate() {
         let before_blank = lines.get(at + 1).is_none_or(|next| blank(next));
         let (next, written) = match place {
-            Place::Fenced(open) if open.closed_by(line) => (Place::Prose, (*line).to_string()),
+            Place::Fenced(open) if open.closed_by(line) => {
+                (Place::Prose { marked: false }, (*line).to_string())
+            }
             Place::Fenced(_) | Place::Unknown => (place, (*line).to_string()),
-            Place::Prose => match Fence::opened_by(line) {
+            Place::Prose { marked } => match Fence::opened_by(line) {
                 Some(open) if open.at_margin => (Place::Fenced(open), (*line).to_string()),
                 Some(_) => (Place::Unknown, (*line).to_string()),
+                // A blank line ends a paragraph; its own spacing may still
+                // count (an indented blank line stays in a list item).
+                None if blank(line) => (Place::Prose { marked: false }, (*line).to_string()),
                 None => {
-                    span = match blank(line) {
-                        true => None,
-                        false => open_span(line, span),
+                    let marked = marked || line.contains(['`', '$']);
+                    let written = match marked {
+                        false => without_trailing(line, before_blank),
+                        true => (*line).to_string(),
                     };
-                    let line = match span {
-                        None => without_trailing(line, before_blank),
-                        Some(_) => (*line).to_string(),
-                    };
-                    (Place::Prose, line)
+                    (Place::Prose { marked }, written)
                 }
             },
-        };
-        span = match next {
-            Place::Prose => span,
-            Place::Fenced(_) | Place::Unknown => None,
         };
         place = next;
         kept.push(written);
@@ -89,7 +92,7 @@ pub fn text(raw: &str) -> String {
         .position(|line| !blank(line))
         .unwrap_or(kept.len());
     let end = match place {
-        Place::Prose => kept
+        Place::Prose { .. } => kept
             .iter()
             .rposition(|line| !blank(line))
             .map_or(first, |last| last + 1),
@@ -101,7 +104,9 @@ pub fn text(raw: &str) -> String {
             _ => kept.len(),
         },
     };
-    kept[first..end.max(first)].join("\n")
+    let normal = kept[first..end.max(first)].join("\n");
+    debug_assert!(!normal.contains('\r'), "one LF between lines");
+    normal
 }
 
 /// Markdown text field `field` holds as it enters the board: itself once
@@ -132,12 +137,21 @@ pub fn entered_line(field: &str, held: &str) -> Result<(), SchemaError> {
 /// it: line ends and NFC as [`text`] makes them, and spaces and tabs gone
 /// from both edges (one line has no structure for them to start).
 pub fn line(raw: &str) -> String {
-    let unified: String = raw
-        .replace("\r\n", "\n")
-        .replace('\r', "\n")
-        .nfc()
-        .collect();
-    unified.trim_matches(spacing).to_string()
+    canonical(&raw.replace("\r\n", "\n").replace('\r', "\n"))
+        .trim_matches(spacing)
+        .to_string()
+}
+
+/// `text` made NFC, only where NFC keeps its ASCII punctuation exactly (an
+/// allowlist): otherwise as written.
+fn canonical(text: &str) -> String {
+    let nfc: String = text.nfc().collect();
+    let punctuation =
+        |text: &str| -> Vec<char> { text.chars().filter(char::is_ascii_punctuation).collect() };
+    match punctuation(&nfc) == punctuation(text) {
+        true => nfc,
+        false => text.to_string(),
+    }
 }
 
 fn spacing(c: char) -> bool {
@@ -149,38 +163,25 @@ fn blank(line: &str) -> bool {
     line.chars().all(spacing)
 }
 
-/// The backtick run of the code span open at the end of `line`, given the
-/// one `open` at its start: each run opens a span or closes the open one
-/// of its own length (backslashes are not escapes inside a span; outside,
-/// counting an escaped run as an opener only keeps more lines as written).
-fn open_span(line: &str, open: Option<usize>) -> Option<usize> {
-    let mut open = open;
-    let mut chars = line.chars().peekable();
-    while let Some(c) = chars.next() {
-        if c != '`' {
-            continue;
-        }
-        let mut run = 1;
-        while chars.next_if_eq(&'`').is_some() {
-            run += 1;
-        }
-        open = match open {
-            Some(length) if length == run => None,
-            Some(length) => Some(length),
-            None => Some(run),
-        };
+/// Whether a stripped trailing space after `c` changes nothing: anything
+/// a reader shows as itself, but a backslash (which a line end after it
+/// makes a hard break).
+fn safe_before_line_end(c: char) -> bool {
+    match c {
+        '\\' => false,
+        c => !spacing(c),
     }
-    open
 }
 
-/// `line` without its trailing spaces and tabs where no hard break can
-/// form: a single trailing space, or any run before a blank line or the
-/// end; a line that may be indented code keeps them.
+/// `line` without its trailing spaces and tabs where nothing can change: a
+/// single trailing space or any run before a blank line or the end, after
+/// a safe character, on a line that cannot be indented code.
 fn without_trailing(line: &str, before_blank: bool) -> String {
     let content = line.trim_end_matches(spacing);
     let run = &line[content.len()..];
     let breakless = run == " " || before_blank;
-    match breakless && !may_be_indented_code(line) {
+    let safe = content.chars().last().is_some_and(safe_before_line_end);
+    match breakless && safe && !may_be_indented_code(line) {
         true => content.to_string(),
         false => line.to_string(),
     }
@@ -221,11 +222,10 @@ impl Fence {
         let length = rest.chars().take_while(|c| *c == mark).count();
         let info = &rest[length..];
         let opens = length >= 3 && (mark == '~' || !info.contains('`'));
-        let quotes = prefix.matches('>').count();
         opens.then_some(Self {
             mark,
             length,
-            quotes,
+            quotes: prefix.matches('>').count(),
             at_margin: prefix.is_empty(),
         })
     }

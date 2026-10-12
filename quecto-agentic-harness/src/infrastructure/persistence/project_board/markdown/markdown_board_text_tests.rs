@@ -22,6 +22,7 @@ fn shown(text: &str) -> String {
             NodeValue::Text(literal) => *literal = literal.nfc().collect(),
             NodeValue::Code(code) => code.literal = code.literal.nfc().collect(),
             NodeValue::CodeBlock(block) => block.literal = block.literal.nfc().collect(),
+            NodeValue::Math(math) => math.literal = math.literal.nfc().collect(),
             _ => {}
         }
     }
