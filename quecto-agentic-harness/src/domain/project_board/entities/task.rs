@@ -41,7 +41,7 @@ pub struct TaskFields {
     pub parent: Option<Slug>,
     pub depends_on: Vec<Slug>,
     /// The version of the task's plan it was accepted at; the plan (its
-    /// items and team) and the runs of it are artifacts of their own.
+    /// task items and team) and the runs of it are artifacts of their own.
     pub accepted_plan: Option<u32>,
     pub claim: Option<Claim>,
     /// Every pull request delivering the task, each numbered from 1.

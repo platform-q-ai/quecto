@@ -20,7 +20,7 @@ use crate::domain::project_board::value_objects::vocabulary::{TaskKind, TaskStat
 
 /// A new task: only the task's own fields. Its plan and team are plan
 /// artifacts (#2481's artifact model), and its claim, runs, reviews, pull
-/// requests and items are made by the board's later changes, so none can
+/// requests and task items are made by the board's later changes, so none can
 /// be supplied here.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NewBoardTask {

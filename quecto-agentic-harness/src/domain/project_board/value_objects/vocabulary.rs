@@ -66,7 +66,7 @@ vocabulary!(
 );
 
 vocabulary!(
-    /// Where one item of a run's board stands.
+    /// Where one task item of a run's board stands.
     ItemState { Todo => "todo", Doing => "doing", Review => "review", Done => "done", Blocked => "blocked" }
 );
 
