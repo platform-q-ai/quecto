@@ -637,4 +637,37 @@ fn a_superseded_task_is_never_done() {
         refused
     );
     assert!(move_task(&review, InProgress, &person("Ada"), &[], &[], &now).is_ok());
+    let linking = superseded(task(Review));
+    assert_eq!(
+        move_task(&linking, Done, &person("Ada"), &[], &[], &now),
+        refused,
+        "superseded is said before the pull requests it links"
+    );
+}
+
+/// A task others took over is archived as superseded, as the refusal of
+/// its completion advises; one archived otherwise is unresolved.
+#[test]
+fn a_superseded_task_is_archived_as_superseded() {
+    let now = at("10:00:00");
+    for status in [Ready, Draft] {
+        let mut fields = task(status).into_fields();
+        fields.superseded_by = vec![Slug::parse("next").unwrap()];
+        let archived = move_task(
+            &Task::new(fields).unwrap(),
+            Archived,
+            &person("Bob"),
+            &[],
+            &[],
+            &now,
+        )
+        .unwrap();
+        assert_eq!(
+            archived.fields().resolution,
+            Some(Resolution::Superseded),
+            "{status:?}"
+        );
+        let plain = move_task(&task(status), Archived, &person("Bob"), &[], &[], &now).unwrap();
+        assert_eq!(plain.fields().resolution, None, "{status:?}");
+    }
 }

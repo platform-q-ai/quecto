@@ -94,6 +94,11 @@ pub fn move_task(
             }
         }
     }
+    // A task others took over is never done, whatever it links.
+    match to {
+        Done => not_superseded(task)?,
+        Draft | Ready | Claimed | InProgress | Review | Blocked | Archived => {}
+    }
     // The holder finishes a task only when it links no pull request and
     // no change: one that links them is done when they merge
     // (`complete_merged`, `changes::complete`). The holder may unlink one
@@ -109,15 +114,11 @@ pub fn move_task(
         }
         _ => {}
     }
-    match to {
-        Done => not_superseded(task)?,
-        Draft | Ready | Claimed | InProgress | Review | Blocked | Archived => {}
-    }
     may_move_with(task, runs, to)?;
     let at = stamp(task, now)?;
     let mut next = task.fields().clone();
     next.status = to;
-    next.resolution = resolved(to, next.resolution);
+    next.resolution = resolved(to, next.resolution, !next.superseded_by.is_empty());
     next.claim = match effect {
         ClaimEffect::Keep => next.claim,
         ClaimEffect::Take => Some(new_claim(actor, &at)?),
@@ -219,7 +220,7 @@ pub(super) fn finish(
     );
     let mut next = fields.clone();
     next.status = Done;
-    next.resolution = resolved(Done, next.resolution);
+    next.resolution = resolved(Done, next.resolution, false);
     next.claim = None;
     let task = settle(next, &at)?;
     assert_eq!(
@@ -231,14 +232,17 @@ pub(super) fn finish(
 }
 
 /// A task's resolution once it moves `to` a status: one done is
-/// completed; one archived keeps what it had (its done one's, or none);
-/// any other has none, as it had none (only a done or archived task is
+/// completed; one archived keeps what it had (its done one's), or is
+/// `superseded` when others took it over (`superseded`), or has none; any
+/// other has none, as it had none (only a done or archived task is
 /// resolved, and neither moves back).
-fn resolved(to: TaskStatus, had: Option<Resolution>) -> Option<Resolution> {
-    match to {
-        Done => Some(Resolution::Completed),
-        Archived => had,
-        Draft | Ready | Claimed | InProgress | Review | Blocked => {
+fn resolved(to: TaskStatus, had: Option<Resolution>, superseded: bool) -> Option<Resolution> {
+    match (to, had, superseded) {
+        (Done, _, _) => Some(Resolution::Completed),
+        (Archived, Some(had), _) => Some(had),
+        (Archived, None, true) => Some(Resolution::Superseded),
+        (Archived, None, false) => None,
+        (Draft | Ready | Claimed | InProgress | Review | Blocked, _, _) => {
             assert!(
                 had.is_none(),
                 "an unresolved task moves among the open statuses"

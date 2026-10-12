@@ -91,8 +91,9 @@ impl Reference {
             None => Err(SchemaError::new(
                 "reference",
                 format!(
-                    "{text:?} is not #n, owner/repo#n or an https URL of at most \
-                     {MAX_REFERENCE_BYTES} bytes"
+                    "{:?} is not #n, owner/repo#n or an https URL of at most \
+                     {MAX_REFERENCE_BYTES} bytes",
+                    echoed(text)
                 ),
             )),
         }
@@ -105,9 +106,11 @@ impl Reference {
 
     /// What makes two references the same pointer: an issue's repository
     /// lowercased (the host names repositories without regard to case);
-    /// a URL with its host lowercased, port 443 dropped and leading zeros
-    /// gone from another, an empty path as `/`, and its escapes' hex in
-    /// upper case. A task does not know its own repository, so
+    /// a URL normalised as RFC 3986 §6.2.2 does: its host lowercased, port
+    /// 443 dropped and leading zeros gone from another, escapes of
+    /// unreserved characters decoded and the rest in upper-case hex, dot
+    /// segments removed, an empty path as `/`, and an empty query or
+    /// fragment as none. A task does not know its own repository, so
     /// `owner/repo#n` for its own is a different key from `#n`.
     pub fn key(&self) -> &str {
         &self.key
@@ -150,29 +153,88 @@ fn escapes_hold(text: &str) -> bool {
     })
 }
 
-/// `text` with every escape's hex in upper case.
-fn escapes_upper(text: &str) -> String {
+/// `text` with each escape of an unreserved character decoded and every
+/// other escape's hex in upper case (RFC 3986 §6.2.2.2); every `%` in it
+/// starts an escape ([`escapes_hold`]).
+fn escapes_normal(text: &str) -> String {
+    let bytes = text.as_bytes();
     let mut out = String::with_capacity(text.len());
-    let mut upper = 0;
-    for character in text.chars() {
-        match (character, upper) {
-            ('%', _) => {
-                upper = 2;
-                out.push('%');
+    let mut at = 0;
+    while at < bytes.len() {
+        let escaped = match (bytes[at], bytes.get(at + 1..at + 3)) {
+            (b'%', Some(hex)) => std::str::from_utf8(hex)
+                .ok()
+                .and_then(|hex| u8::from_str_radix(hex, 16).ok()),
+            _ => None,
+        };
+        match escaped {
+            Some(byte) if byte.is_ascii_alphanumeric() || b"-._~".contains(&byte) => {
+                out.push(char::from(byte));
+                at += 3;
             }
-            (_, 1..=2) => {
-                upper -= 1;
-                out.push(character.to_ascii_uppercase());
+            Some(byte) => {
+                out.push_str(&format!("%{byte:02X}"));
+                at += 3;
             }
-            _ => out.push(character),
+            None => {
+                out.push(char::from(bytes[at]));
+                at += 1;
+            }
         }
     }
     out
 }
 
+/// `path` without its dot segments (RFC 3986 §5.2.4).
+fn without_dots(path: &str) -> String {
+    let mut input = path;
+    let mut output = String::with_capacity(path.len());
+    let pop = |output: &mut String| {
+        let cut = output.rfind('/').unwrap_or(0);
+        output.truncate(cut);
+    };
+    while !input.is_empty() {
+        match input {
+            _ if input.starts_with("../") => input = &input[3..],
+            _ if input.starts_with("./") => input = &input[2..],
+            _ if input.starts_with("/./") => input = &input[2..],
+            "/." => input = "/",
+            _ if input.starts_with("/../") => {
+                input = &input[3..];
+                pop(&mut output);
+            }
+            "/.." => {
+                input = "/";
+                pop(&mut output);
+            }
+            "." | ".." => input = "",
+            _ => {
+                let start = usize::from(input.starts_with('/'));
+                let end = input[start..]
+                    .find('/')
+                    .map_or(input.len(), |end| end + start);
+                output.push_str(&input[..end]);
+                input = &input[end..];
+            }
+        }
+    }
+    output
+}
+
+/// A host's last label names it, not an address: it is not all digits
+/// (IPv4) and not hex as `0x…` (an address in WHATWG's reading).
+fn named(last: &str) -> bool {
+    let lower = last.to_ascii_lowercase();
+    let digits = lower.bytes().all(|byte| byte.is_ascii_digit());
+    let hex = lower
+        .strip_prefix("0x")
+        .is_some_and(|rest| rest.bytes().all(|byte| byte.is_ascii_hexdigit()));
+    !digits && !hex
+}
+
 /// `text` as an https URL and its key: a host of dot-joined labels, the
-/// last not all digits (no IP literal), at most 253 bytes; an optional
-/// port from 1 to 65535; then a path, query and fragment of
+/// last naming it ([`named`]), at most 253 bytes; an optional port from 1
+/// to 65535 (leading zeros aside); then a path, query and fragment of
 /// [`url_char`]s, with at most one `#` and every `%` an escape.
 fn url_key(text: &str) -> Option<String> {
     let rest = text.strip_prefix("https://")?;
@@ -183,19 +245,21 @@ fn url_key(text: &str) -> Option<String> {
         None => (authority, None),
     };
     let labels: Vec<&str> = host.split('.').collect();
-    let named = labels
-        .last()
-        .is_some_and(|last| last.bytes().any(|byte| !byte.is_ascii_digit()));
     let host_holds = (1..=253).contains(&host.len())
         && labels.iter().all(|label| LABEL.is_match(label))
-        && named;
+        && labels.last().is_some_and(|last| named(last));
     let port = match port {
         None => Some(None),
-        Some(port) => (port.len() <= 5 && port.bytes().all(|byte| byte.is_ascii_digit()))
-            .then(|| port.parse::<u32>().ok())
-            .flatten()
-            .filter(|number| (1..=65_535).contains(number))
-            .map(Some),
+        Some(port) => {
+            let digits = port.trim_start_matches('0');
+            (!port.is_empty()
+                && port.bytes().all(|byte| byte.is_ascii_digit())
+                && digits.len() <= 5)
+                .then(|| digits.parse::<u32>().ok())
+                .flatten()
+                .filter(|number| (1..=65_535).contains(number))
+                .map(Some)
+        }
     };
     let tail_holds =
         tail.bytes().all(url_char) && tail.matches('#').count() <= 1 && escapes_hold(tail);
@@ -205,17 +269,32 @@ fn url_key(text: &str) -> Option<String> {
                 None | Some(443) => String::new(),
                 Some(port) => format!(":{port}"),
             };
-            let path = match tail.as_bytes().first() {
-                Some(b'/') => "",
-                None | Some(_) => "/",
+            let (before, fragment) = tail.split_once('#').unwrap_or((tail, ""));
+            let (path, query) = before.split_once('?').unwrap_or((before, ""));
+            let path = match without_dots(&escapes_normal(path)).as_str() {
+                "" => "/".to_string(),
+                path => path.to_string(),
+            };
+            let part = |mark: char, text: &str| match text {
+                "" => String::new(),
+                text => format!("{mark}{}", escapes_normal(text)),
             };
             Some(format!(
-                "https://{}{port}{path}{}",
+                "https://{}{port}{path}{}{}",
                 host.to_ascii_lowercase(),
-                escapes_upper(tail)
+                part('?', query),
+                part('#', fragment)
             ))
         }
         _ => None,
+    }
+}
+
+/// `text` shown in a refusal: at most its first 64 characters.
+fn echoed(text: &str) -> String {
+    match text.char_indices().nth(64) {
+        None => text.to_string(),
+        Some((cut, _)) => format!("{}…", &text[..cut]),
     }
 }
 

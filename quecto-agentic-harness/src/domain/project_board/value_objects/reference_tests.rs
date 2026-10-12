@@ -36,6 +36,8 @@ fn a_reference_is_an_issue_or_an_https_url() {
         "https://a#123".into(),
         "https://a/b#42".into(),
         "https://a/!$&'()*+,;=:@-._~?/x".into(),
+        "https://a.0xg".into(),
+        "https://a:000443".into(),
     ];
     for text in fine {
         assert!(Reference::parse(&text).is_ok(), "{text}");
@@ -58,6 +60,10 @@ fn a_reference_is_an_issue_or_an_https_url() {
         format!("https://{label}a.com"),
         "https://1.2.3.4".into(),
         "https://example.123".into(),
+        "https://0x7f000001".into(),
+        "https://1.0x1".into(),
+        "https://a.0X".into(),
+        "https://a:0000000".into(),
         "https://[::1]".into(),
         "https://u:p@a".into(),
         "https://a:1@b".into(),
@@ -113,6 +119,17 @@ fn a_references_key_names_what_it_points_at() {
         ("https://a?q", "https://a/?q"),
         ("https://a#f", "https://a/#f"),
         ("https://a/%2f", "https://a/%2F"),
+        ("https://a/%7e", "https://a/~"),
+        ("https://a/%41b", "https://a/Ab"),
+        ("https://a/?", "https://a/"),
+        ("https://a/#", "https://a/"),
+        ("https://a/?#", "https://a/"),
+        ("https://a/b/./c", "https://a/b/c"),
+        ("https://a/b/../c", "https://a/c"),
+        ("https://a/b/c/..", "https://a/b/"),
+        ("https://a/../b", "https://a/b"),
+        ("https://a/b/%2e%2E/c", "https://a/c"),
+        ("https://a:000443/x", "https://a/x"),
     ] {
         assert_eq!(key(one), key(other), "{one} {other}");
     }
@@ -121,6 +138,9 @@ fn a_references_key_names_what_it_points_at() {
         ("#1", "owner/repo#1"),
         ("owner/repo#1", "owner/repo#2"),
         ("https://a:8080/x", "https://a/x"),
+        ("https://a/%2F", "https://a//"),
+        ("https://a/?q", "https://a/"),
+        ("https://a/b/c", "https://a/b/c/"),
     ] {
         assert_ne!(key(one), key(other), "{one} {other}");
     }
@@ -138,4 +158,16 @@ fn a_references_key_names_what_it_points_at() {
         Reference::parse("https://a").unwrap().points(),
         Points::Page
     );
+}
+
+/// A refusal echoes at most the first 64 characters of what it refused.
+#[test]
+fn a_refusal_echoes_a_capped_reference() {
+    let long = format!("not a reference {}", "x".repeat(200));
+    let problem = Reference::parse(&long).unwrap_err().problem;
+    let shown: String = long.chars().take(64).collect();
+    assert!(problem.contains(&format!("{shown}…")), "{problem}");
+    assert!(!problem.contains(&long), "{problem}");
+    let short = Reference::parse("nope").unwrap_err().problem;
+    assert!(short.starts_with("\"nope\""), "{short}");
 }

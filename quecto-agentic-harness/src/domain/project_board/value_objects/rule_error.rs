@@ -103,10 +103,17 @@ pub enum BoardRuleError {
     /// superseded, never done.
     Superseded { by: Vec<Slug> },
     /// Two tasks name the same issue.
-    IssueShared { issue: u64, task: Slug },
-    /// A task's issue is a pull request on the board (the host numbers
-    /// issues and pull requests from one sequence).
-    IssueIsPr { issue: u64, task: Slug },
+    IssueShared { issue: u64, tasks: [Slug; 2] },
+    /// `task`'s issue is a pull request `pr_holder` links on the board
+    /// (the host numbers issues and pull requests from one sequence).
+    IssueIsPr {
+        issue: u64,
+        task: Slug,
+        pr_holder: Slug,
+    },
+    /// `task` names by `#n` the pull request its own change `change`
+    /// links.
+    OwnPrReferenced { task: Slug, pr: u64, change: u32 },
     /// Only a draft is edited in place; a task past its draft changes
     /// through its moves.
     NotDraft(TaskStatus),
@@ -220,12 +227,25 @@ impl fmt::Display for BoardRuleError {
                     by.join(", ")
                 )
             }
-            Self::IssueShared { issue, task } => {
-                write!(f, "task {} already has issue {issue}", task.as_str())
-            }
-            Self::IssueIsPr { issue, task } => write!(
+            Self::IssueShared { issue, tasks } => write!(
                 f,
-                "issue {issue} of task {} is a pull request on the board",
+                "tasks {} and {} both have issue {issue}",
+                tasks[0].as_str(),
+                tasks[1].as_str()
+            ),
+            Self::IssueIsPr {
+                issue,
+                task,
+                pr_holder,
+            } => write!(
+                f,
+                "issue {issue} of task {} is a pull request task {} links",
+                task.as_str(),
+                pr_holder.as_str()
+            ),
+            Self::OwnPrReferenced { task, pr, change } => write!(
+                f,
+                "task {} refers to #{pr}, the pull request of its own change {change}",
                 task.as_str()
             ),
             Self::Invalid(error) => write!(f, "invalid task: {error}"),

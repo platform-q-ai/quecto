@@ -463,10 +463,18 @@ fn an_older_done_task_is_read_as_completed() {
         matches!(decode(current.as_bytes()), Err(RecordError::Invalid(error)) if error.field == "resolution"),
         "a schema-3 done task without its resolution"
     );
-    let reread = encode(&task).unwrap();
-    assert!(
-        String::from_utf8(reread)
-            .unwrap()
-            .contains("\"resolution\": \"completed\"")
+    let rewritten = String::from_utf8(encode(&task).unwrap()).unwrap();
+    assert!(rewritten.starts_with("{\n  \"schema\": 3,"), "{rewritten}");
+    assert!(rewritten.contains("\"resolution\": \"completed\""));
+    assert_eq!(
+        decode(rewritten.as_bytes()),
+        Ok(task),
+        "read back as it was"
+    );
+    let archived = older.replace("\"done\"", "\"archived\"");
+    assert_eq!(
+        decode(archived.as_bytes()).unwrap().fields().resolution,
+        None,
+        "an older archived task keeps no resolution"
     );
 }

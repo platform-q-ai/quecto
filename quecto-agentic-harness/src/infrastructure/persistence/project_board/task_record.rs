@@ -212,7 +212,8 @@ pub fn decode(bytes: &[u8]) -> Result<Task, RecordError> {
         }
     }
     // A done task is completed. One written before schema 3 has no
-    // resolution: it is read as completed, as it ended.
+    // resolution: it is read as completed, as it ended. An archived one
+    // keeps none: whether it was done or dropped first is not known.
     let mut record = record;
     let upgraded = matches!(
         (record.schema, record.status.as_str(), &record.resolution),

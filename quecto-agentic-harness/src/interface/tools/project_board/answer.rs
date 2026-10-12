@@ -502,12 +502,27 @@ fn rule_json(rule: &BoardRuleError) -> Value {
             let by: Vec<&str> = by.iter().map(Slug::as_str).collect();
             json!({"code": "superseded", "by": by})
         }
-        R::IssueShared { issue, task } => {
-            json!({"code": "issue_shared", "issue": issue, "task": task.as_str()})
-        }
-        R::IssueIsPr { issue, task } => {
-            json!({"code": "issue_is_pr", "issue": issue, "task": task.as_str()})
-        }
+        R::IssueShared { issue, tasks } => json!({
+            "code": "issue_shared",
+            "issue": issue,
+            "tasks": [tasks[0].as_str(), tasks[1].as_str()],
+        }),
+        R::IssueIsPr {
+            issue,
+            task,
+            pr_holder,
+        } => json!({
+            "code": "issue_is_pr",
+            "issue": issue,
+            "task": task.as_str(),
+            "pr_holder": pr_holder.as_str(),
+        }),
+        R::OwnPrReferenced { task, pr, change } => json!({
+            "code": "own_pr_referenced",
+            "task": task.as_str(),
+            "pr": pr,
+            "change": change,
+        }),
         R::Invalid(schema) => json!({
             "code": "invalid",
             "field": shown(&schema.field),
