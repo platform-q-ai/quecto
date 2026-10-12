@@ -6,6 +6,7 @@ use crate::domain::project_board::entities::claim::{Identity, MAX_EMAIL_BYTES};
 use crate::domain::project_board::entities::plan::{MAX_APPROACH_CHARS, MAX_PLAN_TEXT_BYTES};
 use crate::domain::project_board::entities::task_parts::{MAX_ITEMS, MAX_PER_ITEM};
 use crate::domain::project_board::entities::team::{MAX_IMAGE_BYTES, MAX_MODEL_BYTES, MAX_ROLES};
+use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
 use crate::infrastructure::persistence::project_board::markdown::MarkdownError;
 
@@ -513,14 +514,14 @@ fn a_dependency_on_an_unknown_item_is_refused() {
 /// An approach the blocks refuse names its field and its line there.
 #[test]
 fn an_approach_the_blocks_refuse_names_its_field() {
-    for (approach, line) in [("abc\n", "2"), ("a\n\n\nb", "3"), ("- a\n\n- b", "3")] {
+    for (approach, line) in [("abc\n", 2), ("a\n\n\nb", 2), ("- a\n\n- b", 3)] {
         let plan = plan(PlanFields {
             approach: approach.into(),
             ..example()
         });
         let refused = encode::<PlanCodec>(&plan);
         assert!(
-            matches!(&refused, Err(CodecError::Cell { field: "Approach", problem }) if problem.contains(line)),
+            matches!(&refused, Err(CodecError::Cell { field: "Approach", problem }) if problem.starts_with(&format!("line {line}:"))),
             "{approach:?}: {refused:?}"
         );
     }

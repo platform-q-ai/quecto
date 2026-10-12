@@ -17,7 +17,6 @@ use super::cells::{self, column, refused};
 use super::{ArtifactCodec, CodecError};
 use crate::domain::project_board::entities::plan::{Plan, PlanFields, PlanItem};
 use crate::domain::project_board::entities::team::{Budget, Role, RoleLimits, Team};
-use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::vocabulary::{Effort, PlanState};
 use crate::infrastructure::persistence::project_board::markdown::{
     Body, BodyShape, CellKind, Column, Document, Limits, Section, SectionShape, Shape, blocks_of,
@@ -159,7 +158,9 @@ impl ArtifactCodec for PlanCodec {
         fields.push((CREATED, cells::time(&plan.created)));
         fields.push((UPDATED, cells::time(&plan.updated)));
         let mut sections = vec![];
-        let approach = blocks_of(&plan.approach)?;
+        // The approach's own line, from 1, names where it is refused.
+        let approach =
+            blocks_of(&plan.approach).map_err(|error| refused(APPROACH, error.to_string()))?;
         if let Some(approach) = held(approach) {
             sections.push(section(APPROACH, Body::Prose(approach)));
         }
@@ -201,6 +202,15 @@ impl ArtifactCodec for PlanCodec {
             let rows = rows.collect::<Result<Vec<_>, CodecError>>()?;
             sections.push(section(ROLES, Body::Table(rows)));
         }
+        debug_assert!(
+            in_shape_order(fields.iter().map(|(name, _)| *name)),
+            "the fields are written in the shape's order"
+        );
+        debug_assert_eq!(
+            plan.team.is_some(),
+            sections.iter().any(|section| section.heading == ROLES),
+            "a Roles section exactly when the plan names a team"
+        );
         Ok(Document {
             schema: Self::SCHEMA,
             title: title(plan),
@@ -275,6 +285,14 @@ impl ArtifactCodec for PlanCodec {
         Plan::new(fields)
             .map_err(|error| refused("Plan", format!("{}: {}", error.field, error.problem)))
     }
+}
+
+/// Whether `names` come in [`FIELDS`]' order, each once.
+fn in_shape_order<'a>(names: impl Iterator<Item = &'a str>) -> bool {
+    let mut shape = FIELDS.iter();
+    names
+        .into_iter()
+        .all(|name| shape.any(|field| field.name == name))
 }
 
 /// The derived title.
@@ -379,7 +397,7 @@ fn role(row: &[String]) -> Result<Role, CodecError> {
     };
     let narrow = |_| refused(ROLES, "members or turns past their range");
     Ok(Role {
-        name: Slug::parse(name).map_err(|error| refused(ROLES, error.problem))?,
+        name: cells::read_slug(ROLES, name)?,
         model: model.clone(),
         effort: cells::read_word(ROLES, effort, Effort::parse)?,
         limits: RoleLimits {
