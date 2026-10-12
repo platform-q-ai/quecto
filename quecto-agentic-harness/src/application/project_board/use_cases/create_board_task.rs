@@ -44,7 +44,7 @@ impl CreateBoardTask {
         let tasks = commit(&*self.store, &*self.clock, &message, |board, when| {
             free(board, new)?;
             Ok(vec![
-                Task::new(created_at(new, &when.now)).map_err(ProjectBoardError::Invalid)?,
+                Task::entered(created_at(new, &when.now)).map_err(ProjectBoardError::Invalid)?,
             ])
         })?;
         Ok(tasks.into_iter().next().expect("a create writes its task"))

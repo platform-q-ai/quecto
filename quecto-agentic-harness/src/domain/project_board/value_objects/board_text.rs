@@ -16,7 +16,12 @@
 //! the board's codec then holds it, or refuses it with its field and line.
 //! Task validation takes only normalised text, so no entry point skips
 //! this. Discussions (M4) run it before `append`.
+use super::schema_error::SchemaError;
 use unicode_normalization::UnicodeNormalization;
+
+/// Why text a write path takes is refused: it was never normalised.
+const NOT_ENTERED: &str = "must be board text as it enters (normalised: one LF between \
+     lines, NFC, no blank lines at its edges, no trailing space where no hard break forms)";
 
 /// The most spaces before a fence's closing run a reader still takes as
 /// its close.
@@ -97,6 +102,30 @@ pub fn text(raw: &str) -> String {
         },
     };
     kept[first..end.max(first)].join("\n")
+}
+
+/// Markdown text field `field` holds as it enters the board: itself once
+/// normalised (an allowlist: nothing else is taken).
+///
+/// # Errors
+/// Text no write path normalised.
+pub fn entered_text(field: &str, held: &str) -> Result<(), SchemaError> {
+    match text(held) == held {
+        true => Ok(()),
+        false => Err(SchemaError::new(field, NOT_ENTERED)),
+    }
+}
+
+/// One line field `field` holds as it enters the board: itself once
+/// normalised.
+///
+/// # Errors
+/// A line no write path normalised.
+pub fn entered_line(field: &str, held: &str) -> Result<(), SchemaError> {
+    match line(held) == held {
+        true => Ok(()),
+        false => Err(SchemaError::new(field, NOT_ENTERED)),
+    }
 }
 
 /// One line of text (a title, a criterion, an owner) as the board keeps

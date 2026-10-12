@@ -1,6 +1,7 @@
 //! A task: the overall job a project plans, readies and claims. A [`Task`]
 //! is only ever built from fields that pass [`Task::new`], so an invalid
 //! task cannot exist; change one by taking its fields and building anew.
+use super::super::value_objects::board_text;
 use super::super::value_objects::reference::{IssueNumber, Points, Reference};
 use super::super::value_objects::schema_error::{SchemaError, distinct, line, markdown};
 use super::super::value_objects::slug::Slug;
@@ -85,6 +86,19 @@ impl Task {
     pub fn new(fields: TaskFields) -> Result<Self, SchemaError> {
         validate(&fields)?;
         Ok(Self(fields))
+    }
+
+    /// A task built from text as it enters the board (the write path):
+    /// its title and description must be normalised board text, so no
+    /// entry point skips normalising. Reading a task back (`new`) takes
+    /// what earlier builds stored.
+    ///
+    /// # Errors
+    /// Text that was never normalised, or what `new` refuses.
+    pub fn entered(fields: TaskFields) -> Result<Self, SchemaError> {
+        board_text::entered_line("title", &fields.title)?;
+        board_text::entered_text("description", &fields.description)?;
+        Self::new(fields)
     }
 
     pub fn fields(&self) -> &TaskFields {
