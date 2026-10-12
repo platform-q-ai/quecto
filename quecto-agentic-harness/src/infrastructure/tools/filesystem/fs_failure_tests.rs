@@ -464,6 +464,94 @@ async fn a_panicking_write_task_is_an_internal_fault() {
     assert_eq!(failure.file, FileState::Unknown);
 }
 
+/// #2517: the write runs as the call's own work, in its panic scope (where
+/// the process's hook contains a panic), and its panic is still answered
+/// in #2254's words.
+#[tokio::test]
+async fn a_write_runs_in_its_calls_panic_scope() {
+    use crate::application::tool_panic_scope::{ToolScope, current, scoped};
+    let failure = scoped(ToolScope::new("write"), async {
+        run_write(|| {
+            let tool = current().map(|scope| scope.tool().to_string());
+            panic!("in the scope of {tool:?}")
+        })
+        .await
+        .unwrap_err()
+    })
+    .await;
+    assert_eq!(failure.file, FileState::Unknown);
+    let text = write_failure("f", &failure);
+    let answer = regex::Regex::new(
+        r#"^writing f stopped on an internal error \(the write task failed: task \d+ panicked with message "in the scope of Some\(\\"write\\"\)"\), so whether it was written is not known\. Read it to check before writing it again\.$"#,
+    )
+    .unwrap();
+    assert!(answer.is_match(&text), "{text}");
+}
+
+/// The environment variable that turns [`write_panic_child`] into the
+/// process the test below runs.
+const WRITE_PANIC_CHILD: &str = "QUECTO_2517_WRITE_PANIC_CHILD";
+
+/// #2517: a process with the real panic hook survives a panic inside a
+/// write: the call fails with #2254's answer, and the scope is left clean.
+#[test]
+fn a_panic_inside_a_write_fails_the_call_and_does_not_abort() {
+    use crate::interface::panic_hook::test_support::without_core_dumps;
+    let output = without_core_dumps(&mut std::process::Command::new(
+        std::env::current_exe().unwrap(),
+    ))
+    .args([
+        "--exact",
+        "infrastructure::tools::filesystem::fs_failure::tests::write_panic_child",
+        "--nocapture",
+        "--test-threads=1",
+    ])
+    .env(WRITE_PANIC_CHILD, "1")
+    .env("RUST_BACKTRACE", "0")
+    .stdin(std::process::Stdio::null())
+    .output()
+    .unwrap();
+    let (stdout, stderr) = (
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert!(
+        output.status.success(),
+        "{:?} {stdout} {stderr}",
+        output.status
+    );
+    assert!(
+        stdout.contains(
+            "ANSWER writing f stopped on an internal error (the write task failed: task "
+        ) && stdout.contains(r#"panicked with message "injected write panic"), so whether"#),
+        "{stdout}"
+    );
+    assert!(stdout.contains("RECORDED None"), "{stdout}");
+}
+
+/// The child side of the test above: a no-op in an ordinary run.
+#[test]
+fn write_panic_child() {
+    if std::env::var(WRITE_PANIC_CHILD).is_err() {
+        return;
+    }
+    use crate::application::tool_panic_scope::{ToolScope, scoped};
+    crate::interface::panic_hook::install();
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .unwrap();
+    let scope = ToolScope::new("write");
+    let failure = runtime
+        .block_on(scoped(scope.clone(), async {
+            run_write(|| panic!("injected write panic")).await
+        }))
+        .unwrap_err();
+    println!("ANSWER {}", write_failure("f", &failure));
+    println!("RECORDED {:?}", scope.recorded_panic());
+}
+
 /// Re-review: a two-link cycle is named as a loop.
 #[tokio::test]
 async fn a_cycle_of_two_links_is_a_loop() {
