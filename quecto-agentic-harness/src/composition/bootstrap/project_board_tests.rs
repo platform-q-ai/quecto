@@ -228,3 +228,202 @@ fn a_cancelled_calls_write_lands_nothing() {
     let listed = run(&writer.operations, r#"{"op": "list"}"#);
     assert_eq!(listed["tasks"], json!([]), "{listed}");
 }
+
+/// `environment` with git's command-scope configuration `settings`
+/// (`GIT_CONFIG_COUNT`, `GIT_CONFIG_KEY_<n>`, `GIT_CONFIG_VALUE_<n>`).
+fn with_command_config(
+    mut environment: ProjectBoardEnvironment,
+    settings: &[(&str, &str)],
+) -> ProjectBoardEnvironment {
+    environment
+        .vars
+        .push(("GIT_CONFIG_COUNT".into(), settings.len().to_string().into()));
+    for (n, (key, value)) in settings.iter().enumerate() {
+        environment
+            .vars
+            .push((format!("GIT_CONFIG_KEY_{n}").into(), (*key).into()));
+        environment
+            .vars
+            .push((format!("GIT_CONFIG_VALUE_{n}").into(), (*value).into()));
+    }
+    environment
+}
+
+/// The author and committer of the board branch's last commit on the
+/// remote, `name <email>` each.
+fn board_commit_identities(work: &Path) -> String {
+    let output = Command::new("git")
+        .args(["log", "-1", "--format=%an <%ae>|%cn <%ce>", "quecto/board"])
+        .current_dir(work.parent().unwrap().join("remote.git"))
+        .env_clear()
+        .env("PATH", std::env::var_os("PATH").unwrap())
+        .envs([
+            ("GIT_CONFIG_GLOBAL", "/dev/null"),
+            ("GIT_CONFIG_NOSYSTEM", "1"),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8_lossy(&output.stdout)
+        .trim_end()
+        .to_string()
+}
+
+/// A caller (the pocket relay) names the board's committer in git's
+/// command scope, which outranks the clone's own `user.name` and
+/// `user.email`: the board commits and claims as that identity.
+#[test]
+fn a_command_scope_identity_outranks_the_clones_own() {
+    let (_dir, work) = repository();
+    let pocket = with_command_config(
+        environment(&work, Access::Write),
+        &[
+            ("user.name", "quecto pocket"),
+            ("user.email", "pocket@quecto.invalid"),
+        ],
+    );
+    let handles = build_project_board_handles(&pocket).unwrap();
+    let ops = |request: Value| run(&handles.operations, &request.to_string());
+    assert_eq!(ops(json!({"op": "bootstrap"}))["ok"], json!(true));
+    let created = ops(json!({"op": "create", "task": "a", "title": "A", "status": "ready"}));
+    assert_eq!(created["ok"], json!(true), "{created}");
+    assert_eq!(
+        board_commit_identities(&work),
+        "quecto pocket <pocket@quecto.invalid>|quecto pocket <pocket@quecto.invalid>"
+    );
+    let claimed = ops(json!({"op": "move", "task": "a", "to": "claimed"}));
+    assert_eq!(
+        claimed["task"]["claim"]["holder"],
+        json!({"name": "quecto pocket", "email": "pocket@quecto.invalid"}),
+        "{claimed}"
+    );
+}
+
+/// quecto's own container scripts set the identity beside a credential
+/// helper (`create.sh`, `exec.sh`): the identity writes the board, the
+/// helper is skipped, and nothing is warned of.
+#[test]
+fn the_container_scripts_identity_writes_the_board() {
+    let (_dir, work) = repository();
+    let container = with_command_config(
+        environment(&work, Access::Write),
+        &[
+            ("user.name", "quecto pocket"),
+            ("user.email", "pocket@quecto.invalid"),
+            (
+                "credential.https://github.com.helper",
+                "!gh auth git-credential",
+            ),
+        ],
+    );
+    let mut warnings: Vec<String> = Vec::new();
+    let handles = build_with_warnings(&container, &mut |line| warnings.push(line.into())).unwrap();
+    assert_eq!(warnings, Vec::<String>::new());
+    let ops = |request: Value| run(&handles.operations, &request.to_string());
+    assert_eq!(ops(json!({"op": "bootstrap"}))["ok"], json!(true));
+    let created = ops(json!({"op": "create", "task": "a", "title": "A"}));
+    assert_eq!(created["ok"], json!(true), "{created}");
+    assert_eq!(
+        board_commit_identities(&work),
+        "quecto pocket <pocket@quecto.invalid>|quecto pocket <pocket@quecto.invalid>"
+    );
+}
+
+/// A malformed command-scope set (here a count of 2 with one setting) is
+/// dropped whole and the board carries on as before: a write, as the
+/// clone's own committer, warns of it once in words that name the
+/// variable; a read, which names no committer, warns of nothing.
+#[test]
+fn a_malformed_set_is_dropped_and_only_a_write_warns_of_it() {
+    let (_dir, work) = repository();
+    let plain = build_project_board_handles(&environment(&work, Access::Write)).unwrap();
+    assert_eq!(
+        run(&plain.operations, r#"{"op": "bootstrap"}"#)["ok"],
+        json!(true)
+    );
+    let malformed = |access| {
+        let mut environment = with_command_config(
+            environment(&work, access),
+            &[
+                ("user.name", "quecto pocket"),
+                ("user.email", "p@q.invalid"),
+            ],
+        );
+        environment
+            .vars
+            .retain(|(name, _)| name != "GIT_CONFIG_KEY_1");
+        environment
+    };
+    let mut warnings: Vec<String> = Vec::new();
+    let writer = build_with_warnings(&malformed(Access::Write), &mut |line| {
+        warnings.push(line.into())
+    })
+    .unwrap();
+    assert_eq!(
+        warnings,
+        [
+            "warning: project board: ignoring git's command-scope configuration \
+          (GIT_CONFIG_COUNT): GIT_CONFIG_KEY_1 is not set"
+        ]
+    );
+    let created = run(
+        &writer.operations,
+        r#"{"op": "create", "task": "a", "title": "A"}"#,
+    );
+    assert_eq!(created["ok"], json!(true), "{created}");
+    assert_eq!(
+        board_commit_identities(&work),
+        "Ada <ada@example.com>|Ada <ada@example.com>"
+    );
+    let mut warnings: Vec<String> = Vec::new();
+    let reader = build_with_warnings(&malformed(Access::Read), &mut |line| {
+        warnings.push(line.into())
+    })
+    .unwrap();
+    assert_eq!(warnings, Vec::<String>::new());
+    let listed = run(&reader.operations, r#"{"op": "list"}"#);
+    assert_eq!(listed["tasks"][0]["id"], json!("a"), "{listed}");
+}
+
+/// git takes each command-scope key on its own: a write whose set names
+/// `user.name` alone commits as that name with the clone's own email,
+/// and warns that the set names half an identity; a read warns of
+/// nothing.
+#[test]
+fn a_set_naming_half_an_identity_writes_with_the_clones_other_half() {
+    let (_dir, work) = repository();
+    let half = |access| {
+        with_command_config(
+            environment(&work, access),
+            &[("user.name", "quecto pocket")],
+        )
+    };
+    let mut warnings: Vec<String> = Vec::new();
+    let writer =
+        build_with_warnings(&half(Access::Write), &mut |line| warnings.push(line.into())).unwrap();
+    assert_eq!(
+        warnings,
+        [
+            "warning: project board: git's command-scope configuration (GIT_CONFIG_COUNT) \
+          sets user.name but not user.email, which comes from the repository's own"
+        ]
+    );
+    assert_eq!(
+        run(&writer.operations, r#"{"op": "bootstrap"}"#)["ok"],
+        json!(true)
+    );
+    assert_eq!(
+        board_commit_identities(&work),
+        "quecto pocket <ada@example.com>|quecto pocket <ada@example.com>"
+    );
+    let mut warnings: Vec<String> = Vec::new();
+    let reader =
+        build_with_warnings(&half(Access::Read), &mut |line| warnings.push(line.into())).unwrap();
+    assert_eq!(warnings, Vec::<String>::new());
+    let listed = run(&reader.operations, r#"{"op": "list"}"#);
+    assert_eq!(listed["ok"], json!(true), "{listed}");
+}
