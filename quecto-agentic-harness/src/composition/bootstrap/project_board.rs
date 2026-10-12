@@ -45,7 +45,8 @@ pub fn build_project_board_handles(
     };
     let store = Arc::new(
         GitBoardStore::new(git, &environment.remote)
-            .map_err(|error| unavailable(store_reason(&error)))?,
+            .map_err(|error| unavailable(store_reason(&error)))?
+            .with_cancel(environment.cancelled.clone()),
     );
     let url = store
         .remote_url()

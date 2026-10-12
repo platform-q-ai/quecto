@@ -56,7 +56,8 @@ pub(crate) struct AgentFlags {
     pub(crate) kill_tool: Option<crate::interface::cli::KillToolBuilder>,
     /// Composition's project board builder (#2477), from CliContext: the
     /// `board` tool's board.
-    pub(crate) project_board: Option<crate::interface::cli::board::ProjectBoardHandlesBuilder>,
+    pub(crate) project_board:
+        Option<crate::interface::tools::project_board::site::ProjectBoardHandlesBuilder>,
     /// Composition's retained-context handles builder (D9 #1978), from
     /// CliContext; the tool registry and the agent loop consume its handles.
     pub(crate) retention: Option<crate::interface::cli::RetentionHandlesBuilder>,

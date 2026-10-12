@@ -205,7 +205,7 @@ fn answer(ctx: &CliContext, args: &[String]) -> Value {
         remote: line.remote.clone(),
         build: ctx.project_board,
     };
-    site::answer(&site, &value.to_string())
+    site::answer(&site, &value.to_string(), None)
 }
 
 #[cfg(test)]

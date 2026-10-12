@@ -59,9 +59,14 @@ pub struct BoardSite {
     pub build: Option<ProjectBoardHandlesBuilder>,
 }
 
-/// The answer to the request `text` on `site`'s board. Blocking: the
-/// board's git and host reads hold the calling thread.
-pub fn answer(site: &BoardSite, text: &str) -> Value {
+/// The answer to the request `text` on `site`'s board; once `cancelled` is
+/// set, the board pushes nothing more. Blocking: the board's git and host
+/// reads hold the calling thread.
+pub fn answer(
+    site: &BoardSite,
+    text: &str,
+    cancelled: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+) -> Value {
     let value = match read(text) {
         Ok(value) => value,
         Err(error) => return request_refused(None, &error),
@@ -87,7 +92,7 @@ pub fn answer(site: &BoardSite, text: &str) -> Value {
             false => Access::Read,
         },
         vars: std::env::vars_os().collect(),
-        cancelled: None,
+        cancelled,
     };
     match build(&environment) {
         // The one entry point every front end's request goes through.
