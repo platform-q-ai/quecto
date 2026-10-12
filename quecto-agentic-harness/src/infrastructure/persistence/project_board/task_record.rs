@@ -40,7 +40,7 @@ use std::fmt;
 /// optional key, `null` in a single value and an empty list hold no
 /// value: they read as not set, in any schema (a list set to `null` is
 /// malformed, as every list is).
-pub const SCHEMAS: &[(u32, &str)] = &[(1, "0.107.251"), (2, "0.107.274"), (3, "0.107.287")];
+pub const SCHEMAS: &[(u32, &str)] = &[(1, "0.107.251"), (2, "0.107.274"), (3, "0.107.292")];
 /// The schema every task file is written at: the last row of [`SCHEMAS`].
 pub const SCHEMA_VERSION: u32 = 3;
 const _: () = assert!(SCHEMAS[SCHEMAS.len() - 1].0 == SCHEMA_VERSION);
