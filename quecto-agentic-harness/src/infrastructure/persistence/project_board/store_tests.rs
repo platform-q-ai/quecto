@@ -169,6 +169,11 @@ fn hand_edit(remote: &Path, extra: &[(&str, String)]) -> BoardHead {
     BoardHead(commit)
 }
 
+/// Where the board keeps task `id`.
+fn task_path(id: &str) -> String {
+    format!("tasks/{id}.md")
+}
+
 fn ids(snapshot: &BoardSnapshot) -> Vec<&str> {
     snapshot
         .tasks
@@ -700,6 +705,8 @@ fn bad_arguments_are_refused_before_git_runs() {
 mod bounds;
 #[path = "store_hostile_tests.rs"]
 mod hostile;
+#[path = "store_markdown_tests.rs"]
+mod markdown;
 #[path = "store_push_tests.rs"]
 mod push;
 #[path = "git_runner_tests.rs"]

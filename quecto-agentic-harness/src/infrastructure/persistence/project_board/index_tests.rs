@@ -433,6 +433,38 @@ fn another_layout_or_record_schema_is_rebuilt_even_at_the_same_commit() {
     }
 }
 
+/// An index built while the board kept tasks as JSON (#2481 S8): its
+/// records are task JSON under record schema 3, and it is rebuilt as the
+/// task codec's markdown, never read.
+#[test]
+fn the_index_rebuilds_when_its_records_were_json() {
+    let (_dir, index) = index();
+    rebuild(&index, &board("a1")).unwrap();
+    tamper(
+        &index,
+        "UPDATE meta SET value = '3' WHERE key = 'record_schema';
+         UPDATE tasks SET record = CAST('{\"schema\": 3, \"id\": \"' || id || '\"}' AS BLOB);",
+    );
+    assert!(needs_rebuild(&index.ready()));
+    assert_eq!(
+        rebuild(&index, &board("a1")),
+        Ok(Refreshed::Rebuilt {
+            head: board("a1").head.0
+        })
+    );
+    assert_eq!(ids(index.ready()), ["a"]);
+    let records: Vec<Vec<u8>> = rusqlite::Connection::open(index.path())
+        .unwrap()
+        .prepare("SELECT record FROM tasks ORDER BY id")
+        .unwrap()
+        .query_map([], |row| row.get(0))
+        .unwrap()
+        .collect::<rusqlite::Result<_>>()
+        .unwrap();
+    let markdown = b"<!-- quecto-task schema=";
+    assert!(records.iter().all(|record| record.starts_with(markdown)));
+}
+
 #[test]
 fn rows_are_only_a_prefilter_and_oversized_values_are_not_read() {
     let (_dir, index) = index();
