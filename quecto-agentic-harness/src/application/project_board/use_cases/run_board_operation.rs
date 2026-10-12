@@ -13,7 +13,7 @@ use crate::application::project_board::dto::{BoardListing, BoardOp, ProjectBoard
 use crate::application::project_board::operations::{
     BoardOperationParts, BoardOutcome, BoardRequest, Completion, ListFilter,
 };
-use crate::application::project_board::ports::{BoardBootstrap, ReferenceStatus};
+use crate::application::project_board::ports::{ArtifactKey, BoardBootstrap, ReferenceStatus};
 use crate::domain::project_board::entities::task::Task;
 use crate::domain::project_board::value_objects::rule_error::BoardRuleError;
 use crate::domain::project_board::value_objects::slug::Slug;
@@ -112,9 +112,9 @@ impl RunBoardOperation {
                 head: board.head.clone(),
                 task: task.clone(),
             }),
-            None if board.quarantined.iter().any(|file| file.id() == Some(id)) => {
-                Err(ProjectBoardError::Quarantined(id.clone()))
-            }
+            None if board.quarantined.iter().any(|file| file.id() == Some(id)) => Err(
+                ProjectBoardError::Quarantined(ArtifactKey::Task(id.clone())),
+            ),
             None => Err(ProjectBoardError::NotFound(id.clone())),
         }
     }

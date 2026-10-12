@@ -5,7 +5,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::application::project_board::dto::ProjectBoardError;
-use crate::application::project_board::ports::BoardSnapshot;
+use crate::application::project_board::ports::{ArtifactKey, BoardSnapshot};
 use crate::domain::project_board::entities::task::TaskFields;
 use crate::domain::project_board::value_objects::slug::Slug;
 
@@ -29,7 +29,11 @@ pub(super) fn pointers_hold(
     for reference in refs.parent.into_iter().chain(refs.depends_on) {
         match (held(reference), set_aside(reference)) {
             (true, _) => {}
-            (false, true) => return Err(ProjectBoardError::Quarantined(reference.clone())),
+            (false, true) => {
+                return Err(ProjectBoardError::Quarantined(ArtifactKey::Task(
+                    reference.clone(),
+                )));
+            }
             (false, false) => return Err(ProjectBoardError::UnknownReference(reference.clone())),
         }
     }

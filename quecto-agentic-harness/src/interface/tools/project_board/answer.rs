@@ -63,6 +63,12 @@ pub enum ErrorCode {
     ClockUnreadable,
     /// `task`.
     SetAside,
+    /// `kind`, `id`, `number`: a file of an artifact other than a task is
+    /// set aside. `kind` is `plan`, `run`, `change`, `review` or
+    /// `discussion`; `id` is the task's id (the discussion's own for a
+    /// discussion); `number` is the plan's version, the run's or change's
+    /// number, the reviewed change's number, or null for a discussion.
+    ArtifactSetAside,
     /// `path`, `object`.
     SetAsideFile,
     /// `task`.
@@ -107,6 +113,7 @@ impl ErrorCode {
             Self::Exists => "exists",
             Self::ClockUnreadable => "clock_unreadable",
             Self::SetAside => "set_aside",
+            Self::ArtifactSetAside => "artifact_set_aside",
             Self::SetAsideFile => "set_aside_file",
             Self::UnknownReference => "unknown_reference",
             Self::ClosesCycle => "closes_cycle",
@@ -223,6 +230,29 @@ fn head_json(head: &BoardHead) -> Value {
 
 fn slug_json(slug: &Slug) -> Value {
     Value::String(slug.as_str().into())
+}
+
+/// The artifact a refusal names: a task as `set_aside` by its id, as
+/// ever; any other kind as `artifact_set_aside`, one shape for all five.
+fn set_aside_fields(key: &ArtifactKey) -> (ErrorCode, Map<String, Value>) {
+    let other = |kind: &str, id: &Slug, number: Option<u32>| {
+        (
+            ErrorCode::ArtifactSetAside,
+            fields([
+                ("kind", json!(kind)),
+                ("id", slug_json(id)),
+                ("number", json!(number)),
+            ]),
+        )
+    };
+    match key {
+        ArtifactKey::Task(id) => (ErrorCode::SetAside, fields([("task", slug_json(id))])),
+        ArtifactKey::Plan(id, version) => other("plan", id, Some(*version)),
+        ArtifactKey::Run(id, number) => other("run", id, Some(*number)),
+        ArtifactKey::Change(id, number) => other("change", id, Some(*number)),
+        ArtifactKey::Review(id, change) => other("review", id, Some(*change)),
+        ArtifactKey::Discussion(id) => other("discussion", id, None),
+    }
 }
 
 fn slugs_json(slugs: &[Slug]) -> Value {
@@ -377,7 +407,7 @@ fn error_fields(error: &ProjectBoardError) -> (ErrorCode, Map<String, Value>) {
         E::Clock(BoardClockError::OutOfRange(read)) => {
             (C::ClockUnreadable, fields([("read", shown_json(read))]))
         }
-        E::Quarantined(id) => (C::SetAside, fields([("task", slug_json(id))])),
+        E::Quarantined(key) => set_aside_fields(key),
         E::SetAsideFile { path, object } => {
             assert!(
                 shown_path(path),

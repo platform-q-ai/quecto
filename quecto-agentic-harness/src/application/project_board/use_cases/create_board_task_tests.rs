@@ -1,6 +1,6 @@
 use super::CreateBoardTask;
 use crate::application::project_board::dto::{NewBoardTask, NewBoardTaskStatus, ProjectBoardError};
-use crate::application::project_board::ports::{BoardStoreError, ProjectBoardStore};
+use crate::application::project_board::ports::{ArtifactKey, BoardStoreError, ProjectBoardStore};
 use crate::application::project_board::use_cases::MAX_WRITE_ATTEMPTS;
 use crate::application::project_board::use_cases::fixtures_tests::{
     SetClock, at, board, fields, new_task, slug,
@@ -98,7 +98,10 @@ fn an_id_held_or_set_aside_is_refused() {
     assert_eq!(again, Err(ProjectBoardError::Exists(slug("a"))));
     store.quarantine("q", "malformed");
     let over = create(&store, SetClock::at("10:01:00")).execute(&new_task("q"));
-    assert_eq!(over, Err(ProjectBoardError::Quarantined(slug("q"))));
+    assert_eq!(
+        over,
+        Err(ProjectBoardError::Quarantined(ArtifactKey::Task(slug("q"))))
+    );
 }
 
 /// Another writer moves the board between the read and the write: the
@@ -224,12 +227,18 @@ fn a_quarantined_parent_or_dependency_is_reported_as_quarantined() {
         parent: Some(slug("p")),
         ..new_task("a")
     });
-    assert_eq!(child, Err(ProjectBoardError::Quarantined(slug("p"))));
+    assert_eq!(
+        child,
+        Err(ProjectBoardError::Quarantined(ArtifactKey::Task(slug("p"))))
+    );
     let dependent = create(&store, SetClock::at("10:01:00")).execute(&NewBoardTask {
         depends_on: vec![slug("d")],
         ..new_task("a")
     });
-    assert_eq!(dependent, Err(ProjectBoardError::Quarantined(slug("d"))));
+    assert_eq!(
+        dependent,
+        Err(ProjectBoardError::Quarantined(ArtifactKey::Task(slug("d"))))
+    );
 }
 
 /// The parent's file is spoiled between the read and the write: the
@@ -246,7 +255,10 @@ fn a_parent_quarantined_between_the_read_and_the_write_is_reported() {
         parent: Some(slug("p")),
         ..new_task("a")
     });
-    assert_eq!(child, Err(ProjectBoardError::Quarantined(slug("p"))));
+    assert_eq!(
+        child,
+        Err(ProjectBoardError::Quarantined(ArtifactKey::Task(slug("p"))))
+    );
     assert_eq!(*clock.pauses.lock().unwrap(), [2], "made again once");
     assert_eq!(store.writes(), 1, "only p was written");
 }

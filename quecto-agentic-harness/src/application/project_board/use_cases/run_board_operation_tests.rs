@@ -4,7 +4,7 @@ use super::*;
 use crate::application::project_board::dto::{NewBoardTask, NewBoardTaskStatus};
 use crate::application::project_board::operations::NoPullRequestHost;
 use crate::application::project_board::operations::query_listings::{QueryListings, assembled};
-use crate::application::project_board::ports::{PullRequestState, PullRequestStates};
+use crate::application::project_board::ports::{ArtifactKey, PullRequestState, PullRequestStates};
 use crate::application::project_board::use_cases::QueryBoard;
 use crate::application::project_board::use_cases::fixtures_tests::{SetClock, new_task, slug};
 use crate::infrastructure::test_support::memory_board_store::MemoryBoardStore;
@@ -149,7 +149,7 @@ fn show_tells_a_task_set_aside_from_one_not_on_the_board() {
     store.quarantine("b", "malformed");
     assert_eq!(
         ops.execute(&BoardRequest::Show(slug("b"))),
-        Err(ProjectBoardError::Quarantined(slug("b")))
+        Err(ProjectBoardError::Quarantined(ArtifactKey::Task(slug("b"))))
     );
     assert_eq!(
         ops.execute(&BoardRequest::Show(slug("c"))),
@@ -163,7 +163,7 @@ fn show_tells_a_task_set_aside_from_one_not_on_the_board() {
     );
     assert_eq!(
         ops.execute(&BoardRequest::Complete(slug("b"))),
-        Err(ProjectBoardError::Quarantined(slug("b")))
+        Err(ProjectBoardError::Quarantined(ArtifactKey::Task(slug("b"))))
     );
     ops.execute(&ready_task("d")).unwrap();
     assert_eq!(

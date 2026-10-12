@@ -40,6 +40,7 @@ fn keys(code: ErrorCode) -> &'static [&'static str] {
         C::Stale => &["task", "expected", "updated"],
         C::NotSetAside => &["path", "object"],
         C::SetAsideFile => &["path", "object"],
+        C::ArtifactSetAside => &["kind", "id", "number"],
         C::NoPullRequestHost => &["reason"],
     }
 }
@@ -92,7 +93,7 @@ board_errors! {
     E::Clock(BoardClockError::OutOfRange(_)) => {
         E::Clock(BoardClockError::OutOfRange("1969".into()))
     },
-    E::Quarantined(_) => E::Quarantined(slug("a")),
+    E::Quarantined(_) => E::Quarantined(ArtifactKey::Task(slug("a"))),
     E::SetAsideFile { .. } => E::SetAsideFile {
         path: "tasks/?.json".into(),
         object: "a".repeat(40),
@@ -406,4 +407,77 @@ fn a_set_aside_file_is_named_by_its_raw_path_and_object() {
         )
     );
     assert_eq!(error_json(&named)["message"], json!(named.to_string()));
+}
+
+/// A task set aside answers `set_aside` by its id, as ever; every other
+/// kind answers `artifact_set_aside` in its one shape, by kind, id and
+/// number.
+#[test]
+fn a_set_aside_artifact_is_named_by_its_kind_id_and_number() {
+    let task = board_refused(
+        "show",
+        &ProjectBoardError::Quarantined(ArtifactKey::Task(slug("t"))),
+    );
+    assert_eq!(task["error"]["code"], json!("set_aside"));
+    assert_eq!(task["error"]["task"], json!("t"));
+    let cases = [
+        (
+            ArtifactKey::Plan(slug("t"), 2),
+            "plan",
+            "t",
+            json!(2),
+            "plan 2 of task t",
+        ),
+        (
+            ArtifactKey::Run(slug("t"), 3),
+            "run",
+            "t",
+            json!(3),
+            "run 3 of task t",
+        ),
+        (
+            ArtifactKey::Change(slug("t"), 4),
+            "change",
+            "t",
+            json!(4),
+            "change 4 of task t",
+        ),
+        (
+            ArtifactKey::Review(slug("t"), 5),
+            "review",
+            "t",
+            json!(5),
+            "the review of change 5 of task t",
+        ),
+        (
+            ArtifactKey::Discussion(slug("d")),
+            "discussion",
+            "d",
+            json!(null),
+            "discussion d",
+        ),
+    ];
+    for (key, kind, id, number, named) in cases {
+        let answer = board_refused("show", &ProjectBoardError::Quarantined(key.clone()));
+        let error = answer["error"].as_object().unwrap();
+        assert_eq!(error["code"], json!("artifact_set_aside"), "{key:?}");
+        let got: BTreeSet<&str> = error.keys().map(String::as_str).collect();
+        let mut want: BTreeSet<&str> = keys(ErrorCode::ArtifactSetAside).iter().copied().collect();
+        want.extend(["code", "message"]);
+        assert_eq!(got, want, "{key:?}");
+        assert_eq!(
+            (&error["kind"], &error["id"], &error["number"]),
+            (&json!(kind), &json!(id), &number),
+            "{key:?}"
+        );
+        assert_eq!(
+            error["message"],
+            json!(format!("{named} is set aside as unreadable; mend its file")),
+            "{key:?}"
+        );
+    }
+    assert_eq!(
+        task["error"]["message"],
+        json!("task t is set aside as unreadable; mend its file")
+    );
 }

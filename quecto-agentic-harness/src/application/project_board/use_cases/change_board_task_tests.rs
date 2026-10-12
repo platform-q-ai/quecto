@@ -1,6 +1,6 @@
 use super::ChangeBoardTask;
 use crate::application::project_board::dto::{BoardOp, ProjectBoardError};
-use crate::application::project_board::ports::{ProjectBoardStore, PullRequestState};
+use crate::application::project_board::ports::{ArtifactKey, ProjectBoardStore, PullRequestState};
 use crate::application::project_board::use_cases::CompleteMergedTask;
 use crate::application::project_board::use_cases::fixtures_tests::{
     SetClock, at, board, fields, person, slug,
@@ -136,7 +136,10 @@ fn a_change_the_rules_refuse_writes_nothing() {
     let missing = change(&store, "Ada", "10:00:00").execute(&slug("zz"), &BoardOp::Renew);
     assert_eq!(missing, Err(ProjectBoardError::NotFound(slug("zz"))));
     let set_aside = change(&store, "Ada", "10:00:00").execute(&slug("q"), &BoardOp::Renew);
-    assert_eq!(set_aside, Err(ProjectBoardError::Quarantined(slug("q"))));
+    assert_eq!(
+        set_aside,
+        Err(ProjectBoardError::Quarantined(ArtifactKey::Task(slug("q"))))
+    );
     assert_eq!(store.writes(), writes);
 }
 
@@ -412,7 +415,10 @@ fn a_pull_request_is_not_linked_while_a_tasks_file_is_set_aside() {
     store.quarantine("b", "malformed");
     let writes = store.writes();
     let refused = change(&store, "Ada", "10:00:00").execute(&slug("a"), &BoardOp::AddPr(7));
-    assert_eq!(refused, Err(ProjectBoardError::Quarantined(slug("b"))));
+    assert_eq!(
+        refused,
+        Err(ProjectBoardError::Quarantined(ArtifactKey::Task(slug("b"))))
+    );
     assert_eq!(store.writes(), writes);
     let renewed = change(&store, "Ada", "10:00:00").execute(&slug("a"), &BoardOp::Renew);
     assert!(renewed.is_ok(), "{renewed:?}");

@@ -11,7 +11,9 @@ use std::sync::Arc;
 use super::board_change::{checked_writer, commit};
 use super::task_pointers::{Pointers, pointers_hold};
 use crate::application::project_board::dto::{NewBoardTask, ProjectBoardError};
-use crate::application::project_board::ports::{BoardClock, BoardSnapshot, ProjectBoardStore};
+use crate::application::project_board::ports::{
+    ArtifactKey, BoardClock, BoardSnapshot, ProjectBoardStore,
+};
 use crate::domain::project_board::entities::task::{Task, TaskFields};
 use crate::domain::project_board::value_objects::board_text;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
@@ -89,7 +91,9 @@ fn free(board: &BoardSnapshot, new: &NewBoardTask) -> Result<(), ProjectBoardErr
         .any(|file| file.id() == Some(&new.id));
     match (held, set_aside) {
         (true, _) => Err(ProjectBoardError::Exists(new.id.clone())),
-        (false, true) => Err(ProjectBoardError::Quarantined(new.id.clone())),
+        (false, true) => Err(ProjectBoardError::Quarantined(ArtifactKey::Task(
+            new.id.clone(),
+        ))),
         (false, false) => pointers_hold(
             board,
             &Pointers {

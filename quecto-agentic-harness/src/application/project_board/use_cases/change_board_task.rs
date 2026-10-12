@@ -81,8 +81,8 @@ fn board_readable_for(op: &BoardOp, board: &BoardSnapshot) -> Result<(), Project
             let carried = board.quarantined.iter().find(|file| file.carried);
             match carried {
                 None => Ok(()),
-                Some(file) => match file.id() {
-                    Some(id) => Err(ProjectBoardError::Quarantined(id.clone())),
+                Some(file) => match &file.key {
+                    Some(key) => Err(ProjectBoardError::Quarantined(key.clone())),
                     None => Err(ProjectBoardError::SetAsideFile {
                         path: file.path.clone(),
                         object: file.object.clone(),

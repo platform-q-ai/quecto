@@ -1,5 +1,6 @@
 //! The project board's use cases (#2476).
 mod board_change;
+pub mod board_view;
 mod bootstrap_project_board;
 mod change_board_task;
 mod clear_set_aside;
