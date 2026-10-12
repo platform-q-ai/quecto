@@ -17,7 +17,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
-use crate::application::tool_panic_scope::{carry, carry_future};
+use crate::application::tool_panic_scope::{carry, carry_future, catch_in_call};
 
 /// A carried task's handle. Awaiting it yields the task's value, or the
 /// `JoinError` of a task that was cancelled; a task that panicked resumes
@@ -67,6 +67,33 @@ where
     T: Send + 'static,
 {
     join_carried(runtime.spawn_blocking(carry(blocking(job))))
+}
+
+/// A panic a call's blocking work raised and caught itself
+/// ([`spawn_blocking_caught_in_call`]): the task it ran as, and what it
+/// panicked with.
+pub struct CaughtPanic {
+    pub task: Option<tokio::task::Id>,
+    pub payload: Box<dyn std::any::Any + Send>,
+}
+
+/// Run `job` on the blocking pool as the calling tool call's own work
+/// (#2517), catching a panic in it on its own thread, in the call's scope
+/// (`catch_in_call`, so the panic is forgotten as handled): for a call
+/// that answers its work's panic itself rather than failing with it.
+pub fn spawn_blocking_caught_in_call<T, F>(job: F) -> CarriedJoin<Result<T, CaughtPanic>>
+where
+    F: FnOnce() -> T + Send + 'static,
+    T: Send + 'static,
+{
+    spawn_blocking_in_call(move || {
+        // The job is consumed by the catch and nothing of it is used after
+        // a panic: no broken state is observed.
+        catch_in_call(std::panic::AssertUnwindSafe(job)).map_err(|payload| CaughtPanic {
+            task: tokio::task::try_id(),
+            payload,
+        })
+    })
 }
 
 thread_local! {

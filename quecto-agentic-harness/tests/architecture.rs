@@ -1452,8 +1452,14 @@ fn application_path_allowed(path: &str) -> bool {
     match parts.as_slice() {
         ["crate", "application", "ports", ..] => true,
         // A tool call's own work carries its panic scope (#2192, ADR-0029):
-        // only `call_work`, which joins what it spawns (`carried_work_is_joined`).
-        ["crate", "application", "tool_panic_scope", "carry" | "carry_future"] => true,
+        // only `call_work`, which joins what it spawns (`carried_work_is_joined`),
+        // and catches a panic of work whose call answers it itself (#2517).
+        [
+            "crate",
+            "application",
+            "tool_panic_scope",
+            "carry" | "carry_future" | "catch_in_call",
+        ] => true,
         // Ports are capability-local (#1934, #1960): every
         // `application/<capability>/ports.rs` is a contract this
         // layer implements. Subagent teardown (#1935) was the first.
