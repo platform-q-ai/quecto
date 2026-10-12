@@ -10,6 +10,7 @@ pub mod discussion;
 pub mod plan;
 pub mod review;
 pub mod run;
+pub mod task;
 
 use super::markdown::{Document, MarkdownError, Shape, parse, render, schema_of};
 

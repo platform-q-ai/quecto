@@ -319,3 +319,21 @@ fn the_longest_row_fits_its_line_cap() {
     assert_eq!(line, 4_949);
     assert!(line <= DISCUSSION_LIMITS.line_bytes);
 }
+
+/// A title its heading cannot hold is refused when written, naming the
+/// title, before the file is rendered.
+#[test]
+fn a_discussion_title_its_heading_cannot_hold_is_refused() {
+    for title in ["a #", " a", "a <b>", "a\u{2003}b"] {
+        let titled = Discussion::new(DiscussionFields {
+            title: title.into(),
+            ..example()
+        })
+        .unwrap();
+        let refused = encode::<DiscussionCodec>(&titled);
+        assert!(
+            matches!(&refused, Err(CodecError::Cell { field: "Title", .. })),
+            "{title:?}: {refused:?}"
+        );
+    }
+}
