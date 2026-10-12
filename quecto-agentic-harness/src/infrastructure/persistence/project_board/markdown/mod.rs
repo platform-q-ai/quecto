@@ -21,6 +21,9 @@
 //! | cell | cell |
 //! ```
 //!
+//! [`parse`] takes a file only if writing what it reads gives the same
+//! bytes, so what the reader lets through the writer's rules still refuse.
+//!
 //! One final LF; no CR or BOM. Every line keeps a character allowlist
 //! ([`chars`]) and every text the inline rules ([`inline`]); prose is
 //! paragraphs, one-level lists and fenced code ([`prose`]). Hostile text is
@@ -42,7 +45,10 @@
 //! caller's [`Shape`].
 mod chars;
 mod inline;
+mod parse;
 mod prose;
+
+pub use parse::parse;
 
 /// How large a file, how many lines and how long a line may be: the
 /// caller's.
@@ -210,6 +216,10 @@ pub enum MarkdownError {
     /// one error type for both sides.
     #[error("not the canonical file for what it holds")]
     NotCanonical,
+    /// A file render wrote that does not read back as its document: why
+    /// it was refused when read, or none when it read as another document.
+    #[error("the written file does not read back as its document{}", why.as_ref().map(|why| format!(": {why}")).unwrap_or_default())]
+    NotReadBack { why: Option<Box<MarkdownError>> },
 }
 
 /// A name of a field, heading or column: an ASCII capital, then letters,
@@ -393,11 +403,37 @@ fn cell(value: &str, kind: CellKind, at: usize) -> Result<String, MarkdownError>
 }
 
 /// The file `document` is, refused when it holds anything a file must not.
+/// What is written reads back as `document`, or is refused.
 ///
 /// # Errors
 /// What in the shape or document is refused, and where its file would
-/// hold it.
+/// hold it; `NotReadBack` for a file that would not read back as it.
 pub fn render(document: &Document, shape: &Shape<'_>) -> Result<String, MarkdownError> {
+    // A real check, release builds included: a file that would not read
+    // back as its document is never handed on to be stored.
+    read_back(write(document, shape)?, document, shape)
+}
+
+/// `file`, written from `document`, if it reads back as `document`.
+///
+/// # Errors
+/// `NotReadBack`, with why it was refused when read, when it does not.
+fn read_back(
+    file: String,
+    document: &Document,
+    shape: &Shape<'_>,
+) -> Result<String, MarkdownError> {
+    match parse(file.as_bytes(), shape) {
+        Ok(read) if read == *document => Ok(file),
+        Ok(_) => Err(MarkdownError::NotReadBack { why: None }),
+        Err(why) => Err(MarkdownError::NotReadBack {
+            why: Some(Box::new(why)),
+        }),
+    }
+}
+
+/// [`render`] without the read back, which [`parse`] compares against.
+fn write(document: &Document, shape: &Shape<'_>) -> Result<String, MarkdownError> {
     check_shape(shape)?;
     let limits = shape.limits;
     match text_bytes(document) <= limits.file_bytes {

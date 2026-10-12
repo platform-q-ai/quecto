@@ -1,6 +1,7 @@
 //! The codec over well-formed documents: an exact file, generated
-//! documents read back by a CommonMark/GFM reader (the oracle), block
-//! starts kept as text, and the limits.
+//! documents read back by a CommonMark/GFM reader (the oracle) and by
+//! `parse`, edits of a file refused or read as the oracle reads them,
+//! block starts kept as text, and the limits.
 use super::*;
 use oracle::outline;
 use pulldown_cmark::{Event, Options, Parser, Tag};
@@ -171,6 +172,7 @@ fn the_oracle_refuses_a_file_outlined_otherwise() {
 fn a_document_renders_to_one_exact_file_a_reader_outlines_as_it() {
     assert_eq!(render(&example(), &SHAPE).as_deref(), Ok(EXAMPLE));
     assert_eq!(outline(EXAMPLE, &example()), Ok(()));
+    assert_eq!(parse(EXAMPLE.as_bytes(), &SHAPE), Ok(example()));
 }
 
 /// A small, seeded generator: the same documents on every run.
@@ -308,8 +310,8 @@ impl Seeded {
 }
 
 /// Every generated document the renderer takes, a CommonMark/GFM reader
-/// outlines as the document; a fair share are taken, and a fair share
-/// refused.
+/// outlines as the document and `parse` reads back as it; a fair share
+/// are taken, and a fair share refused.
 #[test]
 fn every_rendered_document_is_outlined_as_itself() {
     let mut seeded = Seeded(0x9e37_79b9_7f4a_7c15);
@@ -320,6 +322,7 @@ fn every_rendered_document_is_outlined_as_itself() {
             Ok(file) => {
                 taken += 1;
                 assert_eq!(outline(&file, &document), Ok(()), "{file}");
+                assert_eq!(parse(file.as_bytes(), &SHAPE), Ok(document), "{file}");
             }
             Err(_) => refused += 1,
         }
@@ -372,6 +375,7 @@ fn block_starts_read_as_text() {
                 "{start:?}: {file}"
             );
         }
+        assert_eq!(parse(file.as_bytes(), &SHAPE), Ok(document), "{start:?}");
     }
 }
 
@@ -403,6 +407,8 @@ fn files_lines_and_line_counts_are_capped_at_their_bounds() {
         let shape = Shape { limits, ..SHAPE };
         let rendered = render(&sized(3, 10), &shape);
         assert_eq!(rendered.is_ok(), fits, "{limits:?}: {rendered:?}");
+        let parsed = parse(file.as_bytes(), &shape);
+        assert_eq!(parsed.is_ok(), fits, "{limits:?}: {parsed:?}");
     }
     // The text a document holds is counted before anything is rendered.
     let shape = Shape {
@@ -418,6 +424,56 @@ fn files_lines_and_line_counts_are_capped_at_their_bounds() {
             bytes: text_bytes(&sized(1, 100)),
             most: 99
         })
+    );
+}
+
+/// Every edit of the example (a character taken out, or a piece put in at
+/// any point) is refused, or read as a document a CommonMark/GFM reader
+/// outlines the edited file as, and that renders to it.
+#[test]
+fn every_edit_of_a_file_is_refused_or_read_as_a_reader_reads_it() {
+    #[rustfmt::skip]
+    const PIECES: &[&str] = &[
+        "\n", "\n\n", "\\", "`", "```", "   ```\n", " ", "-", "- ", "#", "|", "1. ", "[[", "<b>", "\u{200d}",
+    ];
+    let starts: Vec<usize> = (0..=EXAMPLE.len())
+        .filter(|at| EXAMPLE.is_char_boundary(*at))
+        .collect();
+    let (mut read, mut refused) = (0, 0);
+    for (index, &at) in starts.iter().enumerate() {
+        let without = starts
+            .get(index + 1)
+            .map(|&next| format!("{}{}", &EXAMPLE[..at], &EXAMPLE[next..]));
+        let with = PIECES
+            .iter()
+            .map(|piece| format!("{}{piece}{}", &EXAMPLE[..at], &EXAMPLE[at..]));
+        for file in without.into_iter().chain(with) {
+            match parse(file.as_bytes(), &SHAPE) {
+                Ok(document) => {
+                    read += 1;
+                    assert_eq!(outline(&file, &document), Ok(()), "{file}");
+                    assert_eq!(render(&document, &SHAPE).as_deref(), Ok(file.as_str()));
+                }
+                // A refusal that names a line names one of the file's.
+                Err(error) => {
+                    refused += 1;
+                    let said = error.to_string();
+                    let line = said
+                        .strip_prefix("line ")
+                        .and_then(|rest| rest.split_once(':'))
+                        .map(|(line, _)| line.parse::<usize>().unwrap());
+                    let lines = file.lines().count();
+                    assert!(
+                        line.is_none_or(|line| (1..=lines).contains(&line)),
+                        "{said}: {file}"
+                    );
+                }
+            }
+        }
+    }
+    assert!(
+        read > 500 && refused > 2_000,
+        "{read} edits read, {refused} refused"
     );
 }
 

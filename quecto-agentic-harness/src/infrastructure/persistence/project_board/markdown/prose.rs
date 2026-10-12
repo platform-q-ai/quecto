@@ -22,6 +22,9 @@ pub const LANGUAGES: &[&str] = &[
     "kotlin", "java", "go", "sql", "html", "css", "markdown", "c", "cpp",
 ];
 
+/// Why a fence's language is refused, as render and parse both say it.
+pub const LANGUAGE_RULE: &str = "a language from the list of plain highlighters";
+
 /// A fence's language: one of [`LANGUAGES`].
 pub fn language(name: &str) -> bool {
     LANGUAGES.contains(&name)
@@ -48,6 +51,26 @@ pub fn escaped(line: &str) -> String {
         (Some(first), _) if opens_escaped(first) => format!("\\{line}"),
         (_, Some(digits)) => format!("{}\\{}", &line[..digits], &line[digits..]),
         _ => line.to_string(),
+    }
+}
+
+/// The text a line of a paragraph or list item holds: [`escaped`] undone.
+/// `None` when the line starts as a block would, unescaped.
+pub fn unescaped(line: &str) -> Option<String> {
+    let mut chars = line.chars();
+    let (first, second) = (chars.next(), chars.next());
+    let digits = line.bytes().take_while(u8::is_ascii_digit).count();
+    // An ordered marker the writer escaped: digits, `\`, then `.` or `)`.
+    let marker = (digits > 0 && line[digits..].starts_with('\\'))
+        .then(|| format!("{}{}", &line[..digits], &line[digits + 1..]))
+        .filter(|marker| list_number(marker) == Some(digits));
+    match (first, second, marker) {
+        (Some('\\'), Some(next), _) if opens_escaped(next) => Some(line[1..].to_string()),
+        (_, _, Some(marker)) => Some(marker),
+        (Some('['), ..) if starts_with_link(line) => Some(line.to_string()),
+        (Some(first), ..) if opens_escaped(first) => None,
+        _ if list_number(line).is_some() => None,
+        _ => Some(line.to_string()),
     }
 }
 
@@ -124,7 +147,7 @@ pub fn render(
                 let fence = |why| MarkdownError::Fence { line: at, why };
                 match name.as_deref().is_none_or(language) {
                     true => lines.push(format!("```{}", name.as_deref().unwrap_or(""))),
-                    false => return Err(fence("a language from the list of plain highlighters")),
+                    false => return Err(fence(LANGUAGE_RULE)),
                 }
                 for line in code {
                     // A reader closes the fence on a line of three or more

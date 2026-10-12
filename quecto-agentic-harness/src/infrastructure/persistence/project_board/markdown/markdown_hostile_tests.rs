@@ -1,8 +1,169 @@
-//! Hostile documents: each refused when written, with its reason named;
-//! and the near misses a file must keep.
+//! Hostile documents and files: each refused, with its reason named; and
+//! the near misses a file must keep.
 use super::*;
 
 type Named = fn(&MarkdownError) -> bool;
+
+/// The example file with `from` replaced by `to` (once).
+fn edited(from: &str, to: &str) -> Vec<u8> {
+    assert!(EXAMPLE.contains(from), "{from:?}");
+    EXAMPLE.replacen(from, to, 1).into_bytes()
+}
+
+#[test]
+fn every_hostile_file_is_refused_with_its_reason() {
+    let mut huge = EXAMPLE.as_bytes().to_vec();
+    huge.resize(LIMITS.file_bytes + 1, b'x');
+    let not_utf8 = [
+        &EXAMPLE.as_bytes()[..20],
+        &[0xff],
+        &EXAMPLE.as_bytes()[20..],
+    ]
+    .concat();
+    let first = "Agents read the board, `Vec<T>` and all.";
+    use MarkdownError as E;
+    #[rustfmt::skip]
+    let cases: Vec<(&str, Vec<u8>, Named)> = vec![
+        ("raw HTML", edited("and all.", "and <b>all</b>."), |e| matches!(e, E::Html { line: 11 })),
+        ("a comment", edited("and all.", "and <!-- x -->"), |e| matches!(e, E::Html { line: 11 })),
+        ("a character reference", edited("and all.", "and &amp; all."), |e| matches!(e, E::CharacterReference { line: 11 })),
+        ("dollar math", edited("and all.", "and $x$."), |e| matches!(e, E::Math { line: 11 })),
+        ("an image", edited("and all.", "![i](https://example.com/i.png)"), |e| matches!(e, E::Image { line: 11 })),
+        ("an http link", edited("https://example.com/docs", "http://example.com/docs"), |e| matches!(e, E::Link { line: 16 })),
+        ("a stray escape", edited("and all.", "and all\\."), |e| matches!(e, E::Escape { line: 11 })),
+        ("an open code span", edited("and all.", "and `all."), |e| matches!(e, E::UnbalancedCode { line: 11 })),
+        ("a setext underline", edited("1\\. not a list\n", "1\\. not a list\n===\n"), |e| matches!(e, E::BlockLike { line: 14 })),
+        ("a heading in a paragraph", edited("\\# not a heading", "# not a heading"), |e| matches!(e, E::BlockLike { line: 12 })),
+        ("an ordered list in a paragraph", edited("1\\. not a list", "1. not a list"), |e| matches!(e, E::BlockLike { line: 13 })),
+        ("a link reference definition", edited(first, "[a]: https://example.com"), |e| matches!(e, E::BlockLike { line: 11 })),
+        ("a list in a paragraph", edited("\\# not a heading", "- an item"), |e| matches!(e, E::BlockLike { line: 12 })),
+        ("an indented line", edited("\\# not a heading", "    code"), |e| matches!(e, E::Structure { line: 12, .. })),
+        ("a lazy line after a list", edited("- read\n", "- read\nlazy\n"), |e| matches!(e, E::Structure { line: 16, .. })),
+        ("a lazy line after a table", edited("| open |\n", "| open |\nlazy\n"), |e| matches!(e, E::Structure { line: 32, .. })),
+        ("two blank lines", edited("1\\. not a list\n\n", "1\\. not a list\n\n\n"), |e| matches!(e, E::Structure { line: 15, .. })),
+        ("an empty section", edited("## Acceptance\n- Every op answers one JSON line\n", "## Acceptance\n"), |e| matches!(e, E::EmptyProse { .. })),
+        ("a fence left open", edited("}\n```\n", "}\n"), |e| matches!(e, E::Fence { line: 18, .. })),
+        ("a fence's language in capitals", edited("```rust", "```Rust"), |e| matches!(e, E::Fence { line: 18, why: "a language from the list of plain highlighters" })),
+        ("an indented close in code", edited("    let x = 1;", "   ```"), |e| matches!(e, E::Fence { line: 20, .. })),
+        ("a longer close in code", edited("    let x = 1;", "````"), |e| matches!(e, E::Fence { line: 20, .. })),
+        ("a bidi override", edited("and all.", "and a\u{202e}ll."), |e| matches!(e, E::Bidi { line: 11 })),
+        ("a joiner between letters", edited("and all.", "and a\u{200d}ll."), |e| matches!(e, E::Invisible { line: 11 })),
+        ("a zero-width space", edited("and all.", "and a\u{200b}ll."), |e| matches!(e, E::Invisible { line: 11 })),
+        ("text not in NFC", edited("and all.", "and alle\u{301}."), |e| matches!(e, E::NotNfc { line: 11 })),
+        ("a tab", edited("and all.", "and\tall."), |e| matches!(e, E::Control { line: 11 })),
+        ("a CR", edited("and all.\n", "and all.\r\n"), |e| matches!(e, E::CarriageReturn { line: 11 })),
+        ("a BOM", [&[0xef, 0xbb, 0xbf][..], EXAMPLE.as_bytes()].concat(), |e| matches!(e, E::ByteOrderMark)),
+        ("a trailing space", edited("and all.", "and all. "), |e| matches!(e, E::TrailingSpace { line: 11 })),
+        ("an oversize file", huge, |e| matches!(e, E::TooLarge { .. })),
+        ("bytes that are not UTF-8", not_utf8, |e| matches!(e, E::NotUtf8)),
+        ("no final newline", EXAMPLE.trim_end().as_bytes().to_vec(), |e| matches!(e, E::FinalNewline)),
+        ("a blank last line", format!("{EXAMPLE}\n").into_bytes(), |e| matches!(e, E::FinalNewline)),
+        ("another kind's marker", edited("quecto-task", "quecto-plan"), |e| matches!(e, E::Marker)),
+        ("a schema with a leading zero", edited("schema=1", "schema=01"), |e| matches!(e, E::Marker)),
+        ("no title", edited("# Boards", "Boards"), |e| matches!(e, E::Title)),
+        ("a title closed by hashes", edited("CLI\n", "CLI #\n"), |e| matches!(e, E::Title)),
+        ("a field no task has", edited("| Status |", "| Owner |"), |e| matches!(e, E::UnknownField { .. })),
+        ("fields out of order", edited("| Id | board-cli |\n| Status | review |", "| Status | review |\n| Id | board-cli |"), |e| matches!(e, E::Structure { line: 7, .. })),
+        ("a section no task has", edited("## Items", "## Notes"), |e| matches!(e, E::UnknownSection { .. })),
+        ("a heading with no blank line", edited("\n## Acceptance", "## Acceptance"), |e| matches!(e, E::Structure { line: 23, .. })),
+        ("a backslash opening a line", edited(first, "\\plain"), |e| matches!(e, E::BlockLike { line: 11 })),
+        ("a link line escaped", edited(first, "\\[a](https://example.com)"), |e| matches!(e, E::NotCanonical)),
+        ("a row of three cells", edited("| done |", "| done | x |"), |e| matches!(e, E::Cell { line: 30, .. })),
+        ("a pipe that is no edge", edited("| review |", "| rev|iew |"), |e| matches!(e, E::Cell { line: 7, .. })),
+        ("an escaped pipe in an id", edited("| review |", "| rev\\|iew |"), |e| matches!(e, E::Cell { line: 7, .. })),
+        ("a cell padded twice", edited("| review |", "|  review |"), |e| matches!(e, E::Cell { line: 7, .. })),
+        ("a pipe left unescaped in code", edited("`a\\|b`", "`a|b`"), |e| matches!(e, E::Cell { line: 30, .. })),
+        ("a math fence", edited("```rust", "```math"), |e| matches!(e, E::Fence { line: 18, .. })),
+        ("a mermaid fence", edited("```rust", "```mermaid"), |e| matches!(e, E::Fence { line: 18, .. })),
+        ("a geojson fence", edited("```rust", "```geojson"), |e| matches!(e, E::Fence { line: 18, .. })),
+        ("a topojson fence", edited("```rust", "```topojson"), |e| matches!(e, E::Fence { line: 18, .. })),
+        ("an stl fence", edited("```rust", "```stl"), |e| matches!(e, E::Fence { line: 18, .. })),
+        ("a link of a space", edited(first, "[ ](https://example.com)"), |e| matches!(e, E::Link { line: 11 })),
+        ("a link of two spaces", edited(first, "[  ](https://example.com)"), |e| matches!(e, E::Link { line: 11 })),
+        ("a link of a blank code span", edited(first, "[` `](https://example.com)"), |e| matches!(e, E::Link { line: 11 })),
+        ("a link of a mark", edited(first, "[\u{301}](https://example.com)"), |e| matches!(e, E::Link { line: 11 })),
+        ("a link of a blank note", edited(first, "[\u{1d159}](https://example.com)"), |e| matches!(e, E::Invisible { line: 11 })),
+        ("a link with a space before", edited(first, "[ a](https://example.com)"), |e| matches!(e, E::Link { line: 11 })),
+        ("a blank note", edited("and all.", "and a\u{1d159}ll."), |e| matches!(e, E::Invisible { line: 11 })),
+        ("a Hangul filler", edited("and all.", "and a\u{3164}ll."), |e| matches!(e, E::Invisible { line: 11 })),
+        ("a halfwidth Hangul filler", edited("and all.", "and a\u{ffa0}ll."), |e| matches!(e, E::Invisible { line: 11 })),
+        ("a Hangul choseong filler", edited("and all.", "and a\u{115f}ll."), |e| matches!(e, E::Invisible { line: 11 })),
+        ("a Hangul jungseong filler", edited("and all.", "and a\u{1160}ll."), |e| matches!(e, E::Invisible { line: 11 })),
+        ("a selector after a digit", edited("and all.", "and 1\u{fe0f} all."), |e| matches!(e, E::Invisible { line: 11 })),
+        ("a subdivision flag", edited("and all.", "and \u{1f3f4}\u{e0067}\u{e0062}\u{e007f}."), |e| matches!(e, E::Invisible { line: 11 })),
+        ("more lines than a file holds", format!("{EXAMPLE}{}", "x\n".repeat(200_000)).into_bytes(), |e| matches!(e, E::TooManyLines { most: 8_192, .. })),
+        ("an autolink hiding a span", edited(first, "a <1`@b.co> <!-- secret --> <img src=x> &amp; $x$ http://evil.example `"), |e| matches!(e, E::Html { line: 11 })),
+        ("a destination hiding a span", edited(first, "see [a](https://b.co/`)<!-- secret --> <b>bold</b> &#65; `)"), |e| matches!(e, E::Link { line: 11 })),
+        ("a span in a destination", edited(first, "see [a](https://x.co` `http://evil.example)"), |e| matches!(e, E::Link { line: 11 })),
+        ("a line opening with a span in a destination", edited(first, "[a](https://x.co` `http://evil.example)"), |e| matches!(e, E::BlockLike { line: 11 })),
+        ("a title hiding a span", edited("# Boards S2a: quecto board CLI", "# a <1`@b.co> <!-- x --> `"), |e| matches!(e, E::Html { line: 2 })),
+        ("a list item hiding a span", edited("- Every op answers one JSON line", "- see [a](https://b.co/`)<b>x</b> `)"), |e| matches!(e, E::Link { line: 25 })),
+        ("a text cell hiding a span", edited("| Ada (`ada@example.com`) until 2026-10-11T14:00:00Z |", "| [a](https://b.co/`)<b>x</b> `) |"), |e| matches!(e, E::Link { line: 8 })),
+        ("an email autolink of a digit", edited(first, "mail <1@b.co> now"), |e| matches!(e, E::Html { line: 11 })),
+        ("an email autolink of a plus", edited(first, "mail <+x@b.co>"), |e| matches!(e, E::Html { line: 11 })),
+        ("an email autolink of an underscore", edited(first, "mail <_x@b.co>"), |e| matches!(e, E::Html { line: 11 })),
+        ("an ftp address", edited(first, "see ftp://evil.example"), |e| matches!(e, E::Link { line: 11 })),
+        ("any scheme", edited(first, "see gopher://evil.example"), |e| matches!(e, E::Link { line: 11 })),
+        ("an http address in an id", edited("| board-cli |", "| http://evil.example |"), |e| matches!(e, E::Cell { line: 6, .. })),
+        ("a www address in an id", edited("| board-cli |", "| www.evil.example |"), |e| matches!(e, E::Cell { line: 6, .. })),
+        ("an email address in an id", edited("| board-cli |", "| a@b.co |"), |e| matches!(e, E::Cell { line: 6, .. })),
+        ("a footnote", edited(first, "a note[^1]"), |e| matches!(e, E::Link { line: 11 })),
+        ("a Khitan filler", edited(first, "a\u{16fe4}b"), |e| matches!(e, E::Invisible { line: 11 })),
+        ("a line of a mark alone", edited(first, "\u{301}"), |e| matches!(e, E::Invisible { line: 11 })),
+        ("a title of hashes alone", edited("# Boards S2a: quecto board CLI", "# ###"), |e| matches!(e, E::Title)),
+        ("a link of emphasis around a blank span", edited(first, "see [*` `*](https://evil.example)"), |e| matches!(e, E::Link { line: 11 })),
+        ("a link of emphasis around a mark", edited(first, "see [_\u{301}_](https://evil.example)"), |e| matches!(e, E::Link { line: 11 })),
+        ("a title of emphasis around a blank span", edited("# Boards S2a: quecto board CLI", "# *` `*"), |e| matches!(e, E::Invisible { line: 2 })),
+        ("a title of emphasis around a mark", edited("# Boards S2a: quecto board CLI", "# _\u{301}_"), |e| matches!(e, E::Invisible { line: 2 })),
+        ("a text cell of emphasis around a mark", edited("| Ada (`ada@example.com`) until 2026-10-11T14:00:00Z |", "| _\u{301}_ |"), |e| matches!(e, E::Invisible { line: 8 })),
+        ("a bare email", edited(first, "mail ada@example.com"), |e| matches!(e, E::Link { line: 11 })),
+        ("a bare email in a text cell", edited("(`ada@example.com`)", "(ada@example.com)"), |e| matches!(e, E::Link { line: 8 })),
+        ("a mailto address", edited(first, "see mailto:ada"), |e| matches!(e, E::Link { line: 11 })),
+        ("a link that shows an address", edited(first, "see [www.evil.example](https://good.example)"), |e| matches!(e, E::Link { line: 11 })),
+        ("www. after an underscore in an id", edited("| board-cli |", "| a_www.evil.example |"), |e| matches!(e, E::Cell { line: 6, .. })),
+        ("an email of a dash in an id", edited("| board-cli |", "| a-@evil.example |"), |e| matches!(e, E::Cell { line: 6, .. })),
+        ("emphasis by underscores in an id", edited("| board-cli |", "| _x_ |"), |e| matches!(e, E::Cell { line: 6, .. })),
+        ("a link showing a www address in code", edited(first, "see [`www.evil.example`](https://good.example)"), |e| matches!(e, E::Link { line: 11 })),
+        ("a link showing an email in code", edited(first, "see [`ada@evil.example`](https://good.example)"), |e| matches!(e, E::Link { line: 11 })),
+        ("a link showing a scheme split by emphasis", edited(first, "see [http*s:*//evil.example/login](https://good.example)"), |e| matches!(e, E::Link { line: 11 })),
+        ("a link showing a www address split by strikethrough", edited(first, "see [ww~w~.evil.example](https://good.example)"), |e| matches!(e, E::Link { line: 11 })),
+        ("a link showing an email split by emphasis", edited(first, "see [ad*a*@evil.example](https://good.example)"), |e| matches!(e, E::Link { line: 11 })),
+        ("an address with userinfo", edited("https://example.com/docs", "https://example.com@evil.example/docs"), |e| matches!(e, E::Link { line: 16 })),
+        ("an escaped task box", edited("- Every op answers one JSON line", "- \\[x] done"), |e| matches!(e, E::Structure { line: 25, .. })),
+        ("a task box", edited("- Every op answers one JSON line", "- [x] done"), |e| matches!(e, E::BlockLike { line: 25 })),
+        ("punctuation opening a line, unescaped", edited(first, "(a note)"), |e| matches!(e, E::BlockLike { line: 11 })),
+        ("a link showing a www address in padded code", edited(first, "see [www` . `evil.example](https://good.example)"), |e| matches!(e, E::Link { line: 11 })),
+        ("a link showing an email in padded code", edited(first, "see [ada` @ `evil.example](https://good.example)"), |e| matches!(e, E::Link { line: 11 })),
+        ("a link showing a scheme in padded code", edited(first, "see [https:` // `evil.example](https://good.example)"), |e| matches!(e, E::Link { line: 11 })),
+        ("a link showing mailto in padded code", edited(first, "see [mailto` : `ada](https://good.example)"), |e| matches!(e, E::Link { line: 11 })),
+        ("a link showing an email after an underscore in code", edited(first, "see [_`@`evil.example](https://good.example)"), |e| matches!(e, E::Link { line: 11 })),
+        ("a link showing an email after an underscore in strikethrough", edited(first, "see [_~@evil.example~](https://good.example)"), |e| matches!(e, E::Link { line: 11 })),
+        ("a scheme split across a link's start", edited(first, "see https:/[/bank.example/login](https://evil.example)"), |e| matches!(e, E::Link { line: 11 })),
+        ("a www address split across a link's start", edited(first, "see ww[w.bank.example](https://evil.example)"), |e| matches!(e, E::Link { line: 11 })),
+        ("an email split across a link's start", edited(first, "see ada[@bank.example](https://evil.example)"), |e| matches!(e, E::Link { line: 11 })),
+        ("a scheme split across code and a link", edited(first, "see `https:/`[/bank.example/login](https://evil.example)"), |e| matches!(e, E::Link { line: 11 })),
+        ("a scheme split across a link's end", edited(first, "[https:](https://evil.example)//bank.example"), |e| matches!(e, E::Link { line: 11 })),
+        ("a www address split across a link and code", edited(first, "[www](https://evil.example)`.bank.example`"), |e| matches!(e, E::Link { line: 11 })),
+        ("a www address with a mark inside, in a link", edited(first, "see [www\u{332}.bank.example](https://evil.example)"), |e| matches!(e, E::Link { line: 11 })),
+        ("a www address with a mark inside, across a link", edited(first, "see ww[w](https://evil.example)\u{332}.bank.example"), |e| matches!(e, E::Link { line: 11 })),
+        ("an email with a mark inside, in a link", edited(first, "see [ada\u{332}@bank.example](https://evil.example)"), |e| matches!(e, E::Link { line: 11 })),
+        ("an underscore around a link to a handle", edited(first, "see _[@ada](https://github.com/ada)_"), |e| matches!(e, E::Link { line: 11 })),
+        ("runs of unequal length around a link", edited(first, "see ___[@b.example](https://x.example)__"), |e| matches!(e, E::Link { line: 11 })),
+        ("two then one underscore around a link", edited(first, "see __[@evil.example](https://x.example)_"), |e| matches!(e, E::Link { line: 11 })),
+        ("underscores around code in a link", edited(first, "see [__`@`evil.example_](https://x.example)"), |e| matches!(e, E::Link { line: 11 })),
+        ("an opener left over before a link", edited(first, "see _a!__[@evil.example](https://x.example)"), |e| matches!(e, E::Link { line: 11 })),
+        ("emphasis cancelling an underscore in a link", edited(first, "see [*a _`@`evil.example* c_](https://x.example)"), |e| matches!(e, E::Link { line: 11 })),
+        ("the rule of three in a link", edited(first, "see [_`@`evil.example __y_ z_](https://x.example)"), |e| matches!(e, E::Link { line: 11 })),
+        ("strong emphasis opening a link beside an email", edited(first, "see ada`@`b.example[** x](https://x.example)"), |e| matches!(e, E::Link { line: 11 })),
+        ("strong emphasis closing a link beside an email", edited(first, "see [x **](https://x.example)ada`@`b.example"), |e| matches!(e, E::Link { line: 11 })),
+        ("a tilde opening a link beside an email", edited(first, "see ada`@`b.example[~ x](https://x.example)"), |e| matches!(e, E::Link { line: 11 })),
+        ("a table's header renamed", edited("| Item | State |", "| Item | Status |"), |e| matches!(e, E::Structure { line: 28, .. })),
+    ];
+    for (name, bytes, named) in cases {
+        let refused = parse(&bytes, &SHAPE);
+        assert!(refused.as_ref().is_err_and(named), "{name}: {refused:?}");
+    }
+}
 
 /// The example with its first paragraph's first line `text`.
 fn with_line(text: &str) -> Document {
@@ -233,15 +394,18 @@ fn near_misses_are_kept() {
         "a profile [here](https://example.com/@ada) and [paypal.com](https://example.com)",
         "README.md and C:\\x",
         "snake_case and a_b_c",
+        "```a``` opens the line as code, not a fence",
     ] {
         let document = with_line(line);
         let file = render(&document, &SHAPE).unwrap_or_else(|error| panic!("{line:?}: {error:?}"));
         assert_eq!(outline(&file, &document), Ok(()), "{line:?}");
+        assert_eq!(parse(file.as_bytes(), &SHAPE), Ok(document), "{line:?}");
     }
     let document = with_claim("`C:\\x` and `a|b`");
     let file = render(&document, &SHAPE).unwrap();
     assert!(file.contains("| Claim | `C:\\x` and `a\\|b` |"), "{file}");
     assert_eq!(outline(&file, &document), Ok(()));
+    assert_eq!(parse(file.as_bytes(), &SHAPE), Ok(document));
 }
 
 /// The text around each link is read once: many links on one long line
@@ -332,6 +496,7 @@ fn ascii_cells_keep_ids_times_and_locations() {
         let file = render(&document, &SHAPE).unwrap_or_else(|error| panic!("{id}: {error:?}"));
         assert!(file.contains(&format!("| Id | {id} |")), "{id}");
         assert_eq!(outline(&file, &document), Ok(()), "{id}");
+        assert_eq!(parse(file.as_bytes(), &SHAPE), Ok(document), "{id}");
     }
 }
 
@@ -344,6 +509,7 @@ fn a_title_may_end_in_a_hash_of_its_own() {
         document.title = title.into();
         let file = render(&document, &SHAPE).unwrap_or_else(|error| panic!("{title}: {error:?}"));
         assert_eq!(outline(&file, &document), Ok(()), "{title}");
+        assert_eq!(parse(file.as_bytes(), &SHAPE), Ok(document), "{title}");
     }
 }
 
@@ -365,11 +531,41 @@ fn every_refusal_says_what_and_where() {
         (E::TooManyLines { lines: 9, most: 8 }, "9"),
         (E::Title, "title"),
         (E::NotCanonical, "canonical"),
+        (
+            E::NotReadBack {
+                why: Some(Box::new(E::Title)),
+            },
+            "title",
+        ),
     ];
     for (refusal, says) in refusals {
         let error: &dyn std::error::Error = &refusal;
         assert!(error.to_string().contains(says), "{refusal:?}: {error}");
     }
+}
+
+/// A file that does not read back as the document it was written from is
+/// refused, in release builds too, so it is never stored.
+#[test]
+fn a_file_that_reads_back_otherwise_is_refused() {
+    let mut other = example();
+    other.title = "Another".into();
+    assert_eq!(
+        read_back(EXAMPLE.to_string(), &example(), &SHAPE).as_deref(),
+        Ok(EXAMPLE)
+    );
+    // Read back as another document: no reason but that.
+    assert_eq!(
+        read_back(EXAMPLE.to_string(), &other, &SHAPE),
+        Err(MarkdownError::NotReadBack { why: None })
+    );
+    // Not read back at all: the reason it was refused is kept.
+    assert_eq!(
+        read_back("not a board file\n".to_string(), &other, &SHAPE),
+        Err(MarkdownError::NotReadBack {
+            why: Some(Box::new(MarkdownError::Marker))
+        })
+    );
 }
 
 /// A shape is checked before anything is rendered.
@@ -389,6 +585,11 @@ fn a_shape_no_file_can_be_is_refused() {
     ];
     for shape in cases {
         let refused = render(&example(), &shape);
+        assert!(
+            matches!(refused, Err(E::Shape(_))),
+            "{shape:?}: {refused:?}"
+        );
+        let refused = parse(EXAMPLE.as_bytes(), &shape);
         assert!(
             matches!(refused, Err(E::Shape(_))),
             "{shape:?}: {refused:?}"
