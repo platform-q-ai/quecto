@@ -98,6 +98,8 @@ impl ArtifactCodec for DiscussionCodec {
                 ]);
             }
         }
+        // The domain's own line count, which its row budget charges: the
+        // rows written are the rows it budgeted.
         debug_assert_eq!(
             rows.len(),
             discussion
@@ -130,15 +132,33 @@ impl ArtifactCodec for DiscussionCodec {
                 return Err(refused("Discussion", "a table"));
             };
             for row in rows {
-                let [number, from, at, line] = row.as_slice() else {
-                    return Err(refused(MESSAGES, "a row of four cells"));
-                };
-                let number = cells::read_number(MESSAGES, number)?;
-                let author = cells::read_identity(MESSAGES, from)?;
-                let at = cells::read_time(MESSAGES, at)?;
-                next_line(&mut messages, number, author, at, line)?;
+                match (section.heading.as_str(), row.as_slice()) {
+                    (MESSAGES, [number, from, at, line]) => {
+                        let number = cells::read_number(MESSAGES, number)?;
+                        let author = cells::read_identity(MESSAGES, from)?;
+                        let at = cells::read_time(MESSAGES, at)?;
+                        next_line(&mut messages, number, author, at, line)?;
+                    }
+                    (MESSAGES, _) => return Err(refused(MESSAGES, "a row of four cells")),
+                    (heading, _) => {
+                        return Err(refused("Discussion", format!("a row of {heading:?}")));
+                    }
+                }
             }
         }
+        // Every row read went to a message, as one of its lines.
+        debug_assert_eq!(
+            messages.iter().map(Message::lines).sum::<usize>(),
+            document
+                .sections
+                .iter()
+                .map(|section| match &section.body {
+                    Body::Table(rows) => rows.len(),
+                    Body::Prose(_) => 0,
+                })
+                .sum::<usize>(),
+            "every row placed"
+        );
         let fields = DiscussionFields {
             id: cells::read_slug(ID, required(ID)?)?,
             title: document.title.clone(),
@@ -187,7 +207,6 @@ fn next_line(
                 at,
                 text: line.to_string(),
             });
-            debug_assert_eq!(messages.len() as u64, number, "messages numbered from 1");
             Ok(())
         }
         _ => Err(refused(
