@@ -219,7 +219,7 @@ fn near_misses_are_kept() {
         "an email in code `ada@example.com` and a handle @ada",
         "a profile [here](https://example.com/@ada) and [paypal.com](https://example.com)",
         "README.md and C:\\x",
-        "_[@ada](https://github.com/ada)_ and __[@ada](https://github.com/ada)__ and snake_case",
+        "see _[@ada](https://github.com/ada)_ and __[@ada](https://github.com/ada)__ and snake_case",
     ] {
         let document = with_line(line);
         let file = render(&document, &SHAPE).unwrap_or_else(|error| panic!("{line:?}: {error:?}"));

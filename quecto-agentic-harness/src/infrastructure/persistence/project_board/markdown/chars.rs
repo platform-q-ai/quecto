@@ -32,6 +32,11 @@ const BLANK: [char; 3] = ['\u{2800}', '\u{1d159}', '\u{16fe4}'];
 const KEYCAP_BASES: &str = "0123456789#*";
 const KEYCAP: char = '\u{20e3}';
 
+/// Whether `c` is a combining mark.
+pub fn mark(c: char) -> bool {
+    is(&MARK, c)
+}
+
 /// Whether `c` is drawn as something a reader sees.
 pub fn seen(c: char) -> bool {
     is(&SEEN, c) && !BLANK.contains(&c)
