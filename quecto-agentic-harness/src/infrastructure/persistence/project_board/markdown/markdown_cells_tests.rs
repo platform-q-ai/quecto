@@ -239,3 +239,15 @@ fn prose_text_blocks_cannot_hold_is_refused() {
         assert!(blocks.is_err(), "{refused:?}: {blocks:?}");
     }
 }
+
+/// The longest marker `schema_of` reads: a kind of 24 letters and ten
+/// digits; one byte more is no marker.
+#[test]
+fn the_longest_marker_is_read_and_one_byte_more_is_not() {
+    let kind = "abcdefghijklmnopqrstuvwx";
+    assert_eq!(kind.len(), 24);
+    let longest = format!("<!-- quecto-{kind} schema=4294967296 -->\n");
+    assert_eq!(schema_of(longest.as_bytes(), kind), Some(4_294_967_296));
+    let longer = format!("<!-- quecto-{kind} schema=42949672960 -->\n");
+    assert_eq!(schema_of(longer.as_bytes(), kind), None);
+}

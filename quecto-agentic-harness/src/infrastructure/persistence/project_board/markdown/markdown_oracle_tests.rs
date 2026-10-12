@@ -616,3 +616,38 @@ fn a_code_cell_a_reader_shows_as_text_is_caught() {
     let plain = file.replacen("`main`", "main", 1);
     assert!(outline(&plain, &document).is_err(), "{plain}");
 }
+
+/// Inside a code span the text is compared exactly: no markup is taken
+/// out there, so a reader showing `ab` for a written `a*b` is caught.
+#[test]
+fn a_code_span_is_compared_exactly() {
+    let document = Document {
+        schema: 1,
+        title: "Code".into(),
+        fields: vec![("Branch".into(), "a*b_c[d]".into())],
+        sections: vec![],
+    };
+    let file = render(&document, &SHAPE).unwrap();
+    assert_eq!(outline(&file, &document), Ok(()));
+    for shown in ["`ab_c[d]`", "`a*bc[d]`", "`a*b_cd]`", "`a*b_c[d`"] {
+        let edited = file.replacen("`a*b_c[d]`", shown, 1);
+        assert!(outline(&edited, &document).is_err(), "{edited}");
+    }
+}
+
+/// What looks like a link inside a code span is code: no address is taken
+/// out and no link is counted, by the oracle or by a reader.
+#[test]
+fn a_code_value_that_looks_like_a_link_is_code() {
+    let document = Document {
+        schema: 1,
+        title: "Code".into(),
+        fields: vec![
+            ("Claim".into(), "see `[x](https://y.example)` here".into()),
+            ("Branch".into(), "[x](https://y.example)".into()),
+        ],
+        sections: vec![],
+    };
+    let file = render(&document, &SHAPE).unwrap();
+    assert_eq!(outline(&file, &document), Ok(()), "{file}");
+}

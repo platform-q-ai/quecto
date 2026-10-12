@@ -53,7 +53,6 @@ struct ToyCodec;
 
 impl ArtifactCodec for ToyCodec {
     type Value = Toy;
-    const KIND: &'static str = "toy";
     const SCHEMA: u32 = 1;
     const SHAPE: Shape<'static> = Shape {
         kind: "toy",
@@ -145,7 +144,6 @@ struct Lowercased;
 
 impl ArtifactCodec for Lowercased {
     type Value = Toy;
-    const KIND: &'static str = ToyCodec::KIND;
     const SCHEMA: u32 = ToyCodec::SCHEMA;
     const SHAPE: Shape<'static> = ToyCodec::SHAPE;
 
@@ -415,31 +413,6 @@ fn a_value_its_file_would_not_give_back_is_refused_when_encoded() {
     assert_eq!(cells::optional("Pr", None), Ok(ABSENT.to_string()));
 }
 
-/// A codec whose kind is not its shape's writes and reads nothing.
-#[test]
-fn a_codec_whose_kind_is_not_its_shapes_is_refused() {
-    struct Elsewhere;
-    impl ArtifactCodec for Elsewhere {
-        type Value = Toy;
-        const KIND: &'static str = "other";
-        const SCHEMA: u32 = ToyCodec::SCHEMA;
-        const SHAPE: Shape<'static> = ToyCodec::SHAPE;
-        fn to_document(toy: &Toy) -> Result<Document, CodecError> {
-            ToyCodec::to_document(toy)
-        }
-        fn from_document(document: &Document) -> Result<Toy, CodecError> {
-            ToyCodec::from_document(document)
-        }
-    }
-    assert_eq!(ToyCodec::KIND, ToyCodec::SHAPE.kind);
-    let file = encode::<ToyCodec>(&toy()).unwrap();
-    assert_eq!(encode::<Elsewhere>(&toy()), Err(CodecError::Schema));
-    assert_eq!(
-        decode::<Elsewhere>(file.as_bytes()),
-        Err(CodecError::Schema)
-    );
-}
-
 /// A schema past what a u32 holds was still written by something newer.
 #[test]
 fn a_schema_past_u32_reads_as_newer() {
@@ -466,4 +439,59 @@ fn an_email_a_code_span_holds_round_trips() {
         let file = encode::<ToyCodec>(&toy).unwrap();
         assert_eq!(decode::<ToyCodec>(file.as_bytes()), Ok(toy), "{file}");
     }
+}
+
+/// A value whose equality is looser than its document (as `RepoName`'s
+/// ignores case) is still refused when its document would read back as
+/// another: `encode` compares documents, as `decode` does.
+#[test]
+fn a_value_whose_equality_is_loose_is_refused_when_its_document_differs() {
+    /// A toy whose titles are equal whatever their case.
+    #[derive(Debug, Clone)]
+    struct Loose(Toy);
+    impl PartialEq for Loose {
+        fn eq(&self, other: &Self) -> bool {
+            self.0.title.eq_ignore_ascii_case(&other.0.title)
+                && Toy {
+                    title: String::new(),
+                    ..self.0.clone()
+                } == Toy {
+                    title: String::new(),
+                    ..other.0.clone()
+                }
+        }
+    }
+    struct LooseCodec;
+    impl ArtifactCodec for LooseCodec {
+        type Value = Loose;
+        const SCHEMA: u32 = ToyCodec::SCHEMA;
+        const SHAPE: Shape<'static> = ToyCodec::SHAPE;
+        fn to_document(loose: &Loose) -> Result<Document, CodecError> {
+            ToyCodec::to_document(&loose.0)
+        }
+        fn from_document(document: &Document) -> Result<Loose, CodecError> {
+            Lowercased::from_document(document).map(Loose)
+        }
+    }
+    assert_eq!(
+        encode::<LooseCodec>(&Loose(toy())),
+        Err(CodecError::NotCanonical)
+    );
+}
+
+/// A branch with a backtick no code cell holds: refused when written, at
+/// its line, until the domain refuses it first (#2511).
+#[test]
+fn a_backtick_branch_is_refused_when_written() {
+    let toy = Toy {
+        branch: "feat`x".into(),
+        ..toy()
+    };
+    assert!(matches!(
+        encode::<ToyCodec>(&toy),
+        Err(CodecError::Markdown(MarkdownError::Cell {
+            why: "code of printable ASCII but a backtick",
+            ..
+        }))
+    ));
 }
