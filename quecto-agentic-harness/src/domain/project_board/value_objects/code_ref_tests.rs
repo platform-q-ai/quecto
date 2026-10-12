@@ -163,14 +163,21 @@ fn a_repository_is_the_same_whatever_its_case() {
     assert_ne!(upper, RepoName::parse("platform-q-ai/quecto2").unwrap());
 }
 
-/// GitHub's owner limit, pinned: 39 bytes before any `_shortcode`.
+/// GitHub's owner limit, pinned: 39 bytes in all, a `_shortcode`
+/// included, and a shortcode of 1 to 8.
 #[test]
-fn an_owner_is_at_most_39_bytes_before_its_shortcode() {
+fn an_owner_is_at_most_39_bytes_with_its_shortcode() {
     assert_eq!(MAX_OWNER_BYTES, 39);
     let owner = "o".repeat(39);
     assert!(RepoName::parse(&format!("{owner}/n")).is_ok());
-    assert!(RepoName::parse(&format!("{owner}_corp/n")).is_ok());
     assert!(RepoName::parse(&format!("{owner}o/n")).is_err());
+    assert!(RepoName::parse(&format!("{owner}_corp/n")).is_err());
+    assert!(RepoName::parse(&format!("{}_corp/n", "o".repeat(34))).is_ok());
+    assert!(RepoName::parse(&format!("{}_corp/n", "o".repeat(35))).is_err());
+    // A shortcode of 1 to 8 letters and digits.
+    assert!(RepoName::parse("ada_c/n").is_ok());
+    assert!(RepoName::parse("ada_abcd1234/n").is_ok());
+    assert!(RepoName::parse("ada_abcd12345/n").is_err());
 }
 
 /// A refusal says why: a branch names the characters a board file cannot
