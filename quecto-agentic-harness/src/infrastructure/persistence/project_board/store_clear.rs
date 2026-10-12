@@ -50,19 +50,19 @@ impl GitBoardStore {
         let seen = |keep: &KeepCopy| match keep {
             KeepCopy::Object { seen, .. } | KeepCopy::Drop(seen) => seen.len(),
         };
-        // A board holds at most so many names listed twice, and entries:
-        // what a clear saw is bounded by them; the copy it keeps is one it
-        // saw, not counted again.
+        // A board a read takes holds at most so many names listed twice,
+        // and entries: what a clear saw is bounded by them; the copy it
+        // keeps is one it saw, not counted again.
         let saw: usize = clear.repeated.values().map(seen).sum();
         match (
-            clear.repeated.len() <= MAX_TASK_ENTRIES / 2,
-            saw <= MAX_TASK_ENTRIES,
+            clear.repeated.len() <= MAX_READ_ENTRIES / 2,
+            saw <= MAX_READ_ENTRIES,
         ) {
             (true, true) => {}
             _ => {
                 return Err(invalid(format!(
-                    "a clear resolves at most {} names and {MAX_TASK_ENTRIES} copies",
-                    MAX_TASK_ENTRIES / 2
+                    "a clear resolves at most {} names and {MAX_READ_ENTRIES} copies",
+                    MAX_READ_ENTRIES / 2
                 )));
             }
         }
@@ -90,7 +90,7 @@ impl GitBoardStore {
             Err(refusal) => return Ok(BoardWrite::Refused(refusal)),
         };
         assert!(after.repeated.is_empty(), "a clear resolves every name");
-        after.within_bounds(&[], self.limits)?;
+        after.within_clear_bounds(&board, self.limits)?;
         let tasks = self.tasks_tree(&after, &[])?;
         self.land(&base, &tasks, message)
     }

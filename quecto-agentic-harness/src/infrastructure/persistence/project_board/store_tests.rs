@@ -2,6 +2,7 @@ use super::*;
 use crate::domain::project_board::entities::task::TaskFields;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
 use crate::domain::project_board::value_objects::vocabulary::{TaskKind, TaskStatus};
+use crate::infrastructure::persistence::project_board::board_tree::MAX_TASK_ENTRIES;
 use crate::infrastructure::persistence::project_board::git::GitEnvironment;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};

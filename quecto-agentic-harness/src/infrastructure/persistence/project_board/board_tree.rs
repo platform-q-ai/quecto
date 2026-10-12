@@ -34,6 +34,14 @@
 //! other entry is a stray, set aside with no id, and dropped by the next
 //! write.
 //!
+//! A board's root also holds its format marker (#2527): a `format` tree of
+//! one regular file, `board`, reading [`FORMAT`]. A quecto before the task
+//! files became markdown refuses any root tree but `tasks` as a clash, so
+//! it never reads, and never writes over, a board whose tasks it would not
+//! see. Every write adds the marker; a root without one is a board written
+//! before it, read as it is; a marker of a newer format asks for an
+//! upgrade.
+//!
 //! An object a partial clone does not hold yet is not fetched here (every
 //! local call runs with `GIT_NO_LAZY_FETCH`): the read answers
 //! [`Unread::Missing`] with every object it found missing, so the store
@@ -54,18 +62,17 @@ const NAME_PUNCTUATION: &str = "-_.+=@,";
 /// The longest name kept in `tasks/`: an id and its five-byte `.json`,
 /// the longer of the two extensions a task file has had.
 pub const MAX_NAME_BYTES: usize = MAX_SLUG_BYTES + 5;
-/// The most entries the board's `tasks/` tree may hold: its tasks, one
-/// file each, and the files set aside.
+/// The most entries a write leaves in the board's `tasks/` tree: its
+/// tasks, one file each, and the files set aside.
 pub const MAX_TASK_ENTRIES: usize = 2_048;
-/// The most entries a read takes in `tasks/` (red: not yet apart from a
-/// write's).
+/// The most entries a read takes in `tasks/`: a board written before the
+/// task files became markdown holds a JSON file and a summary per task,
+/// up to twice as many as a write leaves.
 pub const MAX_READ_ENTRIES: usize = 2 * MAX_TASK_ENTRIES;
-/// The board's format marker (red: not yet written or read).
-pub const FORMAT: &[u8] = b"quecto-board 2\n";
 /// The largest task file read or written: the task codec's cap.
 pub const MAX_TASK_FILE_BYTES: usize = TASK_LIMITS.file_bytes;
-/// The largest tree read: [`MAX_TASK_ENTRIES`] entries with long names.
-pub const MAX_TREE_BYTES: usize = MAX_TASK_ENTRIES * 160;
+/// The largest tree read: [`MAX_READ_ENTRIES`] entries with long names.
+pub const MAX_TREE_BYTES: usize = MAX_READ_ENTRIES * 160;
 /// The most `ls-tree` prints for a tree of [`MAX_TREE_BYTES`]: each entry
 /// of at least 28 bytes grows by at most 53 when its object name is
 /// spelled in hex beside its type.
@@ -207,49 +214,6 @@ impl Board {
         ))
     }
 
-    /// The board, with `written` in place, keeps within what a read takes:
-    /// the entries of its `tasks/` tree (each task one file, each file set
-    /// aside one) and the task-file bytes a read reads. Every change checks
-    /// it before it builds anything.
-    ///
-    /// # Errors
-    /// An invalid write past either bound.
-    pub fn within_bounds(
-        &self,
-        written: &[(&Task, Vec<u8>)],
-        limits: Limits,
-    ) -> Result<(), BoardStoreError> {
-        let invalid = |why: String| Err(BoardStoreError::InvalidWrite(why));
-        let ids: BTreeSet<&Slug> = written.iter().map(|(task, _)| &task.fields().id).collect();
-        let after: BTreeSet<&Slug> = self.tasks.keys().chain(ids.iter().copied()).collect();
-        let copies: usize = self.repeated.iter().map(|(_, copies)| copies.len()).sum();
-        // A file a clear kept that a read will read as a task is in `kept`
-        // until then; its id is not among the tasks, so it is counted once.
-        let entries = after.len() + self.kept.len() + copies;
-        if entries > MAX_TASK_ENTRIES {
-            return invalid(format!(
-                "the board would hold {} tasks and {} files set aside; it holds at most \
-                 {MAX_TASK_ENTRIES} in all",
-                after.len(),
-                self.kept.len() + copies
-            ));
-        }
-        let replaced: BTreeSet<String> = ids.iter().map(|id| task_file(id)).collect();
-        let carried = self
-            .read_bytes
-            .iter()
-            .filter(|(name, _)| !replaced.contains(*name));
-        let bytes = carried.map(|(_, size)| size).sum::<usize>()
-            + written.iter().map(|(_, bytes)| bytes.len()).sum::<usize>();
-        match bytes <= limits.board_bytes {
-            true => Ok(()),
-            false => invalid(format!(
-                "the board would hold {bytes} bytes of task files; a read takes at most {}",
-                limits.board_bytes
-            )),
-        }
-    }
-
     pub fn is_quarantined(&self, id: &Slug) -> Option<&QuarantinedFile> {
         self.quarantined.iter().find(|file| file.id() == Some(id))
     }
@@ -288,26 +252,6 @@ impl Entry {
     }
 }
 
-/// The task files `tasks/` holds: the task codec's markdown, and the JSON
-/// form older quecto wrote, which this one never reads (#2481 S8).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum TaskFile {
-    Markdown,
-    LegacyJson,
-}
-
-/// A task file's name, with the id it spells if it spells one: which file
-/// it is.
-fn task_name(name: &str) -> Option<(Option<Slug>, TaskFile)> {
-    let (stem, extension) = name.rsplit_once('.')?;
-    let id = Slug::parse(stem).ok();
-    match extension {
-        "md" => Some((id, TaskFile::Markdown)),
-        "json" => Some((id, TaskFile::LegacyJson)),
-        _ => None,
-    }
-}
-
 /// The object type a tree entry's mode names, for the modes git writes.
 fn kind_of_mode(mode: &str) -> Option<&'static str> {
     match mode {
@@ -332,6 +276,12 @@ pub fn read_board(git: &Git, commit: &str, limits: Limits) -> Result<Board, Unre
     let read = tasks
         .filter(|entry| is_tree(entry, &kinds))
         .map(|entry| read_tasks(git, &entry.oid, limits));
+    // So is the format marker, at the same depth.
+    let marker = root
+        .iter()
+        .find(|entry| entry.name == FORMAT_TREE)
+        .filter(|entry| is_tree(entry, &kinds))
+        .map(|entry| read_format(git, &entry.oid, limits));
     let mut missing = missing(&root, &kinds);
     let board = match read {
         Some(Ok(board)) => Some(board),
@@ -342,12 +292,24 @@ pub fn read_board(git: &Git, commit: &str, limits: Limits) -> Result<Board, Unre
         Some(Err(failed)) => return Err(failed),
         None => None,
     };
+    let marked = match marker {
+        Some(Err(Unread::Missing(more))) => {
+            missing.extend(more);
+            None
+        }
+        other => other,
+    };
     if !missing.is_empty() {
         missing.sort();
         missing.dedup();
         return Err(Unread::Missing(missing));
     }
     board_shape(&root, &kinds)?;
+    // No marker: a board written before it, read as it is; the next write
+    // adds it.
+    if let Some(Err(failed)) = marked {
+        return Err(failed);
+    }
     // No `tasks` tree yet: a board that holds no task.
     Ok(board.unwrap_or_default())
 }
@@ -378,7 +340,8 @@ fn missing(entries: &[Entry], kinds: &BTreeMap<String, Found>) -> Vec<String> {
 
 /// A board's root: a README file (a hand edit may have deleted it), a
 /// `tasks` tree once it holds a task, and stray files a write drops; at
-/// least one of the README and `tasks`.
+/// least one of the README and `tasks`; and its format marker, a `format`
+/// tree, once a write of this quecto added it.
 fn board_shape(root: &[Entry], kinds: &BTreeMap<String, Found>) -> Result<(), BoardStoreError> {
     let kind = |entry: &Entry| match kinds.get(&entry.oid) {
         Some(Found::Present(object)) => Some(object.kind.as_str()),
@@ -387,10 +350,10 @@ fn board_shape(root: &[Entry], kinds: &BTreeMap<String, Found>) -> Result<(), Bo
     let file =
         |entry: &Entry| kind_of_mode(&entry.mode) == Some("blob") && kind(entry) == Some("blob");
     let fits = |entry: &Entry| match entry.name.as_str() {
-        "tasks" => is_tree(entry, kinds),
+        "tasks" | FORMAT_TREE => is_tree(entry, kinds),
         _ => file(entry),
     };
-    let ours = |entry: &Entry| matches!(entry.name.as_str(), "README.md" | "tasks");
+    let ours = |entry: &Entry| matches!(entry.name.as_str(), "README.md" | "tasks" | FORMAT_TREE);
     let marked = root.iter().any(ours);
     match (marked, root.iter().find(|entry| !fits(entry))) {
         (true, None) => Ok(()),
@@ -406,106 +369,12 @@ fn board_shape(root: &[Entry], kinds: &BTreeMap<String, Found>) -> Result<(), Bo
     }
 }
 
-/// What becomes of one `tasks/` entry.
-enum Disposition {
-    Read(Slug),
-    /// Set aside, and carried forward by every write when `kept`.
-    Aside {
-        id: Option<Slug>,
-        reason: String,
-        kept: bool,
-    },
-}
-
-fn disposition(entry: &Entry, found: Option<&Object>, count: usize) -> Disposition {
-    let aside =
-        |id: Option<Slug>, reason: String, kept: bool| Disposition::Aside { id, reason, kept };
-    match entry.kept_name() {
-        true => {}
-        false => {
-            let reason = format!(
-                "not a name quecto keeps (letters, numbers and {NAME_PUNCTUATION}, starting \
-                 with a letter or number, at most {MAX_NAME_BYTES} bytes); the next write drops it"
-            );
-            return aside(None, reason, false);
-        }
-    }
-    let Some((id, file)) = task_name(&entry.name) else {
-        let reason = "not a task file: only <id>.md belongs in tasks/".into();
-        return aside(None, reason, false);
-    };
-    let kind = found.map(|object| object.kind.as_str());
-    let size = found.map_or(usize::MAX, |object| object.size);
-    // Carried only when its object is what its mode names: a file or link
-    // over a blob, a directory over a tree.
-    let agrees = match kind_of_mode(&entry.mode) {
-        Some(named @ ("blob" | "tree")) => kind == Some(named),
-        Some(_) | None => false,
-    };
-    match (file, id, count, entry.mode.as_str(), kind) {
-        (_, _, _, GITLINK, _) => aside(
-            None,
-            "a gitlink is not a task file; the next write drops it".into(),
-            false,
-        ),
-        (_, id, 2.., _, _) => aside(id, "named more than once in the tree".into(), false),
-        (TaskFile::Markdown, Some(id), _, REGULAR_FILE, Some("blob"))
-            if size <= MAX_TASK_FILE_BYTES =>
-        {
-            Disposition::Read(id)
-        }
-        (TaskFile::LegacyJson, Some(id), _, REGULAR_FILE, Some("blob")) => aside(
-            Some(id),
-            "a task file in the JSON form older quecto wrote; this quecto keeps tasks as \
-             <id>.md, so it is carried forward as it is and its task stays blocked until it is \
-             cleared"
-                .into(),
-            true,
-        ),
-        (TaskFile::Markdown, id, _, REGULAR_FILE, Some("blob")) if id.is_some() => aside(
-            id,
-            format!("task file is {size} bytes; the most is {MAX_TASK_FILE_BYTES}"),
-            true,
-        ),
-        (_, None, _, _, _) if agrees => aside(
-            None,
-            "its name is not a task id this quecto reads; carried forward as it is".into(),
-            true,
-        ),
-        (_, id, _, mode, _) if agrees => aside(
-            id,
-            format!("not a regular file (mode {mode}); carried forward as it is"),
-            true,
-        ),
-        // A copy a write drops names its id only when no copy a write
-        // carries does: the carried copy is the task, read or set aside.
-        (_, id, 0, mode, _) if kind_of_mode(mode).is_none() => aside(
-            id,
-            format!("mode {mode} is not one git writes, so the next write drops it"),
-            false,
-        ),
-        (_, _, 1.., mode, _) => aside(
-            None,
-            format!("a copy of mode {mode} beside one a write carries; the next write drops it"),
-            false,
-        ),
-        (_, id, 0, mode, _) => aside(
-            id,
-            format!(
-                "mode {mode} over a {}: git cannot send such a tree, so the next write drops it",
-                kind.unwrap_or("missing object")
-            ),
-            false,
-        ),
-    }
-}
-
 fn read_tasks(git: &Git, tree: &str, limits: Limits) -> Result<Board, Unread> {
     let max_bytes = limits.board_bytes;
     let entries = listed(git, tree, limits.tree_bytes)?;
-    if entries.len() > MAX_TASK_ENTRIES {
+    if entries.len() > MAX_READ_ENTRIES {
         return Err(Unread::Failed(BoardStoreError::Unavailable(format!(
-            "the board's tasks tree holds {} entries; the most is {MAX_TASK_ENTRIES}",
+            "the board's tasks tree holds {} entries; the most is {MAX_READ_ENTRIES}",
             entries.len()
         ))));
     }
@@ -527,7 +396,8 @@ fn read_tasks(git: &Git, tree: &str, limits: Limits) -> Result<Board, Unread> {
             board.quarantined.push(QuarantinedFile {
                 path: format!("tasks/{}", shown_name(&entry.raw)),
                 key: id.map(ArtifactKey::Task),
-                // A file's own text can reach the reason: keep what shows.
+                // A file's own text (an id the codec refuses, say) can reach
+                // the reason: only what shows as itself is kept, capped.
                 reason: capped(&sanitised(reason.as_bytes())),
                 object: entry.oid.clone(),
                 carried,
@@ -601,6 +471,15 @@ fn read_tasks(git: &Git, tree: &str, limits: Limits) -> Result<Board, Unread> {
         .map(|(_, entry, size)| (entry.oid.as_str(), *size))
         .collect();
     let contents = contents(git, &wanted)?;
+    // Ids with a task file in the JSON form older quecto wrote: an `.md`
+    // beside one that is no task file is the summary it wrote with it.
+    let legacy: BTreeSet<Slug> = entries
+        .iter()
+        .filter_map(|entry| match task_name(&entry.name) {
+            Some((Some(id), TaskFile::LegacyJson)) => Some(id),
+            Some(_) | None => None,
+        })
+        .collect();
     for (id, entry, _) in to_read {
         // Two files may share one blob, so each is looked up, not taken.
         let bytes = contents.get(&entry.oid).cloned().unwrap_or_default();
@@ -625,26 +504,52 @@ fn read_tasks(git: &Git, tree: &str, limits: Limits) -> Result<Board, Unread> {
                 );
             }
             Err(reason) => {
+                let reason = match legacy.contains(&id) {
+                    true => "a summary older quecto wrote beside its JSON record; carried \
+                             forward as it is"
+                        .to_string(),
+                    false => reason,
+                };
                 keep(&mut board, entry);
                 set_aside(&mut board, entry, Some(id), reason, true);
             }
         }
     }
-    // A task read is never one set aside; a tree that made one both is
-    // refused, never read half-trusted.
-    match board
+    // A task with another file set aside under its id (one in the JSON
+    // form older quecto wrote, a name listed twice) is never read
+    // half-trusted: its file is set aside with it and carried as it is, so
+    // clearing the other file frees it.
+    let blocked: Vec<Slug> = board
         .tasks
         .keys()
-        .find(|id| board.is_quarantined(id).is_some())
-    {
-        None => {}
-        Some(id) => {
-            return Err(Unread::Failed(BoardStoreError::Unavailable(format!(
-                "task {:?} is both read and set aside in tree {tree}",
-                id.as_str()
-            ))));
-        }
+        .filter(|id| board.is_quarantined(id).is_some())
+        .cloned()
+        .collect();
+    for id in blocked {
+        let Some(held) = board.tasks.remove(&id) else {
+            continue;
+        };
+        let name = task_file(&id);
+        board
+            .kept
+            .insert(name.clone(), format!("{REGULAR_FILE} blob {}", held.object));
+        board.quarantined.push(QuarantinedFile {
+            path: format!("{TASKS}{name}"),
+            key: Some(ArtifactKey::Task(id)),
+            reason: "another file of this task is set aside, so this one is too, carried \
+                     forward as it is until that file is cleared"
+                .into(),
+            object: held.object,
+            carried: true,
+        });
     }
+    assert!(
+        board
+            .tasks
+            .keys()
+            .all(|id| board.is_quarantined(id).is_none()),
+        "a task read is never one set aside"
+    );
     board
         .quarantined
         .sort_by(|left, right| left.path.cmp(&right.path));
@@ -745,6 +650,16 @@ pub fn object_id(text: &str) -> Result<String, BoardStoreError> {
         ))),
     }
 }
+
+#[path = "board_bounds.rs"]
+mod bounds;
+#[path = "board_entries.rs"]
+mod entries;
+use entries::{Disposition, TaskFile, disposition, task_name};
+#[path = "board_format.rs"]
+mod format;
+use format::read_format;
+pub use format::{FORMAT, FORMAT_FILE, FORMAT_TREE};
 
 #[cfg(test)]
 #[path = "board_tree_tests.rs"]

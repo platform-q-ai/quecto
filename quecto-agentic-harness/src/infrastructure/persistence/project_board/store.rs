@@ -26,8 +26,8 @@
 use super::artifacts::task::TaskCodec;
 use super::artifacts::{decode, encode};
 use super::board_tree::{
-    Board, LIMITS, Limits, MAX_TASK_ENTRIES, REGULAR_FILE, TREE, Unread, object_id, read_board,
-    task_file, told, unavailable, within,
+    Board, FORMAT, FORMAT_FILE, FORMAT_TREE, LIMITS, Limits, MAX_READ_ENTRIES, REGULAR_FILE, TREE,
+    Unread, object_id, read_board, task_file, told, unavailable, within,
 };
 use super::git::{Git, GitError, SHORT_OUTPUT, failed, quoted};
 use super::push_report::{PushReport, RefStatus, Rejection, ref_status, remote_rejection};
@@ -490,22 +490,35 @@ impl GitBoardStore {
                 format!("{REGULAR_FILE} blob {object}"),
             );
         }
+        // A write leaves at most `MAX_TASK_ENTRIES`; a clear of a board read
+        // past it (an older quecto's) leaves no more than it read.
         assert!(
-            files.len() <= MAX_TASK_ENTRIES,
+            files.len() <= MAX_READ_ENTRIES,
             "the entry bound was checked first"
         );
         self.tree(&files)
     }
 
-    /// A commit of the README and `tasks` on `base`, as the store's
-    /// writer, pushed only if the board is still at `base`.
+    /// The format marker's tree: [`FORMAT_FILE`] reading [`FORMAT`].
+    fn format_tree(&self) -> Result<String, BoardStoreError> {
+        let marker = self.blob(FORMAT)?;
+        self.tree(&BTreeMap::from([(
+            FORMAT_FILE.to_string(),
+            format!("{REGULAR_FILE} blob {marker}"),
+        )]))
+    }
+
+    /// A commit of the README, the format marker and `tasks` on `base`, as
+    /// the store's writer, pushed only if the board is still at `base`.
     fn land(&self, base: &str, tasks: &str, message: &str) -> Result<BoardWrite, BoardStoreError> {
         let readme = self.blob(README)?;
+        let format = self.format_tree()?;
         let root = BTreeMap::from([
             (
                 "README.md".to_string(),
                 format!("{REGULAR_FILE} blob {readme}"),
             ),
+            (FORMAT_TREE.to_string(), format!("{TREE} tree {format}")),
             ("tasks".to_string(), format!("{TREE} tree {tasks}")),
         ]);
         let tree = self.tree(&root)?;
@@ -656,9 +669,9 @@ impl ProjectBoardStore for GitBoardStore {
         self.land(&base, &tasks, message)
     }
 
-    /// Creates the board with only its README, unless it exists. An
-    /// existing branch is the board only when read and write would take it
-    /// as one.
+    /// Creates the board with its README and format marker, unless it
+    /// exists. An existing branch is the board only when read and write
+    /// would take it as one.
     fn bootstrap(&self) -> Result<BoardBootstrap, BoardStoreError> {
         if let Some(clash) = self.clash()? {
             return Err(BoardStoreError::Clash(clash));
@@ -667,10 +680,14 @@ impl ProjectBoardStore for GitBoardStore {
             return self.existing().map(BoardBootstrap::Existing);
         }
         let readme = self.blob(README)?;
-        let tree = self.tree(&BTreeMap::from([(
-            "README.md".to_string(),
-            format!("{REGULAR_FILE} blob {readme}"),
-        )]))?;
+        let format = self.format_tree()?;
+        let tree = self.tree(&BTreeMap::from([
+            (
+                "README.md".to_string(),
+                format!("{REGULAR_FILE} blob {readme}"),
+            ),
+            (FORMAT_TREE.to_string(), format!("{TREE} tree {format}")),
+        ]))?;
         let commit = self
             .git
             .text(&["commit-tree", &tree, "-m", "board: bootstrap"], None)
