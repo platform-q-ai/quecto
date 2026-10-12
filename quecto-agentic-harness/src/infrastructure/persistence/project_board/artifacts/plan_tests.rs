@@ -43,22 +43,22 @@ quecto board list
 quecto board show board-cli
 ```
 
-## Items
-| Item | Title |
+## Task items
+| Task item | Title |
 |---|---|
 | store | The store reads and writes `a\|b` |
 | cli | The CLI answers one JSON line |
 | docs | Docs |
 
-## Item dependencies
-| Item | Depends on |
+## Task item dependencies
+| Task item | Depends on |
 |---|---|
 | cli | store |
 | docs | store |
 | docs | cli |
 
 ## Criteria
-| Item | Criterion |
+| Task item | Criterion |
 |---|---|
 | store | Round trips every kind |
 | store | Refuses hostile files |
@@ -234,7 +234,7 @@ fn a_plan_title_that_is_not_derived_is_refused() {
 }
 
 #[test]
-fn criteria_out_of_item_order_are_not_canonical() {
+fn criteria_out_of_task_item_order_are_not_canonical() {
     let criteria = "| store | Round trips every kind |\n| store | Refuses hostile files |\n| cli | `quecto board list` answers |\n";
     let dependencies = "| cli | store |\n| docs | store |\n| docs | cli |\n";
     for file in [
@@ -256,7 +256,7 @@ fn criteria_out_of_item_order_are_not_canonical() {
 }
 
 #[test]
-fn a_criterion_of_an_unknown_item_is_refused() {
+fn a_criterion_of_an_unknown_task_item_is_refused() {
     for (file, table) in [
         (
             edited("| cli | `quecto board list` answers |", "| nope | x |"),
@@ -264,12 +264,12 @@ fn a_criterion_of_an_unknown_item_is_refused() {
         ),
         (
             edited("| docs | cli |", "| nope | cli |"),
-            "Item dependencies",
+            "Task item dependencies",
         ),
     ] {
         let read = decode::<PlanCodec>(file.as_bytes());
         assert!(
-            matches!(&read, Err(CodecError::Cell { field, .. }) if *field == table),
+            matches!(&read, Err(CodecError::Cell { field, problem }) if *field == table && problem == "nope is no task item of the plan"),
             "{read:?}"
         );
     }
@@ -329,7 +329,7 @@ fn long_slug(index: usize) -> Slug {
     slug(&format!("{}{index:03}", "a".repeat(61)))
 }
 
-/// The widest of every list the domain admits: 128 items, each with 16
+/// The widest of every list the domain admits: 128 task items, each with 16
 /// criteria and as many dependencies as an acyclic plan has, 16 roles,
 /// every optional field, and `approach` and `criterion` as given.
 fn widest(approach: String, criterion: impl Fn(usize, usize) -> String) -> PlanFields {
@@ -387,9 +387,9 @@ fn the_widest_plan_fits_its_limits() {
     let fenced = format!("```{}```", "\n".repeat(MAX_APPROACH_CHARS - 6));
     let most_lines = widest(fenced, |_, c| format!("c{c}"));
     // Most bytes: the whole text budget spent on `|`, which a cell writes
-    // `\|`: each item's share over its criteria, distinct lengths, the last
+    // `\|`: each task item's share over its criteria, distinct lengths, the last
     // taking what is left.
-    // One byte each for the items' titles and the roles' models, one for
+    // One byte each for the task items' titles and the roles' models, one for
     // the image (its row is the widest, written as code), and one for an
     // approach of `#`, which brings its section and is written `\#`.
     let budget = MAX_PLAN_TEXT_BYTES - MAX_ITEMS - MAX_ROLES - 1 - 1;
@@ -428,9 +428,9 @@ fn the_widest_plan_fits_its_limits() {
     }
     let (bytes, lines, longest) = seen;
     // The whole budget spent on cells that write it twice: at least
-    // 1,077,131 bytes (a lower bound; no search proves it the domain's most).
+    // 1,077,156 bytes (a lower bound; no search proves it the domain's most).
     assert!(
-        (1_077_131..=PLAN_LIMITS.file_bytes).contains(&bytes),
+        (1_077_156..=PLAN_LIMITS.file_bytes).contains(&bytes),
         "{bytes}"
     );
     // Past the plan's first estimate of 53,000: a fence's blank lines.
@@ -515,18 +515,18 @@ fn accepted_by_and_accepted_at_come_together() {
     }
 }
 
-/// A dependency on an item the plan does not have names its table.
+/// A dependency on a task item the plan does not have names its table.
 #[test]
-fn a_dependency_on_an_unknown_item_is_refused() {
+fn a_dependency_on_an_unknown_task_item_is_refused() {
     let file = edited("| docs | cli |", "| docs | nope |");
     let read = decode::<PlanCodec>(file.as_bytes());
     assert!(
         matches!(
             &read,
             Err(CodecError::Cell {
-                field: "Item dependencies",
-                ..
-            })
+                field: "Task item dependencies",
+                problem,
+            }) if problem == "nope is no task item of the plan"
         ),
         "{read:?}"
     );
@@ -568,4 +568,19 @@ fn a_model_and_image_only_a_code_cell_holds_round_trip() {
         assert_eq!(decode::<PlanCodec>(file.as_bytes()), Ok(plan));
         read_by_the_oracle(&file);
     }
+}
+
+/// A plan file of the wording before task items (`## Items`) is refused,
+/// never read as an alias of `## Task items`.
+#[test]
+fn an_items_heading_of_the_old_wording_is_refused() {
+    let old = edited("## Task items", "## Items");
+    let read = decode::<PlanCodec>(old.as_bytes());
+    assert_eq!(
+        read,
+        Err(CodecError::Markdown(MarkdownError::UnknownSection {
+            heading: "Items".into()
+        })),
+        "{read:?}"
+    );
 }

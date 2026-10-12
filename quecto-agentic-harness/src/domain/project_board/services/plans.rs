@@ -22,7 +22,7 @@ use super::super::value_objects::vocabulary::{PlanState, TaskStatus};
 use super::claims::{after_last, held_live_by, settle, stamp, within_slack};
 use super::runs::open_of;
 
-/// What a plan says: its approach, items and team.
+/// What a plan says: its approach, task items and team.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct PlanContent {
     /// Markdown.

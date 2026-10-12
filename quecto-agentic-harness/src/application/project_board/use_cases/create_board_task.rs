@@ -1,6 +1,6 @@
 //! Puts a new task on the board: only the task's own fields
 //! ([`NewBoardTask`]), a draft or ready task with no plan, team, claim,
-//! runs, reviews, pull requests or items yet, whose parent and
+//! runs, reviews, pull requests or task items yet, whose parent and
 //! dependencies are already on the board, stamped with the time it was
 //! created. It never closes a cycle: not through new references, which
 //! must exist, nor through a task still naming the id of one that was
@@ -53,7 +53,7 @@ impl CreateBoardTask {
 }
 
 /// The new task's fields, created and updated `now`, with no plan, team,
-/// claim, runs, reviews, pull requests or items yet.
+/// claim, runs, reviews, pull requests or task items yet.
 fn created_at(new: &NewBoardTask, now: &Timestamp) -> TaskFields {
     let fields = TaskFields {
         id: new.id.clone(),

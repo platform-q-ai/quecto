@@ -1,5 +1,5 @@
 //! The run codec: the example file byte for byte, a running run, the
-//! fold-back's tables in item order, and the widest run inside the caps.
+//! fold-back's tables in task item order, and the widest run inside the caps.
 use super::super::{CodecError, decode, encode};
 use super::*;
 use crate::domain::project_board::entities::run::MAX_RUN_TEXT_BYTES;
@@ -25,21 +25,21 @@ const EXAMPLE: &str = r#"<!-- quecto-run schema=1 -->
 | Ended | 2026-10-11T14:40:00Z |
 | Cost tokens | 1840000 |
 
-## Items
-| Item | State |
+## Task items
+| Task item | State |
 |---|---|
 | store | done |
 | cli | done |
 | docs | blocked |
 
 ## Owners
-| Item | Owner |
+| Task item | Owner |
 |---|---|
 | store | W1 builder |
 | cli | W2 builder |
 
 ## Evidence
-| Item | Evidence |
+| Task item | Evidence |
 |---|---|
 | store | [CI run](https://github.com/platform-q-ai/quecto/actions/runs/1) |
 | store | 26 tests pass, `a\|b` included |
@@ -128,6 +128,15 @@ fn edited(from: &str, to: &str) -> String {
     EXAMPLE.replacen(from, to, 1)
 }
 
+/// `file` is refused at `at` with exactly `problem`.
+fn refused_with(file: &str, at: &str, problem: &str) {
+    let read = decode::<RunCodec>(file.as_bytes());
+    assert!(
+        matches!(&read, Err(CodecError::Cell { field, problem: said }) if *field == at && said == problem),
+        "{read:?}\n{file}"
+    );
+}
+
 fn refused_at(file: &str, at: &str) {
     let read = decode::<RunCodec>(file.as_bytes());
     assert!(
@@ -142,7 +151,7 @@ fn the_example_run_file_is_byte_exact() {
 }
 
 #[test]
-fn a_running_run_has_no_end_cost_or_items() {
+fn a_running_run_has_no_end_cost_or_task_items() {
     let file = round_trips(running());
     assert_eq!(
         file,
@@ -150,9 +159,10 @@ fn a_running_run_has_no_end_cost_or_items() {
          | Task | board-cli |\n| Number | 3 |\n| Plan version | 2 |\n| State | running |\n\
          | Started | 2026-10-11T12:05:00Z |\n"
     );
-    // The domain refuses a cost or items before the fold-back.
+    // The domain refuses a cost or task items before the fold-back.
     refused_at(&format!("{file}| Cost tokens | 5 |\n"), "Run");
-    let items = format!("{file}\n## Items\n| Item | State |\n|---|---|\n| store | done |\n");
+    let items =
+        format!("{file}\n## Task items\n| Task item | State |\n|---|---|\n| store | done |\n");
     refused_at(&items, "Run");
     for outcome in RunOutcome::ALL {
         let ended = RunFields {
@@ -193,7 +203,7 @@ fn owners_and_evidence_round_trip() {
         !bare.contains("## Owners") && !bare.contains("## Evidence"),
         "{bare}"
     );
-    // Out of item order, or of an item the run does not report.
+    // Out of task item order, or of a task item the run does not report.
     let swapped = edited(
         "| store | W1 builder |\n| cli | W2 builder |",
         "| cli | W2 builder |\n| store | W1 builder |",
@@ -202,20 +212,23 @@ fn owners_and_evidence_round_trip() {
         decode::<RunCodec>(swapped.as_bytes()),
         Err(CodecError::NotCanonical)
     );
-    refused_at(
+    refused_with(
         &edited("| cli | W2 builder |", "| nope | W2 builder |"),
         "Owners",
+        "nope is no task item of the run",
     );
-    refused_at(
+    refused_with(
         &edited("| cli | W2 builder |", "| store | W2 builder |"),
         "Owners",
+        "one owner per task item",
     );
-    refused_at(
+    refused_with(
         &edited(
             "| cli | `quecto board list`",
             "| nope | `quecto board list`",
         ),
         "Evidence",
+        "nope is no task item of the run",
     );
 }
 
@@ -254,7 +267,7 @@ fn long_slug(index: usize) -> Slug {
     slug(&format!("{}{index:03}", "a".repeat(61)))
 }
 
-/// The run the domain admits at its widest: every item, owner and line of
+/// The run the domain admits at its widest: every task item, owner and line of
 /// evidence, the text budget spent as `evidence` gives it.
 fn widest(evidence: impl Fn(usize, usize) -> String) -> RunFields {
     let items = (0..MAX_ITEMS)
@@ -282,7 +295,7 @@ fn widest(evidence: impl Fn(usize, usize) -> String) -> RunFields {
 #[test]
 fn the_widest_run_fits() {
     // Most bytes and lines: the whole text budget spent on `|`, written
-    // `\|`: each item's share over its evidence, distinct lengths, the last
+    // `\|`: each task item's share over its evidence, distinct lengths, the last
     // line taking what is left.
     let budget = MAX_RUN_TEXT_BYTES - MAX_ITEMS * MAX_OWNER_CHARS;
     let lengths = |index: usize, line: usize| {
@@ -309,11 +322,10 @@ fn the_widest_run_fits() {
         );
     }
     let (bytes, lines, longest) = seen;
-    // The whole budget spent: 691,567 bytes.
-    assert!(
-        (691_000..=RUN_LIMITS.file_bytes).contains(&bytes),
-        "{bytes}"
-    );
+    // The whole budget spent: 691,587 bytes, pinned so a change to the
+    // codec's rows is seen.
+    assert_eq!(bytes, 691_587);
+    assert!(bytes <= RUN_LIMITS.file_bytes, "{bytes}");
     assert!(lines <= RUN_LIMITS.lines && lines > 2_300, "{lines}");
     assert!(
         longest <= RUN_LIMITS.line_bytes && longest > 2_000,
@@ -329,5 +341,20 @@ fn no_outcome_is_spelt_running() {
         RunOutcome::ALL
             .iter()
             .all(|outcome| outcome.as_str() != RUNNING)
+    );
+}
+
+/// A run file of the wording before task items (`## Items`) is refused,
+/// never read as an alias of `## Task items`.
+#[test]
+fn an_items_heading_of_the_old_wording_is_refused() {
+    let old = edited("## Task items", "## Items");
+    let read = decode::<RunCodec>(old.as_bytes());
+    assert_eq!(
+        read,
+        Err(CodecError::Markdown(MarkdownError::UnknownSection {
+            heading: "Items".into()
+        })),
+        "{read:?}"
     );
 }

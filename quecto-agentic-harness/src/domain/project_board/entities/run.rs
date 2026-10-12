@@ -1,6 +1,6 @@
 //! A run: one swarm execution of one plan version (#2481's artifact
 //! model). It is opened when the run starts and folded back once when it
-//! ends: its outcome, cost, and where each of the plan's items stands with
+//! ends: its outcome, cost, and where each of the plan's task items stands with
 //! its evidence. A [`Run`] is only ever built from fields that pass
 //! [`Run::new`].
 use super::super::value_objects::schema_error::{SchemaError, distinct, line};
@@ -13,16 +13,16 @@ use super::task_parts::{MAX_BUDGET_TOKENS, MAX_ITEMS, MAX_OWNER_CHARS, MAX_PER_I
 
 /// The most runs a task starts.
 pub const MAX_RUN_NUMBER: u32 = 999;
-/// All of a run's text together, in UTF-8 bytes: its items' owners and
+/// All of a run's text together, in UTF-8 bytes: its task items' owners and
 /// evidence. Runs hold summaries and links, never logs; this budget keeps
 /// every run inside the one file it is stored in, with room to spare (its
 /// codec, M2, proves the fit).
 pub const MAX_RUN_TEXT_BYTES: usize = 256 * 1024;
 
-/// Where one of the plan's items stood when the run folded back.
+/// Where one of the plan's task items stood when the run folded back.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RunItem {
-    /// The plan item's id.
+    /// The task item's id.
     pub id: Slug,
     pub state: ItemState,
     pub owner: Option<String>,
@@ -91,7 +91,7 @@ impl Run {
     ///
     /// # Errors
     /// The field that names a plan never accepted, or another task,
-    /// version or item.
+    /// version or task item.
     pub fn ran(&self, plan: &Plan) -> Result<(), SchemaError> {
         let planned = plan.fields();
         match planned.state {
@@ -124,7 +124,7 @@ impl Run {
         {
             Some(index) => Err(SchemaError::new(
                 format!("items/{index}/id"),
-                "is not an item of the plan",
+                "is not a task item of the plan",
             )),
             None => Ok(()),
         }
@@ -183,7 +183,7 @@ fn validate(run: &RunFields) -> Result<(), SchemaError> {
         (false, false, false) => {
             return Err(SchemaError::new(
                 "items",
-                "a run reports its items when it folds back",
+                "a run reports its task items when it folds back",
             ));
         }
     }

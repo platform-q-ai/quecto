@@ -80,11 +80,11 @@ pub fn begin_run(
 }
 
 /// `run` folded back at `now`: its `outcome`, its `cost` and where each of
-/// `plan`'s items stood. A run folds back once.
+/// `plan`'s task items stood. A run folds back once.
 ///
 /// # Errors
 /// A run that has ended; a plan never accepted, or of another task or
-/// version, or an item it does not have (named by the error's field); or
+/// version, or a task item it does not have (named by the error's field); or
 /// a result its schema refuses.
 pub fn fold_back(
     run: &Run,

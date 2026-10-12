@@ -1,5 +1,5 @@
 //! A plan: how one task will be achieved (#2481's artifact model), a
-//! versioned artifact of its own. It holds the approach, the items that
+//! versioned artifact of its own. It holds the approach, the task items that
 //! seed the swarm board, and the team's shape. A [`Plan`] is only ever
 //! built from fields that pass [`Plan::new`]; its versions are numbered
 //! from 1 per task, a draft is edited, and an accepted version is never
@@ -18,20 +18,20 @@ pub const MAX_APPROACH_CHARS: usize = 65_536;
 /// The most versions a task's plan reaches.
 pub const MAX_PLAN_VERSION: u32 = 999;
 /// All of a plan's text together, in UTF-8 bytes: the approach, the
-/// items' titles and criteria, the team's models and image. The field
+/// task items' titles and criteria, the team's models and image. The field
 /// limits alone would add up to megabytes; this budget keeps every plan
 /// the domain admits inside the one file it is stored in, with room to
 /// spare (its codec, M2, proves the fit).
 pub const MAX_PLAN_TEXT_BYTES: usize = 320 * 1024;
 
-/// One item the plan seeds the swarm board with, and how its completion
-/// is judged. Where an item stands is a run's, not the plan's.
+/// One task item the plan seeds the swarm board with, and how its completion
+/// is judged. Where a task item stands is a run's, not the plan's.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PlanItem {
     pub id: Slug,
     pub title: String,
     pub criteria: Vec<String>,
-    /// Other items of the same plan; never a cycle.
+    /// Other task items of the same plan; never a cycle.
     pub depends_on: Vec<Slug>,
 }
 
@@ -95,14 +95,14 @@ impl Plan {
         self.0
     }
 
-    /// The item named `id`, if the plan has one.
+    /// The task item named `id`, if the plan has one.
     pub fn item(&self, id: &Slug) -> Option<&PlanItem> {
         self.0.items.iter().find(|item| item.id == *id)
     }
 }
 
 impl PlanItem {
-    /// Its own fields; dependencies on sibling items are the plan's check.
+    /// Its own fields; dependencies on sibling task items are the plan's check.
     pub fn validate(&self, field: &str) -> Result<(), SchemaError> {
         line(&format!("{field}/title"), &self.title, MAX_LINE_CHARS)?;
         lines(&format!("{field}/criteria"), &self.criteria, MAX_PER_ITEM)?;
@@ -193,7 +193,7 @@ fn validate_items(items: &[PlanItem]) -> Result<(), SchemaError> {
             false => {
                 return Err(SchemaError::new(
                     format!("items/{index}/depends_on"),
-                    "must name other items of this plan",
+                    "must name other task items of this plan",
                 ));
             }
         }
@@ -201,14 +201,14 @@ fn validate_items(items: &[PlanItem]) -> Result<(), SchemaError> {
     match blocked_by_cycle(items) {
         Some(index) => Err(SchemaError::new(
             format!("items/{index}/depends_on"),
-            "is on or behind a dependency cycle",
+            "is on or behind a cycle of task item dependencies",
         )),
         None => Ok(()),
     }
 }
 
-/// The first item that can never start because its dependencies loop:
-/// items are settled once all they depend on are, until none settles.
+/// The first task item that can never start because its dependencies loop:
+/// task items are settled once all they depend on are, until none settles.
 /// Every dependency names a sibling (checked before).
 fn blocked_by_cycle(items: &[PlanItem]) -> Option<usize> {
     let position: BTreeMap<&Slug, usize> = items

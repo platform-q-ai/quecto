@@ -32,7 +32,7 @@ const FIELDS: &[Column<'static>] = &[
 
 const ITEMS: &[Column<'static>] = &[
     Column {
-        name: "Item",
+        name: "Task item",
         cell: CellKind::Text,
     },
     Column {
@@ -51,7 +51,7 @@ const SECTIONS: &[SectionShape<'static>] = &[
         body: BodyShape::Prose,
     },
     SectionShape {
-        heading: "Items",
+        heading: "Task items",
         body: BodyShape::Table(ITEMS),
     },
 ];
@@ -111,7 +111,7 @@ pub(super) fn example() -> Document {
                 ]))]),
             },
             Section {
-                heading: "Items".into(),
+                heading: "Task items".into(),
                 body: Body::Table(vec![
                     texts(&["parse `a|b`", "done"]),
                     texts(&["path `C:\\x`", "open"]),
@@ -147,8 +147,8 @@ fn main() {
 ## Acceptance
 - Every op answers one JSON line
 
-## Items
-| Item | State |
+## Task items
+| Task item | State |
 |---|---|
 | parse `a\|b` | done |
 | path `C:\x` | open |
@@ -167,7 +167,7 @@ fn the_oracle_refuses_a_file_outlined_otherwise() {
         ("a paragraph line gained", "1\\. not a list\n", "1\\. not a list\nmore\n"),
         ("a code line gained", "}\n```", "}\nx\n```"),
         ("a table row gained", "| path `C:\\x` | open |\n", "| path `C:\\x` | open |\n| x | y |\n"),
-        ("a header of another width", "| Item | State |\n|---|---|", "| Item | State | More |\n|---|---|---|"),
+        ("a header of another width", "| Task item | State |\n|---|---|", "| Task item | State | More |\n|---|---|---|"),
         ("an ordered list", "- Every op", "1. Every op"),
     ];
     for (name, from, to) in cases {

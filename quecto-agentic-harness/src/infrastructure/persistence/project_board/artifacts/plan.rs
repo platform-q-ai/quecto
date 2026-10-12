@@ -2,10 +2,10 @@
 //! `Plan {version} of {task}`; its fields and tables hold the rest, every
 //! list in the plan's own order:
 //!
-//! - Items `[Item | Title]`, in item order;
-//! - Item dependencies `[Item | Depends on]`, one row per edge, in item
-//!   order then dependency order;
-//! - Criteria `[Item | Criterion]`, grouped in item order;
+//! - Task items `[Task item | Title]`, in task item order;
+//! - Task item dependencies `[Task item | Depends on]`, one row per edge,
+//!   in task item order then dependency order;
+//! - Criteria `[Task item | Criterion]`, grouped in task item order;
 //! - Roles `[Role | Model | Effort | Members | Turns]`, present exactly
 //!   when the plan names a team (Turns `-` for no limit). The team's
 //!   budget, deadline and image rows are taken only with Roles.
@@ -36,9 +36,11 @@ const IMAGE: &str = "Image";
 const CREATED: &str = "Created";
 const UPDATED: &str = "Updated";
 const APPROACH: &str = "Approach";
-const ITEMS: &str = "Items";
-const DEPENDENCIES: &str = "Item dependencies";
+const TASK_ITEMS: &str = "Task items";
+const DEPENDENCIES: &str = "Task item dependencies";
 const CRITERIA: &str = "Criteria";
+/// The column naming a task item, in every table that has one.
+const TASK_ITEM: &str = "Task item";
 const ROLES: &str = "Roles";
 
 const FIELDS: &[Column<'static>] = &[
@@ -56,16 +58,16 @@ const FIELDS: &[Column<'static>] = &[
     column(UPDATED, CellKind::Ascii),
 ];
 
-const ITEM_COLUMNS: &[Column<'static>] = &[
-    column("Item", CellKind::Ascii),
+const TASK_ITEM_COLUMNS: &[Column<'static>] = &[
+    column(TASK_ITEM, CellKind::Ascii),
     column("Title", CellKind::Text),
 ];
 const DEPENDENCY_COLUMNS: &[Column<'static>] = &[
-    column("Item", CellKind::Ascii),
+    column(TASK_ITEM, CellKind::Ascii),
     column("Depends on", CellKind::Ascii),
 ];
 const CRITERION_COLUMNS: &[Column<'static>] = &[
-    column("Item", CellKind::Ascii),
+    column(TASK_ITEM, CellKind::Ascii),
     column("Criterion", CellKind::Text),
 ];
 const ROLE_COLUMNS: &[Column<'static>] = &[
@@ -82,8 +84,8 @@ const SECTIONS: &[SectionShape<'static>] = &[
         body: BodyShape::Prose,
     },
     SectionShape {
-        heading: ITEMS,
-        body: BodyShape::Table(ITEM_COLUMNS),
+        heading: TASK_ITEMS,
+        body: BodyShape::Table(TASK_ITEM_COLUMNS),
     },
     SectionShape {
         heading: DEPENDENCIES,
@@ -180,7 +182,7 @@ impl ArtifactCodec for PlanCodec {
                 .map(move |criterion| vec![ids(item), criterion.clone()])
         });
         for (heading, rows) in [
-            (ITEMS, items.collect::<Vec<_>>()),
+            (TASK_ITEMS, items.collect::<Vec<_>>()),
             (DEPENDENCIES, dependencies.collect()),
             (CRITERIA, criteria.collect()),
         ] {
@@ -328,13 +330,13 @@ impl Read {
     fn section(&mut self, section: &Section) -> Result<(), CodecError> {
         match (section.heading.as_str(), &section.body) {
             (APPROACH, Body::Prose(blocks)) => self.approach = text_of(blocks),
-            (ITEMS, Body::Table(rows)) => {
+            (TASK_ITEMS, Body::Table(rows)) => {
                 for row in rows {
                     let [id, title] = row.as_slice() else {
-                        return Err(refused(ITEMS, "a row of two cells"));
+                        return Err(refused(TASK_ITEMS, "a row of two cells"));
                     };
                     self.items.push(PlanItem {
-                        id: cells::read_slug(ITEMS, id)?,
+                        id: cells::read_slug(TASK_ITEMS, id)?,
                         title: title.clone(),
                         criteria: vec![],
                         depends_on: vec![],
@@ -347,13 +349,13 @@ impl Read {
                         return Err(refused(DEPENDENCIES, "a row of two cells"));
                     };
                     let on = cells::read_slug(DEPENDENCIES, on)?;
-                    // Items are read before their dependencies.
+                    // Task items are read before their dependencies.
                     match self.items.iter().any(|item| item.id == on) {
                         true => self.item(DEPENDENCIES, id)?.depends_on.push(on),
                         false => {
                             return Err(refused(
                                 DEPENDENCIES,
-                                format!("{} is no item of the plan", on.as_str()),
+                                format!("{} is no task item of the plan", on.as_str()),
                             ));
                         }
                     }
@@ -376,13 +378,18 @@ impl Read {
         Ok(())
     }
 
-    /// The item `id` names, among the items read so far.
+    /// The task item `id` names, among the task items read so far.
     fn item(&mut self, table: &'static str, id: &str) -> Result<&mut PlanItem, CodecError> {
         let id = cells::read_slug(table, id)?;
         self.items
             .iter_mut()
             .find(|item| item.id == id)
-            .ok_or_else(|| refused(table, format!("{} is no item of the plan", id.as_str())))
+            .ok_or_else(|| {
+                refused(
+                    table,
+                    format!("{} is no task item of the plan", id.as_str()),
+                )
+            })
     }
 }
 

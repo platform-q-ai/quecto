@@ -6,7 +6,7 @@ use regex::Regex;
 use std::sync::LazyLock;
 
 pub const MAX_ITEMS: usize = 128;
-/// Criteria, evidence and dependencies per item.
+/// Criteria, evidence and dependencies per task item.
 pub const MAX_PER_ITEM: usize = 16;
 pub const MAX_LINE_CHARS: usize = 500;
 pub const MAX_OWNER_CHARS: usize = 100;
