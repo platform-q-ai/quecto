@@ -164,6 +164,11 @@ pub(crate) struct ToolRuntimeBuildArgs<'a> {
     /// Composition's builder of the `agent_cmd kill` owner (#1936); `None`
     /// leaves `kill` unavailable.
     pub kill_tool: Option<crate::interface::cli::KillToolBuilder>,
+    /// Composition's builder of the project board's operations (#2477);
+    /// with it a parent agent gets the `board` tool on its workspace's
+    /// repository, without it no agent does.
+    pub project_board:
+        Option<crate::interface::tools::project_board::site::ProjectBoardHandlesBuilder>,
     pub disabled_tools: &'a [String],
     pub inherited_tool_policy:
         Option<crate::infrastructure::tools::inherited_tool_policy::InheritedToolPolicySnapshot>,
@@ -247,6 +252,7 @@ pub(crate) fn build_tool_runtime(
         container_configs,
         environment_registry,
         kill_tool,
+        project_board,
         disabled_tools,
         inherited_tool_policy,
         workflow,
@@ -383,6 +389,7 @@ pub(crate) fn build_tool_runtime(
     register_bundled_native_tools_with_scope(&mut registry, agent_control.extensions, None);
     let notify_rx = agent_control.notification_rx;
     let _ = agent_control.notification_tx;
+    let _ = project_board;
     let subagent_registry_for_protocol = agent_control.subagent_registry;
     let harness_lifecycle = agent_control.harness_lifecycle;
     if !policy_state.agent_control_default_enabled {

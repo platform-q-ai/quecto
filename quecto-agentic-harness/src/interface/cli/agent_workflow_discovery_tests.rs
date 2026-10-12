@@ -14,6 +14,7 @@ use crate::infrastructure::config::Config;
 
 fn workflow_flags() -> AgentFlags {
     AgentFlags {
+        project_board: None,
         session_name: None,
         no_session: false,
         message: None,

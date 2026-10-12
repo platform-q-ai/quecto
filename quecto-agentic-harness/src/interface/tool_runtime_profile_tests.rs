@@ -9,6 +9,15 @@ fn runtime(
     spawned: bool,
     disabled_tools: &[String],
 ) -> crate::interface::tool_runtime::ToolRuntimeBuild {
+    runtime_with_board(profile_context, spawned, disabled_tools, None)
+}
+
+fn runtime_with_board(
+    profile_context: ToolRuntimeProfileContext,
+    spawned: bool,
+    disabled_tools: &[String],
+    project_board: Option<crate::interface::tools::project_board::site::ProjectBoardHandlesBuilder>,
+) -> crate::interface::tool_runtime::ToolRuntimeBuild {
     let tmp = tempfile::tempdir().expect("tempdir");
     let config = crate::infrastructure::config::Config::default();
     let client = reqwest::Client::new();
@@ -37,6 +46,7 @@ fn runtime(
         effort_control: None,
         container_configs: None,
         kill_tool: None,
+        project_board,
         disabled_tools,
         inherited_tool_policy: None,
         workflow: ToolRuntimeWorkflowPolicy::disabled(tmp.path(), Some(tmp.path())),
@@ -56,6 +66,26 @@ fn names_for(
         .iter()
         .map(|definition| definition.name.to_string())
         .collect()
+}
+
+/// The `board` tool (#2477) is a parent's: with the board composed, a
+/// parent's runtime offers it to the parent profile only; a child's runtime
+/// has none, and nor has a parent's without the board composed.
+#[test]
+fn a_composed_board_is_a_parent_tool() {
+    use crate::interface::tools::project_board::site::{
+        BuildError, ProjectBoardEnvironment, ProjectBoardHandles,
+    };
+    fn unbuilt(_: &ProjectBoardEnvironment) -> Result<ProjectBoardHandles, BuildError> {
+        Err(BuildError::Unavailable("not built in this test".into()))
+    }
+    let parent = runtime_with_board(ToolRuntimeProfileContext::Parent, false, &[], Some(unbuilt));
+    assert!(names_for(&parent, ToolProfileContext::Parent).contains("board"));
+    assert!(!names_for(&parent, ToolProfileContext::Child).contains("board"));
+    let child = runtime_with_board(ToolRuntimeProfileContext::Child, true, &[], Some(unbuilt));
+    assert!(!names_for(&child, ToolProfileContext::Child).contains("board"));
+    let uncomposed = runtime(ToolRuntimeProfileContext::Parent, false, &[]);
+    assert!(!names_for(&uncomposed, ToolProfileContext::Parent).contains("board"));
 }
 
 #[test]
@@ -289,6 +319,7 @@ fn runtime_in_container(
         effort_control: None,
         container_configs: None,
         kill_tool: None,
+        project_board: None,
         disabled_tools: &[],
         inherited_tool_policy: None,
         workflow: workflow_enabled_policy(tmp, Some(tmp)),

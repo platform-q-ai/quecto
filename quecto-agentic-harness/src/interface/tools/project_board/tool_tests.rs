@@ -1,0 +1,73 @@
+use super::*;
+use crate::application::project_board::operations::NoPullRequestHost;
+use crate::application::project_board::operations::query_listings::{QueryListings, assembled};
+use crate::application::project_board::ports::ProjectBoardStore;
+use crate::application::project_board::use_cases::QueryBoard;
+use crate::infrastructure::test_support::memory_board_store::MemoryBoardStore;
+use crate::infrastructure::time::board_clock::SystemBoardClock;
+use crate::interface::tools::project_board::site::{
+    BuildError, ProjectBoardEnvironment, ProjectBoardHandles,
+};
+
+/// The approved text (memory: board-tool-description-approved, "S2b
+/// text"), with only the changes the PR lists to match the ops on master.
+const STORED: &str = r#"Project board for this repo: the shared list of tasks people and agents plan, claim and finish. Tasks live on the repo's quecto/board branch and are written only through this tool, never by editing the branch. Each op is one call, {"op":"<name>", ...named fields}, answering JSON: {"ok":true,...} or {"ok":false,"error":{"code","field","message"}}. Ids are slugs (a-z, 0-9, -). Statuses: draft, ready, claimed, in_progress, review, blocked, done, archived.
+Read: list(status|parent|dependents_of, at most one filter), show(task), list_ready (ready tasks whose dependencies are done or archived), list_takeable (held tasks whose claim expired). Listings are advice; every change is checked against the board when it is written.
+Plan: create(task,title,kind,description,status draft|ready,parent,depends_on); update_draft(task, any of title,description,parent,depends_on, expected_updated) edits a draft only; pass the updated you read as expected_updated so a newer edit is never overwritten. Anyone may create, edit a draft, or move it to ready.
+Work: move(task,to claimed) takes a ready task for 2 hours; renew(task) before it lapses while you work; take_over(task) only once a claim has expired; move(task,to ready) hands it back to ready. Only the claim holder moves a claimed task: move(task,to in_progress|review|blocked|ready). link_pr(task,pr) and unlink_pr(task,pr) are the holder's. A task with linked pull requests is done only when all of them have merged: link_pr and moving to review check this automatically, and complete(task) asks again (anyone may call it). Never move a task to done by hand while a pull request is linked.
+Repair: clear_set_aside(path, object, repeated) removes a file the board could not read (listed under quarantined, with its object); repeated names the copy to keep when a task file appears twice. Use it only when told to.
+On "stale" re-read with show and redo your change; on "contended" call again; on "clock_ahead" or "task_ahead" stop and report: this machine's clock is wrong. A "clock" note on an answer means writes ran without an outside time check."#;
+
+/// The most bytes a tool's description may take.
+const DESCRIPTION_BUDGET_BYTES: usize = 8_192;
+
+#[test]
+fn the_description_is_the_stored_text_within_the_budget() {
+    let definition = BoardTool::new(site(None)).definition();
+    assert_eq!(definition.name, BOARD_TOOL_NAME);
+    assert_eq!(definition.description, STORED);
+    assert!(STORED.len() <= DESCRIPTION_BUDGET_BYTES, "{}", STORED.len());
+}
+
+/// A board in memory, built afresh for each request.
+fn memory_board(_: &ProjectBoardEnvironment) -> Result<ProjectBoardHandles, BuildError> {
+    let store = MemoryBoardStore::default();
+    store.bootstrap().unwrap();
+    let operations = assembled(
+        Arc::new(store.client()),
+        Arc::new(SystemBoardClock::default()),
+        Arc::new(QueryListings(QueryBoard::new(Arc::new(store.client())))),
+        Err(NoPullRequestHost::NotAPullRequestHost),
+    )
+    .map_err(|error| BuildError::Unavailable(error.to_string()))?;
+    Ok(ProjectBoardHandles { operations })
+}
+
+fn site(
+    build: Option<crate::interface::tools::project_board::site::ProjectBoardHandlesBuilder>,
+) -> BoardSite {
+    BoardSite {
+        repo: std::path::PathBuf::from("."),
+        remote: "origin".into(),
+        build,
+    }
+}
+
+/// An op goes through the tool to the board and back as its JSON answer;
+/// a refused one is an error result the model can act on.
+#[tokio::test]
+async fn an_op_round_trips_through_the_tool() {
+    let tool = BoardTool::new(site(Some(memory_board)));
+    let created = tool
+        .execute(r#"{"op":"create","task":"a","title":"A","status":"ready"}"#)
+        .await
+        .unwrap();
+    let answer: Value = serde_json::from_str(&created.content).unwrap();
+    assert!(!created.is_error, "{answer}");
+    assert_eq!(answer["ok"], json!(true));
+    assert_eq!(answer["task"]["id"], json!("a"));
+    let refused = tool.execute(r#"{"op":"claim","task":"a"}"#).await.unwrap();
+    let answer: Value = serde_json::from_str(&refused.content).unwrap();
+    assert!(refused.is_error, "{answer}");
+    assert_eq!(answer["error"]["field"], json!("op"));
+}
