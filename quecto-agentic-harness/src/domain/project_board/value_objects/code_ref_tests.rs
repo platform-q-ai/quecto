@@ -31,7 +31,8 @@ fn a_branch_name_is_one_git_takes() {
         "a/@",
         "a#b+c,d=e",
         "a{b}",
-        "a'b\"c!d$e%f&g(h)i<j>k|l`m",
+        "a'b\"c!d$e%f&g(h)i<j>k;l]m_n|o",
+        "|",
         "a.lock.b",
         "a./b",
         "+",
@@ -42,7 +43,8 @@ fn a_branch_name_is_one_git_takes() {
     for name in [
         "", "-rf", "/main", "main/", "a//b", "a..b", "aa..", ".a", "a/.b", "x.lock", "a.lock/b",
         "a/b.lock", "a.", "a/b.", "a@{b", "a b", "a\tb", "a\u{7f}b", "a~1", "a^b", "a:b", "a?b",
-        "a*b", "a[b", "a\\b",
+        "a*b", "a[b", "a\\b", // No board file holds a backtick: a code span's edge.
+        "a`b", "`",
     ] {
         assert_eq!(
             BranchName::parse(name).unwrap_err().field,
@@ -153,15 +155,56 @@ fn a_branch_name_is_not_one_git_reads_as_something_else() {
 fn a_repository_is_named_owner_slash_name() {
     let longest = format!(
         "{}/{}",
-        "o".repeat(MAX_REPO_PART_BYTES),
+        "o".repeat(MAX_OWNER_BYTES),
         "n".repeat(MAX_REPO_PART_BYTES)
     );
-    for name in ["platform-q-ai/quecto", "a/.github", "a_b/c.d-e", &longest] {
+    for name in [
+        "platform-q-ai/quecto",
+        "a/.github",
+        "a-b/c.d-e",
+        "A1/__init__",
+        "a/www.site",
+        "a--b/c",
+        // An old account may end with a hyphen; an enterprise-managed
+        // user's owner is a name and one `_shortcode`.
+        "a-/b",
+        "ada_corp/x",
+        "ada-b_x1/x",
+        &longest,
+    ] {
         assert!(RepoName::parse(name).is_ok(), "{name}");
     }
     let too_long = format!("o/{}", "n".repeat(MAX_REPO_PART_BYTES + 1));
+    let owner_too_long = format!("{}/n", "o".repeat(40));
     for name in [
-        "", "quecto", "a/b/c", "/b", "a/", "./b", "a/..", "a b/c", "a/b~", "ä/b", &too_long,
+        "",
+        "quecto",
+        "a/b/c",
+        "/b",
+        "a/",
+        "./b",
+        "a/..",
+        "a/.",
+        "a b/c",
+        "a/b~",
+        "ä/b",
+        &too_long,
+        &owner_too_long,
+        // GitHub's owners: letters, digits and hyphens, not first, then at
+        // most one `_shortcode`; a name never starts with a hyphen.
+        "_a/b",
+        "a_/b",
+        "a__b/c",
+        "a_b_c/d",
+        "a_-b/c",
+        "a./b",
+        ".a/b",
+        "-a/b",
+        "-/b",
+        "a.b/c",
+        "a/b|c",
+        "a/b`c",
+        "a/-b",
     ] {
         assert_eq!(RepoName::parse(name).unwrap_err().field, "repo", "{name:?}");
     }
@@ -179,4 +222,37 @@ fn a_repository_is_the_same_whatever_its_case() {
     assert_eq!(hashes.len(), 1);
     assert_eq!(upper.as_str(), "Platform-Q-AI/Quecto");
     assert_ne!(upper, RepoName::parse("platform-q-ai/quecto2").unwrap());
+}
+
+/// GitHub's owner limit, pinned: 39 bytes in all, a `_shortcode`
+/// included, and a shortcode of 1 to 8.
+#[test]
+fn an_owner_is_at_most_39_bytes_with_its_shortcode() {
+    assert_eq!(MAX_OWNER_BYTES, 39);
+    let owner = "o".repeat(39);
+    assert!(RepoName::parse(&format!("{owner}/n")).is_ok());
+    assert!(RepoName::parse(&format!("{owner}o/n")).is_err());
+    assert!(RepoName::parse(&format!("{owner}_corp/n")).is_err());
+    assert!(RepoName::parse(&format!("{}_corp/n", "o".repeat(34))).is_ok());
+    assert!(RepoName::parse(&format!("{}_corp/n", "o".repeat(35))).is_err());
+    // A shortcode of 1 to 8 letters and digits.
+    assert!(RepoName::parse("ada_c/n").is_ok());
+    assert!(RepoName::parse("ada_abcd1234/n").is_ok());
+    assert!(RepoName::parse("ada_abcd12345/n").is_err());
+}
+
+/// A refusal says why: a branch names the characters a board file cannot
+/// hold, a repository GitHub's owner grammar. The field codes stay.
+#[test]
+fn a_refused_name_says_why() {
+    let branch = BranchName::parse("a`b").unwrap_err();
+    assert_eq!(branch.field, "branch");
+    assert!(branch.problem.contains("backtick"), "{}", branch.problem);
+    let repo = RepoName::parse("a_/b").unwrap_err();
+    assert_eq!(repo.field, "repo");
+    assert!(
+        repo.problem.contains("owner") && repo.problem.contains("_shortcode"),
+        "{}",
+        repo.problem
+    );
 }
