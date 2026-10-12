@@ -118,23 +118,58 @@ fn unlinked_by_without_unlinked_at_is_refused() {
     }
 }
 
+/// Git and the domain take a branch with `|`: a code cell holds it, the
+/// `|` written `\|`, and a reader shows it as it is.
 #[test]
-fn a_branch_with_a_pipe_is_refused() {
-    for branch in ["feat|x", "feat`x"] {
-        // Git takes it, and so does the domain; no code cell holds it.
-        let branch = BranchName::parse(branch).unwrap();
-        let change = Change::new(ChangeFields {
-            branch,
+fn a_branch_with_a_pipe_round_trips() {
+    for (branch, written) in [("feat|x", "`feat\\|x`"), ("a|b|c", "`a\\|b\\|c`")] {
+        let file = round_trips(ChangeFields {
+            branch: BranchName::parse(branch).unwrap(),
             ..example()
-        })
-        .unwrap();
-        assert!(matches!(
-            encode::<ChangeCodec>(&change),
-            Err(CodecError::Markdown(MarkdownError::Cell { line: 9, .. }))
-        ));
+        });
+        assert!(
+            file.contains(&format!("| Branch | {written} |\n")),
+            "{file}"
+        );
     }
-    let piped = EXAMPLE.replacen("`feat/2481-board_cli`", "`feat\\|x`", 1);
-    assert!(decode::<ChangeCodec>(piped.as_bytes()).is_err());
+}
+
+/// A backtick no code span holds: refused when written, at its line.
+#[test]
+fn a_branch_with_a_backtick_is_refused() {
+    let change = Change::new(ChangeFields {
+        branch: BranchName::parse("feat`x").unwrap(),
+        ..example()
+    })
+    .unwrap();
+    assert_eq!(
+        encode::<ChangeCodec>(&change),
+        Err(CodecError::Markdown(MarkdownError::Cell {
+            line: 9,
+            why: "code of printable ASCII but a backtick"
+        }))
+    );
+}
+
+/// GitHub names repositories without regard to case; the file keeps the
+/// case it was given, and reads it back.
+#[test]
+fn a_mixed_case_repository_keeps_its_case() {
+    let file = round_trips(ChangeFields {
+        head_repo: RepoName::parse("Platform-Q-AI/Quecto").unwrap(),
+        ..example()
+    });
+    assert!(
+        file.contains("| Repository | `Platform-Q-AI/Quecto` |\n"),
+        "{file}"
+    );
+    let read = decode::<ChangeCodec>(file.as_bytes()).unwrap();
+    assert_eq!(read.fields().head_repo.as_str(), "Platform-Q-AI/Quecto");
+}
+
+#[test]
+fn the_change_codec_kind_is_its_shapes() {
+    assert_eq!(ChangeCodec::KIND, ChangeCodec::SHAPE.kind);
 }
 
 #[test]
@@ -160,7 +195,8 @@ fn a_repo_and_branch_with_underscores_round_trip() {
 fn the_widest_change_fits() {
     let identity = person(
         &"\u{1d538}".repeat(MAX_NAME_CHARS),
-        &format!("{}@b", "a".repeat(MAX_EMAIL_BYTES - 2)),
+        // An email's `|` is written `\|`: the most bytes an email can take.
+        &format!("{}@b", "|".repeat(MAX_EMAIL_BYTES - 2)),
     );
     let part = "a".repeat(MAX_REPO_PART_BYTES);
     let widest = ChangeFields {
@@ -185,7 +221,7 @@ fn the_widest_change_fits() {
         assert!(file.len() <= CHANGE_LIMITS.file_bytes, "{}", file.len());
         assert!(file.lines().count() <= CHANGE_LIMITS.lines);
         assert!(
-            longest <= CHANGE_LIMITS.line_bytes && longest > 650,
+            longest <= CHANGE_LIMITS.line_bytes && longest > 900,
             "{longest}"
         );
     }

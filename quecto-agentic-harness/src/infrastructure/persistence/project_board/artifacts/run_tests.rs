@@ -8,6 +8,7 @@ use crate::domain::project_board::entities::task_parts::{
 };
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
+use crate::infrastructure::persistence::project_board::markdown::MarkdownError;
 
 const EXAMPLE: &str = r#"<!-- quecto-run schema=1 -->
 # Run 3 of board-cli
@@ -215,14 +216,20 @@ fn evidence_with_a_bare_url_is_refused() {
         fields.items[2].evidence = vec![text.into()];
         let run = Run::new(fields.clone()).unwrap();
         assert!(
-            matches!(encode::<RunCodec>(&run), Err(CodecError::Markdown(_))),
+            matches!(
+                encode::<RunCodec>(&run),
+                Err(CodecError::Markdown(MarkdownError::Link { .. }))
+            ),
             "{text}"
         );
         fields.items[2].evidence.clear();
         fields.items[2].owner = Some(text.into());
         let run = Run::new(fields).unwrap();
         assert!(
-            matches!(encode::<RunCodec>(&run), Err(CodecError::Markdown(_))),
+            matches!(
+                encode::<RunCodec>(&run),
+                Err(CodecError::Markdown(MarkdownError::Link { .. }))
+            ),
             "{text}"
         );
     }
@@ -260,10 +267,18 @@ fn widest(evidence: impl Fn(usize, usize) -> String) -> RunFields {
 
 #[test]
 fn the_widest_run_fits() {
-    // Most bytes and lines: the text budget spent on `|`, written `\|`.
-    let owners = MAX_ITEMS * MAX_OWNER_CHARS;
-    let each = (MAX_RUN_TEXT_BYTES - owners) / (MAX_ITEMS * MAX_PER_ITEM) - MAX_PER_ITEM;
-    let most = widest(|_, line| "|".repeat(each + line));
+    // Most bytes and lines: the whole text budget spent on `|`, written
+    // `\|`: each item's share over its evidence, distinct lengths, the last
+    // line taking what is left.
+    let budget = MAX_RUN_TEXT_BYTES - MAX_ITEMS * MAX_OWNER_CHARS;
+    let lengths = |index: usize, line: usize| {
+        let share = budget / MAX_ITEMS + usize::from(index < budget % MAX_ITEMS);
+        let steps = MAX_PER_ITEM * (MAX_PER_ITEM - 1) / 2;
+        let base = (share - steps) / MAX_PER_ITEM;
+        let left = share - (base * MAX_PER_ITEM + steps);
+        base + line + usize::from(line == MAX_PER_ITEM - 1) * left
+    };
+    let most = widest(|index, line| "|".repeat(lengths(index, line)));
     // The longest line: evidence of 4-byte letters.
     let longest_line = widest(|index, line| match (index, line) {
         (0, 0) => "\u{1d538}".repeat(MAX_LINE_CHARS),
@@ -280,10 +295,19 @@ fn the_widest_run_fits() {
         );
     }
     let (bytes, lines, longest) = seen;
-    assert!(bytes <= RUN_LIMITS.file_bytes && bytes > 600_000, "{bytes}");
+    // The whole budget spent: 691,567 bytes.
+    assert!(
+        (691_000..=RUN_LIMITS.file_bytes).contains(&bytes),
+        "{bytes}"
+    );
     assert!(lines <= RUN_LIMITS.lines && lines > 2_300, "{lines}");
     assert!(
         longest <= RUN_LIMITS.line_bytes && longest > 2_000,
         "{longest}"
     );
+}
+
+#[test]
+fn the_run_codec_kind_is_its_shapes() {
+    assert_eq!(RunCodec::KIND, RunCodec::SHAPE.kind);
 }

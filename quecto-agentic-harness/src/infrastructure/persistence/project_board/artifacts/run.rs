@@ -6,7 +6,7 @@
 //! - Items `[Item | State]`, every item the run reports;
 //! - Owners `[Item | Owner]`, only the items that have one;
 //! - Evidence `[Item | Evidence]`, one row per line, grouped by item.
-use super::cells;
+use super::cells::{self, column, refused};
 use super::{ArtifactCodec, CodecError};
 use crate::domain::project_board::entities::run::{Run, RunFields, RunItem};
 use crate::domain::project_board::value_objects::vocabulary::{ItemState, RunOutcome};
@@ -26,10 +26,6 @@ const OWNERS: &str = "Owners";
 const EVIDENCE: &str = "Evidence";
 /// The State of a run that has not folded back.
 const RUNNING: &str = "running";
-
-const fn column(name: &'static str, cell: CellKind) -> Column<'static> {
-    Column { name, cell }
-}
 
 const FIELDS: &[Column<'static>] = &[
     column(TASK, CellKind::Ascii),
@@ -122,7 +118,8 @@ impl ArtifactCodec for RunCodec {
             (EVIDENCE, evidence.collect()),
         ]
         .into_iter()
-        .filter(|(_, rows)| !rows.is_empty())
+        // A table only for what holds rows (a missing one is "none").
+        .filter(|(_, rows)| matches!(rows.as_slice(), [_, ..]))
         .map(|(heading, rows)| Section {
             heading: heading.into(),
             body: Body::Table(rows),
@@ -140,14 +137,9 @@ impl ArtifactCodec for RunCodec {
     }
 
     fn from_document(document: &Document) -> Result<Run, CodecError> {
-        let field = |name: &'static str| {
-            document
-                .fields
-                .iter()
-                .find(|(known, _)| known == name)
-                .map(|(_, cell)| cell.as_str())
-        };
-        let required = |name: &'static str| field(name).ok_or_else(|| refused(name, "missing"));
+        let fields = cells::Fields::of(document);
+        let field = |name: &str| fields.get(name);
+        let required = |name: &'static str| fields.required(name);
         let outcome = match required(STATE)? {
             RUNNING => None,
             word => Some(cells::read_word(STATE, word, RunOutcome::parse)?),
@@ -220,13 +212,6 @@ fn item<'a>(
 
 fn narrow(field: &'static str, number: u64) -> Result<u32, CodecError> {
     u32::try_from(number).map_err(|_| refused(field, "past u32"))
-}
-
-fn refused(field: &'static str, problem: impl Into<String>) -> CodecError {
-    CodecError::Cell {
-        field,
-        problem: problem.into(),
-    }
 }
 
 #[cfg(test)]

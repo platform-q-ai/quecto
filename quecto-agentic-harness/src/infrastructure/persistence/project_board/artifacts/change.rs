@@ -4,10 +4,11 @@
 //! set"; Unlinked by and Unlinked at come together.
 //!
 //! The Repository and Branch cells are code: a repository may be named
-//! `org/www.site` or `_x/y`, and a branch hold most printable ASCII, which
-//! an ASCII cell refuses. A branch with `|` or a backtick (git takes both)
-//! no code cell holds, so it is refused when written.
-use super::cells;
+//! `org/www.site` or `org/__init__`, and a branch hold `_`, `|` and most
+//! other printable ASCII, which an ASCII cell refuses; a code cell holds
+//! them, a `|` written `\|`. A branch with a backtick (git takes one) no
+//! code span holds, so it is refused when written.
+use super::cells::{self, column, refused};
 use super::{ArtifactCodec, CodecError};
 use crate::domain::project_board::entities::change::{Change, ChangeFields};
 use crate::domain::project_board::value_objects::code_ref::{BranchName, CommitId, RepoName};
@@ -27,10 +28,6 @@ const UNLINKED_BY: &str = "Unlinked by";
 const UNLINKED_AT: &str = "Unlinked at";
 const CREATED: &str = "Created";
 const UPDATED: &str = "Updated";
-
-const fn column(name: &'static str, cell: CellKind) -> Column<'static> {
-    Column { name, cell }
-}
 
 const FIELDS: &[Column<'static>] = &[
     column(TASK, CellKind::Ascii),
@@ -76,7 +73,7 @@ impl ArtifactCodec for ChangeCodec {
             (BRANCH, change.branch.as_str().to_string()),
         ];
         if let Some(pr) = change.pr {
-            fields.push((PULL_REQUEST, cells::reference(pr)));
+            fields.push((PULL_REQUEST, cells::reference(PULL_REQUEST, pr)?));
         }
         if let Some(commit) = &change.merged {
             fields.push((MERGE_COMMIT, commit.as_str().to_string()));
@@ -100,14 +97,9 @@ impl ArtifactCodec for ChangeCodec {
     }
 
     fn from_document(document: &Document) -> Result<Change, CodecError> {
-        let field = |name: &'static str| {
-            document
-                .fields
-                .iter()
-                .find(|(known, _)| known == name)
-                .map(|(_, cell)| cell.as_str())
-        };
-        let required = |name: &'static str| field(name).ok_or_else(|| refused(name, "missing"));
+        let fields = cells::Fields::of(document);
+        let field = |name: &str| fields.get(name);
+        let required = |name: &'static str| fields.required(name);
         let schema = |name: &'static str| move |error: SchemaError| refused(name, error.problem);
         let unlinked = match (field(UNLINKED_BY), field(UNLINKED_AT)) {
             (Some(by), Some(at)) => Some((
@@ -141,13 +133,6 @@ impl ArtifactCodec for ChangeCodec {
         };
         Change::new(fields)
             .map_err(|error| refused("Change", format!("{}: {}", error.field, error.problem)))
-    }
-}
-
-fn refused(field: &'static str, problem: impl Into<String>) -> CodecError {
-    CodecError::Cell {
-        field,
-        problem: problem.into(),
     }
 }
 
