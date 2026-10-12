@@ -270,7 +270,8 @@ fn kind_of_mode(mode: &str) -> Option<&'static str> {
 pub fn read_board(git: &Git, commit: &str, limits: Limits) -> Result<Board, Unread> {
     let root = listed(git, &tree_of(git, commit)?, limits.tree_bytes)?;
     let kinds = objects(git, looked_up(&root))?;
-    let tasks = root.iter().find(|entry| entry.name == "tasks");
+    let named = |name: &'static str| root.iter().filter(move |entry| entry.name == name);
+    let tasks = named("tasks").next();
     // The `tasks` tree, when it really is one, is read in the same round
     // as the root, so a partial clone fetches what both miss at once.
     let read = tasks
@@ -278,14 +279,21 @@ pub fn read_board(git: &Git, commit: &str, limits: Limits) -> Result<Board, Unre
         .map(|entry| read_tasks(git, &entry.oid, limits));
     // So is the format marker, at the same depth. A file of its name is a
     // stray, as on a board before the marker; none is a board before it.
-    let marker = match root.iter().find(|entry| entry.name == FORMAT_TREE) {
-        Some(entry) if is_tree(entry, &kinds) => Some(read_format(git, &entry.oid, limits)),
-        Some(entry) if is_file(entry, &kinds) => None,
-        Some(entry) => Some(Ok(Marker::Damaged(format!(
-            "format at the root is of mode {}, not a tree",
-            entry.mode
+    let marker = match named(FORMAT_TREE).collect::<Vec<_>>().as_slice() {
+        [] => None,
+        [entry] if is_tree(entry, &kinds) => Some(read_format(git, &entry.oid, limits)),
+        [entry] if is_file(entry, &kinds) => None,
+        [entry] => Some(Ok(Marker::Damaged(format!(
+            "format at the root is mode {} over a {}",
+            entry.mode,
+            match kinds.get(&entry.oid) {
+                Some(Found::Present(object)) => object.kind.as_str(),
+                Some(Found::Missing) | None => "missing object",
+            }
         )))),
-        None => None,
+        [_, _, ..] => Some(Ok(Marker::Damaged(
+            "format is named more than once at the root".into(),
+        ))),
     };
     let mut missing = missing(&root, &kinds);
     let (read, marker) = (gather(read, &mut missing), gather(marker, &mut missing));
@@ -297,15 +305,29 @@ pub fn read_board(git: &Git, commit: &str, limits: Limits) -> Result<Board, Unre
     // A newer format first: whatever else this quecto would make of the
     // board, it asks for an upgrade.
     let marker = marker.transpose()?;
-    if let Some(Marker::Newer(version)) = marker {
-        return Err(Unread::Failed(newer(version)));
+    match &marker {
+        Some(Marker::Newer(version)) => return Err(Unread::Failed(newer(version))),
+        Some(Marker::Oversized(size)) => {
+            return Err(Unread::Failed(BoardStoreError::Unavailable(format!(
+                "its format marker (format/board) is {size} bytes, more than this quecto reads: \
+                 if a newer quecto wrote the board, upgrade quecto; if a hand edit did, mend the \
+                 board: {RECOVERY}"
+            ))));
+        }
+        Some(Marker::Current | Marker::Damaged(_)) | None => {}
     }
+    // A second `tasks` is never read, so a write would lose what it holds.
+    let damaged = match (&marker, named("tasks").count()) {
+        (Some(Marker::Damaged(why)), _) => Some(format!("its format marker is damaged ({why})")),
+        (_, 2..) => Some("its root names tasks more than once".to_string()),
+        (Some(Marker::Current | Marker::Newer(_) | Marker::Oversized(_)) | None, _) => None,
+    };
     let board = read.transpose()?;
     board_shape(&root, &kinds)?;
-    if let Some(Marker::Damaged(why)) = marker {
+    if let Some(why) = damaged {
         return Err(Unread::Failed(BoardStoreError::Unavailable(format!(
-            "its format marker is damaged ({why}); quecto never writes one so, so a hand edit \
-             did: to mend the board, {RECOVERY}"
+            "{why}; quecto never writes a marker or root like this, so a hand edit did: to \
+             mend the board, {RECOVERY}"
         ))));
     }
     // No `tasks` tree yet: a board that holds no task.

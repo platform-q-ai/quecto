@@ -60,8 +60,8 @@ impl Board {
         match entries <= cap {
             true => Ok(()),
             false => Err(BoardStoreError::InvalidWrite(format!(
-                "the board would hold {entries} task files and files set aside; it holds at \
-                 most {cap}: clear set-aside files to make room"
+                "the board is full: it holds at most {cap} task files and files set aside, and \
+                 would hold {entries}"
             ))),
         }
     }
