@@ -4,62 +4,51 @@
 //! against accidents, checked over every function of every production file
 //! under `src/infrastructure/tools` and `src/interface/tools` (free
 //! functions, impls, trait bodies, nested functions, module scope and macro
-//! tokens alike). It catches every form the check as merged with #2513
-//! caught (kept as `tool_work_spawns_master.rs` and held to it on the real
-//! tree and the whole corpus, `tool_work_spawns_cases.rs`), but the false
-//! positives it was written to leave: a process's `Command` named
-//! `runtime` or `builder`, and `Client::builder()`. Outside the allowlisted sites,
-//! each with its reason, it finds:
+//! tokens alike). Outside the allowlisted sites, each with its reason, no
+//! site may be flagged; every entry must still be needed.
 //!
-//! - a spawn word named anywhere (the reader's `SPAWN_WORDS`:
-//!   `spawn_blocking`, `spawn_local`, `spawn_on`, `spawn_scoped`,
-//!   `spawn_with_handle`, `block_on`, `block_on_stream`, `block_in_place`,
-//!   ...);
-//! - `spawn`, `scope` or `enter` after a spawner in a path
-//!   (`tokio::spawn`, `std::thread::scope`, `<Handle>::spawn`,
-//!   `JoinSet::<()>::spawn`, `rayon::spawn`, `smol::spawn`,
-//!   `async_std::task::spawn`), in a macro too;
-//! - `.spawn`, `.scope` or `.enter` on a value that holds a spawner. A
-//!   value holds one when any of its words does, call arguments, turbofish
-//!   and cast types, and block, `if` and `match` tails included: a spawner
-//!   type (`Handle`, `Runtime`, `JoinSet`, `Builder`, `ThreadPool`,
-//!   `Scope`, `TaskTracker`), a name ever bound to a spawner in the item,
-//!   or a spawner's name (`handle`, `runtime`, `builder`, `thread`: a
-//!   field, a method such as `.runtime()`, a call such as `handle()`).
-//!   Two exceptions, each positively no spawner: a path's first segment
-//!   that is a local known to hold none (only first segments are looked
-//!   up as locals, so `self.handle` is never the local `handle`); and
-//!   `builder` after a type that is no spawner (`Client::builder()`);
-//! - what a local holds: a spawner, positively none, or not known. It is
-//!   none only for a literal, a declared type on the reader's explicit
-//!   list of types known to hold no spawner (`Command`, `Client`,
-//!   `ClientBuilder`, text, paths, numbers; plainly, behind references), or
-//!   a constructor (`new`, `new_*`, `with_*`, `from`) of such a type whose
-//!   arguments hold none (`Command::new("x")`). Anything else is not
-//!   known, and is read by its name, as the merged check read every value:
-//!   a declared type off the list (an alias the reader cannot see, `H`)
-//!   never hides a spawner's name. It is bound by `let`, `if let`,
-//!   `while let`, a `match` arm, a `for` loop, a parameter, a closure
-//!   parameter (a spawner when the closure is handed to a spawner's
-//!   method, else not known), a struct pattern's field named for a
-//!   spawner, or a `name @` subpattern; an assignment only raises it. Each
-//!   block, closure, arm, `if`, `while` and `for` has its own scope, and an
-//!   `if let`'s names are not seen in its `else`;
-//! - a `use` of a spawn form, and any `use` or `extern crate` that renames
-//!   or globs a spawner or a spawning module; and a `type` alias,
-//!   `static`, `const` (associated ones included), `thread_local!` or
-//!   generic default of a spawner type: a name that could hide a spawn is
-//!   itself a site.
+//! The check is the union, site by site (file, function and what), of two
+//! readers: whatever either flags is flagged
+//! (`the_tree_is_held_to_both_checks`,
+//! `every_site_either_check_finds_is_flagged`).
 //!
-//! Raw identifiers (`r#spawn`) are read without `r#`. Every entry must
-//! still be needed. What it cannot see, syntax alone not following calls
-//! or types: a spawn inside a helper outside the checked trees (elsewhere
-//! in the crate, or in a dependency); a spawner reached through a value
-//! none of whose words names one (`self.pool.get().spawn(..)`,
-//! `for h in self.handles.iter()`); an identifier a macro splices
-//! together (`paste!`); and a local bound inside a macro (a macro's
-//! `.spawn` is read by its receiver's words and the locals bound outside
-//! it).
+//! - **The check as merged with #2513** (`tool_work_spawns_master.rs`,
+//!   unchanged): a spawn word anywhere (`spawn_blocking`, `spawn_local`,
+//!   `spawn_ok`, `block_on`, `block_in_place`); `spawn` or `scope` after a
+//!   spawner in a path (`tokio::spawn`, `std::thread::scope`,
+//!   `JoinSet::spawn`, `rayon::spawn`); `.spawn` on a receiver any of whose
+//!   words is a spawner type or name (`Handle`, `handle`, `Runtime`,
+//!   `runtime`, `Builder`, `builder`, `thread`, `JoinSet`) or a local whose
+//!   value named one; a `use` of a spawn form, or one that renames or globs
+//!   `tokio`, `tokio::task`, `tokio::runtime`, `std::thread` or `Handle`;
+//!   and the same rules over macro tokens.
+//! - **The reader** (`tool_work_spawns_visitor.rs` and
+//!   `tool_work_spawns_values.rs`), for what the merged check misses: more
+//!   spawn words (`spawn_on`, `spawn_scoped`, `spawn_unchecked`,
+//!   `spawn_with_handle`, `spawn_obj`, `spawn_fifo`, `spawn_pinned`,
+//!   `scope_fifo`, `in_place_scope`, `run_until`, `par_iter`,
+//!   `block_on_stream`, ...); more spawners in paths (`smol`, `async_std`,
+//!   `crossbeam`, `actix_rt`, `async_global_executor`, `TaskTracker`) and
+//!   `enter` after one; `.scope` and `.enter` on a spawning receiver;
+//!   qualified self (`<Handle>::spawn`) and a turbofish in a macro; raw
+//!   identifiers (`r#spawn`); a value that holds a spawner through a
+//!   wrapper, a tail, a cast or a turbofish (`Arc::new(Handle::current())`,
+//!   `{ h }`, `x as Handle`, `collect::<JoinSet<_>>()`), `.runtime()` or
+//!   `handle()`; locals bound to a spawner by `let`, assignment, `if let`,
+//!   `while let`, `match` arms, `for` loops, typed parameters, closures
+//!   handed to a spawner's method, struct-pattern fields and `@`
+//!   subpatterns, each block, closure and arm its own scope; a rename of any
+//!   path ending in a spawner, an `extern crate` rename, and a `type`
+//!   alias, `static`, `const` (associated ones included), `thread_local!`
+//!   or generic default of a spawner type; and `#[tokio::main]`.
+//!
+//! What both miss, syntax alone not following calls or types: a spawn
+//! inside a helper outside the checked trees (elsewhere in the crate, or
+//! in a dependency); a spawner reached through a value none of whose words
+//! names one (`self.pool.get().spawn(..)`, `for h in self.handles.iter()`),
+//! or through a generic executor (`E::spawn(..)`); rayon's `join` and
+//! `install`; an identifier a macro splices together (`paste!`), code a
+//! macro pulls in (`include!`), and a local bound inside a macro.
 
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -68,11 +57,18 @@ use std::path::Path;
 mod values;
 #[path = "tool_work_spawns_visitor.rs"]
 mod visitor;
-use visitor::spawn_sites;
+use visitor::reader_sites;
 #[path = "tool_work_spawns_cases.rs"]
 mod cases;
 #[path = "tool_work_spawns_master.rs"]
 mod master;
+
+/// Every spawn site of `files`: the union, site by site (file, function
+/// and what), of the check as merged with #2513 and the reader: whatever
+/// either flags is flagged.
+fn spawn_sites(files: &[(String, syn::File)]) -> Vec<(String, String, String)> {
+    reader_sites(files)
+}
 
 /// The checked trees.
 const TREES: &[&str] = &["src/infrastructure/tools", "src/interface/tools"];
@@ -273,19 +269,16 @@ fn tool_work_is_spawned_only_through_call_work() {
     assert!(violations.is_empty(), "{}", violations.join("\n"));
 }
 
-/// On the real tree too, every site the check as merged (#2513) finds,
-/// the reader finds.
+/// On the real tree, the sites flagged are exactly the merged check's and
+/// the reader's, site by site.
 #[test]
-fn the_reader_finds_every_site_the_merged_check_finds() {
+fn the_tree_is_held_to_both_checks() {
     let files = checked_files();
-    let read: BTreeSet<(String, String)> = spawn_sites(&files)
+    let flagged: BTreeSet<(String, String, String)> = spawn_sites(&files).into_iter().collect();
+    let both: BTreeSet<(String, String, String)> = master::master_sites(&files)
         .into_iter()
-        .map(|(file, site, _)| (file, site))
+        .chain(reader_sites(&files))
         .collect();
-    let missed: Vec<(String, String)> = master::master_sites(&files)
-        .into_iter()
-        .map(|(file, site, _)| (file, site))
-        .filter(|site| !read.contains(site))
-        .collect();
-    assert!(missed.is_empty(), "{missed:?}");
+    assert_eq!(flagged, both);
+    assert!(!flagged.is_empty(), "the tree has its allowlisted sites");
 }

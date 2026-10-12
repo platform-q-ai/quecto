@@ -1,11 +1,11 @@
-//! The spawn check's corpus: every form the reader is held to, with the
-//! sites it finds in each (`every_spawn_form_is_seen`; none: no spawn),
-//! and the proof that it catches every form the check as merged (#2513)
-//! caught (`the_reader_catches_all_the_merged_check_caught`), but the
-//! false positives it was written to leave ([`MERGED_FALSE_POSITIVES`]).
+//! The spawn check's corpus: every form it is held to, with the sites it
+//! flags in each (`every_spawn_form_is_seen`; none: no spawn), and the
+//! proof that each site either the merged check or the reader finds is
+//! flagged (`every_site_either_check_finds_is_flagged`).
 
 use super::master::master_sites;
 use super::spawn_sites;
+use super::visitor::reader_sites;
 
 /// Each form, and what the reader finds in it, site by site.
 const CASES: &[(&str, &[&str])] = &[
@@ -345,22 +345,25 @@ const CASES: &[(&str, &[&str])] = &[
         r#"fn f() { let client = reqwest::Client::builder().build().unwrap(); client.spawn(1); }"#,
         &[],
     ),
-    (r#"fn f() { Client::builder().spawn(); }"#, &[]),
+    (
+        r#"fn f() { Client::builder().spawn(); }"#,
+        &[r#"`.spawn(..)` on `Client :: builder ()`"#],
+    ),
     (
         r#"fn f() { let h = Handle::current(); drop(h); let h = 1; h.spawn(); }"#,
         &[r#"`.spawn(..)` on `h`"#],
     ),
     (
         r#"fn f(runtime: &str) { std::process::Command::new(runtime).spawn().unwrap(); }"#,
-        &[],
+        &[r#"`.spawn(..)` on `std :: process :: Command :: new (runtime)`"#],
     ),
     (
         r#"fn f() { let mut builder = std::process::Command::new("x"); builder.spawn().unwrap(); }"#,
-        &[],
+        &[r#"`.spawn(..)` on `builder`"#],
     ),
     (
         r#"fn f(builder: &mut std::process::Command) { builder.spawn().unwrap(); }"#,
-        &[],
+        &[r#"`.spawn(..)` on `builder`"#],
     ),
     (
         r#"fn f() { let handle = std::process::Command::new("x").spawn().unwrap(); handle.wait(); }"#,
@@ -629,8 +632,6 @@ const CASES: &[(&str, &[&str])] = &[
         r#"fn f() { let c = std::process::Command::new("x"); drop(format!("{:?}", c.spawn())); }"#,
         &[],
     ),
-    // A declared type never hides a spawner name: an alias the reader
-    // cannot see (`type H = Handle` elsewhere) stays a spawner by name.
     (
         r#"fn f() { let handle: H = make(); handle.spawn(1); }"#,
         &[r#"`.spawn(..)` on `handle`"#],
@@ -655,57 +656,148 @@ const CASES: &[(&str, &[&str])] = &[
         r#"fn f() { let thread = Worker::new(); thread.spawn(1); }"#,
         &[r#"`.spawn(..)` on `thread`"#],
     ),
+    // The forms of #2523's round-3 review, flagged through the union:
+    // a listed type over a spawner value (R1a), a type read by its last
+    // segment (R1b), a base looked up by its name (R2), `builder` after
+    // any type (R3), a nested item, an attribute and the `Handle` glob,
+    // and the merged check's own flags the reader had left.
+    (
+        r#"fn f() { let runtime: String = Runtime::new(); runtime.spawn(1); }"#,
+        &[r#"`.spawn(..)` on `runtime`"#],
+    ),
+    (
+        r#"fn f() { let handle: &str = Handle::current(); handle.spawn(1); }"#,
+        &[r#"`.spawn(..)` on `handle`"#],
+    ),
+    (
+        r#"impl X { fn f(handle: Self::Client) { handle.spawn(1); } }"#,
+        &[r#"`.spawn(..)` on `handle`"#],
+    ),
+    (
+        r#"fn f<T: X>(handle: T::Command) { handle.spawn(1); }"#,
+        &[r#"`.spawn(..)` on `handle`"#],
+    ),
+    (
+        r#"fn f(handle: &str) { pick(handle).handle.spawn(1); }"#,
+        &[r#"`.spawn(..)` on `pick (handle) . handle`"#],
+    ),
+    (
+        r#"fn f() { Pool::builder().spawn(1); }"#,
+        &[r#"`.spawn(..)` on `Pool :: builder ()`"#],
+    ),
+    (
+        r#"fn f() { let builder = Workers::builder(); builder.spawn(1); }"#,
+        &[r#"`.spawn(..)` on `builder`"#],
+    ),
+    (
+        r#"fn f() { let handle = std::process::Command::new("x"); fn g(handle: Handle) { handle.spawn(1); } }"#,
+        &[r#"`.spawn(..)` on `handle`"#],
+    ),
+    (
+        r#"use tokio::runtime::Handle::*; fn f() {}"#,
+        &[r#"a `use` renaming or globbing `tokio::runtime::Handle`"#],
+    ),
+    (
+        r#"#[cfg(feature = "x")] fn f(builder: std::thread::Builder) { builder.spawn(|| ()); }"#,
+        &[r#"`.spawn(..)` on `builder`"#],
+    ),
+    (
+        r#"fn f() { Client::builder().spawn(); }"#,
+        &[r#"`.spawn(..)` on `Client :: builder ()`"#],
+    ),
+    (
+        r#"fn f(runtime: &str) { std::process::Command::new(runtime).spawn().unwrap(); }"#,
+        &[r#"`.spawn(..)` on `std :: process :: Command :: new (runtime)`"#],
+    ),
+    (
+        r#"fn f() { let mut builder = std::process::Command::new("x"); builder.spawn().unwrap(); }"#,
+        &[r#"`.spawn(..)` on `builder`"#],
+    ),
+    (
+        r#"fn f(builder: &mut std::process::Command) { builder.spawn().unwrap(); }"#,
+        &[r#"`.spawn(..)` on `builder`"#],
+    ),
+    // Cheap words both checks missed.
+    (
+        r#"fn f(p: &P) { p.spawn_fifo(|| ()); }"#,
+        &[r#"`.spawn_fifo(..)` on `p`"#],
+    ),
+    (
+        r#"fn f(p: &P) { p.spawn_pinned(|| async {}); }"#,
+        &[r#"`.spawn_pinned(..)` on `p`"#],
+    ),
+    (
+        r#"fn f(p: &P) { p.scope_fifo(|_| ()); }"#,
+        &[r#"`.scope_fifo(..)` on `p`"#],
+    ),
+    (
+        r#"fn f() { rayon::in_place_scope(|_| ()); }"#,
+        &[r#"`rayon::in_place_scope`"#],
+    ),
+    (
+        r#"fn f(l: L) { l.run_until(async {}); }"#,
+        &[r#"`.run_until(..)` on `l`"#],
+    ),
+    (
+        r#"fn f(v: Vec<u8>) { v.par_iter().for_each(drop); }"#,
+        &[r#"`.par_iter(..)` on `v`"#],
+    ),
+    (
+        r#"fn f() { crossbeam::scope(|_| ()).unwrap(); }"#,
+        &[r#"`crossbeam::scope`"#],
+    ),
+    (
+        r#"fn f() { actix_rt::spawn(async {}); }"#,
+        &[r#"`actix_rt::spawn`"#],
+    ),
+    (
+        r#"fn f() { async_global_executor::spawn(async {}); }"#,
+        &[r#"`async_global_executor::spawn`"#],
+    ),
+    (
+        r#"#[tokio::main] async fn main() {}"#,
+        &[r#"`#[tokio::main]`"#],
+    ),
 ];
 
-/// The forms the merged check flagged that hold no spawner: a process's
-/// `Command` named `runtime` or `builder`, and another type's `builder()`.
-const MERGED_FALSE_POSITIVES: &[&str] = &[
-    r#"fn f() { Client::builder().spawn(); }"#,
-    r#"fn f(runtime: &str) { std::process::Command::new(runtime).spawn().unwrap(); }"#,
-    r#"fn f() { let mut builder = std::process::Command::new("x"); builder.spawn().unwrap(); }"#,
-    r#"fn f(builder: &mut std::process::Command) { builder.spawn().unwrap(); }"#,
-];
+/// The sites flagged in `source`, and the merged check's and the reader's.
+type Found = (String, String, String);
 
-/// What the reader finds in `source`, and whether the merged check flags it.
-fn read(source: &str) -> (Vec<String>, bool) {
+fn checked(source: &str) -> (Vec<Found>, Vec<Found>, Vec<Found>) {
     let file = syn::parse_file(source).unwrap_or_else(|error| panic!("{source}: {error}"));
     let files = [("x.rs".to_string(), file)];
-    let found = spawn_sites(&files)
-        .into_iter()
-        .map(|(_, _, what)| what)
-        .collect();
-    (found, !master_sites(&files).is_empty())
+    (
+        spawn_sites(&files),
+        master_sites(&files),
+        reader_sites(&files),
+    )
 }
 
-/// The reader sees every form, however it is reached, and says what it is.
+/// Every form is flagged as its entry says, site by site.
 #[test]
 fn every_spawn_form_is_seen() {
     assert!(CASES.len() > 150, "the corpus is read: {}", CASES.len());
     for (source, expected) in CASES {
-        let (found, _) = read(source);
-        assert_eq!(found, *expected, "{source}");
+        let (flagged, _, _) = checked(source);
+        let whats: Vec<&str> = flagged.iter().map(|(_, _, what)| what.as_str()).collect();
+        assert_eq!(whats, *expected, "{source}");
     }
 }
 
-/// Every form the merged check caught, the reader catches, but its known
-/// false positives, which the reader leaves (and the merged check still
-/// flags, so the list stays true).
+/// Each site the merged check or the reader finds, in its function and
+/// with its what, is flagged: the check is their union.
 #[test]
-fn the_reader_catches_all_the_merged_check_caught() {
-    for source in CASES
-        .iter()
-        .map(|(source, _)| *source)
-        .chain(MERGED_FALSE_POSITIVES.iter().copied())
-    {
-        let (found, merged) = read(source);
-        match (merged, MERGED_FALSE_POSITIVES.contains(&source)) {
-            (true, false) => assert!(!found.is_empty(), "the merged check caught it: {source}"),
-            (true, true) => assert!(
-                found.is_empty(),
-                "a merged false positive: {source}: {found:?}"
-            ),
-            (false, true) => panic!("the merged check does not flag it: {source}"),
-            (false, false) => {}
+fn every_site_either_check_finds_is_flagged() {
+    for (source, _) in CASES {
+        let (flagged, merged, read) = checked(source);
+        for site in merged.iter().chain(&read) {
+            assert!(flagged.contains(site), "{source}: {site:?} not flagged");
+        }
+        for site in &flagged {
+            assert!(
+                merged.contains(site) || read.contains(site),
+                "{source}: {site:?} from neither check"
+            );
         }
     }
 }

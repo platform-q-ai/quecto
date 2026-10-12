@@ -692,7 +692,7 @@ impl<'ast> Visit<'ast> for Sites<'_> {
 }
 
 /// Every spawn site of `files`: (file, site, what).
-pub(super) fn spawn_sites(files: &[(String, syn::File)]) -> Vec<(String, String, String)> {
+pub(super) fn reader_sites(files: &[(String, syn::File)]) -> Vec<(String, String, String)> {
     let mut found = vec![];
     for (path, parsed) in files {
         let mut sites = Sites {
