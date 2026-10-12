@@ -529,7 +529,7 @@ fn every_edit_of_a_file_is_refused_or_read_as_a_reader_reads_it() {
 }
 
 #[path = "markdown_oracle_tests.rs"]
-mod oracle;
+pub(crate) mod oracle;
 
 #[path = "markdown_hostile_tests.rs"]
 mod hostile;
