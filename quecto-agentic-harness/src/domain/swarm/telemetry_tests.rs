@@ -158,6 +158,7 @@ fn every_domain_refusal_carries_its_kind() {
 fn observation(outcome: BoardOpOutcome) -> BoardOpObservation {
     BoardOpObservation {
         op: "_snapshot".into(),
+        name_form: None,
         actor_ref: "worker-1".into(),
         role: Some(BoardRole::Host),
         run_id: Some("0123456789abcdef0123456789abcdef".into()),

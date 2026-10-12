@@ -14,6 +14,7 @@ use crate::infrastructure::persistence::audit_log::AuditLog;
 fn observation() -> BoardOpObservation {
     BoardOpObservation {
         op: "_status".into(),
+        name_form: None,
         actor_ref: Redacted::from("parent"),
         role: Some(BoardRole::Host),
         run_id: None,

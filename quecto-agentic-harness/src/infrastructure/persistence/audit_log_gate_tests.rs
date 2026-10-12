@@ -17,6 +17,7 @@ use crate::domain::swarm::{
 fn swarm_op() -> AuditEvent {
     AuditEvent::SwarmOp(BoardOpObservation {
         op: "_status".into(),
+        name_form: None,
         actor_ref: Redacted::from("parent"),
         role: Some(BoardRole::Host),
         run_id: None,

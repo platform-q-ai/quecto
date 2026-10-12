@@ -19,7 +19,7 @@ use crate::application::swarm::dto::CallMeasure;
 use crate::application::swarm::ports::BoardOpLog;
 use crate::domain::redaction::Redacted;
 use crate::domain::swarm::watch_polls::{PollTally, WATCH_POLL_OP};
-use crate::domain::swarm::{BoardError, BoardOpObservation, BoardRole, RefusalKind};
+use crate::domain::swarm::{BoardError, BoardOpObservation, BoardRole, NameForm, RefusalKind};
 
 /// Whom a board call is made for (#2279 S15 final review): the calling
 /// member, whose role in the run a member-facing op records, or the
@@ -276,13 +276,13 @@ fn trace_arguments(finished: &Finished<'_>, actor: &Redacted) {
 /// refused call leaves, with nothing measured (no transaction began) and
 /// the caller unproven. `arguments` is what the refusal found wrong in the
 /// member's text (#2341: a value the board cannot hold), kept only for an
-/// `invalid` or `calling` refusal.
+/// `invalid` or `calling` refusal; `name_form` which names a structured
+/// op's call used (#2478), `None` where none applies.
 pub fn refused(
     handles: &SwarmBoardHandles,
     member: &str,
     method: &str,
-    kind: RefusalKind,
-    arguments: BindingFaults,
+    (kind, arguments, name_form): (RefusalKind, BindingFaults, Option<NameForm>),
     elapsed: Duration,
 ) {
     let known = Method::parse(method);
@@ -295,6 +295,7 @@ pub fn refused(
         arguments: super::binding::recorded(&outcome, Some(arguments)),
         outcome,
         elapsed,
+        name_form,
     };
     record(
         handles,

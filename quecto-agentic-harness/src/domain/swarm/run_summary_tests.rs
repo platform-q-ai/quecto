@@ -15,6 +15,7 @@ const RUN: &str = "0123456789abcdef0123456789abcdef";
 fn record(op: &str, decision: Option<&str>, duration_us: u64) -> BoardOpObservation {
     BoardOpObservation {
         op: op.into(),
+        name_form: None,
         actor_ref: "worker".into(),
         role: Some(BoardRole::Worker),
         run_id: Some(RUN.into()),

@@ -833,7 +833,8 @@ body, evidence, reason, path or other board text:
 | Field | Meaning |
 |---|---|
 | `turn` | Always `null`: a board op is not filed under an agent turn (the board is called without one) |
-| `op` | The board method (`unknown` for a name that is none) |
+| `op` | The board method (`unknown` for a name that is none). An op called by its task-item name (#2478: `task_item`, `task_items`, `task_item_create`, `verify_task_item`, `revalidate_task_item`) is recorded by its old name (`task`, `tasks`, `task_create`, `verify_task`, `revalidate_task`) |
+| `name_form` | For a structured op (#2478), which names the call used where the swarm's tasks were renamed task items: `legacy` when it used any old name (one of those five ops by its old name, or `task_id`), `current` when it used task-item names only (`task_item_id` included). Left out for a call that used neither (an op not renamed, given no task id), for the harness's own calls, and in records written before #2478. Counting `legacy` shows whether the old names are still in use; the run summary counts both per op (`name_forms`) |
 | `actor_ref` | The caller's member id: the id the caller chose for itself on the board (`members.id`), redacted if it looks like a credential, and cut to its first 128 characters (a refused call can name any id) |
 | `role` | `host` for the harness's own ops, including the `summary` the harness reads for itself to judge a run after an op or when it settles one; for a member's own `summary` or `reconcile`, and for a member-facing op (`task_create`, `claim`, ...), when the board answered it as a member's, or refused it only after the operation gate authorised the caller as a member (a stale claim token, a task in the wrong state, a refusal after the op's writes committed), the caller's role in the run as the op read it: `coordinator`, `integrator`, or `worker` for any other member; `null` for a refusal before or by the gate itself (`not_member`, `not_coordinator`, `run_missing`, or a run that permits no new work), or when the op read no run (the board holds none). A stranger is never recorded as `worker`. A member whose death was confirmed still holds its role in the run: the gate admits it to read-only ops, so its reads (`summary`, `events`, ...) record `worker` (or its other role), and only its mutations, which the gate refuses as `not_member`, record `null` (#2313) |
 | `run_id` | The run the op found, when it found one and its id is one the board generates (32 lowercase hex digits); `null` otherwise, so an id edited into the board from outside is never recorded |
@@ -866,7 +867,10 @@ body, evidence, reason, path or other board text:
 
 Every name in `missing_args`, `unexpected_args.known`, `wrong_type_args` and
 `unreadable_args` is a field name of the `swarm` tool's schema (the board ops'
-table, `BOARD_OPS`), or `arguments`. This holds by type: the dispatcher records
+table, `BOARD_OPS`, or `task_item_id`, the schema's task-item name for
+`task_id`, #2478), or `arguments`. A `task_item_id` is recorded as `task_id`
+for an op that takes a task id, and by its own name for one that does not
+(sent to the wrong op). This holds by type: the dispatcher records
 only a `SchemaField`, the table's own `&'static str`, which nothing but the
 table lookup (`schema_field`) can construct, so no member text (nor any other
 string) can become a recorded name, in a release build too; debug builds also
@@ -1054,7 +1058,8 @@ the board is still recorded as the op's own `swarm_op`, with no run read
 
 | Refused at | `kind` |
 |---|---|
-| Member input (a value the board's JSON value cannot hold: `1e400`, an integer beyond i64 and u64, a lone surrogate), its field in `unreadable_args` | `invalid` |
+| Member input (a value the board's JSON value cannot hold: `1e400`, an integer beyond i64 and u64, a lone surrogate), its field in `unreadable_args` (`task_id` for a `task_item_id` given to an op that takes a task id) | `invalid` |
+| Member input giving `task_id` and `task_item_id` different values (#2478; `1` and `1.0` differ, as `null` and `1` do), as Python refuses an argument given twice: `unexpected_args` `{"count": 1, "known": ["task_id"]}` | `calling` |
 | The running gate, when the run is not `running` | `not_running` |
 | The running gate, when the running run's deadline has passed, is missing or is not a number | `budget_exhausted` |
 | The running gate, when the `_status` call failed, the status read is not text, or a mutating op's first `_event_cursor` call failed (gate `unreadable`) | `store` |
@@ -1073,6 +1078,7 @@ not the event log is on. It carries no argument text:
 | `cursor_moved` | For a mutating op that reached the board, whether the event cursor moved (`Some(true)` or `Some(false)`); `None` otherwise, including when the second cursor read failed |
 | `lifecycle` | What the post-call step did: `none` (not run), `unchanged`, `notified`, `settled` or `failed` |
 | `warnings` | How many wake hints could not be delivered |
+| `name_form` | `legacy` or `current`, as the op's `swarm_op` record has it (#2478); left out of the line when neither applies |
 | `result_bytes` | The size of the answer text the member received |
 | `duration_us` | The whole op, in microseconds |
 
@@ -1126,7 +1132,7 @@ records:
 | `scope` | Always `process`: the fields below, up to `run`, are this harness's own calls |
 | `records` | The run's `swarm_op` records this process folded |
 | `calls` | The board calls those records account for: one per record, but a run-watch aggregate (`polls`, #2338) accounts for each tick it holds. Each op's `ok` and `refused` counts are calls, so `_watch`'s `ok` is every tick the watch made, recorded alone or aggregated |
-| `ops` | Per op: `ok` (answered), `refused` (by `kind`, left out when none), the nearest-rank `p50` and `p95` and the exact `max` of `duration_us`, `lock_wait_us`, `busy_wait_us` and `commit_us` (#2340: the time the op's `COMMIT`s took; a record that did not measure a wait or a commit time is left out of its percentiles and counted in its `unmeasured`, and a `0` commit time, an op that ran no `COMMIT`, is a measure; a summary written before #2340 has no `commit_us`; a run-watch aggregate, #2338, adds one sample, its slowest tick's, for all the ticks it holds, so `_watch`'s p50 and p95 lean high), `busy` (records whose busy handler fired), and `unsampled` (the percentiles are taken from a uniform sample of at most 4096 of an op's records, drawn over the whole run; the records not held are counted here, and left out when none) |
+| `ops` | Per op: `ok` (answered), `refused` (by `kind`, left out when none), the nearest-rank `p50` and `p95` and the exact `max` of `duration_us`, `lock_wait_us`, `busy_wait_us` and `commit_us` (#2340: the time the op's `COMMIT`s took; a record that did not measure a wait or a commit time is left out of its percentiles and counted in its `unmeasured`, and a `0` commit time, an op that ran no `COMMIT`, is a measure; a summary written before #2340 has no `commit_us`; a run-watch aggregate, #2338, adds one sample, its slowest tick's, for all the ticks it holds, so `_watch`'s p50 and p95 lean high), `busy` (records whose busy handler fired), `name_forms` (#2478: the calls by their records' `name_form`, `{"legacy": N, "current": M}`, left out for an op whose records carry none), and `unsampled` (the percentiles are taken from a uniform sample of at most 4096 of an op's records, drawn over the whole run; the records not held are counted here, and left out when none) |
 | `busy` | Records whose busy handler fired, over every op |
 | `tasks` | Tasks `created`, `claimed`, `released`, `blocked`, `submitted` and `accepted` (verified) by this process's answered ops, by their decisions |
 | `messages` | Messages `sent`, `acked` (consumed) and `withdrawn` by this process's ops, likewise |

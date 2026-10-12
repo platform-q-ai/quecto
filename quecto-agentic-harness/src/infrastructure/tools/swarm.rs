@@ -180,7 +180,7 @@ async fn refuse_op(
     let ctx = context.clone();
     let elapsed = started.elapsed();
     super::call_work::spawn_blocking_in_call(move || {
-        ctx.refused(UNKNOWN_OP, kind, arguments, elapsed)
+        ctx.refused(UNKNOWN_OP, kind, arguments, None, elapsed)
     })
     .await
     .map_err(|error| DomainError::Tool(error.to_string()))?;

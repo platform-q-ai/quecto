@@ -80,7 +80,7 @@ use crate::application::swarm::use_cases::{
     ResumeRun, ResumeRunExternally, RevalidateTask, RevokeTask, SendMessage, SetTaskDependencies,
     StopRun, SubmitTask, UnblockTask, VerifyTask, WithdrawMessage,
 };
-use crate::domain::swarm::{BoardError, BoardOpDetail, RefusalKind};
+use crate::domain::swarm::{BoardError, BoardOpDetail, NameForm, RefusalKind};
 
 pub use self::binding::{BindingFaults, SchemaField, schema_field, unreadable_arguments};
 pub use self::method::may_end_run;
@@ -306,7 +306,7 @@ pub fn call_as(
     args: Value,
     origin: CallOrigin,
 ) -> Result<Value, BoardError> {
-    call_deciding(handles, member, method, args, origin).0
+    call_deciding(handles, member, method, args, (origin, None)).0
 }
 
 /// [`call_as`], answering also whether the op changed the run's control
@@ -317,7 +317,7 @@ pub fn call_deciding(
     member: &str,
     method: &str,
     args: Value,
-    origin: CallOrigin,
+    (origin, name_form): (CallOrigin, Option<NameForm>),
 ) -> (Result<Value, BoardError>, bool) {
     let started = Instant::now();
     let known = Method::parse(method);
@@ -383,6 +383,7 @@ pub fn call_deciding(
         arguments: binding::recorded(&outcome, faults),
         outcome,
         elapsed: started.elapsed(),
+        name_form,
     };
     // A member: answered by an op that checks membership, or authorised by
     // the operation gate before the op refused it (#2313 review M2).
@@ -668,7 +669,7 @@ fn take<const N: usize>(arguments: Vec<Value>) -> Result<[Value; N], BoardError>
 }
 
 #[path = "swarm_board_dispatch_binding.rs"]
-mod binding;
+pub(super) mod binding;
 
 #[path = "swarm_board_dispatch_records.rs"]
 mod records;

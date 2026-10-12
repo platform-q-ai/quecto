@@ -111,7 +111,7 @@ fn logged() -> (
 
 /// The refusal of `claim` given `task_id` and `task_item_id` with two
 /// values.
-pub(super) const CONFLICT: &str = "swarm: \"claim: task_id and task_item_id name the same argument but hold different values; send only one\"";
+pub(super) const CONFLICT: &str = "tool error: swarm: \"claim: task_id and task_item_id name the same argument but hold different values; send only one\"";
 
 /// `task_id` and `task_item_id` are one argument: both, with one value,
 /// are taken; with two (`1` and `2`, `1` and `1.0`, `null` and `1`), the
@@ -197,7 +197,7 @@ async fn the_records_and_events_keep_the_old_names() {
     .await;
     assert_eq!(
         wrong_op,
-        r#"swarm: "task_create: unexpected argument task_item_id""#
+        r#"tool error: swarm: "task_create: unexpected argument task_item_id""#
     );
     let records: Vec<BoardOpObservation> = log.take();
     // The harness's own reads (`_status`, `summary`, ...) are left out.
