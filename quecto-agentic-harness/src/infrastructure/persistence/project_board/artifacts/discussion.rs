@@ -70,10 +70,6 @@ impl ArtifactCodec for DiscussionCodec {
     };
 
     fn to_document(discussion: &Discussion) -> Result<Document, CodecError> {
-        let stub = true;
-        if stub {
-            return Err(CodecError::Schema);
-        }
         let discussion = discussion.fields();
         let mut fields = vec![(ID, cells::slug(&discussion.id))];
         if let Some(task) = &discussion.task {
@@ -117,10 +113,6 @@ impl ArtifactCodec for DiscussionCodec {
     }
 
     fn from_document(document: &Document) -> Result<Discussion, CodecError> {
-        let stub = true;
-        if stub {
-            return Err(CodecError::Schema);
-        }
         let fields = cells::Fields::of(document);
         let required = |name: &'static str| fields.required(name);
         let mut messages: Vec<Message> = vec![];

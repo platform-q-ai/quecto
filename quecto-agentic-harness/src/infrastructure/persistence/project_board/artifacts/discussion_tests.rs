@@ -132,10 +132,10 @@ fn an_unlinked_closed_discussion_round_trips() {
 
 #[test]
 fn a_messages_rows_are_contiguous_and_alike() {
-    // Message 2's rows split by message 1's.
+    // Message 1's rows split by message 2's.
     let split = edited(
-        "| 2 | Rex (`rex@example.com`) | 2026-10-11T12:05:00Z | No:",
-        "| 1 | Ada (`ada@example.com`) | 2026-10-11T12:00:00Z | again |\n| 2 | Rex (`rex@example.com`) | 2026-10-11T12:05:00Z | No:",
+        "and all. |\n",
+        "and all. |\n| 1 | Ada (`ada@example.com`) | 2026-10-11T12:00:00Z | again |\n",
     );
     refused_at(&split, "Messages");
     // A gap in the numbers, or one out of order.
@@ -238,8 +238,10 @@ fn the_widest_discussion_fits_byte_for_byte() {
     assert_eq!(widest.text_bytes(), MAX_DISCUSSION_TEXT_BYTES);
     let file = round_trips(widest.clone());
     let reserve = reserve_used(&file, &widest);
-    // Pinned, so a change to what the codec writes is seen.
-    assert_eq!((file.len(), reserve), (1_048_166, 686));
+    // Pinned, so a change to what the codec writes is seen. The reserve is
+    // small here: the domain counts the title's `|` escaped, as a heading
+    // never writes it (256 bytes to spare).
+    assert_eq!((file.len(), reserve), (1_043_509, 136));
     assert!(reserve <= FILE_RESERVE_BYTES);
     assert!(file.len() <= MAX_DISCUSSION_FILE_BYTES);
     assert!(file.len() <= DISCUSSION_LIMITS.file_bytes);
@@ -266,7 +268,10 @@ fn sixteen_thousand_short_rows_fit_byte_for_byte() {
         .filter(|row| row.starts_with("| ") && row.ends_with(" | x |"))
         .count();
     assert_eq!(rows, MAX_DISCUSSION_LINES);
-    assert_eq!((file.len(), file.lines().count(), reserve), (0, 0, 0));
+    assert_eq!(
+        (file.len(), file.lines().count(), reserve),
+        (911_054, 16_015, 392)
+    );
     assert!(reserve <= FILE_RESERVE_BYTES);
     assert!(file.lines().count() <= DISCUSSION_LIMITS.lines);
     // A row of a 4-digit message is the domain's overhead past its text.
@@ -297,6 +302,6 @@ fn the_longest_row_fits_its_line_cap() {
     );
     let file = round_trips(longest);
     let line = file.lines().map(str::len).max().unwrap();
-    assert_eq!(line, 0);
+    assert_eq!(line, 4_746);
     assert!(line <= DISCUSSION_LIMITS.line_bytes);
 }
