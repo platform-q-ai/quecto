@@ -27,6 +27,9 @@ Work: move(task,to claimed) takes a ready task for 2 hours; renew(task) before i
 Repair: clear_set_aside(path, object, repeated) removes a file the board could not read (listed under quarantined, with its object); repeated names the copy to keep when a task file appears twice. Use it only when told to.
 On "stale" re-read with show and redo your change; on "contended" call again; on "clock_ahead" or "task_ahead" stop and report: this machine's clock is wrong. A "clock" note on an answer means writes ran without an outside time check."#;
 
+/// The most bytes a listing's answer takes.
+pub const MAX_LISTING_BYTES: usize = 32 * 1024;
+
 /// The agent `board` tool over one repository's board.
 pub struct BoardTool {
     site: Arc<BoardSite>,

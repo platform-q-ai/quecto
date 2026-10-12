@@ -56,6 +56,7 @@ fn environment(repo: &Path, access: Access) -> ProjectBoardEnvironment {
         remote: "origin".into(),
         access,
         vars,
+        cancelled: None,
     }
 }
 

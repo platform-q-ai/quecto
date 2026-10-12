@@ -58,6 +58,8 @@ pub struct GitBoardStore {
     last: Mutex<Option<(String, Arc<Board>)>>,
     /// What a read takes at most, and so a write makes ([`LIMITS`]).
     pub(super) limits: Limits,
+    /// Set when the call this store serves was cancelled.
+    cancelled: Option<Arc<std::sync::atomic::AtomicBool>>,
 }
 
 /// What became of a push.
@@ -94,6 +96,7 @@ impl GitBoardStore {
                 remote: remote.to_string(),
                 last: Mutex::new(None),
                 limits: LIMITS,
+                cancelled: None,
             }),
             Err(error) => Err(BoardStoreError::Unavailable(format!(
                 "{remote:?} is not a remote of this repository: {error}"
@@ -259,6 +262,13 @@ impl GitBoardStore {
                 .text(&["rev-parse", "--verify", "--quiet", &commit], None)
                 .map_err(unavailable)?,
         )
+    }
+
+    /// This store, pushing nothing once `cancelled` is set.
+    #[must_use]
+    pub fn with_cancel(mut self, cancelled: Option<Arc<std::sync::atomic::AtomicBool>>) -> Self {
+        self.cancelled = cancelled;
+        self
     }
 
     /// Moves the remote board from `base` (absent when `None`) to `commit`.

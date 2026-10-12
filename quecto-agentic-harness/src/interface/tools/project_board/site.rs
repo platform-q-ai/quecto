@@ -29,6 +29,9 @@ pub struct ProjectBoardEnvironment {
     pub access: Access,
     /// The process environment, which composition allowlists for git.
     pub vars: Vec<(std::ffi::OsString, std::ffi::OsString)>,
+    /// Set when the call the request came from was cancelled: the board
+    /// then pushes nothing more (`None`: the request runs to its end).
+    pub cancelled: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 }
 
 /// The board's operations, built by composition.
@@ -84,6 +87,7 @@ pub fn answer(site: &BoardSite, text: &str) -> Value {
             false => Access::Read,
         },
         vars: std::env::vars_os().collect(),
+        cancelled: None,
     };
     match build(&environment) {
         // The one entry point every front end's request goes through.
