@@ -3,7 +3,9 @@
 //! it will be. The host numbers issues and pull requests from one
 //! sequence, so no two tasks share an issue, no task's issue is a pull
 //! request anywhere on the board (linked the old way or by a change), and
-//! no task names by `#n` a pull request one of its own changes links.
+//! no task names by `#n` a pull request one of its own linked changes
+//! links (an unlinked, abandoned one may be pointed at, as an old-way pull
+//! request may once removed).
 use std::collections::BTreeMap;
 
 use super::super::entities::change::Change;
@@ -13,9 +15,13 @@ use super::super::value_objects::rule_error::BoardRuleError;
 use super::super::value_objects::slug::Slug;
 
 /// Every clash among `tasks`' issues and references and the pull requests
-/// of `tasks` and `changes`, each naming both sides, in the board's order
-/// (by issue, then by task): none when the board holds. An import reports
-/// them all.
+/// of `tasks` and `changes`, each naming both sides: none when the board
+/// holds. An import reports them all. The order: by issue, each issue's
+/// shared pairs and then each of its tasks' pull-request clash (its tasks
+/// in the order `tasks` lists them, the pull request's holder the first
+/// that links it, the old way before a change); then the references to
+/// own pull requests, by task and change in the order given. So the order
+/// follows the snapshot's.
 pub fn number_clashes(tasks: &[Task], changes: &[Change]) -> Vec<BoardRuleError> {
     // Who links each pull request: a task the old way, or a change's task.
     let mut holders: BTreeMap<u64, &Slug> = BTreeMap::new();
@@ -48,11 +54,11 @@ pub fn number_clashes(tasks: &[Task], changes: &[Change]) -> Vec<BoardRuleError>
             });
         }
         if let Some(holder) = holders.get(issue) {
-            clashes.push(BoardRuleError::IssueIsPr {
+            clashes.extend(tasks.iter().map(|task| BoardRuleError::IssueIsPr {
                 issue: *issue,
-                task: tasks[0].clone(),
+                task: (*task).clone(),
                 pr_holder: (*holder).clone(),
-            });
+            }));
         }
     }
     clashes.extend(own_prs_referenced(tasks, changes));
@@ -72,30 +78,38 @@ pub fn issue_numbers_hold(tasks: &[Task], changes: &[Change]) -> Result<(), Boar
     }
 }
 
-/// Each `#n` reference of a task to a pull request one of its own changes
-/// links (a task's own old-way pull requests are its own rule).
+/// Each `#n` reference of a task to a pull request one of its own linked
+/// changes links (a task's own old-way pull requests are its own rule).
 fn own_prs_referenced(tasks: &[Task], changes: &[Change]) -> Vec<BoardRuleError> {
-    let referenced = |task: &Task, pr: u64| {
-        task.fields().references.iter().any(
-            |reference| matches!(reference.points(), Points::Own(number) if number.get() == pr),
-        )
-    };
-    tasks
-        .iter()
-        .flat_map(|task| {
-            changes
-                .iter()
-                .filter(move |change| change.fields().task == task.fields().id)
-                .filter_map(move |change| {
-                    let pr = change.fields().pr?;
-                    referenced(task, pr).then(|| BoardRuleError::OwnPrReferenced {
-                        task: task.fields().id.clone(),
-                        pr,
-                        change: change.fields().number,
-                    })
-                })
-        })
-        .collect()
+    let mut linked: BTreeMap<&Slug, Vec<&Change>> = BTreeMap::new();
+    for change in changes.iter().filter(|change| change.is_linked()) {
+        linked
+            .entry(&change.fields().task)
+            .or_default()
+            .push(change);
+    }
+    let mut clashes = vec![];
+    for task in tasks {
+        let fields = task.fields();
+        let own = linked.get(&fields.id).map_or(&[][..], Vec::as_slice);
+        let referenced: Vec<u64> = fields
+            .references
+            .iter()
+            .filter_map(|reference| match reference.points() {
+                Points::Own(number) => Some(number.get()),
+                Points::Elsewhere(_) | Points::Page => None,
+            })
+            .collect();
+        clashes.extend(own.iter().filter_map(|change| {
+            let pr = change.fields().pr.filter(|pr| referenced.contains(pr))?;
+            Some(BoardRuleError::OwnPrReferenced {
+                task: fields.id.clone(),
+                pr,
+                change: change.fields().number,
+            })
+        }));
+    }
+    clashes
 }
 
 #[cfg(test)]

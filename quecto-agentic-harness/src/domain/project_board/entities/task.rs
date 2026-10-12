@@ -191,8 +191,10 @@ fn validate(task: &TaskFields) -> Result<(), SchemaError> {
 ///
 /// The board's own checks are the importer's and M4's, through
 /// [`issue_numbers_hold`](super::super::services::issue_numbers::issue_numbers_hold):
-/// no two tasks share an issue and no issue is a pull request on the
-/// board; and `superseded_by` names tasks the board holds, without cycles.
+/// no two tasks share an issue (`issue_shared`), no issue is a pull request
+/// on the board (`issue_is_pr`), and no task names by `#n` the pull request
+/// of its own linked change (`own_pr_referenced`); and `superseded_by`
+/// names tasks the board holds, without cycles.
 fn validate_closure(task: &TaskFields) -> Result<(), SchemaError> {
     let issue = task.github_issue.map(IssueNumber::get);
     match task.prs.iter().position(|pr| Some(*pr) == issue) {

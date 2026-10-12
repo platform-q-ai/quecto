@@ -188,3 +188,15 @@ fn a_references_key_is_spelt_normalised() {
         assert_eq!(Reference::parse(text).unwrap().key(), key, "{text}");
     }
 }
+
+/// The echo is cut at a character, never inside one: a multibyte
+/// character straddling byte 64 is kept whole or left out.
+#[test]
+fn a_refusal_echo_cuts_at_a_character() {
+    let text = format!("{}é{}", "x".repeat(63), "y".repeat(100));
+    let problem = Reference::parse(&text).unwrap_err().problem;
+    assert!(
+        problem.contains(&format!("{}é…", "x".repeat(63))),
+        "{problem}"
+    );
+}

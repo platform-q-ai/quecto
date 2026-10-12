@@ -220,6 +220,10 @@ pub(super) fn finish(
     );
     let mut next = fields.clone();
     next.status = Done;
+    assert!(
+        fields.superseded_by.is_empty(),
+        "a task others took over is never completed"
+    );
     next.resolution = resolved(Done, next.resolution, false);
     next.claim = None;
     let task = settle(next, &at)?;

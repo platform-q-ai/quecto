@@ -106,11 +106,11 @@ impl Reference {
 
     /// What makes two references the same pointer: an issue's repository
     /// lowercased (the host names repositories without regard to case);
-    /// a URL normalised as RFC 3986 §6.2.2 does: its host lowercased, port
+    /// a URL normalised as RFC 3986 §6.2.2 does (its host lowercased, port
     /// 443 dropped and leading zeros gone from another, escapes of
     /// unreserved characters decoded and the rest in upper-case hex, dot
-    /// segments removed, an empty path as `/`, and an empty query or
-    /// fragment as none. A task does not know its own repository, so
+    /// segments removed, an empty path as `/`), and, by the board's own
+    /// choice, an empty query or fragment as none. A task does not know its own repository, so
     /// `owner/repo#n` for its own is a different key from `#n`.
     pub fn key(&self) -> &str {
         &self.key
@@ -157,6 +157,7 @@ fn escapes_hold(text: &str) -> bool {
 /// other escape's hex in upper case (RFC 3986 §6.2.2.2); every `%` in it
 /// starts an escape ([`escapes_hold`]).
 fn escapes_normal(text: &str) -> String {
+    debug_assert!(escapes_hold(text), "every % starts an escape");
     let bytes = text.as_bytes();
     let mut out = String::with_capacity(text.len());
     let mut at = 0;

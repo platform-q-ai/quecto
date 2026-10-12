@@ -99,3 +99,67 @@ fn every_clash_is_found_naming_both_sides() {
         "another task's change"
     );
 }
+
+/// Every task holding an issue that is a pull request clashes with it; an
+/// issue three tasks share is two pairs.
+#[test]
+fn an_issue_shared_by_many_clashes_for_each() {
+    let shared = [
+        with("a", Some(1), &[], &[]),
+        with("b", Some(1), &[], &[]),
+        with("c", Some(1), &[], &[]),
+    ];
+    assert_eq!(
+        number_clashes(&shared, &[]),
+        [
+            BoardRuleError::IssueShared {
+                issue: 1,
+                tasks: [slug("a"), slug("b")]
+            },
+            BoardRuleError::IssueShared {
+                issue: 1,
+                tasks: [slug("b"), slug("c")]
+            },
+        ]
+    );
+    let also_pr = [
+        with("a", Some(7), &[], &[]),
+        with("b", Some(7), &[], &[]),
+        with("d", None, &[7], &[]),
+    ];
+    let is_pr = |task: &str| BoardRuleError::IssueIsPr {
+        issue: 7,
+        task: slug(task),
+        pr_holder: slug("d"),
+    };
+    assert_eq!(
+        number_clashes(&also_pr, &[]),
+        [
+            BoardRuleError::IssueShared {
+                issue: 7,
+                tasks: [slug("a"), slug("b")]
+            },
+            is_pr("a"),
+            is_pr("b"),
+        ]
+    );
+}
+
+/// Only a linked change's pull request is the task's own: one an
+/// unlinked (abandoned) change named may be referred to.
+#[test]
+fn a_reference_to_an_abandoned_changes_pull_request_holds() {
+    let mut fields = of("e", 2, 13).into_fields();
+    fields.unlinked = Some((fields.linked_by.clone(), fields.updated.clone()));
+    let abandoned = Change::new(fields).unwrap();
+    let board = [with("e", None, &[], &["#13"])];
+    assert_eq!(number_clashes(&board, &[abandoned]), []);
+    assert_eq!(
+        number_clashes(&board, &[of("e", 2, 13)]),
+        [BoardRuleError::OwnPrReferenced {
+            task: slug("e"),
+            pr: 13,
+            change: 2
+        }]
+    );
+}
