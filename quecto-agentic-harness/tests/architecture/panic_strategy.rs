@@ -189,40 +189,6 @@ fn carried_work_is_joined() {
     );
 }
 
-/// ADR-0029 rule 5 (#2513 review): a tool call's own work leaves the async
-/// workers only through `call_work`, in the call's panic scope, so a panic
-/// in it fails the call instead of aborting the process. No tool adapter
-/// under `src/interface/tools`, and no file implementing `Tool`, spawns a
-/// task or a blocking job itself.
-#[test]
-fn tool_work_is_spawned_only_through_call_work() {
-    let crate_root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let raw = [
-        "tokio::task::spawn_blocking(",
-        "tokio::task::spawn(",
-        "tokio::spawn(",
-        ".spawn_blocking(",
-    ];
-    let adapters = crate_root.join("src/interface/tools");
-    let offenders: Vec<String> = sources(&crate_root.join("src"))
-        .into_iter()
-        .filter(|(path, text)| path.starts_with(&adapters) || text.contains("Tool for "))
-        .flat_map(|(path, text)| {
-            text.lines()
-                .map(str::trim)
-                .filter(|line| !line.starts_with("//"))
-                .filter(|line| raw.iter().any(|spawn| line.contains(spawn)))
-                .map(|line| format!("{}: {line}", path.display()))
-                .collect::<Vec<_>>()
-        })
-        .collect();
-    assert_eq!(
-        offenders,
-        Vec::<String>::new(),
-        "tool work goes through call_work (spawn_blocking_in_call, off_the_workers)"
-    );
-}
-
 /// The functions that may catch a panic by hand, by file, and why.
 /// Anywhere else a tool call's code handles a panic through
 /// `tool_panic_scope::catch_in_call`, which ends the contained unwind and

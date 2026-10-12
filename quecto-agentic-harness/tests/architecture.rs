@@ -85,6 +85,8 @@ mod swarm_board_use_cases;
 mod teardown_authority;
 #[path = "architecture/teardown_layers.rs"]
 mod teardown_layers;
+#[path = "architecture/tool_work_spawns.rs"]
+mod tool_work_spawns;
 #[path = "architecture/use_case_construction.rs"]
 mod use_case_construction;
 #[path = "architecture/web_fetch_boundary.rs"]
