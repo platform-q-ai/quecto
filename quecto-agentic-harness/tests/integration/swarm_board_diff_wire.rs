@@ -102,7 +102,8 @@ fn an_op_with_two_unexpected_fields_names_the_first_as_python_does() {
     assert!(
         result
             .content
-            .contains(&format!("tasks: unexpected argument {named}")),
+            // The tool names the op as its schema advertises it (#2478).
+            .contains(&format!("task_items: unexpected argument {named}")),
         "Python named {named}: {}",
         result.content
     );

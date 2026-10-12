@@ -7,7 +7,7 @@
 use serde_json::{Map, Value};
 
 use super::swarm_board_dispatch::BoardWire;
-use super::swarm_board_ops::wire_text;
+use super::swarm_board_ops::advertised_op;
 use crate::domain::error::DomainError;
 use crate::domain::tool::ToolResult;
 
@@ -49,7 +49,7 @@ pub(super) fn answered(
         (Ok(value), _) => value,
         (Err(refusal), true) => return tool_err(refusal.to_string()),
         (Err(refusal), false) => {
-            let written = wire_text(wire, &Value::Object(notes))
+            let written = (wire.write)(&Value::Object(notes))
                 .unwrap_or_else(|error| format!("the notes cannot be written: {error}"));
             return tool_err(format!("{refusal}\n{written}"));
         }
@@ -67,7 +67,7 @@ pub(super) fn answered(
             Value::Object(fields)
         }
     };
-    match wire_text(wire, &value) {
+    match (wire.write)(&value) {
         Ok(content) => Ok(ToolResult {
             content,
             is_error: false,
@@ -78,35 +78,57 @@ pub(super) fn answered(
     }
 }
 
-/// The structured ops whose answer is one task's row.
-const TASK_ROW_OPS: &[&str] = &[
-    "task",
-    "task_create",
-    "dependencies",
-    "claim",
-    "release",
-    "block",
-    "unblock",
-    "submit",
-    "verify_task",
-    "revalidate_task",
-    "recover",
-    "revoke",
+/// How one answer is presented to a member.
+pub(crate) type Presentation = fn(Value) -> Value;
+
+/// How each structured op's answer is presented, by the op's old name
+/// (every one a board op, which a test holds it to): one task's row, a
+/// list of task rows, file rows or messages, or `release_files`' answer.
+/// Any other op is answered as the board answered it.
+pub(crate) const PRESENTED_OPS: &[(&str, Presentation)] = &[
+    ("task", task_row),
+    ("task_create", task_row),
+    ("dependencies", task_row),
+    ("claim", task_row),
+    ("release", task_row),
+    ("block", task_row),
+    ("unblock", task_row),
+    ("submit", task_row),
+    ("verify_task", task_row),
+    ("revalidate_task", task_row),
+    ("recover", task_row),
+    ("revoke", task_row),
+    ("tasks", task_rows),
+    ("file_owners", file_rows),
+    ("inbox", message_rows),
+    ("release_files", released_files),
 ];
 
 /// The answer of the structured op `op` (its old name) as a member reads
-/// it: a task row's recovery hint as the coordinator's call, a file row's
-/// `task` as `task_item`, `release_files`' `task_id` as `task_item_id`,
-/// and the coordinator's revoke notice as a task item's.
+/// it ([`PRESENTED_OPS`]): a task row's recovery hint as the coordinator's
+/// call, a file row's `task` as `task_item`, `release_files`' `task_id` as
+/// `task_item_id`, and the coordinator's revoke notice as a task item's.
 pub(crate) fn task_item_answer(op: &str, value: Value) -> Value {
-    match op {
-        "tasks" => rows(value, task_row),
-        "file_owners" => rows(value, file_row),
-        "inbox" => rows(value, message_row),
-        "release_files" => renamed(value, "task_id", "task_item_id"),
-        op if TASK_ROW_OPS.contains(&op) => task_row(value),
-        _ => value,
+    match PRESENTED_OPS.iter().find(|(name, _)| *name == op) {
+        Some((_, present)) => present(value),
+        None => value,
     }
+}
+
+fn task_rows(value: Value) -> Value {
+    rows(value, task_row)
+}
+
+fn file_rows(value: Value) -> Value {
+    rows(value, file_row)
+}
+
+fn message_rows(value: Value) -> Value {
+    rows(value, message_row)
+}
+
+fn released_files(value: Value) -> Value {
+    renamed(value, "task_id", "task_item_id")
 }
 
 /// The answer of the harness op `op` as a member reads it: a summary's
@@ -126,7 +148,8 @@ pub(crate) fn task_item_harness_answer(op: &str, value: Value) -> Value {
                 .collect(),
         ),
         (_, Value::Object(fields))
-            if fields.contains_key("task_count") && fields["tasks"].is_array() =>
+            if fields.contains_key("task_count")
+                && fields.get("tasks").is_some_and(Value::is_array) =>
         {
             Value::Object(
                 fields
@@ -148,7 +171,15 @@ pub(crate) fn task_item_harness_answer(op: &str, value: Value) -> Value {
 /// board keeps from Python (the golden fixtures pin them) in task-item
 /// words, and a missing `task_id` by its advertised name.
 pub(crate) fn task_item_refusal(message: &str) -> String {
-    const EXACT: [(&str, &str); 5] = [
+    const EXACT: [(&str, &str); 7] = [
+        (
+            "recovery requires confirmed worker death; revoke(id, reason) reassigns a live owner",
+            "recovery requires confirmed worker death; revoke(task_item_id, reason) reassigns a live owner",
+        ),
+        (
+            "reservations retained after an abrupt exit; recover(id, release_files=True) frees them, or revoke(id, reason)",
+            "reservations retained after an abrupt exit; recover(task_item_id, release_files=True) frees them, or revoke(task_item_id, reason)",
+        ),
         ("unknown task", "unknown task item"),
         (
             "task is not ready to claim",
@@ -188,8 +219,34 @@ pub(crate) fn task_item_refusal(message: &str) -> String {
         return format!("{member}{rest}");
     }
     match message.strip_suffix(MISSING_ID.0) {
-        Some(op) => format!("{op}{}", MISSING_ID.1),
-        None => message.to_owned(),
+        Some(op) => binding_refusal(&format!("{op}{}", MISSING_ID.1)),
+        None => binding_refusal(message),
+    }
+}
+
+/// A binding refusal, `<op>: <one of the binding's own texts>`, naming
+/// its op as the schema advertises it (`task: missing required argument
+/// title` as `task_item: …`); any other message as it is. The op must be a
+/// method name (lowercase letters and underscores) and the rest begin with
+/// one of the binding's texts (`swarm_board_dispatch_binding::refusal`).
+fn binding_refusal(message: &str) -> String {
+    const BINDING: [&str; 5] = [
+        "missing required argument ",
+        "unexpected argument ",
+        "takes ",
+        "arguments must be a JSON array or object",
+        "task_id and task_item_id name the same argument but hold different values; send only one",
+    ];
+    let Some((op, rest)) = message.split_once(": ") else {
+        return message.to_owned();
+    };
+    let method = !op.is_empty()
+        && op
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte == b'_');
+    match method && BINDING.iter().any(|text| rest.starts_with(text)) {
+        true => format!("{}: {rest}", advertised_op(op)),
+        false => message.to_owned(),
     }
 }
 
@@ -210,7 +267,7 @@ fn task_item_error(error: DomainError) -> DomainError {
 }
 
 /// `value`'s items, each as `row` presents it, when `value` is a list.
-fn rows(value: Value, row: fn(Value) -> Value) -> Value {
+fn rows(value: Value, row: Presentation) -> Value {
     match value {
         Value::Array(items) => Value::Array(items.into_iter().map(row).collect()),
         other => other,
@@ -262,40 +319,73 @@ fn file_row(value: Value) -> Value {
     renamed(value, "task", "task_item")
 }
 
-/// An event row: `task_created` as `task_item_created`, and a detail
-/// naming its task (`{..., "task":N, ...}`, as the board writes it) naming
-/// its task item in the same place, the rest of its text as written. Only
-/// a detail that is a JSON object holding the key `task` once is renamed:
-/// the key's quoted text, `"task":`, then occurs once (a string holding it
-/// would escape its quotes).
+/// An event row: `task_created` as `task_item_created`, and a detail's
+/// top-level `task` key (`{..., "task":N, ...}`, as the board writes it)
+/// as `task_item`, in its place; a `task` key nested deeper (an evidence
+/// entry's) and every other character of the text are as written.
 fn event_row(mut value: Value) -> Value {
-    const KEY: (&str, &str) = (r#""task":"#, r#""task_item":"#);
     if let Some(action) = value.get_mut("action")
         && action == "task_created"
     {
         *action = Value::from("task_item_created");
     }
     if let Some(Value::String(detail)) = value.get_mut("detail")
-        && detail.matches(KEY.0).count() == 1
-        && serde_json::from_str::<Map<String, Value>>(detail)
-            .is_ok_and(|fields| fields.contains_key("task"))
+        && let Some(key) = top_level_key(detail, "task")
     {
-        *detail = detail.replacen(KEY.0, KEY.1, 1);
+        detail.replace_range(key, r#""task_item""#);
     }
     value
 }
 
+/// Where `text`, a JSON object, holds the key `name` at its top level: the
+/// byte range of its quoted key, found by scanning the text (strings and
+/// their escapes skipped, depth counted) so nothing else is reparsed or
+/// rewritten; `None` for text that is no JSON object, or holds no such key.
+fn top_level_key(text: &str, name: &str) -> Option<std::ops::Range<usize>> {
+    serde_json::from_str::<Map<String, Value>>(text)
+        .ok()
+        .filter(|fields| fields.contains_key(name))?;
+    let bytes = text.as_bytes();
+    let (mut depth, mut at) = (0usize, 0usize);
+    while at < bytes.len() {
+        match bytes[at] {
+            b'"' => {
+                let start = at;
+                at += 1;
+                while bytes[at] != b'"' {
+                    at += if bytes[at] == b'\\' { 2 } else { 1 };
+                }
+                let quoted = start..at + 1;
+                let colon = text[at + 1..].trim_start().starts_with(':');
+                if depth == 1 && colon && text[quoted.clone()] == format!("\"{name}\"") {
+                    return Some(quoted);
+                }
+            }
+            b'{' | b'[' => depth += 1,
+            b'}' | b']' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+        at += 1;
+    }
+    None
+}
+
 /// A message row: the coordinator's revoke notice (`claim on task N
 /// revoked by the coordinator: <reason>`, `board_recovery`) as a task
-/// item's.
+/// item's, when `N` is an id the board writes: letters, digits, `.`, `-`
+/// and `+` only (a number, as Python's `str` writes it, or plain text).
+/// Who sent it is not checked: the row names its sender, but not whether
+/// that member is the run's coordinator, which only a board read would
+/// say; the notice's exact shape is what is matched.
 fn message_row(mut value: Value) -> Value {
     const NOTICE: (&str, &str) = ("claim on task ", " revoked by the coordinator: ");
+    let id_char = |c: char| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '+');
     if let Some(Value::String(body)) = value.get_mut("body")
         && let Some((id, reason)) = body
             .strip_prefix(NOTICE.0)
             .and_then(|rest| rest.split_once(NOTICE.1))
         && !id.is_empty()
-        && !id.contains(' ')
+        && id.chars().all(id_char)
     {
         *body = format!("claim on task item {id}{}{reason}", NOTICE.1);
     }

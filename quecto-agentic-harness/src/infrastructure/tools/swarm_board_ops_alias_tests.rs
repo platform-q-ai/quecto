@@ -243,7 +243,7 @@ async fn the_records_and_events_keep_the_old_names() {
     .await;
     assert_eq!(
         wrong_op,
-        r#"tool error: swarm: "task_create: unexpected argument task_item_id""#
+        r#"tool error: swarm: "task_item_create: unexpected argument task_item_id""#
     );
     let records: Vec<BoardOpObservation> = log.take();
     // The harness's own reads (`_status`, `summary`, ...) are left out.

@@ -360,7 +360,13 @@ async fn every_mapped_op_returns_exactly_what_the_board_method_returns() {
             }
             Err(refusal) => {
                 assert!(result.is_error, "{}: {}", spec.name, result.content);
-                assert_eq!(result.content, refusal.to_string(), "{}", spec.name);
+                let expected = match spec.name {
+                    "recover" => refusal
+                        .to_string()
+                        .replace("revoke(id, reason)", "revoke(task_item_id, reason)"),
+                    _ => refusal.to_string(),
+                };
+                assert_eq!(result.content, expected, "{}", spec.name);
             }
         }
     }

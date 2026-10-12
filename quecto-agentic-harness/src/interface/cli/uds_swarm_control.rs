@@ -8,10 +8,10 @@ pub(super) const SWARM_WAKE: &str = "swarm_wake";
 
 /// The wake a member re-armed after a provider failure reads (#1721), in
 /// task-item words (#2478 slice B, owner-approved 2026-10-12).
-const RESUMED_WAKE: &str = "The swarm was resumed after a provider failure interrupted your turn. Continue your interrupted work: inspect summary using your last event_cursor, read and acknowledge relevant durable inbox messages, work only on actionable task items and yield when none remain.";
+pub(super) const RESUMED_WAKE: &str = "The swarm was resumed after a provider failure interrupted your turn. Continue your interrupted work: inspect summary using your last event_cursor, read and acknowledge relevant durable inbox messages, work only on actionable task items and yield when none remain.";
 
 /// The wake a member reads when swarm work changed (#2478 slice B wording).
-const CHANGED_WAKE: &str = "Swarm work changed. Inspect summary using your last event_cursor, then read and acknowledge relevant durable inbox messages. Work only on actionable task items; yield when none remain.";
+pub(super) const CHANGED_WAKE: &str = "Swarm work changed. Inspect summary using your last event_cursor, then read and acknowledge relevant durable inbox messages. Work only on actionable task items; yield when none remain.";
 
 #[derive(Deserialize)]
 #[serde(rename_all = "snake_case")]
