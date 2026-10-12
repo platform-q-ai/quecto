@@ -45,6 +45,10 @@ fn the_parts_vocabularies_are_spelt_exactly() {
         "low medium high critical"
     );
     assert_eq!(
+        spelt(Resolution::ALL.iter().map(|w| w.as_str()).collect()),
+        "completed not_planned duplicate superseded"
+    );
+    assert_eq!(
         spelt(DiscussionState::ALL.iter().map(|w| w.as_str()).collect()),
         "open closed"
     );

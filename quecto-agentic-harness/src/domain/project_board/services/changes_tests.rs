@@ -10,7 +10,7 @@ use crate::domain::project_board::value_objects::vocabulary::{
 const OURS: &str = "platform-q-ai/quecto";
 
 /// The fixture task in `status`, linking no pull request the old way.
-fn of(status: TaskStatus) -> Task {
+pub(super) fn of(status: TaskStatus) -> Task {
     without_prs(task(status))
 }
 
@@ -23,7 +23,7 @@ fn on(changes: &[Change]) -> Linked<'_> {
     }
 }
 
-fn now() -> Moment {
+pub(super) fn now() -> Moment {
     Moment {
         now: at("10:00:00"),
         latest: None,
@@ -40,7 +40,7 @@ fn head(name: &str, pr: Option<u64>) -> Head {
 }
 
 /// Each `(pr, branch, state)` as the host reads it, from our repository.
-fn host(prs: &[(u64, &str, PrState)]) -> HostPrs {
+pub(super) fn host(prs: &[(u64, &str, PrState)]) -> HostPrs {
     prs.iter()
         .map(|(pr, name, state)| {
             let read = HostPr {
@@ -53,7 +53,7 @@ fn host(prs: &[(u64, &str, PrState)]) -> HostPrs {
         .collect()
 }
 
-fn merged(digit: char) -> PrState {
+pub(super) fn merged(digit: char) -> PrState {
     PrState::Merged(commit(digit))
 }
 

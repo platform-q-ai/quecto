@@ -248,7 +248,10 @@ fn quarantined_json(file: &QuarantinedFile) -> Value {
     })
 }
 
-/// A task in the board's own field names, every field present.
+/// A task in the board's own field names, every field present but where
+/// it came from and how it ended (`github_issue`, `resolution`,
+/// `superseded_by`, `references`): those are held back on purpose, as
+/// showing them to agents is the owner's call (M4).
 pub fn task_json(task: &Task) -> Value {
     let task = task.fields();
     json!({
@@ -521,6 +524,31 @@ fn rule_json(rule: &BoardRuleError) -> Value {
         R::PrAlreadyLinked(pr) => json!({"code": "pr_already_linked", "pr": pr}),
         R::NotDraft(status) => json!({"code": "not_draft", "status": status.as_str()}),
         R::NoEdit => json!({"code": "no_edit"}),
+        R::Superseded { by } => {
+            let by: Vec<&str> = by.iter().map(Slug::as_str).collect();
+            json!({"code": "superseded", "by": by})
+        }
+        R::IssueShared { issue, tasks } => json!({
+            "code": "issue_shared",
+            "issue": issue,
+            "tasks": [tasks[0].as_str(), tasks[1].as_str()],
+        }),
+        R::IssueIsPr {
+            issue,
+            task,
+            pr_holder,
+        } => json!({
+            "code": "issue_is_pr",
+            "issue": issue,
+            "task": task.as_str(),
+            "pr_holder": pr_holder.as_str(),
+        }),
+        R::OwnPrReferenced { task, pr, change } => json!({
+            "code": "own_pr_referenced",
+            "task": task.as_str(),
+            "pr": pr,
+            "change": change,
+        }),
         R::Invalid(schema) => json!({
             "code": "invalid",
             "field": shown(&schema.field),

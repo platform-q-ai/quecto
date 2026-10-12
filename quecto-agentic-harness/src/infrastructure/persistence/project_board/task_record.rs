@@ -17,10 +17,11 @@
 //! keys. The store also checks that `id` matches the file name.
 use crate::domain::project_board::entities::claim::{Claim, Identity};
 use crate::domain::project_board::entities::task::{Task, TaskFields};
+use crate::domain::project_board::value_objects::reference::{IssueNumber, Reference};
 use crate::domain::project_board::value_objects::schema_error::SchemaError;
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
-use crate::domain::project_board::value_objects::vocabulary::{TaskKind, TaskStatus};
+use crate::domain::project_board::value_objects::vocabulary::{Resolution, TaskKind, TaskStatus};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
@@ -29,14 +30,20 @@ use std::fmt;
 /// format as the task parts complete it (#2483, 0.107.251). Schema 2 is
 /// the artifact model's slimmer task (#2481 M1a): its plan, items, team and
 /// runs are artifacts of their own, and it names its `accepted_plan`; a
-/// schema-1 file holding any of those is malformed to this reader. Review
-/// findings are review artifacts of their own too (M1c): a file of either
-/// schema holding the task's old `reviews` is malformed to this reader.
-/// No board holds any, so the key is dropped without a new schema (a
-/// reader before this one reads every file this one writes).
-pub const SCHEMAS: &[(u32, &str)] = &[(1, "0.107.251"), (2, "0.107.274")];
+/// schema-1 file holding any of those is malformed to this reader. Schema
+/// 3 adds where a task came from and how it ended (#2481 S8):
+/// `github_issue`, `resolution`, `superseded_by` and `references`; an
+/// older file holding a value in any of them is malformed. As for every
+/// optional key, `null` in a single value and an empty list hold no
+/// value: they read as not set, in any schema (a list set to `null` is
+/// malformed, as every list is).
+/// Review findings are review artifacts of their own too (M1c): a file of
+/// any schema holding the task's old `reviews` is malformed to this
+/// reader. No board holds any, so the key is dropped without a new schema
+/// (a reader before this one reads every file this one writes).
+pub const SCHEMAS: &[(u32, &str)] = &[(1, "0.107.251"), (2, "0.107.274"), (3, "0.107.292")];
 /// The schema every task file is written at: the last row of [`SCHEMAS`].
-pub const SCHEMA_VERSION: u32 = 2;
+pub const SCHEMA_VERSION: u32 = 3;
 const _: () = assert!(SCHEMAS[SCHEMAS.len() - 1].0 == SCHEMA_VERSION);
 /// The largest task file read or written. Every task the domain admits is
 /// written under it: the widest structure (about 300 KB) plus the whole
@@ -123,6 +130,14 @@ struct TaskRecord {
     claim: Option<ClaimRecord>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     prs: Vec<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    github_issue: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    resolution: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    superseded_by: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    references: Vec<String>,
     created: String,
     updated: String,
 }
@@ -155,8 +170,10 @@ pub fn decode(bytes: &[u8]) -> Result<Task, RecordError> {
         found => return Err(RecordError::UnknownSchema { found }),
     }
     let record: TaskRecord = serde_json::from_slice(bytes).map_err(malformed)?;
-    // Each key belongs to the schemas that have it: `accepted_plan`
-    // arrived in schema 2.
+    // Each key's values belong to the schemas that have it: `accepted_plan`
+    // arrived in schema 2, and where a task came from and how it ended in
+    // schema 3. A key holding no value (`null` in a single value, an empty
+    // list) reads as not set, in any schema, as every optional key does.
     match (record.schema, &record.accepted_plan) {
         (2.., _) | (_, None) => {}
         (_, Some(_)) => {
@@ -165,6 +182,30 @@ pub fn decode(bytes: &[u8]) -> Result<Task, RecordError> {
             ));
         }
     }
+    let closure = record.github_issue.is_some()
+        || record.resolution.is_some()
+        || !record.superseded_by.is_empty()
+        || !record.references.is_empty();
+    match (record.schema, closure) {
+        (3.., _) | (_, false) => {}
+        (_, true) => {
+            return Err(RecordError::Malformed(
+                "github_issue, resolution, superseded_by and references arrived in schema 3".into(),
+            ));
+        }
+    }
+    // A done task is completed. One written before schema 3 has no
+    // resolution: it is read as completed, as it ended. An archived one
+    // keeps none: whether it was done or dropped first is not known.
+    let mut record = record;
+    let upgraded = matches!(
+        (record.schema, record.status.as_str(), &record.resolution),
+        (1..=2, "done", None)
+    );
+    record.resolution = match upgraded {
+        true => Some(Resolution::Completed.as_str().into()),
+        false => record.resolution,
+    };
     record.into_task().map_err(RecordError::Invalid)
 }
 
@@ -199,6 +240,18 @@ fn time(field: &str, text: &str) -> Result<Timestamp, SchemaError> {
     Timestamp::parse(text).map_err(|error| error.at(field))
 }
 
+/// Each record mapped with its index in the field's path.
+fn indexed<R, T>(
+    field: &str,
+    records: Vec<R>,
+    map: fn(R, &str) -> Result<T, SchemaError>,
+) -> Result<Vec<T>, SchemaError> {
+    let indexed = records.into_iter().enumerate();
+    indexed
+        .map(|(index, record)| map(record, &format!("{field}/{index}")))
+        .collect()
+}
+
 fn word<T>(field: &str, text: &str, parse: fn(&str) -> Option<T>) -> Result<T, SchemaError> {
     parse(text).ok_or_else(|| SchemaError::new(field, format!("{text:?} is not a known value")))
 }
@@ -219,6 +272,18 @@ impl TaskRecord {
             accepted_plan: self.accepted_plan,
             claim: self.claim.map(ClaimRecord::into_claim).transpose()?,
             prs: self.prs,
+            github_issue: self
+                .github_issue
+                .map(|number| IssueNumber::new(number).map_err(|error| error.at("github_issue")))
+                .transpose()?,
+            resolution: self
+                .resolution
+                .map(|word_| word("resolution", &word_, Resolution::parse))
+                .transpose()?,
+            superseded_by: slugs("superseded_by", &self.superseded_by)?,
+            references: indexed("references", self.references, |text, field| {
+                Reference::parse(&text).map_err(|error| error.at(field))
+            })?,
             created: time("created", &self.created)?,
             updated: time("updated", &self.updated)?,
         })
@@ -242,6 +307,18 @@ impl TaskRecord {
             accepted_plan: task.accepted_plan,
             claim: task.claim.as_ref().map(ClaimRecord::from_claim),
             prs: task.prs.clone(),
+            github_issue: task.github_issue.map(IssueNumber::get),
+            resolution: task.resolution.map(|resolution| resolution.as_str().into()),
+            superseded_by: task
+                .superseded_by
+                .iter()
+                .map(|slug| slug.as_str().into())
+                .collect(),
+            references: task
+                .references
+                .iter()
+                .map(|reference| reference.as_str().into())
+                .collect(),
             created: task.created.as_str().into(),
             updated: task.updated.as_str().into(),
         }

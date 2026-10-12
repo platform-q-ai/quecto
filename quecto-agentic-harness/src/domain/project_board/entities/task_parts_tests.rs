@@ -84,6 +84,10 @@ fn fields() -> TaskFields {
             expires: at("11:00:00"),
         }),
         prs: vec![2482],
+        github_issue: None,
+        resolution: None,
+        superseded_by: vec![],
+        references: vec![],
         created: at("08:00:00"),
         updated: at("10:00:00"),
     }

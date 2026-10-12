@@ -455,6 +455,33 @@ fn a_task_linking_changes_is_done_only_when_they_merge() {
     );
 }
 
+/// A task done is resolved as completed, whichever way it is done; an
+/// archived one keeps its done one's resolution, or has none.
+#[test]
+fn a_done_task_is_resolved_as_completed() {
+    let now = at("10:00:00");
+    let done = move_task(
+        &without_prs(task(Review)),
+        Done,
+        &person("Ada"),
+        &[],
+        &[],
+        &now,
+    )
+    .unwrap();
+    assert_eq!(done.fields().resolution, Some(Resolution::Completed));
+    let merged = BTreeSet::from([2482, 2483]);
+    let completed = complete_merged(&task(Review), &merged, &[], &[], &now).unwrap();
+    assert_eq!(
+        completed.task.fields().resolution,
+        Some(Resolution::Completed)
+    );
+    let archived = move_task(&done, Archived, &person("Bob"), &[], &[], &now).unwrap();
+    assert_eq!(archived.fields().resolution, Some(Resolution::Completed));
+    let dropped = move_task(&task(Ready), Archived, &person("Bob"), &[], &[], &now).unwrap();
+    assert_eq!(dropped.fields().resolution, None);
+}
+
 /// A run still going keeps its task held: moves among the held statuses
 /// pass, leaving for ready, done or archived waits until it ends.
 #[test]
@@ -559,4 +586,65 @@ fn a_completion_refuses_another_tasks_run_and_two_going() {
         complete_merged(&task(Review), &merged, &[], &both, &at("10:00:00")),
         Err(BoardRuleError::RunsInconsistent(_))
     ));
+}
+
+/// A task others took over is archived as superseded, never done: its
+/// holder's move and the completion by merged pull requests are refused,
+/// naming who took it over.
+#[test]
+fn a_superseded_task_is_never_done() {
+    let superseded = |task: Task| {
+        let mut fields = task.into_fields();
+        fields.superseded_by = vec![Slug::parse("next").unwrap()];
+        Task::new(fields).unwrap()
+    };
+    let refused = Err(BoardRuleError::Superseded {
+        by: vec![Slug::parse("next").unwrap()],
+    });
+    let now = at("10:00:00");
+    let review = superseded(without_prs(task(Review)));
+    assert_eq!(
+        move_task(&review, Done, &person("Ada"), &[], &[], &now),
+        refused
+    );
+    let merged = BTreeSet::from([2482, 2483]);
+    let linked = superseded(task(Review));
+    assert_eq!(
+        complete_merged(&linked, &merged, &[], &[], &now).map(|done| done.task),
+        refused
+    );
+    assert!(move_task(&review, InProgress, &person("Ada"), &[], &[], &now).is_ok());
+    let linking = superseded(task(Review));
+    assert_eq!(
+        move_task(&linking, Done, &person("Ada"), &[], &[], &now),
+        refused,
+        "superseded is said before the pull requests it links"
+    );
+}
+
+/// A task others took over is archived as superseded, as the refusal of
+/// its completion advises; one archived otherwise is unresolved.
+#[test]
+fn a_superseded_task_is_archived_as_superseded() {
+    let now = at("10:00:00");
+    for status in [Ready, Draft] {
+        let mut fields = task(status).into_fields();
+        fields.superseded_by = vec![Slug::parse("next").unwrap()];
+        let archived = move_task(
+            &Task::new(fields).unwrap(),
+            Archived,
+            &person("Bob"),
+            &[],
+            &[],
+            &now,
+        )
+        .unwrap();
+        assert_eq!(
+            archived.fields().resolution,
+            Some(Resolution::Superseded),
+            "{status:?}"
+        );
+        let plain = move_task(&task(status), Archived, &person("Bob"), &[], &[], &now).unwrap();
+        assert_eq!(plain.fields().resolution, None, "{status:?}");
+    }
 }

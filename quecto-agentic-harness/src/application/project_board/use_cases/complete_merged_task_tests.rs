@@ -10,7 +10,7 @@ use crate::application::project_board::use_cases::fixtures_tests::{
 use crate::domain::project_board::entities::claim::Claim;
 use crate::domain::project_board::entities::task::{Task, TaskFields};
 use crate::domain::project_board::value_objects::rule_error::BoardRuleError;
-use crate::domain::project_board::value_objects::vocabulary::TaskStatus;
+use crate::domain::project_board::value_objects::vocabulary::{Resolution, TaskStatus};
 use crate::infrastructure::test_support::memory_board_store::MemoryBoardStore;
 use crate::infrastructure::test_support::memory_pull_requests::MemoryPullRequests;
 use std::sync::Arc;
@@ -179,6 +179,7 @@ fn a_task_that_cannot_complete_is_refused_before_the_host_is_read() {
     let store = board();
     let done = Task::new(TaskFields {
         status: TaskStatus::Done,
+        resolution: Some(Resolution::Completed),
         prs: vec![7],
         created: at("08:00:00"),
         updated: at("09:00:00"),

@@ -15,7 +15,7 @@ use std::sync::Arc;
 
 use super::board_change::{checked_writer, commit, task_on};
 use super::line_ends::lf;
-use super::references::{References, references_hold};
+use super::task_pointers::{Pointers, pointers_hold};
 use crate::application::project_board::dto::{DraftUpdate, ProjectBoardError};
 use crate::application::project_board::ports::{BoardClock, ProjectBoardStore};
 use crate::domain::project_board::entities::task::Task;
@@ -68,9 +68,9 @@ impl UpdateDraftTask {
             }
             let edited = edit_draft(task, &edit, &when.now).map_err(ProjectBoardError::Rule)?;
             let set = edited.fields();
-            references_hold(
+            pointers_hold(
                 board,
-                &References {
+                &Pointers {
                     id,
                     parent: edit.parent.as_ref().and(set.parent.as_ref()),
                     depends_on: match edit.depends_on {

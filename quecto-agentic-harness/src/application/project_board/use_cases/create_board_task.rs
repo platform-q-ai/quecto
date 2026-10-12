@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use super::board_change::{checked_writer, commit};
 use super::line_ends::lf;
-use super::references::{References, references_hold};
+use super::task_pointers::{Pointers, pointers_hold};
 use crate::application::project_board::dto::{NewBoardTask, ProjectBoardError};
 use crate::application::project_board::ports::{BoardClock, BoardSnapshot, ProjectBoardStore};
 use crate::domain::project_board::entities::task::{Task, TaskFields};
@@ -65,6 +65,10 @@ fn created_at(new: &NewBoardTask, now: &Timestamp) -> TaskFields {
         accepted_plan: None,
         claim: None,
         prs: vec![],
+        github_issue: None,
+        resolution: None,
+        superseded_by: vec![],
+        references: vec![],
         created: now.clone(),
         updated: now.clone(),
     };
@@ -76,7 +80,7 @@ fn created_at(new: &NewBoardTask, now: &Timestamp) -> TaskFields {
 }
 
 /// The id is free (neither held nor set aside), and the references hold
-/// ([`references_hold`]).
+/// ([`pointers_hold`]).
 fn free(board: &BoardSnapshot, new: &NewBoardTask) -> Result<(), ProjectBoardError> {
     let held = board.tasks.iter().any(|task| task.fields().id == new.id);
     let set_aside = board
@@ -86,9 +90,9 @@ fn free(board: &BoardSnapshot, new: &NewBoardTask) -> Result<(), ProjectBoardErr
     match (held, set_aside) {
         (true, _) => Err(ProjectBoardError::Exists(new.id.clone())),
         (false, true) => Err(ProjectBoardError::Quarantined(new.id.clone())),
-        (false, false) => references_hold(
+        (false, false) => pointers_hold(
             board,
-            &References {
+            &Pointers {
                 id: &new.id,
                 parent: new.parent.as_ref(),
                 depends_on: &new.depends_on,

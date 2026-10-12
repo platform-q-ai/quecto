@@ -81,6 +81,12 @@ vocabulary!(
 );
 
 vocabulary!(
+    /// How a done or archived task was resolved (the host's words for a
+    /// closed issue, and `superseded`).
+    Resolution { Completed => "completed", NotPlanned => "not_planned", Duplicate => "duplicate", Superseded => "superseded" }
+);
+
+vocabulary!(
     /// Where a discussion stands: open until someone closes it.
     DiscussionState { Open => "open", Closed => "closed" }
 );

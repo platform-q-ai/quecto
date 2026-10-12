@@ -7,7 +7,7 @@ pub use crate::domain::project_board::entities::fixtures_tests::{
 use crate::domain::project_board::entities::task::{Task, TaskFields};
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
-use crate::domain::project_board::value_objects::vocabulary::{TaskKind, TaskStatus};
+use crate::domain::project_board::value_objects::vocabulary::{Resolution, TaskKind, TaskStatus};
 
 pub fn at(time: &str) -> Timestamp {
     Timestamp::parse(&format!("2026-10-10T{time}Z")).unwrap()
@@ -37,6 +37,14 @@ pub fn task(status: TaskStatus) -> Task {
         accepted_plan: Some(1),
         claim,
         prs: vec![2482, 2483],
+        github_issue: None,
+        // A done task is completed.
+        resolution: match status {
+            TaskStatus::Done => Some(Resolution::Completed),
+            _ => None,
+        },
+        superseded_by: vec![],
+        references: vec![],
         created: at("08:00:00"),
         updated: at("09:00:00"),
     })

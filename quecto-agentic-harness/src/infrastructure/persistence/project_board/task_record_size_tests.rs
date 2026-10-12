@@ -4,7 +4,11 @@ use super::*;
 use crate::domain::project_board::entities::claim::{MAX_EMAIL_BYTES, MAX_NAME_CHARS};
 use crate::domain::project_board::entities::plan::MAX_PLAN_VERSION;
 use crate::domain::project_board::entities::task::{
-    MAX_DEPENDENCIES, MAX_DESCRIPTION_CHARS, MAX_PRS, MAX_TEXT_BYTES, MAX_TITLE_CHARS,
+    MAX_DEPENDENCIES, MAX_DESCRIPTION_CHARS, MAX_PRS, MAX_REFERENCES, MAX_SUPERSEDED_BY,
+    MAX_TEXT_BYTES, MAX_TITLE_CHARS,
+};
+use crate::domain::project_board::value_objects::reference::{
+    IssueNumber, MAX_ISSUE_NUMBER, MAX_REFERENCE_BYTES, Reference,
 };
 use crate::domain::project_board::value_objects::slug::MAX_SLUG_BYTES;
 
@@ -55,6 +59,15 @@ fn widest_structure() -> TaskFields {
             expires: at("11:00:00"),
         }),
         prs: (0..MAX_PRS as u64).map(|n| u64::MAX - n).collect(),
+        github_issue: Some(IssueNumber::new(MAX_ISSUE_NUMBER).unwrap()),
+        // A resolved task is done or archived, so it holds no claim; the
+        // claim is the wider of the two.
+        resolution: None,
+        superseded_by: (0..MAX_SUPERSEDED_BY).map(|n| wide_id('s', n)).collect(),
+        // References are text: each its shortest here, distinct.
+        references: (1..=MAX_REFERENCES)
+            .map(|n| Reference::parse(&format!("#{n}")).unwrap())
+            .collect(),
         created: at("08:00:00"),
         updated: at("09:00:00"),
     }
@@ -118,4 +131,48 @@ fn a_task_of_the_widest_text_takes_a_holder_at_its_widest() {
     let task = Task::new(fields).expect("a holder is not text");
     let bytes = encode(&task).expect("a valid task is always written");
     assert!(bytes.len() <= MAX_TASK_FILE_BYTES, "{} bytes", bytes.len());
+}
+
+/// `bytes` of references: https URLs of at most [`MAX_REFERENCE_BYTES`]
+/// each, distinct, summing to exactly `bytes`.
+fn references_of(mut bytes: usize) -> Vec<Reference> {
+    let mut references = vec![];
+    while bytes > 0 {
+        let head = format!("https://example.com/{}/", references.len());
+        let len = bytes.min(MAX_REFERENCE_BYTES);
+        assert!(len > head.len(), "room for the last reference: {len}");
+        let text = format!("{head}{}", "a".repeat(len - head.len()));
+        references.push(Reference::parse(&text).unwrap());
+        bytes -= len;
+    }
+    assert!(
+        references.len() <= MAX_REFERENCES,
+        "{} references",
+        references.len()
+    );
+    references
+}
+
+/// The text budget is reached, to the byte, only with references: the
+/// title and description at their widest (four-byte characters) and
+/// references for the rest. Such a task is written and read back; one
+/// byte more is refused.
+#[test]
+fn a_task_at_its_text_budget_is_written_and_one_byte_more_is_refused() {
+    let mut fields = widest_structure();
+    fields.references = vec![];
+    fields.title = "\u{1d11e}".repeat(MAX_TITLE_CHARS);
+    fields.description = "\u{1d11e}".repeat(MAX_DESCRIPTION_CHARS);
+    let left = MAX_TEXT_BYTES - fields.text_bytes();
+    fields.references = references_of(left);
+    assert_eq!(fields.text_bytes(), MAX_TEXT_BYTES);
+    let task = Task::new(fields.clone()).expect("exactly the text budget");
+    let bytes = encode(&task).expect("a valid task is always written");
+    assert!(bytes.len() <= MAX_TASK_FILE_BYTES, "{} bytes", bytes.len());
+    assert_eq!(decode(&bytes), Ok(task));
+    let last = fields.references.len() - 1;
+    let longer = format!("{}a", fields.references[last].as_str());
+    fields.references[last] = Reference::parse(&longer).unwrap();
+    let error = Task::new(fields).expect_err("one byte over the budget");
+    assert_eq!(error.field, "text", "{error}");
 }

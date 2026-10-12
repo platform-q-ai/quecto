@@ -32,6 +32,10 @@ pub fn task(id: &str, title: &str) -> Task {
         accepted_plan: None,
         claim: None,
         prs: vec![],
+        github_issue: None,
+        resolution: None,
+        superseded_by: vec![],
+        references: vec![],
         created: at.clone(),
         updated: at,
     })
