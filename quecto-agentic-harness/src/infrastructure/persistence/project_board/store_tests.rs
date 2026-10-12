@@ -124,7 +124,6 @@ fn task(id: &str) -> Task {
         depends_on: vec![],
         accepted_plan: None,
         claim: None,
-        reviews: vec![],
         prs: vec![],
         github_issue: None,
         resolution: None,

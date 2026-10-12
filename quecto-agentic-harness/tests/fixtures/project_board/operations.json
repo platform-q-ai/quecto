@@ -43,7 +43,6 @@
         "depends_on": [],
         "accepted_plan": null,
         "claim": null,
-        "reviews": [],
         "prs": [],
         "created": "2026-10-10T10:00:00Z",
         "updated": "2026-10-10T10:00:00Z"
@@ -72,7 +71,6 @@
         "depends_on": [],
         "accepted_plan": null,
         "claim": null,
-        "reviews": [],
         "prs": [],
         "created": "2026-10-10T10:00:00Z",
         "updated": "2026-10-10T10:00:00Z"
@@ -99,7 +97,6 @@
         "depends_on": [],
         "accepted_plan": null,
         "claim": null,
-        "reviews": [],
         "prs": [],
         "created": "2026-10-10T10:00:00Z",
         "updated": "2026-10-10T10:00:01Z"
@@ -151,7 +148,6 @@
           "since": "2026-10-10T10:00:01Z",
           "expires": "2026-10-10T12:00:01Z"
         },
-        "reviews": [],
         "prs": [],
         "created": "2026-10-10T10:00:00Z",
         "updated": "2026-10-10T10:00:01Z"
@@ -203,7 +199,6 @@
           "since": "2026-10-10T10:00:01Z",
           "expires": "2026-10-10T12:00:01Z"
         },
-        "reviews": [],
         "prs": [],
         "created": "2026-10-10T10:00:00Z",
         "updated": "2026-10-10T10:00:02Z"
@@ -235,7 +230,6 @@
           "since": "2026-10-10T10:00:03Z",
           "expires": "2026-10-10T12:00:03Z"
         },
-        "reviews": [],
         "prs": [],
         "created": "2026-10-10T10:00:00Z",
         "updated": "2026-10-10T10:00:03Z"
@@ -287,7 +281,6 @@
           "since": "2026-10-10T12:30:00Z",
           "expires": "2026-10-10T14:30:00Z"
         },
-        "reviews": [],
         "prs": [],
         "created": "2026-10-10T10:00:00Z",
         "updated": "2026-10-10T12:30:00Z"
@@ -322,7 +315,6 @@
           "since": "2026-10-10T12:30:00Z",
           "expires": "2026-10-10T14:30:00Z"
         },
-        "reviews": [],
         "prs": [
           7
         ],
@@ -341,7 +333,6 @@
           "depends_on": [],
           "accepted_plan": null,
           "claim": null,
-          "reviews": [],
           "prs": [
             7
           ],
@@ -371,7 +362,6 @@
         "depends_on": [],
         "accepted_plan": null,
         "claim": null,
-        "reviews": [],
         "prs": [],
         "created": "2026-10-10T10:00:00Z",
         "updated": "2026-10-10T10:00:00Z"
@@ -404,7 +394,6 @@
           "since": "2026-10-10T10:00:01Z",
           "expires": "2026-10-10T12:00:01Z"
         },
-        "reviews": [],
         "prs": [],
         "created": "2026-10-10T10:00:00Z",
         "updated": "2026-10-10T10:00:01Z"
@@ -437,7 +426,6 @@
           "since": "2026-10-10T10:00:01Z",
           "expires": "2026-10-10T12:00:01Z"
         },
-        "reviews": [],
         "prs": [],
         "created": "2026-10-10T10:00:00Z",
         "updated": "2026-10-10T10:00:02Z"
@@ -470,7 +458,6 @@
           "since": "2026-10-10T10:00:01Z",
           "expires": "2026-10-10T12:00:01Z"
         },
-        "reviews": [],
         "prs": [
           8
         ],
@@ -511,7 +498,6 @@
           "since": "2026-10-10T10:00:01Z",
           "expires": "2026-10-10T12:00:01Z"
         },
-        "reviews": [],
         "prs": [],
         "created": "2026-10-10T10:00:00Z",
         "updated": "2026-10-10T10:00:04Z"
@@ -544,7 +530,6 @@
           "since": "2026-10-10T10:00:01Z",
           "expires": "2026-10-10T12:00:01Z"
         },
-        "reviews": [],
         "prs": [],
         "created": "2026-10-10T10:00:00Z",
         "updated": "2026-10-10T10:00:05Z"
@@ -570,7 +555,6 @@
         "depends_on": [],
         "accepted_plan": null,
         "claim": null,
-        "reviews": [],
         "prs": [],
         "created": "2026-10-10T10:00:00Z",
         "updated": "2026-10-10T10:00:06Z"
@@ -596,7 +580,6 @@
         "depends_on": [],
         "accepted_plan": null,
         "claim": null,
-        "reviews": [],
         "prs": [],
         "created": "2026-10-10T10:00:00Z",
         "updated": "2026-10-10T10:00:07Z"
@@ -623,7 +606,6 @@
         "depends_on": [],
         "accepted_plan": null,
         "claim": null,
-        "reviews": [],
         "prs": [],
         "created": "2026-10-10T10:00:00Z",
         "updated": "2026-10-10T10:00:00Z"
@@ -656,7 +638,6 @@
           "since": "2026-10-10T10:00:01Z",
           "expires": "2026-10-10T12:00:01Z"
         },
-        "reviews": [],
         "prs": [],
         "created": "2026-10-10T10:00:00Z",
         "updated": "2026-10-10T10:00:01Z"
@@ -689,7 +670,6 @@
           "since": "2026-10-10T10:00:01Z",
           "expires": "2026-10-10T12:00:01Z"
         },
-        "reviews": [],
         "prs": [],
         "created": "2026-10-10T10:00:00Z",
         "updated": "2026-10-10T10:00:02Z"
@@ -722,7 +702,6 @@
           "since": "2026-10-10T10:00:01Z",
           "expires": "2026-10-10T12:00:01Z"
         },
-        "reviews": [],
         "prs": [
           9
         ],
@@ -756,7 +735,6 @@
         "depends_on": [],
         "accepted_plan": null,
         "claim": null,
-        "reviews": [],
         "prs": [
           9
         ],
@@ -810,7 +788,6 @@
           "depends_on": [],
           "accepted_plan": null,
           "claim": null,
-          "reviews": [],
           "prs": [
             7
           ],
@@ -840,7 +817,6 @@
         "depends_on": [],
         "accepted_plan": null,
         "claim": null,
-        "reviews": [],
         "prs": [
           7
         ],
@@ -883,7 +859,6 @@
         "depends_on": [],
         "accepted_plan": null,
         "claim": null,
-        "reviews": [],
         "prs": [],
         "created": "2026-10-10T10:00:00Z",
         "updated": "2026-10-10T10:00:00Z"
@@ -962,7 +937,6 @@
         "depends_on": [],
         "accepted_plan": null,
         "claim": null,
-        "reviews": [],
         "prs": [],
         "created": "2026-10-10T10:00:00Z",
         "updated": "2026-10-10T10:00:00Z"
@@ -1142,7 +1116,6 @@
         "depends_on": [],
         "accepted_plan": null,
         "claim": null,
-        "reviews": [],
         "prs": [],
         "created": "2026-10-10T10:00:00Z",
         "updated": "2026-10-10T10:00:00Z"
@@ -1175,7 +1148,6 @@
           "since": "2026-10-10T10:00:01Z",
           "expires": "2026-10-10T12:00:01Z"
         },
-        "reviews": [],
         "prs": [],
         "created": "2026-10-10T10:00:00Z",
         "updated": "2026-10-10T10:00:01Z"
@@ -1208,7 +1180,6 @@
           "since": "2026-10-10T10:00:01Z",
           "expires": "2026-10-10T12:00:01Z"
         },
-        "reviews": [],
         "prs": [],
         "created": "2026-10-10T10:00:00Z",
         "updated": "2026-10-10T10:00:02Z"
@@ -1269,7 +1240,6 @@
           "since": "2026-10-10T10:00:01Z",
           "expires": "2026-10-10T12:00:01Z"
         },
-        "reviews": [],
         "prs": [
           8
         ],
@@ -1330,7 +1300,6 @@
           "since": "2026-10-10T10:00:01Z",
           "expires": "2026-10-10T12:00:01Z"
         },
-        "reviews": [],
         "prs": [
           8,
           10
@@ -1372,7 +1341,6 @@
         ],
         "accepted_plan": null,
         "claim": null,
-        "reviews": [],
         "prs": [],
         "created": "2026-10-10T10:00:00Z",
         "updated": "2026-10-10T10:00:00Z"

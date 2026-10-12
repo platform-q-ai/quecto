@@ -7,9 +7,8 @@ use crate::domain::project_board::entities::task::{
     MAX_DEPENDENCIES, MAX_DESCRIPTION_CHARS, MAX_PRS, MAX_REFERENCES, MAX_SUPERSEDED_BY,
     MAX_TEXT_BYTES, MAX_TITLE_CHARS,
 };
-use crate::domain::project_board::entities::task_parts::{MAX_FINDING_CHARS, MAX_REVIEWS};
 use crate::domain::project_board::value_objects::reference::{
-    IssueNumber, MAX_ISSUE_NUMBER, Reference,
+    IssueNumber, MAX_ISSUE_NUMBER, MAX_REFERENCE_BYTES, Reference,
 };
 use crate::domain::project_board::value_objects::slug::MAX_SLUG_BYTES;
 
@@ -45,17 +44,6 @@ fn person() -> Identity {
 /// holder at its widest, and each text a single character. A new field fails to build here until it
 /// is set.
 fn widest_structure() -> TaskFields {
-    let review = |n: usize| Review {
-        id: wide_id('v', n),
-        round: u8::MAX,
-        reviewer: person(),
-        at: at("09:00:00"),
-        severity: Severity::Critical,
-        location: Some("a:1".into()),
-        finding: "a".into(),
-        verdict: Verdict::WontFix,
-        proving_test: Some("a".into()),
-    };
     TaskFields {
         id: wide_id('t', 0),
         title: "a".into(),
@@ -70,7 +58,6 @@ fn widest_structure() -> TaskFields {
             since: at("09:00:00"),
             expires: at("11:00:00"),
         }),
-        reviews: (0..MAX_REVIEWS).map(review).collect(),
         prs: (0..MAX_PRS as u64).map(|n| u64::MAX - n).collect(),
         github_issue: Some(IssueNumber::new(MAX_ISSUE_NUMBER).unwrap()),
         // A resolved task is done or archived, so it holds no claim; the
@@ -109,49 +96,90 @@ fn the_widest_structure_with_its_whole_text_budget_escaped_fits_the_file_cap() {
     );
 }
 
-/// Spends what is left of the text budget on `"`s.
-fn fill_text_budget(fields: &mut TaskFields) {
-    let mut left = MAX_TEXT_BYTES - fields.text_bytes();
-    left -= widen(&mut fields.title, MAX_TITLE_CHARS, left);
-    left -= widen(&mut fields.description, MAX_DESCRIPTION_CHARS, left);
-    for review in &mut fields.reviews {
-        left -= widen(&mut review.finding, MAX_FINDING_CHARS, left);
-    }
-    assert_eq!(left, 0, "the budget is spent");
+/// Spends the title and description to their limits on `"`s, the
+/// widest text a task has (within its budget).
+fn fill_text(fields: &mut TaskFields) {
+    let left = MAX_TEXT_BYTES - fields.text_bytes();
+    let left = left - widen(&mut fields.title, MAX_TITLE_CHARS, left);
+    widen(&mut fields.description, MAX_DESCRIPTION_CHARS, left);
+    assert_eq!(
+        (
+            fields.title.chars().count(),
+            fields.description.chars().count()
+        ),
+        (MAX_TITLE_CHARS, MAX_DESCRIPTION_CHARS),
+        "the title and description fit the budget whole"
+    );
 }
 
 #[test]
-fn a_task_filled_to_its_text_budget_with_quotes_is_written_and_read_back() {
+fn a_task_of_the_widest_text_in_quotes_is_written_and_read_back() {
     let mut fields = widest_structure();
-    fill_text_budget(&mut fields);
-    assert_eq!(fields.text_bytes(), MAX_TEXT_BYTES);
-    let task = Task::new(fields).expect("exactly the text budget");
+    fill_text(&mut fields);
+    let task = Task::new(fields).expect("within the text budget");
     let bytes = encode(&task).expect("a valid task is always written");
     assert!(bytes.len() <= MAX_TASK_FILE_BYTES, "{} bytes", bytes.len());
     assert_eq!(decode(&bytes), Ok(task));
 }
 
-#[test]
-fn a_task_over_its_text_budget_is_refused_by_the_domain() {
-    let mut fields = widest_structure();
-    fill_text_budget(&mut fields);
-    let short = fields
-        .reviews
-        .iter_mut()
-        .find(|review| review.finding.chars().count() < MAX_FINDING_CHARS)
-        .expect("a finding with room left");
-    short.finding.push('x');
-    let error = Task::new(fields).expect_err("one byte over the budget");
-    assert_eq!(error.field, "text", "{error}");
-}
-
+/// A task at its text budget (four-byte title and description, then
+/// references to the byte) takes a holder at its widest: a holder is not
+/// text, so counting it would refuse this task.
 #[test]
 fn a_task_at_its_text_budget_takes_a_holder_at_its_widest() {
     let mut fields = widest_structure();
     fields.claim.as_mut().unwrap().holder = person();
-    fill_text_budget(&mut fields);
+    fields.references = vec![];
+    fields.title = "\u{1d11e}".repeat(MAX_TITLE_CHARS);
+    fields.description = "\u{1d11e}".repeat(MAX_DESCRIPTION_CHARS);
+    fields.references = references_of(MAX_TEXT_BYTES - fields.text_bytes());
+    assert_eq!(fields.text_bytes(), MAX_TEXT_BYTES);
     fields.claim.as_mut().unwrap().holder = widest_holder();
     let task = Task::new(fields).expect("a holder is not text");
     let bytes = encode(&task).expect("a valid task is always written");
     assert!(bytes.len() <= MAX_TASK_FILE_BYTES, "{} bytes", bytes.len());
+}
+
+/// `bytes` of references: https URLs of at most [`MAX_REFERENCE_BYTES`]
+/// each, distinct, summing to exactly `bytes`.
+fn references_of(mut bytes: usize) -> Vec<Reference> {
+    let mut references = vec![];
+    while bytes > 0 {
+        let head = format!("https://example.com/{}/", references.len());
+        let len = bytes.min(MAX_REFERENCE_BYTES);
+        assert!(len > head.len(), "room for the last reference: {len}");
+        let text = format!("{head}{}", "a".repeat(len - head.len()));
+        references.push(Reference::parse(&text).unwrap());
+        bytes -= len;
+    }
+    assert!(
+        references.len() <= MAX_REFERENCES,
+        "{} references",
+        references.len()
+    );
+    references
+}
+
+/// The text budget is reached, to the byte, only with references: the
+/// title and description at their widest (four-byte characters) and
+/// references for the rest. Such a task is written and read back; one
+/// byte more is refused.
+#[test]
+fn a_task_at_its_text_budget_is_written_and_one_byte_more_is_refused() {
+    let mut fields = widest_structure();
+    fields.references = vec![];
+    fields.title = "\u{1d11e}".repeat(MAX_TITLE_CHARS);
+    fields.description = "\u{1d11e}".repeat(MAX_DESCRIPTION_CHARS);
+    let left = MAX_TEXT_BYTES - fields.text_bytes();
+    fields.references = references_of(left);
+    assert_eq!(fields.text_bytes(), MAX_TEXT_BYTES);
+    let task = Task::new(fields.clone()).expect("exactly the text budget");
+    let bytes = encode(&task).expect("a valid task is always written");
+    assert!(bytes.len() <= MAX_TASK_FILE_BYTES, "{} bytes", bytes.len());
+    assert_eq!(decode(&bytes), Ok(task));
+    let last = fields.references.len() - 1;
+    let longer = format!("{}a", fields.references[last].as_str());
+    fields.references[last] = Reference::parse(&longer).unwrap();
+    let error = Task::new(fields).expect_err("one byte over the budget");
+    assert_eq!(error.field, "text", "{error}");
 }

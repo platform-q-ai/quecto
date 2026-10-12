@@ -101,16 +101,6 @@ pub fn markdown(field: &str, text: &str, max_chars: usize) -> Result<(), SchemaE
     }
 }
 
-/// Markdown of at most `max_chars` characters with something visible.
-pub fn filled_markdown(field: &str, text: &str, max_chars: usize) -> Result<(), SchemaError> {
-    markdown(field, text, max_chars)?;
-    if VISIBLE.is_match(text) {
-        Ok(())
-    } else {
-        Err(SchemaError::new(field, "must have something visible"))
-    }
-}
-
 /// At most `max` entries, no two equal.
 pub fn distinct<T: Ord>(field: &str, entries: &[T], max: usize) -> Result<(), SchemaError> {
     let unique: std::collections::BTreeSet<&T> = entries.iter().collect();

@@ -165,3 +165,58 @@ fn filled() -> ReviewFields {
     }
     full
 }
+
+/// A finding's place is a relative path and a line (and column), numbers
+/// from 1 without leading zeros: one rule for every artifact's findings.
+#[test]
+fn a_findings_place_is_a_relative_path_and_its_line() {
+    let placed = |place: Option<&str>| {
+        let mut review = fields();
+        review.rounds[0].findings[0].location = place.map(String::from);
+        Review::new(review)
+    };
+    for place in [
+        None,
+        Some("src/store.rs:1"),
+        Some("src/store.rs:42:7"),
+        Some(".github/ci.yml:3"),
+        Some("src/a..b.rs:1"),
+        Some("a/-b.rs:1"),
+    ] {
+        assert!(placed(place).is_ok(), "{place:?}");
+    }
+    for place in [
+        "src/store.rs",
+        "src/store.rs:0",
+        "src/store.rs:042",
+        "src/store.rs:4:0",
+        "src/a b.rs:4",
+        "../etc/passwd:1",
+        "-rf.rs:1",
+        "./a.rs:1",
+        "a/./b.rs:1",
+        "a//b.rs:1",
+        "a/:1",
+        "/etc/passwd:1",
+    ] {
+        assert_eq!(
+            placed(Some(place)).unwrap_err().field,
+            "rounds/0/findings/0/location",
+            "{place}"
+        );
+    }
+}
+
+/// A finding of exactly its most characters, each of several bytes, is
+/// admitted: the limit counts characters, not bytes.
+#[test]
+fn a_finding_of_its_most_multibyte_characters_is_admitted() {
+    let mut widest = fields();
+    widest.rounds[0].findings[0].text = "é".repeat(MAX_FINDING_CHARS);
+    assert!(Review::new(widest.clone()).is_ok());
+    widest.rounds[0].findings[0].text.push('é');
+    assert_eq!(
+        Review::new(widest).unwrap_err().field,
+        "rounds/0/findings/0/text"
+    );
+}

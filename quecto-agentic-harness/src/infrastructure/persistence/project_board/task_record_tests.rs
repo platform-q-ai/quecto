@@ -54,34 +54,6 @@ const PARTS: &str = r#"{
     "since": "2026-10-10T09:00:00Z",
     "expires": "2026-10-10T11:00:00Z"
   },
-  "reviews": [
-    {
-      "id": "r1-h1",
-      "round": 1,
-      "reviewer": {
-        "name": "Bob",
-        "email": "bob@example.com"
-      },
-      "at": "2026-10-10T10:00:00Z",
-      "severity": "high",
-      "location": "src/store.rs:42:7",
-      "finding": "Lease not checked",
-      "verdict": "fixed",
-      "proving_test": "stale_lease_is_refused"
-    },
-    {
-      "id": "r1-m1",
-      "round": 1,
-      "reviewer": {
-        "name": "dependabot[bot]",
-        "email": "bot@example.com"
-      },
-      "at": "2026-10-10T10:00:00Z",
-      "severity": "medium",
-      "finding": "Two **lines**:\n\tthe second indented",
-      "verdict": "open"
-    }
-  ],
   "created": "2026-10-10T08:00:00Z",
   "updated": "2026-10-10T10:00:00Z"
 }
@@ -286,7 +258,8 @@ fn a_newer_schema_names_the_least_quecto_that_can_read_it() {
 
 #[test]
 fn every_nested_record_refuses_unknown_keys() {
-    let anchors = ["\"round\"", "\"name\": \"Bob\"", "\"name\": \"Ada\""];
+    // The claim and its holder: the nested records a task has.
+    let anchors = ["\"holder\"", "\"name\": \"Ada\""];
     for anchor in anchors {
         let bytes = edited(PARTS, anchor, &format!("\"extra\": 1, {anchor}"));
         assert!(
@@ -298,31 +271,40 @@ fn every_nested_record_refuses_unknown_keys() {
 
 #[test]
 fn nested_values_the_domain_refuses_are_named_by_their_path() {
-    let cases = [
-        (
-            "accepted_plan",
-            edited(PARTS, "\"accepted_plan\": 3", "\"accepted_plan\": 0"),
-        ),
-        (
-            "reviews/0/severity",
-            edited(
-                PARTS,
-                "\"high\",\n      \"location\"",
-                "\"blocker\",\n      \"location\"",
-            ),
-        ),
-        ("reviews/0/verdict", edited(PARTS, "\"fixed\"", "\"done\"")),
-        (
-            "reviews/0/at",
-            edited(PARTS, "\"at\": \"2026-10-10T10:00:00Z\"", "\"at\": \"now\""),
-        ),
-    ];
+    let cases = [(
+        "accepted_plan",
+        edited(PARTS, "\"accepted_plan\": 3", "\"accepted_plan\": 0"),
+    )];
     for (field, bytes) in cases {
         match decode(&bytes) {
             Err(RecordError::Invalid(error)) => assert_eq!(error.field, field, "{error}"),
             other => panic!("{field}: {other:?}"),
         }
     }
+}
+
+/// A task holds no review findings: they are review artifacts of their
+/// own (M1c). A file holding the task's old `reviews` is malformed to
+/// this reader (no board holds any), and a task never writes them.
+#[test]
+fn a_task_holds_no_review_findings() {
+    let with_reviews = PARTS.replace(
+        "  \"created\"",
+        "  \"reviews\": [\n    {\"id\": \"r1-h1\"}\n  ],\n  \"created\"",
+    );
+    let refused = decode(with_reviews.as_bytes());
+    assert!(
+        matches!(&refused, Err(RecordError::Malformed(why)) if why.contains("reviews")),
+        "{refused:?}"
+    );
+    // Not read as "not set", as an empty list of a key the task has is:
+    // the key is not the task's at all.
+    let empty = PARTS.replace("  \"created\"", "  \"reviews\": [],\n  \"created\"");
+    let refused = decode(empty.as_bytes());
+    assert!(
+        matches!(&refused, Err(RecordError::Malformed(why)) if why.contains("reviews")),
+        "{refused:?}"
+    );
 }
 
 /// Where a task came from and how it ended arrived in schema 3: an older

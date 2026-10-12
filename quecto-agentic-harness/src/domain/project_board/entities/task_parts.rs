@@ -1,41 +1,18 @@
-//! The structured parts the board's artifacts share: their limits, a
-//! task's review findings (kept until the task's own review list is
-//! dropped, D2, now that reviews are an artifact of their own, M1c),
-//! and the checks they share. Reviews are capped; a write past the cap is
-//! refused.
-use super::super::value_objects::schema_error::{SchemaError, distinct, filled_markdown, line};
-use super::super::value_objects::slug::Slug;
-use super::super::value_objects::timestamp::Timestamp;
-use super::super::value_objects::vocabulary::{Severity, Verdict};
-use super::claim::Identity;
+//! The structured parts the board's artifacts share: their limits and the
+//! checks they share (a finding's place is one rule for every artifact
+//! that has findings).
+use super::super::value_objects::schema_error::{SchemaError, distinct, line};
 use regex::Regex;
 use std::sync::LazyLock;
 
 pub const MAX_ITEMS: usize = 128;
 /// Criteria, evidence and dependencies per item.
 pub const MAX_PER_ITEM: usize = 16;
-pub const MAX_REVIEWS: usize = 128;
 pub const MAX_LINE_CHARS: usize = 500;
 pub const MAX_OWNER_CHARS: usize = 100;
 /// The largest integer a JSON reader in any language keeps exactly.
 pub const MAX_BUDGET_TOKENS: u64 = (1 << 53) - 1;
 pub const MAX_FINDING_CHARS: usize = 4_000;
-
-/// A review finding, at `path:line` or `path:line:col` when it has a place.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Review {
-    pub id: Slug,
-    pub round: u8,
-    pub reviewer: Identity,
-    pub at: Timestamp,
-    pub severity: Severity,
-    pub location: Option<String>,
-    /// Markdown.
-    pub finding: String,
-    pub verdict: Verdict,
-    /// The test that proves a fix.
-    pub proving_test: Option<String>,
-}
 
 /// `path:line` or `path:line:col`, numbers from 1 without leading zeros.
 /// The path is relative: `/`-separated segments, none empty, `.` or `..`
@@ -77,35 +54,6 @@ pub(super) fn shaped(
 /// task's findings and a review's.
 pub(super) fn location(field: &str, text: &str) -> Result<(), SchemaError> {
     shaped(field, text, MAX_LINE_CHARS, &LOCATION)
-}
-
-impl Review {
-    pub fn validate(&self, field: &str) -> Result<(), SchemaError> {
-        if !matches!(self.round, 1..) {
-            return Err(SchemaError::new(
-                format!("{field}/round"),
-                "must be at least 1",
-            ));
-        }
-        self.reviewer.validate(&format!("{field}/reviewer"))?;
-        if let Some(location) = &self.location {
-            shaped(
-                &format!("{field}/location"),
-                location,
-                MAX_LINE_CHARS,
-                &LOCATION,
-            )?;
-        }
-        filled_markdown(
-            &format!("{field}/finding"),
-            &self.finding,
-            MAX_FINDING_CHARS,
-        )?;
-        match &self.proving_test {
-            Some(test) => line(&format!("{field}/proving_test"), test, MAX_LINE_CHARS),
-            None => Ok(()),
-        }
-    }
 }
 
 #[cfg(test)]

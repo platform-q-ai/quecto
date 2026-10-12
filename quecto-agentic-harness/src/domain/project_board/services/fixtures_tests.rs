@@ -5,12 +5,9 @@ pub use crate::domain::project_board::entities::fixtures_tests::{
     branch, change, commit, open_run, plan, repo,
 };
 use crate::domain::project_board::entities::task::{Task, TaskFields};
-use crate::domain::project_board::entities::task_parts::Review;
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
-use crate::domain::project_board::value_objects::vocabulary::{
-    Resolution, Severity, TaskKind, TaskStatus, Verdict,
-};
+use crate::domain::project_board::value_objects::vocabulary::{Resolution, TaskKind, TaskStatus};
 
 pub fn at(time: &str) -> Timestamp {
     Timestamp::parse(&format!("2026-10-10T{time}Z")).unwrap()
@@ -39,17 +36,6 @@ pub fn task(status: TaskStatus) -> Task {
         depends_on: vec![],
         accepted_plan: Some(1),
         claim,
-        reviews: vec![Review {
-            id: Slug::parse("r1-h1").unwrap(),
-            round: 1,
-            reviewer: person("Bob"),
-            at: at("08:50:00"),
-            severity: Severity::High,
-            location: Some("src/store.rs:42".into()),
-            finding: "Lease not checked".into(),
-            verdict: Verdict::Fixed,
-            proving_test: None,
-        }],
         prs: vec![2482, 2483],
         github_issue: None,
         // A done task is completed.
