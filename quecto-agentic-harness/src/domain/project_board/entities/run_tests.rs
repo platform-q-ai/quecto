@@ -122,7 +122,7 @@ fn a_runs_text_is_bounded_by_its_budget() {
 }
 
 #[test]
-fn a_run_ran_its_own_plan_version_and_its_items() {
+fn a_run_ran_its_own_plan_version_and_its_task_items() {
     let run = Run::new(ended()).unwrap();
     assert_eq!(run.ran(&plan(1, PlanState::Accepted)), Ok(()));
     assert_eq!(

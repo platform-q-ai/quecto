@@ -151,7 +151,7 @@ fn the_example_run_file_is_byte_exact() {
 }
 
 #[test]
-fn a_running_run_has_no_end_cost_or_items() {
+fn a_running_run_has_no_end_cost_or_task_items() {
     let file = round_trips(running());
     assert_eq!(
         file,
@@ -341,5 +341,20 @@ fn no_outcome_is_spelt_running() {
         RunOutcome::ALL
             .iter()
             .all(|outcome| outcome.as_str() != RUNNING)
+    );
+}
+
+/// A run file of the wording before task items (`## Items`) is refused,
+/// never read as an alias of `## Task items`.
+#[test]
+fn an_items_heading_of_the_old_wording_is_refused() {
+    let old = edited("## Task items", "## Items");
+    let read = decode::<RunCodec>(old.as_bytes());
+    assert_eq!(
+        read,
+        Err(CodecError::Markdown(MarkdownError::UnknownSection {
+            heading: "Items".into()
+        })),
+        "{read:?}"
     );
 }

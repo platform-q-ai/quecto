@@ -234,7 +234,7 @@ fn a_plan_title_that_is_not_derived_is_refused() {
 }
 
 #[test]
-fn criteria_out_of_item_order_are_not_canonical() {
+fn criteria_out_of_task_item_order_are_not_canonical() {
     let criteria = "| store | Round trips every kind |\n| store | Refuses hostile files |\n| cli | `quecto board list` answers |\n";
     let dependencies = "| cli | store |\n| docs | store |\n| docs | cli |\n";
     for file in [
@@ -568,4 +568,19 @@ fn a_model_and_image_only_a_code_cell_holds_round_trip() {
         assert_eq!(decode::<PlanCodec>(file.as_bytes()), Ok(plan));
         read_by_the_oracle(&file);
     }
+}
+
+/// A plan file of the wording before task items (`## Items`) is refused,
+/// never read as an alias of `## Task items`.
+#[test]
+fn an_items_heading_of_the_old_wording_is_refused() {
+    let old = edited("## Task items", "## Items");
+    let read = decode::<PlanCodec>(old.as_bytes());
+    assert_eq!(
+        read,
+        Err(CodecError::Markdown(MarkdownError::UnknownSection {
+            heading: "Items".into()
+        })),
+        "{read:?}"
+    );
 }

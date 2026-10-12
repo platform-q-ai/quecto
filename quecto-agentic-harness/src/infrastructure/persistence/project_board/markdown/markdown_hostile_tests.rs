@@ -64,7 +64,7 @@ fn every_hostile_file_is_refused_with_its_reason() {
         ("a title closed by hashes", edited("CLI\n", "CLI #\n"), |e| matches!(e, E::Title)),
         ("a field no task has", edited("| Status |", "| Owner |"), |e| matches!(e, E::UnknownField { .. })),
         ("fields out of order", edited("| Id | board-cli |\n| Status | review |", "| Status | review |\n| Id | board-cli |"), |e| matches!(e, E::Structure { line: 7, .. })),
-        ("a section no task has", edited("## Items", "## Notes"), |e| matches!(e, E::UnknownSection { .. })),
+        ("a section no task has", edited("## Task items", "## Notes"), |e| matches!(e, E::UnknownSection { .. })),
         ("a heading with no blank line", edited("\n## Acceptance", "## Acceptance"), |e| matches!(e, E::Structure { line: 23, .. })),
         ("a backslash opening a line", edited(first, "\\plain"), |e| matches!(e, E::BlockLike { line: 11 })),
         ("a link line escaped", edited(first, "\\[a](https://example.com)"), |e| matches!(e, E::NotCanonical)),
@@ -157,7 +157,7 @@ fn every_hostile_file_is_refused_with_its_reason() {
         ("strong emphasis opening a link beside an email", edited(first, "see ada`@`b.example[** x](https://x.example)"), |e| matches!(e, E::Link { line: 11 })),
         ("strong emphasis closing a link beside an email", edited(first, "see [x **](https://x.example)ada`@`b.example"), |e| matches!(e, E::Link { line: 11 })),
         ("a tilde opening a link beside an email", edited(first, "see ada`@`b.example[~ x](https://x.example)"), |e| matches!(e, E::Link { line: 11 })),
-        ("a table's header renamed", edited("| Item | State |", "| Item | Status |"), |e| matches!(e, E::Structure { line: 28, .. })),
+        ("a table's header renamed", edited("| Task item | State |", "| Task item | Status |"), |e| matches!(e, E::Structure { line: 28, .. })),
     ];
     for (name, bytes, named) in cases {
         let refused = parse(&bytes, &SHAPE);
