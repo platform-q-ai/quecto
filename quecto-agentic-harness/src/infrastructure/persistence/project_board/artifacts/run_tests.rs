@@ -9,6 +9,8 @@ use crate::domain::project_board::entities::task_parts::{
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
 use crate::infrastructure::persistence::project_board::markdown::MarkdownError;
+use crate::infrastructure::persistence::project_board::markdown::parse;
+use crate::infrastructure::persistence::project_board::markdown::tests::oracle::outline_in;
 
 const EXAMPLE: &str = r#"<!-- quecto-run schema=1 -->
 # Run 3 of board-cli
@@ -105,7 +107,19 @@ fn round_trips(fields: RunFields) -> String {
     let run = Run::new(fields).unwrap();
     let file = encode::<RunCodec>(&run).unwrap();
     assert_eq!(decode::<RunCodec>(file.as_bytes()), Ok(run), "{file}");
+    read_by_the_oracle(&file);
     file
+}
+
+/// `file` read by both readers of the CommonMark/GFM oracle, cell by cell,
+/// as the document it parses to.
+fn read_by_the_oracle(file: &str) {
+    let document = parse(file.as_bytes(), &RunCodec::SHAPE).unwrap();
+    assert_eq!(
+        outline_in(file, &document, &RunCodec::SHAPE),
+        Ok(()),
+        "{file}"
+    );
 }
 
 /// The example file with `from` replaced by `to` (once).

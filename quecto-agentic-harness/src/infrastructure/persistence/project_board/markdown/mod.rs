@@ -654,4 +654,4 @@ fn within(lines: &[String], limits: Limits) -> Result<(), MarkdownError> {
 
 #[cfg(test)]
 #[path = "markdown_tests.rs"]
-mod tests;
+pub(crate) mod tests;

@@ -9,6 +9,8 @@ use crate::domain::project_board::value_objects::code_ref::{
 };
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
+use crate::infrastructure::persistence::project_board::markdown::parse;
+use crate::infrastructure::persistence::project_board::markdown::tests::oracle::outline_in;
 
 const EXAMPLE: &str = "<!-- quecto-change schema=1 -->
 # Change 2 of board-cli
@@ -56,7 +58,19 @@ fn round_trips(fields: ChangeFields) -> String {
     let change = Change::new(fields).unwrap();
     let file = encode::<ChangeCodec>(&change).unwrap();
     assert_eq!(decode::<ChangeCodec>(file.as_bytes()), Ok(change), "{file}");
+    read_by_the_oracle(&file);
     file
+}
+
+/// `file` read by both readers of the CommonMark/GFM oracle, cell by cell,
+/// as the document it parses to.
+fn read_by_the_oracle(file: &str) {
+    let document = parse(file.as_bytes(), &ChangeCodec::SHAPE).unwrap();
+    assert_eq!(
+        outline_in(file, &document, &ChangeCodec::SHAPE),
+        Ok(()),
+        "{file}"
+    );
 }
 
 #[test]
