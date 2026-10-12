@@ -6,6 +6,7 @@
 //! never taken as something near it.
 pub mod cells;
 pub mod change;
+pub mod discussion;
 pub mod plan;
 pub mod run;
 
