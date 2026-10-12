@@ -546,3 +546,6 @@ mod hostile;
 
 #[path = "markdown_cells_tests.rs"]
 mod cells;
+
+#[path = "markdown_board_text_tests.rs"]
+mod board_text;
