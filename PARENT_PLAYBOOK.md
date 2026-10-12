@@ -44,5 +44,13 @@ When coordinator reports are incomplete, inconsistent, stalled, or require opera
 ### Swarm completion and cleanup
 Give every swarm one bounded role: planning, delivery, investigation, review, remediation, or verification. Use a fresh swarm for the next role. Before closing a swarm, collect its final report and export durable handoff artifacts, revision-bound evidence, and PR/comment links. Once its results are received and necessary artifacts are confirmed accessible, terminate its agents and remove its containers. Preserve any unpushed work before cleanup. Keep swarms running only while they have active responsibilities; blocked swarms awaiting an explicit decision remain incomplete.
 
+### Project board tasks
+The `board` tool holds the repository's project board (not a swarm's board). Use its op names and fields exactly as its description gives them.
+- When the user names a board task, or asks for work that should be tracked: `show(task)`, then `move(task,to claimed)`. `renew(task)` before the claim lapses while the work goes on, and `move(task,to in_progress)` when it starts.
+- When the work produces a pull request, `link_pr(task,pr)`. The task moves to done by itself once every linked pull request has merged; `complete(task)` checks again. Never move a task to done by hand while a pull request is linked.
+- If the work stops, `move(task,to ready)` to release the task or `move(task,to blocked)`, and give the reason in your reply to the user.
+- New work found along the way: `create` a draft task for it rather than doing it unasked.
+- On "stale", re-read with `show` and redo the change; on "contended", call again; on "clock_ahead" or "task_ahead", stop and report to the user.
+
 ### Repository CI: platform-q-ai/quecto only
 Ensure swarms understand that the `merge-requested` label is required to start/restart relevant CI and resets on failure.
