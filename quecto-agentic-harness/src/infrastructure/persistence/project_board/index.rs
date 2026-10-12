@@ -566,21 +566,13 @@ fn stored_head(transaction: &Transaction<'_>) -> rusqlite::Result<Option<String>
 #[cfg(test)]
 pub const ABORT_IN_FILL: &str = "QUECTO_BOARD_INDEX_ABORT_IN_FILL";
 
-/// Test-only: dies of SIGABRT as a crash does, marked not dumpable first
-/// (on Linux), so the kernel writes no core dump for a crash the test
-/// stages. Elsewhere it aborts as it is.
+/// Test-only: ends the process at once, as a crash does (no destructor
+/// runs, so the build is left half made). A child its test runs with
+/// `without_core_dumps` ends with `_exit(134)` (#2192's convention), so no
+/// core dump is written for the crash the test stages; otherwise it aborts.
 #[cfg(test)]
-fn abort_without_a_core() -> ! {
-    #[cfg(target_os = "linux")]
-    {
-        // SAFETY: prctl(PR_SET_DUMPABLE) takes plain integers, touches no memory.
-        let undumpable = unsafe { libc::prctl(libc::PR_SET_DUMPABLE, 0, 0, 0, 0) };
-        debug_assert_eq!(
-            undumpable, 0,
-            "a process may always mark itself not dumpable"
-        );
-    }
-    std::process::abort()
+fn end_as_a_crash() -> ! {
+    crate::interface::panic_hook::test_support::fatal_end(std::process::abort)()
 }
 
 fn fill(
@@ -596,7 +588,7 @@ fn fill(
         )?;
         #[cfg(test)]
         if std::env::var_os(ABORT_IN_FILL).is_some() {
-            abort_without_a_core();
+            end_as_a_crash();
         }
         for dependency in &row.depends_on {
             transaction.execute(
