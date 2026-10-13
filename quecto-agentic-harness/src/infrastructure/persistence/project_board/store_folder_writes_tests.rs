@@ -175,7 +175,7 @@ fn a_clear_in_a_folder_removes_its_file_unless_a_name_is_listed_twice() {
     let bob = store(&repos.bob);
     let held = |result: Result<BoardWrite, BoardStoreError>| {
         assert!(
-            matches!(&result, Err(BoardStoreError::FolderSetAside(why)) if why.starts_with("runs/a.1.md is named more than once") && why.contains("quecto has written nothing since")),
+            matches!(&result, Err(BoardStoreError::FolderSetAside(why)) if why.starts_with("runs/a.1.md is named more than once") && why.contains("this quecto writes nothing over such a board")),
             "{result:?}"
         );
     };
@@ -302,3 +302,40 @@ fn a_write_keeps_a_folder_within_its_entries() {
         ))
     );
 }
+
+/// A file set aside under a key that the next write drops (here a regular
+/// file's mode over a tree) does not hold its key: a write of that key
+/// lands and its file takes the name's place.
+#[test]
+fn a_write_replaces_a_keyed_file_the_next_write_drops() {
+    let repos = fresh();
+    let head = board_of(&repos, |repo| {
+        let inner = raw_rows(repo, &[("100644", "f", blob_in(repo, b"f"))]);
+        vec![
+            ("40000", "tasks", Node::Tree(vec![])),
+            (
+                "40000",
+                "runs",
+                Node::Made(vec![("100644", "a.1.md".into(), inner)]),
+            ),
+        ]
+    });
+    let bob = store(&repos.bob);
+    let board = bob.read().unwrap();
+    let key = ArtifactKey::Run(key_slug("a"), 1);
+    assert_eq!(aside(&board), [("runs/a.1.md", Some(&key), false)]);
+    assert!(reason(&board, "runs/a.1.md").ends_with("so the next write drops it"));
+    let run = [BoardArtifact::Run(run("a", 1))];
+    let moved = written(bob.write(&head, &run, "board: run a"));
+    let remote = repos.remote();
+    assert_eq!(
+        blob_at(&remote, &moved, "runs/a.1.md"),
+        file_of(&run[0]).unwrap()
+    );
+    let board = store(&repos.alice).read().unwrap();
+    assert!(board.quarantined.is_empty(), "{:?}", board.quarantined);
+    assert_eq!(board.runs, [run_of(&run[0])]);
+}
+
+#[path = "store_folder_clears_tests.rs"]
+mod clears;

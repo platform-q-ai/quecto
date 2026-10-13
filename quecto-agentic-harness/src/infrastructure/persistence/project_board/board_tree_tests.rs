@@ -308,7 +308,7 @@ fn a_name_listed_twice_outside_tasks_stops_writes_and_clears() {
     assert!(
         refusal
             .as_deref()
-            .is_some_and(|why| why.contains("quecto has written nothing since")),
+            .is_some_and(|why| why.contains("this quecto writes nothing over such a board")),
         "the remedy says what moving the board back undoes: {refusal:?}"
     );
 }

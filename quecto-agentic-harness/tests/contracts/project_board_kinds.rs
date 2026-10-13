@@ -172,7 +172,10 @@ pub fn check_set_aside_key_refuses_only_its_write(
         ],
     ] {
         let refused = bob.write(&spoiled, &artifacts, "board: write run 1");
-        assert!(matches!(refused, Ok(BoardWrite::Refused(_))), "{refused:?}");
+        assert!(
+            matches!(&refused, Ok(BoardWrite::Refused(why)) if why.starts_with("runs/a.1.md is set aside: ")),
+            "{refused:?}"
+        );
         let board = alice.read().unwrap();
         assert_eq!(board.head, spoiled);
         let runs: Vec<u32> = board.runs.iter().map(|run| run.fields().number).collect();
