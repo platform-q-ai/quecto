@@ -822,7 +822,12 @@
         ],
         "created": "2026-10-10T10:00:00Z",
         "updated": "2026-10-10T12:30:02Z"
-      }
+      },
+      "plan": null,
+      "plans": [],
+      "runs": [],
+      "may_be_incomplete": false,
+      "quarantined": []
     }
   },
   {

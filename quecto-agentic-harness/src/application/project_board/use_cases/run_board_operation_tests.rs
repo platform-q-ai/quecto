@@ -75,11 +75,15 @@ fn a_completion_is_pending_until_the_pull_requests_merge() {
         panic!("{review:?}")
     };
     assert_eq!(done.fields().status, TaskStatus::Done);
-    let shown = ops.execute(&BoardRequest::Show(a)).unwrap();
-    let BoardOutcome::Shown { task, .. } = shown else {
+    let shown = ops.execute(&BoardRequest::Show(a, None)).unwrap();
+    let BoardOutcome::Shown(shown, _) = shown else {
         panic!("{shown:?}")
     };
-    assert_eq!(task.fields().status, TaskStatus::Done, "the board holds it");
+    assert_eq!(
+        shown.task.fields().status,
+        TaskStatus::Done,
+        "the board holds it"
+    );
 }
 
 /// A move to review of a task linking no pull request has nothing to
@@ -150,11 +154,11 @@ fn show_tells_a_task_set_aside_from_one_not_on_the_board() {
     ops.execute(&ready_task("b")).unwrap();
     store.quarantine("b", "malformed");
     assert_eq!(
-        ops.execute(&BoardRequest::Show(slug("b"))),
+        ops.execute(&BoardRequest::Show(slug("b"), None)),
         Err(set_aside_task("b"))
     );
     assert_eq!(
-        ops.execute(&BoardRequest::Show(slug("c"))),
+        ops.execute(&BoardRequest::Show(slug("c"), None)),
         Err(ProjectBoardError::NotFound(slug("c")))
     );
     // With no pull request host, a task not on the board is answered as
@@ -170,6 +174,87 @@ fn show_tells_a_task_set_aside_from_one_not_on_the_board() {
     ops.execute(&ready_task("d")).unwrap();
     assert_eq!(
         ops.execute(&BoardRequest::Complete(slug("d"))),
+        Err(ProjectBoardError::NoPullRequestHost(
+            NoPullRequestHost::NotAPullRequestHost
+        ))
+    );
+}
+
+/// A store that hands over every read with one plan of task `a` twice, as
+/// a store that broke its contract would: whatever reads the plans
+/// refuses it, and whatever reads the task alone does not.
+struct PlanTwice(MemoryBoardStore);
+
+impl crate::application::project_board::ports::ProjectBoardStore for PlanTwice {
+    fn read(
+        &self,
+    ) -> Result<
+        crate::application::project_board::ports::BoardSnapshot,
+        crate::application::project_board::ports::BoardStoreError,
+    > {
+        let mut board = self.0.read()?;
+        let plan = crate::infrastructure::test_support::board_artifacts::plan("a", 1);
+        board.plans.extend([plan.clone(), plan]);
+        Ok(board)
+    }
+
+    fn write(
+        &self,
+        expected: &crate::application::project_board::ports::BoardHead,
+        artifacts: &[crate::application::project_board::ports::BoardArtifact],
+        message: &str,
+    ) -> Result<
+        crate::application::project_board::ports::BoardWrite,
+        crate::application::project_board::ports::BoardStoreError,
+    > {
+        self.0.write(expected, artifacts, message)
+    }
+
+    fn clear_set_aside(
+        &self,
+        expected: &crate::application::project_board::ports::BoardHead,
+        clear: &crate::application::project_board::ports::SetAsideClear,
+        message: &str,
+    ) -> Result<
+        crate::application::project_board::ports::BoardWrite,
+        crate::application::project_board::ports::BoardStoreError,
+    > {
+        self.0.clear_set_aside(expected, clear, message)
+    }
+
+    fn bootstrap(
+        &self,
+    ) -> Result<
+        crate::application::project_board::ports::BoardBootstrap,
+        crate::application::project_board::ports::BoardStoreError,
+    > {
+        self.0.bootstrap()
+    }
+
+    fn writer(&self) -> crate::domain::project_board::entities::claim::Identity {
+        self.0.writer()
+    }
+}
+
+/// Review round 2: with no pull request host, `complete` asks only whether
+/// the task is on the board (its plans and runs are not read), so a plan
+/// held twice does not stand in for the missing host.
+#[test]
+fn a_complete_with_no_host_looks_the_task_up_alone() {
+    let memory = MemoryBoardStore::default();
+    let ops = operations(&memory, SetClock::at("10:00:00"), no_host());
+    ops.execute(&BoardRequest::Bootstrap).unwrap();
+    ops.execute(&ready_task("a")).unwrap();
+    let store: Arc<dyn crate::application::project_board::ports::ProjectBoardStore> =
+        Arc::new(PlanTwice(memory.client()));
+    let listings = Arc::new(QueryListings(QueryBoard::new(Arc::clone(&store))));
+    let ops = assembled(store, SetClock::at("10:00:00"), listings, no_host()).unwrap();
+    assert!(matches!(
+        ops.execute(&BoardRequest::Show(slug("a"), None)),
+        Err(ProjectBoardError::Duplicate { .. })
+    ));
+    assert_eq!(
+        ops.execute(&BoardRequest::Complete(slug("a"))),
         Err(ProjectBoardError::NoPullRequestHost(
             NoPullRequestHost::NotAPullRequestHost
         ))
@@ -457,5 +542,43 @@ mod noted {
             ..OpFacts::default()
         };
         assert_eq!(facts, want);
+    }
+
+    /// A show tells how many plan versions and runs of its task it gave
+    /// (#2481 M4a), counts only; a refused show tells none.
+    #[test]
+    fn a_show_tells_how_many_plans_and_runs_it_gave() {
+        use crate::application::project_board::ports::BoardArtifact;
+        use crate::infrastructure::test_support::board_artifacts::{plan, run};
+        let store = MemoryBoardStore::default();
+        let ops = operations(&store, SetClock::at("10:00:00"), no_host());
+        ops.execute(&BoardRequest::Bootstrap).unwrap();
+        ops.execute(&ready_task("a")).unwrap();
+        let (_, facts) = noted(&ops, &BoardRequest::Show(slug("a"), None));
+        let none = OpFacts {
+            plans: Some(0),
+            runs: Some(0),
+            ..OpFacts::default()
+        };
+        assert_eq!(facts, none);
+        let head = store.read().unwrap().head;
+        let seeded = [
+            BoardArtifact::Plan(plan("a", 2)),
+            BoardArtifact::Plan(plan("a", 1)),
+            BoardArtifact::Run(run("a", 1)),
+            BoardArtifact::Plan(plan("b", 1)),
+        ];
+        store.write(&head, &seeded, "board: seed").unwrap();
+        let (shown, facts) = noted(&ops, &BoardRequest::Show(slug("a"), None));
+        assert!(shown.is_ok(), "{shown:?}");
+        let want = OpFacts {
+            plans: Some(2),
+            runs: Some(1),
+            ..OpFacts::default()
+        };
+        assert_eq!(facts, want);
+        let (refused, facts) = noted(&ops, &BoardRequest::Show(slug("b"), None));
+        assert_eq!(refused, Err(ProjectBoardError::NotFound(slug("b"))));
+        assert_eq!(facts, OpFacts::default());
     }
 }

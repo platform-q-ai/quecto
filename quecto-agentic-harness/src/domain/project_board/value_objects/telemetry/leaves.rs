@@ -215,6 +215,9 @@ const KNOWN_KINDS: &[&str] = &[
     "path",
     "object",
     "repeated",
+    // A show's page of its plan (#2481 M4a review round 2).
+    "approach_from",
+    "items_from",
     "op",
     "request",
     "other",

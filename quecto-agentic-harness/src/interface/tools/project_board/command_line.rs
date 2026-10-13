@@ -48,7 +48,7 @@ pub fn request(op: &str, flags: &[String]) -> Result<Value, RequestError> {
                 Value::Array(ids.into_iter().map(|id| Value::String(id.into())).collect())
             }
             Kind::OptionalSlug if text.is_empty() => Value::Null,
-            Kind::Pr => text
+            Kind::Pr | Kind::Offset => text
                 .parse::<u64>()
                 .map(Value::from)
                 .unwrap_or_else(|_| Value::String(text.clone())),

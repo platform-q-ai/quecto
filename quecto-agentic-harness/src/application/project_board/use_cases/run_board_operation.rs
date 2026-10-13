@@ -9,7 +9,6 @@
 //!
 //! Blocking: the store, the listings, the clock and the host all block, so
 //! callers run operations off the async workers.
-use super::board_view;
 use crate::application::project_board::dto::{BoardListing, BoardOp, ProjectBoardError};
 use crate::application::project_board::operations::{
     BoardOperationParts, BoardOutcome, BoardRequest, Completion, ListFilter,
@@ -80,7 +79,15 @@ impl RunBoardOperation {
                 let now = self.parts.clock.now()?;
                 listing(self.parts.listings.takeable(&now))
             }
-            BoardRequest::Show(id) => self.show(id),
+            BoardRequest::Show(id, page) => {
+                let shown = self.parts.query.show(id)?;
+                if let Some(facts) = facts {
+                    let count = |items: usize| u64::try_from(items).unwrap_or(u64::MAX);
+                    facts.plans = Some(count(shown.plans.len()));
+                    facts.runs = Some(count(shown.runs.len()));
+                }
+                Ok(BoardOutcome::Shown(shown, *page))
+            }
             BoardRequest::Create(new) => {
                 Ok(changed(self.parts.create.execute_noted(new, facts)?, None))
             }
@@ -140,19 +147,10 @@ impl RunBoardOperation {
         match &self.parts.complete {
             Ok(complete) => complete.execute_noted(id, facts),
             Err(why) => {
-                self.show(id)?;
+                self.parts.query.task(id)?;
                 Err(ProjectBoardError::NoPullRequestHost(why.clone()))
             }
         }
-    }
-
-    fn show(&self, id: &Slug) -> Result<BoardOutcome, ProjectBoardError> {
-        let board = self.parts.listings.all()?;
-        let task = board_view::task_in(&board.tasks, &board.quarantined, id)?;
-        Ok(BoardOutcome::Shown {
-            head: board.head.clone(),
-            task: task.clone(),
-        })
     }
 }
 

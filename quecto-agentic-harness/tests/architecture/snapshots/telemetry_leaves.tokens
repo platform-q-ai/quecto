@@ -175,6 +175,8 @@ const KNOWN_KINDS : & [
 "path" ,
 "object" ,
 "repeated" ,
+"approach_from" ,
+"items_from" ,
 "op" ,
 "request" ,
 "other" ,

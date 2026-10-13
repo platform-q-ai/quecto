@@ -181,6 +181,55 @@ fn an_unrecorded_call_writes_nothing() {
     call.finish(&answer, true);
 }
 
+/// #2481 M4a: an answered `show` records how many plan versions and runs
+/// it gave, as integers; a listing, and a refused show, record neither.
+#[test]
+fn a_show_records_its_plan_and_run_counts_only() {
+    use crate::application::project_board::ports::BoardArtifact;
+    use crate::infrastructure::test_support::board_artifacts::{plan, run};
+    let store = MemoryBoardStore::default();
+    store.bootstrap().unwrap();
+    let operations = assembled(
+        Arc::new(store.client()),
+        Arc::new(SystemBoardClock::default()),
+        Arc::new(QueryListings(QueryBoard::new(Arc::new(store.client())))),
+        Err(NoPullRequestHost::NotAPullRequestHost),
+    )
+    .unwrap();
+    let created = json!({"op": "create", "task": "a", "title": "A", "status": "ready"});
+    run_recorded(
+        &operations,
+        &created.to_string(),
+        &mut BoardCall::unrecorded(),
+    );
+    let head = store.read().unwrap().head;
+    let seeded = [
+        BoardArtifact::Plan(plan("a", 1)),
+        BoardArtifact::Run(run("a", 1)),
+        BoardArtifact::Run(run("a", 2)),
+    ];
+    store.write(&head, &seeded, "board: seed").unwrap();
+    let lines = recorded(
+        &operations,
+        &[
+            json!({"op": "show", "task": "a"}).to_string(),
+            json!({"op": "show", "task": "b"}).to_string(),
+            json!({"op": "list"}).to_string(),
+        ],
+    );
+    assert_eq!(
+        (&lines[0]["plans"], &lines[0]["runs"]),
+        (&json!(1), &json!(2))
+    );
+    for line in &lines[1..] {
+        assert_eq!(
+            (line.get("plans"), line.get("runs")),
+            (None, None),
+            "{line}"
+        );
+    }
+}
+
 /// `head` is a commit id git produced, or nothing.
 #[test]
 fn a_head_is_recorded_only_as_a_full_commit_id() {
@@ -562,14 +611,16 @@ fn a_rule_failed_completion_records_its_rule() {
     let board = board();
     let created = json!({"op": "create", "task": "a", "title": "A", "status": "ready"});
     run_recorded(&board, &created.to_string(), &mut BoardCall::unrecorded());
-    let BoardOutcome::Shown { task, .. } = board
+    let BoardOutcome::Shown(shown, _) = board
         .execute(&BoardRequest::Show(
             crate::domain::project_board::value_objects::slug::Slug::parse("a").unwrap(),
+            None,
         ))
         .unwrap()
     else {
         panic!("shown")
     };
+    let task = shown.task;
     let records = Arc::new(Records::default());
     let mut call = BoardCall::start(Some(recording(&records)), FrontEnd::Tool, Client::Agent);
     call.named(Some("link_pr"));

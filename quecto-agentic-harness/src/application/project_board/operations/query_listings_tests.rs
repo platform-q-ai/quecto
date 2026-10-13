@@ -78,5 +78,6 @@ pub fn assembled(
         complete,
         clock,
         listings,
+        query: QueryBoard::new(store),
     }))
 }
