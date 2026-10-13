@@ -45,8 +45,7 @@ impl Started {
         &self.plan
     }
 
-    /// The status the task started from, so a start whose swarm never
-    /// launched can put the task back as it was.
+    /// The status it started from, for the caller's compensation.
     pub fn from(&self) -> TaskStatus {
         self.from
     }
@@ -96,6 +95,8 @@ pub fn start(
         }
         Claimed | Review | Blocked => {
             let renewed = renew(task, actor, now)?;
+            // Guards the table's row: a held status moves to in progress
+            // only by its holder's row, never by this rule's say-so.
             move_reads(&renewed, InProgress, actor, &at)?;
             renewed.into_fields()
         }

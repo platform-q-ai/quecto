@@ -191,7 +191,14 @@ fn a_plan_maps_onto_the_swarms_inputs() {
         ],
     };
     assert_eq!(got, want);
-    assert!(got.bytes() <= MAX_BRIEF_BYTES);
+    // Each text and number a line (its UTF-8 bytes and one), counted by
+    // hand: the template 4096; the task 12; the goal 45; the constraints
+    // 19 + 106; the criteria 11 + 7 + 76 and 16 + 7 + 100; the items 3 x 64
+    // for the template, then schema 25 + 17, api 19 + 18 + 31 + 7 (its
+    // dependency), docs 21 + 18 + 4 + 7; the coordinator 12 + 12 + 5; the
+    // workers 8 + 8 + 5 and 9 + 6 + 5; the numbers v1 2, limit 4 2,
+    // deadline 21600 6 and budget 2000000 8.
+    assert_eq!(got.bytes(), 4942);
 }
 
 /// No team: the coordinator picks its pool, its model is the launcher's,
@@ -436,7 +443,8 @@ fn every_refusal_has_a_known_code_and_plain_words() {
         (
             BriefRefusal::DeadlineTooSoon,
             "deadline_too_soon",
-            "the team's deadline is too soon: give it at least 10 minutes",
+            "the team's deadline is too soon: propose a plan with a deadline at least 10 \
+             minutes off",
         ),
         (
             BriefRefusal::NoTaskItems,
@@ -492,4 +500,79 @@ fn every_refusal_has_a_known_code_and_plain_words() {
             "{name} is a known kind"
         );
     }
+}
+
+/// Each bound holds at its limit exactly: criteria of exactly 8192 bytes
+/// once encoded are taken, a byte more refused.
+#[test]
+fn criteria_of_exactly_8_kib_are_taken() {
+    // 15 lines of 500 ASCII characters (502 bytes each, quoted), and one of
+    // `15 `, `é` x 100 (6 bytes each) and `x` x `tail`: with the list's
+    // brackets and commas, 2 + 15 x 502 + (2 + 3 + 600 + tail) + 15.
+    let criteria_of = |tail: usize| {
+        let mut lines = long_lines("x");
+        lines[15] = format!("15 {}{}", "é".repeat(100), "x".repeat(tail));
+        lines
+    };
+    let exact = criteria_of(40);
+    assert_eq!(
+        json_list_bytes(exact.iter().map(String::as_str)),
+        TEXT_MAX_BYTES
+    );
+    let planned = |lines: &[String]| {
+        let criteria: Vec<&str> = lines.iter().map(String::as_str).collect();
+        brief(&plan_with(vec![item("exact", &criteria, &[])], None, ""))
+    };
+    assert!(planned(&exact).is_ok());
+    assert_eq!(
+        planned(&criteria_of(41)),
+        Err(BriefRefusal::ItemTooLarge {
+            item: slug("exact"),
+            limit: ItemLimit::Criteria,
+            bytes: TEXT_MAX_BYTES + 1
+        })
+    );
+}
+
+/// An approach that exactly fits the constraints' 8 KiB is kept whole; a
+/// character more is cut.
+#[test]
+fn an_approach_that_exactly_fits_is_not_cut() {
+    // The list's brackets and comma, the approach's quotes, the pointer.
+    let room = TEXT_MAX_BYTES - 2 - 1 - 2 - json_text(POINTER).len();
+    let exact = "x".repeat(room);
+    let got = brief(&plan_with(items(), None, &exact)).unwrap();
+    assert_eq!(got.constraints, [exact.as_str(), POINTER]);
+    assert!(!got.approach_cut);
+    let over = "x".repeat(room + 1);
+    assert!(
+        brief(&plan_with(items(), None, &over))
+            .unwrap()
+            .approach_cut
+    );
+}
+
+/// A brief of exactly [`MAX_BRIEF_BYTES`] is taken; a byte more refused.
+#[test]
+fn a_brief_of_exactly_64_kib_is_taken() {
+    let lines = long_lines("x");
+    let criteria: Vec<&str> = lines.iter().map(String::as_str).collect();
+    let heavy: Vec<PlanItem> = (0..7)
+        .map(|at| item(&format!("item-{at}"), &criteria, &[]))
+        .collect();
+    let sized = |approach: usize| brief(&plan_with(heavy.clone(), None, &"x".repeat(approach)));
+    // A one-character approach is one line of two bytes; each more
+    // character is a byte more, while the approach is kept whole.
+    let base = sized(1).unwrap().bytes();
+    let short = MAX_BRIEF_BYTES - base;
+    assert!((1..7000).contains(&short), "{short}");
+    let exact = sized(1 + short).unwrap();
+    assert!(!exact.approach_cut);
+    assert_eq!(exact.bytes(), MAX_BRIEF_BYTES);
+    assert_eq!(
+        sized(2 + short),
+        Err(BriefRefusal::BriefTooLarge {
+            bytes: MAX_BRIEF_BYTES + 1
+        })
+    );
 }

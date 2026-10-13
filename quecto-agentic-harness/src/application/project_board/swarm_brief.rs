@@ -24,9 +24,6 @@
 //! as such.
 use std::fmt;
 
-use crate::application::swarm::use_cases::{
-    DEADLINE_HORIZON_SECONDS, MEMBER_LIMIT_MAX, TITLE_MAX_BYTES,
-};
 use crate::domain::project_board::entities::plan::{MAX_PLAN_VERSION, PlanItem};
 use crate::domain::project_board::entities::task::MAX_TITLE_CHARS;
 use crate::domain::project_board::entities::team::{Budget, Role, RoleLimits, Team};
@@ -36,7 +33,10 @@ use crate::domain::project_board::value_objects::timestamp::Timestamp;
 use crate::domain::project_board::value_objects::vocabulary::Effort;
 use crate::domain::swarm::json_text;
 use crate::domain::swarm::records::CriterionKind;
-use crate::domain::swarm::validation::{CRITERIA_MAX_BYTES, TEXT_MAX_BYTES, has_content};
+use crate::domain::swarm::validation::{
+    CRITERIA_MAX_BYTES, DEADLINE_HORIZON_SECONDS, MEMBER_LIMIT_MAX, TEXT_MAX_BYTES,
+    TITLE_MAX_BYTES, has_content,
+};
 
 /// The most bytes a brief takes, measured as [`SwarmBrief::bytes`]: what a
 /// coordinator's task text carries inline.
@@ -237,9 +237,10 @@ impl fmt::Display for BriefRefusal {
             Self::DeadlinePassed => {
                 f.write_str("the team's deadline has passed: propose a plan with a later one")
             }
-            Self::DeadlineTooSoon => {
-                f.write_str("the team's deadline is too soon: give it at least 10 minutes")
-            }
+            Self::DeadlineTooSoon => f.write_str(
+                "the team's deadline is too soon: \
+                     propose a plan with a deadline at least 10 minutes off",
+            ),
             Self::NoTaskItems => {
                 f.write_str("the plan has no task items: add at least one before starting")
             }
@@ -437,8 +438,9 @@ fn terms_of(team: &Team) -> Result<Terms<'_>, BriefRefusal> {
         deadline,
         image,
     } = team;
-    if image.is_some() {
-        return unsupported(TeamField::Image);
+    match image {
+        None => {}
+        Some(_) => return unsupported(TeamField::Image),
     }
     let mut coordinator = None;
     let mut not_applied = Vec::new();
@@ -453,8 +455,9 @@ fn terms_of(team: &Team) -> Result<Terms<'_>, BriefRefusal> {
                 turns,
             },
         } = role;
-        if turns.is_some() {
-            return unsupported(TeamField::Turns);
+        match turns {
+            None => {}
+            Some(_) => return unsupported(TeamField::Turns),
         }
         match (name.as_str() == COORDINATOR_ROLE, *size) {
             (true, 1) => {
@@ -527,12 +530,13 @@ fn brief_item(item: &PlanItem) -> Result<BriefItem, BriefRefusal> {
             bytes,
         })
     };
-    if title.len() > TITLE_MAX_BYTES {
-        return too_large(ItemLimit::Title, title.len());
+    match title.len() {
+        bytes if bytes <= TITLE_MAX_BYTES => {}
+        bytes => return too_large(ItemLimit::Title, bytes),
     }
-    let encoded = json_list_bytes(acceptance.iter().map(String::as_str));
-    if encoded > TEXT_MAX_BYTES {
-        return too_large(ItemLimit::Criteria, encoded);
+    match json_list_bytes(acceptance.iter().map(String::as_str)) {
+        bytes if bytes <= TEXT_MAX_BYTES => {}
+        bytes => return too_large(ItemLimit::Criteria, bytes),
     }
     Ok(BriefItem {
         id: item.id.clone(),

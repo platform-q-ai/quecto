@@ -181,3 +181,22 @@ fn a_start_begins_only_from_ready_or_a_held_status() {
         .collect();
     assert_eq!(starts, [Ready, Claimed, InProgress, Review, Blocked]);
 }
+
+/// A held start moves the task to in progress only by the table's own
+/// row: each held status a start begins from has a holder-only row to in
+/// progress, so a start can never move a task the table would not.
+#[test]
+fn every_held_start_rides_a_holder_row_of_the_table() {
+    for status in [Claimed, Review, Blocked] {
+        let held = task(status);
+        assert!(
+            move_reads(&held, InProgress, &person("Ada"), &at("10:00:00")).is_ok(),
+            "{status:?} has a row to in progress"
+        );
+        assert_eq!(
+            move_reads(&held, InProgress, &person("Bob"), &at("10:00:00")),
+            Err(BoardRuleError::NotHolder),
+            "{status:?}: the row is the holder's"
+        );
+    }
+}
