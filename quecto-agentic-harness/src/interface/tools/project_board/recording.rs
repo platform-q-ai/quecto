@@ -52,9 +52,21 @@ impl BoardCall {
         front_end: FrontEnd,
         client: Client,
     ) -> Self {
-        let open = recording.map(|recording| Open {
+        let arrival = recording.map(|recording| (recording, Instant::now()));
+        Self::arrived(arrival, front_end, client)
+    }
+
+    /// A call from `front_end` for `client` that arrived when `arrival`
+    /// says, with the recording it is recorded in (`None`: recorded
+    /// nowhere, so its arrival was never timed either).
+    pub fn arrived(
+        arrival: Option<(Arc<BoardRecording>, Instant)>,
+        front_end: FrontEnd,
+        client: Client,
+    ) -> Self {
+        let open = arrival.map(|(recording, started)| Open {
             recording,
-            started: Instant::now(),
+            started,
             record: BoardOpRecord {
                 op: OpKind::Unknown,
                 front_end,
@@ -168,12 +180,12 @@ impl BoardCall {
 
     /// Writes the call's record, once its front end sent `answer`:
     /// `cancelled` when the call was dropped before it came back.
-    pub fn finish(self, answer: &Value, cancelled: bool) {
+    pub fn finish(mut self, answer: &Value, cancelled: bool) {
         let Some(Open {
             recording,
             started,
             mut record,
-        }) = self.open
+        }) = self.open.take()
         else {
             return;
         };
@@ -195,6 +207,28 @@ impl BoardCall {
             "the answer's ok {:?} disagrees with its note {noted:?}",
             answer.get("ok")
         );
+    }
+}
+
+impl Drop for BoardCall {
+    /// A recorded call that ends without being finished is recorded all
+    /// the same, with no answer to size or count: refused as `internal`
+    /// when its work panicked (the call unwinds), `cancelled` when it was
+    /// otherwise dropped unanswered.
+    fn drop(&mut self) {
+        if let Some(Open {
+            recording,
+            started,
+            mut record,
+        }) = self.open.take()
+        {
+            match std::thread::panicking() {
+                true => record.outcome = refused("internal", None),
+                false => record.cancelled = true,
+            }
+            record.duration_us = micros(started.elapsed());
+            recording.record(record);
+        }
     }
 }
 

@@ -457,6 +457,19 @@ fn a_time_with_no_four_digit_utc_date_has_no_cli_log_key() {
     assert_eq!(cli_log_key(year_10000), None);
 }
 
+/// Epic #2481 T3 review round 1: the agent tool's recording takes the
+/// switch its session decided, whatever the owner's global file says now.
+#[test]
+fn a_sessions_decided_switch_is_kept() {
+    let base = tempfile::tempdir().unwrap();
+    let config = json!({"telemetry": {"event_log": {"enabled": true}}});
+    std::fs::write(base.path().join("config.json"), config.to_string()).unwrap();
+    let log = AuditLog::open_sync(base.path(), "decided").unwrap();
+    assert!(session_board_recording_decided(false, &log).is_none());
+    std::fs::remove_file(base.path().join("config.json")).unwrap();
+    assert!(session_board_recording_decided(true, &log).is_some());
+}
+
 /// Git records a committer's name byte for byte, so a name spaced with a
 /// chat space (an ideographic space between family and given name) is no
 /// identity the board can record: every write is refused as having no

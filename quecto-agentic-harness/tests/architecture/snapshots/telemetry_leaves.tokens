@@ -81,6 +81,7 @@ const KNOWN_KINDS : & [
 "not_set_aside" ,
 "no_pull_request_host" ,
 "id_in_use" ,
+"internal" ,
 "not_allowed" ,
 "not_holder" ,
 "no_claim" ,

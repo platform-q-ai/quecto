@@ -34,7 +34,8 @@ const fn kind_shaped(text: &str) -> bool {
 
 /// Every kind a record may hold, frozen (append-only): the op names, the
 /// outcomes, front ends, clients, accesses and faults, the task statuses,
-/// the board's error codes and rule codes, and the schema fields of `OPS`
+/// the board's error codes, `internal` (a call that ended without an
+/// answer), rule codes, and the schema fields of `OPS`
 /// with the pseudo-fields `op`, `request` and `other`. Any other text is
 /// recorded as `other`. A test in `answer_tests.rs` holds every error and
 /// rule code the board answers to this list.
@@ -109,6 +110,8 @@ const KNOWN_KINDS: &[&str] = &[
     "not_set_aside",
     "no_pull_request_host",
     "id_in_use",
+    // A call that ended without an answer (T3 review round 1).
+    "internal",
     // Rule codes.
     "not_allowed",
     "not_holder",

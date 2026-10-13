@@ -293,14 +293,13 @@ pub(crate) fn cmd_agent(
     };
     let mut agent = build.agent;
     let key = event_log::one_shot_key(flags.session_name.as_deref());
-    event_log::attach(
-        &mut agent,
-        &base_dir,
-        &flags,
-        &key,
-        build.event_log,
-        out.stderr,
-    );
+    let target = event_log::SessionLogTarget {
+        base_dir: &base_dir,
+        session_key: &key,
+        event_log: build.event_log,
+        project_board: ctx.project_board_recording,
+    };
+    event_log::attach(&mut agent, &flags, &target, out.stderr);
     let handles = crate::interface::cli::run_end_fleet::RunHandles {
         retention: &build.retention,
         run_end: crate::interface::cli::run_end_fleet::RunEnd::compose(
@@ -631,14 +630,13 @@ fn cmd_agent_uds(ctx: &CliContext, mut flags: AgentFlags, stderr: &mut String) -
     agent.set_streaming(true);
     agent.set_session_key(session_identity.clone());
 
-    event_log::attach(
-        &mut agent,
-        &base_dir,
-        &flags,
-        &session_key,
-        build.event_log,
-        stderr,
-    );
+    let target = event_log::SessionLogTarget {
+        base_dir: &base_dir,
+        session_key: &session_key,
+        event_log: build.event_log,
+        project_board: ctx.project_board_recording,
+    };
+    event_log::attach(&mut agent, &flags, &target, stderr);
 
     let model = build.model.clone();
 
