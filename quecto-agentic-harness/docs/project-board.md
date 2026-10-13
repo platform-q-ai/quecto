@@ -199,16 +199,24 @@ writes one `board_fold_back` record under the same switch, gate and rules
 (written to `tracing` at `INFO` as `board fold back`). It holds no titles,
 owners or evidence, only kinds and counts.
 
-The run's own owners and evidence are scrubbed before they reach the board:
-every address in them (`scheme://…`, `//host…` or a bare `host.tld/…`, in a
-code span or a link too) keeps only its host and port (userinfo written
-`***`), its path up to its first `?`, `#`, `;` or `%3F`, and an anchor
-fragment such as `#L10-L20`; an address whose authority is no host and port
-is written `scheme://***`. Secret-shaped spans are then redacted. Known
-limits: a secret in an address's path (a Slack or Discord webhook) is kept; a
-bare `host/…?…` whose host has no dot keeps its query; a secret that is no
-address and matches no redaction pattern is kept. A line split by a line break
-is dropped whole.
+The run's own owners and evidence are scrubbed before they reach the board,
+which is public, so a rule in doubt scrubs. Spaces are made plain first, so an
+address ends where a reader sees it end. Every address in them
+(`scheme://…`, `//host…` or a bare `host.tld` before a `/`, `?` or `#`, in a
+code span or a link too) that holds no `@` and has an unambiguous authority (an
+ASCII host and perhaps a port) keeps that authority, its path up to its first
+`?`, `#`, `;` or `%3F`, and an anchor fragment such as `#L10-L20`; any other
+address is written `scheme://***`. A word holding an `@` before a host
+(`oauth2:token@gitlab.com/…`, an email) is written `***`. Secret-shaped spans,
+an `Authorization: Basic …` credential among them, are then redacted.
+
+Accepted costs: an address with an `@` anywhere (an npm `/@scope`, vite's
+`/@vite/client`, `?to=a@b.co`), and IPv6 or non-ASCII hosts, are scrubbed
+whole; a bare address with no usable host becomes `***`. Known limits: a secret
+in an address's path (a Slack or Discord webhook) is kept; a bare host with no
+dot (`localhost/x?sig=…`), or one glued to a CJK letter or a `_`, keeps its
+query; a secret that is no address and matches no redaction pattern is kept. A
+line split by a line break is dropped whole.
 
 | Field | Meaning |
 |---|---|

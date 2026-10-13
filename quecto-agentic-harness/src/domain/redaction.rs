@@ -64,6 +64,7 @@ impl std::fmt::Display for Redacted {
 ///
 /// Covers both named spans (`<api_key|token|password|secret|access_token>=
 /// <value>`) and tokens that have recognisable prefixes (`Bearer <tok>`,
+/// `Basic <base64>` when the word is no prose,
 /// `sk-` incl. `sk-proj-`/`sk-ant-`/`sk-or-`, AWS `AKIA`, GitHub
 /// `gh[pousr]_`, Slack `xox[baprs]-`, Google `AIza`). This is best-effort:
 /// tokens with no distinguishing shape (bare passwords passed positionally,
@@ -101,6 +102,7 @@ impl std::fmt::Display for Redacted {
 static PATTERNS: LazyLock<regex::Regex> = LazyLock::new(|| {
     regex::Regex::new(concat!(
         r"(?i)(?:bearer\s+\S+",
+        r"|basic\s+(?P<basic>[A-Za-z0-9+/]{8,}={0,2})",
         r"|(?P<lead>(?-i:^|[^A-Za-z]",
         r"|(?:\x1b|\\e|\\x1[bB]|\\033|\\u001[bB]|\^\[)\[[0-9;?]*[A-Za-z]",
         r"|\\[abefnrtv]|\\x[0-9A-Fa-f]{2}|\\u[0-9A-Fa-f]{4}|\\U[0-9A-Fa-f]{8}",
@@ -112,6 +114,15 @@ static PATTERNS: LazyLock<regex::Regex> = LazyLock::new(|| {
     ))
     .expect("static redaction regex is valid")
 });
+
+/// Whether `word`, after `basic`, reads as prose rather than a Base64
+/// credential: ASCII letters alone, none upper case past the first (an
+/// allowlist of what prose is; a credential mixes cases, digits, `+`, `/`
+/// or `=`).
+fn prose(word: &str) -> bool {
+    word.chars().all(|c| c.is_ascii_alphabetic())
+        && word.chars().skip(1).all(|c| c.is_ascii_lowercase())
+}
 
 /// Whether `lead` is one of the word starts [`PATTERNS`] allows before an
 /// `sk-` key, written out independently of the pattern so the assertion
@@ -181,6 +192,10 @@ fn is_ansi_csi(text: &str) -> bool {
 pub(crate) fn redact_secrets(input: &str) -> String {
     PATTERNS
         .replace_all(input, |caps: &regex::Captures<'_>| {
+            // A word after `basic` that reads as prose is no credential.
+            if caps.name("basic").is_some_and(|word| prose(word.as_str())) {
+                return caps[0].to_string();
+            }
             let lead = caps.name("lead").map_or("", |lead| lead.as_str());
             debug_assert!(
                 is_key_lead(lead),

@@ -15,21 +15,28 @@
 //!   done, blocked blocked. A plan item the swarm never seeded is todo
 //!   (`unmatched`); a swarm item no plan item takes is counted (`extra`),
 //!   never kept.
-//! - **Secrets:** every address in an owner or evidence part, wherever it
-//!   stands (bare, in a code span, in a link; `scheme://…`, `//host…` or
-//!   a bare `host.tld/…`), keeps only what [`kept`] allows: a host and
-//!   port (userinfo written `***`), the path up to its first `?`, `#`, `;`
-//!   or `%3F`, and an anchor fragment straight after it. An authority that
-//!   is no host and port gives the whole address away (`scheme://***`).
-//!   Then every secret-shaped span is redacted. The board is pushed, and
-//!   read by every member.
+//! - **Secrets:** the board is public, so when a rule is in doubt it
+//!   scrubs. Spaces are made plain first, so an address ends where a
+//!   reader sees it end. Every address in an owner or evidence part,
+//!   wherever it stands (bare, in a code span, in a link; `scheme://…`,
+//!   `//host…` or a bare `host.tld` before a `/`, `?` or `#`), keeps only
+//!   what [`kept`] allows: when it holds no `@` and its authority is
+//!   unambiguous, that authority, its path up to its first `?`, `#`, `;` or
+//!   `%3F`, and an anchor fragment straight after it; otherwise it is
+//!   written `scheme://***`. A word holding an `@` before a host
+//!   (`oauth2:token@gitlab.com/…`, an email) is written `***`. Then every
+//!   secret-shaped span is redacted, and any URL userinfo left with it.
+//! - **Accepted costs:** an address with an `@` anywhere (an npm `/@scope`,
+//!   vite's `/@vite/client`, `?to=a@b.co`) is scrubbed whole, as are IPv6
+//!   and non-ASCII hosts; a bare address with no usable host becomes `***`.
 //! - **Known limits** (best effort, as the shared redactor is): a secret in
 //!   an address's path (a Slack or Discord webhook's token) is kept, since
-//!   no pattern of the redactor names one; a bare `host/…?…` with no dot
-//!   in its host (`localhost/x?sig=…`) keeps its query; and a secret that
-//!   is no address and matches no redactor pattern (a bare `sig=…` pair)
-//!   is kept. A line split by a line break is never one board line, so it
-//!   is dropped whole.
+//!   no pattern of the redactor names one; a bare host with no dot
+//!   (`localhost/x?sig=…`), or one glued to a CJK letter or a `_`, is not
+//!   read as an address, so it keeps its query; and a secret that is no
+//!   address and matches no redactor pattern (a bare `sig=…` pair) is
+//!   kept. A line split by a line break is never one board line, so it is
+//!   dropped whole.
 //! - **Owner:** the member id, as one board line cut to
 //!   [`MAX_OWNER_CHARS`]; none when the board cannot hold it.
 //! - **Evidence:** one line per entry, `<artifact> at <revision>`, each
@@ -52,7 +59,7 @@ use crate::domain::project_board::value_objects::board_text;
 use crate::domain::project_board::value_objects::schema_error::line;
 use crate::domain::project_board::value_objects::telemetry::ItemCounts;
 use crate::domain::project_board::value_objects::vocabulary::{ItemState, RunOutcome};
-use crate::domain::redaction::redact_secrets;
+use crate::domain::redaction::{redact_secrets, redact_url_userinfo};
 use crate::domain::swarm::{RunState, TaskState};
 use regex::{Captures, Regex};
 use std::sync::LazyLock;
@@ -61,26 +68,38 @@ use std::sync::LazyLock;
 const HTTPS: &str = "https://";
 /// The text of a link written for a bare address.
 const LINK_TEXT: &str = "link";
-/// What an address's userinfo is written as: dropped from a linked one.
-const REDACTED_USER: &str = "***";
 /// What may close a query and is given back to the text around it: a code
 /// span's backtick, a link's or quote's close, punctuation.
 const QUERY_CLOSERS: [char; 12] = ['`', ')', ']', '>', '"', '\'', '.', ',', ';', ':', '!', '?'];
 /// An address anywhere in text (in a code span or a link included), to
 /// the next space: a `scheme://` one (`scheme`, then `rest`); a
 /// scheme-relative `//host…` one after the start, a space or an opening
-/// mark (`lead`, then `relative`); or a bare `host.tld[:port]/…` one
-/// (`bare`).
+/// mark (`lead`, then `relative`); or a bare `host.tld[:port]` one
+/// followed by a `/`, `?` or `#` (`bare`).
 static ADDRESS: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(concat!(
         r"(?P<scheme>[A-Za-z][A-Za-z0-9+.\-]*://)(?P<rest>\S*)",
         r#"|(?P<lead>^|[\s`(\[<"'])(?P<relative>//[^\s/]\S*)"#,
-        r"|\b(?P<bare>[A-Za-z0-9\-]+(?:\.[A-Za-z0-9\-]+)+(?::[0-9]+)?/\S*)",
+        r"|\b(?P<bare>[A-Za-z0-9\-]+(?:\.[A-Za-z0-9\-]+)+(?::[0-9]+)?[/?#]\S*)",
     ))
     .expect("a valid pattern")
 });
-/// What an address whose authority is no host and port is written as.
+/// What an address holding an `@`, or whose authority is ambiguous, is
+/// written as past its scheme; and what a word holding an `@` before a
+/// host is written as.
 const SCRUBBED: &str = "***";
+/// A word holding an `@` before what may be a host (a letter or digit,
+/// then a `.` or `/` before the next space): userinfo glued to a host with
+/// no scheme (`oauth2:token@gitlab.com/…`), an email, or the tail of an
+/// address a space cut.
+static AT_HOST: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"\S*@[A-Za-z0-9][A-Za-z0-9.\-]*[./]\S*").expect("a valid pattern")
+});
+/// What may open a word and stays when the word is scrubbed.
+const WORD_OPENERS: [char; 6] = ['`', '(', '[', '<', '"', '\''];
+/// The line breaks [`board_text::line`] reads as one: kept by [`spaced`],
+/// so a line they break is still refused as two.
+const LINE_BREAKS: [char; 6] = ['\n', '\r', '\u{2028}', '\u{2029}', '\u{85}', '\u{b}'];
 /// What may stand before a bare address and stay outside its link.
 const OPENERS: [char; 2] = ['<', '('];
 /// What may follow a bare address and stay outside its link.
@@ -367,12 +386,38 @@ pub fn cost_of(view: &SwarmRunView) -> u64 {
     view.observed_tokens.min(MAX_BUDGET_TOKENS)
 }
 
-/// `raw` from outside the board as one board line: each address in it
-/// kept to what [`kept_address`] keeps, then every secret-shaped span
-/// redacted.
+/// `raw` from outside the board as one board line: its spaces made plain
+/// ([`spaced`]); each address in it kept to what [`kept`] keeps; each
+/// word holding an `@` before a host written [`SCRUBBED`] ([`at_host`]);
+/// every secret-shaped span redacted; and, as a backstop, any URL userinfo
+/// still left redacted.
 fn scrubbed(raw: &str) -> String {
-    let addressed = ADDRESS.replace_all(raw, kept_address);
-    board_text::line(&redact_secrets(&addressed))
+    let spaced = spaced(raw);
+    let addressed = ADDRESS.replace_all(&spaced, kept_address);
+    let worded = AT_HOST.replace_all(&addressed, at_host);
+    board_text::line(&redact_url_userinfo(&redact_secrets(&worded)))
+}
+
+/// `raw` with every space but a line break a plain one, so an address ends
+/// where a reader sees it end (a no-break space cannot hide the rest of a
+/// password past it).
+fn spaced(raw: &str) -> String {
+    raw.chars()
+        .map(|c| match c.is_whitespace() && !LINE_BREAKS.contains(&c) {
+            true => ' ',
+            false => c,
+        })
+        .collect()
+}
+
+/// A word [`AT_HOST`] found, written [`SCRUBBED`] but for the marks that
+/// open and close it (a code span's backticks, a link's or quote's marks).
+fn at_host(found: &Captures<'_>) -> String {
+    let word = &found[0];
+    let opened = word.trim_start_matches(WORD_OPENERS);
+    let core = opened.trim_end_matches(QUERY_CLOSERS);
+    let (lead, trail) = (&word[..word.len() - opened.len()], &opened[core.len()..]);
+    format!("{lead}{SCRUBBED}{trail}")
 }
 
 /// What an address in text keeps of itself ([`kept`]), its scheme, its
@@ -392,17 +437,17 @@ fn kept_address(found: &Captures<'_>) -> String {
 }
 
 /// What an address keeps of `span` (all of it past `prefix`, up to the
-/// next space), an allowlist: an authority that is a host and port (any
-/// userinfo before them written [`REDACTED_USER`]), its path up to its
+/// next space), an allowlist. An address holding no `@` anywhere, whose
+/// authority is unambiguous ([`unambiguous`]), keeps it, its path up to its
 /// first `?`, `#`, `;` or `%3F`, and a fragment only when it is an anchor
-/// straight after that path. A query, matrix parameters or any other
+/// straight after that path; a query, matrix parameters or any other
 /// fragment (where a signed URL's signature or a token rides) is dropped.
-/// An authority that is no host and port (a password holding `#`, `?` or
-/// `/`, or one of digits read as a port with an `@` after it) gives the
-/// whole address away: it is written `prefix***`. The [`QUERY_CLOSERS`]
-/// that end the span belong to the text around it (a code span's
-/// backtick, a link's close) and are given back, but for a parenthesis or
-/// bracket that closes one opened in what was dropped.
+/// Any other address is written `prefix***`: an `@` may end a userinfo
+/// anywhere in it (a password may hold `/`, `?` or `#`), and the board is
+/// public, so it is never guessed where. The [`QUERY_CLOSERS`] that end the
+/// span belong to the text around it (a code span's backtick, a link's
+/// close) and are given back, but for a parenthesis or bracket that closes
+/// one opened in what was dropped.
 fn kept(prefix: &str, span: &str) -> String {
     let core = span.trim_end_matches(QUERY_CLOSERS);
     let address = parts(core).unwrap_or_else(|| SCRUBBED.to_string());
@@ -411,33 +456,23 @@ fn kept(prefix: &str, span: &str) -> String {
 }
 
 /// The parts of `core` (an address past its scheme) an address keeps, or
-/// none when its authority is no host and port.
+/// none when it holds an `@` or its authority is ambiguous.
 fn parts(core: &str) -> Option<String> {
     let (authority, rest) = core.split_at(core.find(['/', '?', '#']).unwrap_or(core.len()));
-    let (user, host) = match authority.rsplit_once('@') {
-        Some((_, host)) => (true, host),
-        None => (false, authority),
-    };
-    // A password of digits before a `/`, `?` or `#` reads as a port; the
-    // `@` that ends it is still to come.
-    let ported = host.contains(':');
-    match host_shaped(host) && !(ported && !user && rest.contains('@')) {
+    match !core.contains('@') && unambiguous(authority) {
         true => {}
         false => return None,
     }
-    let path_end = path_end(rest);
-    let (path, after) = rest.split_at(path_end);
-    let fragment = after
-        .strip_prefix('#')
-        .filter(|fragment| anchor_shaped(fragment));
-    let userinfo = match user {
-        true => format!("{REDACTED_USER}@"),
-        false => String::new(),
-    };
-    Some(match fragment {
-        Some(fragment) => format!("{userinfo}{host}{path}#{fragment}"),
-        None => format!("{userinfo}{host}{path}"),
-    })
+    let (path, after) = rest.split_at(path_end(rest));
+    Some(
+        match after
+            .strip_prefix('#')
+            .filter(|fragment| anchor_shaped(fragment))
+        {
+            Some(fragment) => format!("{authority}{path}#{fragment}"),
+            None => format!("{authority}{path}"),
+        },
+    )
 }
 
 /// Where a path ends in `rest` (what follows an authority): at its first
@@ -466,9 +501,10 @@ fn balanced(core: &str, kept: &str, closing: &str) -> String {
     given
 }
 
-/// Whether `host` is a host name and, perhaps, a port of digits (an
-/// allowlist).
-fn host_shaped(host: &str) -> bool {
+/// Whether `host`, an authority, is unambiguous: an ASCII host name and,
+/// perhaps, a port of one or more digits, and nothing else (no userinfo,
+/// no IPv6 or non-ASCII host, which are scrubbed rather than read).
+fn unambiguous(host: &str) -> bool {
     let (name, port) = host.split_once(':').unwrap_or((host, "0"));
     !name.is_empty()
         && name
@@ -502,7 +538,14 @@ fn linked(text: &str) -> String {
 /// what is left is no [`address`].
 fn linked_word(word: &str) -> String {
     let opened = word.trim_start_matches(OPENERS);
-    let core = opened.trim_end_matches(CLOSERS);
+    let mut core = opened.trim_end_matches(CLOSERS);
+    // A close that balances an open inside the address is the address's
+    // (`…/Rust_(programming_language)`).
+    while core.matches('(').count() > core.matches(')').count()
+        && opened[core.len()..].starts_with(')')
+    {
+        core = &opened[..core.len() + 1];
+    }
     let (lead, trail) = (&word[..word.len() - opened.len()], &opened[core.len()..]);
     match address(core) {
         Some(address) => format!(
@@ -514,21 +557,19 @@ fn linked_word(word: &str) -> String {
     }
 }
 
-/// `core` as the address a link holds: an `https://` address whose
-/// authority (up to its first `/`, `?` or `#`) is a host and port, with at
-/// most the [`REDACTED_USER`] userinfo [`kept`] writes (dropped here); its
-/// path to its first `?`, `#`, `;` or `%3F`, and an anchor fragment
+/// `core` as the address a link holds: an `https://` address holding no
+/// `@`, whose authority (up to its first `/`, `?` or `#`) is unambiguous;
+/// its path to its first `?`, `#`, `;` or `%3F`, and an anchor fragment
 /// straight after it, kept; its parentheses percent-encoded; and every
 /// character one the codec's address takes (an allowlist). None
 /// otherwise, so the word is left for the codec to judge.
 fn address(core: &str) -> Option<String> {
     let rest = core.strip_prefix(HTTPS)?;
     let (authority, tail) = rest.split_at(rest.find(['/', '?', '#']).unwrap_or(rest.len()));
-    let host = match authority.split_once('@') {
-        None => authority,
-        Some((REDACTED_USER, host)) => host,
-        Some(_) => return None,
-    };
+    match !rest.contains('@') && unambiguous(authority) {
+        true => {}
+        false => return None,
+    }
     let (path, after) = tail.split_at(path_end(tail));
     let kept = match after
         .strip_prefix('#')
@@ -538,8 +579,10 @@ fn address(core: &str) -> Option<String> {
         None => path.to_string(),
     };
     let encoded = kept.replace('(', "%28").replace(')', "%29");
-    let shaped = host_shaped(host) && encoded.chars().all(path_char);
-    shaped.then(|| format!("{HTTPS}{host}{encoded}"))
+    encoded
+        .chars()
+        .all(path_char)
+        .then(|| format!("{HTTPS}{authority}{encoded}"))
 }
 
 /// A character the codec's address takes in its host part.
@@ -547,9 +590,10 @@ fn host_char(c: char) -> bool {
     c.is_ascii_alphanumeric() || "-._~:!&'*+,;=%".contains(c)
 }
 
-/// A character the codec's address takes past its host.
+/// A character the codec's address takes past its host, but an `@`
+/// (refused in any address here).
 fn path_char(c: char) -> bool {
-    host_char(c) || "/?#@".contains(c)
+    host_char(c) || "/?#".contains(c)
 }
 
 /// Member id `raw` as an owner: one board line, its secrets redacted, cut

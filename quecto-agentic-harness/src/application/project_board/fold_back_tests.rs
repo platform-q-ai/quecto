@@ -218,7 +218,7 @@ fn evidence_the_codec_refuses_is_dropped_and_counted_never_the_fold_back() {
         None,
         &[
             ("costs $5", "4f2a9c1"),
-            ("mailed ada@example.com", "4f2a9c1"),
+            ("ftp://example.com/x", "4f2a9c1"),
             ("http://example.com/x", "4f2a9c1"),
             ("www.example.com", "4f2a9c1"),
             ("src/api.rs", "4f2a9c1"),
@@ -513,7 +513,6 @@ fn secrets_never_reach_the_run() {
             "deployed at [REDACTED]",
             "[REDACTED] at main",
             "[link](https://bucket.s3.amazonaws.com/build.tgz) at v1",
-            "[link](https://github.com/o/r) at main",
         ]
     );
     assert_eq!(items.items[0].owner.as_deref(), Some("worker [REDACTED]"));

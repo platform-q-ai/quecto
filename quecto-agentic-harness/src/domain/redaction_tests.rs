@@ -239,3 +239,29 @@ fn a_key_lead_is_one_of_the_allowed_word_starts() {
         assert!(!is_key_lead(lead), "{lead:?}");
     }
 }
+
+#[test]
+fn a_basic_credential_is_redacted_in_any_case_and_prose_is_not() {
+    for header in [
+        "Authorization: Basic dXNlcjpwYXNzd29yZA==",
+        "authorization: basic dXNlcjpwYXNzd29yZA==",
+        "AUTHORIZATION: BASIC dXNlcjpw",
+        "Basic YWRhOjEyMzQ1Njc4",
+        "basic\tQWxhZGRpbjpvcGVuIHNlc2FtZQ==",
+    ] {
+        let redacted = redact_secrets(header);
+        assert!(redacted.ends_with("[REDACTED]"), "{header}: {redacted}");
+        assert!(
+            !redacted.contains("dXNl") && !redacted.contains("YWRh"),
+            "{redacted}"
+        );
+    }
+    for prose in [
+        "a basic understanding of it",
+        "Basic Authentication is set",
+        "the basic setup",
+        "basic abc",
+    ] {
+        assert_eq!(redact_secrets(prose), prose);
+    }
+}
