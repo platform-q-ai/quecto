@@ -34,6 +34,12 @@ impl Records {
     }
 }
 
+/// An outcome as its record's line holds it: the kinds by their names, so
+/// a kind missing from `KNOWN_KINDS` shows as `other` here.
+fn outcome_line(outcome: &OpOutcome) -> Value {
+    serde_json::to_value(outcome).unwrap()
+}
+
 /// A recording into `records`, as a switched-on session's would be.
 pub(crate) fn recording(records: &Arc<Records>) -> Arc<BoardRecording> {
     let log: Arc<dyn ProjectBoardOpLog> = records.clone();
@@ -290,11 +296,10 @@ fn an_id_in_use_refusal_records_its_code() {
     assert_eq!(answer["error"]["code"], json!("id_in_use"));
     call.finish(&answer, false);
     let record = records.taken().remove(0);
-    let in_use = OpOutcome::Refused {
-        code: StaticKind::new("id_in_use"),
-        rule: None,
-    };
-    assert_eq!((record.outcome, record.fault), (in_use, None));
+    assert_eq!(
+        (outcome_line(&record.outcome), record.fault),
+        (json!({"outcome": "refused", "code": "id_in_use"}), None)
+    );
 }
 
 /// Review round 1: the board's refusals that name a schema field record
@@ -352,26 +357,22 @@ fn the_answer_decides_an_outcome_its_note_disagrees_with() {
         code: StaticKind::new("stale"),
         rule: None,
     };
-    assert_eq!(answered_outcome(OpOutcome::Ok, &ok), OpOutcome::Ok);
+    let line = |noted: OpOutcome, answer: &Value| outcome_line(&answered_outcome(noted, answer));
+    assert_eq!(line(OpOutcome::Ok, &ok), json!({"outcome": "ok"}));
     assert_eq!(
-        answered_outcome(noted_refusal.clone(), &refused),
-        noted_refusal
+        line(noted_refusal.clone(), &refused),
+        json!({"outcome": "refused", "code": "stale"}),
+        "an agreeing answer keeps the note"
     );
-    assert_eq!(answered_outcome(noted_refusal, &ok), OpOutcome::Ok);
+    assert_eq!(line(noted_refusal, &ok), json!({"outcome": "ok"}));
     let unknown = json!({"ok": false, "error": {"code": "Secret Code"}});
     assert_eq!(
-        answered_outcome(OpOutcome::Ok, &refused),
-        OpOutcome::Refused {
-            code: StaticKind::new("not_found"),
-            rule: None
-        }
+        line(OpOutcome::Ok, &refused),
+        json!({"outcome": "refused", "code": "not_found"})
     );
     assert_eq!(
-        answered_outcome(OpOutcome::Ok, &unknown),
-        OpOutcome::Refused {
-            code: StaticKind::OTHER,
-            rule: None
-        }
+        line(OpOutcome::Ok, &unknown),
+        json!({"outcome": "refused", "code": "other"})
     );
 }
 
@@ -403,9 +404,8 @@ fn a_disagreeing_answer_is_recorded_then_caught_in_debug_builds() {
         1,
         "the record is written before the assertion"
     );
-    let not_found = OpOutcome::Refused {
-        code: StaticKind::new("not_found"),
-        rule: None,
-    };
-    assert_eq!(written[0].outcome, not_found);
+    assert_eq!(
+        outcome_line(&written[0].outcome),
+        json!({"outcome": "refused", "code": "not_found"})
+    );
 }
