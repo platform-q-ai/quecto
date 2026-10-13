@@ -24,7 +24,7 @@
 use super::*;
 use crate::application::project_board::ports::{KeepCopy, QuarantinedFile, SetAsideClear};
 use crate::infrastructure::persistence::project_board::board_tree::{
-    MAX_TASK_FILE_BYTES, TASK_NAMING, TASKS, TreeCopy, read_size_in, spells_id,
+    MAX_BOARD_ENTRIES, MAX_TASK_FILE_BYTES, TASK_NAMING, TASKS, TreeCopy, read_size_in, spells_id,
 };
 
 /// The most names a refusal lists before it says how many more there are.
@@ -57,19 +57,20 @@ impl GitBoardStore {
         let seen = |keep: &KeepCopy| match keep {
             KeepCopy::Object { seen, .. } | KeepCopy::Drop(seen) => seen.len(),
         };
-        // A board a read takes holds at most so many names listed twice,
-        // and entries: what a clear saw is bounded by them; the copy it
-        // keeps is one it saw, not counted again.
+        // A board a read takes holds at most so many entries in all its
+        // folders, each name listed twice two of them, and one clear
+        // resolves every such name: what a clear saw is bounded by them;
+        // the copy it keeps is one it saw, not counted again.
         let saw: usize = clear.repeated.values().map(seen).sum();
         match (
-            clear.repeated.len() <= MAX_READ_ENTRIES / 2,
-            saw <= MAX_READ_ENTRIES,
+            clear.repeated.len() <= MAX_BOARD_ENTRIES / 2,
+            saw <= MAX_BOARD_ENTRIES,
         ) {
             (true, true) => {}
             _ => {
                 return Err(invalid(format!(
-                    "a clear resolves at most {} names and {MAX_READ_ENTRIES} copies",
-                    MAX_READ_ENTRIES / 2
+                    "a clear resolves at most {} names and {MAX_BOARD_ENTRIES} copies",
+                    MAX_BOARD_ENTRIES / 2
                 )));
             }
         }

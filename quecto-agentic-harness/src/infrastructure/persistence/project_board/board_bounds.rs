@@ -55,10 +55,13 @@ impl Board {
     /// The board a clear of `before` leaves keeps within what a read takes:
     /// a clear never adds an entry, so a board read past what a write
     /// leaves (one written before the task files became markdown) can
-    /// still be cleared, file by file, back within it.
+    /// still be cleared, file by file, back within it. A copy a clear keeps
+    /// of a name listed twice is read again, so its bytes count: keeping
+    /// one may take a folder, `tasks/` or the board past what a read takes
+    /// (S10b), and such a clear is invalid, naming the way out.
     ///
     /// # Errors
-    /// An invalid clear past either bound.
+    /// An invalid clear past any bound.
     pub fn within_clear_bounds(
         &self,
         before: &Board,
@@ -66,11 +69,16 @@ impl Board {
         limits: Limits,
     ) -> Result<(), BoardStoreError> {
         let cap = MAX_TASK_ENTRIES.max(before.entries(&[]));
-        // A clear only takes files away from folders a read took within
-        // their bounds, so no folder's own bound can fail here.
-        debug_assert!(folders_within(folders).is_ok(), "a clear grows no folder");
-        self.entries_within(&[], cap, folders)?;
-        self.bytes_within(&[], limits, folders)
+        let kept = |error: BoardStoreError| match error {
+            BoardStoreError::InvalidWrite(why) => BoardStoreError::InvalidWrite(format!(
+                "{why}; the copy this clear keeps takes it there, so drop that name's copies \
+                 instead"
+            )),
+            other => other,
+        };
+        folders_within(folders).map_err(kept)?;
+        self.entries_within(&[], cap, folders).map_err(kept)?;
+        self.bytes_within(&[], limits, folders).map_err(kept)
     }
 
     /// The entries of the `tasks/` tree with `written` in place. A file a

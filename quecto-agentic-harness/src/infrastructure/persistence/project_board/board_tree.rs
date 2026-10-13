@@ -235,8 +235,8 @@ pub(super) fn named_twice(path: &str, head: &str, copies: &[TreeCopy], writes: &
     let oids: Vec<&str> = copies.iter().map(|copy| copy.oid.as_str()).collect();
     format!(
         "{path} is named more than once in board commit {head} (objects {}). quecto never \
-         writes such a tree, so a hand edit did, and git rejects it (fsck: duplicateEntries): \
-         {writes} can carry it forward, and quecto will not choose a copy. To mend the board, \
+         writes such a tree, so a hand edit did, and git rejects any new tree holding it (fsck: \
+         duplicateEntries): {writes} can carry it forward, and quecto will not choose a copy. To mend the board, \
          clear it (clear set-aside), naming the copy to keep for every name listed more than \
          once, or {RECOVERY}",
         oids.join(", ")
