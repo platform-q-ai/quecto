@@ -31,7 +31,7 @@ pub(super) fn task_name(name: &str) -> Option<(Option<Slug>, TaskFile)> {
 
 /// How a folder names its files, and how a reason names them.
 #[derive(Debug, Clone, Copy)]
-pub(super) struct Naming {
+pub struct Naming {
     /// The folder, `tasks`.
     pub folder: &'static str,
     /// What one of its files holds: `task`.
@@ -47,7 +47,7 @@ pub(super) struct Naming {
 }
 
 /// How `tasks/` names its files.
-pub(super) const TASK_NAMING: Naming = Naming {
+pub const TASK_NAMING: Naming = Naming {
     folder: "tasks",
     noun: "task",
     spelled: "task id",

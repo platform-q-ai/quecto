@@ -288,7 +288,7 @@ fn paths(snapshot: &BoardSnapshot) -> Vec<(&str, Option<&str>)> {
 /// mode, but is not a blob"), so it reaches a store only through objects
 /// it already holds; the store still never trusts a mode over a type. A
 /// task file of that shape is set aside and dropped by the next write
-/// (carrying it would make a board no one can fetch).
+/// (carrying it would make a board no one can fetch), so it holds no id.
 #[test]
 fn a_file_mode_over_a_tree_object_is_set_aside_and_never_stops_a_write() {
     let repos = Repos::new();
@@ -315,9 +315,17 @@ fn a_file_mode_over_a_tree_object_is_set_aside_and_never_stops_a_write() {
         board.tasks.keys().map(Slug::as_str).collect::<Vec<_>>(),
         ["good"]
     );
-    let refused = bob.write_tasks(&head, &[task("tree")], "board: write tree");
-    assert!(matches!(refused, Ok(BoardWrite::Refused(_))), "{refused:?}");
-    let moved = written(bob.write_tasks(&head, &[task("fresh")], "board: add fresh"));
+    // Dropped by the next write, it holds no id: a write of its task lands
+    // in its place (#2481 Q1 review round 2).
+    let replaced = written(bob.write_tasks(&head, &[task("tree")], "board: write tree"));
+    assert_eq!(
+        sh(
+            &repos.remote(),
+            &["cat-file", "-t", &format!("{}:tasks/tree.md", replaced.0)]
+        ),
+        "blob"
+    );
+    let moved = written(bob.write_tasks(&replaced, &[task("fresh")], "board: add fresh"));
     let kept = sh(&repos.remote(), &["ls-tree", "-r", &moved.0]);
     let kept: Vec<(&str, &str)> = kept
         .lines()
@@ -333,6 +341,7 @@ fn a_file_mode_over_a_tree_object_is_set_aside_and_never_stops_a_write() {
             ("format/board", "100644 blob "),
             ("tasks/fresh.md", "100644 blob "),
             ("tasks/good.md", "100644 blob "),
+            ("tasks/tree.md", "100644 blob "),
         ]
     );
     assert_eq!(

@@ -35,10 +35,11 @@ impl GitBoardStore {
         if let Some(refusal) = board.folders_repeated_refusal() {
             return Err(BoardStoreError::FolderSetAside(refusal));
         }
+        // A file the next write drops holds no key: the write replaces it.
         let set_aside = board
             .quarantined
             .iter()
-            .find(|file| file.key.as_ref().is_some_and(|key| keys.contains(key)));
+            .find(|file| file.carried && file.key.as_ref().is_some_and(|key| keys.contains(key)));
         if let Some(file) = set_aside {
             return Ok(BoardWrite::Refused(format!(
                 "{} is set aside: {}",

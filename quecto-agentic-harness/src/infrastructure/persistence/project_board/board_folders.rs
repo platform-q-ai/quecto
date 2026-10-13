@@ -174,10 +174,10 @@ pub struct CarriedTree {
 }
 
 impl CarriedTree {
-    /// Whether a write that leaves it as it was still drops an entry of
-    /// it, and so rebuilds it.
-    pub fn drops(&self) -> bool {
-        self.files.len() != self.entries
+    /// Whether a write carries every entry of it, so one that leaves it as
+    /// it was carries its very tree; otherwise it rebuilds it.
+    pub fn carries_every_entry(&self) -> bool {
+        self.files.len() == self.entries
     }
 }
 

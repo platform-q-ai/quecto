@@ -20,7 +20,9 @@
 //! rebuilt without it. Names listed twice there wait for S10b.
 use super::*;
 use crate::application::project_board::ports::{KeepCopy, QuarantinedFile, SetAsideClear};
-use crate::infrastructure::persistence::project_board::board_tree::{TASKS, TreeCopy, spells_id};
+use crate::infrastructure::persistence::project_board::board_tree::{
+    TASK_NAMING, TASKS, TreeCopy, spells_id,
+};
 
 /// The most names a refusal lists before it says how many more there are.
 const LISTED: usize = 8;
@@ -158,7 +160,7 @@ fn cleared(board: &Board, clear: &SetAsideClear) -> Result<Board, String> {
         },
         None => {
             let file = named(board, clear)?;
-            drop_file(&mut after, file)?;
+            drop_file(&mut after, file);
             Ok(after)
         }
     }
@@ -248,11 +250,17 @@ fn named<'a>(board: &'a Board, clear: &SetAsideClear) -> Result<&'a QuarantinedF
 /// rebuilds without it). A carried name always shows exactly as it is (the
 /// read asserts it), so the shown path finds it; a stray that shows the
 /// same path is never carried, and the write drops it.
-fn drop_file(board: &mut Board, file: &QuarantinedFile) -> Result<(), String> {
-    let no_folder = || format!("{} lies in no folder this quecto reads", file.path);
-    let (folder, name) = file.path.split_once('/').ok_or_else(no_folder)?;
+fn drop_file(board: &mut Board, file: &QuarantinedFile) {
+    let split = file.path.split_once('/');
+    let (folder, name) = split.unwrap_or_default();
+    // A read sets aside files only in `tasks/` and the folders it read.
+    assert!(
+        folder == TASK_NAMING.folder || board.folders.contains_key(folder),
+        "a file set aside lies in a folder the read read: {}",
+        file.path
+    );
     let object = |entry: &String| entry.rsplit(' ').next() == Some(file.object.as_str());
-    match (folder == "tasks", board.folders.get_mut(folder)) {
+    match (folder == TASK_NAMING.folder, board.folders.get_mut(folder)) {
         (true, _) => {
             if board.kept.get(name).is_some_and(object) {
                 board.kept.remove(name);
@@ -265,10 +273,9 @@ fn drop_file(board: &mut Board, file: &QuarantinedFile) -> Result<(), String> {
                 tree.sizes.remove(name);
             }
         }
-        (false, None) => return Err(no_folder()),
+        (false, None) => {}
     }
     board.quarantined.retain(|other| {
         (other.path.as_str(), other.object.as_str()) != (file.path.as_str(), file.object.as_str())
     });
-    Ok(())
 }

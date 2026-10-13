@@ -63,8 +63,9 @@ pub enum ErrorCode {
     StoreUnavailable,
     /// `reason`: the board is past what a read takes.
     BoardTooLarge,
-    /// `reason`: a file set aside outside `tasks/` holds the board (no
-    /// write or clear, and no listing while it names another kind's key).
+    /// `reason`: the board is held outside `tasks/`: no write or clear
+    /// while a name there is listed twice, and no listing while a file set
+    /// aside there names another kind's key.
     FolderSetAside,
     /// `rule`: `{"code", …}`.
     Rule,

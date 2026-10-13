@@ -21,8 +21,8 @@ kind's file and carries every other file by its object. A folder the write leave
 alone is carried as the same tree. A folder it writes in, or one holding a stray
 (any entry a write drops), is rebuilt from the files it carries, and a folder left
 with nothing in it is omitted. A file set aside is carried as it is, and writes to
-its key are refused, unless it is one a write drops. A clear removes one file set
-aside, in any folder. While a name outside `tasks/` is listed more than once, every
+its key are refused, unless it is one a write drops: a write of its key replaces
+it. A clear removes one file set aside, in any folder. While a name outside `tasks/` is listed more than once, every
 write and clear is refused (`folder_set_aside`) until a later quecto can clear it.
 Listings are unavailable (`folder_set_aside`) while a file set aside outside
 `tasks/` names a plan, run, change, review or discussion, since the index holds

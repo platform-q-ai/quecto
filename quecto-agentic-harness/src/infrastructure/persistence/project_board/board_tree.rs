@@ -595,6 +595,7 @@ pub use bounds::within;
 use bounds::within_read;
 #[path = "board_entries.rs"]
 mod entries;
+pub use entries::TASK_NAMING;
 use entries::{TaskFile, task_name};
 #[path = "board_folders.rs"]
 mod folders;

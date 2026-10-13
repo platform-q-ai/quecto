@@ -328,7 +328,7 @@ impl ProjectBoardStore for MemoryBoardStore {
             board
                 .quarantined
                 .iter()
-                .find(|file| file.key.as_ref() == Some(key))
+                .find(|file| file.carried && file.key.as_ref() == Some(key))
         };
         if let Some(file) = artifacts
             .iter()

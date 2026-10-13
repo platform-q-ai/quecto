@@ -127,7 +127,7 @@ impl Board {
         );
         let after = match (read, mine.is_empty()) {
             (None, true) => return None,
-            (Some(tree), true) if !tree.drops() => FolderAfter::Carried(tree),
+            (Some(tree), true) if tree.carries_every_entry() => FolderAfter::Carried(tree),
             (read, _) => {
                 let empty = CarriedTree::default();
                 let tree = read.unwrap_or(&empty);
@@ -157,9 +157,9 @@ impl Board {
         // No quecto writes over such a board, so moving back undoes hand
         // edits alone; the refusal says so.
         Some(format!(
-            "{path} is named more than once, and this quecto neither writes nor clears the board \
-             while a name outside {TASKS} is, so quecto has written nothing since that edit: to \
-             write the board again, {RECOVERY} (which undoes any hand edit after it too)"
+            "{path} is named more than once, and this quecto writes nothing over such a board, \
+             not even a clear, while a name outside {TASKS} is: to write the board again, \
+             {RECOVERY} (which undoes any hand edit after it too)"
         ))
     }
 
