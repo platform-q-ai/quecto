@@ -61,6 +61,9 @@ fn test_composition() -> CliComposition {
         project_board_recording: board::BoardToolRecordingBuilder(
             crate::composition::bootstrap::project_board::session_board_recording_decided,
         ),
+        board_cli_recording: super::board::CliRecordingBuilder(
+            crate::composition::bootstrap::project_board::cli_board_recording,
+        ),
         claude_member: crate::composition::claude_member::build_claude_member_handles,
     }
 }
@@ -115,6 +118,7 @@ fn a_real_runs_context_carries_every_composed_builder() {
             "project_board_recording",
             ctx.project_board_recording.is_some(),
         ),
+        ("board_cli_recording", ctx.board_cli_recording.is_some()),
     ];
     let present: Vec<_> = composed
         .iter()

@@ -351,3 +351,102 @@ fn stdin_input_failures_are_recorded_as_the_requests() {
     let broken = request(&line, || Err(InputError::Read(std::io::Error::other("x")))).unwrap_err();
     assert_eq!(recorded(broken), ("request", "invalid_value"));
 }
+
+/// Epic #2481 T3: a caller names itself by allowlist; its text is never
+/// recorded.
+#[test]
+fn the_client_is_named_by_allowlist() {
+    use std::ffi::OsStr;
+    assert_eq!(client(None), Client::Cli);
+    assert_eq!(
+        client(Some(OsStr::new("pocket-relay"))),
+        Client::PocketRelay
+    );
+    for other in [
+        "pocket_relay",
+        "Pocket-Relay",
+        "pocket-relay ",
+        "",
+        "cli",
+        "agent",
+    ] {
+        assert_eq!(client(Some(OsStr::new(other))), Client::Other, "{other:?}");
+    }
+}
+
+/// `quecto board` run under `base`, recording as composition builds it.
+fn recorded_cli(base: &std::path::Path, line: &[&str]) -> Value {
+    let ctx = CliContext {
+        project_board: Some(memory_board),
+        board_cli_recording: Some(CliRecordingBuilder(
+            crate::composition::bootstrap::project_board::cli_board_recording,
+        )),
+        base_dir: Some(base.to_path_buf()),
+        ..CliContext::default()
+    };
+    let (mut stdout, mut stderr) = (String::new(), String::new());
+    cmd_board(&ctx, &args(line), &mut stdout, &mut stderr);
+    serde_json::from_str(stdout.trim()).unwrap()
+}
+
+/// The `board_op` lines of the day's CLI logs under `base`.
+fn cli_logs(base: &std::path::Path) -> Vec<Value> {
+    let Ok(entries) = std::fs::read_dir(base.join("audit")) else {
+        return vec![];
+    };
+    let mut lines = vec![];
+    for entry in entries {
+        let path = entry.unwrap().path();
+        let name = path.file_name().unwrap().to_string_lossy().into_owned();
+        assert!(
+            name.starts_with("board-cli_") && name.ends_with(".jsonl"),
+            "{name}"
+        );
+        let text = std::fs::read_to_string(&path).unwrap();
+        let read = text
+            .lines()
+            .map(|line| serde_json::from_str::<Value>(line).unwrap());
+        lines.extend(read.filter(|line| line["event"] == "board_op"));
+    }
+    lines
+}
+
+/// Owner condition (2026-10-12): the CLI writes its day's log only while
+/// the owner's global config switches the event log on; one record per
+/// call that answers, a refusal before the board was read included.
+#[test]
+fn the_cli_writes_its_daily_log_only_while_the_switch_is_on() {
+    let off = tempfile::tempdir().unwrap();
+    let answer = recorded_cli(off.path(), &["list"]);
+    assert_eq!(answer["ok"], json!(true), "{answer}");
+    assert!(
+        !off.path().join("audit").exists(),
+        "nothing opened while off"
+    );
+    let on = tempfile::tempdir().unwrap();
+    let config = json!({"telemetry": {"event_log": {"enabled": true}}});
+    std::fs::write(on.path().join("config.json"), config.to_string()).unwrap();
+    recorded_cli(on.path(), &["list"]);
+    recorded_cli(
+        on.path(),
+        &["renew", "--task", "a", "--holder", "Secret Holder"],
+    );
+    let lines = cli_logs(on.path());
+    let got: Vec<(&Value, &Value, &Value)> = lines
+        .iter()
+        .map(|line| (&line["op"], &line["front_end"], &line["outcome"]))
+        .collect();
+    assert_eq!(
+        got,
+        [
+            (&json!("list"), &json!("cli"), &json!("ok")),
+            (&json!("renew"), &json!("cli"), &json!("refused")),
+        ]
+    );
+    assert_eq!(lines[0]["listed"], json!(1), "{}", lines[0]);
+    assert_eq!(
+        (&lines[1]["field"], &lines[1]["fault"]),
+        (&json!("other"), &json!("unexpected"))
+    );
+    assert!(!lines[1].to_string().contains("Secret"), "{}", lines[1]);
+}

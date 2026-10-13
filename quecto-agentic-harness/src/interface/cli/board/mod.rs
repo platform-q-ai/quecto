@@ -41,14 +41,24 @@
 //! naming the variable, never a key or a value. An environment that sets
 //! the scope for something else (a `safe.directory`, say) has those
 //! settings ignored, as before. No other `GIT_*` variable reaches git.
+//!
+//! **Telemetry** (epic #2481 T3). While the owner's global config switches
+//! the event log on, each call that answers writes one `board_op` record
+//! (front end `cli`) to the day's `<base_dir>/audit/board-cli_<UTC
+//! date>.jsonl`; with it off nothing is opened, timed or written. A caller
+//! names itself in `QUECTO_BOARD_CLIENT`, read by allowlist: `pocket-relay`
+//! is recorded as `pocket_relay`, any other value as `other`, and the
+//! command line's own, unset, as `cli`.
+use std::ffi::OsStr;
 use std::io::Read;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use serde_json::Value;
 
 use super::CliContext;
-use crate::domain::project_board::value_objects::telemetry::FaultKind;
-use crate::interface::tools::project_board::answer::request_refused;
+use crate::application::project_board::telemetry::BoardRecording;
+use crate::domain::project_board::value_objects::telemetry::{Client, FaultKind, FrontEnd};
 use crate::interface::tools::project_board::recording::BoardCall;
 use crate::interface::tools::project_board::request::{RequestError, fields_of};
 use crate::interface::tools::project_board::site::{self, BoardSite};
@@ -69,6 +79,25 @@ pub struct BoardToolRecordingBuilder(
         &crate::infrastructure::persistence::audit_log::AuditLog,
     ) -> Option<crate::application::project_board::telemetry::BoardRecording>,
 );
+
+/// Composition's builder of `quecto board`'s recording: into the day's
+/// `board-cli` log under the base directory given, only while the owner's
+/// global config switches the event log on; `None` otherwise.
+#[derive(Debug, Clone, Copy)]
+pub struct CliRecordingBuilder(pub fn(&Path) -> Option<BoardRecording>);
+
+/// The variable a caller names itself in.
+const CLIENT_VARIABLE: &str = "QUECTO_BOARD_CLIENT";
+
+/// The client a call is for, by allowlist, as `QUECTO_BOARD_CLIENT` names
+/// it (`None`: unset): the value itself is never recorded.
+fn client(named: Option<&OsStr>) -> Client {
+    match named.map(OsStr::to_str) {
+        None => Client::Cli,
+        Some(Some("pocket-relay")) => Client::PocketRelay,
+        Some(Some(_) | None) => Client::Other,
+    }
+}
 
 const USAGE: &str = "usage: quecto board <op> [--<field> <value>]... [--input <json>|-] \
                      [--repo <path>] [--remote <name>] [--json]\n";
@@ -240,16 +269,23 @@ pub(crate) fn cmd_board(
         stderr.push_str(USAGE);
         return i32::from(args.is_empty());
     }
-    let answer = answer(ctx, args);
+    let recording = ctx
+        .board_cli_recording
+        .and_then(|build| (build.0)(&ctx.base_dir()))
+        .map(Arc::new);
+    let named = std::env::var_os(CLIENT_VARIABLE);
+    let mut call = BoardCall::start(recording, FrontEnd::Cli, client(named.as_deref()));
+    let answer = answer(ctx, args, &mut call);
     stdout.push_str(&answer.to_string());
     stdout.push('\n');
+    call.finish(&answer, false);
     match answer.get("ok") {
         Some(Value::Bool(true)) => 0,
         Some(_) | None => 1,
     }
 }
 
-fn answer(ctx: &CliContext, args: &[String]) -> Value {
+fn answer(ctx: &CliContext, args: &[String], call: &mut BoardCall) -> Value {
     // An op is echoed back only when it is one: never a stranger's text.
     let named = |op: &Option<String>| {
         op.as_ref()
@@ -258,7 +294,7 @@ fn answer(ctx: &CliContext, args: &[String]) -> Value {
     };
     let line = match read_line(args) {
         Ok(line) => line,
-        Err(error) => return request_refused(None, &error),
+        Err(error) => return call.refuse_request(None, &error),
     };
     let stdin = || match &ctx.stdin_data {
         Some(data) => bounded(data.as_bytes()),
@@ -266,7 +302,11 @@ fn answer(ctx: &CliContext, args: &[String]) -> Value {
     };
     let value = match request(&line, stdin) {
         Ok(value) => value,
-        Err(error) => return request_refused(named(&line.op).as_deref(), &error),
+        Err(error) => {
+            let op = named(&line.op);
+            call.named(op.as_deref());
+            return call.refuse_request(op.as_deref(), &error);
+        }
     };
     let repo = line
         .repo
@@ -279,12 +319,7 @@ fn answer(ctx: &CliContext, args: &[String]) -> Value {
         remote: line.remote.clone(),
         build: ctx.project_board,
     };
-    site::answer(
-        &site,
-        &value.to_string(),
-        None,
-        &mut BoardCall::unrecorded(),
-    )
+    site::answer(&site, &value.to_string(), None, call)
 }
 
 #[cfg(test)]

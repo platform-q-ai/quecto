@@ -37,6 +37,9 @@ fn main() {
             project_board_recording: cli::board::BoardToolRecordingBuilder(
                 quecto::composition::bootstrap::project_board::session_board_recording_decided,
             ),
+            board_cli_recording: cli::board::CliRecordingBuilder(
+                quecto::composition::bootstrap::project_board::cli_board_recording,
+            ),
         },
     ));
 }
