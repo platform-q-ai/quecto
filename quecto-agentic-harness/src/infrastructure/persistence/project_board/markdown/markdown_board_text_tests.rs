@@ -19,9 +19,16 @@ fn shown(text: &str) -> String {
 /// What the normaliser may change: spacing, line ends and blank lines;
 /// every other character, in order, is the text's own.
 fn content(text: &str) -> String {
-    text.chars()
-        .filter(|c| !matches!(c, ' ' | '\t' | '\r' | '\n'))
-        .collect()
+    text.split([
+        ' ', '\t', '\r', '\n', '\u{a0}', '\u{202f}', '\u{2007}', '\u{3000}',
+    ])
+    .collect()
+}
+
+/// What GitHub shows for `text`, a chat space read as the plain space it
+/// looks like: the normaliser may make one plain, never change markup.
+fn shown_plain(text: &str) -> String {
+    shown(text).replace(['\u{a0}', '\u{202f}', '\u{2007}', '\u{3000}'], " ")
 }
 
 /// Pieces of text from chat, imports and editors: what D4 fixes (CR,
@@ -36,8 +43,6 @@ const PIECES: &[&str] = &[
     " ",
     "  ",
     "\t",
-    "\u{a0}",
-    "\u{3000}",
     "\r\n",
     "\r",
     "\n",
@@ -58,7 +63,6 @@ const PIECES: &[&str] = &[
     "`",
     "`x`",
     "`\t`",
-    "`a\u{a0}b`",
     "\n```\n",
     "\n```rust\n",
     "\n~~~\n",
@@ -67,7 +71,6 @@ const PIECES: &[&str] = &[
     "line  \nnext",
     "- a\n  b",
     "- a\n\n  b",
-    "\n\u{a0}\n",
     ".",
     "(",
     "\u{e9}",
@@ -107,7 +110,46 @@ const PIECES: &[&str] = &[
     "<![CDATA[ x \n",
     "[^1]: ",
     "\n[^1]\n",
+    // Addresses an autolink reads (S7 round 4), and markers beside which
+    // a chat space must stay.
+    "www.a.co",
+    "https://a.co",
+    "a@b.co",
+    ">1.",
 ];
+
+/// Pieces holding a chat space (no-break, narrow, figure, ideographic):
+/// beside letters and French punctuation, where the normaliser makes them
+/// plain, and beside markup, where it must not. Drawn one time in
+/// [`CHAT_ONE_IN`], so most texts still pass the domain's plain-space rule.
+const CHAT_PIECES: &[&str] = &[
+    "\u{a0}",
+    "\u{3000}",
+    "`a\u{a0}b`",
+    "\n\u{a0}\n",
+    "x\u{202f}!",
+    "a\u{a0}?",
+    "\u{ab}\u{a0}",
+    "\u{a0}#",
+    "[\u{a0}]",
+    "[x]\u{a0}",
+    "1.\u{a0}",
+    "-\u{a0}",
+    "\u{a0}*",
+    "a\u{2007}b",
+    // Between words and punctuation, as French and Japanese keyboards
+    // write them: the normaliser makes these plain.
+    "b\u{a0}:",
+    "\u{ab}\u{a0}c",
+    "d\u{a0}\u{bb}",
+    "1\u{a0}000",
+    "e\u{3000}f",
+    "g\u{202f};",
+    "h\u{a0}%",
+];
+
+/// One draw in this many is a chat-space piece.
+const CHAT_ONE_IN: usize = 30;
 
 /// A small deterministic generator (an LCG), so a failure replays.
 struct Seeded(u64);
@@ -123,7 +165,10 @@ impl Seeded {
 
     fn text(&mut self) -> String {
         (0..1 + self.below(24))
-            .map(|_| PIECES[self.below(PIECES.len())])
+            .map(|_| match self.below(CHAT_ONE_IN) {
+                0 => CHAT_PIECES[self.below(CHAT_PIECES.len())],
+                _ => PIECES[self.below(PIECES.len())],
+            })
             .collect()
     }
 }
@@ -131,7 +176,7 @@ impl Seeded {
 #[test]
 fn normalising_never_changes_what_a_reader_shows() {
     let mut seeded = Seeded(2481);
-    let (mut checked, mut held) = (0, 0);
+    let (mut checked, mut held, mut plain) = (0, 0, 0);
     for _ in 0..20_000 {
         let raw = seeded.text();
         let normal = board_text::text(&raw);
@@ -144,7 +189,13 @@ fn normalising_never_changes_what_a_reader_shows() {
             continue;
         }
         checked += 1;
-        assert_eq!(shown(&raw), shown(&normal), "{raw:?} → {normal:?}");
+        // A chat space the domain took was made plain by the normaliser.
+        plain += usize::from(raw.contains(['\u{a0}', '\u{202f}', '\u{2007}', '\u{3000}']));
+        assert_eq!(
+            shown_plain(&raw),
+            shown_plain(&normal),
+            "{raw:?} → {normal:?}"
+        );
         // What the codec holds, it holds as the normaliser wrote it.
         if let Ok(blocks) = blocks_of(&normal) {
             assert_eq!(text_of(&blocks), normal, "{raw:?}");
@@ -152,8 +203,8 @@ fn normalising_never_changes_what_a_reader_shows() {
         }
     }
     assert!(
-        checked > 10_000 && held > 500,
-        "{checked} checked, {held} held"
+        checked > 10_000 && held > 500 && plain > 200,
+        "{checked} checked, {held} held, {plain} with chat spaces made plain"
     );
 }
 
@@ -177,10 +228,10 @@ fn each_class_d4_fixes_is_held_once_normalised() {
 }
 
 /// What the normaliser leaves as written, the codec refuses with its line
-/// (or holds as written): a hard break, a tab, a no-break space.
+/// (or holds as written): a hard break, a tab, an em space.
 #[test]
 fn what_d4_leaves_is_refused_by_the_codec_with_its_line() {
-    for (raw, line) in [("line  \nnext", 1), ("a\tb", 1), ("a\n\nb\u{a0}c", 3)] {
+    for (raw, line) in [("line  \nnext", 1), ("a\tb", 1), ("a\n\nb\u{2003}c", 3)] {
         assert_eq!(board_text::text(raw), raw);
         let refused = blocks_of(raw).unwrap_err();
         assert!(

@@ -1,6 +1,7 @@
 use super::*;
 use crate::domain::project_board::entities::run::RunFields;
 use crate::domain::project_board::services::fixtures_tests::{at, open_run, person, plan, task};
+use crate::domain::project_board::value_objects::board_text;
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::vocabulary::{RunOutcome, TaskStatus::*};
 
@@ -660,4 +661,61 @@ fn the_plan_bound_is_the_latest_time_plus_its_slack() {
             updated: at("10:00:31"),
         })
     );
+}
+
+/// A change to a plan's content.
+type Spoil = fn(&mut PlanContent);
+
+/// A plan's text is taken only as it enters the board, normalised: its
+/// approach as markdown, its task items' titles and criteria as lines.
+/// Each case is text the plan's schema takes (a trailing space, a leading
+/// one), so only the guard refuses it, naming its field; the same text
+/// normalised is taken.
+#[test]
+fn plan_text_is_taken_only_once_normalised() {
+    let spoiled: [(&str, Spoil); 3] = [
+        ("approach", |c| c.approach = "Spike, then build. ".into()),
+        ("items/0/title", |c| {
+            c.items[0].title = " Item schema".into()
+        }),
+        ("items/1/criteria/0", |c| {
+            c.items[1].criteria[0] = " api proved".into()
+        }),
+    ];
+    let held = unaccepted(InProgress);
+    for (field, spoil) in spoiled {
+        let mut raw = content();
+        spoil(&mut raw);
+        let ada = person("Ada");
+        let proposed = propose(&held, &[], raw.clone(), &ada, &at("10:00:00"));
+        let edited = edit_draft(
+            &held,
+            &plan(1, PlanState::Draft),
+            raw,
+            None,
+            &ada,
+            &when(&at("10:00:00")),
+        );
+        for refused in [proposed, edited] {
+            match refused {
+                Err(BoardRuleError::Invalid(error)) => assert_eq!(error.field, field),
+                other => panic!("{field}: {other:?}"),
+            }
+        }
+    }
+    let mut spoilt = content();
+    for (_, spoil) in spoiled {
+        spoil(&mut spoilt);
+    }
+    let fields = PlanFields {
+        approach: spoilt.approach.clone(),
+        items: spoilt.items.clone(),
+        ..plan(1, PlanState::Draft).into_fields()
+    };
+    assert!(Plan::new(fields).is_ok(), "the schema takes every case");
+    let mut normalised = content();
+    normalised.approach = board_text::text("Spike, then build. ");
+    normalised.items[0].title = board_text::line(" Item schema");
+    normalised.items[1].criteria[0] = board_text::line(" api proved");
+    assert!(propose(&held, &[], normalised, &person("Ada"), &at("10:00:00")).is_ok());
 }

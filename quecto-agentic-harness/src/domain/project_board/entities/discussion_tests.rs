@@ -1,6 +1,7 @@
 use super::*;
 use crate::domain::project_board::entities::fixtures_tests::{at, person, slug};
 use crate::domain::project_board::entities::task::MAX_TITLE_CHARS;
+use crate::domain::project_board::value_objects::schema_error::PLAIN_SPACES_ONLY;
 
 /// One edit that must make valid fields invalid.
 type Edit = Box<dyn Fn(&mut DiscussionFields)>;
@@ -325,4 +326,24 @@ fn a_discussions_text_counts_each_row_as_written() {
         expected - "How the store locks".len() + 4,
         "a | counts twice"
     );
+}
+
+/// A message line spaces its words with plain spaces only: any other space
+/// (an em space, a no-break space the normaliser did not see) is refused
+/// with the line's field, as no file holds it.
+#[test]
+fn a_message_line_holds_plain_spaces_only() {
+    for space in ['\u{a0}', '\u{2003}', '\u{202f}', '\u{3000}', '\u{205f}'] {
+        let mut held = fields();
+        held.messages[0].text = format!("Plain\nnot{space}plain");
+        let refused = Discussion::new(held).unwrap_err();
+        assert_eq!(
+            (refused.field.as_str(), refused.problem.as_str()),
+            ("messages/0/text/1", PLAIN_SPACES_ONLY),
+            "{space:?}"
+        );
+    }
+    let mut held = fields();
+    held.messages[0].text = "plain spaces only".into();
+    assert!(Discussion::new(held).is_ok());
 }

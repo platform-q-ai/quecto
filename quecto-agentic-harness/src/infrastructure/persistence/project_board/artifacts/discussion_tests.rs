@@ -11,8 +11,14 @@ use crate::domain::project_board::entities::discussion::{
     MAX_MESSAGE_LINE_CHARS, MAX_MESSAGES, ROW_OVERHEAD_BYTES,
 };
 use crate::domain::project_board::entities::task::MAX_TITLE_CHARS;
+use crate::domain::project_board::services::discussions::{Opening, append, begin};
+use crate::domain::project_board::services::plans::Moment;
+use crate::domain::project_board::value_objects::board_text;
+use crate::domain::project_board::value_objects::rule_error::BoardRuleError;
+use crate::domain::project_board::value_objects::schema_error::{PLAIN_SPACES_ONLY, SchemaError};
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
+use crate::infrastructure::persistence::project_board::markdown::MarkdownError;
 use crate::infrastructure::persistence::project_board::markdown::tests::oracle::outline_in;
 use crate::infrastructure::persistence::project_board::markdown::{Document, parse};
 
@@ -324,7 +330,9 @@ fn the_longest_row_fits_its_line_cap() {
 /// title, before the file is rendered.
 #[test]
 fn a_discussion_title_its_heading_cannot_hold_is_refused() {
-    for title in ["a #", " a", "a <b>", "a\u{2003}b"] {
+    // A space other than U+0020 never gets this far: the domain refuses
+    // it with the title's field (a_title_with_a_chat_space_is_held_once_normalised).
+    for title in ["a #", " a", "a <b>"] {
         let titled = Discussion::new(DiscussionFields {
             title: title.into(),
             ..example()
@@ -336,4 +344,109 @@ fn a_discussion_title_its_heading_cannot_hold_is_refused() {
             "{title:?}: {refused:?}"
         );
     }
+}
+
+/// Text Pocket and imports carry, inside a batch (#2516, D4): edge spaces,
+/// tabs, blank lines and CRLF, and the spaces chat writes between words (a
+/// no-break space, a French narrow no-break space before a colon, an
+/// ideographic space) are the message normaliser's: the domain refuses the
+/// raw batch as never normalised, and holds it normalised, as its file
+/// does. A space it leaves (an em space) the domain refuses with its field
+/// and line; a selector outside a keycap, which the domain takes, the
+/// codec refuses with the file line of its message row.
+#[test]
+fn pocket_text_is_held_once_normalised_and_what_no_file_holds_is_named() {
+    let begun = Discussion::new(example()).unwrap();
+    let moment = Moment {
+        now: at("2026-10-11T12:10:00Z"),
+        latest: None,
+    };
+    let batch = |text: &str| {
+        let said = message("Rex", "2026-10-11T12:06:00Z", text);
+        append(&begun, vec![said], &moment)
+    };
+    let never_normalised = |field: &str| {
+        Err(BoardRuleError::Invalid(SchemaError::new(
+            field,
+            "has spacing the board removes: use one LF between lines, no blank lines, and no \
+             spaces or tabs at the start or end of a line",
+        )))
+    };
+    for (raw, held) in [
+        (
+            "  Both ends spaced \t\r\n\r\n\tand a tab first.",
+            "Both ends spaced\nand a tab first.",
+        ),
+        ("Pocket says\u{a0}yes", "Pocket says yes"),
+        ("Bonjour\u{202f}: on commence ?", "Bonjour : on commence ?"),
+        ("はい\u{3000}そうです", "はい そうです"),
+    ] {
+        assert_eq!(batch(raw), never_normalised("batch/0/text"), "{raw:?}");
+        let normalised = board_text::message(raw);
+        assert_eq!(normalised, held);
+        let discussion = batch(&normalised).unwrap();
+        assert_eq!(
+            discussion
+                .fields()
+                .messages
+                .last()
+                .map(|said| said.text.as_str()),
+            Some(held)
+        );
+        round_trips(discussion.into_fields());
+    }
+    let em = board_text::message("an em\u{2003}space");
+    assert_eq!(
+        batch(&em),
+        Err(BoardRuleError::Invalid(SchemaError::new(
+            "batch/0/text/0",
+            PLAIN_SPACES_ONLY
+        ))),
+        "refused by the domain with its line"
+    );
+    // The example's rows are file lines 16 to 18; the batch's follow.
+    let selector = "Fine\nthumbs\u{fe0f} up";
+    assert_eq!(board_text::message(selector), selector, "left as written");
+    let taken = batch(selector).expect("the domain takes it");
+    assert_eq!(
+        encode::<DiscussionCodec>(&taken),
+        Err(CodecError::Markdown(MarkdownError::Invisible { line: 20 }))
+    );
+}
+
+/// A title with a space chat writes between words is held once
+/// normalised, for each such space; raw, the domain refuses it as never
+/// normalised, never the file at write time. An em space, which no
+/// normaliser makes plain, the domain refuses with its field.
+#[test]
+fn a_title_with_a_chat_space_is_held_once_normalised() {
+    let moment = Moment {
+        now: at("2026-10-11T12:10:00Z"),
+        latest: None,
+    };
+    let opening = |title: &str| Opening {
+        id: slug("board-cli-list"),
+        title: title.into(),
+        task: None,
+        started_by: person("Ada"),
+        messages: vec![message("Ada", "2026-10-11T12:00:00Z", "Shall we?")],
+    };
+    for space in ['\u{a0}', '\u{202f}', '\u{2007}', '\u{3000}'] {
+        let raw = format!("Bonjour{space}: on commence ?");
+        let refused = begin(opening(&raw), &moment).unwrap_err();
+        assert!(
+            matches!(&refused, BoardRuleError::Invalid(error) if error.field == "title"),
+            "{space:?}: {refused:?}"
+        );
+        let held = begin(opening(&board_text::line(&raw)), &moment).unwrap();
+        assert_eq!(held.fields().title, "Bonjour : on commence ?");
+        round_trips(held.into_fields());
+    }
+    assert_eq!(
+        begin(opening("an em\u{2003}space"), &moment),
+        Err(BoardRuleError::Invalid(SchemaError::new(
+            "title",
+            PLAIN_SPACES_ONLY
+        )))
+    );
 }
