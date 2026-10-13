@@ -1,7 +1,10 @@
 //! The bounds a change to the board keeps (`board_tree`): the entries of
-//! its `tasks/` tree a write leaves, which a clear never grows, and, with
-//! the other folders a write carries as they are (#2481 S9), the entries
-//! and file bytes a read reads.
+//! its `tasks/` tree a write leaves, which a clear never grows; each other
+//! folder's entries and file bytes as the write leaves it (#2481 S10a),
+//! the bounds a read takes of it; and the entries and file bytes a read
+//! reads in all.
+use super::folders::FOLDERS;
+use super::writes::FolderAfter;
 use super::{Board, Limits, MAX_BOARD_ENTRIES, MAX_TASK_ENTRIES, Unread, task_file, too_large};
 use crate::application::project_board::ports::BoardStoreError;
 use crate::domain::project_board::entities::task::Task;
@@ -28,20 +31,25 @@ pub(super) fn within_read(entries: usize, bytes: usize, limits: Limits) -> Resul
 }
 
 impl Board {
-    /// The board, with `written` in place, keeps within what a write
-    /// leaves: the entries of its `tasks/` tree (each task one file, each
-    /// file set aside one), at most [`MAX_TASK_ENTRIES`], and the task-file
-    /// bytes a read reads. Every write checks it before it builds anything.
+    /// The board, with `written` in place and its other folders as
+    /// `folders`, keeps within what a write leaves: the entries of its
+    /// `tasks/` tree (each task one file, each file set aside one), at most
+    /// [`MAX_TASK_ENTRIES`], and the task-file bytes a read reads; each
+    /// other folder within the entries and file bytes a read takes of it;
+    /// and the board within its own. Every write checks it before it builds
+    /// anything.
     ///
     /// # Errors
-    /// An invalid write past either bound.
+    /// An invalid write past any bound.
     pub fn within_bounds(
         &self,
         written: &[(&Task, Vec<u8>)],
+        folders: &BTreeMap<&'static str, FolderAfter<'_>>,
         limits: Limits,
     ) -> Result<(), BoardStoreError> {
-        self.entries_within(written, MAX_TASK_ENTRIES)?;
-        self.bytes_within(written, limits)
+        folders_within(folders)?;
+        self.entries_within(written, MAX_TASK_ENTRIES, folders)?;
+        self.bytes_within(written, limits, folders)
     }
 
     /// The board a clear of `before` leaves keeps within what a read takes:
@@ -54,11 +62,13 @@ impl Board {
     pub fn within_clear_bounds(
         &self,
         before: &Board,
+        folders: &BTreeMap<&'static str, FolderAfter<'_>>,
         limits: Limits,
     ) -> Result<(), BoardStoreError> {
         let cap = MAX_TASK_ENTRIES.max(before.entries(&[]));
-        self.entries_within(&[], cap)?;
-        self.bytes_within(&[], limits)
+        folders_within(folders)?;
+        self.entries_within(&[], cap, folders)?;
+        self.bytes_within(&[], limits, folders)
     }
 
     /// The entries of the `tasks/` tree with `written` in place. A file a
@@ -75,10 +85,11 @@ impl Board {
         &self,
         written: &[(&Task, Vec<u8>)],
         cap: usize,
+        folders: &BTreeMap<&'static str, FolderAfter<'_>>,
     ) -> Result<(), BoardStoreError> {
         let entries = self.entries(written);
-        // The folders a write carries count towards what a read takes.
-        let all = entries + self.carried_entries();
+        // The other folders count towards what a read takes.
+        let all = entries + folders.values().map(FolderAfter::entries).sum::<usize>();
         match (entries <= cap, all <= MAX_BOARD_ENTRIES) {
             (true, true) => Ok(()),
             (false, _) => Err(BoardStoreError::InvalidWrite(format!(
@@ -96,6 +107,7 @@ impl Board {
         &self,
         written: &[(&Task, Vec<u8>)],
         limits: Limits,
+        folders: &BTreeMap<&'static str, FolderAfter<'_>>,
     ) -> Result<(), BoardStoreError> {
         let replaced: BTreeSet<String> = written
             .iter()
@@ -107,7 +119,7 @@ impl Board {
             .filter(|(name, _)| !replaced.contains(*name));
         let tasks = carried.map(|(_, size)| size).sum::<usize>()
             + written.iter().map(|(_, bytes)| bytes.len()).sum::<usize>();
-        let bytes = tasks + self.carried_bytes();
+        let bytes = tasks + folders.values().map(FolderAfter::bytes).sum::<usize>();
         match (tasks <= limits.tasks_bytes, bytes <= limits.board_bytes) {
             (true, true) => Ok(()),
             (false, _) => Err(BoardStoreError::InvalidWrite(format!(
@@ -120,6 +132,40 @@ impl Board {
             ))),
         }
     }
+}
+
+/// Each folder besides `tasks/`, as a write leaves it, keeps within the
+/// entries and file bytes a read takes of it.
+///
+/// # Errors
+/// An invalid write past either bound of a folder.
+fn folders_within(
+    folders: &BTreeMap<&'static str, FolderAfter<'_>>,
+) -> Result<(), BoardStoreError> {
+    for folder in &FOLDERS {
+        let (name, noun) = (folder.naming.folder, folder.naming.noun);
+        let Some(after) = folders.get(name) else {
+            continue;
+        };
+        let (entries, bytes) = (after.entries(), after.bytes());
+        match (entries <= folder.max_entries, bytes <= folder.max_bytes) {
+            (true, true) => {}
+            (false, _) => {
+                return Err(BoardStoreError::InvalidWrite(format!(
+                    "the board is full: its {name}/ holds at most {} {noun} files and files set \
+                     aside, and would hold {entries}",
+                    folder.max_entries
+                )));
+            }
+            (true, false) => {
+                return Err(BoardStoreError::InvalidWrite(format!(
+                    "the board would hold {bytes} bytes of {noun} files; a read takes at most {}",
+                    folder.max_bytes
+                )));
+            }
+        }
+    }
+    Ok(())
 }
 
 /// A tree of `entries` fits what a read takes, or it is an invalid write,

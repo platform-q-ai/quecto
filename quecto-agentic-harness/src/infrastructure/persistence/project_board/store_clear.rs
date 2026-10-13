@@ -85,7 +85,11 @@ impl GitBoardStore {
             None => return Err(BoardStoreError::NoBoard),
         }
         let board = self.board_at(&base)?;
-        if let Some(refusal) = board.folders_refusal() {
+        // Clears outside `tasks/` wait for a clear across folders (S10b).
+        let waits = board
+            .folders_repeated_refusal()
+            .or_else(|| board.folder_clear_refusal(&clear.path));
+        if let Some(refusal) = waits {
             return Err(BoardStoreError::FolderSetAside(refusal));
         }
         let after = match cleared(&board, clear) {
@@ -93,9 +97,12 @@ impl GitBoardStore {
             Err(refusal) => return Ok(BoardWrite::Refused(refusal)),
         };
         assert!(after.repeated.is_empty(), "a clear resolves every name");
-        after.within_clear_bounds(&board, self.limits)?;
+        // A clear is a write: the other folders drop what a write drops.
+        let folders = after.folders_after(&[]);
+        after.within_clear_bounds(&board, &folders, self.limits)?;
         let tasks = self.tasks_tree(&after, &[])?;
-        self.land(&base, &after, &tasks, message)
+        let folders = self.folder_trees(&folders)?;
+        self.land(&base, &after, &tasks, folders, message)
     }
 }
 

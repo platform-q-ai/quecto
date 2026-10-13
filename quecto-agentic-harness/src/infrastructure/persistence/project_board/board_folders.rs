@@ -10,15 +10,15 @@
 //! aside under the key its name spells, if any, and carried or dropped by
 //! the same rules.
 //!
-//! This quecto reads the folders and writes none: a write or a clear
-//! carries each folder and the archive as they were read, the same trees,
-//! and is refused while a file in a folder is set aside, since only a
-//! quecto that writes the folders can carry one or drop it (S10). So a
-//! reason here never says what the next write does with a file.
+//! A write (S10a) carries a folder it leaves as it was read as the very
+//! tree, and rebuilds one it writes in, or one holding an entry a write
+//! drops, from what it carries (`board_writes`): each file read and each
+//! file set aside but kept, by its object, so a reason here says what the
+//! next write does with a file, as one in `tasks/` does.
 use super::entries::{Disposition, Naming, TaskFile, disposition};
 use super::{
-    Board, Entry, Limits, TREE, Unread, capped, contents, entry_path, listed, looked_up, missing,
-    objects, sanitised, too_large,
+    Board, Entry, Limits, REGULAR_FILE, Unread, capped, contents, entry_path, kind_of_mode, listed,
+    looked_up, missing, objects, sanitised, too_large,
 };
 use crate::application::project_board::ports::{
     ArtifactKey, BoardArtifact, BoardHead, BoardSnapshot, QuarantinedFile,
@@ -80,7 +80,7 @@ const fn numbered_naming(
         pattern: "<task>.<n>.md",
         max_name: MAX_NUMBERED_NAME,
         file_bytes,
-        written: false,
+        written: true,
     }
 }
 
@@ -125,7 +125,7 @@ pub(super) static FOLDERS: [Folder; 5] = [
             pattern: "<id>.md",
             max_name: MAX_SLUG_BYTES + ".md".len(),
             file_bytes: DISCUSSION_LIMITS.file_bytes,
-            written: false,
+            written: true,
         },
         spell: |stem| Slug::parse(stem).ok().map(ArtifactKey::Discussion),
         decode: |bytes| decode::<DiscussionCodec>(bytes).map(BoardArtifact::Discussion),
@@ -155,14 +155,32 @@ fn numbered(stem: &str, max: u32) -> Option<(Slug, u32)> {
     }
 }
 
-/// A folder as a read found it: carried by every write as this tree.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// A folder as a read found it: carried by a write that leaves it as it
+/// was as this tree, and rebuilt from `files` by one that does not.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct CarriedTree {
     pub oid: String,
     /// Its entries, all of them.
     pub entries: usize,
     /// The bytes of its files a read reads.
     pub bytes: usize,
+    /// What a write carries, by name (`<mode> <type> <oid>`): each file
+    /// read, and each set aside but kept. Every other entry is dropped.
+    pub files: BTreeMap<String, String>,
+    /// The bytes of each file a read reads, by name: some of `files`.
+    pub sizes: BTreeMap<String, usize>,
+    /// A name listed more than once among the copies a write carries, as
+    /// its path shows: a write would carry them all (a tree git rejects)
+    /// or choose one, so none is made until a clear resolves it.
+    pub repeated: Option<String>,
+}
+
+impl CarriedTree {
+    /// Whether a write that leaves it as it was still drops an entry of
+    /// it, and so rebuilds it.
+    pub fn drops(&self) -> bool {
+        self.files.len() != self.entries
+    }
 }
 
 /// What a read of one folder found.
@@ -250,6 +268,7 @@ pub(super) fn scan_folder(
     }
     let mut quarantined = vec![];
     let mut to_read = vec![];
+    let (mut files, mut sizes) = (BTreeMap::new(), BTreeMap::new());
     for entry in &entries {
         let found = match kinds.get(&entry.oid) {
             Some(super::Found::Present(object)) => Some(object),
@@ -262,13 +281,38 @@ pub(super) fn scan_folder(
         let count = counts.get(entry.raw.as_slice()).copied().unwrap_or(0);
         match disposition(entry, found, count, file, &folder.naming) {
             Disposition::Read(key) => {
-                to_read.push((key, entry.clone(), found.map_or(0, |o| o.size)));
+                let size = found.map_or(0, |o| o.size);
+                let file = format!("{REGULAR_FILE} blob {}", entry.oid);
+                assert!(
+                    files.insert(entry.name.clone(), file).is_none(),
+                    "read once"
+                );
+                sizes.insert(entry.name.clone(), size);
+                to_read.push((key, entry.clone(), size));
             }
             Disposition::Aside { id, reason, kept } => {
+                if kept {
+                    let kind = kind_of_mode(&entry.mode).unwrap_or("blob");
+                    let file = format!("{} {kind} {}", entry.mode, entry.oid);
+                    assert!(
+                        files.insert(entry.name.clone(), file).is_none(),
+                        "kept once"
+                    );
+                }
                 quarantined.push(aside(folder, entry, id, &reason, kept));
             }
         }
     }
+    // Only names a write would carry, as in `tasks/`: a stray is dropped,
+    // however often it is named.
+    let repeated = entries
+        .iter()
+        .find(|entry| {
+            let twice = counts.get(entry.raw.as_slice()).copied().unwrap_or(0) > 1;
+            let named = entry.kept_name(folder.naming.max_name) && entry.name.ends_with(".md");
+            named && twice && entry.carried(&kinds)
+        })
+        .map(|entry| entry_path(name, &entry.raw, &entry.oid));
     let bytes: usize = to_read.iter().map(|(_, _, size)| size).sum();
     if bytes > folder.max_bytes {
         return Err(too_large(format!(
@@ -280,6 +324,9 @@ pub(super) fn scan_folder(
         oid: tree.to_string(),
         entries: entries.len(),
         bytes,
+        files,
+        sizes,
+        repeated,
     };
     Ok(FolderScan {
         folder,
@@ -385,54 +432,5 @@ impl Board {
             }
         }
         snapshot
-    }
-
-    /// The entries of the folders besides `tasks/`, as every write carries
-    /// them.
-    pub fn carried_entries(&self) -> usize {
-        self.folders.values().map(|tree| tree.entries).sum()
-    }
-
-    /// The bytes a read reads in the folders besides `tasks/`.
-    pub fn carried_bytes(&self) -> usize {
-        self.folders.values().map(|tree| tree.bytes).sum()
-    }
-
-    /// The root's trees a write or a clear carries as they were read: each
-    /// folder besides `tasks/` and the archive, by name (`<mode> <type>
-    /// <oid>`).
-    pub fn carried_trees(&self) -> BTreeMap<String, String> {
-        let folders = self
-            .folders
-            .iter()
-            .map(|(name, tree)| ((*name).to_string(), tree.oid.as_str()));
-        let archive = self
-            .archive
-            .iter()
-            .map(|oid| (ARCHIVE.to_string(), oid.as_str()));
-        folders
-            .chain(archive)
-            .map(|(name, oid)| (name, format!("{TREE} tree {oid}")))
-            .collect()
-    }
-
-    /// Why no write or clear is made: a file set aside in a folder besides
-    /// `tasks/` (the least by path), which this quecto neither carries
-    /// forward nor drops.
-    pub fn folders_refusal(&self) -> Option<String> {
-        let in_folder = |file: &&QuarantinedFile| {
-            FOLDERS.iter().any(|folder| {
-                file.path
-                    .strip_prefix(folder.naming.folder)
-                    .is_some_and(|rest| rest.starts_with('/'))
-            })
-        };
-        let file = self.quarantined.iter().find(in_folder)?;
-        Some(format!(
-            "{} is set aside, and this quecto writes nothing while a file outside tasks/ is set \
-             aside: to write the board again, {}",
-            file.path,
-            super::RECOVERY
-        ))
     }
 }

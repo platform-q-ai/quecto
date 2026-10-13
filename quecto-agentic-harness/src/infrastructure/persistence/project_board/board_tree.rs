@@ -169,8 +169,8 @@ pub struct Board {
     pub listed: usize,
     /// The other kinds' artifacts read, each under its own key.
     pub artifacts: Vec<BoardArtifact>,
-    /// The folders besides `tasks/` as read, by name: every write carries
-    /// each as it is.
+    /// The folders besides `tasks/` as read, by name: a write carries each
+    /// it leaves as it was as this tree, and rebuilds the rest from it.
     pub folders: BTreeMap<&'static str, CarriedTree>,
     /// The archive's tree, never read: every write carries it as it is.
     pub archive: Option<String>,
@@ -602,7 +602,10 @@ pub use folders::{ARCHIVE, CarriedTree, MAX_BOARD_ENTRIES};
 use folders::{FOLDERS, FolderScan, load_folder, root_tree, scan_folder};
 #[path = "board_tasks.rs"]
 mod tasks;
+#[path = "board_writes.rs"]
+mod writes;
 use tasks::{TasksScan, load_tasks, scan_tasks};
+pub use writes::{FolderAfter, FolderFile, folder_file};
 #[path = "board_format.rs"]
 mod format;
 pub use format::{FORMAT, FORMAT_FILE, FORMAT_TREE};

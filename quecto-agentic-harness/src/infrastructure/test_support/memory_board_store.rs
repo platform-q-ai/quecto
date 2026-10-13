@@ -3,6 +3,10 @@
 //! another; [`MemoryBoardStore::before_next_write`] runs another writer's
 //! change just before a write is judged, and
 //! [`MemoryBoardStore::refuse_next_write`] makes the store refuse one.
+//!
+//! It judges a write as the git store does: every kind is written through
+//! its codec (a value it refuses is an invalid write), and a file set aside
+//! outside `tasks/` is not cleared yet (#2481 S10a).
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
 
@@ -13,6 +17,7 @@ use crate::application::project_board::ports::{
 use crate::domain::project_board::entities::claim::Identity;
 use crate::domain::project_board::value_objects::schema_error::line;
 use crate::domain::project_board::value_objects::slug::Slug;
+use crate::infrastructure::persistence::project_board::artifacts::file_of;
 
 type Interleaved = Box<dyn FnOnce(&MemoryBoardStore) + Send>;
 
@@ -333,6 +338,10 @@ impl ProjectBoardStore for MemoryBoardStore {
         {
             return Ok(BoardWrite::Refused(format!("{path} is quarantined")));
         }
+        // As the git store: what a codec refuses is never written.
+        for artifact in artifacts {
+            file_of(artifact).map_err(BoardStoreError::InvalidWrite)?;
+        }
         for artifact in artifacts {
             board.artifacts.insert(artifact.key(), artifact.clone());
         }
@@ -390,6 +399,20 @@ impl ProjectBoardStore for MemoryBoardStore {
             return Ok(BoardWrite::Refused(format!(
                 "{path:?} is not listed more than once"
             )));
+        }
+        // As the git store: a clear across folders waits (S10b).
+        let set_aside = board.quarantined.iter().any(|file| file.path == path);
+        let folders = ["plans/", "runs/", "changes/", "reviews/", "discussions/"];
+        match (
+            folders.iter().any(|folder| path.starts_with(folder)),
+            set_aside,
+        ) {
+            (false, _) | (true, false) => {}
+            (true, true) => {
+                return Err(BoardStoreError::FolderSetAside(format!(
+                    "{path} is set aside, and this store clears only files set aside in tasks/"
+                )));
+            }
         }
         let named = |file: &QuarantinedFile| file.path == path && file.object == clear.object;
         // Entries that share path and object are one file, as on a git

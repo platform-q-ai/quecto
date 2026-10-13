@@ -16,12 +16,16 @@ each its kind's canonical markdown. An `archive/` tree is room left for archived
 work: it is never read, and every write carries it as it is. A file that does not
 read as what its name spells is set aside, never trusted.
 
-This build reads every folder but writes tasks alone. A write or a clear carries
-the other folders as they are, and is refused (`folder_set_aside`) while a file in
-one of them is set aside. Listings are unavailable (`folder_set_aside`) while a
-file set aside outside `tasks/` names a plan, run, change, review or discussion,
-since the index holds tasks alone for now. It writes the marker `quecto-board 3`
-and reads `quecto-board 2` too. A build that reads only format 2 asks for an
+This build reads and writes every folder. A write writes each artifact as its
+kind's file and carries every other file by its object: a folder it leaves as it
+was is carried as the same tree, and a file set aside is carried as it is (writes
+to its key are refused) unless it is one a write drops, such as a stray. Two
+things wait for a clear across folders and are refused (`folder_set_aside`): any
+write or clear while a name outside `tasks/` is listed more than once, and a clear
+of a file set aside outside `tasks/`. Listings are unavailable (`folder_set_aside`)
+while a file set aside outside `tasks/` names a plan, run, change, review or
+discussion, since the index holds tasks alone for now. It writes the marker
+`quecto-board 3` and reads `quecto-board 2` too. A build that reads only format 2 asks for an
 upgrade on a board this build has written, rather than taking its folders for
 someone else's branch.
 
@@ -39,9 +43,11 @@ clone lacks are still fetched before their sizes can be judged.
 | `discussions/` | 2,048 | 16 MiB | 1 MiB |
 | **The board** | **16,384** | **64 MiB** | |
 
-A write leaves at most 2,048 entries in `tasks/`; the 4,096 a read takes leave
-room for a board written before task files were markdown (a JSON file and a
-summary per task). A file larger than its kind's cap is set aside, not read.
+A write keeps every folder and the board within these bounds too, so it never
+makes a board a read refuses, except that it leaves at most 2,048 entries in
+`tasks/`; the 4,096 a read takes leave room for a board written before task files
+were markdown (a JSON file and a summary per task). A file larger than its kind's
+cap is set aside, not read.
 
 ## Telemetry
 
