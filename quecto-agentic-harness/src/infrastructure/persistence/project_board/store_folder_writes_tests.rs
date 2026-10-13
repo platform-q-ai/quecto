@@ -148,10 +148,11 @@ fn a_write_beside_a_file_set_aside_carries_it_and_drops_strays() {
 }
 
 /// While a name outside `tasks/` is listed twice, nothing is written or
-/// cleared; a clear of a file set aside outside `tasks/` waits too. A clear
-/// in `tasks/` drops strays outside it, as a write does.
+/// cleared, and the refusal says that moving the board back undoes no
+/// write of quecto's. A clear of one file set aside in a folder removes it
+/// alone; a clear in `tasks/` drops strays outside it, as a write does.
 #[test]
-fn what_a_write_cannot_yet_do_waits_for_a_clear_across_folders() {
+fn a_clear_in_a_folder_removes_its_file_unless_a_name_is_listed_twice() {
     let repos = fresh();
     let one = bytes::<RunCodec>(&run("a", 1));
     let head = board_of(&repos, |_| {
@@ -174,7 +175,7 @@ fn what_a_write_cannot_yet_do_waits_for_a_clear_across_folders() {
     let bob = store(&repos.bob);
     let held = |result: Result<BoardWrite, BoardStoreError>| {
         assert!(
-            matches!(&result, Err(BoardStoreError::FolderSetAside(why)) if why.starts_with("runs/a.1.md is named more than once")),
+            matches!(&result, Err(BoardStoreError::FolderSetAside(why)) if why.starts_with("runs/a.1.md is named more than once") && why.contains("quecto has written nothing since")),
             "{result:?}"
         );
     };
@@ -199,6 +200,7 @@ fn what_a_write_cannot_yet_do_waits_for_a_clear_across_folders() {
                 "40000",
                 "runs",
                 Node::Tree(vec![
+                    regular("a.1.md", one.clone()),
                     regular("a.2.md", one.clone()),
                     regular("notes.txt", b"notes".to_vec()),
                 ]),
@@ -211,21 +213,63 @@ fn what_a_write_cannot_yet_do_waits_for_a_clear_across_folders() {
         .iter()
         .find(|file| file.path == "runs/a.2.md")
         .unwrap();
-    let outside = SetAsideClear {
+    let run_two = SetAsideClear {
         path: file.path.clone(),
         object: file.object.clone(),
         repeated: BTreeMap::new(),
     };
-    let waits = bob.clear_set_aside(&head, &outside, "board: clear run 2");
-    assert!(
-        matches!(&waits, Err(BoardStoreError::FolderSetAside(why)) if why.starts_with("runs/a.2.md is set aside, and this quecto clears only")),
-        "{waits:?}"
+    let remote = repos.remote();
+    let cleared = written(bob.clear_set_aside(&head, &run_two, "board: clear run 2"));
+    assert_eq!(names(&remote, &cleared, "runs"), ["a.1.md"]);
+    assert_eq!(
+        at(&remote, &cleared, "runs/a.1.md"),
+        at(&remote, &head, "runs/a.1.md")
     );
-    let cleared = written(bob.clear_set_aside(&head, &clear, "board: clear junk"));
-    assert_eq!(names(&repos.remote(), &cleared, "runs"), ["a.2.md"]);
     let board = store(&repos.alice).read().unwrap();
     let paths: Vec<&str> = board.quarantined.iter().map(|f| f.path.as_str()).collect();
-    assert_eq!(paths, ["runs/a.2.md"]);
+    assert_eq!(paths, ["tasks/junk.md"]);
+    let cleared = written(bob.clear_set_aside(&cleared, &clear, "board: clear junk"));
+    assert!(store(&repos.alice).read().unwrap().quarantined.is_empty());
+    assert_eq!(names(&remote, &cleared, "runs"), ["a.1.md"]);
+}
+
+/// A folder a write rebuilds keeps every entry it carries as it was: an
+/// executable, a symbolic link and a directory keep their modes and
+/// objects.
+#[test]
+fn a_rebuilt_folder_keeps_each_entrys_mode_and_object() {
+    let repos = fresh();
+    let head = board_of(&repos, |repo| {
+        let plan = blob_in(repo, &bytes::<PlanCodec>(&plan("a", 3)));
+        let link = blob_in(repo, b"a.1.md");
+        let inner = raw_rows(repo, &[("100644", "f", blob_in(repo, b"f"))]);
+        let rows = vec![
+            ("100755", "a.3.md".to_string(), plan),
+            ("40000", "a.4.md".to_string(), inner),
+            ("120000", "x.md".to_string(), link),
+        ];
+        vec![
+            ("40000", "tasks", Node::Tree(vec![])),
+            ("40000", "plans", Node::Made(rows)),
+        ]
+    });
+    let bob = store(&repos.bob);
+    let moved = written(bob.write(&head, &[BoardArtifact::Plan(plan("a", 1))], "board: plan a"));
+    let remote = repos.remote();
+    let listed = |commit: &BoardHead| -> Vec<String> {
+        sh(&remote, &["ls-tree", &format!("{}:plans", commit.0)])
+            .lines()
+            .filter(|row| !row.ends_with("\ta.1.md"))
+            .map(str::to_string)
+            .collect()
+    };
+    let before = listed(&head);
+    assert_eq!(before.len(), 3, "{before:?}");
+    assert_eq!(listed(&moved), before);
+    assert_eq!(
+        names(&remote, &moved, "plans"),
+        ["a.1.md", "a.3.md", "a.4.md", "x.md"]
+    );
 }
 
 /// A write leaves each folder within the entries a read takes of it: a
@@ -250,4 +294,11 @@ fn a_write_keeps_a_folder_within_its_entries() {
         "{full:?}"
     );
     written(bob.write(&head, &[BoardArtifact::Run(run("a", 1))], "board: run a"));
+    let nothing = bob.write(&head, &[], "board: nothing");
+    assert_eq!(
+        nothing,
+        Err(BoardStoreError::InvalidWrite(
+            "write one or more board files, each once".into()
+        ))
+    );
 }

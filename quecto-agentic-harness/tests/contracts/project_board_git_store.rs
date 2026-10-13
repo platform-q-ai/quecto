@@ -148,28 +148,34 @@ impl Remote {
         sh(bare, &["update-ref", BOARD_REF, &commit], b"");
     }
 
-    /// Someone pushes a `<folder>/<name>` the store cannot read, keeping the
-    /// rest of the board's root as it is.
-    pub fn spoil(&self, folder: &str, name: &str) {
+    /// Someone pushes `bytes` as `<folder>/<name>`, in place of a file of
+    /// that name or beside the folder's others, keeping the rest of the
+    /// board's root as it is.
+    pub fn put(&self, folder: &str, name: &str, bytes: &[u8]) {
         let bare = &self.bare;
         let head = sh(bare, &["rev-parse", BOARD_REF], b"");
-        let broken = sh(bare, &["hash-object", "-w", "--stdin"], b"{");
-        let swap = |listing: String, name: &str, row: String| -> String {
-            let swapped: Vec<String> = listing
+        let blob = sh(bare, &["hash-object", "-w", "--stdin"], bytes);
+        // `listing` with the row named `name` replaced by `row`, or added.
+        let put = |listing: &str, name: &str, row: String| -> String {
+            let mut rows: Vec<String> = listing
                 .lines()
-                .map(|line| match line.ends_with(&format!("\t{name}")) {
-                    true => row.clone(),
-                    false => line.to_string(),
-                })
+                .filter(|line| !line.ends_with(&format!("\t{name}")))
+                .map(str::to_string)
                 .collect();
-            assert_ne!(swapped.join("\n"), listing, "{name} is on the board");
-            swapped.join("\n") + "\n"
+            rows.push(row);
+            rows.join("\n") + "\n"
         };
-        let listing = sh(bare, &["ls-tree", &format!("{head}:{folder}")], b"");
-        let rows = swap(listing, name, format!("100644 blob {broken}\t{name}"));
-        let tree = sh(bare, &["mktree"], rows.as_bytes());
         let root = sh(bare, &["ls-tree", &head], b"");
-        let root = swap(root, folder, format!("040000 tree {tree}\t{folder}"));
+        let held = root
+            .lines()
+            .any(|line| line.ends_with(&format!("\t{folder}")));
+        let listing = match held {
+            true => sh(bare, &["ls-tree", &format!("{head}:{folder}")], b""),
+            false => String::new(),
+        };
+        let rows = put(&listing, name, format!("100644 blob {blob}\t{name}"));
+        let tree = sh(bare, &["mktree"], rows.as_bytes());
+        let root = put(&root, folder, format!("040000 tree {tree}\t{folder}"));
         let root = sh(bare, &["mktree"], root.as_bytes());
         let commit = sh(
             bare,

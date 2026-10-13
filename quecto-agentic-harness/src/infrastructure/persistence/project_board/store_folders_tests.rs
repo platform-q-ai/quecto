@@ -279,7 +279,16 @@ fn names_in_a_folder_are_judged_as_in_tasks() {
     assert!(reason(&board, &format!("plans/{longest}")).contains("holds plan 3 of task a"));
     assert!(reason(&board, &format!("plans/{too_long}")).contains("not a name quecto keeps"));
     // This quecto writes every folder (S10a): a reason says what the next
-    // write does with a file, as one in `tasks/` does.
+    // write does with a file, as one in `tasks/` does, every file it drops
+    // included.
+    for file in board.quarantined.iter().filter(|file| !file.carried) {
+        assert!(
+            file.reason.ends_with("drops it"),
+            "{}: {}",
+            file.path,
+            file.reason
+        );
+    }
     assert!(reason(&board, "plans/a.md").ends_with("; carried forward as it is"));
     assert!(reason(&board, "plans/a.4.md").ends_with("; the next write drops it"));
     assert!(reason(&board, &format!("plans/{too_long}")).ends_with("; the next write drops it"));
@@ -387,9 +396,9 @@ fn a_write_and_a_clear_carry_every_folder_and_the_archive_as_they_are() {
 }
 
 /// A file set aside outside `tasks/` no longer holds the board (S10a): a
-/// write lands, carrying it as it is; only its own clear waits.
+/// write lands, carrying it as it is, and a clear removes it alone.
 #[test]
-fn a_file_set_aside_outside_tasks_holds_only_its_own_clear() {
+fn a_file_set_aside_outside_tasks_is_carried_and_cleared_alone() {
     let repos = fresh();
     let head = board_of(&repos, |_| {
         vec![
@@ -401,32 +410,37 @@ fn a_file_set_aside_outside_tasks_holds_only_its_own_clear() {
             (
                 "40000",
                 "plans",
-                Node::Tree(vec![regular("a.2.md", bytes::<PlanCodec>(&plan("a", 1)))]),
+                Node::Tree(vec![
+                    regular("a.1.md", bytes::<PlanCodec>(&plan("a", 1))),
+                    regular("a.2.md", bytes::<PlanCodec>(&plan("a", 1))),
+                ]),
             ),
         ]
     });
     let bob = store(&repos.bob);
-    let board = bob.read().unwrap();
-    let clears: Vec<_> = board
-        .quarantined
-        .iter()
-        .map(|file| {
-            let clear = SetAsideClear {
-                path: file.path.clone(),
-                object: file.object.clone(),
-                repeated: BTreeMap::new(),
-            };
-            bob.clear_set_aside(&head, &clear, "board: clear")
-        })
-        .collect();
-    assert!(
-        matches!(&clears[0], Err(BoardStoreError::FolderSetAside(why)) if why.contains("plans/a.2.md")),
-        "{clears:?}"
-    );
-    let cleared = written(clears[1].clone());
-    let moved = written(bob.write_tasks(&cleared, &[task("b")], "board: add b"));
+    let moved = written(bob.write_tasks(&head, &[task("b")], "board: add b"));
     let remote = repos.remote();
     assert_eq!(at(&remote, &moved, "plans"), at(&remote, &head, "plans"));
+    let board = bob.read().unwrap();
+    let file = board
+        .quarantined
+        .iter()
+        .find(|f| f.path == "plans/a.2.md")
+        .unwrap();
+    let clear = SetAsideClear {
+        path: file.path.clone(),
+        object: file.object.clone(),
+        repeated: BTreeMap::new(),
+    };
+    let cleared = written(bob.clear_set_aside(&moved, &clear, "board: clear plan 2"));
+    assert_eq!(
+        at(&remote, &cleared, "plans/a.1.md"),
+        at(&remote, &head, "plans/a.1.md")
+    );
+    let board = store(&repos.alice).read().unwrap();
+    let paths: Vec<&str> = board.quarantined.iter().map(|f| f.path.as_str()).collect();
+    assert_eq!(paths, ["tasks/junk.md"]);
+    assert_eq!(board.plans, [plan("a", 1)]);
 }
 
 fn tree() -> Node {

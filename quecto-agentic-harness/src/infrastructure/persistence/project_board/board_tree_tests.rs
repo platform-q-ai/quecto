@@ -283,14 +283,19 @@ fn a_key_is_written_where_a_read_finds_it() {
         ArtifactKey::Plan(id(), 0),
         ArtifactKey::Run(id(), 1_000),
     ] {
-        assert!(folder_file(&key, vec![]).is_err(), "{key}");
+        let refused = folder_file(&key, vec![]);
+        assert!(
+            refused
+                .as_ref()
+                .is_err_and(|why| *why == format!("{key}: has no file name the board can read")),
+            "{key}: {refused:?}"
+        );
     }
     let big = folder_file(&ArtifactKey::Change(id(), 1), vec![0; 8 * 1024 + 1]);
     assert!(big.is_err_and(|why| why.contains("8193 bytes")));
 }
 
-/// Only a name listed twice outside `tasks/` stops a write or a clear; a
-/// clear of a file set aside outside `tasks/` waits too.
+/// Only a name listed twice outside `tasks/` stops a write or a clear.
 #[test]
 fn a_name_listed_twice_outside_tasks_stops_writes_and_clears() {
     let mut board = carried(1, 0);
@@ -303,29 +308,11 @@ fn a_name_listed_twice_outside_tasks_stops_writes_and_clears() {
             .is_some_and(|why| why.starts_with("plans/a.1.md is named more than once")),
         "{refusal:?}"
     );
-    let aside = |path: &str| QuarantinedFile {
-        path: path.into(),
-        key: None,
-        reason: "a stray".into(),
-        object: "a".repeat(40),
-        carried: false,
-    };
-    let board = Board {
-        quarantined: vec![aside("tasks/x.txt"), aside("plans/x.txt")],
-        ..Board::default()
-    };
-    assert_eq!(board.folder_clear_refusal("tasks/x.txt"), None);
-    assert_eq!(
-        board.folder_clear_refusal("runs/y.txt"),
-        None,
-        "nothing there"
-    );
-    let refusal = board.folder_clear_refusal("plans/x.txt");
     assert!(
-        refusal.as_deref().is_some_and(
-            |why| why.starts_with("plans/x.txt is set aside, and this quecto clears only")
-        ),
-        "{refusal:?}"
+        refusal
+            .as_deref()
+            .is_some_and(|why| why.contains("quecto has written nothing since")),
+        "the remedy says what moving the board back undoes: {refusal:?}"
     );
 }
 

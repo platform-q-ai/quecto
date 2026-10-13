@@ -337,12 +337,19 @@ pub fn check_a_change_only_in_case_is_written((alice, bob): Clients) {
     );
 }
 
-/// A file set aside outside `tasks/` is not cleared yet: the clear is
-/// refused (`folder_set_aside`) and the board does not move.
-pub fn check_a_clear_outside_tasks_waits((alice, _bob): Clients, spoil: impl FnOnce(ArtifactKey)) {
+/// A file set aside in a folder besides `tasks/` is cleared alone: the
+/// clear removes it, frees its key, and keeps the folder's other files.
+pub fn check_a_clear_in_a_folder_removes_its_file(
+    (alice, bob): Clients,
+    spoil: impl FnOnce(ArtifactKey),
+) {
     alice.bootstrap().unwrap();
     let head = alice.read().unwrap().head;
-    written(alice.write(&head, &[BoardArtifact::Run(run("a", 1))], "board: run a"));
+    let runs = [
+        BoardArtifact::Run(run("a", 1)),
+        BoardArtifact::Run(run("a", 2)),
+    ];
+    written(alice.write(&head, &runs, "board: runs of a"));
     spoil(ArtifactKey::Run(slug("a"), 1));
     let board = alice.read().unwrap();
     let file = board.quarantined[0].clone();
@@ -352,12 +359,35 @@ pub fn check_a_clear_outside_tasks_waits((alice, _bob): Clients, spoil: impl FnO
         object: file.object,
         repeated: BTreeMap::new(),
     };
-    let refused = alice.clear_set_aside(&board.head, &clear, "board: clear run 1");
-    assert!(
-        matches!(&refused, Err(BoardStoreError::FolderSetAside(why)) if why.contains("runs/a.1.md")),
-        "{refused:?}"
-    );
-    assert_eq!(alice.read().unwrap().head, board.head);
+    let cleared = written(alice.clear_set_aside(&board.head, &clear, "board: clear run 1"));
+    let board = bob.read().unwrap();
+    assert_eq!(board.head, cleared);
+    assert!(board.quarantined.is_empty(), "{:?}", board.quarantined);
+    assert_eq!(board.runs, [run("a", 2)]);
+    written(bob.write(&cleared, &runs[..1], "board: run 1 of a again"));
+    assert_eq!(held(&*alice), keyed(&runs));
+}
+
+/// A stray in a folder besides `tasks/` (`add_stray` puts
+/// `plans/notes.txt` there) is dropped by the next write, whatever it
+/// writes.
+pub fn check_a_write_drops_a_stray_in_a_folder((alice, bob): Clients, add_stray: impl FnOnce()) {
+    alice.bootstrap().unwrap();
+    let head = alice.read().unwrap().head;
+    let planned = [BoardArtifact::Plan(plan("a", 1))];
+    written(alice.write(&head, &planned, "board: plan a"));
+    add_stray();
+    let board = bob.read().unwrap();
+    let strays: Vec<(&str, bool)> = board
+        .quarantined
+        .iter()
+        .map(|file| (file.path.as_str(), file.carried))
+        .collect();
+    assert_eq!(strays, [("plans/notes.txt", false)]);
+    written(bob.write_tasks(&board.head, &[task("b", "Two")], "board: add b"));
+    let board = alice.read().unwrap();
+    assert!(board.quarantined.is_empty(), "{:?}", board.quarantined);
+    assert_eq!(board.plans, [plan("a", 1)]);
 }
 
 fn memory() -> (MemoryBoardStore, Clients) {
@@ -405,10 +435,18 @@ fn the_memory_store_writes_a_change_only_in_case() {
 }
 
 #[test]
-fn the_memory_store_waits_to_clear_outside_tasks() {
+fn the_memory_store_clears_a_file_in_a_folder() {
     let (store, clients) = memory();
-    check_a_clear_outside_tasks_waits(clients, |key| {
+    check_a_clear_in_a_folder_removes_its_file(clients, |key| {
         store.quarantine_key(key, "runs/a.1.md", "malformed")
+    });
+}
+
+#[test]
+fn the_memory_store_drops_a_stray_in_a_folder() {
+    let (store, clients) = memory();
+    check_a_write_drops_a_stray_in_a_folder(clients, || {
+        store.set_aside_stray("plans/notes.txt", "not a plan file")
     });
 }
 
@@ -426,7 +464,7 @@ fn the_git_store_refuses_one_key_twice() {
 fn the_git_store_refuses_only_the_write_of_a_set_aside_key() {
     let remote = Remote::new();
     check_set_aside_key_refuses_only_its_write(remote.clients(), |_| {
-        remote.spoil("runs", "a.1.md")
+        remote.put("runs", "a.1.md", b"{")
     });
 }
 
@@ -451,7 +489,17 @@ fn the_git_store_writes_a_change_only_in_case() {
 }
 
 #[test]
-fn the_git_store_waits_to_clear_outside_tasks() {
+fn the_git_store_clears_a_file_in_a_folder() {
     let remote = Remote::new();
-    check_a_clear_outside_tasks_waits(remote.clients(), |_| remote.spoil("runs", "a.1.md"));
+    check_a_clear_in_a_folder_removes_its_file(remote.clients(), |_| {
+        remote.put("runs", "a.1.md", b"{")
+    });
+}
+
+#[test]
+fn the_git_store_drops_a_stray_in_a_folder() {
+    let remote = Remote::new();
+    check_a_write_drops_a_stray_in_a_folder(remote.clients(), || {
+        remote.put("plans", "notes.txt", b"notes")
+    });
 }
