@@ -6,7 +6,6 @@
 //! log off, neither builder gives a recording, and nothing is written to
 //! the event log, to `tracing` or to the CLI's daily log.
 use std::path::Path;
-use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use quecto::application::project_board::ports::ProjectBoardOpLog;
@@ -30,6 +29,10 @@ fn record() -> BoardOpRecord {
         task: None,
         pr: Some(7),
         head: None,
+        listing: None,
+        cancelled: false,
+        build_us: None,
+        result_bytes: 0,
         duration_us: 12,
     }
 }
@@ -65,32 +68,11 @@ fn audit_files(base: &Path) -> Vec<String> {
     }
 }
 
-#[derive(Clone, Default)]
-struct Captured(Arc<Mutex<Vec<u8>>>);
-
-impl std::io::Write for Captured {
-    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-        self.0.lock().unwrap().extend_from_slice(bytes);
-        Ok(bytes.len())
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
-    }
-}
-
-/// What `run` writes to `tracing`, at every level, under a subscriber of
-/// this thread's own.
+/// What `run` writes to `tracing` on this thread, at every level: one
+/// global capture, never a scoped subscriber (whose callsites another
+/// thread can cache as of no interest).
 fn traced(run: impl FnOnce()) -> String {
-    let captured = Captured::default();
-    let sink = captured.clone();
-    let subscriber = tracing_subscriber::fmt()
-        .with_writer(move || sink.clone())
-        .with_ansi(false)
-        .with_max_level(tracing::Level::TRACE)
-        .finish();
-    tracing::subscriber::with_default(subscriber, run);
-    String::from_utf8(captured.0.lock().unwrap().clone()).unwrap()
+    quecto::infrastructure::test_support::tracing_capture::traced(tracing::Level::TRACE, run)
 }
 
 /// Owner condition (2026-10-12): with the event log off, in the session's

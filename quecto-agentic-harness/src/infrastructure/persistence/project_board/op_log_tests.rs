@@ -1,7 +1,7 @@
 //! Epic #2481 T2: the tracing adapter traces each record at its access's
 //! level, holding the `board_op` line's fields only, then hands it on; a
 //! dropped record raises one warning.
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use super::*;
 use crate::domain::project_board::value_objects::telemetry::{
@@ -23,35 +23,17 @@ fn record(access: Access) -> BoardOpRecord {
         task: None,
         pr: None,
         head: None,
+        listing: None,
+        cancelled: false,
+        build_us: None,
+        result_bytes: 0,
         duration_us: 9,
     }
 }
 
-#[derive(Clone, Default)]
-struct Captured(Arc<Mutex<Vec<u8>>>);
-
-impl std::io::Write for Captured {
-    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-        self.0.lock().unwrap().extend_from_slice(bytes);
-        Ok(bytes.len())
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
-    }
-}
-
-/// What `run` writes to `tracing` at `level` and above.
+/// What `run` writes to `tracing` at `level` and above, on this thread.
 fn traced(level: tracing::Level, run: impl FnOnce()) -> String {
-    let captured = Captured::default();
-    let sink = captured.clone();
-    let subscriber = tracing_subscriber::fmt()
-        .with_writer(move || sink.clone())
-        .with_ansi(false)
-        .with_max_level(level)
-        .finish();
-    tracing::subscriber::with_default(subscriber, run);
-    String::from_utf8(captured.0.lock().unwrap().clone()).unwrap()
+    crate::infrastructure::test_support::tracing_capture::traced(level, run)
 }
 
 #[test]

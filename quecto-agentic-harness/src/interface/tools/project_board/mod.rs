@@ -16,6 +16,7 @@ pub mod tool;
 use serde_json::Value;
 
 use crate::application::project_board::use_cases::RunBoardOperation;
+use crate::domain::project_board::value_objects::telemetry::FaultKind;
 use request::RequestError;
 
 /// The most bytes a request's text may take.
@@ -27,17 +28,17 @@ pub const MAX_REQUEST_BYTES: usize = 1024 * 1024;
 /// # Errors
 /// A request too big, not JSON, or naming a key twice.
 pub fn read(text: &str) -> Result<Value, RequestError> {
-    let refused = |problem: String| RequestError {
-        field: "request".into(),
-        problem,
-    };
+    let refused = |problem: String, fault| RequestError::whole("request", problem, fault);
     if text.len() > MAX_REQUEST_BYTES {
-        return Err(refused(format!(
-            "is {} bytes; a request takes at most {MAX_REQUEST_BYTES}",
-            text.len()
-        )));
+        return Err(refused(
+            format!(
+                "is {} bytes; a request takes at most {MAX_REQUEST_BYTES}",
+                text.len()
+            ),
+            FaultKind::TooLarge,
+        ));
     }
-    json::strict(text).map_err(|error| refused(format!("must be JSON: {error}")))
+    json::strict(text).map_err(|error| refused(format!("must be JSON: {error}"), error.fault()))
 }
 
 /// The answer to the request `text`.

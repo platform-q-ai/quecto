@@ -6,7 +6,8 @@ use std::sync::Arc;
 use super::dto::BoardOp;
 use super::operations::BoardRequest;
 use super::ports::ProjectBoardOpLog;
-use crate::domain::project_board::value_objects::telemetry::{BoardOpRecord, OpKind};
+use crate::domain::project_board::value_objects::slug::Slug;
+use crate::domain::project_board::value_objects::telemetry::{Access, BoardOpRecord, OpKind};
 
 /// The op `request` is. Exhaustive with no catch-all: a new request or
 /// change op does not compile until it has its kind.
@@ -26,6 +27,63 @@ pub fn op_kind(request: &BoardRequest) -> OpKind {
         BoardRequest::Change(_, BoardOp::RemovePr(_)) => OpKind::UnlinkPr,
         BoardRequest::Complete(_) => OpKind::Complete,
         BoardRequest::Clear { .. } => OpKind::ClearSetAside,
+    }
+}
+
+/// Whether the op `kind` writes the board (as [`BoardRequest::writes`]
+/// says of its request) or reads it; an `unknown` op reads nothing, so it
+/// is a read. Exhaustive, so a new op does not compile until it has its
+/// access.
+pub fn access_of(kind: OpKind) -> Access {
+    match kind {
+        OpKind::Bootstrap
+        | OpKind::Create
+        | OpKind::UpdateDraft
+        | OpKind::Move
+        | OpKind::Renew
+        | OpKind::TakeOver
+        | OpKind::LinkPr
+        | OpKind::UnlinkPr
+        | OpKind::Complete
+        | OpKind::ClearSetAside => Access::Write,
+        OpKind::List
+        | OpKind::ListReady
+        | OpKind::ListTakeable
+        | OpKind::Show
+        | OpKind::Unknown => Access::Read,
+    }
+}
+
+/// The task `request` acts on, when its op names one by its `task` field.
+pub fn task_of(request: &BoardRequest) -> Option<&Slug> {
+    match request {
+        BoardRequest::Show(id) | BoardRequest::Change(id, _) | BoardRequest::Complete(id) => {
+            Some(id)
+        }
+        BoardRequest::Create(task) => Some(&task.id),
+        BoardRequest::UpdateDraft(update) => Some(&update.id),
+        BoardRequest::Bootstrap
+        | BoardRequest::List(_)
+        | BoardRequest::ListReady
+        | BoardRequest::ListTakeable
+        | BoardRequest::Clear { .. } => None,
+    }
+}
+
+/// The pull request `request` links or unlinks.
+pub fn pr_of(request: &BoardRequest) -> Option<u64> {
+    match request {
+        BoardRequest::Change(_, BoardOp::AddPr(pr) | BoardOp::RemovePr(pr)) => Some(*pr),
+        BoardRequest::Change(_, BoardOp::Move(_) | BoardOp::Renew | BoardOp::TakeOver)
+        | BoardRequest::Bootstrap
+        | BoardRequest::List(_)
+        | BoardRequest::ListReady
+        | BoardRequest::ListTakeable
+        | BoardRequest::Show(_)
+        | BoardRequest::Create(_)
+        | BoardRequest::UpdateDraft(_)
+        | BoardRequest::Complete(_)
+        | BoardRequest::Clear { .. } => None,
     }
 }
 

@@ -47,6 +47,7 @@ use std::path::PathBuf;
 use serde_json::Value;
 
 use super::CliContext;
+use crate::domain::project_board::value_objects::telemetry::FaultKind;
 use crate::interface::tools::project_board::answer::request_refused;
 use crate::interface::tools::project_board::request::{RequestError, fields_of};
 use crate::interface::tools::project_board::site::{self, BoardSite};
@@ -77,18 +78,17 @@ fn read_line(args: &[String]) -> Result<Line, RequestError> {
         remote: "origin".into(),
     };
     let mut rest = args.iter();
-    let invalid = |flag: &str, problem: &str| RequestError {
-        field: flag.trim_start_matches('-').into(),
-        problem: problem.into(),
+    let invalid = |flag: &str, problem: &str, fault| {
+        RequestError::of(flag.trim_start_matches('-'), problem, fault)
     };
     // A flag of the command line's own: given once, with a value.
     let mut given: Vec<&str> = Vec::new();
     let mut own = |flag: &'static str, value: Option<&String>| {
         let value = value
             .filter(|value| !value.is_empty())
-            .ok_or_else(|| invalid(flag, "needs a value"))?;
+            .ok_or_else(|| invalid(flag, "needs a value", FaultKind::Missing))?;
         match given.contains(&flag) {
-            true => Err(invalid(flag, "is given twice")),
+            true => Err(invalid(flag, "is given twice", FaultKind::DuplicateKey)),
             false => {
                 given.push(flag);
                 Ok(value.clone())
@@ -103,18 +103,19 @@ fn read_line(args: &[String]) -> Result<Line, RequestError> {
             "--remote" => line.remote = own("--remote", rest.next())?,
             flag if flag.starts_with("--") => {
                 // An unknown flag is never echoed back as a field.
-                let value = rest
-                    .next()
-                    .ok_or_else(|| invalid("flags", "a --<field> needs a value"))?;
+                let value = rest.next().ok_or_else(|| {
+                    invalid("flags", "a --<field> needs a value", FaultKind::Missing)
+                })?;
                 line.fields.extend([flag.to_string(), value.clone()]);
             }
             op if line.op.is_none() => line.op = Some(op.to_string()),
             _ => {
                 // A fixed field: the stray text is never echoed back.
-                return Err(RequestError {
-                    field: "arguments".into(),
-                    problem: "hold one op, then --<field> <value> pairs".into(),
-                });
+                return Err(RequestError::stray(
+                    "arguments",
+                    "hold one op, then --<field> <value> pairs",
+                    1,
+                ));
             }
         }
     }
@@ -124,28 +125,29 @@ fn read_line(args: &[String]) -> Result<Line, RequestError> {
 /// The request the command line names; `stdin` reads `--input -`.
 fn request(
     line: &Line,
-    stdin: impl FnOnce() -> std::io::Result<String>,
+    stdin: impl FnOnce() -> Result<String, InputError>,
 ) -> Result<Value, RequestError> {
-    let invalid = |field: &str, problem: &str| RequestError {
-        field: field.into(),
-        problem: problem.into(),
-    };
+    let invalid = |field: &str, problem: &str, fault| RequestError::of(field, problem, fault);
     match (&line.input, &line.op) {
-        (Some(_), _) if !line.fields.is_empty() => Err(invalid(
+        (Some(_), _) if !line.fields.is_empty() => Err(RequestError::whole(
             "input",
             "is the whole request: give fields there, not as flags",
+            FaultKind::InvalidValue,
         )),
         (Some(input), op) => {
             let text = match input.as_str() {
-                "-" => stdin()
-                    .map_err(|error| invalid("input", &format!("could not be read: {error}")))?,
+                "-" => stdin().map_err(|error| {
+                    let problem = format!("could not be read: {error}");
+                    RequestError::whole("input", problem, error.fault())
+                })?,
                 text => text.to_string(),
             };
-            let mut value = json::strict(&text)
-                .map_err(|error| invalid("input", &format!("must be JSON: {error}")))?;
-            let object = value
-                .as_object_mut()
-                .ok_or_else(|| invalid("input", "must be a JSON object"))?;
+            let mut value = json::strict(&text).map_err(|error| {
+                RequestError::whole("input", format!("must be JSON: {error}"), error.fault())
+            })?;
+            let object = value.as_object_mut().ok_or_else(|| {
+                RequestError::whole("input", "must be a JSON object", FaultKind::WrongType)
+            })?;
             if let Some(op) = op {
                 let op = Value::String(op.replace('-', "_"));
                 match object.get("op") {
@@ -153,27 +155,63 @@ fn request(
                         object.insert("op".into(), op);
                     }
                     Some(named) if *named == op => {}
-                    Some(_) => return Err(invalid("op", "differs from the input's op")),
+                    Some(_) => {
+                        let fault = FaultKind::InvalidValue;
+                        return Err(invalid("op", "differs from the input's op", fault));
+                    }
                 }
             }
             Ok(value)
         }
         (None, Some(op)) => command_line::request(op, &line.fields),
-        (None, None) => Err(invalid("op", "is required")),
+        (None, None) => Err(invalid("op", "is required", FaultKind::Missing)),
+    }
+}
+
+/// Why `--input -` could not be read as a request's text.
+#[derive(Debug)]
+enum InputError {
+    /// More than [`MAX_REQUEST_BYTES`].
+    TooLarge,
+    /// Not UTF-8.
+    NotUtf8,
+    /// Standard input could not be read.
+    Read(std::io::Error),
+}
+
+impl std::fmt::Display for InputError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::TooLarge => write!(f, "it is more than {MAX_REQUEST_BYTES} bytes"),
+            Self::NotUtf8 => f.write_str("it is not UTF-8"),
+            Self::Read(error) => write!(f, "{error}"),
+        }
+    }
+}
+
+impl InputError {
+    /// How the request's text was wrong, as the shared path records it.
+    fn fault(&self) -> FaultKind {
+        match self {
+            Self::TooLarge => FaultKind::TooLarge,
+            Self::NotUtf8 => FaultKind::NotJson,
+            Self::Read(_) => FaultKind::InvalidValue,
+        }
     }
 }
 
 /// At most [`MAX_REQUEST_BYTES`] of `input`, as text.
-fn bounded(input: impl Read) -> std::io::Result<String> {
+fn bounded(input: impl Read) -> Result<String, InputError> {
     let mut bytes = Vec::new();
     let limit = u64::try_from(MAX_REQUEST_BYTES).expect("the request bound fits a u64");
-    input.take(limit + 1).read_to_end(&mut bytes)?;
+    input
+        .take(limit + 1)
+        .read_to_end(&mut bytes)
+        .map_err(InputError::Read)?;
     if bytes.len() > MAX_REQUEST_BYTES {
-        return Err(std::io::Error::other(format!(
-            "it is more than {MAX_REQUEST_BYTES} bytes"
-        )));
+        return Err(InputError::TooLarge);
     }
-    String::from_utf8(bytes).map_err(|_| std::io::Error::other("it is not UTF-8"))
+    String::from_utf8(bytes).map_err(|_| InputError::NotUtf8)
 }
 
 pub(crate) fn cmd_board(

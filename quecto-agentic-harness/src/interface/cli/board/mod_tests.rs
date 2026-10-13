@@ -71,7 +71,10 @@ fn input_from_stdin_is_bounded_and_its_failures_are_the_requests() {
     assert_eq!(refused.field, "input");
     assert!(refused.problem.contains("more than"), "{}", refused.problem);
     let line = read_line(&args(&["--input", "-"])).unwrap();
-    let broken = request(&line, || Err(std::io::Error::other("the pipe broke"))).unwrap_err();
+    let broken = request(&line, || {
+        Err(InputError::Read(std::io::Error::other("the pipe broke")))
+    })
+    .unwrap_err();
     assert_eq!(
         (
             broken.field.as_str(),
@@ -313,4 +316,38 @@ fn a_stray_flag_is_never_echoed_back() {
             &json!("op: is not an op of the board")
         )
     );
+}
+
+/// Epic #2481 T3 review round 1: `--input` with field flags beside it is
+/// the request as a whole given wrong, recorded as `request`.
+#[test]
+fn input_beside_field_flags_is_recorded_as_the_request() {
+    let error = built(&["create", "--input", "{}", "--title", "A"], "").unwrap_err();
+    assert_eq!(error.field, "input", "the answer is unchanged");
+    let fault = error.fault;
+    assert_eq!(
+        (
+            fault.field.as_str(),
+            fault.fault.as_str(),
+            fault.unexpected_count
+        ),
+        ("request", "invalid_value", None)
+    );
+}
+
+/// Review round 2: `--input -` over the bound, or not UTF-8, is recorded
+/// as the shared path records a request's text: `request`, `too_large`
+/// or `not_json`; a pipe that breaks is the request as a whole, unread.
+#[test]
+fn stdin_input_failures_are_recorded_as_the_requests() {
+    let recorded = |error: RequestError| (error.fault.field.as_str(), error.fault.fault.as_str());
+    let big = "x".repeat(MAX_REQUEST_BYTES + 1);
+    let too_large = built(&["--input", "-"], &big).unwrap_err();
+    assert_eq!(recorded(too_large), ("request", "too_large"));
+    let line = read_line(&args(&["--input", "-"])).unwrap();
+    let not_utf8 = request(&line, || bounded(&[0xff, 0xfe][..])).unwrap_err();
+    assert_eq!(not_utf8.problem, "could not be read: it is not UTF-8");
+    assert_eq!(recorded(not_utf8), ("request", "not_json"));
+    let broken = request(&line, || Err(InputError::Read(std::io::Error::other("x")))).unwrap_err();
+    assert_eq!(recorded(broken), ("request", "invalid_value"));
 }

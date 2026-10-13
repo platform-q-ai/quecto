@@ -9,6 +9,7 @@ pub mod memory_pull_requests;
 pub mod mock_claude;
 pub mod no_core_dumps;
 pub mod tool_schema_portability;
+pub mod tracing_capture;
 
 /// Read one production-format framed JSON command from a synchronous fixture.
 ///

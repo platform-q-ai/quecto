@@ -48,9 +48,10 @@ const SNAPSHOTS: &[(&str, &str)] = &[
     ),
 ];
 
-/// Types a record field may hold as they are: counts, and the guarded
-/// leaves (the commit id is `code_ref`'s, from `commit_id.rs`).
-const ADMITTED: &[&str] = &["u64", "StaticKind", "TaskRef", "CommitId"];
+/// Types a record field may hold as they are: counts, flags (T3's
+/// `cancelled`), and the guarded leaves (the commit id is `code_ref`'s,
+/// from `commit_id.rs`).
+const ADMITTED: &[&str] = &["u64", "bool", "StaticKind", "TaskRef", "CommitId"];
 
 /// The adapters' file (T2), the one place besides composition that may
 /// name them.

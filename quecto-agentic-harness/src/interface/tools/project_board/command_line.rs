@@ -6,6 +6,7 @@ use serde_json::{Map, Value};
 
 use super::json::strict;
 use super::request::{Kind, RequestError, fields_of};
+use crate::domain::project_board::value_objects::telemetry::FaultKind;
 
 /// The request `op` and `flags` name. A list of ids is comma-separated (an
 /// empty value is the empty list); `--repeated` is JSON; `--parent ""`
@@ -16,13 +17,11 @@ use super::request::{Kind, RequestError, fields_of};
 /// without a value, an empty id in a list, or `--repeated` that is not
 /// JSON.
 pub fn request(op: &str, flags: &[String]) -> Result<Value, RequestError> {
-    let refused = |field: &str, problem: &str| RequestError {
-        field: field.into(),
-        problem: problem.into(),
-    };
+    let refused = |field: &str, problem: &str, fault| RequestError::of(field, problem, fault);
     let op = op.replace('-', "_");
     // A name that is no op is never echoed back.
-    let fields = fields_of(&op).ok_or_else(|| refused("op", "is not an op of the board"))?;
+    let fields = fields_of(&op)
+        .ok_or_else(|| refused("op", "is not an op of the board", FaultKind::InvalidValue))?;
     let mut object = Map::new();
     object.insert("op".into(), Value::String(op.clone()));
     let mut rest = flags.iter();
@@ -30,19 +29,21 @@ pub fn request(op: &str, flags: &[String]) -> Result<Value, RequestError> {
         let name = flag
             .strip_prefix("--")
             .map(|name| name.replace('-', "_"))
-            .ok_or_else(|| refused("flags", "expected --<field> <value>"))?;
+            .ok_or_else(|| refused("flags", "expected --<field> <value>", FaultKind::WrongType))?;
         let field = fields
             .iter()
             .find(|field| field.name == name)
             // A field the op does not take is never echoed back as one.
-            .ok_or_else(|| refused("flags", &format!("{op} takes no such field")))?;
-        let text = rest.next().ok_or_else(|| refused(&name, "needs a value"))?;
+            .ok_or_else(|| RequestError::stray("flags", format!("{op} takes no such field"), 1))?;
+        let text = rest
+            .next()
+            .ok_or_else(|| refused(&name, "needs a value", FaultKind::Missing))?;
         let value = match field.kind {
             Kind::Slugs if text.is_empty() => Value::Array(vec![]),
             Kind::Slugs => {
                 let ids: Vec<&str> = text.split(',').collect();
                 if ids.iter().any(|id| id.is_empty()) {
-                    return Err(refused(&name, "names an empty id"));
+                    return Err(refused(&name, "names an empty id", FaultKind::InvalidValue));
                 }
                 Value::Array(ids.into_iter().map(|id| Value::String(id.into())).collect())
             }
@@ -60,12 +61,12 @@ pub fn request(op: &str, flags: &[String]) -> Result<Value, RequestError> {
             | Kind::TaskKind
             | Kind::Path
             | Kind::ObjectId => Value::String(text.clone()),
-            Kind::Repeated => {
-                strict(text).map_err(|error| refused(&name, &format!("must be JSON: {error}")))?
-            }
+            Kind::Repeated => strict(text).map_err(|error| {
+                refused(&name, &format!("must be JSON: {error}"), error.fault())
+            })?,
         };
         if object.insert(name.clone(), value).is_some() {
-            return Err(refused(&name, "is given twice"));
+            return Err(refused(&name, "is given twice", FaultKind::DuplicateKey));
         }
     }
     Ok(Value::Object(object))

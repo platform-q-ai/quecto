@@ -375,3 +375,107 @@ fn every_op_records_its_own_op_kind() {
         assert_eq!(op_kind(&read).as_str(), *name);
     }
 }
+
+/// Epic #2481 T3: a refusal says, for the call's record, which schema
+/// field was wrong and how; the request's own text never names it.
+#[test]
+fn a_refusal_records_its_schema_field_and_fault() {
+    use crate::interface::tools::project_board::{MAX_REQUEST_BYTES, read};
+    let fault = |error: RequestError| {
+        let RequestFault {
+            field,
+            fault,
+            unexpected_count,
+        } = error.fault;
+        (field.as_str(), fault.as_str(), unexpected_count)
+    };
+    let cases = [
+        (json!({"op": "show"}), ("task", "missing", None)),
+        (
+            json!({"op": "show", "task": 1}),
+            ("task", "wrong_type", None),
+        ),
+        (
+            json!({"op": "show", "task": "Not A Slug"}),
+            ("task", "invalid_value", None),
+        ),
+        (
+            json!({"op": "move", "task": "a", "to": "Away"}),
+            ("to", "invalid_value", None),
+        ),
+        (
+            json!({"op": "link_pr", "task": "a", "pr": "7"}),
+            ("pr", "wrong_type", None),
+        ),
+        (
+            json!({"op": "link_pr", "task": "a", "pr": 0}),
+            ("pr", "invalid_value", None),
+        ),
+        (
+            json!({"op": "create", "task": "a", "title": "A", "depends_on": ["a", 2]}),
+            ("depends_on", "wrong_type", None),
+        ),
+        (
+            json!({"op": "list", "status": "ready", "parent": "a"}),
+            ("parent", "invalid_value", None),
+        ),
+        (
+            json!({"op": "update_draft", "task": "a"}),
+            ("op", "missing", None),
+        ),
+        (json!({"op": "Drop Tables"}), ("op", "invalid_value", None)),
+        (json!({"op": 3}), ("op", "wrong_type", None)),
+        (json!({"task": "a"}), ("op", "missing", None)),
+        (json!(["op"]), ("request", "wrong_type", None)),
+        (
+            json!({"op": "clear_set_aside", "path": "x", "object": "0".repeat(40), "repeated": {"Secret Path": {"drop": ["Secret"]}}}),
+            ("repeated", "invalid_value", None),
+        ),
+        (
+            json!({"op": "clear_set_aside", "path": "x".repeat(10_000), "object": "0".repeat(40)}),
+            ("path", "too_large", None),
+        ),
+        // A stray key is `other`, counted, even when another op takes it.
+        (
+            json!({"op": "show", "task": "a", "title": "A"}),
+            ("other", "unexpected", Some(1)),
+        ),
+        (
+            json!({"op": "list", "Secret Key": 1, "title": 2}),
+            ("other", "unexpected", Some(2)),
+        ),
+    ];
+    for (value, want) in cases {
+        assert_eq!(fault(refused(value.clone())), want, "{value}");
+    }
+    let padded = format!(r#"{{"op": "list"}}{}"#, " ".repeat(MAX_REQUEST_BYTES));
+    let texts = [
+        (r#"{"op": "show" "#, ("request", "not_json", None)),
+        (
+            r#"{"op": "show", "op": "list"}"#,
+            ("request", "duplicate_key", None),
+        ),
+        (padded.as_str(), ("request", "too_large", None)),
+    ];
+    for (text, want) in texts {
+        assert_eq!(fault(read(text).unwrap_err()), want, "{}", &text[..20]);
+    }
+}
+
+/// Only a field of `OPS`, or `op` or `request`, is recorded by name, as
+/// the table spells it; anything else is `other`.
+#[test]
+fn a_schema_field_is_one_the_table_spells() {
+    for (field, want) in [
+        ("depends_on/3", "depends_on"),
+        ("repeated/Secret Path/keep", "repeated"),
+        ("expected_updated", "expected_updated"),
+        ("request", "request"),
+        ("Title", "other"),
+        ("flags", "other"),
+        ("", "other"),
+        ("ok", "other"),
+    ] {
+        assert_eq!(schema_field(field).as_str(), want, "{field:?}");
+    }
+}

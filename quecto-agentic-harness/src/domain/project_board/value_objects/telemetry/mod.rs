@@ -1,8 +1,8 @@
 //! Board op telemetry (epic #2481, T1): what one project board request
 //! did, as the event log's `board_op` record holds it. Pure values, built
 //! the way the swarm board's `swarm_op` is (`domain::swarm::telemetry`).
-//! T1 holds the record's skeleton; later slices add their fields (T3 the
-//! front ends', T4 the use cases', T5 the store's, T6 the index's).
+//! T1 holds the record's skeleton and T3 the front ends' fields; later
+//! slices add theirs (T4 the use cases', T5 the store's, T6 the index's).
 //!
 //! **No free text is ever a field.** Enforced: a field is a kind enum, a
 //! count, or a leaf from `leaves` ([`StaticKind`], a known kind or
@@ -134,8 +134,33 @@ pub struct BoardOpRecord {
     pub pr: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub head: Option<CommitId>,
+    /// A listing's counts (T3), from the answer its front end gave.
+    #[serde(flatten, skip_serializing_if = "Option::is_none")]
+    pub listing: Option<ListingCounts>,
+    /// The call was dropped (its turn interrupted) before it was answered:
+    /// written only when it was.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub cancelled: bool,
+    /// How long composition took to build the board's operations, when
+    /// the request got that far.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub build_us: Option<u64>,
+    /// The answer's size as its front end sent it.
+    pub result_bytes: u64,
     /// The whole request, from its arrival to its answer.
     pub duration_us: u64,
+}
+
+/// What a listing's answer held (T3): the tasks it listed and showed, and
+/// how many it left out; the files it showed set aside, and how many of
+/// those it left out. The CLI leaves nothing out.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct ListingCounts {
+    pub listed: u64,
+    pub shown: u64,
+    pub truncated_more: u64,
+    pub set_aside: u64,
+    pub set_aside_more: u64,
 }
 
 #[cfg(test)]

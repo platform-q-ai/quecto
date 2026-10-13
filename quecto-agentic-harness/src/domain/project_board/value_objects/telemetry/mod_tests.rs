@@ -20,6 +20,10 @@ fn bare() -> BoardOpRecord {
         task: None,
         pr: None,
         head: None,
+        listing: None,
+        cancelled: false,
+        build_us: None,
+        result_bytes: 0,
         duration_us: 0,
     }
 }
@@ -43,6 +47,16 @@ fn full() -> BoardOpRecord {
         task: Some(TaskRef::of(&Slug::parse("fix-index-rebuild").unwrap())),
         pr: Some(7),
         head: CommitId::parse(HEAD).ok(),
+        listing: Some(ListingCounts {
+            listed: 40,
+            shown: 30,
+            truncated_more: 10,
+            set_aside: 3,
+            set_aside_more: 1,
+        }),
+        cancelled: true,
+        build_us: Some(41_000),
+        result_bytes: 412,
         duration_us: 1_830_000,
     }
 }
@@ -54,7 +68,9 @@ fn every_field_serializes_as_its_golden_line() {
         "event": "board_op", "op": "move", "front_end": "tool", "client": "agent",
         "access": "write", "outcome": "refused", "code": "rule", "rule": "not_holder",
         "field": "other", "fault": "unexpected", "unexpected_count": 2,
-        "task": "fix-index-rebuild", "pr": 7, "head": HEAD, "duration_us": 1_830_000,
+        "task": "fix-index-rebuild", "pr": 7, "head": HEAD, "listed": 40, "shown": 30,
+        "truncated_more": 10, "set_aside": 3, "set_aside_more": 1, "cancelled": true,
+        "build_us": 41_000, "result_bytes": 412, "duration_us": 1_830_000,
     });
     assert_eq!(line, golden);
 }
@@ -64,7 +80,7 @@ fn a_bare_record_writes_only_what_always_applies() {
     let line = serde_json::to_value(AuditEvent::BoardOp(Box::new(bare()))).unwrap();
     let golden = json!({
         "event": "board_op", "op": "show", "front_end": "cli", "client": "pocket_relay",
-        "access": "read", "outcome": "ok", "duration_us": 0,
+        "access": "read", "outcome": "ok", "result_bytes": 0, "duration_us": 0,
     });
     assert_eq!(line, golden);
 }
