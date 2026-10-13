@@ -38,9 +38,9 @@ or digit, and not shaped like a ref (`C` followed by digits only: `C7`,
 `spike-1839`, `v1.2`. Anything else — a space, a TAB or LF, `/`,
 non-ASCII — is refused before a ref is minted or a script runs, so a
 name can never break `quecto container ls`, pass for another row, or be
-read as a ref by `quecto container kill <ref|name>`. The tool schema
-carries the shape as the name's `pattern`; the length bound is checked
-by quecto only. A record written before the rule keeps its name: it
+read as a ref by `quecto container kill <ref|name>`. The rule is
+quecto's own (the tool schema types `name` as a plain string), and the
+refusal states it. A record written before the rule keeps its name: it
 lists exactly in `ls --json` and is killed by its ref. `mode: existing` requires exactly one of
 `ref`/`name`; unknown, ambiguous, stopped, or stale (kill pending/failed)
 targets fail without guessing.

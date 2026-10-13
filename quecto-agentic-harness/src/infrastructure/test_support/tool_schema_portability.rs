@@ -10,10 +10,8 @@
 //!   (`"object"`), `properties`, `required` (names of those properties),
 //!   `additionalProperties` (a boolean) and `description` (OpenAI refuses a
 //!   combinator at the root of function parameters); a property, array
-//!   item or `anyOf` branch those plus `items`, `enum`, `minimum`,
-//!   `maximum` and `pattern` (on a string type only, a plain anchored regex
-//!   of classes, groups, alternation, `*` and `+`: OpenAI's subset
-//!   documents it for strings), or only `anyOf` and `description`; `properties`,
+//!   item or `anyOf` branch those plus `items`, `enum`, `minimum` and
+//!   `maximum`, or only `anyOf` and `description`; `properties`,
 //!   `required` and `additionalProperties` only on an object type;
 //!   `description` a string, `enum` a non-empty list, bounds numbers;
 //! - every property, array item and `anyOf` branch names its JSON type,
@@ -54,22 +52,7 @@ const NODE_KEYWORDS: &[&str] = &[
     "anyOf",
     "minimum",
     "maximum",
-    "pattern",
 ];
-
-/// The characters a portable `pattern` may hold: no lookaround, flags,
-/// escapes or counted repetition, which providers support unevenly.
-fn plain_anchored_regex(pattern: &str) -> bool {
-    let anchored = pattern.starts_with('^') && pattern.ends_with('$');
-    let plain = pattern.chars().all(|c| {
-        c.is_ascii_alphanumeric()
-            || matches!(
-                c,
-                '^' | '$' | '|' | '(' | ')' | '[' | ']' | '*' | '+' | '-' | '.' | '_'
-            )
-    });
-    anchored && plain
-}
 
 /// The keywords only an object type may carry.
 const OBJECT_KEYWORDS: &[&str] = &["properties", "required", "additionalProperties"];
@@ -173,16 +156,6 @@ fn check_typed(node: &Value, path: &str, violations: &mut Vec<String>) {
                     violations.push(format!("{path}: items without an array type"));
                 }
                 (false, None) => {}
-            }
-            if let Some(pattern) = map.get("pattern") {
-                let portable = pattern.as_str().is_some_and(plain_anchored_regex);
-                match (names.contains(&"string"), portable) {
-                    (true, true) => {}
-                    (true, false) => {
-                        violations.push(format!("{path}: pattern is not a plain anchored regex"))
-                    }
-                    (false, _) => violations.push(format!("{path}: pattern without a string type")),
-                }
             }
             if names.contains(&"object") {
                 check_object_keywords(map, path, violations);
