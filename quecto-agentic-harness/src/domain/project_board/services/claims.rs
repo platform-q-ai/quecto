@@ -15,6 +15,7 @@
 use super::super::entities::claim::{CLAIM_TTL_SECONDS, Claim, Identity};
 use super::super::entities::task::{Task, TaskFields};
 use super::super::value_objects::rule_error::BoardRuleError;
+use super::super::value_objects::telemetry::ClaimFacts;
 use super::super::value_objects::timestamp::Timestamp;
 
 /// The room the strictly-forward stamp needs past the latest time a
@@ -92,6 +93,18 @@ pub(super) fn held_live_by<'a>(
 /// expired and can be taken over.
 pub fn is_live(claim: &Claim, now: &Timestamp) -> bool {
     *now < claim.expires
+}
+
+/// What a change by `writer` at `now` finds of `task`'s claim (epic
+/// #2481 T4), `None` when it holds none: how long it has been held and
+/// has left, and whether the writer holds it ([`Identity::is`]); never
+/// who does.
+pub fn claim_facts(task: &Task, writer: &Identity, now: &Timestamp) -> Option<ClaimFacts> {
+    task.fields().claim.as_ref().map(|claim| ClaimFacts {
+        held_s: now.seconds_since(&claim.since),
+        left_s: claim.expires.seconds_since(now),
+        holder_is_writer: claim.holder.is(writer),
+    })
 }
 
 /// Whether something stamped `updated` may be built on, given the

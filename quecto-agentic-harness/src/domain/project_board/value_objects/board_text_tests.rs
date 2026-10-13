@@ -355,3 +355,107 @@ fn a_chat_space_between_words_is_made_plain_in_text() {
         assert_eq!(settled(text, raw), raw, "{raw:?}");
     }
 }
+
+/// Epic #2481 T4: the kinds of change a normaliser made, each told by
+/// itself, and none for text it kept as written.
+mod changes {
+    use super::*;
+    use crate::domain::project_board::value_objects::telemetry::TextChange::{self, *};
+
+    fn told(changes: fn(&str) -> Vec<TextChange>, raw: &str, kinds: &[TextChange]) {
+        assert_eq!(changes(raw), kinds, "{raw:?}");
+    }
+
+    #[test]
+    fn kept_text_has_no_changes() {
+        for raw in ["", "Why.\nHow.", "a\u{2028}b", "\tcode", "x\u{a0}`y`"] {
+            told(text_changes, raw, &[]);
+        }
+        for raw in ["", "A title", "Ça va ?"] {
+            told(line_changes, raw, &[]);
+        }
+    }
+
+    #[test]
+    fn a_crlf_is_told() {
+        told(text_changes, "Why.\r\nHow.", &[Crlf]);
+        told(line_changes, "A\r\n", &[Crlf, EdgeSpace]);
+    }
+
+    #[test]
+    fn a_lone_cr_is_told() {
+        told(text_changes, "a\rb", &[LoneCr]);
+        told(line_changes, "a\r", &[LoneCr, EdgeSpace]);
+    }
+
+    #[test]
+    fn another_line_break_is_told_in_a_line() {
+        told(line_changes, "a\u{2028}", &[LineBreak, EdgeSpace]);
+        told(line_changes, "\u{b}a", &[LineBreak, EdgeSpace]);
+    }
+
+    #[test]
+    fn a_chat_space_is_told() {
+        told(text_changes, "Ça va\u{a0}?", &[ChatSpace]);
+        told(line_changes, "Ça va\u{202f}?", &[ChatSpace]);
+    }
+
+    #[test]
+    fn a_tab_is_told_in_a_line() {
+        told(line_changes, "a\tb", &[Tab]);
+    }
+
+    #[test]
+    fn edge_blank_lines_are_told() {
+        told(text_changes, "\n\nabc", &[EdgeBlankLines]);
+        told(text_changes, "abc\n", &[EdgeBlankLines]);
+        told(text_changes, " \n\t\n", &[EdgeBlankLines]);
+        told(text_changes, "```\ncode\n", &[EdgeBlankLines]);
+    }
+
+    #[test]
+    fn a_trailing_space_is_told() {
+        told(text_changes, "Why. \nHow.", &[TrailingSpace]);
+        told(text_changes, "Why.\t\n\nHow.", &[TrailingSpace]);
+    }
+
+    #[test]
+    fn edge_space_is_told_in_a_line() {
+        told(line_changes, "  A title ", &[EdgeSpace]);
+    }
+
+    #[test]
+    fn several_changes_are_told_once_each_in_order() {
+        let raw = "\r\n  Ça va\u{a0}?  \r\nHow. \r\n\r\n";
+        told(
+            text_changes,
+            raw,
+            &[Crlf, ChatSpace, EdgeBlankLines, TrailingSpace],
+        );
+        told(
+            line_changes,
+            "\t\u{a0}a\tb\u{a0}\r\n\r",
+            &[Crlf, LoneCr, ChatSpace, Tab, EdgeSpace],
+        );
+    }
+
+    /// Whatever the text, it is changed exactly when a change is told.
+    #[test]
+    fn a_change_is_told_exactly_when_the_text_changed() {
+        let pieces = [
+            "a", "Ça", " ", "\t", "\n", "\r", "\r\n", "\u{a0}", "\u{2028}", "?", "`", "```", "> ",
+            "    ", "[x](y)", "<b>", "\u{b}",
+        ];
+        let mut seed: u64 = 0x2481;
+        for _ in 0..4000 {
+            let mut raw = String::new();
+            for _ in 0..(seed % 9) {
+                seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+                raw.push_str(pieces[(seed >> 33) as usize % pieces.len()]);
+            }
+            seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+            assert_eq!(text_changes(&raw).is_empty(), text(&raw) == raw, "{raw:?}");
+            assert_eq!(line_changes(&raw).is_empty(), line(&raw) == raw, "{raw:?}");
+        }
+    }
+}
