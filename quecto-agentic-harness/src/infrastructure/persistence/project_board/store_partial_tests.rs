@@ -303,11 +303,12 @@ fn a_server_without_filters_is_fetched_from_whole() {
 }
 
 /// A full clone that lost a file is never told it is too large, nor made a
-/// partial clone: the board is unavailable until the clone is mended.
+/// partial clone: it fetches the file whole, as before partial clones.
 #[test]
-fn a_full_clone_missing_a_file_is_unavailable() {
+fn a_full_clone_missing_a_file_fetches_it_whole() {
     let repos = fresh();
     let head = plans_past_a_cap(&repos);
+    serve_filters(&repos.remote());
     let oid = at(&repos.remote(), &head, "plans/a.2.md");
     let loose = repos
         .bob
@@ -315,12 +316,14 @@ fn a_full_clone_missing_a_file_is_unavailable() {
         .join(&oid[..2])
         .join(&oid[2..]);
     std::fs::remove_file(loose).unwrap();
-    let read = store(&repos.bob).read();
-    assert!(
-        matches!(&read, Err(BoardStoreError::Unavailable(why)) if why.contains(&oid)),
-        "{read:?}"
+    let board = store(&repos.bob).read().unwrap();
+    assert_eq!(
+        reason(&board, "plans/a.2.md"),
+        "plan file is 2097152 bytes; the most is 1572864"
     );
+    assert!(held(&repos.bob, &oid));
     assert_eq!(config(&repos.bob, "remote.origin.promisor"), None);
+    assert_eq!(config(&repos.bob, "remote.origin.partialclonefilter"), None);
 }
 
 /// A root entry a partial clone lacks is judged by its real object, as a

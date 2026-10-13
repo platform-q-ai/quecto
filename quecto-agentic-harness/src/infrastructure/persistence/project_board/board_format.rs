@@ -7,9 +7,8 @@
 //! takes them for a clash, and this one reads a board of format 2 as it is.
 use super::Git;
 use super::{Found, contents};
-use super::{Limits, REGULAR_FILE, Unread, kinds_in, listed};
+use super::{LeftOnRemote, Limits, REGULAR_FILE, Unread, kinds_in, listed};
 use crate::application::project_board::ports::BoardStoreError;
-use std::collections::BTreeSet;
 
 /// The board's format marker: the file `format/board` of a board's root.
 ///
@@ -84,10 +83,10 @@ pub(super) fn read_format(
     git: &Git,
     tree: &str,
     limits: Limits,
-    filtered: &BTreeSet<String>,
+    left: &LeftOnRemote,
 ) -> Result<Marker, Unread> {
     let entries = listed(git, tree, limits.tree_bytes)?;
-    let kinds = kinds_in(git, tree, &entries, filtered)?;
+    let kinds = kinds_in(git, tree, &entries, left)?;
     let damaged = |why: String| Ok(Marker::Damaged(why));
     let Some(entry) = entries.iter().find(|entry| entry.name == FORMAT_FILE) else {
         return damaged("it holds no format/board".into());

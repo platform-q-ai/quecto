@@ -51,9 +51,10 @@
 //! a read only judges their type), and a live folder whole but for any
 //! blob past every cap ([`Wanted::Filtered`], [`FILTER_BYTES`]). A blob
 //! still missing in a folder fetched so is one past every cap: set aside
-//! as too large and carried by its id, never fetched. The root's files are
-//! never read (each write regenerates the README and drops strays), so
-//! they are never fetched either.
+//! as too large and carried by its id, never fetched, and remembered
+//! ([`LeftOnRemote`]) so no later read fetches its folder whole again. A
+//! file at the root is fetched by its id, so a damaged root is judged by
+//! its real objects, as in a full clone.
 use super::artifacts::task::TASK_LIMITS;
 pub use super::cat_file::contents;
 use super::cat_file::{Found, Object, objects};
@@ -137,6 +138,18 @@ pub enum Unread {
     Failed(BoardStoreError),
 }
 
+/// What a partial clone knows a filtered fetch left on the remote: blobs
+/// past every cap, never fetched, set aside as too large and carried by
+/// their ids.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct LeftOnRemote {
+    /// Trees this read fetched with the blob filter: a blob still missing
+    /// under one was left there.
+    pub trees: BTreeSet<String>,
+    /// Blobs an earlier read found left there.
+    pub blobs: BTreeSet<String>,
+}
+
 /// What a partial clone fetches of a tree it misses, or misses part of.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Wanted {
@@ -144,7 +157,9 @@ pub enum Wanted {
     /// other tree at the root, whose type is all a read judges.
     Alone(String),
     /// A live folder's tree and everything under it, but for any blob of
-    /// [`FILTER_BYTES`] or more, which stays on the remote.
+    /// [`FILTER_BYTES`] or more, which stays on the remote; or a file at
+    /// the root by its id, which comes whole (git sends what it is asked
+    /// for by id, whatever the filter).
     Filtered(String),
 }
 
@@ -192,6 +207,8 @@ pub struct Board {
     pub folders: BTreeMap<&'static str, CarriedTree>,
     /// The archive's tree, never read: every write carries it as it is.
     pub archive: Option<String>,
+    /// Blobs a partial clone's filter left on the remote, past every cap.
+    pub omitted: BTreeSet<String>,
 }
 
 /// One copy of a name a write would carry, as its tree entry holds it.
@@ -319,12 +336,10 @@ pub fn read_board(
     git: &Git,
     commit: &str,
     limits: Limits,
-    filtered: &BTreeSet<String>,
+    left: &LeftOnRemote,
 ) -> Result<Board, Unread> {
     let root = listed(git, &tree_of(git, commit)?, limits.tree_bytes)?;
-    let mut kinds = objects(git, looked_up(&root))?;
-    // The root's files are never read, so never fetched.
-    omit(&root, &mut kinds);
+    let kinds = objects(git, looked_up(&root))?;
     let named = |name: &'static str| root.iter().filter(move |entry| entry.name == name);
     // A tree named once: a folder to read, or the archive to carry.
     let once = |name: &'static str| match named(name).collect::<Vec<_>>().as_slice() {
@@ -336,7 +351,7 @@ pub fn read_board(
     // before it.
     let marker = match named(FORMAT_TREE).collect::<Vec<_>>().as_slice() {
         [] => None,
-        [entry] if is_tree(entry, &kinds) => Some(read_format(git, &entry.oid, limits, filtered)),
+        [entry] if is_tree(entry, &kinds) => Some(read_format(git, &entry.oid, limits, left)),
         [entry] if is_file(entry, &kinds) => None,
         [entry] => Some(Ok(Marker::Damaged(format!(
             "format at the root is mode {} over a {}",
@@ -368,21 +383,28 @@ pub fn read_board(
     let tasks = named("tasks")
         .next()
         .filter(|entry| is_tree(entry, &kinds))
-        .map(|entry| scan_tasks(git, &entry.oid, limits, filtered));
+        .map(|entry| scan_tasks(git, &entry.oid, limits, left));
     let folders: Vec<(&'static str, Result<FolderScan, Unread>)> = FOLDERS
         .iter()
         .filter_map(|folder| {
             let name = folder.naming.folder;
-            once(name).map(|entry| (name, scan_folder(git, &entry.oid, folder, limits, filtered)))
+            once(name).map(|entry| (name, scan_folder(git, &entry.oid, folder, limits, left)))
         })
         .collect();
-    // A live tree is fetched with what a read reads under it; any other
-    // (the archive, a stray) alone.
-    let live = |name: &str| name == FORMAT_TREE || (root_tree(name) && name != ARCHIVE);
+    // A live tree, named, is fetched with what a read reads under it, and
+    // a file by its id (whole), in one call; any other tree at the root
+    // (the archive, a stray) alone. Each is judged by its real object.
+    let live = |entry: &Entry| {
+        let name = entry.name.as_str();
+        let named = name == "tasks"
+            || name == FORMAT_TREE
+            || FOLDERS.iter().any(|folder| folder.naming.folder == name);
+        (named && entry.mode == TREE) || kind_of_mode(&entry.mode) == Some("blob")
+    };
     let mut missing: Vec<Wanted> = root
         .iter()
         .filter(|entry| matches!(kinds.get(&entry.oid), Some(Found::Missing)))
-        .map(|entry| match live(&entry.name) {
+        .map(|entry| match live(entry) {
             true => Wanted::Filtered(entry.oid.clone()),
             false => Wanted::Alone(entry.oid.clone()),
         })
@@ -522,9 +544,10 @@ fn looked_up(entries: &[Entry]) -> impl Iterator<Item = &str> {
 }
 
 /// The real type and size of the objects of `entries`, the entries of the
-/// live tree `tree`. One this clone misses asks for `tree` to be fetched
-/// ([`Wanted::Filtered`]); once it was (`filtered`), a blob still missing
-/// is one the fetch left on the remote, past every cap ([`omit`]).
+/// live tree `tree`. A blob the filter left on the remote (`left`: under a
+/// tree this read fetched filtered, or one found left before) is taken as
+/// one past every cap ([`omit`]); anything else this clone misses asks for
+/// `tree` to be fetched ([`Wanted::Filtered`]).
 ///
 /// # Errors
 /// What to fetch, or git fails.
@@ -532,12 +555,13 @@ fn kinds_in(
     git: &Git,
     tree: &str,
     entries: &[Entry],
-    filtered: &BTreeSet<String>,
+    left: &LeftOnRemote,
 ) -> Result<BTreeMap<String, Found>, Unread> {
     let mut kinds = objects(git, looked_up(entries))?;
-    if filtered.contains(tree) {
-        omit(entries, &mut kinds);
-    }
+    let filtered = left.trees.contains(tree);
+    omit(entries, &mut kinds, |oid| {
+        filtered || left.blobs.contains(oid)
+    });
     let missing = entries
         .iter()
         .any(|entry| matches!(kinds.get(&entry.oid), Some(Found::Missing)));
@@ -549,18 +573,12 @@ fn kinds_in(
     }
 }
 
-/// `kinds` with each file of `entries` this clone misses taken for a blob
-/// past every cap, of at least [`FILTER_BYTES`]: never fetched, set aside
-/// as too large, and carried by its id.
-fn omit(entries: &[Entry], kinds: &mut BTreeMap<String, Found>) {
-    debug_assert!(
-        MAX_TASK_FILE_BYTES < FILTER_BYTES
-            && FOLDERS
-                .iter()
-                .all(|folder| folder.naming.file_bytes < FILTER_BYTES),
-        "every file a read reads is fetched"
-    );
-    for entry in entries {
+/// `kinds` with each file of `entries` this clone misses that the filter
+/// `left` on the remote taken for a blob past every cap, of at least
+/// [`FILTER_BYTES`]: never fetched, set aside as too large, and carried by
+/// its id.
+fn omit(entries: &[Entry], kinds: &mut BTreeMap<String, Found>, left: impl Fn(&str) -> bool) {
+    for entry in entries.iter().filter(|entry| left(&entry.oid)) {
         let found = kinds.get_mut(&entry.oid);
         if let (Some("blob"), Some(found @ Found::Missing)) = (kind_of_mode(&entry.mode), found) {
             *found = Found::Present(Object {
@@ -570,6 +588,14 @@ fn omit(entries: &[Entry], kinds: &mut BTreeMap<String, Found>) {
             });
         }
     }
+}
+
+/// The blobs of `kinds` a partial clone's filter left on the remote.
+fn omitted_in(kinds: &BTreeMap<String, Found>) -> impl Iterator<Item = String> + '_ {
+    kinds.iter().filter_map(|(oid, found)| match found {
+        Found::Present(object) if object.omitted => Some(oid.clone()),
+        Found::Present(_) | Found::Missing => None,
+    })
 }
 
 /// A board's root: a README file (a hand edit may have deleted it), a

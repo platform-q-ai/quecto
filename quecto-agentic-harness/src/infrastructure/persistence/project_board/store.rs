@@ -63,9 +63,9 @@ pub struct GitBoardStore {
     pub(super) limits: Limits,
     /// Set when the call this store serves was cancelled.
     cancelled: Option<Arc<std::sync::atomic::AtomicBool>>,
-    /// Whether the remote is this clone's promisor (a partial clone), once
-    /// asked.
-    promisor: std::sync::OnceLock<bool>,
+    /// Whether the remote is this clone's promisor (a partial clone), and
+    /// the fetch filter the clone keeps for it, once asked.
+    partial: std::sync::OnceLock<fetching::Partial>,
 }
 
 /// What became of a push.
@@ -103,7 +103,7 @@ impl GitBoardStore {
                 last: Mutex::new(None),
                 limits: LIMITS,
                 cancelled: None,
-                promisor: std::sync::OnceLock::new(),
+                partial: std::sync::OnceLock::new(),
             }),
             Err(error) => Err(BoardStoreError::Unavailable(format!(
                 "{remote:?} is not a remote of this repository: {error}"
@@ -609,6 +609,8 @@ impl ProjectBoardStore for GitBoardStore {
 mod clear;
 #[path = "store_committer.rs"]
 mod committer;
+#[path = "store_fetch_state.rs"]
+mod fetch_state;
 #[path = "store_fetch.rs"]
 mod fetching;
 #[path = "store_write.rs"]
