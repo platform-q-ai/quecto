@@ -13,7 +13,7 @@ fn args(line: &[&str]) -> Vec<String> {
 }
 
 fn built(line: &[&str], stdin: &str) -> Result<Value, RequestError> {
-    let line = read_line(&args(line))?;
+    let line = read_line(&args(line)).map_err(|refused| refused.error)?;
     let stdin = stdin.to_string();
     request(&line, || bounded(stdin.as_bytes()))
 }
@@ -350,4 +350,174 @@ fn stdin_input_failures_are_recorded_as_the_requests() {
     assert_eq!(recorded(not_utf8), ("request", "not_json"));
     let broken = request(&line, || Err(InputError::Read(std::io::Error::other("x")))).unwrap_err();
     assert_eq!(recorded(broken), ("request", "invalid_value"));
+}
+
+/// Epic #2481 T3: a caller names itself by allowlist; its text is never
+/// recorded.
+#[test]
+fn the_client_is_named_by_allowlist() {
+    use std::ffi::OsStr;
+    assert_eq!(client(None), Client::Cli);
+    assert_eq!(
+        client(Some(OsStr::new("pocket-relay"))),
+        Client::PocketRelay
+    );
+    for other in [
+        "pocket_relay",
+        "Pocket-Relay",
+        "pocket-relay ",
+        "",
+        "cli",
+        "agent",
+    ] {
+        assert_eq!(client(Some(OsStr::new(other))), Client::Other, "{other:?}");
+    }
+}
+
+/// `quecto board` run under `base`, recording as composition builds it.
+fn recorded_cli(base: &std::path::Path, line: &[&str]) -> Value {
+    let ctx = CliContext {
+        project_board: Some(memory_board),
+        board_cli_recording: Some(CliRecordingBuilder(
+            crate::composition::bootstrap::project_board::cli_board_recording,
+        )),
+        base_dir: Some(base.to_path_buf()),
+        ..CliContext::default()
+    };
+    let (mut stdout, mut stderr) = (String::new(), String::new());
+    cmd_board(&ctx, &args(line), &mut stdout, &mut stderr);
+    serde_json::from_str(stdout.trim()).unwrap()
+}
+
+/// The `board_op` lines of the day's CLI logs under `base`.
+fn cli_logs(base: &std::path::Path) -> Vec<Value> {
+    let Ok(entries) = std::fs::read_dir(base.join("audit")) else {
+        return vec![];
+    };
+    let mut lines = vec![];
+    for entry in entries {
+        let path = entry.unwrap().path();
+        let name = path.file_name().unwrap().to_string_lossy().into_owned();
+        assert!(
+            name.starts_with("board-cli_") && name.ends_with(".jsonl"),
+            "{name}"
+        );
+        let text = std::fs::read_to_string(&path).unwrap();
+        let read = text
+            .lines()
+            .map(|line| serde_json::from_str::<Value>(line).unwrap());
+        lines.extend(read.filter(|line| line["event"] == "board_op"));
+    }
+    lines
+}
+
+/// Owner condition (2026-10-12): the CLI writes its day's log only while
+/// the owner's global config switches the event log on; one record per
+/// call that answers, a refusal before the board was read included.
+#[test]
+fn the_cli_writes_its_daily_log_only_while_the_switch_is_on() {
+    let off = tempfile::tempdir().unwrap();
+    let answer = recorded_cli(off.path(), &["list"]);
+    assert_eq!(answer["ok"], json!(true), "{answer}");
+    assert!(
+        !off.path().join("audit").exists(),
+        "nothing opened while off"
+    );
+    let on = tempfile::tempdir().unwrap();
+    let config = json!({"telemetry": {"event_log": {"enabled": true}}});
+    std::fs::write(on.path().join("config.json"), config.to_string()).unwrap();
+    recorded_cli(on.path(), &["list"]);
+    recorded_cli(
+        on.path(),
+        &["renew", "--task", "a", "--holder", "Secret Holder"],
+    );
+    let lines = cli_logs(on.path());
+    let got: Vec<(&Value, &Value, &Value)> = lines
+        .iter()
+        .map(|line| (&line["op"], &line["front_end"], &line["outcome"]))
+        .collect();
+    assert_eq!(
+        got,
+        [
+            (&json!("list"), &json!("cli"), &json!("ok")),
+            (&json!("renew"), &json!("cli"), &json!("refused")),
+        ]
+    );
+    assert_eq!(lines[0]["listed"], json!(1), "{}", lines[0]);
+    assert_eq!(
+        (&lines[1]["field"], &lines[1]["fault"]),
+        (&json!("other"), &json!("unexpected"))
+    );
+    assert!(!lines[1].to_string().contains("Secret"), "{}", lines[1]);
+}
+
+/// Review round 1, the property test at the CLI's entry point: random
+/// titles, keys and words given as flags, as `--input` or as stray
+/// arguments never appear in a record.
+#[test]
+fn no_request_text_reaches_a_record_through_the_cli() {
+    use crate::interface::tools::project_board::recording::tests::outside_text;
+    use rand::{Rng, SeedableRng};
+    let seed: u64 = rand::thread_rng().r#gen();
+    let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
+    let on = tempfile::tempdir().unwrap();
+    let config = json!({"telemetry": {"event_log": {"enabled": true}}});
+    std::fs::write(on.path().join("config.json"), config.to_string()).unwrap();
+    let mut texts = vec![];
+    let mut calls = 0;
+    for case in 0..8 {
+        let (title, key) = (outside_text(&mut rng), outside_text(&mut rng));
+        let flag = format!("--{key}");
+        let input = json!({"op": "create", "task": format!("t-{case}"), "title": title, key.clone(): title}).to_string();
+        let shown = json!({"task": title}).to_string();
+        let task = format!("u-{case}");
+        let lines: [&[&str]; 6] = [
+            &[
+                "create",
+                "--task",
+                &task,
+                "--title",
+                &title,
+                "--description",
+                &key,
+            ],
+            &["list", &flag, &title],
+            &["create", "--input", &input],
+            &["show", "--input", &shown],
+            &[&key, "--task", &title],
+            &["renew", &title, &key],
+        ];
+        for line in lines {
+            recorded_cli(on.path(), line);
+            calls += 1;
+        }
+        texts.extend([title, key]);
+    }
+    let lines = cli_logs(on.path());
+    assert_eq!(lines.len(), calls, "one record per call");
+    for line in lines.iter().map(Value::to_string) {
+        for text in &texts {
+            assert!(
+                !line.contains(text.as_str()),
+                "seed {seed}: {text:?} reached {line}"
+            );
+        }
+    }
+}
+
+/// Review round 2: a command line refused as it is read records the op it
+/// named before the refusal; the answer still names none.
+#[test]
+fn a_line_refused_as_it_is_read_records_the_op_it_named() {
+    let on = tempfile::tempdir().unwrap();
+    let config = json!({"telemetry": {"event_log": {"enabled": true}}});
+    std::fs::write(on.path().join("config.json"), config.to_string()).unwrap();
+    let answer = recorded_cli(on.path(), &["renew", "--task"]);
+    assert_eq!(answer["op"], Value::Null, "{answer}");
+    recorded_cli(on.path(), &["--task"]);
+    let ops: Vec<Value> = cli_logs(on.path())
+        .iter()
+        .map(|line| line["op"].clone())
+        .collect();
+    assert_eq!(ops, [json!("renew"), json!("unknown")]);
 }

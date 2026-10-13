@@ -362,6 +362,14 @@ pub struct CliContext {
     /// Composition's project board builder (#2477); `quecto board`
     /// refuses to run without it.
     pub project_board: Option<board::ProjectBoardHandlesBuilder>,
+    /// Composition's builder of the agent `board` tool's recording (epic
+    /// #2481 T3), bound to the session's event log; without it the tool
+    /// records nothing.
+    pub project_board_recording: Option<board::BoardToolRecordingBuilder>,
+    /// Composition's builder of `quecto board`'s recording (epic #2481
+    /// T3), into the day's `board-cli` log; without it the CLI records
+    /// nothing.
+    pub board_cli_recording: Option<board::CliRecordingBuilder>,
     /// Output reaches the real terminal (`run`, not `run_with_output`): a
     /// one-shot run writes its answer out before it settles its children.
     pub live_output: bool,
@@ -456,6 +464,10 @@ pub struct CliComposition {
     pub claude_member: claude_member::ClaudeMemberHandlesBuilder,
     /// Composition's project board builder (#2477).
     pub project_board: board::ProjectBoardHandlesBuilder,
+    /// Composition's `session_board_recording_decided` (epic #2481 T3).
+    pub project_board_recording: board::BoardToolRecordingBuilder,
+    /// Composition's `cli_board_recording` (epic #2481 T3).
+    pub board_cli_recording: board::CliRecordingBuilder,
 }
 
 /// Run the CLI with the given args and the required outer-owned builders,
@@ -532,6 +544,8 @@ fn composed_context(
         run_end_fleet: Some(composition.run_end_fleet),
         claude_member: Some(composition.claude_member),
         project_board: Some(composition.project_board),
+        project_board_recording: Some(composition.project_board_recording),
+        board_cli_recording: Some(composition.board_cli_recording),
         swarm_board: Some(composition.swarm_board),
         swarm_board_wire: Some(composition.swarm_board_wire),
         swarm_board_log: Some(composition.swarm_board_log),

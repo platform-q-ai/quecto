@@ -41,10 +41,15 @@ fn outcome_line(outcome: &OpOutcome) -> Value {
 }
 
 /// A recording into `records`, as a switched-on session's would be.
-pub(crate) fn recording(records: &Arc<Records>) -> Arc<BoardRecording> {
+pub(crate) fn recording_into(records: &Arc<Records>) -> BoardRecording {
     let log: Arc<dyn ProjectBoardOpLog> = records.clone();
     let recording = BoardRecording::when(RecordingSwitch::resolved(true), || Some(log));
-    Arc::new(recording.expect("on, with a log"))
+    recording.expect("on, with a log")
+}
+
+/// [`recording_into`], shared as a call takes it.
+pub(crate) fn recording(records: &Arc<Records>) -> Arc<BoardRecording> {
+    Arc::new(recording_into(records))
 }
 
 /// The operations over a bootstrapped board in memory.
@@ -407,5 +412,21 @@ fn a_disagreeing_answer_is_recorded_then_caught_in_debug_builds() {
     assert_eq!(
         outcome_line(&written[0].outcome),
         json!({"outcome": "refused", "code": "not_found"})
+    );
+}
+
+/// Review round 2: a call dropped unfinished without a panic is recorded
+/// `cancelled`, as far as it was noted, never `internal`.
+#[test]
+fn a_call_dropped_unfinished_is_recorded_cancelled() {
+    let records = Arc::new(Records::default());
+    let mut call = BoardCall::start(Some(recording(&records)), FrontEnd::Tool, Client::Agent);
+    call.named(Some("show"));
+    drop(call);
+    let written = records.taken();
+    assert_eq!(written.len(), 1);
+    assert_eq!(
+        (written[0].op, &written[0].outcome, written[0].cancelled),
+        (OpKind::Show, &OpOutcome::Ok, true)
     );
 }

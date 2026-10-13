@@ -58,6 +58,12 @@ fn test_composition() -> CliComposition {
         swarm_board_wire: crate::composition::swarm::board_wire(),
         swarm_board_log: crate::composition::swarm::board_op_log,
         project_board: crate::composition::bootstrap::project_board::build_project_board_handles,
+        project_board_recording: board::BoardToolRecordingBuilder(
+            crate::composition::bootstrap::project_board::session_board_recording_decided,
+        ),
+        board_cli_recording: super::board::CliRecordingBuilder(
+            crate::composition::bootstrap::project_board::cli_board_recording,
+        ),
         claude_member: crate::composition::claude_member::build_claude_member_handles,
     }
 }
@@ -108,6 +114,11 @@ fn a_real_runs_context_carries_every_composed_builder() {
         ("claude_member", ctx.claude_member.is_some()),
         ("swarm_board", ctx.swarm_board.is_some()),
         ("swarm_board_log", ctx.swarm_board_log.is_some()),
+        (
+            "project_board_recording",
+            ctx.project_board_recording.is_some(),
+        ),
+        ("board_cli_recording", ctx.board_cli_recording.is_some()),
     ];
     let present: Vec<_> = composed
         .iter()
