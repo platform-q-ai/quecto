@@ -8,9 +8,10 @@ use std::path::PathBuf;
 
 use serde_json::Value;
 
-use super::answer::{FrontEndRefusal, reason_refused, request_refused};
+use super::answer::FrontEndRefusal;
+use super::recording::BoardCall;
 use super::request::{op_of, parse};
-use super::{read, run};
+use super::{read, run_recorded};
 use crate::application::project_board::use_cases::RunBoardOperation;
 
 /// What a request does with the board.
@@ -59,26 +60,29 @@ pub struct BoardSite {
     pub build: Option<ProjectBoardHandlesBuilder>,
 }
 
-/// The answer to the request `text` on `site`'s board; once `cancelled` is
-/// set, the board pushes nothing more. Blocking: the board's git and host
-/// reads hold the calling thread.
+/// The answer to the request `text` on `site`'s board, noted on `call`;
+/// once `cancelled` is set, the board pushes nothing more. Blocking: the
+/// board's git and host reads hold the calling thread.
 pub fn answer(
     site: &BoardSite,
     text: &str,
     cancelled: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    call: &mut BoardCall,
 ) -> Value {
     let value = match read(text) {
         Ok(value) => value,
-        Err(error) => return request_refused(None, &error),
+        Err(error) => return call.refuse_request(None, &error),
     };
     // Read first: a request refused here builds nothing.
     let op = op_of(&value);
+    call.named(op.as_deref());
     let parsed = match parse(&value) {
         Ok(parsed) => parsed,
-        Err(error) => return request_refused(op.as_deref(), &error),
+        Err(error) => return call.refuse_request(op.as_deref(), &error),
     };
+    call.parsed(&parsed);
     let Some(build) = site.build else {
-        return reason_refused(
+        return call.refuse_as_front_end(
             op.as_deref(),
             FrontEndRefusal::StoreUnavailable,
             "the project board capability is not composed",
@@ -94,14 +98,14 @@ pub fn answer(
         vars: std::env::vars_os().collect(),
         cancelled,
     };
-    match build(&environment) {
+    match call.built(|| build(&environment)) {
         // The one entry point every front end's request goes through.
-        Ok(handles) => run(&handles.operations, text),
+        Ok(handles) => run_recorded(&handles.operations, text, call),
         Err(BuildError::NoCommitter(why)) => {
-            reason_refused(op.as_deref(), FrontEndRefusal::NoCommitter, &why)
+            call.refuse_as_front_end(op.as_deref(), FrontEndRefusal::NoCommitter, &why)
         }
         Err(BuildError::Unavailable(why)) => {
-            reason_refused(op.as_deref(), FrontEndRefusal::StoreUnavailable, &why)
+            call.refuse_as_front_end(op.as_deref(), FrontEndRefusal::StoreUnavailable, &why)
         }
     }
 }
