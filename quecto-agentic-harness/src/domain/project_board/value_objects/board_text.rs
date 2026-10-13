@@ -77,8 +77,9 @@ const CODE_INDENT: usize = 4;
 #[derive(Clone, Copy)]
 enum Place {
     /// Prose, outside any fence; `marked` once its paragraph so far holds
-    /// a backtick or a dollar.
-    Prose { marked: bool },
+    /// a backtick or a dollar; `bracketed` once it holds a `[` (a label
+    /// may run on across its lines).
+    Prose { marked: bool, bracketed: bool },
     /// Inside fenced code opened at the margin, which only its close ends.
     Fenced(Fence),
     /// After a fence opened inside a quote, a list item or an indent (which
@@ -93,15 +94,22 @@ pub fn text(raw: &str) -> String {
     let unified = raw.replace("\r\n", "\n").replace('\r', "\n");
     let lines: Vec<&str> = unified.split('\n').collect();
     let mut kept: Vec<String> = Vec::with_capacity(lines.len());
-    let mut place = Place::Prose { marked: false };
+    let mut place = Place::Prose {
+        marked: false,
+        bracketed: false,
+    };
     for (at, line) in lines.iter().enumerate() {
         let before_blank = lines.get(at + 1).is_none_or(|next| blank(next));
         let (next, written) = match place {
-            Place::Fenced(open) if open.closed_by(line) => {
-                (Place::Prose { marked: false }, (*line).to_string())
-            }
+            Place::Fenced(open) if open.closed_by(line) => (
+                Place::Prose {
+                    marked: false,
+                    bracketed: false,
+                },
+                (*line).to_string(),
+            ),
             Place::Fenced(_) | Place::Unknown => (place, (*line).to_string()),
-            Place::Prose { marked } => match Fence::opened_by(line) {
+            Place::Prose { marked, bracketed } => match Fence::opened_by(line) {
                 Some(open) if open.at_margin => (Place::Fenced(open), (*line).to_string()),
                 Some(_) => (Place::Unknown, (*line).to_string()),
                 None if may_start_html_block(line) || defines_footnote(line) => {
@@ -109,14 +117,24 @@ pub fn text(raw: &str) -> String {
                 }
                 // A blank line ends a paragraph; its own spacing may still
                 // count (an indented blank line stays in a list item).
-                None if blank(line) => (Place::Prose { marked: false }, (*line).to_string()),
+                None if blank(line) => (
+                    Place::Prose {
+                        marked: false,
+                        bracketed: false,
+                    },
+                    (*line).to_string(),
+                ),
                 None => {
                     let marked = marked || line.contains(['`', '$', '<']) || links(line);
-                    let written = match marked {
-                        false => without_trailing(&plain_between_words(line), before_blank),
-                        true => (*line).to_string(),
+                    let bracketed = bracketed || line.contains(['[', ']']);
+                    let written = match (marked, bracketed) {
+                        (false, false) => {
+                            without_trailing(&plain_between_words(line), before_blank)
+                        }
+                        (false, true) => without_trailing(line, before_blank),
+                        (true, _) => (*line).to_string(),
                     };
-                    (Place::Prose { marked }, written)
+                    (Place::Prose { marked, bracketed }, written)
                 }
             },
         };
@@ -150,9 +168,12 @@ pub fn text(raw: &str) -> String {
     normal
 }
 
-/// `line`, a prose line no code span, math, HTML or link marks, with each
-/// of [`CHAT_SPACES`] a plain space where a reader sees the same: past the
-/// line's first word (its leading block marks, indent, quote marks, list
+/// `line`, a prose line no code span, math, HTML, link or bracket marks
+/// (a `[` earlier in its paragraph included: a reference label or task box
+/// reads a chat space apart from a plain one), with each of
+/// [`CHAT_SPACES`] a plain space where a reader sees the same (never on a
+/// line that may be indented code, or holds an address): past the line's
+/// first word (its leading block marks, indent, quote marks, list
 /// markers and heading hashes, are never touched, so no list, heading,
 /// quote or indent forms) and between two characters a plain space beside
 /// them makes no markup of ([`spaced_after`], [`spaced_before`]). CommonMark
@@ -170,7 +191,7 @@ fn plain_between_words(line: &str) -> String {
             && left.is_some_and(spaced_after)
             && right.is_some_and(spaced_before)
     };
-    match may_be_indented_code(line) {
+    match may_be_indented_code(line) || holds_address(line) {
         true => line.to_string(),
         false => (0..chars.len())
             .map(|at| match plain(at) {
@@ -179,6 +200,16 @@ fn plain_between_words(line: &str) -> String {
             })
             .collect(),
     }
+}
+
+/// Whether `line` may hold an address (the forms the codec reads as one:
+/// `://`, `www.`, `mailto:`, `xmpp:` in any case, or an `@`): an autolink
+/// takes a chat space as part of it, so such a line is kept.
+fn holds_address(line: &str) -> bool {
+    let lower = line.to_ascii_lowercase();
+    ["://", "www.", "mailto:", "xmpp:", "@"]
+        .iter()
+        .any(|form| lower.contains(form))
 }
 
 /// Where `line`'s first word starts (its first character past its block
@@ -203,7 +234,8 @@ fn first_word_at(line: &str) -> Option<usize> {
 
 /// A character a plain space may follow without making markup: a letter,
 /// a digit, or the punctuation a word or a number ends with, and the
-/// guillemets.
+/// guillemets (an allowlist: emphasis marks, brackets and the rest are
+/// not taken).
 fn spaced_after(c: char) -> bool {
     c.is_alphanumeric() || ".,!?:;%)\u{ab}\u{bb}".contains(c)
 }

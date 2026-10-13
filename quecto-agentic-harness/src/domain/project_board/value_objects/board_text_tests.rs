@@ -320,10 +320,23 @@ fn a_chat_space_between_words_is_made_plain_in_text() {
         "a\u{a0}\u{a0}b",
         "end\u{a0}",
         "a\u{a0}*b*",
-        // Code, links and math are kept as written.
+        "\u{3e}1.\u{a0}x",
+        "- [x]\u{a0}a",
+        "*a*\u{a0}b",
+        // Code, links, references, addresses and math are kept as written:
+        // an autolink reads a chat space as part of the address, a
+        // reference label folds it apart from a plain space.
         "`a\u{a0}b`",
         "[a\u{a0}b](https://example.com)",
+        "[a\u{a0}b]",
+        "[a\nb\u{a0}c\nd]",
+        "See www.example.com\u{a0}now",
+        "See\u{a0}www.example.com now",
+        "SEE\u{a0}WWW.EXAMPLE.COM",
+        "Go https://example.com\u{a0}now",
+        "Mail a@b.co\u{a0}now",
         "```\na\u{a0}b\n```",
+        "    a\u{a0}b",
         // A space no keyboard puts between words.
         "em\u{2003}space",
     ] {

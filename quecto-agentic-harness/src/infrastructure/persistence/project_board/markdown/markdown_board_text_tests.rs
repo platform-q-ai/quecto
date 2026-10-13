@@ -43,8 +43,6 @@ const PIECES: &[&str] = &[
     " ",
     "  ",
     "\t",
-    "\u{a0}",
-    "\u{3000}",
     "\r\n",
     "\r",
     "\n",
@@ -65,7 +63,6 @@ const PIECES: &[&str] = &[
     "`",
     "`x`",
     "`\t`",
-    "`a\u{a0}b`",
     "\n```\n",
     "\n```rust\n",
     "\n~~~\n",
@@ -74,7 +71,6 @@ const PIECES: &[&str] = &[
     "line  \nnext",
     "- a\n  b",
     "- a\n\n  b",
-    "\n\u{a0}\n",
     ".",
     "(",
     "\u{e9}",
@@ -114,18 +110,46 @@ const PIECES: &[&str] = &[
     "<![CDATA[ x \n",
     "[^1]: ",
     "\n[^1]\n",
-    // Round 3 (S7): chat spaces beside markup a plain space would make,
-    // and between French words and punctuation.
+    // Addresses an autolink reads (S7 round 4), and markers beside which
+    // a chat space must stay.
+    "www.a.co",
+    "https://a.co",
+    "a@b.co",
+    ">1.",
+];
+
+/// Pieces holding a chat space (no-break, narrow, figure, ideographic):
+/// beside letters and French punctuation, where the normaliser makes them
+/// plain, and beside markup, where it must not. Drawn one time in
+/// [`CHAT_ONE_IN`], so most texts still pass the domain's plain-space rule.
+const CHAT_PIECES: &[&str] = &[
+    "\u{a0}",
+    "\u{3000}",
+    "`a\u{a0}b`",
+    "\n\u{a0}\n",
     "x\u{202f}!",
     "a\u{a0}?",
     "\u{ab}\u{a0}",
     "\u{a0}#",
     "[\u{a0}]",
+    "[x]\u{a0}",
     "1.\u{a0}",
     "-\u{a0}",
     "\u{a0}*",
-    "\u{3000}",
+    "a\u{2007}b",
+    // Between words and punctuation, as French and Japanese keyboards
+    // write them: the normaliser makes these plain.
+    "b\u{a0}:",
+    "\u{ab}\u{a0}c",
+    "d\u{a0}\u{bb}",
+    "1\u{a0}000",
+    "e\u{3000}f",
+    "g\u{202f};",
+    "h\u{a0}%",
 ];
+
+/// One draw in this many is a chat-space piece.
+const CHAT_ONE_IN: usize = 30;
 
 /// A small deterministic generator (an LCG), so a failure replays.
 struct Seeded(u64);
@@ -141,7 +165,10 @@ impl Seeded {
 
     fn text(&mut self) -> String {
         (0..1 + self.below(24))
-            .map(|_| PIECES[self.below(PIECES.len())])
+            .map(|_| match self.below(CHAT_ONE_IN) {
+                0 => CHAT_PIECES[self.below(CHAT_PIECES.len())],
+                _ => PIECES[self.below(PIECES.len())],
+            })
             .collect()
     }
 }
@@ -149,8 +176,8 @@ impl Seeded {
 #[test]
 fn normalising_never_changes_what_a_reader_shows() {
     let mut seeded = Seeded(2481);
-    let (mut checked, mut held) = (0, 0);
-    for _ in 0..60_000 {
+    let (mut checked, mut held, mut plain) = (0, 0, 0);
+    for _ in 0..20_000 {
         let raw = seeded.text();
         let normal = board_text::text(&raw);
         assert_eq!(board_text::text(&normal), normal, "{raw:?}");
@@ -162,6 +189,8 @@ fn normalising_never_changes_what_a_reader_shows() {
             continue;
         }
         checked += 1;
+        // A chat space the domain took was made plain by the normaliser.
+        plain += usize::from(raw.contains(['\u{a0}', '\u{202f}', '\u{2007}', '\u{3000}']));
         assert_eq!(
             shown_plain(&raw),
             shown_plain(&normal),
@@ -174,8 +203,8 @@ fn normalising_never_changes_what_a_reader_shows() {
         }
     }
     assert!(
-        checked > 10_000 && held > 500,
-        "{checked} checked, {held} held"
+        checked > 10_000 && held > 500 && plain > 200,
+        "{checked} checked, {held} held, {plain} with chat spaces made plain"
     );
 }
 
