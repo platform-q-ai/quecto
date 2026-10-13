@@ -68,3 +68,21 @@ fn a_switch_to_no_log_stops_recording() {
     assert!(!recordings.follow(|| None));
     assert!(recordings.current().is_none());
 }
+
+/// Review round 2: a session switch checks and swaps under one write
+/// lock, so a `stop` racing the rebuild is never undone.
+#[test]
+fn a_stop_racing_a_switch_is_never_undone() {
+    let records = Arc::new(Records::default());
+    let recordings = Arc::new(SessionRecording::default());
+    assert!(recordings.bind(Some(recording_into(&records))));
+    let mut stopper = None;
+    recordings.follow(|| {
+        let racing = Arc::clone(&recordings);
+        stopper = Some(std::thread::spawn(move || racing.stop()));
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        Some(recording_into(&records))
+    });
+    stopper.expect("the rebuild ran").join().unwrap();
+    assert!(recordings.current().is_none(), "the stop stands");
+}

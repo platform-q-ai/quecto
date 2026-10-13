@@ -7,11 +7,12 @@
 //! which runs on the calling thread (it blocks).
 //!
 //! Also where a board request's recording is built (epic #2481 T2):
-//! [`session_board_recording`] for the agent tool, into its session's
-//! event log, and [`cli_board_recording`] for `quecto board`, into the
-//! daily `board-cli:<UTC date>` log. Each derives the switch itself, with
-//! the sessions' rule (#2150), and gives `None` while it is off, so no log
-//! is opened and nothing is written or traced.
+//! [`session_board_recording_decided`] for the agent tool, into its
+//! session's event log with the switch the session decided (T3), and
+//! [`cli_board_recording`] for `quecto board`, into the daily
+//! `board-cli:<UTC date>` log, deriving the switch from the owner's global
+//! file. Each gives `None` while it is off, so no log is opened and nothing
+//! is written or traced.
 use std::path::Path;
 use std::sync::Arc;
 use std::time::SystemTime;
@@ -26,7 +27,7 @@ use crate::application::project_board::use_cases::{
     RunBoardOperation, UpdateDraftTask,
 };
 use crate::domain::redaction::{redact_secrets, redact_url_userinfo};
-use crate::infrastructure::config::telemetry::{TelemetryConfig, globally_enabled};
+use crate::infrastructure::config::telemetry::globally_enabled;
 use crate::infrastructure::persistence::audit_log::AuditLog;
 use crate::infrastructure::persistence::project_board::gh_pull_requests::{
     GhPullRequestStates, github_repository,
@@ -175,22 +176,14 @@ fn store_reason(error: &BoardStoreError) -> String {
 }
 
 /// The agent tool's recording, into its session's event log `log`: only
-/// while `telemetry` (the session's configuration) or the owner's global
-/// file at `base_dir` switches the event log on, and only when `log` has a
-/// synchronous line to append through. `None` otherwise.
-pub fn session_board_recording(
-    telemetry: &TelemetryConfig,
-    base_dir: &Path,
-    log: &AuditLog,
-) -> Option<BoardRecording> {
-    session_recording(switched_on(telemetry.event_log.enabled, base_dir), log)
-}
-
-/// [`session_board_recording`] with the switch its session decided when it
-/// started (`event_log_on`, by the same rule), as the agent tool takes it
-/// (epic #2481 T3): its records follow a session switch with that switch,
+/// while the switch its session decided when it started (`event_log_on`,
+/// with the sessions' rule #2150: the session's configuration or the
+/// owner's global file, `switched_on` in `interface/cli/agent/event_log.rs`)
+/// is on, and only when `log` has a synchronous line to append through.
+/// `None` otherwise. Its records follow a session switch with that switch,
 /// so a later edit to a config file neither starts nor stops them, as the
-/// swarm board's records follow (`record_in_session(true, …)`).
+/// swarm board's records follow (`record_in_session(true, …)`; epic #2481
+/// T3).
 pub fn session_board_recording_decided(
     event_log_on: bool,
     log: &AuditLog,
@@ -220,20 +213,14 @@ fn session_recording(switch: RecordingSwitch, log: &AuditLog) -> Option<BoardRec
 /// its `log_capped` record (a reader, T8, must tolerate both).
 pub fn cli_board_recording(base_dir: &Path) -> Option<BoardRecording> {
     let base_dir = base_dir.to_path_buf();
-    BoardRecording::when(switched_on(false, base_dir.as_path()), move || {
+    let switch = RecordingSwitch::resolved(globally_enabled(base_dir.as_path()));
+    BoardRecording::when(switch, move || {
         let ops = EventLogProjectBoardOps::opened_by_first_record(move || {
             let key = cli_log_key(SystemTime::now())?;
             AuditLog::open_sync(&base_dir, &key).ok()?.crash_line()
         });
         Some(Arc::new(TracingProjectBoardOps::over(ops)) as _)
     })
-}
-
-/// The sessions' switch (#2150, `switched_on` in
-/// `interface/cli/agent/event_log.rs`): the loaded configuration's, or the
-/// owner's global one, so a repository config switches it on, never off.
-fn switched_on(config_on: bool, base_dir: &Path) -> RecordingSwitch {
-    RecordingSwitch::resolved(config_on || globally_enabled(base_dir))
 }
 
 /// The first second of year 10000: RFC 3339 dates have four-digit years.

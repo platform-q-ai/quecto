@@ -16,13 +16,15 @@
 //! Each call is recorded (epic #2481 T3) in its session's event log while
 //! that log is on ([`SessionRecording`]): one `board_op` per call, written
 //! on the call's own thread once its answer is summarised, `cancelled`
-//! when the call was dropped first. A call whose work panicked is
-//! recorded as it unwinds, refused as `internal`.
+//! when the call was dropped while its work ran; a call dropped before its
+//! work started reached no board and writes none. A call whose work
+//! panicked is recorded as it unwinds, refused as `internal`.
 use std::borrow::Cow;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Instant;
 
 use serde_json::{Map, Value, json};
 
@@ -318,8 +320,13 @@ impl Tool for BoardTool {
         arguments: &str,
     ) -> Pin<Box<dyn Future<Output = Result<ToolResult, DomainError>> + Send + '_>> {
         let (site, text) = (Arc::clone(&self.site), arguments.to_owned());
-        // The call's clock starts as it arrives.
-        let mut call = BoardCall::start(self.recordings.current(), FrontEnd::Tool, Client::Agent);
+        // The call's clock starts as it arrives, while it is recorded; the
+        // call itself starts on its work's thread, so a call dropped before
+        // its work started reached no board and writes no record.
+        let arrival = self
+            .recordings
+            .current()
+            .map(|recording| (recording, Instant::now()));
         Box::pin(async move {
             let cancelled = Arc::new(AtomicBool::new(false));
             let mut guard = CancelOnDrop(Some(Arc::clone(&cancelled)));
@@ -327,6 +334,7 @@ impl Tool for BoardTool {
             // in this call's panic scope. The record is written there too,
             // once the answer is summarised, even when the call was dropped.
             let work = off_the_workers(move || {
+                let mut call = BoardCall::arrived(arrival, FrontEnd::Tool, Client::Agent);
                 let answer = summarised(answered(&site, &text, Arc::clone(&cancelled), &mut call));
                 call.finish(&answer, cancelled.load(Ordering::SeqCst));
                 answer

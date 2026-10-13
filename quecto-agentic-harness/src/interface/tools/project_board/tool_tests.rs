@@ -554,3 +554,13 @@ async fn no_request_text_reaches_a_record_through_the_tool() {
         }
     }
 }
+
+/// Review round 2: a call dropped before it was ever polled reached no
+/// board, and writes no record (nor any from the async worker).
+#[test]
+fn a_call_dropped_before_it_runs_writes_no_record() {
+    let records = Arc::new(Records::default());
+    let tool = recorded_tool(site(Some(memory_board)), &records);
+    drop(tool.execute(r#"{"op": "list"}"#));
+    assert!(records.taken().is_empty());
+}

@@ -299,3 +299,62 @@ async fn an_attached_session_records_the_board_tools_calls() {
         assert_eq!(ops, recorded, "{session}");
     }
 }
+
+/// Review round 2: off means off where it is wired in. A session whose
+/// event log is off keeps its workflow audit log; given composition's
+/// builder, its board tool records nothing there, nor after a switch.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_session_with_the_event_log_off_records_no_board_tool_call() {
+    use crate::application::tools::ports::Tool;
+    use crate::interface::cli::board::BoardToolRecordingBuilder;
+    use crate::interface::tools::project_board::site::BoardSite;
+    use crate::interface::tools::project_board::tool::BoardTool;
+    let base = base(false);
+    let cwd = tempfile::tempdir().unwrap();
+    let (ctx, mut flags) = started(base.path(), cwd.path());
+    let selection = ctx.config_selection().unwrap();
+    let mut stderr = String::new();
+    let build = build_agent_from_config_in(
+        &ctx.base_dir(),
+        &selection,
+        &flags,
+        &mut stderr,
+        None,
+        &HashMap::new(),
+    )
+    .unwrap_or_else(|| panic!("{stderr}"));
+    assert!(!build.event_log);
+    let mut agent = build.agent;
+    // A workflow session keeps its audit log with the event log off.
+    flags.workflow = true;
+    let recordings = std::sync::Arc::new(SessionRecording::default());
+    let board_tool = BoardToolSession::new(std::sync::Arc::clone(&recordings));
+    let target = SessionLogTarget {
+        base_dir: base.path(),
+        session_key: "cli:workflow-off",
+        event_log: false,
+        project_board: Some(BoardToolRecordingBuilder(
+            crate::composition::bootstrap::project_board::session_board_recording_decided,
+        )),
+    };
+    attach_to(None, &board_tool, &mut agent, &target, &flags, &mut stderr);
+    assert!(
+        AuditLog::file_path(base.path(), "cli:workflow-off").exists(),
+        "the workflow log is open"
+    );
+    let site = BoardSite {
+        repo: cwd.path().into(),
+        remote: "origin".into(),
+        build: None,
+    };
+    let tool = BoardTool::recorded_in(site, recordings);
+    tool.execute(r#"{"op": "list"}"#).await.unwrap();
+    let arriving = AuditLog::open_sync(base.path(), "cli:workflow-next").unwrap();
+    super::super::followed(arriving, None, &board_tool);
+    tool.execute(r#"{"op": "list"}"#).await.unwrap();
+    for session in ["cli:workflow-off", "cli:workflow-next"] {
+        let text =
+            std::fs::read_to_string(AuditLog::file_path(base.path(), session)).unwrap_or_default();
+        assert!(!text.contains(r#""event":"board_op""#), "{session}: {text}");
+    }
+}

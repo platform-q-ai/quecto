@@ -414,3 +414,19 @@ fn a_disagreeing_answer_is_recorded_then_caught_in_debug_builds() {
         json!({"outcome": "refused", "code": "not_found"})
     );
 }
+
+/// Review round 2: a call dropped unfinished without a panic is recorded
+/// `cancelled`, as far as it was noted, never `internal`.
+#[test]
+fn a_call_dropped_unfinished_is_recorded_cancelled() {
+    let records = Arc::new(Records::default());
+    let mut call = BoardCall::start(Some(recording(&records)), FrontEnd::Tool, Client::Agent);
+    call.named(Some("show"));
+    drop(call);
+    let written = records.taken();
+    assert_eq!(written.len(), 1);
+    assert_eq!(
+        (written[0].op, &written[0].outcome, written[0].cancelled),
+        (OpKind::Show, &OpOutcome::Ok, true)
+    );
+}

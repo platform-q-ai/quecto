@@ -9,11 +9,12 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 use quecto::application::project_board::ports::ProjectBoardOpLog;
-use quecto::composition::bootstrap::project_board::{cli_board_recording, session_board_recording};
+use quecto::composition::bootstrap::project_board::{
+    cli_board_recording, session_board_recording_decided,
+};
 use quecto::domain::project_board::value_objects::telemetry::{
     Access, BoardOpRecord, Client, FrontEnd, OpKind, OpOutcome,
 };
-use quecto::infrastructure::config::telemetry::{EventLogConfig, TelemetryConfig};
 use quecto::infrastructure::persistence::audit_log::AuditLog;
 use quecto::infrastructure::persistence::project_board::op_log::EventLogProjectBoardOps;
 use serde_json::Value;
@@ -34,12 +35,6 @@ fn record() -> BoardOpRecord {
         build_us: None,
         result_bytes: 0,
         duration_us: 12,
-    }
-}
-
-fn telemetry(enabled: bool) -> TelemetryConfig {
-    TelemetryConfig {
-        event_log: EventLogConfig { enabled },
     }
 }
 
@@ -91,7 +86,7 @@ fn off_gives_no_recording_from_either_builder_and_writes_nothing() {
         let mut built = (None, None);
         let output = traced(|| {
             built = (
-                session_board_recording(&telemetry(false), base.path(), &log),
+                session_board_recording_decided(false, &log),
                 cli_board_recording(base.path()),
             );
             for recording in [&built.0, &built.1].into_iter().flatten() {
@@ -109,17 +104,16 @@ fn off_gives_no_recording_from_either_builder_and_writes_nothing() {
     }
 }
 
-/// The sessions' rule (#2150): the session's configuration or the owner's
-/// global file switches recording on; a configuration never switches the
-/// global file off.
+/// The session builder takes the switch its session decided when it
+/// started (#2150's rule, applied by the session), whatever the owner's
+/// global file says now (epic #2481 T3 review round 2).
 #[test]
-fn the_session_builder_records_when_its_config_or_the_global_file_is_on() {
-    for (config_on, global_on) in [(true, false), (false, true), (true, true)] {
+fn the_session_builder_records_when_its_session_decided_the_log_is_on() {
+    for global_on in [false, true] {
         let base = tempfile::tempdir().unwrap();
         global(base.path(), global_on);
         let log = AuditLog::open_sync(base.path(), "cli:on").unwrap();
-        let recording = session_board_recording(&telemetry(config_on), base.path(), &log)
-            .expect("a recording while on");
+        let recording = session_board_recording_decided(true, &log).expect("a recording while on");
         let output = traced(|| recording.record(record()));
         assert!(
             output.contains("board op") && output.contains("quecto::project_board"),
