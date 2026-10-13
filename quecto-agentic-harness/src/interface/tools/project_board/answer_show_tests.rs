@@ -120,7 +120,7 @@ fn shown(plans: Vec<Plan>, runs: Vec<Run>, set_aside: Vec<QuarantinedFile>) -> S
 }
 
 fn answered(shown: ShownTask) -> Value {
-    outcome("show", &BoardOutcome::Shown(shown), None)
+    outcome("show", &BoardOutcome::Shown(shown, None), None)
 }
 
 /// The golden answer: every field in its order.
@@ -361,4 +361,51 @@ fn a_set_aside_file_outside_its_kinds_folder_is_never_shown() {
         object: "a".repeat(40),
         carried: true,
     });
+}
+
+/// A `show` given a page answers the task's id and only the parts of its
+/// accepted plan the page names, from where it names; a part not named is
+/// left out, an offset past the end reads nothing, and a task with no plan
+/// to page through answers `null`.
+#[test]
+fn a_page_answers_only_the_parts_it_names_from_where_it_names() {
+    use crate::application::project_board::operations::PlanPage;
+    let paged = |plans: Vec<Plan>, page: Option<PlanPage>| {
+        outcome(
+            "show",
+            &BoardOutcome::Shown(shown(plans, vec![], vec![]), page),
+            None,
+        )
+    };
+    let accepted = || vec![plan(1, PlanState::Superseded), plan(2, PlanState::Accepted)];
+    let both = paged(accepted(), PlanPage::of(Some(7), Some(0)));
+    assert_eq!(
+        both,
+        json!({
+            "ok": true, "op": "show", "head": "0".repeat(40), "task": "a",
+            "plan": {
+                "version": 2,
+                "approach_from": 7,
+                "approach": "then build.",
+                "items_from": 0,
+                "items": [{"id": "build", "title": "Build it", "criteria": ["it is built"], "depends_on": []}],
+            },
+            "may_be_incomplete": false,
+        })
+    );
+    let items_only = paged(accepted(), PlanPage::of(None, Some(1)));
+    assert_eq!(
+        items_only["plan"],
+        json!({"version": 2, "items_from": 1, "items": []})
+    );
+    let past = paged(accepted(), PlanPage::of(Some(9_999), None));
+    assert_eq!(
+        past["plan"],
+        json!({"version": 2, "approach_from": 9_999, "approach": ""})
+    );
+    let none = paged(
+        vec![plan(1, PlanState::Superseded)],
+        PlanPage::of(Some(0), None),
+    );
+    assert_eq!(none["plan"], json!(null));
 }

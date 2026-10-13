@@ -57,13 +57,40 @@ summary per task). A file larger than its kind's cap is set aside, not read.
 | `may_be_incomplete` | Whether a file that may hold one of the task's plans or runs is set aside: one of the task's own, or a kept file whose name spells none in `plans/` or `runs/`. Its plans and runs may then be missing one |
 | `quarantined` | Those files, as a listing's `quarantined` shows them; one of a plan or run also names its `kind`, `task` and `number` |
 
-The CLI gives the answer whole. The agent tool keeps it within 64 KiB, the task
-always whole: the accepted plan whole if it fits, otherwise its approach and
-task items cut (`plan_truncated`: `approach_more` characters and `items_more`
-items left out); then the newest runs (`runs_more` older ones left out, and
-`latest_run_items_more` of the latest run's task items), the newest plan
-versions (`plans_more`) and the files set aside (`quarantined_more`). A plan at
-the board's limits, with every run and version, is about 1.6 MB whole.
+The CLI gives the answer whole. The agent tool gives an answer within 64 KiB as
+it is, and cuts a longer one to fit. The task is never cut, so a task whose own
+description is long can take more than 64 KiB alone; what does not fit beside it
+is then counted, not shown. A cut answer keeps, in order:
+
+1. the accepted plan whole if it fits. Otherwise it says `plan_truncated: true`
+   and keeps the plan's other fields, as much of its approach as leaves room
+   for what follows (at least half the room is the approach's, and it is never
+   cut inside a character as read), and the leading task items that fit. It
+   counts what it left out (`approach_more` characters, `items_more` items) and
+   says where to read on (`approach_next`, `items_next`). `plan: null` with
+   `plan_truncated` means the plan was cut whole: not even its other fields fit
+   beside the task;
+2. the newest runs: the latest whole, or with its leading task items
+   (`latest_run_items_more` left out), then older runs in brief (`runs_more`
+   left out); no run when the latest does not fit;
+3. the newest plan versions (`plans_more` left out);
+4. the files set aside (`quarantined_more` left out).
+
+A plan at the board's limits, with every run and version, is about 1.6 MB whole.
+
+### Reading on through a plan
+
+`show` takes two optional fields that page through the task's accepted plan:
+`approach_from`, a character of its approach, and `items_from`, the index of one
+of its task items, each from 0. Given either, `show` answers only the task's id
+(`task`), `may_be_incomplete`, and `plan`: the accepted plan's `version` with
+the approach from `approach_from` (as `approach_from` and `approach`) and the
+task items from `items_from` (as `items_from` and `items`), whichever were
+named; a part not named is left out. With no plan to page through, `plan` is
+`null`. The agent tool cuts a page as it cuts a whole `show`, with
+`approach_more`, `approach_next`, `items_more` and `items_next`, so an agent
+reads on with `show(task, approach_from: approach_next, items_from: items_next)`
+until no `_next` is given.
 
 ## Telemetry
 
@@ -134,7 +161,7 @@ as given. It is for the pocket relay to set; an older quecto ignores it.
 | `task`, `pr` | The task the op's `task` names, and the pull request `link_pr` or `unlink_pr` names, once the request was read |
 | `head` | The board's head an answer named, only when it is a full commit id git produced |
 | `listed`, `shown`, `truncated_more`, `set_aside`, `set_aside_more` | For an answered listing: the tasks it listed, those its answer showed and those it left out, and the set-aside files it listed and left out. The agent tool's listing is cut to 32 KiB; the CLI leaves nothing out |
-| `plans`, `runs` | For an answered `show`: how many versions of the task's plan and how many of its runs the answer gave; counts only, never their text |
+| `plans`, `runs` | For an answered `show`: how many versions of its plan and how many runs the task holds, as the board read them; counts only, never their text |
 | `status_from`, `status_to` | For a write of a task (`create`, `update_draft`, `move`, `renew`, `take_over`, `link_pr`, `unlink_pr`, `complete`): the task's status as the write last read it (none for `create`), and the status it moved to: a `move`'s target, made or refused, otherwise the status of the task it wrote (`create`'s `draft` or `ready`, `complete`'s `done`), so a refused write other than `move` writes no `status_to`. A `link_pr` or move to `review` that completes its task records its own write's status here; what came of completing it is in `completion` |
 | `claim` | For a `move`, `renew`, `take_over`, `link_pr` or `unlink_pr` of a task that holds a claim, the claim as the change found it, never its holder: `held_s` (seconds since it began, below zero when the writer's clock reads before that), `left_s` (seconds until it expires, below zero once it has lapsed) and `holder_is_writer` |
 | `attempts`, `lost`, `pause_ms` | For a write (every op that writes but `bootstrap`): the attempts it began (at most 3), how many of them lost the race to another writer, and, when it paused between attempts, the time it paused in milliseconds. A `link_pr` or `move` that completes its task counts only its own write's attempts here; the completion's write is counted in `completion_attempts` |

@@ -79,14 +79,14 @@ impl RunBoardOperation {
                 let now = self.parts.clock.now()?;
                 listing(self.parts.listings.takeable(&now))
             }
-            BoardRequest::Show(id) => {
+            BoardRequest::Show(id, page) => {
                 let shown = self.parts.query.show(id)?;
                 if let Some(facts) = facts {
                     let count = |items: usize| u64::try_from(items).unwrap_or(u64::MAX);
                     facts.plans = Some(count(shown.plans.len()));
                     facts.runs = Some(count(shown.runs.len()));
                 }
-                Ok(BoardOutcome::Shown(shown))
+                Ok(BoardOutcome::Shown(shown, *page))
             }
             BoardRequest::Create(new) => {
                 Ok(changed(self.parts.create.execute_noted(new, facts)?, None))

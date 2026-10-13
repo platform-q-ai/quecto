@@ -21,7 +21,7 @@ pub fn op_kind(request: &BoardRequest) -> OpKind {
         BoardRequest::List(_) => OpKind::List,
         BoardRequest::ListReady => OpKind::ListReady,
         BoardRequest::ListTakeable => OpKind::ListTakeable,
-        BoardRequest::Show(_) => OpKind::Show,
+        BoardRequest::Show(..) => OpKind::Show,
         BoardRequest::Create(_) => OpKind::Create,
         BoardRequest::UpdateDraft(_) => OpKind::UpdateDraft,
         BoardRequest::Change(_, BoardOp::Move(_)) => OpKind::Move,
@@ -61,7 +61,7 @@ pub fn access_of(kind: OpKind) -> Access {
 /// The task `request` acts on, when its op names one by its `task` field.
 pub fn task_of(request: &BoardRequest) -> Option<&Slug> {
     match request {
-        BoardRequest::Show(id) | BoardRequest::Change(id, _) | BoardRequest::Complete(id) => {
+        BoardRequest::Show(id, _) | BoardRequest::Change(id, _) | BoardRequest::Complete(id) => {
             Some(id)
         }
         BoardRequest::Create(task) => Some(&task.id),
@@ -83,7 +83,7 @@ pub fn pr_of(request: &BoardRequest) -> Option<u64> {
         | BoardRequest::List(_)
         | BoardRequest::ListReady
         | BoardRequest::ListTakeable
-        | BoardRequest::Show(_)
+        | BoardRequest::Show(..)
         | BoardRequest::Create(_)
         | BoardRequest::UpdateDraft(_)
         | BoardRequest::Complete(_)

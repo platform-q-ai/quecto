@@ -8,8 +8,9 @@ use super::{
     slugs_json, task_json,
 };
 use crate::application::project_board::dto::ShownTask;
+use crate::application::project_board::operations::PlanPage;
 use crate::application::project_board::ports::{ArtifactKey, QuarantinedFile};
-use crate::domain::project_board::entities::plan::Plan;
+use crate::domain::project_board::entities::plan::{Plan, PlanItem};
 use crate::domain::project_board::entities::run::Run;
 use crate::domain::project_board::entities::team::Team;
 use crate::domain::project_board::value_objects::shown_text::{
@@ -59,18 +60,7 @@ pub(super) fn shown_fields(shown: &ShownTask) -> Map<String, Value> {
 /// budget as `budget_tokens`.
 pub(super) fn plan_json(plan: &Plan) -> Value {
     let plan = plan.fields();
-    let items: Vec<Value> = plan
-        .items
-        .iter()
-        .map(|item| {
-            json!({
-                "id": slug_json(&item.id),
-                "title": item.title,
-                "criteria": item.criteria,
-                "depends_on": slugs_json(&item.depends_on),
-            })
-        })
-        .collect();
+    let items: Vec<Value> = plan.items.iter().map(item_json).collect();
     json!({
         "task": slug_json(&plan.task),
         "version": plan.version,
@@ -85,6 +75,48 @@ pub(super) fn plan_json(plan: &Plan) -> Value {
         "created": plan.created.as_str(),
         "updated": plan.updated.as_str(),
     })
+}
+
+fn item_json(item: &PlanItem) -> Value {
+    json!({
+        "id": slug_json(&item.id),
+        "title": item.title,
+        "criteria": item.criteria,
+        "depends_on": slugs_json(&item.depends_on),
+    })
+}
+
+/// What a `show` given a page answers (#2481 M4a review round 2): its
+/// `head`; the task's id as `task`; `plan`, the accepted plan's `version`
+/// with only the parts the page names: `approach_from` and the
+/// `approach` from that character, `items_from` and the task `items` from
+/// that index (`null` while the task has no plan to page through); and
+/// `may_be_incomplete`, as `show` says it.
+pub(super) fn page_fields(shown: &ShownTask, page: PlanPage) -> Map<String, Value> {
+    let plan = shown.accepted_plan().map(|plan| {
+        let plan = plan.fields();
+        let mut part = fields([("version", json!(plan.version))]);
+        if let Some(from) = page.approach_from() {
+            let approach: String = plan.approach.chars().skip(from).collect();
+            part.insert("approach_from".into(), json!(from));
+            part.insert("approach".into(), json!(approach));
+        }
+        if let Some(from) = page.items_from() {
+            let items: Vec<Value> = plan.items.iter().skip(from).map(item_json).collect();
+            part.insert("items_from".into(), json!(from));
+            part.insert("items".into(), Value::Array(items));
+        }
+        Value::Object(part)
+    });
+    Map::from_iter([
+        ("head".to_string(), head_json(&shown.head)),
+        ("task".to_string(), slug_json(&shown.task.fields().id)),
+        ("plan".to_string(), plan.unwrap_or(Value::Null)),
+        (
+            "may_be_incomplete".to_string(),
+            Value::Bool(shown.may_be_incomplete()),
+        ),
+    ])
 }
 
 fn team_json(team: &Team) -> Value {

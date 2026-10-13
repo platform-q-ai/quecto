@@ -201,7 +201,7 @@ impl BoardCall {
                 BoardOutcome::Bootstrapped { head, .. } | BoardOutcome::Cleared { head } => {
                     Some(head)
                 }
-                BoardOutcome::Shown(shown) => Some(&shown.head),
+                BoardOutcome::Shown(shown, _) => Some(&shown.head),
                 BoardOutcome::Listing(listing) => Some(&listing.head),
                 BoardOutcome::Changed { .. } => None,
             };

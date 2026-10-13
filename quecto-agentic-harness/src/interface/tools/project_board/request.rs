@@ -7,7 +7,7 @@ use serde_json::{Map, Value};
 use crate::application::project_board::dto::{
     BoardOp, DraftUpdate, NewBoardTask, NewBoardTaskStatus,
 };
-use crate::application::project_board::operations::{BoardRequest, ListFilter};
+use crate::application::project_board::operations::{BoardRequest, ListFilter, PlanPage};
 use crate::application::project_board::ports::KeepCopy;
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::telemetry::{FaultKind, RequestFault, StaticKind};
@@ -123,6 +123,8 @@ pub enum Kind {
     TaskKind,
     /// A pull request number, from 1.
     Pr,
+    /// Where a page reads on from: a character or an item, from 0.
+    Offset,
     /// A board file's path, as a listing's `quarantined` shows it.
     Path,
     /// A git object name, as a listing's `quarantined` shows it.
@@ -171,7 +173,14 @@ pub const OPS: &[(&str, &[Field])] = &[
     ),
     ("list_ready", &[]),
     ("list_takeable", &[]),
-    ("show", &[TASK]),
+    (
+        "show",
+        &[
+            TASK,
+            optional("approach_from", Kind::Offset),
+            optional("items_from", Kind::Offset),
+        ],
+    ),
     (
         "create",
         &[
@@ -331,6 +340,21 @@ impl Read<'_> {
         value.as_str().and_then(parse).map(Some).ok_or_else(refused)
     }
 
+    fn offset(&self, name: &str) -> Result<Option<usize>, RequestError> {
+        let Some(value) = self.value(name) else {
+            return Ok(None);
+        };
+        let refused = || {
+            let problem = "must be a character or item to read on from, from 0";
+            RequestError::of(name, problem, misfit(value.is_number()))
+        };
+        value
+            .as_u64()
+            .and_then(|offset| usize::try_from(offset).ok())
+            .map(Some)
+            .ok_or_else(refused)
+    }
+
     fn pr(&self) -> Result<u64, RequestError> {
         let refused = || {
             let fault = misfit(self.value("pr").is_some_and(Value::is_number));
@@ -368,7 +392,10 @@ fn build(op: &str, read: &Read<'_>) -> Result<BoardRequest, RequestError> {
         "list" => list(read),
         "list_ready" => Ok(BoardRequest::ListReady),
         "list_takeable" => Ok(BoardRequest::ListTakeable),
-        "show" => Ok(BoardRequest::Show(read.task()?)),
+        "show" => Ok(BoardRequest::Show(
+            read.task()?,
+            PlanPage::of(read.offset("approach_from")?, read.offset("items_from")?),
+        )),
         "create" => create(read),
         "update_draft" => update_draft(read),
         "move" => {

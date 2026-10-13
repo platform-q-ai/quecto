@@ -611,9 +611,10 @@ fn a_rule_failed_completion_records_its_rule() {
     let board = board();
     let created = json!({"op": "create", "task": "a", "title": "A", "status": "ready"});
     run_recorded(&board, &created.to_string(), &mut BoardCall::unrecorded());
-    let BoardOutcome::Shown(shown) = board
+    let BoardOutcome::Shown(shown, _) = board
         .execute(&BoardRequest::Show(
             crate::domain::project_board::value_objects::slug::Slug::parse("a").unwrap(),
+            None,
         ))
         .unwrap()
     else {
