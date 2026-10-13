@@ -4,7 +4,7 @@
 //! writing it gives the same bytes: what the reader lets through, the
 //! writer's rules still refuse.
 use super::chars::check_line;
-use super::prose::{LANGUAGE_RULE, language, unescaped};
+use super::prose::{LANGUAGE_RULE, language, opens_freely, unescaped};
 use super::{Block, Body, BodyShape, Column, Document, MarkdownError, Section, Shape};
 use super::{cell_value, check_shape, write};
 
@@ -287,18 +287,28 @@ impl<'a> Reader<'a> {
     }
 
     fn paragraph(&mut self) -> Result<Block, MarkdownError> {
+        let opened = self.line();
         let mut texts = vec![];
         while let Some(line) = self.peek(0).filter(|line| !line.is_empty()) {
             texts.push(self.text(line)?);
             self.at += 1;
         }
-        Ok(Block::Paragraph(texts))
+        // Refused read as written: a definition, escaped or not.
+        match opens_freely(&texts) {
+            true => Ok(Block::Paragraph(texts)),
+            false => Err(MarkdownError::ReferenceDefinition { line: opened }),
+        }
     }
 
     fn list(&mut self) -> Result<Block, MarkdownError> {
         let mut items = vec![];
         while let Some(item) = self.peek(0).and_then(|line| line.strip_prefix("- ")) {
-            items.push(self.text(item)?);
+            let text = self.text(item)?;
+            // Refused read as written: an item opening as a definition.
+            match opens_freely(std::slice::from_ref(&text)) {
+                true => items.push(text),
+                false => return Err(MarkdownError::ReferenceDefinition { line: self.line() }),
+            }
             self.at += 1;
         }
         Ok(Block::List(items))
@@ -352,3 +362,7 @@ impl<'a> Reader<'a> {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "parse_tests.rs"]
+mod tests;

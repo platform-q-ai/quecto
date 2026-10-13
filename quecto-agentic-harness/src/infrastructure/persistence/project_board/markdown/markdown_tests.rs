@@ -544,6 +544,9 @@ pub(crate) mod oracle;
 #[path = "markdown_hostile_tests.rs"]
 mod hostile;
 
+#[path = "markdown_references_tests.rs"]
+mod references;
+
 #[path = "markdown_cells_tests.rs"]
 mod cells;
 
