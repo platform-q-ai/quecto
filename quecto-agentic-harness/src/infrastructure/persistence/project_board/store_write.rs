@@ -25,7 +25,7 @@ impl GitBoardStore {
         line("message", message, 200).map_err(|error| invalid(error.to_string()))?;
         let keys: BTreeSet<ArtifactKey> = artifacts.iter().map(BoardArtifact::key).collect();
         if keys.len() != artifacts.len() || artifacts.is_empty() {
-            return Err(invalid("write one or more artifacts, each once".into()));
+            return Err(invalid("write one or more board files, each once".into()));
         }
         let base = self.base(expected)?;
         let board = self.board_at(&base)?;

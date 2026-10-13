@@ -5,10 +5,10 @@
 //! with the files written in place and every entry a write drops gone.
 //!
 //! What this quecto cannot yet do safely is refused (`folder_set_aside`)
-//! until a clear across folders can (S10b): any write or clear while a
-//! name outside `tasks/` is listed more than once, since it would carry
-//! every copy (a tree git rejects) or choose one; and a clear of a file
-//! set aside outside `tasks/`.
+//! until a clear that resolves names listed twice across folders can
+//! (S10b): any write or clear while a name outside `tasks/` is listed more
+//! than once, since it would carry every copy (a tree git rejects) or
+//! choose one.
 use super::folders::{FOLDERS, Folder};
 use super::{ARCHIVE, Board, CarriedTree, RECOVERY, TASKS, TREE};
 use crate::application::project_board::ports::ArtifactKey;
@@ -56,7 +56,7 @@ pub fn folder_file(key: &ArtifactKey, bytes: Vec<u8>) -> Result<FolderFile, Stri
             name,
             bytes,
         }),
-        (false, _, _) | (_, false, _) => Err(format!("{key}: no name a read reads spells it")),
+        (false, _, _) | (_, false, _) => Err(format!("{key}: has no file name the board can read")),
         (true, true, false) => Err(format!(
             "{key}: its file would be {} bytes; the most is {}",
             bytes.len(),
@@ -154,27 +154,13 @@ impl Board {
             .iter()
             .filter_map(|folder| self.folders.get(folder.naming.folder))
             .find_map(|tree| tree.repeated.as_ref())?;
+        // No quecto writes over such a board, so moving back undoes hand
+        // edits alone; the refusal says so.
         Some(format!(
             "{path} is named more than once, and this quecto neither writes nor clears the board \
-             while a name outside {TASKS} is: to write the board again, {RECOVERY}"
+             while a name outside {TASKS} is, so quecto has written nothing since that edit: to \
+             write the board again, {RECOVERY} (which undoes any hand edit after it too)"
         ))
-    }
-
-    /// Why a clear of the file at `path` is not made: a file set aside
-    /// there, in a folder besides `tasks/`.
-    pub fn folder_clear_refusal(&self, path: &str) -> Option<String> {
-        let in_folder = FOLDERS.iter().any(|folder| {
-            path.strip_prefix(folder.naming.folder)
-                .is_some_and(|rest| rest.starts_with('/'))
-        });
-        let set_aside = self.quarantined.iter().any(|file| file.path == path);
-        match (in_folder, set_aside) {
-            (false, _) | (true, false) => None,
-            (true, true) => Some(format!(
-                "{path} is set aside, and this quecto clears only files set aside in {TASKS}: to \
-                 remove it, {RECOVERY}"
-            )),
-        }
     }
 
     /// The archive's root entry, carried as it was read, if the board has

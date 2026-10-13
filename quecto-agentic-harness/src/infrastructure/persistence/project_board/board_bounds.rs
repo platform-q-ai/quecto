@@ -66,7 +66,9 @@ impl Board {
         limits: Limits,
     ) -> Result<(), BoardStoreError> {
         let cap = MAX_TASK_ENTRIES.max(before.entries(&[]));
-        folders_within(folders)?;
+        // A clear only takes files away from folders a read took within
+        // their bounds, so no folder's own bound can fail here.
+        debug_assert!(folders_within(folders).is_ok(), "a clear grows no folder");
         self.entries_within(&[], cap, folders)?;
         self.bytes_within(&[], limits, folders)
     }

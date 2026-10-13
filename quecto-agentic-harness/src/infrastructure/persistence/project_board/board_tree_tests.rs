@@ -278,11 +278,8 @@ fn a_key_is_written_where_a_read_finds_it() {
         let file = folder_file(&key, vec![]).unwrap();
         assert_eq!((file.folder, file.name.as_str()), (folder, name), "{key}");
     }
-    for key in [
-        ArtifactKey::Task(id()),
-        ArtifactKey::Plan(id(), 0),
-        ArtifactKey::Run(id(), 1_000),
-    ] {
+    assert!(folder_file(&ArtifactKey::Task(id()), vec![]).is_err());
+    for key in [ArtifactKey::Plan(id(), 0), ArtifactKey::Run(id(), 1_000)] {
         let refused = folder_file(&key, vec![]);
         assert!(
             refused

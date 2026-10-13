@@ -167,13 +167,19 @@ pub fn file_of(artifact: &BoardArtifact) -> Result<Vec<u8>, String> {
     file.map_err(|why| format!("{}: {why}", artifact.key()))
 }
 
+/// The file of `value`, taken only when it reads back as `value` itself
+/// and writes again to the same bytes (the value's equality may ignore
+/// what its bytes keep, as a repository's ignores case).
 fn written<C: ArtifactCodec>(value: &C::Value) -> Result<Vec<u8>, String> {
     let file = encode::<C>(value)
         .map_err(|error| error.to_string())?
         .into_bytes();
-    match decode::<C>(&file).and_then(|back| encode::<C>(&back)) {
-        Ok(again) if again.as_bytes() == file.as_slice() => Ok(file),
-        Ok(_) | Err(_) => Err("does not read back as written".into()),
+    let back =
+        decode::<C>(&file).map_err(|error| format!("does not read back as written: {error}"))?;
+    let again = encode::<C>(&back).map(String::into_bytes);
+    match (back == *value, again.as_deref() == Ok(file.as_slice())) {
+        (true, true) => Ok(file),
+        (false, _) | (_, false) => Err("does not read back as written".into()),
     }
 }
 

@@ -80,7 +80,6 @@ const fn numbered_naming(
         pattern: "<task>.<n>.md",
         max_name: MAX_NUMBERED_NAME,
         file_bytes,
-        written: true,
     }
 }
 
@@ -125,7 +124,6 @@ pub(super) static FOLDERS: [Folder; 5] = [
             pattern: "<id>.md",
             max_name: MAX_SLUG_BYTES + ".md".len(),
             file_bytes: DISCUSSION_LIMITS.file_bytes,
-            written: true,
         },
         spell: |stem| Slug::parse(stem).ok().map(ArtifactKey::Discussion),
         decode: |bytes| decode::<DiscussionCodec>(bytes).map(BoardArtifact::Discussion),
@@ -292,7 +290,12 @@ pub(super) fn scan_folder(
             }
             Disposition::Aside { id, reason, kept } => {
                 if kept {
-                    let kind = kind_of_mode(&entry.mode).unwrap_or("blob");
+                    let kind = kind_of_mode(&entry.mode);
+                    assert!(
+                        matches!(kind, Some("blob" | "tree")),
+                        "a kept entry's mode names a blob or a tree"
+                    );
+                    let kind = kind.unwrap_or_default();
                     let file = format!("{} {kind} {}", entry.mode, entry.oid);
                     assert!(
                         files.insert(entry.name.clone(), file).is_none(),

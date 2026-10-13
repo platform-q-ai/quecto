@@ -264,10 +264,9 @@ pub enum BoardStoreError {
     TooLarge(String),
     /// A file set aside outside `tasks/` holds the board where a store or
     /// index cannot yet judge it: no write or clear is made while a name
-    /// there is listed more than once, no file there is cleared (a store
-    /// that does not yet clear across folders), and no listing is given
-    /// while one names an artifact other than a task (an index that does
-    /// not yet hold that kind).
+    /// there is listed more than once (a store that cannot yet resolve one
+    /// there), and no listing is given while one names an artifact other
+    /// than a task (an index that does not yet hold that kind).
     FolderSetAside(String),
 }
 

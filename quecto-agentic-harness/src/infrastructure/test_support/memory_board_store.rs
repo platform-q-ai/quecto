@@ -5,8 +5,7 @@
 //! [`MemoryBoardStore::refuse_next_write`] makes the store refuse one.
 //!
 //! It judges a write as the git store does: every kind is written through
-//! its codec (a value it refuses is an invalid write), and a file set aside
-//! outside `tasks/` is not cleared yet (#2481 S10a).
+//! its codec (a value it refuses is an invalid write, #2481 S10a).
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
 
@@ -330,13 +329,16 @@ impl ProjectBoardStore for MemoryBoardStore {
                 .quarantined
                 .iter()
                 .find(|file| file.key.as_ref() == Some(key))
-                .map(|file| file.path.clone())
         };
-        if let Some(path) = artifacts
+        if let Some(file) = artifacts
             .iter()
             .find_map(|artifact| set_aside(&artifact.key()))
         {
-            return Ok(BoardWrite::Refused(format!("{path} is quarantined")));
+            // As the git store words it.
+            return Ok(BoardWrite::Refused(format!(
+                "{} is set aside: {}",
+                file.path, file.reason
+            )));
         }
         // As the git store: what a codec refuses is never written.
         for artifact in artifacts {
@@ -399,20 +401,6 @@ impl ProjectBoardStore for MemoryBoardStore {
             return Ok(BoardWrite::Refused(format!(
                 "{path:?} is not listed more than once"
             )));
-        }
-        // As the git store: a clear across folders waits (S10b).
-        let set_aside = board.quarantined.iter().any(|file| file.path == path);
-        let folders = ["plans/", "runs/", "changes/", "reviews/", "discussions/"];
-        match (
-            folders.iter().any(|folder| path.starts_with(folder)),
-            set_aside,
-        ) {
-            (false, _) | (true, false) => {}
-            (true, true) => {
-                return Err(BoardStoreError::FolderSetAside(format!(
-                    "{path} is set aside, and this store clears only files set aside in tasks/"
-                )));
-            }
         }
         let named = |file: &QuarantinedFile| file.path == path && file.object == clear.object;
         // Entries that share path and object are one file, as on a git

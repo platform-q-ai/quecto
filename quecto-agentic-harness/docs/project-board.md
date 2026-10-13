@@ -17,17 +17,19 @@ work: it is never read, and every write carries it as it is. A file that does no
 read as what its name spells is set aside, never trusted.
 
 This build reads and writes every folder. A write writes each artifact as its
-kind's file and carries every other file by its object: a folder it leaves as it
-was is carried as the same tree, and a file set aside is carried as it is (writes
-to its key are refused) unless it is one a write drops, such as a stray. Two
-things wait for a clear across folders and are refused (`folder_set_aside`): any
-write or clear while a name outside `tasks/` is listed more than once, and a clear
-of a file set aside outside `tasks/`. Listings are unavailable (`folder_set_aside`)
-while a file set aside outside `tasks/` names a plan, run, change, review or
-discussion, since the index holds tasks alone for now. It writes the marker
-`quecto-board 3` and reads `quecto-board 2` too. A build that reads only format 2 asks for an
-upgrade on a board this build has written, rather than taking its folders for
-someone else's branch.
+kind's file and carries every other file by its object. A folder the write leaves
+alone is carried as the same tree. A folder it writes in, or one holding a stray
+(any entry a write drops), is rebuilt from the files it carries, and a folder left
+with nothing in it is omitted. A file set aside is carried as it is, and writes to
+its key are refused, unless it is one a write drops. A clear removes one file set
+aside, in any folder. While a name outside `tasks/` is listed more than once, every
+write and clear is refused (`folder_set_aside`) until a later quecto can clear it.
+Listings are unavailable (`folder_set_aside`) while a file set aside outside
+`tasks/` names a plan, run, change, review or discussion, since the index holds
+tasks alone for now. It writes the marker `quecto-board 3` and reads
+`quecto-board 2` too. A build that reads only format 2 asks for an upgrade on a
+board this build has written, rather than taking its folders for someone else's
+branch.
 
 A read takes at most the following. Past any of these it answers
 `board_too_large` before it reads any file's bytes. In a partial clone, objects the
