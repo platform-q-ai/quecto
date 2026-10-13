@@ -158,30 +158,33 @@ impl ProjectBoardOpLog for EventLogProjectBoardOps {
 
 /// [`ProjectBoardOpLog`] that writes each record to `tracing` (target
 /// `quecto::project_board`, `board op`: DEBUG for a read, INFO for a
-/// write) and then to the log it wraps. The `tracing` record holds the op
-/// and the record's own fields as the `board_op` line serializes them,
-/// without the line's envelope (`ts`, `session`, `host`, `pid`, …), so it
-/// holds no board text either.
-#[derive(Debug)]
-pub struct TracingProjectBoardOps<L> {
-    inner: L,
+/// write) and then to the event log it wraps, only while that log has a
+/// line to write to: a daily log that could not be opened traces no
+/// record, as a session with no line gives no recording at all. The
+/// `tracing` record holds the op and the record's own fields as the
+/// `board_op` line serializes them, without the line's envelope (`ts`,
+/// `session`, `host`, `pid`, …), so it holds no board text either.
+pub struct TracingProjectBoardOps {
+    inner: EventLogProjectBoardOps,
 }
 
-impl<L: ProjectBoardOpLog> TracingProjectBoardOps<L> {
+impl TracingProjectBoardOps {
     /// Each record traced, then written to `inner`.
-    pub fn over(inner: L) -> Self {
+    pub fn over(inner: EventLogProjectBoardOps) -> Self {
         Self { inner }
     }
 }
 
-impl<L: ProjectBoardOpLog> ProjectBoardOpLog for TracingProjectBoardOps<L> {
+impl ProjectBoardOpLog for TracingProjectBoardOps {
     fn record(&self, record: BoardOpRecord) {
-        let op = record.op.as_str();
-        // The fields are rendered only when a subscriber takes the record.
-        let fields = Fields(&record);
-        match record.access {
-            Access::Read => tracing::debug!(target: TARGET, op, record = %fields, "board op"),
-            Access::Write => tracing::info!(target: TARGET, op, record = %fields, "board op"),
+        if self.inner.line.get().is_some() {
+            let op = record.op.as_str();
+            // The fields are rendered only when a subscriber takes them.
+            let fields = Fields(&record);
+            match record.access {
+                Access::Read => tracing::debug!(target: TARGET, op, record = %fields, "board op"),
+                Access::Write => tracing::info!(target: TARGET, op, record = %fields, "board op"),
+            }
         }
         self.inner.record(record);
     }

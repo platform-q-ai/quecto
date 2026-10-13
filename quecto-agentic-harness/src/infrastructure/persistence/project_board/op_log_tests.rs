@@ -9,15 +9,6 @@ use crate::domain::project_board::value_objects::telemetry::{
 };
 use crate::infrastructure::persistence::audit_log::AuditLog;
 
-#[derive(Default)]
-struct Kept(Mutex<Vec<BoardOpRecord>>);
-
-impl ProjectBoardOpLog for Arc<Kept> {
-    fn record(&self, record: BoardOpRecord) {
-        self.0.lock().unwrap().push(record);
-    }
-}
-
 fn record(access: Access) -> BoardOpRecord {
     BoardOpRecord {
         op: OpKind::Move,
@@ -64,9 +55,10 @@ fn traced(level: tracing::Level, run: impl FnOnce()) -> String {
 }
 
 #[test]
-fn a_read_is_traced_at_debug_and_a_write_at_info_then_handed_on() {
-    let kept = Arc::new(Kept::default());
-    let ops = TracingProjectBoardOps::over(kept.clone());
+fn a_read_is_traced_at_debug_and_a_write_at_info_then_written() {
+    let base = tempfile::tempdir().unwrap();
+    let log = AuditLog::open_sync(base.path(), "cli:traced").unwrap();
+    let ops = TracingProjectBoardOps::over(EventLogProjectBoardOps::new(log.crash_line().unwrap()));
     let read = traced(tracing::Level::TRACE, || ops.record(record(Access::Read)));
     assert!(
         read.contains("DEBUG") && read.contains("quecto::project_board"),
@@ -74,7 +66,8 @@ fn a_read_is_traced_at_debug_and_a_write_at_info_then_handed_on() {
     );
     assert!(read.contains("board op"), "{read}");
     let json = serde_json::to_string(&record(Access::Read)).unwrap();
-    assert!(read.contains(&json), "the line's fields: {read}");
+    assert!(read.contains(&json), "the record's own fields: {read}");
+    assert!(!read.contains("cli:traced"), "no envelope: {read}");
     let info_only = traced(tracing::Level::INFO, || ops.record(record(Access::Read)));
     assert_eq!(info_only, "", "a read is DEBUG");
     let write = traced(tracing::Level::INFO, || ops.record(record(Access::Write)));
@@ -82,9 +75,12 @@ fn a_read_is_traced_at_debug_and_a_write_at_info_then_handed_on() {
         write.contains("INFO") && write.contains(r#""rule":"not_holder""#),
         "{write}"
     );
-    let kept = kept.0.lock().unwrap();
-    let handed: Vec<Access> = kept.iter().map(|record| record.access).collect();
-    assert_eq!(handed, [Access::Read, Access::Read, Access::Write]);
+    let text = std::fs::read_to_string(AuditLog::file_path(base.path(), "cli:traced")).unwrap();
+    let accesses: Vec<String> = text
+        .lines()
+        .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap()["access"].to_string())
+        .collect();
+    assert_eq!(accesses, [r#""read""#, r#""read""#, r#""write""#]);
 }
 
 #[test]
@@ -133,14 +129,28 @@ fn a_log_opened_by_its_first_record_is_opened_once_then() {
     assert_eq!(text.lines().count(), 2, "{text}");
 }
 
-/// A log that cannot be opened drops every record, with one warning.
+/// A log that cannot be opened drops every record, with one warning: the
+/// opener is tried once, and no record is traced (#2536 review round 2).
 #[test]
 fn a_log_that_cannot_be_opened_drops_its_records_with_one_warning() {
-    let ops = EventLogProjectBoardOps::opened_by_first_record(|| None);
-    let warned = traced(tracing::Level::WARN, || {
+    use std::sync::atomic::AtomicUsize;
+    let tried = Arc::new(AtomicUsize::new(0));
+    let count = tried.clone();
+    let ops =
+        TracingProjectBoardOps::over(EventLogProjectBoardOps::opened_by_first_record(move || {
+            count.fetch_add(1, Ordering::AcqRel);
+            None
+        }));
+    let traced = traced(tracing::Level::TRACE, || {
         ops.record(record(Access::Read));
-        ops.record(record(Access::Read));
+        ops.record(record(Access::Write));
     });
-    assert_eq!(warned.matches("not being written").count(), 1, "{warned}");
-    assert_eq!(ops.dropped.load(Ordering::Acquire), 0, "nothing to note in");
+    assert_eq!(tried.load(Ordering::Acquire), 1, "tried once");
+    assert_eq!(traced.matches("not being written").count(), 1, "{traced}");
+    assert!(!traced.contains("board op"), "no record traced: {traced}");
+    assert_eq!(
+        ops.inner.dropped.load(Ordering::Acquire),
+        0,
+        "nothing to note in"
+    );
 }

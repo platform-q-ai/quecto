@@ -195,8 +195,12 @@ pub fn session_board_recording(
 /// loads no layered configuration, so it follows the owner's global file
 /// alone; `None` while that is off. The log is opened, and dated, by the
 /// first record, so a run that records nothing leaves no file; a log that
-/// cannot be opened then records nothing. The daily files are kept with no
-/// retention yet: each stops at the event log's cap.
+/// cannot be opened then records nothing, to the log or to `tracing`,
+/// with one warning. The daily files are kept with no retention yet: each
+/// stops at the event log's cap, which is only approximate here, since
+/// each CLI process counts from the file's size when it opened it, so
+/// processes writing at once can overshoot the cap or write a line after
+/// its `log_capped` record (a reader, T8, must tolerate both).
 pub fn cli_board_recording(base_dir: &Path) -> Option<BoardRecording> {
     let base_dir = base_dir.to_path_buf();
     BoardRecording::when(switched_on(false, base_dir.as_path()), move || {

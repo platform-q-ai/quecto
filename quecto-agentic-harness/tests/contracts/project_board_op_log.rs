@@ -104,9 +104,17 @@ fn off_gives_no_recording_from_either_builder_and_writes_nothing() {
             global(base.path(), enabled);
         }
         let log = AuditLog::open_sync(base.path(), "cli:off").unwrap();
+        // Any recording a builder gives records, so the checks below would
+        // see what it writes or traces before the `None` checks fail.
+        let mut built = (None, None);
         let output = traced(|| {
-            assert!(session_board_recording(&telemetry(false), base.path(), &log).is_none());
-            assert!(cli_board_recording(base.path()).is_none());
+            built = (
+                session_board_recording(&telemetry(false), base.path(), &log),
+                cli_board_recording(base.path()),
+            );
+            for recording in [&built.0, &built.1].into_iter().flatten() {
+                recording.record(record());
+            }
         });
         assert_eq!(output, "", "nothing is traced while off");
         assert!(parsed(base.path(), "cli:off").is_empty());
@@ -114,6 +122,8 @@ fn off_gives_no_recording_from_either_builder_and_writes_nothing() {
             audit_files(base.path()),
             ["cli:off.jsonl".replace(':', "_")]
         );
+        assert!(built.0.is_none(), "the session builder gives none");
+        assert!(built.1.is_none(), "the CLI builder gives none");
     }
 }
 
@@ -155,9 +165,13 @@ fn the_cli_builder_records_in_its_daily_log_when_the_global_file_is_on() {
         Vec::<String>::new(),
         "the daily log is opened by its first record, not before"
     );
-    std::thread::spawn(move || recording.record(record()))
+    let output = std::thread::spawn(move || traced(|| recording.record(record())))
         .join()
         .unwrap();
+    assert!(
+        output.contains("board op") && output.contains("quecto::project_board"),
+        "the recording traces while on: {output}"
+    );
     let files = audit_files(base.path());
     assert_eq!(files.len(), 1, "{files:?}");
     let day = files[0]
@@ -175,6 +189,22 @@ fn the_cli_builder_records_in_its_daily_log_when_the_global_file_is_on() {
     assert_eq!(lines[0]["event"], "board_op");
     assert_eq!(lines[0]["session"], format!("board-cli:{day}"));
     assert_eq!(lines[0]["turn"], Value::Null);
+}
+
+/// A daily log that cannot be opened records nothing, and traces no
+/// record either, as a session with no log line gives no recording.
+#[test]
+fn the_cli_builder_traces_nothing_when_its_log_cannot_be_opened() {
+    let base = tempfile::tempdir().unwrap();
+    global(base.path(), true);
+    std::fs::write(AuditLog::directory(base.path()), "not a directory").unwrap();
+    let recording = cli_board_recording(base.path()).expect("a recording while on");
+    let output = traced(|| recording.record(record()));
+    assert!(!output.contains("board op"), "no record traced: {output}");
+    assert!(
+        output.contains("not being written"),
+        "one warning: {output}"
+    );
 }
 
 #[test]
