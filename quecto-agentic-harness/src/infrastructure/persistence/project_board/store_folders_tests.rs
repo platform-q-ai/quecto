@@ -2,9 +2,8 @@
 //! `reviews` and `discussions` are read as their kinds, each file only as
 //! what its name spells, and an `archive` tree is room left for later,
 //! type-checked and never read. A write or a clear carries every folder
-//! and the archive as they are, and none is made while a file outside
-//! `tasks/` is set aside: only a quecto that writes those folders can
-//! carry or drop it.
+//! it leaves as it was, and the archive, as they are
+//! (`store_folder_writes_tests` covers writes in the folders).
 use super::format::{blob_in, raw_rows};
 use super::*;
 use crate::application::project_board::ports::{ArtifactKey, SetAsideClear};
@@ -279,16 +278,11 @@ fn names_in_a_folder_are_judged_as_in_tasks() {
     assert!(reason(&board, "plans/a.3.md").contains("not a regular file"));
     assert!(reason(&board, &format!("plans/{longest}")).contains("holds plan 3 of task a"));
     assert!(reason(&board, &format!("plans/{too_long}")).contains("not a name quecto keeps"));
-    // This quecto writes no folder but `tasks/`: a reason says what is
-    // wrong, never what a write would do.
-    for file in &board.quarantined {
-        assert!(
-            !file.reason.contains("write") && !file.reason.contains("carried"),
-            "{}: {}",
-            file.path,
-            file.reason
-        );
-    }
+    // This quecto writes every folder (S10a): a reason says what the next
+    // write does with a file, as one in `tasks/` does.
+    assert!(reason(&board, "plans/a.md").ends_with("; carried forward as it is"));
+    assert!(reason(&board, "plans/a.4.md").ends_with("; the next write drops it"));
+    assert!(reason(&board, &format!("plans/{too_long}")).ends_with("; the next write drops it"));
 }
 
 /// A name listed twice in a folder sets every copy aside under its key,
@@ -392,10 +386,10 @@ fn a_write_and_a_clear_carry_every_folder_and_the_archive_as_they_are() {
     assert!(store(&repos.alice).read().unwrap().quarantined.is_empty());
 }
 
-/// While a file outside `tasks/` is set aside, nothing is written or
-/// cleared: this quecto neither carries nor drops one.
+/// A file set aside outside `tasks/` no longer holds the board (S10a): a
+/// write lands, carrying it as it is; only its own clear waits.
 #[test]
-fn nothing_is_written_or_cleared_while_a_file_outside_tasks_is_set_aside() {
+fn a_file_set_aside_outside_tasks_holds_only_its_own_clear() {
     let repos = fresh();
     let head = board_of(&repos, |_| {
         vec![
@@ -413,25 +407,26 @@ fn nothing_is_written_or_cleared_while_a_file_outside_tasks_is_set_aside() {
     });
     let bob = store(&repos.bob);
     let board = bob.read().unwrap();
-    let write = bob.write_tasks(&head, &[task("b")], "board: add b");
+    let clears: Vec<_> = board
+        .quarantined
+        .iter()
+        .map(|file| {
+            let clear = SetAsideClear {
+                path: file.path.clone(),
+                object: file.object.clone(),
+                repeated: BTreeMap::new(),
+            };
+            bob.clear_set_aside(&head, &clear, "board: clear")
+        })
+        .collect();
     assert!(
-        matches!(&write, Err(BoardStoreError::FolderSetAside(why)) if why.contains("plans/a.2.md")),
-        "{write:?}"
+        matches!(&clears[0], Err(BoardStoreError::FolderSetAside(why)) if why.contains("plans/a.2.md")),
+        "{clears:?}"
     );
-    for file in &board.quarantined {
-        let clear = SetAsideClear {
-            path: file.path.clone(),
-            object: file.object.clone(),
-            repeated: BTreeMap::new(),
-        };
-        let cleared = bob.clear_set_aside(&head, &clear, "board: clear");
-        assert!(
-            matches!(&cleared, Err(BoardStoreError::FolderSetAside(why)) if why.contains("plans/a.2.md")),
-            "{}: {cleared:?}",
-            file.path
-        );
-    }
-    assert_eq!(sh(&repos.remote(), &["rev-parse", BOARD_REF]), head.0);
+    let cleared = written(clears[1].clone());
+    let moved = written(bob.write_tasks(&cleared, &[task("b")], "board: add b"));
+    let remote = repos.remote();
+    assert_eq!(at(&remote, &moved, "plans"), at(&remote, &head, "plans"));
 }
 
 fn tree() -> Node {
@@ -623,3 +618,5 @@ fn a_partial_clone_reads_every_folder_and_carries_the_archive() {
 
 #[path = "store_folders_bounds_tests.rs"]
 mod bounds;
+#[path = "store_folder_writes_tests.rs"]
+mod writes;
