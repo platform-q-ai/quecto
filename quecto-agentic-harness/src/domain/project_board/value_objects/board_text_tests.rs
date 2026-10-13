@@ -196,11 +196,12 @@ fn links_inline_html_and_footnotes_are_kept_as_written() {
     assert_eq!(settled(text, "[a \nb](/u)"), "[a\nb](/u)");
 }
 
-/// A message as it comes in (#2481 D3): its line ends one LF, each line
-/// trimmed of spaces and tabs at its edges (a table cell shows none), and
-/// blank lines dropped (a message is its non-empty lines). What chat holds
-/// that is not a space or a tab (a no-break space, a selector) is kept, for
-/// the codec to refuse with its line.
+/// A message as it comes in (#2481 D3): its line ends one LF, the spaces
+/// chat carries (no-break, narrow no-break, figure and ideographic) plain
+/// spaces, each line trimmed of spaces and tabs at its edges (a table cell
+/// shows none), and blank lines dropped (a message is its non-empty
+/// lines). Anything else (a selector, another space) is kept, for the
+/// domain or the codec to refuse with its field or line.
 #[test]
 fn a_message_is_its_lines_trimmed_with_blank_lines_dropped() {
     for (raw, kept) in [
@@ -212,7 +213,13 @@ fn a_message_is_its_lines_trimmed_with_blank_lines_dropped() {
         ),
         ("one\rtwo\n\n\nthree", "one\ntwo\nthree"),
         ("  `a  b`  ", "`a  b`"),
-        ("\u{a0}ok\u{fe0f}", "\u{a0}ok\u{fe0f}"),
+        ("\u{a0}ok\u{fe0f}", "ok\u{fe0f}"),
+        ("Pocket:\u{a0}yes", "Pocket: yes"),
+        ("Bonjour\u{202f}: oui", "Bonjour : oui"),
+        ("\u{2007}12\u{2007}", "12"),
+        ("はい\u{3000}そうです", "はい そうです"),
+        ("\u{a0}\u{3000}\nnext", "next"),
+        ("em\u{2003}space", "em\u{2003}space"),
         (" \t\r\n\n", ""),
     ] {
         assert_eq!(settled(message, raw), kept, "{raw:?}");
@@ -222,8 +229,35 @@ fn a_message_is_its_lines_trimmed_with_blank_lines_dropped() {
 #[test]
 fn a_message_is_entered_only_once_normalised() {
     assert_eq!(entered_message("batch/0/text", "Yes,\nwith a TTL."), Ok(()));
-    for raw in ["Yes, ", "Yes,\n\nno", " Yes", "Yes,\r\nno", "Yes,\n"] {
-        let refused = entered_message("batch/0/text", raw).unwrap_err();
-        assert_eq!(refused.field, "batch/0/text", "{raw:?}");
+    for raw in [
+        "Yes, ",
+        "Yes,\n\nno",
+        " Yes",
+        "Yes,\r\nno",
+        "Yes,\n",
+        "Yes,\u{a0}no",
+    ] {
+        assert_eq!(
+            entered_message("batch/0/text", raw),
+            Err(SchemaError::new(
+                "batch/0/text",
+                "has spacing the board removes: use one LF between lines, no blank lines, and \
+                 no spaces or tabs at the start or end of a line"
+            )),
+            "{raw:?}"
+        );
     }
+}
+
+/// A one-line field never normalised is refused with the owner-approved
+/// problem for a line.
+#[test]
+fn a_line_never_normalised_says_what_a_line_is() {
+    assert_eq!(
+        entered_line("title", " Ship it"),
+        Err(SchemaError::new(
+            "title",
+            "must be one line with no spaces or tabs at its start or end"
+        ))
+    );
 }

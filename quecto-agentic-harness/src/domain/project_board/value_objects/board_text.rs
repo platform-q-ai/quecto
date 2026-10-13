@@ -37,9 +37,17 @@ use super::schema_error::SchemaError;
 /// Why text a write path takes is refused: it was never normalised.
 const NOT_ENTERED: &str = "must be board text as it enters (normalised: one LF between \
      lines, no blank lines at its edges, no trailing space where no hard break forms)";
-/// Why a message a write path takes is refused: it was never normalised.
-const NOT_ENTERED_MESSAGE: &str = "must be a message as it enters (normalised: one LF between \
-     lines, no blank lines, no spaces or tabs at a line's edges)";
+/// Why one line a write path takes is refused: it was never normalised
+/// (owner-approved wording, #2481 S7).
+const NOT_ENTERED_LINE: &str = "must be one line with no spaces or tabs at its start or end";
+/// Why a message a write path takes is refused: it was never normalised
+/// (owner-approved wording, #2481 S7).
+const NOT_ENTERED_MESSAGE: &str = "has spacing the board removes: use one LF between lines, no \
+     blank lines, and no spaces or tabs at the start or end of a line";
+/// The spaces chat writes between words that a message keeps as a plain
+/// space: no-break, narrow no-break (French before `:`), figure and
+/// ideographic. A file holds no other space.
+const CHAT_SPACES: [char; 4] = ['\u{a0}', '\u{202f}', '\u{2007}', '\u{3000}'];
 /// The ASCII punctuation a trailing space may follow: all but a backslash,
 /// which a line end after it makes a hard break.
 const SAFE_PUNCTUATION: &str = "!\"#$%&'()*+,-./:;<=>?@[]^_`{|}~";
@@ -146,7 +154,7 @@ pub fn entered_text(field: &str, held: &str) -> Result<(), SchemaError> {
 pub fn entered_line(field: &str, held: &str) -> Result<(), SchemaError> {
     match line(held) == held {
         true => Ok(()),
-        false => Err(SchemaError::new(field, NOT_ENTERED)),
+        false => Err(SchemaError::new(field, NOT_ENTERED_LINE)),
     }
 }
 
@@ -158,19 +166,33 @@ pub fn line(raw: &str) -> String {
 }
 
 /// A discussion message as the board keeps it (#2481 D3): line ends as
-/// [`text`] makes them, each line as [`line`] makes it (a message line is a
-/// table cell, which shows no edge spacing), and blank lines dropped (a
-/// message is its non-empty lines). Empty when nothing but spacing was
-/// said.
+/// [`text`] makes them, the spaces chat writes between words
+/// ([`CHAT_SPACES`]) plain spaces, each line as [`line`] makes it (a
+/// message line is a table cell, which shows no edge spacing), and blank
+/// lines dropped (a message is its non-empty lines). Empty when nothing
+/// but spacing was said.
 pub fn message(raw: &str) -> String {
-    let lines: Vec<String> = line_ends(raw)
+    let plain: String = line_ends(raw)
+        .chars()
+        .map(|c| match CHAT_SPACES.contains(&c) {
+            true => ' ',
+            false => c,
+        })
+        .collect();
+    let lines: Vec<String> = plain
         .split('\n')
         .map(line)
         .filter(|kept| !kept.is_empty())
         .collect();
     let normal = lines.join("\n");
-    debug_assert!(
-        unspaced(&normal).eq(unspaced(raw)),
+    let words = |text: &str| -> String {
+        unspaced(text)
+            .filter(|c| !CHAT_SPACES.contains(c))
+            .collect()
+    };
+    debug_assert_eq!(
+        words(&normal),
+        words(raw),
         "only spacing, line ends and blank lines change"
     );
     normal

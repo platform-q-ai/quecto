@@ -54,13 +54,14 @@ pub struct Opening<'a> {
 /// if that is later.
 ///
 /// # Errors
-/// No message (`invalid`); a message stamped ahead; a title or message
-/// never normalised (`board_text`); or a discussion its schema refuses (a title or message out of shape, messages out of
-/// order, past its limits).
+/// A title or message never normalised (`board_text`), judged first, as
+/// `append` does; no message (`invalid`); a message stamped ahead; or a
+/// discussion its schema refuses (a title or message out of shape,
+/// messages out of order, past its limits).
 pub fn begin(opening: Opening<'_>, when: &Moment) -> Result<Discussion, BoardRuleError> {
-    not_ahead(&opening.id, &opening.messages, when)?;
     entered_line("title", &opening.title).map_err(BoardRuleError::Invalid)?;
     entered_messages("messages", &opening.messages)?;
+    not_ahead(&opening.id, &opening.messages, when)?;
     let (created, last) = match (opening.messages.first(), opening.messages.last()) {
         (Some(first), Some(last)) => (first.at.clone(), last.at.clone()),
         _ => {
@@ -89,10 +90,11 @@ pub fn begin(opening: Opening<'_>, when: &Moment) -> Result<Discussion, BoardRul
 /// messages names it by its place in the batch (`batch/{i}/…`).
 ///
 /// # Errors
-/// A discussion closed or stamped ahead; an empty batch; a message stamped
-/// ahead; a message out of shape or never normalised; a batch that would
-/// fill the discussion past its most messages, lines or text; or a discussion its schema
-/// refuses (a message said before the last one).
+/// A discussion closed or stamped ahead; a batch too many for it; a
+/// message never normalised (judged before any message's time, as `begin`
+/// does); an empty batch; a message stamped ahead or out of shape; a batch
+/// that would fill the discussion past its most lines or text; or a
+/// discussion its schema refuses (a message said before the last one).
 pub fn append(
     discussion: &Discussion,
     messages: Vec<Message>,
@@ -101,10 +103,11 @@ pub fn append(
     let fields = discussion.fields();
     open(discussion)?;
     built_on(discussion, when)?;
-    // The count first, before any message is read (its time or its
-    // shape); then each message's time and own shape, so a message out of
-    // shape is named as such, never read as the discussion being full of
-    // lines or text; then that room.
+    // The count first, before any message is read (its spacing, time or
+    // shape); then each message's spacing, as `begin` judges it first;
+    // then each message's time and own shape, so a message out of shape is
+    // named as such, never read as the discussion being full of lines or
+    // text; then that room.
     let before = fields.messages.len();
     match before + messages.len() <= MAX_MESSAGES {
         true => {}
@@ -115,6 +118,7 @@ pub fn append(
             });
         }
     }
+    entered_messages("batch", &messages)?;
     not_ahead(&fields.id, &messages, when)?;
     let last = match messages.last() {
         Some(last) => last.at.clone(),
@@ -124,7 +128,6 @@ pub fn append(
     shapes
         .try_for_each(|(index, message)| message_shape(&format!("batch/{index}"), message))
         .map_err(BoardRuleError::Invalid)?;
-    entered_messages("batch", &messages)?;
     let mut next = fields.clone();
     next.updated = after_last(&fields.updated, &when.now)?.max(last);
     next.messages.extend(messages);

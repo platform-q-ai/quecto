@@ -6,6 +6,7 @@
 use super::super::{CodecError, decode, encode};
 use super::*;
 use crate::domain::project_board::entities::claim::Identity;
+use crate::domain::project_board::entities::discussion::PLAIN_SPACES_ONLY;
 use crate::domain::project_board::entities::discussion::{
     FILE_RESERVE_BYTES, MAX_DISCUSSION_FILE_BYTES, MAX_DISCUSSION_LINES, MAX_DISCUSSION_TEXT_BYTES,
     MAX_MESSAGE_LINE_CHARS, MAX_MESSAGES, ROW_OVERHEAD_BYTES,
@@ -15,6 +16,7 @@ use crate::domain::project_board::services::discussions::append;
 use crate::domain::project_board::services::plans::Moment;
 use crate::domain::project_board::value_objects::board_text;
 use crate::domain::project_board::value_objects::rule_error::BoardRuleError;
+use crate::domain::project_board::value_objects::schema_error::SchemaError;
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
 use crate::infrastructure::persistence::project_board::markdown::MarkdownError;
@@ -343,14 +345,16 @@ fn a_discussion_title_its_heading_cannot_hold_is_refused() {
     }
 }
 
-/// Text chat carries that a file cannot hold, inside a batch (#2516, D4):
-/// spaces and tabs at a line's edges and blank lines are the message
-/// normaliser's to take away (the domain refuses them raw, so none reaches
-/// the codec), and the batch normalised is held; a no-break space and a
-/// selector outside a keycap are left as written, taken by the domain, and
-/// refused by the codec naming the file line of their message row.
+/// Text Pocket and imports carry, inside a batch (#2516, D4): edge spaces,
+/// tabs, blank lines and CRLF, and the spaces chat writes between words (a
+/// no-break space, a French narrow no-break space before a colon, an
+/// ideographic space) are the message normaliser's: the domain refuses the
+/// raw batch as never normalised, and holds it normalised, as its file
+/// does. A space it leaves (an em space) the domain refuses with its field
+/// and line; a selector outside a keycap, which the domain takes, the
+/// codec refuses with the file line of its message row.
 #[test]
-fn a_batch_holds_what_the_normaliser_fixes_and_names_what_it_leaves() {
+fn pocket_text_is_held_once_normalised_and_what_no_file_holds_is_named() {
     let begun = Discussion::new(example()).unwrap();
     let moment = Moment {
         now: at("2026-10-11T12:10:00Z"),
@@ -360,29 +364,51 @@ fn a_batch_holds_what_the_normaliser_fixes_and_names_what_it_leaves() {
         let said = message("Rex", "2026-10-11T12:06:00Z", text);
         append(&begun, vec![said], &moment)
     };
-    let raw = "  Both ends spaced \t\r\n\r\n\tand a tab first.";
-    // Refused raw, by its shape (a CR, a blank line) or as never normalised.
-    assert!(
-        matches!(batch(raw), Err(BoardRuleError::Invalid(error)) if error.field.starts_with("batch/0/text")),
-        "raw edge spacing never reaches the codec"
-    );
-    assert!(
-        matches!(batch("  Spaced "), Err(BoardRuleError::Invalid(error)) if error.field == "batch/0/text"),
-        "edge spacing alone is refused as never normalised"
-    );
-    let held = batch(&board_text::message(raw)).unwrap();
-    round_trips(held.into_fields());
-    // The example's rows are file lines 16 to 18; the batch's follow.
-    for (left, line) in [
-        ("A no-break space last\u{a0}", 19),
-        ("Fine\nthumbs\u{fe0f} up", 20),
+    let never_normalised = |field: &str| {
+        Err(BoardRuleError::Invalid(SchemaError::new(
+            field,
+            "has spacing the board removes: use one LF between lines, no blank lines, and no \
+             spaces or tabs at the start or end of a line",
+        )))
+    };
+    for (raw, held) in [
+        (
+            "  Both ends spaced \t\r\n\r\n\tand a tab first.",
+            "Both ends spaced\nand a tab first.",
+        ),
+        ("Pocket says\u{a0}yes", "Pocket says yes"),
+        ("Bonjour\u{202f}: on commence ?", "Bonjour : on commence ?"),
+        ("はい\u{3000}そうです", "はい そうです"),
     ] {
-        assert_eq!(board_text::message(left), left, "left as written");
-        let taken = batch(left).expect("the domain takes it");
+        assert_eq!(batch(raw), never_normalised("batch/0/text"), "{raw:?}");
+        let normalised = board_text::message(raw);
+        assert_eq!(normalised, held);
+        let discussion = batch(&normalised).unwrap();
         assert_eq!(
-            encode::<DiscussionCodec>(&taken),
-            Err(CodecError::Markdown(MarkdownError::Invisible { line })),
-            "{left:?}"
+            discussion
+                .fields()
+                .messages
+                .last()
+                .map(|said| said.text.as_str()),
+            Some(held)
         );
+        round_trips(discussion.into_fields());
     }
+    let em = board_text::message("an em\u{2003}space");
+    assert_eq!(
+        batch(&em),
+        Err(BoardRuleError::Invalid(SchemaError::new(
+            "batch/0/text/0",
+            PLAIN_SPACES_ONLY
+        ))),
+        "refused by the domain with its line"
+    );
+    // The example's rows are file lines 16 to 18; the batch's follow.
+    let selector = "Fine\nthumbs\u{fe0f} up";
+    assert_eq!(board_text::message(selector), selector, "left as written");
+    let taken = batch(selector).expect("the domain takes it");
+    assert_eq!(
+        encode::<DiscussionCodec>(&taken),
+        Err(CodecError::Markdown(MarkdownError::Invisible { line: 20 }))
+    );
 }
