@@ -20,7 +20,8 @@ This build reads every folder but writes tasks alone. A write or a clear carries
 the other folders as they are, and is refused (`folder_set_aside`) while a file in
 one of them is set aside. Listings are unavailable (`folder_set_aside`) while a
 file set aside outside `tasks/` names a plan, run, change, review or discussion,
-since the index holds tasks alone for now. It writes the marker `quecto-board 3`
+since the index holds tasks alone for now. `show` reads the store itself, so it
+still answers then (see below). It writes the marker `quecto-board 3`
 and reads `quecto-board 2` too. A build that reads only format 2 asks for an
 upgrade on a board this build has written, rather than taking its folders for
 someone else's branch.
@@ -42,6 +43,19 @@ clone lacks are still fetched before their sizes can be judged.
 A write leaves at most 2,048 entries in `tasks/`; the 4,096 a read takes leave
 room for a board written before task files were markdown (a JSON file and a
 summary per task). A file larger than its kind's cap is set aside, not read.
+
+## Show
+
+`show(task)` reads the task, its plans and its runs from one read of the board
+(#2481 M4a). Besides `head` and the whole `task`, its answer holds:
+
+| Field | Meaning |
+|---|---|
+| `plan` | The task's accepted plan, whole: the version the task names, when the board holds it accepted. `null` while it has none, or while its file is set aside |
+| `plans` | Each version of the task's plan, by version, in brief: `version`, `state`, `proposed_by`, `updated` |
+| `runs` | Each run of the task, by number: the latest whole (its task items, owners and evidence), every other in brief (`number`, `plan_version`, `state`, `started`, `ended`, `cost_tokens`). A run's owners and evidence are shown as text from outside is: credentials redacted, each at most 2,000 characters |
+| `incomplete` | Whether a file that may hold one of the task's plans or runs is set aside: its plans and runs may then be missing one |
+| `set_aside` | Those files, as a listing's `quarantined` shows them; one of a plan or run also names its `kind`, `task` and `number` |
 
 ## Telemetry
 
@@ -112,6 +126,7 @@ as given. It is for the pocket relay to set; an older quecto ignores it.
 | `task`, `pr` | The task the op's `task` names, and the pull request `link_pr` or `unlink_pr` names, once the request was read |
 | `head` | The board's head an answer named, only when it is a full commit id git produced |
 | `listed`, `shown`, `truncated_more`, `set_aside`, `set_aside_more` | For an answered listing: the tasks it listed, those its answer showed and those it left out, and the set-aside files it listed and left out. The agent tool's listing is cut to 32 KiB; the CLI leaves nothing out |
+| `plans`, `runs` | For an answered `show`: how many versions of the task's plan and how many of its runs the answer gave; counts only, never their text |
 | `status_from`, `status_to` | For a write of a task (`create`, `update_draft`, `move`, `renew`, `take_over`, `link_pr`, `unlink_pr`, `complete`): the task's status as the write last read it (none for `create`), and the status it moved to: a `move`'s target, made or refused, otherwise the status of the task it wrote (`create`'s `draft` or `ready`, `complete`'s `done`), so a refused write other than `move` writes no `status_to`. A `link_pr` or move to `review` that completes its task records its own write's status here; what came of completing it is in `completion` |
 | `claim` | For a `move`, `renew`, `take_over`, `link_pr` or `unlink_pr` of a task that holds a claim, the claim as the change found it, never its holder: `held_s` (seconds since it began, below zero when the writer's clock reads before that), `left_s` (seconds until it expires, below zero once it has lapsed) and `holder_is_writer` |
 | `attempts`, `lost`, `pause_ms` | For a write (every op that writes but `bootstrap`): the attempts it began (at most 3), how many of them lost the race to another writer, and, when it paused between attempts, the time it paused in milliseconds. A `link_pr` or `move` that completes its task counts only its own write's attempts here; the completion's write is counted in `completion_attempts` |

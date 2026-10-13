@@ -156,6 +156,11 @@ pub struct BoardOpRecord {
     /// A listing's counts (T3), from the answer its front end gave.
     #[serde(flatten, skip_serializing_if = "Option::is_none")]
     pub listing: Option<ListingCounts>,
+    /// The plan versions and runs an answered `show` gave (#2481 M4a).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plans: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub runs: Option<u64>,
     /// The task's status as a change last read it (T4).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub status_from: Option<StaticKind>,

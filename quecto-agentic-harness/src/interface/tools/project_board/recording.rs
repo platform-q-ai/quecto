@@ -79,6 +79,8 @@ impl BoardCall {
                 pr: None,
                 head: None,
                 listing: None,
+                plans: None,
+                runs: None,
                 status_from: None,
                 status_to: None,
                 claim: None,
@@ -196,9 +198,10 @@ impl BoardCall {
     pub fn answer(&mut self, op: &str, outcome: &BoardOutcome, clock: Option<String>) -> Value {
         self.note(|record| {
             let head = match outcome {
-                BoardOutcome::Bootstrapped { head, .. }
-                | BoardOutcome::Shown { head, .. }
-                | BoardOutcome::Cleared { head } => Some(head),
+                BoardOutcome::Bootstrapped { head, .. } | BoardOutcome::Cleared { head } => {
+                    Some(head)
+                }
+                BoardOutcome::Shown(shown) => Some(&shown.head),
                 BoardOutcome::Listing(listing) => Some(&listing.head),
                 BoardOutcome::Changed { .. } => None,
             };

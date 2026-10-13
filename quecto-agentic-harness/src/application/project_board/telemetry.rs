@@ -112,6 +112,9 @@ pub struct OpFacts {
     pub completion: Option<CompletionFacts>,
     /// What the normaliser changed in the text fields given.
     pub normalised: Option<Normalised>,
+    /// The plan versions and runs a `show` gave (#2481 M4a).
+    pub plans: Option<u64>,
+    pub runs: Option<u64>,
 }
 
 impl OpFacts {
@@ -139,6 +142,8 @@ impl OpFacts {
         put(&mut record.pause_ms, self.pause_ms.as_ref());
         put(&mut record.completion, self.completion.as_ref());
         put(&mut record.normalised, self.normalised.as_ref());
+        put(&mut record.plans, self.plans.as_ref());
+        put(&mut record.runs, self.runs.as_ref());
     }
 }
 

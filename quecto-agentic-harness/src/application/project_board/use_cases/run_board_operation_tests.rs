@@ -76,10 +76,14 @@ fn a_completion_is_pending_until_the_pull_requests_merge() {
     };
     assert_eq!(done.fields().status, TaskStatus::Done);
     let shown = ops.execute(&BoardRequest::Show(a)).unwrap();
-    let BoardOutcome::Shown { task, .. } = shown else {
+    let BoardOutcome::Shown(shown) = shown else {
         panic!("{shown:?}")
     };
-    assert_eq!(task.fields().status, TaskStatus::Done, "the board holds it");
+    assert_eq!(
+        shown.task.fields().status,
+        TaskStatus::Done,
+        "the board holds it"
+    );
 }
 
 /// A move to review of a task linking no pull request has nothing to
@@ -457,5 +461,43 @@ mod noted {
             ..OpFacts::default()
         };
         assert_eq!(facts, want);
+    }
+
+    /// A show tells how many plan versions and runs of its task it gave
+    /// (#2481 M4a), counts only; a refused show tells none.
+    #[test]
+    fn a_show_tells_how_many_plans_and_runs_it_gave() {
+        use crate::application::project_board::ports::BoardArtifact;
+        use crate::infrastructure::test_support::board_artifacts::{plan, run};
+        let store = MemoryBoardStore::default();
+        let ops = operations(&store, SetClock::at("10:00:00"), no_host());
+        ops.execute(&BoardRequest::Bootstrap).unwrap();
+        ops.execute(&ready_task("a")).unwrap();
+        let (_, facts) = noted(&ops, &BoardRequest::Show(slug("a")));
+        let none = OpFacts {
+            plans: Some(0),
+            runs: Some(0),
+            ..OpFacts::default()
+        };
+        assert_eq!(facts, none);
+        let head = store.read().unwrap().head;
+        let seeded = [
+            BoardArtifact::Plan(plan("a", 2)),
+            BoardArtifact::Plan(plan("a", 1)),
+            BoardArtifact::Run(run("a", 1)),
+            BoardArtifact::Plan(plan("b", 1)),
+        ];
+        store.write(&head, &seeded, "board: seed").unwrap();
+        let (shown, facts) = noted(&ops, &BoardRequest::Show(slug("a")));
+        assert!(shown.is_ok(), "{shown:?}");
+        let want = OpFacts {
+            plans: Some(2),
+            runs: Some(1),
+            ..OpFacts::default()
+        };
+        assert_eq!(facts, want);
+        let (refused, facts) = noted(&ops, &BoardRequest::Show(slug("b")));
+        assert_eq!(refused, Err(ProjectBoardError::NotFound(slug("b"))));
+        assert_eq!(facts, OpFacts::default());
     }
 }

@@ -9,11 +9,11 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 pub use super::dto::NoPullRequestHost;
-use super::dto::{BoardListing, BoardOp, DraftUpdate, NewBoardTask, ProjectBoardError};
+use super::dto::{BoardListing, BoardOp, DraftUpdate, NewBoardTask, ProjectBoardError, ShownTask};
 use super::ports::{BoardClock, BoardHead, BoardListings, KeepCopy};
 use super::use_cases::{
     BootstrapProjectBoard, ChangeBoardTask, ClearSetAside, CompleteMergedTask, CreateBoardTask,
-    UpdateDraftTask,
+    QueryBoard, UpdateDraftTask,
 };
 use crate::domain::project_board::entities::task::Task;
 use crate::domain::project_board::value_objects::slug::Slug;
@@ -108,10 +108,8 @@ pub enum BoardOutcome {
         created: bool,
     },
     Listing(BoardListing),
-    Shown {
-        head: BoardHead,
-        task: Task,
-    },
+    /// A task with its plans and runs, as one read of the board found it.
+    Shown(ShownTask),
     /// A task changed; after a change that may complete it (and when it
     /// links pull requests), what came of completing it.
     Changed {
@@ -130,6 +128,10 @@ pub enum BoardOutcome {
 pub struct BoardOperationParts {
     pub clock: Arc<dyn BoardClock>,
     pub listings: Arc<dyn BoardListings>,
+    /// What the listings (the index) do not hold yet: a task with its
+    /// plans and runs, read from the store's snapshot (#2481 M4a; S12 may
+    /// answer it from the index).
+    pub query: QueryBoard,
     pub bootstrap: BootstrapProjectBoard,
     pub create: CreateBoardTask,
     pub update: UpdateDraftTask,

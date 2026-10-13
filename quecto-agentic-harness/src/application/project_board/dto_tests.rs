@@ -99,6 +99,12 @@ fn a_listing_names_the_set_aside_files_in_its_scope() {
         paths(runs.set_aside_in_scope()),
         ["runs/a.7.md", "plans/notes.txt"]
     );
+    let every_run = ArtifactListing::runs_of(&board, &a).unwrap();
+    assert_eq!(every_run.scope, ArtifactScope::Runs { task: a.clone() });
+    assert_eq!(
+        paths(every_run.set_aside_in_scope()),
+        ["runs/a.7.md", "plans/notes.txt"]
+    );
     let changes = ArtifactListing::changes_of(&board, &a).unwrap();
     assert_eq!(
         paths(changes.set_aside_in_scope()),
@@ -158,6 +164,10 @@ fn a_listing_refuses_an_artifact_found_twice() {
     );
     assert_eq!(
         ArtifactListing::runs_of_plan(&board, &a, 1).map(|_| ()),
+        duplicate(ArtifactKey::Run(a.clone(), 3))
+    );
+    assert_eq!(
+        ArtifactListing::runs_of(&board, &a).map(|_| ()),
         duplicate(ArtifactKey::Run(a.clone(), 3))
     );
     assert_eq!(
