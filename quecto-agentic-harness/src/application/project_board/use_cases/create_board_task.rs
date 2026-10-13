@@ -52,8 +52,8 @@ impl CreateBoardTask {
     }
 
     /// [`Self::execute`], noting in `facts` (epic #2481 T4), when given,
-    /// the write's attempts, the status the task is created in, and what
-    /// the normaliser changed in its title and description.
+    /// the write's attempts, the status of the task it wrote, and what the
+    /// normaliser changed in its title and description.
     ///
     /// # Errors
     /// As [`Self::execute`].
@@ -63,7 +63,6 @@ impl CreateBoardTask {
         mut facts: Option<&mut OpFacts>,
     ) -> Result<Task, ProjectBoardError> {
         if let Some(facts) = facts.as_deref_mut() {
-            facts.status_to = Some(new.status.into());
             facts.normalised = Some(Normalised {
                 title: Some(board_text::line_changes(&new.title)),
                 description: Some(board_text::text_changes(&new.description)),
@@ -71,13 +70,18 @@ impl CreateBoardTask {
         }
         let message = format!("board: create {}", new.id.as_str());
         let (store, clock) = (&*self.store, &*self.clock);
-        let written = commit(store, clock, &message, facts, |board, when| {
+        let noted = facts.as_deref_mut();
+        let written = commit(store, clock, &message, noted, |board, when| {
             free(board, new)?;
             let task =
                 Task::entered(created_at(new, &when.now)).map_err(ProjectBoardError::Invalid)?;
             Ok(vec![BoardArtifact::Task(task)])
-        })?;
-        Ok(written_task(written))
+        });
+        let written = written.map(written_task);
+        if let Some(facts) = facts {
+            facts.status_to = written.as_ref().ok().map(|task| task.fields().status);
+        }
+        written
     }
 }
 

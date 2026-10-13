@@ -84,10 +84,12 @@ impl UpdateDraftTask {
         let noted = facts.as_deref_mut();
         let (store, clock) = (&*self.store, &*self.clock);
         let written = commit(store, clock, &message, noted, |board, when| {
-            let task = task_on(board, id)?;
+            let task = task_on(board, id);
             if noting {
-                read = Some(task.fields().status);
+                // This attempt's read, or none: never an earlier one's.
+                read = task.as_ref().ok().map(|task| task.fields().status);
             }
+            let task = task?;
             when.may_build_on(task)?;
             match &update.expected_updated {
                 Some(expected) if *expected != task.fields().updated => {

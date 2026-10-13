@@ -227,6 +227,10 @@ mod noted {
             ..OpFacts::default()
         };
         assert_eq!(facts, written_once(want));
+        // A refused create wrote no task, so it tells no status.
+        let (taken, facts) = noted(&ops, &create);
+        assert_eq!(taken, Err(ProjectBoardError::Exists(slug("a"))));
+        assert_eq!((facts.status_to, facts.attempts), (None, Some(1)));
         let edit = BoardRequest::UpdateDraft(DraftUpdate {
             id: slug("a"),
             title: None,

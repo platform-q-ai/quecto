@@ -80,10 +80,14 @@ impl ChangeBoardTask {
             &op.message(id),
             noted,
             |board, when| {
-                let task = task_on(board, id)?;
+                let task = task_on(board, id);
                 if noting {
-                    read = Some((task.fields().status, claim_facts(task, actor, &when.now)));
+                    // This attempt's read, or none: never an earlier one's.
+                    let found = task.as_ref().ok();
+                    read = found
+                        .map(|task| (task.fields().status, claim_facts(task, actor, &when.now)));
                 }
+                let task = task?;
                 when.may_build_on(task)?;
                 board_readable_for(op, board)?;
                 let changed = apply(task, board, actor, op, &when.now)?;

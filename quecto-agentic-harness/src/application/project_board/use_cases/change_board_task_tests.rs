@@ -680,6 +680,53 @@ mod noted {
         assert_eq!(facts, want);
     }
 
+    /// Another writer moves the board before each of the next `times`
+    /// writes is judged (it writes the task back as it is).
+    fn lose(store: &MemoryBoardStore, times: usize) {
+        if times == 0 {
+            return;
+        }
+        store.before_next_write(move |board| {
+            let read = board.read().unwrap();
+            board
+                .write_tasks(&read.head, &read.tasks, "another writer")
+                .unwrap();
+            lose(board, times - 1);
+        });
+    }
+
+    fn renew_noted(
+        store: &MemoryBoardStore,
+        clock: Arc<SetClock>,
+    ) -> (Result<Task, ProjectBoardError>, OpFacts) {
+        *clock.tick.lock().unwrap() = Duration::from_millis(40);
+        let renew = ChangeBoardTask::new(Arc::new(store.client()), clock).unwrap();
+        let mut facts = OpFacts::default();
+        let renewed = renew.execute_noted(&slug("a"), &BoardOp::Renew, Some(&mut facts));
+        (renewed, facts)
+    }
+
+    #[test]
+    fn each_pause_is_added_and_a_contended_change_tells_every_attempt_lost() {
+        let store = board();
+        seed(&store, held_by_ada(TaskStatus::Claimed));
+        lose(&store, 2);
+        let (renewed, facts) = renew_noted(&store, SetClock::at("10:20:00"));
+        assert!(renewed.is_ok(), "{renewed:?}");
+        assert_eq!(
+            (facts.attempts, facts.lost, facts.pause_ms),
+            (Some(3), Some(2), Some(80))
+        );
+        lose(&store, 3);
+        let (contended, facts) = renew_noted(&store, SetClock::at("10:30:00"));
+        assert_eq!(contended, Err(ProjectBoardError::Contended { attempts: 3 }));
+        assert_eq!(
+            (facts.attempts, facts.lost, facts.pause_ms),
+            (Some(3), Some(3), Some(80))
+        );
+        assert_eq!(facts.status_from, Some(TaskStatus::Claimed), "as last read");
+    }
+
     /// Owner condition: off means nothing is timed.
     #[test]
     fn an_unnoted_change_reads_no_monotonic_time() {

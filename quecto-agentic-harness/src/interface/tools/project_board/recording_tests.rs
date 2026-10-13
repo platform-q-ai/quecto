@@ -475,3 +475,84 @@ fn a_call_records_what_its_use_case_saw() {
         "{linked}"
     );
 }
+
+/// A board clock that counts the reads of its monotonic time.
+#[derive(Default)]
+struct CountingClock {
+    clock: SystemBoardClock,
+    elapsed_reads: std::sync::atomic::AtomicUsize,
+}
+
+impl crate::application::project_board::ports::BoardClock for CountingClock {
+    fn now(
+        &self,
+    ) -> Result<
+        crate::domain::project_board::value_objects::timestamp::Timestamp,
+        crate::application::project_board::ports::BoardClockError,
+    > {
+        self.clock.now()
+    }
+
+    fn reference(
+        &self,
+    ) -> Option<crate::domain::project_board::value_objects::timestamp::Timestamp> {
+        None
+    }
+
+    fn reference_status(&self) -> crate::application::project_board::ports::ReferenceStatus {
+        crate::application::project_board::ports::ReferenceStatus::NoReference("counted".into())
+    }
+
+    fn pause(&self, _attempt: usize) {}
+
+    fn elapsed(&self) -> Duration {
+        self.elapsed_reads
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Duration::ZERO
+    }
+}
+
+/// Epic #2481 T4, owner condition: an unrecorded call notes nothing and
+/// times nothing, even through a write that lost a race; the same write
+/// recorded times its pause.
+#[test]
+fn an_unrecorded_write_reads_no_monotonic_time() {
+    let store = MemoryBoardStore::default();
+    store.bootstrap().unwrap();
+    let clock = Arc::new(CountingClock::default());
+    let operations = assembled(
+        Arc::new(store.client()),
+        clock.clone(),
+        Arc::new(QueryListings(QueryBoard::new(Arc::new(store.client())))),
+        Err(NoPullRequestHost::NotAPullRequestHost),
+    )
+    .unwrap();
+    let create = |task: &str, call: &mut BoardCall| {
+        let request = json!({"op": "create", "task": task, "title": "T", "status": "ready"});
+        let answer = run_recorded(&operations, &request.to_string(), call);
+        assert_eq!(answer["ok"], json!(true), "{answer}");
+    };
+    let lose_once = || {
+        store.before_next_write(|board| {
+            let read = board.read().unwrap();
+            board
+                .write_tasks(&read.head, &read.tasks, "another writer")
+                .unwrap();
+        });
+    };
+    let reads = || {
+        clock
+            .elapsed_reads
+            .load(std::sync::atomic::Ordering::SeqCst)
+    };
+    create("z", &mut BoardCall::unrecorded());
+    lose_once();
+    create("a", &mut BoardCall::unrecorded());
+    assert_eq!(store.writes(), 3, "two creates and the write each lost to");
+    assert_eq!(reads(), 0, "nothing timed while unrecorded");
+    let records = Arc::new(Records::default());
+    let mut call = BoardCall::start(Some(recording(&records)), FrontEnd::Cli, Client::Cli);
+    lose_once();
+    create("b", &mut call);
+    assert_eq!(reads(), 2, "the recorded write timed its one pause");
+}

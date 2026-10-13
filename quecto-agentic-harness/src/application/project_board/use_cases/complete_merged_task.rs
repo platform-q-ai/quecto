@@ -109,10 +109,15 @@ impl CompleteMergedTask {
         let noted = facts.as_deref_mut();
         let (store, clock) = (&*self.store, &*self.clock);
         let written = commit(store, clock, &message, noted, |board, when| {
-            let task = task_on(board, id)?;
+            let task = task_on(board, id);
             if noting {
-                read = Some((task.fields().status, task.fields().prs.len()));
+                // This attempt's read, or none: never an earlier one's.
+                read = task
+                    .as_ref()
+                    .ok()
+                    .map(|task| (task.fields().status, task.fields().prs.len()));
             }
+            let task = task?;
             when.may_build_on(task)?;
             // A task the rule would not complete is refused as such, before
             // its changes and runs are read.
