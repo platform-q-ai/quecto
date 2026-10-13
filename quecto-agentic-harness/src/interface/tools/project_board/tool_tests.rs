@@ -395,10 +395,24 @@ fn waiting_board(environment: &ProjectBoardEnvironment) -> Result<ProjectBoardHa
 }
 
 /// A call dropped while its work runs (its turn interrupted) sets the flag
-/// the board's store checks before it pushes.
+/// the board's store checks before it pushes; its work still records it,
+/// `cancelled` (epic #2481 T3).
 #[tokio::test(flavor = "multi_thread")]
 async fn dropping_a_call_sets_its_cancel_flag() {
-    let tool = BoardTool::new(site(Some(waiting_board)));
+    use crate::infrastructure::config::telemetry::{EventLogConfig, TelemetryConfig};
+    use crate::infrastructure::persistence::audit_log::AuditLog;
+    use crate::interface::tools::project_board::session_recording::{
+        SessionRecording, SessionRecordingBuilder,
+    };
+    let base = tempfile::tempdir().unwrap();
+    let log = AuditLog::open_sync(base.path(), "dropped").unwrap();
+    let recordings = Arc::new(SessionRecording::default());
+    let on = TelemetryConfig {
+        event_log: EventLogConfig { enabled: true },
+    };
+    let build = crate::composition::bootstrap::project_board::session_board_recording;
+    assert!(recordings.bind(SessionRecordingBuilder(build), &on, base.path(), &log));
+    let tool = BoardTool::recorded_in(site(Some(waiting_board)), recordings);
     let call = tool.execute(r#"{"op":"list"}"#);
     // Run the call until its work has started, then drop it.
     tokio::select! {
@@ -410,4 +424,26 @@ async fn dropping_a_call_sets_its_cancel_flag() {
         flag.load(std::sync::atomic::Ordering::SeqCst),
         "dropping the call set the flag"
     );
+    let file = AuditLog::file_path(base.path(), "dropped");
+    let until = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let record = loop {
+        let text = std::fs::read_to_string(&file).unwrap_or_default();
+        let found = text
+            .lines()
+            .map(|line| serde_json::from_str::<Value>(line).unwrap())
+            .find(|line| line["event"] == "board_op");
+        match found {
+            Some(record) => break record,
+            None if std::time::Instant::now() < until => {
+                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+            }
+            None => panic!("the dropped call's work recorded nothing"),
+        }
+    };
+    assert_eq!(
+        (&record["op"], &record["code"], &record["cancelled"]),
+        (&json!("list"), &json!("store_unavailable"), &json!(true)),
+        "{record}"
+    );
+    assert!(record["build_us"].is_u64(), "{record}");
 }

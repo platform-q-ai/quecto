@@ -12,6 +12,12 @@
 //! outside the dropped call's panic scope: a panic in it is no call's to
 //! answer, so it still aborts the process (ADR-0029's backstop does not
 //! reach it).
+//!
+//! Each call is recorded (epic #2481 T3) in its session's event log while
+//! that log is on ([`SessionRecording`]): one `board_op` per call, written
+//! on the call's own thread once its answer is summarised, `cancelled`
+//! when the call was dropped first. A call whose work panicked writes
+//! none.
 use std::borrow::Cow;
 use std::future::Future;
 use std::pin::Pin;
@@ -20,14 +26,14 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use serde_json::{Map, Value, json};
 
-use super::answer::request_refused;
 use super::read;
 use super::recording::BoardCall;
 use super::request::{Kind, OPS, RequestError};
+use super::session_recording::SessionRecording;
 use super::site::{self, BoardSite};
 use crate::application::tools::ports::Tool;
 use crate::domain::error::DomainError;
-use crate::domain::project_board::value_objects::telemetry::FaultKind;
+use crate::domain::project_board::value_objects::telemetry::{Client, FaultKind, FrontEnd};
 use crate::domain::project_board::value_objects::vocabulary::{TaskKind, TaskStatus};
 use crate::domain::tool::{ToolDefinition, ToolResult};
 use crate::infrastructure::tools::call_work::off_the_workers;
@@ -77,12 +83,21 @@ fn tool_ops() -> impl Iterator<Item = &'static (&'static str, &'static [super::r
 /// The agent `board` tool over one repository's board.
 pub struct BoardTool {
     site: Arc<BoardSite>,
+    recordings: Arc<SessionRecording>,
 }
 
 impl BoardTool {
+    /// The tool, recording its calls in the process's session
+    /// ([`SessionRecording::process`]).
     pub fn new(site: BoardSite) -> Self {
+        Self::recorded_in(site, SessionRecording::process())
+    }
+
+    /// The tool, recording its calls as `recordings` is bound.
+    pub fn recorded_in(site: BoardSite, recordings: Arc<SessionRecording>) -> Self {
         Self {
             site: Arc::new(site),
+            recordings,
         }
     }
 }
@@ -245,6 +260,35 @@ fn fitted(items: Vec<Value>, room: &mut usize) -> Vec<Value> {
     shown
 }
 
+/// The answer to the call `text` on `site`, noted on `call`: only the
+/// tool's ops run, the schema's; creating a board is not one, and an op it
+/// does not take is refused naming the ones it does.
+fn answered(
+    site: &BoardSite,
+    text: &str,
+    cancelled: Arc<AtomicBool>,
+    call: &mut BoardCall,
+) -> Value {
+    let request = match read(text) {
+        Ok(request) => request,
+        Err(error) => return call.refuse_request(None, &error),
+    };
+    let fault = match request.get("op") {
+        Some(Value::String(op)) if TOOL_OPS.contains(&op.as_str()) => {
+            return site::answer(site, text, Some(cancelled), call);
+        }
+        Some(Value::String(op)) => {
+            call.named(Some(op));
+            FaultKind::InvalidValue
+        }
+        Some(_) => FaultKind::WrongType,
+        None => FaultKind::Missing,
+    };
+    let ops: Vec<&str> = tool_ops().map(|(op, _)| *op).collect();
+    let problem = format!("must be one of {}", ops.join(", "));
+    call.refuse_request(None, &RequestError::of("op", problem, fault))
+}
+
 /// Sets the call's cancel flag when the call is dropped before its work
 /// came back: the board then pushes nothing more.
 struct CancelOnDrop(Option<Arc<AtomicBool>>);
@@ -271,42 +315,24 @@ impl Tool for BoardTool {
         arguments: &str,
     ) -> Pin<Box<dyn Future<Output = Result<ToolResult, DomainError>> + Send + '_>> {
         let (site, text) = (Arc::clone(&self.site), arguments.to_owned());
+        // The call's clock starts as it arrives.
+        let mut call = BoardCall::start(self.recordings.current(), FrontEnd::Tool, Client::Agent);
         Box::pin(async move {
-            let request = read(&text);
-            let named = request
-                .as_ref()
-                .map(|value| value["op"].as_str().map(str::to_owned));
-            let answer = match named {
-                Err(error) => request_refused(None, error),
-                // Only the tool's ops run, the schema's: creating a board
-                // is not one, and an op it does not take is refused naming
-                // the ones it does.
-                Ok(Some(op)) if TOOL_OPS.contains(&op.as_str()) => {
-                    let cancelled = Arc::new(AtomicBool::new(false));
-                    let mut guard = CancelOnDrop(Some(Arc::clone(&cancelled)));
-                    // The board's git and host reads block: off the async
-                    // workers, in this call's panic scope.
-                    let work = off_the_workers(move || {
-                        let mut call = BoardCall::unrecorded();
-                        site::answer(&site, &text, Some(cancelled), &mut call)
-                    });
-                    let answer = work.await.map_err(|error| {
-                        DomainError::Tool(format!("the board call did not finish: {error}"))
-                    })?;
-                    // Came back: nothing to cancel.
-                    guard.0 = None;
-                    summarised(answer)
-                }
-                Ok(_) => {
-                    let ops: Vec<&str> = tool_ops().map(|(op, _)| *op).collect();
-                    let error = RequestError::of(
-                        "op",
-                        format!("must be one of {}", ops.join(", ")),
-                        FaultKind::InvalidValue,
-                    );
-                    request_refused(None, &error)
-                }
-            };
+            let cancelled = Arc::new(AtomicBool::new(false));
+            let mut guard = CancelOnDrop(Some(Arc::clone(&cancelled)));
+            // The board's git and host reads block: off the async workers,
+            // in this call's panic scope. The record is written there too,
+            // once the answer is summarised, even when the call was dropped.
+            let work = off_the_workers(move || {
+                let answer = summarised(answered(&site, &text, Arc::clone(&cancelled), &mut call));
+                call.finish(&answer, cancelled.load(Ordering::SeqCst));
+                answer
+            });
+            let answer = work.await.map_err(|error| {
+                DomainError::Tool(format!("the board call did not finish: {error}"))
+            })?;
+            // Came back: nothing to cancel.
+            guard.0 = None;
             // A refusal is the model's to act on (re-read, call again, stop).
             let ok = answer.get("ok") == Some(&Value::Bool(true));
             Ok(ToolResult {

@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use super::super::{SessionLogTarget, attach_to, decided_with};
+use super::super::{SessionLogTarget, SessionRecording, attach_to, decided_with};
 use crate::application::configuration::ports::OverlayTrustStore;
 use crate::infrastructure::config::persistence::PersistentOverlayTrustStore;
 use crate::infrastructure::persistence::audit_log::AuditLog;
@@ -181,8 +181,17 @@ fn the_admissions_calls_are_in_the_file_once_the_log_is_attached() {
         base_dir: base.path(),
         session_key: "cli:admitted",
         event_log: build.event_log,
+        project_board: None,
     };
-    attach_to(Some(&board), &mut agent, &target, &flags, &mut stderr);
+    let recordings = SessionRecording::default();
+    attach_to(
+        Some(&board),
+        &recordings,
+        &mut agent,
+        &target,
+        &flags,
+        &mut stderr,
+    );
     let text = std::fs::read_to_string(AuditLog::file_path(base.path(), "cli:admitted")).unwrap();
     let ops: Vec<serde_json::Value> = text
         .lines()

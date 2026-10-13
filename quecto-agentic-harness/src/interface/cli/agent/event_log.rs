@@ -6,6 +6,10 @@ use std::sync::Arc;
 
 use crate::application::agent_loop::AgentLoopImpl;
 use crate::application::audit::ports::AuditSink;
+use crate::infrastructure::config::telemetry::{EventLogConfig, TelemetryConfig};
+use crate::interface::tools::project_board::session_recording::{
+    SessionRecording, SessionRecordingBuilder,
+};
 
 /// The key an agent's audit log is filed under, or `None` when it keeps
 /// none: its session's key, else a key of its own (process and start time,
@@ -84,8 +88,8 @@ pub(super) fn decided_with(
 /// The session switched to `session_key` (#2192): the crash target
 /// follows it, and the event log with it, when the log was the departing
 /// session's own; the process's swarm board then records in the arriving
-/// session's log too (#2313). Answers the log the agent writes to from
-/// now on.
+/// session's log too (#2313), and so does the project board tool (epic
+/// #2481 T3). Answers the log the agent writes to from now on.
 pub(in crate::interface::cli) fn follow_session(
     session_key: Option<&str>,
 ) -> Option<Arc<dyn AuditSink>> {
@@ -93,6 +97,7 @@ pub(in crate::interface::cli) fn follow_session(
     if let Some(board) = crate::infrastructure::tools::swarm_bridge::process_board() {
         board.follow_session(&log);
     }
+    SessionRecording::process().follow(&log);
     Some(Arc::new(log))
 }
 
@@ -109,23 +114,23 @@ fn unkeyed() -> String {
 /// record a fatal panic leaves (#2192): beside the log, for every session
 /// that may leave something behind, with the log's crash line when it keeps
 /// one. The record is armed only once the session is claimed. A failure to
-/// open either is a warning, never a failed start.
+/// open either is a warning, never a failed start. The process's project
+/// board tool records in the log too (epic #2481 T3).
 pub(super) fn attach(
     agent: &mut AgentLoopImpl,
-    base_dir: &Path,
     flags: &super::AgentFlags,
-    session_key: &str,
-    event_log: bool,
+    target: &SessionLogTarget<'_>,
     stderr: &mut String,
 ) {
     use crate::infrastructure::persistence::crash_record::{CrashTarget, prepare};
     let board = crate::infrastructure::tools::swarm_bridge::process_board();
-    let target = SessionLogTarget {
+    let recordings = SessionRecording::process();
+    let crash_line = attach_to(board, &recordings, agent, target, flags, stderr);
+    let SessionLogTarget {
         base_dir,
         session_key,
-        event_log,
-    };
-    let crash_line = attach_to(board, agent, &target, flags, stderr);
+        ..
+    } = *target;
     let keeps_record = match (ephemeral(flags), session_key.is_empty()) {
         (false, false) => Some(session_key.to_string()),
         (true, _) | (false, true) => None,
@@ -138,19 +143,22 @@ pub(super) fn attach(
 }
 
 /// Where a session's audit log is kept: under `base_dir`, for the session
-/// `session_key`, with the event log on or off.
+/// `session_key`, with the event log on or off; and how the project board
+/// tool's recording is built (`None`: the tool records nothing).
 pub(super) struct SessionLogTarget<'a> {
     pub(super) base_dir: &'a Path,
     pub(super) session_key: &'a str,
     pub(super) event_log: bool,
+    pub(super) project_board: Option<SessionRecordingBuilder>,
 }
 
 /// [`attach`]'s log, without the crash record: gives `agent` its audit log
 /// when it keeps one, and records `board`'s calls there while the event log
-/// is on (what it held since admission first); answers the log's crash
-/// line.
+/// is on (what it held since admission first), and binds `recordings` (the
+/// project board tool's) to it; answers the log's crash line.
 pub(super) fn attach_to(
     board: Option<&crate::infrastructure::tools::swarm_bridge::SwarmBoard>,
+    recordings: &SessionRecording,
     agent: &mut AgentLoopImpl,
     target: &SessionLogTarget<'_>,
     flags: &super::AgentFlags,
@@ -161,7 +169,9 @@ pub(super) fn attach_to(
         base_dir,
         session_key,
         event_log,
+        project_board,
     } = *target;
+    let stop_board_tool = || recordings.stop();
     match log_key(flags.workflow, ephemeral(flags), session_key, event_log) {
         Some(key) => match AuditLog::open_sync(base_dir, &key) {
             Ok(log) => {
@@ -172,6 +182,16 @@ pub(super) fn attach_to(
                 if let Some(board) = board {
                     board.record_in_session(event_log, &log);
                 }
+                // The session's switch, as resolved (#2150).
+                let telemetry = TelemetryConfig {
+                    event_log: EventLogConfig { enabled: event_log },
+                };
+                match project_board {
+                    Some(build) => {
+                        recordings.bind(build, &telemetry, base_dir, &log);
+                    }
+                    None => recordings.stop(),
+                }
                 agent.set_audit_log(Some(Arc::new(log) as Arc<dyn AuditSink>));
                 crash_line
             }
@@ -180,6 +200,7 @@ pub(super) fn attach_to(
                 if let Some(board) = board {
                     board.stop_recording();
                 }
+                stop_board_tool();
                 None
             }
         },
@@ -189,6 +210,7 @@ pub(super) fn attach_to(
             if let Some(board) = board {
                 board.stop_recording();
             }
+            stop_board_tool();
             None
         }
     }

@@ -11,6 +11,7 @@ pub mod command_line;
 pub mod json;
 pub mod recording;
 pub mod request;
+pub mod session_recording;
 pub mod site;
 pub mod tool;
 
