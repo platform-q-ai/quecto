@@ -5,23 +5,38 @@
 //! (#2491); and pull request states read with `gh` when the remote is on
 //! GitHub or the configured enterprise host. Built for `quecto board`,
 //! which runs on the calling thread (it blocks).
+//!
+//! Also where a board request's recording is built (epic #2481 T2):
+//! [`session_board_recording`] for the agent tool, into its session's
+//! event log, and [`cli_board_recording`] for `quecto board`, into the
+//! daily `board-cli:<UTC date>` log. Each derives the switch itself, with
+//! the sessions' rule (#2150), and gives `None` while it is off, so no log
+//! is opened and nothing is written or traced.
+use std::path::Path;
 use std::sync::Arc;
+use std::time::SystemTime;
 
 use crate::application::project_board::operations::{BoardOperationParts, NoPullRequestHost};
 use crate::application::project_board::ports::{
     BoardClock, BoardStoreError, ProjectBoardStore, PullRequestStates, PullRequestStatesError,
 };
+use crate::application::project_board::telemetry::{BoardRecording, RecordingSwitch};
 use crate::application::project_board::use_cases::{
     BootstrapProjectBoard, ChangeBoardTask, ClearSetAside, CompleteMergedTask, CreateBoardTask,
     RunBoardOperation, UpdateDraftTask,
 };
 use crate::domain::redaction::{redact_secrets, redact_url_userinfo};
+use crate::infrastructure::config::telemetry::{TelemetryConfig, globally_enabled};
+use crate::infrastructure::persistence::audit_log::{AuditCrashLine, AuditLog};
 use crate::infrastructure::persistence::project_board::gh_pull_requests::{
     GhPullRequestStates, github_repository,
 };
 use crate::infrastructure::persistence::project_board::git::{Git, GitEnvironment, GitError};
 use crate::infrastructure::persistence::project_board::index::BoardIndex;
 use crate::infrastructure::persistence::project_board::indexed_listings::IndexedBoardListings;
+use crate::infrastructure::persistence::project_board::op_log::{
+    EventLogProjectBoardOps, TracingProjectBoardOps,
+};
 use crate::infrastructure::persistence::project_board::store::GitBoardStore;
 use crate::infrastructure::time::remote_time::ReferencedBoardClock;
 use crate::interface::cli::board::{
@@ -157,6 +172,62 @@ fn store_reason(error: &BoardStoreError) -> String {
         | BoardStoreError::InvalidWrite(why)
         | BoardStoreError::Unavailable(why) => why.clone(),
     }
+}
+
+/// The agent tool's recording, into its session's event log `log`: only
+/// while `telemetry` (the session's configuration) or the owner's global
+/// file at `base_dir` switches the event log on, and only when `log` has a
+/// synchronous line to append through. `None` otherwise.
+pub fn session_board_recording(
+    telemetry: &TelemetryConfig,
+    base_dir: &Path,
+    log: &AuditLog,
+) -> Option<BoardRecording> {
+    recording(switched_on(telemetry.event_log.enabled, base_dir), || {
+        log.crash_line()
+    })
+}
+
+/// The `quecto board` CLI's recording, into today's `board-cli:<UTC
+/// date>` log under `base_dir` (`audit/board-cli_<date>.jsonl`). The CLI
+/// loads no layered configuration, so it follows the owner's global file
+/// alone. `None` while that is off, or when the log cannot be opened.
+pub fn cli_board_recording(base_dir: &Path) -> Option<BoardRecording> {
+    recording(switched_on(false, base_dir), || {
+        let key = cli_log_key(SystemTime::now())?;
+        AuditLog::open_sync(base_dir, &key).ok()?.crash_line()
+    })
+}
+
+/// The sessions' switch (#2150, `switched_on` in
+/// `interface/cli/agent/event_log.rs`): the loaded configuration's, or the
+/// owner's global one, so a repository config switches it on, never off.
+fn switched_on(config_on: bool, base_dir: &Path) -> RecordingSwitch {
+    RecordingSwitch::resolved(config_on || globally_enabled(base_dir))
+}
+
+/// A recording into the log on the line `open` gives, traced; `open` is
+/// not called while `switch` is off.
+fn recording(
+    switch: RecordingSwitch,
+    open: impl FnOnce() -> Option<AuditCrashLine>,
+) -> Option<BoardRecording> {
+    BoardRecording::when(switch, || {
+        let ops = TracingProjectBoardOps::over(EventLogProjectBoardOps::new(open()?));
+        Some(Arc::new(ops) as _)
+    })
+}
+
+/// The CLI's daily log key at `now`: `board-cli:<YYYY-MM-DD>`, the UTC
+/// date; `None` for a time with no such date.
+fn cli_log_key(now: SystemTime) -> Option<String> {
+    let stamp = humantime::format_rfc3339_seconds(now).to_string();
+    let day = stamp.get(..10)?;
+    let shaped = day.char_indices().all(|(at, c)| match at {
+        4 | 7 => c == '-',
+        _ => c.is_ascii_digit(),
+    });
+    shaped.then(|| format!("board-cli:{day}"))
 }
 
 #[cfg(test)]

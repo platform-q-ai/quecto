@@ -427,3 +427,19 @@ fn a_set_naming_half_an_identity_writes_with_the_clones_other_half() {
     let listed = run(&reader.operations, r#"{"op": "list"}"#);
     assert_eq!(listed["ok"], json!(true), "{listed}");
 }
+
+/// Epic #2481 T2: the CLI's daily log is named by the UTC date.
+#[test]
+fn the_cli_log_key_is_the_utc_date() {
+    let at = |secs| std::time::UNIX_EPOCH + std::time::Duration::from_secs(secs);
+    assert_eq!(cli_log_key(at(0)).as_deref(), Some("board-cli:1970-01-01"));
+    // 2026-10-13T23:59:59Z, and one second later.
+    assert_eq!(
+        cli_log_key(at(1_791_935_999)).as_deref(),
+        Some("board-cli:2026-10-13")
+    );
+    assert_eq!(
+        cli_log_key(at(1_791_936_000)).as_deref(),
+        Some("board-cli:2026-10-14")
+    );
+}

@@ -1940,11 +1940,11 @@ fn public_ports_have_contract_tests() {
     }
 
     let contract_modules = active_contract_modules();
-    // Ports declared ahead of their adapters (epic #2481 T1): each entry
-    // goes when its contract suite lands on the production adapter (the
-    // op log's with T2), and fails here once any contract module names
-    // it, whatever the module is called.
-    let allowlisted: BTreeSet<&str> = BTreeSet::from(["ProjectBoardOpLog"]);
+    // Ports declared ahead of their adapters (epic #2481): each entry goes
+    // when its contract suite lands on the production adapter, and fails
+    // here once any contract module names it, whatever the module is
+    // called. Empty since T2 gave `ProjectBoardOpLog` its suite.
+    let allowlisted: BTreeSet<&str> = BTreeSet::new();
     for port in &allowlisted {
         assert!(
             ports.contains(*port),

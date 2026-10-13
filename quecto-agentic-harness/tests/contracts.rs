@@ -179,6 +179,8 @@ mod overlay_trust_store;
 mod project_board_git_store;
 #[path = "contracts/project_board_kinds.rs"]
 mod project_board_kinds;
+#[path = "contracts/project_board_op_log.rs"]
+mod project_board_op_log;
 #[path = "contracts/project_board_store.rs"]
 mod project_board_store;
 
