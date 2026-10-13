@@ -170,7 +170,7 @@ fn team(value: &Value) -> Result<Option<Team>, RequestError> {
         return Ok(None);
     }
     let keys = ["roles", "budget_tokens", "deadline", "image"];
-    let team = object("team", value, &keys, 1, "a team, or null for none")?;
+    let team = object("team", value, &keys, 1, "a team")?;
     let role_keys = ["name", "model", "effort", "members", "turns"];
     let roles = list(
         "team/roles",
