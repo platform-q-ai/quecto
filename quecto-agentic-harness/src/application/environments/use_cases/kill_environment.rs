@@ -2,10 +2,12 @@
 //!
 //! The order is the policy:
 //!
-//! 1. resolve the target and refuse — before any claim — an environment
-//!    whose script set retained no `kill`;
+//! 1. resolve the target and refuse — before any claim — a record the
+//!    caller's [`ClaimCondition`] does not admit (another creator), then an
+//!    environment whose script set retained no `kill`;
 //! 2. take the registry's exclusive kill claim (no double kill, no kill
-//!    racing a final-member cleanup: whichever claims first owns the end);
+//!    racing a final-member cleanup: whichever claims first owns the end),
+//!    the condition judged again with the claim itself;
 //! 3. ask every member to shut down through the capability's member-shutdown
 //!    port (protocol over each member's edge; the owned-handle fallback only
 //!    for handles this session owns);
@@ -39,7 +41,8 @@ use std::fmt;
 use std::sync::Arc;
 
 use crate::domain::environments::entities::environment_registry::{
-    EnvironmentRecord, EnvironmentRegistry, EnvironmentTarget,
+    ClaimCondition, ClaimRefusal, CreatorMismatch, EnvironmentRecord, EnvironmentRegistry,
+    EnvironmentTarget,
 };
 
 use super::super::dto::EnvironmentLiveness;
@@ -99,6 +102,11 @@ pub enum KillEnvironmentError {
         environment_ref: String,
         detail: String,
     },
+    /// The kill was conditional on the record's creator
+    /// ([`ClaimCondition::CreatedBy`]) and the record under the target was
+    /// created by another key (empty for a session-less run). Refused
+    /// before or with the claim: nothing was asked, run or changed.
+    NotCreatedBy(CreatorMismatch),
 }
 
 impl fmt::Display for KillEnvironmentError {
@@ -126,11 +134,33 @@ impl fmt::Display for KillEnvironmentError {
                 f,
                 "environment {environment_ref} cleanup failed: {detail}; state is cleanup-failed, retry kill_container"
             ),
+            Self::NotCreatedBy(CreatorMismatch {
+                environment_ref,
+                expected,
+                created_by,
+            }) => {
+                let created_by = match created_by.as_str() {
+                    "" => "no session",
+                    named => named,
+                };
+                write!(
+                    f,
+                    "environment {environment_ref} was created by {created_by}, not {expected}; nothing was killed"
+                )
+            }
         }
     }
 }
 
 impl std::error::Error for KillEnvironmentError {}
+
+/// The kill's error for a refused conditional claim.
+fn claim_refused(refusal: ClaimRefusal) -> KillEnvironmentError {
+    match refusal {
+        ClaimRefusal::Lookup(error) => KillEnvironmentError::Refused(error.to_string()),
+        ClaimRefusal::CreatedByOther(mismatch) => KillEnvironmentError::NotCreatedBy(mismatch),
+    }
+}
 
 /// How a kill of a removable environment went (#2206).
 enum Removal {
@@ -160,12 +190,27 @@ impl KillEnvironment {
         &self,
         target: &EnvironmentTarget,
     ) -> Result<KilledEnvironment, KillEnvironmentError> {
+        self.kill_container_if(target, &ClaimCondition::Any).await
+    }
+
+    /// [`Self::kill_container`] of a record `condition` admits. The
+    /// condition is judged on the resolved record first (so a mismatch is
+    /// reported before any other refusal) and again by the registry with
+    /// the claim itself, so a ref reused in between is never killed.
+    pub async fn kill_container_if(
+        &self,
+        target: &EnvironmentTarget,
+        condition: &ClaimCondition,
+    ) -> Result<KilledEnvironment, KillEnvironmentError> {
         let mut resolved = self
             .registry
             .resolve(target)
             .map_err(|e| KillEnvironmentError::Refused(e.to_string()))?;
+        condition
+            .judge(&resolved)
+            .map_err(KillEnvironmentError::NotCreatedBy)?;
         if resolved.removable() {
-            match self.remove_stopped(resolved).await? {
+            match self.remove_stopped(resolved, condition).await? {
                 Removal::Removed(killed) => return Ok(killed),
                 // An owed removal whose container runs again: its end is
                 // the ordinary kill's (#2206 round 3).
@@ -184,8 +229,8 @@ impl KillEnvironment {
         }
         let claim = self
             .registry
-            .begin_kill(&resolved.environment_ref)
-            .map_err(|e| KillEnvironmentError::Refused(e.to_string()))?;
+            .begin_kill_if(&resolved.environment_ref, condition)
+            .map_err(claim_refused)?;
         // Re-read under the claim so the kill sees the members as of the
         // moment the claim was granted.
         let record = self
@@ -195,6 +240,10 @@ impl KillEnvironment {
         debug_assert!(
             !record.retained_kill_argv.is_empty(),
             "the retained kill argv is immutable once committed"
+        );
+        debug_assert!(
+            condition.admits(&record),
+            "the claim was granted on the condition"
         );
 
         let members = self.members.shutdown_members(&record.members).await;
@@ -241,6 +290,7 @@ impl KillEnvironment {
     async fn remove_stopped(
         &self,
         record: EnvironmentRecord,
+        condition: &ClaimCondition,
     ) -> Result<Removal, KillEnvironmentError> {
         debug_assert!(record.removable());
         debug_assert!(record.members.is_empty(), "a stopped record has no members");
@@ -254,8 +304,8 @@ impl KillEnvironment {
         // acts on the record between the answer and the cleanup.
         let claim = self
             .registry
-            .begin_removal(&environment_ref)
-            .map_err(|e| KillEnvironmentError::Refused(e.to_string()))?;
+            .begin_removal_if(&environment_ref, condition)
+            .map_err(claim_refused)?;
         let refusal = match self.commands.observe_liveness(&record).await {
             EnvironmentLiveness::Gone => None,
             EnvironmentLiveness::Running if record.removal_pending() => {

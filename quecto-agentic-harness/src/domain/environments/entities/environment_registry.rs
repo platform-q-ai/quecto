@@ -19,10 +19,12 @@
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 
+mod claim_condition;
 mod record_lookup;
 mod record_residue;
+pub use claim_condition::{ClaimCondition, ClaimRefusal, CreatorMismatch};
 pub use record_lookup::{EnvironmentLookupError, EnvironmentStatus, EnvironmentTarget};
 pub use record_residue::GONE_AT_RESTORE;
 
@@ -614,7 +616,46 @@ impl EnvironmentRegistry {
     /// which this registry cannot see settle: an explicit kill here is the
     /// operator's retry and claims it (review F6, #2033).
     pub fn begin_kill(&self, environment_ref: &str) -> Result<KillClaim, EnvironmentLookupError> {
-        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        self.claim_kill_locked(state, environment_ref)
+    }
+
+    /// [`Self::begin_kill`] granted only when `condition` admits the record
+    /// under the ref, judged in the same critical section that grants the
+    /// claim: a ref reused since the caller last looked is never claimed on
+    /// the earlier record's word. A refusal claims nothing and writes
+    /// nothing.
+    pub fn begin_kill_if(
+        &self,
+        environment_ref: &str,
+        condition: &ClaimCondition,
+    ) -> Result<KillClaim, ClaimRefusal> {
+        let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        Self::admitted_locked(&state, environment_ref, condition)?;
+        self.claim_kill_locked(state, environment_ref)
+            .map_err(ClaimRefusal::Lookup)
+    }
+
+    /// Whether `condition` admits the record under `environment_ref`, with
+    /// the state lock held by the caller that goes on to claim it.
+    fn admitted_locked(
+        state: &EnvironmentRegistryState,
+        environment_ref: &str,
+        condition: &ClaimCondition,
+    ) -> Result<(), ClaimRefusal> {
+        let record = state.entries.get(environment_ref).ok_or_else(|| {
+            ClaimRefusal::Lookup(EnvironmentLookupError::Unknown(environment_ref.to_string()))
+        })?;
+        condition
+            .judge(record)
+            .map_err(ClaimRefusal::CreatedByOther)
+    }
+
+    fn claim_kill_locked(
+        &self,
+        mut state: MutexGuard<'_, EnvironmentRegistryState>,
+        environment_ref: &str,
+    ) -> Result<KillClaim, EnvironmentLookupError> {
         let record = state
             .entries
             .get_mut(environment_ref)

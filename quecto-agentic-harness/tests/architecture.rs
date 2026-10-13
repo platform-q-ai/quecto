@@ -6803,8 +6803,10 @@ fn kill_container_asks_members_before_the_retained_kill_and_never_twice() {
         "environment_control.rs was folded into application/environments"
     );
     let kill = production_source("src/application/environments/use_cases/kill_environment.rs");
+    // The claim is conditional (`--created-by`): the condition is judged
+    // in the same step that grants it.
     let claim = kill
-        .find(".begin_kill(")
+        .find(".begin_kill_if(")
         .expect("the exclusive claim is taken");
     let members = kill
         .find(".shutdown_members(")
