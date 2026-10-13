@@ -69,7 +69,7 @@ fn what_a_reader_shows_differently_is_left_as_written() {
         "`a\tb` `a\u{a0}b` `a\u{3000}b` `x\u{fe0f}`",
         "line  \nnext",
         "\u{a0}- a",
-        "A\u{fe0f} and a\tb and c\u{a0}d",
+        "A\u{fe0f} and a\tb",
         "a\n\n\n\nb",
         "   a",
         "    a \nb",
@@ -78,13 +78,26 @@ fn what_a_reader_shows_differently_is_left_as_written() {
     }
 }
 
+/// A line's line ends become one LF (a chat line or paragraph separator,
+/// a next line and a vertical tab among them), the spaces chat writes
+/// between words plain spaces, and its edge spaces and tabs go. A
+/// selector, or another space (an em space), is kept for the domain to
+/// refuse with its field.
 #[test]
 fn a_line_is_trimmed_of_spaces_and_tabs_at_both_edges() {
     for (raw, kept) in [
         ("  Title \t", "Title"),
         ("\tFix the build ", "Fix the build"),
-        // Only spaces and tabs: a no-break space or a selector is kept.
-        ("\u{a0}Ship it\u{fe0f}", "\u{a0}Ship it\u{fe0f}"),
+        ("\u{a0}Ship it\u{fe0f}", "Ship it\u{fe0f}"),
+        ("Bonjour\u{202f}: on commence ?", "Bonjour : on commence ?"),
+        ("\u{2007}12\u{a0}items\u{3000}", "12 items"),
+        ("em\u{2003}space", "em\u{2003}space"),
+        ("one\u{2028}two", "one\ntwo"),
+        // A tab inside is a plain space; a line end at an edge goes.
+        ("a\tb", "a b"),
+        ("Title\n", "Title"),
+        ("Title\u{2028}", "Title"),
+        ("\u{2029}\t Title \r\n", "Title"),
     ] {
         assert_eq!(settled(line, raw), kept, "{raw:?}");
     }
@@ -194,4 +207,151 @@ fn links_inline_html_and_footnotes_are_kept_as_written() {
     // A label that only closes on a later line: its space before the
     // line end shows as nothing either way, and goes.
     assert_eq!(settled(text, "[a \nb](/u)"), "[a\nb](/u)");
+}
+
+/// A message as it comes in (#2481 D3): its line ends one LF, the spaces
+/// chat carries (no-break, narrow no-break, figure and ideographic) plain
+/// spaces, each line trimmed of spaces and tabs at its edges (a table cell
+/// shows none), and blank lines dropped (a message is its non-empty
+/// lines). Anything else (a selector, another space) is kept, for the
+/// domain or the codec to refuse with its field or line.
+#[test]
+fn a_message_is_its_lines_trimmed_with_blank_lines_dropped() {
+    for (raw, kept) in [
+        ("Lease?", "Lease?"),
+        ("  Lease? \t", "Lease?"),
+        (
+            "\r\n Yes,\r\n\r\n\twith a TTL. \r\n \n",
+            "Yes,\nwith a TTL.",
+        ),
+        ("one\rtwo\n\n\nthree", "one\ntwo\nthree"),
+        ("  `a  b`  ", "`a  b`"),
+        ("\u{a0}ok\u{fe0f}", "ok\u{fe0f}"),
+        ("Pocket:\u{a0}yes", "Pocket: yes"),
+        ("Bonjour\u{202f}: oui", "Bonjour : oui"),
+        ("\u{2007}12\u{2007}", "12"),
+        ("はい\u{3000}そうです", "はい そうです"),
+        ("\u{a0}\u{3000}\nnext", "next"),
+        ("em\u{2003}space", "em\u{2003}space"),
+        ("one\u{2028}two", "one\ntwo"),
+        ("one\u{2029}two", "one\ntwo"),
+        ("one\u{85}two", "one\ntwo"),
+        ("one\u{b}two", "one\ntwo"),
+        ("a\ttab inside", "a tab inside"),
+        (" \t\r\n\n", ""),
+    ] {
+        assert_eq!(settled(message, raw), kept, "{raw:?}");
+    }
+}
+
+#[test]
+fn a_message_is_entered_only_once_normalised() {
+    assert_eq!(entered_message("batch/0/text", "Yes,\nwith a TTL."), Ok(()));
+    for raw in [
+        "Yes, ",
+        "Yes,\n\nno",
+        " Yes",
+        "Yes,\r\nno",
+        "Yes,\n",
+        "Yes,\u{a0}no",
+    ] {
+        assert_eq!(
+            entered_message("batch/0/text", raw),
+            Err(SchemaError::new(
+                "batch/0/text",
+                "has spacing the board removes: use one LF between lines, no blank lines, and \
+                 no spaces or tabs at the start or end of a line"
+            )),
+            "{raw:?}"
+        );
+    }
+}
+
+/// A one-line field never normalised is refused with the owner-approved
+/// problem for a line.
+#[test]
+fn a_line_never_normalised_says_what_a_line_is() {
+    assert_eq!(
+        entered_line("title", " Ship it"),
+        Err(SchemaError::new(
+            "title",
+            "must be one line, use plain spaces only, and have no spaces or tabs at its \
+             start or end"
+        ))
+    );
+}
+
+/// In markdown text a space chat writes between words (no-break, narrow
+/// no-break, figure, ideographic: French keyboards put them before `!`,
+/// `?`, `:` and inside guillemets) becomes a plain space where nothing can
+/// change: in a prose line, past its first word, between characters a
+/// space beside them never makes markup of. Everywhere else it is left as
+/// written, for the domain to refuse.
+#[test]
+fn a_chat_space_between_words_is_made_plain_in_text() {
+    for (raw, kept) in [
+        (
+            "Bonjour\u{202f}! On commence\u{a0}?",
+            "Bonjour ! On commence ?",
+        ),
+        (
+            "Il dit\u{a0}: \u{ab}\u{a0}oui\u{a0}\u{bb}\nPrix\u{a0}: 10\u{a0}000\u{a0}\u{20ac}",
+            "Il dit : \u{ab} oui \u{bb}\nPrix : 10 000 \u{20ac}",
+        ),
+        (
+            "\u{306f}\u{3044}\u{3000}\u{305d}\u{3046}",
+            "\u{306f}\u{3044} \u{305d}\u{3046}",
+        ),
+        ("- item\u{a0}one", "- item one"),
+        ("1. item\u{202f}!", "1. item !"),
+        ("12\u{a0}items", "12 items"),
+        // A bracket keeps the rest of its paragraph only: a blank line, or
+        // a fence's close, ends it.
+        ("[a] b\n\nc\u{a0}!", "[a] b\n\nc !"),
+        ("[a\n```\nx\n```\nc\u{a0}!", "[a\n```\nx\n```\nc !"),
+        // One neighbour a letter or digit is enough.
+        ("\u{ab}\u{a0}oui\u{a0}\u{bb}", "\u{ab} oui \u{bb}"),
+    ] {
+        assert_eq!(settled(text, raw), kept, "{raw:?}");
+    }
+    for raw in [
+        // A block marker or indentation it could make.
+        "-\u{a0}x",
+        "1.\u{a0}x",
+        "\u{a0}leading",
+        "#\u{a0}x",
+        "> \u{a0}x",
+        // Markup a plain space beside it would make.
+        "a\u{a0}#",
+        "- [\u{a0}] x",
+        "a\u{a0}\u{a0}b",
+        "end\u{a0}",
+        "a\u{a0}*b*",
+        "\u{3e}1.\u{a0}x",
+        "- [x]\u{a0}a",
+        "*a*\u{a0}b",
+        // Code, links, references, addresses and math are kept as written:
+        // an autolink reads a chat space as part of the address, a
+        // reference label folds it apart from a plain space.
+        "`a\u{a0}b`",
+        "[a\u{a0}b](https://example.com)",
+        "[a\u{a0}b]",
+        "[a\nb\u{a0}c\nd]",
+        "See www.example.com\u{a0}now",
+        "See\u{a0}www.example.com now",
+        "SEE\u{a0}WWW.EXAMPLE.COM",
+        "Go https://example.com\u{a0}now",
+        "Mail a@b.co\u{a0}now",
+        // An address a combining mark splits still reads as one.
+        "x w\u{301}ww.a.co\u{a0}now",
+        // Neither neighbour a letter or digit: a table's delimiter row.
+        "| a |\n|:-:\u{a0}:-:|",
+        "100%\u{a0}!",
+        "```\na\u{a0}b\n```",
+        "    a\u{a0}b",
+        // A space no keyboard puts between words.
+        "em\u{2003}space",
+    ] {
+        assert_eq!(settled(text, raw), raw, "{raw:?}");
+    }
 }

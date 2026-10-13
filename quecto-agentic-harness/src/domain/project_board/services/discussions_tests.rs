@@ -3,6 +3,7 @@ use crate::domain::project_board::entities::discussion::{
     MAX_DISCUSSION_LINES, MAX_MESSAGE_LINE_CHARS, MAX_MESSAGE_LINES, MAX_MESSAGES,
 };
 use crate::domain::project_board::services::fixtures_tests::{at, person, task};
+use crate::domain::project_board::value_objects::board_text;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
 use crate::domain::project_board::value_objects::vocabulary::{
     DiscussionLimit, DiscussionState, TaskStatus,
@@ -151,7 +152,8 @@ fn a_batch_of_messages_is_added_to_an_open_discussion() {
         &discussion,
         vec![
             message("Ada", "09:20:00", "ok"),
-            message("Bob", "09:21:00", " "),
+            // Normalised, yet nothing a reader sees.
+            message("Bob", "09:21:00", "\u{200b}"),
         ],
         &when("10:00:00"),
     );
@@ -202,7 +204,7 @@ fn a_batch_that_would_overfill_a_discussion_is_refused_as_full() {
             "batch/250/text",
         ),
         ("x".repeat(MAX_MESSAGE_LINE_CHARS + 1), "batch/250/text/0"),
-        (" ".to_string(), "batch/250/text/0"),
+        ("\u{200b}".to_string(), "batch/250/text/0"),
     ] {
         let mut overfull = many_lines.clone();
         overfull.push(one(&bad));
@@ -348,4 +350,70 @@ fn a_batch_past_the_most_messages_is_refused_before_its_messages_are_read() {
             limit: DiscussionLimit::Messages
         })
     );
+}
+
+/// What a discussion says is taken only as it enters the board, normalised
+/// (#2481 D3, D4): its title as a line and each message as its trimmed,
+/// non-blank lines, both where it begins and in a batch added later. Text
+/// no entry point normalised is refused, naming its field; the same text
+/// normalised is taken.
+#[test]
+fn discussion_text_is_taken_only_once_normalised() {
+    let titled = Opening {
+        title: "How the store locks ".into(),
+        ..opening(vec![message("Ada", "09:00:00", "Lease?")])
+    };
+    let refused = begin(titled, &when("09:10:00")).unwrap_err();
+    assert_eq!(refused_field(refused), "title");
+    let said = vec![
+        message("Ada", "09:00:00", "Lease?"),
+        message("Bob", "09:05:00", " Yes,\n\nwith a TTL."),
+    ];
+    let refused = begin(opening(said), &when("09:10:00")).unwrap_err();
+    assert_eq!(refused_field(refused), "messages/1/text");
+    let batch = vec![
+        message("Ada", "09:20:00", "How long?"),
+        message("Bob", "09:21:00", "A minute. "),
+    ];
+    let refused = append(&begun(), batch, &when("09:30:00")).unwrap_err();
+    assert_eq!(refused_field(refused), "batch/1/text");
+    let batch = vec![message(
+        "Bob",
+        "09:21:00",
+        &board_text::message("A minute. \r\n\r\n Or two."),
+    )];
+    let added = append(&begun(), batch, &when("09:30:00")).unwrap();
+    assert_eq!(
+        added.fields().messages.last().unwrap().text,
+        "A minute.\nOr two."
+    );
+}
+
+/// The field a refusal of the schema names.
+fn refused_field(refused: BoardRuleError) -> String {
+    match refused {
+        BoardRuleError::Invalid(error) => error.field,
+        other => panic!("not a schema refusal: {other:?}"),
+    }
+}
+
+/// Both ways in judge a message's spacing first, before its time: a
+/// message stamped ahead and never normalised is refused as never
+/// normalised, by `begin` and by `append` alike.
+#[test]
+fn begin_and_append_judge_spacing_before_time() {
+    let ahead = || vec![message("Bob", "11:00:00", "Later. ")];
+    let begun_ahead = begin(opening(ahead()), &when("09:10:00")).unwrap_err();
+    let added_ahead = append(&begun(), ahead(), &when("09:30:00")).unwrap_err();
+    assert_eq!(refused_field(begun_ahead), "messages/0/text");
+    assert_eq!(refused_field(added_ahead), "batch/0/text");
+}
+
+/// A space the normaliser does not turn plain (an em space) is refused by
+/// the domain with its field and line, not by the file at write time.
+#[test]
+fn a_space_no_file_holds_is_refused_with_its_field() {
+    let batch = vec![message("Bob", "09:21:00", "Plain\nem\u{2003}space")];
+    let refused = append(&begun(), batch, &when("09:30:00")).unwrap_err();
+    assert_eq!(refused_field(refused), "batch/0/text/1");
 }

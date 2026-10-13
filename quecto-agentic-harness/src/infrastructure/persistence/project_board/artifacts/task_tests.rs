@@ -63,9 +63,11 @@ use crate::domain::project_board::entities::task::{
     MAX_DEPENDENCIES, MAX_DESCRIPTION_CHARS, MAX_PRS, MAX_REFERENCES, MAX_SUPERSEDED_BY,
     MAX_TEXT_BYTES, MAX_TITLE_CHARS,
 };
+use crate::domain::project_board::value_objects::board_text;
 use crate::domain::project_board::value_objects::reference::{
     MAX_ISSUE_NUMBER, MAX_REFERENCE_BYTES,
 };
+use crate::domain::project_board::value_objects::schema_error::{PLAIN_SPACES_ONLY, SchemaError};
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
 use crate::infrastructure::persistence::project_board::markdown::tests::oracle::outline_in;
 use crate::infrastructure::persistence::project_board::markdown::{MarkdownError, parse};
@@ -567,19 +569,11 @@ fn a_reference_keeps_its_written_form() {
 
 /// A title its heading cannot hold is refused when written, naming the
 /// title: closing hashes, a space at an edge, raw HTML, a character
-/// reference, dollar math.
+/// reference, dollar math. A space other than U+0020 never gets this far:
+/// the domain refuses it with the title's field.
 #[test]
 fn a_title_its_heading_cannot_hold_is_refused() {
-    for title in [
-        "a #",
-        " a",
-        "a\u{a0}",
-        "a <b>",
-        "a &amp;",
-        "$x$",
-        "a\u{2003}b",
-        "a\u{fe0f}",
-    ] {
+    for title in ["a #", " a", "a <b>", "a &amp;", "$x$", "a\u{fe0f}"] {
         let titled = TaskFields {
             title: title.into(),
             ..example()
@@ -588,6 +582,51 @@ fn a_title_its_heading_cannot_hold_is_refused() {
         assert!(
             matches!(&refused, Err(CodecError::Cell { field: "Title", .. })),
             "{title:?}: {refused:?}"
+        );
+    }
+}
+
+/// A title spaced with anything but U+0020 is refused by the domain with
+/// its field, never by the file at write time.
+#[test]
+fn a_title_spaced_with_another_space_is_refused_by_the_domain() {
+    for title in ["a\u{a0}", "a\u{2003}b", "a\u{3000}b"] {
+        let refused = Task::new(TaskFields {
+            title: title.into(),
+            ..example()
+        })
+        .unwrap_err();
+        assert_eq!(refused.field, "title", "{title:?}");
+    }
+}
+
+/// A description typed on a French keyboard, its chat spaces before `!`
+/// and `?`, is held once normalised; a chat space beside a block marker,
+/// which the normaliser leaves, and an em space are refused by the domain
+/// with the description's field, never by the file at write time.
+#[test]
+fn a_description_with_chat_spaces_is_held_once_normalised() {
+    let described = |description: &str| {
+        Task::entered(TaskFields {
+            description: description.into(),
+            ..example()
+        })
+    };
+    let probe = "Bonjour\u{202f}! On commence\u{a0}?";
+    let normal = board_text::text(probe);
+    assert_eq!(normal, "Bonjour ! On commence ?");
+    let held = described(&normal).unwrap();
+    let file = encode::<TaskCodec>(&held).unwrap();
+    assert_eq!(decode::<TaskCodec>(file.as_bytes()), Ok(held));
+    for left in ["-\u{a0}x", "\u{a0}leading", "an em\u{2003}space"] {
+        let kept = board_text::text(left);
+        assert_eq!(
+            described(&kept).map(|_| ()),
+            Err(SchemaError::new(
+                "description",
+                format!("line 1: {PLAIN_SPACES_ONLY}")
+            )),
+            "{left:?}"
         );
     }
 }
