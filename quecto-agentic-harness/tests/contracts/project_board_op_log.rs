@@ -30,6 +30,10 @@ fn record() -> BoardOpRecord {
         task: None,
         pr: Some(7),
         head: None,
+        listing: None,
+        cancelled: false,
+        build_us: None,
+        result_bytes: 0,
         duration_us: 12,
     }
 }

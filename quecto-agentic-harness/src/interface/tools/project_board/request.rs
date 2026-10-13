@@ -10,24 +10,95 @@ use crate::application::project_board::dto::{
 use crate::application::project_board::operations::{BoardRequest, ListFilter};
 use crate::application::project_board::ports::KeepCopy;
 use crate::domain::project_board::value_objects::slug::Slug;
+use crate::domain::project_board::value_objects::telemetry::{FaultKind, RequestFault, StaticKind};
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
 use crate::domain::project_board::value_objects::vocabulary::{TaskKind, TaskStatus};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Why a request was refused before the board was read: the field (or
-/// `op`) and what it must be.
+/// `op`) and what it must be, and as the call's record holds it (epic
+/// #2481 T3): which schema field, never the request's own text, and how it
+/// was wrong.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RequestError {
     pub field: String,
     pub problem: String,
+    pub fault: RequestFault,
 }
 
 impl RequestError {
-    fn new(field: &str, problem: impl Into<String>) -> Self {
+    /// `field` was wrong as `fault` says: recorded as the schema field it
+    /// names ([`schema_field`]). A key no schema names is [`Self::stray`].
+    pub fn of(field: &str, problem: impl Into<String>, fault: FaultKind) -> Self {
+        let recorded = match fault {
+            // Whatever text names it, a stray key is never recorded.
+            FaultKind::Unexpected => StaticKind::OTHER,
+            FaultKind::Missing
+            | FaultKind::WrongType
+            | FaultKind::InvalidValue
+            | FaultKind::TooLarge
+            | FaultKind::NotJson
+            | FaultKind::DuplicateKey => schema_field(field),
+        };
+        Self::recorded(field, problem, fault, recorded, None)
+    }
+
+    /// The request as a whole was wrong (too big, not JSON, not an
+    /// object), whichever field the answer names: recorded as `request`.
+    pub fn whole(field: &str, problem: impl Into<String>, fault: FaultKind) -> Self {
+        Self::recorded(field, problem, fault, StaticKind::new("request"), None)
+    }
+
+    /// The request named `strays` keys no schema of its op names, `field`
+    /// the first: recorded as `other`, counted, never named.
+    pub fn stray(field: &str, problem: impl Into<String>, strays: usize) -> Self {
+        let count = u64::try_from(strays).unwrap_or(u64::MAX);
+        let fault = FaultKind::Unexpected;
+        Self::recorded(field, problem, fault, StaticKind::OTHER, Some(count))
+    }
+
+    fn recorded(
+        field: &str,
+        problem: impl Into<String>,
+        fault: FaultKind,
+        recorded: StaticKind,
+        unexpected_count: Option<u64>,
+    ) -> Self {
         Self {
             field: field.into(),
             problem: problem.into(),
+            fault: RequestFault {
+                field: recorded,
+                fault,
+                unexpected_count,
+            },
         }
+    }
+}
+
+/// The fields a refusal names that are no op's: the op, and the request
+/// as a whole.
+const PSEUDO_FIELDS: &[&str] = &["op", "request"];
+
+/// The schema field `field` names, as [`OPS`] spells it: its name up to
+/// any `/` (`depends_on/0` is `depends_on`) when that is a field of an op
+/// or one of [`PSEUDO_FIELDS`]; any other text is `other`. Only the
+/// table's own `&'static str` reaches the kind, never the request's text.
+pub fn schema_field(field: &str) -> StaticKind {
+    let name = field.split('/').next().unwrap_or_default();
+    OPS.iter()
+        .flat_map(|(_, fields)| fields.iter().map(|field| field.name))
+        .chain(PSEUDO_FIELDS.iter().copied())
+        .find(|known| *known == name)
+        .map_or(StaticKind::OTHER, StaticKind::new)
+}
+
+/// How a value of the wrong kind was wrong: not even the JSON type a field
+/// takes (`is_type`), or of that type but no value it takes.
+fn misfit(is_type: bool) -> FaultKind {
+    match is_type {
+        true => FaultKind::InvalidValue,
+        false => FaultKind::WrongType,
     }
 }
 
@@ -162,31 +233,36 @@ pub fn fields_of(op: &str) -> Option<&'static [Field]> {
 /// Not an object, no or an unknown `op`, a field the op does not take, a
 /// required field missing, or a value of the wrong type.
 pub fn parse(value: &Value) -> Result<BoardRequest, RequestError> {
-    let object = value
-        .as_object()
-        .ok_or_else(|| RequestError::new("op", "a request is a JSON object"))?;
-    let op = object
-        .get("op")
-        .and_then(Value::as_str)
-        .ok_or_else(|| RequestError::new("op", "must name an op"))?;
+    let object = value.as_object().ok_or_else(|| {
+        RequestError::whole("op", "a request is a JSON object", FaultKind::WrongType)
+    })?;
+    let op = match object.get("op") {
+        Some(Value::String(op)) => op.as_str(),
+        named => {
+            let fault = named.map_or(FaultKind::Missing, |_| FaultKind::WrongType);
+            return Err(RequestError::of("op", "must name an op", fault));
+        }
+    };
     let fields = fields_of(op).ok_or_else(|| {
         let ops: Vec<&str> = OPS.iter().map(|(name, _)| *name).collect();
-        RequestError::new("op", format!("must be one of {}", ops.join(", ")))
+        let problem = format!("must be one of {}", ops.join(", "));
+        RequestError::of("op", problem, FaultKind::InvalidValue)
     })?;
-    if let Some(stray) = object
-        .keys()
-        .find(|key| *key != "op" && !fields.iter().any(|field| field.name == *key))
-    {
-        return Err(RequestError::new(
-            stray,
-            format!("{op} takes no such field"),
-        ));
+    let taken = |key: &String| key == "op" || fields.iter().any(|field| field.name == *key);
+    let strays: Vec<&String> = object.keys().filter(|key| !taken(key)).collect();
+    if let Some(stray) = strays.first() {
+        let problem = format!("{op} takes no such field");
+        return Err(RequestError::stray(stray, problem, strays.len()));
     }
     if let Some(missing) = fields
         .iter()
         .find(|field| field.required && !object.contains_key(field.name))
     {
-        return Err(RequestError::new(missing.name, "is required"));
+        return Err(RequestError::of(
+            missing.name,
+            "is required",
+            FaultKind::Missing,
+        ));
     }
     let read = Read { object };
     build(op, &read)
@@ -208,7 +284,7 @@ impl Read<'_> {
 
     fn task(&self) -> Result<Slug, RequestError> {
         self.slug("task")?
-            .ok_or_else(|| RequestError::new("task", "is required"))
+            .ok_or_else(|| RequestError::of("task", "is required", FaultKind::Missing))
     }
 
     fn text(&self, name: &str) -> Result<Option<String>, RequestError> {
@@ -219,9 +295,9 @@ impl Read<'_> {
         let Some(value) = self.value(name) else {
             return Ok(None);
         };
-        let items = value
-            .as_array()
-            .ok_or_else(|| RequestError::new(name, "must be a list of task ids"))?;
+        let items = value.as_array().ok_or_else(|| {
+            RequestError::of(name, "must be a list of task ids", FaultKind::WrongType)
+        })?;
         let at = |index: usize| format!("{name}/{index}");
         items
             .iter()
@@ -248,12 +324,18 @@ impl Read<'_> {
         let Some(value) = self.value(name) else {
             return Ok(None);
         };
-        let refused = || RequestError::new(name, format!("must be one of {}", words.join(", ")));
+        let refused = || {
+            let problem = format!("must be one of {}", words.join(", "));
+            RequestError::of(name, problem, misfit(value.is_string()))
+        };
         value.as_str().and_then(parse).map(Some).ok_or_else(refused)
     }
 
     fn pr(&self) -> Result<u64, RequestError> {
-        let refused = || RequestError::new("pr", "must be a pull request number from 1");
+        let refused = || {
+            let fault = misfit(self.value("pr").is_some_and(Value::is_number));
+            RequestError::of("pr", "must be a pull request number from 1", fault)
+        };
         self.value("pr")
             .and_then(Value::as_u64)
             .filter(|pr| *pr >= 1)
@@ -264,8 +346,9 @@ impl Read<'_> {
 fn slug(name: &str, value: &Value) -> Result<Slug, RequestError> {
     let text = value
         .as_str()
-        .ok_or_else(|| RequestError::new(name, "must be a task id"))?;
-    Slug::parse(text).map_err(|error| RequestError::new(name, error.problem))
+        .ok_or_else(|| RequestError::of(name, "must be a task id", FaultKind::WrongType))?;
+    Slug::parse(text)
+        .map_err(|error| RequestError::of(name, error.problem, FaultKind::InvalidValue))
 }
 
 /// Text as sent; the use case and the task's schema read the rest.
@@ -273,7 +356,7 @@ fn text(name: &str, value: &Value) -> Result<String, RequestError> {
     value
         .as_str()
         .map(str::to_owned)
-        .ok_or_else(|| RequestError::new(name, "must be text"))
+        .ok_or_else(|| RequestError::of(name, "must be text", FaultKind::WrongType))
 }
 
 fn build(op: &str, read: &Read<'_>) -> Result<BoardRequest, RequestError> {
@@ -319,11 +402,21 @@ const MAX_PATH_BYTES: usize = 9 * 1024;
 /// A clear names files as the listing shows them: whether the board set
 /// them aside is the use case's check, against the board itself.
 fn clear(read: &Read<'_>) -> Result<BoardRequest, RequestError> {
-    let path = read
-        .value("path")
-        .and_then(Value::as_str)
+    let given = read.value("path").and_then(Value::as_str);
+    let path = given
         .filter(|path| !path.is_empty() && path.len() <= MAX_PATH_BYTES)
-        .ok_or_else(|| RequestError::new("path", "must be a path a listing's quarantined shows"))?;
+        .ok_or_else(|| {
+            let fault = match given {
+                Some(path) if path.len() > MAX_PATH_BYTES => FaultKind::TooLarge,
+                Some(_) => FaultKind::InvalidValue,
+                None => FaultKind::WrongType,
+            };
+            RequestError::of(
+                "path",
+                "must be a path a listing's quarantined shows",
+                fault,
+            )
+        })?;
     let object = object_value("object", read.value("object"))?;
     let repeated = match read.value("repeated") {
         None => BTreeMap::new(),
@@ -341,23 +434,34 @@ fn object_value(name: &str, value: Option<&Value>) -> Result<String, RequestErro
         .and_then(Value::as_str)
         .filter(|oid| object_id(oid))
         .map(str::to_owned)
-        .ok_or_else(|| RequestError::new(name, "must be a full object id a listing shows"))
+        .ok_or_else(|| {
+            let fault = match value {
+                Some(value) => misfit(value.is_string()),
+                None => FaultKind::Missing,
+            };
+            RequestError::of(name, "must be a full object id a listing shows", fault)
+        })
 }
 
 /// The copies a clear keeps or drops, by path.
 fn repeated(value: &Value) -> Result<BTreeMap<String, KeepCopy>, RequestError> {
-    let shape = |at: &str| {
-        RequestError::new(
+    let shape = |at: &str, fault: FaultKind| {
+        RequestError::of(
             at,
             "must map each repeated path to {\"keep\", \"seen\"} or {\"drop\"}",
+            fault,
         )
     };
-    let names = value.as_object().ok_or_else(|| shape("repeated"))?;
+    let names = value
+        .as_object()
+        .ok_or_else(|| shape("repeated", FaultKind::WrongType))?;
     names
         .iter()
         .map(|(path, copy)| {
             let at = |key: &str| format!("repeated/{path}/{key}");
-            let copy = copy.as_object().ok_or_else(|| shape(&at("")))?;
+            let copy = copy
+                .as_object()
+                .ok_or_else(|| shape(&at(""), FaultKind::WrongType))?;
             let mut keys: Vec<&str> = copy.keys().map(String::as_str).collect();
             keys.sort_unstable();
             let keep = match keys.as_slice() {
@@ -366,7 +470,7 @@ fn repeated(value: &Value) -> Result<BTreeMap<String, KeepCopy>, RequestError> {
                     seen: objects(&at("seen"), &copy["seen"])?,
                 },
                 ["drop"] => KeepCopy::Drop(objects(&at("drop"), &copy["drop"])?),
-                _ => return Err(shape(&at(""))),
+                _ => return Err(shape(&at(""), FaultKind::InvalidValue)),
             };
             Ok((path.clone(), keep))
         })
@@ -378,14 +482,18 @@ fn objects(at: &str, value: &Value) -> Result<BTreeSet<String>, RequestError> {
     let items = value
         .as_array()
         .filter(|items| !items.is_empty())
-        .ok_or_else(|| RequestError::new(at, "must list the objects the listing showed"))?;
+        .ok_or_else(|| {
+            let fault = misfit(value.is_array());
+            RequestError::of(at, "must list the objects the listing showed", fault)
+        })?;
     let mut seen = BTreeSet::new();
     for (index, item) in items.iter().enumerate() {
         let object = object_value(&format!("{at}/{index}"), Some(item))?;
         if !seen.insert(object) {
-            return Err(RequestError::new(
+            return Err(RequestError::of(
                 &format!("{at}/{index}"),
                 "is listed twice",
+                FaultKind::InvalidValue,
             ));
         }
     }
@@ -407,9 +515,10 @@ fn list(read: &Read<'_>) -> Result<BoardRequest, RequestError> {
                 (true, true) => "parent",
                 (true, false) | (false, true) | (false, false) => "dependents_of",
             };
-            Err(RequestError::new(
+            Err(RequestError::of(
                 second,
                 "list takes at most one of status, parent and dependents_of",
+                FaultKind::InvalidValue,
             ))
         }
     }
@@ -452,9 +561,10 @@ fn update_draft(read: &Read<'_>) -> Result<BoardRequest, RequestError> {
                 .as_str()
                 .and_then(|text| Timestamp::parse(text).ok())
                 .ok_or_else(|| {
-                    RequestError::new(
+                    RequestError::of(
                         "expected_updated",
                         "must be a time like 2026-10-10T08:00:00Z",
+                        misfit(value.is_string()),
                     )
                 })?,
         ),
@@ -473,9 +583,11 @@ fn update_draft(read: &Read<'_>) -> Result<BoardRequest, RequestError> {
         || update.depends_on.is_some();
     match sets_something {
         true => Ok(BoardRequest::UpdateDraft(update)),
-        false => Err(RequestError::new(
+        // No field to change was given.
+        false => Err(RequestError::of(
             "op",
             "update_draft sets nothing: name a field to change",
+            FaultKind::Missing,
         )),
     }
 }

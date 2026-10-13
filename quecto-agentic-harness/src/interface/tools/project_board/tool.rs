@@ -26,6 +26,7 @@ use super::request::{Kind, OPS, RequestError};
 use super::site::{self, BoardSite};
 use crate::application::tools::ports::Tool;
 use crate::domain::error::DomainError;
+use crate::domain::project_board::value_objects::telemetry::FaultKind;
 use crate::domain::project_board::value_objects::vocabulary::{TaskKind, TaskStatus};
 use crate::domain::tool::{ToolDefinition, ToolResult};
 use crate::infrastructure::tools::call_work::off_the_workers;
@@ -294,10 +295,11 @@ impl Tool for BoardTool {
                 }
                 Ok(_) => {
                     let ops: Vec<&str> = tool_ops().map(|(op, _)| *op).collect();
-                    let error = RequestError {
-                        field: "op".into(),
-                        problem: format!("must be one of {}", ops.join(", ")),
-                    };
+                    let error = RequestError::of(
+                        "op",
+                        format!("must be one of {}", ops.join(", ")),
+                        FaultKind::InvalidValue,
+                    );
                     request_refused(None, &error)
                 }
             };

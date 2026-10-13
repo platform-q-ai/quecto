@@ -47,6 +47,7 @@ use std::path::PathBuf;
 use serde_json::Value;
 
 use super::CliContext;
+use crate::domain::project_board::value_objects::telemetry::FaultKind;
 use crate::interface::tools::project_board::answer::request_refused;
 use crate::interface::tools::project_board::request::{RequestError, fields_of};
 use crate::interface::tools::project_board::site::{self, BoardSite};
@@ -77,18 +78,17 @@ fn read_line(args: &[String]) -> Result<Line, RequestError> {
         remote: "origin".into(),
     };
     let mut rest = args.iter();
-    let invalid = |flag: &str, problem: &str| RequestError {
-        field: flag.trim_start_matches('-').into(),
-        problem: problem.into(),
+    let invalid = |flag: &str, problem: &str, fault| {
+        RequestError::of(flag.trim_start_matches('-'), problem, fault)
     };
     // A flag of the command line's own: given once, with a value.
     let mut given: Vec<&str> = Vec::new();
     let mut own = |flag: &'static str, value: Option<&String>| {
         let value = value
             .filter(|value| !value.is_empty())
-            .ok_or_else(|| invalid(flag, "needs a value"))?;
+            .ok_or_else(|| invalid(flag, "needs a value", FaultKind::Missing))?;
         match given.contains(&flag) {
-            true => Err(invalid(flag, "is given twice")),
+            true => Err(invalid(flag, "is given twice", FaultKind::DuplicateKey)),
             false => {
                 given.push(flag);
                 Ok(value.clone())
@@ -103,18 +103,19 @@ fn read_line(args: &[String]) -> Result<Line, RequestError> {
             "--remote" => line.remote = own("--remote", rest.next())?,
             flag if flag.starts_with("--") => {
                 // An unknown flag is never echoed back as a field.
-                let value = rest
-                    .next()
-                    .ok_or_else(|| invalid("flags", "a --<field> needs a value"))?;
+                let value = rest.next().ok_or_else(|| {
+                    invalid("flags", "a --<field> needs a value", FaultKind::Missing)
+                })?;
                 line.fields.extend([flag.to_string(), value.clone()]);
             }
             op if line.op.is_none() => line.op = Some(op.to_string()),
             _ => {
                 // A fixed field: the stray text is never echoed back.
-                return Err(RequestError {
-                    field: "arguments".into(),
-                    problem: "hold one op, then --<field> <value> pairs".into(),
-                });
+                return Err(RequestError::stray(
+                    "arguments",
+                    "hold one op, then --<field> <value> pairs",
+                    1,
+                ));
             }
         }
     }
@@ -126,26 +127,27 @@ fn request(
     line: &Line,
     stdin: impl FnOnce() -> std::io::Result<String>,
 ) -> Result<Value, RequestError> {
-    let invalid = |field: &str, problem: &str| RequestError {
-        field: field.into(),
-        problem: problem.into(),
-    };
+    let invalid = |field: &str, problem: &str, fault| RequestError::of(field, problem, fault);
     match (&line.input, &line.op) {
         (Some(_), _) if !line.fields.is_empty() => Err(invalid(
             "input",
             "is the whole request: give fields there, not as flags",
+            FaultKind::Unexpected,
         )),
         (Some(input), op) => {
             let text = match input.as_str() {
-                "-" => stdin()
-                    .map_err(|error| invalid("input", &format!("could not be read: {error}")))?,
+                "-" => stdin().map_err(|error| {
+                    let problem = format!("could not be read: {error}");
+                    invalid("input", &problem, FaultKind::InvalidValue)
+                })?,
                 text => text.to_string(),
             };
-            let mut value = json::strict(&text)
-                .map_err(|error| invalid("input", &format!("must be JSON: {error}")))?;
-            let object = value
-                .as_object_mut()
-                .ok_or_else(|| invalid("input", "must be a JSON object"))?;
+            let mut value = json::strict(&text).map_err(|error| {
+                RequestError::whole("input", format!("must be JSON: {error}"), error.fault())
+            })?;
+            let object = value.as_object_mut().ok_or_else(|| {
+                RequestError::whole("input", "must be a JSON object", FaultKind::WrongType)
+            })?;
             if let Some(op) = op {
                 let op = Value::String(op.replace('-', "_"));
                 match object.get("op") {
@@ -153,13 +155,16 @@ fn request(
                         object.insert("op".into(), op);
                     }
                     Some(named) if *named == op => {}
-                    Some(_) => return Err(invalid("op", "differs from the input's op")),
+                    Some(_) => {
+                        let fault = FaultKind::InvalidValue;
+                        return Err(invalid("op", "differs from the input's op", fault));
+                    }
                 }
             }
             Ok(value)
         }
         (None, Some(op)) => command_line::request(op, &line.fields),
-        (None, None) => Err(invalid("op", "is required")),
+        (None, None) => Err(invalid("op", "is required", FaultKind::Missing)),
     }
 }
 

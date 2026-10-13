@@ -587,10 +587,11 @@ fn every_code_the_board_answers_is_a_known_kind() {
     ] {
         codes.push(code(&reason_refused(Some("list"), refusal, "why")));
     }
-    let request = RequestError {
-        field: "op".into(),
-        problem: "must name an op".into(),
-    };
+    let request = RequestError::of(
+        "op",
+        "must name an op",
+        crate::domain::project_board::value_objects::telemetry::FaultKind::Missing,
+    );
     codes.push(code(&request_refused(None, &request)));
     let rules = every_rule().into_iter().map(|(rule, ..)| rule_json(&rule));
     codes.extend(rules.map(|rule| rule["code"].as_str().unwrap().to_owned()));

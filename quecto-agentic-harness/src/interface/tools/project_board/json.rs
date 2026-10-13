@@ -3,24 +3,58 @@
 //! so `{"to": "ready", "to": "done"}` would mean whichever came last).
 use serde::de::{self, DeserializeSeed, Deserializer, MapAccess, SeqAccess, Visitor};
 use serde_json::{Map, Value};
+use std::cell::Cell;
+
+use crate::domain::project_board::value_objects::telemetry::FaultKind;
 use std::fmt;
+
+/// Why text is no request: its reader's words, and whether it named a key
+/// twice (otherwise it is not JSON), which a call's record tells apart.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StrictError {
+    pub message: String,
+    pub duplicate_key: bool,
+}
+
+impl StrictError {
+    /// How the text was wrong, as a call's record holds it.
+    pub fn fault(&self) -> FaultKind {
+        match self.duplicate_key {
+            true => FaultKind::DuplicateKey,
+            false => FaultKind::NotJson,
+        }
+    }
+}
+
+impl fmt::Display for StrictError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.message)
+    }
+}
 
 /// The value `text` holds.
 ///
 /// # Errors
 /// Not JSON, or an object naming a key twice.
-pub fn strict(text: &str) -> Result<Value, String> {
+pub fn strict(text: &str) -> Result<Value, StrictError> {
+    let duplicate = Cell::new(false);
+    let refused = |error: serde_json::Error| StrictError {
+        message: error.to_string(),
+        duplicate_key: duplicate.get(),
+    };
     let mut deserializer = serde_json::Deserializer::from_str(text);
-    let value = Strict
+    let value = Strict(&duplicate)
         .deserialize(&mut deserializer)
-        .map_err(|error| error.to_string())?;
-    deserializer.end().map_err(|error| error.to_string())?;
+        .map_err(refused)?;
+    deserializer.end().map_err(refused)?;
     Ok(value)
 }
 
-struct Strict;
+/// Reads a value strictly, setting its flag when an object names a key
+/// twice.
+struct Strict<'a>(&'a Cell<bool>);
 
-impl<'de> de::DeserializeSeed<'de> for Strict {
+impl<'de> de::DeserializeSeed<'de> for Strict<'_> {
     type Value = Value;
 
     fn deserialize<D: Deserializer<'de>>(self, deserializer: D) -> Result<Value, D::Error> {
@@ -28,7 +62,7 @@ impl<'de> de::DeserializeSeed<'de> for Strict {
     }
 }
 
-impl<'de> Visitor<'de> for Strict {
+impl<'de> Visitor<'de> for Strict<'_> {
     type Value = Value;
 
     fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -65,7 +99,7 @@ impl<'de> Visitor<'de> for Strict {
 
     fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Value, A::Error> {
         let mut items = Vec::new();
-        while let Some(item) = seq.next_element_seed(Strict)? {
+        while let Some(item) = seq.next_element_seed(Strict(self.0))? {
             items.push(item);
         }
         Ok(Value::Array(items))
@@ -74,8 +108,9 @@ impl<'de> Visitor<'de> for Strict {
     fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Value, A::Error> {
         let mut object = Map::new();
         while let Some(key) = map.next_key::<String>()? {
-            let value = map.next_value_seed(Strict)?;
+            let value = map.next_value_seed(Strict(self.0))?;
             if object.insert(key.clone(), value).is_some() {
+                self.0.set(true);
                 return Err(de::Error::custom(format!("the key {key:?} is given twice")));
             }
         }

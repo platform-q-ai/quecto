@@ -23,6 +23,10 @@ fn record(access: Access) -> BoardOpRecord {
         task: None,
         pr: None,
         head: None,
+        listing: None,
+        cancelled: false,
+        build_us: None,
+        result_bytes: 0,
         duration_us: 9,
     }
 }
