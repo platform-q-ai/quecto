@@ -40,6 +40,7 @@ pub fn rule_code(rule: &BoardRuleError) -> &'static str {
         R::NoAcceptedPlan => "no_accepted_plan",
         R::ChangeAlreadyLinked { .. } => "change_already_linked",
         R::NoSuchChange(..) => "no_such_change",
+        R::NoSuchRun(..) => "no_such_run",
         R::ChangeAhead { .. } => "change_ahead",
         R::DiscussionClosed(..) => "discussion_closed",
         R::DiscussionLinked { .. } => "discussion_linked",
@@ -119,6 +120,7 @@ fn rule_fields(rule: &BoardRuleError) -> Map<String, Value> {
             object!({"task": task.as_str(), "change": change})
         }
         R::NoSuchChange(change) => object!({"change": change}),
+        R::NoSuchRun(run) => object!({"run": run}),
         R::ChangeAhead { change, updated } => object!({
             "change": change,
             "updated": updated.as_str(),

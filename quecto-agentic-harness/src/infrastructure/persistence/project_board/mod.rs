@@ -12,3 +12,4 @@ pub mod op_log;
 mod own_group;
 mod push_report;
 pub mod store;
+pub mod text_cells;

@@ -391,6 +391,7 @@ board_rules! {
     R::OwnPrReferenced { .. } => R::OwnPrReferenced { task: Slug::parse("a").unwrap(), pr: 7, change: 1 }, "own_pr_referenced", ["task", "pr", "change"];
     R::ChangeAlreadyLinked { .. } => R::ChangeAlreadyLinked { task: Slug::parse("board-store").unwrap(), change: Some(1) }, "change_already_linked", ["task", "change"];
     R::NoSuchChange(_) => R::NoSuchChange(4), "no_such_change", ["change"];
+    R::NoSuchRun(_) => R::NoSuchRun(4), "no_such_run", ["run"];
     R::ChangeAhead { .. } => R::ChangeAhead { change: 1, updated: at("10:00:00") }, "change_ahead", ["change", "updated"];
     R::DiscussionClosed(_) => R::DiscussionClosed(Slug::parse("chat").unwrap()), "discussion_closed", ["discussion"];
     R::DiscussionLinked { .. } => R::DiscussionLinked { discussion: Slug::parse("chat").unwrap(), task: Slug::parse("board-store").unwrap() }, "discussion_linked", ["discussion", "task"];

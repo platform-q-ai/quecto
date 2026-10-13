@@ -133,3 +133,24 @@ as given. It is for the pocket relay to set; an older quecto ignores it.
 
 Kinds are added, never renamed or reused, so a reader of the log must accept a
 kind or a field it does not know.
+
+### Fold-back records
+
+A started task's run, once its swarm has ended, is folded back onto the board
+(epic #2481 S4): its outcome, where each of its plan's task items stood, owners,
+evidence and cost, written to the run alone in one commit. Each fold-back
+writes one `board_fold_back` record under the same switch, gate and rules
+(written to `tracing` at `INFO` as `board fold back`). It holds no titles,
+owners or evidence, only kinds and counts:
+
+| Field | Meaning |
+|---|---|
+| `task`, `run` | The task (its slug, redacted and capped as above) and the run's number |
+| `outcome`, `code`, `rule` | `ok`, or `refused` with the error and rule codes a `board_op` would carry. A run that had already ended (folded back, or ended as lost by the merge that completed its task) is `ok` with nothing else |
+| `run_outcome` | How the run ended: `succeeded`; `failed` (the swarm failed or exhausted its budget); `stopped` (blocked or cancelled) |
+| `items` | The run's task items by state: `todo`, `doing`, `review`, `done`, `blocked` |
+| `unmatched`, `extra` | Plan items no swarm item matched by its title (`<slug>: <title>`), left `todo`; swarm items no plan item matched, not kept |
+| `evidence`, `evidence_dropped` | Evidence lines kept, and those left out: refused by the board's schema or file format, repeated, or past an item's 16 or the run's 256 KiB |
+| `cost_tokens` | The tokens the swarm was observed to spend |
+| `attempts`, `lost`, `bytes` | The write's attempts and lost races, and the bytes of the run's text |
+| `duration_us` | The whole fold-back |

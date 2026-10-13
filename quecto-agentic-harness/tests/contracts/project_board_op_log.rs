@@ -12,8 +12,10 @@ use quecto::application::project_board::ports::ProjectBoardOpLog;
 use quecto::composition::bootstrap::project_board::{
     cli_board_recording, session_board_recording_decided,
 };
+use quecto::domain::project_board::value_objects::slug::Slug;
 use quecto::domain::project_board::value_objects::telemetry::{
-    Access, BoardOpRecord, Client, FrontEnd, OpKind, OpOutcome,
+    Access, BoardOpRecord, Client, FoldBackRecord, FrontEnd, OpKind, OpOutcome, RunOutcomeKind,
+    TaskRef,
 };
 use quecto::infrastructure::persistence::audit_log::AuditLog;
 use quecto::infrastructure::persistence::project_board::op_log::EventLogProjectBoardOps;
@@ -264,4 +266,39 @@ fn a_record_the_log_cannot_take_is_dropped_quietly() {
     // The first record that does not fit caps the log; nothing follows.
     assert_eq!(lines.len(), 1, "{lines:?}");
     assert_eq!(lines[0]["event"], "log_capped");
+}
+
+/// A fold-back's record (S4) goes the same way: one `board_fold_back`
+/// line under no turn, through a recording only while the log is on.
+#[test]
+fn a_fold_back_record_is_appended_under_no_turn_while_on() {
+    let base = tempfile::tempdir().unwrap();
+    let log = AuditLog::open_sync(base.path(), "cli:folded").unwrap();
+    let recording = session_board_recording_decided(true, &log).expect("a recording while on");
+    let output = traced(|| {
+        recording.record_fold_back(FoldBackRecord {
+            task: TaskRef::of(&Slug::parse("board-store").unwrap()),
+            run: 1,
+            outcome: OpOutcome::Ok,
+            run_outcome: Some(RunOutcomeKind::Stopped),
+            items: None,
+            unmatched: Some(0),
+            extra: Some(2),
+            evidence: Some(0),
+            evidence_dropped: Some(1),
+            cost_tokens: Some(9),
+            attempts: Some(1),
+            lost: Some(0),
+            bytes: Some(0),
+            duration_us: 3,
+        });
+    });
+    assert!(output.contains("board fold back"), "{output}");
+    let lines = parsed(base.path(), "cli:folded");
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    assert_eq!(lines[0]["event"], "board_fold_back");
+    assert_eq!(lines[0]["run_outcome"], "stopped");
+    assert_eq!(lines[0]["extra"], 2);
+    assert_eq!(lines[0]["turn"], Value::Null);
+    assert!(session_board_recording_decided(false, &log).is_none());
 }

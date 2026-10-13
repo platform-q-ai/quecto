@@ -75,6 +75,8 @@ mod board_run_summary_ports;
 mod board_runs;
 #[path = "contracts/board_tasks.rs"]
 mod board_tasks;
+#[path = "contracts/board_text_cells.rs"]
+mod board_text_cells;
 #[path = "contracts/board_transaction.rs"]
 mod board_transaction;
 #[path = "contracts/board_usage.rs"]

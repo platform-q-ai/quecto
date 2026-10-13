@@ -78,11 +78,54 @@ fn checked_now(clock: &dyn BoardClock) -> Result<When, ProjectBoardError> {
 
 /// Writes the artifacts `change` builds from the board and the time, in
 /// one change, retried against a fresh board when another writer moved it
-/// first. Every change writes its task first ([`written_task`]). Given
+/// first. Every such change writes its task first ([`written_task`]); a
+/// fold-back writes its run alone ([`commit_run`]). Given
 /// `facts` (epic #2481 T4), it notes the attempts it began, how many lost
 /// the race and how long it paused between them; given none, it notes
 /// nothing and reads no monotonic time.
 pub(super) fn commit(
+    store: &dyn ProjectBoardStore,
+    clock: &dyn BoardClock,
+    message: &str,
+    facts: Option<&mut OpFacts>,
+    change: impl FnMut(&BoardSnapshot, &When) -> Result<Vec<BoardArtifact>, ProjectBoardError>,
+) -> Result<Vec<BoardArtifact>, ProjectBoardError> {
+    shaped(Writes::TaskFirst, store, clock, message, facts, change)
+}
+
+/// [`commit`] of a change that writes one run alone: a fold-back, which
+/// leaves its task as it is.
+pub(super) fn commit_run(
+    store: &dyn ProjectBoardStore,
+    clock: &dyn BoardClock,
+    message: &str,
+    facts: Option<&mut OpFacts>,
+    change: impl FnMut(&BoardSnapshot, &When) -> Result<Vec<BoardArtifact>, ProjectBoardError>,
+) -> Result<Vec<BoardArtifact>, ProjectBoardError> {
+    shaped(Writes::OneRun, store, clock, message, facts, change)
+}
+
+/// What a change writes, as its use case declares it.
+#[derive(Debug, Clone, Copy)]
+enum Writes {
+    /// Its task first, then any of the task's other artifacts.
+    TaskFirst,
+    /// One run, and nothing else.
+    OneRun,
+}
+
+impl Writes {
+    /// Whether `artifacts` are written as declared (an allowlist).
+    fn holds(self, artifacts: &[BoardArtifact]) -> bool {
+        match self {
+            Self::TaskFirst => matches!(artifacts.first(), Some(BoardArtifact::Task(_))),
+            Self::OneRun => matches!(artifacts, [BoardArtifact::Run(_)]),
+        }
+    }
+}
+
+fn shaped(
+    writes: Writes,
     store: &dyn ProjectBoardStore,
     clock: &dyn BoardClock,
     message: &str,
@@ -94,8 +137,8 @@ pub(super) fn commit(
         let when = checked_now(clock)?;
         let artifacts = change(&snapshot, &when)?;
         assert!(
-            matches!(artifacts.first(), Some(BoardArtifact::Task(_))),
-            "a board change writes its task first"
+            writes.holds(&artifacts),
+            "a board change writes as it declares ({writes:?})"
         );
         match store.write(&snapshot.head, &artifacts, message)? {
             BoardWrite::Written(head) => {

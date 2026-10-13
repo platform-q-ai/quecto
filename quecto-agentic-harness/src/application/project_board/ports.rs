@@ -11,7 +11,7 @@ use crate::domain::project_board::entities::review::Review;
 use crate::domain::project_board::entities::run::Run;
 use crate::domain::project_board::entities::task::Task;
 use crate::domain::project_board::value_objects::slug::Slug;
-use crate::domain::project_board::value_objects::telemetry::BoardOpRecord;
+use crate::domain::project_board::value_objects::telemetry::{BoardOpRecord, FoldBackRecord};
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
 use crate::domain::project_board::value_objects::vocabulary::TaskStatus;
 
@@ -473,6 +473,16 @@ pub trait PullRequestStates: Send + Sync {
     fn state(&self, pr: u64) -> Result<PullRequestState, PullRequestStatesError>;
 }
 
+/// Port: whether the board's file format holds a line of text as a
+/// table's text cell, exactly as the store's codec judges the cells it
+/// writes (a run's owners and evidence among them). Text from outside the
+/// board (a swarm's evidence) is checked here line by line, so one line
+/// the codec would refuse is left out rather than sink the whole write.
+pub trait BoardTextCells: Send + Sync {
+    /// Whether a text cell holds `line` as it is.
+    fn holds(&self, line: &str) -> bool;
+}
+
 /// Port: where each board request's `board_op` record goes (epic #2481):
 /// the event log (a session's, or the CLI's daily `board-cli_<date>`
 /// log) and `tracing`. It is held only inside a
@@ -485,4 +495,8 @@ pub trait ProjectBoardOpLog: Send + Sync {
     /// dropped write is the adapter's to count and report, and never
     /// changes the request's answer.
     fn record(&self, record: BoardOpRecord);
+
+    /// Appends a fold-back's `board_fold_back` record (S4), as
+    /// [`Self::record`] appends a `board_op`.
+    fn record_fold_back(&self, record: FoldBackRecord);
 }

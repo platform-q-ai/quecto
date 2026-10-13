@@ -7,19 +7,37 @@ use quecto::domain::project_board::value_objects::code_ref::CommitId;
 use quecto::domain::project_board::value_objects::slug::Slug;
 use quecto::domain::project_board::value_objects::telemetry::{
     Access, BoardOpRecord, ClaimFacts, Client, CompletionFacts, CompletionKind, FaultKind,
-    FrontEnd, ListingCounts, Normalised, OpKind, OpOutcome, RequestFault, StaticKind, TaskRef,
-    TextChange,
+    FoldBackRecord, FrontEnd, ItemCounts, ListingCounts, Normalised, OpKind, OpOutcome,
+    RequestFault, RunOutcomeKind, StaticKind, TaskRef, TextChange,
 };
 
 use crate::common::read_repo_file;
 
-/// The telemetry section of `docs/project-board.md`.
+/// The heading of the telemetry section's part on fold-back records.
+const FOLD_BACKS: &str = "\n### Fold-back records\n";
+
+/// The telemetry section of `docs/project-board.md`, up to its part on
+/// fold-back records.
 fn telemetry_doc() -> String {
     let doc = read_repo_file("docs/project-board.md");
     let (_, section) = doc
         .split_once("\n## Telemetry\n")
         .expect("docs/project-board.md has a Telemetry section");
-    section.to_owned()
+    let (board_ops, _) = section
+        .split_once(FOLD_BACKS)
+        .expect("the Telemetry section has a part on fold-back records");
+    board_ops.to_owned()
+}
+
+/// The telemetry section's part on fold-back records, up to the next
+/// heading.
+fn fold_back_doc() -> String {
+    let doc = read_repo_file("docs/project-board.md");
+    let (_, part) = doc
+        .split_once(FOLD_BACKS)
+        .expect("docs/project-board.md has a part on fold-back records");
+    let end = part.find("\n#").unwrap_or(part.len());
+    part[..end].to_owned()
 }
 
 /// A record with every field set.
@@ -104,6 +122,53 @@ fn every_field_a_board_op_record_writes_is_documented_and_no_other() {
     // The envelope's fields the page explains for the board.
     written.extend(["session".to_string(), "turn".to_string()]);
     assert_eq!(documented_fields(&telemetry_doc()), written);
+}
+
+#[test]
+fn every_field_a_fold_back_record_writes_is_documented_and_no_other() {
+    let record = FoldBackRecord {
+        task: TaskRef::of(&Slug::parse("a").unwrap()),
+        run: 1,
+        outcome: OpOutcome::Refused {
+            code: StaticKind::new("rule"),
+            rule: Some(StaticKind::new("no_such_run")),
+        },
+        run_outcome: Some(RunOutcomeKind::Stopped),
+        items: Some(ItemCounts {
+            todo: 1,
+            doing: 0,
+            review: 0,
+            done: 0,
+            blocked: 0,
+        }),
+        unmatched: Some(1),
+        extra: Some(1),
+        evidence: Some(1),
+        evidence_dropped: Some(1),
+        cost_tokens: Some(1),
+        attempts: Some(1),
+        lost: Some(0),
+        bytes: Some(1),
+        duration_us: 1,
+    };
+    let line = serde_json::to_value(AuditEvent::BoardFoldBack(Box::new(record))).unwrap();
+    let mut written: BTreeSet<String> = line.as_object().unwrap().keys().cloned().collect();
+    assert!(written.remove("event"));
+    let section = fold_back_doc();
+    assert_eq!(documented_fields(&section), written);
+    for kind in RunOutcomeKind::ALL
+        .iter()
+        .filter(|kind| **kind != RunOutcomeKind::Lost)
+    {
+        let kind = kind.as_str();
+        assert!(
+            section.contains(&format!("`{kind}`")),
+            "`{kind}` is not named"
+        );
+    }
+    for told in ["board_fold_back", "board fold back", "`INFO`"] {
+        assert!(section.contains(told), "{told} is not told");
+    }
 }
 
 #[test]
