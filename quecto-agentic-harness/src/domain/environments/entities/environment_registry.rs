@@ -620,37 +620,6 @@ impl EnvironmentRegistry {
         self.claim_kill_locked(state, environment_ref)
     }
 
-    /// [`Self::begin_kill`] granted only when `condition` admits the record
-    /// under the ref, judged in the same critical section that grants the
-    /// claim: a ref reused since the caller last looked is never claimed on
-    /// the earlier record's word. A refusal claims nothing and writes
-    /// nothing.
-    pub fn begin_kill_if(
-        &self,
-        environment_ref: &str,
-        condition: &ClaimCondition,
-    ) -> Result<KillClaim, ClaimRefusal> {
-        let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
-        Self::admitted_locked(&state, environment_ref, condition)?;
-        self.claim_kill_locked(state, environment_ref)
-            .map_err(ClaimRefusal::Lookup)
-    }
-
-    /// Whether `condition` admits the record under `environment_ref`, with
-    /// the state lock held by the caller that goes on to claim it.
-    fn admitted_locked(
-        state: &EnvironmentRegistryState,
-        environment_ref: &str,
-        condition: &ClaimCondition,
-    ) -> Result<(), ClaimRefusal> {
-        let record = state.entries.get(environment_ref).ok_or_else(|| {
-            ClaimRefusal::Lookup(EnvironmentLookupError::Unknown(environment_ref.to_string()))
-        })?;
-        condition
-            .judge(record)
-            .map_err(ClaimRefusal::CreatedByOther)
-    }
-
     fn claim_kill_locked(
         &self,
         mut state: MutexGuard<'_, EnvironmentRegistryState>,
