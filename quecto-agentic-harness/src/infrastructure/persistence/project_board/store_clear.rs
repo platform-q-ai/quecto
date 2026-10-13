@@ -17,11 +17,14 @@
 //! carried as they are, names listed twice), never on one folder's
 //! layout, so it holds however many folders the board grows. A file set
 //! aside in another folder is cleared alone (#2481 S10a): its folder is
-//! rebuilt without it. Names listed twice there wait for S10b.
+//! rebuilt without it. A name listed twice there (S10b) is resolved as one
+//! in `tasks/` is: the clear names the copy it keeps, which joins what its
+//! folder carries, or that none is, and the folder is rebuilt; quecto
+//! never picks a copy itself.
 use super::*;
 use crate::application::project_board::ports::{KeepCopy, QuarantinedFile, SetAsideClear};
 use crate::infrastructure::persistence::project_board::board_tree::{
-    TASK_NAMING, TASKS, TreeCopy, spells_id,
+    MAX_TASK_FILE_BYTES, TASK_NAMING, TASKS, TreeCopy, read_size_in, spells_id,
 };
 
 /// The most names a refusal lists before it says how many more there are.
@@ -89,16 +92,16 @@ impl GitBoardStore {
             None => return Err(BoardStoreError::NoBoard),
         }
         let board = self.board_at(&base)?;
-        // A name listed twice outside `tasks/` waits for a clear that
-        // resolves it there (S10b).
-        if let Some(refusal) = board.folders_repeated_refusal() {
-            return Err(BoardStoreError::FolderSetAside(refusal));
-        }
         let after = match cleared(&board, clear) {
             Ok(after) => after,
             Err(refusal) => return Ok(BoardWrite::Refused(refusal)),
         };
-        assert!(after.repeated.is_empty(), "a clear resolves every name");
+        // So every folder is rebuilt or carried as a write leaves it.
+        let resolved = after.folders.values().all(|tree| tree.repeated.is_empty());
+        assert!(
+            after.repeated.is_empty() && resolved,
+            "a clear resolves every name"
+        );
         // A clear is a write: the other folders drop what a write drops.
         let folders = after.folders_after(&[]);
         after.within_clear_bounds(&board, &folders, self.limits)?;
@@ -108,19 +111,35 @@ impl GitBoardStore {
     }
 }
 
+/// Where a name listed more than once lies: its folder (`tasks` among
+/// them), its name there and its copies.
+type Repeated<'a> = (&'static str, &'a str, &'a [TreeCopy]);
+
+/// Every name the board lists more than once, by the path its listing
+/// shows: in `tasks/`, then in each other folder.
+fn repeated_names(board: &Board) -> BTreeMap<String, Repeated<'_>> {
+    let tasks = board.repeated.iter().map(|(name, copies)| {
+        let place = (TASK_NAMING.folder, name.as_str(), copies.as_slice());
+        (format!("{TASKS}{name}"), place)
+    });
+    let folders = board.folders.iter().flat_map(|(folder, tree)| {
+        tree.repeated.iter().map(move |(name, copies)| {
+            let place = (*folder, name.as_str(), copies.as_slice());
+            (format!("{folder}/{name}"), place)
+        })
+    });
+    tasks.chain(folders).collect()
+}
+
 /// `board` once `clear` is made, or why it is refused.
 fn cleared(board: &Board, clear: &SetAsideClear) -> Result<Board, String> {
     let shown = |text: &str| quoted(text.as_bytes());
     let objects = |copies: &[TreeCopy]| listed(copies.iter().map(|copy| copy.oid.clone()));
-    let repeated: BTreeMap<String, &[TreeCopy]> = board
-        .repeated
-        .iter()
-        .map(|(name, copies)| (format!("{TASKS}{name}"), copies.as_slice()))
-        .collect();
+    let repeated = repeated_names(board);
     let unresolved = repeated
         .iter()
         .filter(|(path, _)| !clear.repeated.contains_key(*path))
-        .map(|(path, copies)| format!("{path} (objects {})", objects(copies)));
+        .map(|(path, (_, _, copies))| format!("{path} (objects {})", objects(copies)));
     let unresolved: Vec<String> = unresolved.collect();
     match unresolved.is_empty() {
         true => {}
@@ -134,20 +153,18 @@ fn cleared(board: &Board, clear: &SetAsideClear) -> Result<Board, String> {
     }
     let mut after = board.clone();
     for (path, keep) in &clear.repeated {
-        let (Some(copies), Some(name)) = (repeated.get(path), path.strip_prefix(TASKS)) else {
+        let Some((folder, name, copies)) = repeated.get(path) else {
             return Err(format!("{} is not listed more than once", shown(path)));
         };
-        resolve(
-            &mut after,
-            path,
-            name,
-            copies,
-            &listed_at(board, path),
-            keep,
-        )?;
+        if let Some(copy) = resolve(path, copies, &listed_at(board, path), keep)? {
+            keep_copy(&mut after, folder, name, copy);
+        }
         after.quarantined.retain(|file| file.path != *path);
     }
     after.repeated.clear();
+    for tree in after.folders.values_mut() {
+        tree.repeated.clear();
+    }
     match repeated.get(&clear.path) {
         // Resolved with the rest above; the object named is one of its copies.
         Some(_) => match listed_at(board, &clear.path).contains(clear.object.as_str()) {
@@ -166,17 +183,15 @@ fn cleared(board: &Board, clear: &SetAsideClear) -> Result<Board, String> {
     }
 }
 
-/// Resolves the name listed more than once at `path` in `after`: its
-/// copies must be exactly the ones the clear saw, never one more, and a
-/// copy kept stays as it was.
-fn resolve(
-    after: &mut Board,
+/// The copy of the name listed more than once at `path` that a clear
+/// keeps, if any: its copies must be exactly the ones the clear saw, never
+/// one more, and a copy kept stays as it was.
+fn resolve<'a>(
     path: &str,
-    name: &str,
-    copies: &[TreeCopy],
+    copies: &'a [TreeCopy],
     shown: &BTreeSet<&str>,
     keep: &KeepCopy,
-) -> Result<(), String> {
+) -> Result<Option<&'a TreeCopy>, String> {
     let (kept, seen) = match keep {
         KeepCopy::Object { keep, seen } => (Some(keep), seen),
         KeepCopy::Drop(seen) => (None, seen),
@@ -198,19 +213,12 @@ fn resolve(
         }
     }
     let Some(keep) = kept else {
-        return Ok(());
+        return Ok(None);
     };
     let candidates: Vec<&TreeCopy> = copies.iter().filter(|copy| copy.oid == *keep).collect();
     let modes: BTreeSet<&str> = candidates.iter().map(|copy| copy.mode.as_str()).collect();
     match (candidates.first(), modes.len()) {
-        (Some(copy), 1) => {
-            after.kept.insert(name.to_string(), copy.entry());
-            // A read reads it, as a task, only when its name spells an id.
-            if let (Some(size), true) = (copy.read_size(), spells_id(name)) {
-                after.read_bytes.insert(name.to_string(), size);
-            }
-            Ok(())
-        }
+        (Some(copy), 1) => Ok(Some(copy)),
         (Some(_), _) => Err(format!(
             "{keep} names copies of {path} of different modes ({}): which one stays would be a \
              guess; drop them all",
@@ -219,6 +227,32 @@ fn resolve(
         (None, _) => Err(format!(
             "{keep} is not one of {path}'s copies a write carries, the only ones a clear keeps"
         )),
+    }
+}
+
+/// `board` with `copy` kept as `name` in `folder`, as it was: carried by
+/// the write, and counted as a read reads it when a read will.
+fn keep_copy(board: &mut Board, folder: &str, name: &str, copy: &TreeCopy) {
+    match folder == TASK_NAMING.folder {
+        true => {
+            board.kept.insert(name.to_string(), copy.entry());
+            // A read reads it, as a task, only when its name spells an id.
+            if let (Some(size), true) = (copy.read_size(MAX_TASK_FILE_BYTES), spells_id(name)) {
+                board.read_bytes.insert(name.to_string(), size);
+            }
+        }
+        false => {
+            let size = read_size_in(folder, name, copy);
+            let tree = board.folders.get_mut(folder);
+            // A name listed twice lies in a folder the read read.
+            assert!(tree.is_some(), "{folder}/ was read");
+            if let Some(tree) = tree {
+                tree.files.insert(name.to_string(), copy.entry());
+                if let Some(size) = size {
+                    tree.sizes.insert(name.to_string(), size);
+                }
+            }
+        }
     }
 }
 

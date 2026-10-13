@@ -22,8 +22,15 @@ alone is carried as the same tree. A folder it writes in, or one holding a stray
 (any entry a write drops), is rebuilt from the files it carries, and a folder left
 with nothing in it is omitted. A file set aside is carried as it is, and writes to
 its key are refused, unless it is one a write drops: a write of its key replaces
-it. A clear removes one file set aside, in any folder. While a name outside `tasks/` is listed more than once, every
-write and clear is refused (`folder_set_aside`) until a later quecto can clear it.
+it. A clear removes one file set aside, in any folder.
+
+A name listed more than once (a hand edit; git rejects such a tree) is resolved
+only by a clear, which names, for every such name on the board, the copy to keep or
+that none is; quecto never picks a copy. While one is listed in `tasks/`, every
+write is refused. While one is listed in another folder, a write into that folder
+is refused, and any other write carries the folder as the tree it was, so no write
+makes a tree holding a name twice.
+
 Listings are unavailable (`folder_set_aside`) while a file set aside outside
 `tasks/` names a plan, run, change, review or discussion, since the index holds
 tasks alone for now. It writes the marker `quecto-board 3` and reads
@@ -32,8 +39,14 @@ board this build has written, rather than taking its folders for someone else's
 branch.
 
 A read takes at most the following. Past any of these it answers
-`board_too_large` before it reads any file's bytes. In a partial clone, objects the
-clone lacks are still fetched before their sizes can be judged.
+`board_too_large` before it reads any file's bytes.
+
+In a partial clone whose promisor is the board's remote, a read fetches the board's
+commits alone, then its root tree, then each folder with every file but those past
+1.5 MiB (`--filter=blob:limit`), and the archive's tree alone: nothing under the
+archive is fetched. A file the filter left on the remote is past every cap, so it
+is set aside as too large and every write carries it by its id, unfetched. A clone
+whose remote is not its promisor fetches what it lacks whole, as before.
 
 | Folder | Entries | File bytes | One file |
 |---|---|---|---|

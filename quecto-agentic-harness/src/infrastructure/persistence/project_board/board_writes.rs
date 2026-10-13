@@ -4,13 +4,13 @@
 //! very tree it was read as, or rebuilt from what it carries, by object,
 //! with the files written in place and every entry a write drops gone.
 //!
-//! What this quecto cannot yet do safely is refused (`folder_set_aside`)
-//! until a clear that resolves names listed twice across folders can
-//! (S10b): any write or clear while a name outside `tasks/` is listed more
-//! than once, since it would carry every copy (a tree git rejects) or
-//! choose one.
+//! A folder holding a name listed more than once (S10b) holds only itself:
+//! a write that writes nothing in it carries it as the very tree it was
+//! read as, so no write makes a tree of the copies (git rejects one, and
+//! the remote already holds this one), and a write into it is refused until
+//! a clear names the copy each such name keeps.
 use super::folders::{FOLDERS, Folder};
-use super::{ARCHIVE, Board, CarriedTree, RECOVERY, TASKS, TREE};
+use super::{ARCHIVE, Board, CarriedTree, TASKS, TREE, named_twice};
 use crate::application::project_board::ports::ArtifactKey;
 use std::collections::BTreeMap;
 
@@ -120,14 +120,16 @@ impl Board {
         let name = folder.naming.folder;
         let mine: Vec<&FolderFile> = written.iter().filter(|file| file.folder == name).collect();
         let read = self.folders.get(name);
-        // A folder with a name listed twice is refused before any write.
+        // A write into a folder with a name listed twice is refused first.
         assert!(
-            read.is_none_or(|tree| tree.repeated.is_empty()),
-            "no write leaves a folder with a name listed twice"
+            mine.is_empty() || read.is_none_or(|tree| tree.repeated.is_empty()),
+            "no write rebuilds a folder with a name listed twice"
         );
         let after = match (read, mine.is_empty()) {
             (None, true) => return None,
-            (Some(tree), true) if tree.carries_every_entry() => FolderAfter::Carried(tree),
+            (Some(tree), true) if tree.carries_every_entry() || !tree.repeated.is_empty() => {
+                FolderAfter::Carried(tree)
+            }
             (read, _) => {
                 let empty = CarriedTree::default();
                 let tree = read.unwrap_or(&empty);
@@ -147,26 +149,18 @@ impl Board {
         Some((name, after))
     }
 
-    /// Why no write or clear is made: a name listed more than once in a
-    /// folder besides `tasks/` (the first folder's, in the plan's order).
-    pub fn folders_repeated_refusal(&self) -> Option<String> {
-        let path = FOLDERS
-            .iter()
-            .filter_map(|folder| self.folders.get(folder.naming.folder))
-            .find_map(|tree| tree.repeated.first())
-            .map(|(name, _)| name)?;
-        // No quecto writes over such a board, so moving back undoes hand
-        // edits alone; the refusal says so.
-        Some(format!(
-            "{path} is named more than once, and this quecto writes nothing over such a board, \
-             not even a clear, while a name outside {TASKS} is: to write the board again, \
-             {RECOVERY} (which undoes any hand edit after it too)"
-        ))
-    }
-
-    /// Red stub (#2481 S10b).
-    pub fn folder_repeated_refusal(&self, _head: &str, _written: &[FolderFile]) -> Option<String> {
-        self.folders_repeated_refusal()
+    /// Why a write of `written` at board commit `head` is refused: a file
+    /// it writes in a folder besides `tasks/` that lists a name more than
+    /// once (the first such folder's, in the plan's order).
+    pub fn folder_repeated_refusal(&self, head: &str, written: &[FolderFile]) -> Option<String> {
+        FOLDERS.iter().find_map(|folder| {
+            let name = folder.naming.folder;
+            let (path, copies) = self.folders.get(name)?.repeated.first()?;
+            written.iter().any(|file| file.folder == name).then(|| {
+                let writes = format!("no write in {name}/");
+                named_twice(&format!("{name}/{path}"), head, copies, &writes)
+            })
+        })
     }
 
     /// The archive's root entry, carried as it was read, if the board has
