@@ -25,6 +25,7 @@ use crate::application::project_board::telemetry::{
 };
 use crate::domain::project_board::value_objects::code_ref::CommitId;
 use crate::domain::project_board::value_objects::rule_error::BoardRuleError;
+use crate::domain::project_board::value_objects::schema_error::SchemaError;
 use crate::domain::project_board::value_objects::telemetry::{
     Access, BoardOpRecord, Client, FaultKind, FrontEnd, ListingCounts, OpKind, OpOutcome,
     RequestFault, StaticKind, TaskRef,
@@ -137,13 +138,13 @@ impl BoardCall {
     /// The answer of the board's refusal of `op`.
     pub fn refuse_as_board(&mut self, op: &str, error: &ProjectBoardError) -> Value {
         self.note(|record| {
-            // Only a rule's refusal has a rule's code.
-            let rule = match error {
-                ProjectBoardError::Rule(rule) => Some(rule_code(rule)),
-                _ => None,
-            };
+            let (rule, schema) = refusal_parts(error);
             record.outcome = refused(answer::error_code(error).as_str(), rule);
-            record.fault = schema_fault(error);
+            record.fault = schema.map(|schema| RequestFault {
+                field: schema_field(&schema.field),
+                fault: FaultKind::InvalidValue,
+                unexpected_count: None,
+            });
         });
         answer::board_refused(op, error)
     }
@@ -176,6 +177,12 @@ impl BoardCall {
         else {
             return;
         };
+        debug_assert!(
+            agrees(&record.outcome, answer),
+            "the answer {answer} disagrees with its note {:?}",
+            record.outcome
+        );
+        record.outcome = answered_outcome(record.outcome, answer);
         let listing = matches!(
             record.op,
             OpKind::List | OpKind::ListReady | OpKind::ListTakeable
@@ -188,6 +195,31 @@ impl BoardCall {
     }
 }
 
+/// Whether `answer` says what its note `noted` says: ok, or refused.
+fn agrees(noted: &OpOutcome, answer: &Value) -> bool {
+    let answered_ok = answer.get("ok") == Some(&Value::Bool(true));
+    answered_ok == (*noted == OpOutcome::Ok)
+}
+
+/// The outcome a call's record holds, once its front end sent `answer`:
+/// the one noted, when the answer [`agrees`] (it always should: an answer
+/// and its note are made by the same call, and a debug build asserts it).
+/// Otherwise the answer is the truth: `ok`, or refused with the answer's
+/// code as a known kind; never a panic on a user's call.
+fn answered_outcome(noted: OpOutcome, answer: &Value) -> OpOutcome {
+    let answered_ok = answer.get("ok") == Some(&Value::Bool(true));
+    match (agrees(&noted, answer), answered_ok) {
+        (true, _) => noted,
+        (false, true) => OpOutcome::Ok,
+        (false, false) => OpOutcome::Refused {
+            code: answer["error"]["code"]
+                .as_str()
+                .map_or(StaticKind::OTHER, StaticKind::new),
+            rule: None,
+        },
+    }
+}
+
 /// Refused with `code`, and `rule`'s code for a rule: each an entry of the
 /// code's own tables, never text from outside.
 fn refused(code: &'static str, rule: Option<&'static str>) -> OpOutcome {
@@ -197,20 +229,93 @@ fn refused(code: &'static str, rule: Option<&'static str>) -> OpOutcome {
     }
 }
 
-/// Which schema field a refused task's write named: the task's
-/// (`invalid_task`) or a rule's (`invalid`).
-fn schema_fault(error: &ProjectBoardError) -> Option<RequestFault> {
-    // Only these two refusals name a schema field.
-    let schema = match error {
-        ProjectBoardError::Invalid(schema)
-        | ProjectBoardError::Rule(BoardRuleError::Invalid(schema)) => schema,
-        _ => return None,
-    };
-    Some(RequestFault {
-        field: schema_field(&schema.field),
-        fault: FaultKind::InvalidValue,
-        unexpected_count: None,
-    })
+/// What a board's refusal names besides its code: a rule's code, and the
+/// schema error whose field was wrong (a task's, `invalid_task`, or a
+/// rule's, `invalid`). Exhaustive, so a new refusal does not compile until
+/// it says which it names.
+fn refusal_parts(error: &ProjectBoardError) -> (Option<&'static str>, Option<&SchemaError>) {
+    use ProjectBoardError as E;
+    match error {
+        E::Rule(rule) => (Some(rule_code(rule)), rule_schema(rule)),
+        E::Invalid(schema) => (None, Some(schema)),
+        E::Store(_)
+        | E::NotFound(_)
+        | E::Exists(_)
+        | E::Clock(_)
+        | E::Quarantined { .. }
+        | E::Duplicate { .. }
+        | E::SetAsideFile { .. }
+        | E::UnknownReference(_)
+        | E::ClosesCycle { .. }
+        | E::InvalidWriter(_)
+        | E::PrStateUnknown(_)
+        | E::PullRequests(_)
+        | E::TaskAhead { .. }
+        | E::ClockOutOfRange(_)
+        | E::ClockAhead { .. }
+        | E::Contended { .. }
+        | E::Refused(_)
+        | E::NotSetAside { .. }
+        | E::NoPullRequestHost(_)
+        | E::Stale { .. } => (None, None),
+    }
+}
+
+/// The schema error a rule's refusal names: only `invalid` names one.
+/// Exhaustive, as [`refusal_parts`].
+fn rule_schema(rule: &BoardRuleError) -> Option<&SchemaError> {
+    use BoardRuleError as R;
+    match rule {
+        R::Invalid(schema) => Some(schema),
+        R::NotAllowed { .. }
+        | R::NotHolder
+        | R::NoClaim
+        | R::ClaimLive
+        | R::ClaimExpired
+        | R::RunOpen(..)
+        | R::RunEnded(..)
+        | R::PlanNotDraft(..)
+        | R::NotThisTasks
+        | R::NotThisChange
+        | R::TaskFinished(..)
+        | R::UnknownPlanVersion(..)
+        | R::PlanChanged { .. }
+        | R::PlansInconsistent(..)
+        | R::PlanAhead { .. }
+        | R::RunsInconsistent(..)
+        | R::PlanNotAccepted(..)
+        | R::ChangeAlreadyLinked { .. }
+        | R::NoSuchChange(..)
+        | R::ChangeAhead { .. }
+        | R::DiscussionClosed(..)
+        | R::DiscussionLinked { .. }
+        | R::DiscussionAhead { .. }
+        | R::MessageAhead { .. }
+        | R::DiscussionFull { .. }
+        | R::ReviewAhead { .. }
+        | R::ChangesLinked(..)
+        | R::PrUnread(..)
+        | R::PrNotOpen(..)
+        | R::PrHeadMismatch(..)
+        | R::ChangeUnlinked(..)
+        | R::ChangeMerged(..)
+        | R::NoChanges
+        | R::ChangesUnmerged(..)
+        | R::ChangesInconsistent(..)
+        | R::NotTakeable(..)
+        | R::AlreadyHolder
+        | R::NoPrs
+        | R::PrsUnmerged(..)
+        | R::PrsLinked(..)
+        | R::PrNotLinked(..)
+        | R::PrAlreadyLinked(..)
+        | R::NotDraft(..)
+        | R::NoEdit
+        | R::Superseded { .. }
+        | R::IssueShared { .. }
+        | R::IssueIsPr { .. }
+        | R::OwnPrReferenced { .. } => None,
+    }
 }
 
 /// A listing's counts from its answer: the tasks and set-aside files it
@@ -234,6 +339,8 @@ fn micros(elapsed: Duration) -> u64 {
     u64::try_from(elapsed.as_micros()).unwrap_or(u64::MAX)
 }
 
+/// The tests' recordings and outside text, shared with the front ends'
+/// tests.
 #[cfg(test)]
 #[path = "recording_tests.rs"]
-mod tests;
+pub(crate) mod tests;

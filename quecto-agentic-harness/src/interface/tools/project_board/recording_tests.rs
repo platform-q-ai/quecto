@@ -228,7 +228,7 @@ fn a_listing_records_what_its_answer_showed_and_left_out() {
 
 /// Text from outside, `rng`'s: a capital first, so it is never shaped as a
 /// kind, and long enough that no count or id holds it by chance.
-fn outside_text(rng: &mut StdRng) -> String {
+pub(crate) fn outside_text(rng: &mut StdRng) -> String {
     const REST: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 _-./:@";
     let first = char::from(rng.gen_range(b'A'..=b'Z'));
     let length = rng.gen_range(11..40);
@@ -272,4 +272,93 @@ fn no_request_text_ever_reaches_a_record() {
             }
         }
     }
+}
+
+/// Review round 1: the board's refusals that name a schema field record
+/// it: a task the board refuses (`invalid_task`) and a rule's `invalid`.
+#[test]
+fn a_refusal_naming_a_schema_field_records_it() {
+    let board = board();
+    let invalid_task = one(&board, json!({"op": "create", "task": "a", "title": ""}));
+    assert_eq!(
+        (
+            &invalid_task["code"],
+            &invalid_task["field"],
+            &invalid_task["fault"]
+        ),
+        (
+            &json!("invalid_task"),
+            &json!("title"),
+            &json!("invalid_value")
+        ),
+        "{invalid_task}"
+    );
+    one(&board, json!({"op": "create", "task": "b", "title": "B"}));
+    let invalid_rule = one(
+        &board,
+        json!({"op": "update_draft", "task": "b", "title": "Two\nlines"}),
+    );
+    assert_eq!(
+        (
+            &invalid_rule["code"],
+            &invalid_rule["rule"],
+            &invalid_rule["field"],
+            &invalid_rule["fault"]
+        ),
+        (
+            &json!("rule"),
+            &json!("invalid"),
+            &json!("title"),
+            &json!("invalid_value")
+        ),
+        "{invalid_rule}"
+    );
+    // A refusal that names no schema field records none.
+    let missing = one(&board, json!({"op": "show", "task": "c"}));
+    assert_eq!((missing.get("field"), missing.get("fault")), (None, None));
+}
+
+/// Review round 1: the answer is the truth. An answer and its note never
+/// disagree (each is made by the same call); were they to, the record
+/// takes the answer's outcome (a release build does not panic).
+#[test]
+fn the_answer_decides_an_outcome_its_note_disagrees_with() {
+    let refused = json!({"ok": false, "op": "show", "error": {"code": "not_found"}});
+    let ok = json!({"ok": true, "op": "show"});
+    let noted_refusal = OpOutcome::Refused {
+        code: StaticKind::new("stale"),
+        rule: None,
+    };
+    assert_eq!(answered_outcome(OpOutcome::Ok, &ok), OpOutcome::Ok);
+    assert_eq!(
+        answered_outcome(noted_refusal.clone(), &refused),
+        noted_refusal
+    );
+    assert_eq!(answered_outcome(noted_refusal, &ok), OpOutcome::Ok);
+    let unknown = json!({"ok": false, "error": {"code": "Secret Code"}});
+    assert_eq!(
+        answered_outcome(OpOutcome::Ok, &refused),
+        OpOutcome::Refused {
+            code: StaticKind::new("not_found"),
+            rule: None
+        }
+    );
+    assert_eq!(
+        answered_outcome(OpOutcome::Ok, &unknown),
+        OpOutcome::Refused {
+            code: StaticKind::OTHER,
+            rule: None
+        }
+    );
+}
+
+/// Review round 1: in a debug build a disagreement is a bug, caught.
+#[cfg(debug_assertions)]
+#[test]
+#[should_panic(expected = "disagrees with its note")]
+fn a_disagreeing_answer_is_caught_in_debug_builds() {
+    let records = Arc::new(Records::default());
+    let mut call = BoardCall::start(Some(recording(&records)), FrontEnd::Cli, Client::Cli);
+    call.named(Some("show"));
+    call.finish(&json!({"ok": false, "error": {"code": "not_found"}}), false);
 }

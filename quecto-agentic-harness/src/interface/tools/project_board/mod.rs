@@ -43,7 +43,8 @@ pub fn read(text: &str) -> Result<Value, RequestError> {
     json::strict(text).map_err(|error| refused(format!("must be JSON: {error}"), error.fault()))
 }
 
-/// The answer to the request `text`, recorded nowhere.
+/// The answer to the request `text`, recorded nowhere: the tests' way in.
+#[cfg(test)]
 pub fn run(operations: &RunBoardOperation, text: &str) -> Value {
     run_recorded(operations, text, &mut BoardCall::unrecorded())
 }
