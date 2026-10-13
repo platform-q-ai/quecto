@@ -262,9 +262,10 @@ pub enum BoardStoreError {
     /// The board is past what a read takes: too many entries, or too many
     /// bytes, in a folder or in all. Nothing is read.
     TooLarge(String),
-    /// A file set aside outside `tasks/` holds the board: no write or clear
-    /// is made while one is (a store that reads but does not yet write that
-    /// folder), and no listing is given while one names an artifact other
+    /// A file set aside outside `tasks/` holds the board where a store or
+    /// index cannot yet judge it: no write or clear is made while a name
+    /// there is listed more than once (a store that cannot yet resolve one
+    /// there), and no listing is given while one names an artifact other
     /// than a task (an index that does not yet hold that kind).
     FolderSetAside(String),
 }

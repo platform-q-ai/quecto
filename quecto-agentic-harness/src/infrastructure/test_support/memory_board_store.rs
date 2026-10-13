@@ -3,6 +3,9 @@
 //! another; [`MemoryBoardStore::before_next_write`] runs another writer's
 //! change just before a write is judged, and
 //! [`MemoryBoardStore::refuse_next_write`] makes the store refuse one.
+//!
+//! It judges a write as the git store does: every kind is written through
+//! its codec (a value it refuses is an invalid write, #2481 S10a).
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
 
@@ -13,6 +16,7 @@ use crate::application::project_board::ports::{
 use crate::domain::project_board::entities::claim::Identity;
 use crate::domain::project_board::value_objects::schema_error::line;
 use crate::domain::project_board::value_objects::slug::Slug;
+use crate::infrastructure::persistence::project_board::artifacts::file_of;
 
 type Interleaved = Box<dyn FnOnce(&MemoryBoardStore) + Send>;
 
@@ -324,14 +328,21 @@ impl ProjectBoardStore for MemoryBoardStore {
             board
                 .quarantined
                 .iter()
-                .find(|file| file.key.as_ref() == Some(key))
-                .map(|file| file.path.clone())
+                .find(|file| file.carried && file.key.as_ref() == Some(key))
         };
-        if let Some(path) = artifacts
+        if let Some(file) = artifacts
             .iter()
             .find_map(|artifact| set_aside(&artifact.key()))
         {
-            return Ok(BoardWrite::Refused(format!("{path} is quarantined")));
+            // As the git store words it.
+            return Ok(BoardWrite::Refused(format!(
+                "{} is set aside: {}",
+                file.path, file.reason
+            )));
+        }
+        // As the git store: what a codec refuses is never written.
+        for artifact in artifacts {
+            file_of(artifact).map_err(BoardStoreError::InvalidWrite)?;
         }
         for artifact in artifacts {
             board.artifacts.insert(artifact.key(), artifact.clone());

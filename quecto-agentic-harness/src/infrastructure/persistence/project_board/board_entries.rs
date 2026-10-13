@@ -31,7 +31,7 @@ pub(super) fn task_name(name: &str) -> Option<(Option<Slug>, TaskFile)> {
 
 /// How a folder names its files, and how a reason names them.
 #[derive(Debug, Clone, Copy)]
-pub(super) struct Naming {
+pub struct Naming {
     /// The folder, `tasks`.
     pub folder: &'static str,
     /// What one of its files holds: `task`.
@@ -44,21 +44,16 @@ pub(super) struct Naming {
     pub max_name: usize,
     /// The largest file of it read.
     pub file_bytes: usize,
-    /// Whether this quecto writes the folder, so a reason may say what the
-    /// next write does with a file (carries it, drops it). A folder it only
-    /// reads says what is wrong alone.
-    pub written: bool,
 }
 
 /// How `tasks/` names its files.
-pub(super) const TASK_NAMING: Naming = Naming {
+pub const TASK_NAMING: Naming = Naming {
     folder: "tasks",
     noun: "task",
     spelled: "task id",
     pattern: "<id>.md",
     max_name: MAX_NAME_BYTES,
     file_bytes: MAX_TASK_FILE_BYTES,
-    written: true,
 };
 
 /// What becomes of one entry of a folder, its file named by `K` (a task's
@@ -91,13 +86,9 @@ pub(super) fn disposition<K>(
         pattern,
         max_name,
         file_bytes,
-        written,
     } = *naming;
-    // What the next write does, said only of a folder this quecto writes.
-    let then = |what: &str, tail: &str| match written {
-        true => format!("{what}{tail}"),
-        false => what.to_string(),
-    };
+    // What the next write does with the entry, said after what is wrong.
+    let then = |what: &str, tail: &str| format!("{what}{tail}");
     let (dropped, carried) = ("; the next write drops it", "; carried forward as it is");
     match entry.kept_name(max_name) {
         true => {}
@@ -111,7 +102,7 @@ pub(super) fn disposition<K>(
     }
     let Some((id, file)) = file else {
         let reason = format!("not a {noun} file: only {pattern} belongs in {folder}/");
-        return aside(None, reason, false);
+        return aside(None, then(&reason, dropped), false);
     };
     let kind = found.map(|object| object.kind.as_str());
     let size = found.map_or(usize::MAX, |object| object.size);
@@ -169,12 +160,7 @@ pub(super) fn disposition<K>(
         ),
         (_, _, 1.., mode, _) => aside(
             None,
-            match written {
-                true => {
-                    format!("a copy of mode {mode} beside one a write carries{dropped}")
-                }
-                false => format!("a copy of mode {mode} beside another of its name"),
-            },
+            format!("a copy of mode {mode} beside one a write carries{dropped}"),
             false,
         ),
         (_, id, 0, mode, _) => aside(

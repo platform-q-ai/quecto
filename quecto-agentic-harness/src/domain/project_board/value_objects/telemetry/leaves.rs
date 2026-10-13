@@ -113,8 +113,10 @@ const KNOWN_KINDS: &[&str] = &[
     "id_in_use",
     // A call that ended without an answer (T3 review round 1).
     "internal",
-    // A board past what a read takes, and one held by a file set aside
-    // outside tasks/ (#2481 S9 review round 1).
+    // A board past what a read takes (#2481 S9 review round 1), and one
+    // held outside tasks/: a name listed twice there holds writes and
+    // clears (Q1), a file set aside there naming another kind's key holds
+    // listings.
     "board_too_large",
     "folder_set_aside",
     // Rule codes.

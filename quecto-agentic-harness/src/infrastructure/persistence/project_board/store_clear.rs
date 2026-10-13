@@ -15,10 +15,14 @@
 //!
 //! The clear works on the board's own view of its files (tasks, files
 //! carried as they are, names listed twice), never on one folder's
-//! layout, so it holds however many folders the board grows.
+//! layout, so it holds however many folders the board grows. A file set
+//! aside in another folder is cleared alone (#2481 S10a): its folder is
+//! rebuilt without it. Names listed twice there wait for S10b.
 use super::*;
 use crate::application::project_board::ports::{KeepCopy, QuarantinedFile, SetAsideClear};
-use crate::infrastructure::persistence::project_board::board_tree::{TASKS, TreeCopy, spells_id};
+use crate::infrastructure::persistence::project_board::board_tree::{
+    TASK_NAMING, TASKS, TreeCopy, spells_id,
+};
 
 /// The most names a refusal lists before it says how many more there are.
 const LISTED: usize = 8;
@@ -85,7 +89,9 @@ impl GitBoardStore {
             None => return Err(BoardStoreError::NoBoard),
         }
         let board = self.board_at(&base)?;
-        if let Some(refusal) = board.folders_refusal() {
+        // A name listed twice outside `tasks/` waits for a clear that
+        // resolves it there (S10b).
+        if let Some(refusal) = board.folders_repeated_refusal() {
             return Err(BoardStoreError::FolderSetAside(refusal));
         }
         let after = match cleared(&board, clear) {
@@ -93,9 +99,12 @@ impl GitBoardStore {
             Err(refusal) => return Ok(BoardWrite::Refused(refusal)),
         };
         assert!(after.repeated.is_empty(), "a clear resolves every name");
-        after.within_clear_bounds(&board, self.limits)?;
+        // A clear is a write: the other folders drop what a write drops.
+        let folders = after.folders_after(&[]);
+        after.within_clear_bounds(&board, &folders, self.limits)?;
         let tasks = self.tasks_tree(&after, &[])?;
-        self.land(&base, &after, &tasks, message)
+        let folders = self.folder_trees(&folders)?;
+        self.land(&base, &after, &tasks, folders, message)
     }
 }
 
@@ -237,20 +246,34 @@ fn named<'a>(board: &'a Board, clear: &SetAsideClear) -> Result<&'a QuarantinedF
 }
 
 /// `board` without `file`: the file carried as it is goes when it is that
-/// object. A carried name always shows exactly as it is (the read asserts
-/// it), so the shown path finds it; a stray that shows the same path is
-/// never carried, and the write drops it.
+/// object, in `tasks/` or in the folder it lies in (which the write then
+/// rebuilds without it). A carried name always shows exactly as it is (the
+/// read asserts it), so the shown path finds it; a stray that shows the
+/// same path is never carried, and the write drops it.
 fn drop_file(board: &mut Board, file: &QuarantinedFile) {
-    let name = file.path.strip_prefix(TASKS);
-    assert!(name.is_some(), "every file set aside is under {TASKS}");
-    let name = name.unwrap_or_default();
-    let carried = board
-        .kept
-        .get(name)
-        .and_then(|entry| entry.rsplit(' ').next());
-    if carried == Some(file.object.as_str()) {
-        board.kept.remove(name);
-        board.read_bytes.remove(name);
+    let split = file.path.split_once('/');
+    let (folder, name) = split.unwrap_or_default();
+    // A read sets aside files only in `tasks/` and the folders it read.
+    assert!(
+        folder == TASK_NAMING.folder || board.folders.contains_key(folder),
+        "a file set aside lies in a folder the read read: {}",
+        file.path
+    );
+    let object = |entry: &String| entry.rsplit(' ').next() == Some(file.object.as_str());
+    match (folder == TASK_NAMING.folder, board.folders.get_mut(folder)) {
+        (true, _) => {
+            if board.kept.get(name).is_some_and(object) {
+                board.kept.remove(name);
+                board.read_bytes.remove(name);
+            }
+        }
+        (false, Some(tree)) => {
+            if tree.files.get(name).is_some_and(object) {
+                tree.files.remove(name);
+                tree.sizes.remove(name);
+            }
+        }
+        (false, None) => {}
     }
     board.quarantined.retain(|other| {
         (other.path.as_str(), other.object.as_str()) != (file.path.as_str(), file.object.as_str())

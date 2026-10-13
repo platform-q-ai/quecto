@@ -1,4 +1,5 @@
 use super::*;
+use crate::application::project_board::ports::ArtifactKey;
 
 fn entry(raw: &[u8]) -> Entry {
     Entry {
@@ -70,7 +71,6 @@ fn the_folders_and_their_bounds_are_the_plans() {
 /// leading zero, or a discussion's `<id>`.
 #[test]
 fn a_folder_name_spells_a_key_only_as_written() {
-    use crate::application::project_board::ports::ArtifactKey;
     let id = || Slug::parse("a").unwrap();
     let [plans, runs, changes, reviews, discussions] = &FOLDERS;
     assert_eq!((plans.spell)("a.1"), Some(ArtifactKey::Plan(id(), 1)));
@@ -117,68 +117,200 @@ fn a_task() -> Task {
     .unwrap()
 }
 
-/// A board's folders a write carries count towards what a read takes in
-/// all: entries, then file bytes.
-#[test]
-fn a_write_counts_the_folders_it_carries() {
-    let carried = |entries: usize, bytes: usize| Board {
-        folders: BTreeMap::from([(
-            "plans",
-            CarriedTree {
-                oid: "a".repeat(40),
-                entries,
-                bytes,
-            },
-        )]),
-        ..Board::default()
+/// A board whose `plans/` was read as a tree of `entries` entries and
+/// `bytes` bytes a read reads, each entry a file a write carries.
+fn carried(entries: usize, bytes: usize) -> Board {
+    let files = (0..entries)
+        .map(|n| {
+            (
+                format!("x{n}.md"),
+                format!("100644 blob {}", "a".repeat(40)),
+            )
+        })
+        .collect();
+    let tree = CarriedTree {
+        oid: "b".repeat(40),
+        entries,
+        bytes,
+        files,
+        ..CarriedTree::default()
     };
+    Board {
+        folders: BTreeMap::from([("plans", tree)]),
+        ..Board::default()
+    }
+}
+
+/// `plans/a.1.md`, of `size` bytes, as a write makes it.
+fn plan_file(size: usize) -> Vec<FolderFile> {
+    vec![FolderFile {
+        folder: "plans",
+        name: "a.1.md".into(),
+        bytes: vec![b'x'; size],
+    }]
+}
+
+/// A board's other folders, as a write leaves them, count towards what a
+/// read takes in all: entries, then file bytes.
+#[test]
+fn a_write_counts_the_folders_it_leaves() {
     let task = a_task();
     let written = [(&task, vec![0; 10])];
+    let within = |board: Board| board.within_bounds(&written, &board.folders_after(&[]), LIMITS);
+    assert!(within(carried(4_096, 0)).is_ok());
+    let mut full = carried(4_096, 0);
+    for (name, extra) in [("runs", 4_096), ("changes", 4_096), ("reviews", 4_095)] {
+        let mut tree = full.folders["plans"].clone();
+        tree.entries = extra;
+        tree.files = (0..extra)
+            .map(|n| (format!("x{n}.md"), String::new()))
+            .collect();
+        full.folders.insert(name, tree);
+    }
+    assert!(within(full.clone()).is_ok(), "16,383 and one task");
+    full.folders.get_mut("reviews").unwrap().entries = 4_096;
+    full.folders
+        .get_mut("reviews")
+        .unwrap()
+        .files
+        .insert("y.md".into(), String::new());
+    let past = within(full);
     assert!(
-        carried(MAX_BOARD_ENTRIES - 1, 0)
-            .within_bounds(&written, LIMITS)
+        matches!(&past, Err(BoardStoreError::InvalidWrite(why)) if why.contains("16384 entries in all")),
+        "{past:?}"
+    );
+    let folder = |bytes| {
+        let mut board = carried(1, 0);
+        board.folders.get_mut("plans").unwrap().bytes = bytes;
+        board
+    };
+    // A folder's own bytes bound it first: the board's in all is checked
+    // with a limit below it.
+    let limits = Limits {
+        board_bytes: 100,
+        ..LIMITS
+    };
+    let board = folder(90);
+    assert!(
+        board
+            .within_bounds(&written, &board.folders_after(&[]), limits)
             .is_ok()
     );
-    let full = carried(MAX_BOARD_ENTRIES, 0).within_bounds(&written, LIMITS);
-    assert!(
-        matches!(&full, Err(BoardStoreError::InvalidWrite(why)) if why.contains("16384 entries in all")),
-        "{full:?}"
-    );
-    let bytes = MAX_BOARD_BYTES - 10;
-    assert!(carried(1, bytes).within_bounds(&written, LIMITS).is_ok());
-    let past = carried(1, bytes + 1).within_bounds(&written, LIMITS);
+    let board = folder(91);
+    let past = board.within_bounds(&written, &board.folders_after(&[]), limits);
     assert!(
         matches!(&past, Err(BoardStoreError::InvalidWrite(why)) if why.contains("bytes of files")),
         "{past:?}"
     );
 }
 
-/// Only a file set aside in a folder besides `tasks/` stops a write.
+/// A write keeps each other folder, as it leaves it, within the entries
+/// and file bytes a read takes of it.
 #[test]
-fn only_a_file_set_aside_in_another_folder_stops_a_write() {
-    let aside = |path: &str| QuarantinedFile {
-        path: path.into(),
-        key: None,
-        reason: "a stray".into(),
-        object: "a".repeat(40),
-        carried: false,
+fn a_write_keeps_each_folder_within_its_own_bounds() {
+    let within = |board: &Board, files: &[FolderFile]| {
+        board.within_bounds(&[], &board.folders_after(files), LIMITS)
     };
-    let board = |paths: &[&str]| Board {
-        quarantined: paths.iter().map(|path| aside(path)).collect(),
-        ..Board::default()
-    };
-    assert_eq!(
-        board(&["tasks/x.txt", "tasks/plans/x"]).folders_refusal(),
-        None
+    let files = plan_file(10);
+    assert!(within(&carried(4_095, 0), &files).is_ok());
+    let full = within(&carried(4_096, 0), &files);
+    assert!(
+        matches!(&full, Err(BoardStoreError::InvalidWrite(why)) if why.contains("its plans/ holds at most 4096 plan files") && why.contains("would hold 4097")),
+        "{full:?}"
     );
-    let refusal = board(&["discussions/x", "plans/x.txt", "tasks/x.txt"]).folders_refusal();
+    let most = 24 * 1024 * 1024;
+    let mut board = carried(1, 0);
+    let tree = board.folders.get_mut("plans").unwrap();
+    tree.sizes.insert("x0.md".into(), most - 10);
+    assert!(within(&board, &files).is_ok());
+    let past = within(&board, &plan_file(11));
+    assert!(
+        matches!(&past, Err(BoardStoreError::InvalidWrite(why)) if why.contains(&format!("{} bytes of plan files", most + 1))),
+        "{past:?}"
+    );
+}
+
+/// A folder a write leaves as it was is carried as its very tree; one it
+/// writes in, or one holding an entry a write drops, is rebuilt from what
+/// it carries, the file written replacing the one of its name; a folder
+/// never read is made by the write that writes in it.
+#[test]
+fn a_folder_is_carried_unless_written_in_or_dropping() {
+    let board = carried(2, 0);
+    let after = board.folders_after(&[]);
+    assert!(matches!(after["plans"], FolderAfter::Carried(tree) if tree.oid == "b".repeat(40)));
+    let mut dropping = board.clone();
+    dropping.folders.get_mut("plans").unwrap().entries = 3;
+    let after = dropping.folders_after(&[]);
+    assert!(
+        matches!(&after["plans"], FolderAfter::Rebuilt { carried, written, .. } if carried.len() == 2 && written.is_empty()),
+        "{after:?}"
+    );
+    let mut files = plan_file(5);
+    files[0].name = "x1.md".into();
+    let after = board.folders_after(&files);
+    assert_eq!(after["plans"].entries(), 2, "x1.md replaced, not added");
+    let empty = Board::default();
+    let after = empty.folders_after(&files);
+    assert_eq!(
+        (
+            after.len(),
+            after["plans"].entries(),
+            after["plans"].bytes()
+        ),
+        (1, 1, 5)
+    );
+    assert!(empty.folders_after(&[]).is_empty());
+}
+
+/// A key's file lies where a read finds it: its kind's folder, under the
+/// name that spells it; a task's lies in `tasks/`.
+#[test]
+fn a_key_is_written_where_a_read_finds_it() {
+    let id = || Slug::parse("a").unwrap();
+    for (key, folder, name) in [
+        (ArtifactKey::Plan(id(), 1), "plans", "a.1.md"),
+        (ArtifactKey::Run(id(), 999), "runs", "a.999.md"),
+        (ArtifactKey::Change(id(), 2), "changes", "a.2.md"),
+        (ArtifactKey::Review(id(), 3), "reviews", "a.3.md"),
+        (ArtifactKey::Discussion(id()), "discussions", "a.md"),
+    ] {
+        let file = folder_file(&key, vec![]).unwrap();
+        assert_eq!((file.folder, file.name.as_str()), (folder, name), "{key}");
+    }
+    assert!(folder_file(&ArtifactKey::Task(id()), vec![]).is_err());
+    for key in [ArtifactKey::Plan(id(), 0), ArtifactKey::Run(id(), 1_000)] {
+        let refused = folder_file(&key, vec![]);
+        assert!(
+            refused
+                .as_ref()
+                .is_err_and(|why| *why == format!("{key}: has no file name the board can read")),
+            "{key}: {refused:?}"
+        );
+    }
+    let big = folder_file(&ArtifactKey::Change(id(), 1), vec![0; 8 * 1024 + 1]);
+    assert!(big.is_err_and(|why| why.contains("8193 bytes")));
+}
+
+/// Only a name listed twice outside `tasks/` stops a write or a clear.
+#[test]
+fn a_name_listed_twice_outside_tasks_stops_writes_and_clears() {
+    let mut board = carried(1, 0);
+    assert_eq!(board.folders_repeated_refusal(), None);
+    board.folders.get_mut("plans").unwrap().repeated = Some("plans/a.1.md".into());
+    let refusal = board.folders_repeated_refusal();
     assert!(
         refusal
             .as_deref()
-            .is_some_and(|why| why.starts_with("discussions/x is set aside")),
+            .is_some_and(|why| why.starts_with("plans/a.1.md is named more than once")),
         "{refusal:?}"
     );
-    assert_eq!(board(&["plansx/a"]).folders_refusal(), None);
+    assert!(
+        refusal
+            .as_deref()
+            .is_some_and(|why| why.contains("this quecto writes nothing over such a board")),
+        "the remedy says what moving the board back undoes: {refusal:?}"
+    );
 }
 
 /// A write keeps `tasks/` within its own bytes as well as the board within
@@ -191,8 +323,13 @@ fn a_write_keeps_tasks_within_their_own_bytes() {
         tasks_bytes,
         ..LIMITS
     };
-    assert!(Board::default().within_bounds(&written, limits(10)).is_ok());
-    let past = Board::default().within_bounds(&written, limits(9));
+    let none = BTreeMap::new();
+    assert!(
+        Board::default()
+            .within_bounds(&written, &none, limits(10))
+            .is_ok()
+    );
+    let past = Board::default().within_bounds(&written, &none, limits(9));
     assert!(
         matches!(&past, Err(BoardStoreError::InvalidWrite(why)) if why.contains("10 bytes of task files")),
         "{past:?}"
