@@ -180,21 +180,42 @@ impl ArtifactScope {
 
     /// Whether the set-aside `file` may hold one of the listed artifacts:
     /// one whose name spells a key this scope [covers](Self::covers); or,
-    /// whose name spells none, one that is kept (it may hold anything),
-    /// never a stray (it holds nothing that stays).
+    /// whose name spells none, one that is kept in the listed kind's own
+    /// folder (it may hold any of that kind), never one in another kind's
+    /// folder (a task's README holds no plan), nor a stray (it holds
+    /// nothing that stays).
     pub fn holds(&self, file: &QuarantinedFile) -> bool {
-        file.key
-            .as_ref()
-            .map_or(file.carried, |key| self.covers(key))
+        match &file.key {
+            Some(key) => self.covers(key),
+            None => {
+                let in_folder = file
+                    .path
+                    .strip_prefix(self.folder())
+                    .is_some_and(|rest| rest.starts_with('/'));
+                file.carried && in_folder
+            }
+        }
+    }
+
+    /// The board folder the listed kind's files lie in.
+    pub fn folder(&self) -> &'static str {
+        match self {
+            Self::Plans { .. } => "plans",
+            Self::Runs { .. } | Self::RunsOfPlan { .. } => "runs",
+            Self::Changes { .. } => "changes",
+            Self::Review { .. } => "reviews",
+            Self::Discussions { .. } => "discussions",
+        }
     }
 }
 
 impl<T> ArtifactListing<T> {
-    /// The files set aside that may hold one of the listed artifacts:
-    /// while any is, the listing may be incomplete for its scope. A kept
-    /// file set aside whose name spells no key may hold anything, so it
-    /// counts in every scope; a stray (not kept) holds nothing that stays,
-    /// so it counts in none.
+    /// The files set aside that may hold one of the listed artifacts
+    /// ([`ArtifactScope::holds`]): while any is, the listing may be
+    /// incomplete for its scope. A kept file set aside whose name spells
+    /// no key may hold anything of its folder's kind, so it counts in
+    /// that kind's scopes; a stray (not kept) holds nothing that stays, so
+    /// it counts in none.
     pub fn set_aside_in_scope(&self) -> Vec<&QuarantinedFile> {
         self.quarantined
             .iter()

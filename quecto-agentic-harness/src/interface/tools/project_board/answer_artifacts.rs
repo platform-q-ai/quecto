@@ -20,9 +20,9 @@ use crate::domain::project_board::value_objects::shown_text::{
 /// it: its `head`; the whole `task`; `plan`, the task's accepted plan
 /// whole (`null` while it has none, or while its file is set aside);
 /// `plans`, each version in brief, by version; `runs`, by number, each in
-/// brief but the latest, whole; `incomplete`, whether a file that may
-/// hold one of its plans or runs is set aside, and `set_aside`, those
-/// files, as a listing shows them.
+/// brief but the latest readable one, whole; `may_be_incomplete`,
+/// whether a file that may hold one of its plans or runs is set aside, and
+/// `quarantined`, those files, as a listing shows them.
 pub(super) fn shown_fields(shown: &ShownTask) -> Map<String, Value> {
     let latest = shown.latest_run().map(|run| run.fields().number);
     let runs = shown
@@ -32,7 +32,6 @@ pub(super) fn shown_fields(shown: &ShownTask) -> Map<String, Value> {
             true => run_json(run),
             false => run_brief_json(run),
         });
-    let incomplete = shown.may_be_incomplete();
     let plan = shown.accepted_plan();
     Map::from_iter([
         ("head".to_string(), head_json(&shown.head)),
@@ -43,8 +42,14 @@ pub(super) fn shown_fields(shown: &ShownTask) -> Map<String, Value> {
             Value::Array(shown.plans.iter().map(plan_brief_json).collect()),
         ),
         ("runs".to_string(), Value::Array(runs.collect())),
-        ("incomplete".to_string(), Value::Bool(incomplete)),
-        ("set_aside".to_string(), quarantined_list(&shown.set_aside)),
+        (
+            "may_be_incomplete".to_string(),
+            Value::Bool(shown.may_be_incomplete()),
+        ),
+        (
+            "quarantined".to_string(),
+            quarantined_list(&shown.set_aside),
+        ),
     ])
 }
 
@@ -52,7 +57,7 @@ pub(super) fn shown_fields(shown: &ShownTask) -> Map<String, Value> {
 /// field present (`null` or `[]` when unset), in a fixed order: who
 /// accepted it and when as `accepted_by` and `accepted_at`, and its team's
 /// budget as `budget_tokens`.
-pub fn plan_json(plan: &Plan) -> Value {
+pub(super) fn plan_json(plan: &Plan) -> Value {
     let plan = plan.fields();
     let items: Vec<Value> = plan
         .items
@@ -119,8 +124,8 @@ fn plan_brief_json(plan: &Plan) -> Value {
 /// field present, in a fixed order: `state` is `running` or its outcome,
 /// as the file spells it, and its cost `cost_tokens`. Its items' owners
 /// and evidence came from a swarm's report, so each is shown as text from
-/// outside is ([`shown`]): credentials redacted, bounded.
-pub fn run_json(run: &Run) -> Value {
+/// outside is ([`shown`]): credentials redacted.
+pub(super) fn run_json(run: &Run) -> Value {
     let items: Vec<Value> = run
         .fields()
         .items

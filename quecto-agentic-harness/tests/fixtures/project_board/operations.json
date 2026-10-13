@@ -826,8 +826,8 @@
       "plan": null,
       "plans": [],
       "runs": [],
-      "incomplete": false,
-      "set_aside": []
+      "may_be_incomplete": false,
+      "quarantined": []
     }
   },
   {

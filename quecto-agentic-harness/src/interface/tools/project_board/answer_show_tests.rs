@@ -204,8 +204,8 @@ fn show_answers_the_accepted_plan_each_version_and_the_runs() {
                 }],
             },
         ],
-        "incomplete": false,
-        "set_aside": [],
+        "may_be_incomplete": false,
+        "quarantined": [],
     });
     assert_eq!(answer, golden);
     // In this order, as a reader sees it.
@@ -247,42 +247,33 @@ fn show_answers_no_plan_and_a_running_run() {
 }
 
 /// A run's owner and evidence came from a swarm's report: credentials in
-/// them are redacted and each is bounded, as every text from outside is.
+/// either are redacted, as every text from outside is.
 #[test]
-fn a_runs_evidence_is_redacted_and_bounded() {
+fn a_runs_owner_and_evidence_are_redacted() {
     let secret = "sk-abcdefghijklmnopqrstuvwxyz";
-    let long = "e".repeat(MAX_LINE_CHARS_IN_TEST);
-    let answer = answered(shown(
-        vec![],
-        vec![run(
-            1,
-            1,
-            RunOutcome::Stopped,
-            &[&format!("key {secret}"), &long],
-        )],
-        vec![],
-    ));
-    let evidence = answer["runs"][0]["items"][0]["evidence"].to_string();
-    assert!(!evidence.contains(secret), "{evidence}");
-    let lines = answer["runs"][0]["items"][0]["evidence"]
-        .as_array()
-        .unwrap();
-    assert!(
-        lines
-            .iter()
-            .all(|line| line.as_str().unwrap().chars().count() <= MAX_MESSAGE_CHARS + 1)
+    let leaky = run(
+        1,
+        1,
+        RunOutcome::Stopped,
+        &[&format!("key {secret}"), "kept"],
     );
+    let mut fields = leaky.into_fields();
+    fields.items[0].owner = Some(format!("w {secret}"));
+    let answer = answered(shown(vec![], vec![Run::new(fields).unwrap()], vec![]));
+    let item = &answer["runs"][0]["items"][0];
+    let (owner, evidence) = (item["owner"].to_string(), item["evidence"].to_string());
+    assert!(!owner.contains(secret), "{owner}");
+    assert!(owner.starts_with("\"w "), "the rest is kept: {owner}");
+    assert!(!evidence.contains(secret), "{evidence}");
+    assert_eq!(item["evidence"][1], json!("kept"));
 }
 
-/// The longest evidence line a run holds.
-const MAX_LINE_CHARS_IN_TEST: usize =
-    crate::domain::project_board::entities::task_parts::MAX_LINE_CHARS;
-
-/// A plan or run file set aside leaves the answer incomplete and names
-/// it by its kind, task and number, as `artifact_set_aside` does; the
-/// task's plan is then unknown, so none is shown.
+/// A plan or run file set aside leaves the answer `may_be_incomplete` and
+/// names it under `quarantined` by its kind, task and number, as
+/// `artifact_set_aside` does; the task's plan is then unknown, so none is
+/// shown.
 #[test]
-fn a_set_aside_plan_is_named_and_the_answer_incomplete() {
+fn a_set_aside_plan_is_named_and_the_answer_may_be_incomplete() {
     let file = QuarantinedFile {
         path: "plans/a.2.md".into(),
         key: Some(ArtifactKey::Plan(slug("a"), 2)),
@@ -295,10 +286,10 @@ fn a_set_aside_plan_is_named_and_the_answer_incomplete() {
         vec![],
         vec![file],
     ));
-    assert_eq!(answer["incomplete"], json!(true));
+    assert_eq!(answer["may_be_incomplete"], json!(true));
     assert_eq!(answer["plan"], json!(null));
     assert_eq!(
-        answer["set_aside"],
+        answer["quarantined"],
         json!([{
             "path": "plans/a.2.md",
             "id": null,

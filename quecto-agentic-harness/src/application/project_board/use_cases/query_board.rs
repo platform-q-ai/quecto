@@ -151,6 +151,15 @@ impl QueryBoard {
         ArtifactListing::discussions_of(&self.store.read()?, task)
     }
 
+    /// The task `id` alone, as the board holds it.
+    ///
+    /// # Errors
+    /// The store's; the task's file set aside, no task `id` on the board,
+    /// or [`ProjectBoardError::Duplicate`] for a task held twice.
+    pub fn task(&self, id: &Slug) -> Result<Task, ProjectBoardError> {
+        Ok(board_view::task(&self.store.read()?, id)?.clone())
+    }
+
     /// The task `id` with every plan and run of it, from one read of the
     /// board ([`ShownTask`]).
     ///
@@ -189,8 +198,7 @@ fn shown_on(board: &BoardSnapshot, id: &Slug) -> Result<ShownTask, ProjectBoardE
     let plans = ArtifactListing::plans_of(board, id)?;
     let runs = ArtifactListing::runs_of(board, id)?;
     let in_scope = |scope: &ArtifactScope, file| scope.holds(file);
-    // The board's own order, each file once (a kept file whose name spells
-    // no key is in both scopes).
+    // The board's own order, each file once.
     let set_aside = board
         .quarantined
         .iter()

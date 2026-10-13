@@ -150,8 +150,8 @@ fn the_accepted_plan_is_shown_only_where_the_task_and_plan_agree() {
 /// A plan or run file of the task set aside is named, and the task still
 /// shown: what it held is unknown, so the plans and runs may be
 /// incomplete. Another task's file, and a stray the next write drops,
-/// leave it complete; a kept file whose name spells no key may hold
-/// anything, so it counts.
+/// leave it complete; a kept file whose name spells no key counts in the
+/// plans or runs folder, where it may hold one of them, and nowhere else.
 #[test]
 fn a_set_aside_plan_or_run_is_named_never_refused() {
     let store = seeded();
@@ -167,9 +167,19 @@ fn a_set_aside_plan_or_run_is_named_never_refused() {
     assert_eq!(a.accepted_plan(), None, "the task's plan is set aside");
     let b = shown(&store, "b").unwrap();
     assert_eq!(b.set_aside.len(), 1, "its own plan only");
+    // A kept file whose name spells no key counts only where it may hold
+    // a plan or a run: not a task's README, not another kind's file.
+    store.set_aside_path("tasks/README.md", "names no task");
+    store.set_aside_path("changes/x.md", "names no change");
+    assert_eq!(shown(&store, "a").unwrap().set_aside.len(), 2);
     store.set_aside_path("plans/a.x.md", "names no plan");
+    store.set_aside_path("runs/x.md", "names no run");
     let a = shown(&store, "a").unwrap();
-    assert_eq!(a.set_aside.len(), 3, "a kept keyless file counts");
+    assert_eq!(
+        a.set_aside.len(),
+        4,
+        "a kept keyless plan or run file counts"
+    );
     assert!(
         a.set_aside
             .iter()
@@ -232,4 +242,23 @@ fn a_duplicate_plan_or_run_is_refused() {
         shown_on(&broken(other, vec![]), &a).is_ok(),
         "another task's"
     );
+}
+
+/// `task` looks the task up alone: its plans and runs are not read, so a
+/// set-aside plan never stops it; a task set aside or missing does.
+#[test]
+fn task_looks_up_the_task_alone() {
+    let store = seeded();
+    store.quarantine_key(ArtifactKey::Plan(slug("a"), 2), "plans/a.2.md", "malformed");
+    let query = QueryBoard::new(Arc::new(store.client()));
+    assert_eq!(query.task(&slug("a")), Ok(task_naming("a", Some(2))));
+    assert_eq!(
+        query.task(&slug("c")),
+        Err(ProjectBoardError::NotFound(slug("c")))
+    );
+    store.quarantine("a", "malformed");
+    assert!(matches!(
+        query.task(&slug("a")),
+        Err(ProjectBoardError::Quarantined { .. })
+    ));
 }

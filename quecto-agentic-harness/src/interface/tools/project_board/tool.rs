@@ -4,7 +4,8 @@
 //! shared path ([`site::answer`]) on the repository the agent works in.
 //!
 //! Unlike the CLI's, its answers are the agent's to read: a listing shows
-//! a summary per task within [`MAX_LISTING_BYTES`], and creating a board
+//! a summary per task within [`MAX_LISTING_BYTES`], a show its task's
+//! plans and runs within [`MAX_SHOW_BYTES`], and creating a board
 //! (`bootstrap`) is left to the user and the CLI. Its work runs off the
 //! async workers in the call's panic scope (ADR-0029). A call that is
 //! cancelled (its turn interrupted) pushes nothing more to the board; a
@@ -48,11 +49,15 @@ pub const BOARD_TOOL_NAME: &str = "board";
 /// listed in its pull request). The Read line's `show` sentence (#2481
 /// M4a) awaits the owner's approval.
 pub const BOARD_TOOL_DESCRIPTION: &str = r#"Project board for this repo: the shared list of tasks people and agents plan, claim and finish. Tasks live on the repo's quecto/board branch and are written only through this tool, never by editing the branch. Each op is one call, {"op":"<name>", ...named fields}, answering JSON: {"ok":true,...} or {"ok":false,"error":{"code","field","message"}}. Ids are slugs (a-z, 0-9, -). Statuses: draft, ready, claimed, in_progress, review, blocked, done, archived.
-Read: list(status|parent|dependents_of, at most one filter), show(task), list_ready (ready tasks whose dependencies are done or archived), list_takeable (held tasks whose claim expired). Listings show a summary per task; show(task) gives the whole task, its accepted plan, its plan versions and its runs (the latest in full); "incomplete" means a plan or run file is set aside. Listings are advice; every change is checked against the board when it is written.
+Read: list(status|parent|dependents_of, at most one filter), show(task), list_ready (ready tasks whose dependencies are done or archived), list_takeable (held tasks whose claim expired). Listings show a summary per task; show(task) gives the whole task, its accepted plan, each plan version in brief and its runs (the latest readable one in full); "may_be_incomplete" means a plan or run file of the task is set aside; a large plan or many runs are cut, with counts of what was left out. Listings are advice; every change is checked against the board when it is written.
 Plan: create(task,title,kind,description,status draft|ready,parent,depends_on); update_draft(task, any of title,description,parent,depends_on, expected_updated) edits a draft only; pass the updated you read as expected_updated so a newer edit is never overwritten. Anyone may create, edit a draft, move it to ready, or archive a draft, ready or done task with move(task,to archived). Anyone may move a ready task back to draft.
 Work: move(task,to claimed) takes a ready task for 2 hours; renew(task) before it lapses while you work; take_over(task) only once a claim has expired; move(task,to ready) hands it back to ready. Only the claim holder moves a held task: claimed to in_progress|blocked|ready, in_progress to review|blocked|ready, review to in_progress|ready (or done when no pull request is linked), blocked to in_progress|ready. Once its claim has expired, or a task has none, anyone may move a review or blocked task to ready. link_pr(task,pr) and unlink_pr(task,pr) are the holder's. A task with linked pull requests is done only when all of them have merged: link_pr and moving to review check this automatically, and complete(task) asks again (anyone may call it). Never move a task to done by hand while a pull request is linked.
 Repair: clear_set_aside(path, object, repeated) removes a file the board could not read (listed under quarantined, with its object); repeated, for a task file that appears twice, maps its path to {"keep":object,"seen":[objects]} or {"drop":[objects]}, the objects its copies list. Use it only when told to.
 On "stale" re-read with show and redo your change; on "contended" call again; on "clock_ahead" or "task_ahead" stop and report: this machine's clock is wrong. A "clock" note on an answer means writes ran without an outside time check."#;
+
+#[path = "tool_show.rs"]
+mod show;
+pub use show::MAX_SHOW_BYTES;
 
 /// The most bytes a listing's answer takes.
 pub const MAX_LISTING_BYTES: usize = 32 * 1024;
@@ -191,8 +196,13 @@ fn summary(task: &Value) -> Value {
 /// `answer`, a listing's tasks as summaries and the files it shows set
 /// aside, as many of each as fit in [`MAX_LISTING_BYTES`] (its tasks
 /// first, the files in what is left), each list ending with what was left
-/// out; any other answer exactly as it is.
+/// out; an answered show within [`MAX_SHOW_BYTES`] ([`show::capped`]);
+/// any other answer exactly as it is.
 fn summarised(mut answer: Value) -> Value {
+    if answer["ok"] == json!(true) && answer["op"] == json!("show") && answer.get("task").is_some()
+    {
+        return show::capped(answer);
+    }
     let listing = answer["ok"] == json!(true)
         && answer["op"]
             .as_str()

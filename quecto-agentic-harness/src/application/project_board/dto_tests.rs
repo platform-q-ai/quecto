@@ -61,8 +61,9 @@ fn slug(text: &str) -> crate::domain::project_board::value_objects::slug::Slug {
 /// a caller can tell it may be incomplete: a plan's file for the task's
 /// plans, any run of the task for one plan's runs (a run's name gives no
 /// plan version), the change's own review, any discussion (its name gives
-/// no task), and in every scope a kept file whose name spells no key (it
-/// may hold anything); never another task's file or another kind's.
+/// no task), and a kept file whose name spells no key in its kind's own
+/// folder (it may hold any of that kind); never another task's file or
+/// another kind's.
 #[test]
 fn a_listing_names_the_set_aside_files_in_its_scope() {
     use super::{ArtifactListing, ArtifactScope};
@@ -95,38 +96,26 @@ fn a_listing_names_the_set_aside_files_in_its_scope() {
         ["plans/a.2.md", "plans/notes.txt"]
     );
     let runs = ArtifactListing::runs_of_plan(&board, &a, 1).unwrap();
-    assert_eq!(
-        paths(runs.set_aside_in_scope()),
-        ["runs/a.7.md", "plans/notes.txt"]
-    );
+    assert_eq!(paths(runs.set_aside_in_scope()), ["runs/a.7.md"]);
     let every_run = ArtifactListing::runs_of(&board, &a).unwrap();
     assert_eq!(every_run.scope, ArtifactScope::Runs { task: a.clone() });
-    assert_eq!(
-        paths(every_run.set_aside_in_scope()),
-        ["runs/a.7.md", "plans/notes.txt"]
-    );
+    assert_eq!(paths(every_run.set_aside_in_scope()), ["runs/a.7.md"]);
     let changes = ArtifactListing::changes_of(&board, &a).unwrap();
-    assert_eq!(
-        paths(changes.set_aside_in_scope()),
-        ["changes/a.3.md", "plans/notes.txt"]
-    );
+    assert_eq!(paths(changes.set_aside_in_scope()), ["changes/a.3.md"]);
     let review = ArtifactListing::review_of(&board, &a, 3).unwrap();
-    assert_eq!(
-        paths(review.set_aside_in_scope()),
-        ["reviews/a.3.md", "plans/notes.txt"]
-    );
+    assert_eq!(paths(review.set_aside_in_scope()), ["reviews/a.3.md"]);
     let other_review = ArtifactListing::review_of(&board, &a, 1).unwrap();
     assert_eq!(
         paths(other_review.set_aside_in_scope()),
-        ["plans/notes.txt"]
+        Vec::<String>::new()
     );
     let discussions = ArtifactListing::discussions_of(&board, &a).unwrap();
     assert_eq!(
         paths(discussions.set_aside_in_scope()),
-        ["discussions/d.md", "plans/notes.txt"]
+        ["discussions/d.md"]
     );
     let elsewhere = ArtifactListing::changes_of(&board, &slug("c")).unwrap();
-    assert_eq!(paths(elsewhere.set_aside_in_scope()), ["plans/notes.txt"]);
+    assert_eq!(paths(elsewhere.set_aside_in_scope()), Vec::<String>::new());
     assert_eq!(
         elsewhere.quarantined.len(),
         8,
@@ -237,7 +226,7 @@ fn a_duplicate_outside_the_narrowed_items_is_still_refused() {
 /// while it is kept: a stray the next write drops holds nothing that
 /// stays, so it leaves no listing incomplete.
 #[test]
-fn a_kept_keyless_file_counts_in_every_scope_and_a_stray_in_none() {
+fn a_kept_keyless_file_counts_in_its_folders_scopes_and_a_stray_in_none() {
     use super::ArtifactListing;
     use crate::application::project_board::ports::QuarantinedFile;
     let file = |path: &str, carried: bool| QuarantinedFile {
@@ -249,21 +238,30 @@ fn a_kept_keyless_file_counts_in_every_scope_and_a_stray_in_none() {
     };
     let board = snapshot(vec![
         file("tasks/Not A Slug.md", true),
+        file("tasks/README.md", true),
+        file("changes/x.md", true),
+        file("plans/Not A Slug.md", true),
+        file("runs/x.md", true),
+        file("plans/notes.txt", false),
+        file("plansx/y.md", true),
         file("notes.txt", false),
     ]);
     let a = slug("a");
-    let listing = ArtifactListing::plans_of(&board, &a).unwrap();
-    let paths: Vec<&str> = listing
-        .set_aside_in_scope()
-        .into_iter()
-        .map(|file| file.path.as_str())
-        .collect();
-    assert_eq!(paths, ["tasks/Not A Slug.md"]);
+    let in_scope = |files: Vec<&QuarantinedFile>| -> Vec<String> {
+        files.into_iter().map(|file| file.path.clone()).collect()
+    };
+    let plans = ArtifactListing::plans_of(&board, &a).unwrap();
     assert_eq!(
-        listing.quarantined.len(),
-        2,
-        "both are carried in the listing"
+        in_scope(plans.set_aside_in_scope()),
+        ["plans/Not A Slug.md"]
     );
+    assert_eq!(plans.quarantined.len(), 8, "all are carried in the listing");
+    let runs = ArtifactListing::runs_of(&board, &a).unwrap();
+    assert_eq!(in_scope(runs.set_aside_in_scope()), ["runs/x.md"]);
+    let changes = ArtifactListing::changes_of(&board, &a).unwrap();
+    assert_eq!(in_scope(changes.set_aside_in_scope()), ["changes/x.md"]);
+    let discussions = ArtifactListing::discussions_of(&board, &a).unwrap();
+    assert!(discussions.set_aside_in_scope().is_empty());
 }
 
 /// The owner-approved message for an id another artifact still uses: a

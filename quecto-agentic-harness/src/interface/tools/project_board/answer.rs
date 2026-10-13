@@ -49,7 +49,6 @@ use crate::domain::redaction::{redact_secrets, redact_url_userinfo};
 #[path = "answer_artifacts.rs"]
 mod artifacts;
 use artifacts::{artifact_folder, quarantined_json, shown_fields};
-pub use artifacts::{plan_json, run_json};
 
 /// The most characters of an error's message an answer carries.
 pub const MAX_MESSAGE_CHARS: usize = 2_000;
@@ -269,12 +268,17 @@ fn slug_json(slug: &Slug) -> Value {
 /// ever; any other kind as `artifact_set_aside` by [`key_fields`] and its
 /// file's raw path, so a clear can name it exactly.
 fn set_aside_fields(key: &ArtifactKey, path: &str) -> (ErrorCode, Map<String, Value>) {
-    let folder = match (key, artifact_folder(key)) {
-        (_, Some(folder)) => folder,
-        (ArtifactKey::Task(id), None) => {
+    let folder = match key {
+        ArtifactKey::Task(id) => {
             return (ErrorCode::SetAside, fields([("task", slug_json(id))]));
         }
-        (other, None) => unreachable!("every kind but a task has a folder: {other:?}"),
+        ArtifactKey::Plan(..)
+        | ArtifactKey::Run(..)
+        | ArtifactKey::Change(..)
+        | ArtifactKey::Review(..)
+        | ArtifactKey::Discussion(_) => {
+            artifact_folder(key).expect("every kind but a task has a folder")
+        }
     };
     // Its own kind's folder, one name in it.
     assert!(

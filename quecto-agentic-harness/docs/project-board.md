@@ -53,9 +53,17 @@ summary per task). A file larger than its kind's cap is set aside, not read.
 |---|---|
 | `plan` | The task's accepted plan, whole: the version the task names, when the board holds it accepted. `null` while it has none, or while its file is set aside |
 | `plans` | Each version of the task's plan, by version, in brief: `version`, `state`, `proposed_by`, `updated` |
-| `runs` | Each run of the task, by number: the latest whole (its task items, owners and evidence), every other in brief (`number`, `plan_version`, `state`, `started`, `ended`, `cost_tokens`). A run's owners and evidence are shown as text from outside is: credentials redacted, each at most 2,000 characters |
-| `incomplete` | Whether a file that may hold one of the task's plans or runs is set aside: its plans and runs may then be missing one |
-| `set_aside` | Those files, as a listing's `quarantined` shows them; one of a plan or run also names its `kind`, `task` and `number` |
+| `runs` | Each readable run of the task, by number: the latest readable one whole (its task items, owners and evidence), every other in brief (`number`, `plan_version`, `state`, `started`, `ended`, `cost_tokens`). A run's owners and evidence have credentials redacted, as text from outside the board does |
+| `may_be_incomplete` | Whether a file that may hold one of the task's plans or runs is set aside: one of the task's own, or a kept file whose name spells none in `plans/` or `runs/`. Its plans and runs may then be missing one |
+| `quarantined` | Those files, as a listing's `quarantined` shows them; one of a plan or run also names its `kind`, `task` and `number` |
+
+The CLI gives the answer whole. The agent tool keeps it within 64 KiB, the task
+always whole: the accepted plan whole if it fits, otherwise its approach and
+task items cut (`plan_truncated`: `approach_more` characters and `items_more`
+items left out); then the newest runs (`runs_more` older ones left out, and
+`latest_run_items_more` of the latest run's task items), the newest plan
+versions (`plans_more`) and the files set aside (`quarantined_more`). A plan at
+the board's limits, with every run and version, is about 1.6 MB whole.
 
 ## Telemetry
 

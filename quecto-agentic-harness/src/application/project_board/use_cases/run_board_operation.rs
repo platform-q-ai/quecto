@@ -147,7 +147,7 @@ impl RunBoardOperation {
         match &self.parts.complete {
             Ok(complete) => complete.execute_noted(id, facts),
             Err(why) => {
-                self.parts.query.show(id)?;
+                self.parts.query.task(id)?;
                 Err(ProjectBoardError::NoPullRequestHost(why.clone()))
             }
         }
