@@ -1,13 +1,17 @@
 //! Board op telemetry in the application (epic #2481, T1): the op kind of
 //! a request, and whether its `board_op` record is written at all
-//! ([`BoardRecording`]).
+//! ([`BoardRecording`]); T4: what the use cases saw of it ([`OpFacts`]).
 use std::sync::Arc;
 
 use super::dto::BoardOp;
-use super::operations::BoardRequest;
+use super::operations::{BoardRequest, Completion};
 use super::ports::ProjectBoardOpLog;
 use crate::domain::project_board::value_objects::slug::Slug;
-use crate::domain::project_board::value_objects::telemetry::{Access, BoardOpRecord, OpKind};
+use crate::domain::project_board::value_objects::telemetry::{
+    Access, BoardOpRecord, ClaimFacts, CompletionFacts, CompletionKind, Normalised, OpKind,
+    StaticKind,
+};
+use crate::domain::project_board::value_objects::vocabulary::TaskStatus;
 
 /// The op `request` is. Exhaustive with no catch-all: a new request or
 /// change op does not compile until it has its kind.
@@ -84,6 +88,75 @@ pub fn pr_of(request: &BoardRequest) -> Option<u64> {
         | BoardRequest::UpdateDraft(_)
         | BoardRequest::Complete(_)
         | BoardRequest::Clear { .. } => None,
+    }
+}
+
+/// What the board's use cases saw of one request (T4), for its record:
+/// gathered only for a recorded call (a use case given none notes
+/// nothing, and times nothing), and only ever kinds, counts and spans.
+/// Each fact is `None` where it does not apply.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct OpFacts {
+    /// The task's status as the change last read it.
+    pub status_from: Option<TaskStatus>,
+    /// A move's target, made or refused; otherwise the written task's.
+    pub status_to: Option<TaskStatus>,
+    /// The claim the change last found on its task.
+    pub claim: Option<ClaimFacts>,
+    /// The attempts the write began, and how many lost the race.
+    pub attempts: Option<u64>,
+    pub lost: Option<u64>,
+    /// The time the write paused between attempts, when it did.
+    pub pause_ms: Option<u64>,
+    /// What came of completing the task.
+    pub completion: Option<CompletionFacts>,
+    /// What the normaliser changed in the text fields given.
+    pub normalised: Option<Normalised>,
+}
+
+impl OpFacts {
+    /// Writes each fact there is into `record`, leaving every field it
+    /// has none for as it was. A status is recorded as its own name, a
+    /// known kind.
+    pub fn fill(&self, record: &mut BoardOpRecord) {
+        fn put<T: Clone>(field: &mut Option<T>, fact: Option<&T>) {
+            if let Some(fact) = fact {
+                *field = Some(fact.clone());
+            }
+        }
+        let status = |status: &TaskStatus| StaticKind::new(status.as_str());
+        put(
+            &mut record.status_from,
+            self.status_from.as_ref().map(status).as_ref(),
+        );
+        put(
+            &mut record.status_to,
+            self.status_to.as_ref().map(status).as_ref(),
+        );
+        put(&mut record.claim, self.claim.as_ref());
+        put(&mut record.attempts, self.attempts.as_ref());
+        put(&mut record.lost, self.lost.as_ref());
+        put(&mut record.pause_ms, self.pause_ms.as_ref());
+        put(&mut record.completion, self.completion.as_ref());
+        put(&mut record.normalised, self.normalised.as_ref());
+    }
+}
+
+/// `completion` as a record holds it, for a task linking `linked` pull
+/// requests. A failed one's code is the front end's to name (its error
+/// codes are the answer's), so it is left out here.
+pub fn completion_facts(completion: &Completion, linked: usize) -> CompletionFacts {
+    let count = |items: usize| u64::try_from(items).unwrap_or(u64::MAX);
+    let (kind, pending) = match completion {
+        Completion::Done(_) => (CompletionKind::Done, None),
+        Completion::Pending(prs) => (CompletionKind::Pending, Some(count(prs.len()))),
+        Completion::Failed(_) => (CompletionKind::Failed, None),
+    };
+    CompletionFacts {
+        completion: kind,
+        completion_code: None,
+        prs_linked: count(linked),
+        prs_pending: pending,
     }
 }
 

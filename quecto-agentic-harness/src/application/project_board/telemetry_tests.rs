@@ -26,6 +26,14 @@ fn record() -> BoardOpRecord {
         pr: None,
         head: None,
         listing: None,
+        status_from: None,
+        status_to: None,
+        claim: None,
+        attempts: None,
+        lost: None,
+        pause_ms: None,
+        completion: None,
+        normalised: None,
         cancelled: false,
         build_us: None,
         result_bytes: 0,
@@ -155,4 +163,121 @@ fn a_request_names_its_task_and_pull_request() {
             none(OpKind::ClearSetAside),
         ]
     );
+}
+
+/// Epic #2481 T4: the use cases' facts as a record holds them.
+mod facts {
+    use super::*;
+    use crate::application::project_board::dto::ProjectBoardError;
+    use crate::application::project_board::operations::Completion;
+    use crate::domain::project_board::value_objects::rule_error::BoardRuleError;
+    use crate::domain::project_board::value_objects::telemetry::{
+        ClaimFacts, CompletionFacts, CompletionKind, Normalised, StaticKind, TextChange,
+    };
+    use crate::domain::project_board::value_objects::vocabulary::TaskStatus;
+
+    fn claim(held_s: i64) -> ClaimFacts {
+        ClaimFacts {
+            held_s,
+            left_s: 60,
+            holder_is_writer: true,
+        }
+    }
+
+    fn completion(kind: CompletionKind) -> CompletionFacts {
+        CompletionFacts {
+            completion: kind,
+            completion_code: None,
+            prs_linked: 1,
+            prs_pending: None,
+        }
+    }
+
+    /// A record whose every T4 field a front end or an earlier fill set.
+    fn filled() -> BoardOpRecord {
+        BoardOpRecord {
+            status_from: Some(StaticKind::new("ready")),
+            status_to: Some(StaticKind::new("claimed")),
+            claim: Some(claim(1)),
+            attempts: Some(1),
+            lost: Some(0),
+            pause_ms: Some(5),
+            completion: Some(completion(CompletionKind::Done)),
+            normalised: Some(Normalised {
+                title: Some(vec![]),
+                description: None,
+            }),
+            ..record()
+        }
+    }
+
+    #[test]
+    fn fill_writes_only_the_facts_it_has() {
+        let mut record = filled();
+        OpFacts::default().fill(&mut record);
+        assert_eq!(record, filled(), "no fact, nothing written over");
+        let facts = OpFacts {
+            status_from: Some(TaskStatus::InProgress),
+            attempts: Some(3),
+            lost: Some(2),
+            ..OpFacts::default()
+        };
+        facts.fill(&mut record);
+        let want = BoardOpRecord {
+            status_from: Some(StaticKind::new("in_progress")),
+            attempts: Some(3),
+            lost: Some(2),
+            ..filled()
+        };
+        assert_eq!(record, want);
+    }
+
+    #[test]
+    fn fill_writes_every_fact_it_has() {
+        let facts = OpFacts {
+            status_from: Some(TaskStatus::Review),
+            status_to: Some(TaskStatus::Done),
+            claim: Some(claim(-3)),
+            attempts: Some(2),
+            lost: Some(1),
+            pause_ms: Some(70),
+            completion: Some(completion(CompletionKind::Pending)),
+            normalised: Some(Normalised {
+                title: None,
+                description: Some(vec![TextChange::Crlf]),
+            }),
+        };
+        let mut record = record();
+        facts.fill(&mut record);
+        let line = serde_json::to_value(&record).unwrap();
+        let want = serde_json::json!({
+            "op": "show", "front_end": "tool", "client": "agent", "access": "read",
+            "outcome": "ok", "result_bytes": 0, "duration_us": 1,
+            "status_from": "review", "status_to": "done",
+            "claim": {"held_s": -3, "left_s": 60, "holder_is_writer": true},
+            "attempts": 2, "lost": 1, "pause_ms": 70,
+            "completion": "pending", "prs_linked": 1,
+            "normalised": {"description": ["crlf"]},
+        });
+        assert_eq!(line, want);
+    }
+
+    #[test]
+    fn a_completion_is_told_by_its_kind_and_counts() {
+        let pending = Completion::Pending(vec![8, 9]);
+        let failed = Completion::Failed(Box::new(ProjectBoardError::Rule(BoardRuleError::NoPrs)));
+        assert_eq!(
+            completion_facts(&pending, 3),
+            CompletionFacts {
+                completion: CompletionKind::Pending,
+                completion_code: None,
+                prs_linked: 3,
+                prs_pending: Some(2),
+            }
+        );
+        assert_eq!(
+            completion_facts(&failed, 1),
+            completion(CompletionKind::Failed)
+        );
+    }
 }

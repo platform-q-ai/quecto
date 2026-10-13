@@ -21,6 +21,14 @@ fn bare() -> BoardOpRecord {
         pr: None,
         head: None,
         listing: None,
+        status_from: None,
+        status_to: None,
+        claim: None,
+        attempts: None,
+        lost: None,
+        pause_ms: None,
+        completion: None,
+        normalised: None,
         cancelled: false,
         build_us: None,
         result_bytes: 0,
@@ -54,6 +62,26 @@ fn full() -> BoardOpRecord {
             set_aside: 3,
             set_aside_more: 1,
         }),
+        status_from: Some(StaticKind::new("in_progress")),
+        status_to: Some(StaticKind::new("review")),
+        claim: Some(ClaimFacts {
+            held_s: 5400,
+            left_s: -120,
+            holder_is_writer: false,
+        }),
+        attempts: Some(2),
+        lost: Some(1),
+        pause_ms: Some(40),
+        completion: Some(CompletionFacts {
+            completion: CompletionKind::Failed,
+            completion_code: Some(StaticKind::new("pull_requests_unavailable")),
+            prs_linked: 2,
+            prs_pending: Some(1),
+        }),
+        normalised: Some(Normalised {
+            title: Some(vec![]),
+            description: Some(vec![TextChange::Crlf, TextChange::TrailingSpace]),
+        }),
         cancelled: true,
         build_us: Some(41_000),
         result_bytes: 412,
@@ -69,7 +97,13 @@ fn every_field_serializes_as_its_golden_line() {
         "access": "write", "outcome": "refused", "code": "rule", "rule": "not_holder",
         "field": "other", "fault": "unexpected", "unexpected_count": 2,
         "task": "fix-index-rebuild", "pr": 7, "head": HEAD, "listed": 40, "shown": 30,
-        "truncated_more": 10, "set_aside": 3, "set_aside_more": 1, "cancelled": true,
+        "truncated_more": 10, "set_aside": 3, "set_aside_more": 1,
+        "status_from": "in_progress", "status_to": "review",
+        "claim": {"held_s": 5400, "left_s": -120, "holder_is_writer": false},
+        "attempts": 2, "lost": 1, "pause_ms": 40, "completion": "failed",
+        "completion_code": "pull_requests_unavailable", "prs_linked": 2, "prs_pending": 1,
+        "normalised": {"title": [], "description": ["crlf", "trailing_space"]},
+        "cancelled": true,
         "build_us": 41_000, "result_bytes": 412, "duration_us": 1_830_000,
     });
     assert_eq!(line, golden);
@@ -154,6 +188,19 @@ fn no_kind_is_ever_renamed_or_removed() {
         "duplicate_key",
     ];
     frozen(FaultKind::ALL, FaultKind::as_str, &faults);
+    let completions = ["done", "pending", "failed"];
+    frozen(CompletionKind::ALL, CompletionKind::as_str, &completions);
+    let changes = [
+        "crlf",
+        "lone_cr",
+        "line_break",
+        "chat_space",
+        "tab",
+        "edge_blank_lines",
+        "trailing_space",
+        "edge_space",
+    ];
+    frozen(TextChange::ALL, TextChange::as_str, &changes);
 }
 
 #[test]
