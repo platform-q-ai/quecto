@@ -15,11 +15,9 @@
 //! quecto wrote, say), so no write loses one. A task file named twice in
 //! one tree refuses every write instead.
 //!
-//! The other kinds' folders (`plans/`, `runs/`, `changes/`, `reviews/`,
-//! `discussions/`) are read as their kinds (#2481 S9), but not yet
-//! written: a write or a clear carries each, and the `archive` tree, as
-//! the very tree it read, and is refused while a file in one of them is
-//! set aside.
+//! The other kinds' folders and the archive are read (#2481 S9), not yet
+//! written: a write or clear carries each as the tree it read
+//! (`board_folders`).
 //!
 //! The board is fetched from the remote's URL and pushed to its push URL;
 //! a remote whose `pushurl` names another repository than its `url` is
@@ -622,27 +620,7 @@ impl ProjectBoardStore for GitBoardStore {
         }
         let head = self.fetch()?;
         let board = self.board_at(&head)?;
-        let mut snapshot = BoardSnapshot {
-            head: BoardHead(head),
-            tasks: board.tasks.values().map(|held| held.task.clone()).collect(),
-            plans: vec![],
-            runs: vec![],
-            changes: vec![],
-            reviews: vec![],
-            discussions: vec![],
-            quarantined: board.quarantined.clone(),
-        };
-        for artifact in &board.artifacts {
-            match artifact.clone() {
-                BoardArtifact::Plan(plan) => snapshot.plans.push(plan),
-                BoardArtifact::Run(run) => snapshot.runs.push(run),
-                BoardArtifact::Change(change) => snapshot.changes.push(change),
-                BoardArtifact::Review(review) => snapshot.reviews.push(review),
-                BoardArtifact::Discussion(discussion) => snapshot.discussions.push(discussion),
-                BoardArtifact::Task(_) => unreachable!("a task is read from tasks/ alone"),
-            }
-        }
-        Ok(snapshot.asserted())
+        Ok(board.snapshot(BoardHead(head)).asserted())
     }
 
     /// Writes `tasks`, each as its canonical markdown file, on top of

@@ -20,7 +20,7 @@ use super::{
     sanitised, shown_name,
 };
 use crate::application::project_board::ports::{
-    ArtifactKey, BoardArtifact, BoardStoreError, QuarantinedFile,
+    ArtifactKey, BoardArtifact, BoardHead, BoardSnapshot, BoardStoreError, QuarantinedFile,
 };
 use crate::domain::project_board::entities::change::MAX_CHANGE_NUMBER;
 use crate::domain::project_board::entities::plan::MAX_PLAN_VERSION;
@@ -302,6 +302,34 @@ impl Board {
         );
         self.archive = archive;
         self
+    }
+
+    /// The board as a read hands it over, at `head`: every artifact read
+    /// in its kind's list, and every file set aside.
+    pub fn snapshot(&self, head: BoardHead) -> BoardSnapshot {
+        let mut snapshot = BoardSnapshot {
+            head,
+            tasks: self.tasks.values().map(|held| held.task.clone()).collect(),
+            plans: vec![],
+            runs: vec![],
+            changes: vec![],
+            reviews: vec![],
+            discussions: vec![],
+            quarantined: self.quarantined.clone(),
+        };
+        for artifact in &self.artifacts {
+            match artifact.clone() {
+                BoardArtifact::Plan(plan) => snapshot.plans.push(plan),
+                BoardArtifact::Run(run) => snapshot.runs.push(run),
+                BoardArtifact::Change(change) => snapshot.changes.push(change),
+                BoardArtifact::Review(review) => snapshot.reviews.push(review),
+                BoardArtifact::Discussion(discussion) => snapshot.discussions.push(discussion),
+                // Each folder's codec reads its own kind; tasks are read
+                // from `tasks/` alone.
+                BoardArtifact::Task(_) => unreachable!("a task is read from tasks/ alone"),
+            }
+        }
+        snapshot
     }
 
     /// The entries of the folders besides `tasks/`, as every write carries
