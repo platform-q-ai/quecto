@@ -274,6 +274,29 @@ fn no_request_text_ever_reaches_a_record() {
     }
 }
 
+/// #2537's `id_in_use` refusal records its code, and names no field.
+#[test]
+fn an_id_in_use_refusal_records_its_code() {
+    use crate::application::project_board::dto::{IdUser, ProjectBoardError};
+    use crate::domain::project_board::value_objects::slug::Slug;
+    let records = Arc::new(Records::default());
+    let mut call = BoardCall::start(Some(recording(&records)), FrontEnd::Tool, Client::Agent);
+    call.named(Some("create"));
+    let error = ProjectBoardError::IdInUse {
+        id: Slug::parse("a").unwrap(),
+        by: IdUser::Run(1),
+    };
+    let answer = call.refuse_as_board("create", &error);
+    assert_eq!(answer["error"]["code"], json!("id_in_use"));
+    call.finish(&answer, false);
+    let record = records.taken().remove(0);
+    let in_use = OpOutcome::Refused {
+        code: StaticKind::new("id_in_use"),
+        rule: None,
+    };
+    assert_eq!((record.outcome, record.fault), (in_use, None));
+}
+
 /// Review round 1: the board's refusals that name a schema field record
 /// it: a task the board refuses (`invalid_task`) and a rule's `invalid`.
 #[test]

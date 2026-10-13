@@ -244,6 +244,7 @@ fn refusal_parts(error: &ProjectBoardError) -> (Option<&'static str>, Option<&Sc
         E::Store(_)
         | E::NotFound(_)
         | E::Exists(_)
+        | E::IdInUse { .. }
         | E::Clock(_)
         | E::Quarantined { .. }
         | E::Duplicate { .. }
