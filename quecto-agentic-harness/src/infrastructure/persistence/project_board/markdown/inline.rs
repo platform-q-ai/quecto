@@ -1,11 +1,14 @@
 //! The rules a line of text keeps inline (a title, a paragraph's line, a
 //! list item, a text cell). Nothing but plain text, closed code spans,
 //! emphasis and links of one form survives: no raw HTML, comment or
-//! autolink, character reference, dollar math, image, footnote, reference,
-//! wiki or bare link (any `scheme://`, `www.`, `mailto:`, `xmpp:` or
-//! email), and no backslash escape (the renderer adds the only ones a file
-//! holds). A text, and a link's text, shows something that is not an
-//! emphasis marker; a link's text shows no address of its own.
+//! autolink, character reference, dollar math, image, footnote, full or
+//! collapsed reference (`[x][y]`, `[x][]`), wiki or bare link (any
+//! `scheme://`, `www.`, `mailto:`, `xmpp:` or email), and no backslash
+//! escape (the renderer adds the only ones a file holds). A text, and a link's text, shows something that is not an
+//! emphasis marker; a link's text shows no address of its own. A shortcut
+//! reference (`[x]`) is kept as text: it resolves only to a definition,
+//! and a paragraph that would define one is refused (`prose`), so none is
+//! ever on the page.
 //!
 //! The text is read left to right as a reader reads it, so what binds
 //! tighter than a code span (an autolink, raw HTML, a link's address) is

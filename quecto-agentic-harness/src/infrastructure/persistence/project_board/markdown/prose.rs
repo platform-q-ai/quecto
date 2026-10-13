@@ -2,10 +2,30 @@
 //! between them. Nothing else a block can be survives: a paragraph's line
 //! or a list item that opens with ASCII punctuation (the backtick aside),
 //! or as an ordered marker, is escaped with a backslash, so it reads as
-//! text; an item opens with `[` only as a link, never a task box.
+//! text; an item opens with `[` only as a link, never a task box; and a
+//! paragraph that would define a link reference (`[label]:`, its label
+//! on one line or several) is refused, so no `[label]` on the page can
+//! resolve to a hidden address.
 use super::chars::check_line;
 use super::inline::{check_inline, starts_with_link};
 use super::{Block, MarkdownError};
+use regex::Regex;
+use std::sync::LazyLock;
+
+/// A link reference definition's opening, read across a paragraph's
+/// lines: `[`, a label holding no bracket (it may run across lines, or be
+/// empty, which no reader takes but is refused all the same), then `]:`.
+static DEFINITION: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^\[[^\[\]]*\]:").expect("a valid pattern"));
+
+/// Whether `texts`, a paragraph's lines as a domain holds them, would
+/// define a link reference were its first `[` not escaped: a definition
+/// shows nothing and gives every `[label]` on the page a hidden address,
+/// so a paragraph that opens as one is refused, written or read, rather
+/// than held escaped.
+pub fn defines_reference(texts: &[String]) -> bool {
+    DEFINITION.is_match(&texts.join("\n"))
+}
 
 /// Whether a line opening with `first` is escaped: every ASCII punctuation
 /// (a backslash escape is valid before each), so no block any reader knows
@@ -121,6 +141,9 @@ pub fn render(
         };
         match block {
             Block::Paragraph(texts) | Block::List(texts) if texts.is_empty() => return Err(empty),
+            Block::Paragraph(texts) if defines_reference(texts) => {
+                return Err(MarkdownError::Link { line: at });
+            }
             Block::Paragraph(texts) => {
                 for text in texts {
                     text_line(text, lines.len() + 1)?;

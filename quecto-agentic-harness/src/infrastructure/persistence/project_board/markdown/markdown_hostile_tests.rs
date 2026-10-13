@@ -613,3 +613,82 @@ fn a_line_that_opens_with_a_link_stays_a_link() {
     assert_eq!(links, 2, "{file}");
     assert_eq!(outline(&file, &document), Ok(()));
 }
+
+/// The example document, its first section's prose `blocks`.
+fn with_blocks(blocks: Vec<Block>) -> Document {
+    let mut document = example();
+    document.sections[0].body = Body::Prose(blocks);
+    document
+}
+
+/// A paragraph that would define a link reference (its label on one line
+/// or across several, its address bare or relative, with a title or
+/// none) is refused, from a domain's text and when written: a definition
+/// shows nothing, and gives every `[label]` on the page a hidden address.
+/// Nested in a quote or a list item, the same text is no definition: a
+/// quote's `>` is escaped, and an item opens with `[` only as a link.
+#[test]
+fn a_paragraph_that_defines_a_link_reference_is_refused() {
+    for (text, line) in [
+        ("See [docs].\n\n[docs]: //evil.example/x", 3),
+        ("Hidden text below.\n\n[secret]: /x \"a hidden title\"", 3),
+        ("[docs]: https://example.com", 1),
+        ("[a\nb]: /x", 1),
+        ("See [a b].\n\n[a\nb]:\n//evil.example/x", 3),
+        ("[docs]:", 1),
+    ] {
+        assert_eq!(
+            prose::blocks_of(text),
+            Err(MarkdownError::Link { line }),
+            "{text:?}"
+        );
+        let paragraph: Vec<String> = text
+            .rsplit("\n\n")
+            .next()
+            .unwrap()
+            .split('\n')
+            .map(str::to_string)
+            .collect();
+        let written = render(&with_blocks(vec![Block::Paragraph(paragraph)]), &SHAPE);
+        assert_eq!(written, Err(MarkdownError::Link { line: 11 }), "{text:?}");
+    }
+    let quoted = with_blocks(prose::blocks_of("> [docs]: //evil.example/x").unwrap());
+    let file = render(&quoted, &SHAPE).unwrap();
+    assert!(file.contains("\\> [docs]: //evil.example/x"), "{file}");
+    assert_eq!(outline(&file, &quoted), Ok(()), "{file}");
+    assert!(
+        prose::blocks_of("- [docs]: //evil.example/x").is_err(),
+        "an item opens with `[` only as a link"
+    );
+}
+
+/// A file a writer edited by hand, its definition escaped as the renderer
+/// escapes a line, is refused when read, as when written.
+#[test]
+fn a_definition_read_from_a_file_is_refused() {
+    for to in ["\\[docs]: //evil.example/x\n", "\\[a\nb]: /x\n"] {
+        let read = parse(
+            &edited("Agents read the board, `Vec<T>` and all.\n", to),
+            &SHAPE,
+        );
+        assert_eq!(read, Err(MarkdownError::Link { line: 11 }), "{to:?}");
+    }
+}
+
+/// With no definition on the page, a shortcut reference resolves to
+/// nothing: both readers show `[docs]` as text. A collapsed or full
+/// reference is refused as a link of another form.
+#[test]
+fn a_shortcut_reference_reads_as_text_and_a_collapsed_one_is_refused() {
+    let shortcut = with_blocks(prose::blocks_of("See [docs] and [a\nb].").unwrap());
+    let file = render(&shortcut, &SHAPE).unwrap();
+    assert_eq!(outline(&file, &shortcut), Ok(()), "{file}");
+    let html = comrak::markdown_to_html(&file, &oracle::comrak_reader::comrak_options());
+    assert!(!html.contains("<a "), "{html}");
+    for text in ["See [docs][].", "See [docs][ref]."] {
+        assert!(
+            matches!(prose::blocks_of(text), Err(MarkdownError::Link { .. })),
+            "{text:?}"
+        );
+    }
+}

@@ -4,7 +4,7 @@
 //! writing it gives the same bytes: what the reader lets through, the
 //! writer's rules still refuse.
 use super::chars::check_line;
-use super::prose::{LANGUAGE_RULE, language, unescaped};
+use super::prose::{LANGUAGE_RULE, defines_reference, language, unescaped};
 use super::{Block, Body, BodyShape, Column, Document, MarkdownError, Section, Shape};
 use super::{cell_value, check_shape, write};
 
@@ -287,12 +287,17 @@ impl<'a> Reader<'a> {
     }
 
     fn paragraph(&mut self) -> Result<Block, MarkdownError> {
+        let opened = self.line();
         let mut texts = vec![];
         while let Some(line) = self.peek(0).filter(|line| !line.is_empty()) {
             texts.push(self.text(line)?);
             self.at += 1;
         }
-        Ok(Block::Paragraph(texts))
+        // Refused read as written: a definition, escaped or not.
+        match defines_reference(&texts) {
+            true => Err(MarkdownError::Link { line: opened }),
+            false => Ok(Block::Paragraph(texts)),
+        }
     }
 
     fn list(&mut self) -> Result<Block, MarkdownError> {
