@@ -7,6 +7,42 @@ the agent `board` tool, offered to a top-level agent, and the `quecto board` CLI
 which scripts and the pocket relay run. Both read the same JSON request and give
 the same JSON answer; see the README's tool table and `quecto board --help`.
 
+## The board branch
+
+The branch's root holds a `README.md`, a `format/board` marker, and one folder
+per kind of artifact: `tasks/<id>.md`, `plans/<task>.<n>.md`, `runs/<task>.<n>.md`,
+`changes/<task>.<n>.md`, `reviews/<task>.<change>.md` and `discussions/<id>.md`,
+each its kind's canonical markdown. An `archive/` tree is room left for archived
+work: it is never read, and every write carries it as it is. A file that does not
+read as what its name spells is set aside, never trusted.
+
+This build reads every folder but writes tasks alone. A write or a clear carries
+the other folders as they are, and is refused (`folder_set_aside`) while a file in
+one of them is set aside. Listings are unavailable (`folder_set_aside`) while a
+file set aside outside `tasks/` names a plan, run, change, review or discussion,
+since the index holds tasks alone for now. It writes the marker `quecto-board 3`
+and reads `quecto-board 2` too. A build that reads only format 2 asks for an
+upgrade on a board this build has written, rather than taking its folders for
+someone else's branch.
+
+A read takes at most the following. Past any of these it answers
+`board_too_large` before it reads any file's bytes. In a partial clone, objects the
+clone lacks are still fetched before their sizes can be judged.
+
+| Folder | Entries | File bytes | One file |
+|---|---|---|---|
+| `tasks/` | 4,096 | 16 MiB | 512 KiB |
+| `plans/` | 4,096 | 24 MiB | 1.5 MiB |
+| `runs/` | 4,096 | 16 MiB | 768 KiB |
+| `changes/` | 4,096 | 4 MiB | 8 KiB |
+| `reviews/` | 4,096 | 16 MiB | 1 MiB |
+| `discussions/` | 2,048 | 16 MiB | 1 MiB |
+| **The board** | **16,384** | **64 MiB** | |
+
+A write leaves at most 2,048 entries in `tasks/`; the 4,096 a read takes leave
+room for a board written before task files were markdown (a JSON file and a
+summary per task). A file larger than its kind's cap is set aside, not read.
+
 ## Telemetry
 
 Each board call, from either front end, writes one `board_op` record (epic #2481

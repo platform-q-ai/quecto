@@ -18,10 +18,11 @@
 //!   paths) has credentials redacted and is at most [`MAX_MESSAGE_CHARS`]
 //!   characters.
 //!
-//! Until S9 reads the other folders, a set-aside file in a listing
-//! (`quarantined_json`) and a carried file of no known task
-//! (`set_aside_file`) must lie directly under `tasks/` ([`shown_path`]);
-//! S9 widens both checks to every folder it reads.
+//! A set-aside file in a listing (`quarantined_json`) lies directly under
+//! `tasks/` when it is a task's ([`shown_path`]), and a stray there or a
+//! carried file of no known task (`set_aside_file`) directly under any
+//! folder the store reads ([`shown_board_path`], #2481 S9). A listing
+//! names no other kind's key until the index holds those kinds (S12).
 //!
 //! A task's shape is the board's own field names, every field always
 //! present (`null` or `[]` when unset), in a fixed order.
@@ -37,7 +38,9 @@ use crate::application::project_board::ports::{
 use crate::domain::project_board::entities::claim::Identity;
 use crate::domain::project_board::entities::task::Task;
 use crate::domain::project_board::value_objects::rule_error::BoardRuleError;
-use crate::domain::project_board::value_objects::shown_text::{shown_artifact_path, shown_path};
+use crate::domain::project_board::value_objects::shown_text::{
+    shown_artifact_path, shown_board_path, shown_path,
+};
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::redaction::{redact_secrets, redact_url_userinfo};
 
@@ -58,6 +61,11 @@ pub enum ErrorCode {
     InvalidWrite,
     /// `reason`.
     StoreUnavailable,
+    /// `reason`: the board is past what a read takes.
+    BoardTooLarge,
+    /// `reason`: a file set aside outside `tasks/` holds the board (no
+    /// write or clear, and no listing while it names another kind's key).
+    FolderSetAside,
     /// `rule`: `{"code", …}`.
     Rule,
     /// `field`, `problem`.
@@ -123,6 +131,8 @@ impl ErrorCode {
             Self::Clash => "clash",
             Self::InvalidWrite => "invalid_write",
             Self::StoreUnavailable => "store_unavailable",
+            Self::BoardTooLarge => "board_too_large",
+            Self::FolderSetAside => "folder_set_aside",
             Self::Rule => "rule",
             Self::InvalidTask => "invalid_task",
             Self::InvalidWriter => "invalid_writer",
@@ -314,8 +324,13 @@ fn quarantined_json(file: &QuarantinedFile) -> Value {
         "an answer names a task's file or a stray only: {:?}",
         file.key
     );
+    // A task's file in its own folder; a stray in any folder read.
+    let sanitised = match &file.key {
+        Some(_) => shown_path(&file.path),
+        None => shown_board_path(&file.path),
+    };
     assert!(
-        shown_path(&file.path),
+        sanitised,
         "a store shows every path it sets aside sanitised: {:?}",
         file.path
     );
@@ -441,6 +456,12 @@ fn error_fields(error: &ProjectBoardError) -> (ErrorCode, Map<String, Value>) {
         E::Store(BoardStoreError::Unavailable(why)) => {
             (C::StoreUnavailable, fields([("reason", shown_json(why))]))
         }
+        E::Store(BoardStoreError::TooLarge(why)) => {
+            (C::BoardTooLarge, fields([("reason", shown_json(why))]))
+        }
+        E::Store(BoardStoreError::FolderSetAside(why)) => {
+            (C::FolderSetAside, fields([("reason", shown_json(why))]))
+        }
         E::Rule(rule) => (C::Rule, fields([("rule", rule_json(rule))])),
         E::Invalid(schema) => (
             C::InvalidTask,
@@ -472,7 +493,7 @@ fn error_fields(error: &ProjectBoardError) -> (ErrorCode, Map<String, Value>) {
         E::Duplicate { key } => (C::DuplicateArtifact, key_fields(key)),
         E::SetAsideFile { path, object } => {
             assert!(
-                shown_path(path),
+                shown_board_path(path),
                 "a store shows every path it sets aside sanitised: {path:?}"
             );
             // Raw, as a listing shows it: a clear names the file exactly.

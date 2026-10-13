@@ -36,7 +36,7 @@ pub fn plan(task: &str, version: u32) -> Plan {
         task: slug(task),
         version,
         state: PlanState::Draft,
-        approach: "Spike, then build.\n".into(),
+        approach: "Spike, then build.".into(),
         items: vec![PlanItem {
             id: slug("build"),
             title: "Build it".into(),
