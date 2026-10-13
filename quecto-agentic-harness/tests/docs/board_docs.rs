@@ -66,6 +66,8 @@ fn full() -> BoardOpRecord {
             set_aside: 0,
             set_aside_more: 0,
         }),
+        plans: Some(3),
+        runs: Some(2),
         status_from: Some(StaticKind::new("in_progress")),
         status_to: Some(StaticKind::new("review")),
         claim: Some(ClaimFacts {

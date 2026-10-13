@@ -30,6 +30,8 @@ fn record() -> BoardOpRecord {
         pr: None,
         head: None,
         listing: None,
+        plans: None,
+        runs: None,
         status_from: None,
         status_to: None,
         claim: None,
@@ -77,7 +79,7 @@ fn every_request() -> Vec<BoardRequest> {
         BoardRequest::List(ListFilter::Children(a.clone())),
         BoardRequest::ListReady,
         BoardRequest::ListTakeable,
-        BoardRequest::Show(a.clone()),
+        BoardRequest::Show(a.clone(), None),
         BoardRequest::Create(NewBoardTask {
             id: a.clone(),
             title: "A".into(),
@@ -215,6 +217,8 @@ mod facts {
                 title: Some(vec![]),
                 description: None,
             }),
+            plans: Some(2),
+            runs: Some(1),
             ..record()
         }
     }
@@ -254,6 +258,8 @@ mod facts {
                 title: None,
                 description: Some(vec![TextChange::Crlf]),
             }),
+            plans: Some(4),
+            runs: Some(0),
         };
         let mut record = record();
         facts.fill(&mut record);
@@ -265,7 +271,7 @@ mod facts {
             "claim": {"held_s": -3, "left_s": 60, "holder_is_writer": true},
             "attempts": 2, "lost": 1, "pause_ms": 70,
             "completion": "pending", "prs_linked": 1,
-            "normalised": {"description": ["crlf"]},
+            "normalised": {"description": ["crlf"]}, "plans": 4, "runs": 0,
         });
         assert_eq!(line, want);
     }

@@ -21,7 +21,7 @@ pub fn op_kind(request: &BoardRequest) -> OpKind {
         BoardRequest::List(_) => OpKind::List,
         BoardRequest::ListReady => OpKind::ListReady,
         BoardRequest::ListTakeable => OpKind::ListTakeable,
-        BoardRequest::Show(_) => OpKind::Show,
+        BoardRequest::Show(..) => OpKind::Show,
         BoardRequest::Create(_) => OpKind::Create,
         BoardRequest::UpdateDraft(_) => OpKind::UpdateDraft,
         BoardRequest::Change(_, BoardOp::Move(_)) => OpKind::Move,
@@ -61,7 +61,7 @@ pub fn access_of(kind: OpKind) -> Access {
 /// The task `request` acts on, when its op names one by its `task` field.
 pub fn task_of(request: &BoardRequest) -> Option<&Slug> {
     match request {
-        BoardRequest::Show(id) | BoardRequest::Change(id, _) | BoardRequest::Complete(id) => {
+        BoardRequest::Show(id, _) | BoardRequest::Change(id, _) | BoardRequest::Complete(id) => {
             Some(id)
         }
         BoardRequest::Create(task) => Some(&task.id),
@@ -83,7 +83,7 @@ pub fn pr_of(request: &BoardRequest) -> Option<u64> {
         | BoardRequest::List(_)
         | BoardRequest::ListReady
         | BoardRequest::ListTakeable
-        | BoardRequest::Show(_)
+        | BoardRequest::Show(..)
         | BoardRequest::Create(_)
         | BoardRequest::UpdateDraft(_)
         | BoardRequest::Complete(_)
@@ -112,6 +112,9 @@ pub struct OpFacts {
     pub completion: Option<CompletionFacts>,
     /// What the normaliser changed in the text fields given.
     pub normalised: Option<Normalised>,
+    /// The plan versions and runs a `show` gave (#2481 M4a).
+    pub plans: Option<u64>,
+    pub runs: Option<u64>,
 }
 
 impl OpFacts {
@@ -139,6 +142,8 @@ impl OpFacts {
         put(&mut record.pause_ms, self.pause_ms.as_ref());
         put(&mut record.completion, self.completion.as_ref());
         put(&mut record.normalised, self.normalised.as_ref());
+        put(&mut record.plans, self.plans.as_ref());
+        put(&mut record.runs, self.runs.as_ref());
     }
 }
 

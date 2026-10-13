@@ -9,11 +9,11 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 pub use super::dto::NoPullRequestHost;
-use super::dto::{BoardListing, BoardOp, DraftUpdate, NewBoardTask, ProjectBoardError};
+use super::dto::{BoardListing, BoardOp, DraftUpdate, NewBoardTask, ProjectBoardError, ShownTask};
 use super::ports::{BoardClock, BoardHead, BoardListings, KeepCopy};
 use super::use_cases::{
     BootstrapProjectBoard, ChangeBoardTask, ClearSetAside, CompleteMergedTask, CreateBoardTask,
-    UpdateDraftTask,
+    QueryBoard, UpdateDraftTask,
 };
 use crate::domain::project_board::entities::task::Task;
 use crate::domain::project_board::value_objects::slug::Slug;
@@ -41,7 +41,9 @@ pub enum BoardRequest {
     List(ListFilter),
     ListReady,
     ListTakeable,
-    Show(Slug),
+    /// A task with its plans and runs; or, given a page, only that page of
+    /// its accepted plan.
+    Show(Slug, Option<PlanPage>),
     Create(NewBoardTask),
     UpdateDraft(DraftUpdate),
     Change(Slug, BoardOp),
@@ -66,7 +68,7 @@ impl BoardRequest {
             | Self::Change(..)
             | Self::Complete(_)
             | Self::Clear { .. } => true,
-            Self::List(_) | Self::ListReady | Self::ListTakeable | Self::Show(_) => false,
+            Self::List(_) | Self::ListReady | Self::ListTakeable | Self::Show(..) => false,
         }
     }
 
@@ -84,8 +86,40 @@ impl BoardRequest {
             | Self::Clear { .. }
             | Self::List(_)
             | Self::ListReady
-            | Self::Show(_) => false,
+            | Self::Show(..) => false,
         }
+    }
+}
+
+/// Where a `show` reads on in its task's accepted plan (#2481 M4a review
+/// round 2): the approach from its character `approach_from`, the task
+/// items from the index `items_from`. A part not named is not shown, so
+/// a page names at least one ([`Self::of`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PlanPage {
+    approach_from: Option<usize>,
+    items_from: Option<usize>,
+}
+
+impl PlanPage {
+    /// The page from `approach_from` and `items_from`; none when neither
+    /// is named.
+    pub fn of(approach_from: Option<usize>, items_from: Option<usize>) -> Option<Self> {
+        match (approach_from, items_from) {
+            (None, None) => None,
+            (Some(_), _) | (_, Some(_)) => Some(Self {
+                approach_from,
+                items_from,
+            }),
+        }
+    }
+
+    pub fn approach_from(&self) -> Option<usize> {
+        self.approach_from
+    }
+
+    pub fn items_from(&self) -> Option<usize> {
+        self.items_from
     }
 }
 
@@ -108,10 +142,9 @@ pub enum BoardOutcome {
         created: bool,
     },
     Listing(BoardListing),
-    Shown {
-        head: BoardHead,
-        task: Task,
-    },
+    /// A task with its plans and runs, as one read of the board found it,
+    /// and the page of its accepted plan the request asked for, if any.
+    Shown(ShownTask, Option<PlanPage>),
     /// A task changed; after a change that may complete it (and when it
     /// links pull requests), what came of completing it.
     Changed {
@@ -130,6 +163,10 @@ pub enum BoardOutcome {
 pub struct BoardOperationParts {
     pub clock: Arc<dyn BoardClock>,
     pub listings: Arc<dyn BoardListings>,
+    /// What the listings (the index) do not hold yet: a task with its
+    /// plans and runs, read from the store's snapshot (#2481 M4a; S12 may
+    /// answer it from the index).
+    pub query: QueryBoard,
     pub bootstrap: BootstrapProjectBoard,
     pub create: CreateBoardTask,
     pub update: UpdateDraftTask,

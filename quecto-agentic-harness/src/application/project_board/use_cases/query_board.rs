@@ -1,12 +1,16 @@
 //! The board's listings, read from the store's snapshot: ready tasks,
 //! takeable tasks, tasks by status, a task's children and its dependents,
 //! each by id, and a task's plans, runs, changes, review and discussions,
-//! each beside every file the board set aside. (S1e's index may answer
-//! them faster later, behind this use case.)
+//! each beside every file the board set aside; and a task as `show` gives
+//! it, with its plans and runs (#2481 M4a). (S1e's index may answer them
+//! faster later, behind this use case.)
 use std::sync::Arc;
 
-use crate::application::project_board::dto::{ArtifactListing, BoardListing, ProjectBoardError};
-use crate::application::project_board::ports::ProjectBoardStore;
+use super::board_view;
+use crate::application::project_board::dto::{
+    ArtifactListing, ArtifactScope, BoardListing, ProjectBoardError, ShownTask,
+};
+use crate::application::project_board::ports::{BoardSnapshot, ProjectBoardStore};
 use crate::domain::project_board::entities::change::Change;
 use crate::domain::project_board::entities::discussion::Discussion;
 use crate::domain::project_board::entities::plan::Plan;
@@ -147,6 +151,27 @@ impl QueryBoard {
         ArtifactListing::discussions_of(&self.store.read()?, task)
     }
 
+    /// The task `id` alone, as the board holds it.
+    ///
+    /// # Errors
+    /// The store's; the task's file set aside, no task `id` on the board,
+    /// or [`ProjectBoardError::Duplicate`] for a task held twice.
+    pub fn task(&self, id: &Slug) -> Result<Task, ProjectBoardError> {
+        Ok(board_view::task(&self.store.read()?, id)?.clone())
+    }
+
+    /// The task `id` with every plan and run of it, from one read of the
+    /// board ([`ShownTask`]).
+    ///
+    /// # Errors
+    /// The store's; the task's own file set aside, or no task `id` on the
+    /// board; or [`ProjectBoardError::Duplicate`] for a task, plan or run
+    /// of it the board holds twice. A plan or run file set aside is named
+    /// in the answer, never refused.
+    pub fn show(&self, id: &Slug) -> Result<ShownTask, ProjectBoardError> {
+        shown_on(&self.store.read()?, id)
+    }
+
     fn matching(
         &self,
         wanted: impl Fn(&Task, &[Task]) -> bool,
@@ -167,6 +192,39 @@ impl QueryBoard {
     }
 }
 
+/// [`QueryBoard::show`] over the snapshot `board`.
+fn shown_on(board: &BoardSnapshot, id: &Slug) -> Result<ShownTask, ProjectBoardError> {
+    let task = board_view::task(board, id)?.clone();
+    let plans = ArtifactListing::plans_of(board, id)?;
+    let runs = ArtifactListing::runs_of(board, id)?;
+    let in_scope = |scope: &ArtifactScope, file| scope.holds(file);
+    // The board's own order, each file once.
+    let set_aside = board
+        .quarantined
+        .iter()
+        .filter(|file| in_scope(&plans.scope, file) || in_scope(&runs.scope, file))
+        .cloned()
+        .collect();
+    let ordered = |numbers: Vec<u32>| numbers.windows(2).all(|pair| pair[0] < pair[1]);
+    assert!(
+        ordered(
+            plans
+                .items
+                .iter()
+                .map(|plan| plan.fields().version)
+                .collect()
+        ) && ordered(runs.items.iter().map(|run| run.fields().number).collect()),
+        "a task's plans by version and runs by number, each once"
+    );
+    Ok(ShownTask {
+        head: board.head.clone(),
+        task,
+        plans: plans.items,
+        runs: runs.items,
+        set_aside,
+    })
+}
+
 #[cfg(test)]
 #[path = "query_board_tests.rs"]
 mod tests;
@@ -174,3 +232,7 @@ mod tests;
 #[cfg(test)]
 #[path = "query_board_artifacts_tests.rs"]
 mod artifacts_tests;
+
+#[cfg(test)]
+#[path = "query_board_show_tests.rs"]
+mod show_tests;
