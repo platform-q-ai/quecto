@@ -82,6 +82,8 @@ const KNOWN_KINDS : & [
 "no_pull_request_host" ,
 "id_in_use" ,
 "internal" ,
+"board_too_large" ,
+"folder_set_aside" ,
 "not_allowed" ,
 "not_holder" ,
 "no_claim" ,

@@ -61,6 +61,11 @@ pub enum ErrorCode {
     InvalidWrite,
     /// `reason`.
     StoreUnavailable,
+    /// `reason`: the board is past what a read takes.
+    BoardTooLarge,
+    /// `reason`: a file set aside outside `tasks/` holds the board (no
+    /// write or clear, and no listing while it names another kind's key).
+    FolderSetAside,
     /// `rule`: `{"code", …}`.
     Rule,
     /// `field`, `problem`.
@@ -126,6 +131,8 @@ impl ErrorCode {
             Self::Clash => "clash",
             Self::InvalidWrite => "invalid_write",
             Self::StoreUnavailable => "store_unavailable",
+            Self::BoardTooLarge => "board_too_large",
+            Self::FolderSetAside => "folder_set_aside",
             Self::Rule => "rule",
             Self::InvalidTask => "invalid_task",
             Self::InvalidWriter => "invalid_writer",
@@ -448,6 +455,12 @@ fn error_fields(error: &ProjectBoardError) -> (ErrorCode, Map<String, Value>) {
         }
         E::Store(BoardStoreError::Unavailable(why)) => {
             (C::StoreUnavailable, fields([("reason", shown_json(why))]))
+        }
+        E::Store(BoardStoreError::TooLarge(why)) => {
+            (C::BoardTooLarge, fields([("reason", shown_json(why))]))
+        }
+        E::Store(BoardStoreError::FolderSetAside(why)) => {
+            (C::FolderSetAside, fields([("reason", shown_json(why))]))
         }
         E::Rule(rule) => (C::Rule, fields([("rule", rule_json(rule))])),
         E::Invalid(schema) => (

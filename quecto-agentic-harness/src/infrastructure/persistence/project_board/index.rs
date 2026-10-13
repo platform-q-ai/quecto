@@ -62,7 +62,9 @@ impl std::fmt::Display for IndexError {
             Self::Store(
                 BoardStoreError::Clash(why)
                 | BoardStoreError::InvalidWrite(why)
-                | BoardStoreError::Unavailable(why),
+                | BoardStoreError::Unavailable(why)
+                | BoardStoreError::TooLarge(why)
+                | BoardStoreError::FolderSetAside(why),
             ) => f.write_str(why),
             Self::NeedsRebuild(why) => write!(f, "the index needs a rebuild: {why}"),
             Self::Corrupt(why) => write!(f, "the index is corrupt: {why}"),
@@ -550,7 +552,7 @@ fn set_aside_indexable(snapshot: &BoardSnapshot) -> Result<(), IndexError> {
 }
 
 fn not_indexed(what: String) -> IndexError {
-    IndexError::Store(BoardStoreError::Unavailable(format!(
+    IndexError::Store(BoardStoreError::FolderSetAside(format!(
         "the board index names set-aside task files only for now, and {what}"
     )))
 }

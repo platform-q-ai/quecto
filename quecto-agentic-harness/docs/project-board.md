@@ -16,12 +16,31 @@ each its kind's canonical markdown. An `archive/` tree is room left for archived
 work: it is never read, and every write carries it as it is. A file that does not
 read as what its name spells is set aside, never trusted.
 
-This build reads every folder (epic #2481 S9) but writes tasks alone: a write or
-a clear carries the other folders as they are, and is refused while a file in
-one of them is set aside. It writes the marker `quecto-board 3` and reads
-`quecto-board 2` too. A build that reads only format 2 asks for an upgrade on a
-board this build has written, rather than taking its folders for someone else's
-branch.
+This build reads every folder but writes tasks alone. A write or a clear carries
+the other folders as they are, and is refused (`folder_set_aside`) while a file in
+one of them is set aside. Listings are unavailable (`folder_set_aside`) while a
+file set aside outside `tasks/` names a plan, run, change, review or discussion,
+since the index holds tasks alone for now. It writes the marker `quecto-board 3`
+and reads `quecto-board 2` too. A build that reads only format 2 asks for an
+upgrade on a board this build has written, rather than taking its folders for
+someone else's branch.
+
+A read takes at most (`board_too_large` past any of these, before any file is
+read):
+
+| Folder | Entries | File bytes | One file |
+|---|---|---|---|
+| `tasks/` | 4,096 | 16 MiB | 512 KiB |
+| `plans/` | 4,096 | 24 MiB | 1.5 MiB |
+| `runs/` | 4,096 | 16 MiB | 768 KiB |
+| `changes/` | 4,096 | 4 MiB | 8 KiB |
+| `reviews/` | 4,096 | 16 MiB | 1 MiB |
+| `discussions/` | 2,048 | 16 MiB | 1 MiB |
+| **The board** | **16,384** | **64 MiB** | |
+
+A write leaves at most 2,048 entries in `tasks/`; the 4,096 a read takes leave
+room for a board written before task files were markdown (a JSON file and a
+summary per task). A file larger than its kind's cap is set aside, not read.
 
 ## Telemetry
 

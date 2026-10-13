@@ -25,6 +25,8 @@ fn keys(code: ErrorCode) -> &'static [&'static str] {
         | C::Clash
         | C::InvalidWrite
         | C::StoreUnavailable
+        | C::BoardTooLarge
+        | C::FolderSetAside
         | C::PullRequestsUnavailable
         | C::Refused => &["reason"],
         C::NoBoard => &[],
@@ -90,6 +92,12 @@ board_errors! {
     },
     E::Store(BoardStoreError::Unavailable(_)) => {
         E::Store(BoardStoreError::Unavailable("offline".into()))
+    },
+    E::Store(BoardStoreError::TooLarge(_)) => {
+        E::Store(BoardStoreError::TooLarge("16385 entries".into()))
+    },
+    E::Store(BoardStoreError::FolderSetAside(_)) => {
+        E::Store(BoardStoreError::FolderSetAside("plans/a.1.md is set aside".into()))
     },
     E::Rule(_) => E::Rule(BoardRuleError::NotHolder),
     E::Invalid(_) => E::Invalid(SchemaError::new("title", "is empty")),

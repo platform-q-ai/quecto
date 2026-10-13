@@ -13,14 +13,15 @@
 //! This quecto reads the folders and writes none: a write or a clear
 //! carries each folder and the archive as they were read, the same trees,
 //! and is refused while a file in a folder is set aside, since only a
-//! quecto that writes the folders can carry one or drop it (S10).
+//! quecto that writes the folders can carry one or drop it (S10). So a
+//! reason here never says what the next write does with a file.
 use super::entries::{Disposition, Naming, TaskFile, disposition};
 use super::{
-    Board, Entry, Limits, TREE, Unread, capped, contents, listed, looked_up, missing, objects,
-    sanitised, shown_name,
+    Board, Entry, Limits, TREE, Unread, capped, contents, entry_path, listed, looked_up, missing,
+    objects, sanitised, too_large,
 };
 use crate::application::project_board::ports::{
-    ArtifactKey, BoardArtifact, BoardHead, BoardSnapshot, BoardStoreError, QuarantinedFile,
+    ArtifactKey, BoardArtifact, BoardHead, BoardSnapshot, QuarantinedFile,
 };
 use crate::domain::project_board::entities::change::MAX_CHANGE_NUMBER;
 use crate::domain::project_board::entities::plan::MAX_PLAN_VERSION;
@@ -79,11 +80,12 @@ const fn numbered_naming(
         pattern: "<task>.<n>.md",
         max_name: MAX_NUMBERED_NAME,
         file_bytes,
+        written: false,
     }
 }
 
 /// The folders, in the order the plan lists them.
-pub(super) const FOLDERS: [Folder; 5] = [
+pub(super) static FOLDERS: [Folder; 5] = [
     Folder {
         naming: numbered_naming("plans", "plan", "plan name", PLAN_LIMITS.file_bytes),
         spell: |stem| numbered(stem, MAX_PLAN_VERSION).map(|(id, n)| ArtifactKey::Plan(id, n)),
@@ -123,6 +125,7 @@ pub(super) const FOLDERS: [Folder; 5] = [
             pattern: "<id>.md",
             max_name: MAX_SLUG_BYTES + ".md".len(),
             file_bytes: DISCUSSION_LIMITS.file_bytes,
+            written: false,
         },
         spell: |stem| Slug::parse(stem).ok().map(ArtifactKey::Discussion),
         decode: |bytes| decode::<DiscussionCodec>(bytes).map(BoardArtifact::Discussion),
@@ -169,22 +172,68 @@ pub(super) struct FolderRead {
     pub quarantined: Vec<QuarantinedFile>,
 }
 
-/// The folder `folder` of tree `tree`.
+/// One folder scanned: listed, every entry judged by its type and size
+/// alone, and the files still to read (key, entry, size).
+pub(super) struct FolderScan {
+    folder: &'static Folder,
+    tree: CarriedTree,
+    quarantined: Vec<QuarantinedFile>,
+    to_read: Vec<(ArtifactKey, Entry, usize)>,
+}
+
+impl FolderScan {
+    /// The file bytes a load reads.
+    pub(super) fn bytes(&self) -> usize {
+        self.tree.bytes
+    }
+
+    /// The entries the scan listed.
+    pub(super) fn entries(&self) -> usize {
+        self.tree.entries
+    }
+}
+
+/// `entry` of `folder` set aside: under `key`, if any, and `carried` when
+/// a write would carry it.
+fn aside(
+    folder: &Folder,
+    entry: &Entry,
+    key: Option<ArtifactKey>,
+    reason: &str,
+    carried: bool,
+) -> QuarantinedFile {
+    let path = entry_path(folder.naming.folder, &entry.raw);
+    if carried {
+        // A carried name shows as it is, as one in `tasks/` does.
+        let name = format!("{}/{}", folder.naming.folder, entry.name);
+        assert_eq!(path, name, "a carried name shows as it is");
+    }
+    QuarantinedFile {
+        path,
+        key,
+        reason: capped(&sanitised(reason.as_bytes())),
+        object: entry.oid.clone(),
+        carried,
+    }
+}
+
+/// The folder `folder` of tree `tree`, scanned: listed within its entries,
+/// every entry judged, and the bytes of its files to read within its own
+/// bound. No file's bytes are read.
 ///
 /// # Errors
 /// Objects this clone does not hold; git fails, or the folder is past its
 /// bounds.
-pub(super) fn read_folder(
+pub(super) fn scan_folder(
     git: &super::Git,
     tree: &str,
-    folder: &Folder,
+    folder: &'static Folder,
     limits: Limits,
-) -> Result<FolderRead, Unread> {
+) -> Result<FolderScan, Unread> {
     let name = folder.naming.folder;
-    let past = |what: String| Unread::Failed(BoardStoreError::Unavailable(what));
     let entries = listed(git, tree, limits.tree_bytes)?;
     if entries.len() > folder.max_entries {
-        return Err(past(format!(
+        return Err(too_large(format!(
             "the board's {name} tree holds {} entries; the most is {}",
             entries.len(),
             folder.max_entries
@@ -200,23 +249,6 @@ pub(super) fn read_folder(
         *counts.entry(entry.raw.as_slice()).or_default() += 1;
     }
     let mut quarantined = vec![];
-    let mut aside = |entry: &Entry, key: Option<ArtifactKey>, reason: String, carried: bool| {
-        if carried {
-            // A carried name shows as it is, as one in `tasks/` does.
-            assert_eq!(
-                shown_name(&entry.raw),
-                entry.name,
-                "a carried name shows as it is"
-            );
-        }
-        quarantined.push(QuarantinedFile {
-            path: format!("{name}/{}", shown_name(&entry.raw)),
-            key,
-            reason: capped(&sanitised(reason.as_bytes())),
-            object: entry.oid.clone(),
-            carried,
-        });
-    };
     let mut to_read = vec![];
     for entry in &entries {
         let found = match kinds.get(&entry.oid) {
@@ -229,17 +261,45 @@ pub(super) fn read_folder(
             .map(|stem| ((folder.spell)(stem), TaskFile::Markdown));
         let count = counts.get(entry.raw.as_slice()).copied().unwrap_or(0);
         match disposition(entry, found, count, file, &folder.naming) {
-            Disposition::Read(key) => to_read.push((key, entry, found.map_or(0, |o| o.size))),
-            Disposition::Aside { id, reason, kept } => aside(entry, id, reason, kept),
+            Disposition::Read(key) => {
+                to_read.push((key, entry.clone(), found.map_or(0, |o| o.size)));
+            }
+            Disposition::Aside { id, reason, kept } => {
+                quarantined.push(aside(folder, entry, id, &reason, kept));
+            }
         }
     }
     let bytes: usize = to_read.iter().map(|(_, _, size)| size).sum();
     if bytes > folder.max_bytes {
-        return Err(past(format!(
+        return Err(too_large(format!(
             "the board's {name} files hold {bytes} bytes; the most read is {}",
             folder.max_bytes
         )));
     }
+    let tree = CarriedTree {
+        oid: tree.to_string(),
+        entries: entries.len(),
+        bytes,
+    };
+    Ok(FolderScan {
+        folder,
+        tree,
+        quarantined,
+        to_read,
+    })
+}
+
+/// The folder `scan` found, its files read and decoded.
+///
+/// # Errors
+/// git fails to give the files' bytes.
+pub(super) fn load_folder(git: &super::Git, scan: FolderScan) -> Result<FolderRead, Unread> {
+    let FolderScan {
+        folder,
+        tree,
+        mut quarantined,
+        to_read,
+    } = scan;
     let wanted: Vec<(&str, usize)> = to_read
         .iter()
         .map(|(_, entry, size)| (entry.oid.as_str(), *size))
@@ -258,15 +318,10 @@ pub(super) fn read_folder(
             });
         match read {
             Ok(artifact) => artifacts.push(artifact),
-            Err(reason) => aside(entry, Some(key), reason, true),
+            Err(reason) => quarantined.push(aside(folder, &entry, Some(key), &reason, true)),
         }
     }
     quarantined.sort_by(|left, right| left.path.cmp(&right.path));
-    let tree = CarriedTree {
-        oid: tree.to_string(),
-        entries: entries.len(),
-        bytes,
-    };
     Ok(FolderRead {
         tree,
         artifacts,
@@ -374,8 +429,8 @@ impl Board {
         };
         let file = self.quarantined.iter().find(in_folder)?;
         Some(format!(
-            "{} is set aside: this quecto carries set-aside files in tasks/ only, so it writes \
-             nothing while one lies elsewhere; upgrade quecto, or {}",
+            "{} is set aside, and this quecto writes nothing while a file outside tasks/ is set \
+             aside: to write the board again, {}",
             file.path,
             super::RECOVERY
         ))

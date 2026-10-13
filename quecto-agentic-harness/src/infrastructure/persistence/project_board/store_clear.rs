@@ -86,7 +86,7 @@ impl GitBoardStore {
         }
         let board = self.board_at(&base)?;
         if let Some(refusal) = board.folders_refusal() {
-            return Ok(BoardWrite::Refused(refusal));
+            return Err(BoardStoreError::FolderSetAside(refusal));
         }
         let after = match cleared(&board, clear) {
             Ok(after) => after,

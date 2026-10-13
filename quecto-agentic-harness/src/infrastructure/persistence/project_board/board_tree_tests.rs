@@ -180,3 +180,44 @@ fn only_a_file_set_aside_in_another_folder_stops_a_write() {
     );
     assert_eq!(board(&["plansx/a"]).folders_refusal(), None);
 }
+
+/// A write keeps `tasks/` within its own bytes as well as the board within
+/// its bytes in all.
+#[test]
+fn a_write_keeps_tasks_within_their_own_bytes() {
+    let task = a_task();
+    let written = [(&task, vec![0; 10])];
+    let limits = |tasks_bytes| Limits {
+        tasks_bytes,
+        ..LIMITS
+    };
+    assert!(Board::default().within_bounds(&written, limits(10)).is_ok());
+    let past = Board::default().within_bounds(&written, limits(9));
+    assert!(
+        matches!(&past, Err(BoardStoreError::InvalidWrite(why)) if why.contains("10 bytes of task files")),
+        "{past:?}"
+    );
+}
+
+/// A path set aside always shows as one name in its folder, whatever the
+/// name's bytes: never empty, `.`, `..` or two names.
+#[test]
+fn an_entry_path_is_one_name_in_its_folder() {
+    for (raw, shown) in [
+        (&b"a.md"[..], "plans/a.md"),
+        (b"\x01", "plans/\u{2026}"),
+        (b"\x01.\x01", "plans/\u{2026}"),
+        (b"\x01..", "plans/\u{2026}"),
+        (b".", "plans/\u{2026}"),
+        (b"a/b", "plans/\u{2026}"),
+        (b"a\x01b", "plans/a b"),
+        (b"a..b", "plans/a..b"),
+    ] {
+        let path = entry_path("plans", raw);
+        assert_eq!(path, shown, "{raw:?}");
+        assert!(
+            crate::domain::project_board::value_objects::shown_text::shown_board_path(&path),
+            "{path:?}"
+        );
+    }
+}

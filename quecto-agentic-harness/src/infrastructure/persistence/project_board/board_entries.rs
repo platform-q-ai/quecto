@@ -44,6 +44,10 @@ pub(super) struct Naming {
     pub max_name: usize,
     /// The largest file of it read.
     pub file_bytes: usize,
+    /// Whether this quecto writes the folder, so a reason may say what the
+    /// next write does with a file (carries it, drops it). A folder it only
+    /// reads says what is wrong alone.
+    pub written: bool,
 }
 
 /// How `tasks/` names its files.
@@ -54,6 +58,7 @@ pub(super) const TASK_NAMING: Naming = Naming {
     pattern: "<id>.md",
     max_name: MAX_NAME_BYTES,
     file_bytes: MAX_TASK_FILE_BYTES,
+    written: true,
 };
 
 /// What becomes of one entry of a folder, its file named by `K` (a task's
@@ -86,15 +91,22 @@ pub(super) fn disposition<K>(
         pattern,
         max_name,
         file_bytes,
+        written,
     } = *naming;
+    // What the next write does, said only of a folder this quecto writes.
+    let then = |what: &str, tail: &str| match written {
+        true => format!("{what}{tail}"),
+        false => what.to_string(),
+    };
+    let (dropped, carried) = ("; the next write drops it", "; carried forward as it is");
     match entry.kept_name(max_name) {
         true => {}
         false => {
             let reason = format!(
                 "not a name quecto keeps (letters, numbers and {NAME_PUNCTUATION}, starting \
-                 with a letter or number, at most {max_name} bytes); the next write drops it"
+                 with a letter or number, at most {max_name} bytes)"
             );
-            return aside(None, reason, false);
+            return aside(None, then(&reason, dropped), false);
         }
     }
     let Some((id, file)) = file else {
@@ -112,7 +124,7 @@ pub(super) fn disposition<K>(
     match (file, id, count, entry.mode.as_str(), kind) {
         (_, _, _, GITLINK, _) => aside(
             None,
-            format!("a gitlink is not a {noun} file; the next write drops it"),
+            then(&format!("a gitlink is not a {noun} file"), dropped),
             false,
         ),
         (_, id, 2.., _, _) => aside(id, "named more than once in the tree".into(), false),
@@ -134,31 +146,45 @@ pub(super) fn disposition<K>(
         ),
         (_, None, _, _, _) if agrees => aside(
             None,
-            format!("its name is not a {spelled} this quecto reads; carried forward as it is"),
+            then(
+                &format!("its name is not a {spelled} this quecto reads"),
+                carried,
+            ),
             true,
         ),
         (_, id, _, mode, _) if agrees => aside(
             id,
-            format!("not a regular file (mode {mode}); carried forward as it is"),
+            then(&format!("not a regular file (mode {mode})"), carried),
             true,
         ),
         // A copy a write drops names its id only when no copy a write
         // carries does: the carried copy is the task, read or set aside.
         (_, id, 0, mode, _) if kind_of_mode(mode).is_none() => aside(
             id,
-            format!("mode {mode} is not one git writes, so the next write drops it"),
+            then(
+                &format!("mode {mode} is not one git writes"),
+                ", so the next write drops it",
+            ),
             false,
         ),
         (_, _, 1.., mode, _) => aside(
             None,
-            format!("a copy of mode {mode} beside one a write carries; the next write drops it"),
+            match written {
+                true => {
+                    format!("a copy of mode {mode} beside one a write carries{dropped}")
+                }
+                false => format!("a copy of mode {mode} beside another of its name"),
+            },
             false,
         ),
         (_, id, 0, mode, _) => aside(
             id,
-            format!(
-                "mode {mode} over a {}: git cannot send such a tree, so the next write drops it",
-                kind.unwrap_or("missing object")
+            then(
+                &format!(
+                    "mode {mode} over a {}: git cannot send such a tree",
+                    kind.unwrap_or("missing object")
+                ),
+                ", so the next write drops it",
             ),
             false,
         ),

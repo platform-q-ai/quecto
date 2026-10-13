@@ -2,35 +2,32 @@
 //! its `tasks/` tree a write leaves, which a clear never grows, and, with
 //! the other folders a write carries as they are (#2481 S9), the entries
 //! and file bytes a read reads.
-use super::{Board, Limits, MAX_BOARD_ENTRIES, MAX_TASK_ENTRIES, Unread, task_file};
+use super::{Board, Limits, MAX_BOARD_ENTRIES, MAX_TASK_ENTRIES, Unread, task_file, too_large};
 use crate::application::project_board::ports::BoardStoreError;
 use crate::domain::project_board::entities::task::Task;
 use crate::domain::project_board::value_objects::slug::Slug;
 use std::collections::{BTreeMap, BTreeSet};
 
-impl Board {
-    /// The board as read keeps within what a read takes in all its
-    /// folders: [`MAX_BOARD_ENTRIES`] entries and the file bytes of
-    /// `limits`.
-    ///
-    /// # Errors
-    /// Past either bound.
-    pub(super) fn read_within(&self, limits: Limits) -> Result<(), Unread> {
-        let entries = self.listed + self.carried_entries();
-        let bytes = self.read_bytes.values().sum::<usize>() + self.carried_bytes();
-        let past = |why: String| Err(Unread::Failed(BoardStoreError::Unavailable(why)));
-        match (entries <= MAX_BOARD_ENTRIES, bytes <= limits.board_bytes) {
-            (true, true) => Ok(()),
-            (false, _) => past(format!(
-                "the board's trees hold {entries} entries; the most read is {MAX_BOARD_ENTRIES}"
-            )),
-            (true, false) => past(format!(
-                "the board's files hold {bytes} bytes; the most read is {}",
-                limits.board_bytes
-            )),
-        }
+/// A board of `entries` in all its folders, and `bytes` of files to read,
+/// keeps within what a read takes: [`MAX_BOARD_ENTRIES`] and
+/// `limits.board_bytes`. A read checks it before it reads any file's bytes.
+///
+/// # Errors
+/// Past either bound.
+pub(super) fn within_read(entries: usize, bytes: usize, limits: Limits) -> Result<(), Unread> {
+    match (entries <= MAX_BOARD_ENTRIES, bytes <= limits.board_bytes) {
+        (true, true) => Ok(()),
+        (false, _) => Err(too_large(format!(
+            "the board's trees hold {entries} entries; the most read is {MAX_BOARD_ENTRIES}"
+        ))),
+        (true, false) => Err(too_large(format!(
+            "the board's files hold {bytes} bytes; the most read is {}",
+            limits.board_bytes
+        ))),
     }
+}
 
+impl Board {
     /// The board, with `written` in place, keeps within what a write
     /// leaves: the entries of its `tasks/` tree (each task one file, each
     /// file set aside one), at most [`MAX_TASK_ENTRIES`], and the task-file
@@ -108,12 +105,16 @@ impl Board {
             .read_bytes
             .iter()
             .filter(|(name, _)| !replaced.contains(*name));
-        let bytes = carried.map(|(_, size)| size).sum::<usize>()
-            + written.iter().map(|(_, bytes)| bytes.len()).sum::<usize>()
-            + self.carried_bytes();
-        match bytes <= limits.board_bytes {
-            true => Ok(()),
-            false => Err(BoardStoreError::InvalidWrite(format!(
+        let tasks = carried.map(|(_, size)| size).sum::<usize>()
+            + written.iter().map(|(_, bytes)| bytes.len()).sum::<usize>();
+        let bytes = tasks + self.carried_bytes();
+        match (tasks <= limits.tasks_bytes, bytes <= limits.board_bytes) {
+            (true, true) => Ok(()),
+            (false, _) => Err(BoardStoreError::InvalidWrite(format!(
+                "the board would hold {tasks} bytes of task files; a read takes at most {}",
+                limits.tasks_bytes
+            ))),
+            (true, false) => Err(BoardStoreError::InvalidWrite(format!(
                 "the board would hold {bytes} bytes of files a read reads; a read takes at most {}",
                 limits.board_bytes
             ))),

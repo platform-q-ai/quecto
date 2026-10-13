@@ -279,6 +279,16 @@ fn names_in_a_folder_are_judged_as_in_tasks() {
     assert!(reason(&board, "plans/a.3.md").contains("not a regular file"));
     assert!(reason(&board, &format!("plans/{longest}")).contains("holds plan 3 of task a"));
     assert!(reason(&board, &format!("plans/{too_long}")).contains("not a name quecto keeps"));
+    // This quecto writes no folder but `tasks/`: a reason says what is
+    // wrong, never what a write would do.
+    for file in &board.quarantined {
+        assert!(
+            !file.reason.contains("write") && !file.reason.contains("carried"),
+            "{}: {}",
+            file.path,
+            file.reason
+        );
+    }
 }
 
 /// A name listed twice in a folder sets every copy aside under its key,
@@ -405,7 +415,7 @@ fn nothing_is_written_or_cleared_while_a_file_outside_tasks_is_set_aside() {
     let board = bob.read().unwrap();
     let write = bob.write_tasks(&head, &[task("b")], "board: add b");
     assert!(
-        matches!(&write, Ok(BoardWrite::Refused(why)) if why.contains("plans/a.2.md")),
+        matches!(&write, Err(BoardStoreError::FolderSetAside(why)) if why.contains("plans/a.2.md")),
         "{write:?}"
     );
     for file in &board.quarantined {
@@ -416,7 +426,7 @@ fn nothing_is_written_or_cleared_while_a_file_outside_tasks_is_set_aside() {
         };
         let cleared = bob.clear_set_aside(&head, &clear, "board: clear");
         assert!(
-            matches!(&cleared, Ok(BoardWrite::Refused(why)) if why.contains("plans/a.2.md")),
+            matches!(&cleared, Err(BoardStoreError::FolderSetAside(why)) if why.contains("plans/a.2.md")),
             "{}: {cleared:?}",
             file.path
         );
@@ -473,12 +483,25 @@ fn the_root_holds_the_folders_and_an_archive_each_a_tree_once() {
             matches!(&clash, Err(BoardStoreError::Clash(_))),
             "{name}: {clash:?}"
         );
-        let twice = read_root(&[("40000", name, tree), ("40000", name, tree)]);
-        assert!(
-            matches!(&twice, Err(BoardStoreError::Unavailable(why)) if why.contains(&format!("names {name} more than once"))),
-            "{name}: {twice:?}"
-        );
+        // Named twice is damage, whatever the copies are: a tree and a
+        // file are not taken for a clash.
+        for copies in [
+            [("40000", name, tree as fn() -> Node), ("40000", name, tree)],
+            [("40000", name, tree), ("100644", name, stray)],
+        ] {
+            let twice = read_root(&copies);
+            assert!(
+                matches!(&twice, Err(BoardStoreError::Unavailable(why)) if why.contains(&format!("names {name} more than once"))),
+                "{name}: {twice:?}"
+            );
+        }
     }
+    // `tasks` too: `read_root` adds one tree of it.
+    let twice = read_root(&[("100644", "tasks", stray)]);
+    assert!(
+        matches!(&twice, Err(BoardStoreError::Unavailable(why)) if why.contains("names tasks more than once")),
+        "{twice:?}"
+    );
 }
 
 /// `count` rows of one blob in `repo`, named by `name`.
@@ -502,7 +525,7 @@ fn a_board_past_a_folders_bounds_or_its_own_is_not_read() {
         });
         let read = store(&repos.bob).read();
         assert!(
-            matches!(&read, Err(BoardStoreError::Unavailable(why)) if why.contains(bound)),
+            matches!(&read, Err(BoardStoreError::TooLarge(why)) if why.contains(bound)),
             "{bound}: {read:?}"
         );
     };
@@ -520,19 +543,196 @@ fn a_board_past_a_folders_bounds_or_its_own_is_not_read() {
         },
         "changes files hold 4202496 bytes",
     );
-    refused(
-        &|repo| {
-            ["plans", "runs", "changes", "reviews", "discussions"]
-                .into_iter()
-                .map(|name| {
-                    let count = if name == "discussions" { 1 } else { 4_096 };
-                    let rows = many(repo, count, b"x", |n| format!("x{n}.txt"));
-                    ("40000", name, Node::Made(rows))
-                })
-                .collect()
-        },
-        "16385",
+    // The folders' 16,384 entries and one in `tasks/`: the board's own
+    // bound counts every folder, `tasks/` with the rest.
+    let all = |repo: &Path, tasks: usize| -> Vec<RootRow> {
+        let mut rows: Vec<RootRow> = ["plans", "runs", "changes", "reviews"]
+            .into_iter()
+            .map(|name| {
+                let rows = many(repo, 4_096, b"x", |n| format!("x{n}.txt"));
+                ("40000", name, Node::Made(rows))
+            })
+            .collect();
+        let strays = many(repo, tasks, b"x", |n| format!("x{n}.txt"));
+        rows.push(("40000", "tasks", Node::Made(strays)));
+        rows
+    };
+    let repos = fresh();
+    board_of(&repos, |repo| all(repo, 1));
+    let read = store(&repos.bob).read();
+    assert!(
+        matches!(&read, Err(BoardStoreError::TooLarge(why)) if why.contains("16385 entries")),
+        "{read:?}"
     );
+    let repos = fresh();
+    board_of(&repos, |repo| all(repo, 0));
+    assert!(store(&repos.bob).read().is_ok(), "16,384 entries are read");
+}
+
+/// The board's file bytes in all count every folder, `tasks/` with the
+/// rest: at the bound it is read, past it it is not.
+#[test]
+fn a_board_past_its_bytes_in_all_is_not_read() {
+    let repos = fresh();
+    board_of(&repos, |_| every_kind());
+    let all = encode(&task("a")).unwrap().len()
+        + bytes::<PlanCodec>(&plan("a", 1)).len()
+        + bytes::<RunCodec>(&run("a", 1)).len()
+        + bytes::<ChangeCodec>(&change("a", 1)).len()
+        + bytes::<ReviewCodec>(&review("a", 1)).len()
+        + bytes::<DiscussionCodec>(&discussion("d")).len();
+    let mut bob = store(&repos.bob);
+    bob.limits.board_bytes = all;
+    assert!(bob.read().is_ok(), "at the bound");
+    let mut bob = store(&repos.bob);
+    bob.limits.board_bytes = all - 1;
+    let read = bob.read();
+    assert!(
+        matches!(&read, Err(BoardStoreError::TooLarge(why)) if why.contains(&format!("files hold {all} bytes"))),
+        "{read:?}"
+    );
+}
+
+/// `tasks/` is read within its own bytes (16 MiB), as each folder is, and
+/// a write keeps within them.
+#[test]
+fn tasks_are_read_and_written_within_their_own_bytes() {
+    assert_eq!(LIMITS.tasks_bytes, 16 * 1024 * 1024);
+    let repos = fresh();
+    board_of(&repos, |_| every_kind());
+    let size = encode(&task("a")).unwrap().len();
+    let mut bob = store(&repos.bob);
+    bob.limits.tasks_bytes = size - 1;
+    let read = bob.read();
+    assert!(
+        matches!(&read, Err(BoardStoreError::TooLarge(why)) if why.contains("task files hold")),
+        "{read:?}"
+    );
+    let mut bob = store(&repos.bob);
+    bob.limits.tasks_bytes = size;
+    let head = bob.read().unwrap().head;
+    let write = bob.write_tasks(&head, &[task("b")], "board: add b");
+    assert!(
+        matches!(&write, Err(BoardStoreError::InvalidWrite(why)) if why.contains("bytes of task files")),
+        "{write:?}"
+    );
+}
+
+/// A name that shows as nothing, `.`, `..`, or holds a `/` (a hand-made
+/// tree's) is listed as `…` in its folder: one name a listing, an answer
+/// and the index take back, so every listing still answers, and the index
+/// holds without a rebuild.
+#[test]
+fn a_name_that_shows_as_no_name_is_listed_as_one() {
+    use crate::application::project_board::ports::BoardListings;
+    use crate::infrastructure::persistence::project_board::index::{BoardIndex, Refreshed};
+    use crate::infrastructure::persistence::project_board::indexed_listings::IndexedBoardListings;
+    let repos = fresh();
+    let odd = || {
+        ["\u{1}", "\u{1}.\u{1}", "\u{1}..\u{1}", ".", "x/y"]
+            .map(|name| regular(name, b"odd".to_vec()))
+            .to_vec()
+    };
+    board_of(&repos, |_| {
+        let mut tasks = odd();
+        tasks.push(regular("a.md", encode(&task("a")).unwrap()));
+        vec![
+            ("40000", "tasks", Node::Tree(tasks)),
+            ("40000", "plans", Node::Tree(odd())),
+        ]
+    });
+    let bob = Arc::new(store(&repos.bob));
+    let snapshot = bob.read().unwrap();
+    let paths: Vec<&str> = snapshot
+        .quarantined
+        .iter()
+        .map(|f| f.path.as_str())
+        .collect();
+    assert_eq!(paths, [["plans/…"; 5], ["tasks/…"; 5]].concat());
+    let index = BoardIndex::of(&bob).unwrap();
+    let listings = IndexedBoardListings::new(index, bob.clone(), bob.clone());
+    for _ in 0..2 {
+        assert_eq!(listings.ready().unwrap().quarantined.len(), 10);
+    }
+    let index = BoardIndex::of(&bob).unwrap();
+    assert_eq!(
+        index.refresh(&*bob, &*bob),
+        Ok(Refreshed::Unchanged {
+            head: snapshot.head.0.clone()
+        }),
+        "the index holds: no rebuild"
+    );
+}
+
+/// A git on the store's `PATH` that logs every object a `cat-file --batch`
+/// is asked to read (what a read reads the bytes of), then runs git.
+fn logging_git(dir: &Path) -> (std::ffi::OsString, PathBuf) {
+    let real = std::env::split_paths(&std::env::var_os("PATH").unwrap())
+        .map(|dir| dir.join("git"))
+        .find(|git| git.is_file())
+        .unwrap();
+    let bin = dir.join("logging-bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let log = dir.join("batch.log");
+    let script = format!(
+        "#!/bin/sh\ncase \" $* \" in\n  *\" --batch \"*) tee -a '{log}' | '{real}' \"$@\" ;;\n  \
+         *) exec '{real}' \"$@\" ;;\nesac\n",
+        log = log.display(),
+        real = real.display()
+    );
+    executable(&bin.join("git"), &script);
+    let mut path = std::ffi::OsString::from(bin.as_os_str());
+    path.push(":");
+    path.push(std::env::var_os("PATH").unwrap());
+    (path, log)
+}
+
+/// A board past what a read takes, in a folder or in all, is refused
+/// before any file's bytes are read: only the format marker's are.
+#[test]
+fn a_board_past_its_bounds_is_refused_before_any_file_is_read() {
+    let refused_reading_only_the_marker =
+        |rows: &dyn Fn(&Path) -> Vec<RootRow>, limits: Limits, bound: &str| {
+            let repos = fresh();
+            let head = board_of(&repos, rows);
+            let (path, log) = logging_git(repos.dir.path());
+            let mut vars = vars(&repos.bob, &[]);
+            vars.retain(|(key, _)| key != "PATH");
+            vars.push(("PATH".into(), path));
+            let mut bob = store_with(&repos.bob, vars);
+            bob.limits = limits;
+            let read = bob.board_at(&head.0);
+            assert!(
+                matches!(&read, Err(BoardStoreError::TooLarge(why)) if why.contains(bound)),
+                "{bound}: {read:?}"
+            );
+            let marker = at(&repos.bob, &head, "format/board");
+            let asked = std::fs::read_to_string(&log).unwrap_or_default();
+            let asked: Vec<&str> = asked.lines().collect();
+            assert!(
+                !asked.is_empty(),
+                "{bound}: the log records the marker's read"
+            );
+            assert!(asked.iter().all(|oid| *oid == marker), "{bound}: {asked:?}");
+        };
+    // Past a folder's bytes, beside files of every kind within theirs.
+    refused_reading_only_the_marker(
+        &|repo| {
+            let mut rows = every_kind();
+            rows.remove(3);
+            let big = many(repo, 513, &[b'x'; 8 * 1024], |n| format!("a.{n}.md"));
+            rows.push(("40000", "changes", Node::Made(big)));
+            rows
+        },
+        LIMITS,
+        "changes files hold",
+    );
+    // Every folder within its bytes, the board past its own.
+    let small = Limits {
+        board_bytes: 1,
+        ..LIMITS
+    };
+    refused_reading_only_the_marker(&|_| every_kind(), small, "the board's files hold");
 }
 
 /// A partial clone that fetched the board without its trees and blobs

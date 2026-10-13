@@ -660,7 +660,7 @@ impl ProjectBoardStore for GitBoardStore {
             return Ok(BoardWrite::Refused(refusal));
         }
         if let Some(refusal) = board.folders_refusal() {
-            return Ok(BoardWrite::Refused(refusal));
+            return Err(BoardStoreError::FolderSetAside(refusal));
         }
         if let Some(file) = ids.iter().find_map(|id| board.is_quarantined(id)) {
             return Ok(BoardWrite::Refused(format!(
