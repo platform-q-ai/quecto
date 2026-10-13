@@ -34,10 +34,9 @@ fn main() {
             claude_member: quecto::composition::claude_member::build_claude_member_handles,
             project_board:
                 quecto::composition::bootstrap::project_board::build_project_board_handles,
-            project_board_recording:
-                quecto::interface::tools::project_board::session_recording::SessionRecordingBuilder(
-                    quecto::composition::bootstrap::project_board::session_board_recording,
-                ),
+            project_board_recording: cli::BoardToolRecordingBuilder(
+                quecto::composition::bootstrap::project_board::session_board_recording_decided,
+            ),
         },
     ));
 }

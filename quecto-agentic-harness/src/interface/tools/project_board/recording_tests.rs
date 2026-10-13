@@ -41,10 +41,15 @@ fn outcome_line(outcome: &OpOutcome) -> Value {
 }
 
 /// A recording into `records`, as a switched-on session's would be.
-pub(crate) fn recording(records: &Arc<Records>) -> Arc<BoardRecording> {
+pub(crate) fn recording_into(records: &Arc<Records>) -> BoardRecording {
     let log: Arc<dyn ProjectBoardOpLog> = records.clone();
     let recording = BoardRecording::when(RecordingSwitch::resolved(true), || Some(log));
-    Arc::new(recording.expect("on, with a log"))
+    recording.expect("on, with a log")
+}
+
+/// [`recording_into`], shared as a call takes it.
+pub(crate) fn recording(records: &Arc<Records>) -> Arc<BoardRecording> {
+    Arc::new(recording_into(records))
 }
 
 /// The operations over a bootstrapped board in memory.

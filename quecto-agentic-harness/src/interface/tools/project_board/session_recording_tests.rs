@@ -1,33 +1,10 @@
-//! Epic #2481 T3: the board tool's calls are recorded in the session's
-//! event log while it is on, follow a session switch, and stop with it.
-use serde_json::Value;
-
+//! Epic #2481 T3: the board tool's calls are recorded as the session's
+//! recording is bound, follow a session switch, and stop with it.
 use super::*;
 use crate::application::tools::ports::Tool;
-use crate::composition::bootstrap::project_board::session_board_recording;
-use crate::infrastructure::config::telemetry::EventLogConfig;
+use crate::interface::tools::project_board::recording::tests::{Records, recording_into};
 use crate::interface::tools::project_board::site::BoardSite;
 use crate::interface::tools::project_board::tool::BoardTool;
-
-fn telemetry(enabled: bool) -> TelemetryConfig {
-    TelemetryConfig {
-        event_log: EventLogConfig { enabled },
-    }
-}
-
-fn builder() -> SessionRecordingBuilder {
-    SessionRecordingBuilder(session_board_recording)
-}
-
-/// The `board_op` lines of `session`'s log under `base`.
-fn board_ops(base: &Path, session: &str) -> Vec<Value> {
-    let text = std::fs::read_to_string(base.join("audit").join(format!("{session}.jsonl")))
-        .unwrap_or_default();
-    text.lines()
-        .map(|line| serde_json::from_str::<Value>(line).unwrap())
-        .filter(|line| line["event"] == "board_op")
-        .collect()
-}
 
 /// A tool over a board that is not composed: every call is refused, and
 /// recorded all the same.
@@ -40,64 +17,54 @@ fn tool(recordings: &Arc<SessionRecording>) -> BoardTool {
     BoardTool::recorded_in(site, Arc::clone(recordings))
 }
 
+fn ops(records: &Records) -> Vec<&'static str> {
+    records
+        .taken()
+        .iter()
+        .map(|record| record.op.as_str())
+        .collect()
+}
+
 #[tokio::test]
-async fn records_follow_a_session_switch_and_stop_with_the_log() {
-    let base = tempfile::tempdir().unwrap();
-    let (first, second) = (
-        AuditLog::open_sync(base.path(), "first").unwrap(),
-        AuditLog::open_sync(base.path(), "second").unwrap(),
-    );
+async fn records_follow_a_session_switch_and_stop_with_it() {
+    let (first, second) = (Arc::new(Records::default()), Arc::new(Records::default()));
     let recordings = Arc::new(SessionRecording::default());
     let tool = tool(&recordings);
-    assert!(recordings.bind(builder(), &telemetry(true), base.path(), &first));
+    assert!(recordings.bind(Some(recording_into(&first))));
     tool.execute(r#"{"op": "list"}"#).await.unwrap();
-    assert!(recordings.follow(&second), "a recording follows the switch");
+    assert!(recordings.follow(|| Some(recording_into(&second))));
     tool.execute(r#"{"op": "show", "task": "a"}"#)
         .await
         .unwrap();
-    let ops = |session| -> Vec<Value> {
-        board_ops(base.path(), session)
-            .iter()
-            .map(|line| line["op"].clone())
-            .collect()
-    };
-    assert_eq!(ops("first"), ["list"]);
-    assert_eq!(ops("second"), ["show"]);
-    let line = &board_ops(base.path(), "second")[0];
-    assert_eq!(
-        (
-            &line["front_end"],
-            &line["client"],
-            &line["code"],
-            &line["turn"]
-        ),
-        (
-            &Value::from("tool"),
-            &Value::from("agent"),
-            &Value::from("store_unavailable"),
-            &Value::Null
-        ),
-        "{line}"
-    );
+    assert_eq!((ops(&first), ops(&second)), (vec!["list"], vec!["show"]));
     recordings.stop();
-    assert!(!recordings.follow(&first), "nothing bound, nothing follows");
+    let rebuilt = recordings.follow(|| panic!("a stopped session builds nothing"));
+    assert!(!rebuilt, "nothing bound, nothing follows");
     tool.execute(r#"{"op": "list"}"#).await.unwrap();
-    assert_eq!(ops("first"), ["list"], "a stopped session records nothing");
+    assert_eq!((ops(&first), ops(&second)), (vec![], vec![]));
 }
 
-/// Owner condition (2026-10-12): with the event log off, nothing is bound,
+/// Owner condition (2026-10-12): with the event log off nothing is bound,
 /// so no call is recorded, nor does a session switch start one.
 #[tokio::test]
 async fn nothing_is_recorded_while_the_event_log_is_off() {
-    let base = tempfile::tempdir().unwrap();
-    let log = AuditLog::open_sync(base.path(), "off").unwrap();
     let recordings = Arc::new(SessionRecording::default());
-    assert!(!recordings.bind(builder(), &telemetry(false), base.path(), &log));
+    assert!(!recordings.bind(None));
     assert!(recordings.current().is_none());
     tool(&recordings)
         .execute(r#"{"op": "list"}"#)
         .await
         .unwrap();
-    assert!(!recordings.follow(&log));
-    assert_eq!(board_ops(base.path(), "off"), Vec::<Value>::new());
+    assert!(!recordings.follow(|| panic!("an unbound session builds nothing")));
+    assert!(recordings.current().is_none());
+}
+
+/// A switch whose rebuild finds no log to write to records nothing more.
+#[test]
+fn a_switch_to_no_log_stops_recording() {
+    let records = Arc::new(Records::default());
+    let recordings = SessionRecording::default();
+    assert!(recordings.bind(Some(recording_into(&records))));
+    assert!(!recordings.follow(|| None));
+    assert!(recordings.current().is_none());
 }

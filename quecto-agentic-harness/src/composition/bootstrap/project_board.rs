@@ -183,7 +183,24 @@ pub fn session_board_recording(
     base_dir: &Path,
     log: &AuditLog,
 ) -> Option<BoardRecording> {
-    let switch = switched_on(telemetry.event_log.enabled, base_dir);
+    session_recording(switched_on(telemetry.event_log.enabled, base_dir), log)
+}
+
+/// [`session_board_recording`] with the switch its session decided when it
+/// started (`event_log_on`, by the same rule), as the agent tool takes it
+/// (epic #2481 T3): its records follow a session switch with that switch,
+/// so a later edit to a config file neither starts nor stops them, as the
+/// swarm board's records follow (`record_in_session(true, …)`).
+pub fn session_board_recording_decided(
+    event_log_on: bool,
+    log: &AuditLog,
+) -> Option<BoardRecording> {
+    session_recording(RecordingSwitch::resolved(event_log_on), log)
+}
+
+/// A session's recording into `log`, only while `switch` is on and `log`
+/// has a synchronous line to append through.
+fn session_recording(switch: RecordingSwitch, log: &AuditLog) -> Option<BoardRecording> {
     BoardRecording::when(switch, || {
         let ops = EventLogProjectBoardOps::new(log.crash_line()?);
         Some(Arc::new(TracingProjectBoardOps::over(ops)) as _)

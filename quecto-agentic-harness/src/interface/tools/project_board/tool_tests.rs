@@ -4,9 +4,14 @@ use crate::application::project_board::operations::query_listings::{QueryListing
 use crate::application::project_board::ports::ProjectBoardStore;
 use crate::application::project_board::use_cases::QueryBoard;
 use crate::application::tool_panic_scope::{ToolScope, scoped};
+use crate::domain::project_board::value_objects::telemetry::OpOutcome;
 use crate::domain::project_board::value_objects::vocabulary::{TaskKind, TaskStatus};
 use crate::infrastructure::test_support::memory_board_store::MemoryBoardStore;
 use crate::infrastructure::time::board_clock::SystemBoardClock;
+use crate::interface::tools::project_board::recording::tests::{
+    Records, outside_text, recording_into,
+};
+use crate::interface::tools::project_board::session_recording::SessionRecording;
 use crate::interface::tools::project_board::site::{
     BuildError, ProjectBoardEnvironment, ProjectBoardHandles,
 };
@@ -26,10 +31,23 @@ const DESCRIPTION_BUDGET_BYTES: usize = 8_192;
 
 #[test]
 fn the_description_is_the_stored_text_within_the_budget() {
-    let definition = BoardTool::new(site(None)).definition();
+    let definition = tool(site(None)).definition();
     assert_eq!(definition.name, BOARD_TOOL_NAME);
     assert_eq!(definition.description, STORED);
     assert!(STORED.len() <= DESCRIPTION_BUDGET_BYTES, "{}", STORED.len());
+}
+
+/// The tool over `site`, recording into a slot of its own (bound to no
+/// session), never the process's.
+fn tool(site: BoardSite) -> BoardTool {
+    BoardTool::recorded_in(site, Arc::default())
+}
+
+/// The tool over `site`, recording into `records`.
+fn recorded_tool(site: BoardSite, records: &Arc<Records>) -> BoardTool {
+    let recordings = Arc::new(SessionRecording::default());
+    assert!(recordings.bind(Some(recording_into(records))));
+    BoardTool::recorded_in(site, recordings)
 }
 
 /// A board in memory, built afresh for each request.
@@ -60,7 +78,7 @@ fn site(
 /// a refused one is an error result the model can act on.
 #[tokio::test]
 async fn an_op_round_trips_through_the_tool() {
-    let tool = BoardTool::new(site(Some(memory_board)));
+    let tool = tool(site(Some(memory_board)));
     let created = tool
         .execute(r#"{"op":"create","task":"a","title":"A","status":"ready"}"#)
         .await
@@ -83,7 +101,8 @@ async fn a_panic_in_board_work_fails_the_call() {
     fn panicking(_: &ProjectBoardEnvironment) -> Result<ProjectBoardHandles, BuildError> {
         panic!("board boom")
     }
-    let tool = BoardTool::new(site(Some(panicking)));
+    let records = Arc::new(Records::default());
+    let tool = recorded_tool(site(Some(panicking)), &records);
     let call = std::panic::AssertUnwindSafe(scoped(
         ToolScope::new(BOARD_TOOL_NAME),
         tool.execute(r#"{"op":"list"}"#),
@@ -93,6 +112,16 @@ async fn a_panic_in_board_work_fails_the_call() {
     let payload = call.expect_err("the panic resumed in the call");
     let message = crate::application::tool_panic_scope::payload_message(payload.as_ref());
     assert!(message.ends_with("board boom"), "{message}");
+    // Review round 1: the call is recorded as it unwinds, as `internal`.
+    let recorded: Vec<(&str, Option<&str>)> = records
+        .taken()
+        .iter()
+        .map(|record| match &record.outcome {
+            OpOutcome::Refused { code, .. } => (record.op.as_str(), Some(code.as_str())),
+            OpOutcome::Ok => (record.op.as_str(), None),
+        })
+        .collect();
+    assert_eq!(recorded, [("list", Some("internal"))]);
 }
 
 /// A board of `count` ready tasks with long titles, built afresh.
@@ -121,7 +150,7 @@ fn environment() -> ProjectBoardEnvironment {
 /// cap, ending with what it left out.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_listing_shows_summaries_within_the_cap() {
-    let tool = BoardTool::new(site(Some(crowded_board)));
+    let tool = tool(site(Some(crowded_board)));
     for op in ["list", "list_ready"] {
         let listed = tool.execute(&json!({"op": op}).to_string()).await.unwrap();
         assert!(!listed.is_error, "{}", listed.content);
@@ -154,7 +183,7 @@ async fn a_listing_shows_summaries_within_the_cap() {
 /// Creating a board is the user's or the CLI's: the tool refuses it.
 #[tokio::test]
 async fn the_tool_does_not_bootstrap_a_board() {
-    let tool = BoardTool::new(site(Some(memory_board)));
+    let tool = tool(site(Some(memory_board)));
     let refused = tool.execute(r#"{"op":"bootstrap"}"#).await.unwrap();
     let answer: Value = serde_json::from_str(&refused.content).unwrap();
     assert!(refused.is_error, "{answer}");
@@ -165,7 +194,7 @@ async fn the_tool_does_not_bootstrap_a_board() {
 /// fields as the parser reads them.
 #[test]
 fn the_schema_is_the_parsers() {
-    let definition = BoardTool::new(site(None)).definition();
+    let definition = tool(site(None)).definition();
     let schema: Value = serde_json::from_str(&definition.parameters_schema).unwrap();
     let ops: Vec<&str> = OPS
         .iter()
@@ -249,7 +278,7 @@ fn seeded_board(_: &ProjectBoardEnvironment) -> Result<ProjectBoardHandles, Buil
 /// refusal and a success alike.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_non_listing_answer_is_the_shared_paths() {
-    let tool = BoardTool::new(site(Some(seeded_board)));
+    let tool = tool(site(Some(seeded_board)));
     for text in [
         r#"{"op":"show","task":"nope"}"#,
         r#"{"op":"show","task":"a"}"#,
@@ -269,7 +298,7 @@ async fn a_non_listing_answer_is_the_shared_paths() {
 /// named.
 #[tokio::test]
 async fn an_op_the_tool_does_not_take_is_refused_with_its_ops() {
-    let tool = BoardTool::new(site(Some(memory_board)));
+    let tool = tool(site(Some(memory_board)));
     for op in ["nope", "bootstrap"] {
         let refused = tool.execute(&json!({"op": op}).to_string()).await.unwrap();
         let answer: Value = serde_json::from_str(&refused.content).unwrap();
@@ -307,7 +336,7 @@ fn quarantined_board(_: &ProjectBoardEnvironment) -> Result<ProjectBoardHandles,
 /// how many more there are.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_listing_caps_what_it_shows_set_aside() {
-    let tool = BoardTool::new(site(Some(quarantined_board)));
+    let tool = tool(site(Some(quarantined_board)));
     let listed = tool.execute(r#"{"op":"list"}"#).await.unwrap();
     assert!(
         listed.content.len() <= MAX_LISTING_BYTES,
@@ -352,7 +381,7 @@ fn mixed_board(_: &ProjectBoardEnvironment) -> Result<ProjectBoardHandles, Build
 /// tasks out; they get what is left, ending with how many more there are.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_listing_shows_its_tasks_before_what_was_set_aside() {
-    let tool = BoardTool::new(site(Some(mixed_board)));
+    let tool = tool(site(Some(mixed_board)));
     for op in ["list", "list_ready"] {
         let listed = tool.execute(&json!({"op": op}).to_string()).await.unwrap();
         assert!(listed.content.len() <= MAX_LISTING_BYTES, "{op}");
@@ -399,19 +428,12 @@ fn waiting_board(environment: &ProjectBoardEnvironment) -> Result<ProjectBoardHa
 /// `cancelled` (epic #2481 T3).
 #[tokio::test(flavor = "multi_thread")]
 async fn dropping_a_call_sets_its_cancel_flag() {
-    use crate::infrastructure::config::telemetry::{EventLogConfig, TelemetryConfig};
     use crate::infrastructure::persistence::audit_log::AuditLog;
-    use crate::interface::tools::project_board::session_recording::{
-        SessionRecording, SessionRecordingBuilder,
-    };
     let base = tempfile::tempdir().unwrap();
     let log = AuditLog::open_sync(base.path(), "dropped").unwrap();
     let recordings = Arc::new(SessionRecording::default());
-    let on = TelemetryConfig {
-        event_log: EventLogConfig { enabled: true },
-    };
-    let build = crate::composition::bootstrap::project_board::session_board_recording;
-    assert!(recordings.bind(SessionRecordingBuilder(build), &on, base.path(), &log));
+    let build = crate::composition::bootstrap::project_board::session_board_recording_decided;
+    assert!(recordings.bind(build(true, &log)));
     let tool = BoardTool::recorded_in(site(Some(waiting_board)), recordings);
     let call = tool.execute(r#"{"op":"list"}"#);
     // Run the call until its work has started, then drop it.
@@ -446,4 +468,89 @@ async fn dropping_a_call_sets_its_cancel_flag() {
         "{record}"
     );
     assert!(record["build_us"].is_u64(), "{record}");
+}
+
+/// Review round 1: a request the tool does not take records its op, and
+/// a request that is no object records `request`, as the shared path
+/// does; the answers are unchanged.
+#[tokio::test]
+async fn a_request_the_tool_refuses_itself_is_recorded_as_the_shared_path_would() {
+    let records = Arc::new(Records::default());
+    let tool = recorded_tool(site(None), &records);
+    let cases = [
+        (
+            r#"{"op": "bootstrap"}"#,
+            ("bootstrap", "write", "op", "invalid_value"),
+        ),
+        (r#"{"task": "a"}"#, ("unknown", "read", "op", "missing")),
+        (r#"{"op": 3}"#, ("unknown", "read", "op", "wrong_type")),
+        (r#"["op"]"#, ("unknown", "read", "request", "wrong_type")),
+    ];
+    for (text, (op, access, field, fault)) in cases {
+        let answer: Value =
+            serde_json::from_str(&tool.execute(text).await.unwrap().content).unwrap();
+        assert_eq!(
+            answer["error"]["field"],
+            json!("op"),
+            "{text}: answered as ever"
+        );
+        let record = records.taken().remove(0);
+        let line = serde_json::to_value(&record).unwrap();
+        assert_eq!(
+            (
+                &line["op"],
+                &line["access"],
+                &line["code"],
+                &line["field"],
+                &line["fault"]
+            ),
+            (
+                &json!(op),
+                &json!(access),
+                &json!("invalid_request"),
+                &json!(field),
+                &json!(fault)
+            ),
+            "{text}"
+        );
+    }
+}
+
+/// Review round 1, the property test at the tool's entry point: random
+/// titles, descriptions and keys never appear in a record, whichever way
+/// the tool answers.
+#[tokio::test(flavor = "multi_thread")]
+async fn no_request_text_reaches_a_record_through_the_tool() {
+    use rand::{Rng, SeedableRng};
+    let seed: u64 = rand::thread_rng().r#gen();
+    let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
+    let records = Arc::new(Records::default());
+    let tool = recorded_tool(site(Some(memory_board)), &records);
+    for case in 0..16 {
+        let (title, key) = (outside_text(&mut rng), outside_text(&mut rng));
+        let requests = [
+            json!({"op": "create", "task": format!("t-{case}"), "title": title, "description": key}),
+            json!({"op": "list", key.clone(): title}),
+            json!({"op": key.clone(), "title": title}),
+            json!({"op": "bootstrap", "title": title}),
+            json!([title, key]),
+            json!({key.clone(): title}),
+        ];
+        for request in requests {
+            tool.execute(&request.to_string()).await.unwrap();
+            let lines: Vec<String> = records
+                .taken()
+                .iter()
+                .map(|record| serde_json::to_string(record).unwrap())
+                .collect();
+            assert_eq!(lines.len(), 1, "one record per call: {request}");
+            for outside in [&title, &key] {
+                assert!(
+                    !lines[0].contains(outside.as_str()),
+                    "seed {seed}: {outside:?} reached {}",
+                    lines[0]
+                );
+            }
+        }
+    }
 }

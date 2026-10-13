@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use super::super::{SessionLogTarget, SessionRecording, attach_to, decided_with};
+use super::super::{BoardToolSession, SessionLogTarget, SessionRecording, attach_to, decided_with};
 use crate::application::configuration::ports::OverlayTrustStore;
 use crate::infrastructure::config::persistence::PersistentOverlayTrustStore;
 use crate::infrastructure::persistence::audit_log::AuditLog;
@@ -183,10 +183,10 @@ fn the_admissions_calls_are_in_the_file_once_the_log_is_attached() {
         event_log: build.event_log,
         project_board: None,
     };
-    let recordings = SessionRecording::default();
+    let board_tool = BoardToolSession::new(std::sync::Arc::default());
     attach_to(
         Some(&board),
-        &recordings,
+        &board_tool,
         &mut agent,
         &target,
         &flags,
@@ -235,4 +235,67 @@ fn an_agent_whose_environment_sets_the_removed_mode_is_refused() {
         stderr.contains("QUECTO_CONTEXT_MODE") && stderr.contains("removed"),
         "{stderr}"
     );
+}
+
+/// Epic #2481 T3 review round 1: a session attached with the event log on
+/// and composition's builder binds the board tool's recording to its log,
+/// so a tool call lands there; with no builder, nothing does.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_attached_session_records_the_board_tools_calls() {
+    use crate::application::tools::ports::Tool;
+    use crate::interface::cli::BoardToolRecordingBuilder;
+    use crate::interface::tools::project_board::site::BoardSite;
+    use crate::interface::tools::project_board::tool::BoardTool;
+    let base = base(true);
+    let cwd = tempfile::tempdir().unwrap();
+    let (ctx, flags) = started(base.path(), cwd.path());
+    let selection = ctx.config_selection().unwrap();
+    for (session, builder, recorded) in [
+        (
+            "cli:board-on",
+            Some(BoardToolRecordingBuilder(
+                crate::composition::bootstrap::project_board::session_board_recording_decided,
+            )),
+            1,
+        ),
+        ("cli:board-unbuilt", None, 0),
+    ] {
+        let mut stderr = String::new();
+        let build = build_agent_from_config_in(
+            &ctx.base_dir(),
+            &selection,
+            &flags,
+            &mut stderr,
+            None,
+            &HashMap::new(),
+        )
+        .unwrap_or_else(|| panic!("{stderr}"));
+        assert!(build.event_log);
+        let mut agent = build.agent;
+        let recordings = std::sync::Arc::new(SessionRecording::default());
+        let board_tool = BoardToolSession::new(std::sync::Arc::clone(&recordings));
+        let target = SessionLogTarget {
+            base_dir: base.path(),
+            session_key: session,
+            event_log: true,
+            project_board: builder,
+        };
+        attach_to(None, &board_tool, &mut agent, &target, &flags, &mut stderr);
+        let site = BoardSite {
+            repo: cwd.path().into(),
+            remote: "origin".into(),
+            build: None,
+        };
+        BoardTool::recorded_in(site, recordings)
+            .execute(r#"{"op": "list"}"#)
+            .await
+            .unwrap();
+        let text =
+            std::fs::read_to_string(AuditLog::file_path(base.path(), session)).unwrap_or_default();
+        let ops = text
+            .lines()
+            .filter(|line| line.contains(r#""event":"board_op""#))
+            .count();
+        assert_eq!(ops, recorded, "{session}");
+    }
 }

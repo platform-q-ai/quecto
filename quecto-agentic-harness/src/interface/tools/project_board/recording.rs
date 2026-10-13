@@ -168,12 +168,12 @@ impl BoardCall {
 
     /// Writes the call's record, once its front end sent `answer`:
     /// `cancelled` when the call was dropped before it came back.
-    pub fn finish(self, answer: &Value, cancelled: bool) {
+    pub fn finish(mut self, answer: &Value, cancelled: bool) {
         let Some(Open {
             recording,
             started,
             mut record,
-        }) = self.open
+        }) = self.open.take()
         else {
             return;
         };
@@ -195,6 +195,24 @@ impl BoardCall {
             "the answer's ok {:?} disagrees with its note {noted:?}",
             answer.get("ok")
         );
+    }
+}
+
+impl Drop for BoardCall {
+    /// A recorded call that ends without being finished (its work
+    /// panicked, or was dropped before it ran) is recorded all the same:
+    /// refused as `internal`, with no answer to size or count.
+    fn drop(&mut self) {
+        if let Some(Open {
+            recording,
+            started,
+            mut record,
+        }) = self.open.take()
+        {
+            record.outcome = refused("internal", None);
+            record.duration_us = micros(started.elapsed());
+            recording.record(record);
+        }
     }
 }
 

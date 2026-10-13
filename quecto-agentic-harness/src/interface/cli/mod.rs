@@ -103,7 +103,6 @@ pub mod uds_wire;
 mod uds_workflow_nudge;
 
 use crate::application::configuration::dto::{ConfigSelection, ConfigSelectionRequest};
-use crate::interface::tools::project_board::session_recording::SessionRecordingBuilder;
 use config_flag::{extract_config_flag, strip_global_config_flag};
 use std::path::PathBuf;
 
@@ -366,7 +365,7 @@ pub struct CliContext {
     /// Composition's builder of the agent `board` tool's recording (epic
     /// #2481 T3), bound to the session's event log; without it the tool
     /// records nothing.
-    pub project_board_recording: Option<SessionRecordingBuilder>,
+    pub project_board_recording: Option<BoardToolRecordingBuilder>,
     /// Output reaches the real terminal (`run`, not `run_with_output`): a
     /// one-shot run writes its answer out before it settles its children.
     pub live_output: bool,
@@ -461,9 +460,21 @@ pub struct CliComposition {
     pub claude_member: claude_member::ClaudeMemberHandlesBuilder,
     /// Composition's project board builder (#2477).
     pub project_board: board::ProjectBoardHandlesBuilder,
-    /// Composition's `session_board_recording` (epic #2481 T3).
-    pub project_board_recording: SessionRecordingBuilder,
+    /// Composition's `session_board_recording_decided` (epic #2481 T3).
+    pub project_board_recording: BoardToolRecordingBuilder,
 }
+
+/// Composition's builder of the agent `board` tool's recording (epic
+/// #2481 T3): into the session's event log given, with the switch the
+/// session decided when it started; `None` while it is off, or when the
+/// log has no line to append through.
+#[derive(Debug, Clone, Copy)]
+pub struct BoardToolRecordingBuilder(
+    pub  fn(
+        bool,
+        &crate::infrastructure::persistence::audit_log::AuditLog,
+    ) -> Option<crate::application::project_board::telemetry::BoardRecording>,
+);
 
 /// Run the CLI with the given args and the required outer-owned builders,
 /// printing to real stdout/stderr. Returns the exit code.

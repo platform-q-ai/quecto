@@ -16,8 +16,8 @@
 //! Each call is recorded (epic #2481 T3) in its session's event log while
 //! that log is on ([`SessionRecording`]): one `board_op` per call, written
 //! on the call's own thread once its answer is summarised, `cancelled`
-//! when the call was dropped first. A call whose work panicked writes
-//! none.
+//! when the call was dropped first. A call whose work panicked is
+//! recorded as it unwinds, refused as `internal`.
 use std::borrow::Cow;
 use std::future::Future;
 use std::pin::Pin;
@@ -273,20 +273,23 @@ fn answered(
         Ok(request) => request,
         Err(error) => return call.refuse_request(None, &error),
     };
-    let fault = match request.get("op") {
-        Some(Value::String(op)) if TOOL_OPS.contains(&op.as_str()) => {
-            return site::answer(site, text, Some(cancelled), call);
-        }
-        Some(Value::String(op)) => {
-            call.named(Some(op));
-            FaultKind::InvalidValue
-        }
-        Some(_) => FaultKind::WrongType,
-        None => FaultKind::Missing,
-    };
     let ops: Vec<&str> = tool_ops().map(|(op, _)| *op).collect();
     let problem = format!("must be one of {}", ops.join(", "));
-    call.refuse_request(None, &RequestError::of("op", problem, fault))
+    // Recorded as the shared path records it; answered as ever.
+    let error = match (request.is_object(), request.get("op")) {
+        (true, Some(Value::String(op))) if TOOL_OPS.contains(&op.as_str()) => {
+            return site::answer(site, text, Some(cancelled), call);
+        }
+        (true, Some(Value::String(op))) => {
+            call.named(Some(op));
+            RequestError::of("op", problem, FaultKind::InvalidValue)
+        }
+        (true, Some(_)) => RequestError::of("op", problem, FaultKind::WrongType),
+        (true, None) => RequestError::of("op", problem, FaultKind::Missing),
+        // Not an object: the request as a whole.
+        (false, _) => RequestError::whole("op", problem, FaultKind::WrongType),
+    };
+    call.refuse_request(None, &error)
 }
 
 /// Sets the call's cancel flag when the call is dropped before its work
