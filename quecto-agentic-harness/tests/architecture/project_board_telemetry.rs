@@ -12,8 +12,9 @@
 //! - the op-log port, the recording switch, `BoardRecording::when` and
 //!   T2's adapters are named only where [`NAMED_ONLY_IN`] allows, never
 //!   aliased, and never in a public signature in composition;
-//! - the board's modules write no `tracing` record but through T2's
-//!   adapter, which a recording holds;
+//! - the board's modules, its CLI and its composition write no `tracing`
+//!   record but through the adapters' file, whose adapters a recording
+//!   holds;
 //! - every op of the board's `OPS` table has its `OpKind`, and every name
 //!   a record holds today is a known kind.
 use std::collections::BTreeMap;
@@ -51,7 +52,8 @@ const SNAPSHOTS: &[(&str, &str)] = &[
 /// leaves (the commit id is `code_ref`'s, from `commit_id.rs`).
 const ADMITTED: &[&str] = &["u64", "StaticKind", "TaskRef", "CommitId"];
 
-/// T2's adapter file, the one place besides composition it is named.
+/// The adapters' file (T2), the one place besides composition that may
+/// name them.
 const ADAPTER: &str = "src/infrastructure/persistence/project_board/op_log.rs";
 
 /// Each name, and the only production paths (a file, or a directory
@@ -491,24 +493,38 @@ fn composition_hands_out_no_bare_port() {
     );
 }
 
-/// The board's own modules: none writes a `tracing` record but T2's
-/// adapter, which a recording holds, so nothing is written while off.
+/// The board's own modules, its CLI and its composition: none writes a
+/// `tracing` record but the adapters' file, whose adapters a recording
+/// holds, so nothing is written while off.
 const PROJECT_BOARD: &[&str] = &[
     "src/domain/project_board/",
     "src/application/project_board/",
     "src/interface/tools/project_board/",
+    "src/interface/cli/board/",
     "src/infrastructure/persistence/project_board/",
+    "src/composition/bootstrap/project_board.rs",
 ];
 
+/// How a file reaches `tracing`: by its path, or under another name.
+const TRACING: &[&str] = &["tracing::", "tracing as"];
+
 #[test]
-fn the_board_writes_no_tracing_record_but_through_its_adapter() {
-    let traced = "fn f() { tracing::info!(op = \"show\"); }";
-    assert!(dependency_scan::forbidden_hit(traced, &["tracing::"]).is_err());
+fn the_board_writes_no_tracing_record_but_through_its_adapters() {
+    for traced in [
+        "fn f() { tracing::info!(op = \"show\"); }",
+        "use tracing as t; fn f() { t::info!(op = \"show\"); }",
+        "extern crate tracing as t;",
+    ] {
+        assert!(
+            dependency_scan::forbidden_hit(traced, TRACING).is_err(),
+            "{traced}"
+        );
+    }
     let found: Vec<String> = sources()
         .iter()
         .filter(|(file, _)| allowed(file, PROJECT_BOARD) && file != ADAPTER)
         .filter_map(|(file, source)| {
-            let hit = dependency_scan::forbidden_hit(source, &["tracing::"]).err();
+            let hit = dependency_scan::forbidden_hit(source, TRACING).err();
             hit.map(|hit| format!("{file}: {hit}"))
         })
         .collect();

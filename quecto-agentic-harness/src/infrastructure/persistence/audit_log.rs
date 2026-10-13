@@ -654,11 +654,12 @@ fn host_from(status: libc::c_int, buffer: &[u8]) -> Option<String> {
         .filter(|name| !name.is_empty())
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 impl AuditLog {
     /// Test support: another holder takes this log's write gate on its own
     /// thread and keeps it for `held`. Returns once the gate is taken.
-    pub(crate) fn hold_gate_for(&self, held: Duration) -> std::thread::JoinHandle<()> {
+    /// Public in `test-support` builds for the op logs' contract suites.
+    pub fn hold_gate_for(&self, held: Duration) -> std::thread::JoinHandle<()> {
         let gate = self.gate.held.clone();
         let (taken, taken_rx) = std::sync::mpsc::channel();
         let holder = std::thread::spawn(move || {

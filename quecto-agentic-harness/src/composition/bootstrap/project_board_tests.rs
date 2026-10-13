@@ -427,3 +427,32 @@ fn a_set_naming_half_an_identity_writes_with_the_clones_other_half() {
     let listed = run(&reader.operations, r#"{"op": "list"}"#);
     assert_eq!(listed["ok"], json!(true), "{listed}");
 }
+
+/// Epic #2481 T2: the CLI's daily log is named by the UTC date.
+#[test]
+fn the_cli_log_key_is_the_utc_date() {
+    let at = |secs| std::time::UNIX_EPOCH + std::time::Duration::from_secs(secs);
+    assert_eq!(cli_log_key(at(0)).as_deref(), Some("board-cli:1970-01-01"));
+    // 2026-10-13T23:59:59Z, and one second later.
+    assert_eq!(
+        cli_log_key(at(1_791_935_999)).as_deref(),
+        Some("board-cli:2026-10-13")
+    );
+    assert_eq!(
+        cli_log_key(at(1_791_936_000)).as_deref(),
+        Some("board-cli:2026-10-14")
+    );
+}
+
+/// #2536 review: a time with no `YYYY-MM-DD` date (before the epoch, or
+/// in year 10000 or later) has no key, and never panics.
+#[test]
+fn a_time_with_no_four_digit_utc_date_has_no_cli_log_key() {
+    let epoch = std::time::UNIX_EPOCH;
+    let before = epoch - std::time::Duration::from_secs(1);
+    assert_eq!(cli_log_key(before), None);
+    let last = epoch + std::time::Duration::from_secs(253_402_300_799);
+    assert_eq!(cli_log_key(last).as_deref(), Some("board-cli:9999-12-31"));
+    let year_10000 = epoch + std::time::Duration::from_secs(253_402_300_800);
+    assert_eq!(cli_log_key(year_10000), None);
+}
