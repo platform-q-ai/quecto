@@ -73,3 +73,7 @@ pub fn run_recorded(operations: &RunBoardOperation, text: &str, call: &mut Board
 #[cfg(test)]
 #[path = "mod_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "plan_ops_tests.rs"]
+mod plan_ops_tests;

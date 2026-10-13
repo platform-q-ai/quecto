@@ -46,8 +46,8 @@ pub enum BoardRequest {
     ListReady,
     ListTakeable,
     /// A task with its plans and runs; or, given a page, only that page of
-    /// its accepted plan.
-    Show(Slug, Option<PlanPage>),
+    /// its plan: the accepted one, or the version the view names.
+    Show(Slug, PlanView),
     Create(NewBoardTask),
     UpdateDraft(DraftUpdate),
     Change(Slug, BoardOp),
@@ -103,6 +103,15 @@ impl BoardRequest {
     }
 }
 
+/// Which plan a `show` gives and how much of it (#2481 M4b): the version
+/// named (`None`: the task's accepted plan), whole, or only the page
+/// named. The default is the accepted plan, whole.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct PlanView {
+    pub version: Option<u32>,
+    pub page: Option<PlanPage>,
+}
+
 /// Where a `show` reads on in its task's accepted plan (#2481 M4a review
 /// round 2): the approach from its character `approach_from`, the task
 /// items from the index `items_from`. A part not named is not shown, so
@@ -155,8 +164,8 @@ pub enum BoardOutcome {
     },
     Listing(BoardListing),
     /// A task with its plans and runs, as one read of the board found it,
-    /// and the page of its accepted plan the request asked for, if any.
-    Shown(ShownTask, Option<PlanPage>),
+    /// and which plan the request asked for, and how much of it.
+    Shown(ShownTask, PlanView),
     /// A task changed; after a change that may complete it (and when it
     /// links pull requests), what came of completing it.
     Changed {

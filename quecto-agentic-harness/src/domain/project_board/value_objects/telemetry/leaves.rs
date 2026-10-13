@@ -173,6 +173,8 @@ const KNOWN_KINDS: &[&str] = &[
     "own_pr_referenced",
     "invalid",
     "no_accepted_plan",
+    // A plan's schema refusal (#2481 M4b).
+    "invalid_plan",
     // Completions and normaliser changes (T4).
     "pending",
     "failed",

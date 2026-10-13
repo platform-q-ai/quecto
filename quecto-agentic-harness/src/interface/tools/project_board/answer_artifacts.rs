@@ -18,13 +18,14 @@ use crate::domain::project_board::value_objects::shown_text::{
 };
 
 /// What `show` answers (#2481 M4a), all as one read of the board found
-/// it: its `head`; the whole `task`; `plan`, the task's accepted plan
-/// whole (`null` while it has none, or while its file is set aside);
+/// it: its `head`; the whole `task`; `plan`, the version `version` names
+/// whole (#2481 M4b), or with none named the task's accepted plan
+/// (`null` while it has none, or while its file is set aside);
 /// `plans`, each version in brief, by version; `runs`, by number, each in
 /// brief but the latest readable one, whole; `may_be_incomplete`,
 /// whether a file that may hold one of its plans or runs is set aside, and
 /// `quarantined`, those files, as a listing shows them.
-pub(super) fn shown_fields(shown: &ShownTask) -> Map<String, Value> {
+pub(super) fn shown_fields(shown: &ShownTask, version: Option<u32>) -> Map<String, Value> {
     let latest = shown.latest_run().map(|run| run.fields().number);
     let runs = shown
         .runs
@@ -33,7 +34,7 @@ pub(super) fn shown_fields(shown: &ShownTask) -> Map<String, Value> {
             true => run_json(run),
             false => run_brief_json(run),
         });
-    let plan = shown.accepted_plan();
+    let plan = shown.plan(version);
     Map::from_iter([
         ("head".to_string(), head_json(&shown.head)),
         ("task".to_string(), task_json(&shown.task)),
@@ -87,13 +88,18 @@ fn item_json(item: &PlanItem) -> Value {
 }
 
 /// What a `show` given a page answers (#2481 M4a review round 2): its
-/// `head`; the task's id as `task`; `plan`, the accepted plan's `version`
+/// `head`; the task's id as `task`; `plan`, the `version` of the plan
+/// `version` names, or of the accepted plan,
 /// with only the parts the page names: `approach_from` and the
 /// `approach` from that character, `items_from` and the task `items` from
 /// that index (`null` while the task has no plan to page through); and
 /// `may_be_incomplete`, as `show` says it.
-pub(super) fn page_fields(shown: &ShownTask, page: PlanPage) -> Map<String, Value> {
-    let plan = shown.accepted_plan().map(|plan| {
+pub(super) fn page_fields(
+    shown: &ShownTask,
+    page: PlanPage,
+    version: Option<u32>,
+) -> Map<String, Value> {
+    let plan = shown.plan(version).map(|plan| {
         let plan = plan.fields();
         let mut part = fields([("version", json!(plan.version))]);
         if let Some(from) = page.approach_from() {

@@ -6,6 +6,14 @@ fn slug(text: &str) -> Slug {
     Slug::parse(text).unwrap()
 }
 
+/// A show's view of its accepted plan, paged from these offsets.
+fn paged(approach_from: Option<usize>, items_from: Option<usize>) -> PlanView {
+    PlanView {
+        version: None,
+        page: PlanPage::of(approach_from, items_from),
+    }
+}
+
 fn refused(value: Value) -> RequestError {
     parse(&value).expect_err("refused")
 }
@@ -32,23 +40,33 @@ fn each_op_reads_its_own_fields() {
         (json!({"op": "list_takeable"}), BoardRequest::ListTakeable),
         (
             json!({"op": "show", "task": "a"}),
-            BoardRequest::Show(task(), None),
+            BoardRequest::Show(task(), PlanView::default()),
         ),
         (
             json!({"op": "show", "task": "a", "approach_from": 0}),
-            BoardRequest::Show(task(), PlanPage::of(Some(0), None)),
+            BoardRequest::Show(task(), paged(Some(0), None)),
         ),
         (
             json!({"op": "show", "task": "a", "items_from": 3, "approach_from": 900}),
-            BoardRequest::Show(task(), PlanPage::of(Some(900), Some(3))),
+            BoardRequest::Show(task(), paged(Some(900), Some(3))),
         ),
         (
             json!({"op": "show", "task": "a", "approach_from": null, "items_from": null}),
-            BoardRequest::Show(task(), None),
+            BoardRequest::Show(task(), PlanView::default()),
         ),
         (
             json!({"op": "show", "task": "a", "approach_from": null, "items_from": 2}),
-            BoardRequest::Show(task(), PlanPage::of(None, Some(2))),
+            BoardRequest::Show(task(), paged(None, Some(2))),
+        ),
+        (
+            json!({"op": "show", "task": "a", "version": 2, "items_from": 1}),
+            BoardRequest::Show(
+                task(),
+                PlanView {
+                    version: Some(2),
+                    page: PlanPage::of(None, Some(1)),
+                },
+            ),
         ),
         (
             json!({"op": "move", "task": "a", "to": "in_progress"}),

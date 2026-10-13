@@ -5,7 +5,7 @@ use serde_json::{Value, json};
 use super::super::{RequestError, parse};
 use crate::application::project_board::dto::{PlanEdit, PlanProposal};
 use crate::application::project_board::operations::BoardRequest;
-use crate::domain::project_board::entities::plan::PlanItem;
+use crate::domain::project_board::entities::plan::{MAX_PLAN_TEXT_BYTES, PlanItem};
 use crate::domain::project_board::entities::team::{Budget, Role, RoleLimits, Team};
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
@@ -244,8 +244,75 @@ fn a_nested_fault_names_its_path_and_records_its_field() {
             json!({"op": "propose_plan", "task": "a", "items": []}),
             at("approach", "approach", "missing"),
         ),
+        (
+            json!({"op": "edit_plan", "task": "a", "version": 0, "approach": ""}),
+            at("version", "version", "invalid_value"),
+        ),
+        (
+            json!({"op": "show", "task": "a", "version": 0}),
+            at("version", "version", "invalid_value"),
+        ),
+        (
+            propose(json!([{"id": "i"}]), Value::Null),
+            at("items/0/title", "items", "missing"),
+        ),
+        // Ranges are the request's to name, by the domain's own limits.
+        (
+            propose(json!([]), role(json!({"members": 0}))),
+            at("team/roles/0/members", "team", "invalid_value"),
+        ),
+        (
+            propose(json!([]), role(json!({"members": 33}))),
+            at("team/roles/0/members", "team", "invalid_value"),
+        ),
+        (
+            propose(json!([]), role(json!({"turns": 0}))),
+            at("team/roles/0/turns", "team", "invalid_value"),
+        ),
+        (
+            propose(json!([]), json!({"roles": [], "budget_tokens": 0})),
+            at("team/budget_tokens", "team", "invalid_value"),
+        ),
+        (
+            propose(
+                json!([]),
+                json!({"roles": [], "budget_tokens": 1_u64 << 53}),
+            ),
+            at("team/budget_tokens", "team", "invalid_value"),
+        ),
     ];
     for (value, want) in cases {
         assert_eq!(fault(value.clone()), want, "{value}");
     }
+    // A role missing any required key is refused naming it: never a panic.
+    let whole = json!({"name": "w", "model": "m", "effort": "low", "members": 1});
+    for key in ["name", "model", "effort", "members"] {
+        let mut missing = whole.clone();
+        missing.as_object_mut().unwrap().remove(key);
+        let value = propose(json!([]), json!({"roles": [missing]}));
+        let path = format!("team/roles/0/{key}");
+        assert_eq!(fault(value), at(&path, "team", "missing"), "{key}");
+    }
+}
+
+/// The plan's text, as it would enter the board, is held to the most a
+/// plan holds: the whole proposal's, or the text an edit gives.
+#[test]
+fn plan_text_past_the_most_a_plan_holds_is_refused() {
+    let most = MAX_PLAN_TEXT_BYTES;
+    let long = "a".repeat(most - 1);
+    let past = json!({"op": "propose_plan", "task": "a", "approach": long,
+                      "items": [{"id": "i", "title": "TT"}]});
+    assert!(parse(&past).is_err(), "one title byte past the most");
+    let crlf = format!("{}\r\n\r\n", "a".repeat(most - 1));
+    let normalised = json!({"op": "propose_plan", "task": "a", "approach": crlf, "items": []});
+    assert!(parse(&normalised).is_ok(), "counted as it enters");
+    let refused = fault(past);
+    assert_eq!(
+        (refused.0.as_str(), refused.1, refused.2),
+        ("request", "request", "too_large")
+    );
+    let edit = json!({"op": "edit_plan", "task": "a", "version": 1,
+                      "items": [{"id": "i", "title": "T", "criteria": ["c".repeat(most)]}]});
+    assert_eq!(fault(edit).2, "too_large");
 }

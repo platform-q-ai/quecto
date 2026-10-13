@@ -209,3 +209,56 @@ fn only_a_known_draft_of_an_open_task_is_edited_and_only_by_a_change() {
         );
     }
 }
+
+/// An edit pinned to the draft it read that loses the race to another
+/// edit is refused on its second attempt, never written over the other.
+#[test]
+fn a_pinned_edit_that_loses_the_race_is_refused_as_plan_changed() {
+    let store = holding_plans(
+        "a",
+        TaskStatus::Ready,
+        vec![plan_of("a", 1, PlanState::Draft)],
+    );
+    let other = store.client();
+    store.after_next_read(move |_| {
+        let theirs = PlanEdit {
+            approach: Some("Theirs.".into()),
+            ..of(1)
+        };
+        edit_as(&other, "Bob").execute(&theirs).unwrap();
+    });
+    let mine = PlanEdit {
+        items: Some(vec![plan_item("mine", &[])]),
+        expected_updated: Some(at("09:00:00")),
+        ..of(1)
+    };
+    let mut facts = OpFacts::default();
+    assert_eq!(
+        edit_as(&store, "Cy").execute_noted(&mine, Some(&mut facts)),
+        Err(ProjectBoardError::Rule(BoardRuleError::PlanChanged {
+            version: 1,
+            updated: at("10:00:00"),
+        }))
+    );
+    assert_eq!((facts.attempts, facts.lost), (Some(2), Some(1)));
+    assert_eq!(store.read().unwrap().plans[0].fields().approach, "Theirs.");
+}
+
+/// A set-aside task file holds an edit, as it holds every change.
+#[test]
+fn a_task_set_aside_holds_edits() {
+    let store = holding_plans(
+        "a",
+        TaskStatus::Ready,
+        vec![plan_of("a", 1, PlanState::Draft)],
+    );
+    store.quarantine("a", "unreadable");
+    let edit = PlanEdit {
+        approach: Some("New.".into()),
+        ..of(1)
+    };
+    assert_eq!(
+        edit_as(&store, "Ada").execute(&edit),
+        Err(crate::application::project_board::use_cases::fixtures_tests::set_aside_task("a"))
+    );
+}

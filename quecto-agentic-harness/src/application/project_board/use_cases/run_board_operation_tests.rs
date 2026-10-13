@@ -75,7 +75,12 @@ fn a_completion_is_pending_until_the_pull_requests_merge() {
         panic!("{review:?}")
     };
     assert_eq!(done.fields().status, TaskStatus::Done);
-    let shown = ops.execute(&BoardRequest::Show(a, None)).unwrap();
+    let shown = ops
+        .execute(&BoardRequest::Show(
+            a,
+            crate::application::project_board::operations::PlanView::default(),
+        ))
+        .unwrap();
     let BoardOutcome::Shown(shown, _) = shown else {
         panic!("{shown:?}")
     };
@@ -154,11 +159,17 @@ fn show_tells_a_task_set_aside_from_one_not_on_the_board() {
     ops.execute(&ready_task("b")).unwrap();
     store.quarantine("b", "malformed");
     assert_eq!(
-        ops.execute(&BoardRequest::Show(slug("b"), None)),
+        ops.execute(&BoardRequest::Show(
+            slug("b"),
+            crate::application::project_board::operations::PlanView::default()
+        )),
         Err(set_aside_task("b"))
     );
     assert_eq!(
-        ops.execute(&BoardRequest::Show(slug("c"), None)),
+        ops.execute(&BoardRequest::Show(
+            slug("c"),
+            crate::application::project_board::operations::PlanView::default()
+        )),
         Err(ProjectBoardError::NotFound(slug("c")))
     );
     // With no pull request host, a task not on the board is answered as
@@ -250,7 +261,10 @@ fn a_complete_with_no_host_looks_the_task_up_alone() {
     let listings = Arc::new(QueryListings(QueryBoard::new(Arc::clone(&store))));
     let ops = assembled(store, SetClock::at("10:00:00"), listings, no_host()).unwrap();
     assert!(matches!(
-        ops.execute(&BoardRequest::Show(slug("a"), None)),
+        ops.execute(&BoardRequest::Show(
+            slug("a"),
+            crate::application::project_board::operations::PlanView::default()
+        )),
         Err(ProjectBoardError::Duplicate { .. })
     ));
     assert_eq!(
@@ -558,7 +572,13 @@ mod noted {
         let ops = operations(&store, SetClock::at("10:00:00"), no_host());
         ops.execute(&BoardRequest::Bootstrap).unwrap();
         ops.execute(&ready_task("a")).unwrap();
-        let (_, facts) = noted(&ops, &BoardRequest::Show(slug("a"), None));
+        let (_, facts) = noted(
+            &ops,
+            &BoardRequest::Show(
+                slug("a"),
+                crate::application::project_board::operations::PlanView::default(),
+            ),
+        );
         let none = OpFacts {
             plans: Some(0),
             runs: Some(0),
@@ -573,7 +593,13 @@ mod noted {
             BoardArtifact::Plan(plan("b", 1)),
         ];
         store.write(&head, &seeded, "board: seed").unwrap();
-        let (shown, facts) = noted(&ops, &BoardRequest::Show(slug("a"), None));
+        let (shown, facts) = noted(
+            &ops,
+            &BoardRequest::Show(
+                slug("a"),
+                crate::application::project_board::operations::PlanView::default(),
+            ),
+        );
         assert!(shown.is_ok(), "{shown:?}");
         let want = OpFacts {
             plans: Some(2),
@@ -581,7 +607,13 @@ mod noted {
             ..OpFacts::default()
         };
         assert_eq!(facts, want);
-        let (refused, facts) = noted(&ops, &BoardRequest::Show(slug("b"), None));
+        let (refused, facts) = noted(
+            &ops,
+            &BoardRequest::Show(
+                slug("b"),
+                crate::application::project_board::operations::PlanView::default(),
+            ),
+        );
         assert_eq!(refused, Err(ProjectBoardError::NotFound(slug("b"))));
         assert_eq!(facts, OpFacts::default());
     }

@@ -591,7 +591,7 @@ fn a_plan_op_records_its_version_counts_and_normalised_kinds() {
         ],
         [
             &json!("rule"),
-            &json!("invalid"),
+            &json!("invalid_plan"),
             &json!("items"),
             &json!(1)
         ],
@@ -700,7 +700,7 @@ fn a_rule_failed_completion_records_its_rule() {
     let BoardOutcome::Shown(shown, _) = board
         .execute(&BoardRequest::Show(
             crate::domain::project_board::value_objects::slug::Slug::parse("a").unwrap(),
-            None,
+            crate::application::project_board::operations::PlanView::default(),
         ))
         .unwrap()
     else {

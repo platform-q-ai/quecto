@@ -136,6 +136,7 @@ const KNOWN_KINDS : & [
 "own_pr_referenced" ,
 "invalid" ,
 "no_accepted_plan" ,
+"invalid_plan" ,
 "pending" ,
 "failed" ,
 "crlf" ,

@@ -114,12 +114,12 @@ pub(super) fn commit(
     })
 }
 
-/// Whether `artifacts` are one task's change: that task first (and what
-/// the change writes beside it), or, writing no task, only plans, runs,
-/// changes and reviews of one and the same task (an allowlist: a
-/// discussion is keyed by its own id and may be about no task yet, so
-/// the slice that writes discussions decides their shape). Nothing is no
-/// change.
+/// Whether `artifacts` are one task's change (an allowlist): that task
+/// first, then only plans, runs, changes and reviews of it; or, writing
+/// no task, only plans, runs, changes and reviews of one and the same
+/// task. A second task, or a discussion (keyed by its own id, and maybe
+/// about no task yet: the slice that writes discussions decides their
+/// shape), is no one task's change, nor is nothing.
 pub(super) fn one_tasks_change(artifacts: &[BoardArtifact]) -> bool {
     let task_of = |artifact: &BoardArtifact| match artifact {
         BoardArtifact::Plan(plan) => Some(plan.fields().task.clone()),
@@ -128,14 +128,15 @@ pub(super) fn one_tasks_change(artifacts: &[BoardArtifact]) -> bool {
         BoardArtifact::Review(review) => Some(review.fields().task.clone()),
         BoardArtifact::Task(_) | BoardArtifact::Discussion(_) => None,
     };
-    match artifacts.split_first() {
-        Some((BoardArtifact::Task(_), _)) => true,
-        Some((first, rest)) => task_of(first).is_some_and(|task| {
-            rest.iter()
-                .all(|other| task_of(other).as_ref() == Some(&task))
-        }),
-        None => false,
-    }
+    let (task, rest) = match artifacts.split_first() {
+        Some((BoardArtifact::Task(task), rest)) => (Some(task.fields().id.clone()), rest),
+        Some((first, rest)) => (task_of(first), rest),
+        None => return false,
+    };
+    task.is_some_and(|task| {
+        rest.iter()
+            .all(|other| task_of(other).as_ref() == Some(&task))
+    })
 }
 
 /// What one attempt at a write came to.

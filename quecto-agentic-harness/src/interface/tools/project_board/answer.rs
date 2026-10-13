@@ -191,8 +191,10 @@ pub fn outcome(op: &str, outcome: &BoardOutcome, clock: Option<String>) -> Value
             fields.insert("created".into(), Value::Bool(*created));
         }
         BoardOutcome::Listing(listing) => fields.extend(listing_fields(listing)),
-        BoardOutcome::Shown(shown, None) => fields.extend(shown_fields(shown)),
-        BoardOutcome::Shown(shown, Some(page)) => fields.extend(page_fields(shown, *page)),
+        BoardOutcome::Shown(shown, view) => match view.page {
+            None => fields.extend(shown_fields(shown, view.version)),
+            Some(page) => fields.extend(page_fields(shown, page, view.version)),
+        },
         BoardOutcome::Changed { task, completion } => {
             fields.insert("task".into(), task_json(task));
             if let Some(completion) = completion {

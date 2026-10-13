@@ -349,12 +349,13 @@ fn refusal_parts(error: &ProjectBoardError) -> (Option<&'static str>, Option<&Sc
     }
 }
 
-/// The schema error a rule's refusal names: only `invalid` names one.
+/// The schema error a rule's refusal names: only `invalid` and
+/// `invalid_plan` name one.
 /// Exhaustive, as [`refusal_parts`].
 fn rule_schema(rule: &BoardRuleError) -> Option<&SchemaError> {
     use BoardRuleError as R;
     match rule {
-        R::Invalid(schema) => Some(schema),
+        R::Invalid(schema) | R::InvalidPlan(schema) => Some(schema),
         R::NotAllowed { .. }
         | R::NotHolder
         | R::NoClaim

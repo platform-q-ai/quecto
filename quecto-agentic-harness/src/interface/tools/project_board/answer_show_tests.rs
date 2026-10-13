@@ -120,7 +120,14 @@ fn shown(plans: Vec<Plan>, runs: Vec<Run>, set_aside: Vec<QuarantinedFile>) -> S
 }
 
 fn answered(shown: ShownTask) -> Value {
-    outcome("show", &BoardOutcome::Shown(shown, None), None)
+    outcome(
+        "show",
+        &BoardOutcome::Shown(
+            shown,
+            crate::application::project_board::operations::PlanView::default(),
+        ),
+        None,
+    )
 }
 
 /// The golden answer: every field in its order.
@@ -373,7 +380,13 @@ fn a_page_answers_only_the_parts_it_names_from_where_it_names() {
     let paged = |plans: Vec<Plan>, page: Option<PlanPage>| {
         outcome(
             "show",
-            &BoardOutcome::Shown(shown(plans, vec![], vec![]), page),
+            &BoardOutcome::Shown(
+                shown(plans, vec![], vec![]),
+                crate::application::project_board::operations::PlanView {
+                    version: None,
+                    page,
+                },
+            ),
             None,
         )
     };

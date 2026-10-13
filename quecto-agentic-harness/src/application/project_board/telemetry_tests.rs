@@ -80,7 +80,7 @@ fn every_request() -> Vec<BoardRequest> {
         BoardRequest::List(ListFilter::Children(a.clone())),
         BoardRequest::ListReady,
         BoardRequest::ListTakeable,
-        BoardRequest::Show(a.clone(), None),
+        BoardRequest::Show(a.clone(), super::super::operations::PlanView::default()),
         BoardRequest::Create(NewBoardTask {
             id: a.clone(),
             title: "A".into(),

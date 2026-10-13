@@ -79,8 +79,11 @@ fn a_change_writes_its_task_first_or_only_one_tasks_other_artifacts() {
     for (case, artifacts) in taken {
         assert!(one_tasks_change(&artifacts), "{case}");
     }
-    let refused: [(&str, Vec<BoardArtifact>); 5] = [
+    let refused: [(&str, Vec<BoardArtifact>); 8] = [
         ("nothing", vec![]),
+        ("a task, then another's plan", vec![task("a"), plan("b", 1)]),
+        ("two tasks", vec![task("a"), task("b")]),
+        ("a task, then a discussion", vec![task("a"), discussion()]),
         ("plans of two tasks", vec![plan("a", 1), plan("b", 1)]),
         ("a plan, then its task", vec![plan("a", 1), task("a")]),
         ("a discussion alone", vec![discussion()]),
@@ -89,6 +92,21 @@ fn a_change_writes_its_task_first_or_only_one_tasks_other_artifacts() {
     for (case, artifacts) in refused {
         assert!(!one_tasks_change(&artifacts), "{case}");
     }
+}
+
+/// The assert stands on the write path: a change of plans of two tasks
+/// stops before anything is written.
+#[test]
+#[should_panic(
+    expected = "a board change writes its task first, or only one task's other artifacts"
+)]
+fn commit_refuses_a_change_of_two_tasks() {
+    use crate::application::project_board::use_cases::fixtures_tests::{SetClock, board};
+    let store = board();
+    let clock = SetClock::at("10:00:00");
+    let _ = commit(&store, &*clock, "two", None, |_, _| {
+        Ok(vec![plan("a", 1), plan("b", 1)])
+    });
 }
 
 #[test]

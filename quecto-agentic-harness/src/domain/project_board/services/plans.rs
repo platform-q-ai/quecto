@@ -101,7 +101,7 @@ pub fn propose(
     match last < MAX_PLAN_VERSION {
         true => {}
         false => {
-            return Err(BoardRuleError::Invalid(SchemaError::new(
+            return Err(BoardRuleError::InvalidPlan(SchemaError::new(
                 "version",
                 format!("the task has reached {MAX_PLAN_VERSION} plan versions"),
             )));
@@ -120,7 +120,7 @@ pub fn propose(
         created: now.clone(),
         updated: now.clone(),
     })
-    .map_err(BoardRuleError::Invalid)
+    .map_err(BoardRuleError::InvalidPlan)
 }
 
 /// The draft `plan` of `task` saying `content` instead, edited by `actor`
@@ -167,7 +167,7 @@ pub fn edit_draft(
 /// `content`'s text is as it enters the board, normalised: its approach
 /// as markdown, each task item's title and criteria as lines.
 fn entered(content: &PlanContent) -> Result<(), BoardRuleError> {
-    let invalid = BoardRuleError::Invalid;
+    let invalid = BoardRuleError::InvalidPlan;
     entered_text("approach", &content.approach).map_err(invalid)?;
     for (index, item) in content.items.iter().enumerate() {
         entered_line(&format!("items/{index}/title"), &item.title).map_err(invalid)?;
@@ -237,13 +237,13 @@ pub fn accept(
     accepted.state = PlanState::Accepted;
     accepted.accepted = Some((actor.clone(), at.clone()));
     accepted.updated = at.clone();
-    let plan = Plan::new(accepted).map_err(BoardRuleError::Invalid)?;
+    let plan = Plan::new(accepted).map_err(BoardRuleError::InvalidPlan)?;
     let superseded = before
         .map(|before| {
             let mut next = before.fields().clone();
             next.state = PlanState::Superseded;
             next.updated = at.clone();
-            Plan::new(next).map_err(BoardRuleError::Invalid)
+            Plan::new(next).map_err(BoardRuleError::InvalidPlan)
         })
         .transpose()?;
     let result: Vec<&Plan> = versions
@@ -393,7 +393,7 @@ fn moved(plan: &Plan, state: PlanState, now: &Timestamp) -> Result<Plan, BoardRu
 /// whichever is later, so every change moves it strictly forward.
 fn restamped(mut next: PlanFields, plan: &Plan, now: &Timestamp) -> Result<Plan, BoardRuleError> {
     next.updated = after_last(&plan.fields().updated, now)?;
-    Plan::new(next).map_err(BoardRuleError::Invalid)
+    Plan::new(next).map_err(BoardRuleError::InvalidPlan)
 }
 
 #[cfg(test)]

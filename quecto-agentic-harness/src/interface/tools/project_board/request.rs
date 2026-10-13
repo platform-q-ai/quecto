@@ -7,7 +7,7 @@ use serde_json::{Map, Value};
 use crate::application::project_board::dto::{
     BoardOp, DraftUpdate, NewBoardTask, NewBoardTaskStatus,
 };
-use crate::application::project_board::operations::{BoardRequest, ListFilter, PlanPage};
+use crate::application::project_board::operations::{BoardRequest, ListFilter, PlanPage, PlanView};
 use crate::application::project_board::ports::KeepCopy;
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::telemetry::{FaultKind, RequestFault, StaticKind};
@@ -188,6 +188,7 @@ pub const OPS: &[(&str, &[Field])] = &[
             TASK,
             optional("approach_from", Kind::Offset),
             optional("items_from", Kind::Offset),
+            optional("version", Kind::Version),
         ],
     ),
     (
@@ -446,7 +447,10 @@ fn build(op: &str, read: &Read<'_>) -> Result<BoardRequest, RequestError> {
         "list_takeable" => Ok(BoardRequest::ListTakeable),
         "show" => Ok(BoardRequest::Show(
             read.task()?,
-            PlanPage::of(read.offset("approach_from")?, read.offset("items_from")?),
+            PlanView {
+                version: read.value("version").map(plans::version).transpose()?,
+                page: PlanPage::of(read.offset("approach_from")?, read.offset("items_from")?),
+            },
         )),
         "create" => create(read),
         "update_draft" => update_draft(read),

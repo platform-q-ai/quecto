@@ -382,6 +382,42 @@ impl ShownTask {
         })
     }
 
+    /// The plan a show gives: version `version` when one is named, as
+    /// [`Self::version`] finds it; the accepted plan otherwise.
+    pub fn plan(&self, version: Option<u32>) -> Option<&Plan> {
+        match version {
+            Some(version) => self.version(version).ok(),
+            None => self.accepted_plan(),
+        }
+    }
+
+    /// Version `version` of the task's plan, whatever its state (#2481
+    /// M4b: a draft is read before it is edited or accepted).
+    ///
+    /// # Errors
+    /// [`ProjectBoardError::Quarantined`] while its file is set aside; the
+    /// rule [`BoardRuleError::UnknownPlanVersion`] when the task has none.
+    pub fn version(&self, version: u32) -> Result<&Plan, ProjectBoardError> {
+        let id = &self.task.fields().id;
+        let key = ArtifactKey::Plan(id.clone(), version);
+        if let Some(file) = self
+            .set_aside
+            .iter()
+            .find(|file| file.key.as_ref() == Some(&key))
+        {
+            return Err(ProjectBoardError::Quarantined {
+                key,
+                path: file.path.clone(),
+            });
+        }
+        self.plans
+            .iter()
+            .find(|plan| plan.fields().version == version)
+            .ok_or(ProjectBoardError::Rule(BoardRuleError::UnknownPlanVersion(
+                version,
+            )))
+    }
+
     /// The task's latest run: the one numbered last.
     pub fn latest_run(&self) -> Option<&Run> {
         self.runs.last()

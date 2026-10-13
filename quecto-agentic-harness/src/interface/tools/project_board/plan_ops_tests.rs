@@ -1,0 +1,171 @@
+//! #2481 M4b review round 1: a draft is read whole with `show(task,
+//! version)`, so another agent builds on it without wiping it.
+use std::sync::Arc;
+
+use serde_json::{Value, json};
+
+use super::run;
+use crate::application::project_board::operations::NoPullRequestHost;
+use crate::application::project_board::operations::query_listings::{QueryListings, assembled};
+use crate::application::project_board::ports::{ArtifactKey, ProjectBoardStore};
+use crate::application::project_board::use_cases::{QueryBoard, RunBoardOperation};
+use crate::domain::project_board::entities::claim::Identity;
+use crate::domain::project_board::value_objects::slug::Slug;
+use crate::infrastructure::test_support::memory_board_store::MemoryBoardStore;
+use crate::infrastructure::time::board_clock::SystemBoardClock;
+
+/// The board's operations as `name` writes them.
+fn as_writer(store: &MemoryBoardStore, name: &str) -> RunBoardOperation {
+    let client = store.client_as(Identity {
+        name: name.into(),
+        email: format!("{}@example.com", name.to_lowercase()),
+    });
+    assembled(
+        Arc::new(client.clone()),
+        Arc::new(SystemBoardClock::default()),
+        Arc::new(QueryListings(QueryBoard::new(Arc::new(client)))),
+        Err(NoPullRequestHost::NotAPullRequestHost),
+    )
+    .unwrap()
+}
+
+fn call(operations: &RunBoardOperation, request: Value) -> Value {
+    run(operations, &request.to_string())
+}
+
+fn ok(operations: &RunBoardOperation, request: Value) -> Value {
+    let answer = call(operations, request);
+    assert_eq!(answer["ok"], json!(true), "{answer}");
+    answer
+}
+
+fn item(id: &str) -> Value {
+    json!({"id": id, "title": format!("Item {id}"), "criteria": [format!("{id} proved")], "depends_on": []})
+}
+
+/// A board with task `a` and two drafts of its plan by Ada, the second
+/// with two task items.
+fn drafted() -> (MemoryBoardStore, RunBoardOperation, RunBoardOperation) {
+    let store = MemoryBoardStore::default();
+    store.bootstrap().unwrap();
+    let (ada, bob) = (as_writer(&store, "Ada"), as_writer(&store, "Bob"));
+    ok(&ada, json!({"op": "create", "task": "a", "title": "A"}));
+    ok(
+        &ada,
+        json!({"op": "propose_plan", "task": "a", "approach": "First.", "items": []}),
+    );
+    ok(
+        &ada,
+        json!({"op": "propose_plan", "task": "a", "approach": "Ada's approach.",
+               "items": [item("schema"), item("api")]}),
+    );
+    (store, ada, bob)
+}
+
+#[test]
+fn bob_reads_adas_draft_and_adds_one_item_without_wiping_hers() {
+    let (_store, ada, bob) = drafted();
+    let draft = ok(&bob, json!({"op": "show", "task": "a", "version": 2}));
+    let plan = &draft["plan"];
+    assert_eq!(
+        (&plan["version"], &plan["state"], &plan["approach"]),
+        (&json!(2), &json!("draft"), &json!("Ada's approach.")),
+        "{draft}"
+    );
+    assert_eq!(plan["proposed_by"]["name"], json!("Ada"));
+    let mut items = plan["items"].as_array().unwrap().clone();
+    assert_eq!(items, vec![item("schema"), item("api")]);
+    items.push(item("cli"));
+    let edited = ok(
+        &bob,
+        json!({"op": "edit_plan", "task": "a", "version": 2, "items": items,
+               "expected_updated": plan["updated"]}),
+    );
+    assert_eq!(edited["plan"]["edited_by"]["name"], json!("Bob"));
+    let after = ok(&ada, json!({"op": "show", "task": "a", "version": 2}));
+    assert_eq!(
+        after["plan"]["items"],
+        json!([item("schema"), item("api"), item("cli")])
+    );
+    assert_eq!(after["plan"]["approach"], json!("Ada's approach."));
+    // The accepted plan is still none: a version named is shown in its
+    // place only when asked for.
+    assert_eq!(
+        ok(&ada, json!({"op": "show", "task": "a"}))["plan"],
+        Value::Null
+    );
+}
+
+/// A version is paged as the accepted plan is, and its page names it.
+#[test]
+fn a_named_version_is_paged() {
+    let (_store, _ada, bob) = drafted();
+    let page = ok(
+        &bob,
+        json!({"op": "show", "task": "a", "version": 2, "items_from": 1, "approach_from": 6}),
+    );
+    assert_eq!(
+        page["plan"],
+        json!({"version": 2, "approach_from": 6, "approach": "approach.",
+               "items_from": 1, "items": [item("api")]})
+    );
+}
+
+/// A version the task does not have, or whose file is set aside, is
+/// refused, never shown as none.
+#[test]
+fn an_unknown_or_set_aside_version_is_refused() {
+    let (store, _ada, bob) = drafted();
+    let unknown = call(&bob, json!({"op": "show", "task": "a", "version": 9}));
+    assert_eq!(
+        (
+            &unknown["error"]["rule"]["code"],
+            &unknown["error"]["message"]
+        ),
+        (
+            &json!("unknown_plan_version"),
+            &json!("the task has no plan version 9")
+        ),
+        "{unknown}"
+    );
+    let key = ArtifactKey::Plan(Slug::parse("a").unwrap(), 2);
+    store.quarantine_key(key, "plans/a.2.md", "unreadable");
+    let set_aside = call(&bob, json!({"op": "show", "task": "a", "version": 2}));
+    assert_eq!(
+        (&set_aside["error"]["code"], &set_aside["error"]["path"]),
+        (&json!("artifact_set_aside"), &json!("plans/a.2.md")),
+        "{set_aside}"
+    );
+}
+
+/// A plan the schema refuses is named a plan, not a task.
+#[test]
+fn a_plans_schema_refusal_says_plan() {
+    let (store, ada, _bob) = drafted();
+    let writes = store.writes();
+    let refused = call(
+        &ada,
+        json!({"op": "edit_plan", "task": "a", "version": 2,
+               "items": [{"id": "x", "title": "Two\nlines"}]}),
+    );
+    let error = &refused["error"];
+    assert_eq!(
+        (
+            &error["code"],
+            &error["rule"]["code"],
+            &error["rule"]["field"]
+        ),
+        (
+            &json!("rule"),
+            &json!("invalid_plan"),
+            &json!("items/0/title")
+        ),
+        "{refused}"
+    );
+    let message = error["message"].as_str().unwrap();
+    assert!(
+        message.starts_with("invalid plan: items/0/title: "),
+        "{message}"
+    );
+    assert_eq!(store.writes(), writes);
+}

@@ -145,3 +145,46 @@ fn a_plan_set_aside_holds_proposals_and_a_missing_task_is_refused() {
         Err(ProjectBoardError::NotFound(slug("missing")))
     );
 }
+
+/// A proposal that loses the race to a rival's version 2 is rebuilt
+/// against the fresh board and writes version 3, the rival's kept.
+#[test]
+fn a_proposal_that_loses_to_a_rivals_version_writes_the_next() {
+    let store = holding_plans(
+        "a",
+        TaskStatus::Ready,
+        vec![plan_of("a", 1, PlanState::Draft)],
+    );
+    let rival = store.client();
+    store.after_next_read(move |_| {
+        propose(&rival).execute(&proposal("a")).unwrap();
+    });
+    let mut facts = OpFacts::default();
+    let written = propose(&store)
+        .execute_noted(&proposal("a"), Some(&mut facts))
+        .unwrap();
+    assert_eq!(written.fields().version, 3);
+    let versions: Vec<u32> = store
+        .read()
+        .unwrap()
+        .plans
+        .iter()
+        .map(|plan| plan.fields().version)
+        .collect();
+    assert_eq!(versions, [1, 2, 3]);
+    assert_eq!(
+        (facts.attempts, facts.lost, facts.plan_version),
+        (Some(2), Some(1), Some(3))
+    );
+}
+
+/// A set-aside task file holds a proposal, as it holds every change.
+#[test]
+fn a_task_set_aside_holds_proposals() {
+    let store = holding_plans("a", TaskStatus::Ready, vec![]);
+    store.quarantine("a", "unreadable");
+    assert_eq!(
+        propose(&store).execute(&proposal("a")),
+        Err(crate::application::project_board::use_cases::fixtures_tests::set_aside_task("a"))
+    );
+}

@@ -59,22 +59,26 @@ pub struct PlanFields {
 }
 
 impl PlanFields {
-    /// The UTF-8 bytes of every free text in the plan: the approach, the
-    /// items' titles and criteria, the team's models and image. Ids,
-    /// words, numbers, times and identities are bounded by the field
-    /// limits.
+    /// The UTF-8 bytes of every free text in the plan ([`text_bytes`]).
     pub fn text_bytes(&self) -> usize {
-        let items: usize = self
-            .items
-            .iter()
-            .map(|item| item.title.len() + item.criteria.iter().map(String::len).sum::<usize>())
-            .sum();
-        let team = self.team.as_ref().map_or(0, |team| {
-            let models: usize = team.roles.iter().map(|role| role.model.len()).sum();
-            models + team.image.as_ref().map_or(0, String::len)
-        });
-        self.approach.len() + items + team
+        text_bytes(&self.approach, &self.items, self.team.as_ref())
     }
+}
+
+/// The UTF-8 bytes of every free text in a plan of `approach`, `items`
+/// and `team`: the approach, the items' titles and criteria, the team's
+/// models and image. Ids, words, numbers, times and identities are
+/// bounded by the field limits. At most [`MAX_PLAN_TEXT_BYTES`] fit.
+pub fn text_bytes(approach: &str, items: &[PlanItem], team: Option<&Team>) -> usize {
+    let items: usize = items
+        .iter()
+        .map(|item| item.title.len() + item.criteria.iter().map(String::len).sum::<usize>())
+        .sum();
+    let team = team.map_or(0, |team| {
+        let models: usize = team.roles.iter().map(|role| role.model.len()).sum();
+        models + team.image.as_ref().map_or(0, String::len)
+    });
+    approach.len() + items + team
 }
 
 /// A plan whose fields keep every rule of its schema.
