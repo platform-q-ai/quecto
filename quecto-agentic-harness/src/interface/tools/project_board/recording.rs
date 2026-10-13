@@ -366,6 +366,7 @@ fn rule_schema(rule: &BoardRuleError) -> Option<&SchemaError> {
         | R::PlanAhead { .. }
         | R::RunsInconsistent(..)
         | R::PlanNotAccepted(..)
+        | R::NoAcceptedPlan
         | R::ChangeAlreadyLinked { .. }
         | R::NoSuchChange(..)
         | R::ChangeAhead { .. }

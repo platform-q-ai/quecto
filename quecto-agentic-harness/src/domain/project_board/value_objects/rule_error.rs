@@ -48,6 +48,8 @@ pub enum BoardRuleError {
     RunsInconsistent(String),
     /// A run runs the task's accepted plan; this version is not it.
     PlanNotAccepted(u32),
+    /// The task has no accepted plan, so nothing can start it.
+    NoAcceptedPlan,
     /// `task` already links the branch or pull request: by its change
     /// `change`, or the old way when `None`. A pull request is linked to
     /// one task, for good, and a branch to one change until it merges.
@@ -192,6 +194,9 @@ impl fmt::Display for BoardRuleError {
             Self::RunsInconsistent(why) => write!(f, "the task's runs contradict: {why}"),
             Self::PlanNotAccepted(version) => {
                 write!(f, "plan version {version} is not the task's accepted plan")
+            }
+            Self::NoAcceptedPlan => {
+                f.write_str("the task has no accepted plan: accept one before starting it")
             }
             Self::ChangeAlreadyLinked {
                 task,

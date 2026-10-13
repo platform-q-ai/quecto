@@ -6,5 +6,6 @@
 pub mod dto;
 pub mod operations;
 pub mod ports;
+pub mod swarm_brief;
 pub mod telemetry;
 pub mod use_cases;

@@ -13,15 +13,12 @@ use crate::application::swarm::dto::{
 use crate::application::swarm::ports::{
     BoardEncoding, BoardMembers, BoardRepository, BoardRuns, Clock, IdSource,
 };
-use crate::domain::swarm::validation::TEXT_MAX_BYTES;
+use crate::domain::swarm::validation::{
+    DEADLINE_HORIZON_SECONDS, MEMBER_LIMIT_MAX, TEXT_MAX_BYTES,
+};
 use crate::domain::swarm::{
     BoardError, MemberState, RefusalKind, RunState, bounded, bounded_text, criteria,
 };
-
-/// The most members a run may hold, the coordinator included.
-const MEMBER_LIMIT_MAX: i64 = 25;
-/// How far ahead a deadline may be: seven days.
-const DEADLINE_HORIZON_SECONDS: f64 = 604_800.0;
 
 /// Validates the contract in Python's order, then in one creating
 /// transaction either takes over the setup placeholder (only its

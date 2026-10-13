@@ -8,14 +8,12 @@ use crate::application::swarm::board_operation::{detail, operation};
 use crate::application::swarm::board_tasks::read_task;
 use crate::application::swarm::dto::{CreateTaskRequest, CreatedTask, NewTask};
 use crate::application::swarm::ports::{BoardEncoding, BoardRepository, BoardTransaction, Clock};
-use crate::domain::swarm::validation::{TEXT_MAX_BYTES, has_content};
+use crate::domain::swarm::validation::{TEXT_MAX_BYTES, TITLE_MAX_BYTES, has_content};
 use crate::domain::swarm::{
     Access, BoardError, RefusalKind, bounded, bounded_text, dependency_list, python_truthy,
     validate_dependencies,
 };
 
-/// The longest title, in UTF-8 bytes.
-pub const TITLE_MAX_BYTES: usize = 1024;
 /// The longest request id, in UTF-8 bytes (`Store.retry`).
 pub const REQUEST_ID_MAX_BYTES: usize = 128;
 /// The most tasks a board holds.
