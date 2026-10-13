@@ -29,6 +29,12 @@ pub fn shown_path(path: &str) -> bool {
         .is_some_and(|name| one_name(name) && shown_name(name))
 }
 
+/// Whether `path` is a path a store sets aside with no key (a stray) shows:
+/// one name directly under `tasks/` or one of [`ARTIFACT_FOLDERS`].
+pub fn shown_board_path(path: &str) -> bool {
+    shown_path(path)
+}
+
 /// [`shown_path`] for the file of a plan, run, change, review or
 /// discussion: one name directly under `folder` (one of
 /// [`ARTIFACT_FOLDERS`], its kind's), holding no `..`.

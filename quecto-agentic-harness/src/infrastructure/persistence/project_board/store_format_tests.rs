@@ -1,6 +1,7 @@
 //! The board's format marker (#2527 review): every write leaves
-//! `format/board` reading `quecto-board 2`, a root tree an older quecto
-//! takes for a clash. A root without it is a board written before it, read
+//! `format/board` reading `quecto-board 3` (2 until #2481 S9 read the other
+//! folders), a root tree an older quecto takes for a clash, or for a newer
+//! format. A board of format 2 is read as it is. A root without it is a board written before it, read
 //! as it is; a newer format asks for an upgrade before anything else is
 //! judged; a damaged marker beside a board asks for the board to be moved
 //! back; a file named `format` at the root is a stray.
@@ -9,7 +10,7 @@ use crate::infrastructure::persistence::project_board::board_tree::FORMAT;
 
 /// A tree of raw `rows` (mode, name, object id) in `repo`, written as git
 /// would never write one.
-fn raw_rows(repo: &Path, rows: &[(&str, &str, String)]) -> String {
+pub(super) fn raw_rows(repo: &Path, rows: &[(&str, &str, String)]) -> String {
     let mut bytes = vec![];
     for (mode, name, oid) in rows {
         bytes.extend(format!("{mode} {name}\0").as_bytes());
@@ -26,7 +27,7 @@ fn raw_rows(repo: &Path, rows: &[(&str, &str, String)]) -> String {
     )
 }
 
-fn blob_in(repo: &Path, bytes: &[u8]) -> String {
+pub(super) fn blob_in(repo: &Path, bytes: &[u8]) -> String {
     sh_with(repo, &["hash-object", "-w", "--stdin"], bytes)
 }
 
@@ -119,6 +120,24 @@ fn this_quectos_marker_is_read() {
     assert_eq!(read(&repos, &head).unwrap().tasks.len(), 1);
 }
 
+/// A board of format 2 (tasks alone, before this quecto read the other
+/// folders) is read as it is, and the next write leaves format 3.
+#[test]
+fn a_board_of_the_format_before_is_read_and_the_next_write_leaves_this_one() {
+    assert_eq!(FORMAT, b"quecto-board 3\n");
+    let repos = Repos::new();
+    created(&store(&repos.alice));
+    let head = board_with(&repos, true, &[marker(board_file(b"quecto-board 2\n"))]);
+    let bob = store(&repos.bob);
+    assert_eq!(bob.board_at(&head.0).unwrap().tasks.len(), 1);
+    let moved = written(bob.write_tasks(&head, &[task("b")], "board: add b"));
+    let marker = sh(
+        &repos.remote(),
+        &["cat-file", "blob", &format!("{}:format/board", moved.0)],
+    );
+    assert_eq!(marker + "\n", "quecto-board 3\n");
+}
+
 /// A board written before the marker (a README and `tasks`, no `format`)
 /// is read as it is, and the next write adds the marker.
 #[test]
@@ -143,10 +162,10 @@ fn a_board_without_a_format_marker_is_read_and_the_next_write_adds_it() {
 fn a_newer_format_asks_for_an_upgrade_before_anything_else() {
     let repos = Repos::new();
     created(&store(&repos.alice));
-    let mut padded = b"quecto-board 3\nwith more\n".to_vec();
+    let mut padded = b"quecto-board 4\nwith more\n".to_vec();
     padded.resize(4 * 1024, b'x');
     for entries in [
-        board_file(b"quecto-board 3\n"),
+        board_file(b"quecto-board 4\n"),
         vec![
             ("100755", "board", Object::Blob(padded.clone())),
             ("100644", "more", Object::Blob(b"x".to_vec())),
@@ -181,7 +200,7 @@ fn a_newer_format_asks_for_an_upgrade_before_anything_else() {
         "{read:?}"
     );
     // Before a task read refuses too: past the task-file bytes it takes.
-    let head = board_with(&repos, true, &[marker(board_file(b"quecto-board 3\n"))]);
+    let head = board_with(&repos, true, &[marker(board_file(b"quecto-board 4\n"))]);
     let mut bob = store(&repos.bob);
     bob.limits.board_bytes = 1;
     let read = bob.board_at(&head.0);
@@ -235,6 +254,10 @@ fn a_damaged_marker_asks_for_the_board_to_be_moved_back() {
             vec![marker(vec![("40000", "board", Object::EmptyTree)])],
         ),
         ("format 1", vec![marker(board_file(b"quecto-board 1\n"))]),
+        (
+            "format 2 and more",
+            vec![marker(board_file(b"quecto-board 2\nmore\n"))],
+        ),
         (
             "a leading zero",
             vec![marker(board_file(b"quecto-board 02\n"))],
@@ -362,7 +385,7 @@ fn the_merged_board_shape_takes_a_marked_root_for_a_clash() {
 fn a_marker_past_what_is_read_names_an_upgrade_and_a_mend() {
     let repos = Repos::new();
     created(&store(&repos.alice));
-    let mut huge = b"quecto-board 3\n".to_vec();
+    let mut huge = b"quecto-board 4\n".to_vec();
     huge.resize(65 * 1024, b'x');
     let head = board_with(&repos, true, &[marker(board_file(&huge))]);
     let read = read(&repos, &head);
@@ -376,7 +399,7 @@ fn a_marker_past_what_is_read_names_an_upgrade_and_a_mend() {
 /// is never written, cleared or bootstrapped over.
 #[test]
 fn a_marker_this_quecto_does_not_read_refuses_every_change() {
-    for bytes in [&b"quecto-board 3\n"[..], b"quecto-board 1\n"] {
+    for bytes in [&b"quecto-board 4\n"[..], b"quecto-board 1\n"] {
         let repos = Repos::new();
         created(&store(&repos.alice));
         let head = board_with(&repos, true, &[marker(board_file(bytes))]);

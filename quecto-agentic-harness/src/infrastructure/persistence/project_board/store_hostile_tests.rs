@@ -593,6 +593,8 @@ fn a_hostile_cell_never_reaches_a_reason_or_stops_a_listing() {
 
 #[path = "store_clear_tests.rs"]
 mod clear;
+#[path = "store_folders_tests.rs"]
+mod folders;
 #[path = "store_format_tests.rs"]
 mod format;
 #[path = "store_legacy_tests.rs"]
