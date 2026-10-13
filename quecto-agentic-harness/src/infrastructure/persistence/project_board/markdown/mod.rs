@@ -242,6 +242,14 @@ pub enum MarkdownError {
     /// A prose line that starts as a block would, unescaped.
     #[error("line {line}: a line that starts as a block, unescaped")]
     BlockLike { line: usize },
+    /// A paragraph that opens as a link reference definition (`[label]:`,
+    /// its label on one line or several). Placeholder wording, pending the
+    /// owner.
+    #[error(
+        "line {line}: may not start a paragraph with [label]:, which markdown reads as a link \
+         definition; reword it or start with other text"
+    )]
+    ReferenceDefinition { line: usize },
     #[error("not this kind's marker line")]
     Marker,
     #[error("not a title: one line of text, no space at its edges, no closing hashes")]

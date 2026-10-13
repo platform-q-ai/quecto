@@ -639,7 +639,7 @@ fn a_paragraph_that_defines_a_link_reference_is_refused() {
     ] {
         assert_eq!(
             prose::blocks_of(text),
-            Err(MarkdownError::Link { line }),
+            Err(MarkdownError::ReferenceDefinition { line }),
             "{text:?}"
         );
         let paragraph: Vec<String> = text
@@ -650,7 +650,11 @@ fn a_paragraph_that_defines_a_link_reference_is_refused() {
             .map(str::to_string)
             .collect();
         let written = render(&with_blocks(vec![Block::Paragraph(paragraph)]), &SHAPE);
-        assert_eq!(written, Err(MarkdownError::Link { line: 11 }), "{text:?}");
+        assert_eq!(
+            written,
+            Err(MarkdownError::ReferenceDefinition { line: 11 }),
+            "{text:?}"
+        );
     }
     let quoted = with_blocks(prose::blocks_of("> [docs]: //evil.example/x").unwrap());
     let file = render(&quoted, &SHAPE).unwrap();
@@ -660,6 +664,22 @@ fn a_paragraph_that_defines_a_link_reference_is_refused() {
         prose::blocks_of("- [docs]: //evil.example/x").is_err(),
         "an item opens with `[` only as a link"
     );
+    // What the writer is told (placeholder wording, pending the owner).
+    assert_eq!(
+        MarkdownError::ReferenceDefinition { line: 3 }.to_string(),
+        "line 3: may not start a paragraph with [label]:, which markdown reads as a link \
+         definition; reword it or start with other text"
+    );
+    // A paragraph may open with a link, or with a bracket that defines
+    // nothing: one not closed by `]:`, or holding another `[`.
+    for text in [
+        "[docs](https://example.com) says so.",
+        "[WIP] not done: soon",
+        "[a [b]]: c",
+        "[docs] : spaced",
+    ] {
+        assert!(prose::blocks_of(text).is_ok(), "{text:?}");
+    }
 }
 
 /// A file a writer edited by hand, its definition escaped as the renderer
@@ -671,7 +691,11 @@ fn a_definition_read_from_a_file_is_refused() {
             &edited("Agents read the board, `Vec<T>` and all.\n", to),
             &SHAPE,
         );
-        assert_eq!(read, Err(MarkdownError::Link { line: 11 }), "{to:?}");
+        assert_eq!(
+            read,
+            Err(MarkdownError::ReferenceDefinition { line: 11 }),
+            "{to:?}"
+        );
     }
 }
 

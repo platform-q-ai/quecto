@@ -9,22 +9,24 @@
 use super::chars::check_line;
 use super::inline::{check_inline, starts_with_link};
 use super::{Block, MarkdownError};
-use regex::Regex;
-use std::sync::LazyLock;
 
-/// A link reference definition's opening, read across a paragraph's
-/// lines: `[`, a label holding no bracket (it may run across lines, or be
-/// empty, which no reader takes but is refused all the same), then `]:`.
-static DEFINITION: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^\[[^\[\]]*\]:").expect("a valid pattern"));
-
-/// Whether `texts`, a paragraph's lines as a domain holds them, would
-/// define a link reference were its first `[` not escaped: a definition
-/// shows nothing and gives every `[label]` on the page a hidden address,
-/// so a paragraph that opens as one is refused, written or read, rather
-/// than held escaped.
-pub fn defines_reference(texts: &[String]) -> bool {
-    DEFINITION.is_match(&texts.join("\n"))
+/// Whether a paragraph of `texts`, its lines as a domain holds them, may
+/// open as it does (an allowlist): with anything but `[`, with a link,
+/// or with a `[` that defines nothing (its label holds another `[`, or is
+/// not closed by `]:`). A link reference definition shows nothing and
+/// gives every `[label]` on the page a hidden address, so a paragraph
+/// that opens as one is refused, written or read, rather than held
+/// escaped (its label may run across lines).
+pub(super) fn opens_freely(texts: &[String]) -> bool {
+    let joined = texts.join("\n");
+    match joined.strip_prefix('[') {
+        None => true,
+        Some(_) if starts_with_link(&joined) => true,
+        Some(label) => match label.find(['[', ']']) {
+            Some(at) if label[at..].starts_with("]:") => false,
+            Some(_) | None => true,
+        },
+    }
 }
 
 /// Whether a line opening with `first` is escaped: every ASCII punctuation
@@ -141,15 +143,13 @@ pub fn render(
         };
         match block {
             Block::Paragraph(texts) | Block::List(texts) if texts.is_empty() => return Err(empty),
-            Block::Paragraph(texts) if defines_reference(texts) => {
-                return Err(MarkdownError::Link { line: at });
-            }
-            Block::Paragraph(texts) => {
+            Block::Paragraph(texts) if opens_freely(texts) => {
                 for text in texts {
                     text_line(text, lines.len() + 1)?;
                     lines.push(escaped(text));
                 }
             }
+            Block::Paragraph(_) => return Err(MarkdownError::ReferenceDefinition { line: at }),
             Block::List(items) => {
                 for item in items {
                     text_line(item, lines.len() + 1)?;
