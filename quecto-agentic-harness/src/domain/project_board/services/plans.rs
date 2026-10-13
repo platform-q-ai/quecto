@@ -15,6 +15,7 @@ use super::super::entities::plan::{MAX_PLAN_VERSION, Plan, PlanFields, PlanItem}
 use super::super::entities::run::Run;
 use super::super::entities::task::Task;
 use super::super::entities::team::Team;
+use super::super::value_objects::board_text::{entered_line, entered_text};
 use super::super::value_objects::rule_error::BoardRuleError;
 use super::super::value_objects::schema_error::SchemaError;
 use super::super::value_objects::timestamp::Timestamp;
@@ -96,6 +97,7 @@ pub fn propose(
         .map(|plan| plan.fields().version)
         .max()
         .unwrap_or(0);
+    entered(&content)?;
     match last < MAX_PLAN_VERSION {
         true => {}
         false => {
@@ -144,6 +146,7 @@ pub fn edit_draft(
     draft(plan)?;
     as_read(plan, expected)?;
     when.may_build_on(plan)?;
+    entered(&content)?;
     let fields = plan.fields();
     let changes = fields.approach != content.approach
         || fields.items != content.items
@@ -159,6 +162,20 @@ pub fn edit_draft(
     // Drafts are anyone's: the last editor is recorded, the proposer kept.
     next.edited_by = Some(actor.clone());
     restamped(next, plan, now)
+}
+
+/// `content`'s text is as it enters the board, normalised: its approach
+/// as markdown, each task item's title and criteria as lines.
+fn entered(content: &PlanContent) -> Result<(), BoardRuleError> {
+    let invalid = BoardRuleError::Invalid;
+    entered_text("approach", &content.approach).map_err(invalid)?;
+    for (index, item) in content.items.iter().enumerate() {
+        entered_line(&format!("items/{index}/title"), &item.title).map_err(invalid)?;
+        for (at, criterion) in item.criteria.iter().enumerate() {
+            entered_line(&format!("items/{index}/criteria/{at}"), criterion).map_err(invalid)?;
+        }
+    }
+    Ok(())
 }
 
 /// Version `version` of the `board` task's plan accepted by `actor` at

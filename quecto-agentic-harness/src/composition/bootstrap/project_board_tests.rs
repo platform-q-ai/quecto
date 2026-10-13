@@ -469,3 +469,31 @@ fn a_sessions_decided_switch_is_kept() {
     std::fs::remove_file(base.path().join("config.json")).unwrap();
     assert!(session_board_recording_decided(true, &log).is_some());
 }
+
+/// Git records a committer's name byte for byte, so a name spaced with a
+/// chat space (an ideographic space between family and given name) is no
+/// identity the board can record: every write is refused as having no
+/// committer, failing fast before any change; reads still work.
+#[test]
+fn a_committer_spaced_with_a_chat_space_fails_fast_for_every_write() {
+    let (_dir, work) = repository();
+    let writer = build_project_board_handles(&environment(&work, Access::Write)).unwrap();
+    run(&writer.operations, r#"{"op": "bootstrap"}"#);
+    sh(
+        &work,
+        &[
+            "config",
+            "user.name",
+            "\u{5c71}\u{7530}\u{3000}\u{592a}\u{90ce}",
+        ],
+    );
+    let refused = build_project_board_handles(&environment(&work, Access::Write));
+    assert!(
+        matches!(&refused, Err(BuildError::NoCommitter(why)) if why.contains("plain spaces")),
+        "{:?}",
+        refused.as_ref().err()
+    );
+    let reader = build_project_board_handles(&environment(&work, Access::Read)).unwrap();
+    let listed = run(&reader.operations, r#"{"op": "list"}"#);
+    assert_eq!(listed["ok"], json!(true), "{listed}");
+}

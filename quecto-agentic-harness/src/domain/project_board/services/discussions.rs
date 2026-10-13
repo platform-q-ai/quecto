@@ -12,6 +12,10 @@
 //! clock) plus the stamp's slack.
 //!
 //! What the use cases must bring (M4):
+//! - text as it enters the board: the title through `board_text::line`
+//!   and each message through `board_text::message` (edge spacing and
+//!   blank lines go) before `begin` or `append`, which refuse text never
+//!   normalised;
 //! - `begin` does not know the board, so the use case refuses an id a
 //!   discussion already has before it begins one;
 //! - M4 stamps live messages: the append op gives each message the board's
@@ -25,6 +29,7 @@ use super::super::entities::discussion::{
     Message, message_shape,
 };
 use super::super::entities::task::Task;
+use super::super::value_objects::board_text::{entered_line, entered_message};
 use super::super::value_objects::rule_error::BoardRuleError;
 use super::super::value_objects::schema_error::SchemaError;
 use super::super::value_objects::slug::Slug;
@@ -49,10 +54,13 @@ pub struct Opening<'a> {
 /// if that is later.
 ///
 /// # Errors
-/// No message (`invalid`); a message stamped ahead; or a discussion its
-/// schema refuses (a title or message out of shape, messages out of
-/// order, past its limits).
+/// A title or message never normalised (`board_text`), judged first, as
+/// `append` does; no message (`invalid`); a message stamped ahead; or a
+/// discussion its schema refuses (a title or message out of shape,
+/// messages out of order, past its limits).
 pub fn begin(opening: Opening<'_>, when: &Moment) -> Result<Discussion, BoardRuleError> {
+    entered_line("title", &opening.title).map_err(BoardRuleError::Invalid)?;
+    entered_messages("messages", &opening.messages)?;
     not_ahead(&opening.id, &opening.messages, when)?;
     let (created, last) = match (opening.messages.first(), opening.messages.last()) {
         (Some(first), Some(last)) => (first.at.clone(), last.at.clone()),
@@ -82,10 +90,11 @@ pub fn begin(opening: Opening<'_>, when: &Moment) -> Result<Discussion, BoardRul
 /// messages names it by its place in the batch (`batch/{i}/…`).
 ///
 /// # Errors
-/// A discussion closed or stamped ahead; an empty batch; a message stamped
-/// ahead; a message out of shape; a batch that would fill the discussion
-/// past its most messages, lines or text; or a discussion its schema
-/// refuses (a message said before the last one).
+/// A discussion closed or stamped ahead; a batch too many for it; a
+/// message never normalised (judged before any message's time, as `begin`
+/// does); an empty batch; a message stamped ahead or out of shape; a batch
+/// that would fill the discussion past its most lines or text; or a
+/// discussion its schema refuses (a message said before the last one).
 pub fn append(
     discussion: &Discussion,
     messages: Vec<Message>,
@@ -94,10 +103,11 @@ pub fn append(
     let fields = discussion.fields();
     open(discussion)?;
     built_on(discussion, when)?;
-    // The count first, before any message is read (its time or its
-    // shape); then each message's time and own shape, so a message out of
-    // shape is named as such, never read as the discussion being full of
-    // lines or text; then that room.
+    // The count first, before any message is read (its spacing, time or
+    // shape); then each message's spacing, as `begin` judges it first;
+    // then each message's time and own shape, so a message out of shape is
+    // named as such, never read as the discussion being full of lines or
+    // text; then that room.
     let before = fields.messages.len();
     match before + messages.len() <= MAX_MESSAGES {
         true => {}
@@ -108,6 +118,7 @@ pub fn append(
             });
         }
     }
+    entered_messages("batch", &messages)?;
     not_ahead(&fields.id, &messages, when)?;
     let last = match messages.last() {
         Some(last) => last.at.clone(),
@@ -165,6 +176,17 @@ pub fn close(discussion: &Discussion, when: &Moment) -> Result<Discussion, Board
     next.state = DiscussionState::Closed;
     next.updated = after_last(&fields.updated, &when.now)?;
     Discussion::new(next).map_err(BoardRuleError::Invalid)
+}
+
+/// Every one of `messages` (the list `list` names) is as it enters the
+/// board, normalised ([`entered_message`]).
+fn entered_messages(list: &str, messages: &[Message]) -> Result<(), BoardRuleError> {
+    let mut texts = messages.iter().enumerate();
+    texts
+        .try_for_each(|(index, message)| {
+            entered_message(&format!("{list}/{index}/text"), &message.text)
+        })
+        .map_err(BoardRuleError::Invalid)
 }
 
 /// `discussion` is open: messages are added to it, and it is closed once.
