@@ -31,6 +31,8 @@ fn record() -> BoardOpRecord {
         pr: Some(7),
         head: None,
         listing: None,
+        plans: None,
+        runs: None,
         status_from: None,
         status_to: None,
         claim: None,

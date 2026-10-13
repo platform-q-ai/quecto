@@ -24,7 +24,7 @@ use crate::application::project_board::ports::{
 use crate::application::project_board::telemetry::{BoardRecording, RecordingSwitch};
 use crate::application::project_board::use_cases::{
     BootstrapProjectBoard, ChangeBoardTask, ClearSetAside, CompleteMergedTask, CreateBoardTask,
-    RunBoardOperation, UpdateDraftTask,
+    QueryBoard, RunBoardOperation, UpdateDraftTask,
 };
 use crate::domain::redaction::{redact_secrets, redact_url_userinfo};
 use crate::infrastructure::config::telemetry::globally_enabled;
@@ -121,6 +121,7 @@ fn build_with_warnings(
         complete,
         clock,
         listings,
+        query: QueryBoard::new(store),
     };
     Ok(ProjectBoardHandles {
         operations: RunBoardOperation::new(parts),

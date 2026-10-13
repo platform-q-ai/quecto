@@ -16,7 +16,7 @@ use crate::domain::project_board::value_objects::rule_error::BoardRuleError;
 use crate::domain::project_board::value_objects::schema_error::SchemaError;
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
-use crate::domain::project_board::value_objects::vocabulary::{TaskKind, TaskStatus};
+use crate::domain::project_board::value_objects::vocabulary::{PlanState, TaskKind, TaskStatus};
 
 /// A new task: only the task's own fields. Its plan and team are plan
 /// artifacts (#2481's artifact model), and its claim, runs, reviews, pull
@@ -129,11 +129,27 @@ pub struct ArtifactListing<T> {
 /// Which artifacts a listing of a task's other artifacts lists.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ArtifactScope {
-    Plans { task: Slug },
-    RunsOfPlan { task: Slug, version: u32 },
-    Changes { task: Slug },
-    Review { task: Slug, change: u32 },
-    Discussions { task: Slug },
+    Plans {
+        task: Slug,
+    },
+    /// Every run of the task, whichever plan version it ran.
+    Runs {
+        task: Slug,
+    },
+    RunsOfPlan {
+        task: Slug,
+        version: u32,
+    },
+    Changes {
+        task: Slug,
+    },
+    Review {
+        task: Slug,
+        change: u32,
+    },
+    Discussions {
+        task: Slug,
+    },
 }
 
 impl ArtifactScope {
@@ -143,6 +159,7 @@ impl ArtifactScope {
     pub fn covers(&self, key: &ArtifactKey) -> bool {
         match (self, key) {
             (Self::Plans { task }, ArtifactKey::Plan(of, _))
+            | (Self::Runs { task }, ArtifactKey::Run(of, _))
             | (Self::RunsOfPlan { task, .. }, ArtifactKey::Run(of, _))
             | (Self::Changes { task }, ArtifactKey::Change(of, _)) => of == task,
             (Self::Review { task, change }, ArtifactKey::Review(of, number)) => {
@@ -151,6 +168,7 @@ impl ArtifactScope {
             (Self::Discussions { .. }, ArtifactKey::Discussion(_)) => true,
             (
                 Self::Plans { .. }
+                | Self::Runs { .. }
                 | Self::RunsOfPlan { .. }
                 | Self::Changes { .. }
                 | Self::Review { .. }
@@ -159,22 +177,49 @@ impl ArtifactScope {
             ) => false,
         }
     }
+
+    /// Whether the set-aside `file` may hold one of the listed artifacts:
+    /// one whose name spells a key this scope [covers](Self::covers); or,
+    /// whose name spells none, one that is kept in the listed kind's own
+    /// folder (it may hold any of that kind), never one in another kind's
+    /// folder (a task's README holds no plan), nor a stray (it holds
+    /// nothing that stays).
+    pub fn holds(&self, file: &QuarantinedFile) -> bool {
+        match &file.key {
+            Some(key) => self.covers(key),
+            None => {
+                let in_folder = file
+                    .path
+                    .strip_prefix(self.folder())
+                    .is_some_and(|rest| rest.starts_with('/'));
+                file.carried && in_folder
+            }
+        }
+    }
+
+    /// The board folder the listed kind's files lie in.
+    pub fn folder(&self) -> &'static str {
+        match self {
+            Self::Plans { .. } => "plans",
+            Self::Runs { .. } | Self::RunsOfPlan { .. } => "runs",
+            Self::Changes { .. } => "changes",
+            Self::Review { .. } => "reviews",
+            Self::Discussions { .. } => "discussions",
+        }
+    }
 }
 
 impl<T> ArtifactListing<T> {
-    /// The files set aside that may hold one of the listed artifacts:
-    /// while any is, the listing may be incomplete for its scope. A kept
-    /// file set aside whose name spells no key may hold anything, so it
-    /// counts in every scope; a stray (not kept) holds nothing that stays,
-    /// so it counts in none.
+    /// The files set aside that may hold one of the listed artifacts
+    /// ([`ArtifactScope::holds`]): while any is, the listing may be
+    /// incomplete for its scope. A kept file set aside whose name spells
+    /// no key may hold anything of its folder's kind, so it counts in
+    /// that kind's scopes; a stray (not kept) holds nothing that stays, so
+    /// it counts in none.
     pub fn set_aside_in_scope(&self) -> Vec<&QuarantinedFile> {
         self.quarantined
             .iter()
-            .filter(|file| {
-                file.key
-                    .as_ref()
-                    .map_or(file.carried, |key| self.scope.covers(key))
-            })
+            .filter(|file| self.scope.holds(file))
             .collect()
     }
 }
@@ -226,6 +271,17 @@ impl ArtifactListing<Plan> {
 }
 
 impl ArtifactListing<Run> {
+    /// Every run of `task` on `board`, by number, whichever plan version
+    /// it ran (that plan on the board or not).
+    ///
+    /// # Errors
+    /// [`ProjectBoardError::Duplicate`] for a run the board holds twice.
+    pub fn runs_of(board: &BoardSnapshot, task: &Slug) -> Result<Self, ProjectBoardError> {
+        let scope = ArtifactScope::Runs { task: task.clone() };
+        let runs = artifacts_of::runs_of(&board.runs, task);
+        Self::picked(board, scope, runs, ArtifactKey::of_run)
+    }
+
     /// Every run of `task` of its plan's `version` on `board`, by number.
     ///
     /// # Errors
@@ -296,6 +352,44 @@ impl ArtifactListing<Discussion> {
         once(every, ArtifactKey::of_discussion)?;
         let discussions = artifacts_of::discussions_of(&board.discussions, task);
         Self::picked(board, scope, discussions, ArtifactKey::of_discussion)
+    }
+}
+
+/// A task as `show` gives it (#2481 M4a): the task, every version of its
+/// plan by version and every run of it by number, and the files set aside
+/// that may hold one of its plans or runs, all as one snapshot of the
+/// board stood at `head`. While any file is set aside in their scope, the
+/// plans and runs may be incomplete: a set-aside file is named, never a
+/// refusal, since the task itself was read.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ShownTask {
+    pub head: BoardHead,
+    pub task: Task,
+    pub plans: Vec<Plan>,
+    pub runs: Vec<Run>,
+    pub set_aside: Vec<QuarantinedFile>,
+}
+
+impl ShownTask {
+    /// The task's plan: the version the task names as accepted, when the
+    /// board holds it accepted. Where the two disagree (a board whose
+    /// files contradict each other), or the plan is set aside, none is.
+    pub fn accepted_plan(&self) -> Option<&Plan> {
+        let version = self.task.fields().accepted_plan?;
+        self.plans.iter().find(|plan| {
+            let plan = plan.fields();
+            plan.version == version && plan.state == PlanState::Accepted
+        })
+    }
+
+    /// The task's latest run: the one numbered last.
+    pub fn latest_run(&self) -> Option<&Run> {
+        self.runs.last()
+    }
+
+    /// Whether a file that may hold one of its plans or runs is set aside.
+    pub fn may_be_incomplete(&self) -> bool {
+        !self.set_aside.is_empty()
     }
 }
 

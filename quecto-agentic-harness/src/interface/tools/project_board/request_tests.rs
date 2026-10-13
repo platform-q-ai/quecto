@@ -32,7 +32,23 @@ fn each_op_reads_its_own_fields() {
         (json!({"op": "list_takeable"}), BoardRequest::ListTakeable),
         (
             json!({"op": "show", "task": "a"}),
-            BoardRequest::Show(task()),
+            BoardRequest::Show(task(), None),
+        ),
+        (
+            json!({"op": "show", "task": "a", "approach_from": 0}),
+            BoardRequest::Show(task(), PlanPage::of(Some(0), None)),
+        ),
+        (
+            json!({"op": "show", "task": "a", "items_from": 3, "approach_from": 900}),
+            BoardRequest::Show(task(), PlanPage::of(Some(900), Some(3))),
+        ),
+        (
+            json!({"op": "show", "task": "a", "approach_from": null, "items_from": null}),
+            BoardRequest::Show(task(), None),
+        ),
+        (
+            json!({"op": "show", "task": "a", "approach_from": null, "items_from": 2}),
+            BoardRequest::Show(task(), PlanPage::of(None, Some(2))),
         ),
         (
             json!({"op": "move", "task": "a", "to": "in_progress"}),
@@ -279,6 +295,7 @@ fn samples(kind: Kind) -> (Value, Value, Value) {
         Kind::NewStatus => (json!("draft"), json!("ready"), json!("claimed")),
         Kind::TaskKind => (json!("epic"), json!("chore"), json!("story")),
         Kind::Pr => (json!(1), json!(2), json!(0)),
+        Kind::Offset => (json!(0), json!(5), json!(-1)),
         Kind::Path => (json!("tasks/x.md"), json!("tasks/y.md"), json!(7)),
         Kind::ObjectId => (json!("a".repeat(40)), json!("b".repeat(40)), json!("HEAD")),
         Kind::Repeated => (
@@ -344,6 +361,7 @@ fn sample(kind: Kind) -> Value {
         Kind::NewStatus => json!("draft"),
         Kind::TaskKind => json!("task"),
         Kind::Pr => json!(1),
+        Kind::Offset => json!(0),
         Kind::Path => json!("p"),
         Kind::ObjectId => json!("0".repeat(40)),
         Kind::Repeated => json!({}),

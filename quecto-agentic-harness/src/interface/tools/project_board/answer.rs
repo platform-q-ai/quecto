@@ -5,8 +5,9 @@
 //!   after a change that may complete it, `completion`: `{"done": true,
 //!   "task"}`, `{"done": false, "pending": [prs]}` while some have not
 //!   merged, or `{"done": false, "error"}`), a listing's `head`, `tasks`
-//!   and `quarantined`, or `head` alone; and `clock` when a request that
-//!   reads the clock was not bounded against an outside time.
+//!   and `quarantined`, `show`'s ([`shown_fields`]), or `head` alone; and
+//!   `clock` when a request that reads the clock was not bounded against
+//!   an outside time.
 //! - Refusal: `{"ok": false, "op": …, "error": {"code", "message", …}}`.
 //!   Each [`ErrorCode`] has one shape: the same fields every time, but
 //!   `artifact_set_aside` and `duplicate_artifact`, which name an
@@ -18,11 +19,12 @@
 //!   paths) has credentials redacted and is at most [`MAX_MESSAGE_CHARS`]
 //!   characters.
 //!
-//! A set-aside file in a listing (`quarantined_json`) lies directly under
-//! `tasks/` when it is a task's ([`shown_path`]), and a stray there or a
-//! carried file of no known task (`set_aside_file`) directly under any
-//! folder the store reads ([`shown_board_path`], #2481 S9). A listing
-//! names no other kind's key until the index holds those kinds (S12).
+//! A set-aside file an answer lists (`quarantined_json`) lies directly
+//! under `tasks/` when it is a task's (`shown_path`), under its own kind's
+//! folder when it is another kind's ([`shown_artifact_path`], named by its
+//! key as `artifact_set_aside` names one, #2481 M4a), and a stray or a
+//! carried file of no known artifact (`set_aside_file`) directly under any
+//! folder the store reads ([`shown_board_path`], S9).
 //!
 //! A task's shape is the board's own field names, every field always
 //! present (`null` or `[]` when unset), in a fixed order.
@@ -38,10 +40,14 @@ use crate::application::project_board::ports::{
 use crate::domain::project_board::entities::claim::Identity;
 use crate::domain::project_board::entities::task::Task;
 use crate::domain::project_board::value_objects::shown_text::{
-    shown_artifact_path, shown_board_path, shown_path,
+    shown_artifact_path, shown_board_path,
 };
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::redaction::{redact_secrets, redact_url_userinfo};
+
+#[path = "answer_artifacts.rs"]
+mod artifacts;
+use artifacts::{artifact_folder, page_fields, quarantined_json, shown_fields};
 
 /// The most characters of an error's message an answer carries.
 pub const MAX_MESSAGE_CHARS: usize = 2_000;
@@ -184,10 +190,8 @@ pub fn outcome(op: &str, outcome: &BoardOutcome, clock: Option<String>) -> Value
             fields.insert("created".into(), Value::Bool(*created));
         }
         BoardOutcome::Listing(listing) => fields.extend(listing_fields(listing)),
-        BoardOutcome::Shown { head, task } => {
-            fields.insert("head".into(), head_json(head));
-            fields.insert("task".into(), task_json(task));
-        }
+        BoardOutcome::Shown(shown, None) => fields.extend(shown_fields(shown)),
+        BoardOutcome::Shown(shown, Some(page)) => fields.extend(page_fields(shown, *page)),
         BoardOutcome::Changed { task, completion } => {
             fields.insert("task".into(), task_json(task));
             if let Some(completion) = completion {
@@ -266,12 +270,16 @@ fn slug_json(slug: &Slug) -> Value {
 /// file's raw path, so a clear can name it exactly.
 fn set_aside_fields(key: &ArtifactKey, path: &str) -> (ErrorCode, Map<String, Value>) {
     let folder = match key {
-        ArtifactKey::Task(id) => return (ErrorCode::SetAside, fields([("task", slug_json(id))])),
-        ArtifactKey::Plan(..) => "plans",
-        ArtifactKey::Run(..) => "runs",
-        ArtifactKey::Change(..) => "changes",
-        ArtifactKey::Review(..) => "reviews",
-        ArtifactKey::Discussion(_) => "discussions",
+        ArtifactKey::Task(id) => {
+            return (ErrorCode::SetAside, fields([("task", slug_json(id))]));
+        }
+        ArtifactKey::Plan(..)
+        | ArtifactKey::Run(..)
+        | ArtifactKey::Change(..)
+        | ArtifactKey::Review(..)
+        | ArtifactKey::Discussion(_) => {
+            artifact_folder(key).expect("every kind but a task has a folder")
+        }
     };
     // Its own kind's folder, one name in it.
     assert!(
@@ -313,35 +321,6 @@ fn slugs_json(slugs: &[Slug]) -> Value {
 
 fn identity_json(identity: &Identity) -> Value {
     json!({"name": identity.name, "email": identity.email})
-}
-
-fn quarantined_json(file: &QuarantinedFile) -> Value {
-    // An answer names a file set aside by its task's id only: until the
-    // answer names every kind's key, any other kind stops it rather than
-    // show the file as a stray.
-    assert!(
-        matches!(file.key, None | Some(ArtifactKey::Task(_))),
-        "an answer names a task's file or a stray only: {:?}",
-        file.key
-    );
-    // A task's file in its own folder; a stray in any folder read.
-    let sanitised = match &file.key {
-        Some(_) => shown_path(&file.path),
-        None => shown_board_path(&file.path),
-    };
-    assert!(
-        sanitised,
-        "a store shows every path it sets aside sanitised: {:?}",
-        file.path
-    );
-    json!({
-        // Raw: the store allowlists or quotes every name it sets aside,
-        // a path is no secret, and a clear names it exactly as shown.
-        "path": file.path,
-        "id": file.id().map(slug_json),
-        "reason": shown(&file.reason),
-        "object": file.object,
-    })
 }
 
 /// A task in the board's own field names, every field present but where
@@ -563,3 +542,7 @@ use rules::rule_json;
 #[cfg(test)]
 #[path = "answer_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "answer_show_tests.rs"]
+mod show_tests;
