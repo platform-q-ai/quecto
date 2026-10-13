@@ -3,8 +3,9 @@
 //! who did. Its id, if it had one, is free again. A name listed more than
 //! once is cleared by naming the object to keep. As every change, it is a
 //! compare-and-swap, read again and retried when another writer moved the
-//! board first. It reads no clock: nothing it writes is stamped. Blocking:
-//! a lost write pauses the calling thread.
+//! board first. It reads no wall clock: nothing it writes is stamped; a
+//! noted clear times its pauses. Blocking: a lost write pauses the calling
+//! thread.
 use std::sync::Arc;
 
 use super::board_change::{Attempt, checked_writer, retried};

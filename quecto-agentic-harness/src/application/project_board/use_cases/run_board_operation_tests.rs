@@ -346,6 +346,61 @@ mod noted {
         );
     }
 
+    /// The completion after a link counts its own write apart: here it
+    /// loses once to another writer, while the link's own write wins first
+    /// time.
+    #[test]
+    fn a_completion_counts_its_own_write_apart_from_the_change() {
+        let store = MemoryBoardStore::default();
+        let host = MemoryPullRequests::default();
+        host.set(8, PullRequestState::Merged);
+        let clock = SetClock::at("10:00:00");
+        let ops = operations(&store, clock.clone(), Ok(Arc::new(host)));
+        let a = slug("a");
+        for request in [
+            BoardRequest::Bootstrap,
+            ready_task("a"),
+            BoardRequest::Change(a.clone(), BoardOp::Move(TaskStatus::Claimed)),
+            BoardRequest::Change(a.clone(), BoardOp::Move(TaskStatus::InProgress)),
+        ] {
+            ops.execute(&request).unwrap();
+        }
+        *clock.tick.lock().unwrap() = std::time::Duration::from_millis(25);
+        // Armed at the link's write, so it moves the board before the
+        // completion's write is judged.
+        store.before_next_write(|board| {
+            board.before_next_write(|board| {
+                let read = board.read().unwrap();
+                board
+                    .write_tasks(&read.head, &read.tasks, "another writer")
+                    .unwrap();
+            });
+        });
+        let (linked, facts) = noted(&ops, &BoardRequest::Change(a, BoardOp::AddPr(8)));
+        let Ok(BoardOutcome::Changed {
+            completion: Some(Completion::Done(_)),
+            ..
+        }) = linked
+        else {
+            panic!("{linked:?}")
+        };
+        assert_eq!(
+            (facts.attempts, facts.lost, facts.pause_ms),
+            (Some(1), Some(0), None),
+            "the link's own write"
+        );
+        let completion = facts.completion.unwrap();
+        assert_eq!(
+            (
+                completion.completion,
+                completion.completion_attempts,
+                completion.completion_lost,
+                completion.completion_pause_ms
+            ),
+            (CompletionKind::Done, Some(2), Some(1), Some(25))
+        );
+    }
+
     /// `complete` records only done or pending: a task the rule will not
     /// complete records no completion.
     #[test]
