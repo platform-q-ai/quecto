@@ -622,7 +622,10 @@ fn a_description_with_chat_spaces_is_held_once_normalised() {
         let kept = board_text::text(left);
         assert_eq!(
             described(&kept).map(|_| ()),
-            Err(SchemaError::new("description", PLAIN_SPACES_ONLY)),
+            Err(SchemaError::new(
+                "description",
+                format!("line 1: {PLAIN_SPACES_ONLY}")
+            )),
             "{left:?}"
         );
     }

@@ -214,10 +214,18 @@ fn a_line_holds_plain_spaces_only() {
 #[test]
 fn markdown_holds_plain_spaces_tabs_and_line_ends_only() {
     assert_eq!(markdown("description", "a b\n\tc", 100), Ok(()));
-    for text in ["-\u{a0}x", "\u{a0}leading", "em\u{2003}space", "a\u{3000}b"] {
+    for (text, line) in [
+        ("-\u{a0}x", 1),
+        ("\u{a0}leading", 1),
+        ("em\u{2003}space", 1),
+        ("a\nb\n\nc\u{3000}d", 4),
+    ] {
         assert_eq!(
             markdown("description", text, 100),
-            Err(SchemaError::new("description", PLAIN_SPACES_ONLY)),
+            Err(SchemaError::new(
+                "description",
+                format!("line {line}: {PLAIN_SPACES_ONLY}")
+            )),
             "{text:?}"
         );
     }

@@ -43,6 +43,13 @@
 //! Reading an artifact back (`Task::new`, `Plan::new`, `Discussion::new`)
 //! stays lenient by design, so what earlier builds stored still reads.
 use super::schema_error::SchemaError;
+use regex::Regex;
+use std::sync::LazyLock;
+
+/// A combining mark (Unicode `M`): taken out before an address is looked
+/// for, as the codec takes it out.
+static COMBINING: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\p{M}").expect("a valid pattern"));
 
 /// Why text a write path takes is refused: it was never normalised.
 const NOT_ENTERED: &str = "must be board text as it enters (normalised: one LF between \
@@ -126,7 +133,7 @@ pub fn text(raw: &str) -> String {
                 ),
                 None => {
                     let marked = marked || line.contains(['`', '$', '<']) || links(line);
-                    let bracketed = bracketed || line.contains(['[', ']']);
+                    let bracketed = bracketed || line.contains('[');
                     let written = match (marked, bracketed) {
                         (false, false) => {
                             without_trailing(&plain_between_words(line), before_blank)
@@ -190,6 +197,9 @@ fn plain_between_words(line: &str) -> String {
             && first_word.is_some_and(|word| index > word)
             && left.is_some_and(spaced_after)
             && right.is_some_and(spaced_before)
+            // A letter or digit beside it: punctuation on both sides (a
+            // table's `:-:`, `%!`) is markup's ground.
+            && (left.is_some_and(char::is_alphanumeric) || right.is_some_and(char::is_alphanumeric))
     };
     match may_be_indented_code(line) || holds_address(line) {
         true => line.to_string(),
@@ -203,13 +213,16 @@ fn plain_between_words(line: &str) -> String {
 }
 
 /// Whether `line` may hold an address (the forms the codec reads as one:
-/// `://`, `www.`, `mailto:`, `xmpp:` in any case, or an `@`): an autolink
-/// takes a chat space as part of it, so such a line is kept.
+/// `://` or `www.` in any case, or an `@`, combining marks taken out): an
+/// autolink takes a chat space as part of it, so such a line is kept.
 fn holds_address(line: &str) -> bool {
-    let lower = line.to_ascii_lowercase();
-    ["://", "www.", "mailto:", "xmpp:", "@"]
+    // A combining mark inside an address hides it from a pattern, not a
+    // reader (as the codec reads one); GFM's `mailto:` and `xmpp:` links
+    // need an `@` too.
+    let unmarked = COMBINING.replace_all(line, "").to_ascii_lowercase();
+    ["://", "www.", "@"]
         .iter()
-        .any(|form| lower.contains(form))
+        .any(|form| unmarked.contains(form))
 }
 
 /// Where `line`'s first word starts (its first character past its block

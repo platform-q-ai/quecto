@@ -631,6 +631,9 @@ fn an_approach_with_chat_spaces_is_held_once_normalised() {
     read_by_the_oracle(&file);
     assert_eq!(
         with_approach(&board_text::text("-\u{a0}first")),
-        Err(SchemaError::new("approach", PLAIN_SPACES_ONLY))
+        Err(SchemaError::new(
+            "approach",
+            format!("line 1: {PLAIN_SPACES_ONLY}")
+        ))
     );
 }

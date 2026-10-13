@@ -304,6 +304,12 @@ fn a_chat_space_between_words_is_made_plain_in_text() {
         ("- item\u{a0}one", "- item one"),
         ("1. item\u{202f}!", "1. item !"),
         ("12\u{a0}items", "12 items"),
+        // A bracket keeps the rest of its paragraph only: a blank line, or
+        // a fence's close, ends it.
+        ("[a] b\n\nc\u{a0}!", "[a] b\n\nc !"),
+        ("[a\n```\nx\n```\nc\u{a0}!", "[a\n```\nx\n```\nc !"),
+        // One neighbour a letter or digit is enough.
+        ("\u{ab}\u{a0}oui\u{a0}\u{bb}", "\u{ab} oui \u{bb}"),
     ] {
         assert_eq!(settled(text, raw), kept, "{raw:?}");
     }
@@ -335,6 +341,11 @@ fn a_chat_space_between_words_is_made_plain_in_text() {
         "SEE\u{a0}WWW.EXAMPLE.COM",
         "Go https://example.com\u{a0}now",
         "Mail a@b.co\u{a0}now",
+        // An address a combining mark splits still reads as one.
+        "x w\u{301}ww.a.co\u{a0}now",
+        // Neither neighbour a letter or digit: a table's delimiter row.
+        "| a |\n|:-:\u{a0}:-:|",
+        "100%\u{a0}!",
         "```\na\u{a0}b\n```",
         "    a\u{a0}b",
         // A space no keyboard puts between words.

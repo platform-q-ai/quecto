@@ -102,18 +102,33 @@ fn plain_spaced(text: &str) -> bool {
     text.chars().filter(|c| c.is_whitespace()).all(|c| c == ' ')
 }
 
+/// Every space in `line`, a line of markdown, is a plain one or a tab (an
+/// allowlist).
+fn markdown_spaced(line: &str) -> bool {
+    line.chars()
+        .filter(|c| c.is_whitespace())
+        .all(|c| matches!(c, ' ' | '\t'))
+}
+
 /// Markdown of at most `max_chars` characters; it may be empty. Its only
 /// whitespace is plain spaces, tabs and line ends (`board_text::text`
 /// makes the spaces chat writes plain where a reader sees the same).
 pub fn markdown(field: &str, text: &str, max_chars: usize) -> Result<(), SchemaError> {
     let shaped = text.chars().count() <= max_chars && MARKDOWN.is_match(text);
-    let plain = text
-        .chars()
-        .filter(|c| c.is_whitespace())
-        .all(|c| matches!(c, ' ' | '\t' | '\n'));
-    match (shaped, plain) {
-        (true, true) => Ok(()),
-        (true, false) => Err(SchemaError::new(field, PLAIN_SPACES_ONLY)),
+    // The first line spaced with anything but a space or tab, from 1.
+    let unplain =
+        text.split('\n')
+            .enumerate()
+            .find_map(|(index, line)| match markdown_spaced(line) {
+                true => None,
+                false => Some(index),
+            });
+    match (shaped, unplain) {
+        (true, None) => Ok(()),
+        (true, Some(index)) => Err(SchemaError::new(
+            field,
+            format!("line {}: {PLAIN_SPACES_ONLY}", index + 1),
+        )),
         (false, _) => Err(SchemaError::new(
             field,
             format!("must be at most {max_chars} characters of text, newlines and tabs"),
