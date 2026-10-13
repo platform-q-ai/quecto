@@ -187,3 +187,57 @@ fn a_board_past_its_bounds_is_refused_before_any_file_is_read() {
     };
     refused_reading_only_the_marker(&|_| every_kind(), small, "the board's files hold");
 }
+
+/// A folder's tree past the bytes a read takes of one tree is too large,
+/// as a folder past its entries is.
+#[test]
+fn a_folder_tree_past_the_tree_bound_is_too_large() {
+    let repos = fresh();
+    let head = board_of(&repos, |repo| {
+        let mut rows = every_kind();
+        let strays = many(repo, 64, b"x", |n| format!("stray-{n}.txt"));
+        rows.push(("40000", "archive", Node::Made(vec![])));
+        rows[3] = ("40000", "changes", Node::Made(strays));
+        rows
+    });
+    let root = sh(
+        &repos.bob,
+        &["cat-file", "-s", &format!("{}^{{tree}}", head.0)],
+    );
+    let mut bob = store(&repos.bob);
+    bob.limits.tree_bytes = root.parse().unwrap();
+    let read = bob.read();
+    assert!(
+        matches!(&read, Err(BoardStoreError::TooLarge(why)) if why.contains("the board tree")),
+        "{read:?}"
+    );
+}
+
+/// A board that is no board, or a damaged one, says so before a folder
+/// past its bounds is judged: its clash, or its damage and the way to
+/// mend it.
+#[test]
+fn a_clash_or_damage_is_told_before_a_folder_past_its_bounds() {
+    let oversized = |repo: &Path| -> Vec<RootRow> {
+        let rows = many(repo, 4_097, b"x", |n| format!("x{n}.txt"));
+        vec![
+            ("40000", "tasks", Node::Made(vec![])),
+            ("40000", "changes", Node::Made(rows)),
+        ]
+    };
+    let repos = fresh();
+    board_of(&repos, |repo| {
+        let mut rows = oversized(repo);
+        rows.push(("40000", "src", Node::Made(vec![])));
+        rows
+    });
+    let read = store(&repos.bob).read();
+    assert!(matches!(&read, Err(BoardStoreError::Clash(_))), "{read:?}");
+    let repos = fresh();
+    board_marked(&repos, b"quecto-board 1\n", oversized);
+    let read = store(&repos.bob).read();
+    assert!(
+        matches!(&read, Err(BoardStoreError::Unavailable(why)) if why.contains("damaged") && why.contains("move `quecto/board` back")),
+        "{read:?}"
+    );
+}

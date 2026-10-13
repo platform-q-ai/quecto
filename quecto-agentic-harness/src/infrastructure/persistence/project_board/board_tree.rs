@@ -425,7 +425,7 @@ pub(super) fn too_large(why: String) -> Unread {
 /// [`shown_name`], always one name a listing, an answer and the index take
 /// back. A name that shows as nothing, `.`, `..` or with a `/` (only a
 /// hand-made tree holds one) shows as `…`.
-pub(super) fn entry_path(folder: &str, raw: &[u8]) -> String {
+pub(super) fn entry_path(folder: &str, raw: &[u8], _oid: &str) -> String {
     let shown = shown_name(raw);
     let one = !matches!(shown.as_str(), "" | "." | "..") && !shown.contains('/');
     match one {

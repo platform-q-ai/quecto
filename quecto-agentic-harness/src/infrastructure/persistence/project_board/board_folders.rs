@@ -202,7 +202,7 @@ fn aside(
     reason: &str,
     carried: bool,
 ) -> QuarantinedFile {
-    let path = entry_path(folder.naming.folder, &entry.raw);
+    let path = entry_path(folder.naming.folder, &entry.raw, &entry.oid);
     if carried {
         // A carried name shows as it is, as one in `tasks/` does.
         let name = format!("{}/{}", folder.naming.folder, entry.name);

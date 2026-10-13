@@ -516,15 +516,18 @@ fn a_name_that_shows_as_no_name_is_listed_as_one() {
     let repos = fresh();
     let odd = || {
         ["\u{1}", "\u{1}.\u{1}", "\u{1}..\u{1}", ".", "x/y"]
-            .map(|name| regular(name, b"odd".to_vec()))
+            .map(|name| regular(name, format!("odd {name}").into_bytes()))
             .to_vec()
     };
     board_of(&repos, |_| {
         let mut tasks = odd();
         tasks.push(regular("a.md", encode(&task("a")).unwrap()));
+        let mut plans = odd();
+        // A real file named `…` never shows as an odd name does.
+        plans.push(regular("\u{2026}", b"real".to_vec()));
         vec![
             ("40000", "tasks", Node::Tree(tasks)),
-            ("40000", "plans", Node::Tree(odd())),
+            ("40000", "plans", Node::Tree(plans)),
         ]
     });
     let bob = Arc::new(store(&repos.bob));
@@ -534,11 +537,23 @@ fn a_name_that_shows_as_no_name_is_listed_as_one() {
         .iter()
         .map(|f| f.path.as_str())
         .collect();
-    assert_eq!(paths, [["plans/…"; 5], ["tasks/…"; 5]].concat());
+    // Each odd name shows as `…` and its object's short id: two never
+    // collide, nor does one with a file named `…`.
+    let distinct: BTreeSet<&str> = paths.iter().copied().collect();
+    assert_eq!(distinct.len(), 11, "{paths:?}");
+    assert!(paths.contains(&"plans/…"), "{paths:?}");
+    for file in &snapshot.quarantined {
+        let odd = file
+            .path
+            .split_once('/')
+            .and_then(|(_, name)| name.strip_prefix('…'))
+            .unwrap();
+        assert!(odd.is_empty() || file.object.starts_with(odd), "{file:?}");
+    }
     let index = BoardIndex::of(&bob).unwrap();
     let listings = IndexedBoardListings::new(index, bob.clone(), bob.clone());
     for _ in 0..2 {
-        assert_eq!(listings.ready().unwrap().quarantined.len(), 10);
+        assert_eq!(listings.ready().unwrap().quarantined.len(), 11);
     }
     let index = BoardIndex::of(&bob).unwrap();
     assert_eq!(

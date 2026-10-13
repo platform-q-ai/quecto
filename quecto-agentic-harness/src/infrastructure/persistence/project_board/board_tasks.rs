@@ -37,7 +37,7 @@ impl TasksScan {
 
 fn set_aside(board: &mut Board, entry: &Entry, id: Option<Slug>, reason: &str, carried: bool) {
     board.quarantined.push(QuarantinedFile {
-        path: entry_path("tasks", &entry.raw),
+        path: entry_path("tasks", &entry.raw, &entry.oid),
         key: id.map(ArtifactKey::Task),
         // A file's own text (an id the codec refuses, say) can reach the
         // reason: only what shows as itself is kept, capped.
@@ -50,7 +50,7 @@ fn set_aside(board: &mut Board, entry: &Entry, id: Option<Slug>, reason: &str, c
 fn keep(board: &mut Board, entry: &Entry) {
     // A clear finds a kept name by the path the listing shows.
     assert_eq!(
-        entry_path("tasks", &entry.raw),
+        entry_path("tasks", &entry.raw, &entry.oid),
         format!("{TASKS}{}", entry.name),
         "a kept name shows as it is"
     );

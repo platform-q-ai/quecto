@@ -203,17 +203,20 @@ fn a_write_keeps_tasks_within_their_own_bytes() {
 /// name's bytes: never empty, `.`, `..` or two names.
 #[test]
 fn an_entry_path_is_one_name_in_its_folder() {
+    let oid = "0123456789abcdef0123456789abcdef01234567";
+    let odd = "plans/\u{2026}0123456789ab";
     for (raw, shown) in [
         (&b"a.md"[..], "plans/a.md"),
-        (b"\x01", "plans/\u{2026}"),
-        (b"\x01.\x01", "plans/\u{2026}"),
-        (b"\x01..", "plans/\u{2026}"),
-        (b".", "plans/\u{2026}"),
-        (b"a/b", "plans/\u{2026}"),
+        (b"\x01", odd),
+        (b"\x01.\x01", odd),
+        (b"\x01..", odd),
+        (b".", odd),
+        (b"a/b", odd),
         (b"a\x01b", "plans/a b"),
         (b"a..b", "plans/a..b"),
+        ("\u{2026}".as_bytes(), "plans/\u{2026}"),
     ] {
-        let path = entry_path("plans", raw);
+        let path = entry_path("plans", raw, oid);
         assert_eq!(path, shown, "{raw:?}");
         assert!(
             crate::domain::project_board::value_objects::shown_text::shown_board_path(&path),

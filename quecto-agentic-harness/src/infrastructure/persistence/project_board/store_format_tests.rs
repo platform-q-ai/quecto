@@ -186,6 +186,13 @@ fn a_newer_format_asks_for_an_upgrade_before_anything_else() {
             "{read:?}"
         );
     }
+    // The refusal names every format this quecto reads.
+    let head = board_with(&repos, true, &[marker(board_file(b"quecto-board 4\n"))]);
+    let refused = read(&repos, &head);
+    assert!(
+        matches!(&refused, Err(BoardStoreError::Unavailable(why)) if why.contains("format 4") && why.contains("this quecto reads formats 2 and 3")),
+        "{refused:?}"
+    );
     // Past what a u64 holds, it is still newer.
     let head = board_with(
         &repos,
