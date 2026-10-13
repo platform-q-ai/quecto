@@ -27,7 +27,7 @@ use crate::application::project_board::use_cases::{
 };
 use crate::domain::redaction::{redact_secrets, redact_url_userinfo};
 use crate::infrastructure::config::telemetry::{TelemetryConfig, globally_enabled};
-use crate::infrastructure::persistence::audit_log::{AuditCrashLine, AuditLog};
+use crate::infrastructure::persistence::audit_log::AuditLog;
 use crate::infrastructure::persistence::project_board::gh_pull_requests::{
     GhPullRequestStates, github_repository,
 };
@@ -183,19 +183,28 @@ pub fn session_board_recording(
     base_dir: &Path,
     log: &AuditLog,
 ) -> Option<BoardRecording> {
-    recording(switched_on(telemetry.event_log.enabled, base_dir), || {
-        log.crash_line()
+    let switch = switched_on(telemetry.event_log.enabled, base_dir);
+    BoardRecording::when(switch, || {
+        let ops = EventLogProjectBoardOps::new(log.crash_line()?);
+        Some(Arc::new(TracingProjectBoardOps::over(ops)) as _)
     })
 }
 
-/// The `quecto board` CLI's recording, into today's `board-cli:<UTC
+/// The `quecto board` CLI's recording, into the daily `board-cli:<UTC
 /// date>` log under `base_dir` (`audit/board-cli_<date>.jsonl`). The CLI
 /// loads no layered configuration, so it follows the owner's global file
-/// alone. `None` while that is off, or when the log cannot be opened.
+/// alone; `None` while that is off. The log is opened, and dated, by the
+/// first record, so a run that records nothing leaves no file; a log that
+/// cannot be opened then records nothing. The daily files are kept with no
+/// retention yet: each stops at the event log's cap.
 pub fn cli_board_recording(base_dir: &Path) -> Option<BoardRecording> {
-    recording(switched_on(false, base_dir), || {
-        let key = cli_log_key(SystemTime::now())?;
-        AuditLog::open_sync(base_dir, &key).ok()?.crash_line()
+    let base_dir = base_dir.to_path_buf();
+    BoardRecording::when(switched_on(false, base_dir.as_path()), move || {
+        let ops = EventLogProjectBoardOps::opened_by_first_record(move || {
+            let key = cli_log_key(SystemTime::now())?;
+            AuditLog::open_sync(&base_dir, &key).ok()?.crash_line()
+        });
+        Some(Arc::new(TracingProjectBoardOps::over(ops)) as _)
     })
 }
 
@@ -206,21 +215,16 @@ fn switched_on(config_on: bool, base_dir: &Path) -> RecordingSwitch {
     RecordingSwitch::resolved(config_on || globally_enabled(base_dir))
 }
 
-/// A recording into the log on the line `open` gives, traced; `open` is
-/// not called while `switch` is off.
-fn recording(
-    switch: RecordingSwitch,
-    open: impl FnOnce() -> Option<AuditCrashLine>,
-) -> Option<BoardRecording> {
-    BoardRecording::when(switch, || {
-        let ops = TracingProjectBoardOps::over(EventLogProjectBoardOps::new(open()?));
-        Some(Arc::new(ops) as _)
-    })
-}
+/// The first second of year 10000: RFC 3339 dates have four-digit years.
+const YEAR_10000_UNIX_SECS: u64 = 253_402_300_800;
 
 /// The CLI's daily log key at `now`: `board-cli:<YYYY-MM-DD>`, the UTC
-/// date; `None` for a time with no such date.
+/// date; `None` for a time with no such date (before the epoch, or in
+/// year 10000 or later), never a panic.
 fn cli_log_key(now: SystemTime) -> Option<String> {
+    now.duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .filter(|since| since.as_secs() < YEAR_10000_UNIX_SECS)?;
     let stamp = humantime::format_rfc3339_seconds(now).to_string();
     let day = stamp.get(..10)?;
     let shaped = day.char_indices().all(|(at, c)| match at {

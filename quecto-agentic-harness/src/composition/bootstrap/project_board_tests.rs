@@ -443,3 +443,16 @@ fn the_cli_log_key_is_the_utc_date() {
         Some("board-cli:2026-10-14")
     );
 }
+
+/// #2536 review: a time with no `YYYY-MM-DD` date (before the epoch, or
+/// in year 10000 or later) has no key, and never panics.
+#[test]
+fn a_time_with_no_four_digit_utc_date_has_no_cli_log_key() {
+    let epoch = std::time::UNIX_EPOCH;
+    let before = epoch - std::time::Duration::from_secs(1);
+    assert_eq!(cli_log_key(before), None);
+    let last = epoch + std::time::Duration::from_secs(253_402_300_799);
+    assert_eq!(cli_log_key(last).as_deref(), Some("board-cli:9999-12-31"));
+    let year_10000 = epoch + std::time::Duration::from_secs(253_402_300_800);
+    assert_eq!(cli_log_key(year_10000), None);
+}

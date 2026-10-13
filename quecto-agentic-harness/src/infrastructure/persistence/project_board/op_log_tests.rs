@@ -111,3 +111,36 @@ fn drops_are_counted_saturating() {
     ops.count_dropped(5);
     assert_eq!(ops.dropped.load(Ordering::Acquire), u64::MAX);
 }
+
+/// #2536 review: a log opened by its first record is opened once, by that
+/// record, and never before it.
+#[test]
+fn a_log_opened_by_its_first_record_is_opened_once_then() {
+    use std::sync::atomic::AtomicUsize;
+    let base = tempfile::tempdir().unwrap();
+    let opened = Arc::new(AtomicUsize::new(0));
+    let (dir, count) = (base.path().to_path_buf(), opened.clone());
+    let ops = EventLogProjectBoardOps::opened_by_first_record(move || {
+        count.fetch_add(1, Ordering::AcqRel);
+        AuditLog::open_sync(&dir, "cli:lazy").ok()?.crash_line()
+    });
+    assert_eq!(opened.load(Ordering::Acquire), 0, "not before a record");
+    assert!(!AuditLog::directory(base.path()).exists());
+    ops.record(record(Access::Read));
+    ops.record(record(Access::Write));
+    assert_eq!(opened.load(Ordering::Acquire), 1, "once");
+    let text = std::fs::read_to_string(AuditLog::file_path(base.path(), "cli:lazy")).unwrap();
+    assert_eq!(text.lines().count(), 2, "{text}");
+}
+
+/// A log that cannot be opened drops every record, with one warning.
+#[test]
+fn a_log_that_cannot_be_opened_drops_its_records_with_one_warning() {
+    let ops = EventLogProjectBoardOps::opened_by_first_record(|| None);
+    let warned = traced(tracing::Level::WARN, || {
+        ops.record(record(Access::Read));
+        ops.record(record(Access::Read));
+    });
+    assert_eq!(warned.matches("not being written").count(), 1, "{warned}");
+    assert_eq!(ops.dropped.load(Ordering::Acquire), 0, "nothing to note in");
+}

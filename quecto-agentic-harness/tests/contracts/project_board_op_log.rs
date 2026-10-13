@@ -128,7 +128,11 @@ fn the_session_builder_records_when_its_config_or_the_global_file_is_on() {
         let log = AuditLog::open_sync(base.path(), "cli:on").unwrap();
         let recording = session_board_recording(&telemetry(config_on), base.path(), &log)
             .expect("a recording while on");
-        recording.record(record());
+        let output = traced(|| recording.record(record()));
+        assert!(
+            output.contains("board op") && output.contains("quecto::project_board"),
+            "the recording traces while on: {output}"
+        );
         let lines = parsed(base.path(), "cli:on");
         assert_eq!(lines.len(), 1, "{lines:?}");
         assert_eq!(lines[0]["event"], "board_op");
@@ -138,12 +142,19 @@ fn the_session_builder_records_when_its_config_or_the_global_file_is_on() {
 }
 
 /// The `quecto board` CLI loads no layered configuration: its daily
-/// `board-cli:<UTC date>` log follows the owner's global file.
+/// `board-cli:<UTC date>` log follows the owner's global file, and is
+/// opened (dated) by the first record, so a CLI run that records nothing
+/// leaves no empty file.
 #[test]
 fn the_cli_builder_records_in_its_daily_log_when_the_global_file_is_on() {
     let base = tempfile::tempdir().unwrap();
     global(base.path(), true);
     let recording = cli_board_recording(base.path()).expect("a recording while on");
+    assert_eq!(
+        audit_files(base.path()),
+        Vec::<String>::new(),
+        "the daily log is opened by its first record, not before"
+    );
     std::thread::spawn(move || recording.record(record()))
         .join()
         .unwrap();

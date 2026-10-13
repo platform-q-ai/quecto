@@ -19,6 +19,7 @@
 //! a written record (the log caps, or the process ends first) go unnoted.
 //! A record refused at the cap, or a failed write, is dropped too; the
 //! first drop of any kind raises one warning for the adapter's lifetime.
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 
@@ -35,18 +36,58 @@ const TARGET: &str = "quecto::project_board";
 /// wait this long means the log is stuck, and the request goes on.
 pub const BOARD_OP_GATE_WAIT: Duration = Duration::from_millis(50);
 
+/// Opens the line of a log written to only once a record arrives.
+type Opener = Box<dyn Fn() -> Option<AuditCrashLine> + Send + Sync>;
+
+/// The line records are appended through.
+enum Line {
+    /// Already open: a session's log.
+    Given(AuditCrashLine),
+    /// Opened by the first record, once, whatever it gives: the CLI's
+    /// daily log, so a run that records nothing leaves no file.
+    OnFirstRecord {
+        open: Opener,
+        opened: OnceLock<Option<AuditCrashLine>>,
+    },
+}
+
+impl Line {
+    fn get(&self) -> Option<&AuditCrashLine> {
+        match self {
+            Self::Given(line) => Some(line),
+            Self::OnFirstRecord { open, opened } => opened.get_or_init(open).as_ref(),
+        }
+    }
+}
+
 /// [`ProjectBoardOpLog`] over an event log: a session's, or the CLI's
 /// daily `board-cli:<date>` log.
-#[derive(Debug)]
 pub struct EventLogProjectBoardOps {
-    line: AuditCrashLine,
+    line: Line,
     warned: AtomicBool,
     /// Records dropped at the gate and not yet noted in the log.
     dropped: AtomicU64,
 }
 
 impl EventLogProjectBoardOps {
+    /// Records appended through `line`, a log already open.
     pub fn new(line: AuditCrashLine) -> Self {
+        Self::over(Line::Given(line))
+    }
+
+    /// Records appended through the line `open` gives the first record,
+    /// called once; when it gives none, every record is dropped, with the
+    /// one warning.
+    pub fn opened_by_first_record(
+        open: impl Fn() -> Option<AuditCrashLine> + Send + Sync + 'static,
+    ) -> Self {
+        Self::over(Line::OnFirstRecord {
+            open: Box::new(open),
+            opened: OnceLock::new(),
+        })
+    }
+
+    fn over(line: Line) -> Self {
         Self {
             line,
             warned: AtomicBool::new(false),
@@ -69,7 +110,7 @@ impl EventLogProjectBoardOps {
         }
     }
 
-    fn warn(&self, error: &std::io::Error) {
+    fn warn(&self, error: &dyn std::fmt::Display) {
         if self.warned.swap(true, Ordering::AcqRel) {
             return;
         }
@@ -94,7 +135,12 @@ impl ProjectBoardOpLog for EventLogProjectBoardOps {
             events.push(AuditEvent::BoardOpsDropped { dropped: unnoted });
         }
         events.push(AuditEvent::BoardOp(Box::new(record)));
-        match self.line.append(None, events, BOARD_OP_GATE_WAIT) {
+        let appended = match self.line.get() {
+            Some(line) => line.append(None, events, BOARD_OP_GATE_WAIT),
+            // Nothing to note the drops in: they go unnoted.
+            None => Err(std::io::Error::other("the event log could not be opened")),
+        };
+        match appended {
             Ok(()) => {}
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                 // Nothing was written: this record, and the drops it was to
@@ -112,8 +158,10 @@ impl ProjectBoardOpLog for EventLogProjectBoardOps {
 
 /// [`ProjectBoardOpLog`] that writes each record to `tracing` (target
 /// `quecto::project_board`, `board op`: DEBUG for a read, INFO for a
-/// write) and then to the log it wraps. The `tracing` record holds exactly
-/// the fields of the `board_op` line, so it holds no board text either.
+/// write) and then to the log it wraps. The `tracing` record holds the op
+/// and the record's own fields as the `board_op` line serializes them,
+/// without the line's envelope (`ts`, `session`, `host`, `pid`, …), so it
+/// holds no board text either.
 #[derive(Debug)]
 pub struct TracingProjectBoardOps<L> {
     inner: L,
