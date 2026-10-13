@@ -24,16 +24,21 @@ fn held(repo: &Path, oid: &str) -> bool {
         .success()
 }
 
-/// `name`, a clone of the remote made with `filter`, whose remote serves
-/// filtered fetches and objects by id.
-fn partial(repos: &Repos, filter: &str, name: &str) -> PathBuf {
-    let remote = repos.remote();
+/// `remote` serves filtered fetches and objects by id.
+fn serve_filters(remote: &Path) {
     for (key, value) in [
         ("uploadpack.allowFilter", "true"),
         ("uploadpack.allowAnySHA1InWant", "true"),
     ] {
-        sh(&remote, &["config", key, value]);
+        sh(remote, &["config", key, value]);
     }
+}
+
+/// `name`, a clone of the remote made with `filter`, whose remote serves
+/// filtered fetches and objects by id.
+fn partial(repos: &Repos, filter: &str, name: &str) -> PathBuf {
+    let remote = repos.remote();
+    serve_filters(&remote);
     let url = format!("file://{}", remote.display());
     let filter = format!("--filter={filter}");
     sh(repos.dir.path(), &["clone", "-q", &filter, &url, name]);
@@ -143,5 +148,223 @@ fn a_blob_past_every_cap_is_set_aside_unfetched_and_carried_by_its_id() {
     assert_eq!(
         reason(&board, "plans/a.2.md"),
         "plan file is 2097152 bytes; the most is 1572864"
+    );
+}
+
+/// `repo`'s value of `key`, if it is set.
+fn config(repo: &Path, key: &str) -> Option<String> {
+    let output = Command::new("git")
+        .current_dir(repo)
+        .args(["config", "--get", key])
+        .env_clear()
+        .env("PATH", std::env::var_os("PATH").unwrap())
+        .envs([
+            ("HOME", repo.as_os_str()),
+            ("GIT_CONFIG_GLOBAL", "/dev/null".as_ref()),
+            ("GIT_CONFIG_NOSYSTEM", "1".as_ref()),
+        ])
+        .output()
+        .unwrap();
+    let value = String::from_utf8_lossy(&output.stdout)
+        .trim_end()
+        .to_string();
+    output.status.success().then_some(value)
+}
+
+/// The board's remote runs `git-upload-pack` through a wrapper that counts
+/// its runs, which this reads.
+fn counted(repos: &Repos, clone: &Path) -> impl Fn() -> usize {
+    let count = repos.dir.path().join("upload-packs");
+    let wrapper = repos.dir.path().join("upload-pack");
+    executable(
+        &wrapper,
+        &format!(
+            "#!/bin/sh\necho x >> '{}'\nexec git-upload-pack \"$@\"\n",
+            count.display()
+        ),
+    );
+    sh(
+        clone,
+        &[
+            "config",
+            "remote.origin.uploadpack",
+            wrapper.to_str().unwrap(),
+        ],
+    );
+    move || {
+        std::fs::read_to_string(&count)
+            .map(|text| text.lines().count())
+            .unwrap_or(0)
+    }
+}
+
+/// `plans/` holding plan 1 of task `a`, and a file `a.2.md` past every cap.
+fn plans_past_a_cap(repos: &Repos) -> BoardHead {
+    board_of(repos, |_| {
+        vec![
+            ("40000", "tasks", Node::Tree(vec![])),
+            (
+                "40000",
+                "plans",
+                Node::Tree(vec![
+                    regular("a.1.md", bytes::<PlanCodec>(&plan("a", 1))),
+                    regular("a.2.md", vec![b'x'; 2 * 1024 * 1024]),
+                ]),
+            ),
+        ]
+    })
+}
+
+/// A partial clone that has read the board reads a new head as one fetch
+/// of what changed, however it next starts: a file the filter left on the
+/// remote is known for one, never fetched again, and the folder holding it
+/// never fetched whole again.
+#[test]
+fn a_new_head_is_one_fetch_of_what_changed() {
+    let repos = fresh();
+    let head = plans_past_a_cap(&repos);
+    let carol = partial(&repos, "tree:0", "carol");
+    let oid = at(&repos.remote(), &head, "plans/a.2.md");
+    assert_eq!(store(&carol).read().unwrap().plans, [plan("a", 1)]);
+    let fetches = counted(&repos, &carol);
+    let alice = store(&repos.alice);
+    let three = [BoardArtifact::Plan(plan("a", 3))];
+    written(alice.write(&alice.read().unwrap().head, &three, "board: plan a 3"));
+    let before = fetches();
+    let board = store(&carol).read().unwrap();
+    assert_eq!(board.plans, [plan("a", 1), plan("a", 3)]);
+    assert!(reason(&board, "plans/a.2.md").contains("at least"));
+    assert_eq!(
+        fetches() - before,
+        2,
+        "a new head is the remote's head and one fetch"
+    );
+    assert!(!held(&carol, &oid), "the file past every cap was fetched");
+}
+
+/// A clone made partial by hand, either way git marks one, keeps its own
+/// fetch filter (none) after the store's filtered fetches.
+#[test]
+fn a_filtered_fetch_leaves_the_clones_own_filter_as_it_was() {
+    let repos = fresh();
+    plans_past_a_cap(&repos);
+    serve_filters(&repos.remote());
+    let url = format!("file://{}", repos.remote().display());
+    for (name, marks) in [
+        ("flagged", vec![("remote.origin.promisor", "true")]),
+        (
+            "extended",
+            vec![
+                ("core.repositoryformatversion", "1"),
+                ("extensions.partialClone", "origin"),
+            ],
+        ),
+    ] {
+        sh(repos.dir.path(), &["init", "-q", name]);
+        let clone = repos.dir.path().join(name);
+        sh(&clone, &["remote", "add", "origin", &url]);
+        for (key, value) in marks {
+            sh(&clone, &["config", key, value]);
+        }
+        let board = store(&clone).read().unwrap();
+        assert_eq!(board.plans, [plan("a", 1)], "{name}");
+        assert!(
+            reason(&board, "plans/a.2.md").contains("at least"),
+            "{name}"
+        );
+        assert_eq!(
+            config(&clone, "remote.origin.partialclonefilter"),
+            None,
+            "{name}"
+        );
+    }
+}
+
+/// A server that refuses a filter, or knows none, is fetched from whole:
+/// the read is the full clone's, a file past every cap told at its size.
+#[test]
+fn a_server_without_filters_is_fetched_from_whole() {
+    for (key, value) in [
+        ("uploadpackfilter.allow", "false"),
+        ("uploadpack.allowFilter", "false"),
+    ] {
+        let repos = fresh();
+        plans_past_a_cap(&repos);
+        let carol = partial(&repos, "tree:0", "carol");
+        sh(&repos.remote(), &["config", key, value]);
+        let board = store(&carol).read().unwrap();
+        assert_eq!(board.plans, [plan("a", 1)], "{key}");
+        assert_eq!(
+            reason(&board, "plans/a.2.md"),
+            "plan file is 2097152 bytes; the most is 1572864",
+            "{key}"
+        );
+    }
+}
+
+/// A full clone that lost a file is never told it is too large, nor made a
+/// partial clone: the board is unavailable until the clone is mended.
+#[test]
+fn a_full_clone_missing_a_file_is_unavailable() {
+    let repos = fresh();
+    let head = plans_past_a_cap(&repos);
+    let oid = at(&repos.remote(), &head, "plans/a.2.md");
+    let loose = repos
+        .bob
+        .join(".git/objects")
+        .join(&oid[..2])
+        .join(&oid[2..]);
+    std::fs::remove_file(loose).unwrap();
+    let read = store(&repos.bob).read();
+    assert!(
+        matches!(&read, Err(BoardStoreError::Unavailable(why)) if why.contains(&oid)),
+        "{read:?}"
+    );
+    assert_eq!(config(&repos.bob, "remote.origin.promisor"), None);
+}
+
+/// A root entry a partial clone lacks is judged by its real object, as a
+/// full clone judges it: a file's mode over a tree is no board in both.
+#[test]
+fn a_damaged_root_is_judged_alike_in_partial_and_full_clones() {
+    let repos = fresh();
+    board_of(&repos, |repo| {
+        let inner = raw_rows(repo, &[("100644", "f", blob_in(repo, b"f"))]);
+        vec![
+            ("40000", "tasks", Node::Tree(vec![])),
+            (
+                "100644",
+                "notes",
+                Node::Made(vec![("100644", "f".into(), inner)]),
+            ),
+        ]
+    });
+    let carol = partial(&repos, "tree:0", "carol");
+    let full = store(&repos.bob).read();
+    assert!(matches!(&full, Err(BoardStoreError::Clash(_))), "{full:?}");
+    assert_eq!(store(&carol).read(), full);
+}
+
+/// A format marker past what a read takes, which a partial clone's filter
+/// left on the remote, is told as at least the filter's size there; a full
+/// clone tells its size.
+#[test]
+fn a_marker_left_on_the_remote_is_told_at_least_its_size() {
+    let repos = fresh();
+    board_marked(&repos, &vec![b'x'; 2 * 1024 * 1024], |_| {
+        vec![("40000", "tasks", Node::Tree(vec![]))]
+    });
+    let carol = partial(&repos, "blob:none", "carol");
+    let told = |read: Result<BoardSnapshot, BoardStoreError>| match read {
+        Err(BoardStoreError::Unavailable(why)) => why,
+        other => panic!("{other:?}"),
+    };
+    assert!(
+        told(store(&carol).read())
+            .starts_with("its format marker (format/board) is at least 1572865 bytes,"),
+    );
+    assert!(
+        told(store(&repos.bob).read())
+            .starts_with("its format marker (format/board) is 2097152 bytes,"),
     );
 }
