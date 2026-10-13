@@ -85,15 +85,14 @@ pub const PLAIN_SPACES_ONLY: &str = "may space its words with plain spaces (U+00
 /// writes are made plain where text comes in, `board_text::line`).
 pub fn line(field: &str, text: &str, max_chars: usize) -> Result<(), SchemaError> {
     let fits = text.chars().count() <= max_chars;
-    if !(fits && ON_ONE_LINE.is_match(text) && VISIBLE.is_match(text)) {
-        return Err(SchemaError::new(
+    let shaped = fits && ON_ONE_LINE.is_match(text) && VISIBLE.is_match(text);
+    match (shaped, plain_spaced(text)) {
+        (true, true) => Ok(()),
+        (true, false) => Err(SchemaError::new(field, PLAIN_SPACES_ONLY)),
+        (false, _) => Err(SchemaError::new(
             field,
             format!("must be 1 to {max_chars} visible characters on one line"),
-        ));
-    }
-    match plain_spaced(text) {
-        true => Ok(()),
-        false => Err(SchemaError::new(field, PLAIN_SPACES_ONLY)),
+        )),
     }
 }
 
@@ -103,15 +102,22 @@ fn plain_spaced(text: &str) -> bool {
     text.chars().filter(|c| c.is_whitespace()).all(|c| c == ' ')
 }
 
-/// Markdown of at most `max_chars` characters; it may be empty.
+/// Markdown of at most `max_chars` characters; it may be empty. Its only
+/// whitespace is plain spaces, tabs and line ends (`board_text::text`
+/// makes the spaces chat writes plain where a reader sees the same).
 pub fn markdown(field: &str, text: &str, max_chars: usize) -> Result<(), SchemaError> {
-    if text.chars().count() <= max_chars && MARKDOWN.is_match(text) {
-        Ok(())
-    } else {
-        Err(SchemaError::new(
+    let shaped = text.chars().count() <= max_chars && MARKDOWN.is_match(text);
+    let plain = text
+        .chars()
+        .filter(|c| c.is_whitespace())
+        .all(|c| matches!(c, ' ' | '\t' | '\n'));
+    match (shaped, plain) {
+        (true, true) => Ok(()),
+        (true, false) => Err(SchemaError::new(field, PLAIN_SPACES_ONLY)),
+        (false, _) => Err(SchemaError::new(
             field,
             format!("must be at most {max_chars} characters of text, newlines and tabs"),
-        ))
+        )),
     }
 }
 

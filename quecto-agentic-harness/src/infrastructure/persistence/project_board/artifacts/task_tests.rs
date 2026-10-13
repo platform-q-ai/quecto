@@ -63,9 +63,11 @@ use crate::domain::project_board::entities::task::{
     MAX_DEPENDENCIES, MAX_DESCRIPTION_CHARS, MAX_PRS, MAX_REFERENCES, MAX_SUPERSEDED_BY,
     MAX_TEXT_BYTES, MAX_TITLE_CHARS,
 };
+use crate::domain::project_board::value_objects::board_text;
 use crate::domain::project_board::value_objects::reference::{
     MAX_ISSUE_NUMBER, MAX_REFERENCE_BYTES,
 };
+use crate::domain::project_board::value_objects::schema_error::{PLAIN_SPACES_ONLY, SchemaError};
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
 use crate::infrastructure::persistence::project_board::markdown::tests::oracle::outline_in;
 use crate::infrastructure::persistence::project_board::markdown::{MarkdownError, parse};
@@ -595,5 +597,33 @@ fn a_title_spaced_with_another_space_is_refused_by_the_domain() {
         })
         .unwrap_err();
         assert_eq!(refused.field, "title", "{title:?}");
+    }
+}
+
+/// A description typed on a French keyboard, its chat spaces before `!`
+/// and `?`, is held once normalised; a chat space beside a block marker,
+/// which the normaliser leaves, and an em space are refused by the domain
+/// with the description's field, never by the file at write time.
+#[test]
+fn a_description_with_chat_spaces_is_held_once_normalised() {
+    let described = |description: &str| {
+        Task::entered(TaskFields {
+            description: description.into(),
+            ..example()
+        })
+    };
+    let probe = "Bonjour\u{202f}! On commence\u{a0}?";
+    let normal = board_text::text(probe);
+    assert_eq!(normal, "Bonjour ! On commence ?");
+    let held = described(&normal).unwrap();
+    let file = encode::<TaskCodec>(&held).unwrap();
+    assert_eq!(decode::<TaskCodec>(file.as_bytes()), Ok(held));
+    for left in ["-\u{a0}x", "\u{a0}leading", "an em\u{2003}space"] {
+        let kept = board_text::text(left);
+        assert_eq!(
+            described(&kept).map(|_| ()),
+            Err(SchemaError::new("description", PLAIN_SPACES_ONLY)),
+            "{left:?}"
+        );
     }
 }

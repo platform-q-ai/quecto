@@ -207,3 +207,18 @@ fn a_line_holds_plain_spaces_only() {
         );
     }
 }
+
+/// Markdown text spaces its words with plain spaces, tabs and line ends
+/// only: any other space (one the normaliser left beside a block marker,
+/// or an em space) is refused with its field, as no file holds one.
+#[test]
+fn markdown_holds_plain_spaces_tabs_and_line_ends_only() {
+    assert_eq!(markdown("description", "a b\n\tc", 100), Ok(()));
+    for text in ["-\u{a0}x", "\u{a0}leading", "em\u{2003}space", "a\u{3000}b"] {
+        assert_eq!(
+            markdown("description", text, 100),
+            Err(SchemaError::new("description", PLAIN_SPACES_ONLY)),
+            "{text:?}"
+        );
+    }
+}

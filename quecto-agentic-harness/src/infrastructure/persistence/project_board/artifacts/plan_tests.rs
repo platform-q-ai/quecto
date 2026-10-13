@@ -611,3 +611,26 @@ fn a_criterion_with_a_chat_space_is_held_once_normalised() {
         Err(SchemaError::new("items/0/criteria/0", PLAIN_SPACES_ONLY))
     );
 }
+
+/// An approach typed on a French keyboard is held once normalised; a chat
+/// space the normaliser leaves (beside a list marker) is refused by the
+/// domain with the approach's field, never by the file at write time.
+#[test]
+fn an_approach_with_chat_spaces_is_held_once_normalised() {
+    let with_approach = |approach: &str| {
+        Plan::new(PlanFields {
+            approach: approach.into(),
+            ..example()
+        })
+    };
+    let normal = board_text::text("D\u{2019}abord\u{a0}: un spike\u{202f}!");
+    assert_eq!(normal, "D\u{2019}abord : un spike !");
+    let held = with_approach(&normal).unwrap();
+    let file = encode::<PlanCodec>(&held).unwrap();
+    assert_eq!(decode::<PlanCodec>(file.as_bytes()), Ok(held));
+    read_by_the_oracle(&file);
+    assert_eq!(
+        with_approach(&board_text::text("-\u{a0}first")),
+        Err(SchemaError::new("approach", PLAIN_SPACES_ONLY))
+    );
+}
