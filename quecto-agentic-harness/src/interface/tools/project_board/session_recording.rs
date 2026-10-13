@@ -32,12 +32,9 @@ impl SessionRecording {
     }
 
     /// Records later calls through `recording` (`None`: records nothing,
-    /// the switch being off). Whether calls are now recorded.
-    pub fn bind(&self, recording: Option<BoardRecording>) -> bool {
-        let bound = recording.map(Arc::new);
-        let recorded = bound.is_some();
-        *self.write() = bound;
-        recorded
+    /// the switch being off).
+    pub fn bind(&self, recording: Option<BoardRecording>) {
+        *self.write() = recording.map(Arc::new);
     }
 
     /// Records nothing from now on: the session keeps no event log.
@@ -50,15 +47,11 @@ impl SessionRecording {
     /// decided when the session started) replaces the bound one; while
     /// nothing is recorded, nothing is built and nothing starts. One write
     /// lock covers the check and the swap, so a concurrent [`Self::stop`]
-    /// is never undone. Whether calls are now recorded.
-    pub fn follow(&self, rebuild: impl FnOnce() -> Option<BoardRecording>) -> bool {
+    /// is never undone.
+    pub fn follow(&self, rebuild: impl FnOnce() -> Option<BoardRecording>) {
         let mut bound = self.write();
-        match bound.is_some() {
-            true => {
-                *bound = rebuild().map(Arc::new);
-                bound.is_some()
-            }
-            false => false,
+        if bound.is_some() {
+            *bound = rebuild().map(Arc::new);
         }
     }
 

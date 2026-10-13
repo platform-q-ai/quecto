@@ -166,13 +166,11 @@ impl BoardToolSession {
 
     /// The session switched to the one whose log is `log`: a recording
     /// bound is built again there, with the switch its session decided.
-    fn follow(&self, log: &AuditLog) -> bool {
+    fn follow(&self, log: &AuditLog) {
         let source = *self.source();
-        match source {
-            Some(source) => self
-                .recordings
-                .follow(|| (source.build.0)(source.event_log, log)),
-            None => false,
+        if let Some(source) = source {
+            self.recordings
+                .follow(|| (source.build.0)(source.event_log, log));
         }
     }
 }

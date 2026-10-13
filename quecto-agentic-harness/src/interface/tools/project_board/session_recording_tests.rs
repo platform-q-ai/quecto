@@ -30,16 +30,24 @@ async fn records_follow_a_session_switch_and_stop_with_it() {
     let (first, second) = (Arc::new(Records::default()), Arc::new(Records::default()));
     let recordings = Arc::new(SessionRecording::default());
     let tool = tool(&recordings);
-    assert!(recordings.bind(Some(recording_into(&first))));
+    recordings.bind(Some(recording_into(&first)));
+    assert!(recordings.current().is_some());
     tool.execute(r#"{"op": "list"}"#).await.unwrap();
-    assert!(recordings.follow(|| Some(recording_into(&second))));
+    recordings.follow(|| Some(recording_into(&second)));
+    assert!(
+        recordings.current().is_some(),
+        "a recording follows the switch"
+    );
     tool.execute(r#"{"op": "show", "task": "a"}"#)
         .await
         .unwrap();
     assert_eq!((ops(&first), ops(&second)), (vec!["list"], vec!["show"]));
     recordings.stop();
-    let rebuilt = recordings.follow(|| panic!("a stopped session builds nothing"));
-    assert!(!rebuilt, "nothing bound, nothing follows");
+    recordings.follow(|| panic!("a stopped session builds nothing"));
+    assert!(
+        recordings.current().is_none(),
+        "nothing bound, nothing follows"
+    );
     tool.execute(r#"{"op": "list"}"#).await.unwrap();
     assert_eq!((ops(&first), ops(&second)), (vec![], vec![]));
 }
@@ -49,13 +57,13 @@ async fn records_follow_a_session_switch_and_stop_with_it() {
 #[tokio::test]
 async fn nothing_is_recorded_while_the_event_log_is_off() {
     let recordings = Arc::new(SessionRecording::default());
-    assert!(!recordings.bind(None));
+    recordings.bind(None);
     assert!(recordings.current().is_none());
     tool(&recordings)
         .execute(r#"{"op": "list"}"#)
         .await
         .unwrap();
-    assert!(!recordings.follow(|| panic!("an unbound session builds nothing")));
+    recordings.follow(|| panic!("an unbound session builds nothing"));
     assert!(recordings.current().is_none());
 }
 
@@ -64,8 +72,8 @@ async fn nothing_is_recorded_while_the_event_log_is_off() {
 fn a_switch_to_no_log_stops_recording() {
     let records = Arc::new(Records::default());
     let recordings = SessionRecording::default();
-    assert!(recordings.bind(Some(recording_into(&records))));
-    assert!(!recordings.follow(|| None));
+    recordings.bind(Some(recording_into(&records)));
+    recordings.follow(|| None);
     assert!(recordings.current().is_none());
 }
 
@@ -75,7 +83,7 @@ fn a_switch_to_no_log_stops_recording() {
 fn a_stop_racing_a_switch_is_never_undone() {
     let records = Arc::new(Records::default());
     let recordings = Arc::new(SessionRecording::default());
-    assert!(recordings.bind(Some(recording_into(&records))));
+    recordings.bind(Some(recording_into(&records)));
     let mut stopper = None;
     recordings.follow(|| {
         let racing = Arc::clone(&recordings);

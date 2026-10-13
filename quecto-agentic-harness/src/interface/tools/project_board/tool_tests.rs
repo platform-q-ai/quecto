@@ -46,7 +46,7 @@ fn tool(site: BoardSite) -> BoardTool {
 /// The tool over `site`, recording into `records`.
 fn recorded_tool(site: BoardSite, records: &Arc<Records>) -> BoardTool {
     let recordings = Arc::new(SessionRecording::default());
-    assert!(recordings.bind(Some(recording_into(records))));
+    recordings.bind(Some(recording_into(records)));
     BoardTool::recorded_in(site, recordings)
 }
 
@@ -433,7 +433,9 @@ async fn dropping_a_call_sets_its_cancel_flag() {
     let log = AuditLog::open_sync(base.path(), "dropped").unwrap();
     let recordings = Arc::new(SessionRecording::default());
     let build = crate::composition::bootstrap::project_board::session_board_recording_decided;
-    assert!(recordings.bind(build(true, &log)));
+    let recording = build(true, &log);
+    assert!(recording.is_some(), "on, with a log");
+    recordings.bind(recording);
     let tool = BoardTool::recorded_in(site(Some(waiting_board)), recordings);
     let call = tool.execute(r#"{"op":"list"}"#);
     // Run the call until its work has started, then drop it.
@@ -563,4 +565,17 @@ fn a_call_dropped_before_it_runs_writes_no_record() {
     let tool = recorded_tool(site(Some(memory_board)), &records);
     drop(tool.execute(r#"{"op": "list"}"#));
     assert!(records.taken().is_empty());
+}
+
+/// Review round 3: a call's duration runs from its arrival, its queueing
+/// before its work started included.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_calls_duration_covers_its_wait_before_its_work_ran() {
+    let records = Arc::new(Records::default());
+    let tool = recorded_tool(site(None), &records);
+    let call = tool.execute(r#"{"op": "list"}"#);
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    call.await.unwrap();
+    let record = records.taken().remove(0);
+    assert!(record.duration_us >= 50_000, "{}", record.duration_us);
 }
