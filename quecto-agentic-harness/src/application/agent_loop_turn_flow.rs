@@ -16,6 +16,19 @@ pub(super) enum AfterResponse {
     Finish(Result<AgentResult, DomainError>),
 }
 
+fn stream_deadline_error() -> StreamProviderError {
+    StreamProviderError::before_output(DomainError::Provider(format!(
+        "{}logical_stream_bound=300s",
+        crate::domain::inference::services::provider_error::REPLY_TIMEOUT,
+    )))
+}
+
+fn admission_deadline_error() -> StreamProviderError {
+    StreamProviderError::outside_provider(DomainError::Provider(
+        "admission: admission queue wait deadline elapsed".into(),
+    ))
+}
+
 impl AgentLoopImpl {
     /// Send a chat request using incremental streaming.
     ///
@@ -28,61 +41,83 @@ impl AgentLoopImpl {
         &self,
         request: ChatRequest<'_>,
         requirement: ReplyRequirement,
+        deadline: tokio::time::Instant,
     ) -> Result<LlmResponse, StreamProviderError> {
         let mut emitted_event = false;
         let trace = request.trace.clone();
-        let mut rx = self.provider.chat_stream_incremental(request).await;
-        while let Some(event) = rx.recv().await {
-            match event {
-                StreamEvent::TextDelta(t) => {
-                    // Whitespace alone is no output (#2434 review): a blank
-                    // reply is an empty stream, asked again as before.
-                    emitted_event |= t.chars().any(|c| !c.is_whitespace());
-                    self.notify(|| AgentProgressEvent::Token(t));
-                }
-                StreamEvent::ThinkingDelta(t) => {
-                    emitted_event = true;
-                    self.notify(|| AgentProgressEvent::ThinkingDelta(t));
-                }
-                StreamEvent::Done(response) => {
-                    let empty = is_empty_streamed_response(&response);
-                    return match (empty, ends_turn_empty(&response, requirement)) {
-                        // Output, or nothing where nothing ends the turn.
-                        (false, _) | (true, true) => Ok(response),
-                        (true, false) => {
-                            // The empty reply's tokens were spent all the
-                            // same: its attempt reports them (#2436 review).
-                            // Only here: a reply that ends the turn reports
-                            // its usage as an `ok` reply.
-                            if let (Some(trace), Some(usage)) = (&trace, response.usage.clone()) {
-                                trace.record_unfinished_usage(usage);
+        let attempt = async {
+            let mut rx = self.provider.chat_stream_incremental(request).await;
+            while let Some(event) = rx.recv().await {
+                match event {
+                    StreamEvent::TextDelta(t) => {
+                        // Whitespace alone is no output (#2434 review): a blank
+                        // reply is an empty stream, asked again as before.
+                        emitted_event |= t.chars().any(|c| !c.is_whitespace());
+                        self.notify(|| AgentProgressEvent::Token(t));
+                    }
+                    StreamEvent::ThinkingDelta(t) => {
+                        emitted_event = true;
+                        self.notify(|| AgentProgressEvent::ThinkingDelta(t));
+                    }
+                    StreamEvent::Done(response) => {
+                        let empty = is_empty_streamed_response(&response);
+                        return match (empty, ends_turn_empty(&response, requirement)) {
+                            // Output, or nothing where nothing ends the turn.
+                            (false, _) | (true, true) => Ok(response),
+                            (true, false) => {
+                                // The empty reply's tokens were spent all the
+                                // same: its attempt reports them (#2436 review).
+                                // Only here: a reply that ends the turn reports
+                                // its usage as an `ok` reply.
+                                if let (Some(trace), Some(usage)) = (&trace, response.usage.clone())
+                                {
+                                    trace.record_unfinished_usage(usage);
+                                }
+                                Err(StreamProviderError {
+                                    error: DomainError::Provider(empty_stream_error_message(
+                                        &response,
+                                    )),
+                                    emitted_event,
+                                    provider_failure: true,
+                                })
                             }
-                            Err(StreamProviderError {
-                                error: DomainError::Provider(empty_stream_error_message(&response)),
-                                emitted_event,
-                            })
-                        }
-                    };
-                }
-                StreamEvent::Error(e) => {
-                    return Err(StreamProviderError {
-                        error: DomainError::Provider(e),
-                        emitted_event,
-                    });
-                }
-                // Tool call streaming events are handled by the provider's
-                // accumulator — they assemble into LlmResponse.tool_calls
-                // and are delivered via StreamEvent::Done.
-                _ => {
-                    emitted_event = true;
+                        };
+                    }
+                    StreamEvent::Error(e) => {
+                        return Err(StreamProviderError {
+                            error: DomainError::Provider(e),
+                            emitted_event,
+                            provider_failure: true,
+                        });
+                    }
+                    // Tool call streaming events are handled by the provider's
+                    // accumulator — they assemble into LlmResponse.tool_calls
+                    // and are delivered via StreamEvent::Done.
+                    _ => {
+                        emitted_event = true;
+                    }
                 }
             }
+            // Channel closed without Done — shouldn't happen but handle gracefully.
+            Err(StreamProviderError {
+                error: DomainError::Provider(
+                    "streaming channel closed without completion".to_string(),
+                ),
+                emitted_event,
+                provider_failure: true,
+            })
+        };
+        match tokio::time::timeout_at(deadline, attempt).await {
+            Ok(result) => result,
+            Err(_) => Err(StreamProviderError {
+                error: DomainError::Provider(format!(
+                    "{}logical_stream_bound=300s",
+                    crate::domain::inference::services::provider_error::REPLY_TIMEOUT,
+                )),
+                emitted_event,
+                provider_failure: true,
+            }),
         }
-        // Channel closed without Done — shouldn't happen but handle gracefully.
-        Err(StreamProviderError {
-            error: DomainError::Provider("streaming channel closed without completion".to_string()),
-            emitted_event,
-        })
     }
 
     pub(super) async fn request_provider_response(
@@ -90,10 +125,11 @@ impl AgentLoopImpl {
         mut request: ChatRequest<'_>,
         (turn, estimate): (u32, usize),
         requirement: ReplyRequirement,
+        recovery_deadline: Option<tokio::time::Instant>,
     ) -> Result<LlmResponse, StreamProviderError> {
         self.flush_request_accounting()
             .await
-            .map_err(StreamProviderError::before_output)?;
+            .map_err(StreamProviderError::outside_provider)?;
         let prefix = super::super::request_observation::prefix(&request);
         let unchanged = self
             .request_prefix
@@ -139,14 +175,18 @@ impl AgentLoopImpl {
         );
         let outcome = super::super::request_observation::MarkDropping::new(
             observation.trace(),
-            self.request_provider_response_inner(request, requirement),
+            self.request_provider_response_inner(request, requirement, recovery_deadline),
         )
         .await;
         // Whether the failed reply had shown output travels beside the
         // error, which is observed and accounted as before (#2155).
-        let (result, emitted_event) = match outcome {
-            Ok(response) => (Ok(response), false),
-            Err(failure) => (Err(failure.error), failure.emitted_event),
+        let (result, emitted_event, provider_failure) = match outcome {
+            Ok(response) => (Ok(response), false, false),
+            Err(failure) => (
+                Err(failure.error),
+                failure.emitted_event,
+                failure.provider_failure,
+            ),
         };
         {
             let mut unreported = self
@@ -185,10 +225,12 @@ impl AgentLoopImpl {
             .map_err(|error| StreamProviderError {
                 error,
                 emitted_event,
+                provider_failure: false,
             })?;
         result.map_err(|error| StreamProviderError {
             error,
             emitted_event,
+            provider_failure,
         })
     }
 
@@ -196,12 +238,22 @@ impl AgentLoopImpl {
         &self,
         request: ChatRequest<'_>,
         requirement: ReplyRequirement,
+        recovery_deadline: Option<tokio::time::Instant>,
     ) -> Result<LlmResponse, StreamProviderError> {
+        // One wall-clock budget across admissions, attempts and backoff. It
+        // bounds a busy stream too, unlike the provider's inactivity bound.
+        let request_deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(300);
+        let deadline = recovery_deadline.map_or(request_deadline, |d| d.min(request_deadline));
         if let Some(admission) = &self.request_admission {
-            admission
-                .check(crate::domain::inference::value_objects::provider::RequestAttempt::First)
-                .await
-                .map_err(StreamProviderError::before_output)?;
+            tokio::time::timeout_at(
+                deadline,
+                admission.check(
+                    crate::domain::inference::value_objects::provider::RequestAttempt::First,
+                ),
+            )
+            .await
+            .map_err(|_| admission_deadline_error())?
+            .map_err(StreamProviderError::outside_provider)?;
         }
         // Transient-error retry is owned by the `RetryingProvider` decorator, so
         // the non-streaming path makes a single call and passes the error
@@ -225,10 +277,11 @@ impl AgentLoopImpl {
             // second first-attempt check.
             if attempt > 1 {
                 if let Some(admission) = &self.request_admission {
-                    admission
-                        .check(crate::domain::inference::value_objects::provider::RequestAttempt::Reattempt)
+                    tokio::time::timeout_at(deadline, admission
+                        .check(crate::domain::inference::value_objects::provider::RequestAttempt::Reattempt))
                         .await
-                        .map_err(StreamProviderError::before_output)?;
+                        .map_err(|_| admission_deadline_error())?
+                        .map_err(StreamProviderError::outside_provider)?;
                 }
             }
             if let Some(trace) = &request.trace {
@@ -238,7 +291,10 @@ impl AgentLoopImpl {
                     trace.retry();
                 }
             }
-            let result = match self.stream_chat_once(request.clone(), requirement).await {
+            let result = match self
+                .stream_chat_once(request.clone(), requirement, deadline)
+                .await
+            {
                 Ok(response) => Ok(response),
                 Err(stream_error) if stream_error.emitted_event => {
                     // Replaying after emitted content would corrupt output;
@@ -246,6 +302,7 @@ impl AgentLoopImpl {
                     return Err(StreamProviderError {
                         error: enhance_provider_error(stream_error.error),
                         emitted_event: true,
+                        provider_failure: stream_error.provider_failure,
                     });
                 }
                 Err(stream_error) => Err(stream_error.error),
@@ -259,10 +316,13 @@ impl AgentLoopImpl {
                         trace.end_attempt_failed();
                     }
                     let class = classify_provider_error(&err);
-                    if attempt == MAX_PROVIDER_ATTEMPTS
-                        || !class.is_retryable()
-                        || !capped.allows_another(&class)
-                    {
+                    let retry_allowed = attempt < MAX_PROVIDER_ATTEMPTS
+                        && class.is_retryable()
+                        && capped.allows_another(&class)
+                        && tokio::time::Instant::now() < deadline;
+                    if retry_allowed {
+                        debug_assert!(attempt < MAX_PROVIDER_ATTEMPTS);
+                    } else {
                         return Err(StreamProviderError::before_output(enhance_provider_error(
                             err,
                         )));
@@ -287,7 +347,9 @@ impl AgentLoopImpl {
                             err,
                         )));
                     };
-                    tokio::time::sleep(delay).await;
+                    tokio::time::timeout_at(deadline, tokio::time::sleep(delay))
+                        .await
+                        .map_err(|_| stream_deadline_error())?;
                 }
             }
         }
@@ -295,6 +357,54 @@ impl AgentLoopImpl {
         Err(StreamProviderError::before_output(DomainError::Provider(
             "provider request failed without an error".to_string(),
         )))
+    }
+
+    /// One live pre-tool recovery wave after the normal attempt budget. Never
+    /// inject another prompt, replay a dispatched tool, or rely on save success.
+    /// Output, feedback, any tool ledger entry, cancellation and store failure
+    /// all take the conservative terminal path instead.
+    pub(super) async fn try_automatic_provider_recovery(
+        &self,
+        error: &DomainError,
+        output: Output,
+        pre_tool_checkpoint: bool,
+        used: &mut bool,
+        deadline: tokio::time::Instant,
+    ) -> bool {
+        use crate::domain::inference::services::provider_error::ProviderErrorClass;
+        let class = classify_provider_error(error);
+        let eligible = self.streaming
+            && output == Output::NotShown
+            && pre_tool_checkpoint
+            && matches!(*used, false)
+            && matches!(
+                class,
+                ProviderErrorClass::EmptyStream
+                    | ProviderErrorClass::Network
+                    | ProviderErrorClass::Server
+                    | ProviderErrorClass::Stalled
+            );
+        if eligible {
+            let Some(delay) = crate::domain::inference::services::provider_retry::bounded_delay(
+                error,
+                std::time::Duration::from_secs(2),
+                std::time::Duration::from_secs(30),
+            ) else {
+                return false;
+            };
+            if tokio::time::Instant::now() + delay < deadline {
+                // Consume before awaiting, so cancellation never leaves a
+                // partially admitted wave eligible inside this process.
+                *used = true;
+                tracing::warn!(target: "provider_retry", error_class = %class,
+                    recovery_wave = 1, max_recovery_waves = 1,
+                    "automatic pre-tool recovery after provider attempt exhaustion");
+                return tokio::time::timeout_at(deadline, tokio::time::sleep(delay))
+                    .await
+                    .is_ok();
+            }
+        }
+        false
     }
 
     pub(super) fn build_chat_request<'a>(

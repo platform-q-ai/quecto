@@ -129,11 +129,30 @@ pub const OUTPUT_CAP_EXCEEDED: &str = "output cap exceeded: ";
 /// ended before any event (#2249 review).
 pub const EMPTY_STREAM: &str = "stream completed without assistant output: synthetic=empty_stream";
 
+/// Sanitized infrastructure transport markers. Only exact allowlisted suffixes
+/// are eligible for retry; no external source-chain text enters this contract.
+pub const TRANSPORT_SEND: &str = "transport send failure: ";
+pub const TRANSPORT_READ: &str = "transport read failure: ";
+
 pub fn classify_provider_error(err: &DomainError) -> ProviderErrorClass {
     let msg = match err {
         DomainError::Provider(msg) => msg.as_str(),
         _ => return ProviderErrorClass::Unknown,
     };
+
+    if let Some(category) = msg
+        .strip_prefix(TRANSPORT_SEND)
+        .or_else(|| msg.strip_prefix(TRANSPORT_READ))
+    {
+        // Terminal enhancement may append harness guidance on later lines.
+        // The first line remains the exact sanitized category contract.
+        return match category.lines().next().unwrap_or_default() {
+            "timeout" | "connect" | "body" => ProviderErrorClass::Network,
+            // Decode may be corrupt input or a decoder fault: not evidence of
+            // a transient transport failure, so no automatic replay.
+            _ => ProviderErrorClass::Unknown,
+        };
+    }
 
     if msg.starts_with(EMPTY_STREAM) {
         return ProviderErrorClass::EmptyStream;

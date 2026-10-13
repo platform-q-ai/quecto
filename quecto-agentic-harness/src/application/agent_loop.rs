@@ -441,6 +441,12 @@ impl AgentLoopImpl {
         // Count of model-malformed requests turned into addressable feedback.
         let mut malformed_retries: u32 = 0;
         let mut cut_off_retries: u32 = 0;
+        // Live, pre-tool recovery only: this budget is not persisted and is
+        // never re-armed by a wake. The as-appended ledger is authoritative
+        // even when pruning changes the conversation in place.
+        let mut automatic_recovery_used = false;
+        let automatic_recovery_deadline =
+            tokio::time::Instant::now() + std::time::Duration::from_secs(600);
 
         loop {
             if iterations > 0 {
@@ -477,18 +483,21 @@ impl AgentLoopImpl {
             let llm_start = std::time::Instant::now();
             // Streaming (UDS mode) forwards token events in real time; REPL/
             // one-shot use the non-streaming path.
-            let (response, output) = match self
+            let (response, output, provider_failure) = match self
                 .request_provider_response(
                     request,
                     (current_turn, estimated_context_tokens),
                     requirement,
+                    (iterations == 0 && appended_messages.is_empty())
+                        .then_some(automatic_recovery_deadline),
                 )
                 .await
             {
-                Ok(response) => (Ok(response), Output::NotShown),
+                Ok(response) => (Ok(response), Output::NotShown, false),
                 Err(failure) => (
                     Err(failure.error),
                     Output::from_emitted(failure.emitted_event),
+                    failure.provider_failure,
                 ),
             };
             drop(sent);
@@ -510,9 +519,34 @@ impl AgentLoopImpl {
                 }
                 Ok(response) => AfterResponse::Proceed(response),
                 Err(error) => {
-                    let recovery = (&mut malformed_retries, &mut appended_messages);
-                    self.after_provider_failure(messages, (error, output), current_turn, recovery)
+                    if self
+                        .try_automatic_provider_recovery(
+                            &error,
+                            output,
+                            provider_failure && iterations == 0 && appended_messages.is_empty(),
+                            &mut automatic_recovery_used,
+                            automatic_recovery_deadline,
+                        )
                         .await
+                    {
+                        debug_assert_eq!(iterations, 0, "automatic recovery never replays tools");
+                        debug_assert!(appended_messages.is_empty());
+                        AfterResponse::Retry
+                    } else if provider_failure {
+                        let recovery = (&mut malformed_retries, &mut appended_messages);
+                        self.after_provider_failure(
+                            messages,
+                            (error, output),
+                            current_turn,
+                            recovery,
+                        )
+                        .await
+                    } else {
+                        // A store/admission failure is never model feedback,
+                        // regardless of the provider-shaped text a port returns.
+                        self.drain_tool_policy_mutations_at_boundary();
+                        AfterResponse::Finish(self.fail_provider_request(current_turn, error).await)
+                    }
                 }
             };
             let response = match after {

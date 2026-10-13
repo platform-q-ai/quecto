@@ -8,6 +8,9 @@ use crate::domain::message::{LlmResponse, StopReason};
 pub(super) struct StreamProviderError {
     pub(super) error: DomainError,
     pub(super) emitted_event: bool,
+    /// True only when the provider attempt failed, not accounting or admission.
+    /// A store rejection must never be mistaken for a recoverable provider error.
+    pub(super) provider_failure: bool,
 }
 
 impl StreamProviderError {
@@ -16,6 +19,15 @@ impl StreamProviderError {
         Self {
             error,
             emitted_event: false,
+            provider_failure: true,
+        }
+    }
+
+    pub(super) fn outside_provider(error: DomainError) -> Self {
+        Self {
+            error,
+            emitted_event: false,
+            provider_failure: false,
         }
     }
 }

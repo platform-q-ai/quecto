@@ -85,20 +85,17 @@ impl AgentSession {
         let Some(suspension) = &mut self.suspension else {
             return false;
         };
-        if suspension.cause != SuspensionCause::ProviderFailure {
-            return false;
-        }
-        match suspension.generation {
-            Some(seen) if generation > seen => {
+        match (suspension.cause, suspension.generation) {
+            (SuspensionCause::ProviderFailure, Some(seen)) if generation > seen => {
                 self.resume_automatic_turns();
                 self.pending_resume_turn = true;
                 true
             }
-            Some(_) => false,
-            None => {
+            (SuspensionCause::ProviderFailure, None) => {
                 suspension.generation = Some(generation);
                 false
             }
+            _ => false,
         }
     }
 }

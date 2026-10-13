@@ -94,7 +94,9 @@ pub(super) async fn pump_sse<H: SseHandler>(
             Ok(Err(e)) => {
                 receipt.termination(Termination::ReadError);
                 let _ = tx
-                    .send(StreamEvent::Error(format!("stream read error: {e}")))
+                    .send(StreamEvent::Error(
+                        super::super::sse_common::format_read_error(&e),
+                    ))
                     .await;
                 return;
             }
@@ -123,7 +125,9 @@ pub(super) async fn pump_sse<H: SseHandler>(
                     state.diagnostics.parse_errors =
                         state.diagnostics.parse_errors.saturating_add(1);
                 }
-                false
+                receipt.termination(Termination::Rejected);
+                super::super::sse_common::refuse_invalid_utf8(tx).await;
+                return;
             };
             carry.drain(..=pos);
             if done {
@@ -158,8 +162,13 @@ pub(super) async fn pump_sse<H: SseHandler>(
             }
         }
         Some(Err(_)) => {
-            let mut state = receipt.0.lock().unwrap();
-            state.diagnostics.parse_errors = state.diagnostics.parse_errors.saturating_add(1);
+            {
+                let mut state = receipt.0.lock().unwrap();
+                state.diagnostics.parse_errors = state.diagnostics.parse_errors.saturating_add(1);
+            }
+            receipt.termination(Termination::Rejected);
+            super::super::sse_common::refuse_invalid_utf8(tx).await;
+            return;
         }
         None => {}
     }

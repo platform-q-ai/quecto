@@ -67,29 +67,10 @@ impl Profile {
         }
     }
     pub fn send_error(self, error: &reqwest::Error) -> DomainError {
-        let message = match self.vendor {
-            Vendor::Anthropic => format!("HTTP error: {error}"),
-            Vendor::Codex => format!(
-                "Codex request failed: {}",
-                super::sse_common::format_send_error(error)
-            ),
-            Vendor::OpenAi => format!(
-                "HTTP error: {}",
-                super::sse_common::format_send_error(error)
-            ),
-        };
-        DomainError::Provider(message)
+        DomainError::Provider(super::sse_common::format_send_error(error))
     }
     pub fn read_error(self, error: &reqwest::Error) -> DomainError {
-        let label = if matches!(
-            (self.vendor, self.surface),
-            (Vendor::Anthropic, Surface::Assembled)
-        ) {
-            "stream"
-        } else {
-            "response"
-        };
-        DomainError::Provider(format!("failed to read {label}: {error}"))
+        DomainError::Provider(super::sse_common::format_read_error(error))
     }
     pub fn strict_error_body(self) -> bool {
         matches!(

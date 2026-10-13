@@ -30,30 +30,39 @@ pub(crate) fn event_data(line: &str) -> Option<&str> {
     Some(data.strip_prefix(' ').unwrap_or(data))
 }
 
-/// Render a `reqwest` transport error together with its source chain.
-///
-/// `reqwest::Error`'s `Display` only prints its top-level message
-/// (e.g. `"error sending request for url (…)"`); the concrete cause —
-/// `"connection refused"`, `"connection reset"`, `"dns error"`,
-/// `"operation timed out"` — lives in `source()`. Dropping it loses the one
-/// signal the retry classifier (`classify_provider_error`) needs to recognise a
-/// transient `Network` failure, so a retryable connection blip is misclassified
-/// as non-retryable `Unknown` and fails the turn without a single retry.
-///
-/// This walks the full `std::error::Error` source chain and appends each cause,
-/// so the resulting string contains the underlying keyword (`connection`,
-/// `timed out`, `dns`, …) the classifier matches on.
+/// Render only reqwest's public, boolean transport categories. Never walk
+/// `source()` or render the error: both may carry URLs or external text.
+/// A decode flag proves a decoding-path failure, not a decoder defect (the
+/// input may itself be corrupt); fail conservatively rather than replay it.
 pub fn format_send_error(err: &reqwest::Error) -> String {
-    use std::error::Error;
+    format_transport_error(err, false)
+}
 
-    let mut out = err.to_string();
-    let mut source = err.source();
-    while let Some(cause) = source {
-        out.push_str(": ");
-        out.push_str(&cause.to_string());
-        source = cause.source();
-    }
-    out
+pub(crate) fn format_read_error(err: &reqwest::Error) -> String {
+    format_transport_error(err, true)
+}
+
+fn format_transport_error(err: &reqwest::Error, reading: bool) -> String {
+    use crate::domain::inference::services::provider_error::{TRANSPORT_READ, TRANSPORT_SEND};
+    let category = if err.is_decode() {
+        "decode"
+    } else if err.is_timeout() {
+        "timeout"
+    } else if err.is_connect() {
+        "connect"
+    } else if err.is_body() {
+        "body"
+    } else if err.is_request() {
+        "request"
+    } else {
+        "other"
+    };
+    let prefix = if reading {
+        TRANSPORT_READ
+    } else {
+        TRANSPORT_SEND
+    };
+    format!("{prefix}{category}")
 }
 
 /// Truncate an HTTP error body to [`MAX_ERROR_BODY_BYTES`].
@@ -89,7 +98,9 @@ pub fn retry_after_suffix(headers: &reqwest::header::HeaderMap) -> String {
         .get("retry-after-ms")
         .and_then(|v| v.to_str().ok())
         .map(str::trim)
-        .filter(|s| !s.is_empty())
+        .filter(|s| (1..=13).contains(&s.len()) && s.bytes().all(|b| b.is_ascii_digit()))
+        .and_then(|s| s.parse::<u64>().ok())
+        .filter(|n| *n <= 1_000_000_000_000)
     {
         return format!(" retry-after-ms: {ms}");
     }
@@ -97,7 +108,9 @@ pub fn retry_after_suffix(headers: &reqwest::header::HeaderMap) -> String {
         .get("retry-after")
         .and_then(|v| v.to_str().ok())
         .map(str::trim)
-        .filter(|s| !s.is_empty())
+        .filter(|s| (1..=13).contains(&s.len()) && s.bytes().all(|b| b.is_ascii_digit()))
+        .and_then(|s| s.parse::<u64>().ok())
+        .filter(|n| *n <= 1_000_000_000_000)
     {
         return format!(" retry-after: {secs}");
     }
@@ -152,7 +165,7 @@ pub trait SseHandler: Send {
 /// Anthropic). It handles:
 /// - Chunked byte accumulation with a carry buffer
 /// - Guard against unbounded line growth ([`MAX_SSE_LINE_BYTES`])
-/// - UTF-8 decoding of complete lines (skipping malformed lines)
+/// - UTF-8 decoding of complete lines (rejecting malformed lines)
 /// - Stream read errors (emitted as `StreamEvent::Error`)
 /// - A stream with no event for the whole `idle` bound (emitted as the idle
 ///   error, #2210): keep-alives alone do not restart the bound (#2433)
@@ -177,9 +190,7 @@ pub async fn pump_sse<H: SseHandler>(
             Ok(Ok(Some(b))) => b,
             Ok(Ok(None)) => break,
             Ok(Err(e)) => {
-                let _ = tx
-                    .send(StreamEvent::Error(format!("stream read error: {e}")))
-                    .await;
+                let _ = tx.send(StreamEvent::Error(format_read_error(&e))).await;
                 return;
             }
             Err(silent) => {
@@ -203,7 +214,8 @@ pub async fn pump_sse<H: SseHandler>(
                 let line = line.trim_end_matches(['\n', '\r']);
                 matches!(handler.process_line(line, tx).await, SseLineOutcome::Done)
             } else {
-                false
+                refuse_invalid_utf8(tx).await;
+                return;
             };
             carry.drain(..=pos);
             if done {
@@ -220,12 +232,28 @@ pub async fn pump_sse<H: SseHandler>(
     // The body may end without a final newline (#2249 review): its last
     // line is a line all the same, a terminal event included, as a
     // whole-body read parses it. Only then does the handler finalize.
-    if let Some(Ok(line)) = super::sse_end::last_line(&carry) {
-        if matches!(handler.process_line(line, tx).await, SseLineOutcome::Done) {
+    match super::sse_end::last_line(&carry) {
+        Some(Ok(line)) => {
+            if matches!(handler.process_line(line, tx).await, SseLineOutcome::Done) {
+                return;
+            }
+        }
+        Some(Err(_)) => {
+            refuse_invalid_utf8(tx).await;
             return;
         }
+        None => {}
     }
     handler.on_eof(tx).await;
+}
+
+/// Invalid wire UTF-8 is a framing failure, never a completed partial reply.
+pub(crate) async fn refuse_invalid_utf8(tx: &tokio::sync::mpsc::Sender<StreamEvent>) {
+    let _ = tx
+        .send(StreamEvent::Error(
+            "SSE framing failure: invalid_utf8".into(),
+        ))
+        .await;
 }
 
 /// Whether a line of `len` bytes (its `\n` excluded) is within
