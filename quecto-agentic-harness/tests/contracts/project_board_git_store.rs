@@ -185,6 +185,15 @@ impl Remote {
         sh(bare, &["update-ref", BOARD_REF, &commit], b"");
     }
 
+    /// The object `path` names on the remote's board, as git spells it.
+    pub fn object(&self, path: &str) -> String {
+        sh(
+            &self.bare,
+            &["rev-parse", &format!("{BOARD_REF}:{path}")],
+            b"",
+        )
+    }
+
     /// Someone pushes a `tasks/b.md` the store cannot read.
     pub fn spoil_b(&self) {
         let bare = &self.bare;
@@ -295,4 +304,87 @@ fn the_git_store_carries_a_task_file_set_aside_and_drops_a_stray() {
         || remote.add_stray(),
         "tasks/notes.txt",
     );
+}
+
+/// #2481 M4b: a plan is proposed and its task items edited through the
+/// git store, each a commit of its plan alone: the task's file keeps its
+/// object, and the approach the edit left out reads back byte for byte
+/// from another clone.
+#[test]
+fn the_git_store_takes_a_plan_proposed_then_patched() {
+    use quecto::application::project_board::dto::{
+        NewBoardTask, NewBoardTaskStatus, PlanEdit, PlanProposal,
+    };
+    use quecto::application::project_board::ports::ProjectBoardStore;
+    use quecto::application::project_board::use_cases::{
+        BootstrapProjectBoard, CreateBoardTask, EditPlan, ProposePlan,
+    };
+    use quecto::domain::project_board::entities::plan::PlanItem;
+    use quecto::domain::project_board::value_objects::slug::Slug;
+    use quecto::domain::project_board::value_objects::vocabulary::{PlanState, TaskKind};
+    use quecto::infrastructure::time::board_clock::SystemBoardClock;
+    use std::sync::Arc;
+
+    let remote = Remote::new();
+    let alice: Box<dyn ProjectBoardStore> = remote.client(0, "Alice");
+    let store: Arc<dyn ProjectBoardStore> = Arc::from(alice);
+    let clock = Arc::new(SystemBoardClock::default());
+    let id = Slug::parse("board-store").unwrap();
+    BootstrapProjectBoard::new(Arc::clone(&store))
+        .execute()
+        .unwrap();
+    CreateBoardTask::new(Arc::clone(&store), clock.clone())
+        .unwrap()
+        .execute(&NewBoardTask {
+            id: id.clone(),
+            title: "Board store".into(),
+            kind: TaskKind::Task,
+            description: String::new(),
+            status: NewBoardTaskStatus::Ready,
+            parent: None,
+            depends_on: vec![],
+        })
+        .unwrap();
+    let task_file = remote.object("tasks/board-store.md");
+    let item = |name: &str| PlanItem {
+        id: Slug::parse(name).unwrap(),
+        title: format!("Item {name}"),
+        criteria: vec![format!("{name} proved")],
+        depends_on: vec![],
+    };
+    let proposed = ProposePlan::new(Arc::clone(&store), clock.clone())
+        .unwrap()
+        .execute(&PlanProposal {
+            task: id.clone(),
+            approach: "Spike the store.\r\n\n```\n  keep  spaced\n```\n".into(),
+            items: vec![item("schema")],
+            team: None,
+        })
+        .unwrap();
+    let approach = "Spike the store.\n\n```\n  keep  spaced\n```";
+    assert_eq!(
+        proposed.fields().approach,
+        approach,
+        "normalised as it enters"
+    );
+    let edited = EditPlan::new(Arc::clone(&store), clock)
+        .unwrap()
+        .execute(&PlanEdit {
+            task: id.clone(),
+            version: 1,
+            approach: None,
+            items: Some(vec![item("schema"), item("api")]),
+            team: None,
+            expected_updated: Some(proposed.fields().updated.clone()),
+        })
+        .unwrap();
+    assert_eq!(remote.object("tasks/board-store.md"), task_file);
+    let bob = remote.client(1, "Bob");
+    let board = bob.read().unwrap();
+    assert_eq!(board.plans, vec![edited.clone()]);
+    let read = board.plans[0].fields();
+    assert_eq!(read.approach.as_bytes(), approach.as_bytes());
+    assert_eq!((read.version, read.state), (1, PlanState::Draft));
+    assert_eq!(read.items, vec![item("schema"), item("api")]);
+    assert_eq!(bob.committed_by(&board.head.0).unwrap().name, "Alice");
 }

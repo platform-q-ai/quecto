@@ -306,6 +306,8 @@ mod noted {
         let normalised = Normalised {
             title: Some(vec![TextChange::EdgeSpace]),
             description: Some(vec![TextChange::Crlf, TextChange::TrailingSpace]),
+            approach: None,
+            items: None,
         };
         let want = OpFacts {
             status_to: Some(TaskStatus::Draft),
@@ -333,6 +335,8 @@ mod noted {
             normalised: Some(Normalised {
                 title: None,
                 description: Some(vec![]),
+                approach: None,
+                items: None,
             }),
             ..OpFacts::default()
         };

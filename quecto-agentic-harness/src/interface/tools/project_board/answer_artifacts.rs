@@ -141,6 +141,24 @@ fn team_json(team: &Team) -> Value {
     })
 }
 
+/// A plan version as `propose_plan` and `edit_plan` answer it (#2481
+/// M4b): which it is and where it stands, without the text the caller
+/// sent: `task`, `version`, `state`, `proposed_by`, `edited_by`,
+/// `created` and `updated` (what an `edit_plan` passes back as
+/// `expected_updated`).
+pub(super) fn planned_json(plan: &Plan) -> Value {
+    let plan = plan.fields();
+    json!({
+        "task": slug_json(&plan.task),
+        "version": plan.version,
+        "state": plan.state.as_str(),
+        "proposed_by": identity_json(&plan.proposed_by),
+        "edited_by": plan.edited_by.as_ref().map(identity_json),
+        "created": plan.created.as_str(),
+        "updated": plan.updated.as_str(),
+    })
+}
+
 /// A plan version in brief: no text of it but who proposed it.
 fn plan_brief_json(plan: &Plan) -> Value {
     let plan = plan.fields();

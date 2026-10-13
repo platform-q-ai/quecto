@@ -5,7 +5,8 @@
 //!   after a change that may complete it, `completion`: `{"done": true,
 //!   "task"}`, `{"done": false, "pending": [prs]}` while some have not
 //!   merged, or `{"done": false, "error"}`), a listing's `head`, `tasks`
-//!   and `quarantined`, `show`'s ([`shown_fields`]), or `head` alone; and
+//!   and `quarantined`, `show`'s ([`shown_fields`]), a plan proposed or
+//!   edited as `plan` ([`planned_json`]), or `head` alone; and
 //!   `clock` when a request that reads the clock was not bounded against
 //!   an outside time.
 //! - Refusal: `{"ok": false, "op": …, "error": {"code", "message", …}}`.
@@ -47,7 +48,7 @@ use crate::domain::redaction::{redact_secrets, redact_url_userinfo};
 
 #[path = "answer_artifacts.rs"]
 mod artifacts;
-use artifacts::{artifact_folder, page_fields, quarantined_json, shown_fields};
+use artifacts::{artifact_folder, page_fields, planned_json, quarantined_json, shown_fields};
 
 /// The most characters of an error's message an answer carries.
 pub const MAX_MESSAGE_CHARS: usize = 2_000;
@@ -207,6 +208,9 @@ pub fn outcome(op: &str, outcome: &BoardOutcome, clock: Option<String>) -> Value
         }
         BoardOutcome::Cleared { head } => {
             fields.insert("head".into(), head_json(head));
+        }
+        BoardOutcome::Planned(plan) => {
+            fields.insert("plan".into(), planned_json(plan));
         }
     }
     if let Some(why) = clock {

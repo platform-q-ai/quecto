@@ -70,6 +70,8 @@ impl CreateBoardTask {
                 // which no normaliser changes: none is told.
                 description: (!new.description.is_empty())
                     .then(|| board_text::text_changes(&new.description)),
+                approach: None,
+                items: None,
             });
         }
         let message = format!("board: create {}", new.id.as_str());

@@ -22,6 +22,7 @@ use futures::FutureExt;
 const STORED: &str = r#"Project board for this repo: the shared list of tasks people and agents plan, claim and finish. Tasks live on the repo's quecto/board branch and are written only through this tool, never by editing the branch. Each op is one call, {"op":"<name>", ...named fields}, answering JSON: {"ok":true,...} or {"ok":false,"error":{"code","field","message"}}. Ids are slugs (a-z, 0-9, -). Statuses: draft, ready, claimed, in_progress, review, blocked, done, archived.
 Read: list(status|parent|dependents_of, at most one filter), show(task), list_ready (ready tasks whose dependencies are done or archived), list_takeable (held tasks whose claim expired). Listings show a summary per task; show(task) gives the whole task, its accepted plan, each plan version in brief and its runs (the latest readable one in full); "may_be_incomplete" means a file that may hold one of its plans or runs is set aside. What does not fit in 64 KiB beside the task (which is never cut, and may take more alone) is cut, with counts of what was left out and approach_next/items_next to read on with show(task, approach_from, items_from). Listings are advice; every change is checked against the board when it is written.
 Plan: create(task,title,kind,description,status draft|ready,parent,depends_on); update_draft(task, any of title,description,parent,depends_on, expected_updated) edits a draft only; pass the updated you read as expected_updated so a newer edit is never overwritten. Anyone may create, edit a draft, move it to ready, or archive a draft, ready or done task with move(task,to archived). Anyone may move a ready task back to draft.
+Plans: propose_plan(task, approach, items, team) adds a draft version of a task's plan; items are [{"id","title","criteria":[lines],"depends_on":[item ids]}] and team is null or {"roles":[{"name","model","effort","members","turns"}],"budget_tokens","deadline","image"}, as show gives them. edit_plan(task, version, any of approach,items,team, expected_updated) edits a draft: a field you leave out stays as it is and one you give replaces it whole (team null removes the team), so items change without resending the approach. Anyone may propose a plan or edit a draft of a task that is not done or archived; pass the draft's updated as expected_updated so a newer edit is never overwritten, and on "plan_changed" re-read with show and redo your edit.
 Work: move(task,to claimed) takes a ready task for 2 hours; renew(task) before it lapses while you work; take_over(task) only once a claim has expired; move(task,to ready) hands it back to ready. Only the claim holder moves a held task: claimed to in_progress|blocked|ready, in_progress to review|blocked|ready, review to in_progress|ready (or done when no pull request is linked), blocked to in_progress|ready. Once its claim has expired, or a task has none, anyone may move a review or blocked task to ready. link_pr(task,pr) and unlink_pr(task,pr) are the holder's. A task with linked pull requests is done only when all of them have merged: link_pr and moving to review check this automatically, and complete(task) asks again (anyone may call it). Never move a task to done by hand while a pull request is linked.
 Repair: clear_set_aside(path, object, repeated) removes a file the board could not read (listed under quarantined, with its object); repeated, for a task file that appears twice, maps its path to {"keep":object,"seen":[objects]} or {"drop":[objects]}, the objects its copies list. Use it only when told to.
 On "stale" re-read with show and redo your change; on "contended" call again; on "clock_ahead" or "task_ahead" stop and report: this machine's clock is wrong. A "clock" note on an answer means writes ran without an outside time check."#;
@@ -215,6 +216,41 @@ fn the_schema_is_the_parsers() {
     assert_eq!(schema["properties"]["status"]["enum"], json!(statuses));
     let kinds: Vec<&str> = TaskKind::ALL.iter().map(|kind| kind.as_str()).collect();
     assert_eq!(schema["properties"]["kind"]["enum"], json!(kinds));
+    // A plan's nested fields are typed as `show` gives them (#2481 M4b).
+    let item = &schema["properties"]["items"]["items"];
+    assert_eq!(item["required"], json!(["id", "title"]));
+    assert_eq!(item["additionalProperties"], json!(false));
+    let team = &schema["properties"]["team"];
+    assert_eq!(team["type"], json!(["object", "null"]));
+    let role = &team["properties"]["roles"]["items"];
+    assert_eq!(
+        role["required"],
+        json!(["name", "model", "effort", "members"])
+    );
+    assert_eq!(
+        role["properties"]["effort"]["enum"],
+        json!(["low", "medium", "high", "max"])
+    );
+    assert_eq!(schema["properties"]["version"]["minimum"], json!(1));
+}
+
+/// #2481 M4b: the tool takes the plan ops through to the board (a board
+/// built afresh per call holds no task to plan, so the board answers).
+#[tokio::test]
+async fn the_tool_takes_the_plan_ops() {
+    let tool = tool(site(Some(memory_board)));
+    for request in [
+        json!({"op": "propose_plan", "task": "a", "approach": "A", "items": []}),
+        json!({"op": "edit_plan", "task": "a", "version": 1, "team": null}),
+    ] {
+        let result = tool.execute(&request.to_string()).await.unwrap();
+        let answer: Value = serde_json::from_str(&result.content).unwrap();
+        assert_eq!(
+            (&answer["op"], &answer["error"]["code"]),
+            (&request["op"], &json!("not_found")),
+            "{answer}"
+        );
+    }
 }
 
 /// A clock reading one time, with no outside reference.

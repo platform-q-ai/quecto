@@ -118,6 +118,12 @@ impl RunBoardOperation {
                 Ok(changed(task, completion))
             }
             BoardRequest::Complete(id) => Ok(changed(self.complete(id, facts)?, None)),
+            BoardRequest::ProposePlan(proposal) => Ok(BoardOutcome::Planned(
+                self.parts.propose_plan.execute_noted(proposal, facts)?,
+            )),
+            BoardRequest::EditPlan(edit) => Ok(BoardOutcome::Planned(
+                self.parts.edit_plan.execute_noted(edit, facts)?,
+            )),
             BoardRequest::Clear {
                 path,
                 object,

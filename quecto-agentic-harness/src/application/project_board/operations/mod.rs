@@ -9,12 +9,16 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 pub use super::dto::NoPullRequestHost;
-use super::dto::{BoardListing, BoardOp, DraftUpdate, NewBoardTask, ProjectBoardError, ShownTask};
+use super::dto::{
+    BoardListing, BoardOp, DraftUpdate, NewBoardTask, PlanEdit, PlanProposal, ProjectBoardError,
+    ShownTask,
+};
 use super::ports::{BoardClock, BoardHead, BoardListings, KeepCopy};
 use super::use_cases::{
     BootstrapProjectBoard, ChangeBoardTask, ClearSetAside, CompleteMergedTask, CreateBoardTask,
-    QueryBoard, UpdateDraftTask,
+    EditPlan, ProposePlan, QueryBoard, UpdateDraftTask,
 };
+use crate::domain::project_board::entities::plan::Plan;
 use crate::domain::project_board::entities::task::Task;
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::vocabulary::TaskStatus;
@@ -48,6 +52,10 @@ pub enum BoardRequest {
     UpdateDraft(DraftUpdate),
     Change(Slug, BoardOp),
     Complete(Slug),
+    /// A new draft version of a task's plan (#2481 M4b).
+    ProposePlan(PlanProposal),
+    /// A draft plan patched: only the fields it gives change.
+    EditPlan(PlanEdit),
     /// Clear the file set aside at `path` whose contents are `object`,
     /// resolving every name listed more than once (`repeated`).
     Clear {
@@ -67,6 +75,8 @@ impl BoardRequest {
             | Self::UpdateDraft(_)
             | Self::Change(..)
             | Self::Complete(_)
+            | Self::ProposePlan(_)
+            | Self::EditPlan(_)
             | Self::Clear { .. } => true,
             Self::List(_) | Self::ListReady | Self::ListTakeable | Self::Show(..) => false,
         }
@@ -81,6 +91,8 @@ impl BoardRequest {
             | Self::UpdateDraft(_)
             | Self::Change(..)
             | Self::Complete(_)
+            | Self::ProposePlan(_)
+            | Self::EditPlan(_)
             | Self::ListTakeable => true,
             Self::Bootstrap
             | Self::Clear { .. }
@@ -154,6 +166,8 @@ pub enum BoardOutcome {
     Cleared {
         head: BoardHead,
     },
+    /// A plan version proposed or edited, as written (#2481 M4b).
+    Planned(Plan),
 }
 
 /// The use cases and ports one run of [`RunBoardOperation`] is made of,
@@ -171,6 +185,8 @@ pub struct BoardOperationParts {
     pub create: CreateBoardTask,
     pub update: UpdateDraftTask,
     pub change: ChangeBoardTask,
+    pub propose_plan: ProposePlan,
+    pub edit_plan: EditPlan,
     pub clear: ClearSetAside,
     pub complete: Result<CompleteMergedTask, NoPullRequestHost>,
 }

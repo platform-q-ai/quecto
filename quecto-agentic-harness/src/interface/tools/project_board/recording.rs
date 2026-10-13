@@ -81,6 +81,9 @@ impl BoardCall {
                 listing: None,
                 plans: None,
                 runs: None,
+                plan_version: None,
+                items: None,
+                roles: None,
                 status_from: None,
                 status_to: None,
                 claim: None,
@@ -203,7 +206,7 @@ impl BoardCall {
                 }
                 BoardOutcome::Shown(shown, _) => Some(&shown.head),
                 BoardOutcome::Listing(listing) => Some(&listing.head),
-                BoardOutcome::Changed { .. } => None,
+                BoardOutcome::Changed { .. } | BoardOutcome::Planned(_) => None,
             };
             record.outcome = OpOutcome::Ok;
             record.head = head.and_then(|head| CommitId::parse(&head.0).ok());

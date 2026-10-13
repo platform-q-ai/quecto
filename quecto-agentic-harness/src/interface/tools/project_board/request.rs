@@ -125,6 +125,15 @@ pub enum Kind {
     Pr,
     /// Where a page reads on from: a character or an item, from 0.
     Offset,
+    /// A plan's version, from 1.
+    Version,
+    /// A plan's task items: `[{"id", "title", "criteria", "depends_on"}]`,
+    /// as `show` gives them.
+    PlanItems,
+    /// A plan's team, as `show` gives it: `{"roles": [{"name", "model",
+    /// "effort", "members", "turns"}], "budget_tokens", "deadline",
+    /// "image"}`, or `null` for none.
+    Team,
     /// A board file's path, as a listing's `quarantined` shows it.
     Path,
     /// A git object name, as a listing's `quarantined` shows it.
@@ -210,6 +219,26 @@ pub const OPS: &[(&str, &[Field])] = &[
     ("link_pr", &[TASK, required("pr", Kind::Pr)]),
     ("unlink_pr", &[TASK, required("pr", Kind::Pr)]),
     ("complete", &[TASK]),
+    (
+        "propose_plan",
+        &[
+            TASK,
+            required("approach", Kind::Text),
+            required("items", Kind::PlanItems),
+            optional("team", Kind::Team),
+        ],
+    ),
+    (
+        "edit_plan",
+        &[
+            TASK,
+            required("version", Kind::Version),
+            optional("approach", Kind::Text),
+            optional("items", Kind::PlanItems),
+            optional("team", Kind::Team),
+            optional("expected_updated", Kind::Timestamp),
+        ],
+    ),
     (
         "clear_set_aside",
         &[
@@ -340,6 +369,13 @@ impl Read<'_> {
         value.as_str().and_then(parse).map(Some).ok_or_else(refused)
     }
 
+    /// A time as the board spells it, when given.
+    fn timestamp(&self, name: &str) -> Result<Option<Timestamp>, RequestError> {
+        self.value(name)
+            .map(|value| timestamp(name, value))
+            .transpose()
+    }
+
     /// An offset, or none when it is absent or `null`.
     fn offset(&self, name: &str) -> Result<Option<usize>, RequestError> {
         let value = match self.value(name) {
@@ -367,6 +403,20 @@ impl Read<'_> {
             .filter(|pr| *pr >= 1)
             .ok_or_else(refused)
     }
+}
+
+/// A time as the board spells it.
+fn timestamp(name: &str, value: &Value) -> Result<Timestamp, RequestError> {
+    value
+        .as_str()
+        .and_then(|text| Timestamp::parse(text).ok())
+        .ok_or_else(|| {
+            RequestError::of(
+                name,
+                "must be a time like 2026-10-10T08:00:00Z",
+                misfit(value.is_string()),
+            )
+        })
 }
 
 fn slug(name: &str, value: &Value) -> Result<Slug, RequestError> {
@@ -409,6 +459,8 @@ fn build(op: &str, read: &Read<'_>) -> Result<BoardRequest, RequestError> {
         "link_pr" => change(BoardOp::AddPr(read.pr()?)),
         "unlink_pr" => change(BoardOp::RemovePr(read.pr()?)),
         "complete" => Ok(BoardRequest::Complete(read.task()?)),
+        "propose_plan" => plans::propose_plan(read),
+        "edit_plan" => plans::edit_plan(read),
         "clear_set_aside" => clear(read),
         other => unreachable!("op {other} is in OPS but not built"),
     }
@@ -583,21 +635,7 @@ fn update_draft(read: &Read<'_>) -> Result<BoardRequest, RequestError> {
         Some(Value::Null) => Some(None),
         Some(value) => Some(Some(slug("parent", value)?)),
     };
-    let expected_updated = match read.value("expected_updated") {
-        None => None,
-        Some(value) => Some(
-            value
-                .as_str()
-                .and_then(|text| Timestamp::parse(text).ok())
-                .ok_or_else(|| {
-                    RequestError::of(
-                        "expected_updated",
-                        "must be a time like 2026-10-10T08:00:00Z",
-                        misfit(value.is_string()),
-                    )
-                })?,
-        ),
-    };
+    let expected_updated = read.timestamp("expected_updated")?;
     let update = DraftUpdate {
         id: read.task()?,
         title: read.text("title")?,
@@ -620,6 +658,9 @@ fn update_draft(read: &Read<'_>) -> Result<BoardRequest, RequestError> {
         )),
     }
 }
+
+#[path = "request_plans.rs"]
+mod plans;
 
 #[cfg(test)]
 #[path = "request_tests.rs"]

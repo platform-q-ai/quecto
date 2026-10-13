@@ -669,6 +669,10 @@ impl fmt::Display for ProjectBoardError {
 
 impl std::error::Error for ProjectBoardError {}
 
+#[path = "dto_plans.rs"]
+mod plans;
+pub use plans::{PlanEdit, PlanProposal};
+
 #[cfg(test)]
 #[path = "dto_tests.rs"]
 mod tests;

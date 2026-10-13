@@ -131,6 +131,8 @@ fn each_op_reads_its_own_fields() {
             "link_pr",
             "unlink_pr",
             "complete",
+            "propose_plan",
+            "edit_plan",
             "clear_set_aside"
         ],
         "no op is named plain ready; status changes are moves"
@@ -303,6 +305,17 @@ fn samples(kind: Kind) -> (Value, Value, Value) {
             json!({"tasks/b.md": {"drop": ["a".repeat(40)]}}),
             json!("tasks/a.md"),
         ),
+        Kind::Version => (json!(1), json!(2), json!(0)),
+        Kind::PlanItems => (
+            json!([{"id": "a", "title": "A"}]),
+            json!([{"id": "b", "title": "B"}]),
+            json!("a"),
+        ),
+        Kind::Team => (
+            json!({"roles": [{"name": "w", "model": "m", "effort": "low", "members": 1}]}),
+            Value::Null,
+            json!("w"),
+        ),
     }
 }
 
@@ -326,6 +339,13 @@ fn every_field_in_the_table_is_read_by_its_kind() {
                     "description"
                 };
                 object.insert(other.into(), json!("D"));
+            }
+            if *op == "edit_plan" {
+                let (other, value) = match except {
+                    "approach" => ("items", json!([])),
+                    _ => ("approach", json!("D")),
+                };
+                object.insert(other.into(), value);
             }
             object
         };
@@ -365,6 +385,9 @@ fn sample(kind: Kind) -> Value {
         Kind::Path => json!("p"),
         Kind::ObjectId => json!("0".repeat(40)),
         Kind::Repeated => json!({}),
+        Kind::Version => json!(1),
+        Kind::PlanItems => json!([]),
+        Kind::Team => Value::Null,
     }
 }
 
