@@ -129,10 +129,10 @@ fn request(
 ) -> Result<Value, RequestError> {
     let invalid = |field: &str, problem: &str, fault| RequestError::of(field, problem, fault);
     match (&line.input, &line.op) {
-        (Some(_), _) if !line.fields.is_empty() => Err(invalid(
+        (Some(_), _) if !line.fields.is_empty() => Err(RequestError::whole(
             "input",
             "is the whole request: give fields there, not as flags",
-            FaultKind::Unexpected,
+            FaultKind::InvalidValue,
         )),
         (Some(input), op) => {
             let text = match input.as_str() {

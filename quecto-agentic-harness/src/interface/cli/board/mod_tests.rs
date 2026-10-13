@@ -314,3 +314,20 @@ fn a_stray_flag_is_never_echoed_back() {
         )
     );
 }
+
+/// Epic #2481 T3 review round 1: `--input` with field flags beside it is
+/// the request as a whole given wrong, recorded as `request`.
+#[test]
+fn input_beside_field_flags_is_recorded_as_the_request() {
+    let error = built(&["create", "--input", "{}", "--title", "A"], "").unwrap_err();
+    assert_eq!(error.field, "input", "the answer is unchanged");
+    let fault = error.fault;
+    assert_eq!(
+        (
+            fault.field.as_str(),
+            fault.fault.as_str(),
+            fault.unexpected_count
+        ),
+        ("request", "invalid_value", None)
+    );
+}
