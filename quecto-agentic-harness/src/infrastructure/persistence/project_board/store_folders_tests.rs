@@ -574,62 +574,6 @@ fn a_name_that_shows_as_no_name_is_listed_as_one() {
     );
 }
 
-/// A partial clone that fetched the board without its trees and blobs
-/// (`--filter=tree:0`) fetches what the folders and the archive miss, in
-/// one call per tree level, then reads every kind and carries the archive.
-#[test]
-fn a_partial_clone_reads_every_folder_and_carries_the_archive() {
-    let repos = fresh();
-    let remote = repos.remote();
-    for (key, value) in [
-        ("uploadpack.allowFilter", "true"),
-        ("uploadpack.allowAnySHA1InWant", "true"),
-    ] {
-        sh(&remote, &["config", key, value]);
-    }
-    let head = board_of(&repos, |repo| {
-        let mut rows = every_kind();
-        let old = vec![("100644", "old.txt".into(), blob_in(repo, b"anything"))];
-        rows.push(("40000", "archive", Node::Made(old)));
-        rows
-    });
-    let url = format!("file://{}", remote.display());
-    sh(
-        repos.dir.path(),
-        &[
-            "clone",
-            "-q",
-            "--filter=tree:0",
-            "--no-single-branch",
-            &url,
-            "carol",
-        ],
-    );
-    let carol = repos.dir.path().join("carol");
-    let tree = format!("{}^{{tree}}", head.0);
-    let held = Command::new("git")
-        .current_dir(&carol)
-        .args(["cat-file", "-e", &tree])
-        .env_clear()
-        .env("PATH", std::env::var_os("PATH").unwrap())
-        .envs([
-            ("HOME", carol.as_os_str()),
-            ("GIT_CONFIG_GLOBAL", "/dev/null".as_ref()),
-            ("GIT_CONFIG_NOSYSTEM", "1".as_ref()),
-            ("GIT_NO_LAZY_FETCH", "1".as_ref()),
-        ])
-        .stderr(std::process::Stdio::null())
-        .status()
-        .unwrap();
-    assert!(!held.success(), "the clone holds no tree of the board yet");
-    let partial = store(&carol);
-    let board = partial.read().unwrap();
-    assert_eq!(board.reviews, [review("a", 1)]);
-    assert_eq!(board.discussions, [discussion("d")]);
-    let moved = written(partial.write_tasks(&head, &[task("b")], "board: add b"));
-    assert_eq!(at(&remote, &moved, ARCHIVE), at(&remote, &head, ARCHIVE));
-}
-
 #[path = "store_folders_bounds_tests.rs"]
 mod bounds;
 #[path = "store_folder_writes_tests.rs"]

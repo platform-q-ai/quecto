@@ -122,7 +122,7 @@ impl Board {
         let read = self.folders.get(name);
         // A folder with a name listed twice is refused before any write.
         assert!(
-            read.is_none_or(|tree| tree.repeated.is_none()),
+            read.is_none_or(|tree| tree.repeated.is_empty()),
             "no write leaves a folder with a name listed twice"
         );
         let after = match (read, mine.is_empty()) {
@@ -153,7 +153,8 @@ impl Board {
         let path = FOLDERS
             .iter()
             .filter_map(|folder| self.folders.get(folder.naming.folder))
-            .find_map(|tree| tree.repeated.as_ref())?;
+            .find_map(|tree| tree.repeated.first())
+            .map(|(name, _)| name)?;
         // No quecto writes over such a board, so moving back undoes hand
         // edits alone; the refusal says so.
         Some(format!(
@@ -161,6 +162,11 @@ impl Board {
              not even a clear, while a name outside {TASKS} is: to write the board again, \
              {RECOVERY} (which undoes any hand edit after it too)"
         ))
+    }
+
+    /// Red stub (#2481 S10b).
+    pub fn folder_repeated_refusal(&self, _head: &str, _written: &[FolderFile]) -> Option<String> {
+        self.folders_repeated_refusal()
     }
 
     /// The archive's root entry, carried as it was read, if the board has

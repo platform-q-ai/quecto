@@ -1,8 +1,8 @@
 //! Writing the board's other folders (#2481 S10a): each artifact lands as
 //! its kind's file under the name a read spells, every other file is
 //! carried by its object, a folder a write leaves as it was is carried as
-//! its very tree, and what a write cannot yet do safely waits for a clear
-//! across folders (S10b).
+//! its very tree, and a write into a folder with a name listed twice waits
+//! for the clear that resolves it (S10b).
 use super::*;
 use crate::application::project_board::ports::BoardArtifact;
 use crate::infrastructure::persistence::project_board::artifacts::file_of;
@@ -147,12 +147,13 @@ fn a_write_beside_a_file_set_aside_carries_it_and_drops_strays() {
     assert!(reason(&board, "plans/a.2.md").ends_with("not plan 2 of task a"));
 }
 
-/// While a name outside `tasks/` is listed twice, nothing is written or
-/// cleared, and the refusal says that moving the board back undoes no
-/// write of quecto's. A clear of one file set aside in a folder removes it
-/// alone; a clear in `tasks/` drops strays outside it, as a write does.
+/// While a name outside `tasks/` is listed twice, a write elsewhere lands
+/// (`store_folder_repeats_tests`), and a clear that leaves the name
+/// unresolved is refused, naming it. A clear of one file set aside in a
+/// folder removes it alone; a clear in `tasks/` drops strays outside it, as
+/// a write does.
 #[test]
-fn a_clear_in_a_folder_removes_its_file_unless_a_name_is_listed_twice() {
+fn a_clear_in_a_folder_removes_its_file_unless_a_name_is_left_listed_twice() {
     let repos = fresh();
     let one = bytes::<RunCodec>(&run("a", 1));
     let head = board_of(&repos, |_| {
@@ -173,13 +174,6 @@ fn a_clear_in_a_folder_removes_its_file_unless_a_name_is_listed_twice() {
         ]
     });
     let bob = store(&repos.bob);
-    let held = |result: Result<BoardWrite, BoardStoreError>| {
-        assert!(
-            matches!(&result, Err(BoardStoreError::FolderSetAside(why)) if why.starts_with("runs/a.1.md is named more than once") && why.contains("this quecto writes nothing over such a board")),
-            "{result:?}"
-        );
-    };
-    held(bob.write_tasks(&head, &[task("b")], "board: add b"));
     let junk = bob.read().unwrap().quarantined[2].clone();
     assert_eq!(junk.path, "tasks/junk.md");
     let clear = SetAsideClear {
@@ -187,7 +181,11 @@ fn a_clear_in_a_folder_removes_its_file_unless_a_name_is_listed_twice() {
         object: junk.object.clone(),
         repeated: BTreeMap::new(),
     };
-    held(bob.clear_set_aside(&head, &clear, "board: clear junk"));
+    let held = bob.clear_set_aside(&head, &clear, "board: clear junk");
+    assert!(
+        matches!(&held, Ok(BoardWrite::Refused(why)) if why.contains("every name listed more than once is resolved in the same clear") && why.contains("runs/a.1.md")),
+        "{held:?}"
+    );
     assert_eq!(sh(&repos.remote(), &["rev-parse", BOARD_REF]), head.0);
     let head = board_of(&repos, |_| {
         vec![
@@ -339,3 +337,7 @@ fn a_write_replaces_a_keyed_file_the_next_write_drops() {
 
 #[path = "store_folder_clears_tests.rs"]
 mod clears;
+#[path = "store_partial_tests.rs"]
+mod partial;
+#[path = "store_folder_repeats_tests.rs"]
+mod repeats;

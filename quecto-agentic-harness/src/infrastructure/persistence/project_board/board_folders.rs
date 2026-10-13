@@ -17,8 +17,8 @@
 //! next write does with a file, as one in `tasks/` does.
 use super::entries::{Disposition, Naming, TaskFile, disposition};
 use super::{
-    Board, Entry, Limits, REGULAR_FILE, Unread, capped, contents, entry_path, kind_of_mode, listed,
-    looked_up, missing, objects, sanitised, too_large,
+    Board, Entry, Limits, REGULAR_FILE, TreeCopy, Unread, capped, contents, entry_path,
+    kind_of_mode, listed, looked_up, missing, objects, sanitised, too_large,
 };
 use crate::application::project_board::ports::{
     ArtifactKey, BoardArtifact, BoardHead, BoardSnapshot, QuarantinedFile,
@@ -167,10 +167,11 @@ pub struct CarriedTree {
     pub files: BTreeMap<String, String>,
     /// The bytes of each file a read reads, by name: some of `files`.
     pub sizes: BTreeMap<String, usize>,
-    /// A name listed more than once among the copies a write carries, as
-    /// its path shows: a write would carry them all (a tree git rejects)
-    /// or choose one, so none is made until a clear resolves it.
-    pub repeated: Option<String>,
+    /// Names listed more than once among the copies a write carries, each
+    /// with every copy: a tree git rejects (`Board::repeated`), so a write
+    /// into the folder waits until a clear resolves them, and any other
+    /// write carries the folder as its very tree, making no tree of them.
+    pub repeated: Vec<(String, Vec<TreeCopy>)>,
 }
 
 impl CarriedTree {
@@ -308,14 +309,25 @@ pub(super) fn scan_folder(
     }
     // Only names a write would carry, as in `tasks/`: a stray is dropped,
     // however often it is named.
-    let repeated = entries
-        .iter()
-        .find(|entry| {
-            let twice = counts.get(entry.raw.as_slice()).copied().unwrap_or(0) > 1;
-            let named = entry.kept_name(folder.naming.max_name) && entry.name.ends_with(".md");
-            named && twice && entry.carried(&kinds)
-        })
-        .map(|entry| entry_path(name, &entry.raw, &entry.oid));
+    let mut repeated: BTreeMap<String, Vec<TreeCopy>> = BTreeMap::new();
+    for entry in &entries {
+        let twice = counts.get(entry.raw.as_slice()).copied().unwrap_or(0) > 1;
+        let named = entry.kept_name(folder.naming.max_name) && entry.name.ends_with(".md");
+        // A twin a write drops (a gitlink, a mode over another type) is
+        // no copy.
+        let copy = named && twice && entry.carried(&kinds);
+        if let (true, Some(super::Found::Present(object))) = (copy, kinds.get(&entry.oid)) {
+            repeated
+                .entry(entry.name.clone())
+                .or_default()
+                .push(TreeCopy {
+                    mode: entry.mode.clone(),
+                    kind: object.kind.clone(),
+                    oid: entry.oid.clone(),
+                    size: object.size,
+                });
+        }
+    }
     let bytes: usize = to_read.iter().map(|(_, _, size)| size).sum();
     if bytes > folder.max_bytes {
         return Err(too_large(format!(
@@ -329,7 +341,7 @@ pub(super) fn scan_folder(
         bytes,
         files,
         sizes,
-        repeated,
+        repeated: repeated.into_iter().collect(),
     };
     Ok(FolderScan {
         folder,
