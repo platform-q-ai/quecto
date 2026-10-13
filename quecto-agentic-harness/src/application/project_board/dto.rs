@@ -299,6 +299,32 @@ impl ArtifactListing<Discussion> {
     }
 }
 
+/// An artifact besides a task that uses a task's id: a plan, run, change
+/// or review of the task by that id (by its number), or a discussion
+/// about it (by its own id). A task cannot be one, so an id in use is
+/// never said to be used by itself.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub enum IdUser {
+    Plan(u32),
+    Run(u32),
+    Change(u32),
+    Review(u32),
+    Discussion(Slug),
+}
+
+impl IdUser {
+    /// Its key on the board, for the task by the id `id`.
+    pub fn key(&self, id: &Slug) -> ArtifactKey {
+        match self {
+            Self::Plan(version) => ArtifactKey::Plan(id.clone(), *version),
+            Self::Run(number) => ArtifactKey::Run(id.clone(), *number),
+            Self::Change(number) => ArtifactKey::Change(id.clone(), *number),
+            Self::Review(change) => ArtifactKey::Review(id.clone(), *change),
+            Self::Discussion(discussion) => ArtifactKey::Discussion(discussion.clone()),
+        }
+    }
+}
+
 /// Why a board operation did nothing.
 /// Why the board's remote reports no pull requests.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -331,14 +357,15 @@ pub enum ProjectBoardError {
     NotFound(Slug),
     Exists(Slug),
     /// No task `id` is on the board, but the artifact `by` (a plan, run,
-    /// change or review of a task by that id, or a discussion about it)
-    /// already names it: a new task would take over what it says. While a
-    /// file that may name it is set aside (one of that task's, or any
-    /// discussion) a create is refused as set aside instead: creates are
-    /// rare, so it waits for the mend.
+    /// change or review of a task by that id, or a discussion about it:
+    /// never a task, which [`IdUser`] cannot hold) already names it: a new
+    /// task would take over what it says. While a file that may name it is
+    /// set aside (one of that task's, or any discussion) a create is
+    /// refused as set aside instead: creates are rare, so it waits for the
+    /// mend.
     IdInUse {
         id: Slug,
-        by: ArtifactKey,
+        by: IdUser,
     },
     /// This machine's clock could not tell the time.
     Clock(BoardClockError),
@@ -458,17 +485,15 @@ impl fmt::Display for ProjectBoardError {
             Self::Exists(id) => write!(f, "task {} already exists", id.as_str()),
             // Owner-approved wording (#2481 S7).
             Self::IdInUse { id, by } => {
-                let id = id.as_str();
-                write!(f, "no task {id} is on the board, but ")?;
+                let name = id.as_str();
+                write!(f, "no task {name} is on the board, but ")?;
                 match by {
-                    ArtifactKey::Discussion(discussion) => {
-                        write!(f, "discussion {} is about {id}", discussion.as_str())?;
+                    IdUser::Discussion(discussion) => {
+                        write!(f, "discussion {} is about {name}", discussion.as_str())?;
                     }
-                    ArtifactKey::Task(_)
-                    | ArtifactKey::Plan(..)
-                    | ArtifactKey::Run(..)
-                    | ArtifactKey::Change(..)
-                    | ArtifactKey::Review(..) => write!(f, "{by} is still there")?,
+                    IdUser::Plan(_) | IdUser::Run(_) | IdUser::Change(_) | IdUser::Review(_) => {
+                        write!(f, "{} is still there", by.key(id))?;
+                    }
                 }
                 write!(f, " and uses that id; choose another id")
             }

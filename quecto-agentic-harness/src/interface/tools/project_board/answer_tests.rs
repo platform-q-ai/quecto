@@ -97,7 +97,7 @@ board_errors! {
     E::Exists(_) => E::Exists(slug("a")),
     E::IdInUse { .. } => E::IdInUse {
         id: slug("a"),
-        by: ArtifactKey::Run(slug("a"), 1),
+        by: crate::application::project_board::dto::IdUser::Run(1),
     },
     E::Clock(BoardClockError::OutOfRange(_)) => {
         E::Clock(BoardClockError::OutOfRange("1969".into()))

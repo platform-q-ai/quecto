@@ -701,3 +701,24 @@ fn a_move_reads_only_what_can_hold_it() {
         })
     );
 }
+
+/// For every move the table allows, a run going refuses it exactly when
+/// [`move_reads`] says the move reads the runs: what is read and what
+/// holds the task are one rule.
+#[test]
+fn a_run_going_holds_exactly_the_moves_that_read_runs() {
+    let ada = person("Ada");
+    let now = at("10:00:00");
+    let running = crate::domain::project_board::services::fixtures_tests::open_run(1, 1);
+    for (from, to, _, _) in TRANSITIONS {
+        let held = without_prs(task(*from));
+        let reads = move_reads(&held, *to, &ada, &now).unwrap();
+        let moved = move_task(&held, *to, &ada, std::slice::from_ref(&running), &[], &now);
+        assert_eq!(
+            moved == Err(BoardRuleError::RunOpen(1)),
+            reads.runs,
+            "{from:?} -> {to:?}: {moved:?}"
+        );
+        assert_eq!(reads.runs, super::super::runs::holds_moves_to(*to));
+    }
+}

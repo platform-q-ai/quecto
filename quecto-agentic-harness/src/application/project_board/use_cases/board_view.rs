@@ -11,7 +11,7 @@
 //! view finds more than once (a store that broke its contract of one
 //! artifact per key) is refused as [`ProjectBoardError::Duplicate`], never
 //! a panic.
-use crate::application::project_board::dto::{ProjectBoardError, once};
+use crate::application::project_board::dto::{IdUser, ProjectBoardError, once};
 use crate::application::project_board::ports::{ArtifactKey, BoardSnapshot, QuarantinedFile};
 use crate::domain::project_board::entities::change::Change;
 use crate::domain::project_board::entities::plan::Plan;
@@ -119,7 +119,7 @@ pub fn review_of<'b>(
 /// file may name it too, and a set-aside discussion's task is unknown.
 /// Creates are rare, so waiting for such a file to be mended costs little,
 /// where reusing an id would join the new task to what an old one left.
-pub fn naming(board: &BoardSnapshot, id: &Slug) -> Result<Option<ArtifactKey>, ProjectBoardError> {
+pub fn naming(board: &BoardSnapshot, id: &Slug) -> Result<Option<IdUser>, ProjectBoardError> {
     clear_of(board, |key| match key {
         ArtifactKey::Plan(task, _)
         | ArtifactKey::Run(task, _)
@@ -136,13 +136,22 @@ pub fn naming(board: &BoardSnapshot, id: &Slug) -> Result<Option<ArtifactKey>, P
         .iter()
         .filter(|review| review.fields().task == *id);
     let discussions = artifacts_of::discussions_of(&board.discussions, id);
+    // The store's order is its own (reviews come unsorted): the least.
     let named = plans
         .into_iter()
-        .map(ArtifactKey::of_plan)
-        .chain(runs.into_iter().map(ArtifactKey::of_run))
-        .chain(changes.into_iter().map(ArtifactKey::of_change))
-        .chain(reviews.map(ArtifactKey::of_review))
-        .chain(discussions.into_iter().map(ArtifactKey::of_discussion))
+        .map(|plan| IdUser::Plan(plan.fields().version))
+        .chain(runs.into_iter().map(|run| IdUser::Run(run.fields().number)))
+        .chain(
+            changes
+                .into_iter()
+                .map(|change| IdUser::Change(change.fields().number)),
+        )
+        .chain(reviews.map(|review| IdUser::Review(review.fields().change)))
+        .chain(
+            discussions
+                .into_iter()
+                .map(|discussion| IdUser::Discussion(discussion.fields().id.clone())),
+        )
         .min();
     Ok(named)
 }

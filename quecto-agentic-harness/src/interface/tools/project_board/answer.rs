@@ -450,7 +450,7 @@ fn error_fields(error: &ProjectBoardError) -> (ErrorCode, Map<String, Value>) {
             C::IdInUse,
             fields([
                 ("task", slug_json(id)),
-                ("by", Value::Object(key_fields(by))),
+                ("by", Value::Object(key_fields(&by.key(id)))),
             ]),
         ),
         E::Clock(BoardClockError::OutOfRange(read)) => {

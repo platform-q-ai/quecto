@@ -130,12 +130,26 @@ pub fn end_lost(
 ///
 /// # Errors
 /// A run of another task, or runs that contradict each other; a run
-/// still going while `to` is not a held status.
+/// still going while `to` is a status it holds the task back from
+/// ([`holds_moves_to`]).
 pub fn may_move_with(task: &Task, runs: &[Run], to: TaskStatus) -> Result<(), BoardRuleError> {
     let open = open_of(task, runs)?;
-    match (open, to.may_hold_claim()) {
-        (None, _) | (Some(_), true) => Ok(()),
-        (Some(run), false) => Err(BoardRuleError::RunOpen(run.fields().number)),
+    match (open, holds_moves_to(to)) {
+        (None, _) | (Some(_), false) => Ok(()),
+        (Some(run), true) => Err(BoardRuleError::RunOpen(run.fields().number)),
+    }
+}
+
+/// Whether a run going holds its task back from moving to `to`: the
+/// statuses that hold no claim (draft, ready, done, archived), which a
+/// task leaves its holder for. The one rule a move's reads
+/// (`transitions::move_reads`) and [`may_move_with`] share.
+pub fn holds_moves_to(to: TaskStatus) -> bool {
+    match to {
+        TaskStatus::Draft | TaskStatus::Ready | TaskStatus::Done | TaskStatus::Archived => true,
+        TaskStatus::Claimed | TaskStatus::InProgress | TaskStatus::Review | TaskStatus::Blocked => {
+            false
+        }
     }
 }
 

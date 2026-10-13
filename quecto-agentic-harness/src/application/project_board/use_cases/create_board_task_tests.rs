@@ -1,5 +1,7 @@
 use super::CreateBoardTask;
-use crate::application::project_board::dto::{NewBoardTask, NewBoardTaskStatus, ProjectBoardError};
+use crate::application::project_board::dto::{
+    IdUser, NewBoardTask, NewBoardTaskStatus, ProjectBoardError,
+};
 use crate::application::project_board::ports::{
     ArtifactKey, BoardArtifact, BoardStoreError, ProjectBoardStore,
 };
@@ -467,6 +469,7 @@ fn board_text_is_normalised_before_the_schema_reads_it() {
 /// An id the board's other artifacts already name (a plan, run, change or
 /// review of a task by that id, or a discussion about it) is refused,
 /// naming the least of them: a new task would take over what they say.
+/// Each kind alone names it.
 #[test]
 fn an_id_other_artifacts_name_is_refused() {
     let about_x = Discussion::new(DiscussionFields {
@@ -476,16 +479,24 @@ fn an_id_other_artifacts_name_is_refused() {
     .unwrap();
     for (artifacts, least) in [
         (
+            vec![BoardArtifact::Plan(board_artifacts::plan("x", 5))],
+            IdUser::Plan(5),
+        ),
+        (
             vec![BoardArtifact::Run(board_artifacts::run("x", 1))],
-            ArtifactKey::Run(slug("x"), 1),
+            IdUser::Run(1),
         ),
         (
             vec![BoardArtifact::Change(board_artifacts::change("x", 4))],
-            ArtifactKey::Change(slug("x"), 4),
+            IdUser::Change(4),
+        ),
+        (
+            vec![BoardArtifact::Review(board_artifacts::review("x", 3))],
+            IdUser::Review(3),
         ),
         (
             vec![BoardArtifact::Discussion(about_x)],
-            ArtifactKey::Discussion(slug("chat")),
+            IdUser::Discussion(slug("chat")),
         ),
         (
             vec![
@@ -493,7 +504,7 @@ fn an_id_other_artifacts_name_is_refused() {
                 BoardArtifact::Plan(board_artifacts::plan("x", 3)),
                 BoardArtifact::Plan(board_artifacts::plan("x", 2)),
             ],
-            ArtifactKey::Plan(slug("x"), 2),
+            IdUser::Plan(2),
         ),
     ] {
         let store = board();
@@ -512,7 +523,7 @@ fn an_id_other_artifacts_name_is_refused() {
             create(&store, SetClock::at("10:00:00"))
                 .execute(&new_task("y"))
                 .is_ok(),
-            "{least} names x alone"
+            "{least:?} names x alone"
         );
     }
 }
@@ -523,11 +534,14 @@ fn an_id_other_artifacts_name_is_refused() {
 #[test]
 fn a_create_waits_while_a_file_that_may_name_its_id_is_set_aside() {
     for (key, path) in [
+        (ArtifactKey::Plan(slug("x"), 2), "plans/x.2.md"),
         (ArtifactKey::Run(slug("x"), 1), "runs/x.1.md"),
+        (ArtifactKey::Change(slug("x"), 3), "changes/x.3.md"),
+        (ArtifactKey::Review(slug("x"), 4), "reviews/x.4.md"),
         (ArtifactKey::Discussion(slug("chat")), "discussions/chat.md"),
     ] {
         let store = board();
-        store.quarantine_key(ArtifactKey::Run(slug("y"), 1), "runs/y.1.md", "malformed");
+        store.quarantine_key(ArtifactKey::Plan(slug("y"), 1), "plans/y.1.md", "malformed");
         assert!(
             create(&store, SetClock::at("10:00:00"))
                 .execute(&new_task("w"))

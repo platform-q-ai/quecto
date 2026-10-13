@@ -8,7 +8,7 @@ use super::super::value_objects::timestamp::Timestamp;
 use super::super::value_objects::vocabulary::Resolution;
 use super::super::value_objects::vocabulary::TaskStatus::{self, *};
 use super::claims::{held_by, held_live_by, is_live, new_claim, settle, stamp};
-use super::runs::{lost_at, may_move_with, open_of};
+use super::runs::{holds_moves_to, lost_at, may_move_with, open_of};
 use std::collections::BTreeSet;
 
 /// Who may make a move.
@@ -68,8 +68,8 @@ pub struct MoveReads {
 
 /// What moving `task` to `to` by `actor` at `now` reads of the task's
 /// work, once the table, the actor and the task's own fields allow it: a
-/// move to a status that holds no claim reads the runs (a run going holds
-/// the task), review to done reads the changes (a change linked holds it),
+/// move a run going holds back ([`holds_moves_to`]) reads the runs,
+/// review to done reads the changes (a change linked holds it),
 /// any other reads nothing. A use case reads only these, so a move the
 /// rule refuses anyway is refused as such, and reads nothing.
 ///
@@ -84,7 +84,7 @@ pub fn move_reads(
     allowed(task, to, actor, now)?;
     let from = task.fields().status;
     Ok(MoveReads {
-        runs: !to.may_hold_claim(),
+        runs: holds_moves_to(to),
         changes: (from, to) == (Review, Done),
     })
 }
