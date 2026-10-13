@@ -160,7 +160,7 @@ Feature: Environments outlive sessions
     And the persistent runtime should have killed an environment at least 1 time
     And the durable environment registry should record "C1" with status "stopped" created by "session-one"
     When I run quecto with arguments "container kill C1"
-    Then the exit code should be 1
+    Then the exit code should be 4
     And stderr should contain "environment 'C1' is stopped"
 
   @done @issue-2024 @container-env

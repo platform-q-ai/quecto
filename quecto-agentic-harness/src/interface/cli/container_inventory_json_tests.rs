@@ -401,7 +401,15 @@ fn kill_created_by_is_parsed_strictly() {
         ),
         (
             vec!["container", "kill", "C1", "--created-by", "cli:pocket-7 "],
-            "--created-by: a creator key is 1-256 printable ASCII characters with no spaces",
+            "--created-by requires a key: a creator key is 1-256 printable ASCII characters with no spaces",
+        ),
+        (
+            vec!["container", "kill", "C1", "--force"],
+            "unknown argument --force",
+        ),
+        (
+            vec!["container", "kill", "--force"],
+            "unknown argument --force",
         ),
         (
             vec!["container", "kill", "tab-name", "--created-by", POCKET],
@@ -420,7 +428,7 @@ fn the_help_and_usage_name_the_machine_flags() {
     let help = run(&["help"], &CliContext::default());
     for needle in [
         "ls [--all] [--json]",
-        "kill <ref|name>",
+        "kill <ref|name>  End one environment (exit 4 when there is nothing to kill)",
         "kill <ref> --created-by <key>",
         "(exit 3, nothing killed, when another key created it; exit 4 when there is nothing to kill)",
     ] {
@@ -503,4 +511,29 @@ fn an_empty_name_lists_as_null() {
         .find(|row| row["ref"] == "C6")
         .expect("C6 listed");
     assert_eq!(six["name"], serde_json::Value::Null);
+}
+
+/// A name only stopped environments carry is nothing this command can
+/// end, as a stopped ref whose box left nothing is: both exit 4.
+#[test]
+fn a_stopped_name_is_nothing_to_kill_like_a_stopped_ref() {
+    let (dir, ctx, log) = fixture();
+    let store = FileEnvironmentRegistryStore::for_base_dir(&dir.path().join("base"));
+    let mut stopped = store
+        .load()
+        .unwrap()
+        .into_iter()
+        .find(|record| record.environment_ref == "C3")
+        .unwrap();
+    stopped.name = Some("old-box".into());
+    store.record(&stopped).unwrap();
+    let output = run(&["container", "kill", "old-box"], &ctx);
+    assert_eq!(output.exit_code, EXIT_NOTHING_TO_KILL, "{output:?}");
+    assert!(
+        output
+            .stderr
+            .contains("environment 'old-box' is stopped; nothing live has that name"),
+        "{output:?}"
+    );
+    assert!(!log.exists());
 }

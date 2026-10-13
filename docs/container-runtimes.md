@@ -584,9 +584,12 @@ What a new session can do with a restored environment:
   | Exit | Meaning |
   | --- | --- |
   | 0 | Killed (or a `stopped` environment's leftovers removed). |
-  | 1 | Usage error, unreadable registry, or the kill was refused or failed (members unsettled, kill script failed, liveness unknown, …). |
-  | 3 | `--created-by` only: the record was created by another key — `environment <ref> was created by <creator>, not <key>; nothing was killed` (`no session` for an empty creator). Nothing was asked, run or written. |
-  | 4 | Nothing to kill: an unknown ref (or name), a `stopped` record this command's own restore just forgot, or a `stopped` record whose script set retained no cleanup. With `--created-by` the creator is judged first, so another key's record answers 3, never 4. |
+  | 1 | Usage error (an unknown flag such as `--force` included), unreadable registry, or the kill was refused or failed (members unsettled, kill script failed, liveness unknown, …). |
+  | 3 | Nothing this command can end, because another key created it (`--created-by` only): `environment <ref> was created by <creator>, not <key>; nothing was killed` (`no session` for an empty creator). Nothing was asked, run or written. |
+  | 4 | Nothing this command can end, because nothing is there: an unknown ref or name, a name only `stopped` environments carry, a `stopped` record this command's own restore just forgot, or a `stopped` record whose script set retained no cleanup. With `--created-by` the creator is judged first, so another key's record answers 3, never 4. A state directory such a record left behind may still be collected by `quecto container gc`. |
+
+  Exit 4 applies to a plain `kill` as well (it was 1 before `--created-by`
+  existed).
 
   What protects against a ref reused between a listing and a kill: the
   kill command restores the registry from `environments.json` when it
@@ -606,7 +609,8 @@ What a new session can do with a restored environment:
 
   The Pocket relay ends a deleted task's environments this way: `ls --all
   --json`, then `kill <ref> --created-by cli:pocket-<task id>` for each
-  row carrying that key, treating 3 and 4 as "nothing of ours left".
+  row carrying that key, treating 3 and 4 as "nothing this command can
+  end".
 - **collect** — `quecto container gc [--dry-run] [--name <config>]
   [--abandoned | --abandoned-after <duration>]` removes **orphans**: environments whose container is exited or unknown
   to the runtime **and** that the registry either does not record or

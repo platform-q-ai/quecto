@@ -9,8 +9,6 @@
 
 use std::fmt;
 
-use super::environment_registry::ref_number;
-
 /// The longest name, in bytes.
 pub const MAX_ENVIRONMENT_NAME_BYTES: usize = 64;
 
@@ -26,8 +24,14 @@ pub fn is_safe_environment_name(name: &str) -> bool {
     let rest_admitted = bytes
         .iter()
         .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'));
-    let not_a_ref = ref_number(name).is_none();
-    length_admitted && first_admitted && rest_admitted && not_a_ref
+    length_admitted && first_admitted && rest_admitted && !is_ref_shaped(name)
+}
+
+/// `C` followed by one or more ASCII digits: what `kill <ref|name>` reads
+/// as a ref (judged by shape, so a number too large to parse counts too).
+fn is_ref_shaped(name: &str) -> bool {
+    name.strip_prefix('C')
+        .is_some_and(|digits| !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()))
 }
 
 /// A new environment's name: only a name [`is_safe_environment_name`]
@@ -66,7 +70,7 @@ pub struct UnsafeEnvironmentName;
 impl fmt::Display for UnsafeEnvironmentName {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(
-            "must be 1-64 characters, each a letter, digit, '-', '_' or '.', starting with a letter or digit, and not shaped like a ref (C followed by digits)",
+            "must be 1-64 characters, each an ASCII letter, digit, '-', '_' or '.', starting with an ASCII letter or digit, and not shaped like a ref (C followed by digits)",
         )
     }
 }

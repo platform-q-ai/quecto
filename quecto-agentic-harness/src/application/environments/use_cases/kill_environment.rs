@@ -159,16 +159,18 @@ impl fmt::Display for KillEnvironmentError {
 
 impl std::error::Error for KillEnvironmentError {}
 
-/// The kill's error for a failed lookup: an unknown target is nothing to
-/// kill; every other failure (ambiguous, stopped name, stale, unreadable)
-/// is a refusal.
+/// The kill's error for a failed lookup: an unknown target, or a name only
+/// stopped environments carry, is nothing to kill; every other failure
+/// (ambiguous, stale, unreadable) is a refusal.
 fn lookup_refused(error: EnvironmentLookupError) -> KillEnvironmentError {
     match error {
         EnvironmentLookupError::Unknown(_) => {
             KillEnvironmentError::NothingToKill(error.to_string())
         }
+        EnvironmentLookupError::Stopped(_) => KillEnvironmentError::NothingToKill(format!(
+            "{error}; nothing live has that name (`quecto container ls --all` lists its ref)"
+        )),
         EnvironmentLookupError::Ambiguous(_)
-        | EnvironmentLookupError::Stopped(_)
         | EnvironmentLookupError::Stale(_)
         | EnvironmentLookupError::Unreadable(_) => KillEnvironmentError::Refused(error.to_string()),
     }

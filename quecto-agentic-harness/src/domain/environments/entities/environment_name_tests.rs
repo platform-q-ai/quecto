@@ -48,7 +48,8 @@ fn a_name_is_one_to_sixty_four_bytes() {
 /// kill <ref|name>`: refused. Only `C` followed by digits is a ref.
 #[test]
 fn a_ref_shaped_name_is_refused() {
-    for name in ["C7", "C07", "C0", "C123456"] {
+    // Judged by shape, so a number too large to parse is a ref too.
+    for name in ["C7", "C07", "C0", "C123456", "C99999999999999999999"] {
         assert!(!is_safe_environment_name(name), "{name}");
     }
     for name in ["c7", "C7a", "C", "C-7", "CC7", "7C"] {
@@ -71,6 +72,6 @@ fn an_environment_name_is_built_only_from_a_safe_name() {
 fn the_refusal_states_the_rule() {
     assert_eq!(
         UnsafeEnvironmentName.to_string(),
-        "must be 1-64 characters, each a letter, digit, '-', '_' or '.', starting with a letter or digit, and not shaped like a ref (C followed by digits)"
+        "must be 1-64 characters, each an ASCII letter, digit, '-', '_' or '.', starting with an ASCII letter or digit, and not shaped like a ref (C followed by digits)"
     );
 }

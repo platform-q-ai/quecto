@@ -122,7 +122,7 @@ fn a_swarm_member_cannot_launch_a_coordinator() {
 
 /// The refusal names the field and states the domain's rule (pending owner
 /// approval).
-const UNSAFE_NAME_REFUSAL: &str = "container.name must be 1-64 characters, each a letter, digit, '-', '_' or '.', starting with a letter or digit, and not shaped like a ref (C followed by digits)";
+const UNSAFE_NAME_REFUSAL: &str = "container.name must be 1-64 characters, each an ASCII letter, digit, '-', '_' or '.', starting with an ASCII letter or digit, and not shaped like a ref (C followed by digits)";
 
 /// A new environment's name must be safe to show in `quecto container ls`
 /// and to address with `kill <ref|name>`: letters, digits, `-`, `_`, `.`,
@@ -138,6 +138,7 @@ fn a_new_container_name_outside_the_allowlist_is_refused() {
         "a/b",
         "C7",
         "C07",
+        "C99999999999999999999",
         &"a".repeat(65),
     ] {
         let err = parse_container_selection(&json!({"container":{"mode":"new","name":name}}))

@@ -371,13 +371,16 @@ fn parse_kill(args: &[String]) -> Result<KillRequest, String> {
             "--created-by" => {
                 let key = rest
                     .next()
-                    .filter(|key| !key.is_empty())
                     .ok_or_else(|| format!("--created-by requires a key\n{USAGE}"))?;
-                let key = CreatorKey::try_from(key.clone())
-                    .map_err(|invalid| format!("--created-by: {invalid}\n{USAGE}"))?;
+                let key = CreatorKey::try_from(key.clone()).map_err(|invalid| {
+                    format!("--created-by requires a key: {invalid}\n{USAGE}")
+                })?;
                 if created_by.replace(key).is_some() {
                     return Err(format!("--created-by may be given once\n{USAGE}"));
                 }
+            }
+            target if target.starts_with('-') => {
+                return Err(format!("unknown argument {target}\n{USAGE}"));
             }
             _ => targets.push(arg),
         }
