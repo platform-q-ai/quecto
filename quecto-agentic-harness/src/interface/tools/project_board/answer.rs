@@ -587,6 +587,7 @@ pub fn rule_code(rule: &BoardRuleError) -> &'static str {
         R::PlanAhead { .. } => "plan_ahead",
         R::RunsInconsistent(..) => "runs_inconsistent",
         R::PlanNotAccepted(..) => "plan_not_accepted",
+        R::NoAcceptedPlan => "no_accepted_plan",
         R::ChangeAlreadyLinked { .. } => "change_already_linked",
         R::NoSuchChange(..) => "no_such_change",
         R::ChangeAhead { .. } => "change_ahead",
@@ -663,6 +664,7 @@ fn rule_fields(rule: &BoardRuleError) -> Map<String, Value> {
         }),
         R::RunsInconsistent(why) => object!({"reason": shown(why)}),
         R::PlanNotAccepted(version) => object!({"version": version}),
+        R::NoAcceptedPlan => Map::new(),
         R::ChangeAlreadyLinked { task, change } => {
             object!({"task": task.as_str(), "change": change})
         }

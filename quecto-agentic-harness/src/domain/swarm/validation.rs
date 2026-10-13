@@ -12,6 +12,12 @@ pub const CRITERIA_MAX_BYTES: usize = 16384;
 pub const CRITERION_ID_MAX_BYTES: usize = 128;
 /// `bounded`'s default maximum.
 pub const TEXT_MAX_BYTES: usize = 8192;
+/// The longest task title, in UTF-8 bytes (`Tasks.task_create`).
+pub const TITLE_MAX_BYTES: usize = 1024;
+/// The most members a run may hold, the coordinator included.
+pub const MEMBER_LIMIT_MAX: i64 = 25;
+/// How far ahead a run's deadline may be: seven days.
+pub const DEADLINE_HORIZON_SECONDS: f64 = 604_800.0;
 /// The most bytes a member id may take (`Workbench._admit`'s
 /// `bounded(member, 'member', 128)`): no longer id is ever a member's.
 pub const MEMBER_ID_MAX_BYTES: usize = 128;
