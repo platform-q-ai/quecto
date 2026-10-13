@@ -3,16 +3,17 @@
 //! who did. Its id, if it had one, is free again. A name listed more than
 //! once is cleared by naming the object to keep. As every change, it is a
 //! compare-and-swap, read again and retried when another writer moved the
-//! board first. It reads no clock: nothing it writes is stamped. Blocking:
-//! a lost write pauses the calling thread.
+//! board first. It reads no wall clock: nothing it writes is stamped; a
+//! noted clear times its pauses. Blocking: a lost write pauses the calling
+//! thread.
 use std::sync::Arc;
 
-use super::MAX_WRITE_ATTEMPTS;
-use super::board_change::checked_writer;
+use super::board_change::{Attempt, checked_writer, retried};
 use crate::application::project_board::dto::ProjectBoardError;
 use crate::application::project_board::ports::{
     BoardClock, BoardHead, BoardWrite, KeepCopy, ProjectBoardStore, QuarantinedFile, SetAsideClear,
 };
+use crate::application::project_board::telemetry::OpFacts;
 use std::collections::{BTreeMap, BTreeSet};
 
 pub struct ClearSetAside {
@@ -43,16 +44,27 @@ impl ClearSetAside {
         object: &str,
         repeated: &BTreeMap<String, KeepCopy>,
     ) -> Result<BoardHead, ProjectBoardError> {
+        self.execute_noted(path, object, repeated, None)
+    }
+
+    /// [`Self::execute`], noting in `facts` (epic #2481 T4), when given,
+    /// the write's attempts, lost races and pause.
+    ///
+    /// # Errors
+    /// As [`Self::execute`].
+    pub fn execute_noted(
+        &self,
+        path: &str,
+        object: &str,
+        repeated: &BTreeMap<String, KeepCopy>,
+        facts: Option<&mut OpFacts>,
+    ) -> Result<BoardHead, ProjectBoardError> {
         let clear = SetAsideClear {
             path: path.to_string(),
             object: object.to_string(),
             repeated: repeated.clone(),
         };
-
-        for attempt in 1..=MAX_WRITE_ATTEMPTS {
-            if attempt > 1 {
-                self.clock.pause(attempt);
-            }
+        retried(&*self.clock, facts, || {
             let board = self.store.read()?;
             // The path is one the board set aside: the store's own list is
             // the check, and the store owns what a name may be.
@@ -72,14 +84,11 @@ impl ClearSetAside {
             match self.store.clear_set_aside(&board.head, &clear, &message)? {
                 BoardWrite::Written(head) => {
                     assert_ne!(head, board.head, "a clear the board holds moves its head");
-                    return Ok(head);
+                    Ok(Attempt::Done(head))
                 }
-                BoardWrite::Lost => continue,
-                BoardWrite::Refused(reason) => return Err(ProjectBoardError::Refused(reason)),
+                BoardWrite::Lost => Ok(Attempt::Lost),
+                BoardWrite::Refused(reason) => Err(ProjectBoardError::Refused(reason)),
             }
-        }
-        Err(ProjectBoardError::Contended {
-            attempts: MAX_WRITE_ATTEMPTS,
         })
     }
 }

@@ -430,3 +430,177 @@ fn a_call_dropped_unfinished_is_recorded_cancelled() {
         (OpKind::Show, &OpOutcome::Ok, true)
     );
 }
+
+/// Epic #2481 T4: a recorded call holds what the use cases saw, and a
+/// failed completion's error code as the answer spells it.
+#[test]
+fn a_call_records_what_its_use_case_saw() {
+    let board = board();
+    let lines = recorded(
+        &board,
+        &[
+            json!({"op": "create", "task": "a", "title": " A ", "status": "ready"}).to_string(),
+            json!({"op": "move", "task": "a", "to": "claimed"}).to_string(),
+            json!({"op": "link_pr", "task": "a", "pr": 7}).to_string(),
+        ],
+    );
+    // A create that gave no description tells none.
+    assert_eq!(lines[0]["normalised"], json!({"title": ["edge_space"]}));
+    assert_eq!(
+        (
+            lines[0]["status_to"].clone(),
+            lines[0]["attempts"].clone(),
+            lines[0]["lost"].clone()
+        ),
+        (json!("ready"), json!(1), json!(0))
+    );
+    assert_eq!(
+        (
+            lines[1]["status_from"].clone(),
+            lines[1]["status_to"].clone()
+        ),
+        (json!("ready"), json!("claimed"))
+    );
+    let linked = &lines[2];
+    assert_eq!(linked["claim"]["holder_is_writer"], json!(true), "{linked}");
+    assert_eq!(
+        (
+            linked["completion"].clone(),
+            linked["completion_code"].clone(),
+            linked["prs_linked"].clone()
+        ),
+        (json!("failed"), json!("no_pull_request_host"), json!(1)),
+        "{linked}"
+    );
+}
+
+/// A board clock that counts the reads of its monotonic time.
+#[derive(Default)]
+struct CountingClock {
+    clock: SystemBoardClock,
+    elapsed_reads: std::sync::atomic::AtomicUsize,
+}
+
+impl crate::application::project_board::ports::BoardClock for CountingClock {
+    fn now(
+        &self,
+    ) -> Result<
+        crate::domain::project_board::value_objects::timestamp::Timestamp,
+        crate::application::project_board::ports::BoardClockError,
+    > {
+        self.clock.now()
+    }
+
+    fn reference(
+        &self,
+    ) -> Option<crate::domain::project_board::value_objects::timestamp::Timestamp> {
+        None
+    }
+
+    fn reference_status(&self) -> crate::application::project_board::ports::ReferenceStatus {
+        crate::application::project_board::ports::ReferenceStatus::NoReference("counted".into())
+    }
+
+    fn pause(&self, _attempt: usize) {}
+
+    fn elapsed(&self) -> Duration {
+        self.elapsed_reads
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Duration::ZERO
+    }
+}
+
+/// Epic #2481 T4, owner condition: an unrecorded call notes nothing and
+/// times nothing, even through a write that lost a race; the same write
+/// recorded times its pause.
+#[test]
+fn an_unrecorded_write_reads_no_monotonic_time() {
+    let store = MemoryBoardStore::default();
+    store.bootstrap().unwrap();
+    let clock = Arc::new(CountingClock::default());
+    let operations = assembled(
+        Arc::new(store.client()),
+        clock.clone(),
+        Arc::new(QueryListings(QueryBoard::new(Arc::new(store.client())))),
+        Err(NoPullRequestHost::NotAPullRequestHost),
+    )
+    .unwrap();
+    let create = |task: &str, call: &mut BoardCall| {
+        let request = json!({"op": "create", "task": task, "title": "T", "status": "ready"});
+        let answer = run_recorded(&operations, &request.to_string(), call);
+        assert_eq!(answer["ok"], json!(true), "{answer}");
+    };
+    let lose_once = || {
+        store.before_next_write(|board| {
+            let read = board.read().unwrap();
+            board
+                .write_tasks(&read.head, &read.tasks, "another writer")
+                .unwrap();
+        });
+    };
+    let reads = || {
+        clock
+            .elapsed_reads
+            .load(std::sync::atomic::Ordering::SeqCst)
+    };
+    create("z", &mut BoardCall::unrecorded());
+    lose_once();
+    create("a", &mut BoardCall::unrecorded());
+    assert_eq!(store.writes(), 3, "two creates and the write each lost to");
+    assert_eq!(reads(), 0, "nothing timed while unrecorded");
+    let records = Arc::new(Records::default());
+    let mut call = BoardCall::start(Some(recording(&records)), FrontEnd::Cli, Client::Cli);
+    lose_once();
+    create("b", &mut call);
+    assert_eq!(reads(), 2, "the recorded write timed its one pause");
+}
+
+/// Review round 2: a completion a rule failed names the rule as well as
+/// its code, as the answer spells them.
+#[test]
+fn a_rule_failed_completion_records_its_rule() {
+    let board = board();
+    let created = json!({"op": "create", "task": "a", "title": "A", "status": "ready"});
+    run_recorded(&board, &created.to_string(), &mut BoardCall::unrecorded());
+    let BoardOutcome::Shown { task, .. } = board
+        .execute(&BoardRequest::Show(
+            crate::domain::project_board::value_objects::slug::Slug::parse("a").unwrap(),
+        ))
+        .unwrap()
+    else {
+        panic!("shown")
+    };
+    let records = Arc::new(Records::default());
+    let mut call = BoardCall::start(Some(recording(&records)), FrontEnd::Tool, Client::Agent);
+    call.named(Some("link_pr"));
+    let facts = crate::application::project_board::telemetry::OpFacts {
+        completion: Some(
+            crate::application::project_board::telemetry::completion_facts(
+                CompletionKind::Failed,
+                1,
+                None,
+            ),
+        ),
+        ..Default::default()
+    };
+    facts.fill(&mut call.open.as_mut().unwrap().record);
+    let failed = crate::application::project_board::operations::Completion::Failed(Box::new(
+        ProjectBoardError::Rule(BoardRuleError::NoPrs),
+    ));
+    let outcome = BoardOutcome::Changed {
+        task,
+        completion: Some(failed),
+    };
+    let answer = call.answer("link_pr", &outcome, None);
+    call.finish(&answer, false);
+    let line = serde_json::to_value(records.taken().remove(0)).unwrap();
+    assert_eq!(
+        (
+            line["completion"].clone(),
+            line["completion_code"].clone(),
+            line["completion_rule"].clone()
+        ),
+        (json!("failed"), json!("rule"), json!("no_prs")),
+        "{line}"
+    );
+}

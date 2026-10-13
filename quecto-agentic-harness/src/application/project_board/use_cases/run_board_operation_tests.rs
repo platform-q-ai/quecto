@@ -175,3 +175,287 @@ fn show_tells_a_task_set_aside_from_one_not_on_the_board() {
         ))
     );
 }
+
+/// Epic #2481 T4: what the use cases saw of a noted request.
+mod noted {
+    use super::*;
+    use crate::application::project_board::dto::DraftUpdate;
+    use crate::application::project_board::ports::ProjectBoardStore;
+    use crate::application::project_board::telemetry::OpFacts;
+    use crate::domain::project_board::value_objects::telemetry::{
+        ClaimFacts, CompletionFacts, CompletionKind, Normalised, TextChange,
+    };
+
+    fn noted(
+        ops: &RunBoardOperation,
+        request: &BoardRequest,
+    ) -> (Result<BoardOutcome, ProjectBoardError>, OpFacts) {
+        let mut facts = OpFacts::default();
+        let result = ops.execute_noted(request, Some(&mut facts));
+        (result, facts)
+    }
+
+    fn written_once(facts: OpFacts) -> OpFacts {
+        OpFacts {
+            attempts: Some(1),
+            lost: Some(0),
+            ..facts
+        }
+    }
+
+    #[test]
+    fn a_create_and_a_draft_edit_tell_what_the_normaliser_changed() {
+        let store = MemoryBoardStore::default();
+        let ops = operations(&store, SetClock::at("10:00:00"), no_host());
+        let (bootstrapped, facts) = noted(&ops, &BoardRequest::Bootstrap);
+        assert!(bootstrapped.is_ok());
+        assert_eq!(facts, OpFacts::default(), "a bootstrap writes no task");
+        let create = BoardRequest::Create(NewBoardTask {
+            title: "  A title".into(),
+            description: "Why.\r\nHow. ".into(),
+            status: NewBoardTaskStatus::Draft,
+            ..new_task("a")
+        });
+        let (created, facts) = noted(&ops, &create);
+        assert!(created.is_ok(), "{created:?}");
+        let normalised = Normalised {
+            title: Some(vec![TextChange::EdgeSpace]),
+            description: Some(vec![TextChange::Crlf, TextChange::TrailingSpace]),
+        };
+        let want = OpFacts {
+            status_to: Some(TaskStatus::Draft),
+            normalised: Some(normalised),
+            ..OpFacts::default()
+        };
+        assert_eq!(facts, written_once(want));
+        // A refused create wrote no task, so it tells no status.
+        let (taken, facts) = noted(&ops, &create);
+        assert_eq!(taken, Err(ProjectBoardError::Exists(slug("a"))));
+        assert_eq!((facts.status_to, facts.attempts), (None, Some(1)));
+        let edit = BoardRequest::UpdateDraft(DraftUpdate {
+            id: slug("a"),
+            title: None,
+            description: Some("Plain.".into()),
+            parent: None,
+            depends_on: None,
+            expected_updated: None,
+        });
+        let (edited, facts) = noted(&ops, &edit);
+        assert!(edited.is_ok(), "{edited:?}");
+        let want = OpFacts {
+            status_from: Some(TaskStatus::Draft),
+            status_to: Some(TaskStatus::Draft),
+            normalised: Some(Normalised {
+                title: None,
+                description: Some(vec![]),
+            }),
+            ..OpFacts::default()
+        };
+        assert_eq!(facts, written_once(want));
+        let untitled = BoardRequest::UpdateDraft(DraftUpdate {
+            id: slug("a"),
+            title: None,
+            description: None,
+            parent: Some(None),
+            depends_on: None,
+            expected_updated: None,
+        });
+        let (_, facts) = noted(&ops, &untitled);
+        assert_eq!(facts.normalised, None, "no text given, none told");
+    }
+
+    /// A link tells what came of completing its task, and `complete`
+    /// tells done or pending; neither names a failed one's code.
+    #[test]
+    fn a_link_and_a_complete_tell_what_came_of_completing_the_task() {
+        let store = MemoryBoardStore::default();
+        let host = MemoryPullRequests::default();
+        host.set(8, PullRequestState::Open);
+        let ops = operations(&store, SetClock::at("10:00:00"), Ok(Arc::new(host.clone())));
+        let a = slug("a");
+        for request in [
+            BoardRequest::Bootstrap,
+            ready_task("a"),
+            BoardRequest::Change(a.clone(), BoardOp::Move(TaskStatus::Claimed)),
+            BoardRequest::Change(a.clone(), BoardOp::Move(TaskStatus::InProgress)),
+        ] {
+            ops.execute(&request).unwrap();
+        }
+        let completion = |kind, prs_linked, prs_pending| CompletionFacts {
+            completion: kind,
+            completion_code: None,
+            completion_rule: None,
+            prs_linked,
+            prs_pending,
+            completion_attempts: None,
+            completion_lost: None,
+            completion_pause_ms: None,
+        };
+        // After a link, the completion's own write: one attempt, none lost.
+        let written_once_more = |facts: CompletionFacts| CompletionFacts {
+            completion_attempts: Some(1),
+            completion_lost: Some(0),
+            ..facts
+        };
+        let (_, linked) = noted(&ops, &BoardRequest::Change(a.clone(), BoardOp::AddPr(8)));
+        // Claimed at 10:00:01 (a stamp a second past the create), read at
+        // 10:00:00 by this set clock.
+        let claim = ClaimFacts {
+            held_s: -1,
+            left_s: 7201,
+            holder_is_writer: true,
+        };
+        let want = OpFacts {
+            status_from: Some(TaskStatus::InProgress),
+            status_to: Some(TaskStatus::InProgress),
+            claim: Some(claim),
+            completion: Some(written_once_more(completion(
+                CompletionKind::Pending,
+                1,
+                Some(1),
+            ))),
+            ..OpFacts::default()
+        };
+        assert_eq!(linked, written_once(want));
+        let (refused, pending) = noted(&ops, &BoardRequest::Complete(a.clone()));
+        assert!(refused.is_err());
+        let want = OpFacts {
+            status_from: Some(TaskStatus::InProgress),
+            completion: Some(completion(CompletionKind::Pending, 1, Some(1))),
+            ..OpFacts::default()
+        };
+        assert_eq!(pending, written_once(want));
+        host.set(9, PullRequestState::Unknown);
+        let (_, failed) = noted(&ops, &BoardRequest::Change(a.clone(), BoardOp::AddPr(9)));
+        let failed_completion = written_once_more(completion(CompletionKind::Failed, 2, None));
+        assert_eq!(failed.completion, Some(failed_completion));
+        host.set(8, PullRequestState::Merged);
+        host.set(9, PullRequestState::Merged);
+        let (done, facts) = noted(&ops, &BoardRequest::Complete(a));
+        assert!(done.is_ok(), "{done:?}");
+        let want = OpFacts {
+            status_from: Some(TaskStatus::InProgress),
+            status_to: Some(TaskStatus::Done),
+            completion: Some(completion(CompletionKind::Done, 2, None)),
+            ..OpFacts::default()
+        };
+        assert_eq!(facts.completion, want.completion);
+        assert_eq!(
+            (facts.status_from, facts.status_to, facts.attempts),
+            (want.status_from, want.status_to, Some(1))
+        );
+    }
+
+    /// The completion after a link counts its own write apart: here it
+    /// loses once to another writer, while the link's own write wins first
+    /// time.
+    #[test]
+    fn a_completion_counts_its_own_write_apart_from_the_change() {
+        let store = MemoryBoardStore::default();
+        let host = MemoryPullRequests::default();
+        host.set(8, PullRequestState::Merged);
+        let clock = SetClock::at("10:00:00");
+        let ops = operations(&store, clock.clone(), Ok(Arc::new(host)));
+        let a = slug("a");
+        for request in [
+            BoardRequest::Bootstrap,
+            ready_task("a"),
+            BoardRequest::Change(a.clone(), BoardOp::Move(TaskStatus::Claimed)),
+            BoardRequest::Change(a.clone(), BoardOp::Move(TaskStatus::InProgress)),
+        ] {
+            ops.execute(&request).unwrap();
+        }
+        *clock.tick.lock().unwrap() = std::time::Duration::from_millis(25);
+        // Armed at the link's write, so it moves the board before the
+        // completion's write is judged.
+        store.before_next_write(|board| {
+            board.before_next_write(|board| {
+                let read = board.read().unwrap();
+                board
+                    .write_tasks(&read.head, &read.tasks, "another writer")
+                    .unwrap();
+            });
+        });
+        let (linked, facts) = noted(&ops, &BoardRequest::Change(a, BoardOp::AddPr(8)));
+        let Ok(BoardOutcome::Changed {
+            completion: Some(Completion::Done(_)),
+            ..
+        }) = linked
+        else {
+            panic!("{linked:?}")
+        };
+        assert_eq!(
+            (facts.attempts, facts.lost, facts.pause_ms),
+            (Some(1), Some(0), None),
+            "the link's own write"
+        );
+        let completion = facts.completion.unwrap();
+        assert_eq!(
+            (
+                completion.completion,
+                completion.completion_attempts,
+                completion.completion_lost,
+                completion.completion_pause_ms
+            ),
+            (CompletionKind::Done, Some(2), Some(1), Some(25))
+        );
+    }
+
+    /// `complete` records only done or pending: a task the rule will not
+    /// complete records no completion.
+    #[test]
+    fn a_complete_refused_otherwise_tells_no_completion() {
+        let store = MemoryBoardStore::default();
+        let host = MemoryPullRequests::default();
+        let ops = operations(&store, SetClock::at("10:00:00"), Ok(Arc::new(host)));
+        ops.execute(&BoardRequest::Bootstrap).unwrap();
+        let draft = BoardRequest::Create(NewBoardTask {
+            status: NewBoardTaskStatus::Draft,
+            ..new_task("a")
+        });
+        ops.execute(&draft).unwrap();
+        let (refused, facts) = noted(&ops, &BoardRequest::Complete(slug("a")));
+        assert!(
+            matches!(
+                refused,
+                Err(ProjectBoardError::Rule(BoardRuleError::NotAllowed { .. }))
+            ),
+            "{refused:?}"
+        );
+        assert_eq!(facts.completion, None);
+        assert_eq!(facts.status_from, Some(TaskStatus::Draft));
+    }
+
+    /// A clear tells its attempts: here one lost to another writer.
+    #[test]
+    fn a_clear_tells_its_attempts() {
+        let store = MemoryBoardStore::default();
+        let clock = SetClock::at("10:00:00");
+        *clock.tick.lock().unwrap() = std::time::Duration::from_millis(30);
+        let ops = operations(&store, clock, no_host());
+        ops.execute(&BoardRequest::Bootstrap).unwrap();
+        ops.execute(&ready_task("z")).unwrap();
+        store.set_aside_path("notes.txt", "not a task file");
+        let object = store.read().unwrap().quarantined[0].object.clone();
+        store.before_next_write(|board| {
+            let read = board.read().unwrap();
+            board
+                .write_tasks(&read.head, &read.tasks, "another writer")
+                .unwrap();
+        });
+        let clear = BoardRequest::Clear {
+            path: "notes.txt".into(),
+            object,
+            repeated: Default::default(),
+        };
+        let (cleared, facts) = noted(&ops, &clear);
+        assert!(cleared.is_ok(), "{cleared:?}");
+        let want = OpFacts {
+            attempts: Some(2),
+            lost: Some(1),
+            pause_ms: Some(30),
+            ..OpFacts::default()
+        };
+        assert_eq!(facts, want);
+    }
+}

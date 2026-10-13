@@ -15,8 +15,10 @@ use crate::application::project_board::dto::{NewBoardTask, ProjectBoardError};
 use crate::application::project_board::ports::{
     BoardArtifact, BoardClock, BoardSnapshot, ProjectBoardStore,
 };
+use crate::application::project_board::telemetry::OpFacts;
 use crate::domain::project_board::entities::task::{Task, TaskFields};
 use crate::domain::project_board::value_objects::board_text;
+use crate::domain::project_board::value_objects::telemetry::Normalised;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
 use crate::domain::project_board::value_objects::vocabulary::TaskStatus;
 
@@ -46,14 +48,44 @@ impl CreateBoardTask {
     /// that id, or any discussion, is set aside; the clock's; or the
     /// store's.
     pub fn execute(&self, new: &NewBoardTask) -> Result<Task, ProjectBoardError> {
+        self.execute_noted(new, None)
+    }
+
+    /// [`Self::execute`], noting in `facts` (epic #2481 T4), when given,
+    /// the write's attempts, the status of the task it wrote, and what the
+    /// normaliser changed in its title and in its description, when one
+    /// was given.
+    ///
+    /// # Errors
+    /// As [`Self::execute`].
+    pub fn execute_noted(
+        &self,
+        new: &NewBoardTask,
+        mut facts: Option<&mut OpFacts>,
+    ) -> Result<Task, ProjectBoardError> {
+        if let Some(facts) = facts.as_deref_mut() {
+            facts.normalised = Some(Normalised {
+                title: Some(board_text::line_changes(&new.title)),
+                // A request that gave no description holds an empty one,
+                // which no normaliser changes: none is told.
+                description: (!new.description.is_empty())
+                    .then(|| board_text::text_changes(&new.description)),
+            });
+        }
         let message = format!("board: create {}", new.id.as_str());
-        let written = commit(&*self.store, &*self.clock, &message, |board, when| {
+        let (store, clock) = (&*self.store, &*self.clock);
+        let noted = facts.as_deref_mut();
+        let written = commit(store, clock, &message, noted, |board, when| {
             free(board, new)?;
             let task =
                 Task::entered(created_at(new, &when.now)).map_err(ProjectBoardError::Invalid)?;
             Ok(vec![BoardArtifact::Task(task)])
-        })?;
-        Ok(written_task(written))
+        });
+        let written = written.map(written_task);
+        if let Some(facts) = facts {
+            facts.status_to = written.as_ref().ok().map(|task| task.fields().status);
+        }
+        written
     }
 }
 

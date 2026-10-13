@@ -15,9 +15,11 @@ use crate::application::project_board::operations::{
     BoardOperationParts, BoardOutcome, BoardRequest, Completion, ListFilter,
 };
 use crate::application::project_board::ports::{BoardBootstrap, ReferenceStatus};
+use crate::application::project_board::telemetry::{OpFacts, completion_facts_of};
 use crate::domain::project_board::entities::task::Task;
 use crate::domain::project_board::value_objects::rule_error::BoardRuleError;
 use crate::domain::project_board::value_objects::slug::Slug;
+use crate::domain::project_board::value_objects::telemetry::CompletionFacts;
 use crate::domain::project_board::value_objects::vocabulary::TaskStatus;
 
 pub struct RunBoardOperation {
@@ -35,6 +37,22 @@ impl RunBoardOperation {
     /// # Errors
     /// The use case's or the listing's refusal.
     pub fn execute(&self, request: &BoardRequest) -> Result<BoardOutcome, ProjectBoardError> {
+        self.execute_noted(request, None)
+    }
+
+    /// [`Self::execute`], noting in `facts` (epic #2481 T4), when given,
+    /// what its use case saw and, after a change that may complete its
+    /// task, what came of completing it, with the completion's own write
+    /// counted apart from the change's. Given none, nothing is noted or
+    /// timed.
+    ///
+    /// # Errors
+    /// As [`Self::execute`].
+    pub fn execute_noted(
+        &self,
+        request: &BoardRequest,
+        mut facts: Option<&mut OpFacts>,
+    ) -> Result<BoardOutcome, ProjectBoardError> {
         let listing = |listing: Result<BoardListing, _>| {
             listing
                 .map(BoardOutcome::Listing)
@@ -63,23 +81,45 @@ impl RunBoardOperation {
                 listing(self.parts.listings.takeable(&now))
             }
             BoardRequest::Show(id) => self.show(id),
-            BoardRequest::Create(new) => Ok(changed(self.parts.create.execute(new)?, None)),
-            BoardRequest::UpdateDraft(update) => {
-                Ok(changed(self.parts.update.execute(update)?, None))
+            BoardRequest::Create(new) => {
+                Ok(changed(self.parts.create.execute_noted(new, facts)?, None))
             }
+            BoardRequest::UpdateDraft(update) => Ok(changed(
+                self.parts.update.execute_noted(update, facts)?,
+                None,
+            )),
             BoardRequest::Change(id, op) => {
-                let task = self.parts.change.execute(id, op)?;
+                let task = self
+                    .parts
+                    .change
+                    .execute_noted(id, op, facts.as_deref_mut())?;
                 let links = !task.fields().prs.is_empty();
-                let completion = (completes(op) && links).then(|| completion(self.complete(id)));
+                // The completion's own write is noted apart (only while
+                // noting), so the change's attempts stay its own.
+                let mut own = facts.as_ref().map(|_| OpFacts::default());
+                let completion =
+                    (completes(op) && links).then(|| completion(self.complete(id, own.as_mut())));
+                if let (Some(facts), Some(completion)) = (facts, &completion) {
+                    let own = own.unwrap_or_default();
+                    facts.completion = Some(CompletionFacts {
+                        completion_attempts: own.attempts,
+                        completion_lost: own.lost,
+                        completion_pause_ms: own.pause_ms,
+                        ..completion_facts_of(completion, task.fields().prs.len())
+                    });
+                }
                 Ok(changed(task, completion))
             }
-            BoardRequest::Complete(id) => Ok(changed(self.complete(id)?, None)),
+            BoardRequest::Complete(id) => Ok(changed(self.complete(id, facts)?, None)),
             BoardRequest::Clear {
                 path,
                 object,
                 repeated,
             } => Ok(BoardOutcome::Cleared {
-                head: self.parts.clear.execute(path, object, repeated)?,
+                head: self
+                    .parts
+                    .clear
+                    .execute_noted(path, object, repeated, facts)?,
             }),
         }
     }
@@ -94,11 +134,11 @@ impl RunBoardOperation {
         }
     }
 
-    /// Task `id` completed; with no pull request host, a task not on the
-    /// board is answered as such first.
-    fn complete(&self, id: &Slug) -> Result<Task, ProjectBoardError> {
+    /// Task `id` completed, noted in `facts` when given; with no pull
+    /// request host, a task not on the board is answered as such first.
+    fn complete(&self, id: &Slug, facts: Option<&mut OpFacts>) -> Result<Task, ProjectBoardError> {
         match &self.parts.complete {
-            Ok(complete) => complete.execute(id),
+            Ok(complete) => complete.execute_noted(id, facts),
             Err(why) => {
                 self.show(id)?;
                 Err(ProjectBoardError::NoPullRequestHost(why.clone()))

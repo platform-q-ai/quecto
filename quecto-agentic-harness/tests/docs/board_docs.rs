@@ -60,9 +60,13 @@ fn full() -> BoardOpRecord {
         pause_ms: Some(1),
         completion: Some(CompletionFacts {
             completion: CompletionKind::Failed,
-            completion_code: Some(StaticKind::new("store_unavailable")),
+            completion_code: Some(StaticKind::new("rule")),
+            completion_rule: Some(StaticKind::new("no_prs")),
             prs_linked: 1,
             prs_pending: Some(1),
+            completion_attempts: Some(1),
+            completion_lost: Some(0),
+            completion_pause_ms: Some(1),
         }),
         normalised: Some(Normalised {
             title: Some(vec![TextChange::Crlf]),
