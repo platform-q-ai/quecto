@@ -664,7 +664,7 @@ fn a_paragraph_that_defines_a_link_reference_is_refused() {
         prose::blocks_of("- [docs]: //evil.example/x").is_err(),
         "an item opens with `[` only as a link"
     );
-    // What the writer is told (placeholder wording, pending the owner).
+    // What the writer is told: the owner-approved wording, byte for byte.
     assert_eq!(
         MarkdownError::ReferenceDefinition { line: 3 }.to_string(),
         "line 3: may not start a paragraph with [label]:, which markdown reads as a link \
