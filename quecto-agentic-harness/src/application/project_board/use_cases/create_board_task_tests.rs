@@ -1,12 +1,18 @@
 use super::CreateBoardTask;
-use crate::application::project_board::dto::{NewBoardTask, NewBoardTaskStatus, ProjectBoardError};
-use crate::application::project_board::ports::{BoardStoreError, ProjectBoardStore};
+use crate::application::project_board::dto::{
+    IdUser, NewBoardTask, NewBoardTaskStatus, ProjectBoardError,
+};
+use crate::application::project_board::ports::{
+    ArtifactKey, BoardArtifact, BoardStoreError, ProjectBoardStore,
+};
 use crate::application::project_board::use_cases::MAX_WRITE_ATTEMPTS;
 use crate::application::project_board::use_cases::fixtures_tests::{
     SetClock, at, board, fields, new_task, set_aside_task, slug,
 };
+use crate::domain::project_board::entities::discussion::{Discussion, DiscussionFields};
 use crate::domain::project_board::entities::task::{Task, TaskFields};
 use crate::domain::project_board::value_objects::vocabulary::TaskStatus;
+use crate::infrastructure::test_support::board_artifacts;
 use crate::infrastructure::test_support::memory_board_store::MemoryBoardStore;
 use std::sync::Arc;
 
@@ -458,4 +464,97 @@ fn board_text_is_normalised_before_the_schema_reads_it() {
         .unwrap();
     assert_eq!(created.fields().title, "Ship it");
     assert_eq!(created.fields().description, "Why.\nHow so.");
+}
+
+/// An id the board's other artifacts already name (a plan, run, change or
+/// review of a task by that id, or a discussion about it) is refused,
+/// naming the least of them: a new task would take over what they say.
+/// Each kind alone names it.
+#[test]
+fn an_id_other_artifacts_name_is_refused() {
+    let about_x = Discussion::new(DiscussionFields {
+        task: Some(slug("x")),
+        ..board_artifacts::discussion("chat").fields().clone()
+    })
+    .unwrap();
+    for (artifacts, least) in [
+        (
+            vec![BoardArtifact::Plan(board_artifacts::plan("x", 5))],
+            IdUser::Plan(5),
+        ),
+        (
+            vec![BoardArtifact::Run(board_artifacts::run("x", 1))],
+            IdUser::Run(1),
+        ),
+        (
+            vec![BoardArtifact::Change(board_artifacts::change("x", 4))],
+            IdUser::Change(4),
+        ),
+        (
+            vec![BoardArtifact::Review(board_artifacts::review("x", 3))],
+            IdUser::Review(3),
+        ),
+        (
+            vec![BoardArtifact::Discussion(about_x)],
+            IdUser::Discussion(slug("chat")),
+        ),
+        (
+            vec![
+                BoardArtifact::Review(board_artifacts::review("x", 1)),
+                BoardArtifact::Plan(board_artifacts::plan("x", 3)),
+                BoardArtifact::Plan(board_artifacts::plan("x", 2)),
+            ],
+            IdUser::Plan(2),
+        ),
+    ] {
+        let store = board();
+        let head = store.read().unwrap().head;
+        store.write(&head, &artifacts, "seed").unwrap();
+        let writes = store.writes();
+        assert_eq!(
+            create(&store, SetClock::at("10:00:00")).execute(&new_task("x")),
+            Err(ProjectBoardError::IdInUse {
+                id: slug("x"),
+                by: least.clone()
+            })
+        );
+        assert_eq!(store.writes(), writes);
+        assert!(
+            create(&store, SetClock::at("10:00:00"))
+                .execute(&new_task("y"))
+                .is_ok(),
+            "{least:?} names x alone"
+        );
+    }
+}
+
+/// While a file that may name the id is set aside, a create waits: a plan,
+/// run, change or review of a task by that id, or any discussion (its task
+/// is unknown). Creates are rare, so waiting for a mend costs little.
+#[test]
+fn a_create_waits_while_a_file_that_may_name_its_id_is_set_aside() {
+    for (key, path) in [
+        (ArtifactKey::Plan(slug("x"), 2), "plans/x.2.md"),
+        (ArtifactKey::Run(slug("x"), 1), "runs/x.1.md"),
+        (ArtifactKey::Change(slug("x"), 3), "changes/x.3.md"),
+        (ArtifactKey::Review(slug("x"), 4), "reviews/x.4.md"),
+        (ArtifactKey::Discussion(slug("chat")), "discussions/chat.md"),
+    ] {
+        let store = board();
+        store.quarantine_key(ArtifactKey::Plan(slug("y"), 1), "plans/y.1.md", "malformed");
+        assert!(
+            create(&store, SetClock::at("10:00:00"))
+                .execute(&new_task("w"))
+                .is_ok(),
+            "another task's file blocks nothing"
+        );
+        store.quarantine_key(key.clone(), path, "malformed");
+        assert_eq!(
+            create(&store, SetClock::at("10:00:00")).execute(&new_task("x")),
+            Err(ProjectBoardError::Quarantined {
+                key,
+                path: path.into()
+            })
+        );
+    }
 }

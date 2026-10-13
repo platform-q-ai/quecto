@@ -13,10 +13,10 @@
 //! is tried again.
 use std::sync::Arc;
 
-use super::board_change::{checked_writer, commit, task_on};
+use super::board_change::{checked_writer, commit, task_on, written_task};
 use super::task_pointers::{Pointers, pointers_hold};
 use crate::application::project_board::dto::{DraftUpdate, ProjectBoardError};
-use crate::application::project_board::ports::{BoardClock, ProjectBoardStore};
+use crate::application::project_board::ports::{BoardArtifact, BoardClock, ProjectBoardStore};
 use crate::domain::project_board::entities::task::Task;
 use crate::domain::project_board::services::drafts::{DraftEdit, edit_draft};
 use crate::domain::project_board::value_objects::board_text;
@@ -53,7 +53,7 @@ impl UpdateDraftTask {
             depends_on: update.depends_on.clone(),
         };
         let message = format!("board: edit draft {}", id.as_str());
-        let tasks = commit(&*self.store, &*self.clock, &message, |board, when| {
+        let written = commit(&*self.store, &*self.clock, &message, |board, when| {
             let task = task_on(board, id)?;
             when.may_build_on(task)?;
             match &update.expected_updated {
@@ -79,9 +79,9 @@ impl UpdateDraftTask {
                     },
                 },
             )?;
-            Ok(vec![edited])
+            Ok(vec![BoardArtifact::Task(edited)])
         })?;
-        Ok(tasks.into_iter().next().expect("an edit writes its task"))
+        Ok(written_task(written))
     }
 }
 

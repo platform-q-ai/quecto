@@ -344,3 +344,14 @@ fn another_tasks_runs_and_two_going_are_refused() {
         Err(BoardRuleError::RunsInconsistent(_))
     ));
 }
+
+/// A run going holds a task back from exactly the statuses that hold no
+/// claim: those a task leaves its holder for.
+#[test]
+fn a_run_holds_moves_to_the_statuses_that_hold_no_claim() {
+    for to in [
+        Draft, Ready, Claimed, InProgress, Review, Blocked, Done, Archived,
+    ] {
+        assert_eq!(holds_moves_to(to), !to.may_hold_claim(), "{to:?}");
+    }
+}

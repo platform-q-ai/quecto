@@ -1,16 +1,17 @@
 //! What a use case reads off a board (#2481, M3): a task and its plans,
-//! runs, changes and reviews. Each view refuses while a file in its scope
-//! is set aside: what that file held is unknown, so an answer without it
+//! runs, changes and reviews, and what names a task's id. Each view
+//! refuses while a file in its scope is set aside: what that file held is
+//! unknown, so an answer without it
 //! could be wrong (a run's number reused, a change's pull request linked
 //! twice). A file set aside whose name spells no artifact (a stray) is in
 //! no view's scope, so it blocks none. A view sees keys only: a kept file
-//! set aside with no key (its artifact unknown) blocks no view, so S7's
-//! link wiring through [`all_changes`] must still refuse while one exists,
-//! as `change_board_task`'s `board_readable_for` does now. An artifact a
+//! set aside with no key (its artifact unknown) blocks no view, so a link
+//! through [`all_changes`] still refuses while one exists
+//! (`change_board_task`'s `board_readable_for` runs first). An artifact a
 //! view finds more than once (a store that broke its contract of one
 //! artifact per key) is refused as [`ProjectBoardError::Duplicate`], never
 //! a panic.
-use crate::application::project_board::dto::{ProjectBoardError, once};
+use crate::application::project_board::dto::{IdUser, ProjectBoardError, once};
 use crate::application::project_board::ports::{ArtifactKey, BoardSnapshot, QuarantinedFile};
 use crate::domain::project_board::entities::change::Change;
 use crate::domain::project_board::entities::plan::Plan;
@@ -109,6 +110,50 @@ pub fn review_of<'b>(
     let reviews = artifacts_of::reviews_of_change(&board.reviews, id, change);
     let reviews = once(reviews, ArtifactKey::of_review)?;
     Ok(reviews.first().copied())
+}
+
+/// The least artifact besides a task that names the task `id` (a plan,
+/// run, change or review of it, or a discussion about it), or `None`: a
+/// new task by that id would take over what it says. Refused while a
+/// plan, run, change or review of it is set aside, or any discussion: the
+/// file may name it too, and a set-aside discussion's task is unknown.
+/// Creates are rare, so waiting for such a file to be mended costs little,
+/// where reusing an id would join the new task to what an old one left.
+pub fn naming(board: &BoardSnapshot, id: &Slug) -> Result<Option<IdUser>, ProjectBoardError> {
+    clear_of(board, |key| match key {
+        ArtifactKey::Plan(task, _)
+        | ArtifactKey::Run(task, _)
+        | ArtifactKey::Change(task, _)
+        | ArtifactKey::Review(task, _) => task == id,
+        ArtifactKey::Discussion(_) => true,
+        ArtifactKey::Task(_) => false,
+    })?;
+    let plans = artifacts_of::plans_of(&board.plans, id);
+    let runs = artifacts_of::runs_of(&board.runs, id);
+    let changes = artifacts_of::changes_of(&board.changes, id);
+    let reviews = board
+        .reviews
+        .iter()
+        .filter(|review| review.fields().task == *id);
+    let discussions = artifacts_of::discussions_of(&board.discussions, id);
+    // The store's order is its own (reviews come unsorted): the least.
+    let named = plans
+        .into_iter()
+        .map(|plan| IdUser::Plan(plan.fields().version))
+        .chain(runs.into_iter().map(|run| IdUser::Run(run.fields().number)))
+        .chain(
+            changes
+                .into_iter()
+                .map(|change| IdUser::Change(change.fields().number)),
+        )
+        .chain(reviews.map(|review| IdUser::Review(review.fields().change)))
+        .chain(
+            discussions
+                .into_iter()
+                .map(|discussion| IdUser::Discussion(discussion.fields().id.clone())),
+        )
+        .min();
+    Ok(named)
 }
 
 /// Refuses with the least key in scope that a set-aside file names, so a

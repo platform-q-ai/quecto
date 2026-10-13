@@ -8,11 +8,13 @@
 //! tried again.
 use std::sync::Arc;
 
-use super::board_change::{checked_writer, commit};
+use super::board_change::{checked_writer, commit, written_task};
 use super::board_view;
 use super::task_pointers::{Pointers, pointers_hold};
 use crate::application::project_board::dto::{NewBoardTask, ProjectBoardError};
-use crate::application::project_board::ports::{BoardClock, BoardSnapshot, ProjectBoardStore};
+use crate::application::project_board::ports::{
+    BoardArtifact, BoardClock, BoardSnapshot, ProjectBoardStore,
+};
 use crate::domain::project_board::entities::task::{Task, TaskFields};
 use crate::domain::project_board::value_objects::board_text;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
@@ -39,16 +41,19 @@ impl CreateBoardTask {
     /// # Errors
     /// A parent or dependency not on the board, or set aside; an id a
     /// task already names; the schema's refusal; an id the board holds or
-    /// has set aside; the clock's; or the store's.
+    /// has set aside; an id a plan, run, change, review or discussion
+    /// already names, or while a plan, run, change or review of a task by
+    /// that id, or any discussion, is set aside; the clock's; or the
+    /// store's.
     pub fn execute(&self, new: &NewBoardTask) -> Result<Task, ProjectBoardError> {
         let message = format!("board: create {}", new.id.as_str());
-        let tasks = commit(&*self.store, &*self.clock, &message, |board, when| {
+        let written = commit(&*self.store, &*self.clock, &message, |board, when| {
             free(board, new)?;
-            Ok(vec![
-                Task::entered(created_at(new, &when.now)).map_err(ProjectBoardError::Invalid)?,
-            ])
+            let task =
+                Task::entered(created_at(new, &when.now)).map_err(ProjectBoardError::Invalid)?;
+            Ok(vec![BoardArtifact::Task(task)])
         })?;
-        Ok(tasks.into_iter().next().expect("a create writes its task"))
+        Ok(written_task(written))
     }
 }
 
@@ -80,19 +85,28 @@ fn created_at(new: &NewBoardTask, now: &Timestamp) -> TaskFields {
     fields
 }
 
-/// The id is free (neither held nor set aside), and the references hold
-/// ([`pointers_hold`]).
+/// The id is free (neither held nor set aside, and named by no other
+/// artifact: a new task would take over what it says), and the references
+/// hold ([`pointers_hold`]). While a file that may name the id is set
+/// aside ([`board_view::naming`]: one of that task's, or any discussion)
+/// the create waits for it: creates are rare.
 fn free(board: &BoardSnapshot, new: &NewBoardTask) -> Result<(), ProjectBoardError> {
     match board_view::task(board, &new.id) {
         Ok(_) => Err(ProjectBoardError::Exists(new.id.clone())),
-        Err(ProjectBoardError::NotFound(_)) => pointers_hold(
-            board,
-            &Pointers {
-                id: &new.id,
-                parent: new.parent.as_ref(),
-                depends_on: &new.depends_on,
-            },
-        ),
+        Err(ProjectBoardError::NotFound(_)) => match board_view::naming(board, &new.id)? {
+            Some(by) => Err(ProjectBoardError::IdInUse {
+                id: new.id.clone(),
+                by,
+            }),
+            None => pointers_hold(
+                board,
+                &Pointers {
+                    id: &new.id,
+                    parent: new.parent.as_ref(),
+                    depends_on: &new.depends_on,
+                },
+            ),
+        },
         Err(refused) => Err(refused),
     }
 }

@@ -1,4 +1,5 @@
 use super::*;
+use crate::application::project_board::dto::IdUser;
 use crate::application::project_board::ports::{BoardHead, QuarantinedFile};
 use crate::application::project_board::use_cases::fixtures_tests::{fields, slug};
 use crate::domain::project_board::entities::task::Task;
@@ -312,4 +313,36 @@ fn a_view_refuses_an_artifact_found_twice() {
     let (board, key) = twice("review");
     assert_eq!(review_of(&board, &a, 1).map(|_| ()), duplicate(key));
     assert!(review_of(&board, &slug("b"), 1).is_ok());
+}
+
+/// What names a task's id is the least such artifact, whatever order the
+/// store hands them over in.
+#[test]
+fn naming_names_the_least_artifact_naming_the_id() {
+    let mut board = board(vec![]);
+    board.tasks.retain(|task| task.fields().id != slug("a"));
+    board.plans.reverse();
+    board.discussions = vec![discussion("chat")];
+    assert_eq!(naming(&board, &slug("a")), Ok(Some(IdUser::Plan(1))));
+    assert_eq!(naming(&board, &slug("z")), Ok(None));
+    let set_aside = keyed(ArtifactKey::Discussion(slug("old")));
+    let mut blocked = board.clone();
+    blocked.quarantined = vec![set_aside];
+    assert_eq!(
+        naming(&blocked, &slug("z")),
+        Err(refused(ArtifactKey::Discussion(slug("old"))))
+    );
+}
+
+/// Reviews come in the store's order, unsorted: of reviews 3 and 1 of the
+/// id's task, the least, review 1, is named.
+#[test]
+fn naming_names_the_least_review_whatever_the_store_order() {
+    let mut board = board(vec![]);
+    board.tasks.clear();
+    board.plans.clear();
+    board.runs.clear();
+    board.changes.clear();
+    board.reviews = vec![review("a", 3), review("a", 1)];
+    assert_eq!(naming(&board, &slug("a")), Ok(Some(IdUser::Review(1))));
 }

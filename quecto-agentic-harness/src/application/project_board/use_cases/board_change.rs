@@ -8,7 +8,7 @@
 //! as the store's calls do: callers run a change off the async workers.
 use crate::application::project_board::dto::ProjectBoardError;
 use crate::application::project_board::ports::{
-    BoardClock, BoardSnapshot, BoardWrite, ProjectBoardStore,
+    BoardArtifact, BoardClock, BoardSnapshot, BoardWrite, ProjectBoardStore,
 };
 use crate::domain::project_board::entities::claim::Identity;
 use crate::domain::project_board::entities::task::Task;
@@ -75,29 +75,33 @@ fn checked_now(clock: &dyn BoardClock) -> Result<When, ProjectBoardError> {
     }
 }
 
-/// Writes the tasks `change` builds from the board and the time, retried
-/// against a fresh board when another writer moved it first.
+/// Writes the artifacts `change` builds from the board and the time, in
+/// one change, retried against a fresh board when another writer moved it
+/// first. Every change writes its task first ([`written_task`]).
 pub(super) fn commit(
     store: &dyn ProjectBoardStore,
     clock: &dyn BoardClock,
     message: &str,
-    mut change: impl FnMut(&BoardSnapshot, &When) -> Result<Vec<Task>, ProjectBoardError>,
-) -> Result<Vec<Task>, ProjectBoardError> {
+    mut change: impl FnMut(&BoardSnapshot, &When) -> Result<Vec<BoardArtifact>, ProjectBoardError>,
+) -> Result<Vec<BoardArtifact>, ProjectBoardError> {
     for attempt in 1..=MAX_WRITE_ATTEMPTS {
         if attempt > 1 {
             clock.pause(attempt);
         }
         let snapshot = store.read()?;
         let when = checked_now(clock)?;
-        let tasks = change(&snapshot, &when)?;
-        assert!(!tasks.is_empty(), "a board change writes at least one task");
-        match store.write_tasks(&snapshot.head, &tasks, message)? {
+        let artifacts = change(&snapshot, &when)?;
+        assert!(
+            matches!(artifacts.first(), Some(BoardArtifact::Task(_))),
+            "a board change writes its task first"
+        );
+        match store.write(&snapshot.head, &artifacts, message)? {
             BoardWrite::Written(head) => {
                 assert_ne!(
                     head, snapshot.head,
                     "a write the board holds moves its head"
                 );
-                return Ok(tasks);
+                return Ok(artifacts);
             }
             BoardWrite::Lost => continue,
             BoardWrite::Refused(reason) => return Err(ProjectBoardError::Refused(reason)),
@@ -106,6 +110,20 @@ pub(super) fn commit(
     Err(ProjectBoardError::Contended {
         attempts: MAX_WRITE_ATTEMPTS,
     })
+}
+
+/// The task a change wrote: [`commit`] holds every change to writing its
+/// task first.
+pub(super) fn written_task(artifacts: Vec<BoardArtifact>) -> Task {
+    match artifacts.into_iter().next() {
+        Some(BoardArtifact::Task(task)) => task,
+        other => panic!("a board change writes its task first, not {other:?}"),
+    }
+}
+
+/// `views` as a rule takes them: owned, in the view's order.
+pub(super) fn owned<T: Clone>(views: Vec<&T>) -> Vec<T> {
+    views.into_iter().cloned().collect()
 }
 
 /// The identity the store commits as, checked once when a use case is
