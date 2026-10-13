@@ -146,11 +146,11 @@ owners or evidence, only kinds and counts:
 | Field | Meaning |
 |---|---|
 | `task`, `run` | The task (its slug, redacted and capped as above) and the run's number |
-| `outcome`, `code`, `rule` | `ok`, or `refused` with the error and rule codes a `board_op` would carry. A run that had already ended (folded back, or ended as lost by the merge that completed its task) is `ok` with nothing else |
+| `outcome`, `code`, `rule` | `ok`, or `refused` with the error and rule codes a `board_op` would carry. A run that had already ended (folded back, or ended as lost by the merge that completed its task) is `ok` with only `attempts` and `lost` |
 | `run_outcome` | How the run ended: `succeeded`; `failed` (the swarm failed or exhausted its budget); `stopped` (blocked or cancelled) |
 | `items` | The run's task items by state: `todo`, `doing`, `review`, `done`, `blocked` |
 | `unmatched`, `extra` | Plan items no swarm item matched by its title (`<slug>: <title>`), left `todo`; swarm items no plan item matched, not kept |
-| `evidence`, `evidence_dropped` | Evidence lines kept, and those left out: refused by the board's schema or file format, repeated, or past an item's 16 or the run's 256 KiB |
+| `evidence`, `evidence_dropped` | Evidence lines kept, and those left out: refused by the board's schema or file format, repeated, or past an item's 16 or the run's 256 KiB (owners counted first). A run the store judges too large with its evidence is written again without any, every line counted dropped |
 | `cost_tokens` | The tokens the swarm was observed to spend |
-| `attempts`, `lost`, `bytes` | The write's attempts and lost races, and the bytes of the run's text |
+| `attempts`, `lost`, `bytes` | The writes' attempts and lost races (both passes, when the evidence was left out), on every outcome; and the bytes of the run's text |
 | `duration_us` | The whole fold-back |

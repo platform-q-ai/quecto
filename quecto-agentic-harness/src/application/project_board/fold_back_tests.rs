@@ -1,7 +1,9 @@
 use super::*;
 use crate::domain::project_board::entities::claim::Identity;
 use crate::domain::project_board::entities::plan::{Plan, PlanFields, PlanItem};
+use crate::domain::project_board::entities::run::{Run, RunFields};
 use crate::domain::project_board::entities::task_parts::MAX_BUDGET_TOKENS;
+use crate::domain::project_board::services::runs::fold_back;
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
 use crate::domain::project_board::value_objects::vocabulary::PlanState;
@@ -77,7 +79,18 @@ fn view(items: Vec<SwarmItemView>) -> SwarmRunView {
 }
 
 fn folded(items: Vec<SwarmItemView>) -> FoldBackItems {
-    run_items(&plan(), &view(items), &MarkdownTextCells)
+    run_items(&plan(), &view(items), &MarkdownTextCells, Evidence::Kept)
+}
+
+/// The one evidence line `artifact at revision` makes, if it is kept.
+fn kept_line(artifact: &str, revision: &str) -> Option<String> {
+    let items = folded(vec![swarm_item(
+        "api: Build the api",
+        SwarmItemState::Completed,
+        None,
+        &[(artifact, revision)],
+    )]);
+    items.items[0].evidence.first().cloned()
 }
 
 #[test]
@@ -136,8 +149,8 @@ fn items_match_by_title_key_in_plan_order_and_the_rest_are_counted() {
         // A second item under one key, and one no plan item names.
         swarm_item("api: Build the api", SwarmItemState::Ready, None, &[]),
         swarm_item("lint: Lint it", SwarmItemState::Completed, None, &[]),
-        // Close to a key, but not it.
-        swarm_item("docs: build the docs", SwarmItemState::Completed, None, &[]),
+        // Close to a key, but neither it nor its `<slug>: ` prefix.
+        swarm_item("Docs: Build the docs", SwarmItemState::Completed, None, &[]),
     ]);
     let states: Vec<(&str, ItemState, Option<&str>)> = items
         .items
@@ -248,11 +261,10 @@ fn evidence_is_normalised_and_kept_within_the_schema() {
 }
 
 #[test]
-fn evidence_stops_at_the_runs_text_budget() {
+fn owners_come_first_and_the_folded_run_stays_within_its_text_budget() {
     let line = "y".repeat(MAX_LINE_CHARS - " at abc".len());
-    let per_item: Vec<(&str, &str)> = (0..MAX_PER_ITEM).map(|_| (line.as_str(), "abc")).collect();
-    // Distinct lines per item: the budget, not distinctness, is in play.
-    let titles: Vec<String> = (0..40).map(|n| format!("i{n}: Item {n}")).collect();
+    // 100 characters of 4 bytes each: owners take 400 bytes an item.
+    let owner = "\u{10400}".repeat(MAX_OWNER_CHARS);
     let mut fields = plan().into_fields();
     fields.items = (0..40)
         .map(|n| PlanItem {
@@ -263,32 +275,286 @@ fn evidence_stops_at_the_runs_text_budget() {
         })
         .collect();
     let plan = Plan::new(fields).unwrap();
-    let items: Vec<SwarmItemView> = titles
-        .iter()
-        .map(|title| {
-            let mut item = swarm_item(title, SwarmItemState::Completed, None, &[]);
-            item.evidence = per_item
-                .iter()
-                .enumerate()
-                .map(|(n, (artifact, revision))| SwarmEvidence {
-                    artifact: format!("{n:02}{}", &artifact[2..]),
-                    revision: (*revision).into(),
+    let items: Vec<SwarmItemView> = (0..40)
+        .map(|n| {
+            let title = format!("i{n}: Item {n}");
+            let mut item = swarm_item(&title, SwarmItemState::Completed, Some(&owner), &[]);
+            // Distinct lines per item: the budget, not distinctness, is in play.
+            item.evidence = (0..MAX_PER_ITEM)
+                .map(|at| SwarmEvidence {
+                    artifact: format!("{at:02}{}", &line[2..]),
+                    revision: "abc".into(),
                 })
                 .collect();
             item
         })
         .collect();
-    let folded = run_items(&plan, &view(items), &MarkdownTextCells);
-    let bytes: usize = folded
+    let folded = run_items(&plan, &view(items), &MarkdownTextCells, Evidence::Kept);
+    let owners: usize = folded
+        .items
+        .iter()
+        .filter_map(|item| item.owner.as_ref())
+        .map(String::len)
+        .sum();
+    assert_eq!(owners, 40 * 4 * MAX_OWNER_CHARS);
+    let lines: usize = folded
         .items
         .iter()
         .flat_map(|item| &item.evidence)
         .map(String::len)
         .sum();
-    assert!(bytes <= MAX_RUN_TEXT_BYTES, "{bytes}");
-    assert!(bytes + MAX_LINE_CHARS > MAX_RUN_TEXT_BYTES, "{bytes}");
+    assert!(owners + lines <= MAX_RUN_TEXT_BYTES, "{owners} + {lines}");
+    assert!(
+        owners + lines + MAX_LINE_CHARS > MAX_RUN_TEXT_BYTES,
+        "{owners} + {lines}"
+    );
     assert_eq!(folded.evidence + folded.dropped, 40 * MAX_PER_ITEM);
     assert!(folded.dropped > 0);
+    // The domain's own fold-back takes it: the run's text is within bound.
+    let at = Timestamp::parse("2026-10-10T10:00:00Z").unwrap();
+    let open = Run::new(RunFields {
+        task: slug("board-store"),
+        number: 1,
+        plan_version: 1,
+        started: at.clone(),
+        ended: None,
+        outcome: None,
+        cost: None,
+        items: vec![],
+    })
+    .unwrap();
+    let run = fold_back(
+        &open,
+        &plan,
+        RunOutcome::Succeeded,
+        Some(1),
+        folded.items,
+        &at,
+    )
+    .unwrap();
+    assert!(run.fields().text_bytes() <= MAX_RUN_TEXT_BYTES);
+}
+
+#[test]
+fn evidence_left_out_keeps_states_and_owners_and_counts_every_line() {
+    let items = run_items(
+        &plan(),
+        &view(vec![swarm_item(
+            "api: Build the api",
+            SwarmItemState::Completed,
+            Some("worker-1"),
+            &[("src/api.rs", "4f2a9c1"), ("src/lib.rs", "4f2a9c1")],
+        )]),
+        &MarkdownTextCells,
+        Evidence::Left,
+    );
+    assert_eq!(items.items[0].state, ItemState::Done);
+    assert_eq!(items.items[0].owner.as_deref(), Some("worker-1"));
+    assert!(items.items.iter().all(|item| item.evidence.is_empty()));
+    assert_eq!((items.evidence, items.dropped), (0, 2));
+}
+
+#[test]
+fn of_several_items_under_one_key_the_most_progressed_then_newest_is_taken() {
+    let items = folded(vec![
+        // Blocked, then created again and completed.
+        swarm_item(
+            "api: Build the api",
+            SwarmItemState::Completed,
+            Some("worker-3"),
+            &[],
+        ),
+        swarm_item(
+            "api: Build the api",
+            SwarmItemState::Blocked,
+            Some("worker-1"),
+            &[],
+        ),
+        // Two claimed: the newer is taken.
+        swarm_item(
+            "store: Build the store",
+            SwarmItemState::Claimed,
+            Some("worker-1"),
+            &[],
+        ),
+        swarm_item(
+            "store: Build the store",
+            SwarmItemState::Claimed,
+            Some("worker-2"),
+            &[],
+        ),
+        swarm_item("docs: Build the docs", SwarmItemState::Ready, None, &[]),
+        swarm_item(
+            "docs: Build the docs",
+            SwarmItemState::Submitted,
+            Some("worker-4"),
+            &[],
+        ),
+    ]);
+    let states: Vec<(ItemState, Option<&str>)> = items
+        .items
+        .iter()
+        .map(|item| (item.state, item.owner.as_deref()))
+        .collect();
+    assert_eq!(
+        states,
+        [
+            (ItemState::Done, Some("worker-3")),
+            (ItemState::Doing, Some("worker-2")),
+            (ItemState::Review, Some("worker-4")),
+        ]
+    );
+    assert_eq!((items.unmatched, items.extra), (0, 3));
+    let ranked = [
+        SwarmItemState::Blocked,
+        SwarmItemState::Ready,
+        SwarmItemState::Claimed,
+        SwarmItemState::Submitted,
+        SwarmItemState::Completed,
+    ];
+    assert!(
+        ranked
+            .windows(2)
+            .all(|pair| pair[0].progress() < pair[1].progress())
+    );
+}
+
+#[test]
+fn a_title_rewritten_after_its_key_prefix_still_matches_its_item() {
+    let items = folded(vec![
+        swarm_item(
+            "api: Build the API, rewritten",
+            SwarmItemState::Completed,
+            None,
+            &[],
+        ),
+        swarm_item(
+            "store: Build the store ",
+            SwarmItemState::Claimed,
+            None,
+            &[],
+        ),
+        // An exact title wins over a prefix.
+        swarm_item(
+            "docs: Docs, rewritten",
+            SwarmItemState::Completed,
+            None,
+            &[],
+        ),
+        swarm_item("docs: Build the docs", SwarmItemState::Ready, None, &[]),
+        // Another slug's prefix is not this one's.
+        swarm_item(
+            "api-v2: Build the api",
+            SwarmItemState::Completed,
+            None,
+            &[],
+        ),
+        swarm_item("api:Build the api", SwarmItemState::Completed, None, &[]),
+    ]);
+    let states: Vec<ItemState> = items.items.iter().map(|item| item.state).collect();
+    assert_eq!(states, [ItemState::Done, ItemState::Doing, ItemState::Todo]);
+    assert_eq!((items.unmatched, items.extra), (0, 3));
+}
+
+#[test]
+fn secrets_never_reach_the_run() {
+    const TOKEN: &str = "ghp_abcdefghijklmnopqrstuvwxyz0123456789";
+    let signed = "https://bucket.s3.amazonaws.com/build.tgz?X-Amz-Algorithm=AWS4-HMAC-SHA256\
+        &X-Amz-Credential=AKIAIOSFODNN7EXAMPLE%2F20261013%2Fus-east-1%2Fs3%2Faws4_request\
+        &X-Amz-Date=20261013T000000Z&X-Amz-Expires=3600&X-Amz-SignedHeaders=host\
+        &X-Amz-Signature=deadbeefcafe0123456789";
+    let token_url = format!("https://github.com/o/r/pull/7?token={TOKEN}");
+    let userinfo = format!("https://ada:{TOKEN}@github.com/o/r");
+    let items = folded(vec![
+        swarm_item(
+            "api: Build the api",
+            SwarmItemState::Completed,
+            Some(&format!("worker {TOKEN}")),
+            &[
+                (token_url.as_str(), "4f2a9c1"),
+                (TOKEN, "4f2a9c1"),
+                ("deployed", "Bearer abcdef0123456789"),
+                ("password=hunter2", "main"),
+                (signed, "v1"),
+                (userinfo.as_str(), "main"),
+            ],
+        ),
+        swarm_item(
+            "store: Build the store",
+            SwarmItemState::Claimed,
+            Some("password=hunter2"),
+            &[],
+        ),
+    ]);
+    let written: Vec<&str> = items
+        .items
+        .iter()
+        .flat_map(|item| item.evidence.iter().chain(&item.owner))
+        .map(String::as_str)
+        .collect();
+    for secret in [
+        TOKEN,
+        "hunter2",
+        "abcdef0123456789",
+        "AKIA",
+        "deadbeef",
+        "Amz",
+    ] {
+        assert!(
+            written.iter().all(|line| !line.contains(secret)),
+            "{secret}: {written:?}"
+        );
+    }
+    assert_eq!(
+        items.items[0].evidence,
+        [
+            "[link](https://github.com/o/r/pull/7) at 4f2a9c1",
+            "[REDACTED] at 4f2a9c1",
+            "deployed at [REDACTED]",
+            "[REDACTED] at main",
+            "[link](https://bucket.s3.amazonaws.com/build.tgz) at v1",
+            "[link](https://github.com/o/r) at main",
+        ]
+    );
+    assert_eq!(items.items[0].owner.as_deref(), Some("worker [REDACTED]"));
+    assert_eq!(items.items[1].owner.as_deref(), Some("[REDACTED]"));
+}
+
+#[test]
+fn only_a_whole_address_is_linked_with_its_punctuation_left_outside() {
+    let rows = [
+        ("https://x.com/a)b", "[link](https://x.com/a%29b)"),
+        ("https://x.com/a(b)c", "[link](https://x.com/a%28b%29c)"),
+        (
+            "see https://x.com/a, then",
+            "see [link](https://x.com/a), then",
+        ),
+        ("<https://x.com/a>", "[link](https://x.com/a)"),
+        ("(https://x.com/a)", "([link](https://x.com/a))"),
+        ("https://x.com/a.", "[link](https://x.com/a)."),
+        ("https://x.com/a#L10", "[link](https://x.com/a#L10)"),
+    ];
+    for (artifact, line) in rows {
+        assert_eq!(
+            kept_line(artifact, "abc"),
+            Some(format!("{line} at abc")),
+            "{artifact}"
+        );
+    }
+    // Not an address in the codec's set: left as written, so the codec
+    // refuses the line and it is dropped.
+    for artifact in [
+        "https://x.com/a`b`",
+        "https://x.com/[a]",
+        "https://",
+        "xhttps://x.com",
+    ] {
+        let line = kept_line(artifact, "abc");
+        assert!(
+            line.as_deref().is_none_or(|line| !line.contains("[link]")),
+            "{artifact}: {line:?}"
+        );
+    }
 }
 
 #[test]
@@ -320,6 +586,18 @@ fn an_owner_is_the_member_id_capped_and_one_the_board_cannot_hold_is_none() {
     );
     assert_eq!(items.items[1].owner, None);
     assert_eq!(items.items[2].owner, None);
+    // Cut at the limit, then trimmed again: no space is left at its end.
+    let spaced = format!("{} b", "a".repeat(MAX_OWNER_CHARS - 1));
+    let items = folded(vec![swarm_item(
+        "api: Build the api",
+        SwarmItemState::Claimed,
+        Some(&spaced),
+        &[],
+    )]);
+    assert_eq!(
+        items.items[0].owner.as_deref(),
+        Some("a".repeat(MAX_OWNER_CHARS - 1).as_str())
+    );
 }
 
 #[test]

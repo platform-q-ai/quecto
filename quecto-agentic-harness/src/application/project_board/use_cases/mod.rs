@@ -18,7 +18,7 @@ pub use change_board_task::ChangeBoardTask;
 pub use clear_set_aside::ClearSetAside;
 pub use complete_merged_task::CompleteMergedTask;
 pub use create_board_task::CreateBoardTask;
-pub use fold_back_run::{FoldBackRun, FoldedBack};
+pub use fold_back_run::FoldBackRun;
 pub use query_board::QueryBoard;
 pub use run_board_operation::RunBoardOperation;
 pub use update_draft_task::UpdateDraftTask;

@@ -296,7 +296,9 @@ mod facts {
 
 mod fold_back_facts {
     use super::*;
-    use crate::domain::project_board::value_objects::telemetry::TaskRef;
+    use crate::domain::project_board::value_objects::telemetry::{
+        ItemCounts, RunOutcomeKind, TaskRef,
+    };
 
     fn bare() -> FoldBackRecord {
         FoldBackRecord {

@@ -153,6 +153,8 @@ mod external_agent_process;
 mod external_agent_telemetry;
 #[path = "contracts/fleet_settlement.rs"]
 mod fleet_settlement;
+#[path = "contracts/fold_back_recorder.rs"]
+mod fold_back_recorder;
 #[path = "contracts/fresh_session_identity_generator.rs"]
 mod fresh_session_identity_generator;
 #[path = "contracts/historical_roster_source.rs"]

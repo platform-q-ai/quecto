@@ -17,9 +17,12 @@ use std::sync::Arc;
 use super::board_change::{checked_writer, commit_run, task_on};
 use super::board_view;
 use crate::application::project_board::dto::ProjectBoardError;
-use crate::application::project_board::fold_back::{SwarmRunView, cost_of, run_items};
+use crate::application::project_board::fold_back::{
+    Evidence, FoldBackItems, FoldedBack, SwarmRunView, cost_of, run_items,
+};
 use crate::application::project_board::ports::{
-    BoardArtifact, BoardClock, BoardTextCells, ProjectBoardStore,
+    BoardArtifact, BoardClock, BoardStoreError, BoardTextCells, FoldBackOutcome, FoldBackRecorder,
+    ProjectBoardStore,
 };
 use crate::application::project_board::telemetry::{FoldBackFacts, OpFacts, counted};
 use crate::domain::project_board::entities::run::Run;
@@ -28,20 +31,14 @@ use crate::domain::project_board::value_objects::rule_error::BoardRuleError;
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::telemetry::RunOutcomeKind;
 
-/// What came of a fold-back.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum FoldedBack {
-    /// The run as the board now holds it.
-    Folded(Run),
-    /// The run (by its number) had ended already: nothing was written.
-    Ended(u32),
-}
-
 pub struct FoldBackRun {
     store: Arc<dyn ProjectBoardStore>,
     clock: Arc<dyn BoardClock>,
     cells: Arc<dyn BoardTextCells>,
 }
+
+/// One pass at the write: the run written and what its items kept.
+type Pass = Result<(Run, FoldBackItems), ProjectBoardError>;
 
 impl FoldBackRun {
     /// # Errors
@@ -60,7 +57,9 @@ impl FoldBackRun {
     }
 
     /// Run `number` of task `id` folded back from `view`, its swarm
-    /// ended.
+    /// ended. A run the store judges invalid with its evidence (past its
+    /// file's bounds) is folded once more without it: its outcome, states,
+    /// owners and cost.
     ///
     /// # Errors
     /// No such task, run or plan version on the board, or one of their
@@ -76,9 +75,39 @@ impl FoldBackRun {
         self.execute_noted(id, number, view, None)
     }
 
+    /// [`Self::execute`], its outcome handed to `recorder` when there is
+    /// one, with what it saw and how long it took; with none, nothing is
+    /// gathered or timed.
+    ///
+    /// # Errors
+    /// As [`Self::execute`].
+    pub fn execute_recorded(
+        &self,
+        id: &Slug,
+        number: u32,
+        view: &SwarmRunView,
+        recorder: Option<&dyn FoldBackRecorder>,
+    ) -> Result<FoldedBack, ProjectBoardError> {
+        let Some(recorder) = recorder else {
+            return self.execute(id, number, view);
+        };
+        let started = self.clock.elapsed();
+        let mut facts = FoldBackFacts::default();
+        let result = self.execute_noted(id, number, view, Some(&mut facts));
+        recorder.record(FoldBackOutcome {
+            task: id,
+            run: number,
+            result: &result,
+            facts: &facts,
+            elapsed: self.clock.elapsed().saturating_sub(started),
+        });
+        result
+    }
+
     /// [`Self::execute`], noting in `facts` (epic #2481, S4), when given,
-    /// the write's attempts and, for a run it folds, how it ended, its
-    /// task items by state, what was left out, its cost and its size.
+    /// its writes' attempts and lost races, whatever came of them, and,
+    /// for a run it folds, how it ended, its task items by state, what was
+    /// left out, its cost and its size.
     ///
     /// # Errors
     /// As [`Self::execute`].
@@ -89,62 +118,90 @@ impl FoldBackRun {
         view: &SwarmRunView,
         facts: Option<&mut FoldBackFacts>,
     ) -> Result<FoldedBack, ProjectBoardError> {
+        let mut write = facts.as_ref().map(|_| OpFacts::default());
+        let mut passed = self.pass(id, number, view, Evidence::Kept, write.as_mut());
+        if let Err(ProjectBoardError::Store(BoardStoreError::InvalidWrite(_))) = &passed {
+            let mut again = facts.as_ref().map(|_| OpFacts::default());
+            passed = self.pass(id, number, view, Evidence::Left, again.as_mut());
+            if let (Some(write), Some(again)) = (write.as_mut(), again) {
+                let sum = |one: Option<u64>, two: Option<u64>| {
+                    Some(one.unwrap_or(0).saturating_add(two.unwrap_or(0)))
+                };
+                write.attempts = sum(write.attempts, again.attempts);
+                write.lost = sum(write.lost, again.lost);
+            }
+        }
+        let (result, items) = match passed {
+            Ok((run, items)) => (Ok(FoldedBack::Folded(run)), Some(items)),
+            Err(ProjectBoardError::Rule(BoardRuleError::RunEnded(ended))) => {
+                assert_eq!(ended, number, "the run that ended is the one folded");
+                (Ok(FoldedBack::Ended(ended)), None)
+            }
+            Err(error) => (Err(error), None),
+        };
+        noted(facts, write, result, items)
+    }
+
+    /// One pass at folding the run back, its evidence kept or left out.
+    fn pass(
+        &self,
+        id: &Slug,
+        number: u32,
+        view: &SwarmRunView,
+        evidence: Evidence,
+        write: Option<&mut OpFacts>,
+    ) -> Pass {
         let outcome = view.end.outcome();
         let message = format!(
             "board: run {number} of {} folded back, {}",
             id.as_str(),
             outcome.as_str()
         );
-        let cost = cost_of(view);
-        let mut write = facts.as_ref().map(|_| OpFacts::default());
-        let mut noted = None;
+        let mut kept = None;
         let (store, clock) = (&*self.store, &*self.clock);
-        let written = commit_run(store, clock, &message, write.as_mut(), |board, when| {
-            noted = None;
+        let written = commit_run(store, clock, &message, write, |board, when| {
             task_on(board, id)?;
             let runs = board_view::runs_of(board, id)?;
             let plans = board_view::plans_of(board, id)?;
             let (run, plan) = run_and_plan(&runs, &plans, number)?;
-            let items = run_items(plan, view, &*self.cells);
-            let tally = (
-                items.counts(),
-                items.unmatched,
-                items.extra,
-                items.evidence,
-                items.dropped,
-            );
-            let folded = fold_back(run, plan, outcome, Some(cost), items.items, &when.now)?;
-            noted = Some(tally);
+            let items = run_items(plan, view, &*self.cells, evidence);
+            let cost = Some(cost_of(view));
+            let folded = fold_back(run, plan, outcome, cost, items.items.clone(), &when.now)?;
+            // This attempt's items, never an earlier one's.
+            kept = Some(items);
             Ok(vec![BoardArtifact::Run(folded)])
-        });
-        let folded = match written {
-            Ok(artifacts) => FoldedBack::Folded(written_run(artifacts)),
-            Err(ProjectBoardError::Rule(BoardRuleError::RunEnded(ended))) => {
-                assert_eq!(ended, number, "the run that ended is the one folded");
-                noted = None;
-                FoldedBack::Ended(ended)
-            }
-            Err(error) => return Err(error),
-        };
-        if let Some(facts) = facts {
-            let write = write.unwrap_or_default();
-            facts.attempts = write.attempts;
-            facts.lost = write.lost;
-            if let (FoldedBack::Folded(run), Some((items, unmatched, extra, kept, dropped))) =
-                (&folded, noted)
-            {
-                facts.run_outcome = Some(RunOutcomeKind::of(outcome));
-                facts.items = Some(items);
-                facts.unmatched = Some(counted(unmatched));
-                facts.extra = Some(counted(extra));
-                facts.evidence = Some(counted(kept));
-                facts.evidence_dropped = Some(counted(dropped));
-                facts.cost_tokens = run.fields().cost;
-                facts.bytes = Some(counted(run.fields().text_bytes()));
-            }
-        }
-        Ok(folded)
+        })?;
+        let items = kept.expect("a written fold-back mapped its items");
+        Ok((written_run(written), items))
     }
+}
+
+/// `result`, after noting in `facts`, when given, the writes'
+/// attempts and, for a run folded, what its `items` kept.
+fn noted(
+    facts: Option<&mut FoldBackFacts>,
+    write: Option<OpFacts>,
+    result: Result<FoldedBack, ProjectBoardError>,
+    items: Option<FoldBackItems>,
+) -> Result<FoldedBack, ProjectBoardError> {
+    let Some(facts) = facts else {
+        return result;
+    };
+    let write = write.unwrap_or_default();
+    facts.attempts = write.attempts;
+    facts.lost = write.lost;
+    if let (Ok(FoldedBack::Folded(run)), Some(items)) = (&result, items) {
+        let fields = run.fields();
+        facts.run_outcome = fields.outcome.map(RunOutcomeKind::of);
+        facts.items = Some(items.counts());
+        facts.unmatched = Some(counted(items.unmatched));
+        facts.extra = Some(counted(items.extra));
+        facts.evidence = Some(counted(items.evidence));
+        facts.evidence_dropped = Some(counted(items.dropped));
+        facts.cost_tokens = fields.cost;
+        facts.bytes = Some(counted(fields.text_bytes()));
+    }
+    result
 }
 
 /// The run a fold-back wrote: [`commit_run`] holds it to one run alone.

@@ -3,7 +3,11 @@ use std::sync::Arc;
 use super::*;
 use crate::application::project_board::fold_back::tests::{plan, swarm_item};
 use crate::application::project_board::fold_back::{SwarmEnd, SwarmItemState, SwarmItemView};
-use crate::application::project_board::ports::{BoardArtifact, BoardWrite, ProjectBoardStore};
+use crate::application::project_board::ports::{
+    BoardArtifact, BoardStoreError, BoardWrite, FoldBackOutcome, FoldBackRecorder,
+    ProjectBoardStore,
+};
+use crate::application::project_board::use_cases::MAX_WRITE_ATTEMPTS;
 use crate::application::project_board::use_cases::fixtures_tests::{
     SetClock, at, board, fields, person, slug,
 };
@@ -226,9 +230,126 @@ fn a_board_moved_under_every_attempt_is_contended() {
         &store,
         crate::application::project_board::use_cases::MAX_WRITE_ATTEMPTS,
     );
-    let folded = fold_back(&store).execute(&slug("board-store"), 1, &swarm());
+    let mut facts = FoldBackFacts::default();
+    let folded =
+        fold_back(&store).execute_noted(&slug("board-store"), 1, &swarm(), Some(&mut facts));
     assert_eq!(folded, Err(ProjectBoardError::Contended { attempts: 3 }));
     assert!(run_on(&store).is_open());
+    // A fold-back refused still tells its write's attempts.
+    let attempts = Some(u64::try_from(MAX_WRITE_ATTEMPTS).unwrap());
+    assert_eq!(
+        facts,
+        FoldBackFacts {
+            attempts,
+            lost: attempts,
+            ..FoldBackFacts::default()
+        }
+    );
+}
+
+#[test]
+fn a_run_the_store_finds_too_large_is_folded_again_without_its_evidence() {
+    let (store, _, _) = started();
+    store.invalid_next_write("the run's file is past its bounds");
+    let mut facts = FoldBackFacts::default();
+    let folded = fold_back(&store)
+        .execute_noted(&slug("board-store"), 1, &swarm(), Some(&mut facts))
+        .unwrap();
+    let FoldedBack::Folded(run) = folded else {
+        panic!("folded back: {folded:?}");
+    };
+    assert_eq!(run, run_on(&store));
+    let fields = run.fields();
+    assert_eq!(fields.outcome, Some(RunOutcome::Succeeded));
+    assert_eq!(fields.cost, Some(52_000));
+    assert!(fields.items.iter().all(|item| item.evidence.is_empty()));
+    assert_eq!(fields.items[0].owner.as_deref(), Some("worker-1"));
+    assert_eq!(fields.items[0].state, ItemState::Done);
+    assert_eq!((facts.evidence, facts.evidence_dropped), (Some(0), Some(2)));
+    assert_eq!((facts.attempts, facts.lost), (Some(2), Some(0)));
+
+    // Judged invalid again without it: refused, nothing written.
+    let (store, _, _) = started();
+    let writes = store.writes();
+    store.invalid_next_write("past its bounds");
+    // The first write's interleaving makes the second invalid too.
+    store.before_next_write(|board| {
+        board.before_next_write(|board| board.invalid_next_write("still past its bounds"));
+    });
+    let mut facts = FoldBackFacts::default();
+    let folded =
+        fold_back(&store).execute_noted(&slug("board-store"), 1, &swarm(), Some(&mut facts));
+    assert_eq!(
+        folded,
+        Err(ProjectBoardError::Store(BoardStoreError::InvalidWrite(
+            "still past its bounds".into()
+        )))
+    );
+    assert_eq!((store.writes(), facts.attempts), (writes, Some(2)));
+    assert!(run_on(&store).is_open());
+}
+
+#[test]
+#[should_panic(expected = "a board change writes as it declares")]
+fn a_run_write_that_writes_its_task_too_is_a_bug() {
+    let (store, task, run) = started();
+    let clock = SetClock::at("11:00:00");
+    let _ = super::super::board_change::commit_run(&store, &*clock, "board: x", None, |_, _| {
+        Ok(vec![
+            BoardArtifact::Task(task.clone()),
+            BoardArtifact::Run(run.clone()),
+        ])
+    });
+}
+
+/// One outcome a recorder was given, owned.
+type Outcome = (
+    Slug,
+    u32,
+    Result<FoldedBack, ProjectBoardError>,
+    FoldBackFacts,
+    std::time::Duration,
+);
+
+/// The outcomes a recorder was given.
+#[derive(Default)]
+struct Recorded(std::sync::Mutex<Vec<Outcome>>);
+
+impl FoldBackRecorder for Recorded {
+    fn record(&self, outcome: FoldBackOutcome<'_>) {
+        self.0.lock().unwrap().push((
+            outcome.task.clone(),
+            outcome.run,
+            outcome.result.clone(),
+            outcome.facts.clone(),
+            outcome.elapsed,
+        ));
+    }
+}
+
+#[test]
+fn a_recorded_fold_back_hands_its_outcome_facts_and_time_to_the_recorder() {
+    let (store, _, _) = started();
+    let clock = SetClock::at("11:00:00");
+    *clock.tick.lock().unwrap() = std::time::Duration::from_millis(5);
+    let use_case =
+        FoldBackRun::new(Arc::new(store.client()), clock, Arc::new(MarkdownTextCells)).unwrap();
+    let recorded = Recorded::default();
+    let folded = use_case.execute_recorded(&slug("board-store"), 1, &swarm(), Some(&recorded));
+    let taken = std::mem::take(&mut *recorded.0.lock().unwrap());
+    let [(task, run, result, facts, elapsed)] = taken.as_slice() else {
+        panic!("one outcome: {taken:?}");
+    };
+    assert_eq!((task, *run, result), (&slug("board-store"), 1, &folded));
+    assert_eq!(facts.run_outcome, Some(RunOutcomeKind::Succeeded));
+    assert!(
+        *elapsed >= std::time::Duration::from_millis(5),
+        "{elapsed:?}"
+    );
+    // With no recorder, it is a plain fold-back: the run has ended now.
+    let again = use_case.execute_recorded(&slug("board-store"), 1, &swarm(), None);
+    assert_eq!(again, Ok(FoldedBack::Ended(1)));
+    assert!(recorded.0.lock().unwrap().is_empty());
 }
 
 #[test]
@@ -245,9 +366,18 @@ fn a_run_task_or_plan_the_board_lacks_is_refused_and_nothing_written() {
         Err(ProjectBoardError::NotFound(slug("elsewhere")))
     );
     store.refuse_next_write("the codec refused it");
+    let mut facts = FoldBackFacts::default();
     assert_eq!(
-        use_case.execute(&slug("board-store"), 1, &swarm()),
+        use_case.execute_noted(&slug("board-store"), 1, &swarm(), Some(&mut facts)),
         Err(ProjectBoardError::Refused("the codec refused it".into()))
+    );
+    assert_eq!(
+        facts,
+        FoldBackFacts {
+            attempts: Some(1),
+            lost: Some(0),
+            ..FoldBackFacts::default()
+        }
     );
     assert_eq!(store.writes(), writes);
     assert!(run_on(&store).is_open());

@@ -2,7 +2,7 @@
 //! (the S1d git store implements [`ProjectBoardStore`] over the
 //! repository's `quecto/board` branch), its listings from a local view of
 //! it (the S1e index implements [`BoardListings`]) and what time it is.
-use super::dto::BoardListing;
+use super::dto::{BoardListing, FoldBackFacts, FoldedBack, ProjectBoardError};
 use crate::domain::project_board::entities::change::Change;
 use crate::domain::project_board::entities::claim::Identity;
 use crate::domain::project_board::entities::discussion::Discussion;
@@ -481,6 +481,27 @@ pub trait PullRequestStates: Send + Sync {
 pub trait BoardTextCells: Send + Sync {
     /// Whether a text cell holds `line` as it is.
     fn holds(&self, line: &str) -> bool;
+}
+
+/// What one fold-back came to, as its recorder is given it.
+#[derive(Debug, Clone, Copy)]
+pub struct FoldBackOutcome<'a> {
+    pub task: &'a Slug,
+    pub run: u32,
+    pub result: &'a Result<FoldedBack, ProjectBoardError>,
+    pub facts: &'a FoldBackFacts,
+    /// The whole fold-back, on the board clock's monotonic time.
+    pub elapsed: std::time::Duration,
+}
+
+/// Port: where a fold-back's outcome goes, its `board_fold_back` record
+/// (S4), for the caller in this layer that folds a run back (the keeper).
+/// The front end implements it, naming its error and rule codes. A caller
+/// holds one only while the event log is on, so with it off no fact is
+/// gathered and nothing is timed.
+pub trait FoldBackRecorder: Send + Sync {
+    /// Records `outcome`, never failing the fold-back.
+    fn record(&self, outcome: FoldBackOutcome<'_>);
 }
 
 /// Port: where each board request's `board_op` record goes (epic #2481):

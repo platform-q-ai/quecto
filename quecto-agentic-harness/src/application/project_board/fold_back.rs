@@ -7,22 +7,33 @@
 //!   end a swarm, so only they make a [`SwarmEnd`], and a fold-back is only
 //!   ever of an ended swarm.
 //! - **Task items:** a swarm item is matched to the plan item whose brief
-//!   title it carries ([`item_title`], `<slug>: <title>`), exactly; the
-//!   first of several under one title is taken. Ready is todo, claimed
-//!   doing, submitted review, completed done, blocked blocked. A plan item
-//!   the swarm never seeded is todo (`unmatched`); a swarm item no plan
-//!   item names is counted (`extra`), never kept.
+//!   title it carries ([`item_title`], `<slug>: <title>`), exactly, or,
+//!   when none carries it, by its `<slug>: ` prefix (a slug holds no `:`,
+//!   so a prefix names one plan item). Of several, the most progressed is
+//!   taken (completed, submitted, claimed, ready, blocked), the newest of
+//!   equals. Ready is todo, claimed doing, submitted review, completed
+//!   done, blocked blocked. A plan item the swarm never seeded is todo
+//!   (`unmatched`); a swarm item no plan item takes is counted (`extra`),
+//!   never kept.
+//! - **Secrets:** every owner and evidence part has its URL userinfo and
+//!   secret-shaped spans redacted first, and a linked address loses its
+//!   query (a signed URL's signature): the board is pushed, and read by
+//!   every member.
 //! - **Owner:** the member id, as one board line cut to
 //!   [`MAX_OWNER_CHARS`]; none when the board cannot hold it.
 //! - **Evidence:** one line per entry, `<artifact> at <revision>`, each
-//!   bare `https://` address in it written as a `[link](…)`. A line the
-//!   board cannot hold (its schema, its codec's text cell, a repeat, past
-//!   [`MAX_PER_ITEM`] or past the run's [`MAX_RUN_TEXT_BYTES`]) is dropped
-//!   and counted: one bad line never sinks the fold-back.
+//!   word that is a whole `https://` address (its surrounding `<>`, `()`
+//!   and trailing punctuation left outside) written as a `[link](…)`. A
+//!   line the board cannot hold (its schema, its codec's text cell, a
+//!   repeat, past [`MAX_PER_ITEM`] or past the run's [`MAX_RUN_TEXT_BYTES`],
+//!   owners counted first) is dropped and counted, with no marker left:
+//!   one bad line never sinks the fold-back.
 //! - **Cost:** the swarm's observed tokens, within the board's bound.
+pub use super::dto::FoldedBack;
 use super::ports::BoardTextCells;
 use super::swarm_brief::item_title;
 use crate::domain::project_board::entities::plan::Plan;
+use crate::domain::project_board::entities::plan::PlanItem;
 use crate::domain::project_board::entities::run::{MAX_RUN_TEXT_BYTES, RunItem};
 use crate::domain::project_board::entities::task_parts::{
     MAX_BUDGET_TOKENS, MAX_LINE_CHARS, MAX_OWNER_CHARS, MAX_PER_ITEM,
@@ -31,12 +42,28 @@ use crate::domain::project_board::value_objects::board_text;
 use crate::domain::project_board::value_objects::schema_error::line;
 use crate::domain::project_board::value_objects::telemetry::ItemCounts;
 use crate::domain::project_board::value_objects::vocabulary::{ItemState, RunOutcome};
+use crate::domain::redaction::{redact_secrets, redact_url_userinfo};
 use crate::domain::swarm::{RunState, TaskState};
 
 /// The scheme of the one address a board line links.
 const HTTPS: &str = "https://";
 /// The text of a link written for a bare address.
 const LINK_TEXT: &str = "link";
+/// What a redacted URL's userinfo leaves (`redact_url_userinfo`): dropped
+/// from a linked address.
+const REDACTED_USERINFO: &str = "***@";
+/// What may stand before a bare address and stay outside its link.
+const OPENERS: [char; 2] = ['<', '('];
+/// What may follow a bare address and stay outside its link.
+const CLOSERS: [char; 8] = ['>', ')', '.', ',', ';', ':', '!', '?'];
+
+/// Whether a fold-back keeps its evidence, or leaves it out (a run the
+/// store judged too large with it).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Evidence {
+    Kept,
+    Left,
+}
 
 /// How a swarm ended: one of the statuses that end it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -101,6 +128,19 @@ impl SwarmItemState {
             "completed" => Some(Self::Completed),
             "blocked" => Some(Self::Blocked),
             _ => None,
+        }
+    }
+
+    /// How far an item standing so got: completed, submitted, claimed,
+    /// ready, then blocked (an item blocked and created again is taken by
+    /// its new copy).
+    pub fn progress(self) -> u8 {
+        match self {
+            Self::Blocked => 0,
+            Self::Ready => 1,
+            Self::Claimed => 2,
+            Self::Submitted => 3,
+            Self::Completed => 4,
         }
     }
 
@@ -175,16 +215,17 @@ impl FoldBackItems {
 }
 
 /// Where each of `plan`'s task items stood when `view`'s swarm ended,
-/// each line checked against `cells` as the board's codec holds it.
-pub fn run_items(plan: &Plan, view: &SwarmRunView, cells: &dyn BoardTextCells) -> FoldBackItems {
+/// each line checked against `cells` as the board's codec holds it, and
+/// its evidence kept or left out as `evidence` says.
+pub fn run_items(
+    plan: &Plan,
+    view: &SwarmRunView,
+    cells: &dyn BoardTextCells,
+    evidence_kept: Evidence,
+) -> FoldBackItems {
     let planned = &plan.fields().items;
-    let matched: Vec<Option<&SwarmItemView>> = planned
-        .iter()
-        .map(|item| {
-            let key = item_title(item);
-            view.items.iter().find(|swarm| swarm.title == key)
-        })
-        .collect();
+    let matched: Vec<Option<&SwarmItemView>> =
+        planned.iter().map(|item| matched(item, view)).collect();
     let taken = matched.iter().flatten().count();
     let owners: Vec<Option<String>> = matched
         .iter()
@@ -202,7 +243,8 @@ pub fn run_items(plan: &Plan, view: &SwarmRunView, cells: &dyn BoardTextCells) -
             let mut kept: Vec<String> = Vec::new();
             for entry in lines {
                 let written = evidence_line(entry);
-                let holds = kept.len() < MAX_PER_ITEM
+                let holds = evidence_kept == Evidence::Kept
+                    && kept.len() < MAX_PER_ITEM
                     && written.len() <= room
                     && !kept.contains(&written)
                     && held_line(&written, MAX_LINE_CHARS, cells);
@@ -243,11 +285,38 @@ pub fn run_items(plan: &Plan, view: &SwarmRunView, cells: &dyn BoardTextCells) -
     folded
 }
 
+/// The swarm item plan item `item` stands for: of those carrying its
+/// title exactly, or else its `<slug>: ` prefix, the most progressed, the
+/// newest of equals.
+fn matched<'v>(item: &PlanItem, view: &'v SwarmRunView) -> Option<&'v SwarmItemView> {
+    let key = item_title(item);
+    let prefix = format!("{}: ", item.id.as_str());
+    debug_assert!(
+        key.starts_with(&prefix),
+        "a title key starts with its prefix"
+    );
+    let (key, prefix) = (key.as_str(), prefix.as_str());
+    let under = |exact: bool| {
+        view.items
+            .iter()
+            .enumerate()
+            .filter(move |(_, swarm)| match exact {
+                true => swarm.title == key,
+                false => swarm.title.starts_with(prefix),
+            })
+    };
+    let exact = under(true).next().is_some();
+    under(exact)
+        .max_by_key(|(at, swarm)| (swarm.state.progress(), *at))
+        .map(|(_, swarm)| swarm)
+}
+
 /// `entry` as one evidence line: `<artifact> at <revision>`, each part one
-/// board line with its bare addresses linked. Empty when either part is.
+/// board line, its secrets redacted and its bare addresses linked. Empty
+/// when either part is.
 pub fn evidence_line(entry: &SwarmEvidence) -> String {
-    let artifact = linked(&board_text::line(&entry.artifact));
-    let revision = linked(&board_text::line(&entry.revision));
+    let artifact = linked(&scrubbed(&entry.artifact));
+    let revision = linked(&scrubbed(&entry.revision));
     match (artifact.is_empty(), revision.is_empty()) {
         (false, false) => format!("{artifact} at {revision}"),
         _ => String::new(),
@@ -260,27 +329,74 @@ pub fn cost_of(view: &SwarmRunView) -> u64 {
     view.observed_tokens.min(MAX_BUDGET_TOKENS)
 }
 
-/// `text` with each word that is a bare `https://` address written as a
-/// link to it; the codec judges the address itself.
+/// `raw` from outside the board as one board line, a URL's userinfo and
+/// every secret-shaped span redacted first.
+fn scrubbed(raw: &str) -> String {
+    board_text::line(&redact_secrets(&redact_url_userinfo(raw)))
+}
+
+/// `text` with each word that is a whole bare address written as a link
+/// to it ([`linked_word`]).
 fn linked(text: &str) -> String {
     text.split(' ')
-        .map(
-            |word| match word.starts_with(HTTPS) && word.len() > HTTPS.len() {
-                true => format!("[{LINK_TEXT}]({word})"),
-                false => word.to_string(),
-            },
-        )
+        .map(linked_word)
         .collect::<Vec<_>>()
         .join(" ")
 }
 
-/// Member id `raw` as an owner: one board line, cut to
-/// [`MAX_OWNER_CHARS`]; none when the board cannot hold what is left.
+/// `word` with the address it holds, once any of [`OPENERS`] before it
+/// and [`CLOSERS`] after it are set apart, written as a link to that
+/// address (angle brackets, an autolink's, dropped); `word` as it is when
+/// what is left is no [`address`].
+fn linked_word(word: &str) -> String {
+    let opened = word.trim_start_matches(OPENERS);
+    let core = opened.trim_end_matches(CLOSERS);
+    let (lead, trail) = (&word[..word.len() - opened.len()], &opened[core.len()..]);
+    match address(core) {
+        Some(address) => format!(
+            "{}[{LINK_TEXT}]({address}){}",
+            lead.replace('<', ""),
+            trail.replace('>', "")
+        ),
+        None => word.to_string(),
+    }
+}
+
+/// `core` as the address a link holds: an `https://` address with a host,
+/// its redacted userinfo and its query dropped (a query may carry a
+/// credential, such as a signed URL's signature), its parentheses
+/// percent-encoded, and every character one the codec's address takes (an
+/// allowlist: its host, then its path and fragment); none otherwise.
+fn address(core: &str) -> Option<String> {
+    let rest = core.strip_prefix(HTTPS)?;
+    let rest = rest.strip_prefix(REDACTED_USERINFO).unwrap_or(rest);
+    let (before, fragment) = rest.split_once('#').unwrap_or((rest, ""));
+    let path = before.split_once('?').map_or(before, |(path, _)| path);
+    let kept = match fragment.is_empty() {
+        true => path.to_string(),
+        false => format!("{path}#{fragment}"),
+    };
+    let encoded = kept.replace('(', "%28").replace(')', "%29");
+    let (host, tail) = encoded.split_at(encoded.find(['/', '#']).unwrap_or(encoded.len()));
+    let shaped = !host.is_empty() && host.chars().all(host_char) && tail.chars().all(path_char);
+    shaped.then(|| format!("{HTTPS}{encoded}"))
+}
+
+/// A character the codec's address takes in its host part.
+fn host_char(c: char) -> bool {
+    c.is_ascii_alphanumeric() || "-._~:!&'*+,;=%".contains(c)
+}
+
+/// A character the codec's address takes past its host.
+fn path_char(c: char) -> bool {
+    host_char(c) || "/?#@".contains(c)
+}
+
+/// Member id `raw` as an owner: one board line, its secrets redacted, cut
+/// to [`MAX_OWNER_CHARS`] and trimmed again; none when the board cannot
+/// hold what is left.
 fn owner_of(raw: &str, cells: &dyn BoardTextCells) -> Option<String> {
-    let cut: String = board_text::line(raw)
-        .chars()
-        .take(MAX_OWNER_CHARS)
-        .collect();
+    let cut: String = scrubbed(raw).chars().take(MAX_OWNER_CHARS).collect();
     let owner = board_text::line(&cut);
     held_line(&owner, MAX_OWNER_CHARS, cells).then_some(owner)
 }
