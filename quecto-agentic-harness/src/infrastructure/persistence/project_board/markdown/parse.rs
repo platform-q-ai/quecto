@@ -303,7 +303,12 @@ impl<'a> Reader<'a> {
     fn list(&mut self) -> Result<Block, MarkdownError> {
         let mut items = vec![];
         while let Some(item) = self.peek(0).and_then(|line| line.strip_prefix("- ")) {
-            items.push(self.text(item)?);
+            let text = self.text(item)?;
+            // Refused read as written: an item opening as a definition.
+            match opens_freely(std::slice::from_ref(&text)) {
+                true => items.push(text),
+                false => return Err(MarkdownError::ReferenceDefinition { line: self.line() }),
+            }
             self.at += 1;
         }
         Ok(Block::List(items))

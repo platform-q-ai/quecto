@@ -11,6 +11,7 @@ fn the_reader_refuses_a_definition_paragraph_itself() {
     for (lines, line) in [
         (vec!["\\[docs]: //evil.example/x"], 1),
         (vec!["\\[a", "b]: /x"], 1),
+        (vec!["[`]: //evil.example/x \"`](https://example.com)\""], 1),
     ] {
         let mut reader = Reader {
             lines: &lines,
@@ -30,5 +31,20 @@ fn the_reader_refuses_a_definition_paragraph_itself() {
     assert_eq!(
         reader.paragraph(),
         Ok(Block::Paragraph(vec!["[WIP] not done: soon".into()]))
+    );
+}
+
+/// The reader refuses a list item that opens as a definition, its label's
+/// end hidden in a code span, on its own line.
+#[test]
+fn the_reader_refuses_a_definition_item_itself() {
+    let lines = vec!["- [`]: //evil.example/x \"`](https://example.com)\""];
+    let mut reader = Reader {
+        lines: &lines,
+        at: 0,
+    };
+    assert_eq!(
+        reader.list(),
+        Err(MarkdownError::ReferenceDefinition { line: 1 })
     );
 }

@@ -10,23 +10,40 @@ use super::chars::check_line;
 use super::inline::{check_inline, starts_with_link};
 use super::{Block, MarkdownError};
 
-/// Whether a paragraph of `texts`, its lines as a domain holds them, may
-/// open as it does (an allowlist): with anything but `[`, with a link,
-/// or with a `[` that defines nothing (its label holds another `[`, or is
-/// not closed by `]:`). A link reference definition shows nothing and
-/// gives every `[label]` on the page a hidden address, so a paragraph
-/// that opens as one is refused, written or read, rather than held
+/// Whether a paragraph or list item of `texts`, its lines as a domain
+/// holds them, may open as it does (an allowlist): with anything but `[`,
+/// or with a `[` that defines nothing. Its label is read raw, as
+/// CommonMark reads a label: it ends at the first `]` no backslash
+/// escapes, even inside a code span, and holds no other `[`; a label so
+/// closed by `]:` defines a link reference. A link's first raw `]` comes
+/// before its `(`, so a link opens freely. A definition shows nothing and
+/// gives every `[label]` on the page a hidden address, so a paragraph or
+/// item that opens as one is refused, written or read, rather than held
 /// escaped (its label may run across lines).
 pub(super) fn opens_freely(texts: &[String]) -> bool {
     let joined = texts.join("\n");
-    match joined.strip_prefix('[') {
-        None => true,
-        Some(_) if starts_with_link(&joined) => true,
-        Some(label) => match label.find(['[', ']']) {
-            Some(at) if label[at..].starts_with("]:") => false,
-            Some(_) | None => true,
-        },
+    let Some(label) = joined.strip_prefix('[') else {
+        return true;
+    };
+    let mut chars = label.char_indices();
+    while let Some((at, c)) = chars.next() {
+        match c {
+            // An escaped character never ends the label: skipping it
+            // refuses more, never less.
+            '\\' => {
+                chars.next();
+            }
+            '[' => return true,
+            ']' => {
+                return match label[at + 1..].chars().next() {
+                    Some(':') => false,
+                    Some(_) | None => true,
+                };
+            }
+            _ => {}
+        }
     }
+    true
 }
 
 /// Whether a line opening with `first` is escaped: every ASCII punctuation
@@ -69,7 +86,11 @@ pub fn list_number(line: &str) -> Option<usize> {
 /// would start with, or before an ordered marker's `.` or `)`.
 pub fn escaped(line: &str) -> String {
     match (line.chars().next(), list_number(line)) {
-        // A link opens the line: a reference definition it is not.
+        // A link opens the line. Where a definition could start (a
+        // paragraph's first line, an item) one is refused before this
+        // ([`opens_freely`]); inside a paragraph none can, and a code span
+        // binds tighter than a link's brackets, so the line is the link a
+        // domain's text holds: escaping it would unlink it.
         (Some('['), _) if starts_with_link(line) => line.to_string(),
         (Some(first), _) if opens_escaped(first) => format!("\\{line}"),
         (_, Some(digits)) => format!("{}\\{}", &line[..digits], &line[digits..]),
@@ -153,6 +174,16 @@ pub fn render(
             Block::List(items) => {
                 for item in items {
                     text_line(item, lines.len() + 1)?;
+                    // An item is a paragraph of its own: it may not open
+                    // as a definition either.
+                    match opens_freely(std::slice::from_ref(item)) {
+                        true => {}
+                        false => {
+                            return Err(MarkdownError::ReferenceDefinition {
+                                line: lines.len() + 1,
+                            });
+                        }
+                    }
                     // A `[` opening an item is a task box to GitHub, but
                     // for a link's.
                     if item.starts_with('[') && !starts_with_link(item) {
