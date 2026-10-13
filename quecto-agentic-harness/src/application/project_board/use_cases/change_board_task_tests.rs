@@ -528,25 +528,42 @@ fn a_task_a_change_links_is_not_finished_by_its_holder() {
 }
 
 /// What the task's run or change files held is unknown while one is set
-/// aside, so a move waits for it; another task's blocks nothing.
+/// aside, so a move that reads them waits for it: a move leaving its
+/// holder reads the runs, review to done the changes. Another task's file
+/// blocks nothing.
 #[test]
-fn a_move_waits_while_a_run_or_change_of_its_task_is_set_aside() {
-    for (key, path) in [
-        (ArtifactKey::Run(slug("a"), 1), "runs/a.1.md"),
-        (ArtifactKey::Change(slug("a"), 2), "changes/a.2.md"),
+fn a_move_that_reads_a_set_aside_run_or_change_of_its_task_waits() {
+    for (key, path, from, to) in [
+        (
+            ArtifactKey::Run(slug("a"), 1),
+            "runs/a.1.md",
+            TaskStatus::InProgress,
+            TaskStatus::Ready,
+        ),
+        (
+            ArtifactKey::Change(slug("a"), 2),
+            "changes/a.2.md",
+            TaskStatus::Review,
+            TaskStatus::Done,
+        ),
     ] {
-        let store = board();
-        seed(&store, held_by_ada(TaskStatus::InProgress));
-        store.quarantine_key(ArtifactKey::Run(slug("b"), 1), "runs/b.1.md", "malformed");
-        let other = change(&store, "Ada", "10:00:00")
-            .execute(&slug("a"), &BoardOp::Move(TaskStatus::Blocked));
-        assert!(
-            other.is_ok(),
-            "another task's file blocks nothing: {other:?}"
+        let others = board();
+        seed(&others, held_by_ada(from));
+        others.quarantine_key(ArtifactKey::Run(slug("b"), 1), "runs/b.1.md", "malformed");
+        others.quarantine_key(
+            ArtifactKey::Change(slug("b"), 1),
+            "changes/b.1.md",
+            "malformed",
         );
+        let moved = change(&others, "Ada", "10:01:00").execute(&slug("a"), &BoardOp::Move(to));
+        assert!(
+            moved.is_ok(),
+            "another task's files block nothing: {moved:?}"
+        );
+        let store = board();
+        seed(&store, held_by_ada(from));
         store.quarantine_key(key.clone(), path, "malformed");
-        let moved = change(&store, "Ada", "10:01:00")
-            .execute(&slug("a"), &BoardOp::Move(TaskStatus::InProgress));
+        let moved = change(&store, "Ada", "10:01:00").execute(&slug("a"), &BoardOp::Move(to));
         assert_eq!(
             moved,
             Err(ProjectBoardError::Quarantined {
@@ -555,6 +572,34 @@ fn a_move_waits_while_a_run_or_change_of_its_task_is_set_aside() {
             })
         );
     }
+}
+
+/// A move reads only what it needs: among the held statuses it reads
+/// neither runs nor changes, so set-aside ones block nothing; and a move
+/// the table refuses is refused as such, before anything is read.
+#[test]
+fn a_move_reads_only_what_it_needs() {
+    let store = board();
+    seed(&store, held_by_ada(TaskStatus::InProgress));
+    store.quarantine_key(ArtifactKey::Run(slug("a"), 1), "runs/a.1.md", "malformed");
+    store.quarantine_key(
+        ArtifactKey::Change(slug("a"), 1),
+        "changes/a.1.md",
+        "malformed",
+    );
+    let blocked = change(&store, "Ada", "10:00:00")
+        .execute(&slug("a"), &BoardOp::Move(TaskStatus::Blocked))
+        .unwrap();
+    assert_eq!(blocked.fields().status, TaskStatus::Blocked);
+    let skipped =
+        change(&store, "Ada", "10:01:00").execute(&slug("a"), &BoardOp::Move(TaskStatus::Done));
+    assert_eq!(
+        skipped,
+        Err(ProjectBoardError::Rule(BoardRuleError::NotAllowed {
+            from: TaskStatus::Blocked,
+            to: TaskStatus::Done
+        }))
+    );
 }
 
 /// A pull request is linked once board-wide, whichever way: one another

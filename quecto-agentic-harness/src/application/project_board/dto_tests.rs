@@ -1,5 +1,6 @@
 use super::ProjectBoardError;
-use crate::application::project_board::ports::{BoardClockError, BoardStoreError};
+use crate::application::project_board::ports::{ArtifactKey, BoardClockError, BoardStoreError};
+use crate::domain::project_board::value_objects::slug::Slug;
 
 /// A store's failure says which kind it is, not only the store's words.
 #[test]
@@ -252,5 +253,33 @@ fn a_kept_keyless_file_counts_in_every_scope_and_a_stray_in_none() {
         listing.quarantined.len(),
         2,
         "both are carried in the listing"
+    );
+}
+
+/// The owner-approved message for an id another artifact still uses: a
+/// plan, run, change or review by its key, a discussion by what it is
+/// about.
+#[test]
+fn an_id_in_use_names_what_still_uses_it() {
+    let x = Slug::parse("x").unwrap();
+    let shown = |by: ArtifactKey| ProjectBoardError::IdInUse { id: x.clone(), by }.to_string();
+    for (by, what) in [
+        (ArtifactKey::Plan(x.clone(), 2), "plan 2 of task x"),
+        (ArtifactKey::Run(x.clone(), 1), "run 1 of task x"),
+        (ArtifactKey::Change(x.clone(), 4), "change 4 of task x"),
+        (ArtifactKey::Review(x.clone(), 3), "review 3 of task x"),
+    ] {
+        assert_eq!(
+            shown(by),
+            format!(
+                "no task x is on the board, but {what} is still there and uses that id; \
+                 choose another id"
+            )
+        );
+    }
+    assert_eq!(
+        shown(ArtifactKey::Discussion(Slug::parse("chat").unwrap())),
+        "no task x is on the board, but discussion chat is about x and uses that id; \
+         choose another id"
     );
 }

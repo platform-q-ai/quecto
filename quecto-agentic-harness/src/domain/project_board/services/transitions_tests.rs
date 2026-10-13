@@ -662,3 +662,42 @@ fn a_superseded_task_is_archived_as_superseded() {
         assert_eq!(plain.fields().resolution, None, "{status:?}");
     }
 }
+
+/// A move reads of the task's work only what can hold it: the runs for a
+/// move to a status that holds no claim, the changes for review to done,
+/// nothing among the held statuses; a move the rule refuses anyway is
+/// refused before anything is read.
+#[test]
+fn a_move_reads_only_what_can_hold_it() {
+    let ada = person("Ada");
+    let now = at("10:00:00");
+    let reads = |from, to| move_reads(&without_prs(task(from)), to, &ada, &now);
+    let read = |runs, changes| Ok(MoveReads { runs, changes });
+    assert_eq!(reads(Claimed, InProgress), read(false, false));
+    assert_eq!(reads(InProgress, Review), read(false, false));
+    assert_eq!(reads(InProgress, Ready), read(true, false));
+    assert_eq!(reads(Review, Done), read(true, true));
+    assert_eq!(
+        reads(Ready, Review),
+        Err(BoardRuleError::NotAllowed {
+            from: Ready,
+            to: Review
+        })
+    );
+    assert_eq!(
+        move_reads(&task(Review), Done, &ada, &now),
+        Err(BoardRuleError::PrsLinked(task(Review).fields().prs.clone())),
+        "a task linking pull requests is refused before its changes are read"
+    );
+    assert_eq!(
+        move_reads(&task(Claimed), InProgress, &person("Bob"), &now),
+        Err(BoardRuleError::NotHolder)
+    );
+    assert_eq!(
+        completable(&task(Draft)),
+        Err(BoardRuleError::NotAllowed {
+            from: Draft,
+            to: Done
+        })
+    );
+}

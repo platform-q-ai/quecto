@@ -466,8 +466,7 @@ fn board_text_is_normalised_before_the_schema_reads_it() {
 
 /// An id the board's other artifacts already name (a plan, run, change or
 /// review of a task by that id, or a discussion about it) is refused,
-/// naming the least of them, whatever the store's order: a new task would
-/// take over what they say. One of them set aside is refused as set aside.
+/// naming the least of them: a new task would take over what they say.
 #[test]
 fn an_id_other_artifacts_name_is_refused() {
     let about_x = Discussion::new(DiscussionFields {
@@ -475,45 +474,73 @@ fn an_id_other_artifacts_name_is_refused() {
         ..board_artifacts::discussion("chat").fields().clone()
     })
     .unwrap();
-    let store = board();
-    for (artifact, least) in [
+    for (artifacts, least) in [
         (
-            BoardArtifact::Discussion(about_x),
+            vec![BoardArtifact::Run(board_artifacts::run("x", 1))],
+            ArtifactKey::Run(slug("x"), 1),
+        ),
+        (
+            vec![BoardArtifact::Change(board_artifacts::change("x", 4))],
+            ArtifactKey::Change(slug("x"), 4),
+        ),
+        (
+            vec![BoardArtifact::Discussion(about_x)],
             ArtifactKey::Discussion(slug("chat")),
         ),
         (
-            BoardArtifact::Review(board_artifacts::review("x", 3)),
-            ArtifactKey::Review(slug("x"), 3),
-        ),
-        (
-            BoardArtifact::Plan(board_artifacts::plan("x", 2)),
+            vec![
+                BoardArtifact::Review(board_artifacts::review("x", 1)),
+                BoardArtifact::Plan(board_artifacts::plan("x", 3)),
+                BoardArtifact::Plan(board_artifacts::plan("x", 2)),
+            ],
             ArtifactKey::Plan(slug("x"), 2),
         ),
     ] {
+        let store = board();
         let head = store.read().unwrap().head;
-        store.write(&head, &[artifact], "seed").unwrap();
+        store.write(&head, &artifacts, "seed").unwrap();
         let writes = store.writes();
         assert_eq!(
             create(&store, SetClock::at("10:00:00")).execute(&new_task("x")),
             Err(ProjectBoardError::IdInUse {
                 id: slug("x"),
-                by: least
+                by: least.clone()
             })
         );
         assert_eq!(store.writes(), writes);
+        assert!(
+            create(&store, SetClock::at("10:00:00"))
+                .execute(&new_task("y"))
+                .is_ok(),
+            "{least} names x alone"
+        );
     }
-    assert!(
-        create(&store, SetClock::at("10:00:00"))
-            .execute(&new_task("y"))
-            .is_ok(),
-        "they name x alone"
-    );
-    store.quarantine_key(ArtifactKey::Run(slug("x"), 1), "runs/x.1.md", "malformed");
-    assert_eq!(
-        create(&store, SetClock::at("10:00:00")).execute(&new_task("x")),
-        Err(ProjectBoardError::Quarantined {
-            key: ArtifactKey::Run(slug("x"), 1),
-            path: "runs/x.1.md".into()
-        })
-    );
+}
+
+/// While a file that may name the id is set aside, a create waits: a plan,
+/// run, change or review of a task by that id, or any discussion (its task
+/// is unknown). Creates are rare, so waiting for a mend costs little.
+#[test]
+fn a_create_waits_while_a_file_that_may_name_its_id_is_set_aside() {
+    for (key, path) in [
+        (ArtifactKey::Run(slug("x"), 1), "runs/x.1.md"),
+        (ArtifactKey::Discussion(slug("chat")), "discussions/chat.md"),
+    ] {
+        let store = board();
+        store.quarantine_key(ArtifactKey::Run(slug("y"), 1), "runs/y.1.md", "malformed");
+        assert!(
+            create(&store, SetClock::at("10:00:00"))
+                .execute(&new_task("w"))
+                .is_ok(),
+            "another task's file blocks nothing"
+        );
+        store.quarantine_key(key.clone(), path, "malformed");
+        assert_eq!(
+            create(&store, SetClock::at("10:00:00")).execute(&new_task("x")),
+            Err(ProjectBoardError::Quarantined {
+                key,
+                path: path.into()
+            })
+        );
+    }
 }

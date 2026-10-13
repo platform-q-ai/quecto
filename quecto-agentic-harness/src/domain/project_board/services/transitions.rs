@@ -59,9 +59,40 @@ const TRANSITIONS: &[(TaskStatus, TaskStatus, Actor, ClaimEffect)] = &[
     (Blocked,    Ready,      Actor::HolderWhileLive, ClaimEffect::Clear),
 ];
 
+/// What a move reads of the task's work: its runs, its changes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MoveReads {
+    pub runs: bool,
+    pub changes: bool,
+}
+
+/// What moving `task` to `to` by `actor` at `now` reads of the task's
+/// work, once the table, the actor and the task's own fields allow it: a
+/// move to a status that holds no claim reads the runs (a run going holds
+/// the task), review to done reads the changes (a change linked holds it),
+/// any other reads nothing. A use case reads only these, so a move the
+/// rule refuses anyway is refused as such, and reads nothing.
+///
+/// # Errors
+/// What [`move_task`] refuses before it looks at runs or changes.
+pub fn move_reads(
+    task: &Task,
+    to: TaskStatus,
+    actor: &Identity,
+    now: &Timestamp,
+) -> Result<MoveReads, BoardRuleError> {
+    allowed(task, to, actor, now)?;
+    let from = task.fields().status;
+    Ok(MoveReads {
+        runs: !to.may_hold_claim(),
+        changes: (from, to) == (Review, Done),
+    })
+}
+
 /// `task` moved to `to` by `actor` at `now`, if the table allows it and
 /// its `runs` and `changes` (all of them, as the board holds them) let it
-/// leave.
+/// leave. Only those [`move_reads`] names count: a caller may leave the
+/// rest empty.
 pub fn move_task(
     task: &Task,
     to: TaskStatus,
@@ -70,6 +101,35 @@ pub fn move_task(
     changes: &[Change],
     now: &Timestamp,
 ) -> Result<Task, BoardRuleError> {
+    let effect = allowed(task, to, actor, now)?;
+    let from = task.fields().status;
+    let linked = numbers(task, changes, Change::is_linked)?;
+    // Only review to done is held by a change linked.
+    if (from, to) == (Review, Done) && !linked.is_empty() {
+        return Err(BoardRuleError::ChangesLinked(linked));
+    }
+    may_move_with(task, runs, to)?;
+    let at = stamp(task, now)?;
+    let mut next = task.fields().clone();
+    next.status = to;
+    next.resolution = resolved(to, next.resolution, !next.superseded_by.is_empty());
+    next.claim = match effect {
+        ClaimEffect::Keep => next.claim,
+        ClaimEffect::Take => Some(new_claim(actor, &at)?),
+        ClaimEffect::Clear => None,
+    };
+    settle(next, &at)
+}
+
+/// What a move does to the claim, when the table and its actor allow it,
+/// a task others took over is not finished, and a task that links pull
+/// requests is not finished by its holder.
+fn allowed(
+    task: &Task,
+    to: TaskStatus,
+    actor: &Identity,
+    now: &Timestamp,
+) -> Result<ClaimEffect, BoardRuleError> {
     let from = task.fields().status;
     let (_, _, who, effect) = TRANSITIONS
         .iter()
@@ -102,29 +162,12 @@ pub fn move_task(
     // The holder finishes a task only when it links no pull request and
     // no change: one that links them is done when they merge
     // (`complete_merged`, `changes::complete`). The holder may unlink one
-    // deliberately (`remove_pr`, `changes::unlink`), and then finish.
-    let linked = numbers(task, changes, Change::is_linked)?;
-    match ((from, to), &task.fields().prs[..], &linked[..]) {
-        ((Review, Done), [], []) => {}
-        ((Review, Done), [_, ..], _) => {
-            return Err(BoardRuleError::PrsLinked(task.fields().prs.clone()));
-        }
-        ((Review, Done), [], numbers) => {
-            return Err(BoardRuleError::ChangesLinked(numbers.to_vec()));
-        }
-        _ => {}
+    // deliberately (`remove_pr`, `changes::unlink`), and then finish. The
+    // changes are `move_task`'s to judge.
+    match ((from, to), &task.fields().prs[..]) {
+        ((Review, Done), [_, ..]) => Err(BoardRuleError::PrsLinked(task.fields().prs.clone())),
+        _ => Ok(*effect),
     }
-    may_move_with(task, runs, to)?;
-    let at = stamp(task, now)?;
-    let mut next = task.fields().clone();
-    next.status = to;
-    next.resolution = resolved(to, next.resolution, !next.superseded_by.is_empty());
-    next.claim = match effect {
-        ClaimEffect::Keep => next.claim,
-        ClaimEffect::Take => Some(new_claim(actor, &at)?),
-        ClaimEffect::Clear => None,
-    };
-    settle(next, &at)
 }
 
 /// The system move behind "a merged PR moves its task to done": a task
@@ -185,8 +228,13 @@ fn numbers(
 }
 
 /// A task that is ready (released with what delivers it linked) or held
-/// may be completed; any other may not.
-pub(super) fn completable(task: &Task) -> Result<(), BoardRuleError> {
+/// may be completed; any other may not. A use case asks before it reads
+/// the task's runs and changes, so a completion refused anyway reads
+/// nothing.
+///
+/// # Errors
+/// A draft, done or archived task, or one others took over.
+pub fn completable(task: &Task) -> Result<(), BoardRuleError> {
     match task.fields().status {
         Ready | Claimed | InProgress | Review | Blocked => not_superseded(task),
         from @ (Draft | Done | Archived) => Err(BoardRuleError::NotAllowed { from, to: Done }),

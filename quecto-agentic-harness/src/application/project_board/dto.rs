@@ -332,7 +332,10 @@ pub enum ProjectBoardError {
     Exists(Slug),
     /// No task `id` is on the board, but the artifact `by` (a plan, run,
     /// change or review of a task by that id, or a discussion about it)
-    /// already names it: a new task would take over what it says.
+    /// already names it: a new task would take over what it says. While a
+    /// file that may name it is set aside (one of that task's, or any
+    /// discussion) a create is refused as set aside instead: creates are
+    /// rare, so it waits for the mend.
     IdInUse {
         id: Slug,
         by: ArtifactKey,
@@ -417,6 +420,13 @@ impl From<BoardStoreError> for ProjectBoardError {
     }
 }
 
+/// A rule's refusal, as the board's rules refuse a change.
+impl From<BoardRuleError> for ProjectBoardError {
+    fn from(error: BoardRuleError) -> Self {
+        Self::Rule(error)
+    }
+}
+
 impl From<BoardClockError> for ProjectBoardError {
     fn from(error: BoardClockError) -> Self {
         Self::Clock(error)
@@ -446,11 +456,22 @@ impl fmt::Display for ProjectBoardError {
             Self::Invalid(error) => write!(f, "invalid task: {error}"),
             Self::NotFound(id) => write!(f, "no task {}", id.as_str()),
             Self::Exists(id) => write!(f, "task {} already exists", id.as_str()),
-            Self::IdInUse { id, by } => write!(
-                f,
-                "the id {} is already in use: {by} names it; choose another",
-                id.as_str()
-            ),
+            // Owner-approved wording (#2481 S7).
+            Self::IdInUse { id, by } => {
+                let id = id.as_str();
+                write!(f, "no task {id} is on the board, but ")?;
+                match by {
+                    ArtifactKey::Discussion(discussion) => {
+                        write!(f, "discussion {} is about {id}", discussion.as_str())?;
+                    }
+                    ArtifactKey::Task(_)
+                    | ArtifactKey::Plan(..)
+                    | ArtifactKey::Run(..)
+                    | ArtifactKey::Change(..)
+                    | ArtifactKey::Review(..) => write!(f, "{by} is still there")?,
+                }
+                write!(f, " and uses that id; choose another id")
+            }
             Self::SetAsideFile { path, object } => write!(
                 f,
                 "the file {path:?} (object {object}) is set aside as unreadable and its task is \

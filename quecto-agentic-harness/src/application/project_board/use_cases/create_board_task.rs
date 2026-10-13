@@ -43,7 +43,8 @@ impl CreateBoardTask {
     /// task already names; the schema's refusal; an id the board holds or
     /// has set aside; an id a plan, run, change, review or discussion
     /// already names, or while a plan, run, change or review of a task by
-    /// that id is set aside; the clock's; or the store's.
+    /// that id, or any discussion, is set aside; the clock's; or the
+    /// store's.
     pub fn execute(&self, new: &NewBoardTask) -> Result<Task, ProjectBoardError> {
         let message = format!("board: create {}", new.id.as_str());
         let written = commit(&*self.store, &*self.clock, &message, |board, when| {
@@ -86,7 +87,9 @@ fn created_at(new: &NewBoardTask, now: &Timestamp) -> TaskFields {
 
 /// The id is free (neither held nor set aside, and named by no other
 /// artifact: a new task would take over what it says), and the references
-/// hold ([`pointers_hold`]).
+/// hold ([`pointers_hold`]). While a file that may name the id is set
+/// aside ([`board_view::naming`]: one of that task's, or any discussion)
+/// the create waits for it: creates are rare.
 fn free(board: &BoardSnapshot, new: &NewBoardTask) -> Result<(), ProjectBoardError> {
     match board_view::task(board, &new.id) {
         Ok(_) => Err(ProjectBoardError::Exists(new.id.clone())),

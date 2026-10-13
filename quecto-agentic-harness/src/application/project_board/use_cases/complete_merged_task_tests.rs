@@ -397,3 +397,36 @@ fn a_completion_waits_while_a_run_or_change_of_its_task_is_set_aside() {
         assert_eq!(status(&store), TaskStatus::Review);
     }
 }
+
+/// A task the rule would not complete is refused as such before its runs
+/// or changes are read: a draft is `not_allowed`, even while a run or
+/// change of it is set aside.
+#[test]
+fn a_draft_is_not_completed_whatever_is_set_aside() {
+    let store = board();
+    let draft = Task::new(TaskFields {
+        status: TaskStatus::Draft,
+        prs: vec![7],
+        created: at("08:00:00"),
+        updated: at("09:00:00"),
+        ..fields("a")
+    })
+    .unwrap();
+    let head = store.read().unwrap().head;
+    store.write_tasks(&head, &[draft], "seed").unwrap();
+    store.quarantine_key(ArtifactKey::Run(slug("a"), 1), "runs/a.1.md", "malformed");
+    store.quarantine_key(
+        ArtifactKey::Change(slug("a"), 1),
+        "changes/a.1.md",
+        "malformed",
+    );
+    let host = MemoryPullRequests::default();
+    host.fail("must not be asked");
+    assert_eq!(
+        complete(&store, &host).execute(&slug("a")),
+        Err(ProjectBoardError::Rule(BoardRuleError::NotAllowed {
+            from: TaskStatus::Draft,
+            to: TaskStatus::Done
+        }))
+    );
+}

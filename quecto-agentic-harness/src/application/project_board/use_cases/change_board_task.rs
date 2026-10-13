@@ -18,7 +18,7 @@ use crate::domain::project_board::entities::task::Task;
 use crate::domain::project_board::services::changes::Linked;
 use crate::domain::project_board::services::claims::{renew, take_over};
 use crate::domain::project_board::services::pull_requests::{add_pr, remove_pr};
-use crate::domain::project_board::services::transitions::move_task;
+use crate::domain::project_board::services::transitions::{move_reads, move_task};
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
 
@@ -106,11 +106,13 @@ fn board_readable_for(op: &BoardOp, board: &BoardSnapshot) -> Result<(), Project
     }
 }
 
-/// `op` on `task`, as `board` holds it. A move takes the task's runs and
-/// changes, so a run going or a change linked holds it, and waits while
-/// one of their files is set aside ([`board_view::runs_of`],
-/// [`board_view::changes_of`]); a link takes every change on the board and
-/// every task, so a pull request is linked once whichever way.
+/// `op` on `task`, as `board` holds it. A move reads the task's runs and
+/// changes only as the rule names them ([`move_reads`]: the use case keeps
+/// no copy of the table): a run going or a change linked holds the task, a
+/// move that reads a set-aside one waits, and a move the rule refuses
+/// anyway is refused as such, reading nothing. A link takes every change
+/// on the board and every task, so a pull request is linked once
+/// whichever way.
 fn apply(
     task: &Task,
     board: &BoardSnapshot,
@@ -123,8 +125,15 @@ fn apply(
         BoardOp::Renew => renew(task, actor, now),
         BoardOp::TakeOver => take_over(task, actor, now),
         BoardOp::Move(to) => {
-            let runs = owned(board_view::runs_of(board, id)?);
-            let changes = owned(board_view::changes_of(board, id)?);
+            let reads = move_reads(task, *to, actor, now)?;
+            let runs = match reads.runs {
+                true => owned(board_view::runs_of(board, id)?),
+                false => vec![],
+            };
+            let changes = match reads.changes {
+                true => owned(board_view::changes_of(board, id)?),
+                false => vec![],
+            };
             move_task(task, *to, actor, &runs, &changes, now)
         }
         BoardOp::AddPr(pr) => {

@@ -6,6 +6,13 @@
 //! safe for anyone to run, and running it again only asks again: a task
 //! linking several closes on the run after the last merge.
 //!
+//! A change of the task still open (linked, its merge not recorded) holds
+//! the completion: refused as `changes_unmerged` before the host is read.
+//! A task is completed through its changes by M4's `changes::complete`,
+//! wired with M4's link op (it needs the host's merge commits, which
+//! [`PullRequestStates`] does not read), so no change exists before one
+//! can complete it.
+//!
 //! S2 runs it after every successful `AddPr` (a pull request may have
 //! merged before it was linked, and no merge event follows), on every
 //! `Move(Review)`, and on the repository's merge events; and the holder or
@@ -29,7 +36,9 @@ use crate::application::project_board::ports::{
     PullRequestStatesError,
 };
 use crate::domain::project_board::entities::task::Task;
-use crate::domain::project_board::services::transitions::{Completed, complete_merged};
+use crate::domain::project_board::services::transitions::{
+    Completed, completable, complete_merged,
+};
 use crate::domain::project_board::value_objects::slug::Slug;
 
 /// The time a completion's pull request reads share.
@@ -80,19 +89,20 @@ impl CompleteMergedTask {
         let written = commit(&*self.store, &*self.clock, &message, |board, when| {
             let task = task_on(board, id)?;
             when.may_build_on(task)?;
-            // All of the task's changes and runs, as the board holds them:
-            // an open change holds the completion, and the run going is
-            // written back ended. What a set-aside one held is unknown, so
-            // the completion waits for it.
+            // A task the rule would not complete is refused as such, before
+            // its changes and runs are read.
+            completable(task)?;
+            // The task's changes and runs, as the board holds them: an open
+            // change holds the completion, and the run going is written back
+            // ended. What a set-aside one held is unknown, so the
+            // completion waits for it.
             let changes = owned(board_view::changes_of(board, id)?);
             let runs = owned(board_view::runs_of(board, id)?);
             // The host is asked only about a task that would complete were
-            // its pull requests merged: a draft, done or archived task, one
-            // linking none, or one an open change holds, is refused by the
-            // rule first.
+            // its pull requests merged: one linking none, or one an open
+            // change holds, is refused by the rule first.
             let linked: BTreeSet<u64> = task.fields().prs.iter().copied().collect();
-            complete_merged(task, &linked, &changes, &runs, &when.now)
-                .map_err(ProjectBoardError::Rule)?;
+            complete_merged(task, &linked, &changes, &runs, &when.now)?;
             let reads = Reads {
                 host: &*self.prs,
                 clock: &*self.clock,
@@ -101,8 +111,7 @@ impl CompleteMergedTask {
             };
             let merged = merged(&reads, &task.fields().prs)?;
             let Completed { task, run } =
-                complete_merged(task, &merged, &changes, &runs, &when.now)
-                    .map_err(ProjectBoardError::Rule)?;
+                complete_merged(task, &merged, &changes, &runs, &when.now)?;
             // The task and the run it ended, in one change.
             let mut written = vec![BoardArtifact::Task(task)];
             written.extend(run.map(BoardArtifact::Run));
