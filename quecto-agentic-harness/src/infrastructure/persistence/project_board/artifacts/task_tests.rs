@@ -567,19 +567,11 @@ fn a_reference_keeps_its_written_form() {
 
 /// A title its heading cannot hold is refused when written, naming the
 /// title: closing hashes, a space at an edge, raw HTML, a character
-/// reference, dollar math.
+/// reference, dollar math. A space other than U+0020 never gets this far:
+/// the domain refuses it with the title's field.
 #[test]
 fn a_title_its_heading_cannot_hold_is_refused() {
-    for title in [
-        "a #",
-        " a",
-        "a\u{a0}",
-        "a <b>",
-        "a &amp;",
-        "$x$",
-        "a\u{2003}b",
-        "a\u{fe0f}",
-    ] {
+    for title in ["a #", " a", "a <b>", "a &amp;", "$x$", "a\u{fe0f}"] {
         let titled = TaskFields {
             title: title.into(),
             ..example()
@@ -589,5 +581,19 @@ fn a_title_its_heading_cannot_hold_is_refused() {
             matches!(&refused, Err(CodecError::Cell { field: "Title", .. })),
             "{title:?}: {refused:?}"
         );
+    }
+}
+
+/// A title spaced with anything but U+0020 is refused by the domain with
+/// its field, never by the file at write time.
+#[test]
+fn a_title_spaced_with_another_space_is_refused_by_the_domain() {
+    for title in ["a\u{a0}", "a\u{2003}b", "a\u{3000}b"] {
+        let refused = Task::new(TaskFields {
+            title: title.into(),
+            ..example()
+        })
+        .unwrap_err();
+        assert_eq!(refused.field, "title", "{title:?}");
     }
 }

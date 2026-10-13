@@ -6,6 +6,8 @@ use crate::domain::project_board::entities::claim::{Identity, MAX_EMAIL_BYTES};
 use crate::domain::project_board::entities::plan::{MAX_APPROACH_CHARS, MAX_PLAN_TEXT_BYTES};
 use crate::domain::project_board::entities::task_parts::{MAX_ITEMS, MAX_PER_ITEM};
 use crate::domain::project_board::entities::team::{MAX_IMAGE_BYTES, MAX_MODEL_BYTES, MAX_ROLES};
+use crate::domain::project_board::value_objects::board_text;
+use crate::domain::project_board::value_objects::schema_error::{PLAIN_SPACES_ONLY, SchemaError};
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
 use crate::infrastructure::persistence::project_board::markdown::MarkdownError;
@@ -582,5 +584,30 @@ fn an_items_heading_of_the_old_wording_is_refused() {
             heading: "Items".into()
         })),
         "{read:?}"
+    );
+}
+
+/// A criterion with a space chat writes between words is held once
+/// normalised, for each such space, and round-trips; an em space, which no
+/// normaliser makes plain, the domain refuses with its field, never the
+/// file at write time.
+#[test]
+fn a_criterion_with_a_chat_space_is_held_once_normalised() {
+    let with_criterion = |criterion: &str| {
+        let mut fields = example();
+        fields.items[0].criteria[0] = criterion.into();
+        Plan::new(fields)
+    };
+    for space in ['\u{a0}', '\u{202f}', '\u{2007}', '\u{3000}'] {
+        let criterion = board_text::line(&format!("{space}Lists answer{space}: fast{space}"));
+        assert_eq!(criterion, "Lists answer : fast");
+        let held = with_criterion(&criterion).unwrap();
+        let file = encode::<PlanCodec>(&held).unwrap();
+        assert_eq!(decode::<PlanCodec>(file.as_bytes()), Ok(held));
+        read_by_the_oracle(&file);
+    }
+    assert_eq!(
+        with_criterion("an em\u{2003}space"),
+        Err(SchemaError::new("items/0/criteria/0", PLAIN_SPACES_ONLY))
     );
 }

@@ -76,17 +76,31 @@ static VISIBLE: LazyLock<Regex> = LazyLock::new(|| {
         .expect("visible allowlist")
 });
 
-/// Single-line text with something visible, at most `max_chars` characters.
+/// Why a line is refused for a space other than U+0020: no file holds
+/// one. Placeholder wording, pending the owner (#2481 S7).
+pub const PLAIN_SPACES_ONLY: &str = "may space its words with plain spaces (U+0020) only";
+
+/// Single-line text with something visible, at most `max_chars`
+/// characters, its words spaced with plain spaces only (the spaces chat
+/// writes are made plain where text comes in, `board_text::line`).
 pub fn line(field: &str, text: &str, max_chars: usize) -> Result<(), SchemaError> {
     let fits = text.chars().count() <= max_chars;
-    if fits && ON_ONE_LINE.is_match(text) && VISIBLE.is_match(text) {
-        Ok(())
-    } else {
-        Err(SchemaError::new(
+    if !(fits && ON_ONE_LINE.is_match(text) && VISIBLE.is_match(text)) {
+        return Err(SchemaError::new(
             field,
             format!("must be 1 to {max_chars} visible characters on one line"),
-        ))
+        ));
     }
+    match plain_spaced(text) {
+        true => Ok(()),
+        false => Err(SchemaError::new(field, PLAIN_SPACES_ONLY)),
+    }
+}
+
+/// Every space in `text` is a plain one (an allowlist: U+0020 is the only
+/// whitespace taken).
+fn plain_spaced(text: &str) -> bool {
+    text.chars().filter(|c| c.is_whitespace()).all(|c| c == ' ')
 }
 
 /// Markdown of at most `max_chars` characters; it may be empty.

@@ -48,6 +48,11 @@ const NOT_ENTERED_MESSAGE: &str = "has spacing the board removes: use one LF bet
 /// space: no-break, narrow no-break (French before `:`), figure and
 /// ideographic. A file holds no other space.
 const CHAT_SPACES: [char; 4] = ['\u{a0}', '\u{202f}', '\u{2007}', '\u{3000}'];
+/// What chat and imports break a line with besides LF: a lone CR, a line
+/// or paragraph separator, a next line and a vertical tab. A line or a
+/// message takes each as one LF (markdown text keeps them: a reader does
+/// not break a line there).
+const LINE_BREAKS: [char; 5] = ['\r', '\u{2028}', '\u{2029}', '\u{85}', '\u{b}'];
 /// The ASCII punctuation a trailing space may follow: all but a backslash,
 /// which a line end after it makes a hard break.
 const SAFE_PUNCTUATION: &str = "!\"#$%&'()*+,-./:;<=>?@[]^_`{|}~";
@@ -72,8 +77,8 @@ enum Place {
     Unknown,
 }
 
-/// Markdown text (a description, an approach, a message) as the board
-/// keeps it.
+/// Markdown text (a description, an approach) as the board keeps it. A
+/// discussion message is one line per row, normalised by [`message`].
 pub fn text(raw: &str) -> String {
     let unified = raw.replace("\r\n", "\n").replace('\r', "\n");
     let lines: Vec<&str> = unified.split('\n').collect();
@@ -159,34 +164,32 @@ pub fn entered_line(field: &str, held: &str) -> Result<(), SchemaError> {
 }
 
 /// One line of text (a title, a criterion, an owner) as the board keeps
-/// it: line ends as [`text`] makes them, and spaces and tabs gone
-/// from both edges (one line has no structure for them to start).
+/// it: each line end one LF (CRLF, and each of [`LINE_BREAKS`]), the
+/// spaces chat writes between words ([`CHAT_SPACES`]) plain spaces, and
+/// spaces and tabs gone from both edges (one line has no structure for
+/// them to start). A line end left inside makes it two lines, which the
+/// field's schema refuses.
 pub fn line(raw: &str) -> String {
-    line_ends(raw).trim_matches(spacing).to_string()
+    plain_spaces(&line_ends(raw))
+        .trim_matches(spacing)
+        .to_string()
 }
 
-/// A discussion message as the board keeps it (#2481 D3): line ends as
-/// [`text`] makes them, the spaces chat writes between words
-/// ([`CHAT_SPACES`]) plain spaces, each line as [`line`] makes it (a
-/// message line is a table cell, which shows no edge spacing), and blank
-/// lines dropped (a message is its non-empty lines). Empty when nothing
-/// but spacing was said.
+/// A discussion message as the board keeps it (#2481 D3): split at each
+/// line end (CRLF, LF and each of [`LINE_BREAKS`]), a tab inside a line a
+/// plain space, each line as [`line`] makes it (the spaces chat writes
+/// plain; a message line is a table cell, which shows no edge spacing),
+/// and blank lines dropped (a message is its non-empty lines). Empty when
+/// nothing but spacing was said.
 pub fn message(raw: &str) -> String {
-    let plain: String = line_ends(raw)
-        .chars()
-        .map(|c| match CHAT_SPACES.contains(&c) {
-            true => ' ',
-            false => c,
-        })
-        .collect();
-    let lines: Vec<String> = plain
+    let lines: Vec<String> = line_ends(raw)
         .split('\n')
-        .map(line)
+        .map(|said| line(&said.replace('\t', " ")))
         .filter(|kept| !kept.is_empty())
         .collect();
     let normal = lines.join("\n");
     let words = |text: &str| -> String {
-        unspaced(text)
+        unspaced(&line_ends(text))
             .filter(|c| !CHAT_SPACES.contains(c))
             .collect()
     };
@@ -212,7 +215,23 @@ pub fn entered_message(field: &str, held: &str) -> Result<(), SchemaError> {
 
 /// `raw` with each CRLF or lone CR made one LF.
 fn line_ends(raw: &str) -> String {
-    raw.replace("\r\n", "\n").replace('\r', "\n")
+    raw.replace("\r\n", "\n")
+        .chars()
+        .map(|c| match LINE_BREAKS.contains(&c) {
+            true => '\n',
+            false => c,
+        })
+        .collect()
+}
+
+/// `text` with each of [`CHAT_SPACES`] a plain space.
+fn plain_spaces(text: &str) -> String {
+    text.chars()
+        .map(|c| match CHAT_SPACES.contains(&c) {
+            true => ' ',
+            false => c,
+        })
+        .collect()
 }
 
 /// `text`'s characters but spacing and line ends, in order: what the

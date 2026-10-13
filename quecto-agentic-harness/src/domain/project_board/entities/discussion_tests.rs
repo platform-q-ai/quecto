@@ -1,6 +1,7 @@
 use super::*;
 use crate::domain::project_board::entities::fixtures_tests::{at, person, slug};
 use crate::domain::project_board::entities::task::MAX_TITLE_CHARS;
+use crate::domain::project_board::value_objects::schema_error::PLAIN_SPACES_ONLY;
 
 /// One edit that must make valid fields invalid.
 type Edit = Box<dyn Fn(&mut DiscussionFields)>;

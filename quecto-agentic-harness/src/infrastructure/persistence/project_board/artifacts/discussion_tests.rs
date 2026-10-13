@@ -6,17 +6,16 @@
 use super::super::{CodecError, decode, encode};
 use super::*;
 use crate::domain::project_board::entities::claim::Identity;
-use crate::domain::project_board::entities::discussion::PLAIN_SPACES_ONLY;
 use crate::domain::project_board::entities::discussion::{
     FILE_RESERVE_BYTES, MAX_DISCUSSION_FILE_BYTES, MAX_DISCUSSION_LINES, MAX_DISCUSSION_TEXT_BYTES,
     MAX_MESSAGE_LINE_CHARS, MAX_MESSAGES, ROW_OVERHEAD_BYTES,
 };
 use crate::domain::project_board::entities::task::MAX_TITLE_CHARS;
-use crate::domain::project_board::services::discussions::append;
+use crate::domain::project_board::services::discussions::{Opening, append, begin};
 use crate::domain::project_board::services::plans::Moment;
 use crate::domain::project_board::value_objects::board_text;
 use crate::domain::project_board::value_objects::rule_error::BoardRuleError;
-use crate::domain::project_board::value_objects::schema_error::SchemaError;
+use crate::domain::project_board::value_objects::schema_error::{PLAIN_SPACES_ONLY, SchemaError};
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
 use crate::infrastructure::persistence::project_board::markdown::MarkdownError;
@@ -331,7 +330,9 @@ fn the_longest_row_fits_its_line_cap() {
 /// title, before the file is rendered.
 #[test]
 fn a_discussion_title_its_heading_cannot_hold_is_refused() {
-    for title in ["a #", " a", "a <b>", "a\u{2003}b"] {
+    // A space other than U+0020 never gets this far: the domain refuses
+    // it with the title's field (a_title_with_a_chat_space_is_held_once_normalised).
+    for title in ["a #", " a", "a <b>"] {
         let titled = Discussion::new(DiscussionFields {
             title: title.into(),
             ..example()
@@ -410,5 +411,42 @@ fn pocket_text_is_held_once_normalised_and_what_no_file_holds_is_named() {
     assert_eq!(
         encode::<DiscussionCodec>(&taken),
         Err(CodecError::Markdown(MarkdownError::Invisible { line: 20 }))
+    );
+}
+
+/// A title with a space chat writes between words is held once
+/// normalised, for each such space; raw, the domain refuses it as never
+/// normalised, never the file at write time. An em space, which no
+/// normaliser makes plain, the domain refuses with its field.
+#[test]
+fn a_title_with_a_chat_space_is_held_once_normalised() {
+    let moment = Moment {
+        now: at("2026-10-11T12:10:00Z"),
+        latest: None,
+    };
+    let opening = |title: &str| Opening {
+        id: slug("board-cli-list"),
+        title: title.into(),
+        task: None,
+        started_by: person("Ada"),
+        messages: vec![message("Ada", "2026-10-11T12:00:00Z", "Shall we?")],
+    };
+    for space in ['\u{a0}', '\u{202f}', '\u{2007}', '\u{3000}'] {
+        let raw = format!("Bonjour{space}: on commence ?");
+        let refused = begin(opening(&raw), &moment).unwrap_err();
+        assert!(
+            matches!(&refused, BoardRuleError::Invalid(error) if error.field == "title"),
+            "{space:?}: {refused:?}"
+        );
+        let held = begin(opening(&board_text::line(&raw)), &moment).unwrap();
+        assert_eq!(held.fields().title, "Bonjour : on commence ?");
+        round_trips(held.into_fields());
+    }
+    assert_eq!(
+        begin(opening("an em\u{2003}space"), &moment),
+        Err(BoardRuleError::Invalid(SchemaError::new(
+            "title",
+            PLAIN_SPACES_ONLY
+        )))
     );
 }

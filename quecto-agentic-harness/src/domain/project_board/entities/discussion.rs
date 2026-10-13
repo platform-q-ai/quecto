@@ -48,10 +48,6 @@ pub const FILE_RESERVE_BYTES: usize = 4 * 1024;
 /// 1_044_480 + 4_096 = 1_048_576 = MAX_DISCUSSION_FILE_BYTES`.
 pub const MAX_DISCUSSION_TEXT_BYTES: usize = MAX_DISCUSSION_FILE_BYTES - FILE_RESERVE_BYTES;
 
-/// Why a message line is refused for a space other than U+0020: no file
-/// holds one. Placeholder wording, pending the owner (#2481 S7).
-pub const PLAIN_SPACES_ONLY: &str = "may space its words with plain spaces (U+0020) only";
-
 /// One message: who said what, and when.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Message {
@@ -220,7 +216,7 @@ pub fn message_shape(field: &str, message: &Message) -> Result<(), SchemaError> 
 }
 
 /// A message's text: one to [`MAX_MESSAGE_LINES`] lines, each a single
-/// line with something visible, spaced with plain spaces only.
+/// line with something visible, spaced with plain spaces only (`line`).
 fn text(field: &str, message: &Message) -> Result<(), SchemaError> {
     match message.lines() {
         1..=MAX_MESSAGE_LINES => {}
@@ -233,20 +229,12 @@ fn text(field: &str, message: &Message) -> Result<(), SchemaError> {
     }
     let mut lines = message.text.split('\n').enumerate();
     lines.try_for_each(|(index, text)| {
-        let field = format!("{field}/text/{index}");
-        line(&field, text, MAX_MESSAGE_LINE_CHARS)?;
-        plain_spaced(&field, text)
+        line(
+            &format!("{field}/text/{index}"),
+            text,
+            MAX_MESSAGE_LINE_CHARS,
+        )
     })
-}
-
-/// Every space in `text` is a plain one (U+0020): the spaces chat writes
-/// between words are made plain where messages come in
-/// (`board_text::message`), and no file holds any other.
-fn plain_spaced(field: &str, text: &str) -> Result<(), SchemaError> {
-    match text.chars().all(|c| c == ' ' || !c.is_whitespace()) {
-        true => Ok(()),
-        false => Err(SchemaError::new(field, PLAIN_SPACES_ONLY)),
-    }
 }
 
 #[cfg(test)]

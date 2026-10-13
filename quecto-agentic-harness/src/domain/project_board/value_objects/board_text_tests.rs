@@ -78,13 +78,21 @@ fn what_a_reader_shows_differently_is_left_as_written() {
     }
 }
 
+/// A line's line ends become one LF (a chat line or paragraph separator,
+/// a next line and a vertical tab among them), the spaces chat writes
+/// between words plain spaces, and its edge spaces and tabs go. A
+/// selector, or another space (an em space), is kept for the domain to
+/// refuse with its field.
 #[test]
 fn a_line_is_trimmed_of_spaces_and_tabs_at_both_edges() {
     for (raw, kept) in [
         ("  Title \t", "Title"),
         ("\tFix the build ", "Fix the build"),
-        // Only spaces and tabs: a no-break space or a selector is kept.
-        ("\u{a0}Ship it\u{fe0f}", "\u{a0}Ship it\u{fe0f}"),
+        ("\u{a0}Ship it\u{fe0f}", "Ship it\u{fe0f}"),
+        ("Bonjour\u{202f}: on commence ?", "Bonjour : on commence ?"),
+        ("\u{2007}12\u{a0}items\u{3000}", "12 items"),
+        ("em\u{2003}space", "em\u{2003}space"),
+        ("one\u{2028}two", "one\ntwo"),
     ] {
         assert_eq!(settled(line, raw), kept, "{raw:?}");
     }
@@ -220,6 +228,11 @@ fn a_message_is_its_lines_trimmed_with_blank_lines_dropped() {
         ("はい\u{3000}そうです", "はい そうです"),
         ("\u{a0}\u{3000}\nnext", "next"),
         ("em\u{2003}space", "em\u{2003}space"),
+        ("one\u{2028}two", "one\ntwo"),
+        ("one\u{2029}two", "one\ntwo"),
+        ("one\u{85}two", "one\ntwo"),
+        ("one\u{b}two", "one\ntwo"),
+        ("a\ttab inside", "a tab inside"),
         (" \t\r\n\n", ""),
     ] {
         assert_eq!(settled(message, raw), kept, "{raw:?}");
