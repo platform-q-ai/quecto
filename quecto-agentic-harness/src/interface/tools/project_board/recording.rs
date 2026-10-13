@@ -87,7 +87,9 @@ impl BoardCall {
         Self { open }
     }
 
-    /// A call recorded nowhere.
+    /// A call recorded nowhere: the tests' (every front end starts its
+    /// calls with the recording composition gave it).
+    #[cfg(test)]
     pub fn unrecorded() -> Self {
         Self { open: None }
     }

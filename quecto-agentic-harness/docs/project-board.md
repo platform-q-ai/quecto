@@ -33,7 +33,10 @@ filed under no turn. It never holds up the board: it waits for the gate at most
 50 ms, and past that it is dropped and counted, and the next record written is
 preceded by one `{"event":"board_ops_dropped","dropped":N}` line. A record the
 log cannot take is dropped with one warning, and never changes the call's
-answer. The same record is also written to `tracing` (target
+answer. The drop count lives with the recording, so it can go unnoted: a
+`quecto board` process writes one record, so a drop of its one record is
+never noted, and a session switch starts a new count for the arriving
+session's log, losing the departing session's unnoted drops. The same record is also written to `tracing` (target
 `quecto::project_board`, message `board op`: `DEBUG` for a read, `INFO` for a
 write), only while the event log is on.
 
@@ -51,13 +54,14 @@ as given. It is for the pocket relay to set; an older quecto ignores it.
 
 | Field | Meaning |
 |---|---|
+| `session` | As on every event-log record: the agent's session for the tool; `board-cli:<UTC date>` for `quecto board` |
 | `turn` | Always `null`: a board call is filed under no agent turn |
 | `op` | The op the request named: `bootstrap`, `list`, `list_ready`, `list_takeable`, `show`, `create`, `update_draft`, `move`, `renew`, `take_over`, `link_pr`, `unlink_pr`, `complete`, `clear_set_aside`; `unknown` for a request that names none, or none the board has. A request the agent tool does not take (`bootstrap`) records its op, refused |
 | `front_end` | `tool` (the agent `board` tool) or `cli` (`quecto board`) |
 | `client` | `agent` for the tool; for the CLI `cli`, or as `QUECTO_BOARD_CLIENT` names it: `pocket_relay` or `other` |
 | `access` | `read` or `write`: what the op does, even when it was refused before it was read |
 | `outcome` | `ok` or `refused` |
-| `code`, `rule` | For a refusal, the answer's error code (`invalid_request`, `rule`, `not_found`, `stale`, `contended`, `clock_ahead`, ...) and, for `rule`, the rule's code (`not_holder`, `claim_expired`, `not_allowed`, ...) |
+| `code`, `rule` | For a refusal, the answer's error code (`invalid_request`, `rule`, `not_found`, `stale`, `contended`, `clock_ahead`, ...) and, for `rule`, the rule's code (`not_holder`, `claim_expired`, `not_allowed`, ...). `internal` is no answer's code: a call whose work ended without an answer (it panicked) is recorded as it unwinds, refused as `internal` |
 | `field`, `fault`, `unexpected_count` | For `invalid_request`, `invalid_task` and the rule `invalid`, which field was wrong: a schema field as the board's table spells it (`depends_on/2` is `depends_on`), `op`, `request` (the request as a whole), or `other`; and how: `missing`, `unexpected`, `wrong_type`, `invalid_value`, `too_large`, `not_json`, `duplicate_key`. A key no schema of the op names is `other`, `unexpected`, and `unexpected_count` counts such keys, never naming one, even when another op takes a field of that name |
 | `task`, `pr` | The task the op's `task` names, and the pull request `link_pr` or `unlink_pr` names, once the request was read |
 | `head` | The board's head an answer named, only when it is a full commit id git produced |
@@ -68,4 +72,4 @@ as given. It is for the pocket relay to set; an older quecto ignores it.
 | `duration_us` | The whole call, from its arrival to its answer |
 
 Kinds are added, never renamed or reused, so a reader of the log must accept a
-kind or a field it does not know. A call whose work panicked writes no record.
+kind or a field it does not know.

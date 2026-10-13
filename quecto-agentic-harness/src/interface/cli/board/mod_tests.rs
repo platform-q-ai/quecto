@@ -450,3 +450,57 @@ fn the_cli_writes_its_daily_log_only_while_the_switch_is_on() {
     );
     assert!(!lines[1].to_string().contains("Secret"), "{}", lines[1]);
 }
+
+/// Review round 1, the property test at the CLI's entry point: random
+/// titles, keys and words given as flags, as `--input` or as stray
+/// arguments never appear in a record.
+#[test]
+fn no_request_text_reaches_a_record_through_the_cli() {
+    use crate::interface::tools::project_board::recording::tests::outside_text;
+    use rand::{Rng, SeedableRng};
+    let seed: u64 = rand::thread_rng().r#gen();
+    let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
+    let on = tempfile::tempdir().unwrap();
+    let config = json!({"telemetry": {"event_log": {"enabled": true}}});
+    std::fs::write(on.path().join("config.json"), config.to_string()).unwrap();
+    let mut texts = vec![];
+    let mut calls = 0;
+    for case in 0..8 {
+        let (title, key) = (outside_text(&mut rng), outside_text(&mut rng));
+        let flag = format!("--{key}");
+        let input = json!({"op": "create", "task": format!("t-{case}"), "title": title, key.clone(): title}).to_string();
+        let shown = json!({"task": title}).to_string();
+        let task = format!("u-{case}");
+        let lines: [&[&str]; 6] = [
+            &[
+                "create",
+                "--task",
+                &task,
+                "--title",
+                &title,
+                "--description",
+                &key,
+            ],
+            &["list", &flag, &title],
+            &["create", "--input", &input],
+            &["show", "--input", &shown],
+            &[&key, "--task", &title],
+            &["renew", &title, &key],
+        ];
+        for line in lines {
+            recorded_cli(on.path(), line);
+            calls += 1;
+        }
+        texts.extend([title, key]);
+    }
+    let lines = cli_logs(on.path());
+    assert_eq!(lines.len(), calls, "one record per call");
+    for line in lines.iter().map(Value::to_string) {
+        for text in &texts {
+            assert!(
+                !line.contains(text.as_str()),
+                "seed {seed}: {text:?} reached {line}"
+            );
+        }
+    }
+}

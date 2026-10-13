@@ -76,7 +76,8 @@ fn every_field_a_board_op_record_writes_is_documented_and_no_other() {
     let line = serde_json::to_value(AuditEvent::BoardOp(Box::new(full()))).unwrap();
     let mut written: BTreeSet<String> = line.as_object().unwrap().keys().cloned().collect();
     written.remove("event");
-    written.insert("turn".into());
+    // The envelope's fields the page explains for the board.
+    written.extend(["session".to_string(), "turn".to_string()]);
     assert_eq!(documented_fields(&telemetry_doc()), written);
 }
 
@@ -101,6 +102,8 @@ fn every_kind_a_front_end_records_is_named() {
         "board-cli_<UTC date>.jsonl",
         "board_ops_dropped",
         "quecto::project_board",
+        "board-cli:<UTC date>",
+        "`internal`",
     ] {
         assert!(section.contains(told), "{told} is not told");
     }
