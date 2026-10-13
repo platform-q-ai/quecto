@@ -118,6 +118,22 @@ pub(super) fn help_text(out: &mut String) {
         "                  preflight (runtime, jq, git, gh, image, --repo, state dir) without\n",
     );
     out.push_str("                  creating an environment; exit 1 when any check fails\n");
+    out.push_str(
+        "              ls [--all] [--json]  Recorded environments (--all: stopped too; --json:\n",
+    );
+    out.push_str(
+        "                  one line {\"environments\":[...],\"hidden_stopped\":N} for scripts)\n",
+    );
+    out.push_str(
+        "              kill <ref|name> [--created-by <key>]  End one; with --created-by only if\n",
+    );
+    out.push_str(
+        "                  its CREATED-BY is exactly <key> (exit 3 and nothing killed otherwise)\n",
+    );
+    out.push_str(
+        "              gc [--dry-run] [--name <config>] [--abandoned | --abandoned-after <duration>]\n",
+    );
+    out.push_str("                  Remove orphaned environments of a container config\n");
     out.push_str("  models      Manage runtime model registry (discover)\n");
     out.push_str("  status      Show status\n");
     out.push_str("  help        Show this help\n");

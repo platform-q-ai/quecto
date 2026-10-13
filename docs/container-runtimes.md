@@ -31,7 +31,13 @@ number, array or `null` is refused with a message naming what arrived and
 how to send it.
 
 Unknown fields are rejected. Runtime-specific fields (`branch`, `pr`,
-`image`, ...) do not exist. `mode: existing` requires exactly one of
+`image`, ...) do not exist. A new environment's `name` must be 1–64
+bytes of ASCII letters, digits, `-`, `_` and `.`, starting with a letter
+or digit (`review-env`, `spike-1839`, `v1.2`); anything else — a space,
+a TAB or LF, `/`, non-ASCII — is refused before a ref is minted or a
+script runs, so a name can never break `quecto container ls` or pass
+for another row. A record written before the rule keeps its name: it
+lists exactly in `ls --json` and is killed by its ref. `mode: existing` requires exactly one of
 `ref`/`name`; unknown, ambiguous, stopped, or stale (kill pending/failed)
 targets fail without guessing.
 
@@ -536,7 +542,9 @@ What a new session can do with a restored environment:
 - **list** — `agent_cmd get_containers` (`agent_id: "*"`; `"all":true`
   for stopped ones and other sessions' that cannot be joined), or from the
   shell `quecto container ls` (live ones; `--all` includes `stopped`):
-  `REF NAME CONFIG STATUS REPOSITORY CREATED-BY AGE`.
+  `REF NAME CONFIG STATUS REPOSITORY CREATED-BY AGE`. Scripts read
+  `quecto container ls [--all] --json` instead (below); the table is for
+  people and its columns are not escaped.
 - **join** — `spawn {"container": {"mode": "existing", "ref": "C1"}}` (or
   `"name"`) while it is `running`/`empty`/`retained`; the retained `exec`
   runs. This is the **concurrent-session** case: the environment's
@@ -562,6 +570,16 @@ What a new session can do with a restored environment:
   forgotten; a container still running is refused untouched. The creating session, if still alive, sees its member die and
   runs its own final-member kill after yours — the shipped scripts are
   idempotent.
+- **kill only your own** — `quecto container kill <ref|name>
+  --created-by <key>` kills only when the record's CREATED-BY is exactly
+  `<key>` (whole string, no prefix). The check is made by the registry
+  in the same step that grants the kill's claim, so a ref reused between
+  a listing and the kill is refused rather than killed. A mismatch
+  prints `environment <ref> was created by <creator>, not <key>; nothing
+  was killed` (`no session` for a session-less creator) and exits **3**;
+  nothing is asked, run or written. The Pocket relay ends a deleted
+  task's environments this way: `ls --all --json`, then `kill <ref>
+  --created-by cli:pocket-<task id>` for each row carrying that key.
 - **collect** — `quecto container gc [--dry-run] [--name <config>]
   [--abandoned | --abandoned-after <duration>]` removes **orphans**: environments whose container is exited or unknown
   to the runtime **and** that the registry either does not record or
@@ -648,6 +666,35 @@ the file aside; repair it in place instead when the environments matter.
 doctor and `spawn` do (the working directory's effective configuration, or
 `--config <file>`), restore the registry for their own run, and never
 touch a live environment.
+
+### Machine-readable listing (`quecto container ls --json`)
+
+`quecto container ls [--all] --json` prints the same environments as the
+table, as one line of JSON (exit 0; exit 1 with nothing on stdout when
+the registry cannot be read or an argument is unknown):
+
+```json
+{"environments":[{"ref":"C1","name":"review-env","config":"standard","status":"empty","repository":"https://***@github.com/org/repo","created_by":"cli:pocket-42","created_at":1760000000,"age_s":5130,"unverified":null}],"hidden_stopped":2}
+```
+
+Keys appear in this order; absent values are `null`, never `"-"`:
+
+| Key | Value |
+| --- | --- |
+| `ref` | The environment's ref (`C1`). |
+| `name` | Its name, or `null`. An older record's name may hold any characters; JSON escapes them. |
+| `config` | The container config that created it. |
+| `status` | `running`, `empty` (live, no members recorded here), `retained`, `killing`, `cleanup-failed` or `stopped` (only with `--all`). |
+| `repository` | The repository URL with any userinfo shown as `***`, or `null`. |
+| `created_by` | The creating session's key (CREATED-BY), or `null` for a session-less run. |
+| `created_at` | Creation time in Unix seconds, or `null` when the creator recorded none. |
+| `age_s` | Seconds since `created_at`, or `null`. |
+| `unverified` | Why this listing's restore could not check it against the runtime (the reason in the `note: <ref> could not be verified …` line on stderr), or `null`. |
+
+`hidden_stopped` counts the `stopped` environments left out because
+`--all` was not given (`0` with `--all`). The restore's notes still go to
+stderr as for the table. The human table is unchanged and is not a
+machine format.
 
 ## Configuration
 
