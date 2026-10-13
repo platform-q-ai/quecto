@@ -133,3 +133,94 @@ fn a_refused_move_tells_its_target_and_the_claim_it_found() {
     };
     assert_eq!(facts, want);
 }
+
+/// Review round 2: a later attempt that finds no task keeps nothing of an
+/// earlier attempt's read (its first write loses to a writer that sets
+/// the task's file aside).
+mod a_task_gone_on_retry {
+    use super::*;
+    use crate::application::project_board::dto::DraftUpdate;
+    use crate::application::project_board::use_cases::UpdateDraftTask;
+
+    fn spoiled_before_the_first_write(store: &MemoryBoardStore) {
+        store.before_next_write(|board| board.quarantine("a", "spoiled"));
+    }
+
+    fn assert_nothing_read(facts: &OpFacts) {
+        assert_eq!((facts.status_from, facts.claim), (None, None), "{facts:?}");
+        assert_eq!((facts.attempts, facts.lost), (Some(2), Some(1)));
+    }
+
+    #[test]
+    fn a_change_tells_no_status_or_claim() {
+        let store = board();
+        seed(&store, held_by_ada(TaskStatus::Claimed));
+        spoiled_before_the_first_write(&store);
+        let mut facts = OpFacts::default();
+        let renewed = change(&store, "Ada", "10:20:00").execute_noted(
+            &slug("a"),
+            &BoardOp::Renew,
+            Some(&mut facts),
+        );
+        assert_eq!(renewed, Err(set_aside_task("a")));
+        assert_nothing_read(&facts);
+        assert_eq!(facts.status_to, None);
+    }
+
+    #[test]
+    fn a_draft_edit_tells_no_status() {
+        let store = board();
+        seed(
+            &store,
+            TaskFields {
+                status: TaskStatus::Draft,
+                ..fields("a")
+            },
+        );
+        spoiled_before_the_first_write(&store);
+        let update = DraftUpdate {
+            id: slug("a"),
+            title: Some("Edited".into()),
+            description: None,
+            parent: None,
+            depends_on: None,
+            expected_updated: None,
+        };
+        let edit =
+            UpdateDraftTask::new(Arc::new(store.client()), SetClock::at("10:20:00")).unwrap();
+        let mut facts = OpFacts::default();
+        assert_eq!(
+            edit.execute_noted(&update, Some(&mut facts)),
+            Err(set_aside_task("a"))
+        );
+        assert_nothing_read(&facts);
+    }
+
+    #[test]
+    fn a_completion_tells_no_status_or_completion() {
+        let store = board();
+        seed(
+            &store,
+            TaskFields {
+                prs: vec![7],
+                ..held_by_ada(TaskStatus::InProgress)
+            },
+        );
+        let host = MemoryPullRequests::default();
+        host.set(7, PullRequestState::Merged);
+        spoiled_before_the_first_write(&store);
+        let complete = CompleteMergedTask::new(
+            Arc::new(store.client()),
+            SetClock::at("10:20:00"),
+            Arc::new(host),
+        )
+        .unwrap();
+        let mut facts = OpFacts::default();
+        assert_eq!(
+            complete.execute_noted(&slug("a"), Some(&mut facts)),
+            Err(set_aside_task("a"))
+        );
+        assert_nothing_read(&facts);
+        assert_eq!(facts.completion, None);
+    }
+}

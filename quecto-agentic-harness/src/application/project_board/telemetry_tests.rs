@@ -188,8 +188,12 @@ mod facts {
         CompletionFacts {
             completion: kind,
             completion_code: None,
+            completion_rule: None,
             prs_linked: 1,
             prs_pending: None,
+            completion_attempts: None,
+            completion_lost: None,
+            completion_pause_ms: None,
         }
     }
 
@@ -271,8 +275,12 @@ mod facts {
             CompletionFacts {
                 completion: CompletionKind::Pending,
                 completion_code: None,
+                completion_rule: None,
                 prs_linked: 3,
                 prs_pending: Some(2),
+                completion_attempts: None,
+                completion_lost: None,
+                completion_pause_ms: None,
             }
         );
         assert_eq!(

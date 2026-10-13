@@ -53,7 +53,8 @@ impl CreateBoardTask {
 
     /// [`Self::execute`], noting in `facts` (epic #2481 T4), when given,
     /// the write's attempts, the status of the task it wrote, and what the
-    /// normaliser changed in its title and description.
+    /// normaliser changed in its title and in its description, when one
+    /// was given.
     ///
     /// # Errors
     /// As [`Self::execute`].
@@ -65,7 +66,10 @@ impl CreateBoardTask {
         if let Some(facts) = facts.as_deref_mut() {
             facts.normalised = Some(Normalised {
                 title: Some(board_text::line_changes(&new.title)),
-                description: Some(board_text::text_changes(&new.description)),
+                // A request that gave no description holds an empty one,
+                // which no normaliser changes: none is told.
+                description: (!new.description.is_empty())
+                    .then(|| board_text::text_changes(&new.description)),
             });
         }
         let message = format!("board: create {}", new.id.as_str());

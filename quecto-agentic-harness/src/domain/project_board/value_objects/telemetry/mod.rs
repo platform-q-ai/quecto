@@ -219,16 +219,26 @@ pub struct ClaimFacts {
 }
 
 /// What came of completing a task (T4): its kind; for `failed`, the error
-/// code of the refusal that failed it; the pull requests the task links,
-/// and those not merged yet.
+/// code of the refusal that failed it and, for a rule's, the rule's code;
+/// the pull requests the task links, and those not merged yet; and, for a
+/// completion run after a change, its own write's attempts, lost races
+/// and pause.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct CompletionFacts {
     pub completion: CompletionKind,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub completion_code: Option<StaticKind>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub completion_rule: Option<StaticKind>,
     pub prs_linked: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub prs_pending: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub completion_attempts: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub completion_lost: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub completion_pause_ms: Option<u64>,
 }
 
 /// What the normaliser changed in each text field a request gave (T4):

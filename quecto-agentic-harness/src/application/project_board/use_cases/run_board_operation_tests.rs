@@ -180,6 +180,7 @@ fn show_tells_a_task_set_aside_from_one_not_on_the_board() {
 mod noted {
     use super::*;
     use crate::application::project_board::dto::DraftUpdate;
+    use crate::application::project_board::ports::ProjectBoardStore;
     use crate::application::project_board::telemetry::OpFacts;
     use crate::domain::project_board::value_objects::telemetry::{
         ClaimFacts, CompletionFacts, CompletionKind, Normalised, TextChange,
@@ -283,8 +284,18 @@ mod noted {
         let completion = |kind, prs_linked, prs_pending| CompletionFacts {
             completion: kind,
             completion_code: None,
+            completion_rule: None,
             prs_linked,
             prs_pending,
+            completion_attempts: None,
+            completion_lost: None,
+            completion_pause_ms: None,
+        };
+        // After a link, the completion's own write: one attempt, none lost.
+        let written_once_more = |facts: CompletionFacts| CompletionFacts {
+            completion_attempts: Some(1),
+            completion_lost: Some(0),
+            ..facts
         };
         let (_, linked) = noted(&ops, &BoardRequest::Change(a.clone(), BoardOp::AddPr(8)));
         // Claimed at 10:00:01 (a stamp a second past the create), read at
@@ -298,7 +309,11 @@ mod noted {
             status_from: Some(TaskStatus::InProgress),
             status_to: Some(TaskStatus::InProgress),
             claim: Some(claim),
-            completion: Some(completion(CompletionKind::Pending, 1, Some(1))),
+            completion: Some(written_once_more(completion(
+                CompletionKind::Pending,
+                1,
+                Some(1),
+            ))),
             ..OpFacts::default()
         };
         assert_eq!(linked, written_once(want));
@@ -312,7 +327,7 @@ mod noted {
         assert_eq!(pending, written_once(want));
         host.set(9, PullRequestState::Unknown);
         let (_, failed) = noted(&ops, &BoardRequest::Change(a.clone(), BoardOp::AddPr(9)));
-        let failed_completion = completion(CompletionKind::Failed, 2, None);
+        let failed_completion = written_once_more(completion(CompletionKind::Failed, 2, None));
         assert_eq!(failed.completion, Some(failed_completion));
         host.set(8, PullRequestState::Merged);
         host.set(9, PullRequestState::Merged);
@@ -329,5 +344,63 @@ mod noted {
             (facts.status_from, facts.status_to, facts.attempts),
             (want.status_from, want.status_to, Some(1))
         );
+    }
+
+    /// `complete` records only done or pending: a task the rule will not
+    /// complete records no completion.
+    #[test]
+    fn a_complete_refused_otherwise_tells_no_completion() {
+        let store = MemoryBoardStore::default();
+        let host = MemoryPullRequests::default();
+        let ops = operations(&store, SetClock::at("10:00:00"), Ok(Arc::new(host)));
+        ops.execute(&BoardRequest::Bootstrap).unwrap();
+        let draft = BoardRequest::Create(NewBoardTask {
+            status: NewBoardTaskStatus::Draft,
+            ..new_task("a")
+        });
+        ops.execute(&draft).unwrap();
+        let (refused, facts) = noted(&ops, &BoardRequest::Complete(slug("a")));
+        assert!(
+            matches!(
+                refused,
+                Err(ProjectBoardError::Rule(BoardRuleError::NotAllowed { .. }))
+            ),
+            "{refused:?}"
+        );
+        assert_eq!(facts.completion, None);
+        assert_eq!(facts.status_from, Some(TaskStatus::Draft));
+    }
+
+    /// A clear tells its attempts: here one lost to another writer.
+    #[test]
+    fn a_clear_tells_its_attempts() {
+        let store = MemoryBoardStore::default();
+        let clock = SetClock::at("10:00:00");
+        *clock.tick.lock().unwrap() = std::time::Duration::from_millis(30);
+        let ops = operations(&store, clock, no_host());
+        ops.execute(&BoardRequest::Bootstrap).unwrap();
+        ops.execute(&ready_task("z")).unwrap();
+        store.set_aside_path("notes.txt", "not a task file");
+        let object = store.read().unwrap().quarantined[0].object.clone();
+        store.before_next_write(|board| {
+            let read = board.read().unwrap();
+            board
+                .write_tasks(&read.head, &read.tasks, "another writer")
+                .unwrap();
+        });
+        let clear = BoardRequest::Clear {
+            path: "notes.txt".into(),
+            object,
+            repeated: Default::default(),
+        };
+        let (cleared, facts) = noted(&ops, &clear);
+        assert!(cleared.is_ok(), "{cleared:?}");
+        let want = OpFacts {
+            attempts: Some(2),
+            lost: Some(1),
+            pause_ms: Some(30),
+            ..OpFacts::default()
+        };
+        assert_eq!(facts, want);
     }
 }

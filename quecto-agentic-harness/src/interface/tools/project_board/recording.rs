@@ -204,7 +204,7 @@ impl BoardCall {
             };
             record.outcome = OpOutcome::Ok;
             record.head = head.and_then(|head| CommitId::parse(&head.0).ok());
-            // A failed completion's code, as the answer spells it.
+            // A failed completion's code and rule, as the answer spells them.
             if let (
                 BoardOutcome::Changed {
                     completion: Some(Completion::Failed(error)),
@@ -216,6 +216,7 @@ impl BoardCall {
                 debug_assert_eq!(completion.completion, CompletionKind::Failed);
                 completion.completion_code =
                     Some(StaticKind::new(answer::error_code(error).as_str()));
+                completion.completion_rule = refusal_parts(error).0.map(StaticKind::new);
             }
         });
         answer::outcome(op, outcome, clock)

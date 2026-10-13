@@ -19,6 +19,7 @@ use crate::application::project_board::telemetry::{OpFacts, completion_facts_of}
 use crate::domain::project_board::entities::task::Task;
 use crate::domain::project_board::value_objects::rule_error::BoardRuleError;
 use crate::domain::project_board::value_objects::slug::Slug;
+use crate::domain::project_board::value_objects::telemetry::CompletionFacts;
 use crate::domain::project_board::value_objects::vocabulary::TaskStatus;
 
 pub struct RunBoardOperation {
@@ -41,9 +42,9 @@ impl RunBoardOperation {
 
     /// [`Self::execute`], noting in `facts` (epic #2481 T4), when given,
     /// what its use case saw and, after a change that may complete its
-    /// task, what came of completing it. Given none, nothing is noted or
-    /// timed. A completion's own write is not counted in the change's
-    /// attempts.
+    /// task, what came of completing it, with the completion's own write
+    /// counted apart from the change's. Given none, nothing is noted or
+    /// timed.
     ///
     /// # Errors
     /// As [`Self::execute`].
@@ -93,11 +94,19 @@ impl RunBoardOperation {
                     .change
                     .execute_noted(id, op, facts.as_deref_mut())?;
                 let links = !task.fields().prs.is_empty();
+                // The completion's own write is noted apart (only while
+                // noting), so the change's attempts stay its own.
+                let mut own = facts.as_ref().map(|_| OpFacts::default());
                 let completion =
-                    (completes(op) && links).then(|| completion(self.complete(id, None)));
+                    (completes(op) && links).then(|| completion(self.complete(id, own.as_mut())));
                 if let (Some(facts), Some(completion)) = (facts, &completion) {
-                    facts.completion =
-                        Some(completion_facts_of(completion, task.fields().prs.len()));
+                    let own = own.unwrap_or_default();
+                    facts.completion = Some(CompletionFacts {
+                        completion_attempts: own.attempts,
+                        completion_lost: own.lost,
+                        completion_pause_ms: own.pause_ms,
+                        ..completion_facts_of(completion, task.fields().prs.len())
+                    });
                 }
                 Ok(changed(task, completion))
             }
@@ -107,7 +116,10 @@ impl RunBoardOperation {
                 object,
                 repeated,
             } => Ok(BoardOutcome::Cleared {
-                head: self.parts.clear.execute(path, object, repeated)?,
+                head: self
+                    .parts
+                    .clear
+                    .execute_noted(path, object, repeated, facts)?,
             }),
         }
     }

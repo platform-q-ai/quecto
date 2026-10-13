@@ -143,9 +143,9 @@ impl OpFacts {
 }
 
 /// A completion of `kind` for a task linking `linked` pull requests,
-/// `pending` of them not merged yet. A failed one's code is the front
-/// end's to name (its error codes are the answer's), so it is left out
-/// here.
+/// `pending` of them not merged yet. A failed one's code and rule are
+/// the front end's to name (its error codes are the answer's), and the
+/// write's own counts its caller's to add, so they are left out here.
 pub fn completion_facts(
     kind: CompletionKind,
     linked: usize,
@@ -155,8 +155,12 @@ pub fn completion_facts(
     CompletionFacts {
         completion: kind,
         completion_code: None,
+        completion_rule: None,
         prs_linked: count(linked),
         prs_pending: pending.map(count),
+        completion_attempts: None,
+        completion_lost: None,
+        completion_pause_ms: None,
     }
 }
 

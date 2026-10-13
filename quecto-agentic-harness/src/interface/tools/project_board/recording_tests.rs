@@ -444,10 +444,8 @@ fn a_call_records_what_its_use_case_saw() {
             json!({"op": "link_pr", "task": "a", "pr": 7}).to_string(),
         ],
     );
-    assert_eq!(
-        lines[0]["normalised"],
-        json!({"title": ["edge_space"], "description": []})
-    );
+    // A create that gave no description tells none.
+    assert_eq!(lines[0]["normalised"], json!({"title": ["edge_space"]}));
     assert_eq!(
         (
             lines[0]["status_to"].clone(),
@@ -555,4 +553,54 @@ fn an_unrecorded_write_reads_no_monotonic_time() {
     lose_once();
     create("b", &mut call);
     assert_eq!(reads(), 2, "the recorded write timed its one pause");
+}
+
+/// Review round 2: a completion a rule failed names the rule as well as
+/// its code, as the answer spells them.
+#[test]
+fn a_rule_failed_completion_records_its_rule() {
+    let board = board();
+    let created = json!({"op": "create", "task": "a", "title": "A", "status": "ready"});
+    run_recorded(&board, &created.to_string(), &mut BoardCall::unrecorded());
+    let BoardOutcome::Shown { task, .. } = board
+        .execute(&BoardRequest::Show(
+            crate::domain::project_board::value_objects::slug::Slug::parse("a").unwrap(),
+        ))
+        .unwrap()
+    else {
+        panic!("shown")
+    };
+    let records = Arc::new(Records::default());
+    let mut call = BoardCall::start(Some(recording(&records)), FrontEnd::Tool, Client::Agent);
+    call.named(Some("link_pr"));
+    let facts = crate::application::project_board::telemetry::OpFacts {
+        completion: Some(
+            crate::application::project_board::telemetry::completion_facts(
+                CompletionKind::Failed,
+                1,
+                None,
+            ),
+        ),
+        ..Default::default()
+    };
+    facts.fill(&mut call.open.as_mut().unwrap().record);
+    let failed = crate::application::project_board::operations::Completion::Failed(Box::new(
+        ProjectBoardError::Rule(BoardRuleError::NoPrs),
+    ));
+    let outcome = BoardOutcome::Changed {
+        task,
+        completion: Some(failed),
+    };
+    let answer = call.answer("link_pr", &outcome, None);
+    call.finish(&answer, false);
+    let line = serde_json::to_value(records.taken().remove(0)).unwrap();
+    assert_eq!(
+        (
+            line["completion"].clone(),
+            line["completion_code"].clone(),
+            line["completion_rule"].clone()
+        ),
+        (json!("failed"), json!("rule"), json!("no_prs")),
+        "{line}"
+    );
 }
