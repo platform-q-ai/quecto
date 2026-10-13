@@ -1,7 +1,9 @@
 //! The bounds a clear keeps: those every write keeps, a board at its
 //! entry bound, and how much a clear may name and a refusal may list.
 use super::*;
-use crate::infrastructure::persistence::project_board::board_tree::MAX_READ_ENTRIES;
+use crate::infrastructure::persistence::project_board::board_tree::{
+    MAX_BOARD_ENTRIES, MAX_READ_ENTRIES,
+};
 
 /// A clear keeps every bound a write keeps, and is refused as invalid
 /// past one, never panicking: the bytes of a tree and the task-file bytes
@@ -108,14 +110,30 @@ fn a_clear_and_its_refusals_are_bounded() {
     let why =
         refused(bob.clear_set_aside(&head, &clearing("tasks/d0.md", &one, &[]), "board: clear"));
     assert!(why.contains("and 2 more"), "{why}");
-    let many: Vec<(String, KeepCopy)> = (0..=MAX_READ_ENTRIES / 2)
-        .map(|n| (format!("tasks/n{n}.md"), drop_all(&[])))
-        .collect();
-    let many: Vec<(&str, KeepCopy)> = many
-        .iter()
-        .map(|(path, keep)| (path.as_str(), keep.clone()))
-        .collect();
-    let invalid = bob.clear_set_aside(&head, &clearing("tasks/d0.md", &one, &many), "board: clear");
+    // A board a read takes may list about as many names twice as it holds
+    // entries in all its folders, halved: one clear must name them all.
+    let many = |count: usize| -> Vec<(String, KeepCopy)> {
+        (0..count)
+            .map(|n| (format!("tasks/n{n}.md"), drop_all(&[])))
+            .collect()
+    };
+    let clear_of = |names: &[(String, KeepCopy)]| {
+        let names: Vec<(&str, KeepCopy)> = names
+            .iter()
+            .map(|(path, keep)| (path.as_str(), keep.clone()))
+            .collect();
+        bob.clear_set_aside(
+            &head,
+            &clearing("tasks/d0.md", &one, &names),
+            "board: clear",
+        )
+    };
+    let judged = clear_of(&many(MAX_READ_ENTRIES / 2 + 1));
+    assert!(
+        matches!(judged, Ok(BoardWrite::Refused(_))),
+        "past one folder's share: {judged:?}"
+    );
+    let invalid = clear_of(&many(MAX_BOARD_ENTRIES / 2 + 1));
     assert!(
         matches!(invalid, Err(BoardStoreError::InvalidWrite(_))),
         "{invalid:?}"
@@ -137,7 +155,7 @@ fn the_copies_a_clear_names_are_bounded_by_what_it_saw() {
             .chain((1..count).map(|n| format!("{n:040x}")))
             .collect()
     };
-    let at = objects(MAX_READ_ENTRIES);
+    let at = objects(MAX_BOARD_ENTRIES);
     let at: Vec<&str> = at.iter().map(String::as_str).collect();
     let judged = bob.clear_set_aside(
         &head,
@@ -148,7 +166,7 @@ fn the_copies_a_clear_names_are_bounded_by_what_it_saw() {
         matches!(judged, Ok(BoardWrite::Refused(_))),
         "at the bound: {judged:?}"
     );
-    let past = objects(MAX_READ_ENTRIES + 1);
+    let past = objects(MAX_BOARD_ENTRIES + 1);
     let past: Vec<&str> = past.iter().map(String::as_str).collect();
     for resolution in [keep(&one, &past), drop_all(&past)] {
         let invalid = bob.clear_set_aside(

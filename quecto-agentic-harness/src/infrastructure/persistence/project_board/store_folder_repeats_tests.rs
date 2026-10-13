@@ -180,3 +180,48 @@ fn one_clear_resolves_names_listed_twice_in_tasks_and_every_folder() {
         "{board:?}"
     );
 }
+
+/// A clear that keeps a copy is a write a read must still take: keeping a
+/// plan that takes `plans/` past its bytes is invalid, naming the drop
+/// instead, and a clear dropping every copy lands.
+#[test]
+fn a_clear_keeping_a_copy_past_its_folders_bytes_is_invalid() {
+    let repos = fresh();
+    let cap = vec![b'x'; 1_536 * 1024];
+    let head = board_of(&repos, |_| {
+        let mut files: Vec<(&'static str, String, Vec<u8>)> = (1..=15)
+            .map(|n| ("100644", format!("a.{n}.md"), cap.clone()))
+            .collect();
+        files.push(regular("b.1.md", b"x".to_vec()));
+        files.push(regular("c.1.md", cap.clone()));
+        files.push(regular("c.1.md", b"{".to_vec()));
+        vec![
+            ("40000", "tasks", Node::Tree(vec![])),
+            ("40000", "plans", Node::Tree(files)),
+        ]
+    });
+    let remote = repos.remote();
+    let (big, bad) = (
+        at(&remote, &head, "plans/a.1.md"),
+        blob_in(&repos.bob, b"{"),
+    );
+    let copies = seen(&[big.as_str(), bad.as_str()]);
+    let bob = store(&repos.bob);
+    let keep = KeepCopy::Object {
+        keep: big.clone(),
+        seen: copies.clone(),
+    };
+    let clear = resolving("plans/c.1.md", &bad, &[("plans/c.1.md", keep)]);
+    let past = bob.clear_set_aside(&head, &clear, "board: keep c 1");
+    assert!(
+        matches!(&past, Err(BoardStoreError::InvalidWrite(why)) if why.contains("bytes of plan files") && why.ends_with("so drop that name's copies instead")),
+        "{past:?}"
+    );
+    let clear = resolving(
+        "plans/c.1.md",
+        &bad,
+        &[("plans/c.1.md", KeepCopy::Drop(copies))],
+    );
+    let cleared = written(bob.clear_set_aside(&head, &clear, "board: drop c 1"));
+    assert_eq!(names(&remote, &cleared, "plans").len(), 16);
+}

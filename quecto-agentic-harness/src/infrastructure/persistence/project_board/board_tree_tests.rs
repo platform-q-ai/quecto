@@ -321,7 +321,8 @@ fn a_name_listed_twice_outside_tasks_holds_only_its_folder() {
                 "plans/a.1.md is named more than once in board commit c (objects {}, {})",
                 "d".repeat(40),
                 "e".repeat(40)
-            )) && why.contains("no write in plans/ can carry it forward")),
+            )) && why.contains("no write in plans/ can carry it forward")
+                && why.contains("git rejects any new tree holding it")),
         "{refusal:?}"
     );
 }
