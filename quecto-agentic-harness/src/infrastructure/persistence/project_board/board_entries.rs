@@ -130,16 +130,11 @@ pub(super) fn disposition<K>(
                 .into(),
             true,
         ),
-        (TaskFile::Markdown, id, _, REGULAR_FILE, Some("blob")) if id.is_some() => {
-            let reason = match found.is_some_and(|object| object.omitted) {
-                true => format!(
-                    "{noun} file is at least {size} bytes, more than a partial clone fetches; \
-                     the most is {file_bytes}"
-                ),
-                false => format!("{noun} file is {size} bytes; the most is {file_bytes}"),
-            };
-            aside(id, reason, true)
-        }
+        (TaskFile::Markdown, id, _, REGULAR_FILE, Some("blob")) if id.is_some() => aside(
+            id,
+            format!("{noun} file is {size} bytes; the most is {file_bytes}"),
+            true,
+        ),
         (_, None, _, _, _) if agrees => aside(
             None,
             then(

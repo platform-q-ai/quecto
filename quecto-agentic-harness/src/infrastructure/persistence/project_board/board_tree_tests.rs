@@ -58,9 +58,6 @@ fn the_folders_and_their_bounds_are_the_plans() {
     );
     let names: Vec<&str> = FOLDERS.iter().map(|folder| folder.naming.folder).collect();
     assert_eq!(names, ARTIFACT_FOLDERS);
-    // A partial clone fetches every file a read may read, and none past.
-    let largest = table.iter().map(|row| row.3).max().unwrap();
-    assert_eq!(FILTER_BYTES, largest.max(MAX_TASK_FILE_BYTES) + 1);
     assert_eq!(MAX_BOARD_ENTRIES, 16_384);
     for name in ["tasks", "plans", "discussions", ARCHIVE] {
         assert!(root_tree(name), "{name}");

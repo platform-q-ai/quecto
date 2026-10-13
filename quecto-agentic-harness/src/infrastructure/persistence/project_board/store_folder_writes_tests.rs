@@ -337,7 +337,5 @@ fn a_write_replaces_a_keyed_file_the_next_write_drops() {
 
 #[path = "store_folder_clears_tests.rs"]
 mod clears;
-#[path = "store_partial_tests.rs"]
-mod partial;
 #[path = "store_folder_repeats_tests.rs"]
 mod repeats;

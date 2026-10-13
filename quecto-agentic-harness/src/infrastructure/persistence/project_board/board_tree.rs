@@ -45,15 +45,8 @@
 //!
 //! An object a partial clone does not hold yet is not fetched here (every
 //! local call runs with `GIT_NO_LAZY_FETCH`): the read answers
-//! [`Unread::Missing`] with what to fetch for every object it found
-//! missing, so the store fetches them in one round and reads again
-//! (#2481 S10b): the root and the archive as trees alone ([`Wanted::Alone`]:
-//! a read only judges their type), and a live folder whole but for any
-//! blob past every cap ([`Wanted::Filtered`], [`FILTER_BYTES`]). A blob
-//! still missing in a folder fetched so is one past every cap: set aside
-//! as too large and carried by its id, never fetched. The root's files are
-//! never read (each write regenerates the README and drops strays), so
-//! they are never fetched either.
+//! [`Unread::Missing`] with every object it found missing, so the store
+//! fetches them in one call and reads again.
 use super::artifacts::task::TASK_LIMITS;
 pub use super::cat_file::contents;
 use super::cat_file::{Found, Object, objects};
@@ -62,7 +55,7 @@ use crate::application::project_board::ports::{BoardArtifact, BoardStoreError, Q
 use crate::domain::project_board::entities::task::Task;
 use crate::domain::project_board::value_objects::shown_text::shown_board_path;
 use crate::domain::project_board::value_objects::slug::{MAX_SLUG_BYTES, Slug};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 /// The punctuation a name kept in `tasks/` may hold besides letters and
 /// numbers.
@@ -131,21 +124,10 @@ pub fn unavailable(error: GitError) -> BoardStoreError {
 /// Why a board commit was not read.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Unread {
-    /// What to fetch for the objects the commit names that this clone
-    /// does not hold (a partial clone); then read again.
-    Missing(Vec<Wanted>),
+    /// Objects the commit names that this clone does not hold (a partial
+    /// clone): fetch them, then read again.
+    Missing(Vec<String>),
     Failed(BoardStoreError),
-}
-
-/// What a partial clone fetches of a tree it misses, or misses part of.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Wanted {
-    /// The tree alone, nothing under it: the root, the archive, or any
-    /// other tree at the root, whose type is all a read judges.
-    Alone(String),
-    /// A live folder's tree and everything under it, but for any blob of
-    /// [`FILTER_BYTES`] or more, which stays on the remote.
-    Filtered(String),
 }
 
 impl From<BoardStoreError> for Unread {
@@ -315,16 +297,9 @@ fn kind_of_mode(mode: &str) -> Option<&'static str> {
 /// # Errors
 /// Objects this clone does not hold; git fails, a tree is past its bounds,
 /// or the commit is not a board (a clash).
-pub fn read_board(
-    git: &Git,
-    commit: &str,
-    limits: Limits,
-    filtered: &BTreeSet<String>,
-) -> Result<Board, Unread> {
+pub fn read_board(git: &Git, commit: &str, limits: Limits) -> Result<Board, Unread> {
     let root = listed(git, &tree_of(git, commit)?, limits.tree_bytes)?;
-    let mut kinds = objects(git, looked_up(&root))?;
-    // The root's files are never read, so never fetched.
-    omit(&root, &mut kinds);
+    let kinds = objects(git, looked_up(&root))?;
     let named = |name: &'static str| root.iter().filter(move |entry| entry.name == name);
     // A tree named once: a folder to read, or the archive to carry.
     let once = |name: &'static str| match named(name).collect::<Vec<_>>().as_slice() {
@@ -336,7 +311,7 @@ pub fn read_board(
     // before it.
     let marker = match named(FORMAT_TREE).collect::<Vec<_>>().as_slice() {
         [] => None,
-        [entry] if is_tree(entry, &kinds) => Some(read_format(git, &entry.oid, limits, filtered)),
+        [entry] if is_tree(entry, &kinds) => Some(read_format(git, &entry.oid, limits)),
         [entry] if is_file(entry, &kinds) => None,
         [entry] => Some(Ok(Marker::Damaged(format!(
             "format at the root is mode {} over a {}",
@@ -356,7 +331,7 @@ pub fn read_board(
         Some(Ok(Marker::Newer(version))) => return Err(Unread::Failed(newer(version))),
         Some(Ok(Marker::Oversized(size))) => {
             return Err(Unread::Failed(BoardStoreError::Unavailable(format!(
-                "its format marker (format/board) is {size}, more than this quecto reads: \
+                "its format marker (format/board) is {size} bytes, more than this quecto reads: \
                  if a newer quecto wrote the board, upgrade quecto; if a hand edit did, mend the \
                  board: {RECOVERY}"
             ))));
@@ -368,25 +343,15 @@ pub fn read_board(
     let tasks = named("tasks")
         .next()
         .filter(|entry| is_tree(entry, &kinds))
-        .map(|entry| scan_tasks(git, &entry.oid, limits, filtered));
+        .map(|entry| scan_tasks(git, &entry.oid, limits));
     let folders: Vec<(&'static str, Result<FolderScan, Unread>)> = FOLDERS
         .iter()
         .filter_map(|folder| {
             let name = folder.naming.folder;
-            once(name).map(|entry| (name, scan_folder(git, &entry.oid, folder, limits, filtered)))
+            once(name).map(|entry| (name, scan_folder(git, &entry.oid, folder, limits)))
         })
         .collect();
-    // A live tree is fetched with what a read reads under it; any other
-    // (the archive, a stray) alone.
-    let live = |name: &str| name == FORMAT_TREE || (root_tree(name) && name != ARCHIVE);
-    let mut missing: Vec<Wanted> = root
-        .iter()
-        .filter(|entry| matches!(kinds.get(&entry.oid), Some(Found::Missing)))
-        .map(|entry| match live(&entry.name) {
-            true => Wanted::Filtered(entry.oid.clone()),
-            false => Wanted::Alone(entry.oid.clone()),
-        })
-        .collect();
+    let mut missing = missing(&root, &kinds);
     let (tasks, marker) = (gather(tasks, &mut missing), gather(marker, &mut missing));
     let folders: Vec<(&'static str, Option<Result<FolderScan, Unread>>)> = folders
         .into_iter()
@@ -485,10 +450,10 @@ pub(super) fn entry_path(folder: &str, raw: &[u8], oid: &str) -> String {
     odd
 }
 
-/// `result`, what it misses moved to `missing`.
+/// `result`, its missing objects moved to `missing`.
 fn gather<T>(
     result: Option<Result<T, Unread>>,
-    missing: &mut Vec<Wanted>,
+    missing: &mut Vec<String>,
 ) -> Option<Result<T, Unread>> {
     match result {
         Some(Err(Unread::Missing(more))) => {
@@ -521,55 +486,12 @@ fn looked_up(entries: &[Entry]) -> impl Iterator<Item = &str> {
         .map(|entry| entry.oid.as_str())
 }
 
-/// The real type and size of the objects of `entries`, the entries of the
-/// live tree `tree`. One this clone misses asks for `tree` to be fetched
-/// ([`Wanted::Filtered`]); once it was (`filtered`), a blob still missing
-/// is one the fetch left on the remote, past every cap ([`omit`]).
-///
-/// # Errors
-/// What to fetch, or git fails.
-fn kinds_in(
-    git: &Git,
-    tree: &str,
-    entries: &[Entry],
-    filtered: &BTreeSet<String>,
-) -> Result<BTreeMap<String, Found>, Unread> {
-    let mut kinds = objects(git, looked_up(entries))?;
-    if filtered.contains(tree) {
-        omit(entries, &mut kinds);
-    }
-    let missing = entries
+fn missing(entries: &[Entry], kinds: &BTreeMap<String, Found>) -> Vec<String> {
+    entries
         .iter()
-        .any(|entry| matches!(kinds.get(&entry.oid), Some(Found::Missing)));
-    match missing {
-        // A tree still missing after a fetch is asked for again, which the
-        // store refuses to repeat.
-        true => Err(Unread::Missing(vec![Wanted::Filtered(tree.to_string())])),
-        false => Ok(kinds),
-    }
-}
-
-/// `kinds` with each file of `entries` this clone misses taken for a blob
-/// past every cap, of at least [`FILTER_BYTES`]: never fetched, set aside
-/// as too large, and carried by its id.
-fn omit(entries: &[Entry], kinds: &mut BTreeMap<String, Found>) {
-    debug_assert!(
-        MAX_TASK_FILE_BYTES < FILTER_BYTES
-            && FOLDERS
-                .iter()
-                .all(|folder| folder.naming.file_bytes < FILTER_BYTES),
-        "every file a read reads is fetched"
-    );
-    for entry in entries {
-        let found = kinds.get_mut(&entry.oid);
-        if let (Some("blob"), Some(found @ Found::Missing)) = (kind_of_mode(&entry.mode), found) {
-            *found = Found::Present(Object {
-                kind: "blob".into(),
-                size: FILTER_BYTES,
-                omitted: true,
-            });
-        }
-    }
+        .filter(|entry| matches!(kinds.get(&entry.oid), Some(Found::Missing)))
+        .map(|entry| entry.oid.clone())
+        .collect()
 }
 
 /// A board's root: a README file (a hand edit may have deleted it), a
@@ -629,8 +551,7 @@ fn listed(git: &Git, tree: &str, max_bytes: usize) -> Result<Vec<Entry>, Unread>
         Some(Found::Present(object)) => {
             return Err(not_read(format!("{tree} is a {}, not a tree", object.kind)));
         }
-        // Only the root is listed before its type is known: fetched alone.
-        Some(Found::Missing) => return Err(Unread::Missing(vec![Wanted::Alone(tree.to_string())])),
+        Some(Found::Missing) => return Err(Unread::Missing(vec![tree.to_string()])),
         None => return Err(not_read(format!("cat-file did not report {tree}"))),
     }
     let listing = git
@@ -685,7 +606,7 @@ pub use entries::TASK_NAMING;
 use entries::{TaskFile, task_name};
 #[path = "board_folders.rs"]
 mod folders;
-pub use folders::{ARCHIVE, CarriedTree, FILTER_BYTES, MAX_BOARD_ENTRIES, read_size_in};
+pub use folders::{ARCHIVE, CarriedTree, MAX_BOARD_ENTRIES, read_size_in};
 use folders::{FOLDERS, FolderScan, load_folder, root_tree, scan_folder};
 #[path = "board_tasks.rs"]
 mod tasks;
