@@ -4,10 +4,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use super::*;
+use crate::application::project_board::dto::FoldBackFacts;
 use crate::application::project_board::dto::ProjectBoardError;
 use crate::application::project_board::fold_back::{SwarmEnd, SwarmRunView};
 use crate::application::project_board::ports::ProjectBoardStore;
-use crate::application::project_board::telemetry::FoldBackFacts;
 use crate::application::project_board::use_cases::FoldBackRun;
 use crate::domain::project_board::value_objects::rule_error::BoardRuleError;
 use crate::domain::project_board::value_objects::slug::Slug;

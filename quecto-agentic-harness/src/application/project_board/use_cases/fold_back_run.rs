@@ -16,15 +16,15 @@ use std::sync::Arc;
 
 use super::board_change::{checked_writer, commit_run, task_on};
 use super::board_view;
-use crate::application::project_board::dto::ProjectBoardError;
+use crate::application::project_board::dto::{FoldBackFacts, FoldedBack, ProjectBoardError};
 use crate::application::project_board::fold_back::{
-    Evidence, FoldBackItems, FoldedBack, SwarmRunView, cost_of, run_items,
+    Evidence, FoldBackItems, SwarmRunView, cost_of, run_items,
 };
 use crate::application::project_board::ports::{
     BoardArtifact, BoardClock, BoardStoreError, BoardTextCells, FoldBackOutcome, FoldBackRecorder,
     ProjectBoardStore,
 };
-use crate::application::project_board::telemetry::{FoldBackFacts, OpFacts, counted};
+use crate::application::project_board::telemetry::{OpFacts, counted};
 use crate::domain::project_board::entities::run::Run;
 use crate::domain::project_board::services::runs::{fold_back, run_and_plan};
 use crate::domain::project_board::value_objects::rule_error::BoardRuleError;
@@ -57,13 +57,15 @@ impl FoldBackRun {
     }
 
     /// Run `number` of task `id` folded back from `view`, its swarm
-    /// ended. A run the store judges invalid with its evidence (past its
-    /// file's bounds) is folded once more without it: its outcome, states,
-    /// owners and cost.
+    /// ended. A run that would leave the board past its bytes
+    /// ([`BoardStoreError::WriteTooLarge`]) is folded once more without its
+    /// evidence: its outcome, states, owners and cost. Any other invalid
+    /// write is refused as it is, its evidence never left out.
     ///
     /// # Errors
     /// No such task, run or plan version on the board, or one of their
-    /// files set aside; the board's rules or the store refusing the run;
+    /// files set aside; the board's rules or the store refusing the run
+    /// (as invalid, or too large even without its evidence);
     /// the board contended past every attempt; the store's or clock's
     /// failure. Nothing is written.
     pub fn execute(
@@ -120,7 +122,9 @@ impl FoldBackRun {
     ) -> Result<FoldedBack, ProjectBoardError> {
         let mut write = facts.as_ref().map(|_| OpFacts::default());
         let mut passed = self.pass(id, number, view, Evidence::Kept, write.as_mut());
-        if let Err(ProjectBoardError::Store(BoardStoreError::InvalidWrite(_))) = &passed {
+        // Only a run past the board's bytes is folded again, smaller (an
+        // allowlist): any other invalid write is the caller's to see.
+        if let Err(ProjectBoardError::Store(BoardStoreError::WriteTooLarge(_))) = &passed {
             let mut again = facts.as_ref().map(|_| OpFacts::default());
             passed = self.pass(id, number, view, Evidence::Left, again.as_mut());
             if let (Some(write), Some(again)) = (write.as_mut(), again) {

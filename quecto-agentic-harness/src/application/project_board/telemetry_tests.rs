@@ -296,6 +296,7 @@ mod facts {
 
 mod fold_back_facts {
     use super::*;
+    use crate::application::project_board::dto::FoldBackFacts;
     use crate::domain::project_board::value_objects::telemetry::{
         ItemCounts, RunOutcomeKind, TaskRef,
     };

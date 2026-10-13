@@ -470,7 +470,9 @@ impl fmt::Display for ProjectBoardError {
             Self::Store(BoardStoreError::Clash(why)) => {
                 write!(f, "the board clashes with the repository: {why}")
             }
-            Self::Store(BoardStoreError::InvalidWrite(why)) => {
+            Self::Store(
+                BoardStoreError::InvalidWrite(why) | BoardStoreError::WriteTooLarge(why),
+            ) => {
                 write!(f, "the board refused an invalid write: {why}")
             }
             Self::Store(BoardStoreError::Unavailable(why)) => {

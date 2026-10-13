@@ -4,7 +4,6 @@
 use std::sync::Arc;
 
 use super::dto::BoardOp;
-pub use super::dto::FoldBackFacts;
 use super::operations::{BoardRequest, Completion};
 use super::ports::ProjectBoardOpLog;
 use crate::domain::project_board::value_objects::slug::Slug;

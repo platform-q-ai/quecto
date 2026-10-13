@@ -5,10 +5,10 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use quecto::application::project_board::dto::FoldBackFacts;
+use quecto::application::project_board::dto::FoldedBack;
 use quecto::application::project_board::dto::ProjectBoardError;
-use quecto::application::project_board::fold_back::FoldedBack;
 use quecto::application::project_board::ports::{FoldBackOutcome, FoldBackRecorder};
-use quecto::application::project_board::telemetry::FoldBackFacts;
 use quecto::composition::bootstrap::project_board::session_board_recording_decided;
 use quecto::domain::project_board::value_objects::rule_error::BoardRuleError;
 use quecto::domain::project_board::value_objects::slug::Slug;

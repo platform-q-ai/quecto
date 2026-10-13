@@ -302,8 +302,9 @@ fn the_git_store_carries_a_task_file_set_aside_and_drops_a_stray() {
 /// written, and the board reads it back as folded.
 #[test]
 fn the_git_store_takes_a_run_folded_back_alone_with_no_secret_in_its_file() {
+    use quecto::application::project_board::dto::FoldedBack;
     use quecto::application::project_board::fold_back::{
-        FoldedBack, SwarmEnd, SwarmEvidence, SwarmItemState, SwarmItemView, SwarmRunView,
+        SwarmEnd, SwarmEvidence, SwarmItemState, SwarmItemView, SwarmRunView,
     };
     use quecto::application::project_board::ports::{BoardArtifact, BoardWrite};
     use quecto::application::project_board::use_cases::FoldBackRun;
@@ -395,6 +396,10 @@ fn the_git_store_takes_a_run_folded_back_alone_with_no_secret_in_its_file() {
                 ),
                 (TOKEN.to_string(), "4f2a9c1"),
                 ("costs $5".to_string(), "4f2a9c1"),
+                (
+                    "`https://acct.blob.core.windows.net/c/b?sv=2024&sig=AbC%2Bsecret`".into(),
+                    "4f2a9c1",
+                ),
             ]
             .map(|(artifact, revision)| SwarmEvidence {
                 artifact,
@@ -431,6 +436,11 @@ fn the_git_store_takes_a_run_folded_back_alone_with_no_secret_in_its_file() {
         b"",
     );
     assert!(!file.contains(TOKEN) && !file.contains("$5"), "{file}");
+    assert!(!file.contains("sig=") && !file.contains("sv="), "{file}");
+    assert!(
+        file.contains("`https://acct.blob.core.windows.net/c/b` at 4f2a9c1"),
+        "{file}"
+    );
     assert!(
         file.contains("[link](https://github.com/o/r/pull/7) at 4f2a9c1"),
         "{file}"

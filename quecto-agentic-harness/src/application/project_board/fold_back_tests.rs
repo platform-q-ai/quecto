@@ -607,3 +607,81 @@ fn the_cost_is_the_observed_tokens_within_the_board_bound() {
     run.observed_tokens = u64::MAX;
     assert_eq!(cost_of(&run), MAX_BUDGET_TOKENS);
 }
+
+#[test]
+fn an_address_keeps_no_query_wherever_it_stands() {
+    let rows = [
+        (
+            "`https://acct.blob.core.windows.net/c/b?sv=2024&sig=AbC%2Bsecret`",
+            "`https://acct.blob.core.windows.net/c/b`",
+        ),
+        ("`http://h.example/p?sig=s3cr3t`", "`http://h.example/p`"),
+        (
+            "[x](https://h.example/p?sig=s3cr3t)",
+            "[x](https://h.example/p)",
+        ),
+        (
+            "https://h.example/p?sig=s3cr3t#frag",
+            "[link](https://h.example/p#frag)",
+        ),
+        ("https://x.com/a?", "[link](https://x.com/a)?"),
+    ];
+    for (artifact, line) in rows {
+        let kept = kept_line(artifact, "abc");
+        assert_eq!(kept, Some(format!("{line} at abc")), "{artifact}");
+        assert!(kept.is_some_and(|kept| !kept.contains("sig=") && !kept.contains("sv=")));
+    }
+}
+
+#[test]
+fn an_address_is_never_retargeted_past_its_authority() {
+    assert_eq!(
+        kept_line("https://good.example?to=a@b.co", "abc"),
+        Some("[link](https://good.example) at abc".into())
+    );
+    let fragment = kept_line("https://good.example#@evil.example/x", "abc");
+    assert!(
+        fragment
+            .as_deref()
+            .is_none_or(|line| line.starts_with("[link](https://good.example#@evil")),
+        "{fragment:?}"
+    );
+    // Userinfo only inside the authority, and only as the scrub writes it.
+    assert_eq!(
+        address("https://***@good.example/x"),
+        Some("https://good.example/x".into())
+    );
+    assert_eq!(address("https://evil@good.example/x"), None);
+    assert_eq!(address("https://***@evil@good.example/x"), None);
+    assert_eq!(
+        address("https://good.example?to=a@b.co"),
+        Some("https://good.example".into())
+    );
+    assert_eq!(
+        address("https://good.example#@evil.example/x"),
+        Some("https://good.example#@evil.example/x".into())
+    );
+}
+
+#[test]
+fn a_port_and_an_at_sign_in_the_path_are_kept_and_trailing_marks_left_outside() {
+    assert_eq!(
+        address("https://x.com:8443/a"),
+        Some("https://x.com:8443/a".into())
+    );
+    assert_eq!(
+        address("https://x.com/u@v"),
+        Some("https://x.com/u@v".into())
+    );
+    assert_eq!(
+        kept_line("https://x.com:8443/a", "abc"),
+        Some("[link](https://x.com:8443/a) at abc".into())
+    );
+    for mark in [";", ":", "!", "?", ".", ","] {
+        assert_eq!(
+            kept_line(&format!("https://x.com/a{mark}"), "abc"),
+            Some(format!("[link](https://x.com/a){mark} at abc")),
+            "{mark}"
+        );
+    }
+}

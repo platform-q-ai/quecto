@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 use super::answer::error_code;
 use super::recording::{micros, refusal_parts};
-use crate::application::project_board::fold_back::FoldedBack;
+use crate::application::project_board::dto::FoldedBack;
 use crate::application::project_board::ports::{FoldBackOutcome, FoldBackRecorder};
 use crate::application::project_board::telemetry::BoardRecording;
 use crate::domain::project_board::value_objects::telemetry::{

@@ -91,6 +91,9 @@ board_errors! {
     E::Store(BoardStoreError::InvalidWrite(_)) => {
         E::Store(BoardStoreError::InvalidWrite("too big".into()))
     },
+    E::Store(BoardStoreError::WriteTooLarge(_)) => {
+        E::Store(BoardStoreError::WriteTooLarge("runs/ past its bytes".into()))
+    },
     E::Store(BoardStoreError::Unavailable(_)) => {
         E::Store(BoardStoreError::Unavailable("offline".into()))
     },

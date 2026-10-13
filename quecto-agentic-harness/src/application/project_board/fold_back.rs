@@ -15,10 +15,12 @@
 //!   done, blocked blocked. A plan item the swarm never seeded is todo
 //!   (`unmatched`); a swarm item no plan item takes is counted (`extra`),
 //!   never kept.
-//! - **Secrets:** every owner and evidence part has its URL userinfo and
-//!   secret-shaped spans redacted first, and a linked address loses its
-//!   query (a signed URL's signature): the board is pushed, and read by
-//!   every member.
+//! - **Secrets:** every `scheme://` address in an owner or evidence part,
+//!   wherever it stands (bare, in a code span, in a link), keeps only its
+//!   scheme, host, path and fragment: its userinfo is written `***` and
+//!   its query (a signed URL's signature, a token) dropped. Then every
+//!   secret-shaped span is redacted. The board is pushed, and read by every
+//!   member.
 //! - **Owner:** the member id, as one board line cut to
 //!   [`MAX_OWNER_CHARS`]; none when the board cannot hold it.
 //! - **Evidence:** one line per entry, `<artifact> at <revision>`, each
@@ -29,7 +31,6 @@
 //!   owners counted first) is dropped and counted, with no marker left:
 //!   one bad line never sinks the fold-back.
 //! - **Cost:** the swarm's observed tokens, within the board's bound.
-pub use super::dto::FoldedBack;
 use super::ports::BoardTextCells;
 use super::swarm_brief::item_title;
 use crate::domain::project_board::entities::plan::Plan;
@@ -42,16 +43,30 @@ use crate::domain::project_board::value_objects::board_text;
 use crate::domain::project_board::value_objects::schema_error::line;
 use crate::domain::project_board::value_objects::telemetry::ItemCounts;
 use crate::domain::project_board::value_objects::vocabulary::{ItemState, RunOutcome};
-use crate::domain::redaction::{redact_secrets, redact_url_userinfo};
+use crate::domain::redaction::redact_secrets;
 use crate::domain::swarm::{RunState, TaskState};
+use regex::{Captures, Regex};
+use std::sync::LazyLock;
 
 /// The scheme of the one address a board line links.
 const HTTPS: &str = "https://";
 /// The text of a link written for a bare address.
 const LINK_TEXT: &str = "link";
-/// What a redacted URL's userinfo leaves (`redact_url_userinfo`): dropped
-/// from a linked address.
-const REDACTED_USERINFO: &str = "***@";
+/// What an address's userinfo is written as: dropped from a linked one.
+const REDACTED_USER: &str = "***";
+/// What may close a query and is given back to the text around it: a code
+/// span's backtick, a link's or quote's close, punctuation.
+const QUERY_CLOSERS: [char; 12] = ['`', ')', ']', '>', '"', '\'', '.', ',', ';', ':', '!', '?'];
+/// A `scheme://` address anywhere in text (in a code span or a link
+/// included): its scheme, then its authority, path, query and fragment,
+/// each running to the next one's mark or a space.
+static ADDRESS: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(concat!(
+        r"(?P<scheme>[A-Za-z][A-Za-z0-9+.\-]*://)(?P<authority>[^/?#\s]*)",
+        r"(?P<path>[^?#\s]*)(?P<query>\?[^#\s]*)?(?P<fragment>#\S*)?",
+    ))
+    .expect("a valid pattern")
+});
 /// What may stand before a bare address and stay outside its link.
 const OPENERS: [char; 2] = ['<', '('];
 /// What may follow a bare address and stay outside its link.
@@ -224,8 +239,18 @@ pub fn run_items(
     evidence_kept: Evidence,
 ) -> FoldBackItems {
     let planned = &plan.fields().items;
-    let matched: Vec<Option<&SwarmItemView>> =
+    let found: Vec<Option<(usize, &SwarmItemView)>> =
         planned.iter().map(|item| matched(item, view)).collect();
+    let at: Vec<usize> = found.iter().flatten().map(|(at, _)| *at).collect();
+    debug_assert_eq!(
+        at.iter().collect::<std::collections::BTreeSet<_>>().len(),
+        at.len(),
+        "a swarm item stands for one plan item at most (a slug holds no `:`)"
+    );
+    let matched: Vec<Option<&SwarmItemView>> = found
+        .iter()
+        .map(|found| found.map(|(_, swarm)| swarm))
+        .collect();
     let taken = matched.iter().flatten().count();
     let owners: Vec<Option<String>> = matched
         .iter()
@@ -285,10 +310,11 @@ pub fn run_items(
     folded
 }
 
-/// The swarm item plan item `item` stands for: of those carrying its
+/// The swarm item plan item `item` stands for, by its place in the view:
+/// of those carrying its
 /// title exactly, or else its `<slug>: ` prefix, the most progressed, the
 /// newest of equals.
-fn matched<'v>(item: &PlanItem, view: &'v SwarmRunView) -> Option<&'v SwarmItemView> {
+fn matched<'v>(item: &PlanItem, view: &'v SwarmRunView) -> Option<(usize, &'v SwarmItemView)> {
     let key = item_title(item);
     let prefix = format!("{}: ", item.id.as_str());
     debug_assert!(
@@ -306,9 +332,7 @@ fn matched<'v>(item: &PlanItem, view: &'v SwarmRunView) -> Option<&'v SwarmItemV
             })
     };
     let exact = under(true).next().is_some();
-    under(exact)
-        .max_by_key(|(at, swarm)| (swarm.state.progress(), *at))
-        .map(|(_, swarm)| swarm)
+    under(exact).max_by_key(|(at, swarm)| (swarm.state.progress(), *at))
 }
 
 /// `entry` as one evidence line: `<artifact> at <revision>`, each part one
@@ -329,10 +353,34 @@ pub fn cost_of(view: &SwarmRunView) -> u64 {
     view.observed_tokens.min(MAX_BUDGET_TOKENS)
 }
 
-/// `raw` from outside the board as one board line, a URL's userinfo and
-/// every secret-shaped span redacted first.
+/// `raw` from outside the board as one board line: each address in it
+/// kept to what [`kept_address`] keeps, then every secret-shaped span
+/// redacted.
 fn scrubbed(raw: &str) -> String {
-    board_text::line(&redact_secrets(&redact_url_userinfo(raw)))
+    let addressed = ADDRESS.replace_all(raw, kept_address);
+    board_text::line(&redact_secrets(&addressed))
+}
+
+/// What an address in text keeps (an allowlist): its scheme, its host and
+/// port (any userinfo before them written [`REDACTED_USER`]), its path and
+/// its fragment; its query (where a signed URL's signature or a token
+/// rides) is dropped, but for the [`QUERY_CLOSERS`] that end it, which
+/// belong to the text around it (a code span's backtick, a link's close).
+fn kept_address(found: &Captures<'_>) -> String {
+    let part = |name: &str| found.name(name).map_or("", |part| part.as_str());
+    let authority = part("authority");
+    let host = match authority.rsplit_once('@') {
+        Some((_, host)) => format!("{REDACTED_USER}@{host}"),
+        None => authority.to_string(),
+    };
+    let query = part("query");
+    let closing = &query[query.trim_end_matches(QUERY_CLOSERS).len()..];
+    format!(
+        "{}{host}{}{closing}{}",
+        part("scheme"),
+        part("path"),
+        part("fragment")
+    )
 }
 
 /// `text` with each word that is a whole bare address written as a link
@@ -362,24 +410,29 @@ fn linked_word(word: &str) -> String {
     }
 }
 
-/// `core` as the address a link holds: an `https://` address with a host,
-/// its redacted userinfo and its query dropped (a query may carry a
-/// credential, such as a signed URL's signature), its parentheses
-/// percent-encoded, and every character one the codec's address takes (an
-/// allowlist: its host, then its path and fragment); none otherwise.
+/// `core` as the address a link holds: an `https://` address whose
+/// authority (up to its first `/`, `?` or `#`) is a host, with at most the
+/// [`REDACTED_USER`] userinfo [`kept_address`] writes (dropped here), its
+/// query dropped, its parentheses percent-encoded, and every character one
+/// the codec's address takes (an allowlist: its host, then its path and
+/// fragment); none otherwise, so the word is left for the codec to judge.
 fn address(core: &str) -> Option<String> {
     let rest = core.strip_prefix(HTTPS)?;
-    let rest = rest.strip_prefix(REDACTED_USERINFO).unwrap_or(rest);
-    let (before, fragment) = rest.split_once('#').unwrap_or((rest, ""));
+    let (authority, tail) = rest.split_at(rest.find(['/', '?', '#']).unwrap_or(rest.len()));
+    let host = match authority.split_once('@') {
+        None => authority,
+        Some((REDACTED_USER, host)) => host,
+        Some(_) => return None,
+    };
+    let (before, fragment) = tail.split_once('#').unwrap_or((tail, ""));
     let path = before.split_once('?').map_or(before, |(path, _)| path);
     let kept = match fragment.is_empty() {
         true => path.to_string(),
         false => format!("{path}#{fragment}"),
     };
     let encoded = kept.replace('(', "%28").replace(')', "%29");
-    let (host, tail) = encoded.split_at(encoded.find(['/', '#']).unwrap_or(encoded.len()));
-    let shaped = !host.is_empty() && host.chars().all(host_char) && tail.chars().all(path_char);
-    shaped.then(|| format!("{HTTPS}{encoded}"))
+    let shaped = !host.is_empty() && host.chars().all(host_char) && encoded.chars().all(path_char);
+    shaped.then(|| format!("{HTTPS}{host}{encoded}"))
 }
 
 /// A character the codec's address takes in its host part.

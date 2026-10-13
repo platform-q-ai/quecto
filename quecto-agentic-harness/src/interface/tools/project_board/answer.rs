@@ -450,7 +450,8 @@ fn error_fields(error: &ProjectBoardError) -> (ErrorCode, Map<String, Value>) {
     match error {
         E::Store(BoardStoreError::NoBoard) => (C::NoBoard, Map::new()),
         E::Store(BoardStoreError::Clash(why)) => (C::Clash, fields([("reason", shown_json(why))])),
-        E::Store(BoardStoreError::InvalidWrite(why)) => {
+        // Past the board's bytes is answered as an invalid write.
+        E::Store(BoardStoreError::InvalidWrite(why) | BoardStoreError::WriteTooLarge(why)) => {
             (C::InvalidWrite, fields([("reason", shown_json(why))]))
         }
         E::Store(BoardStoreError::Unavailable(why)) => {

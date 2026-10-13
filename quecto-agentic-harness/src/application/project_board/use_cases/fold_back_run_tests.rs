@@ -247,10 +247,29 @@ fn a_board_moved_under_every_attempt_is_contended() {
     );
 }
 
+/// The board moved by another write of its task.
+fn moved(board: &MemoryBoardStore) {
+    let snapshot = board.read().unwrap();
+    let task = snapshot.tasks[0].clone();
+    let written = board.write(&snapshot.head, &[BoardArtifact::Task(task)], "board: other");
+    assert!(matches!(written, Ok(BoardWrite::Written(_))), "{written:?}");
+}
+
+fn too_large(why: &str) -> BoardStoreError {
+    BoardStoreError::WriteTooLarge(why.into())
+}
+
 #[test]
 fn a_run_the_store_finds_too_large_is_folded_again_without_its_evidence() {
     let (store, _, _) = started();
-    store.invalid_next_write("the run's file is past its bounds");
+    // A lost race, the run too large; then a lost race again, and it lands.
+    store.before_next_write(|board| {
+        moved(board);
+        board.before_next_write(|board| {
+            board.fail_next_write(too_large("runs/ would hold too many bytes"));
+            board.before_next_write(moved);
+        });
+    });
     let mut facts = FoldBackFacts::default();
     let folded = fold_back(&store)
         .execute_noted(&slug("board-store"), 1, &swarm(), Some(&mut facts))
@@ -266,26 +285,38 @@ fn a_run_the_store_finds_too_large_is_folded_again_without_its_evidence() {
     assert_eq!(fields.items[0].owner.as_deref(), Some("worker-1"));
     assert_eq!(fields.items[0].state, ItemState::Done);
     assert_eq!((facts.evidence, facts.evidence_dropped), (Some(0), Some(2)));
-    assert_eq!((facts.attempts, facts.lost), (Some(2), Some(0)));
+    // Both passes' attempts and lost races.
+    assert_eq!((facts.attempts, facts.lost), (Some(4), Some(2)));
 
-    // Judged invalid again without it: refused, nothing written.
+    // Too large again without it: refused, nothing written.
     let (store, _, _) = started();
     let writes = store.writes();
-    store.invalid_next_write("past its bounds");
-    // The first write's interleaving makes the second invalid too.
+    store.fail_next_write(too_large("past its bytes"));
     store.before_next_write(|board| {
-        board.before_next_write(|board| board.invalid_next_write("still past its bounds"));
+        board.before_next_write(|board| board.fail_next_write(too_large("still past them")));
     });
     let mut facts = FoldBackFacts::default();
     let folded =
         fold_back(&store).execute_noted(&slug("board-store"), 1, &swarm(), Some(&mut facts));
     assert_eq!(
         folded,
-        Err(ProjectBoardError::Store(BoardStoreError::InvalidWrite(
-            "still past its bounds".into()
-        )))
+        Err(ProjectBoardError::Store(too_large("still past them")))
     );
     assert_eq!((store.writes(), facts.attempts), (writes, Some(2)));
+    assert!(run_on(&store).is_open());
+}
+
+#[test]
+fn any_other_invalid_write_is_refused_with_its_evidence_never_left_out() {
+    let (store, _, _) = started();
+    let writes = store.writes();
+    let invalid = BoardStoreError::InvalidWrite("plan 1 of task board-store: line 2".into());
+    store.fail_next_write(invalid.clone());
+    let mut facts = FoldBackFacts::default();
+    let folded =
+        fold_back(&store).execute_noted(&slug("board-store"), 1, &swarm(), Some(&mut facts));
+    assert_eq!(folded, Err(ProjectBoardError::Store(invalid)));
+    assert_eq!((store.writes(), facts.attempts), (writes, Some(1)));
     assert!(run_on(&store).is_open());
 }
 
@@ -332,6 +363,8 @@ fn a_recorded_fold_back_hands_its_outcome_facts_and_time_to_the_recorder() {
     let (store, _, _) = started();
     let clock = SetClock::at("11:00:00");
     *clock.tick.lock().unwrap() = std::time::Duration::from_millis(5);
+    // The clock has run a while: the time taken is a difference, not a reading.
+    *clock.elapsed.lock().unwrap() = std::time::Duration::from_secs(100);
     let use_case =
         FoldBackRun::new(Arc::new(store.client()), clock, Arc::new(MarkdownTextCells)).unwrap();
     let recorded = Recorded::default();
@@ -342,10 +375,8 @@ fn a_recorded_fold_back_hands_its_outcome_facts_and_time_to_the_recorder() {
     };
     assert_eq!((task, *run, result), (&slug("board-store"), 1, &folded));
     assert_eq!(facts.run_outcome, Some(RunOutcomeKind::Succeeded));
-    assert!(
-        *elapsed >= std::time::Duration::from_millis(5),
-        "{elapsed:?}"
-    );
+    // One tick: the start's reading, and the end's.
+    assert_eq!(*elapsed, std::time::Duration::from_millis(5));
     // With no recorder, it is a plain fold-back: the run has ended now.
     let again = use_case.execute_recorded(&slug("board-store"), 1, &swarm(), None);
     assert_eq!(again, Ok(FoldedBack::Ended(1)));
