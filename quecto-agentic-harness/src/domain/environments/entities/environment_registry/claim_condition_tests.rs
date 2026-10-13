@@ -59,6 +59,77 @@ fn journalled() -> (EnvironmentRegistry, Arc<Mutex<Vec<String>>>) {
 
 const POCKET: &str = "cli:pocket-7";
 
+fn key(text: &str) -> CreatorKey {
+    CreatorKey::try_from(text.to_string()).unwrap()
+}
+
+#[test]
+fn a_creator_key_is_nonempty_printable_ascii_without_spaces() {
+    for text in [
+        POCKET,
+        "telegram:-42",
+        "chat-1760000000-7",
+        "a",
+        &"k".repeat(256),
+    ] {
+        assert_eq!(key(text).as_str(), text);
+    }
+    for text in [
+        "",
+        " ",
+        "cli:pocket-7 ",
+        " cli:pocket-7",
+        "cli pocket",
+        "tab\tkey",
+        "lf\nkey",
+        "é",
+        &"k".repeat(257),
+    ] {
+        assert_eq!(
+            CreatorKey::try_from(text.to_string()),
+            Err(InvalidCreatorKey),
+            "{text:?}"
+        );
+    }
+}
+
+/// A key can never be empty, so no condition admits a session-less record.
+#[test]
+fn a_session_less_record_is_never_admitted_by_a_creator_condition() {
+    let none = record("C1", EnvironmentStatus::Running, "");
+    for text in [POCKET, "-", "cli:"] {
+        assert!(
+            !ClaimCondition::CreatedBy(key(text)).admits(&none),
+            "{text}"
+        );
+    }
+    assert!(ClaimCondition::Any.admits(&none));
+}
+
+/// Exact bytes: no case folding, no trimming.
+#[test]
+fn a_creator_differing_in_case_or_whitespace_is_not_admitted() {
+    let condition = ClaimCondition::CreatedBy(key(POCKET));
+    for created_by in [
+        "CLI:POCKET-7",
+        "cli:pocket-7 ",
+        " cli:pocket-7",
+        "cli:pocket-7\n",
+    ] {
+        let other = record("C1", EnvironmentStatus::Running, created_by);
+        assert!(!condition.admits(&other), "{created_by:?}");
+    }
+    assert_eq!(condition.judge_creator("C4", POCKET), Ok(()));
+    assert_eq!(
+        condition.judge_creator("C4", "cli:other"),
+        Err(CreatorMismatch {
+            environment_ref: "C4".into(),
+            expected: POCKET.into(),
+            created_by: "cli:other".into(),
+        })
+    );
+}
+
 #[test]
 fn any_admits_every_record_and_created_by_only_an_exact_key() {
     let ours = record("C1", EnvironmentStatus::Running, POCKET);
@@ -66,12 +137,11 @@ fn any_admits_every_record_and_created_by_only_an_exact_key() {
     let none = record("C1", EnvironmentStatus::Running, "");
     assert!(ClaimCondition::Any.admits(&ours));
     assert!(ClaimCondition::Any.admits(&none));
-    let condition = ClaimCondition::CreatedBy(POCKET.into());
+    let condition = ClaimCondition::CreatedBy(key(POCKET));
     assert!(condition.admits(&ours));
     assert!(!condition.admits(&theirs), "a prefix is not a match");
     assert!(!condition.admits(&none));
-    assert!(!ClaimCondition::CreatedBy("cli:pocket".into()).admits(&ours));
-    assert!(!ClaimCondition::CreatedBy(String::new()).admits(&ours));
+    assert!(!ClaimCondition::CreatedBy(key("cli:pocket")).admits(&ours));
     assert_eq!(
         condition.judge(&theirs),
         Err(CreatorMismatch {
@@ -88,7 +158,7 @@ fn a_kill_claim_is_granted_when_the_creator_matches() {
     registry.commit(record("C1", EnvironmentStatus::Running, POCKET));
     writes.lock().unwrap().clear();
     let claim = registry
-        .begin_kill_if("C1", &ClaimCondition::CreatedBy(POCKET.into()))
+        .begin_kill_if("C1", &ClaimCondition::CreatedBy(key(POCKET)))
         .unwrap();
     assert_eq!(
         registry.get("C1").unwrap().status,
@@ -108,7 +178,7 @@ fn a_kill_claim_on_another_creators_record_is_refused_untouched() {
     registry.commit(record("C1", EnvironmentStatus::Running, "cli:other"));
     writes.lock().unwrap().clear();
     let refusal = registry
-        .begin_kill_if("C1", &ClaimCondition::CreatedBy(POCKET.into()))
+        .begin_kill_if("C1", &ClaimCondition::CreatedBy(key(POCKET)))
         .unwrap_err();
     assert_eq!(
         refusal,
@@ -131,7 +201,7 @@ fn a_kill_claim_on_another_creators_record_is_refused_untouched() {
 fn a_conditional_kill_claim_keeps_the_ordinary_refusals() {
     let (registry, _) = journalled();
     registry.commit(record("C1", EnvironmentStatus::Stopped, POCKET));
-    let condition = ClaimCondition::CreatedBy(POCKET.into());
+    let condition = ClaimCondition::CreatedBy(key(POCKET));
     assert_eq!(
         registry.begin_kill_if("C1", &condition).unwrap_err(),
         ClaimRefusal::Lookup(EnvironmentLookupError::Stopped("C1".into()))
@@ -148,7 +218,7 @@ fn a_removal_claim_is_granted_only_when_the_creator_matches() {
     registry.commit(record("C1", EnvironmentStatus::Stopped, "cli:other"));
     registry.commit(record("C2", EnvironmentStatus::Stopped, POCKET));
     writes.lock().unwrap().clear();
-    let condition = ClaimCondition::CreatedBy(POCKET.into());
+    let condition = ClaimCondition::CreatedBy(key(POCKET));
     assert_eq!(
         registry.begin_removal_if("C1", &condition).unwrap_err(),
         ClaimRefusal::CreatedByOther(CreatorMismatch {

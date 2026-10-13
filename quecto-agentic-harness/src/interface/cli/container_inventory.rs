@@ -17,14 +17,19 @@ use crate::application::environments::dto::{
 };
 use crate::application::environments::use_cases::{KillEnvironmentError, KilledEnvironment};
 use crate::domain::environments::entities::environment_registry::{
-    ClaimCondition, EnvironmentLookupError, EnvironmentRecord, EnvironmentStatus,
+    ClaimCondition, CreatorKey, EnvironmentLookupError, EnvironmentRecord, EnvironmentStatus,
     EnvironmentTarget, ref_number,
 };
 
 /// `quecto container kill <ref> --created-by <key>` found the record
-/// created by another key: nothing was killed. Every other refusal or
-/// failure exits 1.
+/// created by another key: nothing was killed.
 pub(super) const EXIT_NOT_CREATED_BY: i32 = 3;
+/// `quecto container kill` found nothing to kill: an unknown ref (or
+/// name), a record this command's own restore forgot, or a `stopped`
+/// record whose script set retained no cleanup. With `--created-by` the
+/// creator is judged first (exit 3 when it differs). Every other refusal
+/// or failure exits 1.
+pub(super) const EXIT_NOTHING_TO_KILL: i32 = 4;
 
 fn inventory(ctx: &CliContext, mode: RestoreMode) -> Result<ContainerInventoryHandles, String> {
     let Some(build) = ctx.container_inventory else {
@@ -54,7 +59,7 @@ fn present_restore_notes(handles: &ContainerInventoryHandles, stderr: &mut Strin
         stderr.push_str(line);
         stderr.push('\n');
     }
-    for environment_ref in &handles.restore.forgotten {
+    for environment_ref in handles.restore.forgotten_refs() {
         stderr.push_str(&format!(
             "{environment_ref} forgotten (stopped; nothing left on disk or in the runtime)\n"
         ));
@@ -185,7 +190,11 @@ pub(super) struct LsJsonEnvironment {
     pub name: Option<String>,
     /// The container config that created it.
     pub config: String,
+    /// The registry status (`running` even with no members recorded).
     pub status: String,
+    /// Member agents this listing's registry records (members live in
+    /// their session's memory, not on file).
+    pub members: usize,
     /// Userinfo redacted, as in the table.
     pub repository: Option<String>,
     pub created_by: Option<String>,
@@ -206,9 +215,10 @@ impl LsJsonEnvironment {
         let present = |value: &str| Some(value.to_string()).filter(|value| !value.is_empty());
         Self {
             environment_ref: record.environment_ref.clone(),
-            name: record.name.clone(),
+            name: record.name.as_deref().and_then(present),
             config: record.script_name.clone(),
-            status: record.status_label().to_string(),
+            status: record.status.name().to_string(),
+            members: record.members.len(),
             repository: present(&record.repository)
                 .map(|url| crate::domain::redaction::redact_url_userinfo(&url)),
             created_by: present(&record.created_by),
@@ -237,8 +247,16 @@ pub(super) fn ls_json(
         environments,
         hidden_stopped,
     };
-    let mut line = serde_json::to_string(&listing)
+    let line = serde_json::to_string(&listing)
         .map_err(|error| format!("the listing could not be written as JSON: {error}"))?;
+    // serde escapes control characters but not these three, which some
+    // line readers (JavaScript's, Python's `str.splitlines`) split on; they
+    // occur only inside strings, where the escape means the same.
+    let mut line = line
+        .replace('\u{2028}', "\\u2028")
+        .replace('\u{2029}', "\\u2029")
+        .replace('\u{0085}', "\\u0085");
+    debug_assert!(!line.contains('\n'), "the listing is one line");
     line.push('\n');
     Ok(line)
 }
@@ -355,7 +373,9 @@ fn parse_kill(args: &[String]) -> Result<KillRequest, String> {
                     .next()
                     .filter(|key| !key.is_empty())
                     .ok_or_else(|| format!("--created-by requires a key\n{USAGE}"))?;
-                if created_by.replace(key.clone()).is_some() {
+                let key = CreatorKey::try_from(key.clone())
+                    .map_err(|invalid| format!("--created-by: {invalid}\n{USAGE}"))?;
+                if created_by.replace(key).is_some() {
                     return Err(format!("--created-by may be given once\n{USAGE}"));
                 }
             }
@@ -372,9 +392,16 @@ fn parse_kill(args: &[String]) -> Result<KillRequest, String> {
         }
         _ => return Err(format!("kill takes exactly one <ref|name>\n{USAGE}")),
     };
-    let condition = match created_by {
-        Some(key) => ClaimCondition::CreatedBy(key),
-        None => ClaimCondition::Any,
+    // A name can be reused the moment its environment stops; a ref is the
+    // one address a creator-checked kill accepts.
+    let condition = match (created_by, &target) {
+        (Some(key), EnvironmentTarget::Ref(_)) => ClaimCondition::CreatedBy(key),
+        (Some(_), EnvironmentTarget::Name(name)) => {
+            return Err(format!(
+                "--created-by takes a ref (C followed by digits), not the name '{name}'\n{USAGE}"
+            ));
+        }
+        (None, _) => ClaimCondition::Any,
     };
     Ok(KillRequest { target, condition })
 }
@@ -392,20 +419,28 @@ fn end_environment(
         .build()
         .map_err(|error| format!("runtime: {error}"))?;
     present_restore_notes(&handles, stderr);
-    match &target {
+    let forgotten = match &target {
+        EnvironmentTarget::Ref(environment_ref) => handles
+            .restore
+            .forgotten
+            .iter()
+            .find(|forgotten| forgotten.environment_ref == *environment_ref),
+        EnvironmentTarget::Name(_) => None,
+    };
+    match forgotten {
         // The restore this command ran just forgot it (#2134): it was
-        // stopped, which is what a kill of it has always answered.
-        EnvironmentTarget::Ref(environment_ref)
-            if handles.restore.forgotten.contains(environment_ref) =>
-        {
-            Err(KillFailure::Other(format!(
+        // stopped and nothing of it is left. Its creator is judged first,
+        // as for any record.
+        Some(forgotten) => {
+            condition
+                .judge_creator(&forgotten.environment_ref, &forgotten.created_by)
+                .map_err(KillEnvironmentError::NotCreatedBy)?;
+            Err(KillFailure::NothingToKill(format!(
                 "{}; nothing of it was left, so it was forgotten",
-                EnvironmentLookupError::Stopped(environment_ref.clone())
+                EnvironmentLookupError::Stopped(forgotten.environment_ref.clone())
             )))
         }
-        EnvironmentTarget::Ref(_) | EnvironmentTarget::Name(_) => {
-            Ok(runtime.block_on(handles.kill.kill_container_if(&target, &condition))?)
-        }
+        None => Ok(runtime.block_on(handles.kill.kill_container_if(&target, &condition))?),
     }
 }
 
@@ -413,6 +448,8 @@ fn end_environment(
 enum KillFailure {
     /// The record under the target was created by another key.
     NotCreatedBy(String),
+    /// Nothing is there to kill.
+    NothingToKill(String),
     Other(String),
 }
 
@@ -426,6 +463,7 @@ impl From<KillEnvironmentError> for KillFailure {
     fn from(error: KillEnvironmentError) -> Self {
         match error {
             KillEnvironmentError::NotCreatedBy(_) => Self::NotCreatedBy(error.to_string()),
+            KillEnvironmentError::NothingToKill(_) => Self::NothingToKill(error.to_string()),
             KillEnvironmentError::Refused(_)
             | KillEnvironmentError::MembersUnsettled { .. }
             | KillEnvironmentError::KillFailed { .. } => Self::Other(error.to_string()),
@@ -463,6 +501,10 @@ pub(crate) fn cmd_kill(
         Err(KillFailure::NotCreatedBy(error)) => {
             fail(stderr, &error);
             EXIT_NOT_CREATED_BY
+        }
+        Err(KillFailure::NothingToKill(error)) => {
+            fail(stderr, &error);
+            EXIT_NOTHING_TO_KILL
         }
         Err(KillFailure::Other(error)) => fail(stderr, &error),
     }

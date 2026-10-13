@@ -41,3 +41,17 @@ fn is_joinable_agrees_with_what_a_join_resolves_for_every_status() {
         assert_eq!(resolved.is_ok(), joinable, "{status:?}: {resolved:?}");
     }
 }
+
+#[test]
+fn every_status_has_its_registry_name() {
+    let named = [
+        (EnvironmentStatus::Running, "running"),
+        (EnvironmentStatus::Killing, "killing"),
+        (EnvironmentStatus::Stopped, "stopped"),
+        (EnvironmentStatus::CleanupFailed, "cleanup-failed"),
+        (EnvironmentStatus::Retained, "retained"),
+    ];
+    for (status, name) in named {
+        assert_eq!(status.name(), name);
+    }
+}

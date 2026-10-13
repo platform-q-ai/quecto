@@ -156,7 +156,7 @@ fn exec_result_contract_rejects_invalid_shapes_and_proxy() {
 fn environment_name_is_taken_from_new_mode_only() {
     let named = base_config(ContainerSelection::New {
         container_config: None,
-        name: Some("review-env".into()),
+        name: Some("review-env".to_string().try_into().unwrap()),
     });
     assert_eq!(environment_name(&named).as_deref(), Some("review-env"));
     assert!(environment_name(&base_config(ContainerSelection::Local)).is_none());

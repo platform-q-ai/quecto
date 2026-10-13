@@ -6804,7 +6804,22 @@ fn kill_container_asks_members_before_the_retained_kill_and_never_twice() {
     );
     let kill = production_source("src/application/environments/use_cases/kill_environment.rs");
     // The claim is conditional (`--created-by`): the condition is judged
-    // in the same step that grants it.
+    // in the same step that grants it, through the one claim call.
+    assert_eq!(
+        kill.matches(".begin_kill(").count(),
+        0,
+        "the unconditional claim would skip the creator check"
+    );
+    assert_eq!(
+        kill.matches(".begin_kill_if(").count(),
+        1,
+        "exactly one kill-claim call site"
+    );
+    assert_eq!(
+        kill.matches(".begin_removal(").count(),
+        0,
+        "the unconditional removal claim would skip the creator check"
+    );
     let claim = kill
         .find(".begin_kill_if(")
         .expect("the exclusive claim is taken");

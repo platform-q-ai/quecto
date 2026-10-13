@@ -176,3 +176,38 @@ fn the_spawn_tool_carries_the_coordinator_opt_in_to_the_config() {
         assert!(err.contains(reason), "{args}: {err}");
     }
 }
+
+/// The `name` pattern a new container's schema carries says what the
+/// domain admits (pending owner approval): the shape — a letter or digit
+/// first, then letters, digits, `-`, `_`, `.`, and never `C` followed only
+/// by digits. The 64-byte bound is the domain's alone (a portable pattern
+/// cannot count).
+#[test]
+fn the_new_container_name_pattern_agrees_with_the_domain_rule() {
+    use crate::domain::environments::entities::environment_name::is_safe_environment_name;
+    let def = SpawnTool::new(vec![]).definition();
+    let schema: serde_json::Value = serde_json::from_str(&def.parameters_schema).unwrap();
+    let pattern = schema["properties"]["container"]["anyOf"][1]["properties"]["name"]["pattern"]
+        .as_str()
+        .expect("new-mode name carries a pattern");
+    let regex = regex::Regex::new(pattern).unwrap();
+    let alphabet = [
+        "C", "c", "7", "0", "a", "Z", "-", "_", ".", " ", "/", "\t", "é",
+    ];
+    let mut corpus: Vec<String> = vec![String::new()];
+    for _ in 0..3 {
+        let longer: Vec<String> = corpus
+            .iter()
+            .flat_map(|prefix| alphabet.iter().map(move |c| format!("{prefix}{c}")))
+            .collect();
+        corpus.extend(longer);
+    }
+    corpus.extend(["C123", "C07", "review-env", "C7a", "c7"].map(String::from));
+    for name in &corpus {
+        assert_eq!(
+            regex.is_match(name),
+            is_safe_environment_name(name),
+            "pattern and domain disagree on {name:?}"
+        );
+    }
+}

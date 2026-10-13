@@ -253,3 +253,44 @@ fn annotation_and_constraint_values_have_their_shapes() {
         ]
     );
 }
+
+/// `pattern` is documented for strings by OpenAI's subset and accepted by
+/// Anthropic; only a plain anchored regex of classes, groups, alternation,
+/// `*` and `+` is portable (no lookaround, flags, escapes or counts).
+#[test]
+fn a_plain_anchored_pattern_on_a_string_is_portable() {
+    let schema = json!({
+        "type": "object",
+        "properties": {"name": {"type": "string", "pattern": "^(C|[A-BD-Za-z0-9][A-Za-z0-9._-]*)$"}}
+    });
+    assert_eq!(portability_violations(&schema), Vec::<String>::new());
+}
+
+#[test]
+fn a_pattern_off_a_string_or_beyond_the_plain_subset_is_not_portable() {
+    for (property, reason) in [
+        (
+            json!({"type": "integer", "pattern": "^[0-9]+$"}),
+            "$.p: pattern without a string type",
+        ),
+        (
+            json!({"type": "string", "pattern": "^(?!C[0-9]+$).*$"}),
+            "$.p: pattern is not a plain anchored regex",
+        ),
+        (
+            json!({"type": "string", "pattern": "^\\d+$"}),
+            "$.p: pattern is not a plain anchored regex",
+        ),
+        (
+            json!({"type": "string", "pattern": "[a-z]+"}),
+            "$.p: pattern is not a plain anchored regex",
+        ),
+        (
+            json!({"type": "string", "pattern": 7}),
+            "$.p: pattern is not a plain anchored regex",
+        ),
+    ] {
+        let schema = json!({"type": "object", "properties": {"p": property}});
+        assert_eq!(portability_violations(&schema), vec![reason.to_string()]);
+    }
+}

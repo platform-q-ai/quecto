@@ -120,6 +120,10 @@ fn a_swarm_member_cannot_launch_a_coordinator() {
     );
 }
 
+/// The refusal names the field and states the domain's rule (pending owner
+/// approval).
+const UNSAFE_NAME_REFUSAL: &str = "container.name must be 1-64 characters, each a letter, digit, '-', '_' or '.', starting with a letter or digit, and not shaped like a ref (C followed by digits)";
+
 /// A new environment's name must be safe to show in `quecto container ls`
 /// and to address with `kill <ref|name>`: letters, digits, `-`, `_`, `.`,
 /// starting with a letter or digit, 1-64 bytes.
@@ -132,6 +136,8 @@ fn a_new_container_name_outside_the_allowlist_is_refused() {
         "lf\nenv",
         "-env",
         "a/b",
+        "C7",
+        "C07",
         &"a".repeat(65),
     ] {
         let err = parse_container_selection(&json!({"container":{"mode":"new","name":name}}))
@@ -154,13 +160,15 @@ fn a_new_container_name_inside_the_allowlist_is_accepted() {
         "tool_env",
         "spike-1839",
         "v1.2",
+        "c7",
+        "C7a",
         &"a".repeat(64),
     ] {
         assert_eq!(
             parse_container_selection(&json!({"container":{"mode":"new","name":name}})).unwrap(),
             ContainerSelection::New {
                 container_config: None,
-                name: Some(name.to_string()),
+                name: Some(name.to_string().try_into().unwrap()),
             }
         );
     }

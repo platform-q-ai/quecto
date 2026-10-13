@@ -12,8 +12,8 @@ use crate::application::environments::ports::{
 };
 use crate::application::environments::use_cases::{KillEnvironment, KillEnvironmentError};
 use crate::domain::environments::entities::environment_registry::{
-    ClaimCondition, CreatorMismatch, EnvironmentOrigin, EnvironmentRecord, EnvironmentRegistry,
-    EnvironmentStatus, EnvironmentTarget,
+    ClaimCondition, CreatorKey, CreatorMismatch, EnvironmentOrigin, EnvironmentRecord,
+    EnvironmentRegistry, EnvironmentStatus, EnvironmentTarget,
 };
 
 /// Records every port call in order.
@@ -90,6 +90,10 @@ impl EnvironmentMemberShutdown for Members {
 
 const POCKET: &str = "cli:pocket-7";
 
+fn pocket() -> CreatorKey {
+    CreatorKey::try_from(POCKET.to_string()).unwrap()
+}
+
 fn record(env_ref: &str, status: EnvironmentStatus, created_by: &str) -> EnvironmentRecord {
     EnvironmentRecord {
         environment_ref: env_ref.to_string(),
@@ -144,7 +148,7 @@ fn a_matching_creator_kills_a_live_environment() {
         &registry,
         &spy,
         by_ref("C1"),
-        ClaimCondition::CreatedBy(POCKET.into()),
+        ClaimCondition::CreatedBy(pocket()),
     )
     .unwrap();
     assert!(!killed.removed_stopped);
@@ -169,7 +173,7 @@ fn another_creators_live_environment_is_refused_untouched() {
             &registry,
             &spy,
             by_ref("C1"),
-            ClaimCondition::CreatedBy(POCKET.into()),
+            ClaimCondition::CreatedBy(pocket()),
         )
         .unwrap_err();
         assert_eq!(
@@ -194,7 +198,7 @@ fn another_creators_stopped_environment_is_not_removed() {
         &registry,
         &spy,
         by_ref("C1"),
-        ClaimCondition::CreatedBy(POCKET.into()),
+        ClaimCondition::CreatedBy(pocket()),
     )
     .unwrap_err();
     assert!(
@@ -217,7 +221,7 @@ fn a_matching_creators_stopped_environment_is_removed() {
         &registry,
         &spy,
         by_ref("C1"),
-        ClaimCondition::CreatedBy(POCKET.into()),
+        ClaimCondition::CreatedBy(pocket()),
     )
     .unwrap();
     assert!(killed.removed_stopped);
@@ -238,7 +242,7 @@ fn a_mismatch_is_reported_before_the_scripts_own_refusals() {
         &registry,
         &spy,
         by_ref("C1"),
-        ClaimCondition::CreatedBy(POCKET.into()),
+        ClaimCondition::CreatedBy(pocket()),
     )
     .unwrap_err();
     assert!(
@@ -276,4 +280,108 @@ fn an_unconditional_kill_is_unchanged() {
     let spy = Arc::new(Spy::default());
     kill_if(&registry, &spy, by_ref("C1"), ClaimCondition::Any).unwrap();
     assert_eq!(spy.ran(), ["members()", "kill env-C1"]);
+}
+
+/// The registry judges the creator again with the claim itself: a record
+/// replaced under the same ref after the lookup (the ref forgotten and
+/// minted again for another session) is refused, never killed.
+#[test]
+fn a_ref_reused_between_the_lookup_and_the_claim_is_refused_untouched() {
+    for status in [EnvironmentStatus::Running, EnvironmentStatus::Stopped] {
+        let registry = EnvironmentRegistry::new();
+        registry.commit(record("C1", status.clone(), POCKET));
+        let reused = record("C1", status.clone(), "cli:other");
+        registry.after_next_resolve(move |registry| {
+            registry.remove("C1");
+            registry.commit(reused);
+        });
+        let spy = Arc::new(Spy::default());
+        let error = kill_if(
+            &registry,
+            &spy,
+            by_ref("C1"),
+            ClaimCondition::CreatedBy(pocket()),
+        )
+        .unwrap_err();
+        assert_eq!(
+            error,
+            KillEnvironmentError::NotCreatedBy(CreatorMismatch {
+                environment_ref: "C1".into(),
+                expected: POCKET.into(),
+                created_by: "cli:other".into(),
+            }),
+            "{status:?}"
+        );
+        assert!(spy.ran().is_empty(), "nothing was asked or run");
+        let after = registry.get("C1").unwrap();
+        assert_eq!(after.created_by, "cli:other");
+        assert_eq!(
+            after.status, status,
+            "the other session's record is as it was"
+        );
+    }
+}
+
+/// A ref removed after the lookup is nothing to kill.
+#[test]
+fn a_ref_forgotten_between_the_lookup_and_the_claim_is_nothing_to_kill() {
+    let registry = EnvironmentRegistry::new();
+    registry.commit(record("C1", EnvironmentStatus::Running, POCKET));
+    registry.after_next_resolve(|registry| {
+        registry.remove("C1");
+    });
+    let spy = Arc::new(Spy::default());
+    let error = kill_if(
+        &registry,
+        &spy,
+        by_ref("C1"),
+        ClaimCondition::CreatedBy(pocket()),
+    )
+    .unwrap_err();
+    assert!(
+        matches!(error, KillEnvironmentError::NothingToKill(_)),
+        "{error:?}"
+    );
+    assert!(spy.ran().is_empty());
+}
+
+#[test]
+fn an_unknown_ref_is_nothing_to_kill() {
+    let registry = EnvironmentRegistry::new();
+    let spy = Arc::new(Spy::default());
+    for condition in [ClaimCondition::Any, ClaimCondition::CreatedBy(pocket())] {
+        let error = kill_if(&registry, &spy, by_ref("C9"), condition).unwrap_err();
+        assert_eq!(
+            error,
+            KillEnvironmentError::NothingToKill(
+                "environment 'C9' is unknown in this session".into()
+            )
+        );
+    }
+}
+
+/// A stopped record whose script set retained no cleanup has nothing left
+/// a kill could remove — after the creator is judged.
+#[test]
+fn a_stopped_record_without_a_cleanup_is_nothing_to_kill_once_its_creator_matches() {
+    let registry = EnvironmentRegistry::new();
+    let mut ours = record("C1", EnvironmentStatus::Stopped, POCKET);
+    ours.retained_cleanup_argv.clear();
+    let mut theirs = record("C2", EnvironmentStatus::Stopped, "cli:other");
+    theirs.retained_cleanup_argv.clear();
+    registry.commit(ours);
+    registry.commit(theirs);
+    let spy = Arc::new(Spy::default());
+    let condition = ClaimCondition::CreatedBy(pocket());
+    let error = kill_if(&registry, &spy, by_ref("C1"), condition.clone()).unwrap_err();
+    assert!(
+        matches!(error, KillEnvironmentError::NothingToKill(_)),
+        "{error:?}"
+    );
+    let error = kill_if(&registry, &spy, by_ref("C2"), condition).unwrap_err();
+    assert!(
+        matches!(error, KillEnvironmentError::NotCreatedBy(_)),
+        "{error:?}"
+    );
+    assert!(spy.ran().is_empty());
 }

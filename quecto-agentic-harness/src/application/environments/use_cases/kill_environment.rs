@@ -41,8 +41,8 @@ use std::fmt;
 use std::sync::Arc;
 
 use crate::domain::environments::entities::environment_registry::{
-    ClaimCondition, ClaimRefusal, CreatorMismatch, EnvironmentRecord, EnvironmentRegistry,
-    EnvironmentTarget,
+    ClaimCondition, ClaimRefusal, CreatorMismatch, EnvironmentLookupError, EnvironmentRecord,
+    EnvironmentRegistry, EnvironmentTarget,
 };
 
 use super::super::dto::EnvironmentLiveness;
@@ -84,7 +84,12 @@ pub struct KilledEnvironment {
 /// Every error names the state the registry was left in.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum KillEnvironmentError {
-    /// Refused before any claim or effect: unknown/ambiguous target, an
+    /// Nothing is there to kill (refused before any claim or effect): an
+    /// unknown target, one forgotten before its claim could be taken, or a
+    /// `stopped` environment whose script set retained no `cleanup` — what
+    /// it left is the collector's. The account says which.
+    NothingToKill(String),
+    /// Refused before any claim or effect: an ambiguous target, an
     /// already-claimed environment, a script set without a retained `kill`
     /// (or, for a `stopped` one, without a retained `cleanup`), or a
     /// `stopped` one whose container the runtime does not report gone. The
@@ -112,7 +117,7 @@ pub enum KillEnvironmentError {
 impl fmt::Display for KillEnvironmentError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Refused(detail) => f.write_str(detail),
+            Self::Refused(detail) | Self::NothingToKill(detail) => f.write_str(detail),
             Self::MembersUnsettled {
                 environment_ref,
                 members,
@@ -154,10 +159,25 @@ impl fmt::Display for KillEnvironmentError {
 
 impl std::error::Error for KillEnvironmentError {}
 
+/// The kill's error for a failed lookup: an unknown target is nothing to
+/// kill; every other failure (ambiguous, stopped name, stale, unreadable)
+/// is a refusal.
+fn lookup_refused(error: EnvironmentLookupError) -> KillEnvironmentError {
+    match error {
+        EnvironmentLookupError::Unknown(_) => {
+            KillEnvironmentError::NothingToKill(error.to_string())
+        }
+        EnvironmentLookupError::Ambiguous(_)
+        | EnvironmentLookupError::Stopped(_)
+        | EnvironmentLookupError::Stale(_)
+        | EnvironmentLookupError::Unreadable(_) => KillEnvironmentError::Refused(error.to_string()),
+    }
+}
+
 /// The kill's error for a refused conditional claim.
 fn claim_refused(refusal: ClaimRefusal) -> KillEnvironmentError {
     match refusal {
-        ClaimRefusal::Lookup(error) => KillEnvironmentError::Refused(error.to_string()),
+        ClaimRefusal::Lookup(error) => lookup_refused(error),
         ClaimRefusal::CreatedByOther(mismatch) => KillEnvironmentError::NotCreatedBy(mismatch),
     }
 }
@@ -202,10 +222,7 @@ impl KillEnvironment {
         target: &EnvironmentTarget,
         condition: &ClaimCondition,
     ) -> Result<KilledEnvironment, KillEnvironmentError> {
-        let mut resolved = self
-            .registry
-            .resolve(target)
-            .map_err(|e| KillEnvironmentError::Refused(e.to_string()))?;
+        let mut resolved = self.registry.resolve(target).map_err(lookup_refused)?;
         condition
             .judge(&resolved)
             .map_err(KillEnvironmentError::NotCreatedBy)?;
@@ -296,7 +313,7 @@ impl KillEnvironment {
         debug_assert!(record.members.is_empty(), "a stopped record has no members");
         let environment_ref = record.environment_ref.clone();
         if record.retained_cleanup_argv.is_empty() {
-            return Err(KillEnvironmentError::Refused(format!(
+            return Err(KillEnvironmentError::NothingToKill(format!(
                 "environment {environment_ref} is stopped and its script set retained no cleanup; `quecto container gc` collects what it left"
             )));
         }

@@ -322,14 +322,17 @@ fn kill_failure_persists_retryable_state_and_the_retry_runs_the_kill_again() {
 }
 
 #[test]
-fn unknown_ref_is_refused_without_asking_anyone() {
+fn unknown_ref_is_nothing_to_kill_and_asks_no_one() {
     let fx = Fixture::new(&["a"], &[], SpyCommands::new);
     let err = block_on(
         fx.use_case()
             .kill_container(&EnvironmentTarget::Ref("C9".to_string())),
     )
     .unwrap_err();
-    assert!(matches!(err, KillEnvironmentError::Refused(_)), "{err:?}");
+    assert!(
+        matches!(err, KillEnvironmentError::NothingToKill(_)),
+        "{err:?}"
+    );
     assert!(err.to_string().contains("C9"), "{err}");
     assert!(fx.journal().is_empty());
     assert_eq!(fx.status(), EnvironmentStatus::Running);

@@ -239,7 +239,7 @@ fn report_restore(report: &RestoredRegistry) {
     for (environment_ref, reason) in &report.retained {
         eprintln!("{environment_ref} retained at restore: {reason}");
     }
-    match report.forgotten.as_slice() {
+    match report.forgotten_refs().as_slice() {
         [] => {}
         refs => tracing::info!(
             ?refs,

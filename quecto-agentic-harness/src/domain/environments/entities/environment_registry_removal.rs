@@ -72,8 +72,8 @@ impl EnvironmentRegistry {
         &self,
         environment_ref: &str,
     ) -> Result<RemovalClaim, EnvironmentLookupError> {
-        let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
-        self.claim_removal_locked(state, environment_ref)
+        self.begin_removal_if(environment_ref, &ClaimCondition::Any)
+            .map_err(ClaimRefusal::unconditional)
     }
 
     /// [`Self::begin_removal`] granted only when `condition` admits the

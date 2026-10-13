@@ -13,7 +13,7 @@ fn parse(container: Value) -> Result<ContainerSelection, String> {
 fn new_container(container_config: Option<&str>, name: Option<&str>) -> ContainerSelection {
     ContainerSelection::New {
         container_config: container_config.map(str::to_string),
-        name: name.map(str::to_string),
+        name: name.map(|name| name.to_string().try_into().unwrap()),
     }
 }
 

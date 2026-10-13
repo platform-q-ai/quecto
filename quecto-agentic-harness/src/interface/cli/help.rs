@@ -124,11 +124,12 @@ pub(super) fn help_text(out: &mut String) {
     out.push_str(
         "                  one line {\"environments\":[...],\"hidden_stopped\":N} for scripts)\n",
     );
+    out.push_str("              kill <ref|name>  End one environment\n");
     out.push_str(
-        "              kill <ref|name> [--created-by <key>]  End one; with --created-by only if\n",
+        "              kill <ref> --created-by <key>  End it only if its CREATED-BY is exactly <key>\n",
     );
     out.push_str(
-        "                  its CREATED-BY is exactly <key> (exit 3 and nothing killed otherwise)\n",
+        "                  (exit 3, nothing killed, when another key created it; exit 4 when there is nothing to kill)\n",
     );
     out.push_str(
         "              gc [--dry-run] [--name <config>] [--abandoned | --abandoned-after <duration>]\n",

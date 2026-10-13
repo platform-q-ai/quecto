@@ -5,7 +5,7 @@
 //! contract parsing stay in `spawn_container`).
 
 use crate::domain::agents::services::subagent::ContainerSelection;
-use crate::domain::environments::entities::environment_name::is_safe_environment_name;
+use crate::domain::environments::entities::environment_name::EnvironmentName;
 use crate::domain::environments::entities::environment_registry::EnvironmentTarget;
 use serde_json::{Map, Value};
 
@@ -124,21 +124,16 @@ fn parse_new_mode(
 ) -> Result<ContainerSelection, String> {
     reject_unknown_container_fields(map, &["mode", "container_config", "name"])?;
     // A name is shown in `quecto container ls`, in logs and in `kill
-    // <ref|name>`: only the allowlist's shape is admitted.
-    let name = match optional_string(map, "name")? {
-        Some(name) if is_safe_environment_name(&name) => Some(name),
-        Some(_) => return Err(UNSAFE_NAME_REFUSAL.to_string()),
-        None => None,
-    };
+    // <ref|name>`: only the domain's allowlist is admitted.
+    let name = optional_string(map, "name")?
+        .map(EnvironmentName::try_from)
+        .transpose()
+        .map_err(|refusal| format!("container.name {refusal}"))?;
     Ok(ContainerSelection::New {
         container_config: optional_string(map, "container_config")?,
         name,
     })
 }
-
-/// The refusal for a new environment name outside the allowlist
-/// (`domain::environments::entities::environment_name`).
-pub(super) const UNSAFE_NAME_REFUSAL: &str = "container.name must be 1-64 characters, each a letter, digit, '-', '_' or '.', starting with a letter or digit";
 
 fn parse_existing_mode(
     map: &serde_json::Map<String, serde_json::Value>,

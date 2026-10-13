@@ -4,7 +4,7 @@
 //! REPOSITORY with spaces — lists exactly and is still killable by ref.
 
 use super::tests::{run, script};
-use super::{EXIT_NOT_CREATED_BY, LsJsonEnvironment, ls_json};
+use super::{EXIT_NOT_CREATED_BY, EXIT_NOTHING_TO_KILL, LsJsonEnvironment, ls_json};
 use crate::application::environments::ports::EnvironmentRegistryStore;
 use crate::domain::environments::entities::environment_registry::{
     EnvironmentOrigin, EnvironmentRecord, EnvironmentStatus,
@@ -22,7 +22,10 @@ const CRAFTED: &str = "x\nC1   y  official  empty  -  cli:pocket-7";
 ///   a token, created by the Pocket task at t=100;
 /// - `C2`, running, named [`CRAFTED`], created by another session, whose
 ///   inspect fails (so it is unverified);
-/// - `C3`, stopped, unnamed, session-less, its state dir left behind.
+/// - `C3`, stopped, unnamed, session-less, its state dir left behind;
+/// - `C4`, stopped, created by the Pocket task, and `C5`, stopped, created
+///   by another session and named `""`: neither left a state dir, so the
+///   restore every command runs forgets them.
 ///
 /// Every kill appends the environment id to `kill.log`.
 fn fixture() -> (tempfile::TempDir, CliContext, std::path::PathBuf) {
@@ -42,6 +45,11 @@ fn fixture() -> (tempfile::TempDir, CliContext, std::path::PathBuf) {
         dir.path(),
         "failing.sh",
         "echo 'runtime unreachable' >&2; exit 1",
+    );
+    let dead = script(
+        dir.path(),
+        "dead.sh",
+        r#"if [ "${1:-}" = --list ]; then exit 0; fi; printf '{"status":"dead","metadata":{}}'"#,
     );
     let log = dir.path().join("kill.log");
     let kill = script(
@@ -111,6 +119,26 @@ fn fixture() -> (tempfile::TempDir, CliContext, std::path::PathBuf) {
             "",
             Some(50),
         ),
+        record(
+            "C4",
+            "env-four",
+            None,
+            "",
+            EnvironmentStatus::Stopped,
+            &dead,
+            POCKET,
+            None,
+        ),
+        record(
+            "C5",
+            "env-five",
+            Some(""),
+            "",
+            EnvironmentStatus::Stopped,
+            &dead,
+            "cli:other",
+            None,
+        ),
     ] {
         store.record(&written).unwrap();
     }
@@ -148,7 +176,8 @@ fn ls_json_lists_live_environments_exactly_whatever_their_names_hold() {
     assert_eq!(one["ref"], "C1");
     assert_eq!(one["name"], "tab\tname");
     assert_eq!(one["config"], "official");
-    assert_eq!(one["status"], "empty");
+    assert_eq!(one["status"], "running", "the registry status, not `empty`");
+    assert_eq!(one["members"], 0);
     assert_eq!(one["repository"], "https://***@example.test/my repo");
     assert_eq!(one["created_by"], POCKET);
     assert_eq!(one["created_at"], 100);
@@ -241,6 +270,7 @@ fn the_json_shape_is_stable() {
             name: Some("tab\tname".into()),
             config: "official".into(),
             status: "running".into(),
+            members: 2,
             repository: Some("https://***@example.test/my repo".into()),
             created_by: Some(POCKET.into()),
             created_at: Some(100),
@@ -249,9 +279,10 @@ fn the_json_shape_is_stable() {
         },
         LsJsonEnvironment {
             environment_ref: "C2".into(),
-            name: Some("x\ny \"z\"".into()),
+            name: Some("x\ny \"z\" \u{2028}\u{2029}\u{85}".into()),
             config: "official".into(),
             status: "cleanup-failed".into(),
+            members: 0,
             repository: None,
             created_by: None,
             created_at: None,
@@ -263,10 +294,11 @@ fn the_json_shape_is_stable() {
         ls_json(&rows, 4).unwrap(),
         concat!(
             r#"{"environments":["#,
-            r#"{"ref":"C1","name":"tab\tname","config":"official","status":"running","#,
+            r#"{"ref":"C1","name":"tab\tname","config":"official","status":"running","members":2,"#,
             r#""repository":"https://***@example.test/my repo","created_by":"cli:pocket-7","#,
             r#""created_at":100,"age_s":23,"unverified":null},"#,
-            r#"{"ref":"C2","name":"x\ny \"z\"","config":"official","status":"cleanup-failed","#,
+            r#"{"ref":"C2","name":"x\ny \"z\" \u2028\u2029\u0085","config":"official","#,
+            r#""status":"cleanup-failed","members":0,"#,
             r#""repository":null,"created_by":null,"created_at":null,"age_s":null,"#,
             r#""unverified":"inspect failed"}"#,
             r#"],"hidden_stopped":4}"#,
@@ -305,8 +337,9 @@ fn kill_created_by_another_key_refuses_with_its_own_exit_code_and_kills_nothing(
     for args in [
         ["container", "kill", "C2", "--created-by", POCKET],
         ["container", "kill", "--created-by", POCKET, "C2"],
-        // A prefix of the record's key is not its key.
+        // A prefix of the record's key is not its key, nor another case.
         ["container", "kill", "C1", "--created-by", "cli:pocket-"],
+        ["container", "kill", "C1", "--created-by", "CLI:POCKET-7"],
     ] {
         let output = run(&args, &ctx);
         assert_eq!(output.exit_code, EXIT_NOT_CREATED_BY, "{output:?}");
@@ -322,7 +355,7 @@ fn kill_created_by_another_key_refuses_with_its_own_exit_code_and_kills_nothing(
         .iter()
         .map(|row| row["status"].as_str().unwrap())
         .collect();
-    assert_eq!(statuses, ["empty", "empty"], "both still live");
+    assert_eq!(statuses, ["running", "running"], "both still live");
     assert_eq!(EXIT_NOT_CREATED_BY, 3);
 }
 
@@ -366,6 +399,14 @@ fn kill_created_by_is_parsed_strictly() {
             vec!["container", "kill", "--created-by", POCKET],
             "kill takes exactly one <ref|name>",
         ),
+        (
+            vec!["container", "kill", "C1", "--created-by", "cli:pocket-7 "],
+            "--created-by: a creator key is 1-256 printable ASCII characters with no spaces",
+        ),
+        (
+            vec!["container", "kill", "tab-name", "--created-by", POCKET],
+            "--created-by takes a ref (C followed by digits), not the name 'tab-name'",
+        ),
     ] {
         let output = run(&args, &ctx);
         assert_eq!(output.exit_code, 1, "{args:?}: {output:?}");
@@ -379,16 +420,87 @@ fn the_help_and_usage_name_the_machine_flags() {
     let help = run(&["help"], &CliContext::default());
     for needle in [
         "ls [--all] [--json]",
-        "kill <ref|name> [--created-by <key>]",
-        "exit 3",
+        "kill <ref|name>",
+        "kill <ref> --created-by <key>",
+        "(exit 3, nothing killed, when another key created it; exit 4 when there is nothing to kill)",
     ] {
         assert!(help.stdout.contains(needle), "help misses {needle}");
     }
     let usage = run(&["container"], &CliContext::default());
     for needle in [
         "usage: quecto container ls [--all] [--json]",
-        "usage: quecto container kill <ref|name> [--created-by <key>]",
+        "usage: quecto container kill <ref|name>\n",
+        "usage: quecto container kill <ref> --created-by <key>\n",
     ] {
         assert!(usage.stderr.contains(needle), "usage misses {needle}");
     }
+}
+
+#[test]
+fn an_unknown_ref_is_nothing_to_kill_with_or_without_a_creator() {
+    let (_dir, ctx, log) = fixture();
+    for args in [
+        vec!["container", "kill", "C9"],
+        vec!["container", "kill", "C9", "--created-by", POCKET],
+        vec!["container", "kill", "no-such-name"],
+    ] {
+        let output = run(&args, &ctx);
+        assert_eq!(
+            output.exit_code, EXIT_NOTHING_TO_KILL,
+            "{args:?}: {output:?}"
+        );
+        assert!(output.stderr.contains("is unknown"), "{output:?}");
+    }
+    assert!(!log.exists());
+    assert_eq!(EXIT_NOTHING_TO_KILL, 4);
+}
+
+/// A record the kill's own restore forgot is nothing to kill — once its
+/// creator matches; another creator's is refused as such.
+#[test]
+fn a_record_forgotten_by_the_kills_restore_is_judged_by_its_creator_first() {
+    let (_dir, ctx, log) = fixture();
+    let output = run(&["container", "kill", "C5", "--created-by", POCKET], &ctx);
+    assert_eq!(output.exit_code, EXIT_NOT_CREATED_BY, "{output:?}");
+    assert!(
+        output.stderr.contains(
+            "environment C5 was created by cli:other, not cli:pocket-7; nothing was killed"
+        ),
+        "{output:?}"
+    );
+    assert!(!log.exists());
+    let (_dir, ctx, _) = fixture();
+    let output = run(&["container", "kill", "C4", "--created-by", POCKET], &ctx);
+    assert_eq!(output.exit_code, EXIT_NOTHING_TO_KILL, "{output:?}");
+    assert!(
+        output
+            .stderr
+            .contains("environment 'C4' is stopped; nothing of it was left, so it was forgotten"),
+        "{output:?}"
+    );
+    let (_dir, ctx, _) = fixture();
+    let output = run(&["container", "kill", "C4"], &ctx);
+    assert_eq!(output.exit_code, EXIT_NOTHING_TO_KILL, "{output:?}");
+}
+
+#[test]
+fn an_empty_name_lists_as_null() {
+    let (dir, ctx, _) = fixture();
+    let store = FileEnvironmentRegistryStore::for_base_dir(&dir.path().join("base"));
+    let mut named_empty = store
+        .load()
+        .unwrap()
+        .into_iter()
+        .find(|record| record.environment_ref == "C1")
+        .unwrap();
+    named_empty.environment_ref = "C6".into();
+    named_empty.environment_uuid = "uuid-C6".into();
+    named_empty.name = Some(String::new());
+    store.record(&named_empty).unwrap();
+    let listing = parsed(&run(&["container", "ls", "--json"], &ctx).stdout);
+    let six = environments(&listing)
+        .iter()
+        .find(|row| row["ref"] == "C6")
+        .expect("C6 listed");
+    assert_eq!(six["name"], serde_json::Value::Null);
 }
