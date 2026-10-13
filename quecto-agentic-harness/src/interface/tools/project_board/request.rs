@@ -340,9 +340,11 @@ impl Read<'_> {
         value.as_str().and_then(parse).map(Some).ok_or_else(refused)
     }
 
+    /// An offset, or none when it is absent or `null`.
     fn offset(&self, name: &str) -> Result<Option<usize>, RequestError> {
-        let Some(value) = self.value(name) else {
-            return Ok(None);
+        let value = match self.value(name) {
+            None | Some(Value::Null) => return Ok(None),
+            Some(value) => value,
         };
         let refused = || {
             let problem = "must be a character or item to read on from, from 0";

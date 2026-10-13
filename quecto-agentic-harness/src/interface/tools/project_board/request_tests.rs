@@ -43,6 +43,14 @@ fn each_op_reads_its_own_fields() {
             BoardRequest::Show(task(), PlanPage::of(Some(900), Some(3))),
         ),
         (
+            json!({"op": "show", "task": "a", "approach_from": null, "items_from": null}),
+            BoardRequest::Show(task(), None),
+        ),
+        (
+            json!({"op": "show", "task": "a", "approach_from": null, "items_from": 2}),
+            BoardRequest::Show(task(), PlanPage::of(None, Some(2))),
+        ),
+        (
             json!({"op": "move", "task": "a", "to": "in_progress"}),
             BoardRequest::Change(task(), BoardOp::Move(TaskStatus::InProgress)),
         ),

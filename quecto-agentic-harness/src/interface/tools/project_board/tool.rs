@@ -128,7 +128,7 @@ fn field_schema(kind: Kind) -> Value {
         Kind::OptionalSlug => json!({"type": ["string", "null"]}),
         Kind::Slugs => json!({"type": "array", "items": {"type": "string"}}),
         Kind::Pr => json!({"type": "integer", "minimum": 1}),
-        Kind::Offset => json!({"type": "integer", "minimum": 0}),
+        Kind::Offset => json!({"type": ["integer", "null"], "minimum": 0}),
         // A path to {"keep", "seen"} or {"drop"}: the portable schema
         // subset types no values under names it does not know, so the
         // description gives the shape.

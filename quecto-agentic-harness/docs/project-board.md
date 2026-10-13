@@ -64,8 +64,9 @@ is then counted, not shown. A cut answer keeps, in order:
 
 1. the accepted plan whole if it fits. Otherwise it says `plan_truncated: true`
    and keeps the plan's other fields, as much of its approach as leaves room
-   for what follows (at least half the room is the approach's, and it is never
-   cut inside a character as read), and the leading task items that fit. It
+   for what follows (at least half the room is the approach's, cut where it
+   keeps characters as read, such as accented letters, emoji sequences and
+   flags, whole where it can), and the leading task items that fit. It
    counts what it left out (`approach_more` characters, `items_more` items) and
    says where to read on (`approach_next`, `items_next`). `plan: null` with
    `plan_truncated` means the plan was cut whole: not even its other fields fit
@@ -82,7 +83,10 @@ A plan at the board's limits, with every run and version, is about 1.6 MB whole.
 
 `show` takes two optional fields that page through the task's accepted plan:
 `approach_from`, a character of its approach, and `items_from`, the index of one
-of its task items, each from 0. Given either, `show` answers only the task's id
+of its task items, each from 0 (`null` is the same as leaving it out). A
+character here is a Unicode scalar value, not what a reader sees as one, so an
+agent passes back only the `approach_next` and `items_next` an answer gave,
+never an offset it counted itself. Given either, `show` answers only the task's id
 (`task`), `may_be_incomplete`, and `plan`: the accepted plan's `version` with
 the approach from `approach_from` (as `approach_from` and `approach`) and the
 task items from `items_from` (as `items_from` and `items`), whichever were
@@ -90,7 +94,10 @@ named; a part not named is left out. With no plan to page through, `plan` is
 `null`. The agent tool cuts a page as it cuts a whole `show`, with
 `approach_more`, `approach_next`, `items_more` and `items_next`, so an agent
 reads on with `show(task, approach_from: approach_next, items_from: items_next)`
-until no `_next` is given.
+until no `_next` is given. Every page moves on: where no cut keeps a character
+as read whole, a page cuts inside it rather than read nothing. Every page names
+the accepted plan's `version`; if it differs from the first answer's, the plan
+changed while it was read, so read again from 0.
 
 ## Telemetry
 

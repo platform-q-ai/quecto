@@ -419,7 +419,9 @@ fn pages_read_on_through_the_whole_plan() {
             items.extend(page_items.iter().map(|item| item["id"].clone()));
         }
         let at = |key: &str| cut[key].as_u64().map(|at| at as usize);
-        next = (at("approach_next"), at("items_next"));
+        let read_on = (at("approach_next"), at("items_next"));
+        moves_forward(&cut, page);
+        next = read_on;
     }
     assert!(pages > 1, "a plan at the limits takes more than one page");
     assert_eq!(approach, full.fields().approach);
@@ -432,19 +434,22 @@ fn pages_read_on_through_the_whole_plan() {
     assert_eq!(items, ids);
 }
 
-/// A cut never leaves a character half shown: never before a combining
-/// mark, a variation selector or an emoji modifier, never after a
-/// zero-width joiner.
+/// Once a whole character as read fits, a cut never leaves one half
+/// shown: never before a combining mark, a variation selector or an emoji
+/// modifier, never after a zero-width joiner. (Below that, the page still
+/// moves on: `a_cut_keeps_clusters_whole_where_it_can_and_always_moves_on`.)
 #[test]
 fn an_approach_is_cut_where_no_character_joins_the_next() {
     use super::prefix_within;
     let accented = "e\u{301}".repeat(10);
-    for room in 0..accented.len() {
+    let first = "e\u{301}".len();
+    for room in first..accented.len() {
         let cut = prefix_within(&accented, room);
         assert!(cut.chars().count() % 2 == 0, "{room}: {cut:?}");
     }
     let family = "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}x".repeat(4);
-    for room in 0..family.len() {
+    let first = "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}".len();
+    for room in first..family.len() {
         let cut = prefix_within(&family, room);
         assert!(!cut.ends_with('\u{200D}'), "{room}: {cut:?}");
         let rest = &family[cut.len()..];
@@ -452,11 +457,72 @@ fn an_approach_is_cut_where_no_character_joins_the_next() {
         assert!(cut.len() <= room);
     }
     let waved = "\u{1F44B}\u{1F3FD}\u{2764}\u{FE0F}".repeat(3);
-    for room in 0..waved.len() {
+    for room in "\u{1F44B}\u{1F3FD}".len()..waved.len() {
         let rest = &waved[prefix_within(&waved, room).len()..];
         assert!(
             !rest.starts_with(['\u{1F3FD}', '\u{FE0F}']),
             "{room}: {rest:?}"
         );
+    }
+}
+
+/// Every cut page reads on past where it began: `approach_next` past
+/// `approach_from`, `items_next` past `items_from`.
+fn moves_forward(cut: &Value, page: crate::application::project_board::operations::PlanPage) {
+    let at = |key: &str| cut[key].as_u64().map(|at| at as usize);
+    if let (Some(from), Some(next)) = (page.approach_from(), at("approach_next")) {
+        assert!(next > from, "approach_next {next} past {from}");
+    }
+    if let (Some(from), Some(next)) = (page.items_from(), at("items_next")) {
+        assert!(next > from, "items_next {next} past {from}");
+    }
+}
+
+/// Review round 3: an approach with no safe cut (one letter and forty
+/// thousand combining marks) is still read on page by page: a page cuts
+/// inside the cluster rather than read nothing, and the pages hold it
+/// whole.
+#[test]
+fn a_page_with_no_safe_cut_still_reads_on() {
+    use crate::application::project_board::operations::PlanPage;
+    let full = format!("e{}", "\u{301}".repeat(40_000));
+    let page = |from: usize| {
+        let approach: String = full.chars().skip(from).collect();
+        json!({
+            "ok": true, "op": "show", "head": "0".repeat(40), "task": "a",
+            "plan": {"version": 1, "approach_from": from, "approach": approach},
+            "may_be_incomplete": false,
+        })
+    };
+    let (mut read, mut from, mut pages) = (String::new(), Some(0), 0);
+    while let Some(at) = from {
+        pages += 1;
+        assert!(pages < 20, "pages always read on");
+        let cut = capped(page(at));
+        assert!(bytes(&cut) <= MAX_SHOW_BYTES, "{}", bytes(&cut));
+        read.push_str(cut["plan"]["approach"].as_str().unwrap());
+        moves_forward(&cut, PlanPage::of(Some(at), None).unwrap());
+        from = cut["approach_next"].as_u64().map(|next| next as usize);
+    }
+    assert!(pages > 1);
+    assert_eq!(read, full);
+}
+
+/// A cut that can keep a cluster whole does; one that cannot keeps every
+/// character that fits rather than none.
+#[test]
+fn a_cut_keeps_clusters_whole_where_it_can_and_always_moves_on() {
+    use super::prefix_within;
+    let marks = format!("e{}", "\u{301}".repeat(100));
+    for room in 1..marks.len() {
+        assert!(!prefix_within(&marks, room).is_empty(), "{room}");
+    }
+    assert_eq!(prefix_within(&marks, 0), "");
+    // Flags are pairs of regional indicators: never cut between a pair
+    // once one whole flag fits.
+    let flags = "\u{1F1EC}\u{1F1E7}\u{1F1EB}\u{1F1F7}".repeat(3);
+    for room in 8..flags.len() {
+        let kept = prefix_within(&flags, room).chars().count();
+        assert!(kept % 2 == 0, "{room}: {kept}");
     }
 }

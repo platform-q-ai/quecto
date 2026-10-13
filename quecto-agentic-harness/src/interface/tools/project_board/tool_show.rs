@@ -11,7 +11,8 @@
 //! 1. the accepted `plan`, whole; if it does not fit (`plan_truncated`),
 //!    its fields but the approach and task items, then as much of the
 //!    approach as leaves what follows its room (at least half), cut where
-//!    no character joins the next, then the leading task items that fit
+//!    no character joins the next where it can, then the leading task
+//!    items that fit
 //!    (`approach_more` characters and `items_more` items left out, and
 //!    `approach_next` and `items_next`, where `show` given
 //!    `approach_from` and `items_from` reads on);
@@ -43,7 +44,9 @@ pub const MAX_SHOW_BYTES: usize = 64 * 1024;
 
 /// A character that joins the one before it into one character as read
 /// (a combining or enclosing mark, a variation selector, a zero-width
-/// joiner, an emoji modifier or tag): a cut never falls before one.
+/// joiner, an emoji modifier or tag): a cut falls before one only when
+/// nothing before it in the page could be cut whole ([`prefix_within`]).
+/// A flag's two regional indicators are kept together too ([`mid_flag`]).
 static JOINS_PREVIOUS: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"^[\p{M}\x{200D}\x{1F3FB}-\x{1F3FF}\x{E0020}-\x{E007F}]$").expect("joiners")
 });
@@ -253,8 +256,10 @@ fn fitted_runs(runs: Vec<Value>, room: &mut usize) -> (Vec<Value>, usize, usize)
             }
         }
     }
-    if !shown.is_empty() {
-        shown.extend(fitted(newest_first.collect(), room));
+    // Older runs only beside the latest.
+    if let Some(_latest) = shown.first() {
+        let older = fitted(newest_first.collect(), room);
+        shown.extend(older);
     }
     shown.reverse();
     let more = total - shown.len();
@@ -278,7 +283,9 @@ fn noted(answer: &mut Value, key: &str, count: usize) {
 }
 
 /// The longest leading part of `text` whose JSON string, quotes aside,
-/// takes at most `room` bytes, ending where no character joins the next.
+/// takes at most `room` bytes, ending where no character joins the next
+/// where it can: when no such end fits, every character that fits, so a
+/// page always reads on.
 fn prefix_within(text: &str, room: usize) -> String {
     let mut taken = 0;
     let mut end = 0;
@@ -292,8 +299,14 @@ fn prefix_within(text: &str, room: usize) -> String {
             false => break,
         }
     }
+    let fits = end;
     while end > 0 && !a_boundary(text, end) {
         end = text[..end].char_indices().last().map_or(0, |(at, _)| at);
+    }
+    // No safe cut in what fits (one letter and its endless marks): reading
+    // on matters more than a whole cluster, so keep what fits.
+    if end == 0 {
+        end = fits;
     }
     text[..end].to_string()
 }
@@ -305,7 +318,17 @@ fn a_boundary(text: &str, at: usize) -> bool {
         .chars()
         .next()
         .is_some_and(|c| JOINS_PREVIOUS.is_match(c.encode_utf8(&mut [0; 4])));
-    !next_joins && !text[..at].ends_with('\u{200D}')
+    !next_joins && !text[..at].ends_with('\u{200D}') && !mid_flag(text, at)
+}
+
+/// Whether the byte `at` of `text` falls inside a flag: between the two
+/// regional indicators of a pair (an odd run of them before it, one
+/// after).
+fn mid_flag(text: &str, at: usize) -> bool {
+    let regional = |c: &char| ('\u{1F1E6}'..='\u{1F1FF}').contains(c);
+    let before = text[..at].chars().rev().take_while(regional).count();
+    let after = text[at..].chars().next().filter(regional).is_some();
+    after && before % 2 == 1
 }
 
 /// The bytes `value` takes as JSON.
