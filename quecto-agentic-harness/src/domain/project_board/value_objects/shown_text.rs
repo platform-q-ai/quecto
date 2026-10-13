@@ -29,6 +29,16 @@ pub fn shown_path(path: &str) -> bool {
         .is_some_and(|name| one_name(name) && shown_name(name))
 }
 
+/// Whether `path` is a path a store sets aside with no key (a stray) shows:
+/// [`shown_path`], but directly under `tasks/` or any of
+/// [`ARTIFACT_FOLDERS`], the folders a store reads.
+pub fn shown_board_path(path: &str) -> bool {
+    std::iter::once("tasks")
+        .chain(ARTIFACT_FOLDERS)
+        .filter_map(|folder| path.strip_prefix(folder)?.strip_prefix('/'))
+        .any(|name| one_name(name) && shown_name(name))
+}
+
 /// [`shown_path`] for the file of a plan, run, change, review or
 /// discussion: one name directly under `folder` (one of
 /// [`ARTIFACT_FOLDERS`], its kind's), holding no `..`.

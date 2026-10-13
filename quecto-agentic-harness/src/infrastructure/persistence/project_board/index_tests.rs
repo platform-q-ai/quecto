@@ -375,12 +375,46 @@ fn other_kinds_index_but_a_set_aside_one_is_refused_until_s12() {
         assert!(
             matches!(
                 &refused,
-                Err(IndexError::Store(BoardStoreError::Unavailable(why))) if why.contains(path)
+                Err(IndexError::Store(BoardStoreError::FolderSetAside(why)))
+                    if why.contains(path) && why.contains("move `quecto/board` back")
             ),
             "{path}: {refused:?}"
         );
         assert!(needs_rebuild(&index.head()), "{path}: nothing built");
     }
+}
+
+/// A stray (no key) in any folder the store reads is indexed and listed
+/// as one in `tasks/` is: the index reads back every path a store shows.
+#[test]
+fn a_stray_outside_tasks_is_indexed_and_listed() {
+    let (_dir, index) = index();
+    let mut holding = board("a1");
+    for path in ["plans/notes.txt", "discussions/a..b.txt"] {
+        holding.quarantined.push(QuarantinedFile {
+            path: path.into(),
+            key: None,
+            reason: "not a plan file".into(),
+            object: "c".repeat(40),
+            carried: false,
+        });
+    }
+    rebuild(&index, &holding).unwrap();
+    let listed = index.all().unwrap();
+    let paths: Vec<&str> = listed
+        .quarantined
+        .iter()
+        .map(|file| file.path.as_str())
+        .collect();
+    assert_eq!(
+        paths,
+        [
+            "discussions/a..b.txt",
+            "plans/notes.txt",
+            "tasks/x.md",
+            "tasks/x.txt"
+        ]
+    );
 }
 
 #[test]

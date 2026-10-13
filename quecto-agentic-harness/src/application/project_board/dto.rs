@@ -473,6 +473,10 @@ impl fmt::Display for ProjectBoardError {
             Self::Store(BoardStoreError::Unavailable(why)) => {
                 write!(f, "the board store is unavailable: {why}")
             }
+            Self::Store(BoardStoreError::TooLarge(why)) => {
+                write!(f, "the board is too large to read: {why}")
+            }
+            Self::Store(BoardStoreError::FolderSetAside(why)) => f.write_str(why),
             Self::Rule(error) => write!(f, "{error}"),
             Self::Clock(BoardClockError::OutOfRange(read)) => {
                 write!(

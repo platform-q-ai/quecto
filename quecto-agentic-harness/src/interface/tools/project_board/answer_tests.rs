@@ -25,6 +25,8 @@ fn keys(code: ErrorCode) -> &'static [&'static str] {
         | C::Clash
         | C::InvalidWrite
         | C::StoreUnavailable
+        | C::BoardTooLarge
+        | C::FolderSetAside
         | C::PullRequestsUnavailable
         | C::Refused => &["reason"],
         C::NoBoard => &[],
@@ -90,6 +92,12 @@ board_errors! {
     },
     E::Store(BoardStoreError::Unavailable(_)) => {
         E::Store(BoardStoreError::Unavailable("offline".into()))
+    },
+    E::Store(BoardStoreError::TooLarge(_)) => {
+        E::Store(BoardStoreError::TooLarge("16385 entries".into()))
+    },
+    E::Store(BoardStoreError::FolderSetAside(_)) => {
+        E::Store(BoardStoreError::FolderSetAside("plans/a.1.md is set aside".into()))
     },
     E::Rule(_) => E::Rule(BoardRuleError::NotHolder),
     E::Invalid(_) => E::Invalid(SchemaError::new("title", "is empty")),
@@ -286,6 +294,36 @@ fn an_unsanitised_path_is_never_shown() {
     });
 }
 
+/// A stray (a file set aside with no key) in any folder the store reads
+/// is listed as one in `tasks/` is: by its raw path, with no id.
+#[test]
+fn a_stray_in_any_folder_read_is_listed_by_its_path() {
+    for path in ["tasks/x.txt", "plans/notes.txt", "discussions/a..b.txt"] {
+        let shown = quarantined_json(&QuarantinedFile {
+            path: path.into(),
+            key: None,
+            reason: "a stray".into(),
+            object: "a".repeat(40),
+            carried: false,
+        });
+        assert_eq!(shown["path"], json!(path));
+        assert_eq!(shown["id"], json!(null));
+    }
+}
+
+/// A stray outside every folder the store reads stops the answer.
+#[test]
+#[should_panic(expected = "shows every path it sets aside sanitised")]
+fn a_stray_outside_the_folders_read_is_never_shown() {
+    let _ = quarantined_json(&QuarantinedFile {
+        path: "archive/x.txt".into(),
+        key: None,
+        reason: "a stray".into(),
+        object: "a".repeat(40),
+        carried: false,
+    });
+}
+
 /// A file set aside under another kind's key is never shown as a stray:
 /// the answer stops until it can name that kind.
 #[test]
@@ -427,6 +465,40 @@ fn a_set_aside_file_is_named_by_its_raw_path_and_object() {
         )
     );
     assert_eq!(error_json(&named)["message"], json!(named.to_string()));
+}
+
+/// The board's two read-time refusals answer their own codes, each with
+/// its reason.
+#[test]
+fn a_board_too_large_or_held_answers_its_own_code() {
+    let (big, held) = ("16385 entries", "plans/a.1.md is set aside");
+    for (error, code, reason) in [
+        (
+            BoardStoreError::TooLarge(big.into()),
+            "board_too_large",
+            big,
+        ),
+        (
+            BoardStoreError::FolderSetAside(held.into()),
+            "folder_set_aside",
+            held,
+        ),
+    ] {
+        let shown = error_json(&ProjectBoardError::Store(error.clone()));
+        assert_eq!(shown["code"], json!(code), "{error:?}");
+        assert_eq!(shown["reason"], json!(reason), "{error:?}");
+    }
+}
+
+/// A carried file of no known task in another kind's folder is named by
+/// its raw path and object as one under `tasks/` is.
+#[test]
+fn a_set_aside_file_in_any_folder_read_is_named_by_its_raw_path() {
+    let shown = error_json(&ProjectBoardError::SetAsideFile {
+        path: "plans/a.01.md".into(),
+        object: "a".repeat(40),
+    });
+    assert_eq!(shown["path"], json!("plans/a.01.md"));
 }
 
 /// A task set aside answers `set_aside` by its id, as ever; a plan, run,

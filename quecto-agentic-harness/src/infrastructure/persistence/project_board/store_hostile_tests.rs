@@ -155,7 +155,7 @@ fn a_board_tree_past_its_entry_bound_is_not_read() {
     hand_edit(&repos.remote(), &many);
     let read = store(&repos.bob).read();
     assert!(
-        matches!(&read, Err(BoardStoreError::Unavailable(why)) if why.contains("entries")),
+        matches!(&read, Err(BoardStoreError::TooLarge(why)) if why.contains("entries")),
         "{read:?}"
     );
 }
@@ -593,6 +593,8 @@ fn a_hostile_cell_never_reaches_a_reason_or_stops_a_listing() {
 
 #[path = "store_clear_tests.rs"]
 mod clear;
+#[path = "store_folders_tests.rs"]
+mod folders;
 #[path = "store_format_tests.rs"]
 mod format;
 #[path = "store_legacy_tests.rs"]

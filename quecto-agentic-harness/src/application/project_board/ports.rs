@@ -259,6 +259,14 @@ pub enum BoardStoreError {
     /// The store could not be reached or read, or cannot tell whether a
     /// write landed.
     Unavailable(String),
+    /// The board is past what a read takes: too many entries, or too many
+    /// bytes, in a folder or in all. Nothing is read.
+    TooLarge(String),
+    /// A file set aside outside `tasks/` holds the board: no write or clear
+    /// is made while one is (a store that reads but does not yet write that
+    /// folder), and no listing is given while one names an artifact other
+    /// than a task (an index that does not yet hold that kind).
+    FolderSetAside(String),
 }
 
 /// Where a project's board lives. Blocking: callers run it off the async

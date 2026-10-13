@@ -53,3 +53,32 @@ fn a_task_path_shown_is_one_name_under_tasks() {
     }
     assert!(shown_path("tasks/a..b.json"), "a name may hold two dots");
 }
+
+/// A path a store sets aside with no key (a stray) is one name directly
+/// under any folder it reads: `tasks/` or another kind's folder.
+#[test]
+fn a_board_path_shown_is_one_name_in_any_folder_read() {
+    for shown in [
+        "tasks/a.md",
+        "plans/notes.txt",
+        "runs/a..b.txt",
+        "changes/x",
+        "reviews/a.1.md",
+        "discussions/d.1.md",
+    ] {
+        assert!(shown_board_path(shown), "{shown:?}");
+    }
+    for hostile in [
+        "archive/a.md",
+        "format/board",
+        "src/a.md",
+        "README.md",
+        "plans/",
+        "plans/..",
+        "plans/a/b.md",
+        "plansx/a.md",
+        "plans/a\u{202e}.md",
+    ] {
+        assert!(!shown_board_path(hostile), "{hostile:?}");
+    }
+}
