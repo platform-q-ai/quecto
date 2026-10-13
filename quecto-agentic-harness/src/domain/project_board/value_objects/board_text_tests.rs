@@ -380,6 +380,7 @@ mod changes {
     fn a_crlf_is_told() {
         told(text_changes, "Why.\r\nHow.", &[Crlf]);
         told(line_changes, "A\r\n", &[Crlf, EdgeSpace]);
+        told(line_changes, "a\r\nb", &[Crlf]);
     }
 
     #[test]
@@ -474,6 +475,25 @@ mod changes {
         assert_eq!(texts.contains(&ChatSpace), fewer_chat, "{raw:?}");
         let dropped = line_count(&normal) < line_count(raw);
         assert_eq!(texts.contains(&EdgeBlankLines), dropped, "{raw:?}");
+        // Trailing spacing removed: the spacing of the lines kept, plus the
+        // chat spaces made plain, less the spacing the text holds now. (A
+        // raw line ending in spacing is not enough: a hard break, code, a
+        // backslash or a marked paragraph keeps it.)
+        let spacing = |text: &str| count(text, &[' ', '\t']);
+        let unified = raw.replace("\r\n", "\n").replace('\r', "\n");
+        let read: Vec<&str> = match unified.is_empty() {
+            true => vec![],
+            false => unified.split('\n').collect(),
+        };
+        let first = read
+            .iter()
+            .position(|line| !line.chars().all(|c| c == ' ' || c == '\t'))
+            .unwrap_or(read.len());
+        let end = (first + line_count(&normal)).min(read.len());
+        let kept_spacing: usize = read[first..end].iter().map(|line| spacing(line)).sum();
+        let made_plain = count(raw, &CHAT_SPACES) - count(&normal, &CHAT_SPACES);
+        let trimmed = kept_spacing + made_plain > spacing(&normal);
+        assert_eq!(texts.contains(&TrailingSpace), trimmed, "{raw:?}");
         for never in [LineBreak, Tab, EdgeSpace] {
             assert!(!texts.contains(&never), "{raw:?}");
         }
@@ -492,6 +512,15 @@ mod changes {
             "{raw:?}"
         );
         assert_eq!(lines.contains(&Tab), raw.contains('\t'), "{raw:?}");
+        // Spacing at an edge: whatever becomes a space or a line end there.
+        let spaced = |c: char| {
+            matches!(c, ' ' | '\t' | '\r' | '\n')
+                || CHAT_SPACES.contains(&c)
+                || LINE_BREAKS.contains(&c)
+        };
+        let edged =
+            raw.chars().next().is_some_and(spaced) || raw.chars().last().is_some_and(spaced);
+        assert_eq!(lines.contains(&EdgeSpace), edged, "{raw:?}");
         for never in [EdgeBlankLines, TrailingSpace] {
             assert!(!lines.contains(&never), "{raw:?}");
         }
