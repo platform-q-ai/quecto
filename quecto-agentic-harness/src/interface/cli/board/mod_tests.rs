@@ -13,7 +13,7 @@ fn args(line: &[&str]) -> Vec<String> {
 }
 
 fn built(line: &[&str], stdin: &str) -> Result<Value, RequestError> {
-    let line = read_line(&args(line))?;
+    let line = read_line(&args(line)).map_err(|refused| refused.error)?;
     let stdin = stdin.to_string();
     request(&line, || bounded(stdin.as_bytes()))
 }
@@ -503,4 +503,21 @@ fn no_request_text_reaches_a_record_through_the_cli() {
             );
         }
     }
+}
+
+/// Review round 2: a command line refused as it is read records the op it
+/// named before the refusal; the answer still names none.
+#[test]
+fn a_line_refused_as_it_is_read_records_the_op_it_named() {
+    let on = tempfile::tempdir().unwrap();
+    let config = json!({"telemetry": {"event_log": {"enabled": true}}});
+    std::fs::write(on.path().join("config.json"), config.to_string()).unwrap();
+    let answer = recorded_cli(on.path(), &["renew", "--task"]);
+    assert_eq!(answer["op"], Value::Null, "{answer}");
+    recorded_cli(on.path(), &["--task"]);
+    let ops: Vec<Value> = cli_logs(on.path())
+        .iter()
+        .map(|line| line["op"].clone())
+        .collect();
+    assert_eq!(ops, [json!("renew"), json!("unknown")]);
 }

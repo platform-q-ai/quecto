@@ -17,9 +17,12 @@ the event log or to `tracing`.
 - **The agent tool** records in its session's event log,
   `<base_dir>/audit/<session>.jsonl`, under the session's own rule: the loaded
   configuration or your global config switches it on, and a repository overlay
-  may switch it on, never off. Its records follow a session switch to the
-  arriving session's log; a session that keeps no event log (`-s -`,
-  `--no-session`) records nothing.
+  may switch it on, never off, and the switch is decided when the session
+  starts. Its records follow a session switch to the arriving session's log,
+  with that switch. A session that keeps no event log from its start (`-s -`,
+  `--no-session`) records nothing; a switch into a session that persists no
+  log keeps recording into the departing session's log, as the agent's own
+  events do.
 - **`quecto board`** loads no layered configuration, so it follows your global
   config (`<base_dir>/config.json`) alone. While that switches the event log on,
   it writes the day's log, `<base_dir>/audit/board-cli_<UTC date>.jsonl`, opened
@@ -56,17 +59,17 @@ as given. It is for the pocket relay to set; an older quecto ignores it.
 |---|---|
 | `session` | As on every event-log record: the agent's session for the tool; `board-cli:<UTC date>` for `quecto board` |
 | `turn` | Always `null`: a board call is filed under no agent turn |
-| `op` | The op the request named: `bootstrap`, `list`, `list_ready`, `list_takeable`, `show`, `create`, `update_draft`, `move`, `renew`, `take_over`, `link_pr`, `unlink_pr`, `complete`, `clear_set_aside`; `unknown` for a request that names none, or none the board has. A request the agent tool does not take (`bootstrap`) records its op, refused |
+| `op` | The op the request named: `bootstrap`, `list`, `list_ready`, `list_takeable`, `show`, `create`, `update_draft`, `move`, `renew`, `take_over`, `link_pr`, `unlink_pr`, `complete`, `clear_set_aside`; `unknown` for a request that names none, or none the board has. A request the agent tool does not take (`bootstrap`) records its op, refused, and a `quecto board` line refused as it is read records the op it named before the refusal |
 | `front_end` | `tool` (the agent `board` tool) or `cli` (`quecto board`) |
 | `client` | `agent` for the tool; for the CLI `cli`, or as `QUECTO_BOARD_CLIENT` names it: `pocket_relay` or `other` |
 | `access` | `read` or `write`: what the op does, even when it was refused before it was read |
 | `outcome` | `ok` or `refused` |
-| `code`, `rule` | For a refusal, the answer's error code (`invalid_request`, `rule`, `not_found`, `stale`, `contended`, `clock_ahead`, ...) and, for `rule`, the rule's code (`not_holder`, `claim_expired`, `not_allowed`, ...). `internal` is no answer's code: a call whose work ended without an answer (it panicked) is recorded as it unwinds, refused as `internal` |
+| `code`, `rule` | For a refusal, the answer's error code (`invalid_request`, `rule`, `not_found`, `stale`, `contended`, `clock_ahead`, ...) and, for `rule`, the rule's code (`not_holder`, `claim_expired`, `not_allowed`, ...). `internal` is no answer's code: an agent tool call whose work ended without an answer (it panicked) is recorded as it unwinds, refused as `internal`. A `quecto board` panic aborts the process and writes no record |
 | `field`, `fault`, `unexpected_count` | For `invalid_request`, `invalid_task` and the rule `invalid`, which field was wrong: a schema field as the board's table spells it (`depends_on/2` is `depends_on`), `op`, `request` (the request as a whole), or `other`; and how: `missing`, `unexpected`, `wrong_type`, `invalid_value`, `too_large`, `not_json`, `duplicate_key`. A key no schema of the op names is `other`, `unexpected`, and `unexpected_count` counts such keys, never naming one, even when another op takes a field of that name |
 | `task`, `pr` | The task the op's `task` names, and the pull request `link_pr` or `unlink_pr` names, once the request was read |
 | `head` | The board's head an answer named, only when it is a full commit id git produced |
 | `listed`, `shown`, `truncated_more`, `set_aside`, `set_aside_more` | For an answered listing: the tasks it listed, those its answer showed and those it left out, and the set-aside files it listed and left out. The agent tool's listing is cut to 32 KiB; the CLI leaves nothing out |
-| `cancelled` | Written `true` only when the tool call was dropped (its turn interrupted) before its answer came back; the work still records it |
+| `cancelled` | Written `true` only when the tool call was dropped (its turn interrupted) while its work ran: the work still records it. A call dropped before its work started reached no board and writes no record |
 | `build_us` | How long building the board's operations took, when the request got that far |
 | `result_bytes` | The size of the answer as its front end sent it |
 | `duration_us` | The whole call, from its arrival to its answer |

@@ -111,7 +111,15 @@ struct Line {
     remote: String,
 }
 
-fn read_line(args: &[String]) -> Result<Line, RequestError> {
+/// A command line refused as it was read, and the op it named before the
+/// refusal, if any (for the call's record; the answer names none).
+#[derive(Debug)]
+struct LineRefused {
+    op: Option<String>,
+    error: RequestError,
+}
+
+fn read_line(args: &[String]) -> Result<Line, LineRefused> {
     let mut line = Line {
         op: None,
         fields: Vec::new(),
@@ -119,6 +127,14 @@ fn read_line(args: &[String]) -> Result<Line, RequestError> {
         repo: None,
         remote: "origin".into(),
     };
+    match read_into(&mut line, args) {
+        Ok(()) => Ok(line),
+        Err(error) => Err(LineRefused { op: line.op, error }),
+    }
+}
+
+/// Reads `args` into `line`, as far as they go.
+fn read_into(line: &mut Line, args: &[String]) -> Result<(), RequestError> {
     let mut rest = args.iter();
     let invalid = |flag: &str, problem: &str, fault| {
         RequestError::of(flag.trim_start_matches('-'), problem, fault)
@@ -161,7 +177,7 @@ fn read_line(args: &[String]) -> Result<Line, RequestError> {
             }
         }
     }
-    Ok(line)
+    Ok(())
 }
 
 /// The request the command line names; `stdin` reads `--input -`.
@@ -294,7 +310,10 @@ fn answer(ctx: &CliContext, args: &[String], call: &mut BoardCall) -> Value {
     };
     let line = match read_line(args) {
         Ok(line) => line,
-        Err(error) => return call.refuse_request(None, &error),
+        Err(LineRefused { op, error }) => {
+            call.named(named(&op).as_deref());
+            return call.refuse_request(None, &error);
+        }
     };
     let stdin = || match &ctx.stdin_data {
         Some(data) => bounded(data.as_bytes()),
