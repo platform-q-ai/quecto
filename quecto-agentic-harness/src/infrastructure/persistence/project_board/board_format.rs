@@ -2,7 +2,9 @@
 //! root of one regular file, `board`, reading [`FORMAT`]. A quecto before
 //! the task files became markdown takes any root tree but `tasks` for a
 //! clash, so it never reads, and never writes over, a board whose tasks it
-//! would not see.
+//! would not see. Format 3 (#2481 S9) adds the other kinds' folders and the
+//! archive to the root: a quecto of format 2 asks for an upgrade, never
+//! takes them for a clash, and this one reads a board of format 2 as it is.
 use super::Git;
 use super::{Found, contents, objects};
 use super::{Limits, REGULAR_FILE, Unread, listed, looked_up, missing};
@@ -18,11 +20,14 @@ use crate::application::project_board::ports::BoardStoreError;
 /// first line, other files in `format/` and the file's size are that
 /// format's own. A reader takes any `<n>` above its own as a newer format,
 /// however large (past what a `u64` holds included), and asks for an
-/// upgrade; this quecto's marker is exactly `quecto-board 2` and an LF,
+/// upgrade; this quecto's marker is exactly `quecto-board 3` and an LF,
 /// alone in `format/`, a regular file.
-pub const FORMAT: &[u8] = b"quecto-board 2\n";
+pub const FORMAT: &[u8] = b"quecto-board 3\n";
 /// The format [`FORMAT`] names.
-const FORMAT_VERSION: u64 = 2;
+const FORMAT_VERSION: u64 = 3;
+/// The formats this quecto reads, each by its number and its marker's
+/// bytes: format 2 (tasks alone) as it is, and its own.
+const READ_FORMATS: [(&str, &[u8]); 2] = [("2", b"quecto-board 2\n"), ("3", FORMAT)];
 
 /// The name of the format marker's tree at a board's root.
 pub const FORMAT_TREE: &str = "format";
@@ -32,7 +37,8 @@ pub const FORMAT_FILE: &str = "board";
 /// What a board's format marker says.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum Marker {
-    /// This quecto's: [`FORMAT`], as it writes it.
+    /// One this quecto reads: [`FORMAT`], as it writes it, or the format
+    /// before it, read as it is.
     Current,
     /// A newer quecto's: its first line names a later format (its number,
     /// as written), whatever else the marker holds.
@@ -100,13 +106,14 @@ pub(super) fn read_format(git: &Git, tree: &str, limits: Limits) -> Result<Marke
         .split(|byte| *byte == b'\n')
         .next()
         .unwrap_or_default();
+    let read = |number: &str| READ_FORMATS.iter().find(|(read, _)| *read == number);
     match named_format(first) {
         Some(number) if above(number) => Ok(Marker::Newer(number.to_string())),
-        Some(number) if number == FORMAT_VERSION.to_string() => {
-            match (entries.len(), entry.mode.as_str(), bytes == FORMAT) {
+        Some(number) => match read(number) {
+            Some((_, marker)) => match (entries.len(), entry.mode.as_str(), bytes == *marker) {
                 (1, REGULAR_FILE, true) => Ok(Marker::Current),
                 (1, REGULAR_FILE, false) => {
-                    damaged("format/board is not `quecto-board 2` alone".into())
+                    damaged(format!("format/board is not `quecto-board {number}` alone"))
                 }
                 (1, mode, _) => damaged(format!(
                     "format/board is of mode {mode}, not a regular file"
@@ -114,9 +121,9 @@ pub(super) fn read_format(git: &Git, tree: &str, limits: Limits) -> Result<Marke
                 (count, _, _) => damaged(format!(
                     "format holds {count} entries, not format/board alone"
                 )),
-            }
-        }
-        Some(older) => damaged(format!("it names format {older}, which no quecto writes")),
+            },
+            None => damaged(format!("it names format {number}, which no quecto writes")),
+        },
         None => damaged("format/board names no format".into()),
     }
 }

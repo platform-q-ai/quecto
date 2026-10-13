@@ -7,6 +7,22 @@ the agent `board` tool, offered to a top-level agent, and the `quecto board` CLI
 which scripts and the pocket relay run. Both read the same JSON request and give
 the same JSON answer; see the README's tool table and `quecto board --help`.
 
+## The board branch
+
+The branch's root holds a `README.md`, a `format/board` marker, and one folder
+per kind of artifact: `tasks/<id>.md`, `plans/<task>.<n>.md`, `runs/<task>.<n>.md`,
+`changes/<task>.<n>.md`, `reviews/<task>.<change>.md` and `discussions/<id>.md`,
+each its kind's canonical markdown. An `archive/` tree is room left for archived
+work: it is never read, and every write carries it as it is. A file that does not
+read as what its name spells is set aside, never trusted.
+
+This build reads every folder (epic #2481 S9) but writes tasks alone: a write or
+a clear carries the other folders as they are, and is refused while a file in
+one of them is set aside. It writes the marker `quecto-board 3` and reads
+`quecto-board 2` too. A build that reads only format 2 asks for an upgrade on a
+board this build has written, rather than taking its folders for someone else's
+branch.
+
 ## Telemetry
 
 Each board call, from either front end, writes one `board_op` record (epic #2481

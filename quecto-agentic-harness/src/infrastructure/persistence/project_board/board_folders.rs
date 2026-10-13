@@ -1,0 +1,355 @@
+//! The board's folders besides `tasks/` (#2481 S9): `plans`, `runs`,
+//! `changes`, `reviews` and `discussions`, each of one kind's files, and
+//! the `archive` tree, room left for later (M5): type-checked as a tree,
+//! never read, outside every bound.
+//!
+//! A folder's file is read when its name spells a key, `<task>.<n>.md` (a
+//! number from 1 to 999 with no leading zero) or a discussion's `<id>.md`,
+//! and it decodes as its kind's canonical file of that very key. Every
+//! other entry is judged as one in `tasks/` is (`board_entries`): set
+//! aside under the key its name spells, if any, and carried or dropped by
+//! the same rules.
+//!
+//! This quecto reads the folders and writes none: a write or a clear
+//! carries each folder and the archive as they were read, the same trees,
+//! and is refused while a file in a folder is set aside, since only a
+//! quecto that writes the folders can carry one or drop it (S10).
+use super::entries::{Disposition, Naming, TaskFile, disposition};
+use super::{
+    Board, Entry, Limits, TREE, Unread, capped, contents, listed, looked_up, missing, objects,
+    sanitised, shown_name,
+};
+use crate::application::project_board::ports::{
+    ArtifactKey, BoardArtifact, BoardStoreError, QuarantinedFile,
+};
+use crate::domain::project_board::entities::change::MAX_CHANGE_NUMBER;
+use crate::domain::project_board::entities::plan::MAX_PLAN_VERSION;
+use crate::domain::project_board::entities::run::MAX_RUN_NUMBER;
+use crate::domain::project_board::value_objects::slug::{MAX_SLUG_BYTES, Slug};
+use crate::infrastructure::persistence::project_board::artifacts::change::{
+    CHANGE_LIMITS, ChangeCodec,
+};
+use crate::infrastructure::persistence::project_board::artifacts::discussion::{
+    DISCUSSION_LIMITS, DiscussionCodec,
+};
+use crate::infrastructure::persistence::project_board::artifacts::plan::{PLAN_LIMITS, PlanCodec};
+use crate::infrastructure::persistence::project_board::artifacts::review::{
+    REVIEW_LIMITS, ReviewCodec,
+};
+use crate::infrastructure::persistence::project_board::artifacts::run::{RUN_LIMITS, RunCodec};
+use crate::infrastructure::persistence::project_board::artifacts::{CodecError, decode};
+use std::collections::BTreeMap;
+
+const MIB: usize = 1024 * 1024;
+
+/// The archive's name at a board's root.
+pub const ARCHIVE: &str = "archive";
+
+/// The most entries one read takes in all the board's folders.
+pub const MAX_BOARD_ENTRIES: usize = 16_384;
+
+/// One folder of a kind's files besides `tasks/`.
+pub(super) struct Folder {
+    pub naming: Naming,
+    /// The key a file's name spells, from the name without its `.md`.
+    pub spell: fn(&str) -> Option<ArtifactKey>,
+    /// The artifact a file's bytes hold, by the kind's codec.
+    pub decode: fn(&[u8]) -> Result<BoardArtifact, CodecError>,
+    /// The most entries a read takes in it.
+    pub max_entries: usize,
+    /// The most file bytes a read takes in it.
+    pub max_bytes: usize,
+}
+
+/// The longest name a numbered folder keeps: the longest id, the most
+/// digits and `.md`.
+const MAX_NUMBERED_NAME: usize = MAX_SLUG_BYTES + ".999.md".len();
+
+/// How a numbered folder names its files: `<task>.<n>.md`.
+const fn numbered_naming(
+    folder: &'static str,
+    noun: &'static str,
+    spelled: &'static str,
+    file_bytes: usize,
+) -> Naming {
+    Naming {
+        folder,
+        noun,
+        spelled,
+        pattern: "<task>.<n>.md",
+        max_name: MAX_NUMBERED_NAME,
+        file_bytes,
+    }
+}
+
+/// The folders, in the order the plan lists them.
+pub(super) const FOLDERS: [Folder; 5] = [
+    Folder {
+        naming: numbered_naming("plans", "plan", "plan name", PLAN_LIMITS.file_bytes),
+        spell: |stem| numbered(stem, MAX_PLAN_VERSION).map(|(id, n)| ArtifactKey::Plan(id, n)),
+        decode: |bytes| decode::<PlanCodec>(bytes).map(BoardArtifact::Plan),
+        max_entries: 4_096,
+        max_bytes: 24 * MIB,
+    },
+    Folder {
+        naming: numbered_naming("runs", "run", "run name", RUN_LIMITS.file_bytes),
+        spell: |stem| numbered(stem, MAX_RUN_NUMBER).map(|(id, n)| ArtifactKey::Run(id, n)),
+        decode: |bytes| decode::<RunCodec>(bytes).map(BoardArtifact::Run),
+        max_entries: 4_096,
+        max_bytes: 16 * MIB,
+    },
+    Folder {
+        naming: numbered_naming("changes", "change", "change name", CHANGE_LIMITS.file_bytes),
+        spell: |stem| numbered(stem, MAX_CHANGE_NUMBER).map(|(id, n)| ArtifactKey::Change(id, n)),
+        decode: |bytes| decode::<ChangeCodec>(bytes).map(BoardArtifact::Change),
+        max_entries: 4_096,
+        max_bytes: 4 * MIB,
+    },
+    Folder {
+        naming: Naming {
+            pattern: "<task>.<change>.md",
+            ..numbered_naming("reviews", "review", "review name", REVIEW_LIMITS.file_bytes)
+        },
+        spell: |stem| numbered(stem, MAX_CHANGE_NUMBER).map(|(id, n)| ArtifactKey::Review(id, n)),
+        decode: |bytes| decode::<ReviewCodec>(bytes).map(BoardArtifact::Review),
+        max_entries: 4_096,
+        max_bytes: 16 * MIB,
+    },
+    Folder {
+        naming: Naming {
+            folder: "discussions",
+            noun: "discussion",
+            spelled: "discussion name",
+            pattern: "<id>.md",
+            max_name: MAX_SLUG_BYTES + ".md".len(),
+            file_bytes: DISCUSSION_LIMITS.file_bytes,
+        },
+        spell: |stem| Slug::parse(stem).ok().map(ArtifactKey::Discussion),
+        decode: |bytes| decode::<DiscussionCodec>(bytes).map(BoardArtifact::Discussion),
+        max_entries: 2_048,
+        max_bytes: 16 * MIB,
+    },
+];
+
+/// The trees a board's root holds by name: `tasks`, each folder and the
+/// archive. Any other tree is no board's.
+pub(super) fn root_tree(name: &str) -> bool {
+    name == "tasks" || name == ARCHIVE || FOLDERS.iter().any(|folder| folder.naming.folder == name)
+}
+
+/// The task and number `stem` spells: `<id>.<n>`, `n` from 1 to `max`
+/// written with no leading zero.
+fn numbered(stem: &str, max: u32) -> Option<(Slug, u32)> {
+    let (id, number) = stem.rsplit_once('.')?;
+    let digits = number.as_bytes();
+    let shaped = digits.len() <= 3
+        && digits.first().is_some_and(|b| (b'1'..=b'9').contains(b))
+        && digits.iter().all(u8::is_ascii_digit);
+    let number: u32 = shaped.then(|| number.parse().ok()).flatten()?;
+    match number <= max {
+        true => Some((Slug::parse(id).ok()?, number)),
+        false => None,
+    }
+}
+
+/// A folder as a read found it: carried by every write as this tree.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CarriedTree {
+    pub oid: String,
+    /// Its entries, all of them.
+    pub entries: usize,
+    /// The bytes of its files a read reads.
+    pub bytes: usize,
+}
+
+/// What a read of one folder found.
+pub(super) struct FolderRead {
+    pub tree: CarriedTree,
+    pub artifacts: Vec<BoardArtifact>,
+    pub quarantined: Vec<QuarantinedFile>,
+}
+
+/// The folder `folder` of tree `tree`.
+///
+/// # Errors
+/// Objects this clone does not hold; git fails, or the folder is past its
+/// bounds.
+pub(super) fn read_folder(
+    git: &super::Git,
+    tree: &str,
+    folder: &Folder,
+    limits: Limits,
+) -> Result<FolderRead, Unread> {
+    let name = folder.naming.folder;
+    let past = |what: String| Unread::Failed(BoardStoreError::Unavailable(what));
+    let entries = listed(git, tree, limits.tree_bytes)?;
+    if entries.len() > folder.max_entries {
+        return Err(past(format!(
+            "the board's {name} tree holds {} entries; the most is {}",
+            entries.len(),
+            folder.max_entries
+        )));
+    }
+    let kinds = objects(git, looked_up(&entries))?;
+    let missing = missing(&entries, &kinds);
+    if !missing.is_empty() {
+        return Err(Unread::Missing(missing));
+    }
+    let mut counts: BTreeMap<&[u8], usize> = BTreeMap::new();
+    for entry in entries.iter().filter(|entry| entry.carried(&kinds)) {
+        *counts.entry(entry.raw.as_slice()).or_default() += 1;
+    }
+    let mut quarantined = vec![];
+    let mut aside = |entry: &Entry, key: Option<ArtifactKey>, reason: String, carried: bool| {
+        if carried {
+            // A carried name shows as it is, as one in `tasks/` does.
+            assert_eq!(
+                shown_name(&entry.raw),
+                entry.name,
+                "a carried name shows as it is"
+            );
+        }
+        quarantined.push(QuarantinedFile {
+            path: format!("{name}/{}", shown_name(&entry.raw)),
+            key,
+            reason: capped(&sanitised(reason.as_bytes())),
+            object: entry.oid.clone(),
+            carried,
+        });
+    };
+    let mut to_read = vec![];
+    for entry in &entries {
+        let found = match kinds.get(&entry.oid) {
+            Some(super::Found::Present(object)) => Some(object),
+            Some(super::Found::Missing) | None => None,
+        };
+        let file = entry
+            .name
+            .strip_suffix(".md")
+            .map(|stem| ((folder.spell)(stem), TaskFile::Markdown));
+        let count = counts.get(entry.raw.as_slice()).copied().unwrap_or(0);
+        match disposition(entry, found, count, file, &folder.naming) {
+            Disposition::Read(key) => to_read.push((key, entry, found.map_or(0, |o| o.size))),
+            Disposition::Aside { id, reason, kept } => aside(entry, id, reason, kept),
+        }
+    }
+    let bytes: usize = to_read.iter().map(|(_, _, size)| size).sum();
+    if bytes > folder.max_bytes {
+        return Err(past(format!(
+            "the board's {name} files hold {bytes} bytes; the most read is {}",
+            folder.max_bytes
+        )));
+    }
+    let wanted: Vec<(&str, usize)> = to_read
+        .iter()
+        .map(|(_, entry, size)| (entry.oid.as_str(), *size))
+        .collect();
+    let contents = contents(git, &wanted)?;
+    let mut artifacts = vec![];
+    for (key, entry, _) in to_read {
+        // Two files may share one blob, so each is looked up, not taken.
+        let bytes = contents.get(&entry.oid).cloned().unwrap_or_default();
+        let noun = folder.naming.noun;
+        let read = (folder.decode)(&bytes)
+            .map_err(|error| format!("{noun} file: {error}"))
+            .and_then(|artifact| match artifact.key() == key {
+                true => Ok(artifact),
+                false => Err(format!("holds {}, not {key}", artifact.key())),
+            });
+        match read {
+            Ok(artifact) => artifacts.push(artifact),
+            Err(reason) => aside(entry, Some(key), reason, true),
+        }
+    }
+    quarantined.sort_by(|left, right| left.path.cmp(&right.path));
+    let tree = CarriedTree {
+        oid: tree.to_string(),
+        entries: entries.len(),
+        bytes,
+    };
+    Ok(FolderRead {
+        tree,
+        artifacts,
+        quarantined,
+    })
+}
+
+impl Board {
+    /// `self` with the folders `read` and the archive `archive` beside its
+    /// tasks.
+    pub(super) fn with_folders(
+        mut self,
+        read: Vec<(&'static str, FolderRead)>,
+        archive: Option<String>,
+    ) -> Self {
+        for (name, folder) in read {
+            self.artifacts.extend(folder.artifacts);
+            self.quarantined.extend(folder.quarantined);
+            self.folders.insert(name, folder.tree);
+        }
+        self.quarantined
+            .sort_by(|left, right| left.path.cmp(&right.path));
+        // An artifact is read or set aside, never both, and read once.
+        let read: std::collections::BTreeSet<ArtifactKey> =
+            self.artifacts.iter().map(BoardArtifact::key).collect();
+        assert_eq!(read.len(), self.artifacts.len(), "an artifact is read once");
+        assert!(
+            self.quarantined
+                .iter()
+                .filter_map(|file| file.key.as_ref())
+                .all(|key| !read.contains(key)),
+            "an artifact read is never one set aside"
+        );
+        self.archive = archive;
+        self
+    }
+
+    /// The entries of the folders besides `tasks/`, as every write carries
+    /// them.
+    pub fn carried_entries(&self) -> usize {
+        self.folders.values().map(|tree| tree.entries).sum()
+    }
+
+    /// The bytes a read reads in the folders besides `tasks/`.
+    pub fn carried_bytes(&self) -> usize {
+        self.folders.values().map(|tree| tree.bytes).sum()
+    }
+
+    /// The root's trees a write or a clear carries as they were read: each
+    /// folder besides `tasks/` and the archive, by name (`<mode> <type>
+    /// <oid>`).
+    pub fn carried_trees(&self) -> BTreeMap<String, String> {
+        let folders = self
+            .folders
+            .iter()
+            .map(|(name, tree)| ((*name).to_string(), tree.oid.as_str()));
+        let archive = self
+            .archive
+            .iter()
+            .map(|oid| (ARCHIVE.to_string(), oid.as_str()));
+        folders
+            .chain(archive)
+            .map(|(name, oid)| (name, format!("{TREE} tree {oid}")))
+            .collect()
+    }
+
+    /// Why no write or clear is made: a file set aside in a folder besides
+    /// `tasks/` (the least by path), which this quecto neither carries
+    /// forward nor drops.
+    pub fn folders_refusal(&self) -> Option<String> {
+        let in_folder = |file: &&QuarantinedFile| {
+            FOLDERS.iter().any(|folder| {
+                file.path
+                    .strip_prefix(folder.naming.folder)
+                    .is_some_and(|rest| rest.starts_with('/'))
+            })
+        };
+        let file = self.quarantined.iter().find(in_folder)?;
+        Some(format!(
+            "{} is set aside: this quecto carries set-aside files in tasks/ only, so it writes \
+             nothing while one lies elsewhere; upgrade quecto, or {}",
+            file.path,
+            super::RECOVERY
+        ))
+    }
+}

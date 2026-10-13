@@ -29,7 +29,9 @@ use crate::application::project_board::ports::{
 };
 use crate::domain::project_board::entities::task::Task;
 use crate::domain::project_board::services::claims::is_live;
-use crate::domain::project_board::value_objects::shown_text::{shown_char, shown_path};
+use crate::domain::project_board::value_objects::shown_text::{
+    shown_board_path, shown_char, shown_path,
+};
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
 use crate::domain::project_board::value_objects::vocabulary::TaskStatus;
@@ -425,8 +427,13 @@ impl BoardIndex {
                     false => return Err(corrupt(format!("object {object:?} of {path:?}"))),
                 }
                 // A path and reason as a store shows them, or the row was
-                // planted.
-                match shown_path(&path) {
+                // planted: a task's file in `tasks/`, a stray in any folder
+                // the store reads.
+                let shown = match &id {
+                    Some(_) => shown_path(&path),
+                    None => shown_board_path(&path),
+                };
+                match shown {
                     true => {}
                     false => return Err(corrupt(format!("path {path:?} no store shows"))),
                 }

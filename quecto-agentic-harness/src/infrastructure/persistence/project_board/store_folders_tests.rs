@@ -15,11 +15,17 @@ use crate::infrastructure::persistence::project_board::artifacts::plan::PlanCode
 use crate::infrastructure::persistence::project_board::artifacts::review::ReviewCodec;
 use crate::infrastructure::persistence::project_board::artifacts::run::RunCodec;
 use crate::infrastructure::persistence::project_board::artifacts::{ArtifactCodec, encode as file};
-use crate::infrastructure::persistence::project_board::board_tree::FORMAT;
+use crate::infrastructure::persistence::project_board::board_tree::{ARCHIVE, FORMAT};
 use crate::infrastructure::test_support::board_artifacts::{change, discussion, plan, review, run};
 
 /// A row of a tree: its mode, its name and the object's id.
 type Row = (&'static str, String, String);
+
+/// A row of the root: its mode, its name and what it holds.
+type RootRow = (&'static str, &'static str, Node);
+
+/// A row of the root made fresh for each repository.
+type MadeRow = (&'static str, &'static str, fn() -> Node);
 
 /// The file `value` is, as bytes.
 fn bytes<C: ArtifactCodec>(value: &C::Value) -> Vec<u8> {
@@ -47,11 +53,7 @@ fn regular(name: &str, bytes: Vec<u8>) -> (&'static str, String, Vec<u8>) {
 /// `board` reads `marker`, and `rows` (mode, name, node): the same commit
 /// in the remote and in bob's clone (fetched there, as it were), since
 /// git's transport refuses to send some such trees.
-fn board_marked(
-    repos: &Repos,
-    marker: &[u8],
-    rows: impl Fn(&Path) -> Vec<(&'static str, &'static str, Node)>,
-) -> BoardHead {
+fn board_marked(repos: &Repos, marker: &[u8], rows: impl Fn(&Path) -> Vec<RootRow>) -> BoardHead {
     let mut head: Option<BoardHead> = None;
     for repo in [repos.remote(), repos.bob.clone()] {
         let format = raw_rows(&repo, &[("100644", "board", blob_in(&repo, marker))]);
@@ -93,10 +95,7 @@ fn board_marked(
     head
 }
 
-fn board_of(
-    repos: &Repos,
-    rows: impl Fn(&Path) -> Vec<(&'static str, &'static str, Node)>,
-) -> BoardHead {
+fn board_of(repos: &Repos, rows: impl Fn(&Path) -> Vec<RootRow>) -> BoardHead {
     board_marked(repos, FORMAT, rows)
 }
 
@@ -110,7 +109,7 @@ fn tree_of(repo: &Path, rows: &[Row]) -> String {
 
 /// Task `a`, and one file of each other kind, each named as its folder
 /// names it.
-fn every_kind() -> Vec<(&'static str, &'static str, Node)> {
+fn every_kind() -> Vec<RootRow> {
     let folder = |name: &'static str, file: &str, bytes: Vec<u8>| {
         ("40000", name, Node::Tree(vec![regular(file, bytes)]))
     };
@@ -235,6 +234,7 @@ fn names_in_a_folder_are_judged_as_in_tasks() {
     board_of(&repos, |_| {
         let entries = vec![
             regular("notes.txt", b"notes".to_vec()),
+            regular("a..b.txt", b"notes".to_vec()),
             regular("a.md", plan.clone()),
             regular("a.01.md", plan.clone()),
             regular("a.0.md", plan.clone()),
@@ -259,6 +259,7 @@ fn names_in_a_folder_are_judged_as_in_tasks() {
     let (three, most) = (plan_key("a", 3), plan_key(&"x".repeat(MAX_SLUG_BYTES), 999));
     let mut want = vec![
         ("discussions/d.1.md", None, true),
+        ("plans/a..b.txt", None, false),
         ("plans/a.0.md", None, true),
         ("plans/a.01.md", None, true),
         ("plans/a.1000.md", None, true),
@@ -432,10 +433,10 @@ fn stray() -> Node {
 }
 
 /// The board at a root of `rows` (mode, name, node) and an empty `tasks`.
-fn read_root(rows: &[(&'static str, &'static str, fn() -> Node)]) -> Result<(), BoardStoreError> {
+fn read_root(rows: &[MadeRow]) -> Result<(), BoardStoreError> {
     let repos = fresh();
     let head = board_of(&repos, |_| {
-        let mut all: Vec<(&str, &str, Node)> = rows
+        let mut all: Vec<RootRow> = rows
             .iter()
             .map(|(mode, name, node)| (*mode, *name, node()))
             .collect();
@@ -449,7 +450,7 @@ fn read_root(rows: &[(&'static str, &'static str, fn() -> Node)]) -> Result<(), 
 /// other tree, or one of theirs that is not a tree, is no board.
 #[test]
 fn the_root_holds_the_folders_and_an_archive_each_a_tree_once() {
-    let mut every: Vec<(&str, &str, fn() -> Node)> = CARRIED
+    let mut every: Vec<MadeRow> = CARRIED
         .iter()
         .map(|name| ("40000", *name, tree as fn() -> Node))
         .collect();
@@ -492,7 +493,7 @@ fn many(repo: &Path, count: usize, bytes: &[u8], name: impl Fn(usize) -> String)
 /// the board within its own: past any, it is not read.
 #[test]
 fn a_board_past_a_folders_bounds_or_its_own_is_not_read() {
-    let refused = |rows: &dyn Fn(&Path) -> Vec<(&'static str, &'static str, Node)>, bound: &str| {
+    let refused = |rows: &dyn Fn(&Path) -> Vec<RootRow>, bound: &str| {
         let repos = fresh();
         board_of(&repos, |repo| {
             let mut rows = rows(repo);
@@ -532,4 +533,60 @@ fn a_board_past_a_folders_bounds_or_its_own_is_not_read() {
         },
         "16385",
     );
+}
+
+/// A partial clone that fetched the board without its trees and blobs
+/// (`--filter=tree:0`) fetches what the folders and the archive miss, in
+/// one call per tree level, then reads every kind and carries the archive.
+#[test]
+fn a_partial_clone_reads_every_folder_and_carries_the_archive() {
+    let repos = fresh();
+    let remote = repos.remote();
+    for (key, value) in [
+        ("uploadpack.allowFilter", "true"),
+        ("uploadpack.allowAnySHA1InWant", "true"),
+    ] {
+        sh(&remote, &["config", key, value]);
+    }
+    let head = board_of(&repos, |repo| {
+        let mut rows = every_kind();
+        let old = vec![("100644", "old.txt".into(), blob_in(repo, b"anything"))];
+        rows.push(("40000", "archive", Node::Made(old)));
+        rows
+    });
+    let url = format!("file://{}", remote.display());
+    sh(
+        repos.dir.path(),
+        &[
+            "clone",
+            "-q",
+            "--filter=tree:0",
+            "--no-single-branch",
+            &url,
+            "carol",
+        ],
+    );
+    let carol = repos.dir.path().join("carol");
+    let tree = format!("{}^{{tree}}", head.0);
+    let held = Command::new("git")
+        .current_dir(&carol)
+        .args(["cat-file", "-e", &tree])
+        .env_clear()
+        .env("PATH", std::env::var_os("PATH").unwrap())
+        .envs([
+            ("HOME", carol.as_os_str()),
+            ("GIT_CONFIG_GLOBAL", "/dev/null".as_ref()),
+            ("GIT_CONFIG_NOSYSTEM", "1".as_ref()),
+            ("GIT_NO_LAZY_FETCH", "1".as_ref()),
+        ])
+        .stderr(std::process::Stdio::null())
+        .status()
+        .unwrap();
+    assert!(!held.success(), "the clone holds no tree of the board yet");
+    let partial = store(&carol);
+    let board = partial.read().unwrap();
+    assert_eq!(board.reviews, [review("a", 1)]);
+    assert_eq!(board.discussions, [discussion("d")]);
+    let moved = written(partial.write_tasks(&head, &[task("b")], "board: add b"));
+    assert_eq!(at(&remote, &moved, ARCHIVE), at(&remote, &head, ARCHIVE));
 }

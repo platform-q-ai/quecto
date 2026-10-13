@@ -1,13 +1,36 @@
 //! The bounds a change to the board keeps (`board_tree`): the entries of
-//! its `tasks/` tree a write leaves, which a clear never grows, and the
-//! task-file bytes a read reads.
-use super::{Board, Limits, MAX_TASK_ENTRIES, task_file};
+//! its `tasks/` tree a write leaves, which a clear never grows, and, with
+//! the other folders a write carries as they are (#2481 S9), the entries
+//! and file bytes a read reads.
+use super::{Board, Limits, MAX_BOARD_ENTRIES, MAX_TASK_ENTRIES, Unread, task_file};
 use crate::application::project_board::ports::BoardStoreError;
 use crate::domain::project_board::entities::task::Task;
 use crate::domain::project_board::value_objects::slug::Slug;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 impl Board {
+    /// The board as read keeps within what a read takes in all its
+    /// folders: [`MAX_BOARD_ENTRIES`] entries and the file bytes of
+    /// `limits`.
+    ///
+    /// # Errors
+    /// Past either bound.
+    pub(super) fn read_within(&self, limits: Limits) -> Result<(), Unread> {
+        let entries = self.listed + self.carried_entries();
+        let bytes = self.read_bytes.values().sum::<usize>() + self.carried_bytes();
+        let past = |why: String| Err(Unread::Failed(BoardStoreError::Unavailable(why)));
+        match (entries <= MAX_BOARD_ENTRIES, bytes <= limits.board_bytes) {
+            (true, true) => Ok(()),
+            (false, _) => past(format!(
+                "the board's trees hold {entries} entries; the most read is {MAX_BOARD_ENTRIES}"
+            )),
+            (true, false) => past(format!(
+                "the board's files hold {bytes} bytes; the most read is {}",
+                limits.board_bytes
+            )),
+        }
+    }
+
     /// The board, with `written` in place, keeps within what a write
     /// leaves: the entries of its `tasks/` tree (each task one file, each
     /// file set aside one), at most [`MAX_TASK_ENTRIES`], and the task-file
@@ -57,11 +80,17 @@ impl Board {
         cap: usize,
     ) -> Result<(), BoardStoreError> {
         let entries = self.entries(written);
-        match entries <= cap {
-            true => Ok(()),
-            false => Err(BoardStoreError::InvalidWrite(format!(
+        // The folders a write carries count towards what a read takes.
+        let all = entries + self.carried_entries();
+        match (entries <= cap, all <= MAX_BOARD_ENTRIES) {
+            (true, true) => Ok(()),
+            (false, _) => Err(BoardStoreError::InvalidWrite(format!(
                 "the board is full: it holds at most {cap} task files and files set aside, and \
                  would hold {entries}"
+            ))),
+            (true, false) => Err(BoardStoreError::InvalidWrite(format!(
+                "the board is full: it holds at most {MAX_BOARD_ENTRIES} entries in all its \
+                 folders, and would hold {all}"
             ))),
         }
     }
@@ -80,13 +109,41 @@ impl Board {
             .iter()
             .filter(|(name, _)| !replaced.contains(*name));
         let bytes = carried.map(|(_, size)| size).sum::<usize>()
-            + written.iter().map(|(_, bytes)| bytes.len()).sum::<usize>();
+            + written.iter().map(|(_, bytes)| bytes.len()).sum::<usize>()
+            + self.carried_bytes();
         match bytes <= limits.board_bytes {
             true => Ok(()),
             false => Err(BoardStoreError::InvalidWrite(format!(
-                "the board would hold {bytes} bytes of task files; a read takes at most {}",
+                "the board would hold {bytes} bytes of files a read reads; a read takes at most {}",
                 limits.board_bytes
             ))),
         }
     }
+}
+
+/// A tree of `entries` fits what a read takes, or it is an invalid write,
+/// so no write makes a board no one can read.
+pub fn within(entries: &BTreeMap<String, String>, limits: Limits) -> Result<(), BoardStoreError> {
+    match tree_bytes(entries) {
+        bytes if bytes <= limits.tree_bytes => Ok(()),
+        bytes => Err(BoardStoreError::InvalidWrite(format!(
+            "the board would hold a tree of {bytes} bytes; a read takes at most {}",
+            limits.tree_bytes
+        ))),
+    }
+}
+
+/// The bytes git takes to hold a tree of `entries` (name to `<mode> <type>
+/// <oid>`): each is its mode without leading zeros, a space, its name, a
+/// NUL and its raw object name.
+fn tree_bytes(entries: &BTreeMap<String, String>) -> usize {
+    entries
+        .iter()
+        .map(|(name, meta)| {
+            let mut fields = meta.split(' ');
+            let mode = fields.next().unwrap_or("").trim_start_matches('0');
+            let oid = fields.nth(1).unwrap_or("");
+            mode.len() + 1 + name.len() + 1 + oid.len() / 2
+        })
+        .sum()
 }

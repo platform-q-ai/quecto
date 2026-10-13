@@ -15,6 +15,12 @@
 //! quecto wrote, say), so no write loses one. A task file named twice in
 //! one tree refuses every write instead.
 //!
+//! The other kinds' folders (`plans/`, `runs/`, `changes/`, `reviews/`,
+//! `discussions/`) are read as their kinds (#2481 S9), but not yet
+//! written: a write or a clear carries each, and the `archive` tree, as
+//! the very tree it read, and is refused while a file in one of them is
+//! set aside.
+//!
 //! The board is fetched from the remote's URL and pushed to its push URL;
 //! a remote whose `pushurl` names another repository than its `url` is
 //! not a board remote, and a push to it is judged by what `url` serves.
@@ -508,12 +514,26 @@ impl GitBoardStore {
         )]))
     }
 
-    /// A commit of the README, the format marker and `tasks` on `base`, as
-    /// the store's writer, pushed only if the board is still at `base`.
-    fn land(&self, base: &str, tasks: &str, message: &str) -> Result<BoardWrite, BoardStoreError> {
+    /// A commit of the README, the format marker, `tasks`, and the trees
+    /// `board` carries as they are (its other folders and the archive) on
+    /// `base`, as the store's writer, pushed only if the board is still at
+    /// `base`.
+    fn land(
+        &self,
+        base: &str,
+        board: &Board,
+        tasks: &str,
+        message: &str,
+    ) -> Result<BoardWrite, BoardStoreError> {
+        // A folder carried while a file in it is set aside would carry or
+        // drop that file unjudged: write and clear refuse first.
+        assert!(
+            board.folders_refusal().is_none(),
+            "no folder with a file set aside is carried"
+        );
         let readme = self.blob(README)?;
         let format = self.format_tree()?;
-        let root = BTreeMap::from([
+        let mut root = BTreeMap::from([
             (
                 "README.md".to_string(),
                 format!("{REGULAR_FILE} blob {readme}"),
@@ -521,6 +541,14 @@ impl GitBoardStore {
             (FORMAT_TREE.to_string(), format!("{TREE} tree {format}")),
             ("tasks".to_string(), format!("{TREE} tree {tasks}")),
         ]);
+        let carried = board.carried_trees();
+        let names = root.len() + carried.len();
+        root.extend(carried);
+        assert_eq!(
+            root.len(),
+            names,
+            "a carried tree is none of the root's own"
+        );
         let tree = self.tree(&root)?;
         let args = ["commit-tree", tree.as_str(), "-p", base, "-m", message];
         let commit = self.git.text(&args, None).map_err(unavailable)?;
@@ -594,7 +622,7 @@ impl ProjectBoardStore for GitBoardStore {
         }
         let head = self.fetch()?;
         let board = self.board_at(&head)?;
-        Ok(BoardSnapshot {
+        let mut snapshot = BoardSnapshot {
             head: BoardHead(head),
             tasks: board.tasks.values().map(|held| held.task.clone()).collect(),
             plans: vec![],
@@ -603,8 +631,18 @@ impl ProjectBoardStore for GitBoardStore {
             reviews: vec![],
             discussions: vec![],
             quarantined: board.quarantined.clone(),
+        };
+        for artifact in &board.artifacts {
+            match artifact.clone() {
+                BoardArtifact::Plan(plan) => snapshot.plans.push(plan),
+                BoardArtifact::Run(run) => snapshot.runs.push(run),
+                BoardArtifact::Change(change) => snapshot.changes.push(change),
+                BoardArtifact::Review(review) => snapshot.reviews.push(review),
+                BoardArtifact::Discussion(discussion) => snapshot.discussions.push(discussion),
+                BoardArtifact::Task(_) => unreachable!("a task is read from tasks/ alone"),
+            }
         }
-        .asserted())
+        Ok(snapshot.asserted())
     }
 
     /// Writes `tasks`, each as its canonical markdown file, on top of
@@ -643,6 +681,9 @@ impl ProjectBoardStore for GitBoardStore {
         if let Some(refusal) = board.repeated_refusal(&base) {
             return Ok(BoardWrite::Refused(refusal));
         }
+        if let Some(refusal) = board.folders_refusal() {
+            return Ok(BoardWrite::Refused(refusal));
+        }
         if let Some(file) = ids.iter().find_map(|id| board.is_quarantined(id)) {
             return Ok(BoardWrite::Refused(format!(
                 "{} is set aside: {}",
@@ -666,7 +707,7 @@ impl ProjectBoardStore for GitBoardStore {
         // cannot be read.
         board.within_bounds(&encoded, self.limits)?;
         let tasks = self.tasks_tree(&board, &encoded)?;
-        self.land(&base, &tasks, message)
+        self.land(&base, &board, &tasks, message)
     }
 
     /// Creates the board with its README and format marker, unless it

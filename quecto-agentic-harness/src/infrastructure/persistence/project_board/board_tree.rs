@@ -6,11 +6,12 @@
 //! - the task files' bytes, in one `cat-file --batch`.
 //!
 //! A board's root holds its README (each write regenerates it), a `tasks`
-//! tree, and maybe stray files (each write drops them). A root with
-//! anything else, a directory above all, or with neither a README nor a
-//! `tasks` tree, is someone's code, not a board: reading, writing and
-//! bootstrapping all take the same view of it ([`Unread::Failed`] with a
-//! clash).
+//! tree, the other kinds' folders and an `archive` tree (`board_folders`,
+//! #2481 S9), each a tree named once, and maybe stray files (each write
+//! drops them). A root with anything else, any other directory above all,
+//! or with neither a README nor a `tasks` tree, is someone's code, not a
+//! board: reading, writing and bootstrapping all take the same view of it
+//! ([`Unread::Failed`] with a clash).
 //!
 //! In `tasks/`, only names quecto keeps are anything but strays: ASCII
 //! letters, digits and `-_.+=@,`, starting with a letter or digit, no
@@ -51,7 +52,9 @@ use super::artifacts::task::{TASK_LIMITS, TaskCodec};
 pub use super::cat_file::contents;
 use super::cat_file::{Found, Object, objects};
 use super::git::{Git, GitError, capped, quoted, sanitised, shown_name};
-use crate::application::project_board::ports::{ArtifactKey, BoardStoreError, QuarantinedFile};
+use crate::application::project_board::ports::{
+    ArtifactKey, BoardArtifact, BoardStoreError, QuarantinedFile,
+};
 use crate::domain::project_board::entities::task::Task;
 use crate::domain::project_board::value_objects::slug::{MAX_SLUG_BYTES, Slug};
 use std::collections::{BTreeMap, BTreeSet};
@@ -157,6 +160,15 @@ pub struct Board {
     /// The size of every task file a read of this board reads, by name:
     /// what a write checks against the read bound.
     pub read_bytes: BTreeMap<String, usize>,
+    /// The entries a read listed in `tasks/`, strays included.
+    pub listed: usize,
+    /// The other kinds' artifacts read, each under its own key.
+    pub artifacts: Vec<BoardArtifact>,
+    /// The folders besides `tasks/` as read, by name: every write carries
+    /// each as it is.
+    pub folders: BTreeMap<&'static str, CarriedTree>,
+    /// The archive's tree, never read: every write carries it as it is.
+    pub archive: Option<String>,
 }
 
 /// One copy of a name a write would carry, as its tree entry holds it.
@@ -232,12 +244,13 @@ struct Entry {
 impl Entry {
     /// Whether quecto keeps this name: ASCII letters, digits and
     /// [`NAME_PUNCTUATION`], starting with a letter or digit, at most
-    /// [`MAX_NAME_BYTES`]. Every id fits; no path separator, no bracket, no
-    /// invisible or combining character, so `mktree` takes every name a
-    /// write carries and every one shows as itself.
-    fn kept_name(&self) -> bool {
+    /// `max_name` bytes (its folder's longest name). Every id fits; no path
+    /// separator, no bracket, no invisible or combining character, so
+    /// `mktree` takes every name a write carries and every one shows as
+    /// itself.
+    fn kept_name(&self, max_name: usize) -> bool {
         let allowed = |b: &u8| b.is_ascii_alphanumeric() || NAME_PUNCTUATION.as_bytes().contains(b);
-        self.raw.len() <= MAX_NAME_BYTES
+        self.raw.len() <= max_name
             && self.raw.first().is_some_and(u8::is_ascii_alphanumeric)
             && self.raw.iter().all(allowed)
     }
@@ -271,12 +284,25 @@ pub fn read_board(git: &Git, commit: &str, limits: Limits) -> Result<Board, Unre
     let root = listed(git, &tree_of(git, commit)?, limits.tree_bytes)?;
     let kinds = objects(git, looked_up(&root))?;
     let named = |name: &'static str| root.iter().filter(move |entry| entry.name == name);
+    // A tree named once: a folder to read, or the archive to carry.
+    let once = |name: &'static str| match named(name).collect::<Vec<_>>().as_slice() {
+        [entry] if is_tree(entry, &kinds) => Some(*entry),
+        _ => None,
+    };
     let tasks = named("tasks").next();
     // The `tasks` tree, when it really is one, is read in the same round
     // as the root, so a partial clone fetches what both miss at once.
     let read = tasks
         .filter(|entry| is_tree(entry, &kinds))
         .map(|entry| read_tasks(git, &entry.oid, limits));
+    // So are the other kinds' folders.
+    let folders: Vec<(&'static str, Result<FolderRead, Unread>)> = FOLDERS
+        .iter()
+        .filter_map(|folder| {
+            let name = folder.naming.folder;
+            once(name).map(|entry| (name, read_folder(git, &entry.oid, folder, limits)))
+        })
+        .collect();
     // So is the format marker, at the same depth. A file of its name is a
     // stray, as on a board before the marker; none is a board before it.
     let marker = match named(FORMAT_TREE).collect::<Vec<_>>().as_slice() {
@@ -297,6 +323,10 @@ pub fn read_board(git: &Git, commit: &str, limits: Limits) -> Result<Board, Unre
     };
     let mut missing = missing(&root, &kinds);
     let (read, marker) = (gather(read, &mut missing), gather(marker, &mut missing));
+    let folders: Vec<(&'static str, Option<Result<FolderRead, Unread>>)> = folders
+        .into_iter()
+        .map(|(name, read)| (name, gather(Some(read), &mut missing)))
+        .collect();
     if !missing.is_empty() {
         missing.sort();
         missing.dedup();
@@ -316,13 +346,21 @@ pub fn read_board(git: &Git, commit: &str, limits: Limits) -> Result<Board, Unre
         }
         Some(Marker::Current | Marker::Damaged(_)) | None => {}
     }
-    // A second `tasks` is never read, so a write would lose what it holds.
-    let damaged = match (&marker, named("tasks").count()) {
+    // A second `tasks`, folder or archive is never read or carried, so a
+    // write would lose what it holds.
+    let twice = root.iter().map(|entry| entry.name.as_str()).find(|name| {
+        root_tree(name) && root.iter().filter(|entry| entry.name == *name).count() > 1
+    });
+    let damaged = match (&marker, twice) {
         (Some(Marker::Damaged(why)), _) => Some(format!("its format marker is damaged ({why})")),
-        (_, 2..) => Some("its root names tasks more than once".to_string()),
-        (Some(Marker::Current | Marker::Newer(_) | Marker::Oversized(_)) | None, _) => None,
+        (_, Some(name)) => Some(format!("its root names {name} more than once")),
+        (Some(Marker::Current | Marker::Newer(_) | Marker::Oversized(_)) | None, None) => None,
     };
     let board = read.transpose()?;
+    let folders = folders
+        .into_iter()
+        .filter_map(|(name, read)| Some(read?.map(|read| (name, read))))
+        .collect::<Result<Vec<_>, Unread>>()?;
     board_shape(&root, &kinds)?;
     if let Some(why) = damaged {
         return Err(Unread::Failed(BoardStoreError::Unavailable(format!(
@@ -331,7 +369,10 @@ pub fn read_board(git: &Git, commit: &str, limits: Limits) -> Result<Board, Unre
         ))));
     }
     // No `tasks` tree yet: a board that holds no task.
-    Ok(board.unwrap_or_default())
+    let archive = once(ARCHIVE).map(|entry| entry.oid.clone());
+    let board = board.unwrap_or_default().with_folders(folders, archive);
+    board.read_within(limits)?;
+    Ok(board)
 }
 
 /// `result`, its missing objects moved to `missing`.
@@ -379,9 +420,10 @@ fn missing(entries: &[Entry], kinds: &BTreeMap<String, Found>) -> Vec<String> {
 }
 
 /// A board's root: a README file (a hand edit may have deleted it), a
-/// `tasks` tree once it holds a task, and stray files a write drops; at
-/// least one of the README and `tasks`; and its format marker, a `format`
-/// tree, once a write of this quecto added it.
+/// `tasks` tree once it holds a task, the other kinds' folders and the
+/// archive, each a tree, and stray files a write drops; at least one of the
+/// README and `tasks`; and its format marker, a `format` tree, once a write
+/// of this quecto added it.
 fn board_shape(root: &[Entry], kinds: &BTreeMap<String, Found>) -> Result<(), BoardStoreError> {
     let kind = |entry: &Entry| match kinds.get(&entry.oid) {
         Some(Found::Present(object)) => Some(object.kind.as_str()),
@@ -391,8 +433,8 @@ fn board_shape(root: &[Entry], kinds: &BTreeMap<String, Found>) -> Result<(), Bo
         |entry: &Entry| kind_of_mode(&entry.mode) == Some("blob") && kind(entry) == Some("blob");
     // The format marker is judged on its own (`read_board`).
     let fits = |entry: &Entry| match entry.name.as_str() {
-        "tasks" => is_tree(entry, kinds),
         FORMAT_TREE => true,
+        name if root_tree(name) => is_tree(entry, kinds),
         _ => file(entry),
     };
     let ours = |entry: &Entry| matches!(entry.name.as_str(), "README.md" | "tasks");
@@ -432,7 +474,10 @@ fn read_tasks(git: &Git, tree: &str, limits: Limits) -> Result<Board, Unread> {
         *counts.entry(entry.raw.as_slice()).or_default() += 1;
     }
     let count = |entry: &Entry| counts.get(entry.raw.as_slice()).copied().unwrap_or(0);
-    let mut board = Board::default();
+    let mut board = Board {
+        listed: entries.len(),
+        ..Board::default()
+    };
     let set_aside =
         |board: &mut Board, entry: &Entry, id: Option<Slug>, reason: String, carried: bool| {
             board.quarantined.push(QuarantinedFile {
@@ -463,7 +508,8 @@ fn read_tasks(git: &Git, tree: &str, limits: Limits) -> Result<Board, Unread> {
             Some(Found::Present(object)) => Some(object),
             Some(Found::Missing) | None => None,
         };
-        match disposition(entry, found, count(entry)) {
+        let file = task_name(&entry.name);
+        match disposition(entry, found, count(entry), file, &TASK_NAMING) {
             Disposition::Read(id) => {
                 let size = found.map_or(0, |object| object.size);
                 board.read_bytes.insert(entry.name.clone(), size);
@@ -486,7 +532,10 @@ fn read_tasks(git: &Git, tree: &str, limits: Limits) -> Result<Board, Unread> {
             Some(Found::Present(object)) => Some(object),
             Some(Found::Missing) | None => None,
         };
-        match (entry.kept_name() && record && count(entry) > 1, found) {
+        match (
+            entry.kept_name(MAX_NAME_BYTES) && record && count(entry) > 1,
+            found,
+        ) {
             (true, Some(object)) if entry.carried(&kinds) => {
                 repeated.entry(&entry.name).or_default().push(TreeCopy {
                     mode: entry.mode.clone(),
@@ -655,33 +704,6 @@ fn entry(row: &[u8]) -> Result<Entry, BoardStoreError> {
     }
 }
 
-/// A tree of `entries` fits what a read takes, or it is an invalid write,
-/// so no write makes a board no one can read.
-pub fn within(entries: &BTreeMap<String, String>, limits: Limits) -> Result<(), BoardStoreError> {
-    match tree_bytes(entries) {
-        bytes if bytes <= limits.tree_bytes => Ok(()),
-        bytes => Err(BoardStoreError::InvalidWrite(format!(
-            "the board would hold a tree of {bytes} bytes; a read takes at most {}",
-            limits.tree_bytes
-        ))),
-    }
-}
-
-/// The bytes git takes to hold a tree of `entries` (name to `<mode> <type>
-/// <oid>`): each is its mode without leading zeros, a space, its name, a
-/// NUL and its raw object name.
-fn tree_bytes(entries: &BTreeMap<String, String>) -> usize {
-    entries
-        .iter()
-        .map(|(name, meta)| {
-            let mut fields = meta.split(' ');
-            let mode = fields.next().unwrap_or("").trim_start_matches('0');
-            let oid = fields.nth(1).unwrap_or("");
-            mode.len() + 1 + name.len() + 1 + oid.len() / 2
-        })
-        .sum()
-}
-
 /// A full SHA-1 or SHA-256 object name.
 pub fn object_id(text: &str) -> Result<String, BoardStoreError> {
     let hex = text
@@ -697,9 +719,14 @@ pub fn object_id(text: &str) -> Result<String, BoardStoreError> {
 
 #[path = "board_bounds.rs"]
 mod bounds;
+pub use bounds::within;
 #[path = "board_entries.rs"]
 mod entries;
-use entries::{Disposition, TaskFile, disposition, task_name};
+use entries::{Disposition, TASK_NAMING, TaskFile, disposition, task_name};
+#[path = "board_folders.rs"]
+mod folders;
+pub use folders::{ARCHIVE, CarriedTree, MAX_BOARD_ENTRIES};
+use folders::{FOLDERS, FolderRead, read_folder, root_tree};
 #[path = "board_format.rs"]
 mod format;
 pub use format::{FORMAT, FORMAT_FILE, FORMAT_TREE};

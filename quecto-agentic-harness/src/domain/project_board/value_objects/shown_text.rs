@@ -30,9 +30,13 @@ pub fn shown_path(path: &str) -> bool {
 }
 
 /// Whether `path` is a path a store sets aside with no key (a stray) shows:
-/// one name directly under `tasks/` or one of [`ARTIFACT_FOLDERS`].
+/// [`shown_path`], but directly under `tasks/` or any of
+/// [`ARTIFACT_FOLDERS`], the folders a store reads.
 pub fn shown_board_path(path: &str) -> bool {
-    shown_path(path)
+    std::iter::once("tasks")
+        .chain(ARTIFACT_FOLDERS)
+        .filter_map(|folder| path.strip_prefix(folder)?.strip_prefix('/'))
+        .any(|name| one_name(name) && shown_name(name))
 }
 
 /// [`shown_path`] for the file of a plan, run, change, review or
