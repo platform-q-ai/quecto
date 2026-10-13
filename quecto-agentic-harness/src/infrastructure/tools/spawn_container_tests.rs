@@ -638,3 +638,52 @@ async fn a_nested_container_is_refused_inside_a_container_by_the_real_condition(
         );
     }
 }
+
+/// Defence in depth behind the spawn input's allowlist: a selection built
+/// any other way with an unsafe name is refused before a ref is minted or
+/// the create script runs.
+#[tokio::test]
+async fn an_unsafe_environment_name_is_refused_before_create() {
+    let dir = TempDir::new().unwrap();
+    let marker = dir.path().join("created");
+    let cfg_path = dir.path().join("config.toml");
+    std::fs::write(
+        &cfg_path,
+        format!(
+            r#"{{"container_configs": {{"alt": {{"default": true, "create": ["/bin/sh", "-c", "touch '{}'"], "cleanup": ["true"]}}}}}}"#,
+            marker.display()
+        ),
+    )
+    .unwrap();
+    let mut config = base_config(ContainerSelection::New {
+        container_config: Some("alt".into()),
+        name: Some("a\tb".into()),
+    });
+    config.config_path = Some(cfg_path);
+    let registry = EnvironmentRegistry::new();
+    let selection = test_selection(dir.path());
+    let err = spawn_prepared_child(
+        &config,
+        &ChildCommand {
+            swarm_context: None,
+            swarm_member: false,
+            supervisor: &test_supervisor(),
+            binary: Path::new("true"),
+            cli_args: &[],
+            base_dir: dir.path(),
+            admission_dir: None,
+        },
+        &registry,
+        Some(&selection),
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        err.to_string()
+            .contains(super::super::spawn_input::UNSAFE_NAME_REFUSAL),
+        "{err}"
+    );
+    assert!(!marker.exists(), "the create script never ran");
+    assert!(registry.entries().is_empty(), "nothing was committed");
+    assert_eq!(registry.mint_ref().unwrap(), "C1", "no ref was minted");
+}

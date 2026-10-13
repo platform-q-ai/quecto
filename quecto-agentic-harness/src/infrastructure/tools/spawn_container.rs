@@ -7,6 +7,7 @@ use crate::application::subagents::dto::{
 use crate::application::subagents::use_cases::SelectContainerConfig;
 use crate::domain::agents::services::subagent::{ContainerSelection, SubagentConfig};
 use crate::domain::agents::value_objects::subagent_launch::ParentEndpoint;
+use crate::domain::environments::entities::environment_name::is_safe_environment_name;
 use crate::domain::environments::entities::environment_registry::{
     EnvironmentRecord, EnvironmentRegistry,
 };
@@ -397,8 +398,19 @@ async fn spawn_script_managed_child(
     // Names are durable across sessions now (#2024 S4d): a name that
     // still names a live environment — this session's or a restored one
     // — would make every later `name` lookup ambiguous, so it is refused
-    // before any ref is minted or script runs.
-    if let Some(name) = environment_name(config) {
+    // before any ref is minted or script runs. Only an allowlisted name is
+    // admitted at all (the spawn input checks it too; this guards every
+    // other way a selection is built).
+    let name = match environment_name(config) {
+        Some(name) if is_safe_environment_name(&name) => Some(name),
+        Some(_) => {
+            return Err(DomainError::Tool(
+                super::spawn_input::UNSAFE_NAME_REFUSAL.to_string(),
+            ));
+        }
+        None => None,
+    };
+    if let Some(name) = name {
         use crate::domain::environments::entities::environment_registry::{
             EnvironmentLookupError, EnvironmentTarget,
         };
