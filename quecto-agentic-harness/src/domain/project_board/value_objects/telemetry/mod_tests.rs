@@ -218,3 +218,169 @@ fn an_op_name_finds_its_kind_and_any_other_text_is_unknown() {
         assert_eq!(OpKind::named(text), OpKind::Unknown, "{text:?}");
     }
 }
+
+/// S4 (#2479): a start, as one `board_start` line holds it.
+#[test]
+fn a_start_serializes_as_its_golden_line() {
+    let started = BoardStartRecord {
+        task: TaskRef::of(&Slug::parse("demo-hello").unwrap()),
+        client: Client::PocketRelay,
+        outcome: OpOutcome::Ok,
+        run: Some(1),
+        plan_version: Some(2),
+        members: Some(3),
+        roles: Some(2),
+        items: Some(4),
+        not_applied: Some(1),
+        claim: Some(StartClaim::Fresh),
+        launch_us: Some(250_000),
+        duration_us: 900_000,
+    };
+    let line = serde_json::to_value(AuditEvent::BoardStart(Box::new(started))).unwrap();
+    let golden = json!({
+        "event": "board_start", "task": "demo-hello", "client": "pocket_relay",
+        "outcome": "ok", "run": 1, "plan_version": 2, "members": 3, "roles": 2, "items": 4,
+        "not_applied": 1, "claim": "fresh", "launch_us": 250_000, "duration_us": 900_000,
+    });
+    assert_eq!(line, golden);
+    let refused = BoardStartRecord {
+        task: TaskRef::of(&Slug::parse("demo-hello").unwrap()),
+        client: Client::Agent,
+        outcome: OpOutcome::Refused {
+            code: StaticKind::new("rule"),
+            rule: Some(StaticKind::new("no_accepted_plan")),
+        },
+        run: None,
+        plan_version: None,
+        members: None,
+        roles: None,
+        items: None,
+        not_applied: None,
+        claim: None,
+        launch_us: None,
+        duration_us: 40,
+    };
+    let line = serde_json::to_value(AuditEvent::BoardStart(Box::new(refused))).unwrap();
+    let golden = json!({
+        "event": "board_start", "task": "demo-hello", "client": "agent",
+        "outcome": "refused", "code": "rule", "rule": "no_accepted_plan", "duration_us": 40,
+    });
+    assert_eq!(line, golden);
+}
+
+/// S4: renewals folded into one record, and a failure alone.
+#[test]
+fn claim_renewals_serialize_as_their_golden_lines() {
+    let renewals = ClaimRenewalsRecord {
+        task: TaskRef::of(&Slug::parse("demo-hello").unwrap()),
+        run: 1,
+        outcome: OpOutcome::Ok,
+        renewals: 3,
+        min_left_s: Some(2_640),
+    };
+    let line = serde_json::to_value(AuditEvent::BoardClaimRenewals(Box::new(renewals))).unwrap();
+    let golden = json!({
+        "event": "board_claim_renewals", "task": "demo-hello", "run": 1, "outcome": "ok",
+        "renewals": 3, "min_left_s": 2_640,
+    });
+    assert_eq!(line, golden);
+    let failed = ClaimRenewalsRecord {
+        task: TaskRef::of(&Slug::parse("demo-hello").unwrap()),
+        run: 1,
+        outcome: OpOutcome::Refused {
+            code: StaticKind::new("rule"),
+            rule: Some(StaticKind::new("not_holder")),
+        },
+        renewals: 0,
+        min_left_s: None,
+    };
+    let line = serde_json::to_value(AuditEvent::BoardClaimRenewals(Box::new(failed))).unwrap();
+    let golden = json!({
+        "event": "board_claim_renewals", "task": "demo-hello", "run": 1,
+        "outcome": "refused", "code": "rule", "rule": "not_holder", "renewals": 0,
+    });
+    assert_eq!(line, golden);
+}
+
+/// S4: a fold-back, as one `board_fold_back` line holds it.
+#[test]
+fn a_fold_back_serializes_as_its_golden_line() {
+    let folded = FoldBackRecord {
+        task: TaskRef::of(&Slug::parse("demo-hello").unwrap()),
+        run: 1,
+        outcome: OpOutcome::Ok,
+        run_outcome: Some(StaticKind::new("succeeded")),
+        items: Some(ItemCounts {
+            todo: 0,
+            doing: 0,
+            review: 1,
+            done: 2,
+            blocked: 0,
+        }),
+        unmatched: Some(0),
+        extra: Some(1),
+        evidence: Some(5),
+        evidence_dropped: Some(1),
+        cost_tokens: Some(812_000),
+        attempts: Some(1),
+        lost: Some(0),
+        bytes: Some(1_900),
+        duration_us: 120_000,
+    };
+    let line = serde_json::to_value(AuditEvent::BoardFoldBack(Box::new(folded))).unwrap();
+    let golden = json!({
+        "event": "board_fold_back", "task": "demo-hello", "run": 1, "outcome": "ok",
+        "run_outcome": "succeeded",
+        "items": {"todo": 0, "doing": 0, "review": 1, "done": 2, "blocked": 0},
+        "unmatched": 0, "extra": 1, "evidence": 5, "evidence_dropped": 1,
+        "cost_tokens": 812_000, "attempts": 1, "lost": 0, "bytes": 1_900,
+        "duration_us": 120_000,
+    });
+    assert_eq!(line, golden);
+    let bare = FoldBackRecord {
+        task: TaskRef::of(&Slug::parse("demo-hello").unwrap()),
+        run: 1,
+        outcome: OpOutcome::Refused {
+            code: StaticKind::new("contended"),
+            rule: None,
+        },
+        run_outcome: None,
+        items: None,
+        unmatched: None,
+        extra: None,
+        evidence: None,
+        evidence_dropped: None,
+        cost_tokens: None,
+        attempts: None,
+        lost: None,
+        bytes: None,
+        duration_us: 9,
+    };
+    let line = serde_json::to_value(AuditEvent::BoardFoldBack(Box::new(bare))).unwrap();
+    let golden = json!({
+        "event": "board_fold_back", "task": "demo-hello", "run": 1, "outcome": "refused",
+        "code": "contended", "duration_us": 9,
+    });
+    assert_eq!(line, golden);
+}
+
+/// S4: the start's claim kinds, and every run outcome a fold-back names,
+/// are known kinds; none of the S4 lines is read back.
+#[test]
+fn the_s4_kinds_are_frozen_and_known() {
+    let claims: Vec<&str> = StartClaim::ALL.iter().map(|kind| kind.as_str()).collect();
+    assert_eq!(claims, ["fresh", "held"]);
+    for kind in StartClaim::ALL {
+        assert_eq!(
+            serde_json::to_value(kind).unwrap(),
+            Value::from(kind.as_str())
+        );
+        assert_eq!(StaticKind::new(kind.as_str()).as_str(), kind.as_str());
+    }
+    use crate::domain::project_board::value_objects::vocabulary::RunOutcome;
+    for outcome in RunOutcome::ALL {
+        assert_eq!(StaticKind::new(outcome.as_str()).as_str(), outcome.as_str());
+    }
+    let line = json!({"event": "board_start", "task": "t", "client": "agent", "outcome": "ok", "duration_us": 0});
+    assert!(serde_json::from_value::<AuditEvent>(line).is_err());
+}
