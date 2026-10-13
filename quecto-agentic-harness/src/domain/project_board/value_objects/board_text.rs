@@ -24,16 +24,22 @@
 //! written: the board's
 //! codec then holds it, or refuses it with its field and line.
 //!
-//! The write paths take only normalised text: `Task::entered` (create) and
-//! `edit_draft` check it with [`entered_text`] and [`entered_line`], so no
-//! entry point skips normalising. Reading a task back (`Task::new`) stays
-//! lenient by design, so what earlier builds stored still reads.
-//! Discussions (M4) run [`text`] before `append`.
+//! The write paths take only normalised text, so no entry point skips
+//! normalising: `Task::entered` (create) and the task's `edit_draft` check
+//! it with [`entered_text`] and [`entered_line`]; a plan's `propose` and
+//! `edit_draft` check its approach, task item titles and criteria; and a
+//! discussion's `begin` and `append` check its title and every message
+//! with [`entered_message`] (a message is normalised by [`message`]).
+//! Reading an artifact back (`Task::new`, `Plan::new`, `Discussion::new`)
+//! stays lenient by design, so what earlier builds stored still reads.
 use super::schema_error::SchemaError;
 
 /// Why text a write path takes is refused: it was never normalised.
 const NOT_ENTERED: &str = "must be board text as it enters (normalised: one LF between \
      lines, no blank lines at its edges, no trailing space where no hard break forms)";
+/// Why a message a write path takes is refused: it was never normalised.
+const NOT_ENTERED_MESSAGE: &str = "must be a message as it enters (normalised: one LF between \
+     lines, no blank lines, no spaces or tabs at a line's edges)";
 /// The ASCII punctuation a trailing space may follow: all but a backslash,
 /// which a line end after it makes a hard break.
 const SAFE_PUNCTUATION: &str = "!\"#$%&'()*+,-./:;<=>?@[]^_`{|}~";
@@ -148,10 +154,43 @@ pub fn entered_line(field: &str, held: &str) -> Result<(), SchemaError> {
 /// it: line ends as [`text`] makes them, and spaces and tabs gone
 /// from both edges (one line has no structure for them to start).
 pub fn line(raw: &str) -> String {
-    raw.replace("\r\n", "\n")
-        .replace('\r', "\n")
-        .trim_matches(spacing)
-        .to_string()
+    line_ends(raw).trim_matches(spacing).to_string()
+}
+
+/// A discussion message as the board keeps it (#2481 D3): line ends as
+/// [`text`] makes them, each line as [`line`] makes it (a message line is a
+/// table cell, which shows no edge spacing), and blank lines dropped (a
+/// message is its non-empty lines). Empty when nothing but spacing was
+/// said.
+pub fn message(raw: &str) -> String {
+    let lines: Vec<String> = line_ends(raw)
+        .split('\n')
+        .map(line)
+        .filter(|kept| !kept.is_empty())
+        .collect();
+    let normal = lines.join("\n");
+    debug_assert!(
+        unspaced(&normal).eq(unspaced(raw)),
+        "only spacing, line ends and blank lines change"
+    );
+    normal
+}
+
+/// A message field `field` holds as it enters the board: itself once
+/// normalised by [`message`].
+///
+/// # Errors
+/// A message no write path normalised.
+pub fn entered_message(field: &str, held: &str) -> Result<(), SchemaError> {
+    match message(held) == held {
+        true => Ok(()),
+        false => Err(SchemaError::new(field, NOT_ENTERED_MESSAGE)),
+    }
+}
+
+/// `raw` with each CRLF or lone CR made one LF.
+fn line_ends(raw: &str) -> String {
+    raw.replace("\r\n", "\n").replace('\r', "\n")
 }
 
 /// `text`'s characters but spacing and line ends, in order: what the

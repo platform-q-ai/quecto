@@ -3,6 +3,7 @@ use crate::domain::project_board::entities::discussion::{
     MAX_DISCUSSION_LINES, MAX_MESSAGE_LINE_CHARS, MAX_MESSAGE_LINES, MAX_MESSAGES,
 };
 use crate::domain::project_board::services::fixtures_tests::{at, person, task};
+use crate::domain::project_board::value_objects::board_text;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
 use crate::domain::project_board::value_objects::vocabulary::{
     DiscussionLimit, DiscussionState, TaskStatus,
@@ -348,4 +349,49 @@ fn a_batch_past_the_most_messages_is_refused_before_its_messages_are_read() {
             limit: DiscussionLimit::Messages
         })
     );
+}
+
+/// What a discussion says is taken only as it enters the board, normalised
+/// (#2481 D3, D4): its title as a line and each message as its trimmed,
+/// non-blank lines, both where it begins and in a batch added later. Text
+/// no entry point normalised is refused, naming its field; the same text
+/// normalised is taken.
+#[test]
+fn discussion_text_is_taken_only_once_normalised() {
+    let titled = Opening {
+        title: "How the store locks ".into(),
+        ..opening(vec![message("Ada", "09:00:00", "Lease?")])
+    };
+    let refused = begin(titled, &when("09:10:00")).unwrap_err();
+    assert_eq!(refused_field(refused), "title");
+    let said = vec![
+        message("Ada", "09:00:00", "Lease?"),
+        message("Bob", "09:05:00", " Yes,\n\nwith a TTL."),
+    ];
+    let refused = begin(opening(said), &when("09:10:00")).unwrap_err();
+    assert_eq!(refused_field(refused), "messages/1/text");
+    let batch = vec![
+        message("Ada", "09:20:00", "How long?"),
+        message("Bob", "09:21:00", "A minute. "),
+    ];
+    let refused = append(&begun(), batch, &when("09:30:00")).unwrap_err();
+    assert_eq!(refused_field(refused), "batch/1/text");
+    let batch = vec![message(
+        "Bob",
+        "09:21:00",
+        &board_text::message("A minute. \r\n\r\n Or two."),
+    )];
+    let added = append(&begun(), batch, &when("09:30:00")).unwrap();
+    assert_eq!(
+        added.fields().messages.last().unwrap().text,
+        "A minute.\nOr two."
+    );
+}
+
+/// The field a refusal of the schema names.
+fn refused_field(refused: BoardRuleError) -> String {
+    match refused {
+        BoardRuleError::Invalid(error) => error.field,
+        other => panic!("not a schema refusal: {other:?}"),
+    }
 }

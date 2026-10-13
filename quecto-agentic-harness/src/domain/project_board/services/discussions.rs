@@ -12,6 +12,10 @@
 //! clock) plus the stamp's slack.
 //!
 //! What the use cases must bring (M4):
+//! - text as it enters the board: the title through `board_text::line`
+//!   and each message through `board_text::message` (edge spacing and
+//!   blank lines go) before `begin` or `append`, which refuse text never
+//!   normalised;
 //! - `begin` does not know the board, so the use case refuses an id a
 //!   discussion already has before it begins one;
 //! - M4 stamps live messages: the append op gives each message the board's
@@ -25,6 +29,7 @@ use super::super::entities::discussion::{
     Message, message_shape,
 };
 use super::super::entities::task::Task;
+use super::super::value_objects::board_text::{entered_line, entered_message};
 use super::super::value_objects::rule_error::BoardRuleError;
 use super::super::value_objects::schema_error::SchemaError;
 use super::super::value_objects::slug::Slug;
@@ -49,11 +54,13 @@ pub struct Opening<'a> {
 /// if that is later.
 ///
 /// # Errors
-/// No message (`invalid`); a message stamped ahead; or a discussion its
-/// schema refuses (a title or message out of shape, messages out of
+/// No message (`invalid`); a message stamped ahead; a title or message
+/// never normalised (`board_text`); or a discussion its schema refuses (a title or message out of shape, messages out of
 /// order, past its limits).
 pub fn begin(opening: Opening<'_>, when: &Moment) -> Result<Discussion, BoardRuleError> {
     not_ahead(&opening.id, &opening.messages, when)?;
+    entered_line("title", &opening.title).map_err(BoardRuleError::Invalid)?;
+    entered_messages("messages", &opening.messages)?;
     let (created, last) = match (opening.messages.first(), opening.messages.last()) {
         (Some(first), Some(last)) => (first.at.clone(), last.at.clone()),
         _ => {
@@ -83,8 +90,8 @@ pub fn begin(opening: Opening<'_>, when: &Moment) -> Result<Discussion, BoardRul
 ///
 /// # Errors
 /// A discussion closed or stamped ahead; an empty batch; a message stamped
-/// ahead; a message out of shape; a batch that would fill the discussion
-/// past its most messages, lines or text; or a discussion its schema
+/// ahead; a message out of shape or never normalised; a batch that would
+/// fill the discussion past its most messages, lines or text; or a discussion its schema
 /// refuses (a message said before the last one).
 pub fn append(
     discussion: &Discussion,
@@ -117,6 +124,7 @@ pub fn append(
     shapes
         .try_for_each(|(index, message)| message_shape(&format!("batch/{index}"), message))
         .map_err(BoardRuleError::Invalid)?;
+    entered_messages("batch", &messages)?;
     let mut next = fields.clone();
     next.updated = after_last(&fields.updated, &when.now)?.max(last);
     next.messages.extend(messages);
@@ -165,6 +173,17 @@ pub fn close(discussion: &Discussion, when: &Moment) -> Result<Discussion, Board
     next.state = DiscussionState::Closed;
     next.updated = after_last(&fields.updated, &when.now)?;
     Discussion::new(next).map_err(BoardRuleError::Invalid)
+}
+
+/// Every one of `messages` (the list `list` names) is as it enters the
+/// board, normalised ([`entered_message`]).
+fn entered_messages(list: &str, messages: &[Message]) -> Result<(), BoardRuleError> {
+    let mut texts = messages.iter().enumerate();
+    texts
+        .try_for_each(|(index, message)| {
+            entered_message(&format!("{list}/{index}/text"), &message.text)
+        })
+        .map_err(BoardRuleError::Invalid)
 }
 
 /// `discussion` is open: messages are added to it, and it is closed once.

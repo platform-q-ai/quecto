@@ -195,3 +195,35 @@ fn links_inline_html_and_footnotes_are_kept_as_written() {
     // line end shows as nothing either way, and goes.
     assert_eq!(settled(text, "[a \nb](/u)"), "[a\nb](/u)");
 }
+
+/// A message as it comes in (#2481 D3): its line ends one LF, each line
+/// trimmed of spaces and tabs at its edges (a table cell shows none), and
+/// blank lines dropped (a message is its non-empty lines). What chat holds
+/// that is not a space or a tab (a no-break space, a selector) is kept, for
+/// the codec to refuse with its line.
+#[test]
+fn a_message_is_its_lines_trimmed_with_blank_lines_dropped() {
+    for (raw, kept) in [
+        ("Lease?", "Lease?"),
+        ("  Lease? \t", "Lease?"),
+        (
+            "\r\n Yes,\r\n\r\n\twith a TTL. \r\n \n",
+            "Yes,\nwith a TTL.",
+        ),
+        ("one\rtwo\n\n\nthree", "one\ntwo\nthree"),
+        ("  `a  b`  ", "`a  b`"),
+        ("\u{a0}ok\u{fe0f}", "\u{a0}ok\u{fe0f}"),
+        (" \t\r\n\n", ""),
+    ] {
+        assert_eq!(settled(message, raw), kept, "{raw:?}");
+    }
+}
+
+#[test]
+fn a_message_is_entered_only_once_normalised() {
+    assert_eq!(entered_message("batch/0/text", "Yes,\nwith a TTL."), Ok(()));
+    for raw in ["Yes, ", "Yes,\n\nno", " Yes", "Yes,\r\nno", "Yes,\n"] {
+        let refused = entered_message("batch/0/text", raw).unwrap_err();
+        assert_eq!(refused.field, "batch/0/text", "{raw:?}");
+    }
+}
