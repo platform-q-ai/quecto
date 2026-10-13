@@ -25,8 +25,9 @@ and reads `quecto-board 2` too. A build that reads only format 2 asks for an
 upgrade on a board this build has written, rather than taking its folders for
 someone else's branch.
 
-A read takes at most (`board_too_large` past any of these, before any file is
-read):
+A read takes at most the following. Past any of these it answers
+`board_too_large` before it reads any file's bytes. In a partial clone, objects the
+clone lacks are still fetched before their sizes can be judged.
 
 | Folder | Entries | File bytes | One file |
 |---|---|---|---|

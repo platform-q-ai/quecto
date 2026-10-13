@@ -364,11 +364,8 @@ pub fn read_board(git: &Git, commit: &str, limits: Limits) -> Result<Board, Unre
     if let Some(name) = twice {
         return Err(damage(&format!("its root names {name} more than once")));
     }
-    let tasks = tasks.transpose()?;
-    let folders = folders
-        .into_iter()
-        .filter_map(|(name, scan)| Some(scan?.map(|scan| (name, scan))))
-        .collect::<Result<Vec<_>, Unread>>()?;
+    // A board that is no board, or a damaged one, says so before what its
+    // folders' scans found.
     board_shape(&root, &kinds)?;
     match &marker {
         Some(Marker::Damaged(why)) => {
@@ -376,6 +373,11 @@ pub fn read_board(git: &Git, commit: &str, limits: Limits) -> Result<Board, Unre
         }
         Some(Marker::Current | Marker::Newer(_) | Marker::Oversized(_)) | None => {}
     }
+    let tasks = tasks.transpose()?;
+    let folders = folders
+        .into_iter()
+        .filter_map(|(name, scan)| Some(scan?.map(|scan| (name, scan))))
+        .collect::<Result<Vec<_>, Unread>>()?;
     // What a read takes in all, before any file's bytes are read.
     let entries = tasks.as_ref().map_or(0, TasksScan::entries)
         + folders
@@ -421,17 +423,24 @@ pub(super) fn too_large(why: String) -> Unread {
     Unread::Failed(BoardStoreError::TooLarge(why))
 }
 
+/// The hex digits of an object's id an odd name shows.
+const SHORT_OID: usize = 12;
+
 /// A tree entry's name as a path set aside in `folder` shows it: its
-/// [`shown_name`], always one name a listing, an answer and the index take
-/// back. A name that shows as nothing, `.`, `..` or with a `/` (only a
-/// hand-made tree holds one) shows as `…`.
-pub(super) fn entry_path(folder: &str, raw: &[u8], _oid: &str) -> String {
-    let shown = shown_name(raw);
-    let one = !matches!(shown.as_str(), "" | "." | "..") && !shown.contains('/');
-    match one {
-        true => format!("{folder}/{shown}"),
-        false => format!("{folder}/…"),
+/// [`shown_name`], when that is a path a listing, an answer and the index
+/// take back ([`shown_board_path`], the one rule they share). Any other
+/// (a name that shows as nothing, `.`, `..`, or holds a `/`, as only a
+/// hand-made tree does) shows as `…` and the first digits of its object's
+/// id, `oid`: two never collide, nor does one with a file named `…`.
+pub(super) fn entry_path(folder: &str, raw: &[u8], oid: &str) -> String {
+    let candidate = format!("{folder}/{}", shown_name(raw));
+    if shown_board_path(&candidate) {
+        return candidate;
     }
+    let short: String = oid.chars().take(SHORT_OID).collect();
+    let odd = format!("{folder}/…{short}");
+    assert!(shown_board_path(&odd), "an odd name shows as one: {odd:?}");
+    odd
 }
 
 /// `result`, its missing objects moved to `missing`.

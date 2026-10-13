@@ -132,6 +132,7 @@ pub(super) fn read_format(git: &Git, tree: &str, limits: Limits) -> Result<Marke
 pub(super) fn newer(version: &str) -> BoardStoreError {
     BoardStoreError::Unavailable(format!(
         "the board is in format {version}, written by a newer quecto; this quecto reads \
-         format {FORMAT_VERSION}: upgrade quecto to read it"
+         formats {}: upgrade quecto to read it",
+        READ_FORMATS.map(|(read, _)| read).join(" and ")
     ))
 }
