@@ -538,10 +538,7 @@ fn error_fields(error: &ProjectBoardError) -> (ErrorCode, Map<String, Value>) {
 fn rule_json(rule: &BoardRuleError) -> Value {
     let mut answer = Map::new();
     answer.insert("code".into(), Value::String(rule_code(rule).into()));
-    let Value::Object(fields) = rule_fields(rule) else {
-        unreachable!("a rule's fields are an object")
-    };
-    answer.extend(fields);
+    answer.extend(rule_fields(rule));
     Value::Object(answer)
 }
 
@@ -603,94 +600,104 @@ pub fn rule_code(rule: &BoardRuleError) -> &'static str {
     }
 }
 
+/// A JSON object's fields, in order: `object!({"key": value, ...})`, each
+/// value as `json!` reads it.
+macro_rules! object {
+    ({$($key:literal: $value:expr),* $(,)?}) => {{
+        let mut fields = Map::new();
+        $(fields.insert($key.to_string(), json!($value));)*
+        fields
+    }};
+}
+
 /// A board rule's own fields, its code aside.
-fn rule_fields(rule: &BoardRuleError) -> Value {
+fn rule_fields(rule: &BoardRuleError) -> Map<String, Value> {
     use BoardRuleError as R;
     match rule {
         R::NotAllowed { from, to } => {
-            json!({"from": from.as_str(), "to": to.as_str()})
+            object!({"from": from.as_str(), "to": to.as_str()})
         }
-        R::NotHolder => json!({}),
-        R::NoClaim => json!({}),
-        R::ClaimLive => json!({}),
-        R::ClaimExpired => json!({}),
-        R::RunOpen(run) => json!({"run": run}),
-        R::RunEnded(run) => json!({"run": run}),
-        R::PlanNotDraft(state) => json!({"state": state.as_str()}),
-        R::NotThisTasks => json!({}),
-        R::NotThisChange => json!({}),
-        R::TaskFinished(status) => json!({"status": status.as_str()}),
+        R::NotHolder => Map::new(),
+        R::NoClaim => Map::new(),
+        R::ClaimLive => Map::new(),
+        R::ClaimExpired => Map::new(),
+        R::RunOpen(run) => object!({"run": run}),
+        R::RunEnded(run) => object!({"run": run}),
+        R::PlanNotDraft(state) => object!({"state": state.as_str()}),
+        R::NotThisTasks => Map::new(),
+        R::NotThisChange => Map::new(),
+        R::TaskFinished(status) => object!({"status": status.as_str()}),
         R::UnknownPlanVersion(version) => {
-            json!({"version": version})
+            object!({"version": version})
         }
-        R::PlanChanged { version, updated } => json!({
+        R::PlanChanged { version, updated } => object!({
             "version": version,
             "updated": updated.as_str(),
         }),
-        R::PlansInconsistent(why) => json!({"reason": shown(why)}),
-        R::PlanAhead { version, updated } => json!({
+        R::PlansInconsistent(why) => object!({"reason": shown(why)}),
+        R::PlanAhead { version, updated } => object!({
             "version": version,
             "updated": updated.as_str(),
         }),
-        R::RunsInconsistent(why) => json!({"reason": shown(why)}),
-        R::PlanNotAccepted(version) => json!({"version": version}),
+        R::RunsInconsistent(why) => object!({"reason": shown(why)}),
+        R::PlanNotAccepted(version) => object!({"version": version}),
         R::ChangeAlreadyLinked { task, change } => {
-            json!({"task": task.as_str(), "change": change})
+            object!({"task": task.as_str(), "change": change})
         }
-        R::NoSuchChange(change) => json!({"change": change}),
-        R::ChangeAhead { change, updated } => json!({
+        R::NoSuchChange(change) => object!({"change": change}),
+        R::ChangeAhead { change, updated } => object!({
             "change": change,
             "updated": updated.as_str(),
         }),
-        R::DiscussionClosed(id) => json!({"discussion": id.as_str()}),
-        R::DiscussionLinked { discussion, task } => json!({
+        R::DiscussionClosed(id) => object!({"discussion": id.as_str()}),
+        R::DiscussionLinked { discussion, task } => object!({
             "discussion": discussion.as_str(),
             "task": task.as_str(),
         }),
         R::DiscussionAhead {
             discussion,
             updated,
-        } => json!({
+        } => object!({
             "discussion": discussion.as_str(),
             "updated": updated.as_str(),
         }),
-        R::MessageAhead { discussion, at } => json!({
+        R::MessageAhead { discussion, at } => object!({
             "discussion": discussion.as_str(),
             "at": at.as_str(),
         }),
-        R::DiscussionFull { discussion, limit } => json!({
+        R::DiscussionFull { discussion, limit } => object!({
             "discussion": discussion.as_str(),
             "limit": limit.as_str(),
         }),
-        R::ReviewAhead { change, updated } => json!({
+        R::ReviewAhead { change, updated } => object!({
             "change": change,
             "updated": updated.as_str(),
         }),
-        R::ChangesLinked(changes) => json!({"changes": changes}),
-        R::PrUnread(pr) => json!({"pr": pr}),
-        R::PrNotOpen(pr) => json!({"pr": pr}),
-        R::PrHeadMismatch(pr) => json!({"pr": pr}),
-        R::ChangeUnlinked(change) => json!({"change": change}),
-        R::ChangeMerged(change) => json!({"change": change}),
-        R::NoChanges => json!({}),
-        R::ChangesUnmerged(changes) => json!({"changes": changes}),
+        R::ChangesLinked(changes) => object!({"changes": changes}),
+        R::PrUnread(pr) => object!({"pr": pr}),
+        R::PrNotOpen(pr) => object!({"pr": pr}),
+        R::PrHeadMismatch(pr) => object!({"pr": pr}),
+        R::ChangeUnlinked(change) => object!({"change": change}),
+        R::ChangeMerged(change) => object!({"change": change}),
+        R::NoChanges => Map::new(),
+        R::ChangesUnmerged(changes) => object!({"changes": changes}),
         R::ChangesInconsistent(why) => {
-            json!({"reason": shown(why)})
+            object!({"reason": shown(why)})
         }
-        R::NotTakeable(status) => json!({"status": status.as_str()}),
-        R::AlreadyHolder => json!({}),
-        R::NoPrs => json!({}),
-        R::PrsUnmerged(prs) => json!({"prs": prs}),
-        R::PrsLinked(prs) => json!({"prs": prs}),
-        R::PrNotLinked(pr) => json!({"pr": pr}),
-        R::PrAlreadyLinked(pr) => json!({"pr": pr}),
-        R::NotDraft(status) => json!({"status": status.as_str()}),
-        R::NoEdit => json!({}),
+        R::NotTakeable(status) => object!({"status": status.as_str()}),
+        R::AlreadyHolder => Map::new(),
+        R::NoPrs => Map::new(),
+        R::PrsUnmerged(prs) => object!({"prs": prs}),
+        R::PrsLinked(prs) => object!({"prs": prs}),
+        R::PrNotLinked(pr) => object!({"pr": pr}),
+        R::PrAlreadyLinked(pr) => object!({"pr": pr}),
+        R::NotDraft(status) => object!({"status": status.as_str()}),
+        R::NoEdit => Map::new(),
         R::Superseded { by } => {
             let by: Vec<&str> = by.iter().map(Slug::as_str).collect();
-            json!({"by": by})
+            object!({"by": by})
         }
-        R::IssueShared { issue, tasks } => json!({
+        R::IssueShared { issue, tasks } => object!({
             "issue": issue,
             "tasks": [tasks[0].as_str(), tasks[1].as_str()],
         }),
@@ -698,17 +705,17 @@ fn rule_fields(rule: &BoardRuleError) -> Value {
             issue,
             task,
             pr_holder,
-        } => json!({
+        } => object!({
             "issue": issue,
             "task": task.as_str(),
             "pr_holder": pr_holder.as_str(),
         }),
-        R::OwnPrReferenced { task, pr, change } => json!({
+        R::OwnPrReferenced { task, pr, change } => object!({
             "task": task.as_str(),
             "pr": pr,
             "change": change,
         }),
-        R::Invalid(schema) => json!({
+        R::Invalid(schema) => object!({
             "field": shown(&schema.field),
             "problem": shown(&schema.problem),
         }),

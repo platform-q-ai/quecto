@@ -125,7 +125,7 @@ fn read_line(args: &[String]) -> Result<Line, RequestError> {
 /// The request the command line names; `stdin` reads `--input -`.
 fn request(
     line: &Line,
-    stdin: impl FnOnce() -> std::io::Result<String>,
+    stdin: impl FnOnce() -> Result<String, InputError>,
 ) -> Result<Value, RequestError> {
     let invalid = |field: &str, problem: &str, fault| RequestError::of(field, problem, fault);
     match (&line.input, &line.op) {
@@ -138,7 +138,7 @@ fn request(
             let text = match input.as_str() {
                 "-" => stdin().map_err(|error| {
                     let problem = format!("could not be read: {error}");
-                    invalid("input", &problem, FaultKind::InvalidValue)
+                    RequestError::whole("input", problem, error.fault())
                 })?,
                 text => text.to_string(),
             };
@@ -168,17 +168,50 @@ fn request(
     }
 }
 
+/// Why `--input -` could not be read as a request's text.
+#[derive(Debug)]
+enum InputError {
+    /// More than [`MAX_REQUEST_BYTES`].
+    TooLarge,
+    /// Not UTF-8.
+    NotUtf8,
+    /// Standard input could not be read.
+    Read(std::io::Error),
+}
+
+impl std::fmt::Display for InputError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::TooLarge => write!(f, "it is more than {MAX_REQUEST_BYTES} bytes"),
+            Self::NotUtf8 => f.write_str("it is not UTF-8"),
+            Self::Read(error) => write!(f, "{error}"),
+        }
+    }
+}
+
+impl InputError {
+    /// How the request's text was wrong, as the shared path records it.
+    fn fault(&self) -> FaultKind {
+        match self {
+            Self::TooLarge => FaultKind::TooLarge,
+            Self::NotUtf8 => FaultKind::NotJson,
+            Self::Read(_) => FaultKind::InvalidValue,
+        }
+    }
+}
+
 /// At most [`MAX_REQUEST_BYTES`] of `input`, as text.
-fn bounded(input: impl Read) -> std::io::Result<String> {
+fn bounded(input: impl Read) -> Result<String, InputError> {
     let mut bytes = Vec::new();
     let limit = u64::try_from(MAX_REQUEST_BYTES).expect("the request bound fits a u64");
-    input.take(limit + 1).read_to_end(&mut bytes)?;
+    input
+        .take(limit + 1)
+        .read_to_end(&mut bytes)
+        .map_err(InputError::Read)?;
     if bytes.len() > MAX_REQUEST_BYTES {
-        return Err(std::io::Error::other(format!(
-            "it is more than {MAX_REQUEST_BYTES} bytes"
-        )));
+        return Err(InputError::TooLarge);
     }
-    String::from_utf8(bytes).map_err(|_| std::io::Error::other("it is not UTF-8"))
+    String::from_utf8(bytes).map_err(|_| InputError::NotUtf8)
 }
 
 pub(crate) fn cmd_board(
