@@ -7,8 +7,11 @@
 //! claim, so a removal never races a kill or another removal. A removal
 //! whose cleanup failed is marked owed, so the next kill retries it.
 
+use std::sync::MutexGuard;
+
 use super::{
-    EnvironmentLookupError, EnvironmentRecord, EnvironmentRegistry, EnvironmentStatus, KillClaim,
+    ClaimCondition, ClaimRefusal, EnvironmentLookupError, EnvironmentRecord, EnvironmentRegistry,
+    EnvironmentRegistryState, EnvironmentStatus, KillClaim,
 };
 
 /// The `metadata` key a removal whose cleanup failed leaves on the record
@@ -69,7 +72,30 @@ impl EnvironmentRegistry {
         &self,
         environment_ref: &str,
     ) -> Result<RemovalClaim, EnvironmentLookupError> {
-        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        self.begin_removal_if(environment_ref, &ClaimCondition::Any)
+            .map_err(ClaimRefusal::unconditional)
+    }
+
+    /// [`Self::begin_removal`] granted only when `condition` admits the
+    /// record, judged in the same critical section that grants the claim
+    /// (see [`Self::begin_kill_if`]). A refusal claims nothing and writes
+    /// nothing.
+    pub fn begin_removal_if(
+        &self,
+        environment_ref: &str,
+        condition: &ClaimCondition,
+    ) -> Result<RemovalClaim, ClaimRefusal> {
+        let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        Self::admitted_locked(&state, environment_ref, condition)?;
+        self.claim_removal_locked(state, environment_ref)
+            .map_err(ClaimRefusal::Lookup)
+    }
+
+    fn claim_removal_locked(
+        &self,
+        mut state: MutexGuard<'_, EnvironmentRegistryState>,
+        environment_ref: &str,
+    ) -> Result<RemovalClaim, EnvironmentLookupError> {
         let record = state
             .entries
             .get_mut(environment_ref)

@@ -63,7 +63,7 @@ fn stopped_records_with_nothing_on_disk_are_forgotten_and_refs_restart_at_c1() {
     let process = process_with_disk(gone, disk(&[], asked.clone()));
     let (registry, report) =
         RestoreRegistry::new(store.clone(), process, no_hosted()).execute("cli:two");
-    assert_eq!(report.forgotten, ["C4", "C9"]);
+    assert_eq!(report.forgotten_refs(), ["C4", "C9"]);
     assert!(report.diagnostics.is_empty(), "{:?}", report.diagnostics);
     assert!(registry.entries().is_empty());
     assert!(store.load().unwrap().is_empty());
@@ -230,7 +230,7 @@ fn a_record_whose_inspect_cannot_answer_holds_back_no_other_across_restores() {
         RestoreRegistry::new(store.clone(), process, no_hosted()).execute("cli:two")
     };
     let (_, report) = restore();
-    assert_eq!(report.forgotten, ["C3", "C4", "C5"]);
+    assert_eq!(report.forgotten_refs(), ["C3", "C4", "C5"]);
     assert_eq!(
         report.kept_stopped,
         [("C2".to_string(), "no inspect argv".to_string())]

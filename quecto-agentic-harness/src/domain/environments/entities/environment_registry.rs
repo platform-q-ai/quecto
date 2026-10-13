@@ -19,10 +19,17 @@
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 
+mod claim_condition;
 mod record_lookup;
 mod record_residue;
+#[cfg(test)]
+mod resolve_hook;
+pub use claim_condition::{
+    ClaimCondition, ClaimRefusal, CreatorKey, CreatorMismatch, InvalidCreatorKey,
+    MAX_CREATOR_KEY_BYTES,
+};
 pub use record_lookup::{EnvironmentLookupError, EnvironmentStatus, EnvironmentTarget};
 pub use record_residue::GONE_AT_RESTORE;
 
@@ -189,6 +196,8 @@ pub struct EnvironmentRegistry {
     /// Key of the session this registry belongs to; stamped on every
     /// record it creates.
     session: Arc<str>,
+    #[cfg(test)]
+    after_resolve: resolve_hook::ResolveHook,
 }
 
 impl EnvironmentRegistry {
@@ -200,10 +209,9 @@ impl EnvironmentRegistry {
     /// creating records on behalf of `session`.
     pub fn with_journal(journal: EnvironmentJournal, session: &str) -> Self {
         Self {
-            state: Arc::default(),
             journal: Some(journal),
-            journal_order: Arc::default(),
             session: Arc::from(session),
+            ..Self::default()
         }
     }
 
@@ -480,14 +488,18 @@ impl EnvironmentRegistry {
     ) -> Result<EnvironmentRecord, EnvironmentLookupError> {
         self.recover_unread();
         let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
-        match (Self::resolve_locked(&state, target), &state.read_error) {
+        let resolved = match (Self::resolve_locked(&state, target), &state.read_error) {
             // Nothing is known of what the store holds: a miss is not an
             // unknown target, it is the store's read error (round 2 F-B).
             (Err(EnvironmentLookupError::Unknown(_)), Some(error)) => {
                 Err(EnvironmentLookupError::Unreadable(error.to_string()))
             }
             (resolved, _) => resolved,
-        }
+        };
+        drop(state);
+        #[cfg(test)]
+        self.after_resolve.fire(self);
+        resolved
     }
 
     /// Resolve a target for joining: the environment must be live. Stopped
@@ -614,7 +626,15 @@ impl EnvironmentRegistry {
     /// which this registry cannot see settle: an explicit kill here is the
     /// operator's retry and claims it (review F6, #2033).
     pub fn begin_kill(&self, environment_ref: &str) -> Result<KillClaim, EnvironmentLookupError> {
-        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        self.begin_kill_if(environment_ref, &ClaimCondition::Any)
+            .map_err(ClaimRefusal::unconditional)
+    }
+
+    fn claim_kill_locked(
+        &self,
+        mut state: MutexGuard<'_, EnvironmentRegistryState>,
+        environment_ref: &str,
+    ) -> Result<KillClaim, EnvironmentLookupError> {
         let record = state
             .entries
             .get_mut(environment_ref)

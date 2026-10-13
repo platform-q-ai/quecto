@@ -150,7 +150,7 @@ fn kill_by_ref_or_name_runs_the_retained_kill_and_records_stopped() {
     // #2206: a stopped environment is removed by a kill only through its
     // retained cleanup; this script set retained none.
     let output = run(&["container", "kill", "C1"], &ctx);
-    assert_eq!(output.exit_code, 1, "{output:?}");
+    assert_eq!(output.exit_code, super::EXIT_NOTHING_TO_KILL, "{output:?}");
     assert!(
         output
             .stderr
@@ -594,13 +594,13 @@ fn gc_parses_the_abandoned_policy_and_refuses_a_bad_duration() {
     }
 }
 
-/// #2134: a kill of a ref the command's own restore just forgot answers as
-/// a kill of a stopped environment always has, and says why it is gone.
+/// #2134: a kill of a ref the command's own restore just forgot answers
+/// nothing to kill (exit 4), and says why it is gone.
 #[test]
 fn killing_a_ref_the_restore_just_forgot_says_it_is_stopped() {
     let (_dir, ctx, cleanup_log) = composed_with_exited_containers();
     let output = run(&["container", "kill", "C2"], &ctx);
-    assert_eq!(output.exit_code, 1, "{output:?}");
+    assert_eq!(output.exit_code, super::EXIT_NOTHING_TO_KILL, "{output:?}");
     assert!(
         output
             .stderr
