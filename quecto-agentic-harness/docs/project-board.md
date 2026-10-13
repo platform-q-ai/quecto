@@ -197,7 +197,18 @@ A started task's run, once its swarm has ended, is folded back onto the board
 evidence and cost, written to the run alone in one commit. Each fold-back
 writes one `board_fold_back` record under the same switch, gate and rules
 (written to `tracing` at `INFO` as `board fold back`). It holds no titles,
-owners or evidence, only kinds and counts:
+owners or evidence, only kinds and counts.
+
+The run's own owners and evidence are scrubbed before they reach the board:
+every address in them (`scheme://…`, `//host…` or a bare `host.tld/…`, in a
+code span or a link too) keeps only its host and port (userinfo written
+`***`), its path up to its first `?`, `#`, `;` or `%3F`, and an anchor
+fragment such as `#L10-L20`; an address whose authority is no host and port
+is written `scheme://***`. Secret-shaped spans are then redacted. Known
+limits: a secret in an address's path (a Slack or Discord webhook) is kept; a
+bare `host/…?…` whose host has no dot keeps its query; a secret that is no
+address and matches no redaction pattern is kept. A line split by a line break
+is dropped whole.
 
 | Field | Meaning |
 |---|---|

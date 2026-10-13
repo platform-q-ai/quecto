@@ -396,6 +396,8 @@ fn the_git_store_takes_a_run_folded_back_alone_with_no_secret_in_its_file() {
                 ),
                 (TOKEN.to_string(), "4f2a9c1"),
                 ("costs $5".to_string(), "4f2a9c1"),
+                ("postgres://app:S3cr#t@db:5432/app".to_string(), "4f2a9c1"),
+                ("https://h.example/p#sig=ab".to_string(), "4f2a9c1"),
                 (
                     "`https://acct.blob.core.windows.net/c/b?sv=2024&sig=AbC%2Bsecret`".into(),
                     "4f2a9c1",
@@ -437,6 +439,11 @@ fn the_git_store_takes_a_run_folded_back_alone_with_no_secret_in_its_file() {
     );
     assert!(!file.contains(TOKEN) && !file.contains("$5"), "{file}");
     assert!(!file.contains("sig=") && !file.contains("sv="), "{file}");
+    assert!(!file.contains("S3cr") && !file.contains("app:"), "{file}");
+    assert!(
+        file.contains("[link](https://h.example/p) at 4f2a9c1"),
+        "{file}"
+    );
     assert!(
         file.contains("`https://acct.blob.core.windows.net/c/b` at 4f2a9c1"),
         "{file}"

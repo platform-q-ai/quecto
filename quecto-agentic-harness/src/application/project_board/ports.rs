@@ -257,9 +257,10 @@ pub enum BoardStoreError {
     /// [`BoardWrite::Lost`], since no store can tell it from a head it
     /// never held. Read the board again. Nothing was written.
     InvalidWrite(String),
-    /// A write that would leave the board, or one of its folders, holding
-    /// more bytes of files than a read takes. Nothing was written; a write
-    /// of smaller files may land. Front ends answer it as an invalid write.
+    /// A write that would leave its files' total bytes, on the board or in
+    /// one of its folders, past what a read takes. Nothing was written; a
+    /// write of smaller files may land. Front ends answer it as an invalid
+    /// write.
     WriteTooLarge(String),
     /// The store could not be reached or read, or cannot tell whether a
     /// write landed.
