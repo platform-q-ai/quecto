@@ -52,7 +52,8 @@ use crate::domain::environments::services::environment_retention::{
 };
 
 use super::super::dto::{
-    CorrectionOutcome, EnvironmentLiveness, OvertakenAudience, RestoreMode, RestoredRegistry,
+    CorrectionOutcome, EnvironmentLiveness, ForgottenEnvironment, OvertakenAudience, RestoreMode,
+    RestoredRegistry,
 };
 use super::super::ports::{EnvironmentProcess, EnvironmentRegistryStore, HostedSwarmRunInspection};
 use super::box_residue::{Residue, ResidueProbe};
@@ -397,7 +398,10 @@ impl RestoreRegistry {
             return;
         }
         match self.store.forget(&record) {
-            Ok(()) => report.forgotten.push(record.environment_ref),
+            Ok(()) => report.forgotten.push(ForgottenEnvironment {
+                environment_ref: record.environment_ref,
+                created_by: record.created_by,
+            }),
             Err(error) => {
                 tell(
                     report,

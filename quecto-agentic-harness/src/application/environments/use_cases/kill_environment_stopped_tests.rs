@@ -276,9 +276,12 @@ fn a_stopped_environment_without_a_retained_cleanup_is_refused_before_asking() {
     });
     let commands = Commands::answering(EnvironmentLiveness::Gone);
 
-    let error = kill(&registry, &commands, by_ref("C6"))
-        .unwrap_err()
-        .to_string();
+    let error = kill(&registry, &commands, by_ref("C6")).unwrap_err();
+    assert!(
+        matches!(error, KillEnvironmentError::NothingToKill(_)),
+        "{error:?}"
+    );
+    let error = error.to_string();
 
     assert!(error.contains("retained no cleanup"), "{error}");
     assert!(error.contains("quecto container gc"), "{error}");

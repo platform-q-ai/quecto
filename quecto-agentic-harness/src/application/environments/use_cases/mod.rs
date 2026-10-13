@@ -46,6 +46,8 @@ mod gc_orphaned_environments_scope_tests;
 #[cfg(test)]
 mod gc_orphaned_environments_tests;
 #[cfg(test)]
+mod kill_environment_created_by_tests;
+#[cfg(test)]
 mod kill_environment_stopped_tests;
 #[cfg(test)]
 mod kill_environment_tests;
