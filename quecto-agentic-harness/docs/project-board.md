@@ -11,8 +11,10 @@ the same JSON answer; see the README's tool table and `quecto board --help`.
 
 Each board call, from either front end, writes one `board_op` record (epic #2481
 T3), only while the event log is on (`"telemetry": {"event_log": {"enabled":
-true}}`, off by default). With it off nothing is opened, timed or written, to
-the event log or to `tracing`.
+true}}`, off by default). With it off no `board_op` record is built, timed or
+written, to the event log or to `tracing`. The board clock's one warning when
+it has no outside time (`quecto::project_board`) is still written whatever the
+switch says; gating it is telemetry slice T5's.
 
 - **The agent tool** records in its session's event log,
   `<base_dir>/audit/<session>.jsonl`, under the session's own rule: the loaded
@@ -48,8 +50,13 @@ the board's table, an error or rule code, a schema field), counts, a task's
 slug (redacted and capped at 64 characters), a pull request's number and a
 commit id git produced. Never a title, a description, a message, a problem or
 reason, a path, a name, an email, a remote, a token, nor any key or value a
-request sent. Lifecycle questions (time in each status, claim lifetimes) are
-answered from the board branch's own history, not from these records.
+request sent. The session's event log still holds, as for every tool, the
+generic `tool_call` and `tool_result` records of each `board` tool call, with
+its arguments and its answer's preview word for word (the README's "tool
+arguments and result previews as sent"); an audit view of the board tool's
+arguments (slice T0) awaits the owner's decision. Lifecycle questions (time in
+each status, claim lifetimes) are answered from the board branch's own history,
+not from these records.
 
 A caller names itself in `QUECTO_BOARD_CLIENT`, read by allowlist:
 `pocket-relay` is recorded as `pocket_relay`, any other value as `other`, never
