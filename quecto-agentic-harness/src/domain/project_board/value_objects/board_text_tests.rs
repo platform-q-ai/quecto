@@ -439,12 +439,73 @@ mod changes {
         );
     }
 
-    /// Whatever the text, it is changed exactly when a change is told.
+    /// A chat space past a dropped blank line is told: lines are lined up
+    /// past the blank ones dropped at the start.
+    #[test]
+    fn a_chat_space_after_a_dropped_blank_line_is_told() {
+        told(text_changes, "\nÇa va\u{a0}?", &[ChatSpace, EdgeBlankLines]);
+        told(
+            text_changes,
+            " \n\t\nÇa va\u{3000}?",
+            &[ChatSpace, EdgeBlankLines],
+        );
+    }
+
+    /// The kinds a property test can tell from the raw text alone: each
+    /// is told exactly when the text holds what it changes.
+    fn told_kinds_hold(raw: &str) {
+        let count = |text: &str, set: &[char]| text.chars().filter(|c| set.contains(c)).count();
+        let crlf = raw.contains("\r\n");
+        let lone_cr = raw.replace("\r\n", "").contains('\r');
+        let breaks: Vec<char> = LINE_BREAKS.iter().copied().filter(|c| *c != '\r').collect();
+        let line_count = |text: &str| match text.is_empty() {
+            true => 0,
+            false => text
+                .replace("\r\n", "\n")
+                .replace('\r', "\n")
+                .split('\n')
+                .count(),
+        };
+        let (texts, normal) = (text_changes(raw), text(raw));
+        assert_eq!(texts.is_empty(), normal == raw, "{raw:?}");
+        assert_eq!(texts.contains(&Crlf), crlf, "{raw:?}");
+        assert_eq!(texts.contains(&LoneCr), lone_cr, "{raw:?}");
+        let fewer_chat = count(&normal, &CHAT_SPACES) < count(raw, &CHAT_SPACES);
+        assert_eq!(texts.contains(&ChatSpace), fewer_chat, "{raw:?}");
+        let dropped = line_count(&normal) < line_count(raw);
+        assert_eq!(texts.contains(&EdgeBlankLines), dropped, "{raw:?}");
+        for never in [LineBreak, Tab, EdgeSpace] {
+            assert!(!texts.contains(&never), "{raw:?}");
+        }
+        let lines = line_changes(raw);
+        assert_eq!(lines.is_empty(), line(raw) == raw, "{raw:?}");
+        assert_eq!(lines.contains(&Crlf), crlf, "{raw:?}");
+        assert_eq!(lines.contains(&LoneCr), lone_cr, "{raw:?}");
+        assert_eq!(
+            lines.contains(&LineBreak),
+            count(raw, &breaks) > 0,
+            "{raw:?}"
+        );
+        assert_eq!(
+            lines.contains(&ChatSpace),
+            count(raw, &CHAT_SPACES) > 0,
+            "{raw:?}"
+        );
+        assert_eq!(lines.contains(&Tab), raw.contains('\t'), "{raw:?}");
+        for never in [EdgeBlankLines, TrailingSpace] {
+            assert!(!lines.contains(&never), "{raw:?}");
+        }
+    }
+
+    /// Whatever the text, it is changed exactly when a change is told,
+    /// and each kind told from the raw text alone is told exactly when
+    /// it applies.
     #[test]
     fn a_change_is_told_exactly_when_the_text_changed() {
         let pieces = [
-            "a", "Ça", " ", "\t", "\n", "\r", "\r\n", "\u{a0}", "\u{2028}", "?", "`", "```", "> ",
-            "    ", "[x](y)", "<b>", "\u{b}",
+            "a", "Ça", " ", "\t", "\n", "\r", "\r\n", "\u{a0}", "\u{202f}", "\u{2007}", "\u{3000}",
+            "\u{2028}", "\u{2029}", "\u{85}", "\u{b}", "?", "`", "```", "~~~", "$", "\\", "> ",
+            "- ", "1. ", "[^1]: ", "    ", "[x](y)", "<b>",
         ];
         let mut seed: u64 = 0x2481;
         for _ in 0..4000 {
@@ -454,8 +515,7 @@ mod changes {
                 raw.push_str(pieces[(seed >> 33) as usize % pieces.len()]);
             }
             seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
-            assert_eq!(text_changes(&raw).is_empty(), text(&raw) == raw, "{raw:?}");
-            assert_eq!(line_changes(&raw).is_empty(), line(&raw) == raw, "{raw:?}");
+            told_kinds_hold(&raw);
         }
     }
 }
