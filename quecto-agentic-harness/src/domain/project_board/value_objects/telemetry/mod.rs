@@ -35,6 +35,7 @@
 use serde::Serialize;
 
 use super::code_ref::CommitId;
+use super::vocabulary::RunOutcome;
 pub use leaves::{StaticKind, TaskRef};
 
 mod leaves;
@@ -260,6 +261,23 @@ kinds!(
     StartClaim { Fresh => "fresh", Held => "held" }
 );
 
+kinds!(
+    /// How a folded run ended (S4): a run outcome, by its own name.
+    RunOutcomeKind { Succeeded => "succeeded", Failed => "failed", Stopped => "stopped", Lost => "lost" }
+);
+
+impl RunOutcomeKind {
+    /// The kind of `outcome`.
+    pub fn of(outcome: RunOutcome) -> Self {
+        match outcome {
+            RunOutcome::Succeeded => Self::Succeeded,
+            RunOutcome::Failed => Self::Failed,
+            RunOutcome::Stopped => Self::Stopped,
+            RunOutcome::Lost => Self::Lost,
+        }
+    }
+}
+
 /// One start of a task (S4, #2479), as the event log's `board_start`
 /// record holds it: what was started, how large a team, whether the claim
 /// was taken, and how long the coordinator's launch took. Each optional
@@ -307,8 +325,7 @@ pub struct ClaimRenewalsRecord {
     pub min_left_s: Option<i64>,
 }
 
-/// A run folded back (S4): how it ended (`run_outcome`, a run outcome's
-/// name), where the plan's task items stood, the plan items the swarm
+/// A run folded back (S4): how it ended (`run_outcome`), where the plan's task items stood, the plan items the swarm
 /// never seeded (`unmatched`) and the swarm items no plan item matched
 /// (`extra`), the evidence lines kept and dropped, its cost, and its
 /// write's attempts, lost races and size.
@@ -319,7 +336,7 @@ pub struct FoldBackRecord {
     #[serde(flatten)]
     pub outcome: OpOutcome,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub run_outcome: Option<StaticKind>,
+    pub run_outcome: Option<RunOutcomeKind>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub items: Option<ItemCounts>,
     #[serde(skip_serializing_if = "Option::is_none")]

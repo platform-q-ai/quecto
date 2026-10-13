@@ -176,15 +176,20 @@ const KNOWN_KINDS: &[&str] = &[
     "trailing_space",
     "edge_space",
     // Starts, claim renewals and fold-backs (S4): brief refusals, the team
-    // fields spawn cannot carry, claim kinds and run outcomes.
+    // fields spawn cannot carry, the item limits, claim kinds and run
+    // outcomes.
     "team_too_large",
     "team_unsupported",
     "deadline_passed",
+    "deadline_too_soon",
+    "no_task_items",
     "item_too_large",
     "brief_too_large",
     "image",
     "turns",
     "members",
+    "workers",
+    "criteria",
     "fresh",
     "held",
     "succeeded",

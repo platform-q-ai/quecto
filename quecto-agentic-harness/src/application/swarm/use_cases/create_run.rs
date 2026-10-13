@@ -19,9 +19,9 @@ use crate::domain::swarm::{
 };
 
 /// The most members a run may hold, the coordinator included.
-const MEMBER_LIMIT_MAX: i64 = 25;
+pub const MEMBER_LIMIT_MAX: i64 = 25;
 /// How far ahead a deadline may be: seven days.
-const DEADLINE_HORIZON_SECONDS: f64 = 604_800.0;
+pub const DEADLINE_HORIZON_SECONDS: f64 = 604_800.0;
 
 /// Validates the contract in Python's order, then in one creating
 /// transaction either takes over the setup placeholder (only its

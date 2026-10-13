@@ -1,8 +1,8 @@
 //! Starting a task (S4, #2479): the one change that hands a task to a
 //! swarm. A ready task is claimed by its starter; a task the starter holds
-//! live is worked on as it is. Either way it moves to in progress and a run
-//! of its accepted plan begins, all at one stamp, so the task and the run
-//! are written by one commit.
+//! has its claim renewed. Either way it moves to in progress and a run of
+//! its accepted plan begins, all at one stamp, so the task and the run are
+//! written by one commit, and the run begins with a whole claim window.
 //!
 //! The transition table stays the authority on who may move a task: a start
 //! asks it about each move it makes ([`move_reads`]) and composes them, as
@@ -14,31 +14,67 @@ use super::super::entities::task::Task;
 use super::super::value_objects::rule_error::BoardRuleError;
 use super::super::value_objects::timestamp::Timestamp;
 use super::super::value_objects::vocabulary::TaskStatus::{self, *};
-use super::claims::{held_live_by, new_claim, settle, stamp};
+use super::claims::{new_claim, renew, settle, stamp};
 use super::runs::begin_run;
 use super::transitions::move_reads;
 
-/// A task started: in progress, held by its starter, and its run begun.
+/// A task started: in progress, held by its starter, and a run of its
+/// accepted plan begun. Only [`start`] builds one, so holding one proves
+/// its plan is the task's accepted plan.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Started {
-    pub task: Task,
-    pub run: Run,
-    /// Whether the start took the claim (the task was ready), so a start
-    /// whose swarm never launched knows to hand the task back.
-    pub took_claim: bool,
+    task: Task,
+    run: Run,
+    plan: Plan,
+    from: TaskStatus,
+}
+
+impl Started {
+    /// The task as the start wrote it.
+    pub fn task(&self) -> &Task {
+        &self.task
+    }
+
+    /// The run the start began.
+    pub fn run(&self) -> &Run {
+        &self.run
+    }
+
+    /// The accepted plan the run runs.
+    pub fn plan(&self) -> &Plan {
+        &self.plan
+    }
+
+    /// The status the task started from, so a start whose swarm never
+    /// launched can put the task back as it was.
+    pub fn from(&self) -> TaskStatus {
+        self.from
+    }
+
+    /// Whether the start took the claim: the task was ready.
+    pub fn took_claim(&self) -> bool {
+        self.from == Ready
+    }
+
+    /// The task and the run, to write in one commit.
+    pub fn into_writes(self) -> (Task, Run) {
+        (self.task, self.run)
+    }
 }
 
 /// `task` started by `actor` at `now` on `plan`, its accepted plan (`None`
 /// when the board holds no file of that version), after every run in
-/// `runs`: a ready task is claimed by `actor`; a claimed, in-review or
-/// blocked one that `actor` holds live moves to in progress; an in-progress
-/// one stays. The task's change and the run share one stamp.
+/// `runs`: a ready task is claimed by `actor`; a claimed, in-progress,
+/// in-review or blocked one that `actor` holds has its claim renewed (an
+/// expired one too, as [`renew`] allows the holder) and moves to, or stays
+/// in, progress. The task's change, its claim and the run share one stamp,
+/// at which the claim's liveness is judged.
 ///
 /// # Errors
 /// A draft, done or archived task (`not_allowed`); a claim `actor` does not
-/// hold live; no accepted plan, or its file missing, or another plan given;
-/// a run still going, or runs that contradict each other; a stamp or a run
-/// number the board cannot spell.
+/// hold, live or not (`not_holder`, `no_claim`); no accepted plan, or its
+/// file missing, or another plan given; a run still going, or runs that
+/// contradict each other; a stamp or a run number the board cannot spell.
 pub fn start(
     task: &Task,
     runs: &[Run],
@@ -47,19 +83,23 @@ pub fn start(
     now: &Timestamp,
 ) -> Result<Started, BoardRuleError> {
     let from = task.fields().status;
-    let took_claim = match from {
+    let at = stamp(task, now)?;
+    // The task's fields once held by `actor` at the stamp: a new claim on
+    // a ready task (set with the move, as a ready task holds none), or
+    // the holder's renewed one.
+    let mut next = match from {
         Ready => {
-            move_reads(task, Claimed, actor, now)?;
-            true
+            move_reads(task, Claimed, actor, &at)?;
+            let mut next = task.fields().clone();
+            next.claim = Some(new_claim(actor, &at)?);
+            next
         }
         Claimed | Review | Blocked => {
-            move_reads(task, InProgress, actor, now)?;
-            false
+            let renewed = renew(task, actor, now)?;
+            move_reads(&renewed, InProgress, actor, &at)?;
+            renewed.into_fields()
         }
-        InProgress => {
-            held_live_by(task, actor, now)?;
-            false
-        }
+        InProgress => renew(task, actor, now)?.into_fields(),
         Draft | Done | Archived => {
             return Err(BoardRuleError::NotAllowed {
                 from,
@@ -72,30 +112,26 @@ pub fn start(
         (Some(version), None) => return Err(BoardRuleError::UnknownPlanVersion(version)),
         (Some(_), Some(plan)) => plan,
     };
-    let at = stamp(task, now)?;
-    let mut next = task.fields().clone();
     next.status = TaskStatus::InProgress;
-    if took_claim {
-        next.claim = Some(new_claim(actor, &at)?);
-    }
     let started = settle(next, &at)?;
     let run = begin_run(&started, runs, plan, actor, &at)?;
+    let fields = started.fields();
     assert!(
-        started.fields().updated == at && run.fields().started == at,
+        fields.updated == at && run.fields().started == at,
         "the task's change and its run share one stamp"
     );
     assert!(
-        started
-            .fields()
+        fields
             .claim
             .as_ref()
-            .is_some_and(|claim| claim.holder.is(actor)),
-        "a started task is held by its starter"
+            .is_some_and(|claim| claim.holder.is(actor) && claim.since == at),
+        "a started task is held by its starter, its claim taken or renewed at the stamp"
     );
     Ok(Started {
         task: started,
         run,
-        took_claim,
+        plan: plan.clone(),
+        from,
     })
 }
 

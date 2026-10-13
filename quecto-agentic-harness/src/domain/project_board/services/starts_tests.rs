@@ -3,7 +3,7 @@ use crate::domain::project_board::entities::run::Run;
 use crate::domain::project_board::services::fixtures_tests::{
     at, last_written, open_run, person, plan, task, without_claim,
 };
-use crate::domain::project_board::value_objects::vocabulary::PlanState;
+use crate::domain::project_board::value_objects::vocabulary::{PlanState, RunOutcome};
 
 fn accepted() -> Plan {
     plan(1, PlanState::Accepted)
@@ -14,83 +14,113 @@ fn start_at(task: &Task, runs: &[Run], by: &str, now: &str) -> Result<Started, B
 }
 
 /// A state a start may find: the task, its runs, the starter, the time,
-/// and whether the start takes the claim or why it refuses.
+/// and the status it started from or why it refuses.
 type Row = (
     &'static str,
     Task,
     Vec<Run>,
     &'static str,
     &'static str,
-    Result<bool, BoardRuleError>,
+    Result<TaskStatus, BoardRuleError>,
 );
 
-/// Every state a start may find, and what it does or why it refuses.
+/// Every state a start may find, and what it does or why it refuses. Ada
+/// holds every held fixture task from 09:00 to 11:00.
 #[test]
-fn a_start_claims_a_ready_task_or_works_under_the_starters_live_claim() {
+fn a_start_claims_a_ready_task_or_works_under_the_starters_own_claim() {
     let ended = |run: Run| {
         let mut fields = run.into_fields();
         fields.ended = Some(at("09:30:00"));
-        fields.outcome =
-            Some(crate::domain::project_board::value_objects::vocabulary::RunOutcome::Lost);
+        fields.outcome = Some(RunOutcome::Lost);
         Run::new(fields).unwrap()
     };
+    let not_allowed = |from| {
+        Err(BoardRuleError::NotAllowed {
+            from,
+            to: InProgress,
+        })
+    };
     #[rustfmt::skip] // One readable state per row.
-    let table: [Row; 13] = [
-        ("ready", task(Ready), vec![], "Bob", "10:00:00", Ok(true)),
-        ("claimed by the starter", task(Claimed), vec![], "Ada", "10:00:00", Ok(false)),
-        ("in progress by the starter", task(InProgress), vec![], "Ada", "10:00:00", Ok(false)),
-        ("in review by the starter", task(Review), vec![], "Ada", "10:00:00", Ok(false)),
-        ("blocked by the starter", task(Blocked), vec![], "Ada", "10:00:00", Ok(false)),
-        ("a run ended before", task(InProgress), vec![ended(open_run(1, 1))], "Ada", "10:00:00", Ok(false)),
-        ("held by someone else", task(InProgress), vec![], "Bob", "10:00:00", Err(BoardRuleError::NotHolder)),
-        ("the starter's claim expired", task(Claimed), vec![], "Ada", "11:30:00", Err(BoardRuleError::ClaimExpired)),
+    let table: [Row; 23] = [
+        ("ready", task(Ready), vec![], "Bob", "10:00:00", Ok(Ready)),
+        ("claimed by the starter", task(Claimed), vec![], "Ada", "10:00:00", Ok(Claimed)),
+        ("in progress by the starter", task(InProgress), vec![], "Ada", "10:00:00", Ok(InProgress)),
+        ("in review by the starter", task(Review), vec![], "Ada", "10:00:00", Ok(Review)),
+        ("blocked by the starter", task(Blocked), vec![], "Ada", "10:00:00", Ok(Blocked)),
+        ("a run ended before", task(InProgress), vec![ended(open_run(1, 1))], "Ada", "10:00:00", Ok(InProgress)),
+        // The holder renews an expired claim of their own, as `renew` does.
+        ("claimed, the starter's claim expired", task(Claimed), vec![], "Ada", "11:30:00", Ok(Claimed)),
+        ("in progress, the starter's claim expired", task(InProgress), vec![], "Ada", "11:30:00", Ok(InProgress)),
+        ("in review, the starter's claim expired", task(Review), vec![], "Ada", "11:30:00", Ok(Review)),
+        ("blocked, the starter's claim expired", task(Blocked), vec![], "Ada", "11:30:00", Ok(Blocked)),
+        // Someone else's claim, live or expired, is theirs until taken over.
+        ("claimed by someone else", task(Claimed), vec![], "Bob", "10:00:00", Err(BoardRuleError::NotHolder)),
+        ("in progress by someone else", task(InProgress), vec![], "Bob", "10:00:00", Err(BoardRuleError::NotHolder)),
+        ("in review by someone else", task(Review), vec![], "Bob", "10:00:00", Err(BoardRuleError::NotHolder)),
+        ("blocked by someone else", task(Blocked), vec![], "Bob", "10:00:00", Err(BoardRuleError::NotHolder)),
+        ("claimed by someone else, expired", task(Claimed), vec![], "Bob", "11:30:00", Err(BoardRuleError::NotHolder)),
+        ("in progress by someone else, expired", task(InProgress), vec![], "Bob", "11:30:00", Err(BoardRuleError::NotHolder)),
+        ("in review by someone else, expired", task(Review), vec![], "Bob", "11:30:00", Err(BoardRuleError::NotHolder)),
+        ("blocked by someone else, expired", task(Blocked), vec![], "Bob", "11:30:00", Err(BoardRuleError::NotHolder)),
         ("held by nobody", without_claim(task(Review)), vec![], "Ada", "10:00:00", Err(BoardRuleError::NoClaim)),
         ("a run open", task(InProgress), vec![open_run(1, 1)], "Ada", "10:00:00", Err(BoardRuleError::RunOpen(1))),
-        ("a draft", task(Draft), vec![], "Ada", "10:00:00", Err(BoardRuleError::NotAllowed { from: Draft, to: InProgress })),
-        ("done", task(Done), vec![], "Ada", "10:00:00", Err(BoardRuleError::NotAllowed { from: Done, to: InProgress })),
-        ("archived", task(Archived), vec![], "Ada", "10:00:00", Err(BoardRuleError::NotAllowed { from: Archived, to: InProgress })),
+        ("a draft", task(Draft), vec![], "Ada", "10:00:00", not_allowed(Draft)),
+        ("done", task(Done), vec![], "Ada", "10:00:00", not_allowed(Done)),
+        ("archived", task(Archived), vec![], "Ada", "10:00:00", not_allowed(Archived)),
     ];
     for (state, task, runs, by, now, want) in table {
         let got = start_at(&task, &runs, by, now).map(|started| {
-            let fields = started.task.fields();
+            let fields = started.task().fields();
             assert_eq!(fields.status, InProgress, "{state}");
             let claim = fields.claim.as_ref().expect("a started task is held");
             assert!(claim.holder.is(&person(by)), "{state}");
-            assert!(started.run.is_open(), "{state}");
+            assert!(started.run().is_open(), "{state}");
             let number = runs.len() as u32 + 1;
-            assert_eq!(started.run.fields().number, number, "{state}");
-            assert_eq!(started.run.fields().plan_version, 1, "{state}");
-            started.took_claim
+            assert_eq!(started.run().fields().number, number, "{state}");
+            assert_eq!(started.plan(), &accepted(), "{state}");
+            assert_eq!(started.took_claim(), started.from() == Ready, "{state}");
+            started.from()
         });
         assert_eq!(got, want, "{state}");
     }
 }
 
 /// The claim, the move and the run share one stamp, as one commit writes
-/// them: the caller's time, or a second past the task's last change.
+/// them: the caller's time, or a second past the task's last change. A
+/// held claim is renewed at that stamp too, so a run never begins with
+/// only seconds of its claim left.
 #[test]
 fn a_start_stamps_its_claim_its_move_and_its_run_alike() {
-    for (written, now, stamped) in [
-        ("09:00:00", "10:00:00", "10:00:00"),
-        ("10:30:00", "10:00:00", "10:30:01"),
-    ] {
-        let ready = last_written(task(Ready), &at(written));
-        let started = start_at(&ready, &[], "Bob", now).unwrap();
-        let fields = started.task.fields();
-        let claim = fields.claim.as_ref().unwrap();
-        assert_eq!(fields.updated, at(stamped));
-        assert_eq!(claim.since, at(stamped));
-        assert_eq!(
-            claim.expires,
-            at(stamped).plus_seconds(2 * 60 * 60).unwrap()
-        );
-        assert_eq!(started.run.fields().started, at(stamped));
+    for (status, by) in [(Ready, "Bob"), (Claimed, "Ada"), (InProgress, "Ada")] {
+        for (written, now, stamped) in [
+            ("09:00:00", "10:59:59", "10:59:59"),
+            ("10:30:00", "10:00:00", "10:30:01"),
+        ] {
+            let before = last_written(task(status), &at(written));
+            let started = start_at(&before, &[], by, now).unwrap();
+            let fields = started.task().fields();
+            let claim = fields.claim.as_ref().unwrap();
+            assert_eq!(fields.updated, at(stamped), "{status:?}");
+            assert_eq!(claim.since, at(stamped), "{status:?}");
+            let expires = at(stamped).plus_seconds(2 * 60 * 60).unwrap();
+            assert_eq!(claim.expires, expires, "{status:?}");
+            assert_eq!(started.run().fields().started, at(stamped), "{status:?}");
+        }
     }
-    // A held task keeps its claim as it was.
-    let held = task(InProgress);
-    let started = start_at(&held, &[], "Ada", "10:00:00").unwrap();
-    assert_eq!(started.task.fields().claim, held.fields().claim);
-    assert_eq!(started.run.fields().started, at("10:00:00"));
+}
+
+/// Liveness is judged at the start's stamp, on the renewed claim: the
+/// starter's own claim, live at the caller's time but lapsed by the stamp
+/// (the task was last written a moment after it ends), still starts.
+#[test]
+fn liveness_is_judged_at_the_stamp_on_the_renewed_claim() {
+    let lapsing = last_written(task(Claimed), &at("11:00:05"));
+    let started = start_at(&lapsing, &[], "Ada", "10:30:00").unwrap();
+    assert_eq!(started.run().fields().started, at("11:00:06"));
+    assert_eq!(
+        started.task().fields().claim.as_ref().unwrap().since,
+        at("11:00:06")
+    );
 }
 
 /// Only the task's accepted plan starts: none accepted, its version

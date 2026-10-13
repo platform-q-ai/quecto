@@ -6,6 +6,7 @@ use serde_json::{Value, json};
 use super::*;
 use crate::domain::audit::AuditEvent;
 use crate::domain::project_board::value_objects::slug::Slug;
+use crate::domain::project_board::value_objects::vocabulary::RunOutcome;
 
 const HEAD: &str = "0123456789abcdef0123456789abcdef01234567";
 
@@ -309,7 +310,7 @@ fn a_fold_back_serializes_as_its_golden_line() {
         task: TaskRef::of(&Slug::parse("demo-hello").unwrap()),
         run: 1,
         outcome: OpOutcome::Ok,
-        run_outcome: Some(StaticKind::new("succeeded")),
+        run_outcome: Some(RunOutcomeKind::of(RunOutcome::Succeeded)),
         items: Some(ItemCounts {
             todo: 0,
             doing: 0,
@@ -377,10 +378,13 @@ fn the_s4_kinds_are_frozen_and_known() {
         );
         assert_eq!(StaticKind::new(kind.as_str()).as_str(), kind.as_str());
     }
-    use crate::domain::project_board::value_objects::vocabulary::RunOutcome;
+    // Each run outcome has its kind, of its own name.
     for outcome in RunOutcome::ALL {
-        assert_eq!(StaticKind::new(outcome.as_str()).as_str(), outcome.as_str());
+        let kind = RunOutcomeKind::of(*outcome);
+        assert_eq!(kind.as_str(), outcome.as_str());
+        assert_eq!(StaticKind::new(kind.as_str()).as_str(), kind.as_str());
     }
+    assert_eq!(RunOutcomeKind::ALL.len(), RunOutcome::ALL.len());
     let line = json!({"event": "board_start", "task": "t", "client": "agent", "outcome": "ok", "duration_us": 0});
     assert!(serde_json::from_value::<AuditEvent>(line).is_err());
 }
