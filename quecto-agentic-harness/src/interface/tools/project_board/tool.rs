@@ -22,6 +22,7 @@ use serde_json::{Map, Value, json};
 
 use super::answer::request_refused;
 use super::read;
+use super::recording::BoardCall;
 use super::request::{Kind, OPS, RequestError};
 use super::site::{self, BoardSite};
 use crate::application::tools::ports::Tool;
@@ -285,7 +286,10 @@ impl Tool for BoardTool {
                     let mut guard = CancelOnDrop(Some(Arc::clone(&cancelled)));
                     // The board's git and host reads block: off the async
                     // workers, in this call's panic scope.
-                    let work = off_the_workers(move || site::answer(&site, &text, Some(cancelled)));
+                    let work = off_the_workers(move || {
+                        let mut call = BoardCall::unrecorded();
+                        site::answer(&site, &text, Some(cancelled), &mut call)
+                    });
                     let answer = work.await.map_err(|error| {
                         DomainError::Tool(format!("the board call did not finish: {error}"))
                     })?;

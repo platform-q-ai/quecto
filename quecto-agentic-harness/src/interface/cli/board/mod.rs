@@ -49,6 +49,7 @@ use serde_json::Value;
 use super::CliContext;
 use crate::domain::project_board::value_objects::telemetry::FaultKind;
 use crate::interface::tools::project_board::answer::request_refused;
+use crate::interface::tools::project_board::recording::BoardCall;
 use crate::interface::tools::project_board::request::{RequestError, fields_of};
 use crate::interface::tools::project_board::site::{self, BoardSite};
 use crate::interface::tools::project_board::{MAX_REQUEST_BYTES, command_line, json};
@@ -266,7 +267,12 @@ fn answer(ctx: &CliContext, args: &[String]) -> Value {
         remote: line.remote.clone(),
         build: ctx.project_board,
     };
-    site::answer(&site, &value.to_string(), None)
+    site::answer(
+        &site,
+        &value.to_string(),
+        None,
+        &mut BoardCall::unrecorded(),
+    )
 }
 
 #[cfg(test)]

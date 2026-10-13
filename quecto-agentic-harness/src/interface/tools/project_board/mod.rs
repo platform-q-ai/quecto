@@ -9,6 +9,7 @@
 pub mod answer;
 pub mod command_line;
 pub mod json;
+pub mod recording;
 pub mod request;
 pub mod site;
 pub mod tool;
@@ -17,6 +18,7 @@ use serde_json::Value;
 
 use crate::application::project_board::use_cases::RunBoardOperation;
 use crate::domain::project_board::value_objects::telemetry::FaultKind;
+use recording::BoardCall;
 use request::RequestError;
 
 /// The most bytes a request's text may take.
@@ -41,21 +43,29 @@ pub fn read(text: &str) -> Result<Value, RequestError> {
     json::strict(text).map_err(|error| refused(format!("must be JSON: {error}"), error.fault()))
 }
 
-/// The answer to the request `text`.
+/// The answer to the request `text`, recorded nowhere: the tests' way in.
+#[cfg(test)]
 pub fn run(operations: &RunBoardOperation, text: &str) -> Value {
+    run_recorded(operations, text, &mut BoardCall::unrecorded())
+}
+
+/// The answer to the request `text`, noted on `call` (epic #2481 T3).
+pub fn run_recorded(operations: &RunBoardOperation, text: &str, call: &mut BoardCall) -> Value {
     let value = match read(text) {
         Ok(value) => value,
-        Err(error) => return answer::request_refused(None, &error),
+        Err(error) => return call.refuse_request(None, &error),
     };
     let op = request::op_of(&value);
+    call.named(op.as_deref());
     let request = match request::parse(&value) {
         Ok(request) => request,
-        Err(error) => return answer::request_refused(op.as_deref(), &error),
+        Err(error) => return call.refuse_request(op.as_deref(), &error),
     };
+    call.parsed(&request);
     let op = op.expect("a parsed request names an op");
     match operations.execute(&request) {
-        Ok(outcome) => answer::outcome(&op, &outcome, operations.clock_note(&request)),
-        Err(error) => answer::board_refused(&op, &error),
+        Ok(outcome) => call.answer(&op, &outcome, operations.clock_note(&request)),
+        Err(error) => call.refuse_as_board(&op, &error),
     }
 }
 
