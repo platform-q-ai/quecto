@@ -629,3 +629,94 @@ fn a_pull_request_another_tasks_change_links_is_not_linked_again() {
     seed_artifacts(&store, vec![BoardArtifact::Change(unlinked)]);
     assert_eq!(link("10:01:00").unwrap().fields().prs, vec![7]);
 }
+
+/// Epic #2481 T4: what a noted change saw, of the task as it last read
+/// it: a write that lost once is two attempts, one lost, and the pause
+/// between them on the clock's monotonic time.
+mod noted {
+    use super::*;
+    use crate::application::project_board::telemetry::OpFacts;
+    use crate::domain::project_board::value_objects::telemetry::ClaimFacts;
+    use std::time::Duration;
+
+    /// A renew at 10:20 that loses once to a move to in progress.
+    fn renew_losing_once(store: &MemoryBoardStore) -> (ChangeBoardTask, Arc<SetClock>) {
+        seed(store, held_by_ada(TaskStatus::Claimed));
+        store.before_next_write(|board| {
+            let other =
+                ChangeBoardTask::new(Arc::new(board.client()), SetClock::at("10:10:00")).unwrap();
+            other
+                .execute(&slug("a"), &BoardOp::Move(TaskStatus::InProgress))
+                .unwrap();
+        });
+        let clock = SetClock::at("10:20:00");
+        *clock.tick.lock().unwrap() = Duration::from_millis(40);
+        let renew = ChangeBoardTask::new(Arc::new(store.client()), clock.clone()).unwrap();
+        (renew, clock)
+    }
+
+    #[test]
+    fn a_change_that_lost_once_tells_two_attempts_and_the_task_it_built_on() {
+        let store = board();
+        let (renew, _) = renew_losing_once(&store);
+        let mut facts = OpFacts::default();
+        renew
+            .execute_noted(&slug("a"), &BoardOp::Renew, Some(&mut facts))
+            .unwrap();
+        let claim = ClaimFacts {
+            held_s: 80 * 60,
+            left_s: 40 * 60,
+            holder_is_writer: true,
+        };
+        let want = OpFacts {
+            status_from: Some(TaskStatus::InProgress),
+            status_to: Some(TaskStatus::InProgress),
+            claim: Some(claim),
+            attempts: Some(2),
+            lost: Some(1),
+            pause_ms: Some(40),
+            ..OpFacts::default()
+        };
+        assert_eq!(facts, want);
+    }
+
+    /// Owner condition: off means nothing is timed.
+    #[test]
+    fn an_unnoted_change_reads_no_monotonic_time() {
+        let store = board();
+        let (renew, clock) = renew_losing_once(&store);
+        renew.execute(&slug("a"), &BoardOp::Renew).unwrap();
+        assert_eq!(*clock.pauses.lock().unwrap(), [2], "it did lose once");
+        assert_eq!(*clock.elapsed.lock().unwrap(), Duration::ZERO);
+    }
+
+    #[test]
+    fn a_refused_move_tells_its_target_and_the_claim_it_found() {
+        let store = board();
+        seed(&store, held_by_ada(TaskStatus::InProgress));
+        let mut facts = OpFacts::default();
+        let refused = change(&store, "Bob", "11:00:30").execute_noted(
+            &slug("a"),
+            &BoardOp::Move(TaskStatus::Review),
+            Some(&mut facts),
+        );
+        assert!(
+            matches!(refused, Err(ProjectBoardError::Rule(_))),
+            "{refused:?}"
+        );
+        let claim = ClaimFacts {
+            held_s: 2 * 60 * 60 + 30,
+            left_s: -30,
+            holder_is_writer: false,
+        };
+        let want = OpFacts {
+            status_from: Some(TaskStatus::InProgress),
+            status_to: Some(TaskStatus::Review),
+            claim: Some(claim),
+            attempts: Some(1),
+            lost: Some(0),
+            ..OpFacts::default()
+        };
+        assert_eq!(facts, want);
+    }
+}

@@ -64,7 +64,7 @@ pub fn run_recorded(operations: &RunBoardOperation, text: &str, call: &mut Board
     };
     call.parsed(&request);
     let op = op.expect("a parsed request names an op");
-    match operations.execute(&request) {
+    match call.executed(operations, &request) {
         Ok(outcome) => call.answer(&op, &outcome, operations.clock_note(&request)),
         Err(error) => call.refuse_as_board(&op, &error),
     }

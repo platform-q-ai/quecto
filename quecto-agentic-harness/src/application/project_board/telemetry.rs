@@ -142,21 +142,33 @@ impl OpFacts {
     }
 }
 
-/// `completion` as a record holds it, for a task linking `linked` pull
-/// requests. A failed one's code is the front end's to name (its error
-/// codes are the answer's), so it is left out here.
-pub fn completion_facts(completion: &Completion, linked: usize) -> CompletionFacts {
+/// A completion of `kind` for a task linking `linked` pull requests,
+/// `pending` of them not merged yet. A failed one's code is the front
+/// end's to name (its error codes are the answer's), so it is left out
+/// here.
+pub fn completion_facts(
+    kind: CompletionKind,
+    linked: usize,
+    pending: Option<usize>,
+) -> CompletionFacts {
     let count = |items: usize| u64::try_from(items).unwrap_or(u64::MAX);
-    let (kind, pending) = match completion {
-        Completion::Done(_) => (CompletionKind::Done, None),
-        Completion::Pending(prs) => (CompletionKind::Pending, Some(count(prs.len()))),
-        Completion::Failed(_) => (CompletionKind::Failed, None),
-    };
     CompletionFacts {
         completion: kind,
         completion_code: None,
         prs_linked: count(linked),
-        prs_pending: pending,
+        prs_pending: pending.map(count),
+    }
+}
+
+/// `completion` as a record holds it, for a task linking `linked` pull
+/// requests ([`completion_facts`]).
+pub fn completion_facts_of(completion: &Completion, linked: usize) -> CompletionFacts {
+    match completion {
+        Completion::Done(_) => completion_facts(CompletionKind::Done, linked, None),
+        Completion::Pending(prs) => {
+            completion_facts(CompletionKind::Pending, linked, Some(prs.len()))
+        }
+        Completion::Failed(_) => completion_facts(CompletionKind::Failed, linked, None),
     }
 }
 

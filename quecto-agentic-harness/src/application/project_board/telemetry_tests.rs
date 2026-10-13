@@ -267,7 +267,7 @@ mod facts {
         let pending = Completion::Pending(vec![8, 9]);
         let failed = Completion::Failed(Box::new(ProjectBoardError::Rule(BoardRuleError::NoPrs)));
         assert_eq!(
-            completion_facts(&pending, 3),
+            completion_facts_of(&pending, 3),
             CompletionFacts {
                 completion: CompletionKind::Pending,
                 completion_code: None,
@@ -276,7 +276,7 @@ mod facts {
             }
         );
         assert_eq!(
-            completion_facts(&failed, 1),
+            completion_facts_of(&failed, 1),
             completion(CompletionKind::Failed)
         );
     }

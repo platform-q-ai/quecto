@@ -175,3 +175,155 @@ fn show_tells_a_task_set_aside_from_one_not_on_the_board() {
         ))
     );
 }
+
+/// Epic #2481 T4: what the use cases saw of a noted request.
+mod noted {
+    use super::*;
+    use crate::application::project_board::dto::DraftUpdate;
+    use crate::application::project_board::telemetry::OpFacts;
+    use crate::domain::project_board::value_objects::telemetry::{
+        ClaimFacts, CompletionFacts, CompletionKind, Normalised, TextChange,
+    };
+
+    fn noted(
+        ops: &RunBoardOperation,
+        request: &BoardRequest,
+    ) -> (Result<BoardOutcome, ProjectBoardError>, OpFacts) {
+        let mut facts = OpFacts::default();
+        let result = ops.execute_noted(request, Some(&mut facts));
+        (result, facts)
+    }
+
+    fn written_once(facts: OpFacts) -> OpFacts {
+        OpFacts {
+            attempts: Some(1),
+            lost: Some(0),
+            ..facts
+        }
+    }
+
+    #[test]
+    fn a_create_and_a_draft_edit_tell_what_the_normaliser_changed() {
+        let store = MemoryBoardStore::default();
+        let ops = operations(&store, SetClock::at("10:00:00"), no_host());
+        let (bootstrapped, facts) = noted(&ops, &BoardRequest::Bootstrap);
+        assert!(bootstrapped.is_ok());
+        assert_eq!(facts, OpFacts::default(), "a bootstrap writes no task");
+        let create = BoardRequest::Create(NewBoardTask {
+            title: "  A title".into(),
+            description: "Why.\r\nHow. ".into(),
+            status: NewBoardTaskStatus::Draft,
+            ..new_task("a")
+        });
+        let (created, facts) = noted(&ops, &create);
+        assert!(created.is_ok(), "{created:?}");
+        let normalised = Normalised {
+            title: Some(vec![TextChange::EdgeSpace]),
+            description: Some(vec![TextChange::Crlf, TextChange::TrailingSpace]),
+        };
+        let want = OpFacts {
+            status_to: Some(TaskStatus::Draft),
+            normalised: Some(normalised),
+            ..OpFacts::default()
+        };
+        assert_eq!(facts, written_once(want));
+        let edit = BoardRequest::UpdateDraft(DraftUpdate {
+            id: slug("a"),
+            title: None,
+            description: Some("Plain.".into()),
+            parent: None,
+            depends_on: None,
+            expected_updated: None,
+        });
+        let (edited, facts) = noted(&ops, &edit);
+        assert!(edited.is_ok(), "{edited:?}");
+        let want = OpFacts {
+            status_from: Some(TaskStatus::Draft),
+            status_to: Some(TaskStatus::Draft),
+            normalised: Some(Normalised {
+                title: None,
+                description: Some(vec![]),
+            }),
+            ..OpFacts::default()
+        };
+        assert_eq!(facts, written_once(want));
+        let untitled = BoardRequest::UpdateDraft(DraftUpdate {
+            id: slug("a"),
+            title: None,
+            description: None,
+            parent: Some(None),
+            depends_on: None,
+            expected_updated: None,
+        });
+        let (_, facts) = noted(&ops, &untitled);
+        assert_eq!(facts.normalised, None, "no text given, none told");
+    }
+
+    /// A link tells what came of completing its task, and `complete`
+    /// tells done or pending; neither names a failed one's code.
+    #[test]
+    fn a_link_and_a_complete_tell_what_came_of_completing_the_task() {
+        let store = MemoryBoardStore::default();
+        let host = MemoryPullRequests::default();
+        host.set(8, PullRequestState::Open);
+        let ops = operations(&store, SetClock::at("10:00:00"), Ok(Arc::new(host.clone())));
+        let a = slug("a");
+        for request in [
+            BoardRequest::Bootstrap,
+            ready_task("a"),
+            BoardRequest::Change(a.clone(), BoardOp::Move(TaskStatus::Claimed)),
+            BoardRequest::Change(a.clone(), BoardOp::Move(TaskStatus::InProgress)),
+        ] {
+            ops.execute(&request).unwrap();
+        }
+        let completion = |kind, prs_linked, prs_pending| CompletionFacts {
+            completion: kind,
+            completion_code: None,
+            prs_linked,
+            prs_pending,
+        };
+        let (_, linked) = noted(&ops, &BoardRequest::Change(a.clone(), BoardOp::AddPr(8)));
+        // Claimed at 10:00:01 (a stamp a second past the create), read at
+        // 10:00:00 by this set clock.
+        let claim = ClaimFacts {
+            held_s: -1,
+            left_s: 7201,
+            holder_is_writer: true,
+        };
+        let want = OpFacts {
+            status_from: Some(TaskStatus::InProgress),
+            status_to: Some(TaskStatus::InProgress),
+            claim: Some(claim),
+            completion: Some(completion(CompletionKind::Pending, 1, Some(1))),
+            ..OpFacts::default()
+        };
+        assert_eq!(linked, written_once(want));
+        let (refused, pending) = noted(&ops, &BoardRequest::Complete(a.clone()));
+        assert!(refused.is_err());
+        let want = OpFacts {
+            status_from: Some(TaskStatus::InProgress),
+            completion: Some(completion(CompletionKind::Pending, 1, Some(1))),
+            ..OpFacts::default()
+        };
+        assert_eq!(pending, written_once(want));
+        host.set(9, PullRequestState::Unknown);
+        let (_, failed) = noted(&ops, &BoardRequest::Change(a.clone(), BoardOp::AddPr(9)));
+        let failed_completion = completion(CompletionKind::Failed, 2, None);
+        assert_eq!(failed.completion, Some(failed_completion));
+        host.set(8, PullRequestState::Merged);
+        host.set(9, PullRequestState::Merged);
+        let (done, facts) = noted(&ops, &BoardRequest::Complete(a));
+        assert!(done.is_ok(), "{done:?}");
+        let want = OpFacts {
+            status_from: Some(TaskStatus::InProgress),
+            status_to: Some(TaskStatus::Done),
+            completion: Some(completion(CompletionKind::Done, 2, None)),
+            ..OpFacts::default()
+        };
+        assert_eq!(facts.completion, want.completion);
+        assert_eq!(
+            (facts.status_from, facts.status_to, facts.attempts),
+            (want.status_from, want.status_to, Some(1))
+        );
+    }
+}

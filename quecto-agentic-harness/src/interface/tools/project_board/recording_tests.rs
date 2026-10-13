@@ -430,3 +430,48 @@ fn a_call_dropped_unfinished_is_recorded_cancelled() {
         (OpKind::Show, &OpOutcome::Ok, true)
     );
 }
+
+/// Epic #2481 T4: a recorded call holds what the use cases saw, and a
+/// failed completion's error code as the answer spells it.
+#[test]
+fn a_call_records_what_its_use_case_saw() {
+    let board = board();
+    let lines = recorded(
+        &board,
+        &[
+            json!({"op": "create", "task": "a", "title": " A ", "status": "ready"}).to_string(),
+            json!({"op": "move", "task": "a", "to": "claimed"}).to_string(),
+            json!({"op": "link_pr", "task": "a", "pr": 7}).to_string(),
+        ],
+    );
+    assert_eq!(
+        lines[0]["normalised"],
+        json!({"title": ["edge_space"], "description": []})
+    );
+    assert_eq!(
+        (
+            lines[0]["status_to"].clone(),
+            lines[0]["attempts"].clone(),
+            lines[0]["lost"].clone()
+        ),
+        (json!("ready"), json!(1), json!(0))
+    );
+    assert_eq!(
+        (
+            lines[1]["status_from"].clone(),
+            lines[1]["status_to"].clone()
+        ),
+        (json!("ready"), json!("claimed"))
+    );
+    let linked = &lines[2];
+    assert_eq!(linked["claim"]["holder_is_writer"], json!(true), "{linked}");
+    assert_eq!(
+        (
+            linked["completion"].clone(),
+            linked["completion_code"].clone(),
+            linked["prs_linked"].clone()
+        ),
+        (json!("failed"), json!("no_pull_request_host"), json!(1)),
+        "{linked}"
+    );
+}

@@ -10,6 +10,7 @@ use crate::application::project_board::dto::ProjectBoardError;
 use crate::application::project_board::ports::{
     BoardArtifact, BoardClock, BoardSnapshot, BoardWrite, ProjectBoardStore,
 };
+use crate::application::project_board::telemetry::OpFacts;
 use crate::domain::project_board::entities::claim::Identity;
 use crate::domain::project_board::entities::task::Task;
 use crate::domain::project_board::services::claims::{CLOCK_AHEAD_SECONDS, within_slack};
@@ -77,16 +78,26 @@ fn checked_now(clock: &dyn BoardClock) -> Result<When, ProjectBoardError> {
 
 /// Writes the artifacts `change` builds from the board and the time, in
 /// one change, retried against a fresh board when another writer moved it
-/// first. Every change writes its task first ([`written_task`]).
+/// first. Every change writes its task first ([`written_task`]). Given
+/// `facts` (epic #2481 T4), it notes the attempts it began, how many lost
+/// the race and how long it paused between them; given none, it notes
+/// nothing and reads no monotonic time.
 pub(super) fn commit(
     store: &dyn ProjectBoardStore,
     clock: &dyn BoardClock,
     message: &str,
+    mut facts: Option<&mut OpFacts>,
     mut change: impl FnMut(&BoardSnapshot, &When) -> Result<Vec<BoardArtifact>, ProjectBoardError>,
 ) -> Result<Vec<BoardArtifact>, ProjectBoardError> {
+    if let Some(facts) = facts.as_deref_mut() {
+        facts.lost = Some(0);
+    }
     for attempt in 1..=MAX_WRITE_ATTEMPTS {
         if attempt > 1 {
-            clock.pause(attempt);
+            paused(clock, attempt, facts.as_deref_mut());
+        }
+        if let Some(facts) = facts.as_deref_mut() {
+            facts.attempts = Some(u64::try_from(attempt).unwrap_or(u64::MAX));
         }
         let snapshot = store.read()?;
         let when = checked_now(clock)?;
@@ -103,13 +114,31 @@ pub(super) fn commit(
                 );
                 return Ok(artifacts);
             }
-            BoardWrite::Lost => continue,
+            BoardWrite::Lost => {
+                if let Some(facts) = facts.as_deref_mut() {
+                    facts.lost = Some(facts.lost.unwrap_or(0) + 1);
+                }
+            }
             BoardWrite::Refused(reason) => return Err(ProjectBoardError::Refused(reason)),
         }
     }
     Err(ProjectBoardError::Contended {
         attempts: MAX_WRITE_ATTEMPTS,
     })
+}
+
+/// The pause before attempt `attempt`, timed on the clock's monotonic
+/// time into `facts` only when there are facts to note.
+fn paused(clock: &dyn BoardClock, attempt: usize, facts: Option<&mut OpFacts>) {
+    let Some(facts) = facts else {
+        clock.pause(attempt);
+        return;
+    };
+    let before = clock.elapsed();
+    clock.pause(attempt);
+    let pause = clock.elapsed().saturating_sub(before);
+    let ms = u64::try_from(pause.as_millis()).unwrap_or(u64::MAX);
+    facts.pause_ms = Some(facts.pause_ms.unwrap_or(0).saturating_add(ms));
 }
 
 /// The task a change wrote: [`commit`] holds every change to writing its
