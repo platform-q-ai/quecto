@@ -77,9 +77,12 @@ fn a_paragraph_that_defines_a_link_reference_is_refused() {
          definition; reword it or start with other text"
     );
     // A paragraph may open with a link, or with a bracket that defines
-    // nothing: one not closed by `]:`, or holding another `[`.
+    // nothing: one not closed by `]:`, holding another `[`, or never
+    // closed at all (on one line or across several).
     for text in [
         "[docs](https://example.com) says so.",
+        "[1/3 done, rest pending",
+        "[a\nb c",
         "[WIP] not done: soon",
         "[a [b]]: c",
         "[a [b]: c",
