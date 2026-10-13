@@ -18,7 +18,7 @@
 use super::entries::{Disposition, Naming, TaskFile, disposition};
 use super::{
     Board, Entry, Limits, REGULAR_FILE, TreeCopy, Unread, capped, contents, entry_path,
-    kind_of_mode, listed, looked_up, missing, objects, sanitised, too_large,
+    kind_of_mode, kinds_in, listed, sanitised, too_large,
 };
 use crate::application::project_board::ports::{
     ArtifactKey, BoardArtifact, BoardHead, BoardSnapshot, QuarantinedFile,
@@ -39,12 +39,17 @@ use crate::infrastructure::persistence::project_board::artifacts::review::{
 };
 use crate::infrastructure::persistence::project_board::artifacts::run::{RUN_LIMITS, RunCodec};
 use crate::infrastructure::persistence::project_board::artifacts::{CodecError, decode};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 const MIB: usize = 1024 * 1024;
 
 /// The archive's name at a board's root.
 pub const ARCHIVE: &str = "archive";
+
+/// The size from which a partial clone's fetch of a folder leaves a blob
+/// on the remote: one past the largest file a read reads (a plan's), so
+/// every file a read may read is fetched and none past every cap is.
+pub const FILTER_BYTES: usize = PLAN_LIMITS.file_bytes + 1;
 
 /// The most entries one read takes in all the board's folders.
 pub const MAX_BOARD_ENTRIES: usize = 16_384;
@@ -254,6 +259,7 @@ pub(super) fn scan_folder(
     tree: &str,
     folder: &'static Folder,
     limits: Limits,
+    filtered: &BTreeSet<String>,
 ) -> Result<FolderScan, Unread> {
     let name = folder.naming.folder;
     let entries = listed(git, tree, limits.tree_bytes)?;
@@ -264,11 +270,7 @@ pub(super) fn scan_folder(
             folder.max_entries
         )));
     }
-    let kinds = objects(git, looked_up(&entries))?;
-    let missing = missing(&entries, &kinds);
-    if !missing.is_empty() {
-        return Err(Unread::Missing(missing));
-    }
+    let kinds = kinds_in(git, tree, &entries, filtered)?;
     let mut counts: BTreeMap<&[u8], usize> = BTreeMap::new();
     for entry in entries.iter().filter(|entry| entry.carried(&kinds)) {
         *counts.entry(entry.raw.as_slice()).or_default() += 1;

@@ -5,8 +5,7 @@
 use super::entries::{Disposition, TASK_NAMING, TaskFile, disposition, task_name};
 use super::{
     Board, Entry, Found, HeldTask, Limits, MAX_NAME_BYTES, MAX_READ_ENTRIES, REGULAR_FILE, TASKS,
-    TreeCopy, Unread, contents, entry_path, kind_of_mode, listed, looked_up, missing, objects,
-    task_file, too_large,
+    TreeCopy, Unread, contents, entry_path, kind_of_mode, kinds_in, listed, task_file, too_large,
 };
 use crate::application::project_board::ports::{ArtifactKey, QuarantinedFile};
 use crate::domain::project_board::value_objects::slug::Slug;
@@ -74,6 +73,7 @@ pub(super) fn scan_tasks(
     git: &super::Git,
     tree: &str,
     limits: Limits,
+    filtered: &BTreeSet<String>,
 ) -> Result<TasksScan, Unread> {
     let entries = listed(git, tree, limits.tree_bytes)?;
     if entries.len() > MAX_READ_ENTRIES {
@@ -82,11 +82,7 @@ pub(super) fn scan_tasks(
             entries.len()
         )));
     }
-    let kinds = objects(git, looked_up(&entries))?;
-    let missing = missing(&entries, &kinds);
-    if !missing.is_empty() {
-        return Err(Unread::Missing(missing));
-    }
+    let kinds = kinds_in(git, tree, &entries, filtered)?;
     // Copies of each name a write would carry: a copy it drops (a gitlink,
     // a mode over another type) makes no duplicate.
     let mut counts: BTreeMap<&[u8], usize> = BTreeMap::new();
