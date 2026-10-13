@@ -7,7 +7,7 @@ use std::sync::Arc;
 use crate::application::agent_loop::AgentLoopImpl;
 use crate::application::audit::ports::AuditSink;
 use crate::infrastructure::persistence::audit_log::AuditLog;
-use crate::interface::cli::BoardToolRecordingBuilder;
+use crate::interface::cli::board::BoardToolRecordingBuilder;
 use crate::interface::tools::project_board::session_recording::SessionRecording;
 
 /// The key an agent's audit log is filed under, or `None` when it keeps

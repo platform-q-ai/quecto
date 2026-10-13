@@ -243,7 +243,7 @@ fn an_agent_whose_environment_sets_the_removed_mode_is_refused() {
 #[tokio::test(flavor = "multi_thread")]
 async fn an_attached_session_records_the_board_tools_calls() {
     use crate::application::tools::ports::Tool;
-    use crate::interface::cli::BoardToolRecordingBuilder;
+    use crate::interface::cli::board::BoardToolRecordingBuilder;
     use crate::interface::tools::project_board::site::BoardSite;
     use crate::interface::tools::project_board::tool::BoardTool;
     let base = base(true);

@@ -34,7 +34,7 @@ fn main() {
             claude_member: quecto::composition::claude_member::build_claude_member_handles,
             project_board:
                 quecto::composition::bootstrap::project_board::build_project_board_handles,
-            project_board_recording: cli::BoardToolRecordingBuilder(
+            project_board_recording: cli::board::BoardToolRecordingBuilder(
                 quecto::composition::bootstrap::project_board::session_board_recording_decided,
             ),
         },

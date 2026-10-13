@@ -58,6 +58,18 @@ pub use crate::interface::tools::project_board::site::{
     Access, BuildError, ProjectBoardEnvironment, ProjectBoardHandles, ProjectBoardHandlesBuilder,
 };
 
+/// Composition's builder of the agent `board` tool's recording (epic
+/// #2481 T3): into the session's event log given, with the switch the
+/// session decided when it started; `None` while it is off, or when the
+/// log has no line to append through.
+#[derive(Debug, Clone, Copy)]
+pub struct BoardToolRecordingBuilder(
+    pub  fn(
+        bool,
+        &crate::infrastructure::persistence::audit_log::AuditLog,
+    ) -> Option<crate::application::project_board::telemetry::BoardRecording>,
+);
+
 const USAGE: &str = "usage: quecto board <op> [--<field> <value>]... [--input <json>|-] \
                      [--repo <path>] [--remote <name>] [--json]\n";
 
