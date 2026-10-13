@@ -1,8 +1,8 @@
 //! Board op telemetry (epic #2481, T1): what one project board request
 //! did, as the event log's `board_op` record holds it. Pure values, built
 //! the way the swarm board's `swarm_op` is (`domain::swarm::telemetry`).
-//! T1 holds the record's skeleton and T3 the front ends' fields; later
-//! slices add theirs (T4 the use cases', T5 the store's, T6 the index's).
+//! T1 holds the record's skeleton, T3 the front ends' fields and T4 the
+//! use cases'; later slices add theirs (T5 the store's, T6 the index's).
 //!
 //! **No free text is ever a field.** Enforced: a field is a kind enum, a
 //! count, or a leaf from `leaves` ([`StaticKind`], a known kind or
@@ -89,6 +89,25 @@ kinds!(
     }
 );
 
+kinds!(
+    /// What came of completing a task after a change that may complete it
+    /// (T4): every linked pull request merged, some not merged yet, or not
+    /// judged (the host, the store or a rule failed it).
+    CompletionKind { Done => "done", Pending => "pending", Failed => "failed" }
+);
+kinds!(
+    /// A kind of change the board's normaliser made to a text field as it
+    /// entered the board (T4), never the text: a CRLF, a lone CR or
+    /// another line break made one LF; a chat space or a tab made a plain
+    /// space; blank lines gone from a text's edges; trailing spaces gone
+    /// from a line; spacing gone from a one-line field's edges.
+    TextChange {
+        Crlf => "crlf", LoneCr => "lone_cr", LineBreak => "line_break",
+        ChatSpace => "chat_space", Tab => "tab", EdgeBlankLines => "edge_blank_lines",
+        TrailingSpace => "trailing_space", EdgeSpace => "edge_space",
+    }
+);
+
 /// How the request ended: `ok`, or refused with its `ErrorCode` and, for a
 /// rule, the rule's code.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -137,6 +156,31 @@ pub struct BoardOpRecord {
     /// A listing's counts (T3), from the answer its front end gave.
     #[serde(flatten, skip_serializing_if = "Option::is_none")]
     pub listing: Option<ListingCounts>,
+    /// The task's status as a change last read it (T4).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status_from: Option<StaticKind>,
+    /// The status a change moved to: a move's target, made or refused;
+    /// otherwise the status of the task it wrote (T4).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status_to: Option<StaticKind>,
+    /// The claim a change found on its task (T4).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub claim: Option<ClaimFacts>,
+    /// The attempts a write began, and how many of them lost the race to
+    /// another writer (T4).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub attempts: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lost: Option<u64>,
+    /// How long a write paused between its attempts, when it did (T4).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pause_ms: Option<u64>,
+    /// What came of completing the task (T4).
+    #[serde(flatten, skip_serializing_if = "Option::is_none")]
+    pub completion: Option<CompletionFacts>,
+    /// What the normaliser changed in the text fields a request gave (T4).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub normalised: Option<Normalised>,
     /// The call was dropped (its turn interrupted) before it was answered:
     /// written only when it was.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
@@ -161,6 +205,41 @@ pub struct ListingCounts {
     pub truncated_more: u64,
     pub set_aside: u64,
     pub set_aside_more: u64,
+}
+
+/// A task's claim as a change found it (T4), never its holder: how long
+/// it had been held and had left, in seconds (`left_s` below zero once it
+/// lapsed; `held_s` below zero when the writer's clock reads before the
+/// claim began), and whether the writer holds it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct ClaimFacts {
+    pub held_s: i64,
+    pub left_s: i64,
+    pub holder_is_writer: bool,
+}
+
+/// What came of completing a task (T4): its kind; for `failed`, the error
+/// code of the refusal that failed it; the pull requests the task links,
+/// and those not merged yet.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct CompletionFacts {
+    pub completion: CompletionKind,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub completion_code: Option<StaticKind>,
+    pub prs_linked: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prs_pending: Option<u64>,
+}
+
+/// What the normaliser changed in each text field a request gave (T4):
+/// left out for a field the request did not give, and empty for one it
+/// kept as written.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Normalised {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<Vec<TextChange>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<Vec<TextChange>>,
 }
 
 #[cfg(test)]
