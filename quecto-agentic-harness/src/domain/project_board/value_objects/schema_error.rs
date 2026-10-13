@@ -77,8 +77,9 @@ static VISIBLE: LazyLock<Regex> = LazyLock::new(|| {
 });
 
 /// Why a line is refused for a space other than U+0020: no file holds
-/// one. Placeholder wording, pending the owner (#2481 S7).
-pub const PLAIN_SPACES_ONLY: &str = "may space its words with plain spaces (U+0020) only";
+/// one (owner-approved wording, #2481 S7).
+pub const PLAIN_SPACES_ONLY: &str =
+    "has a space the board can't keep: use plain spaces (U+0020) only";
 
 /// Single-line text with something visible, at most `max_chars`
 /// characters, its words spaced with plain spaces only (the spaces chat

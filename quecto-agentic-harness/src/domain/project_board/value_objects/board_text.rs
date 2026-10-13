@@ -56,7 +56,8 @@ const NOT_ENTERED: &str = "must be board text as it enters (normalised: one LF b
      lines, no blank lines at its edges, no trailing space where no hard break forms)";
 /// Why one line a write path takes is refused: it was never normalised
 /// (owner-approved wording, #2481 S7).
-const NOT_ENTERED_LINE: &str = "must be one line with no spaces or tabs at its start or end";
+const NOT_ENTERED_LINE: &str =
+    "must be one line, use plain spaces only, and have no spaces or tabs at its start or end";
 /// Why a message a write path takes is refused: it was never normalised
 /// (owner-approved wording, #2481 S7).
 const NOT_ENTERED_MESSAGE: &str = "has spacing the board removes: use one LF between lines, no \

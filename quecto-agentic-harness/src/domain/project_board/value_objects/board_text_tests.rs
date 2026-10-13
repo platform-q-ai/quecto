@@ -275,7 +275,8 @@ fn a_line_never_normalised_says_what_a_line_is() {
         entered_line("title", " Ship it"),
         Err(SchemaError::new(
             "title",
-            "must be one line with no spaces or tabs at its start or end"
+            "must be one line, use plain spaces only, and have no spaces or tabs at its \
+             start or end"
         ))
     );
 }

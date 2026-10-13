@@ -198,6 +198,11 @@ fn ignorable_and_blank_looking_characters_are_refused() {
 /// problem, as no file holds one.
 #[test]
 fn a_line_holds_plain_spaces_only() {
+    // The owner-approved wording, byte for byte.
+    assert_eq!(
+        PLAIN_SPACES_ONLY,
+        "has a space the board can't keep: use plain spaces (U+0020) only"
+    );
     assert_eq!(line("title", "plain spaces only", 100), Ok(()));
     for space in ['\u{a0}', '\u{202f}', '\u{2007}', '\u{3000}', '\u{2003}'] {
         assert_eq!(
