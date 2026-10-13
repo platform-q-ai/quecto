@@ -177,12 +177,8 @@ impl BoardCall {
         else {
             return;
         };
-        debug_assert!(
-            agrees(&record.outcome, answer),
-            "the answer {answer} disagrees with its note {:?}",
-            record.outcome
-        );
-        record.outcome = answered_outcome(record.outcome, answer);
+        let (noted, agreed) = (record.outcome.clone(), agrees(&record.outcome, answer));
+        record.outcome = answered_outcome(noted.clone(), answer);
         let listing = matches!(
             record.op,
             OpKind::List | OpKind::ListReady | OpKind::ListTakeable
@@ -192,6 +188,13 @@ impl BoardCall {
         record.result_bytes = u64::try_from(answer.to_string().len()).unwrap_or(u64::MAX);
         record.duration_us = micros(started.elapsed());
         recording.record(record);
+        // Written first; the message holds the answer's `ok` and the
+        // noted kinds only, never the answer's text.
+        debug_assert!(
+            agreed,
+            "the answer's ok {:?} disagrees with its note {noted:?}",
+            answer.get("ok")
+        );
     }
 }
 

@@ -352,13 +352,37 @@ fn the_answer_decides_an_outcome_its_note_disagrees_with() {
     );
 }
 
-/// Review round 1: in a debug build a disagreement is a bug, caught.
-#[cfg(debug_assertions)]
+/// Review rounds 1 and 2: a disagreement is a bug, caught in a debug
+/// build; the record (with the answer's outcome) is written first, and the
+/// message holds only the answer's `ok` and the noted outcome, never the
+/// answer's text.
 #[test]
-#[should_panic(expected = "disagrees with its note")]
-fn a_disagreeing_answer_is_caught_in_debug_builds() {
+fn a_disagreeing_answer_is_recorded_then_caught_in_debug_builds() {
     let records = Arc::new(Records::default());
     let mut call = BoardCall::start(Some(recording(&records)), FrontEnd::Cli, Client::Cli);
     call.named(Some("show"));
-    call.finish(&json!({"ok": false, "error": {"code": "not_found"}}), false);
+    let answer = json!({"ok": false, "error": {"code": "not_found", "message": "Secret Title"}});
+    let finished =
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| call.finish(&answer, false)));
+    assert_eq!(
+        finished.is_err(),
+        cfg!(debug_assertions),
+        "only a debug build asserts"
+    );
+    if let Err(payload) = finished {
+        let message = crate::application::tool_panic_scope::payload_message(payload.as_ref());
+        assert!(message.contains("disagrees with its note"), "{message}");
+        assert!(!message.contains("Secret Title"), "{message}");
+    }
+    let written = records.taken();
+    assert_eq!(
+        written.len(),
+        1,
+        "the record is written before the assertion"
+    );
+    let not_found = OpOutcome::Refused {
+        code: StaticKind::new("not_found"),
+        rule: None,
+    };
+    assert_eq!(written[0].outcome, not_found);
 }
