@@ -1,6 +1,7 @@
 use std::collections::BTreeSet;
 
 use super::*;
+use crate::domain::project_board::value_objects::rule_error::BoardRuleError;
 use crate::domain::project_board::value_objects::schema_error::SchemaError;
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
@@ -360,6 +361,7 @@ board_rules! {
     R::PlansInconsistent(_) => R::PlansInconsistent("two accepted".into()), "plans_inconsistent", ["reason"];
     R::RunsInconsistent(_) => R::RunsInconsistent("two going".into()), "runs_inconsistent", ["reason"];
     R::PlanNotAccepted(_) => R::PlanNotAccepted(2), "plan_not_accepted", ["version"];
+    R::NoAcceptedPlan => R::NoAcceptedPlan, "no_accepted_plan", [];
     R::NotTakeable(_) => R::NotTakeable(TaskStatus::Ready), "not_takeable", ["status"];
     R::AlreadyHolder => R::AlreadyHolder, "already_holder", [];
     R::NoPrs => R::NoPrs, "no_prs", [];

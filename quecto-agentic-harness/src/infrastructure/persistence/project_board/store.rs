@@ -15,9 +15,10 @@
 //! quecto wrote, say), so no write loses one. A task file named twice in
 //! one tree refuses every write instead.
 //!
-//! The other kinds' folders and the archive are read (#2481 S9), not yet
-//! written: a write or clear carries each as the tree it read
-//! (`board_folders`).
+//! The other kinds' folders are read (#2481 S9) and written (S10a) the same
+//! way: each artifact written as its kind's file, every other file carried
+//! by its object (`store_write`). The archive is carried as the tree it
+//! read.
 //!
 //! The board is fetched from the remote's URL and pushed to its push URL;
 //! a remote whose `pushurl` names another repository than its `url` is
@@ -27,8 +28,8 @@
 //! (`--no-filter`), and what a clone still misses (a board commit it
 //! fetched with a filter before) is fetched in one call per tree level,
 //! never one object at a time.
-use super::artifacts::task::TaskCodec;
-use super::artifacts::{decode, encode};
+#[cfg(test)]
+use super::artifacts::{encode, task::TaskCodec};
 use super::board_tree::{
     Board, FORMAT, FORMAT_FILE, FORMAT_TREE, LIMITS, Limits, MAX_READ_ENTRIES, REGULAR_FILE, TREE,
     Unread, object_id, read_board, task_file, told, unavailable, within,
@@ -512,22 +513,23 @@ impl GitBoardStore {
         )]))
     }
 
-    /// A commit of the README, the format marker, `tasks`, and the trees
-    /// `board` carries as they are (its other folders and the archive) on
-    /// `base`, as the store's writer, pushed only if the board is still at
-    /// `base`.
+    /// A commit of the README, the format marker, `tasks`, the other
+    /// folders' trees (`folders`, by name) and the archive `board` carries
+    /// as it is, on `base`, as the store's writer, pushed only if the board
+    /// is still at `base`.
     fn land(
         &self,
         base: &str,
         board: &Board,
         tasks: &str,
+        folders: BTreeMap<String, String>,
         message: &str,
     ) -> Result<BoardWrite, BoardStoreError> {
-        // A folder carried while a file in it is set aside would carry or
-        // drop that file unjudged: write and clear refuse first.
+        // A name listed twice in a folder would be carried or chosen
+        // unjudged: write and clear refuse first.
         assert!(
-            board.folders_refusal().is_none(),
-            "no folder with a file set aside is carried"
+            board.folders_repeated_refusal().is_none(),
+            "no folder with a name listed twice is written"
         );
         let readme = self.blob(README)?;
         let format = self.format_tree()?;
@@ -539,7 +541,8 @@ impl GitBoardStore {
             (FORMAT_TREE.to_string(), format!("{TREE} tree {format}")),
             ("tasks".to_string(), format!("{TREE} tree {tasks}")),
         ]);
-        let carried = board.carried_trees();
+        let carried: BTreeMap<String, String> =
+            folders.into_iter().chain(board.archive_entry()).collect();
         let names = root.len() + carried.len();
         root.extend(carried);
         assert_eq!(
@@ -623,69 +626,16 @@ impl ProjectBoardStore for GitBoardStore {
         Ok(board.snapshot(BoardHead(head)).asserted())
     }
 
-    /// Writes `tasks`, each as its canonical markdown file, on top of
-    /// `expected` in one commit and pushes it only if the board is still
-    /// there.
+    /// Writes `artifacts`, each as its kind's canonical markdown file, on
+    /// top of `expected` in one commit and pushes it only if the board is
+    /// still there.
     fn write(
         &self,
         expected: &BoardHead,
         artifacts: &[BoardArtifact],
         message: &str,
     ) -> Result<BoardWrite, BoardStoreError> {
-        let invalid = |why: String| BoardStoreError::InvalidWrite(why);
-        line("message", message, 200).map_err(|error| invalid(error.to_string()))?;
-        // Tasks alone until the store keeps the other kinds (S10); reads hold none.
-        let tasks = artifacts
-            .iter()
-            .map(|artifact| match artifact {
-                BoardArtifact::Task(task) => Ok(task.clone()),
-                BoardArtifact::Plan(_)
-                | BoardArtifact::Run(_)
-                | BoardArtifact::Change(_)
-                | BoardArtifact::Review(_)
-                | BoardArtifact::Discussion(_) => Err(invalid(format!(
-                    "{}: the git store keeps tasks only, for now",
-                    artifact.key()
-                ))),
-            })
-            .collect::<Result<Vec<Task>, _>>()?;
-        let tasks = tasks.as_slice();
-        let ids: BTreeSet<&Slug> = tasks.iter().map(|task| &task.fields().id).collect();
-        if ids.len() != tasks.len() || tasks.is_empty() {
-            return Err(invalid("write one or more tasks, each once".into()));
-        }
-        let base = self.base(expected)?;
-        let board = self.board_at(&base)?;
-        if let Some(refusal) = board.repeated_refusal(&base) {
-            return Ok(BoardWrite::Refused(refusal));
-        }
-        if let Some(refusal) = board.folders_refusal() {
-            return Err(BoardStoreError::FolderSetAside(refusal));
-        }
-        if let Some(file) = ids.iter().find_map(|id| board.is_quarantined(id)) {
-            return Ok(BoardWrite::Refused(format!(
-                "{} is set aside: {}",
-                file.path, file.reason
-            )));
-        }
-        let encoded = tasks
-            .iter()
-            .map(|task| {
-                let id = task.fields().id.as_str();
-                let file = encode::<TaskCodec>(task)
-                    .map_err(|error| invalid(format!("task {id}: {error}")))?;
-                let bytes = file.into_bytes();
-                match decode::<TaskCodec>(&bytes).ok().as_ref() == Some(task) {
-                    true => Ok((task, bytes)),
-                    false => Err(invalid(format!("task {id} does not read back as written"))),
-                }
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        // A read takes at most so much, so no write makes a board that
-        // cannot be read.
-        board.within_bounds(&encoded, self.limits)?;
-        let tasks = self.tasks_tree(&board, &encoded)?;
-        self.land(&base, &board, &tasks, message)
+        self.write_artifacts(expected, artifacts, message)
     }
 
     /// Creates the board with its README and format marker, unless it
@@ -743,6 +693,8 @@ impl ProjectBoardStore for GitBoardStore {
 mod clear;
 #[path = "store_committer.rs"]
 mod committer;
+#[path = "store_write.rs"]
+mod writing;
 
 #[cfg(test)]
 #[path = "store_tests.rs"]

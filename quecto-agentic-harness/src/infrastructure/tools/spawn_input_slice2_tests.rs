@@ -87,7 +87,7 @@ fn new_mode_accepts_optional_environment_name() {
         parsed,
         Ok(ContainerSelection::New {
             container_config: None,
-            name: Some("review-env".into()),
+            name: Some("review-env".to_string().try_into().unwrap()),
         }),
         "mode new must carry the optional environment name"
     );

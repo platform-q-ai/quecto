@@ -7,8 +7,9 @@
 //!   each match a whole-file snapshot (`snapshots/*.tokens`, doc comments
 //!   left out), so any change to them, bodies and macros included, is a
 //!   reviewed change to a snapshot;
-//! - every field reachable from `BoardOpRecord` is a kind, a count, a
-//!   guarded leaf or a record of those;
+//! - every field reachable from `BoardOpRecord`, or from S4's start,
+//!   claim renewals and fold-back records, is a kind, a count, a guarded
+//!   leaf or a record of those;
 //! - the op-log port, the recording switch, `BoardRecording::when` and
 //!   T2's adapters are named only where [`NAMED_ONLY_IN`] allows, never
 //!   aliased, and never in a public signature in composition;
@@ -341,15 +342,27 @@ fn refused_from(root: &str, types: &BTreeMap<String, Declared>) -> Vec<String> {
     refused
 }
 
+/// Every record the board writes: a request's, and S4's start, claim
+/// renewals and fold-back.
+const RECORDS: &[&str] = &[
+    "BoardOpRecord",
+    "BoardStartRecord",
+    "ClaimRenewalsRecord",
+    "FoldBackRecord",
+];
+
 #[test]
-fn a_board_op_record_holds_only_kinds_counts_and_guarded_leaves() {
+fn a_board_record_holds_only_kinds_counts_and_guarded_leaves() {
     let source = std::fs::read_to_string(RECORD_FILE).unwrap();
     let types = declared(&syn::parse_file(&source).unwrap());
-    assert!(
-        types.contains_key("BoardOpRecord"),
-        "the record is in {RECORD_FILE}"
-    );
-    assert_eq!(refused_from("BoardOpRecord", &types), Vec::<String>::new());
+    for record in RECORDS {
+        assert!(types.contains_key(*record), "{record} is in {RECORD_FILE}");
+        assert_eq!(
+            refused_from(record, &types),
+            Vec::<String>::new(),
+            "{record}"
+        );
+    }
 }
 
 #[test]

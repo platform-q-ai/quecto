@@ -46,8 +46,8 @@ pub const BOARD_TOOL_NAME: &str = "board";
 
 /// The tool's description: the approved text, with only the changes the
 /// ops on master need and the ones the owner approved (#2477 S2b, #2513;
-/// listed in its pull request). The Read line's `show` sentence (#2481
-/// M4a) awaits the owner's approval.
+/// listed in its pull request). The Read line's `show` sentences (#2481
+/// M4a) are owner-approved (2026-10-13).
 pub const BOARD_TOOL_DESCRIPTION: &str = r#"Project board for this repo: the shared list of tasks people and agents plan, claim and finish. Tasks live on the repo's quecto/board branch and are written only through this tool, never by editing the branch. Each op is one call, {"op":"<name>", ...named fields}, answering JSON: {"ok":true,...} or {"ok":false,"error":{"code","field","message"}}. Ids are slugs (a-z, 0-9, -). Statuses: draft, ready, claimed, in_progress, review, blocked, done, archived.
 Read: list(status|parent|dependents_of, at most one filter), show(task), list_ready (ready tasks whose dependencies are done or archived), list_takeable (held tasks whose claim expired). Listings show a summary per task; show(task) gives the whole task, its accepted plan, each plan version in brief and its runs (the latest readable one in full); "may_be_incomplete" means a file that may hold one of its plans or runs is set aside. What does not fit in 64 KiB beside the task (which is never cut, and may take more alone) is cut, with counts of what was left out and approach_next/items_next to read on with show(task, approach_from, items_from). Listings are advice; every change is checked against the board when it is written.
 Plan: create(task,title,kind,description,status draft|ready,parent,depends_on); update_draft(task, any of title,description,parent,depends_on, expected_updated) edits a draft only; pass the updated you read as expected_updated so a newer edit is never overwritten. Anyone may create, edit a draft, move it to ready, or archive a draft, ready or done task with move(task,to archived). Anyone may move a ready task back to draft.

@@ -76,6 +76,17 @@ pub enum AuditEvent {
     /// written (the log's gate stayed busy past a record's bound): written
     /// just before the next `board_op`, in the same write.
     BoardOpsDropped { dropped: u64 },
+    /// One start of a project board task (S4, #2479), written only while
+    /// the event log is on, and never read back, as `board_op`.
+    #[serde(skip_deserializing)]
+    BoardStart(Box<super::project_board::value_objects::telemetry::BoardStartRecord>),
+    /// A started run's claim renewals, folded (S4), as `board_op`.
+    #[serde(skip_deserializing)]
+    BoardClaimRenewals(Box<super::project_board::value_objects::telemetry::ClaimRenewalsRecord>),
+    /// A started run folded back into its task's run file (S4), as
+    /// `board_op`.
+    #[serde(skip_deserializing)]
+    BoardFoldBack(Box<super::project_board::value_objects::telemetry::FoldBackRecord>),
     LlmTurnStart {
         input_tokens_estimate: usize,
         message_count: usize,

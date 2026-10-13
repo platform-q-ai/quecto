@@ -35,8 +35,8 @@ const fn kind_shaped(text: &str) -> bool {
 /// Every kind a record may hold, frozen (append-only): the op names, the
 /// outcomes, front ends, clients, accesses and faults, the task statuses,
 /// the board's error codes, `internal` (a call that ended without an
-/// answer), rule codes, completions and normaliser changes (T4), and the
-/// schema fields of `OPS`
+/// answer), rule codes, completions and normaliser changes (T4), S4's
+/// start, renewal and fold-back kinds, and the schema fields of `OPS`
 /// with the pseudo-fields `op`, `request` and `other`. Any other text is
 /// recorded as `other`. A test in `answer_tests.rs` holds every error and
 /// rule code the board answers to this list.
@@ -113,8 +113,10 @@ const KNOWN_KINDS: &[&str] = &[
     "id_in_use",
     // A call that ended without an answer (T3 review round 1).
     "internal",
-    // A board past what a read takes, and one held by a file set aside
-    // outside tasks/ (#2481 S9 review round 1).
+    // A board past what a read takes (#2481 S9 review round 1), and one
+    // held outside tasks/: a name listed twice there holds writes and
+    // clears (Q1), a file set aside there naming another kind's key holds
+    // listings.
     "board_too_large",
     "folder_set_aside",
     // Rule codes.
@@ -167,6 +169,7 @@ const KNOWN_KINDS: &[&str] = &[
     "issue_is_pr",
     "own_pr_referenced",
     "invalid",
+    "no_accepted_plan",
     // Completions and normaliser changes (T4).
     "pending",
     "failed",
@@ -178,6 +181,26 @@ const KNOWN_KINDS: &[&str] = &[
     "edge_blank_lines",
     "trailing_space",
     "edge_space",
+    // Starts, claim renewals and fold-backs (S4): brief refusals, the team
+    // fields spawn cannot carry, the item limits, claim kinds and run
+    // outcomes.
+    "team_too_large",
+    "team_unsupported",
+    "deadline_passed",
+    "deadline_too_soon",
+    "no_task_items",
+    "item_too_large",
+    "brief_too_large",
+    "image",
+    "turns",
+    "members",
+    "workers",
+    "criteria",
+    "fresh",
+    "held",
+    "succeeded",
+    "stopped",
+    "lost",
     // Schema fields and pseudo-fields.
     "task",
     "title",

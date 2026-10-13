@@ -148,6 +148,43 @@ impl Remote {
         sh(bare, &["update-ref", BOARD_REF, &commit], b"");
     }
 
+    /// Someone pushes `bytes` as `<folder>/<name>`, in place of a file of
+    /// that name or beside the folder's others, keeping the rest of the
+    /// board's root as it is.
+    pub fn put(&self, folder: &str, name: &str, bytes: &[u8]) {
+        let bare = &self.bare;
+        let head = sh(bare, &["rev-parse", BOARD_REF], b"");
+        let blob = sh(bare, &["hash-object", "-w", "--stdin"], bytes);
+        // `listing` with the row named `name` replaced by `row`, or added.
+        let put = |listing: &str, name: &str, row: String| -> String {
+            let mut rows: Vec<String> = listing
+                .lines()
+                .filter(|line| !line.ends_with(&format!("\t{name}")))
+                .map(str::to_string)
+                .collect();
+            rows.push(row);
+            rows.join("\n") + "\n"
+        };
+        let root = sh(bare, &["ls-tree", &head], b"");
+        let held = root
+            .lines()
+            .any(|line| line.ends_with(&format!("\t{folder}")));
+        let listing = match held {
+            true => sh(bare, &["ls-tree", &format!("{head}:{folder}")], b""),
+            false => String::new(),
+        };
+        let rows = put(&listing, name, format!("100644 blob {blob}\t{name}"));
+        let tree = sh(bare, &["mktree"], rows.as_bytes());
+        let root = put(&root, folder, format!("040000 tree {tree}\t{folder}"));
+        let root = sh(bare, &["mktree"], root.as_bytes());
+        let commit = sh(
+            bare,
+            &["commit-tree", &root, "-p", &head, "-m", "hand edit"],
+            b"",
+        );
+        sh(bare, &["update-ref", BOARD_REF, &commit], b"");
+    }
+
     /// Someone pushes a `tasks/b.md` the store cannot read.
     pub fn spoil_b(&self) {
         let bare = &self.bare;

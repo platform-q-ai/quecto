@@ -13,6 +13,7 @@ pub mod run;
 pub mod task;
 
 use super::markdown::{Document, MarkdownError, Shape, parse, render, schema_of};
+use crate::application::project_board::ports::BoardArtifact;
 
 /// Why a value or a file was refused.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -143,6 +144,42 @@ pub fn decode<C: ArtifactCodec>(bytes: &[u8]) -> Result<C::Value, CodecError> {
     match C::to_document(&value)? == document {
         true => Ok(value),
         false => Err(CodecError::NotCanonical),
+    }
+}
+
+/// The file a write makes of `artifact`, by its kind's codec, or why none
+/// is made: what the codec refuses (its field and line), named by the
+/// artifact's key. A file is taken only when it reads back and writes
+/// again to the very same bytes: equality of values may be looser than
+/// their files (a repository's ignores case), so bytes decide.
+///
+/// # Errors
+/// A value the codec refuses, or one that does not read back as written.
+pub fn file_of(artifact: &BoardArtifact) -> Result<Vec<u8>, String> {
+    let file = match artifact {
+        BoardArtifact::Task(task) => written::<task::TaskCodec>(task),
+        BoardArtifact::Plan(plan) => written::<plan::PlanCodec>(plan),
+        BoardArtifact::Run(run) => written::<run::RunCodec>(run),
+        BoardArtifact::Change(change) => written::<change::ChangeCodec>(change),
+        BoardArtifact::Review(review) => written::<review::ReviewCodec>(review),
+        BoardArtifact::Discussion(discussion) => written::<discussion::DiscussionCodec>(discussion),
+    };
+    file.map_err(|why| format!("{}: {why}", artifact.key()))
+}
+
+/// The file of `value`, taken only when it reads back as `value` itself
+/// and writes again to the same bytes (the value's equality may ignore
+/// what its bytes keep, as a repository's ignores case).
+fn written<C: ArtifactCodec>(value: &C::Value) -> Result<Vec<u8>, String> {
+    let file = encode::<C>(value)
+        .map_err(|error| error.to_string())?
+        .into_bytes();
+    let back =
+        decode::<C>(&file).map_err(|error| format!("does not read back as written: {error}"))?;
+    let again = encode::<C>(&back).map(String::into_bytes);
+    match (back == *value, again.as_deref() == Ok(file.as_slice())) {
+        (true, true) => Ok(file),
+        (false, _) | (_, false) => Err("does not read back as written".into()),
     }
 }
 

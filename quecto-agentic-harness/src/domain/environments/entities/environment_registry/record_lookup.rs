@@ -25,6 +25,18 @@ pub enum EnvironmentStatus {
 }
 
 impl EnvironmentStatus {
+    /// The status as the registry holds it — `running` whatever its
+    /// members, unlike `EnvironmentRecord::status_label`'s `empty`.
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Running => "running",
+            Self::Killing => "killing",
+            Self::Stopped => "stopped",
+            Self::CleanupFailed => "cleanup-failed",
+            Self::Retained => "retained",
+        }
+    }
+
     /// Whether `{"mode":"existing"}` admits a join (#2220): the allowlist
     /// [`super::EnvironmentRegistry::resolve_joinable`] applies — live, or
     /// retained for inspection.

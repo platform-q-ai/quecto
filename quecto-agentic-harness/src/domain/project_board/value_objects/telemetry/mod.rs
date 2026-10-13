@@ -3,6 +3,8 @@
 //! the way the swarm board's `swarm_op` is (`domain::swarm::telemetry`).
 //! T1 holds the record's skeleton, T3 the front ends' fields and T4 the
 //! use cases'; later slices add theirs (T5 the store's, T6 the index's).
+//! S4 adds a start's, its claim renewals' and its fold-back's records,
+//! under the same rules.
 //!
 //! **No free text is ever a field.** Enforced: a field is a kind enum, a
 //! count, or a leaf from `leaves` ([`StaticKind`], a known kind or
@@ -33,6 +35,7 @@
 use serde::Serialize;
 
 use super::code_ref::CommitId;
+use super::vocabulary::RunOutcome;
 pub use leaves::{StaticKind, TaskRef};
 
 mod leaves;
@@ -255,6 +258,119 @@ pub struct Normalised {
     pub title: Option<Vec<TextChange>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<Vec<TextChange>>,
+}
+
+kinds!(
+    /// Whether a start took the task's claim (it was ready) or found it
+    /// held by the starter (S4).
+    StartClaim { Fresh => "fresh", Held => "held" }
+);
+
+kinds!(
+    /// How a folded run ended (S4): a run outcome, by its own name.
+    RunOutcomeKind { Succeeded => "succeeded", Failed => "failed", Stopped => "stopped", Lost => "lost" }
+);
+
+impl RunOutcomeKind {
+    /// The kind of `outcome`.
+    pub fn of(outcome: RunOutcome) -> Self {
+        match outcome {
+            RunOutcome::Succeeded => Self::Succeeded,
+            RunOutcome::Failed => Self::Failed,
+            RunOutcome::Stopped => Self::Stopped,
+            RunOutcome::Lost => Self::Lost,
+        }
+    }
+}
+
+/// One start of a task (S4, #2479), as the event log's `board_start`
+/// record holds it: what was started, how large a team, whether the claim
+/// was taken, and how long the coordinator's launch took. Each optional
+/// field is left out when the start did not get that far.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct BoardStartRecord {
+    pub task: TaskRef,
+    pub client: Client,
+    #[serde(flatten)]
+    pub outcome: OpOutcome,
+    /// The run's number.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub run: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plan_version: Option<u64>,
+    /// The member limit, the coordinator included.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub members: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub roles: Option<u64>,
+    /// The task items the brief seeds.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub items: Option<u64>,
+    /// The worker roles whose models were not applied.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub not_applied: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub claim: Option<StartClaim>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub launch_us: Option<u64>,
+    pub duration_us: u64,
+}
+
+/// A started run's claim renewals (S4): consecutive successful renewals
+/// folded into one record, with the least time the claim had left before
+/// one; a failed renewal is a record of its own, refused.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ClaimRenewalsRecord {
+    pub task: TaskRef,
+    pub run: u64,
+    #[serde(flatten)]
+    pub outcome: OpOutcome,
+    pub renewals: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub min_left_s: Option<i64>,
+}
+
+/// A run folded back (S4): how it ended (`run_outcome`), where the plan's task items stood, the plan items the swarm
+/// never seeded (`unmatched`) and the swarm items no plan item matched
+/// (`extra`), the evidence lines kept and dropped, its cost, and its
+/// write's attempts, lost races and size.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct FoldBackRecord {
+    pub task: TaskRef,
+    pub run: u64,
+    #[serde(flatten)]
+    pub outcome: OpOutcome,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub run_outcome: Option<RunOutcomeKind>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub items: Option<ItemCounts>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unmatched: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub extra: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub evidence: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub evidence_dropped: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cost_tokens: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub attempts: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lost: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bytes: Option<u64>,
+    pub duration_us: u64,
+}
+
+/// A run's task items by the state each stood in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct ItemCounts {
+    pub todo: u64,
+    pub doing: u64,
+    pub review: u64,
+    pub done: u64,
+    pub blocked: u64,
 }
 
 #[cfg(test)]

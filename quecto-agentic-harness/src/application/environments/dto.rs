@@ -182,6 +182,15 @@ pub enum OvertakenAudience {
     Fleet,
 }
 
+/// A record a restore forgot: its ref and who created it, so a kill
+/// conditional on the creator can still answer for it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ForgottenEnvironment {
+    pub environment_ref: String,
+    /// CREATED-BY (empty for a session-less run).
+    pub created_by: String,
+}
+
 /// What restoring the durable registry into a session found.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RestoredRegistry {
@@ -189,9 +198,9 @@ pub struct RestoredRegistry {
     pub restored: Vec<String>,
     /// Refs whose container was gone and that were marked stopped.
     pub stopped: Vec<String>,
-    /// Refs of `stopped` records whose box left nothing behind, forgotten
-    /// so their numbers are free again (#2134).
-    pub forgotten: Vec<String>,
+    /// `stopped` records whose box left nothing behind, forgotten so their
+    /// numbers are free again (#2134).
+    pub forgotten: Vec<ForgottenEnvironment>,
     /// `stopped` records kept although part of their box is gone, each
     /// with the reason (#2134): not the runtime's failure to answer about
     /// a live record, which is `unverified`.
@@ -212,6 +221,16 @@ pub struct RestoredRegistry {
     /// Anything that judges environments by their record must refuse
     /// while this is set.
     pub read_error: Option<String>,
+}
+
+impl RestoredRegistry {
+    /// The refs of [`Self::forgotten`], in order.
+    pub fn forgotten_refs(&self) -> Vec<&str> {
+        self.forgotten
+            .iter()
+            .map(|forgotten| forgotten.environment_ref.as_str())
+            .collect()
+    }
 }
 
 /// One environment the runtime knows, as the config's `inspect --list`

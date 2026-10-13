@@ -495,3 +495,63 @@ fn a_backtick_branch_is_refused_when_written() {
         }))
     ));
 }
+
+/// A file `written` takes must read back as the very value, as well as
+/// the very bytes: a codec that reads a file back as another value than it
+/// wrote (here, on its second read) is refused, and a read-back the codec
+/// refuses names why.
+#[test]
+fn a_file_that_reads_back_as_another_value_is_not_written() {
+    use std::cell::Cell;
+    thread_local! {
+        static READS: Cell<u32> = const { Cell::new(0) };
+    }
+    /// A toy and how often its file was read: never in its document.
+    #[derive(Debug, Clone, PartialEq)]
+    struct Counted(Toy, u32);
+    struct Rereads;
+    impl ArtifactCodec for Rereads {
+        type Value = Counted;
+        const SCHEMA: u32 = ToyCodec::SCHEMA;
+        const SHAPE: Shape<'static> = ToyCodec::SHAPE;
+        fn to_document(counted: &Counted) -> Result<Document, CodecError> {
+            ToyCodec::to_document(&counted.0)
+        }
+        fn from_document(document: &Document) -> Result<Counted, CodecError> {
+            let read = READS.with(|reads| reads.replace(reads.get() + 1));
+            ToyCodec::from_document(document).map(|toy| Counted(toy, read.min(1)))
+        }
+    }
+    READS.with(|reads| reads.set(0));
+    assert_eq!(
+        written::<Rereads>(&Counted(toy(), 0)),
+        Err("does not read back as written".into())
+    );
+    /// A toy whose second read forgets the title's case, so its file no
+    /// longer writes its own document.
+    struct Forgets;
+    impl ArtifactCodec for Forgets {
+        type Value = Toy;
+        const SCHEMA: u32 = ToyCodec::SCHEMA;
+        const SHAPE: Shape<'static> = ToyCodec::SHAPE;
+        fn to_document(toy: &Toy) -> Result<Document, CodecError> {
+            ToyCodec::to_document(toy)
+        }
+        fn from_document(document: &Document) -> Result<Toy, CodecError> {
+            match READS.with(|reads| reads.replace(reads.get() + 1)) {
+                0 => ToyCodec::from_document(document),
+                _ => Lowercased::from_document(document),
+            }
+        }
+    }
+    READS.with(|reads| reads.set(0));
+    assert_eq!(
+        written::<Forgets>(&toy()),
+        Err(format!(
+            "does not read back as written: {}",
+            CodecError::NotCanonical
+        ))
+    );
+    READS.with(|reads| reads.set(0));
+    assert_eq!(written::<ToyCodec>(&toy()).map(|_| ()), Ok(()));
+}
