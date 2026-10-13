@@ -2,14 +2,7 @@ use super::*;
 
 #[test]
 fn a_line_allows_letters_marks_numbers_punctuation_symbols_and_spaces() {
-    for good in [
-        "Board store",
-        "e\u{301}té",
-        "№ 42 → ✓",
-        "a\u{a0}b",
-        "-",
-        "日本語",
-    ] {
+    for good in ["Board store", "e\u{301}té", "№ 42 → ✓", "-", "日本語"] {
         assert_eq!(line("title", good, 20), Ok(()), "{good:?}");
     }
 }
@@ -196,6 +189,49 @@ fn ignorable_and_blank_looking_characters_are_refused() {
         assert!(
             markdown("description", bad, 20).is_err(),
             "markdown {bad:?}"
+        );
+    }
+}
+
+/// A one-line field spaces its words with plain spaces only: any other
+/// space (no-break, narrow, ideographic, em) is refused with its own
+/// problem, as no file holds one.
+#[test]
+fn a_line_holds_plain_spaces_only() {
+    // The owner-approved wording, byte for byte.
+    assert_eq!(
+        PLAIN_SPACES_ONLY,
+        "has a space the board can't keep: use plain spaces (U+0020) only"
+    );
+    assert_eq!(line("title", "plain spaces only", 100), Ok(()));
+    for space in ['\u{a0}', '\u{202f}', '\u{2007}', '\u{3000}', '\u{2003}'] {
+        assert_eq!(
+            line("title", &format!("not{space}plain"), 100),
+            Err(SchemaError::new("title", PLAIN_SPACES_ONLY)),
+            "{space:?}"
+        );
+    }
+}
+
+/// Markdown text spaces its words with plain spaces, tabs and line ends
+/// only: any other space (one the normaliser left beside a block marker,
+/// or an em space) is refused with its field, as no file holds one.
+#[test]
+fn markdown_holds_plain_spaces_tabs_and_line_ends_only() {
+    assert_eq!(markdown("description", "a b\n\tc", 100), Ok(()));
+    for (text, line) in [
+        ("-\u{a0}x", 1),
+        ("\u{a0}leading", 1),
+        ("em\u{2003}space", 1),
+        ("a\nb\n\nc\u{3000}d", 4),
+    ] {
+        assert_eq!(
+            markdown("description", text, 100),
+            Err(SchemaError::new(
+                "description",
+                format!("line {line}: {PLAIN_SPACES_ONLY}")
+            )),
+            "{text:?}"
         );
     }
 }

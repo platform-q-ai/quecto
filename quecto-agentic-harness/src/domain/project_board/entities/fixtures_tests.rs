@@ -54,7 +54,7 @@ pub fn plan(version: u32, state: PlanState) -> Plan {
         task: slug("board-store"),
         version,
         state,
-        approach: "Spike, then build.\n".into(),
+        approach: "Spike, then build.".into(),
         items: vec![item("schema", &[]), item("api", &["schema"])],
         team: Some(team()),
         proposed_by: person("Ada"),

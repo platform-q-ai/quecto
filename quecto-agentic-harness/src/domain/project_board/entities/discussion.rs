@@ -216,7 +216,7 @@ pub fn message_shape(field: &str, message: &Message) -> Result<(), SchemaError> 
 }
 
 /// A message's text: one to [`MAX_MESSAGE_LINES`] lines, each a single
-/// line with something visible.
+/// line with something visible, spaced with plain spaces only (`line`).
 fn text(field: &str, message: &Message) -> Result<(), SchemaError> {
     match message.lines() {
         1..=MAX_MESSAGE_LINES => {}
