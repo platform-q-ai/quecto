@@ -629,3 +629,7 @@ fn a_pull_request_another_tasks_change_links_is_not_linked_again() {
     seed_artifacts(&store, vec![BoardArtifact::Change(unlinked)]);
     assert_eq!(link("10:01:00").unwrap().fields().prs, vec![7]);
 }
+
+/// Epic #2481 T4: what a noted change saw.
+#[path = "change_board_task_noted_tests.rs"]
+mod noted;

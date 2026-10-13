@@ -17,9 +17,11 @@ use super::board_change::{checked_writer, commit, task_on, written_task};
 use super::task_pointers::{Pointers, pointers_hold};
 use crate::application::project_board::dto::{DraftUpdate, ProjectBoardError};
 use crate::application::project_board::ports::{BoardArtifact, BoardClock, ProjectBoardStore};
+use crate::application::project_board::telemetry::OpFacts;
 use crate::domain::project_board::entities::task::Task;
 use crate::domain::project_board::services::drafts::{DraftEdit, edit_draft};
 use crate::domain::project_board::value_objects::board_text;
+use crate::domain::project_board::value_objects::telemetry::Normalised;
 
 pub struct UpdateDraftTask {
     store: Arc<dyn ProjectBoardStore>,
@@ -45,6 +47,32 @@ impl UpdateDraftTask {
     /// refusal; a reference it sets not on the board, set aside or closing
     /// a cycle; the clock's; the store's.
     pub fn execute(&self, update: &DraftUpdate) -> Result<Task, ProjectBoardError> {
+        self.execute_noted(update, None)
+    }
+
+    /// [`Self::execute`], noting in `facts` (epic #2481 T4), when given,
+    /// the write's attempts, the draft's status as last read and as
+    /// written, and what the normaliser changed in each text field the
+    /// update gives.
+    ///
+    /// # Errors
+    /// As [`Self::execute`].
+    pub fn execute_noted(
+        &self,
+        update: &DraftUpdate,
+        mut facts: Option<&mut OpFacts>,
+    ) -> Result<Task, ProjectBoardError> {
+        if let Some(facts) = facts.as_deref_mut() {
+            let normalised = Normalised {
+                title: update.title.as_deref().map(board_text::line_changes),
+                description: update.description.as_deref().map(board_text::text_changes),
+            };
+            // An edit that gives no text has nothing normalised to tell.
+            let gives_text = normalised.title.is_some() || normalised.description.is_some();
+            facts.normalised = gives_text.then_some(normalised);
+        }
+        let noting = facts.is_some();
+        let mut read = None;
         let id = &update.id;
         let edit = DraftEdit {
             title: update.title.as_deref().map(board_text::line),
@@ -53,8 +81,15 @@ impl UpdateDraftTask {
             depends_on: update.depends_on.clone(),
         };
         let message = format!("board: edit draft {}", id.as_str());
-        let written = commit(&*self.store, &*self.clock, &message, |board, when| {
-            let task = task_on(board, id)?;
+        let noted = facts.as_deref_mut();
+        let (store, clock) = (&*self.store, &*self.clock);
+        let written = commit(store, clock, &message, noted, |board, when| {
+            let task = task_on(board, id);
+            if noting {
+                // This attempt's read, or none: never an earlier one's.
+                read = task.as_ref().ok().map(|task| task.fields().status);
+            }
+            let task = task?;
             when.may_build_on(task)?;
             match &update.expected_updated {
                 Some(expected) if *expected != task.fields().updated => {
@@ -80,8 +115,13 @@ impl UpdateDraftTask {
                 },
             )?;
             Ok(vec![BoardArtifact::Task(edited)])
-        })?;
-        Ok(written_task(written))
+        });
+        let written = written.map(written_task);
+        if let Some(facts) = facts {
+            facts.status_from = read;
+            facts.status_to = written.as_ref().ok().map(|task| task.fields().status);
+        }
+        written
     }
 }
 

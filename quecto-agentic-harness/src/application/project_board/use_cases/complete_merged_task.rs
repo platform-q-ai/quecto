@@ -35,11 +35,14 @@ use crate::application::project_board::ports::{
     BoardArtifact, BoardClock, ProjectBoardStore, PullRequestState, PullRequestStates,
     PullRequestStatesError,
 };
+use crate::application::project_board::telemetry::{OpFacts, completion_facts};
 use crate::domain::project_board::entities::task::Task;
 use crate::domain::project_board::services::transitions::{
     Completed, completable, complete_merged,
 };
+use crate::domain::project_board::value_objects::rule_error::BoardRuleError;
 use crate::domain::project_board::value_objects::slug::Slug;
+use crate::domain::project_board::value_objects::telemetry::CompletionKind;
 
 /// The time a completion's pull request reads share.
 pub const READ_BUDGET: Duration = Duration::from_secs(30);
@@ -83,11 +86,38 @@ impl CompleteMergedTask {
     /// pull request not merged, and the rest as
     /// [`ChangeBoardTask`](super::ChangeBoardTask)'s. Nothing is written.
     pub fn execute(&self, id: &Slug) -> Result<Task, ProjectBoardError> {
+        self.execute_noted(id, None)
+    }
+
+    /// [`Self::execute`], noting in `facts` (epic #2481 T4), when given,
+    /// the write's attempts, the task's status as last read and as
+    /// written, and what came of completing it: done, or pending on pull
+    /// requests not merged yet (any other refusal is its own answer).
+    ///
+    /// # Errors
+    /// As [`Self::execute`].
+    pub fn execute_noted(
+        &self,
+        id: &Slug,
+        mut facts: Option<&mut OpFacts>,
+    ) -> Result<Task, ProjectBoardError> {
         let message = format!("board: {} done, its pull requests merged", id.as_str());
         // One deadline for every attempt: a lost write does not restart it.
         let deadline = self.clock.elapsed().saturating_add(self.read_budget);
-        let written = commit(&*self.store, &*self.clock, &message, |board, when| {
-            let task = task_on(board, id)?;
+        let noting = facts.is_some();
+        let mut read = None;
+        let noted = facts.as_deref_mut();
+        let (store, clock) = (&*self.store, &*self.clock);
+        let written = commit(store, clock, &message, noted, |board, when| {
+            let task = task_on(board, id);
+            if noting {
+                // This attempt's read, or none: never an earlier one's.
+                read = task
+                    .as_ref()
+                    .ok()
+                    .map(|task| (task.fields().status, task.fields().prs.len()));
+            }
+            let task = task?;
             when.may_build_on(task)?;
             // A task the rule would not complete is refused as such, before
             // its changes and runs are read.
@@ -116,8 +146,24 @@ impl CompleteMergedTask {
             let mut written = vec![BoardArtifact::Task(task)];
             written.extend(run.map(BoardArtifact::Run));
             Ok(written)
-        })?;
-        Ok(written_task(written))
+        });
+        let written = written.map(written_task);
+        if let (Some(facts), Some((status, linked))) = (facts, read) {
+            facts.status_from = Some(status);
+            facts.status_to = written.as_ref().ok().map(|task| task.fields().status);
+            facts.completion = match &written {
+                Ok(task) => Some(completion_facts(
+                    CompletionKind::Done,
+                    task.fields().prs.len(),
+                    None,
+                )),
+                Err(ProjectBoardError::Rule(BoardRuleError::PrsUnmerged(prs))) => Some(
+                    completion_facts(CompletionKind::Pending, linked, Some(prs.len())),
+                ),
+                Err(_) => None,
+            };
+        }
+        written
     }
 }
 

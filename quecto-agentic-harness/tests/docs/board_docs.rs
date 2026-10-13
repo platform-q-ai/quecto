@@ -6,8 +6,9 @@ use quecto::domain::audit::AuditEvent;
 use quecto::domain::project_board::value_objects::code_ref::CommitId;
 use quecto::domain::project_board::value_objects::slug::Slug;
 use quecto::domain::project_board::value_objects::telemetry::{
-    Access, BoardOpRecord, Client, FaultKind, FrontEnd, ListingCounts, OpKind, OpOutcome,
-    RequestFault, StaticKind, TaskRef,
+    Access, BoardOpRecord, ClaimFacts, Client, CompletionFacts, CompletionKind, FaultKind,
+    FrontEnd, ListingCounts, Normalised, OpKind, OpOutcome, RequestFault, StaticKind, TaskRef,
+    TextChange,
 };
 
 use crate::common::read_repo_file;
@@ -46,6 +47,30 @@ fn full() -> BoardOpRecord {
             truncated_more: 1,
             set_aside: 0,
             set_aside_more: 0,
+        }),
+        status_from: Some(StaticKind::new("in_progress")),
+        status_to: Some(StaticKind::new("review")),
+        claim: Some(ClaimFacts {
+            held_s: 1,
+            left_s: -1,
+            holder_is_writer: true,
+        }),
+        attempts: Some(2),
+        lost: Some(1),
+        pause_ms: Some(1),
+        completion: Some(CompletionFacts {
+            completion: CompletionKind::Failed,
+            completion_code: Some(StaticKind::new("rule")),
+            completion_rule: Some(StaticKind::new("no_prs")),
+            prs_linked: 1,
+            prs_pending: Some(1),
+            completion_attempts: Some(1),
+            completion_lost: Some(0),
+            completion_pause_ms: Some(1),
+        }),
+        normalised: Some(Normalised {
+            title: Some(vec![TextChange::Crlf]),
+            description: Some(vec![]),
         }),
         cancelled: true,
         build_us: Some(1),
@@ -89,7 +114,9 @@ fn every_kind_a_front_end_records_is_named() {
         .chain(FrontEnd::ALL.iter().map(|kind| kind.as_str()))
         .chain(Client::ALL.iter().map(|kind| kind.as_str()))
         .chain(Access::ALL.iter().map(|kind| kind.as_str()))
-        .chain(FaultKind::ALL.iter().map(|kind| kind.as_str()));
+        .chain(FaultKind::ALL.iter().map(|kind| kind.as_str()))
+        .chain(CompletionKind::ALL.iter().map(|kind| kind.as_str()))
+        .chain(TextChange::ALL.iter().map(|kind| kind.as_str()));
     for kind in kinds {
         assert!(
             section.contains(&format!("`{kind}`")),

@@ -61,8 +61,30 @@ NotJson => "not_json" ,
 DuplicateKey => "duplicate_key" ,
 }
 ) ;
+kinds ! (
+CompletionKind {
+Done => "done" ,
+Pending => "pending" ,
+Failed => "failed"
+}
+) ;
+kinds ! (
+TextChange {
+Crlf => "crlf" ,
+LoneCr => "lone_cr" ,
+LineBreak => "line_break" ,
+ChatSpace => "chat_space" ,
+Tab => "tab" ,
+EdgeBlankLines => "edge_blank_lines" ,
+TrailingSpace => "trailing_space" ,
+EdgeSpace => "edge_space" ,
+}
+) ;
 # [ derive ( Debug , Clone , PartialEq , Eq , Serialize  )  ] # [ serde ( tag = "outcome" , rename_all = "snake_case"  )  ] pub enum OpOutcome { Ok , Refused { code : StaticKind , # [ serde ( skip_serializing_if = "Option::is_none"  )  ] rule : Option < StaticKind > ,  } ,  }
 # [ derive ( Debug , Clone , PartialEq , Eq , Serialize  )  ] pub struct RequestFault { pub field : StaticKind , pub fault : FaultKind , # [ serde ( skip_serializing_if = "Option::is_none"  )  ] pub unexpected_count : Option < u64 > ,  }
-# [ derive ( Debug , Clone , PartialEq , Eq , Serialize  )  ] pub struct BoardOpRecord { pub op : OpKind , pub front_end : FrontEnd , pub client : Client , pub access : Access , # [ serde ( flatten  )  ] pub outcome : OpOutcome , # [ serde ( flatten , skip_serializing_if = "Option::is_none"  )  ] pub fault : Option < RequestFault > , # [ serde ( skip_serializing_if = "Option::is_none"  )  ] pub task : Option < TaskRef > , # [ serde ( skip_serializing_if = "Option::is_none"  )  ] pub pr : Option < u64 > , # [ serde ( skip_serializing_if = "Option::is_none"  )  ] pub head : Option < CommitId > , # [ serde ( flatten , skip_serializing_if = "Option::is_none"  )  ] pub listing : Option < ListingCounts > , # [ serde ( skip_serializing_if = "std::ops::Not::not"  )  ] pub cancelled : bool , # [ serde ( skip_serializing_if = "Option::is_none"  )  ] pub build_us : Option < u64 > , pub result_bytes : u64 , pub duration_us : u64 ,  }
+# [ derive ( Debug , Clone , PartialEq , Eq , Serialize  )  ] pub struct BoardOpRecord { pub op : OpKind , pub front_end : FrontEnd , pub client : Client , pub access : Access , # [ serde ( flatten  )  ] pub outcome : OpOutcome , # [ serde ( flatten , skip_serializing_if = "Option::is_none"  )  ] pub fault : Option < RequestFault > , # [ serde ( skip_serializing_if = "Option::is_none"  )  ] pub task : Option < TaskRef > , # [ serde ( skip_serializing_if = "Option::is_none"  )  ] pub pr : Option < u64 > , # [ serde ( skip_serializing_if = "Option::is_none"  )  ] pub head : Option < CommitId > , # [ serde ( flatten , skip_serializing_if = "Option::is_none"  )  ] pub listing : Option < ListingCounts > , # [ serde ( skip_serializing_if = "Option::is_none"  )  ] pub status_from : Option < StaticKind > , # [ serde ( skip_serializing_if = "Option::is_none"  )  ] pub status_to : Option < StaticKind > , # [ serde ( skip_serializing_if = "Option::is_none"  )  ] pub claim : Option < ClaimFacts > , # [ serde ( skip_serializing_if = "Option::is_none"  )  ] pub attempts : Option < u64 > , # [ serde ( skip_serializing_if = "Option::is_none"  )  ] pub lost : Option < u64 > , # [ serde ( skip_serializing_if = "Option::is_none"  )  ] pub pause_ms : Option < u64 > , # [ serde ( flatten , skip_serializing_if = "Option::is_none"  )  ] pub completion : Option < CompletionFacts > , # [ serde ( skip_serializing_if = "Option::is_none"  )  ] pub normalised : Option < Normalised > , # [ serde ( skip_serializing_if = "std::ops::Not::not"  )  ] pub cancelled : bool , # [ serde ( skip_serializing_if = "Option::is_none"  )  ] pub build_us : Option < u64 > , pub result_bytes : u64 , pub duration_us : u64 ,  }
 # [ derive ( Debug , Clone , Copy , PartialEq , Eq , Serialize  )  ] pub struct ListingCounts { pub listed : u64 , pub shown : u64 , pub truncated_more : u64 , pub set_aside : u64 , pub set_aside_more : u64 ,  }
+# [ derive ( Debug , Clone , Copy , PartialEq , Eq , Serialize  )  ] pub struct ClaimFacts { pub held_s : i64 , pub left_s : i64 , pub holder_is_writer : bool ,  }
+# [ derive ( Debug , Clone , PartialEq , Eq , Serialize  )  ] pub struct CompletionFacts { pub completion : CompletionKind , # [ serde ( skip_serializing_if = "Option::is_none"  )  ] pub completion_code : Option < StaticKind > , # [ serde ( skip_serializing_if = "Option::is_none"  )  ] pub completion_rule : Option < StaticKind > , pub prs_linked : u64 , # [ serde ( skip_serializing_if = "Option::is_none"  )  ] pub prs_pending : Option < u64 > , # [ serde ( skip_serializing_if = "Option::is_none"  )  ] pub completion_attempts : Option < u64 > , # [ serde ( skip_serializing_if = "Option::is_none"  )  ] pub completion_lost : Option < u64 > , # [ serde ( skip_serializing_if = "Option::is_none"  )  ] pub completion_pause_ms : Option < u64 > ,  }
+# [ derive ( Debug , Clone , PartialEq , Eq , Serialize  )  ] pub struct Normalised { # [ serde ( skip_serializing_if = "Option::is_none"  )  ] pub title : Option < Vec < TextChange > > , # [ serde ( skip_serializing_if = "Option::is_none"  )  ] pub description : Option < Vec < TextChange > > ,  }
 # [ cfg ( test  )  ] # [ path = "mod_tests.rs"  ] mod tests ;

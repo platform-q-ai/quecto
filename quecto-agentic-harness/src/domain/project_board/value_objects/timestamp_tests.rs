@@ -56,3 +56,17 @@ fn a_timestamp_moves_forward_by_whole_seconds_up_to_the_year_9999() {
         "past the year 9999 is refused"
     );
 }
+
+/// Epic #2481 T4: the signed seconds between two moments, for a claim's
+/// age and time left; whole range, either way round.
+#[test]
+fn the_seconds_between_two_moments_are_signed() {
+    let at = |text: &str| Timestamp::parse(text).unwrap();
+    let (early, late) = (at("2026-10-10T09:00:00Z"), at("2026-10-10T11:00:01Z"));
+    assert_eq!(late.seconds_since(&early), 7201);
+    assert_eq!(early.seconds_since(&late), -7201);
+    assert_eq!(early.seconds_since(&early), 0);
+    let (first, last) = (at("1970-01-01T00:00:00Z"), at(LAST));
+    assert_eq!(last.seconds_since(&first), 253_402_300_799);
+    assert_eq!(first.seconds_since(&last), -253_402_300_799);
+}

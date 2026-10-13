@@ -164,3 +164,48 @@ fn the_slack_bound_tightens_to_the_latest_time_where_it_would_overflow() {
     assert!(within_slack(&last, Some(&last)));
     assert!(!within_slack(&time("9999-12-31T23:59:51Z"), Some(&last)));
 }
+
+/// Epic #2481 T4: what a change saw of a claim (held 09:00 to 11:00 by
+/// Ada), at its boundaries, without naming its holder.
+#[test]
+fn claim_facts_count_from_its_start_to_its_expiry() {
+    let held = task(InProgress);
+    let facts = |who: &str, time: &str| claim_facts(&held, &person(who), &at(time));
+    let fact = |held_s, left_s, holder_is_writer| {
+        Some(ClaimFacts {
+            held_s,
+            left_s,
+            holder_is_writer,
+        })
+    };
+    assert_eq!(facts("Ada", "09:00:00"), fact(0, 7200, true), "taken now");
+    assert_eq!(
+        facts("Ada", "10:59:59"),
+        fact(7199, 1, true),
+        "its last second"
+    );
+    assert_eq!(
+        facts("Bob", "11:00:00"),
+        fact(7200, 0, false),
+        "expires now"
+    );
+    assert_eq!(facts("Bob", "11:00:01"), fact(7201, -1, false), "lapsed");
+    assert_eq!(
+        facts("Bob", "08:59:00"),
+        fact(-60, 7260, false),
+        "a clock behind"
+    );
+    let shouting = Identity {
+        name: "Someone".into(),
+        email: "ADA@EXAMPLE.COM".into(),
+    };
+    assert!(
+        claim_facts(&held, &shouting, &at("10:00:00"))
+            .unwrap()
+            .holder_is_writer
+    );
+    assert_eq!(
+        claim_facts(&task(Ready), &person("Ada"), &at("10:00:00")),
+        None
+    );
+}

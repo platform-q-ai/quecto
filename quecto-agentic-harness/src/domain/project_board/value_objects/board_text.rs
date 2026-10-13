@@ -43,6 +43,7 @@
 //! Reading an artifact back (`Task::new`, `Plan::new`, `Discussion::new`)
 //! stays lenient by design, so what earlier builds stored still reads.
 use super::schema_error::SchemaError;
+use super::telemetry::TextChange;
 use regex::Regex;
 use std::sync::LazyLock;
 
@@ -328,6 +329,89 @@ pub fn entered_message(field: &str, held: &str) -> Result<(), SchemaError> {
         true => Ok(()),
         false => Err(SchemaError::new(field, NOT_ENTERED_MESSAGE)),
     }
+}
+
+/// The kinds of change [`text`] makes to `raw` (epic #2481 T4), each
+/// once, in [`TextChange`]'s order: none exactly when it keeps `raw` as
+/// written. Its steps are [`text`]'s, told apart: line ends unified, then
+/// each kept line's chat spaces and trailing spacing (lines line up past
+/// the blank ones dropped at the start, as [`text`] drops none inside),
+/// then the lines dropped at the edges.
+pub fn text_changes(raw: &str) -> Vec<TextChange> {
+    let unified = raw.replace("\r\n", "\n");
+    let lines_of = |text: &str| -> Vec<String> {
+        match text.is_empty() {
+            true => vec![],
+            false => text.split('\n').map(str::to_string).collect(),
+        }
+    };
+    let read = lines_of(&unified.replace('\r', "\n"));
+    let normal = text(raw);
+    let kept = lines_of(&normal);
+    let first = read
+        .iter()
+        .position(|line| !blank(line))
+        .unwrap_or(read.len());
+    debug_assert!(
+        first + kept.len() <= read.len(),
+        "text keeps lines, never adds one"
+    );
+    let pairs = || read[first..].iter().zip(&kept);
+    let chat = |line: &str| line.chars().filter(|c| CHAT_SPACES.contains(c)).count();
+    let trailing = |line: &str| line.len() - line.trim_end_matches(spacing).len();
+    let changes = [
+        (TextChange::Crlf, unified.len() < raw.len()),
+        (TextChange::LoneCr, unified.contains('\r')),
+        (
+            TextChange::ChatSpace,
+            pairs().any(|(was, now)| chat(was) > chat(now)),
+        ),
+        (TextChange::EdgeBlankLines, kept.len() < read.len()),
+        (
+            TextChange::TrailingSpace,
+            pairs().any(|(was, now)| trailing(was) > trailing(now)),
+        ),
+    ];
+    told(raw, &normal, &changes)
+}
+
+/// The kinds of change [`line`] makes to `raw` (epic #2481 T4), each
+/// once, in [`TextChange`]'s order: none exactly when it keeps `raw` as
+/// written. Its steps are [`line`]'s, one by one.
+pub fn line_changes(raw: &str) -> Vec<TextChange> {
+    let crlf = raw.replace("\r\n", "\n");
+    let lone_cr = crlf.replace('\r', "\n");
+    let broken = line_ends(&lone_cr);
+    let plain = plain_spaces(&broken);
+    let untabbed = plain.replace('\t', " ");
+    let trimmed = untabbed.trim_matches([' ', '\n']);
+    debug_assert_eq!(trimmed, line(raw), "line's own steps");
+    let changes = [
+        (TextChange::Crlf, crlf != raw),
+        (TextChange::LoneCr, lone_cr != crlf),
+        (TextChange::LineBreak, broken != lone_cr),
+        (TextChange::ChatSpace, plain != broken),
+        (TextChange::Tab, untabbed != plain),
+        (TextChange::EdgeSpace, trimmed != untabbed),
+    ];
+    told(raw, trimmed, &changes)
+}
+
+/// The kinds `changes` tells, in [`TextChange`]'s order; asserted in
+/// debug builds to be none exactly when `kept` is `raw` (telemetry never
+/// fails a write).
+fn told(raw: &str, kept: &str, changes: &[(TextChange, bool)]) -> Vec<TextChange> {
+    let told: Vec<TextChange> = TextChange::ALL
+        .iter()
+        .copied()
+        .filter(|kind| changes.contains(&(*kind, true)))
+        .collect();
+    debug_assert_eq!(
+        told.is_empty(),
+        raw == kept,
+        "a change is told exactly when one was made"
+    );
+    told
 }
 
 /// `raw` with each line end one LF: a CRLF, and each of [`LINE_BREAKS`]

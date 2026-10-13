@@ -35,6 +35,20 @@ impl Timestamp {
         &self.0
     }
 
+    /// The seconds from `earlier` to this moment: below zero when this one
+    /// comes first (epic #2481 T4, a claim's age and time left). Every
+    /// spellable span fits an `i64` many times over.
+    pub fn seconds_since(&self, earlier: &Timestamp) -> i64 {
+        let moment = |time: &Timestamp| {
+            humantime::parse_rfc3339(&time.0).expect("a parsed timestamp reads back")
+        };
+        let signed = |span: Duration| i64::try_from(span.as_secs()).unwrap_or(i64::MAX);
+        match moment(self).duration_since(moment(earlier)) {
+            Ok(after) => signed(after),
+            Err(before) => -signed(before.duration()),
+        }
+    }
+
     /// This moment `seconds` later, refused past the year 9999.
     pub fn plus_seconds(&self, seconds: u64) -> Result<Self, SchemaError> {
         let start = humantime::parse_rfc3339(&self.0).expect("a parsed timestamp reads back");

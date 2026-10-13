@@ -48,10 +48,14 @@ const SNAPSHOTS: &[(&str, &str)] = &[
     ),
 ];
 
-/// Types a record field may hold as they are: counts, flags (T3's
-/// `cancelled`), and the guarded leaves (the commit id is `code_ref`'s,
-/// from `commit_id.rs`).
-const ADMITTED: &[&str] = &["u64", "bool", "StaticKind", "TaskRef", "CommitId"];
+/// Types a record field may hold as they are: counts, signed spans (T4's
+/// claim seconds), flags (T3's `cancelled`), and the guarded leaves (the
+/// commit id is `code_ref`'s, from `commit_id.rs`).
+const ADMITTED: &[&str] = &["u64", "i64", "bool", "StaticKind", "TaskRef", "CommitId"];
+
+/// The containers a field's types are read through: whatever they hold
+/// (a `BTreeMap`'s keys and values alike) must be admitted in turn.
+const CONTAINERS: &[&str] = &["Option", "Vec", "BTreeMap"];
 
 /// The adapters' file (T2), the one place besides composition that may
 /// name them.
@@ -285,8 +289,9 @@ fn declared(file: &syn::File) -> BTreeMap<String, Declared> {
     types
 }
 
-/// The types a field of `ty` holds, `Option` unwrapped, each by its whole
-/// path (`other::StaticKind` is not the leaf).
+/// The types a field of `ty` holds, each of [`CONTAINERS`] unwrapped (by
+/// its bare name only), each by its whole path (`other::StaticKind` is
+/// not the leaf).
 fn leaves(ty: &syn::Type, out: &mut Vec<String>) {
     let syn::Type::Path(path) = ty else {
         out.push(format!("<not a path: {}>", tokens(ty)));
@@ -294,7 +299,7 @@ fn leaves(ty: &syn::Type, out: &mut Vec<String>) {
     };
     let only = (path.qself.is_none() && path.path.segments.len() == 1)
         .then(|| &path.path.segments[0])
-        .filter(|segment| segment.ident == "Option");
+        .filter(|segment| CONTAINERS.iter().any(|name| segment.ident == name));
     match only.map(|segment| &segment.arguments) {
         Some(syn::PathArguments::AngleBracketed(arguments)) => {
             for argument in &arguments.args {
@@ -357,6 +362,27 @@ fn the_record_scan_refuses_text_fields() {
     assert_eq!(
         refused,
         ["other::StaticKind", "String", "std::path::PathBuf"]
+    );
+    // T4: text inside a list or a map is found, and only the bare
+    // containers are read through.
+    let nested: syn::File = syn::parse_quote! {
+        pub struct BoardOpRecord {
+            pub titles: Option<Vec<String>>,
+            pub by_path: BTreeMap<std::path::PathBuf, u64>,
+            pub by_kind: BTreeMap<StaticKind, Vec<i64>>,
+            pub names: std::vec::Vec<StaticKind>,
+            pub reasons: Vec<Box<str>>,
+        }
+    };
+    let refused = refused_from("BoardOpRecord", &declared(&nested));
+    assert_eq!(
+        refused,
+        [
+            "Box<str>",
+            "std::vec::Vec<StaticKind>",
+            "std::path::PathBuf",
+            "String"
+        ]
     );
 }
 

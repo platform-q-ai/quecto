@@ -13,10 +13,11 @@ use crate::application::project_board::dto::{BoardOp, ProjectBoardError};
 use crate::application::project_board::ports::{
     BoardArtifact, BoardClock, BoardSnapshot, ProjectBoardStore,
 };
+use crate::application::project_board::telemetry::OpFacts;
 use crate::domain::project_board::entities::claim::Identity;
 use crate::domain::project_board::entities::task::Task;
 use crate::domain::project_board::services::changes::Linked;
-use crate::domain::project_board::services::claims::{renew, take_over};
+use crate::domain::project_board::services::claims::{claim_facts, renew, take_over};
 use crate::domain::project_board::services::pull_requests::{add_pr, remove_pr};
 use crate::domain::project_board::services::transitions::{move_reads, move_task};
 use crate::domain::project_board::value_objects::slug::Slug;
@@ -53,20 +54,60 @@ impl ChangeBoardTask {
     /// latest task, its runs and changes, and every change on the board);
     /// the clock's; a board that kept moving; the store's.
     pub fn execute(&self, id: &Slug, op: &BoardOp) -> Result<Task, ProjectBoardError> {
+        self.execute_noted(id, op, None)
+    }
+
+    /// [`Self::execute`], noting in `facts` (epic #2481 T4), when given,
+    /// the write's attempts and, of the task as last read, its status and
+    /// the claim it held; the status a move asked for, made or refused,
+    /// and otherwise the written task's.
+    ///
+    /// # Errors
+    /// As [`Self::execute`].
+    pub fn execute_noted(
+        &self,
+        id: &Slug,
+        op: &BoardOp,
+        mut facts: Option<&mut OpFacts>,
+    ) -> Result<Task, ProjectBoardError> {
         let actor = &self.actor;
+        let noting = facts.is_some();
+        let mut read = None;
+        let noted = facts.as_deref_mut();
         let written = commit(
             &*self.store,
             &*self.clock,
             &op.message(id),
+            noted,
             |board, when| {
-                let task = task_on(board, id)?;
+                let task = task_on(board, id);
+                if noting {
+                    // This attempt's read, or none: never an earlier one's.
+                    let found = task.as_ref().ok();
+                    read = found
+                        .map(|task| (task.fields().status, claim_facts(task, actor, &when.now)));
+                }
+                let task = task?;
                 when.may_build_on(task)?;
                 board_readable_for(op, board)?;
                 let changed = apply(task, board, actor, op, &when.now)?;
                 Ok(vec![BoardArtifact::Task(changed)])
             },
-        )?;
-        Ok(written_task(written))
+        );
+        let written = written.map(written_task);
+        if let Some(facts) = facts {
+            if let Some((status, claim)) = read {
+                facts.status_from = Some(status);
+                facts.claim = claim;
+            }
+            facts.status_to = match op {
+                BoardOp::Move(to) => Some(*to),
+                BoardOp::Renew | BoardOp::TakeOver | BoardOp::AddPr(_) | BoardOp::RemovePr(_) => {
+                    written.as_ref().ok().map(|task| task.fields().status)
+                }
+            };
+        }
+        written
     }
 }
 

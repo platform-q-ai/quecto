@@ -19,16 +19,17 @@ use serde_json::Value;
 use super::answer::{self, FrontEndRefusal, rule_code};
 use super::request::{RequestError, schema_field};
 use crate::application::project_board::dto::ProjectBoardError;
-use crate::application::project_board::operations::{BoardOutcome, BoardRequest};
+use crate::application::project_board::operations::{BoardOutcome, BoardRequest, Completion};
 use crate::application::project_board::telemetry::{
-    BoardRecording, access_of, op_kind, pr_of, task_of,
+    BoardRecording, OpFacts, access_of, op_kind, pr_of, task_of,
 };
+use crate::application::project_board::use_cases::RunBoardOperation;
 use crate::domain::project_board::value_objects::code_ref::CommitId;
 use crate::domain::project_board::value_objects::rule_error::BoardRuleError;
 use crate::domain::project_board::value_objects::schema_error::SchemaError;
 use crate::domain::project_board::value_objects::telemetry::{
-    Access, BoardOpRecord, Client, FaultKind, FrontEnd, ListingCounts, OpKind, OpOutcome,
-    RequestFault, StaticKind, TaskRef,
+    Access, BoardOpRecord, Client, CompletionKind, FaultKind, FrontEnd, ListingCounts, OpKind,
+    OpOutcome, RequestFault, StaticKind, TaskRef,
 };
 
 /// One front end call on the board, and its record while it is recorded.
@@ -78,6 +79,14 @@ impl BoardCall {
                 pr: None,
                 head: None,
                 listing: None,
+                status_from: None,
+                status_to: None,
+                claim: None,
+                attempts: None,
+                lost: None,
+                pause_ms: None,
+                completion: None,
+                normalised: None,
                 cancelled: false,
                 build_us: None,
                 result_bytes: 0,
@@ -117,6 +126,25 @@ impl BoardCall {
             record.task = task_of(request).map(TaskRef::of);
             record.pr = pr_of(request);
         });
+    }
+
+    /// What `operations` make of `request`, with what its use cases saw
+    /// (T4) noted while recorded; unrecorded, nothing is noted or timed.
+    ///
+    /// # Errors
+    /// As [`RunBoardOperation::execute`].
+    pub fn executed(
+        &mut self,
+        operations: &RunBoardOperation,
+        request: &BoardRequest,
+    ) -> Result<BoardOutcome, ProjectBoardError> {
+        let Some(open) = &mut self.open else {
+            return operations.execute(request);
+        };
+        let mut facts = OpFacts::default();
+        let result = operations.execute_noted(request, Some(&mut facts));
+        facts.fill(&mut open.record);
+        result
     }
 
     /// What `build` builds (the board's operations), timed while recorded.
@@ -176,6 +204,20 @@ impl BoardCall {
             };
             record.outcome = OpOutcome::Ok;
             record.head = head.and_then(|head| CommitId::parse(&head.0).ok());
+            // A failed completion's code and rule, as the answer spells them.
+            if let (
+                BoardOutcome::Changed {
+                    completion: Some(Completion::Failed(error)),
+                    ..
+                },
+                Some(completion),
+            ) = (outcome, &mut record.completion)
+            {
+                debug_assert_eq!(completion.completion, CompletionKind::Failed);
+                completion.completion_code =
+                    Some(StaticKind::new(answer::error_code(error).as_str()));
+                completion.completion_rule = refusal_parts(error).0.map(StaticKind::new);
+            }
         });
         answer::outcome(op, outcome, clock)
     }
