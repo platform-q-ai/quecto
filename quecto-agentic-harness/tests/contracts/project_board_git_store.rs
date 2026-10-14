@@ -399,7 +399,7 @@ fn the_git_store_takes_a_run_folded_back_alone_with_no_secret_in_its_file() {
                 ("postgres://app:S3cr#t@db:5432/app".to_string(), "4f2a9c1"),
                 ("https://h.example/p#sig=ab".to_string(), "4f2a9c1"),
                 (
-                    "`https://acct.blob.core.windows.net/c/b?sv=2024&sig=AbC%2Bsecret`".into(),
+                    "`https://acct.blob.core.windows.net/c/b?sv=2024&sig=AbC%2Bs3cr3t`".into(),
                     "4f2a9c1",
                 ),
             ]
@@ -446,10 +446,8 @@ fn the_git_store_takes_a_run_folded_back_alone_with_no_secret_in_its_file() {
         file.contains("`https://acct.blob.core.windows.net/c/b` at 4f2a9c1"),
         "{file}"
     );
-    assert!(
-        file.contains("[link](https://github.com/o/r/pull/7) at 4f2a9c1"),
-        "{file}"
-    );
+    // A line naming a credential word (`token`) is dropped whole.
+    assert!(!file.contains("pull/7"), "{file}");
     assert!(file.contains("[REDACTED] at 4f2a9c1"), "{file}");
     let log = sh(&remote.bare, &["log", "-1", "--format=%s", BOARD_REF], b"");
     assert_eq!(log, "board: run 1 of board-store folded back, succeeded");

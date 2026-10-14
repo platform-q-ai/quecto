@@ -463,7 +463,7 @@ fn secrets_never_reach_the_run() {
         &X-Amz-Credential=AKIAIOSFODNN7EXAMPLE%2F20261013%2Fus-east-1%2Fs3%2Faws4_request\
         &X-Amz-Date=20261013T000000Z&X-Amz-Expires=3600&X-Amz-SignedHeaders=host\
         &X-Amz-Signature=deadbeefcafe0123456789";
-    let token_url = format!("https://github.com/o/r/pull/7?token={TOKEN}");
+    let token_url = format!("https://github.com/o/r/pull/7?t={TOKEN}");
     let userinfo = format!("https://ada:{TOKEN}@github.com/o/r");
     let items = folded(vec![
         swarm_item(
@@ -475,6 +475,7 @@ fn secrets_never_reach_the_run() {
                 (TOKEN, "4f2a9c1"),
                 ("deployed", "Bearer abcdef0123456789"),
                 ("password=hunter2", "main"),
+                ("pwd=hunter2", "main"),
                 (signed, "v1"),
                 (userinfo.as_str(), "main"),
             ],
@@ -498,6 +499,7 @@ fn secrets_never_reach_the_run() {
         "abcdef0123456789",
         "AKIA",
         "deadbeef",
+        "password",
         "Amz",
     ] {
         assert!(
@@ -510,13 +512,12 @@ fn secrets_never_reach_the_run() {
         [
             "[link](https://github.com/o/r/pull/7) at 4f2a9c1",
             "[REDACTED] at 4f2a9c1",
-            // `Bearer …` is a credential: its line is dropped whole.
-            "[REDACTED] at main",
-            "[link](https://bucket.s3.amazonaws.com/build.tgz) at v1",
+            // Lines naming a credential word (`Bearer`, `password`, `pwd=`,
+            // the signed URL's `Credential`) are dropped whole.
         ]
     );
     assert_eq!(items.items[0].owner.as_deref(), Some("worker [REDACTED]"));
-    assert_eq!(items.items[1].owner.as_deref(), Some("[REDACTED]"));
+    assert_eq!(items.items[1].owner, None);
 }
 
 #[test]
@@ -557,8 +558,9 @@ fn only_a_whole_address_is_linked_with_its_punctuation_left_outside() {
 }
 
 #[test]
-fn an_owner_is_the_member_id_capped_and_one_the_board_cannot_hold_is_none() {
-    let long = "w".repeat(MAX_OWNER_CHARS + 20);
+fn an_owner_past_its_limit_or_one_the_board_cannot_hold_is_none() {
+    // Never cut: a cut may strip the `@` that marks a secret.
+    let long = "w".repeat(MAX_OWNER_CHARS + 1);
     let items = folded(vec![
         swarm_item(
             "api: Build the api",
@@ -579,14 +581,11 @@ fn an_owner_is_the_member_id_capped_and_one_the_board_cannot_hold_is_none() {
             &[],
         ),
     ]);
-    assert_eq!(
-        items.items[0].owner.as_deref(),
-        Some("w".repeat(MAX_OWNER_CHARS).as_str())
-    );
+    assert_eq!(items.items[0].owner, None);
     assert_eq!(items.items[1].owner, None);
     assert_eq!(items.items[2].owner, None);
-    // Cut at the limit, then trimmed again: no space is left at its end.
-    let spaced = format!("{} b", "a".repeat(MAX_OWNER_CHARS - 1));
+    // At its limit, it is kept, trimmed: no space is left at its end.
+    let spaced = format!("{} ", "a".repeat(MAX_OWNER_CHARS - 1));
     let items = folded(vec![swarm_item(
         "api: Build the api",
         SwarmItemState::Claimed,

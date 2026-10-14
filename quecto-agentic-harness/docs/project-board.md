@@ -201,33 +201,39 @@ owners or evidence, only kinds and counts.
 
 The run's own owners and evidence are scrubbed before they reach the board,
 which is public, so a line in doubt is dropped whole (counted in
-`evidence_dropped`; an owner in doubt is left out), never rewritten further.
-Each part is cut to its board limit first, and its spaces made plain, so an
-address ends where a reader sees it end. A line is in doubt when it holds:
+`evidence_dropped`; an owner in doubt is left out), never rewritten further. A
+line is in doubt when it holds:
 
-- an `Authorization:` header, or `basic` or `bearer` before a credential-like
-  word;
+- a part past its board limit in characters (500 for an evidence part, 100 for
+  an owner): it is never cut, since a cut may strip the `@` that marks a
+  secret;
+- a credential word, in any case and as any part of a word, once zero-width
+  characters are taken out: `authorization`, `bearer`, `basic `, `password`,
+  `passwd`, `pwd=`, `secret`, `token`, `api_key`, `apikey`, `api-key`,
+  `credential`, `private_key`, `private-key`;
 - an address whose fragment is no short anchor (up to 64 letters, digits, `_`,
   `.` or `-`), whose path holds `%25`, or a bare host whose word holds a `;`;
-- an at sign (`@`, fullwidth `＠` or small `﹫`) outside an address, but in a
-  `worker@1` or `HEAD@{1}` word.
+- an at sign (`@`, fullwidth `＠`, small `﹫`, or `%40` encoded once or more)
+  outside an address, judged after secrets are redacted, but in a `worker@1` or
+  `HEAD@{1}` word.
 
-Otherwise every address (`scheme://…`, `//host…` or a bare `host.tld` before a
-`/`, `?` or `#`, in a code span or a link too) that holds no at sign and has an
-unambiguous authority (an ASCII host and perhaps a port of digits) keeps that
-authority, its path up to its first `?`, `#`, `;` or `%3F`, and a short anchor
-such as `#L10-L20` straight after it; any other address is written
-`scheme://***`. Secret-shaped spans are then redacted.
+Otherwise its spaces are made plain, and every address (`scheme://…`, `//host…`
+or a bare `host.tld` before a `/`, `?` or `#`, in a code span or a link too)
+that holds no at sign and has an unambiguous authority (an ASCII host and
+perhaps a port of digits) keeps that authority, its path up to its first `?`,
+`#`, `;` or `%3F`, and a short anchor such as `#L10-L20` straight after it; any
+other address is written `scheme://***`. Secret-shaped spans are then redacted.
 
-Accepted costs: an address with an at sign anywhere (an npm `/@scope`, vite's
-`/@vite/client`, `?to=a@b.co`), an IPv6 or a non-ASCII host is written
-`scheme://***`; a line holding an email, a `pkg@1.2.3`, an `@types/node`, a
-`git@host:repo`, any other at sign outside an address, or `basic`/`bearer`
-before a credential-like word is dropped. Known limits: a secret in an
-address's path (a Slack or Discord webhook) is kept; a bare host with no dot
-(`localhost/x?sig=…`), or one glued to a CJK letter or a `_`, keeps its query;
-a secret that is no address, holds no at sign and matches no redaction pattern
-is kept. A line split by a line break is dropped whole.
+Accepted costs: a line that merely mentions a credential word ("basic CI-check
+passed", "token budget") is dropped, as is a line past its limit; an address
+with an at sign anywhere (an npm `/@scope`, vite's `/@vite/client`,
+`?to=a@b.co`), an IPv6 or a non-ASCII host is written `scheme://***`; a line
+holding an email, a `pkg@1.2.3`, an `@types/node`, a `git@host:repo` or any
+other at sign outside an address is dropped. Known limits: a secret with no at
+sign and no credential word (`-u admin:hunter2secret`), or in an address's path
+(a Slack or Discord webhook), is kept; a bare `host.com;sig=…` with no `/`, a
+bare host with no dot (`localhost/x?sig=…`), or one glued to a CJK letter or a
+`_`, keeps what follows it. A line split by a line break is dropped whole.
 
 | Field | Meaning |
 |---|---|

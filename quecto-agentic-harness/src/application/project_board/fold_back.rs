@@ -16,34 +16,38 @@
 //!   (`unmatched`); a swarm item no plan item takes is counted (`extra`),
 //!   never kept.
 //! - **Secrets:** the board is public, so a line in doubt is dropped
-//!   whole (and counted), never rewritten further. Each owner and evidence
-//!   part is cut to its board limit first, and its spaces made plain, so an
-//!   address ends where a reader sees it end. A part is in doubt when it
-//!   holds an `Authorization:` header or a credential after `basic` or
-//!   `bearer`; an address whose fragment is no short anchor (up to 64 of
-//!   `[A-Za-z0-9_.-]`), whose path holds `%25`, or a bare host whose word
-//!   holds a `;`; or an at sign (`@`, fullwidth or small) outside an
-//!   address, but in a `worker@1` or `HEAD@{1}` word. Otherwise every
-//!   address (`scheme://…`, `//host…` or a bare `host.tld` before a `/`, `?`
-//!   or `#`, in a code span or a link too) that holds no at sign and has an
-//!   unambiguous authority (an ASCII host, perhaps a port of digits) keeps
-//!   that authority, its path up to its first `?`, `#`, `;` or `%3F`, and a
-//!   short anchor straight after it; any other is written `scheme://***`.
-//!   Then every secret-shaped span is redacted.
-//! - **Accepted costs:** an address with an at sign anywhere (an npm
-//!   `/@scope`, vite's `/@vite/client`, `?to=a@b.co`), an IPv6 or a
-//!   non-ASCII host is written `scheme://***`; a line holding an email, a
+//!   whole (and counted), never rewritten further; an owner in doubt is
+//!   left out. A part is in doubt when it is past its board limit in
+//!   characters (never cut: a cut may strip the `@` that marks a secret);
+//!   when, once zero-width characters are taken out, it names a credential
+//!   word ([`CREDENTIAL_WORDS`]: `authorization`, `bearer`, `basic `,
+//!   `password`, `token`, `secret`, … in any case, as any part of a word);
+//!   when an address in it has a fragment that is no short anchor (up to
+//!   64 of `[A-Za-z0-9_.-]`), a `%25` in its path, or is a bare host whose
+//!   word holds a `;`; or when, once secrets are redacted, it holds an at
+//!   sign (`@`, fullwidth, small, or `%40` encoded once or more) outside an
+//!   address, but in a `worker@1` or `HEAD@{1}` word. Otherwise its spaces
+//!   are made plain, and every address (`scheme://…`, `//host…` or a bare
+//!   `host.tld` before a `/`, `?` or `#`, in a code span or a link too)
+//!   that holds no at sign and has an unambiguous authority (an ASCII host,
+//!   perhaps a port of digits) keeps that authority, its path up to its
+//!   first `?`, `#`, `;` or `%3F`, and a short anchor straight after it;
+//!   any other is written `scheme://***`. Then every secret-shaped span is
+//!   redacted.
+//! - **Accepted costs:** a line that merely mentions a credential word
+//!   ("basic CI-check passed", "token budget") is dropped; a line past its
+//!   limit is dropped, not shortened; an address with an at sign anywhere
+//!   (an npm `/@scope`, vite's `/@vite/client`, `?to=a@b.co`), an IPv6 or
+//!   a non-ASCII host is written `scheme://***`; a line holding an email, a
 //!   `pkg@1.2.3`, an `@types/node`, a `git@host:repo` or any other at sign
-//!   outside an address is dropped, as is one holding `basic` or `bearer`
-//!   before a credential-like word; an owner holding one is left out.
-//! - **Known limits** (best effort, as the shared redactor is): a secret in
-//!   an address's path (a Slack or Discord webhook's token) is kept, since
-//!   no pattern of the redactor names one; a bare host with no dot
+//!   outside an address is dropped; an owner holding one is left out.
+//! - **Known limits** (best effort, as the shared redactor is): a secret
+//!   with no at sign and no credential word (`-u admin:hunter2secret`), or
+//!   in an address's path (a Slack or Discord webhook's token), is kept; a
+//!   bare `host.com;sig=…` with no `/`, a bare host with no dot
 //!   (`localhost/x?sig=…`), or one glued to a CJK letter or a `_`, is not
-//!   read as an address, so it keeps its query; and a secret that is no
-//!   address, holds no at sign and matches no redactor pattern (a bare
-//!   `sig=…` pair) is kept. A line split by a line break is never one board
-//!   line, so it is dropped whole.
+//!   read as an address, so it keeps what follows. A line split by a line
+//!   break is never one board line, so it is dropped whole.
 //! - **Owner:** the member id, as one board line cut to
 //!   [`MAX_OWNER_CHARS`]; none when the board cannot hold it.
 //! - **Evidence:** one line per entry, `<artifact> at <revision>`, each
@@ -103,11 +107,32 @@ static AT_EXEMPT: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"^(?:[A-Za-z0-9._\-]+@[0-9]+|[A-Za-z0-9._/\-]*@\{[0-9]+\})$")
         .expect("a valid pattern")
 });
-/// A credential's scheme before a credential-like word (`Basic dXNl…`,
-/// `bearer eyJ…`), in any case.
-static CREDENTIAL: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)\b(?:basic|bearer)\s+(?P<word>\S{8,})").expect("a valid pattern")
-});
+/// A percent-encoded at sign, encoded once or more (`%40`, `%2540`, …),
+/// in any case.
+static AT_ENCODED: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)%(?:25)*40").expect("a valid pattern"));
+/// The words that name a credential: a line holding one, in any case and
+/// as any part of a word, is dropped (a line that merely mentions one
+/// too: the board is public).
+const CREDENTIAL_WORDS: [&str; 14] = [
+    "authorization",
+    "bearer",
+    "basic ",
+    "password",
+    "passwd",
+    "pwd=",
+    "secret",
+    "token",
+    "api_key",
+    "apikey",
+    "api-key",
+    "credential",
+    "private_key",
+    "private-key",
+];
+/// The zero-width characters taken out before a line is judged, so none
+/// can split a credential word.
+const ZERO_WIDTH: [char; 5] = ['\u{200b}', '\u{200c}', '\u{200d}', '\u{2060}', '\u{feff}'];
 /// The longest fragment an address keeps: a short anchor.
 const MAX_FRAGMENT_CHARS: usize = 64;
 /// What may open a word, set apart before the word is judged.
@@ -405,17 +430,22 @@ pub fn cost_of(view: &SwarmRunView) -> u64 {
 
 /// `raw` from outside the board as one board line, or none when in doubt
 /// (the board is public: a doubtful line is dropped, never rewritten
-/// further). `raw` is cut to `cap` characters first (its board limit, so
-/// no work grows past it) and its spaces made plain ([`spaced`]). In doubt:
-/// an `Authorization:` header or a credential after `basic` or `bearer`
-/// ([`credentialed`]); an address [`kept`] doubts; or an at sign left
-/// outside an address that is no [`AT_EXEMPT`] word. Otherwise each
-/// address is kept to what [`kept`] keeps, and every secret-shaped span
-/// redacted.
+/// further). In doubt: `raw` past `cap` characters, its board limit (never
+/// cut, since a cut may strip the `@` that marks a secret; and nothing past
+/// it is scrubbed, so no work grows past it); a credential word
+/// ([`names_a_credential`], once zero-width characters are taken out); an
+/// address [`kept`] doubts; or, once secrets are redacted, an at sign
+/// (`%40` too) outside an address that is no [`AT_EXEMPT`] word.
+/// Otherwise its spaces are made plain ([`spaced`]), each address kept to
+/// what [`kept`] keeps, and every secret-shaped span redacted.
 fn scrubbed(raw: &str, cap: usize) -> Option<String> {
-    let capped: String = raw.chars().take(cap).collect();
-    let spaced = spaced(&capped);
-    match credentialed(&spaced) {
+    match raw.chars().nth(cap) {
+        None => {}
+        Some(_) => return None,
+    }
+    let visible: String = raw.chars().filter(|c| !ZERO_WIDTH.contains(c)).collect();
+    let spaced = spaced(&visible);
+    match names_a_credential(&spaced) {
         false => {}
         true => return None,
     }
@@ -426,45 +456,44 @@ fn scrubbed(raw: &str, cap: usize) -> Option<String> {
             found[0].to_string()
         })
     });
-    match (doubt.get(), at_signs_exempt(&addressed)) {
+    let redacted = redact_secrets(&addressed);
+    match (doubt.get(), at_signs_exempt(&redacted)) {
         (false, true) => {}
         _ => return None,
     }
-    let redacted = redact_secrets(&addressed);
     debug_assert!(
-        at_signs_exempt(&redacted)
-            && redacted
-                .split(' ')
-                .filter(|word| word.contains("://"))
-                .all(|word| !word.contains(AT_SIGNS)),
-        "no userinfo and no at sign but an exempt word survive: {redacted:?}"
+        redacted
+            .split(' ')
+            .filter(|word| word.contains("://"))
+            .all(|word| !holds_at(word)),
+        "no userinfo survives: {redacted:?}"
     );
     Some(board_text::line(&redacted))
 }
 
-/// Whether `text` holds an `Authorization:` header, or `basic` or
-/// `bearer` before a credential-like word (one that is no prose: not
-/// letters alone, lower case past the first), in any case.
-fn credentialed(text: &str) -> bool {
-    let prose = |word: &str| {
-        word.chars().all(|c| c.is_ascii_alphabetic())
-            && word.chars().skip(1).all(|c| c.is_ascii_lowercase())
-    };
-    text.to_lowercase().contains("authorization:")
-        || CREDENTIAL
-            .captures_iter(text)
-            .any(|found| !prose(&found["word"]))
+/// Whether `text` names a credential: holds one of [`CREDENTIAL_WORDS`],
+/// in any case, as any part of a word.
+fn names_a_credential(text: &str) -> bool {
+    let lower = text.to_lowercase();
+    CREDENTIAL_WORDS.iter().any(|word| lower.contains(word))
 }
 
-/// Whether every word of `text` that holds an at sign, its opening and
-/// closing marks set apart, is an [`AT_EXEMPT`] one (an allowlist).
+/// Whether `text` holds an at sign: `@`, fullwidth, small, or a
+/// percent-encoded one ([`AT_ENCODED`]).
+fn holds_at(text: &str) -> bool {
+    text.contains(AT_SIGNS) || AT_ENCODED.is_match(text)
+}
+
+/// Whether every word of `text` that holds an at sign ([`holds_at`]), its
+/// opening and closing marks set apart, is an [`AT_EXEMPT`] one (an
+/// allowlist).
 fn at_signs_exempt(text: &str) -> bool {
     text.split(' ')
         .map(|word| {
             word.trim_start_matches(WORD_OPENERS)
                 .trim_end_matches(QUERY_CLOSERS)
         })
-        .all(|word| !word.contains(AT_SIGNS) || AT_EXEMPT.is_match(word))
+        .all(|word| !holds_at(word) || AT_EXEMPT.is_match(word))
 }
 
 /// `raw` with every space but a line break a plain one, so an address ends
@@ -543,14 +572,14 @@ fn kept(prefix: &str, span: &str, form: Form) -> Option<String> {
 /// doubly encoded mark) in its path, or a `;` in a bare host's word.
 fn judged(core: &str, form: Form) -> Judged {
     let (authority, rest) = core.split_at(core.find(['/', '?', '#']).unwrap_or(core.len()));
-    let at_free = core.chars().all(|c| !AT_SIGNS.contains(&c));
+    let at_free = !holds_at(core);
     match (at_free, unambiguous(authority)) {
         (true, true) => {}
         _ => return Judged::Scrubbed,
     }
     let (path, after) = rest.split_at(path_end(rest));
     let fragment = core.split_once('#').map(|(_, fragment)| fragment);
-    let plain = !path.to_ascii_lowercase().contains("%25")
+    let plain = !path.contains("%25")
         && fragment.is_none_or(anchor_shaped)
         && (form == Form::Named || !core.contains(';'));
     match plain {
@@ -699,15 +728,11 @@ fn path_char(c: char) -> bool {
 }
 
 /// Member id `raw` as an owner: scrubbed as an evidence part is
-/// ([`scrubbed`], cut to [`MAX_OWNER_CHARS`] first), cut again and trimmed;
-/// none when in doubt (an at sign but `worker@1`'s, a credential) or when
-/// the board cannot hold what is left.
+/// ([`scrubbed`], within [`MAX_OWNER_CHARS`]); none when in doubt (past
+/// its limit, an at sign but `worker@1`'s, a credential word) or when the
+/// board cannot hold what is left.
 fn owner_of(raw: &str, cells: &dyn BoardTextCells) -> Option<String> {
-    let cut: String = scrubbed(raw, MAX_OWNER_CHARS)?
-        .chars()
-        .take(MAX_OWNER_CHARS)
-        .collect();
-    let owner = board_text::line(&cut);
+    let owner = scrubbed(raw, MAX_OWNER_CHARS)?;
     held_line(&owner, MAX_OWNER_CHARS, cells).then_some(owner)
 }
 

@@ -1,4 +1,4 @@
-//! S4 review rounds 2 to 5: what the scrubber keeps of an address in an
+//! S4 review rounds 2 to 6: what the scrubber keeps of an address in an
 //! owner or evidence part, and what a link holds. The board is public:
 //! when a rule is in doubt, it scrubs.
 use super::tests::kept_line;
@@ -26,7 +26,7 @@ fn doubted(raws: &[&str]) {
 fn an_address_keeps_no_query_wherever_it_stands() {
     let rows = [
         (
-            "`https://acct.blob.core.windows.net/c/b?sv=2024&sig=AbC%2Bsecret`",
+            "`https://acct.blob.core.windows.net/c/b?sv=2024&sig=AbC%2Bs3cr3t`",
             "`https://acct.blob.core.windows.net/c/b`",
         ),
         ("`http://h.example/p?sig=s3cr3t`", "`http://h.example/p`"),
@@ -129,21 +129,89 @@ fn userinfo_outside_a_named_scheme_is_never_kept() {
 }
 
 #[test]
-fn a_credential_header_drops_the_line() {
+fn a_line_naming_a_credential_word_is_dropped_in_any_case_or_markup() {
     doubted(&[
         "Authorization: Basic dXNlcjpwYXNzd29yZA==",
-        "authorization:token",
+        "Authorization: token-xyz",
+        "authorization",
         "basic dXNlcjpw",
         "BASIC YWRhOjEyMzQ1Njc4",
         "Bearer abcdef0123456789",
-        "bearer\u{a0}eyJhbGciOi",
+        "bearer abc",
+        "`Bearer` `eyJhbGciOi`",
+        "**Bearer** eyJhbGciOi",
+        "Bearer: eyJhbGciOi",
+        "Bearer=eyJhbGciOi",
+        "Bear\u{200b}er eyJhbGciOi",
+        "bas\u{feff}ic dXNl",
+        "password: hunter2",
+        "Passwd x",
+        "pwd=x",
+        "client_secret x",
+        "an access token",
+        "api_key x",
+        "APIKEY x",
+        "api-key x",
+        "credentials file",
+        "private_key.pem",
+        "private-key.pem",
+        // The accepted cost: a line that merely mentions one.
+        "basic CI-check passed",
+        "token budget",
+    ]);
+    // No keyword: kept.
+    scrubs(&[
+        ("a basically fine run", "a basically fine run"),
+        ("src/api.rs", "src/api.rs"),
+    ]);
+}
+
+#[test]
+fn a_part_past_its_limit_is_dropped_never_cut() {
+    for raw in [
+        "user:s3cretPassw0rd@tcp(db)/app",
+        "https://deploy:12345678@h.com",
+        "dXNlcjpwYXNzd29yZA",
+    ] {
+        // Cut short of its `@`, it would read clean: so it is never cut.
+        assert_eq!(scrubbed(raw, raw.chars().count() - 1), None, "{raw}");
+    }
+    let at = "a".repeat(MAX_LINE_CHARS);
+    assert_eq!(scrubbed(&at, MAX_LINE_CHARS).as_deref(), Some(at.as_str()));
+    assert_eq!(scrubbed(&format!("{at}a"), MAX_LINE_CHARS), None);
+    // In characters, not bytes.
+    let wide = "\u{10400}".repeat(MAX_LINE_CHARS);
+    assert_eq!(
+        scrubbed(&wide, MAX_LINE_CHARS).as_deref(),
+        Some(wide.as_str())
+    );
+}
+
+#[test]
+fn a_percent_encoded_at_sign_is_an_at_sign() {
+    doubted(&[
+        "https%3A%2F%2Fadmin%3As3cretPW%40db.example.com%2Fx",
+        "oauth2:TOKEN%40gitlab.com/x",
+        "oauth2:glpat%40gitlab.com/x",
+        "u:p%40host.com",
+        "u:p%2540host.com",
+        "u:p%25252540host.com",
+        "u:p%40",
+        "worker%401",
     ]);
     scrubs(&[
-        ("a basic understanding", "a basic understanding"),
-        ("Basic Authentication set", "Basic Authentication set"),
-        // A short one is the shared redactor's.
-        ("bearer abc", "[REDACTED]"),
+        // An address holding one is written whole.
+        ("https://u:p%40h.example/x", "https://***"),
+        ("https://h.example/a%2540b", "https://***"),
+        // Another escape is no at sign.
+        ("https://h.example/a%20b", "https://h.example/a%20b"),
     ]);
+}
+
+#[test]
+fn an_exempt_word_is_judged_after_redaction() {
+    // A key glued to `@1` is no `worker@1`: once redacted, it is dropped.
+    doubted(&["sk-abcdefgh12@1", "AKIA0123456789ABCDEF@2"]);
 }
 
 #[test]
@@ -175,7 +243,7 @@ fn only_a_short_anchor_fragment_is_kept_and_any_other_drops_the_line() {
             "https://h.example/p#readme.md",
         ),
         // A short anchor after a dropped query goes with the query.
-        ("https://h.example/p?token=ab#cd", "https://h.example/p"),
+        ("https://h.example/p?t=ab#cd", "https://h.example/p"),
     ]);
     let long = format!("https://h.example/p#{}", "a".repeat(MAX_FRAGMENT_CHARS + 1));
     doubted(&[
