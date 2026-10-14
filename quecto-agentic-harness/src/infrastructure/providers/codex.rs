@@ -324,7 +324,7 @@ impl CodexProvider {
                 break;
             }
             if let Ok(event) = serde_json::from_str::<serde_json::Value>(data) {
-                if Self::format_stream_failure(&event).is_some() {
+                if Self::is_stream_failure(&event) {
                     let error = super::provider_diagnostics::stream_raw(
                         "Codex",
                         raw_data.unwrap_or(data),
@@ -363,15 +363,11 @@ impl CodexProvider {
     /// `error.code`, `error.message`) or, as OpenAI documents it, at the
     /// top level (`code`, `message`); both are read. A `response.*`
     /// failure keeps its established rendering (type and message).
-    fn format_stream_failure(event: &serde_json::Value) -> Option<String> {
+    fn is_stream_failure(event: &serde_json::Value) -> bool {
         match event["type"].as_str() {
-            Some("response.failed" | "response.incomplete" | "error") => {
-                Some(super::provider_diagnostics::stream("Codex", event))
-            }
-            None if super::attempt_profile::is_untyped_error_chunk(event) => {
-                Some(super::provider_diagnostics::stream("Codex", event))
-            }
-            _ => None,
+            Some("response.failed" | "response.incomplete" | "error") => true,
+            None => super::attempt_profile::is_untyped_error_chunk(event),
+            _ => false,
         }
     }
 

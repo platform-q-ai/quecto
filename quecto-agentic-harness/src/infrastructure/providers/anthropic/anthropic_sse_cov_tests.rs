@@ -708,30 +708,3 @@ fn parse_sse_response_string_error_event_keeps_its_text() {
         "{err}"
     );
 }
-
-#[tokio::test]
-async fn s1_sse_payload_budget_family() {
-    let oversized = format!(
-        "{}{}",
-        serde_json::json!({"error":{"type":"billing_error","message":"secret-canary"}}),
-        " ".repeat(4096)
-    );
-    for data in [&oversized, "{not json secret-canary"] {
-        let err =
-            AnthropicProvider::parse_sse_response(&format!("event: error\ndata: {data}\n"), None)
-                .unwrap_err()
-                .to_string();
-        assert!(err.contains("HTTP 502 from Anthropic: class=server; refusal=none"));
-        assert!(!err.contains("secret-canary"));
-        let (tx, mut rx) = channel();
-        let mut handler = AnthropicSseHandler::new(None);
-        handler.process_line("event: error", &tx).await;
-        assert!(matches!(
-            handler.process_line(&format!("data: {data}"), &tx).await,
-            SseLineOutcome::Done
-        ));
-        assert!(
-            matches!(rx.recv().await, Some(StreamEvent::Error(m)) if m == "HTTP 502 from Anthropic: class=server; refusal=none")
-        );
-    }
-}

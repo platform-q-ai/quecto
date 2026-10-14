@@ -139,7 +139,7 @@ async fn an_error_event_reads_its_top_level_code_and_message() {
     );
     assert!(!message.contains("The server had an error"), "{message}");
 
-    let nested = CodexProvider::format_stream_failure(&serde_json::json!({
+    let nested = format_stream_failure(&serde_json::json!({
         "type": "error",
         "error": {"type": "invalid_request_error", "code": "bad_input", "message": "nested"}
     }))
@@ -156,7 +156,7 @@ async fn an_error_event_reads_its_top_level_code_and_message() {
 /// `code` is not added, so its classification and wording are unchanged.
 #[test]
 fn a_failed_response_keeps_its_rendering() {
-    let failed = CodexProvider::format_stream_failure(&serde_json::json!({
+    let failed = format_stream_failure(&serde_json::json!({
         "type": "response.failed",
         "code": "top_level_ignored",
         "message": "top level ignored",
@@ -171,7 +171,7 @@ fn a_failed_response_keeps_its_rendering() {
 /// message shows none.
 #[test]
 fn a_failed_response_never_reads_top_level_fields() {
-    let failed = CodexProvider::format_stream_failure(&serde_json::json!({
+    let failed = format_stream_failure(&serde_json::json!({
         "type": "response.failed",
         "code": "top_level_ignored",
         "message": "top level ignored",
@@ -237,4 +237,31 @@ async fn a_streamed_reply_with_nothing_in_it_ends_whole_at_end_turn() {
         }
         other => panic!("expected a whole reply: {other:?}"),
     }
+}
+
+#[test]
+fn codex_failure_predicate_is_shape_only_and_budget_independent() {
+    for value in [
+        serde_json::json!({"type":"response.failed"}),
+        serde_json::json!({"type":"response.incomplete"}),
+        serde_json::json!({"type":"error", "message":"s".repeat(4097)}),
+        serde_json::json!({"error":{}}),
+        serde_json::json!({"type":null,"error":"failed"}),
+    ] {
+        assert!(CodexProvider::is_stream_failure(&value));
+    }
+    for value in [
+        serde_json::json!({"type":"response.completed", "error":{}}),
+        serde_json::json!({"type":"response.output_text.delta"}),
+        serde_json::json!({"error":null}),
+        serde_json::json!({"error":""}),
+    ] {
+        assert!(!CodexProvider::is_stream_failure(&value));
+    }
+}
+
+// Keep the original rendering contracts while production detection is pure.
+fn format_stream_failure(event: &serde_json::Value) -> Option<String> {
+    CodexProvider::is_stream_failure(event)
+        .then(|| super::super::provider_diagnostics::stream("Codex", event))
 }

@@ -7,17 +7,10 @@
 use crate::domain::audit::AuditEvent;
 use crate::domain::error::DomainError;
 use crate::domain::inference::services::provider_error::{
-    ProviderErrorClass, classify_provider_error, model_refusal, provider_http_status,
+    BILLING_GUIDANCE, CONTEXT_LIMIT_GUIDANCE, MODEL_REFUSED_GUIDANCE, ProviderErrorClass,
+    classify_provider_error, model_refusal, provider_http_status,
 };
 use crate::domain::message::{Message, Role};
-
-/// The guidance a model refused for the account or auth mode ends with
-/// (#2435). The loop does not know the hold, so the guidance says what a
-/// hold does without claiming one: with `model_refusal_ttl_secs = 0` none is.
-const MODEL_REFUSED_GUIDANCE: &str = "Model unavailable: the provider refused this model for \
-     the account or auth mode in use. While a refusal is held (providers.model_refusal_ttl_secs, \
-     an hour by default; 0 holds none) the model is not offered, until the provider serves it \
-     again; choose another model (list_models, then set_model).";
 
 /// Build the audit event that persists a terminal provider failure (#937).
 ///
@@ -104,9 +97,7 @@ pub(super) fn enhance_provider_error(err: DomainError) -> DomainError {
             .to_ascii_lowercase()
             .contains("context/output limit")
     {
-        return DomainError::Provider(format!(
-            "{message}\n\nContext/output limit: the provider rejected the request because the prompt plus requested output appears to exceed a model limit. Try reducing prompt history, lowering max output tokens, or enabling/prioritizing context pruning before retrying."
-        ));
+        return DomainError::Provider(format!("{message}\n\n{CONTEXT_LIMIT_GUIDANCE}"));
     }
 
     if model_refusal(&DomainError::Provider(message.clone())).is_some() {
@@ -155,9 +146,7 @@ fn terminal_class_guidance(err: &DomainError) -> Option<&'static str> {
         ProviderErrorClass::Auth => Some(
             "Authentication: the provider rejected your credentials (not retryable). Check the API key or re-authenticate (`quecto auth login`), then retry.",
         ),
-        ProviderErrorClass::Billing => Some(
-            "Billing/quota: the provider reports exhausted credit or a billing limit (not retryable). Check the account plan, billing, or quota before retrying.",
-        ),
+        ProviderErrorClass::Billing => Some(BILLING_GUIDANCE),
         // An admission refusal already says what to do (respawn, restart).
         ProviderErrorClass::Client
         | ProviderErrorClass::Cancelled

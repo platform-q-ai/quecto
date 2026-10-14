@@ -249,3 +249,89 @@ fn finite_context_limit_family() {
         );
     }
 }
+
+#[test]
+fn provider_diagnostics_transport_nonstandard_status_is_unknown() {
+    for status in [600, 999] {
+        for vendor in ["OpenAI", "Codex", "Anthropic"] {
+            for body in [String::new(), "{not json secret-canary".into(), "x".repeat(BODY_LIMIT + 1), r#"{"error":{"type":"unknown","code":"model_not_found","message":"secret-canary"}}"#.into()] {
+                let diagnostic = http(status, vendor, &body);
+                assert_eq!(diagnostic, format!("HTTP {status} from {vendor}: class=unknown; refusal=none"));
+                assert_eq!(classify_provider_error(&DomainError::Provider(diagnostic)), ProviderErrorClass::Unknown);
+            }
+            // Existing exact billing authority stays finite and terminal, regardless
+            // of HTTP class; nonstandard statuses cannot establish model refusal.
+            let diagnostic = http(
+                status,
+                vendor,
+                r#"{"error":{"code":"insufficient_quota","message":"secret-canary"}}"#,
+            );
+            assert_eq!(
+                diagnostic,
+                format!("HTTP {status} from {vendor}: class=billing; refusal=none")
+            );
+            let error = DomainError::Provider(diagnostic);
+            assert_eq!(classify_provider_error(&error), ProviderErrorClass::Billing);
+            assert_eq!(model_refusal(&error), None);
+        }
+    }
+}
+
+#[test]
+fn provider_diagnostics_each_recognized_declaration_must_allow_refusal() {
+    for incompatible in [
+        "server_error",
+        "api_error",
+        "internal_error",
+        "internal_server_error",
+        "service_unavailable",
+        "service_unavailable_error",
+        "timeout_error",
+        "rate_limit_error",
+        "rate_limit_exceeded",
+        "overloaded_error",
+        "authentication_error",
+        "permission_error",
+        "insufficient_quota",
+        "billing_error",
+        "billing_hard_limit_reached",
+        "usage_limit_reached",
+        "invalid_api_key",
+        "request_too_large",
+    ] {
+        for (vendor, status, refusal) in [
+            ("OpenAI", 404, "model_not_found"),
+            ("Anthropic", 404, "not_found_error"),
+            ("Codex", 400, "invalid_request_error"),
+        ] {
+            for (kind, code) in [(incompatible, refusal), (refusal, incompatible)] {
+                let body = serde_json::json!({"detail":"model is not supported when using Codex with a ChatGPT account", "error":{"type":kind,"code":code,"message":"model: secret-canary"}}).to_string();
+                assert_eq!(
+                    model_refusal(&DomainError::Provider(http(status, vendor, &body))),
+                    None,
+                    "{body}"
+                );
+            }
+        }
+    }
+    for (kind, code) in [
+        ("unknown", "model_not_found"),
+        ("model_not_found", "unknown"),
+    ] {
+        let body = serde_json::json!({"error":{"type":kind,"code":code}}).to_string();
+        assert!(model_refusal(&DomainError::Provider(http(404, "OpenAI", &body))).is_some());
+    }
+}
+
+#[test]
+fn anthropic_error_budget_parse_admission_is_affirmative() {
+    for source in [
+        include_str!("anthropic/anthropic_sse.rs"),
+        include_str!("anthropic/anthropic_sse_handler.rs"),
+    ] {
+        assert!(
+            source.contains("(\"error\", true) => serde_json::from_str(data).unwrap_or_default()")
+        );
+        assert!(source.contains("(\"error\", _) => serde_json::Value::Null"));
+    }
+}

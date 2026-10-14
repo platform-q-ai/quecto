@@ -202,9 +202,32 @@ pub fn model_refusal(err: &DomainError) -> Option<String> {
     }
 }
 
+/// The guidance a model refused for the account or auth mode ends with
+/// (#2435). The loop does not know the hold, so the guidance says what a
+/// hold does without claiming one: with `model_refusal_ttl_secs = 0` none is.
+pub const MODEL_REFUSED_GUIDANCE: &str = "Model unavailable: the provider refused this model for \
+     the account or auth mode in use. While a refusal is held (providers.model_refusal_ttl_secs, \
+     an hour by default; 0 holds none) the model is not offered, until the provider serves it \
+     again; choose another model (list_models, then set_model).";
+
+pub const BILLING_GUIDANCE: &str = "Billing/quota: the provider reports exhausted credit or a billing limit (not retryable). Check the account plan, billing, or quota before retrying.";
+pub const CONTEXT_LIMIT_GUIDANCE: &str = "Context/output limit: the provider rejected the request because the prompt plus requested output appears to exceed a model limit. Try reducing prompt history, lowering max output tokens, or enabling/prioritizing context pruning before retrying.";
+
 /// Pure finite grammar. A relay prefix is compatible; the entire suffix
 /// must match. Domain code has no JSON, HTTP client or infrastructure dependency.
 fn canonical_failure(message: &str) -> Option<(u16, &str, Option<ProviderErrorClass>, bool)> {
+    let message = [
+        MODEL_REFUSED_GUIDANCE,
+        BILLING_GUIDANCE,
+        CONTEXT_LIMIT_GUIDANCE,
+    ]
+    .into_iter()
+    .find_map(|guidance| {
+        message
+            .strip_suffix(guidance)
+            .and_then(|m| m.strip_suffix("\n\n"))
+    })
+    .unwrap_or(message);
     let start = message.find("HTTP ")?;
     let rest = &message[start + 5..];
     let (status, rest) = rest.split_once(" from ")?;
@@ -213,7 +236,7 @@ fn canonical_failure(message: &str) -> Option<(u16, &str, Option<ProviderErrorCl
     let status = status
         .parse::<u16>()
         .ok()
-        .filter(|s| (100..=599).contains(s))?;
+        .filter(|s| (100..=999).contains(s))?;
     let (vendor, body) = rest.split_once(": class=")?;
     if ["OpenAI", "Codex", "Anthropic"].contains(&vendor) {
         let (class, refusal) = body.split_once("; refusal=")?;

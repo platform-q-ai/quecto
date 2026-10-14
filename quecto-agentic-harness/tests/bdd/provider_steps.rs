@@ -84,13 +84,34 @@ fn then_error_not_retryable(world: &mut QuectoWorld) {
 
 #[given(expr = "a 500 response whose body declares an {string} client code")]
 fn given_500_with_client_code(world: &mut QuectoWorld, code: String) {
-    // Push the wire detail into the step, keeping the feature declarative (#935).
-    use quecto::domain::error::DomainError;
-    let message = format!(
-        "HTTP 500 from provider: {{\"error\":{{\"code\":\"{code}\",\"message\":\"max_tokens 200000 exceeds the model output limit of 65536\"}}}}"
-    );
-    let err = DomainError::Provider(message);
-    world.error_class = Some(classify_provider_error(&err));
+    // Exercise the real provider boundary: raw JSON is not domain authority.
+    use super::inference_admission_provider_steps::feedback;
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    world.error_class = Some(rt.block_on(async {
+        let mut server = feedback::Server::start(feedback::Reply {
+            status: 500,
+            headers: String::new(),
+            body: serde_json::json!({"error":{"code":code,"message":"max_tokens secret-canary"}})
+                .to_string(),
+            stalled: false,
+        })
+        .await;
+        let gate = Arc::new(feedback::Gate::default());
+        let provider = feedback::Leaf::OpenAi.provider(&server.url, gate.clone());
+        let task = tokio::spawn(async move { provider.chat(feedback::request()).await });
+        server.connection().await.release();
+        let error = feedback::bounded(task).await.unwrap().unwrap_err();
+        assert_eq!(server.starts(), 1);
+        assert_eq!(
+            error.to_string(),
+            "provider error: HTTP 500 from OpenAI: class=client; refusal=none"
+        );
+        assert!(!error.to_string().contains("secret-canary"));
+        classify_provider_error(&error)
+    }));
 }
 
 // ===========================================================================

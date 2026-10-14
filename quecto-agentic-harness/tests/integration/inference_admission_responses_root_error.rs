@@ -24,6 +24,12 @@ async fn check(leaf: Leaf, post_text: bool) {
     let gate = Arc::new(Gate::default());
     let provider = leaf.provider(&server.url, gate.clone());
     let output = bounded(stream(provider.as_ref())).await;
+    assert!(
+        output
+            .errors
+            .iter()
+            .all(|error| !error.contains("opaque fixture"))
+    );
     oracle::verify(oracle::checks(
         server.starts(),
         &output,
@@ -32,7 +38,7 @@ async fn check(leaf: Leaf, post_text: bool) {
             post: post_text,
             enabled: true,
             throttle: true,
-            error: "Responses stream error: code=rate_limit_exceeded: opaque fixture",
+            error: "HTTP 429 from Codex: class=rate_limit; refusal=none",
         },
     ));
 }

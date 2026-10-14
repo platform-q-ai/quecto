@@ -200,6 +200,28 @@ pub(super) fn openai_stream_error(value: &serde_json::Value) -> String {
     super::provider_diagnostics::stream("OpenAI", value)
 }
 
+/// Unknown declarations are inert; each recognized declaration must itself
+/// describe a compatible client refusal, never an outage or throttle.
+pub(super) fn refusal_compatible_declaration(name: &str) -> bool {
+    let known = CLIENT_ERRORS
+        .iter()
+        .chain(SERVER_ERRORS)
+        .find(|(n, _)| *n == name)
+        .map(|(_, status)| *status)
+        .or_else(|| {
+            let value = serde_json::json!({"error":{"type":name}});
+            match (
+                crate::domain::inference::services::provider_error::is_billing_error_name(name),
+                super::admission_feedback::is_typed_throttle(&value),
+            ) {
+                (true, _) => Some(BILLING_STATUS),
+                (_, true) => Some(429),
+                _ => None,
+            }
+        });
+    matches!(known, None | Some(400 | 404))
+}
+
 /// The HTTP status an OpenAI-compatible error chunk stands for; see
 /// [`openai_stream_error`].
 pub(super) fn stream_error_status(value: &serde_json::Value) -> u16 {

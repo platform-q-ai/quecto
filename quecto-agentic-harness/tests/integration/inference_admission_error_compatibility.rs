@@ -25,8 +25,8 @@ async fn truncated_429(leaf: Leaf) {
     assert_parity(&disabled, &enabled);
 }
 async fn oversized(leaf: Leaf) {
-    // A multibyte codepoint straddles byte 4096: both display size and UTF-8
-    // boundary preservation are compatibility contracts, not fixture policy.
+    // A multibyte codepoint straddles the diagnostic budget: no prefix
+    // of an oversized body may escape or establish semantic authority.
     let body = format!("{}é{}", "x".repeat(4095), "tail".repeat(500));
     let (disabled, enabled) = compare(
         leaf,
@@ -282,11 +282,11 @@ fn characterize_oversized(disabled: &Observation, leaf: Leaf) {
     assert_eq!(
         raw,
         &format!(
-            "HTTP 429 from {}: {}... (truncated)",
-            leaf.vendor(),
-            "x".repeat(4095)
+            "HTTP 429 from {}: class=rate_limit; refusal=none",
+            leaf.vendor()
         )
     );
+    assert!(!raw.contains("xxx") && !raw.contains("tail") && !raw.contains("é"));
     assert_eq!(classified.class, ProviderErrorClass::RateLimit);
     assert_eq!(classified.status, Some(429));
 }
@@ -551,9 +551,8 @@ fn disabled_characterizations_reject_each_expected_fact_counterexample() {
         e.class = ProviderErrorClass::RateLimit;
         e.status = Some(429);
         let raw = format!(
-            "HTTP 429 from {}: {}... (truncated)",
-            leaf.vendor(),
-            "x".repeat(4095)
+            "HTTP 429 from {}: class=rate_limit; refusal=none",
+            leaf.vendor()
         );
         characterize_sensitivity(
             &format!("C-oversized-{leaf:?}"),
@@ -586,4 +585,43 @@ fn disabled_characterizations_reject_each_expected_fact_counterexample() {
         &[0],
         characterize_unterminated,
     );
+}
+
+#[tokio::test]
+async fn nonstandard_transport_status_chat_and_incremental_admitted_and_passive() {
+    for status in [600, 999] {
+        for leaf in [Leaf::OpenAi, Leaf::Anthropic, Leaf::Responses, Leaf::OAuth] {
+            for surface in [Surface::Chat, Surface::Incremental] {
+                let (passive, admitted) = compare(
+                    leaf,
+                    surface,
+                    Reply {
+                        status,
+                        body: String::new(),
+                        missing_bytes: 0,
+                    },
+                )
+                .await;
+                assert_parity(&passive, &admitted);
+                let marker = format!(
+                    "HTTP {status} from {}: class=unknown; refusal=none",
+                    leaf.vendor()
+                );
+                match passive {
+                    Observation::Error(error) => {
+                        assert_eq!(error.class, ProviderErrorClass::Unknown);
+                        assert!(!error.retryable);
+                        assert!(error.display.ends_with(&marker));
+                    }
+                    Observation::Events(events) => {
+                        assert_eq!(events.len(), 1);
+                        assert!(
+                            matches!(&events[0], Event::Error { raw, classified } if raw == &marker && classified.class == ProviderErrorClass::Unknown && !classified.retryable)
+                        );
+                    }
+                    other => panic!("expected finite error: {other:?}"),
+                }
+            }
+        }
+    }
 }

@@ -467,7 +467,8 @@ impl AnthropicProvider {
                 raw_data.unwrap_or(data).len()
                     <= crate::infrastructure::providers::provider_diagnostics::BODY_LIMIT,
             ) {
-                ("error", false) => serde_json::Value::Null,
+                ("error", true) => serde_json::from_str(data).unwrap_or_default(),
+                ("error", _) => serde_json::Value::Null,
                 _ => serde_json::from_str(data).unwrap_or_default(),
             };
 
@@ -676,3 +677,7 @@ mod cov_tests;
 #[cfg(test)]
 #[path = "anthropic_sse_end_tests.rs"]
 mod end_tests;
+
+#[cfg(test)]
+#[path = "anthropic_sse_budget_tests.rs"]
+mod budget_tests;

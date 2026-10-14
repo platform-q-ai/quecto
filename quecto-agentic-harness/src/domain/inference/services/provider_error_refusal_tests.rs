@@ -82,3 +82,17 @@ fn a_refusal_relayed_through_a_stream_error_is_still_a_refusal() {
         .is_some()
     );
 }
+
+#[test]
+fn model_refusal_local_guidance_does_not_admit_arbitrary_suffixes() {
+    for suffix in [
+        " arbitrary provider prose",
+        "\n\nModel unavailable: secret-canary",
+        "\n\nBilling/quota: secret-canary",
+    ] {
+        let error = DomainError::Provider(format!(
+            "HTTP 400 from Codex: class=client; refusal=model{suffix}"
+        ));
+        assert_eq!(model_refusal(&error), None);
+    }
+}

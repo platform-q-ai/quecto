@@ -9,7 +9,7 @@ use quecto::domain::{
 };
 use std::sync::Arc;
 
-const ERROR: &str = "Anthropic stream error: type=error: Anthropic stream error";
+const ERROR: &str = "HTTP 502 from Anthropic: class=server; refusal=none";
 fn checks(sends: usize, output: &Transcript, state: &Snapshot, error: bool) -> [bool; 7] {
     [
         sends == 1,

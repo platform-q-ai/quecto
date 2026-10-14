@@ -65,6 +65,14 @@ async fn check_error(
         provider
     };
     let output = bounded(stream(&provider)).await;
+    assert!(
+        output
+            .errors
+            .iter()
+            .all(|error| !error.contains("opaque fixture")
+                && !error.contains("message")
+                && !error.contains("\"error\""))
+    );
     oracle::verify(oracle::checks(
         server.starts(),
         &output,
@@ -74,8 +82,14 @@ async fn check_error(
             enabled,
             throttle,
             error: &format!(
-                "HTTP {status} OpenAI stream error: {}",
-                json!({"error": error})
+                "HTTP {status} from OpenAI: class={}; refusal=none",
+                match status {
+                    400 => "client",
+                    402 => "billing",
+                    429 => "rate_limit",
+                    500 | 502 => "server",
+                    _ => panic!("unlisted fixture status"),
+                }
             ),
         },
     ));

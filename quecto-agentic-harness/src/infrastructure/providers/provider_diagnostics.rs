@@ -47,7 +47,7 @@ async fn read_bounded(
 fn render(status: u16, vendor: &str, class: ProviderErrorClass, refusal: &str) -> String {
     assert!(["OpenAI", "Codex", "Anthropic"].contains(&vendor));
     assert!(["model", "none", "encrypted", "none; limit=context length"].contains(&refusal));
-    assert!((100..=599).contains(&status));
+    assert!((100..=999).contains(&status));
     let text = format!("HTTP {status} from {vendor}: class={class}; refusal={refusal}");
     assert!(text.len() <= BODY_LIMIT);
     text
@@ -144,8 +144,10 @@ pub(super) fn stream_raw(vendor: &str, raw: &str, value: &serde_json::Value) -> 
 /// Contradictory known auth, billing or server declarations cannot establish
 /// refusal authority. Unknown fields are inert (the known vendor shape wins).
 fn refusal_compatible(error: &serde_json::Value) -> bool {
-    let normalized = serde_json::json!({"error": error});
-    [400, 404, 502].contains(&super::attempt_profile::stream_error_status(&normalized))
+    [error["type"].as_str(), error["code"].as_str()]
+        .into_iter()
+        .flatten()
+        .all(super::attempt_profile::refusal_compatible_declaration)
 }
 
 fn is_context_limit(error: &serde_json::Value) -> bool {

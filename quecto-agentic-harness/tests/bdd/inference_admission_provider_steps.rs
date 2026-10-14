@@ -360,7 +360,7 @@ mod oracle {
         assert_eq!(out.text, vec!["visible once"]);
         assert_eq!(
             out.errors,
-            vec!["Anthropic stream error: type=overloaded_error: opaque fixture"]
+            vec!["HTTP 529 from Anthropic: class=server; refusal=none"]
         );
         assert_eq!(out.done, 0);
     }
@@ -469,7 +469,7 @@ fn prove_oracles() {
     rejects(|| oracle::throttle(&absent));
     let output = feedback::Transcript {
         text: vec!["visible once".into()],
-        errors: vec!["Anthropic stream error: type=overloaded_error: opaque fixture".into()],
+        errors: vec!["HTTP 529 from Anthropic: class=server; refusal=none".into()],
         done: 0,
     };
     oracle::no_replay(1, &output);

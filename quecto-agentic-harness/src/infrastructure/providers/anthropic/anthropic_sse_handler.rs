@@ -80,7 +80,8 @@ impl SseHandler for AnthropicSseHandler {
                 self.current_event.as_str(),
                 data.len() <= crate::infrastructure::providers::provider_diagnostics::BODY_LIMIT,
             ) {
-                ("error", false) => serde_json::Value::Null,
+                ("error", true) => serde_json::from_str(data).unwrap_or_default(),
+                ("error", _) => serde_json::Value::Null,
                 _ => serde_json::from_str(data).unwrap_or_default(),
             };
             if dispatch_sse_event(

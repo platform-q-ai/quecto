@@ -128,11 +128,30 @@ fn outcome(w: &mut QuectoWorld) {
             "original HTTP status: {:?}",
             out.errors
         );
-        assert!(out.errors[0].contains(if s.case == "terminal-billing" {
-            "billing is terminal"
+        let vendor = match s.leaf.unwrap() {
+            feedback::Leaf::OpenAi => "OpenAI",
+            feedback::Leaf::Anthropic => "Anthropic",
+            feedback::Leaf::Responses | feedback::Leaf::OAuth => "Codex",
+        };
+        let class = if s.case == "terminal-billing" {
+            "billing"
         } else {
-            "opaque busy"
-        }));
+            "rate_limit"
+        };
+        let marker = format!("HTTP 429 from {vendor}: class={class}; refusal=none");
+        // Whole replies wrap DomainError; incremental events carry the marker directly.
+        assert_eq!(
+            out.errors[0],
+            if s.surface == "incremental" {
+                marker
+            } else {
+                format!("provider error: {marker}")
+            }
+        );
+        assert!(
+            !out.errors[0].contains("billing is terminal")
+                && !out.errors[0].contains("opaque busy")
+        );
     }
     match s.case.as_str() {
         "success" | "terminal-billing" => assert!(after.receipts.is_empty()),
