@@ -1,14 +1,19 @@
 //! Adapter-local immutable observations; never an application timing port.
+#[cfg(any(test, feature = "test-support"))]
 use std::time::Duration;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Phase {
+    #[cfg(any(test, feature = "test-support"))]
     Setup,
     Begin,
+    #[cfg(any(test, feature = "test-support"))]
     Work,
+    #[cfg(any(test, feature = "test-support"))]
     Commit,
 }
 
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Scope {
     pub call: u128,
@@ -17,6 +22,7 @@ pub struct Scope {
     pub phase: Phase,
 }
 
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Clone, Copy, Debug)]
 pub struct AccountedSample {
     pub scope: Scope,
@@ -24,6 +30,7 @@ pub struct AccountedSample {
     pub actual: Duration,
 }
 
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Clone, Copy, Debug)]
 pub enum Observation {
     Begin(Scope),
@@ -32,12 +39,50 @@ pub enum Observation {
 
 /// The same affirmative release policy drives fake cases and both real fixtures.
 /// No clock, planned delay, or setup time is a qualification input.
+#[cfg(any(test, feature = "test-support"))]
 pub fn release_qualified(held_ack: bool, intended: Scope, sample: AccountedSample) -> bool {
     held_ack
         && intended.phase == Phase::Begin
         && sample.scope == intended
         && sample.callback >= 0
         && sample.actual >= Duration::from_millis(100)
+}
+
+/// Shared fixture lifecycle: the decision is invoked even before BEGIN or a
+/// receipt exists. Absence is an input, never a caller-side short circuit.
+#[cfg(any(test, feature = "test-support"))]
+#[derive(Debug)]
+pub struct ReleaseLifecycle {
+    held_ack: bool,
+    intended: Option<Scope>,
+    receipt: Option<AccountedSample>,
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl ReleaseLifecycle {
+    pub fn new(held_ack: bool) -> Self {
+        Self {
+            held_ack,
+            intended: None,
+            receipt: None,
+        }
+    }
+
+    pub fn observe(&mut self, event: Observation) -> bool {
+        match event {
+            Observation::Begin(scope) if self.intended.is_none() => self.intended = Some(scope),
+            Observation::Accounted(sample) => self.receipt = Some(sample),
+            _ => {}
+        }
+        self.qualified()
+    }
+
+    pub fn qualified(&self) -> bool {
+        match (self.intended, self.receipt) {
+            (Some(intended), Some(receipt)) => release_qualified(self.held_ack, intended, receipt),
+            _ => false,
+        }
+    }
 }
 
 /// Test adapter fixture with joined, bounded cancellation cleanup. Dropping it
@@ -76,27 +121,20 @@ impl HeldLock {
 
     pub fn observer(&self) -> std::sync::Arc<dyn Fn(Observation) + Send + Sync> {
         let release = self.release.clone();
-        let intended = std::sync::Mutex::new(None);
+        let lifecycle = std::sync::Mutex::new(ReleaseLifecycle::new(true));
         std::sync::Arc::new(move |event| {
-            let mut intended = intended
+            let qualifies = lifecycle
                 .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            match event {
-                Observation::Begin(scope) if intended.is_none() => *intended = Some(scope),
-                Observation::Accounted(sample) => {
-                    if let Some(scope) = *intended {
-                        if release_qualified(true, scope, sample) {
-                            if let Some(release) = release
-                                .lock()
-                                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                                .take()
-                            {
-                                let _sent = release.send(true);
-                            }
-                        }
-                    }
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .observe(event);
+            if qualifies {
+                if let Some(release) = release
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .take()
+                {
+                    let _sent = release.send(true);
                 }
-                _ => {}
             }
         })
     }

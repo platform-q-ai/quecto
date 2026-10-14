@@ -372,7 +372,7 @@ fn run<T>(
         }
     };
     // The lock wait is measured only for a metered call (#2303).
-    connection.phase(meter::observation::Phase::Begin);
+    connection.phase(meter::Phase::Begin);
     let asked = tally.map(|tally| (tally, Instant::now()));
     let phase = connection.phase_control();
     let begun = connection.transaction_with_behavior(behavior);

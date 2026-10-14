@@ -17,12 +17,18 @@
 //! statement found the database busy. The tally reaches the handler as the
 //! handler's owned argument, never through shared observer state, and the handler is
 //! unregistered ([`unwait_metered`]) before the connection closes.
+#[cfg(any(test, feature = "test-support"))]
 #[path = "meter_observation.rs"]
 pub mod observation;
+#[cfg(not(any(test, feature = "test-support")))]
+#[path = "meter_observation.rs"]
+mod observation;
 
-use observation::{AccountedSample, Observation, Phase, Scope};
+pub(super) use observation::Phase;
+#[cfg(any(test, feature = "test-support"))]
+use observation::{AccountedSample, Observation, Scope};
 use std::ffi::{c_int, c_void};
-use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
@@ -95,9 +101,10 @@ impl MeteredCall for SqliteMeteredCall {
     }
 }
 
-fn next_identity(sequence: &AtomicU64) -> u64 {
+#[cfg(any(test, feature = "test-support"))]
+fn next_identity(sequence: &std::sync::atomic::AtomicU64) -> u64 {
     sequence
-        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
+        .try_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
             value.checked_add(1)
         })
         .expect("meter identity space exhausted")
@@ -106,12 +113,18 @@ fn next_identity(sequence: &AtomicU64) -> u64 {
 /// What one metered call has measured so far.
 pub(super) struct Tally {
     measure: Mutex<CallMeasure>,
-    call_id: u128,
-    connections: AtomicU64,
+    #[cfg(any(test, feature = "test-support"))]
+    observation: Option<CallObservation>,
     /// Whether the call's record names its caller's role, so the run's
     /// roles are read for it: not for a call whose role is fixed.
     roles_wanted: AtomicBool,
-    observer: Option<Arc<dyn Fn(Observation) + Send + Sync>>,
+}
+
+#[cfg(any(test, feature = "test-support"))]
+struct CallObservation {
+    call_id: u128,
+    connections: std::sync::atomic::AtomicU64,
+    observer: Arc<dyn Fn(Observation) + Send + Sync>,
 }
 
 impl Tally {
@@ -119,11 +132,19 @@ impl Tally {
     pub(super) fn new() -> Self {
         Self {
             measure: Mutex::new(CallMeasure::default()),
-            call_id: uuid::Uuid::new_v4().as_u128(),
-            connections: AtomicU64::new(1),
+            #[cfg(any(test, feature = "test-support"))]
+            observation: None,
             roles_wanted: AtomicBool::new(true),
-            observer: None,
         }
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    fn observe(&mut self, observer: Arc<dyn Fn(Observation) + Send + Sync>) {
+        self.observation = Some(CallObservation {
+            call_id: uuid::Uuid::new_v4().as_u128(),
+            connections: std::sync::atomic::AtomicU64::new(1),
+            observer,
+        });
     }
 
     /// The measure, also after a panic elsewhere left the lock poisoned:
@@ -196,7 +217,7 @@ impl SqliteBoardCallMeter {
         observer: Arc<dyn Fn(Observation) + Send + Sync>,
     ) -> Arc<dyn MeteredCall> {
         let mut tally = Tally::new();
-        tally.observer = Some(observer);
+        tally.observe(observer);
         Arc::new(SqliteMeteredCall {
             store: self.store.clone(),
             sums: self.sums.clone(),
@@ -214,12 +235,19 @@ pub(super) struct MeteredConnection<'a> {
 
 struct Handler<'a> {
     tally: &'a Tally,
+    #[cfg(any(test, feature = "test-support"))]
+    observation: Option<HandlerObservation>,
+}
+
+#[cfg(any(test, feature = "test-support"))]
+struct HandlerObservation {
     scope: Scope,
     phase: Arc<AtomicU8>,
     actual: Mutex<(Phase, Duration)>,
 }
 
-impl Handler<'_> {
+#[cfg(any(test, feature = "test-support"))]
+impl HandlerObservation {
     fn scope(&self) -> Scope {
         let phase = match self.phase.load(Ordering::Acquire) {
             1 => Phase::Begin,
@@ -232,35 +260,43 @@ impl Handler<'_> {
             ..self.scope
         }
     }
+}
 
+impl Handler<'_> {
+    #[cfg(any(test, feature = "test-support"))]
     fn notify(&self, event: Observation) {
-        if let Some(observer) = &self.tally.observer {
-            observer(event);
+        if let Some(observation) = &self.tally.observation {
+            (observation.observer)(event);
         }
     }
 
-    fn account(&self, count: c_int, slept: Duration) {
-        let scope = self.scope();
-        let actual = {
-            let mut actual = self.actual.lock().unwrap_or_else(PoisonError::into_inner);
-            if actual.0 == scope.phase {
-                actual.1 = actual.1.saturating_add(slept);
-            } else {
-                *actual = (scope.phase, slept);
-            }
-            actual.1
-        };
+    fn account(&self, _count: c_int, slept: Duration) {
         {
             let mut measure = self.tally.held();
             measure.busy_wait = measure.busy_wait.saturating_add(slept);
         }
-        // Both mutexes have been released. Notification contains immutable,
-        // already-accounted actual sleep, never the planned retry delay.
-        self.notify(Observation::Accounted(AccountedSample {
-            scope,
-            callback: count,
-            actual,
-        }));
+        #[cfg(any(test, feature = "test-support"))]
+        if let Some(observation) = &self.observation {
+            let scope = observation.scope();
+            let actual = {
+                let mut actual = observation
+                    .actual
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner);
+                if actual.0 == scope.phase {
+                    actual.1 = actual.1.saturating_add(slept);
+                } else {
+                    *actual = (scope.phase, slept);
+                }
+                actual.1
+            };
+            // Both mutexes released; immutable actual sleep is already accounted.
+            self.notify(Observation::Accounted(AccountedSample {
+                scope,
+                callback: _count,
+                actual,
+            }));
+        }
     }
 
     fn busy(&self, count: c_int) -> bool {
@@ -291,17 +327,22 @@ impl<'a> MeteredConnection<'a> {
                     .expect("owned connection")
                     .handle()
             };
-            let identity = next_identity(&tally.connections);
             let mut handler = Box::new(Handler {
                 tally,
-                scope: Scope {
-                    call: tally.call_id,
-                    connection: identity,
-                    transaction: identity,
-                    phase: Phase::Setup,
-                },
-                phase: Arc::new(AtomicU8::new(0)),
-                actual: Mutex::new((Phase::Setup, Duration::ZERO)),
+                #[cfg(any(test, feature = "test-support"))]
+                observation: tally.observation.as_ref().map(|observation| {
+                    let identity = next_identity(&observation.connections);
+                    HandlerObservation {
+                        scope: Scope {
+                            call: observation.call_id,
+                            connection: identity,
+                            transaction: identity,
+                            phase: Phase::Setup,
+                        },
+                        phase: Arc::new(AtomicU8::new(0)),
+                        actual: Mutex::new((Phase::Setup, Duration::ZERO)),
+                    }
+                }),
             });
             let argument = std::ptr::from_mut(&mut *handler).cast::<c_void>();
             // SQLite uses the argument synchronously on this connection's thread.
@@ -322,23 +363,32 @@ impl<'a> MeteredConnection<'a> {
         Ok(owned)
     }
 
-    pub(super) fn phase(&self, phase: Phase) {
+    pub(super) fn phase(&self, _phase: Phase) {
+        #[cfg(any(test, feature = "test-support"))]
         if let Some(handler) = &self.handler {
-            let value = match phase {
-                Phase::Setup => 0,
-                Phase::Begin => 1,
-                Phase::Work => 2,
-                Phase::Commit => 3,
-            };
-            handler.phase.store(value, Ordering::Release);
-            if phase == Phase::Begin {
-                handler.notify(Observation::Begin(handler.scope()));
+            if let Some(observation) = &handler.observation {
+                let value = match _phase {
+                    Phase::Setup => 0,
+                    Phase::Begin => 1,
+                    Phase::Work => 2,
+                    Phase::Commit => 3,
+                };
+                observation.phase.store(value, Ordering::Release);
+                if _phase == Phase::Begin {
+                    handler.notify(Observation::Begin(observation.scope()));
+                }
             }
         }
     }
 
     pub(super) fn phase_control(&self) -> Option<Arc<AtomicU8>> {
-        self.handler.as_ref().map(|handler| handler.phase.clone())
+        #[cfg(any(test, feature = "test-support"))]
+        if let Some(handler) = &self.handler {
+            if let Some(observation) = &handler.observation {
+                return Some(observation.phase.clone());
+            }
+        }
+        None
     }
 
     fn unregister(&mut self) {
@@ -407,7 +457,15 @@ unsafe extern "C" fn busy_callback(argument: *mut c_void, count: c_int) -> c_int
     // SAFETY: the pointer is valid and only read through.
     if let Some(handler) = unsafe { argument.cast::<Handler<'_>>().as_ref() } {
         let retry = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| handler.busy(count)));
-        c_int::from(retry.unwrap_or(false))
+        match retry {
+            Ok(retry) => c_int::from(retry),
+            Err(payload) => {
+                // Arbitrary payload Drop can panic too. Deliberately leak only this
+                // exceptional payload rather than run user code outside containment.
+                std::mem::forget(payload);
+                0
+            }
+        }
     } else {
         0
     }
@@ -436,3 +494,7 @@ fn busy_delay(count: c_int) -> Option<Duration> {
 #[cfg(test)]
 #[path = "meter_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "meter_boundary_tests.rs"]
+mod boundary_tests;

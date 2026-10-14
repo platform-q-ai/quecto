@@ -175,7 +175,21 @@ mod held_lock_release_policy {
 
     #[test]
     fn timer_cannot_release_contender_gated_before_begin() {
-        assert_release_qualified(None, false, true, 0);
+        let mut lifecycle = held_lock_timer_policy::ReleaseLifecycle::new(true);
+        assert!(
+            !lifecycle.qualified(),
+            "shared lifecycle must keep holder locked while contender is gated before BEGIN"
+        );
+        let begin = held_lock_timer_policy::Scope {
+            call: 1,
+            connection: 2,
+            transaction: 3,
+            phase: held_lock_timer_policy::Phase::Begin,
+        };
+        assert!(
+            !lifecycle.observe(held_lock_timer_policy::Observation::Begin(begin)),
+            "BEGIN entry without accounted receipt cannot release holder"
+        );
     }
 
     #[test]
