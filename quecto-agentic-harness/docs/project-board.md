@@ -207,10 +207,14 @@ line is in doubt when it holds:
 - a part past its board limit in characters (500 for an evidence part, 100 for
   an owner): it is never cut, since a cut may strip the `@` that marks a
   secret;
-- a credential word, in any case and as any part of a word, once zero-width
-  characters are taken out: `authorization`, `bearer`, `basic `, `password`,
-  `passwd`, `pwd=`, `secret`, `token`, `api_key`, `apikey`, `api-key`,
-  `credential`, `private_key`, `private-key`;
+- an invisible character: a format character or another default ignorable one
+  (a soft hyphen, a direction mark, a zero-width space, a variation selector, a
+  tag);
+- a credential word as any part of a word, once the text is folded (NFKC, so a
+  fullwidth form reads as its letters, then lower case): `authorization`,
+  `bearer`, `password`, `passwd`, `pwd=`, `secret`, `token`, `api_key`,
+  `apikey`, `api-key`, `credential`, `private_key`, `private-key`, or `basic`
+  before anything but a letter (so "basically" is kept);
 - an address whose fragment is no short anchor (up to 64 letters, digits, `_`,
   `.` or `-`), whose path holds `%25`, or a bare host whose word holds a `;`;
 - an at sign (`@`, fullwidth `＠`, small `﹫`, or `%40` encoded once or more)
@@ -225,13 +229,18 @@ perhaps a port of digits) keeps that authority, its path up to its first `?`,
 other address is written `scheme://***`. Secret-shaped spans are then redacted.
 
 Accepted costs: a line that merely mentions a credential word ("basic CI-check
-passed", "token budget") is dropped, as is a line past its limit; an address
+passed", "token budget") is dropped, so a task item about auth, token or
+credential code may show little or no evidence (drops are counted in
+`evidence_dropped`, not shown); a line holding an invisible character, or past
+its limit, is dropped too; an address
 with an at sign anywhere (an npm `/@scope`, vite's `/@vite/client`,
 `?to=a@b.co`), an IPv6 or a non-ASCII host is written `scheme://***`; a line
 holding an email, a `pkg@1.2.3`, an `@types/node`, a `git@host:repo` or any
 other at sign outside an address is dropped. Known limits: a secret with no at
-sign and no credential word (`-u admin:hunter2secret`), or in an address's path
-(a Slack or Discord webhook), is kept; a bare `host.com;sig=…` with no `/`, a
+sign and no credential word (`-u admin:hunter2`), or in an address's path (a
+Slack or Discord webhook), is kept, as is a credential word spelt with a
+lookalike from another script (a Cyrillic `е` in `sеcret`) or `basic` glued to
+letters (`basicAuth=…`); a bare `host.com;sig=…` with no `/`, a
 bare host with no dot (`localhost/x?sig=…`), or one glued to a CJK letter or a
 `_`, keeps what follows it. A line split by a line break is dropped whole.
 

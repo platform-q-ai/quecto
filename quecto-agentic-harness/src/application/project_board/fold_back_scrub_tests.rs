@@ -1,4 +1,4 @@
-//! S4 review rounds 2 to 6: what the scrubber keeps of an address in an
+//! S4 review rounds 2 to 7: what the scrubber keeps of an address in an
 //! owner or evidence part, and what a link holds. The board is public:
 //! when a rule is in doubt, it scrubs.
 use super::tests::kept_line;
@@ -144,6 +144,13 @@ fn a_line_naming_a_credential_word_is_dropped_in_any_case_or_markup() {
         "Bearer=eyJhbGciOi",
         "Bear\u{200b}er eyJhbGciOi",
         "bas\u{feff}ic dXNl",
+        // `basic` before anything but a letter, or at the end.
+        "Basic\u{200b}dXNlcjpw",
+        "Basic:dXNlcjpw",
+        "Basic\u{a0}dXNlcjpw",
+        "curl -H Basic",
+        // Compatibility forms fold to the word (NFKC).
+        "\u{ff50}\u{ff41}\u{ff53}\u{ff53}\u{ff57}\u{ff4f}\u{ff52}\u{ff44}=x",
         "password: hunter2",
         "Passwd x",
         "pwd=x",
@@ -415,4 +422,27 @@ fn a_long_run_of_parentheses_is_judged_in_one_pass() {
         "{:?}",
         started.elapsed()
     );
+}
+
+#[test]
+fn a_part_holding_an_invisible_format_character_is_dropped() {
+    for invisible in [
+        '\u{ad}',    // soft hyphen
+        '\u{200e}',  // left-to-right mark
+        '\u{2061}',  // function application
+        '\u{34f}',   // combining grapheme joiner
+        '\u{fe0f}',  // variation selector 16
+        '\u{e0041}', // tag latin capital A
+        '\u{200b}',  // zero-width space
+        '\u{feff}',  // zero-width no-break space
+    ] {
+        assert_eq!(
+            scrubbed(&format!("src/api{invisible}.rs"), MAX_LINE_CHARS),
+            None,
+            "{:?}",
+            invisible
+        );
+    }
+    // Visible marks and letters are kept.
+    scrubs(&[("caf\u{e9} \u{4e2d}\u{6587}", "caf\u{e9} \u{4e2d}\u{6587}")]);
 }

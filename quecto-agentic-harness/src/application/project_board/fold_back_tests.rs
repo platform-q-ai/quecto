@@ -584,6 +584,30 @@ fn an_owner_past_its_limit_or_one_the_board_cannot_hold_is_none() {
     assert_eq!(items.items[0].owner, None);
     assert_eq!(items.items[1].owner, None);
     assert_eq!(items.items[2].owner, None);
+    // A scrub may lengthen an owner (`a://@` is written `a://***`): past
+    // its limit then, the board refuses it, and it is left out.
+    let grown = format!("{} `a://@`", "x".repeat(MAX_OWNER_CHARS - 8));
+    let fits = format!("{} `a://@`", "x".repeat(MAX_OWNER_CHARS - 12));
+    let items = folded(vec![
+        swarm_item(
+            "api: Build the api",
+            SwarmItemState::Claimed,
+            Some(&grown),
+            &[],
+        ),
+        swarm_item(
+            "store: Build the store",
+            SwarmItemState::Claimed,
+            Some(&fits),
+            &[],
+        ),
+    ]);
+    assert_eq!(grown.chars().count(), MAX_OWNER_CHARS);
+    assert_eq!(items.items[0].owner, None);
+    assert_eq!(
+        items.items[1].owner,
+        Some(format!("{} `a://***`", "x".repeat(MAX_OWNER_CHARS - 12)))
+    );
     // At its limit, it is kept, trimmed: no space is left at its end.
     let spaced = format!("{} ", "a".repeat(MAX_OWNER_CHARS - 1));
     let items = folded(vec![swarm_item(
