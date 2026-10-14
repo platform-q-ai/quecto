@@ -444,4 +444,8 @@ Each `start` that reaches the board writes one `board_start` record besides its
 | `not_applied` | The worker roles whose models were not applied |
 | `claim` | `fresh` when the start took the claim, `held` when the starter held it |
 | `launch_us` | How long the coordinator's launch took |
+| `folded`, `released` | For a start undone (its coordinator did not launch, or its call was cancelled before the launch): whether its own fold-back ended the run, and, when the start took the claim, whether it released it |
 | `duration_us` | The whole call |
+
+A start undone writes its fold-back's own `board_fold_back` record too, as
+below.

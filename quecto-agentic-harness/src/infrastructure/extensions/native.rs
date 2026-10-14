@@ -256,6 +256,9 @@ pub struct AgentControlToolBuild {
     /// registry serves (S4c): what the board's coordinator launcher spawns
     /// through.
     pub spawn_tool: Arc<dyn crate::application::tools::ports::Tool>,
+    /// The `agent_cmd` tool beside it: what the launcher stops a
+    /// coordinator that came up wrong with.
+    pub agent_cmd_tool: Arc<dyn crate::application::tools::ports::Tool>,
 }
 
 pub fn build_agent_control_tool_extensions(deps: AgentControlToolDeps) -> AgentControlToolBuild {
@@ -303,13 +306,15 @@ pub fn build_agent_control_tool_extensions(deps: AgentControlToolDeps) -> AgentC
         .with_container_config_roster(deps.container_config_roster);
 
     let spawn_tool: Arc<dyn crate::application::tools::ports::Tool> = Arc::new(spawn);
+    let agent_cmd_tool: Arc<dyn crate::application::tools::ports::Tool> = Arc::new(agent_cmd);
     AgentControlToolBuild {
         extensions: vec![Arc::new(NativeExtension::with_tools(
             "quecto:agent-control",
             "Bundled Quecto subagent control tools",
-            vec![Arc::clone(&spawn_tool), Arc::new(agent_cmd)],
+            vec![Arc::clone(&spawn_tool), Arc::clone(&agent_cmd_tool)],
         ))],
         spawn_tool,
+        agent_cmd_tool,
         subagent_registry: registry,
         harness_lifecycle,
         notification_tx,

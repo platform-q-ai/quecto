@@ -344,6 +344,12 @@ pub struct BoardStartRecord {
     pub claim: Option<StartClaim>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub launch_us: Option<u64>,
+    /// For a start undone (S4c review round 1): whether its own fold-back
+    /// ended the run, and, when it took the claim, whether it released it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub folded: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub released: Option<bool>,
     pub duration_us: u64,
 }
 

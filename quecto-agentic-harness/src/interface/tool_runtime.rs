@@ -398,8 +398,8 @@ pub(crate) fn build_tool_runtime(
         use crate::infrastructure::tools::coordinator_launch as launch;
         let permit = launch::SpawnPermit::default();
         registry.watch_spawn_permit(permit.clone());
-        let launcher =
-            launch::SpawnCoordinatorLauncher::new(agent_control.spawn_tool.clone(), permit);
+        let (spawn, kill) = (&agent_control.spawn_tool, &agent_control.agent_cmd_tool);
+        let launcher = launch::SpawnCoordinatorLauncher::new(spawn.clone(), kill.clone(), permit);
         let board = crate::interface::tools::project_board::tool::BoardTool::new(
             crate::interface::tools::project_board::site::BoardSite {
                 repo: board_repo,

@@ -1,7 +1,8 @@
 //! The coordinator launch port's contract (S4c), run against its
 //! spawn-backed adapter over a spawn that answers as told: it launches
 //! only while the session's policy allows spawn, asks spawn for a
-//! coordinator in a new container, and answers what spawn says runs.
+//! coordinator in a new container, and answers what spawn's structured
+//! answer says runs, stopping a coordinator that came up outside one.
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
@@ -17,18 +18,21 @@ use quecto::infrastructure::tools::coordinator_launch::SpawnCoordinatorLauncher;
 use quecto::infrastructure::tools::coordinator_launch::SpawnPermit;
 use quecto::infrastructure::tools::registry::ToolRegistryImpl;
 
-/// A `spawn` that answers `content` (an error when `failing`) and keeps
-/// the arguments of each call.
+/// A `spawn` (or, named so, `agent_cmd`) that answers `content` (an
+/// error when `failing`) with `metadata`, and keeps the arguments of each
+/// call.
 struct Spawn {
+    name: &'static str,
     content: String,
     failing: bool,
+    metadata: Option<String>,
     calls: Mutex<Vec<String>>,
 }
 
 impl Tool for Spawn {
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
-            name: "spawn".into(),
+            name: self.name.into(),
             description: "a test spawn".into(),
             parameters_schema: r#"{"type":"object"}"#.into(),
         }
@@ -43,16 +47,37 @@ impl Tool for Spawn {
             content: self.content.clone(),
             is_error: self.failing,
             image_blocks: vec![],
-            delivery_metadata: None,
+            delivery_metadata: self.metadata.clone(),
         };
         Box::pin(async move { Ok(result) })
     }
 }
 
 fn spawn(content: &str, failing: bool) -> Arc<Spawn> {
+    spawned_with(content, failing, None)
+}
+
+fn spawned_with(content: &str, failing: bool, metadata: Option<&str>) -> Arc<Spawn> {
     Arc::new(Spawn {
+        name: "spawn",
         content: content.into(),
         failing,
+        metadata: metadata.map(str::to_owned),
+        calls: Mutex::default(),
+    })
+}
+
+/// What spawn's structured answer says of a child it launched.
+fn launched_child(environment_ref: Option<&str>) -> String {
+    serde_json::json!({"spawned": {"uuid": "0b5e", "environment_ref": environment_ref}}).to_string()
+}
+
+fn agent_cmd() -> Arc<Spawn> {
+    Arc::new(Spawn {
+        name: "agent_cmd",
+        content: "killed".into(),
+        failing: false,
+        metadata: None,
         calls: Mutex::default(),
     })
 }
@@ -60,6 +85,14 @@ fn spawn(content: &str, failing: bool) -> Arc<Spawn> {
 /// A launcher over `spawn`, its permit watched by a registry holding it
 /// and judged by its policy (`allowed`: left enabled, or disabled).
 fn launcher(spawn: Arc<Spawn>, allowed: bool) -> (SpawnCoordinatorLauncher, ToolRegistryImpl) {
+    launcher_stopping_with(spawn, agent_cmd(), allowed)
+}
+
+fn launcher_stopping_with(
+    spawn: Arc<Spawn>,
+    agent_cmd: Arc<Spawn>,
+    allowed: bool,
+) -> (SpawnCoordinatorLauncher, ToolRegistryImpl) {
     let permit = SpawnPermit::default();
     let mut registry = ToolRegistryImpl::new();
     registry.register(spawn.clone());
@@ -67,7 +100,10 @@ fn launcher(spawn: Arc<Spawn>, allowed: bool) -> (SpawnCoordinatorLauncher, Tool
     if !allowed {
         registry.disable_tool("spawn");
     }
-    (SpawnCoordinatorLauncher::new(spawn, permit), registry)
+    (
+        SpawnCoordinatorLauncher::new(spawn, agent_cmd, permit),
+        registry,
+    )
 }
 
 fn request() -> CoordinatorRequest {
@@ -96,7 +132,7 @@ const RUNNING: &str = "Subagent 'board-demo-hello-run-1' is running (uuid=0b5e) 
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_coordinator_launches_through_spawn_while_the_policy_allows_it() {
-    let spawned = spawn(RUNNING, false);
+    let spawned = spawned_with(RUNNING, false, Some(&launched_child(Some("C4"))));
     let (launching, _registry) = launcher(spawned.clone(), true);
     assert!(launching.may_launch());
     assert_eq!(
@@ -145,14 +181,27 @@ async fn spawns_refusal_or_an_answer_naming_no_container_is_a_refusal() {
         launched(Arc::new(launching)).await,
         Err(LaunchRefused("no container runtime is available".into()))
     );
-    let local = spawn(
-        "Subagent 'x' is running (uuid=0b5e). Use agent_cmd to interact.",
-        false,
-    );
-    let (launching, _registry) = launcher(local, true);
+    // Words alone name nothing: only spawn's structured answer does.
+    let (launching, _registry) = launcher(spawn(RUNNING, false), true);
     let refused = launched(Arc::new(launching)).await;
     assert!(
         matches!(&refused, Err(LaunchRefused(why)) if why.starts_with("spawn answered no running coordinator")),
         "{refused:?}"
+    );
+    // A coordinator outside a container is stopped, then refused.
+    let local = spawned_with("running", false, Some(&launched_child(None)));
+    let stopper = agent_cmd();
+    let (launching, _registry) = launcher_stopping_with(local, stopper.clone(), true);
+    let refused = launched(Arc::new(launching)).await;
+    assert_eq!(
+        refused,
+        Err(LaunchRefused(
+            "the coordinator came up outside a container, so it was stopped".into()
+        ))
+    );
+    let kill: serde_json::Value = serde_json::from_str(&stopper.calls.lock().unwrap()[0]).unwrap();
+    assert_eq!(
+        kill,
+        serde_json::json!({"agent_id": "0b5e", "command": "kill"})
     );
 }

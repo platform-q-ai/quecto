@@ -560,3 +560,31 @@ fn the_board_committer_override_changes_only_the_boards_commits() {
         }
     }
 }
+
+/// Q10: the committer's email is the last `<...>` of the value, so a name
+/// that holds ` <` is judged as the name (refused: a name holds no `<`),
+/// never read as the start of the email; unset, it names none.
+#[test]
+fn the_board_committer_is_read_from_its_last_angle_brackets() {
+    let named = |value: &str| {
+        board_committer(&[(
+            OsString::from("QUECTO_BOARD_COMMITTER"),
+            OsString::from(value),
+        )])
+    };
+    assert_eq!(
+        named("quecto pocket <pocket@quecto.invalid>"),
+        Some(Ok(Identity {
+            name: "quecto pocket".into(),
+            email: "pocket@quecto.invalid".into(),
+        }))
+    );
+    let refused = named("a <b <c@d.example>").unwrap().unwrap_err();
+    assert!(refused.contains("committer/name"), "{refused}");
+    let bare = named("pocket@quecto.invalid").unwrap().unwrap_err();
+    assert!(
+        bare.ends_with("it names no email in angle brackets"),
+        "{bare}"
+    );
+    assert_eq!(board_committer(&[]), None);
+}

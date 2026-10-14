@@ -119,6 +119,11 @@ const ALLOWED: &[(&str, &str, &str)] = &[
         "drives the session's spawn tool to completion in place, on the board call's own blocking thread (no new task): its panic is the board call's",
     ),
     (
+        "src/infrastructure/tools/coordinator_launch/mod.rs",
+        "impl SpawnCoordinatorLauncher::stopped",
+        "drives the session's agent_cmd kill of a coordinator that came up outside a container to completion in place, on the same board call's blocking thread (no new task): its panic is the board call's",
+    ),
+    (
         "src/infrastructure/tools/find_fd.rs",
         "impl FdFindPaths::find",
         "drives its own current-thread runtime on the find owner's thread (call_work::std_thread_in_call), never a worker",

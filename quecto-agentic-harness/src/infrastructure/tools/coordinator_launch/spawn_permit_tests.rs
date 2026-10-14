@@ -51,3 +51,85 @@ fn the_permit_follows_the_registrys_policy_over_spawn() {
     unrelated.watch_spawn_permit(other.clone());
     assert!(!other.allowed(), "another tool is no spawn");
 }
+
+/// A persisted policy (the user's saved preference) narrowing spawn to
+/// children closes the permit, and lifting it opens it again.
+#[test]
+fn the_permit_follows_a_persisted_policy() {
+    use crate::domain::tool_descriptor::ProfileAvailabilityScope;
+    use crate::infrastructure::config::{ToolPolicyConfig, ToolPolicyEntryConfig};
+    use crate::infrastructure::tools::registration::ToolRegistration;
+    let permit = SpawnPermit::default();
+    let mut registry = ToolRegistryImpl::new();
+    registry.register(Arc::new(Named("spawn")));
+    registry.watch_spawn_permit(permit.clone());
+    assert!(permit.allowed());
+    let stable_id = ToolRegistration::official_native()
+        .identity_for_name("spawn")
+        .stable_id
+        .to_string();
+    let mut policy = ToolPolicyConfig::default();
+    policy.entries.insert(
+        stable_id,
+        ToolPolicyEntryConfig {
+            scope: ProfileAvailabilityScope::Child,
+        },
+    );
+    assert!(registry.apply_persisted_tool_policy(&policy).is_empty());
+    assert!(!permit.allowed(), "a child-only spawn is no parent's");
+    registry.apply_persisted_tool_policy(&ToolPolicyConfig::default());
+    assert!(permit.allowed(), "the preference lifted");
+}
+
+/// A policy inherited from a parent session that keeps spawn from this
+/// one closes the permit; one that grants it leaves it open.
+#[test]
+fn the_permit_follows_an_inherited_policy() {
+    use std::collections::BTreeMap;
+
+    use crate::domain::tool_descriptor::ProfileAvailabilityScope;
+    use crate::infrastructure::tools::inherited_tool_policy::InheritedToolPolicySnapshot;
+    let inherited = |scope| {
+        let permit = SpawnPermit::default();
+        let mut registry = ToolRegistryImpl::new();
+        registry.register(Arc::new(Named("spawn")));
+        registry.watch_spawn_permit(permit.clone());
+        let snapshot = InheritedToolPolicySnapshot::new(BTreeMap::from([("spawn".into(), scope)]));
+        registry.apply_inherited_tool_policy_snapshot(&snapshot);
+        permit.allowed()
+    };
+    assert!(!inherited(ProfileAvailabilityScope::None));
+    assert!(!inherited(ProfileAvailabilityScope::Child));
+    assert!(inherited(ProfileAvailabilityScope::Both));
+}
+
+/// A guard that refuses every spawn.
+struct NoSpawn;
+
+impl crate::application::tools::ports::ToolGuard for NoSpawn {
+    fn check(&self, tool_name: &str, _: &str) -> Result<(), String> {
+        match tool_name {
+            "spawn" => Err("spawn is guarded".into()),
+            _ => Ok(()),
+        }
+    }
+}
+
+/// The permit carries the registry's guards, those registered before it
+/// was watched and after, and judges a spawn call by them.
+#[test]
+fn the_permit_judges_a_spawn_by_the_registrys_guards() {
+    let permit = SpawnPermit::default();
+    assert_eq!(permit.check("{}"), Ok(()), "no guards, no refusal");
+    let mut registry = ToolRegistryImpl::new();
+    registry.register(Arc::new(Named("spawn")));
+    registry.watch_spawn_permit(permit.clone());
+    assert_eq!(permit.check("{}"), Ok(()));
+    registry.register_guard(Arc::new(NoSpawn));
+    assert_eq!(permit.check("{}"), Err("spawn is guarded".into()));
+    let early = SpawnPermit::default();
+    let mut guarded = ToolRegistryImpl::new();
+    guarded.register_guard(Arc::new(NoSpawn));
+    guarded.watch_spawn_permit(early.clone());
+    assert_eq!(early.check("{}"), Err("spawn is guarded".into()));
+}

@@ -629,16 +629,23 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
             ),
             is_error: false,
             image_blocks: vec![],
-            delivery_metadata: None,
+            delivery_metadata: Some(spawned_metadata(&identity.registry_key, environment_ref)),
         }
     }
 }
 
+/// What a spawn launched, for its callers, never the model (S4c): the
+/// child's `uuid` and its container's `environment_ref` (`null` for a local
+/// child), as the board's coordinator launcher reads them
+/// ([`super::coordinator_launch`]).
+pub(super) fn spawned_metadata(uuid: &str, environment_ref: Option<&str>) -> String {
+    serde_json::json!({"spawned": {"uuid": uuid, "environment_ref": environment_ref}}).to_string()
+}
+
 /// The line a spawn answers once its child runs: the child's name, its
 /// `uuid`, and its container's ` environment_ref=…` and details (empty for
-/// a local child). The board's coordinator launcher reads it back
-/// ([`super::coordinator_launch`]), so the two stay together.
-pub(super) fn running_line(session: &str, uuid: &str, environment: &str) -> String {
+/// a local child).
+fn running_line(session: &str, uuid: &str, environment: &str) -> String {
     format!(
         "Subagent '{session}' is running (uuid={uuid}){environment}. Use agent_cmd to interact."
     )

@@ -201,6 +201,14 @@ async fn the_tool_starts_a_task_with_its_sessions_launcher() {
         "{line}"
     );
     assert!(line.get("launch_us").is_some(), "{line}");
+    // Who the call is for: the agent itself, unless the relay names
+    // itself in the harness's environment.
+    let client = crate::interface::tools::project_board::recording::named_client(
+        std::env::var_os(crate::interface::tools::project_board::recording::CLIENT_VARIABLE)
+            .as_deref(),
+        crate::domain::project_board::value_objects::telemetry::Client::Agent,
+    );
+    assert_eq!((ops[0].client, starts[0].client), (client, client));
     let unlaunched = tool_without_launcher()
         .execute(&request.to_string())
         .await
@@ -211,4 +219,72 @@ async fn the_tool_starts_a_task_with_its_sessions_launcher() {
 
 fn tool_without_launcher() -> super::BoardTool {
     tool(site(Some(launching_board)))
+}
+
+/// A launcher whose every launch fails.
+struct Failing;
+
+impl crate::application::project_board::ports::CoordinatorLaunch for Failing {
+    fn may_launch(&self) -> bool {
+        true
+    }
+
+    fn launch(
+        &self,
+        _: &crate::application::project_board::ports::CoordinatorRequest,
+    ) -> Result<
+        crate::application::project_board::ports::LaunchedCoordinator,
+        crate::application::project_board::ports::LaunchRefused,
+    > {
+        Err(crate::application::project_board::ports::LaunchRefused(
+            "no container runtime".into(),
+        ))
+    }
+}
+
+/// S4c review round 1: a start whose launch failed answers where its undo
+/// left the run, and records the undo: `folded` and `released` on its
+/// `board_start`, and the fold-back's own `board_fold_back`.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_failed_launch_records_its_undo() {
+    let records = Arc::new(Records::default());
+    let failing = BoardSite {
+        launcher: Some(Arc::new(Failing)),
+        ..site(Some(launching_board))
+    };
+    let tool = recorded_tool(failing, &records);
+    let request = json!({"op": "start", "task": "a", "plan_version": 1});
+    let refused = tool.execute(&request.to_string()).await.unwrap();
+    let answer: Value = serde_json::from_str(&refused.content).unwrap();
+    assert!(refused.is_error, "{answer}");
+    assert_eq!(
+        (
+            &answer["error"]["code"],
+            &answer["error"]["run_state"],
+            &answer["error"]["released"]
+        ),
+        (&json!("launch_failed"), &json!("folded"), &json!(true)),
+        "{answer}"
+    );
+    let starts = records.starts();
+    assert_eq!(
+        (starts.len(), starts[0].folded, starts[0].released),
+        (1, Some(true), Some(true))
+    );
+    let folds = records.fold_backs();
+    assert_eq!(folds.len(), 1, "the undo's fold-back is recorded");
+    let line = serde_json::to_value(crate::domain::audit::AuditEvent::BoardFoldBack(Box::new(
+        folds[0].clone(),
+    )))
+    .unwrap();
+    assert_eq!(
+        (
+            &line["task"],
+            &line["run"],
+            &line["outcome"],
+            &line["run_outcome"]
+        ),
+        (&json!("a"), &json!(1), &json!("ok"), &json!("failed")),
+        "{line}"
+    );
 }

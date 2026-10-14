@@ -164,6 +164,24 @@ async fn success_names_the_container_config_and_relays_the_selection_diagnostics
         identity.registry_key
     );
     assert_eq!(result.content, expected);
+    // S4c: what it launched, for its callers, never in its words.
+    let metadata: serde_json::Value =
+        serde_json::from_str(result.delivery_metadata.as_deref().unwrap()).unwrap();
+    assert_eq!(
+        metadata,
+        serde_json::json!({"spawned": {"uuid": identity.registry_key, "environment_ref": env_ref}})
+    );
+    let local = ports.success(&identity, None);
+    assert_eq!(
+        local.delivery_metadata.as_deref(),
+        Some(spawned_metadata(&identity.registry_key, None).as_str())
+    );
+    assert!(
+        local
+            .delivery_metadata
+            .unwrap()
+            .contains(r#""environment_ref":null"#)
+    );
 }
 
 /// #1390 review finding: a join racing a kill must not register into a

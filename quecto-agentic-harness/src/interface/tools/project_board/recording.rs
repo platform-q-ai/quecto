@@ -20,6 +20,7 @@ use super::answer::{self, FrontEndRefusal, rule_code};
 use super::request::{RequestError, schema_field};
 use crate::application::project_board::dto::ProjectBoardError;
 use crate::application::project_board::operations::{BoardOutcome, BoardRequest, Completion};
+use crate::application::project_board::ports::{FoldBackOutcome, FoldBackRecorder};
 use crate::application::project_board::start::StartFacts;
 use crate::application::project_board::telemetry::{
     BoardRecording, OpFacts, access_of, op_kind, pr_of, task_of,
@@ -275,10 +276,23 @@ impl BoardCall {
         record.cancelled = cancelled;
         record.result_bytes = u64::try_from(answer.to_string().len()).unwrap_or(u64::MAX);
         record.duration_us = micros(started.elapsed());
+        let undo = start.as_ref().and_then(|facts| facts.fold_back.clone());
         let start = start.and_then(|facts| start_record(&record, facts));
         recording.record(record);
         if let Some(start) = start {
             recording.record_start(start);
+        }
+        // A start's undo folded its run back: that fold-back's own record.
+        if let Some(undo) = undo {
+            super::fold_back_call::FoldBackCall::new(Arc::clone(&recording)).record(
+                FoldBackOutcome {
+                    task: &undo.task,
+                    run: undo.run,
+                    result: &undo.result,
+                    facts: &undo.facts,
+                    elapsed: undo.elapsed,
+                },
+            );
         }
         // Written first; the message holds the answer's `ok` and the
         // noted kinds only, never the answer's text.
@@ -502,6 +516,8 @@ fn start_record(record: &BoardOpRecord, facts: StartFacts) -> Option<BoardStartR
         not_applied: facts.not_applied,
         claim: facts.claim,
         launch_us: facts.launch_us,
+        folded: facts.folded,
+        released: facts.released,
         duration_us: record.duration_us,
     })
 }

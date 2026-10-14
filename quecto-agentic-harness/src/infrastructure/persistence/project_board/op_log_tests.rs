@@ -123,6 +123,51 @@ fn a_fold_back_is_traced_at_info_then_written_as_its_own_event() {
     assert_eq!(line["cost_tokens"], 1234, "{line}");
 }
 
+/// S4c: a start is traced at INFO as `board start`, then written as its
+/// own `board_start` event, through both adapters.
+#[test]
+fn a_start_is_traced_at_info_then_written_as_its_own_event() {
+    use crate::domain::project_board::value_objects::slug::Slug;
+    use crate::domain::project_board::value_objects::telemetry::{
+        BoardStartRecord, StartClaim, TaskRef,
+    };
+    let base = tempfile::tempdir().unwrap();
+    let log = AuditLog::open_sync(base.path(), "cli:started").unwrap();
+    let ops = TracingProjectBoardOps::over(EventLogProjectBoardOps::new(log.crash_line().unwrap()));
+    let record = BoardStartRecord {
+        task: TaskRef::of(&Slug::parse("board-store").unwrap()),
+        client: Client::Agent,
+        outcome: OpOutcome::Ok,
+        run: Some(1),
+        plan_version: Some(2),
+        members: Some(3),
+        roles: Some(2),
+        items: Some(4),
+        not_applied: Some(0),
+        claim: Some(StartClaim::Held),
+        launch_us: Some(7),
+        folded: None,
+        released: None,
+        duration_us: 9,
+    };
+    let traced = traced(tracing::Level::INFO, || ops.record_start(record.clone()));
+    assert!(
+        traced.contains("INFO") && traced.contains("board start"),
+        "{traced}"
+    );
+    assert!(
+        traced.contains(&serde_json::to_string(&record).unwrap()),
+        "{traced}"
+    );
+    let text = std::fs::read_to_string(AuditLog::file_path(base.path(), "cli:started")).unwrap();
+    let line: serde_json::Value = serde_json::from_str(text.lines().last().unwrap()).unwrap();
+    assert_eq!(line["event"], "board_start", "{line}");
+    assert_eq!(
+        (&line["claim"], &line["launch_us"]),
+        (&serde_json::json!("held"), &serde_json::json!(7))
+    );
+}
+
 #[test]
 fn a_dropped_record_warns_once() {
     let base = tempfile::tempdir().unwrap();

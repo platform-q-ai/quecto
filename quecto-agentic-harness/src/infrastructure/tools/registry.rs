@@ -94,6 +94,7 @@ impl ToolRegistryImpl {
     /// Guards run in registration order. The first `Err` short-circuits.
     pub fn register_guard(&mut self, guard: Arc<dyn ToolGuard>) {
         self.guards.push(guard);
+        self.refresh_spawn_permit();
     }
 
     /// Return the number of registered guards.
