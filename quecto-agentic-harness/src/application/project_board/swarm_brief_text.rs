@@ -4,6 +4,9 @@
 //! its text never holds: data from the plan, not instructions. So no
 //! approach, title or criterion can pass for the template's own words;
 //! only the template's few fixed lines are instructions.
+use std::sync::LazyLock;
+
+use regex::Regex;
 use serde_json::{Value, json};
 
 use super::{SwarmBrief, TEMPLATE_BYTES};
@@ -21,7 +24,7 @@ const _: () = assert!(INSTRUCTIONS.len() < TEMPLATE_BYTES / 4);
 
 /// `brief` as its coordinator's task text.
 pub fn render(brief: &SwarmBrief) -> String {
-    let data = ascii(&data_of(brief).to_string());
+    let data = shown(&data_of(brief).to_string());
     // One line of JSON holds no line break, so no line of it is a fence;
     // the tag keeps even the fence's words out of the data's text.
     let tag = (1..)
@@ -40,17 +43,24 @@ pub fn render(brief: &SwarmBrief) -> String {
     )
 }
 
-/// `json` with every character past ASCII escaped as JSON spells it, a backslash, `u` and four hex digits (a pair of
-/// them past the basic plane): its JSON reads back the same, and no
-/// character in it can look like another (a right-to-left mark, a
-/// lookalike letter) to the coordinator reading it. Outside strings JSON
-/// holds only ASCII, so every such character is inside one.
-fn ascii(json: &str) -> String {
+/// The characters a reader cannot see that change how text reads: format
+/// characters (bidi controls and isolates, zero-width characters, tags),
+/// controls, and the line and paragraph separators.
+static HIDDEN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^[\p{Cf}\p{Cc}\p{Zl}\p{Zp}]$").expect("a valid class"));
+
+/// `json` with every hidden character ([`HIDDEN`]) escaped as JSON spells
+/// it, a backslash, `u` and four hex digits (a pair of them past the basic
+/// plane): its JSON reads back the same, and nothing in it reorders or
+/// hides text from the coordinator reading it. Every other character,
+/// CJK and emoji included, is kept as it is, at its own size. Outside
+/// strings JSON holds no such character, so every one is inside one.
+fn shown(json: &str) -> String {
     let mut escaped = String::with_capacity(json.len());
     for character in json.chars() {
-        match character.is_ascii() {
-            true => escaped.push(character),
-            false => {
+        match HIDDEN.is_match(character.encode_utf8(&mut [0; 4])) {
+            false => escaped.push(character),
+            true => {
                 let mut units = [0; 2];
                 for unit in character.encode_utf16(&mut units) {
                     escaped.push_str(&format!("\\u{unit:04x}"));
@@ -58,7 +68,6 @@ fn ascii(json: &str) -> String {
             }
         }
     }
-    assert!(escaped.is_ascii(), "the brief's data is ASCII");
     escaped
 }
 

@@ -641,13 +641,16 @@ pub enum ProjectBoardError {
     /// undo left it (`run_state`); when the start took the claim, whether
     /// the task went back to ready, releasing it (`released`); and, for a
     /// task held in review or blocked before, whether it went back there
-    /// (`restored`).
+    /// (`restored`). With `still_running` (a coordinator that came up wrong
+    /// and could not be stopped) nothing was undone: the run is open and
+    /// the claim held.
     LaunchFailed {
         reason: String,
         run: u32,
         run_state: RunAfterUndo,
         released: Option<bool>,
         restored: Option<Restored>,
+        still_running: Option<String>,
     },
 }
 
