@@ -128,6 +128,12 @@ impl RunBoardOperation {
             BoardRequest::EditPlan(edit) => Ok(BoardOutcome::Planned(
                 self.parts.edit_plan.execute_noted(edit, facts)?,
             )),
+            BoardRequest::AcceptPlan(acceptance) => Ok(BoardOutcome::Accepted(Box::new(
+                self.parts.accept_plan.execute_noted(acceptance, facts)?,
+            ))),
+            BoardRequest::DiscardPlan(discard) => Ok(BoardOutcome::Planned(
+                self.parts.discard_plan.execute_noted(discard, facts)?,
+            )),
             BoardRequest::Clear {
                 path,
                 object,

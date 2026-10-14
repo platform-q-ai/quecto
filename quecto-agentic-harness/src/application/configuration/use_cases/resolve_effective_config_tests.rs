@@ -13,6 +13,7 @@ fn layered() -> ConfigSelection {
         global: PathBuf::from(GLOBAL),
         overlay: Some(PathBuf::from(OVERLAY)),
         legacy_local: Some(PathBuf::from(LEGACY)),
+        overlay_origin: Default::default(),
     })
 }
 
@@ -50,7 +51,8 @@ fn a_trusted_overlay_merges_over_the_global_file() {
             explicit: false,
             overlay: Some(OverlayReport {
                 path: PathBuf::from(OVERLAY),
-                state: OverlayState::Applied
+                state: OverlayState::Applied,
+                origin: Default::default(),
             }),
             legacy_local: None,
         }
@@ -92,7 +94,8 @@ fn an_untrusted_overlay_is_reported_and_not_applied() {
                 problem: None,
                 // What the withheld document declares, without applying it.
                 sections: vec!["agents".to_string()],
-            }
+            },
+            origin: Default::default(),
         })
     );
     assert_eq!(effective.sources.applied_overlay(), None);
@@ -169,6 +172,7 @@ fn a_symbolic_link_at_the_overlay_location_is_refused_even_when_its_target_is_tr
     let Some(OverlayReport {
         path,
         state: OverlayState::Refused { reason },
+        ..
     }) = &effective.sources.overlay
     else {
         panic!("refused: {:?}", effective.sources.overlay);
@@ -289,7 +293,8 @@ fn an_absent_overlay_and_an_absent_global_file_yield_an_empty_document() {
         effective.sources.overlay,
         Some(OverlayReport {
             path: PathBuf::from(OVERLAY),
-            state: OverlayState::Absent
+            state: OverlayState::Absent,
+            origin: Default::default(),
         })
     );
 }
@@ -442,6 +447,7 @@ fn without_an_overlay_location_only_the_global_file_loads() {
         global: PathBuf::from(GLOBAL),
         overlay: None,
         legacy_local: None,
+        overlay_origin: Default::default(),
     });
     let effective = resolve.execute(&selection).unwrap();
     assert_eq!(effective.sources.overlay, None);
@@ -697,4 +703,28 @@ fn a_prompt_is_offered_only_for_an_overlay_that_would_apply_and_an_absent_global
         EffectiveConfigError::InvalidMerge { global: None, .. }
     ));
     assert!(error.to_string().contains("no global file"), "{error}");
+}
+
+/// The interactive offer is told where the overlay comes from, so a
+/// prompt in a linked worktree says it is the main worktree's file.
+#[test]
+fn the_trust_offer_carries_the_overlays_origin() {
+    let store = MemoryStore::with(&[(GLOBAL, "{}"), (OVERLAY, "{}")]);
+    let trust = Arc::new(FakeTrust {
+        consents: true,
+        ..FakeTrust::default()
+    });
+    let (resolve, _) = use_case(store, trust.clone());
+    let shared = ConfigSelection::Layered(ConfigLayers {
+        global: PathBuf::from(GLOBAL),
+        overlay: Some(PathBuf::from(OVERLAY)),
+        legacy_local: None,
+        overlay_origin: OverlayOrigin::MainWorktree,
+    });
+    resolve.execute(&shared).unwrap();
+    resolve.execute(&layered()).unwrap();
+    assert_eq!(
+        *trust.offered_origins.lock().unwrap(),
+        [OverlayOrigin::MainWorktree]
+    );
 }

@@ -706,6 +706,7 @@ pub mod grep_tool;
 pub mod telemetry;
 pub use grep_tool::GrepToolConfig;
 pub mod loaders;
+pub mod main_worktree;
 pub mod mapping;
 // #2403: the watermark marks.
 pub mod context_marks;

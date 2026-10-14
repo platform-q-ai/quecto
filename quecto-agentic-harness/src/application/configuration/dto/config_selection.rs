@@ -42,11 +42,35 @@ pub enum ConfigSelection {
 pub struct ConfigLayers {
     /// `<base_dir>/config.json`.
     pub global: PathBuf,
-    /// `<cwd>/.quecto/config.json`, when the working directory is known.
+    /// `<cwd>/.quecto/config.json`, when the working directory is known —
+    /// or, for a linked git worktree with no overlay of its own, its main
+    /// worktree's (see `overlay_origin`).
     pub overlay: Option<PathBuf>,
+    /// Where `overlay` was found.
+    pub overlay_origin: OverlayOrigin,
     /// `<cwd>/config.json`, the retired selection, when the working
     /// directory is known; reported if present, never loaded.
     pub legacy_local: Option<PathBuf>,
+}
+
+/// Where the overlay candidate comes from. A linked git worktree never has
+/// the untracked overlay checked out, so one with no overlay of its own
+/// shares its main worktree's: that file, judged by that file's trust
+/// record, exactly as a run in the main worktree judges it. Nothing is
+/// copied and no trust is recorded for the linked worktree.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum OverlayOrigin {
+    /// The working directory's own `.quecto/config.json`.
+    #[default]
+    WorkingDirectory,
+    /// `<main worktree>/.quecto/config.json`, shared with the linked
+    /// worktree the working directory is the root of. It is read (and
+    /// trusted) there and never written from here.
+    MainWorktree,
+    /// The working directory's own location only: it looks like a linked
+    /// worktree, but its main worktree could not be resolved (fail
+    /// closed); `reason` says why, for the operator.
+    MainWorktreeUnresolved { reason: String },
 }
 
 impl ConfigSelection {
@@ -79,6 +103,16 @@ impl ConfigSelection {
         match self {
             Self::Explicit(_) => None,
             Self::Layered(layers) => layers.overlay.as_deref(),
+        }
+    }
+
+    /// Where the overlay candidate comes from; the working directory when
+    /// there is none.
+    pub fn overlay_origin(&self) -> &OverlayOrigin {
+        const OWN: &OverlayOrigin = &OverlayOrigin::WorkingDirectory;
+        match self {
+            Self::Explicit(_) => OWN,
+            Self::Layered(layers) => &layers.overlay_origin,
         }
     }
 }

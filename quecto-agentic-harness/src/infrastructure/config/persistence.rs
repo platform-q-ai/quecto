@@ -16,6 +16,7 @@ use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
 
+use crate::application::configuration::ports::overlay_trust_store::OverlayOrigin;
 use crate::application::configuration::ports::{OverlayApproval, OverlayTrust, OverlayTrustStore};
 
 /// The trust record's file name under the base directory.
@@ -56,8 +57,14 @@ impl OverlayTrustStore for PersistentOverlayTrustStore {
 
     /// Consent only: the caller validates the overlay and records the
     /// approval, so a "y" on a broken overlay trusts nothing.
-    fn offer(&self, path: &Path, fingerprint: &str, content: &[u8]) -> bool {
-        self.prompt_on_miss && prompt_approval(path, fingerprint, content)
+    fn offer(
+        &self,
+        path: &Path,
+        fingerprint: &str,
+        content: &[u8],
+        origin: &OverlayOrigin,
+    ) -> bool {
+        self.prompt_on_miss && prompt_approval(path, fingerprint, content, origin)
     }
 
     fn approve(&self, path: &Path, content: &[u8]) -> Result<OverlayApproval, String> {
@@ -112,16 +119,31 @@ pub fn prompt_preview(content: &[u8]) -> String {
     shown
 }
 
-fn prompt_approval(path: &Path, fingerprint: &str, content: &[u8]) -> bool {
+/// The question the prompt asks: the file, whose it is when it is shared
+/// from the main worktree, its fingerprint and its (bounded) content.
+pub(crate) fn prompt_question(
+    path: &Path,
+    fingerprint: &str,
+    content: &[u8],
+    origin: &OverlayOrigin,
+) -> String {
+    let shared = match origin {
+        OverlayOrigin::MainWorktree => ", from the main worktree",
+        OverlayOrigin::WorkingDirectory | OverlayOrigin::MainWorktreeUnresolved { .. } => "",
+    };
+    format!(
+        "Repo-local config overlay {}{shared} (sha256 {fingerprint}):\n{}Trust this overlay? [y/N] ",
+        path.display(),
+        prompt_preview(content)
+    )
+}
+
+fn prompt_approval(path: &Path, fingerprint: &str, content: &[u8], origin: &OverlayOrigin) -> bool {
     if !io::stdin().is_terminal() {
         return false;
     }
     // What is shown is what a "y" approves: the bytes the caller read.
-    eprint!(
-        "Repo-local config overlay {} (sha256 {fingerprint}):\n{}Trust this overlay? [y/N] ",
-        path.display(),
-        prompt_preview(content)
-    );
+    eprint!("{}", prompt_question(path, fingerprint, content, origin));
     let _ = io::stderr().flush();
     let mut input = String::new();
     io::stdin()

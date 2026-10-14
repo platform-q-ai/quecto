@@ -274,3 +274,71 @@ fn an_items_only_edit_past_the_most_beside_a_kept_approach_is_refused() {
         "{line}"
     );
 }
+
+/// #2481 M4c: Bob reads Ada's draft and accepts it as read; the board
+/// names it, a later acceptance supersedes it, and the call is recorded
+/// with the plan's states and version, never its text.
+#[test]
+fn a_draft_read_is_accepted_superseded_and_recorded_by_state() {
+    use super::recording::BoardCall;
+    use super::recording::tests::{Records, recording};
+    use super::run_recorded;
+    use crate::domain::audit::AuditEvent;
+    use crate::domain::project_board::value_objects::telemetry::{Client, FrontEnd};
+    let (_store, ada, bob) = drafted();
+    let draft = ok(&bob, json!({"op": "show", "task": "a", "version": 2}));
+    let updated = draft["plan"]["updated"].clone();
+    let records = Arc::new(Records::default());
+    let mut recorded = BoardCall::start(Some(recording(&records)), FrontEnd::Tool, Client::Agent);
+    let request = json!({"op": "accept_plan", "task": "a", "version": 2, "expected_updated": updated, "expected_accepted": null});
+    let accepted = run_recorded(&bob, &request.to_string(), &mut recorded);
+    recorded.finish(&accepted, false);
+    assert_eq!(accepted["ok"], json!(true), "{accepted}");
+    assert_eq!(
+        (
+            &accepted["task"]["accepted_plan"],
+            &accepted["plan"]["state"],
+            &accepted["superseded"]
+        ),
+        (&json!(2), &json!("accepted"), &Value::Null)
+    );
+    let line =
+        serde_json::to_value(AuditEvent::BoardOp(Box::new(records.taken().remove(0)))).unwrap();
+    assert_eq!(
+        [
+            &line["op"],
+            &line["plan_version"],
+            &line["plan_state_from"],
+            &line["plan_state_to"]
+        ],
+        [
+            &json!("accept_plan"),
+            &json!(2),
+            &json!("draft"),
+            &json!("accepted")
+        ],
+        "{line}"
+    );
+    let first = ok(&ada, json!({"op": "show", "task": "a", "version": 1}));
+    let again = ok(
+        &ada,
+        json!({"op": "accept_plan", "task": "a", "version": 1, "expected_accepted": 2,
+               "expected_updated": first["plan"]["updated"]}),
+    );
+    assert_eq!(
+        again["superseded"],
+        json!(2),
+        "a rollback to the older draft"
+    );
+    let shown = ok(&ada, json!({"op": "show", "task": "a"}));
+    assert_eq!(shown["plan"]["version"], json!(1));
+    let discard = call(
+        &ada,
+        json!({"op": "discard_plan", "task": "a", "version": 2}),
+    );
+    assert_eq!(
+        discard["error"]["rule"]["code"],
+        json!("plan_not_draft"),
+        "a superseded plan is not discarded"
+    );
+}
