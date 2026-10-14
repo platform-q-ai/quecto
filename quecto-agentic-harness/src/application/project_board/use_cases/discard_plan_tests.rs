@@ -1,4 +1,4 @@
-//! #2481 M4c: a discard sets a draft aside for good, keeping it, and
+//! #2481 M4c: a discard discards a draft, keeping it as discarded, and
 //! writes it alone.
 use super::DiscardPlan;
 use crate::application::project_board::dto::{PlanDiscard, ProjectBoardError};
@@ -134,4 +134,24 @@ fn a_stale_or_unheld_discard_is_refused() {
         discard_as(&done, "Ada").execute(&of(1)).map(|_| ()),
         rule(BoardRuleError::TaskFinished(TaskStatus::Done))
     );
+}
+
+/// Review round 1 (L1): a retry refused before its read notes no state
+/// from the attempt that lost.
+#[test]
+fn a_retry_refused_before_its_read_notes_no_earlier_state() {
+    let store = holding_plans(
+        "a",
+        TaskStatus::Ready,
+        vec![plan_of("a", 1, PlanState::Draft)],
+    );
+    store.after_next_read(|store| store.quarantine("a", "unreadable"));
+    let mut facts = OpFacts::default();
+    let refused = discard_as(&store, "Ada").execute_noted(&of(1), Some(&mut facts));
+    assert!(
+        matches!(refused, Err(ProjectBoardError::Quarantined { .. })),
+        "{refused:?}"
+    );
+    assert_eq!((facts.attempts, facts.lost), (Some(2), Some(1)));
+    assert_eq!((facts.plan_state_from, facts.plan_state_to), (None, None));
 }

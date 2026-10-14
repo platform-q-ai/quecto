@@ -389,6 +389,7 @@ fn rule_schema(rule: &BoardRuleError) -> Option<&SchemaError> {
         | R::TaskFinished(..)
         | R::UnknownPlanVersion(..)
         | R::PlanChanged { .. }
+        | R::AcceptedPlanChanged { .. }
         | R::PlansInconsistent(..)
         | R::PlanAhead { .. }
         | R::RunsInconsistent(..)

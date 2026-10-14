@@ -46,13 +46,16 @@ impl PlanEdit {
 
 /// Draft `version` of `task`'s plan accepted as the task's plan (#2481
 /// M4c), as the caller read it: `expected_updated` is the draft's
-/// `updated` then, so the content accepted is the content reviewed. It is
-/// required: an acceptance is never of a draft unread.
+/// `updated` then, so the content accepted is the content reviewed, and
+/// `expected_accepted` the version the task named as accepted then
+/// (`None`: none), so an acceptance never supersedes one its caller did
+/// not see. Both are required: an acceptance is never of a board unread.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PlanAcceptance {
     pub task: Slug,
     pub version: u32,
     pub expected_updated: Timestamp,
+    pub expected_accepted: Option<u32>,
 }
 
 /// Draft `version` of `task`'s plan discarded (it is kept), pinned to the

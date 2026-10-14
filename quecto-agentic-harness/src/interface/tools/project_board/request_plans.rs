@@ -62,6 +62,7 @@ pub(super) fn accept_plan(read: &Read<'_>) -> Result<BoardRequest, RequestError>
         task: read.task()?,
         version: version(read.value("version").expect(present))?,
         expected_updated: read.timestamp("expected_updated")?.expect(present),
+        expected_accepted: accepted(read.value("expected_accepted").expect(present))?,
     }))
 }
 
@@ -79,6 +80,16 @@ pub(super) fn discard_plan(read: &Read<'_>) -> Result<BoardRequest, RequestError
 pub(super) fn version(value: &Value) -> Result<u32, RequestError> {
     let problem = format!("must be a plan version from 1 to {MAX_PLAN_VERSION}");
     number("version", value, 1..=MAX_PLAN_VERSION, &problem)
+}
+
+/// The version a task was seen naming as accepted, or none for `null`.
+fn accepted(value: &Value) -> Result<Option<u32>, RequestError> {
+    if value.is_null() {
+        return Ok(None);
+    }
+    let problem =
+        format!("must be the accepted plan's version, 1 to {MAX_PLAN_VERSION}, or null for none");
+    number("expected_accepted", value, 1..=MAX_PLAN_VERSION, &problem).map(Some)
 }
 
 /// The object at `at`, taking only `keys` (an allowlist); `what` it must

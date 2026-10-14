@@ -436,15 +436,17 @@ fn the_git_store_takes_an_acceptance_of_three_files_in_one_commit() {
         team: None,
     };
     let first = propose.execute(&proposal("First.")).unwrap();
-    let acceptance = |plan: &quecto::domain::project_board::entities::plan::Plan| PlanAcceptance {
+    let acceptance = |plan: &quecto::domain::project_board::entities::plan::Plan,
+                      seen: Option<u32>| PlanAcceptance {
         task: id.clone(),
         version: plan.fields().version,
         expected_updated: plan.fields().updated.clone(),
+        expected_accepted: seen,
     };
-    accept.execute(&acceptance(&first)).unwrap();
+    accept.execute(&acceptance(&first, None)).unwrap();
     let second = propose.execute(&proposal("Second.")).unwrap();
     let before = remote.object("plans/board-store.1.md");
-    let accepted = accept.execute(&acceptance(&second)).unwrap();
+    let accepted = accept.execute(&acceptance(&second, Some(1))).unwrap();
     assert_ne!(
         remote.object("plans/board-store.1.md"),
         before,

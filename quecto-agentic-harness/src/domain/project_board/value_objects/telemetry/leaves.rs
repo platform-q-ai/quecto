@@ -66,6 +66,10 @@ const KNOWN_KINDS: &[&str] = &[
     "discard_plan",
     "accepted",
     "discarded",
+    // An acceptance's pin on the plan it saw accepted (#2481 M4c review
+    // round 1): its field and its refusal.
+    "expected_accepted",
+    "accepted_plan_changed",
     // Outcomes, front ends, clients, accesses, faults.
     "ok",
     "refused",

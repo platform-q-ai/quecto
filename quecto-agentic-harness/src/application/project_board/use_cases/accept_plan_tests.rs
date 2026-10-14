@@ -53,12 +53,14 @@ fn accept_as(store: &MemoryBoardStore, writer: &str) -> AcceptPlan {
     AcceptPlan::new(Arc::new(client), SetClock::at("10:00:00")).unwrap()
 }
 
-/// Draft `version` of task `a`, as read at 09:00.
-fn of(version: u32) -> PlanAcceptance {
+/// Draft `version` of task `a`, as read at 09:00, with the task seen
+/// naming `accepted`.
+fn of(version: u32, accepted: Option<u32>) -> PlanAcceptance {
     PlanAcceptance {
         task: slug("a"),
         version,
         expected_updated: at("09:00:00"),
+        expected_accepted: accepted,
     }
 }
 
@@ -87,7 +89,7 @@ fn accepting_names_the_draft_and_supersedes_the_plan_accepted_before() {
     );
     let mut facts = OpFacts::default();
     let accepted = accept_as(&store, "Ada")
-        .execute_noted(&of(2), Some(&mut facts))
+        .execute_noted(&of(2, Some(1)), Some(&mut facts))
         .unwrap();
     assert_eq!(accepted.task.fields().accepted_plan, Some(2));
     assert_eq!(accepted.task.fields().updated, at("10:00:00"));
@@ -136,7 +138,7 @@ fn a_first_acceptance_supersedes_none_and_an_older_draft_rolls_back() {
         vec![plan_of("a", 1, PlanState::Draft)],
         vec![],
     );
-    let accepted = accept_as(&first, "Ada").execute(&of(1)).unwrap();
+    let accepted = accept_as(&first, "Ada").execute(&of(1, None)).unwrap();
     assert_eq!(accepted.superseded, None);
     let store = seeded(
         naming(Some(2)),
@@ -146,7 +148,7 @@ fn a_first_acceptance_supersedes_none_and_an_older_draft_rolls_back() {
         ],
         vec![],
     );
-    let rolled_back = accept_as(&store, "Ada").execute(&of(1)).unwrap();
+    let rolled_back = accept_as(&store, "Ada").execute(&of(1, Some(2))).unwrap();
     assert_eq!(rolled_back.task.fields().accepted_plan, Some(1));
     assert_eq!(
         states(&store),
@@ -154,7 +156,9 @@ fn a_first_acceptance_supersedes_none_and_an_older_draft_rolls_back() {
     );
     let writes = store.writes();
     assert_eq!(
-        accept_as(&store, "Ada").execute(&of(2)).map(|_| ()),
+        accept_as(&store, "Ada")
+            .execute(&of(2, Some(1)))
+            .map(|_| ()),
         rule(BoardRuleError::PlanNotDraft(PlanState::Superseded))
     );
     assert_eq!(store.writes(), writes);
@@ -173,7 +177,7 @@ fn nothing_is_accepted_while_a_run_is_open() {
     let mut facts = OpFacts::default();
     assert_eq!(
         accept_as(&store, "Ada")
-            .execute_noted(&of(2), Some(&mut facts))
+            .execute_noted(&of(2, Some(1)), Some(&mut facts))
             .map(|_| ()),
         rule(BoardRuleError::RunOpen(1))
     );
@@ -198,13 +202,13 @@ fn a_held_tasks_plan_is_its_holders_and_a_set_aside_run_holds_it() {
     };
     let store = seeded(held, vec![plan_of("a", 1, PlanState::Draft)], vec![]);
     assert_eq!(
-        accept_as(&store, "Bob").execute(&of(1)).map(|_| ()),
+        accept_as(&store, "Bob").execute(&of(1, None)).map(|_| ()),
         rule(BoardRuleError::NotHolder)
     );
     let key = ArtifactKey::Run(slug("a"), 1);
     store.quarantine_key(key.clone(), "runs/a.1.md", "unreadable");
     assert_eq!(
-        accept_as(&store, "Ada").execute(&of(1)).map(|_| ()),
+        accept_as(&store, "Ada").execute(&of(1, None)).map(|_| ()),
         Err(ProjectBoardError::Quarantined {
             key,
             path: "runs/a.1.md".into()
@@ -221,7 +225,7 @@ fn a_stale_expected_updated_is_refused_as_plan_changed() {
     );
     let stale = PlanAcceptance {
         expected_updated: at("08:00:00"),
-        ..of(1)
+        ..of(1, None)
     };
     assert_eq!(
         accept_as(&store, "Ada").execute(&stale).map(|_| ()),
@@ -261,7 +265,7 @@ fn an_acceptance_that_loses_to_an_edit_of_its_draft_is_refused() {
     let mut facts = OpFacts::default();
     assert_eq!(
         accept_as(&store, "Ada")
-            .execute_noted(&of(1), Some(&mut facts))
+            .execute_noted(&of(1, None), Some(&mut facts))
             .map(|_| ()),
         rule(BoardRuleError::PlanChanged {
             version: 1,
@@ -293,19 +297,106 @@ fn plans_that_contradict_each_other_are_refused() {
         ],
         vec![],
     );
-    for (store, version, why) in [
-        (unnamed, 2, "version 1 is accepted; the task names none"),
+    for (store, version, seen, why) in [
+        (
+            unnamed,
+            2,
+            None,
+            "version 1 is accepted; the task names none",
+        ),
         (
             two,
             3,
+            Some(1),
             "versions 1, 2 are accepted; the task names version 1",
         ),
     ] {
         let writes = store.writes();
         assert_eq!(
-            accept_as(&store, "Ada").execute(&of(version)).map(|_| ()),
+            accept_as(&store, "Ada")
+                .execute(&of(version, seen))
+                .map(|_| ()),
             rule(BoardRuleError::PlansInconsistent(why.into()))
         );
         assert_eq!(store.writes(), writes);
     }
+}
+
+/// Review round 1: Bob read draft 2 while the task named none; Ada then
+/// accepted draft 3. Bob's acceptance of draft 2, its own draft unchanged,
+/// is refused: it would supersede an acceptance he never saw. A rollback
+/// that names what it supersedes is a knowing choice, and lands.
+#[test]
+fn a_stale_reader_never_supersedes_an_acceptance_it_did_not_see() {
+    let store = seeded(
+        naming(None),
+        vec![
+            plan_of("a", 2, PlanState::Draft),
+            plan_of("a", 3, PlanState::Draft),
+        ],
+        vec![],
+    );
+    let bobs_read = of(2, None);
+    accept_as(&store, "Ada").execute(&of(3, None)).unwrap();
+    let writes = store.writes();
+    assert_eq!(
+        accept_as(&store, "Bob").execute(&bobs_read).map(|_| ()),
+        rule(BoardRuleError::AcceptedPlanChanged { accepted: Some(3) })
+    );
+    assert_eq!(store.writes(), writes, "nothing written");
+    assert_eq!(
+        states(&store),
+        [(2, PlanState::Draft), (3, PlanState::Accepted)]
+    );
+    let rollback = of(2, Some(3));
+    let rolled_back = accept_as(&store, "Bob").execute(&rollback).unwrap();
+    assert_eq!(
+        rolled_back.superseded.map(|plan| plan.fields().version),
+        Some(3)
+    );
+    assert_eq!(
+        states(&store),
+        [(2, PlanState::Accepted), (3, PlanState::Superseded)]
+    );
+}
+
+/// Review round 1 (L1): a retry refused before its read notes no state
+/// from the attempt that lost.
+#[test]
+fn a_retry_refused_before_its_read_notes_no_earlier_state() {
+    let store = seeded(
+        naming(None),
+        vec![plan_of("a", 1, PlanState::Draft)],
+        vec![],
+    );
+    store.after_next_read(|store| store.quarantine("a", "unreadable"));
+    let mut facts = OpFacts::default();
+    let refused = accept_as(&store, "Ada").execute_noted(&of(1, None), Some(&mut facts));
+    assert!(
+        matches!(refused, Err(ProjectBoardError::Quarantined { .. })),
+        "{refused:?}"
+    );
+    assert_eq!((facts.attempts, facts.lost), (Some(2), Some(1)));
+    assert_eq!((facts.plan_state_from, facts.plan_state_to), (None, None));
+}
+
+/// Review round 1 (L3): a task stamped ahead of the outside time by a
+/// clock running ahead is not built on, as for every task write.
+#[test]
+fn a_task_stamped_ahead_is_not_accepted_on() {
+    let store = seeded(
+        naming(None),
+        vec![plan_of("a", 1, PlanState::Draft)],
+        vec![],
+    );
+    let client = store.client_as(person("Ada"));
+    let behind = SetClock::with_reference("08:00:00", Some("08:00:00"));
+    let accepting = AcceptPlan::new(Arc::new(client), behind).unwrap();
+    assert_eq!(
+        accepting.execute(&of(1, None)).map(|_| ()),
+        Err(ProjectBoardError::TaskAhead {
+            id: slug("a"),
+            updated: at("09:00:00"),
+        })
+    );
 }

@@ -37,6 +37,9 @@ pub enum BoardRuleError {
     /// The plan changed since the caller read it (`updated` now): read it
     /// again and decide again.
     PlanChanged { version: u32, updated: Timestamp },
+    /// The task's accepted plan changed since the caller read it
+    /// (`accepted` now, or none): read it again and decide again.
+    AcceptedPlanChanged { accepted: Option<u32> },
     /// The plan was stamped by a clock running ahead of the outside time:
     /// building on it would drag the task ahead too.
     PlanAhead { version: u32, updated: Timestamp },
@@ -181,6 +184,17 @@ impl fmt::Display for BoardRuleError {
             }
             Self::UnknownPlanVersion(version) => {
                 write!(f, "the task has no plan version {version}")
+            }
+            Self::AcceptedPlanChanged { accepted } => {
+                let now = match accepted {
+                    Some(version) => format!("version {version}"),
+                    None => "none".to_string(),
+                };
+                write!(
+                    f,
+                    "the task's accepted plan changed since it was read (it is now {now}); \
+                     read it again"
+                )
             }
             Self::PlanChanged { version, updated } => write!(
                 f,

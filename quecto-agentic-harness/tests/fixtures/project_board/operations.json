@@ -1620,7 +1620,8 @@
       "op": "accept_plan",
       "task": "epic",
       "version": 1,
-      "expected_updated": "2026-10-10T10:00:00Z"
+      "expected_updated": "2026-10-10T10:00:00Z",
+      "expected_accepted": null
     },
     "answer": {
       "ok": false,
@@ -1641,7 +1642,8 @@
       "op": "accept_plan",
       "task": "epic",
       "version": 1,
-      "expected_updated": "2026-10-10T10:00:01Z"
+      "expected_updated": "2026-10-10T10:00:01Z",
+      "expected_accepted": null
     },
     "answer": {
       "ok": true,
@@ -1708,7 +1710,8 @@
       "op": "accept_plan",
       "task": "epic",
       "version": 2,
-      "expected_updated": "2026-10-10T10:00:00Z"
+      "expected_updated": "2026-10-10T10:00:00Z",
+      "expected_accepted": 1
     },
     "answer": {
       "ok": true,
@@ -1813,7 +1816,8 @@
     "request": {
       "op": "accept_plan",
       "task": "epic",
-      "version": 3
+      "version": 3,
+      "expected_accepted": 2
     },
     "answer": {
       "ok": false,
@@ -1901,6 +1905,27 @@
       "runs": [],
       "may_be_incomplete": false,
       "quarantined": []
+    }
+  },
+  {
+    "request": {
+      "op": "accept_plan",
+      "task": "epic",
+      "version": 2,
+      "expected_updated": "2026-10-10T10:00:03Z",
+      "expected_accepted": 1
+    },
+    "answer": {
+      "ok": false,
+      "op": "accept_plan",
+      "error": {
+        "code": "rule",
+        "message": "the task's accepted plan changed since it was read (it is now version 2); read it again",
+        "rule": {
+          "code": "accepted_plan_changed",
+          "accepted": 2
+        }
+      }
     }
   }
 ]

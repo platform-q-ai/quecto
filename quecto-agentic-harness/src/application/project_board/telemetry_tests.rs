@@ -134,6 +134,7 @@ fn every_request() -> Vec<BoardRequest> {
                     "2026-10-10T09:00:00Z",
                 )
                 .unwrap(),
+            expected_accepted: None,
         }),
         BoardRequest::DiscardPlan(PlanDiscard {
             task: a.clone(),

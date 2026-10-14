@@ -290,8 +290,7 @@ fn a_draft_read_is_accepted_superseded_and_recorded_by_state() {
     let updated = draft["plan"]["updated"].clone();
     let records = Arc::new(Records::default());
     let mut recorded = BoardCall::start(Some(recording(&records)), FrontEnd::Tool, Client::Agent);
-    let request =
-        json!({"op": "accept_plan", "task": "a", "version": 2, "expected_updated": updated});
+    let request = json!({"op": "accept_plan", "task": "a", "version": 2, "expected_updated": updated, "expected_accepted": null});
     let accepted = run_recorded(&bob, &request.to_string(), &mut recorded);
     recorded.finish(&accepted, false);
     assert_eq!(accepted["ok"], json!(true), "{accepted}");
@@ -323,7 +322,7 @@ fn a_draft_read_is_accepted_superseded_and_recorded_by_state() {
     let first = ok(&ada, json!({"op": "show", "task": "a", "version": 1}));
     let again = ok(
         &ada,
-        json!({"op": "accept_plan", "task": "a", "version": 1,
+        json!({"op": "accept_plan", "task": "a", "version": 1, "expected_accepted": 2,
                "expected_updated": first["plan"]["updated"]}),
     );
     assert_eq!(

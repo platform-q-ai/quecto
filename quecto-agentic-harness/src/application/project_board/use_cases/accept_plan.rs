@@ -2,7 +2,10 @@
 //! compare-and-swap: the task, the plan accepted and the plan it
 //! supersedes, if one was accepted, are written in one change, task
 //! first. The draft must still be as the caller read it
-//! (`expected_updated`), so the content accepted is the content reviewed;
+//! (`expected_updated`), so the content accepted is the content reviewed,
+//! and the task must still name the plan the caller saw accepted
+//! (`expected_accepted`), so an acceptance never supersedes one its caller
+//! did not see and a rollback is a knowing choice;
 //! a lost race is judged again on the fresh board, so an edit that landed
 //! in between is refused (`plan_changed`), never accepted unread. The
 //! claim holder decides for a held task, anyone for one nobody holds, and
@@ -19,7 +22,9 @@ use crate::application::project_board::ports::{BoardArtifact, BoardClock, Projec
 use crate::application::project_board::telemetry::OpFacts;
 use crate::domain::project_board::entities::claim::Identity;
 use crate::domain::project_board::entities::plan::Plan;
-use crate::domain::project_board::services::plans::{Accepted, Moment, TaskPlans, accept};
+use crate::domain::project_board::services::plans::{
+    Accepted, Moment, TaskPlans, accept, as_accepted,
+};
 use crate::domain::project_board::value_objects::vocabulary::PlanState;
 
 pub struct AcceptPlan {
@@ -83,14 +88,16 @@ impl AcceptPlan {
             &message,
             facts.as_deref_mut(),
             |board, when| {
+                // This attempt's read, or none: never an earlier one's.
+                read = None;
                 let task = task_on(board, id)?;
                 when.may_build_on(task)?;
                 let versions = owned(board_view::plans_of(board, id)?);
                 let runs = owned(board_view::runs_of(board, id)?);
                 if noting {
-                    // This attempt's read, or none: never an earlier one's.
                     read = state_of(&versions, version);
                 }
+                as_accepted(task, acceptance.expected_accepted)?;
                 let board = TaskPlans {
                     task,
                     versions: &versions,

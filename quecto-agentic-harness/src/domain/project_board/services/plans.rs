@@ -270,7 +270,8 @@ pub fn accept(
     })
 }
 
-/// The draft `plan` of `task` discarded by `actor` at `when`; it is kept.
+/// The draft `plan` of `task` discarded by `actor` at `when`; it is kept,
+/// as discarded.
 /// With `expected`, the draft must still be as the caller read it (its
 /// `updated`), so the draft set aside is the one reviewed (#2481 M4c).
 ///
@@ -361,6 +362,21 @@ fn of_task(task: &Task, versions: &[Plan]) -> Result<(), BoardRuleError> {
     }
 }
 
+/// The task's accepted plan as the caller saw it (#2481 M4c review round
+/// 1): the version it named then (`None`: it named none) is the one it
+/// names now, so an acceptance never supersedes one its caller did not
+/// see, and a rollback is a knowing choice.
+///
+/// # Errors
+/// The task names another version, or none, or one where it named none.
+pub fn as_accepted(task: &Task, expected: Option<u32>) -> Result<(), BoardRuleError> {
+    let accepted = task.fields().accepted_plan;
+    match accepted == expected {
+        true => Ok(()),
+        false => Err(BoardRuleError::AcceptedPlanChanged { accepted }),
+    }
+}
+
 /// `plan` as the caller read it: unchanged since `expected`, when given.
 fn as_read(plan: &Plan, expected: Option<&Timestamp>) -> Result<(), BoardRuleError> {
     let updated = &plan.fields().updated;
@@ -414,3 +430,7 @@ mod limits_tests;
 #[cfg(test)]
 #[path = "plans_discard_tests.rs"]
 mod discard_tests;
+
+#[cfg(test)]
+#[path = "plans_pin_tests.rs"]
+mod pin_tests;

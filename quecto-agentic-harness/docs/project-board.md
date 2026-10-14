@@ -165,30 +165,36 @@ answer `plan`: its `task`, `version`, `state`, `proposed_by`, `edited_by`,
 
 ## Accepting or discarding a plan
 
-A draft becomes the task's plan by `accept_plan(task, version, expected_updated)`
-(#2481 M4c). One commit writes the task, naming the version (`accepted_plan`),
-the plan, `accepted` with who accepted it and when, and the version accepted
-before, now `superseded`. All three share one stamp. An older draft accepted
-over a newer accepted version is a rollback: the newer one is superseded. A
-superseded plan is never accepted again; propose a new version instead.
-`expected_updated` is required: the `updated` that `show(task, version)` gave,
-so what is accepted is what was read. A draft changed since is refused
-(`plan_changed`), also when an edit lands while the acceptance is being
-written. The answer gives the `task`, the `plan` and the version it
-`superseded` (`null` when none was accepted).
+A draft becomes the task's plan by `accept_plan(task, version, expected_updated,
+expected_accepted)` (#2481 M4c). One commit writes the task, naming the version
+(`accepted_plan`), the plan, `accepted` with who accepted it and when, and the
+version accepted before, now `superseded`; all three share one stamp. Accepting
+an older draft over a newer accepted version is a rollback: the newer one is
+superseded. A superseded plan is never accepted again: propose it anew.
 
-`discard_plan(task, version, expected_updated)` sets a draft aside for good: it
-is kept, as `discarded`, and only it is written. `expected_updated` is optional,
-as for `edit_plan`. The answer gives the `plan`.
+Both pins are required. `expected_updated` is the `updated` that `show(task,
+version)` gave, so what is accepted is what was read: a draft changed since is
+refused (`plan_changed`), also when an edit lands while the acceptance is being
+written. `expected_accepted` is the task's `accepted_plan` as it was read
+(`null` while it named none), so an acceptance never supersedes one its caller
+did not see: a task that names another version now is refused
+(`accepted_plan_changed`, with the version it names now as `accepted`), and a
+rollback is a knowing choice. The answer gives the `task`, the `plan` and the
+version it `superseded` (`null` when none was accepted).
+
+`discard_plan(task, version, expected_updated)` discards a draft: it is kept, as
+`discarded`, and only it is written. `expected_updated` is optional, as for
+`edit_plan`. The answer gives the `plan`.
 
 On a task someone holds, only the holder of a live claim accepts or discards
-(`not_holder`, or `claim_expired` for the holder: renew first); on a task
+(`not_holder`; the holder of an expired claim gets `claim_expired` and renews
+first, and anyone else takes the task over with `take_over` first). On a task
 nobody holds, anyone does. Both are refused for a done or archived task
 (`task_finished`), for a version that is not a draft (`plan_not_draft`) or that
 the task does not have (`unknown_plan_version`), and while the task's file or a
-file named as one of its plans is set aside. An acceptance is also refused
-while a run of the task is going (`run_open`) or a file named as one of its
-runs is set aside (it may be the open one), and while the task's plans or runs
+file named as one of its plans is set aside. An acceptance is also refused while
+a run of the task is going (`run_open`) or a file named as one of its runs is
+set aside (it may be the open one), and while the task's plans or runs
 contradict each other (`plans_inconsistent`, `runs_inconsistent`): mend them
 first.
 

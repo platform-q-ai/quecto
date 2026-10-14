@@ -1,7 +1,7 @@
 //! Discards a draft version of a task's plan (#2481 M4c) as a
 //! compare-and-swap; the plan is kept, as discarded. With
 //! `expected_updated`, the draft must still be as the caller read it, so
-//! a draft edited since is refused (`plan_changed`), never set aside
+//! a draft edited since is refused (`plan_changed`), never discarded
 //! unread. The claim holder decides for a held task, anyone for one
 //! nobody holds. Only the plan is written. Blocking: a lost write pauses
 //! the calling thread before it is tried again.
@@ -75,12 +75,13 @@ impl DiscardPlan {
             &message,
             facts.as_deref_mut(),
             |board, when| {
+                // This attempt's read, or none: never an earlier one's.
+                read = None;
                 let task = task_on(board, id)?;
                 let plan = board_view::plans_of(board, id)?
                     .into_iter()
                     .find(|plan| plan.fields().version == version);
                 if noting {
-                    // This attempt's read, or none: never an earlier one's.
                     read = plan.map(|plan| plan.fields().state);
                 }
                 let plan = plan.ok_or(BoardRuleError::UnknownPlanVersion(version))?;

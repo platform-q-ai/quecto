@@ -303,21 +303,57 @@ fn an_acceptance_requires_the_updated_it_read_and_a_discard_may_give_one() {
     let read = Timestamp::parse("2026-10-10T09:00:00Z").unwrap();
     assert_eq!(
         parse(&json!({"op": "accept_plan", "task": "a", "version": 2,
-                      "expected_updated": "2026-10-10T09:00:00Z"})),
+                      "expected_updated": "2026-10-10T09:00:00Z", "expected_accepted": 1})),
         Ok(BoardRequest::AcceptPlan(PlanAcceptance {
             task: slug("a"),
             version: 2,
             expected_updated: read.clone(),
+            expected_accepted: Some(1),
         }))
     );
-    let unread = refused(json!({"op": "accept_plan", "task": "a", "version": 2}));
-    assert_eq!(
+    let none = parse(&json!({"op": "accept_plan", "task": "a", "version": 2,
+                             "expected_updated": "2026-10-10T09:00:00Z", "expected_accepted": null}));
+    assert!(
+        matches!(&none, Ok(BoardRequest::AcceptPlan(acceptance)) if acceptance.expected_accepted.is_none()),
+        "{none:?}"
+    );
+    let fault = |error: RequestError| {
+        let recorded = error.fault;
         (
-            unread.field.as_str(),
-            unread.fault.field.as_str(),
-            unread.fault.fault.as_str()
-        ),
-        ("expected_updated", "expected_updated", "missing")
+            error.field,
+            recorded.field.as_str(),
+            recorded.fault.as_str(),
+        )
+    };
+    let unread = refused(json!({"op": "accept_plan", "task": "a", "version": 2,
+                                "expected_accepted": null}));
+    assert_eq!(
+        fault(unread),
+        (
+            "expected_updated".to_string(),
+            "expected_updated",
+            "missing"
+        )
+    );
+    let unseen = refused(json!({"op": "accept_plan", "task": "a", "version": 2,
+                                "expected_updated": "2026-10-10T09:00:00Z"}));
+    assert_eq!(
+        fault(unseen),
+        (
+            "expected_accepted".to_string(),
+            "expected_accepted",
+            "missing"
+        )
+    );
+    let zero = refused(json!({"op": "accept_plan", "task": "a", "version": 2,
+                              "expected_updated": "2026-10-10T09:00:00Z", "expected_accepted": 0}));
+    assert_eq!(
+        fault(zero),
+        (
+            "expected_accepted".to_string(),
+            "expected_accepted",
+            "invalid_value"
+        )
     );
     assert_eq!(
         parse(&json!({"op": "discard_plan", "task": "a", "version": 1})),
