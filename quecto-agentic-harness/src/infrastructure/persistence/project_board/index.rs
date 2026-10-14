@@ -62,6 +62,7 @@ impl std::fmt::Display for IndexError {
             Self::Store(
                 BoardStoreError::Clash(why)
                 | BoardStoreError::InvalidWrite(why)
+                | BoardStoreError::WriteTooLarge(why)
                 | BoardStoreError::Unavailable(why)
                 | BoardStoreError::TooLarge(why)
                 | BoardStoreError::FolderSetAside(why),

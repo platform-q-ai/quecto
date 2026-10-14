@@ -12,6 +12,10 @@ impl ProjectBoardOpLog for Log {
     fn record(&self, record: BoardOpRecord) {
         self.0.lock().unwrap().push(record);
     }
+
+    fn record_fold_back(&self, _record: FoldBackRecord) {
+        unreachable!("a board_op test writes no fold-back");
+    }
 }
 
 fn record() -> BoardOpRecord {
@@ -348,6 +352,83 @@ mod facts {
         assert_eq!(
             completion_facts_of(&failed, 1),
             completion(CompletionKind::Failed)
+        );
+    }
+}
+
+mod fold_back_facts {
+    use super::*;
+    use crate::application::project_board::dto::FoldBackFacts;
+    use crate::domain::project_board::value_objects::telemetry::{
+        ItemCounts, RunOutcomeKind, TaskRef,
+    };
+
+    fn bare() -> FoldBackRecord {
+        FoldBackRecord {
+            task: TaskRef::of(&Slug::parse("board-store").unwrap()),
+            run: 1,
+            outcome: OpOutcome::Ok,
+            run_outcome: None,
+            items: None,
+            unmatched: None,
+            extra: None,
+            evidence: None,
+            evidence_dropped: None,
+            cost_tokens: None,
+            attempts: Some(9),
+            lost: None,
+            bytes: None,
+            duration_us: 5,
+        }
+    }
+
+    #[test]
+    fn fill_writes_every_fact_it_has_and_keeps_the_rest() {
+        let mut record = bare();
+        FoldBackFacts::default().fill(&mut record);
+        assert_eq!(record, bare());
+        let counts = ItemCounts {
+            todo: 1,
+            doing: 2,
+            review: 3,
+            done: 4,
+            blocked: 5,
+        };
+        let facts = FoldBackFacts {
+            run_outcome: Some(RunOutcomeKind::Stopped),
+            items: Some(counts),
+            unmatched: Some(1),
+            extra: Some(2),
+            evidence: Some(3),
+            evidence_dropped: Some(4),
+            cost_tokens: Some(5),
+            attempts: Some(6),
+            lost: Some(7),
+            bytes: Some(8),
+        };
+        facts.fill(&mut record);
+        let expected = FoldBackRecord {
+            run_outcome: Some(RunOutcomeKind::Stopped),
+            items: Some(counts),
+            unmatched: Some(1),
+            extra: Some(2),
+            evidence: Some(3),
+            evidence_dropped: Some(4),
+            cost_tokens: Some(5),
+            attempts: Some(6),
+            lost: Some(7),
+            bytes: Some(8),
+            ..bare()
+        };
+        assert_eq!(record, expected);
+    }
+
+    #[test]
+    fn a_count_is_held_whole_or_saturated() {
+        assert_eq!(counted(7), 7);
+        assert_eq!(
+            counted(usize::MAX),
+            u64::try_from(usize::MAX).unwrap_or(u64::MAX)
         );
     }
 }

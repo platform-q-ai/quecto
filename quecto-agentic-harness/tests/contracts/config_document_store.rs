@@ -146,3 +146,53 @@ fn an_overlay_behind_a_symbolic_link_at_any_level_below_the_working_directory_is
         OverlayDocument::Present(b"{\"borrowed\":true}".to_vec())
     );
 }
+
+/// Whether anything is at an overlay location, decided from directory
+/// entries alone (the file is never opened): absent only when there is no
+/// entry; a file, a directory, or a link on the overlay's stretch is there
+/// (and is read, or refused, as itself).
+#[test]
+fn an_overlay_entry_is_probed_without_reading_it() {
+    let dir = TempDir::new().unwrap();
+    let store = under_test();
+    let overlay = dir.path().join(".quecto").join("config.json");
+    assert!(!store.has_overlay_entry(&overlay).unwrap(), "no .quecto");
+    std::fs::create_dir(dir.path().join(".quecto")).unwrap();
+    assert!(!store.has_overlay_entry(&overlay).unwrap(), "empty .quecto");
+
+    // Unreadable content is still an entry: the probe does not open it.
+    std::fs::write(&overlay, "{").unwrap();
+    std::fs::set_permissions(
+        &overlay,
+        std::os::unix::fs::PermissionsExt::from_mode(0o000),
+    )
+    .unwrap();
+    assert!(store.has_overlay_entry(&overlay).unwrap());
+    std::fs::remove_file(&overlay).unwrap();
+
+    std::os::unix::fs::symlink(dir.path().join("missing"), &overlay).unwrap();
+    assert!(
+        store.has_overlay_entry(&overlay).unwrap(),
+        "a dangling link"
+    );
+
+    // A linked `.quecto` with nothing behind it is an entry too: the link
+    // alone is what the overlay read refuses.
+    let empty = TempDir::new().unwrap();
+    let to_empty = TempDir::new().unwrap();
+    std::os::unix::fs::symlink(empty.path(), to_empty.path().join(".quecto")).unwrap();
+    assert!(
+        store
+            .has_overlay_entry(&to_empty.path().join(".quecto").join("config.json"))
+            .unwrap(),
+        "a .quecto link to an empty directory"
+    );
+
+    let linked = TempDir::new().unwrap();
+    std::os::unix::fs::symlink(dir.path().join(".quecto"), linked.path().join(".quecto")).unwrap();
+    let through = linked.path().join(".quecto").join("config.json");
+    assert!(
+        store.has_overlay_entry(&through).unwrap(),
+        "a linked .quecto is an entry (refused when read)"
+    );
+}

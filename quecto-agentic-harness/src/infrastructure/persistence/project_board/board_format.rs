@@ -6,8 +6,8 @@
 //! archive to the root: a quecto of format 2 asks for an upgrade, never
 //! takes them for a clash, and this one reads a board of format 2 as it is.
 use super::Git;
-use super::{Found, contents, objects};
-use super::{Limits, REGULAR_FILE, Unread, listed, looked_up, missing};
+use super::{Found, contents};
+use super::{LeftOnRemote, Limits, REGULAR_FILE, Unread, kinds_in, listed};
 use crate::application::project_board::ports::BoardStoreError;
 
 /// The board's format marker: the file `format/board` of a board's root.
@@ -44,8 +44,9 @@ pub(super) enum Marker {
     /// as written), whatever else the marker holds.
     Newer(String),
     /// Larger than this quecto reads to find the first line: a newer
-    /// quecto's, or a hand edit's.
-    Oversized(usize),
+    /// quecto's, or a hand edit's. Its size as told: `N bytes`, or `at
+    /// least N bytes` for one a partial clone left on the remote.
+    Oversized(String),
     /// Not one any quecto writes: why.
     Damaged(String),
 }
@@ -78,26 +79,30 @@ fn above(number: &str) -> bool {
 ///
 /// # Errors
 /// Objects this clone does not hold, or git fails.
-pub(super) fn read_format(git: &Git, tree: &str, limits: Limits) -> Result<Marker, Unread> {
+pub(super) fn read_format(
+    git: &Git,
+    tree: &str,
+    limits: Limits,
+    left: &LeftOnRemote,
+) -> Result<Marker, Unread> {
     let entries = listed(git, tree, limits.tree_bytes)?;
-    let kinds = objects(git, looked_up(&entries))?;
-    let missing = missing(&entries, &kinds);
-    if !missing.is_empty() {
-        return Err(Unread::Missing(missing));
-    }
+    let kinds = kinds_in(git, tree, &entries, left)?;
     let damaged = |why: String| Ok(Marker::Damaged(why));
     let Some(entry) = entries.iter().find(|entry| entry.name == FORMAT_FILE) else {
         return damaged("it holds no format/board".into());
     };
-    let size = match kinds.get(&entry.oid) {
-        Some(Found::Present(object)) if object.kind == "blob" => object.size,
+    let (size, omitted) = match kinds.get(&entry.oid) {
+        Some(Found::Present(object)) if object.kind == "blob" => (object.size, object.omitted),
         Some(Found::Present(object)) => {
             return damaged(format!("format/board is a {}, not a file", object.kind));
         }
         Some(Found::Missing) | None => return damaged("format/board names no object".into()),
     };
-    if size > MAX_MARKER_READ {
-        return Ok(Marker::Oversized(size));
+    match (size > MAX_MARKER_READ, omitted) {
+        (true, false) => return Ok(Marker::Oversized(format!("{size} bytes"))),
+        (true, true) => return Ok(Marker::Oversized(format!("at least {size} bytes"))),
+        // A blob left on the remote is past every cap.
+        (false, omitted) => assert!(!omitted, "an omitted marker is past what is read"),
     }
     let bytes = contents(git, &[(entry.oid.as_str(), size)])?
         .remove(&entry.oid)

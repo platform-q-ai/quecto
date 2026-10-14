@@ -58,6 +58,9 @@ fn the_folders_and_their_bounds_are_the_plans() {
     );
     let names: Vec<&str> = FOLDERS.iter().map(|folder| folder.naming.folder).collect();
     assert_eq!(names, ARTIFACT_FOLDERS);
+    // A partial clone fetches every file a read may read, and none past.
+    let largest = table.iter().map(|row| row.3).max().unwrap();
+    assert_eq!(FILTER_BYTES, largest.max(MAX_TASK_FILE_BYTES) + 1);
     assert_eq!(MAX_BOARD_ENTRIES, 16_384);
     for name in ["tasks", "plans", "discussions", ARCHIVE] {
         assert!(root_tree(name), "{name}");
@@ -199,7 +202,7 @@ fn a_write_counts_the_folders_it_leaves() {
     let board = folder(91);
     let past = board.within_bounds(&written, &board.folders_after(&[]), limits);
     assert!(
-        matches!(&past, Err(BoardStoreError::InvalidWrite(why)) if why.contains("bytes of files")),
+        matches!(&past, Err(BoardStoreError::WriteTooLarge(why)) if why.contains("bytes of files")),
         "{past:?}"
     );
 }
@@ -225,7 +228,7 @@ fn a_write_keeps_each_folder_within_its_own_bounds() {
     assert!(within(&board, &files).is_ok());
     let past = within(&board, &plan_file(11));
     assert!(
-        matches!(&past, Err(BoardStoreError::InvalidWrite(why)) if why.contains(&format!("{} bytes of plan files", most + 1))),
+        matches!(&past, Err(BoardStoreError::WriteTooLarge(why)) if why.contains(&format!("{} bytes of plan files", most + 1))),
         "{past:?}"
     );
 }
@@ -292,24 +295,38 @@ fn a_key_is_written_where_a_read_finds_it() {
     assert!(big.is_err_and(|why| why.contains("8193 bytes")));
 }
 
-/// Only a name listed twice outside `tasks/` stops a write or a clear.
+/// A name listed twice outside `tasks/` holds only its own folder: a write
+/// that writes nothing there carries the folder as its very tree, however
+/// many entries it drops, and a write into it is refused, naming the clear.
 #[test]
-fn a_name_listed_twice_outside_tasks_stops_writes_and_clears() {
+fn a_name_listed_twice_outside_tasks_holds_only_its_folder() {
     let mut board = carried(1, 0);
-    assert_eq!(board.folders_repeated_refusal(), None);
-    board.folders.get_mut("plans").unwrap().repeated = Some("plans/a.1.md".into());
-    let refusal = board.folders_repeated_refusal();
+    assert_eq!(board.folder_repeated_refusal("c", &plan_file(1)), None);
+    let copy = |oid: char| TreeCopy {
+        mode: REGULAR_FILE.into(),
+        kind: "blob".into(),
+        oid: oid.to_string().repeat(40),
+        size: 1,
+    };
+    let tree = board.folders.get_mut("plans").unwrap();
+    tree.entries = 3;
+    tree.repeated = vec![("a.1.md".into(), vec![copy('d'), copy('e')])];
+    let after = board.folders_after(&[]);
+    assert!(matches!(after["plans"], FolderAfter::Carried(tree) if tree.oid == "b".repeat(40)));
+    let mut run = plan_file(1);
+    run[0].folder = "runs";
+    assert_eq!(board.folder_repeated_refusal("c", &run), None);
+    let refusal = board.folder_repeated_refusal("c", &plan_file(1));
     assert!(
         refusal
             .as_deref()
-            .is_some_and(|why| why.starts_with("plans/a.1.md is named more than once")),
+            .is_some_and(|why| why.starts_with(&format!(
+                "plans/a.1.md is named more than once in board commit c (objects {}, {})",
+                "d".repeat(40),
+                "e".repeat(40)
+            )) && why.contains("no write in plans/ can carry it forward")
+                && why.contains("git rejects any new tree holding it")),
         "{refusal:?}"
-    );
-    assert!(
-        refusal
-            .as_deref()
-            .is_some_and(|why| why.contains("this quecto writes nothing over such a board")),
-        "the remedy says what moving the board back undoes: {refusal:?}"
     );
 }
 
@@ -331,7 +348,7 @@ fn a_write_keeps_tasks_within_their_own_bytes() {
     );
     let past = Board::default().within_bounds(&written, &none, limits(9));
     assert!(
-        matches!(&past, Err(BoardStoreError::InvalidWrite(why)) if why.contains("10 bytes of task files")),
+        matches!(&past, Err(BoardStoreError::WriteTooLarge(why)) if why.contains("10 bytes of task files")),
         "{past:?}"
     );
 }

@@ -22,8 +22,19 @@ alone is carried as the same tree. A folder it writes in, or one holding a stray
 (any entry a write drops), is rebuilt from the files it carries, and a folder left
 with nothing in it is omitted. A file set aside is carried as it is, and writes to
 its key are refused, unless it is one a write drops: a write of its key replaces
-it. A clear removes one file set aside, in any folder. While a name outside `tasks/` is listed more than once, every
-write and clear is refused (`folder_set_aside`) until a later quecto can clear it.
+it. A clear removes one file set aside, in any folder.
+
+A name listed more than once (a hand edit; git rejects such a tree) is resolved
+only by a clear, which names, for every such name on the board, the copy to keep or
+that none is; quecto never picks a copy. While one is listed in `tasks/`, every
+write is refused. While one is listed in another folder, a write into that folder
+is refused, and any other write carries the folder as the tree it was, so no write
+makes a tree holding a name twice. A clear that keeps a copy is refused when the
+copy would take a folder or the board past what a read takes: keep a smaller copy,
+or drop every copy. A clear resolving thousands of names, near its caps (8,192
+names, 16,384 copies), may not fit in one 1 MiB tool request; the refusal's other
+way out, moving `quecto/board` back to the commit before the hand edit, covers it.
+
 Listings are unavailable (`folder_set_aside`) while a file set aside outside
 `tasks/` names a plan, run, change, review or discussion, since the index holds
 tasks alone for now. `show` reads the store itself, so it still answers then (see
@@ -32,8 +43,34 @@ build that reads only format 2 asks for an upgrade on a board this build has
 written, rather than taking its folders for someone else's branch.
 
 A read takes at most the following. Past any of these it answers
-`board_too_large` before it reads any file's bytes. In a partial clone, objects the
-clone lacks are still fetched before their sizes can be judged.
+`board_too_large` before it reads any file's bytes.
+
+In a partial clone whose promisor is the board's remote, the first read fetches
+the board's commits alone, then its root, then each folder with every file but
+those past 1.5 MiB (`--filter=blob:limit`), and the archive's tree alone. Files at
+the root (the README, strays) are fetched by their ids, and git sends a file asked
+for by id at any size. A file the filter left on the remote is past every cap, so
+it is set aside as too large and every write carries it by its id, unfetched.
+
+The clone remembers, in `.git/quecto/project-board/fetch-<remote>`, the last board
+it read whole and the files left on the remote. Each new head is then one fetch of
+what changed since, as in a full clone, archive changes included (the archive is
+never fetched whole, but what a new head adds to it comes with the head). A folder
+holding a file left on the remote is never fetched whole again for it. These
+fetches keep the clone's own fetch filter. A server that refuses filters is fetched
+from whole. A clone whose remote is not its promisor fetches what it lacks whole,
+as before.
+
+git skips a head it already holds, so when the user's own `git fetch` (or an
+editor's) moved the board first, that one fetch brings nothing: each folder that
+changed since the last read is then fetched again whole, and no other folder. That
+brings every file in the folder under 1.5 MiB, whether a read reads it or sets it
+aside, so at worst about 4,096 files of 1.5 MiB for one folder, far past the 24 MiB
+a read takes of `plans/`. Each such fetch leaves a pack holding
+copies of objects the clone already has; git's own maintenance (`git maintenance
+run`, `git gc`) folds them away, and quecto runs none itself.
+
+The board store needs git 2.44 or later (`GIT_NO_LAZY_FETCH`).
 
 | Folder | Entries | File bytes | One file |
 |---|---|---|---|
@@ -283,3 +320,69 @@ as given. It is for the pocket relay to set; an older quecto ignores it.
 
 Kinds are added, never renamed or reused, so a reader of the log must accept a
 kind or a field it does not know.
+
+### Fold-back records
+
+A started task's run, once its swarm has ended, is folded back onto the board
+(epic #2481 S4): its outcome, where each of its plan's task items stood, owners,
+evidence and cost, written to the run alone in one commit. Each fold-back
+writes one `board_fold_back` record under the same switch, gate and rules
+(written to `tracing` at `INFO` as `board fold back`). It holds no titles,
+owners or evidence, only kinds and counts.
+
+The run's own owners and evidence are scrubbed before they reach the board,
+which is public, so a line in doubt is dropped whole (counted in
+`evidence_dropped`; an owner in doubt is left out), never rewritten further. A
+line is in doubt when it holds:
+
+- a part past its board limit in characters (500 for an evidence part, 100 for
+  an owner): it is never cut, since a cut may strip the `@` that marks a
+  secret;
+- an invisible character: a format character or another default ignorable one
+  (a soft hyphen, a direction mark, a zero-width space, a variation selector, a
+  tag);
+- a credential word as any part of a word, once the text is folded (NFKC, so a
+  fullwidth form reads as its letters, then lower case): `authorization`,
+  `bearer`, `password`, `passwd`, `pwd=`, `secret`, `token`, `api_key`,
+  `apikey`, `api-key`, `credential`, `private_key`, `private-key`, or `basic`
+  before anything but a letter (so "basically" is kept);
+- an address whose fragment is no short anchor (up to 64 letters, digits, `_`,
+  `.` or `-`), whose path holds `%25`, or a bare host whose word holds a `;`;
+- an at sign (`@`, fullwidth `＠`, small `﹫`, or `%40` encoded once or more)
+  outside an address, judged after secrets are redacted, but in a `worker@1` or
+  `HEAD@{1}` word.
+
+Otherwise its spaces are made plain, and every address (`scheme://…`, `//host…`
+or a bare `host.tld` before a `/`, `?` or `#`, in a code span or a link too)
+that holds no at sign and has an unambiguous authority (an ASCII host and
+perhaps a port of digits) keeps that authority, its path up to its first `?`,
+`#`, `;` or `%3F`, and a short anchor such as `#L10-L20` straight after it; any
+other address is written `scheme://***`. Secret-shaped spans are then redacted.
+
+Accepted costs: a line that merely mentions a credential word ("basic CI-check
+passed", "token budget") is dropped, so a task item about auth, token or
+credential code may show little or no evidence (drops are counted in
+`evidence_dropped`, not shown); a line holding an invisible character, or past
+its limit, is dropped too; an address
+with an at sign anywhere (an npm `/@scope`, vite's `/@vite/client`,
+`?to=a@b.co`), an IPv6 or a non-ASCII host is written `scheme://***`; a line
+holding an email, a `pkg@1.2.3`, an `@types/node`, a `git@host:repo` or any
+other at sign outside an address is dropped. Known limits: a secret with no at
+sign and no credential word (`-u admin:hunter2`), or in an address's path (a
+Slack or Discord webhook), is kept, as is a credential word spelt with a
+lookalike from another script (a Cyrillic `е` in `sеcret`) or `basic` glued to
+letters (`basicAuth=…`); a bare `host.com;sig=…` with no `/`, a
+bare host with no dot (`localhost/x?sig=…`), or one glued to a CJK letter or a
+`_`, keeps what follows it. A line split by a line break is dropped whole.
+
+| Field | Meaning |
+|---|---|
+| `task`, `run` | The task (its slug, redacted and capped as above) and the run's number |
+| `outcome`, `code`, `rule` | `ok`, or `refused` with the error and rule codes a `board_op` would carry. A run that had already ended (folded back, or ended as lost by the merge that completed its task) is `ok` with only `attempts` and `lost` |
+| `run_outcome` | How the run ended: `succeeded`; `failed` (the swarm failed or exhausted its budget); `stopped` (blocked or cancelled) |
+| `items` | The run's task items by state: `todo`, `doing`, `review`, `done`, `blocked` |
+| `unmatched`, `extra` | Plan items no swarm item matched by its title (`<slug>: <title>`) or, failing that, by its `<slug>: ` prefix, left `todo`; swarm items no plan item took (of several under one key, all but the most progressed, then newest), not kept |
+| `evidence`, `evidence_dropped` | Evidence lines kept, and those left out: refused by the board's schema or file format, repeated, or past an item's 16 or the run's 256 KiB (owners counted first). A run that would leave the board, or its `runs/`, past the bytes a read takes is written again without any, every line counted dropped; any other invalid write is refused, with nothing left out |
+| `cost_tokens` | The tokens the swarm was observed to spend |
+| `attempts`, `lost`, `bytes` | The writes' attempts and lost races (both passes, when the evidence was left out), on every outcome; and the bytes of the run's text |
+| `duration_us` | The whole fold-back |

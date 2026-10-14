@@ -177,6 +177,7 @@ fn store_reason(error: &BoardStoreError) -> String {
         BoardStoreError::NoBoard => "the project has no board yet".into(),
         BoardStoreError::Clash(why)
         | BoardStoreError::InvalidWrite(why)
+        | BoardStoreError::WriteTooLarge(why)
         | BoardStoreError::Unavailable(why)
         | BoardStoreError::TooLarge(why)
         | BoardStoreError::FolderSetAside(why) => why.clone(),

@@ -71,9 +71,8 @@ pub enum ErrorCode {
     StoreUnavailable,
     /// `reason`: the board is past what a read takes.
     BoardTooLarge,
-    /// `reason`: the board is held outside `tasks/`: no write or clear
-    /// while a name there is listed twice, and no listing while a file set
-    /// aside there names another kind's key.
+    /// `reason`: the board is held outside `tasks/`: no listing while a
+    /// file set aside there names another kind's key.
     FolderSetAside,
     /// `rule`: `{"code", …}`.
     Rule,
@@ -444,7 +443,8 @@ fn error_fields(error: &ProjectBoardError) -> (ErrorCode, Map<String, Value>) {
     match error {
         E::Store(BoardStoreError::NoBoard) => (C::NoBoard, Map::new()),
         E::Store(BoardStoreError::Clash(why)) => (C::Clash, fields([("reason", shown_json(why))])),
-        E::Store(BoardStoreError::InvalidWrite(why)) => {
+        // Past the board's bytes is answered as an invalid write.
+        E::Store(BoardStoreError::InvalidWrite(why) | BoardStoreError::WriteTooLarge(why)) => {
             (C::InvalidWrite, fields([("reason", shown_json(why))]))
         }
         E::Store(BoardStoreError::Unavailable(why)) => {
