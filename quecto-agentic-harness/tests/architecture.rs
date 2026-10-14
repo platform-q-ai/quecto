@@ -1945,9 +1945,9 @@ fn public_ports_have_contract_tests() {
     // Ports declared ahead of their adapters (epic #2481): each entry goes
     // when its contract suite lands on the production adapter, and fails
     // here once any contract module names it, whatever the module is
-    // called. `CoordinatorLaunch` (S4c) waits for its spawn-backed adapter,
-    // which brings its suite in the slice after its use case.
-    let allowlisted: BTreeSet<&str> = BTreeSet::from(["CoordinatorLaunch"]);
+    // called. `CoordinatorLaunch` and `RunLiveness` (S4c) wait for their
+    // spawn-backed adapter, which brings their suites in Q8b.
+    let allowlisted: BTreeSet<&str> = BTreeSet::from(["CoordinatorLaunch", "RunLiveness"]);
     for port in &allowlisted {
         assert!(
             ports.contains(*port),

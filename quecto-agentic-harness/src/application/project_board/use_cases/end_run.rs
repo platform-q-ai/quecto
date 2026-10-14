@@ -1,13 +1,18 @@
-//! Ends a task's open run by hand (S4c's recovery): for a run whose swarm
-//! will never fold it back, as when a start's coordinator never launched
-//! and its undo could not end the run, or the process died between the
-//! start's write and its launch. Without it such a run would hold its task
-//! for good.
+//! Records how a task's started run ended (S4c): nothing else does, as
+//! the swarm never writes the board. Once the swarm has ended (its parent
+//! closes it), the claim's holder records the outcome; the same ends a run
+//! no swarm will finish, as when a start's coordinator never launched and
+//! its undo could not end the run, or the process died between the start's
+//! write and its launch. Without it a run would hold its task for good.
 //!
 //! The claim's holder ends it as `succeeded`, `stopped` or `failed`, folded
-//! back as a swarm that ended so with nothing reported is ([`run_items`],
-//! [`cost_of`]), so a holder can record a success the keeper did not;
-//! never while its swarm is still running. As `lost`
+//! back as a swarm that ended so with nothing reported is ([`run_items`]:
+//! every task item as todo), its cost unknown, so a holder can record a
+//! success. Never while its swarm is still running:
+//! while this front end sees it running ([`RunLiveness`]: its session
+//! launched the coordinator, and it still runs) the end is refused
+//! (`run_live`); a coordinator another session launched is not seen. As
+//! `lost`
 //! it is ended by whoever the domain lets ([`end_lost`]: the holder of a
 //! live claim, or anyone when nobody claims the task; one who finds the
 //! claim expired takes the task over first). With `expected_updated`, the
@@ -19,11 +24,9 @@ use std::sync::Arc;
 use super::board_change::{checked_writer, commit_run, task_on};
 use super::board_view;
 use crate::application::project_board::dto::{ProjectBoardError, RunEnd, RunEndOutcome};
-use crate::application::project_board::fold_back::{
-    Evidence, SwarmEnd, SwarmRunView, cost_of, run_items,
-};
+use crate::application::project_board::fold_back::{Evidence, SwarmEnd, SwarmRunView, run_items};
 use crate::application::project_board::ports::{
-    BoardArtifact, BoardClock, BoardTextCells, ProjectBoardStore,
+    BoardArtifact, BoardClock, BoardTextCells, ProjectBoardStore, RunLiveness,
 };
 use crate::application::project_board::telemetry::OpFacts;
 use crate::domain::project_board::entities::claim::Identity;
@@ -37,6 +40,9 @@ pub struct EndRun {
     store: Arc<dyn ProjectBoardStore>,
     clock: Arc<dyn BoardClock>,
     cells: Arc<dyn BoardTextCells>,
+    /// Whether a run's swarm still runs here (`None`: this front end can
+    /// see none).
+    liveness: Option<Arc<dyn RunLiveness>>,
     /// The store's committer, checked valid when built: who ends the run.
     actor: Identity,
 }
@@ -48,12 +54,14 @@ impl EndRun {
         store: Arc<dyn ProjectBoardStore>,
         clock: Arc<dyn BoardClock>,
         cells: Arc<dyn BoardTextCells>,
+        liveness: Option<Arc<dyn RunLiveness>>,
     ) -> Result<Self, ProjectBoardError> {
         let actor = checked_writer(&*store)?;
         Ok(Self {
             store,
             clock,
             cells,
+            liveness,
             actor,
         })
     }
@@ -61,8 +69,9 @@ impl EndRun {
     /// The run `request` names, ended as it says, as written.
     ///
     /// # Errors
-    /// No such task, run or plan version, or one of their files set aside;
-    /// a task stamped ahead, or changed since it was read; the rules' (an
+    /// A run whose swarm still runs here; no such task, run or plan
+    /// version, or one of their files set aside; a task stamped ahead, or
+    /// changed since it was read; the rules' (an
     /// actor who may not end it, a run that has ended); the clock's; a
     /// board that kept moving; the store's.
     pub fn execute(&self, request: &RunEnd) -> Result<Run, ProjectBoardError> {
@@ -86,6 +95,14 @@ impl EndRun {
             facts.run_outcome = Some(request.outcome.outcome());
         }
         let (id, number) = (&request.task, request.run);
+        // A swarm still running here is stopped before its run is ended.
+        let live = self.liveness.as_ref();
+        if live.is_some_and(|liveness| liveness.is_running(id, number)) {
+            return Err(ProjectBoardError::RunLive {
+                task: id.clone(),
+                run: number,
+            });
+        }
         let message = format!(
             "board: run {number} of {} ended, {}",
             id.as_str(),
@@ -130,7 +147,8 @@ impl EndRun {
                     };
                     let reported = Reported {
                         items: run_items(plan, &view, &*self.cells, Evidence::Left).items,
-                        cost: Some(cost_of(&view)),
+                        // A hand end has no report: its cost is unknown.
+                        cost: None,
                     };
                     end_held(task, (run, plan), end, reported, actor, &when.now)
                 };

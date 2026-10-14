@@ -51,6 +51,7 @@ fn keys(code: ErrorCode) -> &'static [&'static str] {
         // (a_duplicate_artifact_is_named_by_its_kind_task_and_number).
         C::DuplicateArtifact => &["kind", "task", "number"],
         C::NoLauncher => &[],
+        C::RunLive => &["task", "run"],
         C::Brief => &["brief"],
         C::LaunchFailed => &[
             "reason",
@@ -169,6 +170,10 @@ board_errors! {
         updated: at("10:00:00"),
     },
     E::NoLauncher => E::NoLauncher,
+    E::RunLive { .. } => E::RunLive {
+        task: slug("a"),
+        run: 1,
+    },
     E::Brief { .. } => E::from(crate::application::project_board::swarm_brief::BriefRefusal::NoTaskItems),
     E::LaunchFailed { .. } => E::LaunchFailed {
         reason: "no container runtime".into(),

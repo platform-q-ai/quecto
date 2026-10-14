@@ -46,6 +46,7 @@ use crate::domain::project_board::value_objects::shown_text::{
     shown_artifact_path, shown_board_path,
 };
 use crate::domain::project_board::value_objects::slug::Slug;
+use crate::domain::project_board::value_objects::vocabulary::RunOutcome;
 use crate::domain::redaction::{redact_secrets, redact_url_userinfo};
 
 #[path = "answer_artifacts.rs"]
@@ -132,6 +133,9 @@ pub enum ErrorCode {
     NoPullRequestHost,
     /// This session may not spawn, so it starts nothing (S4c).
     NoLauncher,
+    /// `task`, `run`: the run's swarm still runs here, so it is not ended
+    /// by hand (S4c).
+    RunLive,
     /// `brief`: `{"code"}`, why the plan cannot brief a swarm (S4c).
     Brief,
     /// `reason` (the launch's), `run`, `run_state` (`folded`,
@@ -179,6 +183,7 @@ impl ErrorCode {
             Self::NotSetAside => "not_set_aside",
             Self::NoPullRequestHost => "no_pull_request_host",
             Self::NoLauncher => "no_launcher",
+            Self::RunLive => "run_live",
             Self::Brief => "brief",
             Self::LaunchFailed => "launch_failed",
         }
@@ -201,6 +206,10 @@ fn shown_json(text: &str) -> Value {
 
 /// The answer to `op`, which came to `outcome`; `clock` says why its
 /// changes were not bounded against an outside time.
+/// What an `end_run` by its holder recorded of the run's task items: no
+/// swarm reported them (S4c).
+const NO_SWARM_REPORT: &str = "items recorded as todo: no swarm report";
+
 pub fn outcome(op: &str, outcome: &BoardOutcome, clock: Option<String>) -> Value {
     let mut fields = Map::new();
     match outcome {
@@ -234,6 +243,16 @@ pub fn outcome(op: &str, outcome: &BoardOutcome, clock: Option<String>) -> Value
         }
         BoardOutcome::RunEnded(run) => {
             fields.insert("run".into(), run_json(run));
+            // A hand end reports no swarm: what it recorded of the items.
+            let report = match run.fields().outcome {
+                Some(RunOutcome::Succeeded | RunOutcome::Stopped | RunOutcome::Failed) => {
+                    Some(NO_SWARM_REPORT)
+                }
+                Some(RunOutcome::Lost) | None => None,
+            };
+            if let Some(report) = report {
+                fields.insert("items_recorded".into(), json!(report));
+            }
         }
         BoardOutcome::Accepted(accepted) => {
             fields.insert("task".into(), task_json(&accepted.task));
@@ -563,6 +582,10 @@ fn error_fields(error: &ProjectBoardError) -> (ErrorCode, Map<String, Value>) {
             fields([("reason", shown_json(&why.to_string()))]),
         ),
         E::NoLauncher => (C::NoLauncher, Map::new()),
+        E::RunLive { task, run } => (
+            C::RunLive,
+            fields([("task", slug_json(task)), ("run", json!(run))]),
+        ),
         E::Brief { code, .. } => (C::Brief, fields([("brief", json!({"code": code}))])),
         E::LaunchFailed {
             reason,

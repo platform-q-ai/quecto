@@ -123,6 +123,12 @@ impl fmt::Display for ProjectBoardError {
                  start the task from a session that may",
             ),
             Self::Brief { reason, .. } => write!(f, "the plan cannot brief a swarm: {reason}"),
+            Self::RunLive { task, run } => write!(
+                f,
+                "run {run} of {task} still has its swarm running in this session: stop its \
+                 coordinator first (agent_cmd kill), then end the run",
+                task = task.as_str()
+            ),
             Self::LaunchFailed {
                 reason,
                 run,

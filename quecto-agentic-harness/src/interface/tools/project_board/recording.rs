@@ -354,6 +354,7 @@ pub(super) fn refusal_parts(
         | E::NoPullRequestHost(_)
         | E::Stale { .. }
         | E::NoLauncher
+        | E::RunLive { .. }
         | E::LaunchFailed { .. } => (None, None),
     }
 }

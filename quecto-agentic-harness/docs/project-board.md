@@ -235,34 +235,44 @@ set aside (it may be the open one), and while the task's plans or runs
 contradict each other (`plans_inconsistent`, `runs_inconsistent`): mend them
 first.
 
-## Ending a run by hand
+## Ending a run
 
-A started run is folded back by the keeper that watches its swarm, when the
-swarm ends or its coordinator dies; the swarm itself never writes the board. A
-run no keeper will fold back holds its task for good, since a held task leaves
-its holder only once its runs have ended: a start whose coordinator never
-launched and whose undo could not end the run (its answer's `run_state` is
-`open`), or a start that wrote and then stopped (the process died) before it
-launched. `end_run(task, run, outcome, expected_updated)` ends such a run.
+Nothing records a started run's end by itself: the swarm never writes the
+board. Once the swarm has ended (its parent closes it with `swarm_control
+close`), the claim holder records how it ended with `end_run(task, run,
+outcome, expected_updated)`: `succeeded`, `stopped` or `failed`. Until then the
+run holds its task, since a held task leaves its holder only once its runs have
+ended. The same ends a run no swarm will ever finish: a start whose coordinator
+never launched and whose undo could not end the run (its answer's `run_state`
+is `open`), or a start that wrote and then stopped (the process died) before it
+launched.
+
+The claim a start takes or renews lasts 2 hours and is not renewed while the
+swarm runs. Once it has expired, its holder renews it (`renew`), or anyone else
+takes the task over (`take_over`), and then ends the run.
 
 `outcome` is one of `succeeded`, `stopped`, `failed` or `lost`; any other word
 is refused. The holder of a live claim on the task ends the run as `succeeded`,
 `stopped` or `failed` (`not_holder` for anyone else, `claim_expired` for a
-holder whose claim lapsed: renew first): it is folded back as the keeper folds
-back a swarm that ended so and reported nothing, each of its plan's task items
-as such a swarm leaves it, its cost 0. So a holder records a success the keeper
-did not, and the task can go on to done. As `lost`, the run is ended by the
+holder whose claim lapsed: renew first): it is recorded as a swarm that ended
+so and reported nothing would be, each of its plan's task items as todo, its
+cost unknown. So a success is recorded, and the task can go on to done. As `lost`, the run is ended by the
 holder of a live claim, or by anyone when the task has no claim; whoever finds
 the claim expired takes the task over with `take_over` first, and then ends the
 run as its holder. `expected_updated` is optional: when given, the task must
 still be as it was read (`stale`).
 
-Never end a run whose swarm is still running: stop it first.
+Never end a run whose swarm is still running: stop it first. An `end_run`
+refuses a run whose coordinator the session asking launched and still runs
+(`run_live`, with its `task` and `run`), whatever its front end; a coordinator
+another session launched is not seen, so from there (the CLI included) the
+caller makes sure it has stopped.
 
 Only the run is written; the task stays as it is, for its holder to move on
 (back to `ready`, say). A run that has ended is refused (`run_ended`), as is
 one the task does not have (`no_such_run`). The answer gives the `run`, as
-`show` gives a run in full. `quecto board end-run` takes the same fields.
+`show` gives a run in full, and, for a run its holder ended,
+`items_recorded`: "items recorded as todo: no swarm report". `quecto board end-run` takes the same fields.
 
 ## Telemetry
 

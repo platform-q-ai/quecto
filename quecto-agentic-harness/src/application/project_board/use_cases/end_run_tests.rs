@@ -51,6 +51,7 @@ fn ender(store: &MemoryBoardStore, who: &str, when: &str) -> EndRun {
         Arc::new(store.client_as(person(who))),
         SetClock::at(when),
         Arc::new(MarkdownTextCells),
+        None,
     )
     .unwrap()
 }
@@ -69,9 +70,8 @@ fn run_1(store: &MemoryBoardStore) -> Run {
 }
 
 /// The holder ends the stranded run as stopped or failed: every item as
-/// a swarm that never ran left it, its cost as a fold-back of a swarm that
-/// reported nothing records it (0); then the task can leave them. A
-/// success is recorded the same way, so the task can go on to done.
+/// todo (no swarm report), its cost unknown; then the task can leave them.
+/// A success is recorded the same way, so the task can go on to done.
 #[test]
 fn the_holder_ends_a_stranded_run_and_can_then_release_the_task() {
     for (outcome, want) in [
@@ -86,10 +86,10 @@ fn the_holder_ends_a_stranded_run_and_can_then_release_the_task() {
             .unwrap();
         assert_eq!(ended, run_1(&store));
         let fields = ended.fields();
-        assert_eq!((fields.outcome, fields.cost), (Some(want), Some(0)));
+        assert_eq!((fields.outcome, fields.cost), (Some(want), None));
         assert_eq!(fields.ended, Some(at("10:30:00")));
         let states: Vec<ItemState> = fields.items.iter().map(|item| item.state).collect();
-        assert_eq!(states.len(), 3, "every plan item is accounted for");
+        assert_eq!(states, [ItemState::Todo; 3], "every plan item, as todo");
         assert_eq!(
             (
                 facts.run,
@@ -202,4 +202,61 @@ fn an_outcome_is_named_by_its_allowlist() {
     for other in ["Succeeded", "Lost", "", "running", "completed"] {
         assert_eq!(RunEndOutcome::parse(other), None, "{other}");
     }
+}
+
+/// Whether a run's swarm runs here, as told.
+struct Running(bool);
+
+impl crate::application::project_board::ports::RunLiveness for Running {
+    fn is_running(
+        &self,
+        task: &crate::domain::project_board::value_objects::slug::Slug,
+        run: u32,
+    ) -> bool {
+        self.0 && task.as_str() == "board-store" && run == 1
+    }
+}
+
+/// Review round 3 (M2): a run whose swarm still runs where this front end
+/// can see it is never ended by hand, by any outcome; nothing is written.
+/// One it does not see running ends as ever.
+#[test]
+fn a_run_whose_swarm_still_runs_is_not_ended() {
+    let (store, _) = stranded();
+    let writes = store.writes();
+    let watching = |running| {
+        EndRun::new(
+            Arc::new(store.client_as(person("Ada"))),
+            SetClock::at("10:30:00"),
+            Arc::new(MarkdownTextCells),
+            Some(Arc::new(Running(running))),
+        )
+        .unwrap()
+    };
+    for outcome in RunEndOutcome::ALL {
+        let refused = watching(true).execute(&ending(outcome));
+        assert_eq!(
+            refused,
+            Err(ProjectBoardError::RunLive {
+                task: slug("board-store"),
+                run: 1,
+            }),
+            "{outcome:?}"
+        );
+    }
+    assert_eq!(store.writes(), writes, "nothing written");
+    assert_eq!(
+        ProjectBoardError::RunLive {
+            task: slug("board-store"),
+            run: 1,
+        }
+        .to_string(),
+        "run 1 of board-store still has its swarm running in this session: stop its \
+         coordinator first (agent_cmd kill), then end the run"
+    );
+    assert!(
+        watching(false)
+            .execute(&ending(RunEndOutcome::Failed))
+            .is_ok()
+    );
 }

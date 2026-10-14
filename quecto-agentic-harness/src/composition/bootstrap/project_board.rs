@@ -123,10 +123,12 @@ fn build_with_warnings(
         edit_plan: EditPlan::new(Arc::clone(&store), Arc::clone(&clock)).map_err(built)?,
         accept_plan: AcceptPlan::new(Arc::clone(&store), Arc::clone(&clock)).map_err(built)?,
         discard_plan: DiscardPlan::new(Arc::clone(&store), Arc::clone(&clock)).map_err(built)?,
+        // No front end of this slice sees a run's swarm (Q8b's tool does).
         end_run: EndRun::new(
             Arc::clone(&store),
             Arc::clone(&clock),
             Arc::new(MarkdownTextCells),
+            None,
         )
         .map_err(built)?,
         clear: ClearSetAside::new(Arc::clone(&store), Arc::clone(&clock)).map_err(built)?,

@@ -85,6 +85,7 @@ pub fn assembled(
             Arc::new(
                 crate::infrastructure::persistence::project_board::text_cells::MarkdownTextCells,
             ),
+            None,
         )?,
         clear: ClearSetAside::new(Arc::clone(&store), Arc::clone(&clock))?,
         complete,

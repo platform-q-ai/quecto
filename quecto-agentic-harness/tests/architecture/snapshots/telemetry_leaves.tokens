@@ -41,6 +41,7 @@ const KNOWN_KINDS : & [
 "no_launcher" ,
 "brief" ,
 "launch_failed" ,
+"run_live" ,
 "end_run" ,
 "run" ,
 "outcome" ,

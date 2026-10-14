@@ -75,7 +75,9 @@ const KNOWN_KINDS: &[&str] = &[
     "no_launcher",
     "brief",
     "launch_failed",
-    // A run ended by hand (S4c): its op and fields; its outcomes are S4's.
+    // A run ended by hand (S4c): its op and fields; its outcomes are S4's;
+    // its refusal while the run's swarm runs here.
+    "run_live",
     "end_run",
     "run",
     "outcome",
