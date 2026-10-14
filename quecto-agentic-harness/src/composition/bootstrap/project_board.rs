@@ -19,14 +19,16 @@ use std::time::SystemTime;
 
 use crate::application::project_board::operations::{BoardOperationParts, NoPullRequestHost};
 use crate::application::project_board::ports::{
-    BoardClock, BoardStoreError, ProjectBoardStore, PullRequestStates, PullRequestStatesError,
+    BoardClock, BoardStoreError, CoordinatorLaunch, ProjectBoardStore, PullRequestStates,
+    PullRequestStatesError, RunLiveness,
 };
 use crate::application::project_board::telemetry::{BoardRecording, RecordingSwitch};
 use crate::application::project_board::use_cases::{
     AcceptPlan, BootstrapProjectBoard, ChangeBoardTask, ClearSetAside, CompleteMergedTask,
     CreateBoardTask, DiscardPlan, EditPlan, EndRun, ProposePlan, QueryBoard, RunBoardOperation,
-    UpdateDraftTask,
+    StartBoardTask, UpdateDraftTask,
 };
+use crate::domain::project_board::entities::claim::Identity;
 use crate::domain::redaction::{redact_secrets, redact_url_userinfo};
 use crate::infrastructure::config::telemetry::globally_enabled;
 use crate::infrastructure::persistence::audit_log::AuditLog;
@@ -78,17 +80,23 @@ fn build_with_warnings(
         (Access::Write | Access::Read, None) | (Access::Read, Some(_)) => {}
     }
     let git = match environment.access {
-        Access::Write => Git::configured_committer(&environment.repo, &vars)
-            .and_then(|committer| Git::new(&environment.repo, vars, committer))
-            .map_err(write_refusal)?,
+        Access::Write => {
+            let committer = match board_committer(&environment.vars) {
+                Some(named) => named.map_err(BuildError::NoCommitter)?,
+                None => {
+                    Git::configured_committer(&environment.repo, &vars).map_err(write_refusal)?
+                }
+            };
+            Git::new(&environment.repo, vars, committer).map_err(write_refusal)?
+        }
         Access::Read => Git::reader(&environment.repo, vars)
             .map_err(|error| unavailable(format!("git cannot run here: {error}")))?,
     };
-    let store = Arc::new(
-        GitBoardStore::new(git, &environment.remote)
-            .map_err(|error| unavailable(store_reason(&error)))?
-            .with_cancel(environment.cancelled.clone()),
-    );
+    let board = GitBoardStore::new(git, &environment.remote)
+        .map_err(|error| unavailable(store_reason(&error)))?;
+    // A start's undo writes past the call's cancel, so no run is stranded.
+    let undo_store: Arc<dyn ProjectBoardStore> = Arc::new(board.without_cancel());
+    let store = Arc::new(board.with_cancel(environment.cancelled.clone()));
     let url = store
         .remote_url()
         .map_err(|error| unavailable(store_reason(&error)))?;
@@ -123,14 +131,34 @@ fn build_with_warnings(
         edit_plan: EditPlan::new(Arc::clone(&store), Arc::clone(&clock)).map_err(built)?,
         accept_plan: AcceptPlan::new(Arc::clone(&store), Arc::clone(&clock)).map_err(built)?,
         discard_plan: DiscardPlan::new(Arc::clone(&store), Arc::clone(&clock)).map_err(built)?,
-        // No front end of this slice sees a run's swarm (Q8b's tool does).
         end_run: EndRun::new(
             Arc::clone(&store),
             Arc::clone(&clock),
             Arc::new(MarkdownTextCells),
-            None,
+            environment
+                .launcher
+                .clone()
+                .map(|swarms| swarms as Arc<dyn RunLiveness>),
         )
         .map_err(built)?,
+        start: StartBoardTask::new(
+            Arc::clone(&store),
+            undo_store,
+            Arc::clone(&clock),
+            Arc::new(MarkdownTextCells),
+            environment
+                .launcher
+                .clone()
+                .map(|swarms| swarms as Arc<dyn CoordinatorLaunch>),
+            environment.cancelled.clone(),
+        )
+        .map_err(built)?
+        .seeing(
+            environment
+                .launcher
+                .clone()
+                .map(|swarms| swarms as Arc<dyn RunLiveness>),
+        ),
         clear: ClearSetAside::new(Arc::clone(&store), Arc::clone(&clock)).map_err(built)?,
         complete,
         clock,
@@ -167,6 +195,42 @@ fn pull_request_states(
 /// configured, or one git would not record as given) is the committer's;
 /// anything else (no git, a timeout, a repository git cannot run in) is
 /// the store's, with its cause.
+/// The variable that names who board writes are made by (S4c, Q10): set
+/// by the pocket relay for the harness it launches, so its board commits
+/// and claims are the bot's while the agent's own commits stay its clone's.
+const COMMITTER_VARIABLE: &str = "QUECTO_BOARD_COMMITTER";
+
+/// The board's committer as [`COMMITTER_VARIABLE`] names it in `vars`,
+/// `name <email>`; `None` while it is unset. Only the board composition
+/// reads it, so nothing else git does changes.
+///
+/// # Errors
+/// A value not shaped `name <email>`, or naming an identity no task can
+/// hold: refused, never ignored for the clone's own.
+fn board_committer(
+    vars: &[(std::ffi::OsString, std::ffi::OsString)],
+) -> Option<Result<Identity, String>> {
+    let (_, value) = vars.iter().find(|(key, _)| key == COMMITTER_VARIABLE)?;
+    let refused = |why: &str| format!("{COMMITTER_VARIABLE} must be \"name <email>\": {why}");
+    let Some(value) = value.to_str() else {
+        return Some(Err(refused("it is not text")));
+    };
+    let parsed = value
+        .strip_suffix('>')
+        .and_then(|rest| rest.rsplit_once(" <"))
+        .map(|(name, email)| Identity {
+            name: name.to_owned(),
+            email: email.to_owned(),
+        });
+    Some(match parsed {
+        Some(identity) => match identity.validate("committer") {
+            Ok(()) => Ok(identity),
+            Err(error) => Err(refused(&error.to_string())),
+        },
+        None => Err(refused("it names no email in angle brackets")),
+    })
+}
+
 fn write_refusal(error: GitError) -> BuildError {
     match error {
         GitError::Identity(why) => BuildError::NoCommitter(why),

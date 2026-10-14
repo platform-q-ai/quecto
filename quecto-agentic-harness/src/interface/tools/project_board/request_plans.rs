@@ -12,7 +12,7 @@ use serde_json::{Map, Value};
 
 use super::{Read, misfit, text, timestamp};
 use crate::application::project_board::dto::{
-    PlanAcceptance, PlanDiscard, PlanEdit, PlanProposal, RunEnd, RunEndOutcome,
+    PlanAcceptance, PlanDiscard, PlanEdit, PlanProposal, RunEnd, RunEndOutcome, TaskStart,
 };
 use crate::application::project_board::operations::BoardRequest;
 use crate::domain::project_board::entities::plan::{MAX_PLAN_VERSION, PlanItem};
@@ -101,10 +101,25 @@ pub(super) fn end_run(read: &Read<'_>) -> Result<BoardRequest, RequestError> {
     }))
 }
 
-/// A plan's version, from 1.
+/// A plan's version, from 1, as `version` names it.
 pub(super) fn version(value: &Value) -> Result<u32, RequestError> {
+    version_at("version", value)
+}
+
+/// A plan's version, from 1, as field `name` names it.
+fn version_at(name: &str, value: &Value) -> Result<u32, RequestError> {
     let problem = format!("must be a plan version from 1 to {MAX_PLAN_VERSION}");
-    number("version", value, 1..=MAX_PLAN_VERSION, &problem)
+    number(name, value, 1..=MAX_PLAN_VERSION, &problem)
+}
+
+/// A task started on the accepted plan version its caller confirmed
+/// (S4c).
+pub(super) fn start(read: &Read<'_>) -> Result<BoardRequest, RequestError> {
+    let present = "a required field is present";
+    Ok(BoardRequest::Start(TaskStart {
+        task: read.task()?,
+        plan_version: version_at("plan_version", read.value("plan_version").expect(present))?,
+    }))
 }
 
 /// The version a task was seen naming as accepted, or none for `null`.

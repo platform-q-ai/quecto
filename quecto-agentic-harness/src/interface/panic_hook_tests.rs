@@ -740,3 +740,6 @@ fn the_fatal_event_is_filed_under_the_turn_it_happened_in() {
     assert_eq!(event["turn"], 5, "{event}");
     assert!(event["tool"].is_null(), "{event}");
 }
+
+#[path = "panic_hook_message_tests.rs"]
+mod message;

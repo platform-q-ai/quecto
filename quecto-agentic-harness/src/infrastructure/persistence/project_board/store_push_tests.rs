@@ -315,3 +315,38 @@ fn ref_status_reads_only_our_ref_line() {
         Some(RefStatus::Rejected("[remote rejected] (no pe )".into()))
     );
 }
+
+/// The same board's store without the cancel (S4c, a start's undo) still
+/// pushes once the call was cancelled, so an undo is never stranded.
+#[test]
+fn a_store_without_the_cancel_still_pushes() {
+    let repos = Repos::new();
+    let head = created(&store(&repos.alice));
+    let cancelled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let alice = store(&repos.alice).with_cancel(Some(cancelled));
+    let undo = alice.without_cancel();
+    let written = undo.write_tasks(&head, &[task("a")], "board: add a");
+    assert!(
+        matches!(&written, Ok(BoardWrite::Written(_))),
+        "{written:?}"
+    );
+    assert_eq!(store(&repos.bob).read().unwrap().tasks.len(), 1);
+    assert!(matches!(
+        alice.write_tasks(&undo.read().unwrap().head, &[task("b")], "board: add b"),
+        Ok(BoardWrite::Refused(_))
+    ));
+}
+
+/// Review round 3 (L5): the uncancelled store keeps what this store found
+/// of its remote (a partial clone's filter), never asking again.
+#[test]
+fn a_store_without_the_cancel_keeps_what_it_found_of_its_remote() {
+    let repos = Repos::new();
+    let alice = store(&repos.alice);
+    let found = super::super::fetching::Partial::Promisor {
+        filter: Some("blob:none".into()),
+    };
+    alice.partial.set(found.clone()).unwrap();
+    assert_eq!(alice.without_cancel().partial.get(), Some(&found));
+    assert_eq!(store(&repos.alice).without_cancel().partial.get(), None);
+}

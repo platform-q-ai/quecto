@@ -59,7 +59,7 @@ use serde_json::Value;
 use super::CliContext;
 use crate::application::project_board::telemetry::BoardRecording;
 use crate::domain::project_board::value_objects::telemetry::{Client, FaultKind, FrontEnd};
-use crate::interface::tools::project_board::recording::BoardCall;
+use crate::interface::tools::project_board::recording::{BoardCall, CLIENT_VARIABLE, named_client};
 use crate::interface::tools::project_board::request::{RequestError, fields_of};
 use crate::interface::tools::project_board::site::{self, BoardSite};
 use crate::interface::tools::project_board::{MAX_REQUEST_BYTES, command_line, json};
@@ -86,17 +86,50 @@ pub struct BoardToolRecordingBuilder(
 #[derive(Debug, Clone, Copy)]
 pub struct CliRecordingBuilder(pub fn(&Path) -> Option<BoardRecording>);
 
-/// The variable a caller names itself in.
-const CLIENT_VARIABLE: &str = "QUECTO_BOARD_CLIENT";
+/// Why `quecto board start` is refused (owner-approved, S4c).
+const START_NEEDS_A_SESSION: &str =
+    "start needs an agent session: ask a quecto agent, or use Pocket";
+
+/// The ops `quecto board` takes, an allowlist: every op of the board's
+/// table but `start`, which launches a swarm coordinator that only an
+/// agent session can host (S4c). A new op is refused here until it is
+/// listed.
+const CLI_OPS: &[&str] = &[
+    "bootstrap",
+    "list",
+    "list_ready",
+    "list_takeable",
+    "show",
+    "create",
+    "update_draft",
+    "move",
+    "renew",
+    "take_over",
+    "link_pr",
+    "unlink_pr",
+    "complete",
+    "propose_plan",
+    "edit_plan",
+    "accept_plan",
+    "discard_plan",
+    "end_run",
+    "clear_set_aside",
+];
+
+/// Why `quecto board` does not take `op`, an op of the board's table it
+/// does not list.
+fn not_taken(op: &str) -> String {
+    match op {
+        "start" => START_NEEDS_A_SESSION.into(),
+        other => format!("{other} is not taken by quecto board: ask a quecto agent"),
+    }
+}
 
 /// The client a call is for, by allowlist, as `QUECTO_BOARD_CLIENT` names
-/// it (`None`: unset): the value itself is never recorded.
+/// it (`None`: unset, the command line's own): the value itself is never
+/// recorded.
 fn client(named: Option<&OsStr>) -> Client {
-    match named.map(OsStr::to_str) {
-        None => Client::Cli,
-        Some(Some("pocket-relay")) => Client::PocketRelay,
-        Some(Some(_) | None) => Client::Other,
-    }
+    named_client(named, Client::Cli)
 }
 
 const USAGE: &str = "usage: quecto board <op> [--<field> <value>]... [--input <json>|-] \
@@ -327,6 +360,23 @@ fn answer(ctx: &CliContext, args: &[String], call: &mut BoardCall) -> Value {
             return call.refuse_request(op.as_deref(), &error);
         }
     };
+    // Only the ops the command line takes (an allowlist) go on: one it
+    // does not, `start` (S4c, owner-approved words), is refused here, as
+    // the request it is, before anything is built. A request naming no op
+    // of the table is the shared parser's to refuse.
+    let op = value
+        .get("op")
+        .and_then(Value::as_str)
+        .filter(|op| fields_of(op).is_some());
+    match op {
+        Some(op) if CLI_OPS.contains(&op) => {}
+        None => {}
+        Some(op) => {
+            call.named(Some(op));
+            let refusal = RequestError::of("op", not_taken(op), FaultKind::InvalidValue);
+            return call.refuse_request(Some(op), &refusal);
+        }
+    }
     let repo = line
         .repo
         .clone()
@@ -337,6 +387,7 @@ fn answer(ctx: &CliContext, args: &[String], call: &mut BoardCall) -> Value {
         repo,
         remote: line.remote.clone(),
         build: ctx.project_board,
+        launcher: None,
     };
     site::answer(&site, &value.to_string(), None, call)
 }

@@ -357,12 +357,15 @@ fn a_start_that_cannot_launch_writes_nothing() {
         Err(ProjectBoardError::NoLauncher)
     );
     let forbidden = Launcher::forbidden();
+    let mut facts = OpFacts::default();
     assert_eq!(
-        starter(&store, Some(forbidden.clone())).execute(&confirmed(1)),
+        starter(&store, Some(forbidden.clone())).execute_noted(&confirmed(1), Some(&mut facts)),
         Err(ProjectBoardError::NoLauncher),
         "a session whose policy stopped allowing spawn starts nothing"
     );
     assert!(forbidden.asked().is_empty());
+    // A start record is still noted, as far as it got.
+    assert_eq!(facts.start.map(|start| start.plan_version), Some(Some(1)));
     let unaccepted = seeded(
         |fields| TaskFields {
             accepted_plan: None,

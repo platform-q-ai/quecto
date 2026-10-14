@@ -139,3 +139,79 @@ fn a_coordinator_that_may_still_run_leaves_the_start_as_it_is() {
     );
     assert_eq!(slug("a"), task.fields().id);
 }
+
+/// A launch whose call was cancelled as spawn began: it refuses with
+/// nothing named as running, as a dropped spawn says.
+struct CancelledAsItCameUp;
+
+impl CoordinatorLaunch for CancelledAsItCameUp {
+    fn may_launch(&self) -> bool {
+        true
+    }
+
+    fn launch(
+        &self,
+        _: &CoordinatorRequest,
+        _: &AtomicBool,
+    ) -> Result<LaunchedCoordinator, LaunchRefused> {
+        Err(LaunchRefused::because(
+            "the call was cancelled while the coordinator launched: the launch was dropped",
+        ))
+    }
+}
+
+/// Whether run 1's coordinator still runs here, as told: `7f3a`.
+struct Seen(bool);
+
+impl crate::application::project_board::ports::RunLiveness for Seen {
+    fn running_coordinator(
+        &self,
+        _: &crate::domain::project_board::value_objects::slug::Slug,
+        run: u32,
+    ) -> Option<String> {
+        (self.0 && run == 1).then(|| "7f3a".into())
+    }
+}
+
+/// Review round 4 (L1): before it undoes anything, a start asks whether
+/// the run's coordinator came up anyway (a cancel, a panic or a timeout
+/// after spawn began); while one runs it undoes nothing and names it, as
+/// for one the launch could not stop. One not running is undone as ever.
+#[test]
+fn a_coordinator_seen_running_after_a_failed_launch_leaves_the_start_as_it_is() {
+    for (running, run_state, released, still_running) in [
+        (
+            true,
+            RunAfterUndo::Open,
+            Some(false),
+            Some("7f3a".to_string()),
+        ),
+        (false, RunAfterUndo::Folded, Some(true), None),
+    ] {
+        let store = seeded(ready, vec![plan(1, PlanState::Accepted)], vec![]);
+        let launcher: Arc<dyn CoordinatorLaunch> = Arc::new(CancelledAsItCameUp);
+        let starting =
+            starter_of(&store, Some(launcher), None).seeing(Some(Arc::new(Seen(running))));
+        let refused = starting.execute(&confirmed(1));
+        assert_eq!(
+            refused,
+            Err(ProjectBoardError::LaunchFailed {
+                reason: "the call was cancelled while the coordinator launched: the launch was \
+                         dropped"
+                    .into(),
+                run: 1,
+                run_state,
+                released,
+                restored: None,
+                still_running,
+            }),
+            "running: {running}"
+        );
+        let (_, runs) = task_and_runs(&store);
+        assert_eq!(
+            runs[0].fields().outcome.is_none(),
+            running,
+            "running: {running}"
+        );
+    }
+}

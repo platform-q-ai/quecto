@@ -40,6 +40,7 @@ use crate::application::project_board::ports::{
     ArtifactKey, BoardClockError, BoardHead, BoardStoreError, PullRequestStatesError,
     QuarantinedFile,
 };
+use crate::application::project_board::start::StartedTask;
 use crate::domain::project_board::entities::claim::Identity;
 use crate::domain::project_board::entities::task::Task;
 use crate::domain::project_board::value_objects::shown_text::{
@@ -212,8 +213,8 @@ const NO_SWARM_REPORT: &str = "items recorded as todo: no swarm report";
 
 /// What an `end_run` from a front end that cannot see running swarms (the
 /// CLI) leaves its caller to have made sure of (S4c).
-const NOT_CHECKED: &str = "this front end cannot see running swarms: make sure the run's \
-coordinator has stopped (agent_cmd kill) before ending its run";
+const NOT_CHECKED: &str =
+    "this end was not checked against running swarms: if the run's coordinator still runs, stop it";
 
 pub fn outcome(op: &str, outcome: &BoardOutcome, clock: Option<String>) -> Value {
     let mut fields = Map::new();
@@ -269,6 +270,7 @@ pub fn outcome(op: &str, outcome: &BoardOutcome, clock: Option<String>) -> Value
                 fields.insert("items_recorded".into(), json!(report));
             }
         }
+        BoardOutcome::Started(started) => fields.extend(started_fields(started)),
         BoardOutcome::Accepted(accepted) => {
             fields.insert("task".into(), task_json(&accepted.task));
             fields.insert("plan".into(), planned_json(&accepted.plan));
@@ -288,6 +290,39 @@ pub fn outcome(op: &str, outcome: &BoardOutcome, clock: Option<String>) -> Value
     answer.insert("op".into(), Value::String(op.into()));
     answer.extend(fields);
     Value::Object(answer)
+}
+
+/// What `start` answers (S4c): the `task` as written, its `run`, the
+/// `coordinator` launched for it (its `agent` and the container it runs
+/// in, `environment_ref`), the worker roles whose models were not applied
+/// (`not_applied`: `role`, `model`, `effort`), and whether the start took
+/// the claim (`claim`: `fresh`) or found it held by the starter (`held`).
+fn started_fields(started: &StartedTask) -> Map<String, Value> {
+    let not_applied: Vec<Value> = started
+        .not_applied
+        .iter()
+        .map(|role| {
+            json!({
+                "role": slug_json(&role.role),
+                "model": shown(&role.model),
+                "effort": role.effort.as_str(),
+            })
+        })
+        .collect();
+    let coordinator = &started.coordinator;
+    fields([
+        ("task", task_json(&started.task)),
+        ("run", run_json(&started.run)),
+        (
+            "coordinator",
+            json!({
+                "agent": shown(&coordinator.agent),
+                "environment_ref": shown(&coordinator.environment_ref),
+            }),
+        ),
+        ("not_applied", Value::Array(not_applied)),
+        ("claim", json!(started.claim.as_str())),
+    ])
 }
 
 fn listing_fields(listing: &BoardListing) -> Map<String, Value> {

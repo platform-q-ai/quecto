@@ -528,3 +528,18 @@ fn only_the_kept_panic_has_a_provisional_record_and_it_is_taken_once() {
     assert_eq!(scope.take_provisional(), None);
     assert_eq!(scope.recorded_panic().unwrap().message, "first");
 }
+
+/// Review (mutant): a message cut at the bound inside a character is cut
+/// at the character before it, never mid-character.
+#[test]
+fn a_panic_message_is_cut_on_a_character_boundary() {
+    let message = format!("a{}", "\u{e9}".repeat(600));
+    let shown = shown_panic_message(&message);
+    let kept = shown.strip_suffix('\u{2026}').expect("marked as cut");
+    assert_eq!(
+        kept.len(),
+        MAX_PANIC_MESSAGE_BYTES - 1,
+        "one byte short of a whole é"
+    );
+    assert!(kept.starts_with('a') && kept[1..].chars().all(|c| c == '\u{e9}'));
+}

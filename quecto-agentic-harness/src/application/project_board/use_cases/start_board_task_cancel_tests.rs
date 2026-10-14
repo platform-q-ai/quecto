@@ -126,44 +126,9 @@ fn a_start_cancelled_before_its_launch_launches_nothing_and_is_undone() {
     assert_undone(&store);
 }
 
-/// A launcher cancelled while it runs: it refuses, and the cancel the
-/// start's own store now honours does not reach its undo.
-struct CancelledLaunch(Arc<AtomicBool>);
-
-impl CoordinatorLaunch for CancelledLaunch {
-    fn may_launch(&self) -> bool {
-        true
-    }
-
-    fn launch(
-        &self,
-        _: &CoordinatorRequest,
-        _: &std::sync::atomic::AtomicBool,
-    ) -> Result<LaunchedCoordinator, LaunchRefused> {
-        self.0.store(true, Ordering::SeqCst);
-        Err(LaunchRefused::because("the call was cancelled"))
-    }
-}
-
-#[test]
-fn a_start_cancelled_during_its_launch_is_still_undone() {
-    let store = seeded(ready, vec![plan(1, PlanState::Accepted)], vec![]);
-    let cancelled = Arc::new(AtomicBool::new(false));
-    let launcher = Arc::new(CancelledLaunch(Arc::clone(&cancelled)));
-    let starting = cancellable_starter(&store, &cancelled, false, launcher);
-    assert_eq!(
-        starting.execute(&confirmed(1)),
-        Err(ProjectBoardError::LaunchFailed {
-            reason: "the call was cancelled".into(),
-            run: 1,
-            run_state: RunAfterUndo::Folded,
-            released: Some(true),
-            restored: None,
-            still_running: None,
-        })
-    );
-    assert_undone(&store);
-}
+// A cancel during the launch, through the real launcher and a spawn that
+// never answers, is the coordinator launch contract's
+// (`a_start_cancelled_during_its_launch_drops_it_and_is_undone`).
 
 /// Cancelled before it writes: the store refuses the write, so nothing is
 /// written and nothing launched.
