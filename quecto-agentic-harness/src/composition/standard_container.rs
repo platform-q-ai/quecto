@@ -18,7 +18,7 @@ use std::sync::Arc;
 use serde_json::Value;
 
 use crate::application::configuration::dto::{
-    ConfigLayer, ConfigPatch, ConfigPatchError, ConfigSelection, OverlayState,
+    ConfigLayer, ConfigPatch, ConfigPatchError, ConfigSelection, OverlayOrigin, OverlayState,
 };
 use crate::application::configuration::use_cases::{PatchConfiguration, ResolveEffectiveConfig};
 use crate::application::environments::dto::{ContainerConfigDocument, PersistedContainerConfig};
@@ -57,6 +57,12 @@ impl ContainerConfigPersistence for OverlayContainerConfigWriter {
         let Some(path) = self.selection.overlay_path().map(Path::to_path_buf) else {
             return Err(ConfigPatchError::NoOverlayLocation.to_string());
         };
+        match self.selection.overlay_origin() {
+            OverlayOrigin::WorkingDirectory | OverlayOrigin::MainWorktreeUnresolved { .. } => {}
+            OverlayOrigin::MainWorktree => {
+                return Err(ConfigPatchError::SharedOverlay { path }.to_string());
+            }
+        }
         let effective = self
             .resolve
             .execute(&self.selection)

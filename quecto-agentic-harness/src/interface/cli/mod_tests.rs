@@ -396,3 +396,59 @@ fn the_repl_runs_setup_commands_refuses_the_rest_and_no_arguments_at_all_means_t
     assert_eq!(bare.exit_code, 0);
     assert!(bare.stdout.is_empty(), "{}", bare.stdout);
 }
+
+/// From a linked git worktree with no overlay of its own, `status` names
+/// the main worktree's overlay and says it is shared; trusting it there
+/// approves that one file, and `config set` never writes it from here.
+#[test]
+fn a_linked_worktree_reports_and_applies_the_main_worktrees_overlay() {
+    let layout = crate::infrastructure::config::main_worktree::tests::layout();
+    let base = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        base.path().join("config.json"),
+        r#"{"agents":{"defaults":{"model":"global-model"}}}"#,
+    )
+    .unwrap();
+    let shared = layout.main.join(".quecto").join("config.json");
+    std::fs::create_dir_all(shared.parent().unwrap()).unwrap();
+    std::fs::write(&shared, r#"{"agents":{"defaults":{"model":"main-model"}}}"#).unwrap();
+    let ctx = CliContext {
+        base_dir: Some(base.path().to_path_buf()),
+        cwd: Some(layout.linked.clone()),
+        configuration: Some(crate::composition::configuration::build_configuration_handles),
+        ..Default::default()
+    };
+    let out = run_with_output(args("status"), &ctx);
+    assert_eq!(out.exit_code, 0, "{}", out.stderr);
+    let line = |state: &str| {
+        format!(
+            "Overlay:   {} ({state}, from the main worktree)",
+            shared.display()
+        )
+    };
+    assert!(out.stdout.contains(&line("untrusted")), "{}", out.stdout);
+    assert!(
+        out.stdout.contains("Model:     global-model"),
+        "{}",
+        out.stdout
+    );
+
+    let trust = run_with_output(args("config trust"), &ctx);
+    assert_eq!(trust.exit_code, 0, "{}", trust.stderr);
+    let out = run_with_output(args("status"), &ctx);
+    assert!(out.stdout.contains(&line("trusted")), "{}", out.stdout);
+    assert!(
+        out.stdout.contains("Model:     main-model"),
+        "{}",
+        out.stdout
+    );
+
+    let set = run_with_output(args("config set agents.defaults.model \"x\""), &ctx);
+    assert_ne!(set.exit_code, 0, "{}", set.stdout);
+    assert!(
+        set.stderr.contains("shared with this linked worktree"),
+        "{}",
+        set.stderr
+    );
+    assert!(!layout.linked.join(".quecto").exists(), "nothing is copied");
+}

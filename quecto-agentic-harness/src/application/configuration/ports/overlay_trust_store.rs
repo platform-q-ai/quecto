@@ -4,6 +4,10 @@
 
 use std::path::{Path, PathBuf};
 
+/// Where an offered overlay comes from; re-exported so an adapter names it
+/// through the port.
+pub use crate::application::configuration::dto::OverlayOrigin;
+
 /// The trust decision for one overlay content.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OverlayTrust {
@@ -33,8 +37,10 @@ pub trait OverlayTrustStore: Send + Sync {
     /// Ask the user, when there is one to ask, whether to trust this
     /// content — shown to them, so what they consent to is what the caller
     /// then [`approve`](Self::approve)s; `true` is consent, not a record.
-    /// A non-interactive adapter answers `false`.
-    fn offer(&self, path: &Path, fingerprint: &str, content: &[u8]) -> bool;
+    /// A non-interactive adapter answers `false`. `origin` says whose file
+    /// it is (a linked worktree's question names the main worktree's).
+    fn offer(&self, path: &Path, fingerprint: &str, content: &[u8], origin: &OverlayOrigin)
+    -> bool;
 
     /// Record this exact content at this path as the one trusted content
     /// for the path (an earlier approval of other content is superseded).

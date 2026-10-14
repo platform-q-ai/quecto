@@ -30,6 +30,7 @@ use serde_json::{Map, Value};
 
 use crate::application::configuration::dto::{
     ConfigLayer, ConfigPatch, ConfigPatchError, ConfigPatchReceipt, ConfigSelection, ConfigUnset,
+    OverlayOrigin,
 };
 use crate::application::configuration::overlay_policy::{
     global_only_path, global_only_values, key_segments, policy_entry_id, remove_path, set_path,
@@ -256,10 +257,17 @@ impl PatchConfiguration {
     ) -> Result<PathBuf, ConfigPatchError> {
         match layer {
             ConfigLayer::Global => Ok(selection.path().to_path_buf()),
-            ConfigLayer::Overlay => selection
-                .overlay_path()
-                .map(Path::to_path_buf)
-                .ok_or(ConfigPatchError::NoOverlayLocation),
+            ConfigLayer::Overlay => {
+                let path = selection
+                    .overlay_path()
+                    .map(Path::to_path_buf)
+                    .ok_or(ConfigPatchError::NoOverlayLocation)?;
+                match selection.overlay_origin() {
+                    OverlayOrigin::WorkingDirectory
+                    | OverlayOrigin::MainWorktreeUnresolved { .. } => Ok(path),
+                    OverlayOrigin::MainWorktree => Err(ConfigPatchError::SharedOverlay { path }),
+                }
+            }
         }
     }
 

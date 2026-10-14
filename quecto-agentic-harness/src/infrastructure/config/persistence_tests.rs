@@ -51,11 +51,16 @@ fn a_prompting_adapter_offers_nothing_without_a_terminal_and_records_nothing() {
         trust.decide(&overlay, b"{}"),
         OverlayTrust::Untrusted { .. }
     ));
-    assert!(!trust.offer(&overlay, "abc", b"{}"));
+    assert!(!trust.offer(&overlay, "abc", b"{}", &OverlayOrigin::WorkingDirectory));
     assert!(!trust.record_path().exists());
-    assert!(!prompt_approval(&overlay, "abc", b"{}"));
+    assert!(!prompt_approval(
+        &overlay,
+        "abc",
+        b"{}",
+        &OverlayOrigin::WorkingDirectory
+    ));
     let silent = PersistentOverlayTrustStore::for_base_dir(base.path(), false);
-    assert!(!silent.offer(&overlay, "abc", b"{}"));
+    assert!(!silent.offer(&overlay, "abc", b"{}", &OverlayOrigin::WorkingDirectory));
 }
 
 #[test]
@@ -132,4 +137,21 @@ fn an_unwritable_record_fails_approval_with_the_record_path() {
     let trust = PersistentOverlayTrustStore::for_base_dir(&blocker, false);
     let error = trust.approve(Path::new("/tmp/x.json"), b"{}").unwrap_err();
     assert!(error.contains(TRUST_RECORD_FILE_NAME), "{error}");
+}
+
+/// The question names the file, and — in a linked worktree — that it is
+/// the main worktree's, shared here.
+#[test]
+fn the_prompt_question_says_when_the_overlay_is_the_main_worktrees() {
+    let path = Path::new("/main/.quecto/config.json");
+    let own = prompt_question(path, "abc", b"{}", &OverlayOrigin::WorkingDirectory);
+    assert_eq!(
+        own,
+        "Repo-local config overlay /main/.quecto/config.json (sha256 abc):\n{}\nTrust this overlay? [y/N] "
+    );
+    let shared = prompt_question(path, "abc", b"{}", &OverlayOrigin::MainWorktree);
+    assert_eq!(
+        shared,
+        "Repo-local config overlay /main/.quecto/config.json, from the main worktree (sha256 abc):\n{}\nTrust this overlay? [y/N] "
+    );
 }

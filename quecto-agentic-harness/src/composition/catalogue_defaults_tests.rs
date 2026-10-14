@@ -34,6 +34,7 @@ fn fixture(global_content: &str) -> Fixture {
         global: global.clone(),
         overlay: Some(overlay.clone()),
         legacy_local: None,
+        overlay_origin: Default::default(),
     });
     Fixture {
         trust_record: base.path().join("config-overlay-trust.json"),
