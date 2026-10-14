@@ -5,8 +5,10 @@
 //!   after a change that may complete it, `completion`: `{"done": true,
 //!   "task"}`, `{"done": false, "pending": [prs]}` while some have not
 //!   merged, or `{"done": false, "error"}`), a listing's `head`, `tasks`
-//!   and `quarantined`, `show`'s ([`shown_fields`]), a plan proposed or
-//!   edited as `plan` ([`planned_json`]), or `head` alone; and
+//!   and `quarantined`, `show`'s ([`shown_fields`]), a plan proposed,
+//!   edited or discarded as `plan` ([`planned_json`]), a plan accepted as
+//!   the `task` naming it, the `plan` and the version it `superseded`
+//!   (`null` when none was accepted), or `head` alone; and
 //!   `clock` when a request that reads the clock was not bounded against
 //!   an outside time.
 //! - Refusal: `{"ok": false, "op": …, "error": {"code", "message", …}}`.
@@ -212,6 +214,13 @@ pub fn outcome(op: &str, outcome: &BoardOutcome, clock: Option<String>) -> Value
         }
         BoardOutcome::Planned(plan) => {
             fields.insert("plan".into(), planned_json(plan));
+        }
+        BoardOutcome::Accepted(accepted) => {
+            fields.insert("task".into(), task_json(&accepted.task));
+            fields.insert("plan".into(), planned_json(&accepted.plan));
+            let superseded = accepted.superseded.as_ref();
+            let superseded = superseded.map(|plan| plan.fields().version);
+            fields.insert("superseded".into(), json!(superseded));
         }
     }
     if let Some(why) = clock {

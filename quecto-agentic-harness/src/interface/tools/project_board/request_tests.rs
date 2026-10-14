@@ -151,6 +151,8 @@ fn each_op_reads_its_own_fields() {
             "complete",
             "propose_plan",
             "edit_plan",
+            "accept_plan",
+            "discard_plan",
             "clear_set_aside"
         ],
         "no op is named plain ready; status changes are moves"
@@ -324,6 +326,7 @@ fn samples(kind: Kind) -> (Value, Value, Value) {
             json!("tasks/a.md"),
         ),
         Kind::Version => (json!(1), json!(2), json!(0)),
+        Kind::AcceptedVersion => (json!(1), Value::Null, json!("1")),
         Kind::PlanItems => (
             json!([{"id": "a", "title": "A"}]),
             json!([{"id": "b", "title": "B"}]),
@@ -404,6 +407,7 @@ fn sample(kind: Kind) -> Value {
         Kind::ObjectId => json!("0".repeat(40)),
         Kind::Repeated => json!({}),
         Kind::Version => json!(1),
+        Kind::AcceptedVersion => Value::Null,
         Kind::PlanItems => json!([]),
         Kind::Team => Value::Null,
     }

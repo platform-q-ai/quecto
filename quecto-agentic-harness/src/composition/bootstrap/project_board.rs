@@ -23,8 +23,9 @@ use crate::application::project_board::ports::{
 };
 use crate::application::project_board::telemetry::{BoardRecording, RecordingSwitch};
 use crate::application::project_board::use_cases::{
-    BootstrapProjectBoard, ChangeBoardTask, ClearSetAside, CompleteMergedTask, CreateBoardTask,
-    EditPlan, ProposePlan, QueryBoard, RunBoardOperation, UpdateDraftTask,
+    AcceptPlan, BootstrapProjectBoard, ChangeBoardTask, ClearSetAside, CompleteMergedTask,
+    CreateBoardTask, DiscardPlan, EditPlan, ProposePlan, QueryBoard, RunBoardOperation,
+    UpdateDraftTask,
 };
 use crate::domain::redaction::{redact_secrets, redact_url_userinfo};
 use crate::infrastructure::config::telemetry::globally_enabled;
@@ -119,6 +120,8 @@ fn build_with_warnings(
         change: ChangeBoardTask::new(Arc::clone(&store), Arc::clone(&clock)).map_err(built)?,
         propose_plan: ProposePlan::new(Arc::clone(&store), Arc::clone(&clock)).map_err(built)?,
         edit_plan: EditPlan::new(Arc::clone(&store), Arc::clone(&clock)).map_err(built)?,
+        accept_plan: AcceptPlan::new(Arc::clone(&store), Arc::clone(&clock)).map_err(built)?,
+        discard_plan: DiscardPlan::new(Arc::clone(&store), Arc::clone(&clock)).map_err(built)?,
         clear: ClearSetAside::new(Arc::clone(&store), Arc::clone(&clock)).map_err(built)?,
         complete,
         clock,

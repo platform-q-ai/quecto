@@ -95,7 +95,13 @@ fn a_finished_tasks_plans_are_settled() {
             Err(refused.clone())
         );
         assert_eq!(
-            discard(&finished, &plan(2, PlanState::Draft), &ada, &now),
+            discard(
+                &finished,
+                &plan(2, PlanState::Draft),
+                None,
+                &ada,
+                &when(&now)
+            ),
             Err(refused.clone())
         );
         let versions = [plan(1, PlanState::Accepted), plan(2, PlanState::Draft)];
@@ -340,7 +346,13 @@ fn the_holder_decides_for_a_held_task_and_anyone_for_an_unclaimed_one() {
             "{status:?}: renew first"
         );
         assert_eq!(
-            discard(&held, &versions[1], &person("Bob"), &at("10:00:00")),
+            discard(
+                &held,
+                &versions[1],
+                None,
+                &person("Bob"),
+                &when(&at("10:00:00"))
+            ),
             Err(BoardRuleError::NotHolder)
         );
     }
@@ -370,6 +382,8 @@ fn an_acceptance_waits_for_a_known_unchanged_draft_and_no_run_going() {
     let now = at("10:00:00");
     let versions = [plan(1, PlanState::Accepted), plan(2, PlanState::Draft)];
     let accept_with = |version: u32, expected: Option<&Timestamp>, runs: &[Run]| {
+        let accepted = held.fields().accepted_plan;
+        let expected = expected.map(|updated| AsRead { updated, accepted });
         accept(
             &TaskPlans {
                 task: &held,
@@ -431,8 +445,9 @@ fn a_discarded_draft_is_kept_and_only_a_draft_is_discarded() {
     let discarded = discard(
         &task(Ready),
         &plan(2, PlanState::Draft),
+        None,
         &person("Bob"),
-        &at("10:00:00"),
+        &when(&at("10:00:00")),
     )
     .unwrap();
     assert_eq!(discarded.fields().state, PlanState::Discarded);
@@ -441,7 +456,13 @@ fn a_discarded_draft_is_kept_and_only_a_draft_is_discarded() {
         plan(2, PlanState::Draft).fields().items
     );
     assert_eq!(
-        discard(&task(Ready), &discarded, &person("Bob"), &at("10:00:00")),
+        discard(
+            &task(Ready),
+            &discarded,
+            None,
+            &person("Bob"),
+            &when(&at("10:00:00"))
+        ),
         Err(BoardRuleError::PlanNotDraft(PlanState::Discarded))
     );
 }

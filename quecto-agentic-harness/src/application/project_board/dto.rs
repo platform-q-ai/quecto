@@ -740,7 +740,7 @@ pub use fold_back::{FoldBackFacts, FoldedBack};
 
 #[path = "dto_plans.rs"]
 mod plans;
-pub use plans::{PlanEdit, PlanProposal};
+pub use plans::{PlanAcceptance, PlanDiscard, PlanEdit, PlanProposal};
 
 #[cfg(test)]
 #[path = "dto_tests.rs"]

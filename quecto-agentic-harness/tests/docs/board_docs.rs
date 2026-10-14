@@ -71,6 +71,8 @@ fn full() -> BoardOpRecord {
         plan_version: Some(2),
         items: Some(5),
         roles: Some(2),
+        plan_state_from: Some(StaticKind::new("draft")),
+        plan_state_to: Some(StaticKind::new("accepted")),
         status_from: Some(StaticKind::new("in_progress")),
         status_to: Some(StaticKind::new("review")),
         claim: Some(ClaimFacts {

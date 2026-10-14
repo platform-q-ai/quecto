@@ -361,6 +361,7 @@ board_rules! {
     R::TaskFinished(_) => R::TaskFinished(TaskStatus::Done), "task_finished", ["status"];
     R::UnknownPlanVersion(_) => R::UnknownPlanVersion(3), "unknown_plan_version", ["version"];
     R::PlanChanged { .. } => R::PlanChanged { version: 2, updated: at("10:00:00") }, "plan_changed", ["version", "updated"];
+    R::AcceptedPlanChanged { .. } => R::AcceptedPlanChanged { accepted: Some(3) }, "accepted_plan_changed", ["accepted"];
     R::PlansInconsistent(_) => R::PlansInconsistent("two accepted".into()), "plans_inconsistent", ["reason"];
     R::RunsInconsistent(_) => R::RunsInconsistent("two going".into()), "runs_inconsistent", ["reason"];
     R::PlanNotAccepted(_) => R::PlanNotAccepted(2), "plan_not_accepted", ["version"];

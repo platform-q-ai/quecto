@@ -127,6 +127,9 @@ pub enum Kind {
     Offset,
     /// A plan's version, from 1.
     Version,
+    /// A plan's version, from 1, or `null` for none: the version a task
+    /// was seen naming as accepted (#2481 M4c).
+    AcceptedVersion,
     /// A plan's task items: `[{"id", "title", "criteria", "depends_on"}]`,
     /// as `show` gives them.
     PlanItems,
@@ -237,6 +240,23 @@ pub const OPS: &[(&str, &[Field])] = &[
             optional("approach", Kind::Text),
             optional("items", Kind::PlanItems),
             optional("team", Kind::Team),
+            optional("expected_updated", Kind::Timestamp),
+        ],
+    ),
+    (
+        "accept_plan",
+        &[
+            TASK,
+            required("version", Kind::Version),
+            required("expected_updated", Kind::Timestamp),
+            required("expected_accepted", Kind::AcceptedVersion),
+        ],
+    ),
+    (
+        "discard_plan",
+        &[
+            TASK,
+            required("version", Kind::Version),
             optional("expected_updated", Kind::Timestamp),
         ],
     ),
@@ -465,6 +485,8 @@ fn build(op: &str, read: &Read<'_>) -> Result<BoardRequest, RequestError> {
         "complete" => Ok(BoardRequest::Complete(read.task()?)),
         "propose_plan" => plans::propose_plan(read),
         "edit_plan" => plans::edit_plan(read),
+        "accept_plan" => plans::accept_plan(read),
+        "discard_plan" => plans::discard_plan(read),
         "clear_set_aside" => clear(read),
         other => unreachable!("op {other} is in OPS but not built"),
     }
