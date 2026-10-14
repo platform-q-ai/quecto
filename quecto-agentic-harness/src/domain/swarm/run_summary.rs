@@ -162,6 +162,47 @@ pub struct SwarmRunSummary {
     /// at settle (#2313 review M1); `None` (written `null`) when the board
     /// could not be read then.
     pub run: Option<RunTotals>,
+    /// The project board task the run was started for (#2481 S4d), as its
+    /// goal names it ([`board_task_of`]), redacted as the board's own
+    /// records name a task; left out for a run no board task started.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub board_task: Option<Redacted>,
+}
+
+impl SwarmRunSummary {
+    /// The summary, naming the board task `goal` names, if it names one.
+    #[must_use]
+    pub fn for_goal(mut self, goal: Option<&str>) -> Self {
+        self.board_task = goal.and_then(board_task_of).map(|task| Redacted::new(task));
+        self
+    }
+}
+
+/// The longest board task id: the project board's slug bound.
+const MAX_BOARD_TASK_BYTES: usize = 64;
+
+/// The project board task `goal` names, when it is the goal a board start
+/// briefs its swarm with, `Board task <id>, plan v<n>: <title>` (an id of
+/// 1 to 64 of `a-z`, `0-9` and inner `-`, a version of digits); `None` for
+/// any other goal (an allowlist: a goal the coordinator reworded names
+/// none).
+pub fn board_task_of(goal: &str) -> Option<&str> {
+    let rest = goal.strip_prefix("Board task ")?;
+    let (task, rest) = rest.split_once(", plan v")?;
+    let (version, _title) = rest.split_once(": ")?;
+    let bytes = task.as_bytes();
+    let edge =
+        |byte: Option<&u8>| byte.is_some_and(|b| b.is_ascii_lowercase() || b.is_ascii_digit());
+    let body = bytes
+        .iter()
+        .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || *b == b'-');
+    let id =
+        bytes.len() <= MAX_BOARD_TASK_BYTES && edge(bytes.first()) && edge(bytes.last()) && body;
+    let numbered = !version.is_empty() && version.bytes().all(|b| b.is_ascii_digit());
+    match (id, numbered) {
+        (true, true) => Some(task),
+        _ => None,
+    }
 }
 
 fn is_zero(count: &u64) -> bool {
@@ -437,6 +478,7 @@ impl RunSummaryFold {
             unlisted_ops: self.unlisted_ops,
             unlisted_requests: self.unlisted_requests,
             run,
+            board_task: None,
         }
     }
 }

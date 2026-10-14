@@ -491,3 +491,55 @@ fn an_op_counts_the_name_forms_its_calls_used() {
     );
     assert_eq!(line["ops"]["send"].get("name_forms"), None, "{line}");
 }
+
+/// A run a board start briefed names its board task: exactly the goal the
+/// brief spells (`Board task <id>, plan v<n>: <title>`), never another.
+#[test]
+fn a_board_start_s_goal_names_its_task_and_nothing_else_does() {
+    assert_eq!(
+        board_task_of("Board task demo-hello, plan v1: Say hello"),
+        Some("demo-hello")
+    );
+    assert_eq!(
+        board_task_of("Board task a1, plan v12: x, plan v3: y"),
+        Some("a1")
+    );
+    let longest = "a".repeat(64);
+    assert_eq!(
+        board_task_of(&format!("Board task {longest}, plan v1: t")),
+        Some(longest.as_str())
+    );
+    for goal in [
+        "",
+        "Ship the board",
+        "board task demo, plan v1: t",
+        "Board task Demo, plan v1: t",
+        "Board task -demo, plan v1: t",
+        "Board task demo-, plan v1: t",
+        "Board task de mo, plan v1: t",
+        "Board task , plan v1: t",
+        "Board task demo, plan v: t",
+        "Board task demo, plan vx: t",
+        "Board task demo, plan v1 t",
+        "Board task demo plan v1: t",
+        &format!("Board task {}a, plan v1: t", "a".repeat(64)),
+    ] {
+        assert_eq!(board_task_of(goal), None, "{goal:?}");
+    }
+}
+
+/// The summary names its board task, redacted as the board's records name
+/// a task, only when its run's goal names one; otherwise the field is
+/// left out of its line.
+#[test]
+fn the_summary_names_its_board_task_only_when_the_goal_does() {
+    let named = folded(&[record("claim", Some("claimed"), 10)])
+        .for_goal(Some("Board task demo-hello, plan v1: Say hello"));
+    let line = serde_json::to_value(&named).unwrap();
+    assert_eq!(line["board_task"], json!("demo-hello"));
+    for goal in [None, Some("Ship the board")] {
+        let unnamed = folded(&[record("claim", Some("claimed"), 10)]).for_goal(goal);
+        let line = serde_json::to_value(&unnamed).unwrap();
+        assert!(line.get("board_task").is_none(), "{goal:?}: {line}");
+    }
+}

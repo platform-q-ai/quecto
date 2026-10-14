@@ -5,6 +5,7 @@
 //! of times.
 pub mod dto;
 pub mod fold_back;
+pub mod keeper;
 pub mod operations;
 pub mod ports;
 pub mod start;

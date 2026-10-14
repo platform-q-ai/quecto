@@ -511,6 +511,19 @@ pub trait FoldBackRecorder: Send + Sync {
     fn record(&self, outcome: FoldBackOutcome<'_>);
 }
 
+/// Port: a started run's swarm board (S4d), read by the environment ref
+/// its coordinator runs in, as the session's live board view answers it
+/// (`get_swarm_board`'s projection, a JSON object). Blocking: the run's
+/// keeper reads it from its own thread.
+pub trait StartedSwarm: Send + Sync {
+    /// The projection of the board `environment_ref` hosts.
+    ///
+    /// # Errors
+    /// The board could not be read (no such swarm, one no longer live, one
+    /// hosting no board, or the board's own failure), in words.
+    fn board(&self, environment_ref: &str) -> Result<serde_json::Value, String>;
+}
+
 /// Port: where each board request's `board_op` record goes (epic #2481):
 /// the event log (a session's, or the CLI's daily `board-cli_<date>`
 /// log) and `tracing`. It is held only inside a
