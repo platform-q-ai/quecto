@@ -313,3 +313,86 @@ fn an_id_in_use_names_what_still_uses_it() {
          choose another id"
     );
 }
+
+/// #2481 M4b review round 2: a named plan version is the board's, or
+/// refused: as set aside while its own file is (checked before the plan
+/// is looked up, so even a store that also holds it is refused), as an
+/// unknown file set aside while a kept file in `plans/` that names no key
+/// may hold it, and as unknown otherwise.
+#[test]
+fn a_named_plan_version_is_refused_while_a_file_that_may_hold_it_is_set_aside() {
+    use super::ShownTask;
+    use crate::application::project_board::ports::{BoardHead, QuarantinedFile};
+    use crate::application::project_board::use_cases::fixtures_tests::fields;
+    use crate::domain::project_board::entities::task::Task;
+    use crate::domain::project_board::value_objects::rule_error::BoardRuleError;
+    use crate::infrastructure::test_support::board_artifacts::plan;
+    let file = |path: &str, key: Option<ArtifactKey>| QuarantinedFile {
+        path: path.into(),
+        key,
+        reason: "malformed".into(),
+        object: "0".repeat(40),
+        carried: true,
+    };
+    let shown = |set_aside: Vec<QuarantinedFile>| ShownTask {
+        head: BoardHead("h".into()),
+        task: Task::new(fields("a")).unwrap(),
+        plans: vec![plan("a", 1), plan("a", 2)],
+        runs: vec![],
+        set_aside,
+    };
+    let key = ArtifactKey::Plan(slug("a"), 2);
+    let held_too = shown(vec![file("plans/a.2.md", Some(key.clone()))]);
+    assert_eq!(
+        held_too.version(2),
+        Err(ProjectBoardError::Quarantined {
+            key,
+            path: "plans/a.2.md".into()
+        })
+    );
+    let keyless = shown(vec![file("plans/Not A Slug.md", None)]);
+    assert_eq!(
+        keyless.version(3),
+        Err(ProjectBoardError::SetAsideFile {
+            path: "plans/Not A Slug.md".into(),
+            object: "0".repeat(40)
+        })
+    );
+    assert_eq!(
+        keyless.version(1),
+        Ok(&plan("a", 1)),
+        "a plan read is the board's"
+    );
+    // A keyed file of another version holds none of this one.
+    let other = shown(vec![file(
+        "plans/a.5.md",
+        Some(ArtifactKey::Plan(slug("a"), 5)),
+    )]);
+    assert_eq!(
+        other.version(3),
+        Err(ProjectBoardError::Rule(BoardRuleError::UnknownPlanVersion(
+            3
+        )))
+    );
+    // Of two keyless files, the least by path is named, however ordered.
+    let two = |first: &str, second: &str| shown(vec![file(first, None), file(second, None)]);
+    for keyless in [
+        two("plans/b c.md", "plans/a b.md"),
+        two("plans/a b.md", "plans/b c.md"),
+    ] {
+        assert_eq!(
+            keyless.version(3),
+            Err(ProjectBoardError::SetAsideFile {
+                path: "plans/a b.md".into(),
+                object: "0".repeat(40)
+            })
+        );
+    }
+    let clear = shown(vec![file("runs/x.md", None)]);
+    assert_eq!(
+        clear.version(3),
+        Err(ProjectBoardError::Rule(BoardRuleError::UnknownPlanVersion(
+            3
+        )))
+    );
+}

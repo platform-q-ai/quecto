@@ -698,7 +698,7 @@ fn plan_text_is_taken_only_once_normalised() {
         );
         for refused in [proposed, edited] {
             match refused {
-                Err(BoardRuleError::Invalid(error)) => assert_eq!(error.field, field),
+                Err(BoardRuleError::InvalidPlan(error)) => assert_eq!(error.field, field),
                 other => panic!("{field}: {other:?}"),
             }
         }

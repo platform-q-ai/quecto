@@ -395,6 +395,7 @@ board_rules! {
     R::ChangesInconsistent(_) => R::ChangesInconsistent("number 1 twice".into()), "changes_inconsistent", ["reason"];
     R::PlanAhead { .. } => R::PlanAhead { version: 2, updated: at("10:00:00") }, "plan_ahead", ["version", "updated"];
     R::Invalid(_) => R::Invalid(SchemaError::new("title", "is empty")), "invalid", ["field", "problem"];
+    R::InvalidPlan(_) => R::InvalidPlan(SchemaError::new("items/0/title", "is empty")), "invalid_plan", ["field", "problem"];
 }
 
 #[test]
