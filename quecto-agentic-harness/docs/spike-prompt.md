@@ -2,6 +2,8 @@ Goal: Spike for task <TASK>: attempt a working end-to-end implementation quickly
 
 Start from the truth: if task <TASK> has a Challenge report (the brief gives it), its "What is actually left" paragraph and its traps are your brief — the task's description may be stale. If it has none, check the task's description against the code for a few minutes first.
 
+If task <TASK> has an accepted plan on the project board, the brief gives it too: check its approach and task items against the code as you would the description.
+
 How to spike:
 - Build the whole thing end to end, the crude way. Follow the compiler and the running behaviour, not a plan. Fix whatever breaks only as far as you need to keep going.
 - Crude in polish, never in structure. Respect the project's architecture: Clean Architecture (code lives in the layer it belongs to, dependencies point inward, boundaries are crossed only through their ports) and SOLID. A spike built in the wrong place tells you nothing about where the real work lands or how it cuts. If doing it properly needs a new port, type or seam, create it roughly — that need IS a finding. If the architecture makes the change awkward, do not cut across it: record the friction.

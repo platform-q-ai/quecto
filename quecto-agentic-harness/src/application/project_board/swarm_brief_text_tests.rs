@@ -257,3 +257,36 @@ fn the_other_invisible_code_points_are_escaped() {
     let (_, data) = fenced(&text);
     assert_eq!(data["items"][0]["acceptance"][0], json!(titled));
 }
+
+/// The coordinator playbook knows a board brief as the renderer writes it
+/// (#2481 Q11): its opening words, its fences, and every field of the run
+/// and of an item it says to seed exactly as given.
+#[test]
+fn the_coordinator_playbook_names_the_briefs_shape() {
+    let playbook = include_str!("../../../../COORDINATOR_PLAYBOOK.md");
+    let text = render(&brief(vec![item("store", &["it stores"], &[])]));
+    let opening = "You coordinate the swarm for board task";
+    assert!(text.starts_with(opening) && playbook.contains(&format!("\"{opening}\"")));
+    let (lines, data) = fenced(&text);
+    for edge in ["BEGIN", "END"] {
+        let fence = format!("=== {edge} PLAN DATA ");
+        assert!(lines.iter().any(|line| line.starts_with(&fence)), "{edge}");
+        assert!(playbook.contains(&format!("`{fence}n ===`")), "{edge}");
+    }
+    let start = playbook
+        .find("### Board task briefs")
+        .expect("the board brief section");
+    let end = playbook[start + 1..]
+        .find("\n### ")
+        .map_or(playbook.len(), |next| start + 1 + next);
+    let section = &playbook[start..end];
+    let fields = data["run"]
+        .as_object()
+        .unwrap()
+        .keys()
+        .chain(data["items"][0].as_object().unwrap().keys())
+        .filter(|field| field.as_str() != "id");
+    for field in fields {
+        assert!(section.contains(field.as_str()), "{field}");
+    }
+}
