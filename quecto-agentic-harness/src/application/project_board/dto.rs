@@ -629,6 +629,14 @@ pub enum ProjectBoardError {
     /// This session may not spawn, so it has no launcher: nothing is
     /// started (S4c).
     NoLauncher,
+    /// Run `run` of task `task` still has its swarm running in this
+    /// session, its coordinator `agent`, so it is not ended by hand: the
+    /// coordinator is stopped first (S4c).
+    RunLive {
+        task: Slug,
+        run: u32,
+        agent: String,
+    },
     /// The task's accepted plan cannot brief a swarm (`code`, the brief's
     /// refusal code, and `reason`, its words): nothing is started.
     Brief {
@@ -688,7 +696,7 @@ mod plans;
 #[path = "dto_start.rs"]
 mod start;
 pub use plans::{PlanAcceptance, PlanDiscard, PlanEdit, PlanProposal};
-pub use start::TaskStart;
+pub use start::{EndedRun, LivenessCheck, RunEnd, RunEndOutcome, TaskStart};
 
 #[cfg(test)]
 #[path = "dto_tests.rs"]

@@ -153,6 +153,7 @@ fn each_op_reads_its_own_fields() {
             "edit_plan",
             "accept_plan",
             "discard_plan",
+            "end_run",
             "clear_set_aside"
         ],
         "no op is named plain ready; status changes are moves"
@@ -327,6 +328,8 @@ fn samples(kind: Kind) -> (Value, Value, Value) {
         ),
         Kind::Version => (json!(1), json!(2), json!(0)),
         Kind::AcceptedVersion => (json!(1), Value::Null, json!("1")),
+        Kind::Run => (json!(1), json!(2), json!(0)),
+        Kind::RunEnd => (json!("failed"), json!("lost"), json!("completed")),
         Kind::PlanItems => (
             json!([{"id": "a", "title": "A"}]),
             json!([{"id": "b", "title": "B"}]),
@@ -408,6 +411,8 @@ fn sample(kind: Kind) -> Value {
         Kind::Repeated => json!({}),
         Kind::Version => json!(1),
         Kind::AcceptedVersion => Value::Null,
+        Kind::Run => json!(1),
+        Kind::RunEnd => json!("failed"),
         Kind::PlanItems => json!([]),
         Kind::Team => Value::Null,
     }
@@ -540,5 +545,49 @@ fn a_schema_field_is_one_the_table_spells() {
         ("ok", "other"),
     ] {
         assert_eq!(schema_field(field).as_str(), want, "{field:?}");
+    }
+}
+
+/// S4c: end_run reads its run, its outcome (an allowlist) and its
+/// optional pin; a run out of range or an outcome off the list is refused.
+#[test]
+fn end_run_reads_its_run_outcome_and_pin() {
+    use crate::application::project_board::dto::{RunEnd, RunEndOutcome};
+    let at = Timestamp::parse("2026-10-10T09:00:00Z").unwrap();
+    assert_eq!(
+        parse(
+            &json!({"op": "end_run", "task": "a", "run": 2, "outcome": "stopped",
+                      "expected_updated": "2026-10-10T09:00:00Z"})
+        ),
+        Ok(BoardRequest::EndRun(RunEnd {
+            task: slug("a"),
+            run: 2,
+            outcome: RunEndOutcome::Stopped,
+            expected_updated: Some(at),
+        }))
+    );
+    for (value, field, problem) in [
+        (
+            json!({"op": "end_run", "task": "a", "run": 1, "outcome": "completed"}),
+            "outcome",
+            "must be one of succeeded, stopped, failed, lost",
+        ),
+        (
+            json!({"op": "end_run", "task": "a", "run": 0, "outcome": "lost"}),
+            "run",
+            "must be a run number from 1 to 999",
+        ),
+        (
+            json!({"op": "end_run", "task": "a", "run": 1000, "outcome": "lost"}),
+            "run",
+            "must be a run number from 1 to 999",
+        ),
+    ] {
+        let error = refused(value.clone());
+        assert_eq!(
+            (error.field.as_str(), error.problem.as_str()),
+            (field, problem),
+            "{value}"
+        );
     }
 }

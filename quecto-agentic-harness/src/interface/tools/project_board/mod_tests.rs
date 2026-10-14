@@ -192,6 +192,14 @@ fn a_command_line_reaches_the_same_request_as_the_tools_json() {
     assert_eq!(accept(""), pinned(Value::Null));
     assert_eq!(accept("null"), pinned(Value::Null));
     assert_eq!(accept("3"), pinned(json!(3)));
+    // A run ended by hand (S4c): its run a number, its outcome a word.
+    assert_eq!(
+        line(
+            "end-run",
+            &["--task", "a", "--run", "2", "--outcome", "failed"]
+        ),
+        Ok(json!({"op": "end_run", "task": "a", "run": 2, "outcome": "failed"}))
+    );
     let pr_word = line("link-pr", &["--task", "a", "--pr", "twelve"]).unwrap();
     assert_eq!(
         request::parse(&pr_word).unwrap_err().field,

@@ -19,7 +19,7 @@ use crate::infrastructure::persistence::project_board::text_cells::MarkdownTextC
 use crate::infrastructure::test_support::memory_board_store::MemoryBoardStore;
 
 /// A launcher that fails, its run having been folded back meanwhile by
-/// another writer (the swarm's keeper, say) as stopped.
+/// another writer (its holder, say) as stopped.
 struct EndedMeanwhile(MemoryBoardStore);
 
 impl CoordinatorLaunch for EndedMeanwhile {

@@ -576,6 +576,17 @@ impl LaunchRefused {
     }
 }
 
+/// Port: whether a run's swarm is still running, as far as this front end
+/// can tell (S4c): a subagent of this session with the run's label still
+/// runs. A front end that launches none (the CLI) has none, and a
+/// coordinator another session launched is not seen: `end_run` from there
+/// relies on its caller to have stopped it.
+pub trait RunLiveness: Send + Sync {
+    /// The agent id of the coordinator of run `run` of `task` still
+    /// running here, if one is: what `agent_cmd kill` stops.
+    fn running_coordinator(&self, task: &Slug, run: u32) -> Option<String>;
+}
+
 /// Port: launches a started task's swarm coordinator in a new container
 /// (S4c). Its adapter goes through the session's own spawn path, so it
 /// launches only what the session itself could spawn, and only while its

@@ -10,13 +10,13 @@ use std::sync::Arc;
 
 pub use super::dto::NoPullRequestHost;
 use super::dto::{
-    BoardListing, BoardOp, DraftUpdate, NewBoardTask, PlanAcceptance, PlanDiscard, PlanEdit,
-    PlanProposal, ProjectBoardError, ShownTask,
+    BoardListing, BoardOp, DraftUpdate, EndedRun, NewBoardTask, PlanAcceptance, PlanDiscard,
+    PlanEdit, PlanProposal, ProjectBoardError, RunEnd, ShownTask,
 };
 use super::ports::{BoardClock, BoardHead, BoardListings, KeepCopy};
 use super::use_cases::{
     AcceptPlan, BootstrapProjectBoard, ChangeBoardTask, ClearSetAside, CompleteMergedTask,
-    CreateBoardTask, DiscardPlan, EditPlan, ProposePlan, QueryBoard, UpdateDraftTask,
+    CreateBoardTask, DiscardPlan, EditPlan, EndRun, ProposePlan, QueryBoard, UpdateDraftTask,
 };
 use crate::domain::project_board::entities::plan::Plan;
 use crate::domain::project_board::entities::task::Task;
@@ -61,6 +61,8 @@ pub enum BoardRequest {
     AcceptPlan(PlanAcceptance),
     /// A draft plan discarded; it is kept.
     DiscardPlan(PlanDiscard),
+    /// A run ended by hand (S4c), for a run no swarm will fold back.
+    EndRun(RunEnd),
     /// Clear the file set aside at `path` whose contents are `object`,
     /// resolving every name listed more than once (`repeated`).
     Clear {
@@ -84,6 +86,7 @@ impl BoardRequest {
             | Self::EditPlan(_)
             | Self::AcceptPlan(_)
             | Self::DiscardPlan(_)
+            | Self::EndRun(_)
             | Self::Clear { .. } => true,
             Self::List(_) | Self::ListReady | Self::ListTakeable | Self::Show(..) => false,
         }
@@ -102,6 +105,7 @@ impl BoardRequest {
             | Self::EditPlan(_)
             | Self::AcceptPlan(_)
             | Self::DiscardPlan(_)
+            | Self::EndRun(_)
             | Self::ListTakeable => true,
             Self::Bootstrap
             | Self::Clear { .. }
@@ -191,6 +195,8 @@ pub enum BoardOutcome {
     /// accepted, and the version it superseded, if one was accepted
     /// (boxed: three artifacts).
     Accepted(Box<Accepted>),
+    /// A run ended by hand, as written (S4c).
+    RunEnded(EndedRun),
 }
 
 /// The use cases and ports one run of [`RunBoardOperation`] is made of,
@@ -212,6 +218,7 @@ pub struct BoardOperationParts {
     pub edit_plan: EditPlan,
     pub accept_plan: AcceptPlan,
     pub discard_plan: DiscardPlan,
+    pub end_run: EndRun,
     pub clear: ClearSetAside,
     pub complete: Result<CompleteMergedTask, NoPullRequestHost>,
 }

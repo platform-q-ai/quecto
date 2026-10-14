@@ -543,5 +543,8 @@ fn an_undo_that_cannot_fold_back_says_so_and_keeps_the_claim() {
 #[path = "start_board_task_cancel_tests.rs"]
 mod cancel;
 
+#[path = "start_board_task_stuck_tests.rs"]
+mod stuck;
+
 #[path = "start_board_task_undo_tests.rs"]
 mod undo;

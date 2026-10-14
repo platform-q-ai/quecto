@@ -86,6 +86,8 @@ impl BoardCall {
                 roles: None,
                 plan_state_from: None,
                 plan_state_to: None,
+                run: None,
+                run_outcome: None,
                 status_from: None,
                 status_to: None,
                 claim: None,
@@ -206,7 +208,8 @@ impl BoardCall {
                 BoardOutcome::Listing(listing) => Some(&listing.head),
                 BoardOutcome::Changed { .. }
                 | BoardOutcome::Planned(_)
-                | BoardOutcome::Accepted(_) => None,
+                | BoardOutcome::Accepted(_)
+                | BoardOutcome::RunEnded(_) => None,
             };
             record.outcome = OpOutcome::Ok;
             record.head = head.and_then(|head| CommitId::parse(&head.0).ok());
@@ -351,6 +354,7 @@ pub(super) fn refusal_parts(
         | E::NoPullRequestHost(_)
         | E::Stale { .. }
         | E::NoLauncher
+        | E::RunLive { .. }
         | E::LaunchFailed { .. } => (None, None),
     }
 }
