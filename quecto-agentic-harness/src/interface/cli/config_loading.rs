@@ -62,15 +62,23 @@ pub(crate) fn layer_diagnostics(sources: &ConfigSources) -> Vec<String> {
     sources.diagnostics()
 }
 
-/// The `Overlay:` line of `quecto status`.
+/// The `Overlay:` line of `quecto status`; an overlay shared from a linked
+/// worktree's main worktree says so after its trust state.
 pub(crate) fn overlay_summary(sources: &ConfigSources) -> String {
     match &sources.overlay {
-        Some(report) => match &report.state {
-            OverlayState::Applied => format!("{} (trusted)", report.path.display()),
-            OverlayState::Untrusted { .. } => format!("{} (untrusted)", report.path.display()),
-            OverlayState::Refused { .. } => format!("{} (refused)", report.path.display()),
-            OverlayState::Absent => "none".to_string(),
-        },
+        Some(report) => {
+            let shared = match report.origin.is_shared() {
+                true => ", from the main worktree",
+                false => "",
+            };
+            let path = report.path.display();
+            match &report.state {
+                OverlayState::Applied => format!("{path} (trusted{shared})"),
+                OverlayState::Untrusted { .. } => format!("{path} (untrusted{shared})"),
+                OverlayState::Refused { .. } => format!("{path} (refused{shared})"),
+                OverlayState::Absent => "none".to_string(),
+            }
+        }
         None if sources.explicit => "none (--config replaces both layers)".to_string(),
         None => "none".to_string(),
     }

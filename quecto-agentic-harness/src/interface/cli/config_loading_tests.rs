@@ -1,5 +1,5 @@
 use super::*;
-use crate::application::configuration::dto::OverlayReport;
+use crate::application::configuration::dto::{OverlayOrigin, OverlayReport};
 use std::path::PathBuf;
 
 fn sources(overlay: Option<OverlayState>, legacy: bool) -> ConfigSources {
@@ -9,6 +9,7 @@ fn sources(overlay: Option<OverlayState>, legacy: bool) -> ConfigSources {
         overlay: overlay.map(|state| OverlayReport {
             path: PathBuf::from("/work/.quecto/config.json"),
             state,
+            origin: Default::default(),
         }),
         legacy_local: legacy.then(|| PathBuf::from("/work/config.json")),
     }
@@ -124,4 +125,61 @@ fn loading_reports_a_missing_explicit_file_by_path() {
     .err()
     .unwrap();
     assert_eq!(error, "config not found: /nowhere/config.json");
+}
+
+fn with_origin(state: OverlayState, origin: OverlayOrigin) -> ConfigSources {
+    let mut sources = sources(Some(state), false);
+    sources.overlay.as_mut().unwrap().origin = origin;
+    sources
+}
+
+#[test]
+fn the_overlay_summary_says_a_shared_overlay_comes_from_the_main_worktree() {
+    let shared = |state| overlay_summary(&with_origin(state, OverlayOrigin::MainWorktree));
+    assert_eq!(
+        shared(OverlayState::Applied),
+        "/work/.quecto/config.json (trusted, from the main worktree)"
+    );
+    assert_eq!(
+        shared(OverlayState::Untrusted {
+            fingerprint: "abc".into(),
+            problem: None,
+            sections: Vec::new(),
+        }),
+        "/work/.quecto/config.json (untrusted, from the main worktree)"
+    );
+    assert_eq!(
+        shared(OverlayState::Refused {
+            reason: "link".into()
+        }),
+        "/work/.quecto/config.json (refused, from the main worktree)"
+    );
+    assert_eq!(shared(OverlayState::Absent), "none");
+}
+
+#[test]
+fn an_unresolved_main_worktree_is_a_diagnostic_naming_why_and_the_own_location() {
+    let unresolved = OverlayOrigin::MainWorktreeUnresolved {
+        reason: "gitdir: /gone".into(),
+    };
+    let sources = with_origin(OverlayState::Absent, unresolved.clone());
+    assert_eq!(overlay_summary(&sources), "none");
+    let lines = layer_diagnostics(&sources);
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    assert!(lines[0].contains("linked git worktree") && lines[0].contains("gitdir: /gone"));
+    assert!(
+        lines[0].contains("/work/.quecto/config.json"),
+        "{}",
+        lines[0]
+    );
+    // With the own overlay untrusted, both lines are said.
+    let untrusted = OverlayState::Untrusted {
+        fingerprint: "abc".into(),
+        problem: None,
+        sections: Vec::new(),
+    };
+    assert_eq!(
+        layer_diagnostics(&with_origin(untrusted, unresolved)).len(),
+        2
+    );
 }

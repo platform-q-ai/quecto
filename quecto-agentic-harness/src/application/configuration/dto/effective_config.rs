@@ -3,6 +3,8 @@
 
 use std::path::PathBuf;
 
+use super::config_selection::OverlayOrigin;
+
 /// The merged document plus where each part came from.
 #[derive(Debug, Clone, PartialEq)]
 pub struct EffectiveConfig {
@@ -44,6 +46,9 @@ impl ConfigSources {
 pub struct OverlayReport {
     pub path: PathBuf,
     pub state: OverlayState,
+    /// Where the selection found `path` (the working directory's own, or
+    /// shared from a linked worktree's main worktree).
+    pub origin: OverlayOrigin,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -196,6 +201,17 @@ impl ConfigSources {
                 path.display()
             )),
             Some((_, OverlayState::Applied | OverlayState::Absent)) | None => {}
+        }
+        if let Some(OverlayReport {
+            path,
+            origin: OverlayOrigin::MainWorktreeUnresolved { reason },
+            ..
+        }) = &self.overlay
+        {
+            lines.push(format!(
+                "this directory looks like a linked git worktree, but its main worktree could not be resolved ({reason}); the main worktree's repo-local config overlay is not shared, and only {} is considered",
+                path.display()
+            ));
         }
         if let Some(legacy) = &self.legacy_local {
             lines.push(format!(

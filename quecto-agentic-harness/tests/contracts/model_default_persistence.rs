@@ -46,6 +46,7 @@ pub(crate) fn writer(layers: &Layers) -> ConfigDefaultsWriter {
             global: layers.global.clone(),
             overlay: Some(layers.overlay.clone()),
             legacy_local: Some(layers.cwd.path().join("config.json")),
+            overlay_origin: Default::default(),
         }),
     )
 }

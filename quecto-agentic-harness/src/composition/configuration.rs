@@ -15,6 +15,7 @@ use crate::application::configuration::use_cases::{
     PatchConfiguration, ReadConfiguration, ResolveEffectiveConfig, SelectConfig, TrustConfigOverlay,
 };
 use crate::infrastructure::config::loaders::FilesystemConfigDocumentStore;
+use crate::infrastructure::config::main_worktree::GitMetadataWorktreeLocator;
 use crate::infrastructure::config::mapping::{
     ConfigValidatorAdapter, realize_config, realize_inherited_child_config,
 };
@@ -42,7 +43,10 @@ pub fn build_configuration_handles(env: &ConfigurationEnvironment) -> Configurat
         trust.clone(),
     ));
     ConfigurationHandles {
-        select: Arc::new(SelectConfig::new()),
+        select: Arc::new(SelectConfig::new(
+            store.clone(),
+            Arc::new(GitMetadataWorktreeLocator),
+        )),
         read: Arc::new(ReadConfiguration::new(store.clone(), resolve.clone())),
         patch: Arc::new(PatchConfiguration::new(
             store.clone(),
@@ -131,3 +135,7 @@ pub fn watched_config_sources(base_dir: &Path, selection: &ConfigSelection) -> V
 #[cfg(test)]
 #[path = "configuration_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "configuration_worktree_tests.rs"]
+mod worktree_tests;

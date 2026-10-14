@@ -21,7 +21,7 @@ use serde_json::{Map, Value};
 use crate::application::configuration::dto::removed_keys::{RemovedKeysIn, Repair};
 use crate::application::configuration::dto::{
     ConfigLayer, ConfigSelection, ConfigSources, EffectiveConfig, EffectiveConfigError,
-    OverlayReport, OverlayState,
+    OverlayOrigin, OverlayReport, OverlayState,
 };
 use crate::application::configuration::overlay_policy::{
     global_only_key, looks_like_config, merge_overlay,
@@ -229,11 +229,14 @@ impl ResolveEffectiveConfig {
                                 Some(OverlayReport {
                                     path: path.clone(),
                                     state: OverlayState::Applied,
+                                    origin: layers.overlay_origin.clone(),
                                 }),
                                 Some(overlay),
                             )
                         }
-                        (Some(path), None) => self.apply_overlay(global, path, check)?,
+                        (Some(path), None) => {
+                            self.apply_overlay(global, path, &layers.overlay_origin, check)?
+                        }
                         (None, _) => (global, None, None),
                     };
                 match overlay
@@ -279,12 +282,14 @@ impl ResolveEffectiveConfig {
         &self,
         global: Map<String, Value>,
         path: &Path,
+        origin: &OverlayOrigin,
         check: Check,
     ) -> Result<OverlaidDocument, EffectiveConfigError> {
         let report = |state| {
             Some(OverlayReport {
                 path: path.to_path_buf(),
                 state,
+                origin: origin.clone(),
             })
         };
         // The store's refusal comes before any trust decision: a link's

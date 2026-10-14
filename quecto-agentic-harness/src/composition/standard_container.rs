@@ -57,6 +57,9 @@ impl ContainerConfigPersistence for OverlayContainerConfigWriter {
         let Some(path) = self.selection.overlay_path().map(Path::to_path_buf) else {
             return Err(ConfigPatchError::NoOverlayLocation.to_string());
         };
+        if self.selection.overlay_origin().is_shared() {
+            return Err(ConfigPatchError::SharedOverlay { path }.to_string());
+        }
         let effective = self
             .resolve
             .execute(&self.selection)
