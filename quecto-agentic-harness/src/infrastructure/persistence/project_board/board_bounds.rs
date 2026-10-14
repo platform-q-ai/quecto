@@ -11,6 +11,18 @@ use crate::domain::project_board::entities::task::Task;
 use crate::domain::project_board::value_objects::slug::Slug;
 use std::collections::{BTreeMap, BTreeSet};
 
+/// What a clear keeps of the names listed twice it resolves.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ClearKeeps {
+    /// No copy: it only takes files away.
+    Nothing,
+    /// A copy of each of these paths, at least one.
+    Copies(Vec<String>),
+}
+
+/// The most kept paths a refusal names before it says how many more.
+const SHOWN_PATHS: usize = 8;
+
 /// A board of `entries` in all its folders, and `bytes` of files to read,
 /// keeps within what a read takes: [`MAX_BOARD_ENTRIES`] and
 /// `limits.board_bytes`. A read checks it before it reads any file's bytes.
@@ -58,7 +70,9 @@ impl Board {
     /// still be cleared, file by file, back within it. A copy a clear keeps
     /// of a name listed twice is read again, so its bytes count: keeping
     /// one may take a folder, `tasks/` or the board past what a read takes
-    /// (S10b), and such a clear is invalid, naming the way out.
+    /// (S10b), and such a clear is invalid, naming the copies it keeps and
+    /// the ways out. A clear never grows an entry count, kept copies or
+    /// not: each takes the place of two or more.
     ///
     /// # Errors
     /// An invalid clear past any bound.
@@ -67,18 +81,31 @@ impl Board {
         before: &Board,
         folders: &BTreeMap<&'static str, FolderAfter<'_>>,
         limits: Limits,
+        keeps: &ClearKeeps,
     ) -> Result<(), BoardStoreError> {
         let cap = MAX_TASK_ENTRIES.max(before.entries(&[]));
-        let kept = |error: BoardStoreError| match error {
-            BoardStoreError::InvalidWrite(why) => BoardStoreError::InvalidWrite(format!(
-                "{why}; the copy this clear keeps takes it there, so drop that name's copies \
-                 instead"
-            )),
-            other => other,
+        let told = |error: BoardStoreError| match (keeps, error) {
+            (ClearKeeps::Copies(paths), BoardStoreError::InvalidWrite(why)) => {
+                let shown: Vec<&str> = paths.iter().take(SHOWN_PATHS).map(String::as_str).collect();
+                let more = match paths.len().saturating_sub(SHOWN_PATHS) {
+                    0 => String::new(),
+                    more => format!(" and {more} more"),
+                };
+                let copies = match paths.len() {
+                    1 => "copy",
+                    _ => "copies",
+                };
+                BoardStoreError::InvalidWrite(format!(
+                    "{why}, once this clear keeps its {copies} of {}{more}: keep a smaller copy, \
+                     or drop every copy instead",
+                    shown.join(", ")
+                ))
+            }
+            (ClearKeeps::Copies(_) | ClearKeeps::Nothing, other) => other,
         };
-        folders_within(folders).map_err(kept)?;
-        self.entries_within(&[], cap, folders).map_err(kept)?;
-        self.bytes_within(&[], limits, folders).map_err(kept)
+        folders_within(folders).map_err(told)?;
+        self.entries_within(&[], cap, folders)?;
+        self.bytes_within(&[], limits, folders).map_err(told)
     }
 
     /// The entries of the `tasks/` tree with `written` in place. A file a

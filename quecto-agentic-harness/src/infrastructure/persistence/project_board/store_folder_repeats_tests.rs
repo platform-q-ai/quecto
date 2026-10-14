@@ -214,7 +214,7 @@ fn a_clear_keeping_a_copy_past_its_folders_bytes_is_invalid() {
     let clear = resolving("plans/c.1.md", &bad, &[("plans/c.1.md", keep)]);
     let past = bob.clear_set_aside(&head, &clear, "board: keep c 1");
     assert!(
-        matches!(&past, Err(BoardStoreError::InvalidWrite(why)) if why.contains("bytes of plan files") && why.ends_with("so drop that name's copies instead")),
+        matches!(&past, Err(BoardStoreError::InvalidWrite(why)) if why.contains("bytes of plan files") && why.ends_with(", once this clear keeps its copy of plans/c.1.md: keep a smaller copy, or drop every copy instead")),
         "{past:?}"
     );
     let clear = resolving(
@@ -224,4 +224,63 @@ fn a_clear_keeping_a_copy_past_its_folders_bytes_is_invalid() {
     );
     let cleared = written(bob.clear_set_aside(&head, &clear, "board: drop c 1"));
     assert_eq!(names(&remote, &cleared, "plans").len(), 16);
+}
+
+/// A kept copy a read reads counts towards the board's bytes in all: one
+/// that takes the board past them is invalid, naming it. A kept copy whose
+/// name spells no key is never read, so it counts nothing.
+#[test]
+fn only_a_kept_copy_a_read_reads_counts_towards_the_boards_bytes() {
+    let repos = fresh();
+    let one = bytes::<PlanCodec>(&plan("a", 1));
+    let notes = vec![b'n'; 4096];
+    let head = board_of(&repos, |_| {
+        let mut files = vec![regular("a.1.md", one.clone())];
+        files.extend([
+            regular("c.1.md", one.clone()),
+            regular("c.1.md", b"{".to_vec()),
+            regular("notes.md", notes.clone()),
+            regular("notes.md", b"{".to_vec()),
+        ]);
+        vec![
+            ("40000", "tasks", Node::Tree(vec![])),
+            ("40000", "plans", Node::Tree(files)),
+        ]
+    });
+    let remote = repos.remote();
+    let bad = blob_in(&repos.bob, b"{");
+    let (plan_copy, note_copy) = (
+        at(&remote, &head, "plans/a.1.md"),
+        blob_in(&repos.bob, &notes),
+    );
+    let mut bob = store(&repos.bob);
+    bob.limits.board_bytes = one.len() + 10;
+    let pair = |good: &str| seen(&[good, bad.as_str()]);
+    let keep = |good: &str| KeepCopy::Object {
+        keep: good.to_string(),
+        seen: pair(good),
+    };
+    let keeping_the_plan = resolving(
+        "plans/c.1.md",
+        &bad,
+        &[
+            ("plans/c.1.md", keep(&plan_copy)),
+            ("plans/notes.md", KeepCopy::Drop(pair(&note_copy))),
+        ],
+    );
+    let past = bob.clear_set_aside(&head, &keeping_the_plan, "board: keep c 1");
+    assert!(
+        matches!(&past, Err(BoardStoreError::InvalidWrite(why)) if why.starts_with("the board would hold") && why.ends_with(", once this clear keeps its copy of plans/c.1.md: keep a smaller copy, or drop every copy instead")),
+        "{past:?}"
+    );
+    let keeping_the_notes = resolving(
+        "plans/c.1.md",
+        &bad,
+        &[
+            ("plans/c.1.md", KeepCopy::Drop(pair(&plan_copy))),
+            ("plans/notes.md", keep(&note_copy)),
+        ],
+    );
+    let cleared = written(bob.clear_set_aside(&head, &keeping_the_notes, "board: keep notes"));
+    assert_eq!(names(&remote, &cleared, "plans"), ["a.1.md", "notes.md"]);
 }

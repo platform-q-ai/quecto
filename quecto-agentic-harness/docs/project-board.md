@@ -29,7 +29,11 @@ only by a clear, which names, for every such name on the board, the copy to keep
 that none is; quecto never picks a copy. While one is listed in `tasks/`, every
 write is refused. While one is listed in another folder, a write into that folder
 is refused, and any other write carries the folder as the tree it was, so no write
-makes a tree holding a name twice.
+makes a tree holding a name twice. A clear that keeps a copy is refused when the
+copy would take a folder or the board past what a read takes: keep a smaller copy,
+or drop every copy. A clear resolving thousands of names, near its caps (8,192
+names, 16,384 copies), may not fit in one 1 MiB tool request; the refusal's other
+way out, moving `quecto/board` back to the commit before the hand edit, covers it.
 
 Listings are unavailable (`folder_set_aside`) while a file set aside outside
 `tasks/` names a plan, run, change, review or discussion, since the index holds
