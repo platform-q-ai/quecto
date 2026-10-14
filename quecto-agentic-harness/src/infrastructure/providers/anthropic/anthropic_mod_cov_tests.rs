@@ -340,7 +340,7 @@ async fn chat_stream_incremental_cancelled_emits_error_event() {
 }
 
 #[tokio::test]
-async fn chat_http_error_includes_retry_after() {
+async fn chat_http_error_drops_raw_retry_after() {
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -362,8 +362,11 @@ async fn chat_http_error_includes_retry_after() {
         .await
         .unwrap_err();
     let text = err.to_string();
-    assert!(text.contains("HTTP 529 from Anthropic: busy"), "{text}");
-    assert!(text.contains("retry-after: 3"), "{text}");
+    assert!(
+        text.contains("HTTP 529 from Anthropic: class=server; refusal=none"),
+        "{text}"
+    );
+    assert!(!text.contains("retry-after"), "{text}");
 }
 
 #[tokio::test]

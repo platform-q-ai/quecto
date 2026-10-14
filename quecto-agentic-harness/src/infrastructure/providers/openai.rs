@@ -251,13 +251,11 @@ impl OpenAiProvider {
         }
         let status = response.status().as_u16();
         if status != 200 {
-            let retry_after = super::sse_common::retry_after_suffix(response.headers());
-            let read = self.stream_idle.text(response).await;
+            let read = super::provider_diagnostics::read(response, self.stream_idle).await;
             attempt.iter().for_each(|a| a.error_read(status, &read));
             let text = super::stream_idle::error_text(read);
-            return Err(DomainError::Provider(format!(
-                "HTTP {} from OpenAI: {}{}",
-                status, text, retry_after
+            return Err(DomainError::Provider(super::provider_diagnostics::http(
+                status, "OpenAI", &text,
             )));
         }
 
@@ -343,13 +341,12 @@ impl OpenAiProvider {
         }
         let status = response.status().as_u16();
         if status != 200 {
-            let retry_after = super::sse_common::retry_after_suffix(response.headers());
-            let read = self.stream_idle.text(response).await;
+            let read = super::provider_diagnostics::read(response, self.stream_idle).await;
             attempt.iter().for_each(|a| a.error_read(status, &read));
-            let text = super::sse_common::truncate_error_body(super::stream_idle::error_text(read));
+            let text = super::stream_idle::error_text(read);
             let _ = tx
-                .send(StreamEvent::Error(format!(
-                    "HTTP {status} from OpenAI: {text}{retry_after}"
+                .send(StreamEvent::Error(super::provider_diagnostics::http(
+                    status, "OpenAI", &text,
                 )))
                 .await;
             return;
@@ -437,18 +434,18 @@ impl LlmProvider for OpenAiProvider {
                     attempt.response(&response);
                 }
                 let status = response.status().as_u16();
-                let retry_after = super::sse_common::retry_after_suffix(response.headers());
-                let text = response
-                    .text()
-                    .await
-                    .inspect_err(|_| attempt.iter().for_each(|a| a.read_failed()))
-                    .map_err(|e| {
-                        DomainError::Provider(format!("failed to read response: {}", e))
-                    })?;
-                Ok::<_, DomainError>((status, retry_after, text))
+                let text = match status {
+                    200 => response
+                        .text()
+                        .await
+                        .map_err(super::stream_idle::BodyError::Read),
+                    _ => super::provider_diagnostics::read_reply(response).await,
+                }
+                .inspect_err(|_| attempt.iter().for_each(|a| a.read_failed()))
+                .map_err(|e| DomainError::Provider(format!("failed to read response: {}", e)))?;
+                Ok::<_, DomainError>((status, text))
             };
-            let (status, retry_after, response_text) = match self.stream_idle.whole(exchange).await
-            {
+            let (status, response_text) = match self.stream_idle.whole(exchange).await {
                 Ok(read) => read?,
                 Err(late) => {
                     attempt.iter().for_each(|a| a.timed_out());
@@ -460,9 +457,10 @@ impl LlmProvider for OpenAiProvider {
                 attempt
                     .iter()
                     .for_each(|a| a.http_error(status, Some(&response_text)));
-                return Err(DomainError::Provider(format!(
-                    "HTTP {} from OpenAI: {}{}",
-                    status, response_text, retry_after
+                return Err(DomainError::Provider(super::provider_diagnostics::http(
+                    status,
+                    "OpenAI",
+                    &response_text,
                 )));
             }
 

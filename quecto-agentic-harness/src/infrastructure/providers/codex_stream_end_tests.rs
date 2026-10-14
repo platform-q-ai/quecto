@@ -96,11 +96,11 @@ async fn an_untyped_error_chunk_ends_the_stream_as_an_error() {
     ] {
         let events = handled(&[TEXT, chunk, COMPLETED]).await;
         let message = last_error(&events);
-        assert!(message.contains("Responses stream error"), "{message}");
-        assert!(message.contains("model crashed"), "{message}");
+        assert!(message.starts_with("HTTP "), "{message}");
+        assert!(!message.contains("model crashed"), "{message}");
         let err = CodexProvider::parse_sse_response(&format!("{TEXT}\n{chunk}\n{COMPLETED}\n"))
             .unwrap_err();
-        assert!(err.to_string().contains("model crashed"), "{err}");
+        assert!(!err.to_string().contains("model crashed"), "{err}");
     }
 }
 
@@ -133,17 +133,23 @@ async fn an_error_event_reads_its_top_level_code_and_message() {
     ])
     .await;
     let message = last_error(&events);
-    assert!(message.contains("code=server_error"), "{message}");
-    assert!(message.contains("The server had an error"), "{message}");
+    assert!(
+        message == "HTTP 500 from Codex: class=server; refusal=none",
+        "{message}"
+    );
+    assert!(!message.contains("The server had an error"), "{message}");
 
     let nested = CodexProvider::format_stream_failure(&serde_json::json!({
         "type": "error",
         "error": {"type": "invalid_request_error", "code": "bad_input", "message": "nested"}
     }))
     .unwrap();
-    assert!(nested.contains("type=invalid_request_error"), "{nested}");
-    assert!(nested.contains("code=bad_input"), "{nested}");
-    assert!(nested.contains("nested"), "{nested}");
+    assert!(
+        nested == "HTTP 400 from Codex: class=client; refusal=none",
+        "{nested}"
+    );
+    assert!(!nested.contains("code=bad_input"), "{nested}");
+    assert!(!nested.contains("nested"), "{nested}");
 }
 
 /// A `response.failed` keeps its established rendering: its nested
@@ -157,10 +163,7 @@ fn a_failed_response_keeps_its_rendering() {
         "response": {"status": "failed", "error": {"type": "rate_limit_error", "code": "insufficient_quota", "message": "m"}}
     }))
     .unwrap();
-    assert_eq!(
-        failed,
-        "Responses stream response.failed: status=failed: type=rate_limit_error: m"
-    );
+    assert_eq!(failed, "HTTP 402 from Codex: class=billing; refusal=none");
 }
 
 /// A failure's top-level `message` or `code` is never read: only an `error`
@@ -175,10 +178,7 @@ fn a_failed_response_never_reads_top_level_fields() {
         "response": {"status": "failed", "error": {"type": "server_error"}}
     }))
     .unwrap();
-    assert_eq!(
-        failed,
-        "Responses stream response.failed: status=failed: type=server_error"
-    );
+    assert_eq!(failed, "HTTP 500 from Codex: class=server; refusal=none");
 }
 
 /// A body with no event at all is an empty stream (#2249 review round 2):
@@ -204,14 +204,18 @@ async fn an_untyped_empty_error_object_ends_the_stream_as_an_error() {
     for terminal in [COMPLETED, "data: [DONE]"] {
         let events = handled(&[TEXT, chunk, terminal]).await;
         assert!(
-            last_error(&events).starts_with("Responses stream error"),
+            last_error(&events) == "HTTP 502 from Codex: class=server; refusal=none",
             "{events:?}"
         );
         assert!(!events.iter().any(|e| matches!(e, StreamEvent::Done(_))));
     }
     let err =
         CodexProvider::parse_sse_response(&format!("{TEXT}\n{chunk}\n{COMPLETED}\n")).unwrap_err();
-    assert!(err.to_string().contains("Responses stream error"), "{err}");
+    assert!(
+        err.to_string()
+            .contains("HTTP 502 from Codex: class=server; refusal=none"),
+        "{err}"
+    );
 }
 
 /// #2434: a streamed reply that completed with nothing in it is whole,

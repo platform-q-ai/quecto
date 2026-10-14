@@ -11,8 +11,8 @@ use crate::domain::catalogue::ModelRef;
 use crate::domain::message::Message;
 use crate::infrastructure::providers::router::ProviderRouter;
 
-const REFUSAL: &str = r#"HTTP 400 from Codex: {"detail":"The 'mini' model is not supported when using Codex with a ChatGPT account."}"#;
-const DETAIL: &str = "The 'mini' model is not supported when using Codex with a ChatGPT account.";
+const REFUSAL: &str = "HTTP 400 from Codex: class=client; refusal=model";
+const DETAIL: &str = "This model is unavailable for this account. Choose an available model or check account access.";
 const HELD: Duration = Duration::from_secs(3600);
 
 /// A provider that fails every request with `error`.
@@ -144,7 +144,7 @@ async fn a_streamed_refusal_is_recorded_and_the_events_pass_through() {
     let Some(StreamEvent::Error(message)) = events.recv().await else {
         panic!("the error event passes through");
     };
-    assert!(message.contains(DETAIL), "{message}");
+    assert!(message.contains(REFUSAL), "{message}");
     assert!(events.recv().await.is_none(), "the stream ends after it");
     assert_eq!(refused(&sink, "openai-oauth/mini").as_deref(), Some(DETAIL));
 }

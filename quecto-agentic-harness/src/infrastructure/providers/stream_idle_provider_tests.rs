@@ -359,7 +359,7 @@ async fn a_request_no_response_head_answers_is_abandoned() {
 /// empty, and recorded as idle where observed.
 #[tokio::test]
 async fn an_error_body_that_goes_silent_is_abandoned() {
-    let marker = "(error body abandoned: stream idle timeout after 200 ms)";
+    let marker = "class=server; refusal=none";
     for vendor in Vendor::ALL {
         for gated in [false, true] {
             let url = servers::silent_error_body().await;

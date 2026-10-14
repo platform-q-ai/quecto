@@ -31,11 +31,12 @@ async fn header_receipt(leaf: Leaf, status: u16) {
     let mut task = task;
     let output = bounded(&mut task.0).await.unwrap();
     let after_body = gate.snapshot();
-    let expected_error = match leaf {
-        Leaf::OpenAi => format!("HTTP {status} from OpenAI: {body} retry-after: 30"),
-        Leaf::Responses | Leaf::OAuth => format!("HTTP {status} from Codex: {body}"),
-        Leaf::Anthropic => format!("HTTP {status} from Anthropic: {body} retry-after: 30"),
+    let vendor = match leaf {
+        Leaf::OpenAi => "OpenAI",
+        Leaf::Responses | Leaf::OAuth => "Codex",
+        Leaf::Anthropic => "Anthropic",
     };
+    let expected_error = format!("HTTP {status} from {vendor}: class=billing; refusal=none");
     verify(header_oracle(
         server.starts(),
         completed_before_body,

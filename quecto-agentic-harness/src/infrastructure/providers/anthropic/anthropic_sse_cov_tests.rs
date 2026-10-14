@@ -532,7 +532,10 @@ async fn handler_error_event_emits_error_instead_of_empty_done() {
         .await;
     assert!(matches!(outcome, SseLineOutcome::Done));
     match rx.recv().await.unwrap() {
-        StreamEvent::Error(e) => assert!(e.contains("overloaded_error"), "{e}"),
+        StreamEvent::Error(e) => assert!(
+            e == "HTTP 529 from Anthropic: class=server; refusal=none",
+            "{e}"
+        ),
         other => panic!("unexpected: {other:?}"),
     }
 }
@@ -544,7 +547,11 @@ fn parse_sse_response_error_event_returns_error() {
         None,
     )
     .unwrap_err();
-    assert!(err.to_string().contains("overloaded_error"), "{err}");
+    assert!(
+        err.to_string()
+            .contains("HTTP 529 from Anthropic: class=server; refusal=none"),
+        "{err}"
+    );
 }
 
 #[test]
@@ -695,5 +702,36 @@ fn parse_sse_response_string_error_event_keeps_its_text() {
         None,
     )
     .unwrap_err();
-    assert!(err.to_string().contains("model crashed"), "{err}");
+    assert!(
+        err.to_string()
+            .contains("HTTP 502 from Anthropic: class=server; refusal=none"),
+        "{err}"
+    );
+}
+
+#[tokio::test]
+async fn s1_sse_payload_budget_family() {
+    let oversized = format!(
+        "{}{}",
+        serde_json::json!({"error":{"type":"billing_error","message":"secret-canary"}}),
+        " ".repeat(4096)
+    );
+    for data in [&oversized, "{not json secret-canary"] {
+        let err =
+            AnthropicProvider::parse_sse_response(&format!("event: error\ndata: {data}\n"), None)
+                .unwrap_err()
+                .to_string();
+        assert!(err.contains("HTTP 502 from Anthropic: class=server; refusal=none"));
+        assert!(!err.contains("secret-canary"));
+        let (tx, mut rx) = channel();
+        let mut handler = AnthropicSseHandler::new(None);
+        handler.process_line("event: error", &tx).await;
+        assert!(matches!(
+            handler.process_line(&format!("data: {data}"), &tx).await,
+            SseLineOutcome::Done
+        ));
+        assert!(
+            matches!(rx.recv().await, Some(StreamEvent::Error(m)) if m == "HTTP 502 from Anthropic: class=server; refusal=none")
+        );
+    }
 }

@@ -106,7 +106,7 @@ impl Leaf {
                     },
                     json!({"type":"response.failed","response":{"status":"failed","error":error}})
                 ),
-                format!("Responses stream response.failed: status=failed: type={kind}: {message}"),
+                finite_sse_error("Codex", kind, code),
             ),
             Self::Anthropic => (
                 format!(
@@ -118,7 +118,7 @@ impl Leaf {
                     },
                     json!({"type":"error","error":error})
                 ),
-                format!("Anthropic stream error: type={kind}: {message}"),
+                finite_sse_error("Anthropic", kind, code),
             ),
             Self::OpenAi => {
                 unreachable!("OpenAI SSE error vocabulary needs a separate parser contract")
@@ -358,4 +358,18 @@ pub async fn stream(provider: &dyn LlmProvider) -> Transcript {
         }
     }
     output
+}
+
+/// Independent expected diagnostics for this fixture's finite cases. Wire
+/// messages stay in the fault body but never in the asserted outward value.
+fn finite_sse_error(vendor: &str, kind: &str, code: Option<&str>) -> String {
+    let (status, class) = match (kind, code) {
+        ("insufficient_quota", _) | (_, Some("insufficient_quota")) => (402, "billing"),
+        ("rate_limit_error", _) => (429, "rate_limit"),
+        ("overloaded_error", _) => (529, "server"),
+        ("authentication_error", _) => (401, "auth"),
+        ("invalid_request_error", _) => (400, "client"),
+        _ => (502, "server"),
+    };
+    format!("HTTP {status} from {vendor}: class={class}; refusal=none")
 }

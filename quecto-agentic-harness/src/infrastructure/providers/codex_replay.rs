@@ -78,9 +78,8 @@ impl CodexProvider {
     }
 
     /// Whether an error is the service refusing replayed reasoning.
-    fn is_replay_refusal(message: &str) -> bool {
-        let lower = message.to_ascii_lowercase();
-        lower.contains("400") && lower.contains("encrypted")
+    pub(super) fn is_replay_refusal(message: &str) -> bool {
+        message.ends_with("HTTP 400 from Codex: class=client; refusal=encrypted")
     }
 
     fn note_replay_refused(&self, message: &str) {
@@ -199,12 +198,17 @@ impl CodexProvider {
         }
         let status = resp.status().as_u16();
         if status != 200 {
-            let read = idle.text(resp).await;
+            let read =
+                crate::infrastructure::providers::provider_diagnostics::read(resp, idle).await;
             attempt.iter().for_each(|a| a.error_read(status, &read));
             let error_body = crate::infrastructure::providers::stream_idle::error_text(read);
-            return Err(DomainError::Provider(format!(
-                "HTTP {status} from Codex: {error_body}"
-            )));
+            return Err(DomainError::Provider(
+                crate::infrastructure::providers::provider_diagnostics::http(
+                    status,
+                    "Codex",
+                    &error_body,
+                ),
+            ));
         }
         let raw = match &attempt {
             Some(attempt) => attempt.read_sse(resp, profile).await?,

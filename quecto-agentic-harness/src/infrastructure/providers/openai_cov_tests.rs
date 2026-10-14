@@ -529,7 +529,7 @@ async fn chat_stream_incremental_wiremock_emits_text_and_done() {
 }
 
 #[tokio::test]
-async fn chat_stream_http_error_includes_retry_after() {
+async fn chat_stream_http_error_drops_raw_retry_after() {
     use crate::application::providers::ports::LlmProvider;
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -552,8 +552,11 @@ async fn chat_stream_http_error_includes_retry_after() {
         .await
         .unwrap_err();
     let text = err.to_string();
-    assert!(text.contains("HTTP 429 from OpenAI: slow down"), "{text}");
-    assert!(text.contains("retry-after: 7"), "{text}");
+    assert!(
+        text.contains("HTTP 429 from OpenAI: class=rate_limit; refusal=none"),
+        "{text}"
+    );
+    assert!(!text.contains("retry-after"), "{text}");
 }
 
 #[tokio::test]

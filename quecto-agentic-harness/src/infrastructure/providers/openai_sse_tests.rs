@@ -220,7 +220,7 @@ async fn handler_ends_the_stream_as_an_error_at_an_error_chunk_of_either_shape()
         }
         assert!(
             matches!(&events[..], [StreamEvent::TextDelta(t), StreamEvent::Error(e)]
-                if t == "part" && e.starts_with(status) && e.contains("OpenAI stream error")),
+                if t == "part" && e.starts_with(status) && e.contains("from OpenAI: class=")),
             "{error}: {events:?}"
         );
     }
@@ -239,4 +239,32 @@ async fn handler_reads_only_object_or_string_errors_as_error_chunks() {
         ));
         assert!(rx.try_recv().is_err(), "{other}");
     }
+}
+
+#[tokio::test]
+async fn s1_sse_payload_budget_family() {
+    let chunk = format!(
+        "{}{}",
+        serde_json::json!({"error":{"code":"insufficient_quota","message":"secret-canary"}}),
+        " ".repeat(4096)
+    );
+    let (tx, mut rx) = tokio::sync::mpsc::channel(4);
+    let mut handler = OpenAiSseHandler::new();
+    assert!(matches!(
+        handler.process_line(&format!("data: {chunk}"), &tx).await,
+        SseLineOutcome::Done
+    ));
+    assert!(
+        matches!(rx.recv().await, Some(StreamEvent::Error(m)) if m == "HTTP 502 from OpenAI: class=server; refusal=none")
+    );
+    // Malformed acceptance is unchanged (S2/S4); none of its prose escapes.
+    let mut handler = OpenAiSseHandler::new();
+    assert!(matches!(
+        handler
+            .process_line("data: {not json secret-canary", &tx)
+            .await,
+        SseLineOutcome::Continue
+    ));
+    handler.on_eof(&tx).await;
+    assert!(matches!(rx.recv().await, Some(StreamEvent::Error(m)) if !m.contains("secret-canary")));
 }

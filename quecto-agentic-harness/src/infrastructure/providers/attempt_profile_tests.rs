@@ -116,7 +116,7 @@ fn the_openai_stream_error_status_comes_from_typed_fields_never_the_message() {
     );
     let rendered = openai_stream_error(&serde_json::json!({"error": {"type": "rate_limit_error"}}));
     assert!(
-        rendered.ends_with(r#"OpenAI stream error: {"error":{"type":"rate_limit_error"}}"#),
+        rendered == "HTTP 429 from OpenAI: class=rate_limit; refusal=none",
         "{rendered}"
     );
 }
@@ -530,7 +530,10 @@ fn a_bare_string_error_chunk_is_classified_as_the_unknown_object_form() {
     };
     assert_eq!(class(&string), class(&object));
     assert!(class(&string).is_retryable());
-    assert!(openai_stream_error(&string).contains("model crashed"));
+    assert_eq!(
+        openai_stream_error(&string),
+        "HTTP 502 from OpenAI: class=server; refusal=none"
+    );
     for (value, chunk) in [
         (string, true),
         (object, true),

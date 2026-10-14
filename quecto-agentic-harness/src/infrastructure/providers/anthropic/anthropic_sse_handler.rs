@@ -76,7 +76,13 @@ impl SseHandler for AnthropicSseHandler {
         if let Some(event_type) = line.strip_prefix("event: ") {
             self.current_event = event_type.to_string();
         } else if let Some(data) = data {
-            let chunk_val: serde_json::Value = serde_json::from_str(data).unwrap_or_default();
+            let chunk_val: serde_json::Value = match (
+                self.current_event.as_str(),
+                data.len() <= crate::infrastructure::providers::provider_diagnostics::BODY_LIMIT,
+            ) {
+                ("error", false) => serde_json::Value::Null,
+                _ => serde_json::from_str(data).unwrap_or_default(),
+            };
             if dispatch_sse_event(
                 &self.current_event,
                 &chunk_val,

@@ -89,9 +89,7 @@ fn classify_prefers_http_status_over_keywords() {
 
 #[test]
 fn classify_openai_insufficient_quota_is_terminal_billing_not_rate_limit() {
-    let err = provider(
-        r#"HTTP 429 from OpenAI: {"error":{"message":"You exceeded your current quota, please check your plan and billing details.","type":"insufficient_quota","param":null,"code":"insufficient_quota"}}"#,
-    );
+    let err = provider("HTTP 429 from OpenAI: class=billing; refusal=none");
 
     assert_eq!(classify_provider_error(&err), ProviderErrorClass::Billing);
 }
@@ -137,14 +135,13 @@ fn classify_cancelled_variants() {
 }
 
 #[test]
-fn xai_chat_endpoint_denial_403_is_retryable_server() {
-    // xAI's transient capacity rejection arrives as a 403 but succeeds on
-    // retry — promote it from Auth to Server so RetryingProvider retries it.
+fn xai_chat_endpoint_denial_403_stays_auth() {
+    // Arbitrary capacity prose cannot override HTTP Auth.
     let err = provider(
         "HTTP 403 from OpenAI: {\"code\":\"permission-denied\",\"error\":\"Access to the chat endpoint is denied. Please ensure you're using...\"}",
     );
-    assert_eq!(classify_provider_error(&err), ProviderErrorClass::Server);
-    assert!(classify_provider_error(&err).is_retryable());
+    assert_eq!(classify_provider_error(&err), ProviderErrorClass::Auth);
+    assert!(!classify_provider_error(&err).is_retryable());
 }
 
 #[test]
@@ -266,10 +263,7 @@ fn classify_status_separators_between_marker_and_code() {
 
 #[test]
 fn invalid_request_error_in_500_is_client_not_server() {
-    let err = provider(
-        "HTTP 500 from Fireworks: {\"error\":{\"code\":\"invalid_request_error\",\
-         \"message\":\"max_tokens 200000 exceeds the model output limit of 65536\"}}",
-    );
+    let err = provider("HTTP 500 from OpenAI: class=client; refusal=none");
     let class = classify_provider_error(&err);
     assert_eq!(
         class,
@@ -284,9 +278,7 @@ fn invalid_request_error_in_500_is_client_not_server() {
 
 #[test]
 fn openai_style_invalid_request_type_in_5xx_is_client() {
-    let err = provider(
-        "HTTP 502: {\"error\":{\"type\":\"invalid_request_error\",\"message\":\"unsupported value\"}}",
-    );
+    let err = provider("HTTP 502 from OpenAI: class=client; refusal=none");
     let class = classify_provider_error(&err);
     assert_eq!(
         class,
@@ -329,23 +321,17 @@ fn invalid_request_error_only_in_free_text_message_stays_server() {
 #[test]
 fn invalid_request_error_with_whitespace_around_colon_is_client() {
     // Whitespace-tolerant structured match.
-    let err = provider(
-        "HTTP 500: {\"error\": {\"code\" : \"invalid_request_error\", \"message\":\"bad\"}}",
-    );
+    let err = provider("HTTP 500 from OpenAI: class=client; refusal=none");
     assert_eq!(classify_provider_error(&err), ProviderErrorClass::Client);
 }
 
 #[test]
 fn subscription_usage_limit_is_terminal_but_transient_throttle_still_retries() {
-    for field in ["type", "code"] {
-        let body = format!(
-            r#"HTTP 429: {{"error":{{"{field}":"usage_limit_reached","resets_in_seconds":601828}}}}"#
-        );
-        assert_eq!(
-            classify_provider_error(&provider(&body)),
-            ProviderErrorClass::Billing
-        );
-    }
+    let body = "HTTP 429 from OpenAI: class=billing; refusal=none";
+    assert_eq!(
+        classify_provider_error(&provider(body)),
+        ProviderErrorClass::Billing
+    );
     assert_eq!(
         classify_provider_error(&provider(
             r#"HTTP 429: {"error":{"type":"rate_limit_exceeded"}}"#

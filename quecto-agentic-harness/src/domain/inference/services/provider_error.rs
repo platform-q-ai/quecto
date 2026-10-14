@@ -163,31 +163,11 @@ pub fn classify_provider_error(err: &DomainError) -> ProviderErrorClass {
 
     let lowered = msg.to_ascii_lowercase();
 
-    if declares_billing_or_quota_error(&lowered) {
-        return ProviderErrorClass::Billing;
+    if let Some((status, _, class, _)) = canonical_failure(msg) {
+        return class.unwrap_or_else(|| ProviderErrorClass::from_status(status));
     }
-
     if let Some(status) = extract_http_status(&lowered) {
-        let class = ProviderErrorClass::from_status(status);
-        // #935: some providers (e.g. Fireworks) wrap an explicit client error
-        // code such as `invalid_request_error` inside a 5xx status. Such a
-        // request can never succeed on retry (the request itself is invalid),
-        // so classify it as non-retryable `Client` and fail fast with the real
-        // message instead of futile retries and misleading "retry later".
-        if class == ProviderErrorClass::Server && declares_client_error_code(&lowered) {
-            return ProviderErrorClass::Client;
-        }
-        // xAI returns a 403 ("access to the chat endpoint is denied") when the
-        // OAuth-subscription inference surface transiently refuses a request
-        // under load, rather than a 429. The status code says Auth (terminal),
-        // but this particular body is a capacity rejection that succeeds on
-        // retry, so classify it as retryable `Server`. Kept deliberately narrow
-        // to this exact phrase so a genuine revoked-token / wrong-audience 403
-        // still fast-fails as `Auth`.
-        if class == ProviderErrorClass::Auth && is_transient_chat_endpoint_denial(&lowered) {
-            return ProviderErrorClass::Server;
-        }
-        return class;
+        return ProviderErrorClass::from_status(status);
     }
 
     // A parenthesised `(NNN)` group is a weaker signal than an `http`/`status`
@@ -208,82 +188,59 @@ pub fn classify_provider_error(err: &DomainError) -> ProviderErrorClass {
 /// The most bytes of a provider's refusal reason kept (#2435).
 pub const MODEL_REFUSAL_REASON_MAX_BYTES: usize = 300;
 
-/// The known shapes of a provider refusing a model for the account or auth
-/// mode in use (#2435): the HTTP status, the vendor named in the error, and
-/// a phrase its body carries. An allowlist: any other failure — a
-/// malformed request, a credential, an outage — is never a refusal.
-const MODEL_REFUSALS: &[(u16, &str, &[&str])] = &[
-    // Codex behind a ChatGPT sign-in serves only some models.
-    (
-        400,
-        "Codex",
-        &["model is not supported when using Codex with a ChatGPT account"],
-    ),
-    // The OpenAI API: no such model for this key or organisation.
-    (404, "OpenAI", &["model_not_found"]),
-    // Anthropic: no such model for this key or plan.
-    (404, "Anthropic", &["not_found_error", "model:"]),
-];
-
-/// The provider's reason when `err` is a definitive refusal of the model
-/// for the account or auth mode in use (#2435), else `None`. The error must
-/// carry the providers' own `HTTP <status> from <vendor>: <body>` shape
-/// (possibly behind a relay's prefix) and match a [`MODEL_REFUSALS`] row.
-/// The reason is the body's own message (`detail`, or `error.message`),
-/// else the body, bounded to [`MODEL_REFUSAL_REASON_MAX_BYTES`].
+/// Fixed operator guidance, never a provider's message or request echo.
 pub fn model_refusal(err: &DomainError) -> Option<String> {
     let DomainError::Provider(message) = err else {
         return None;
     };
-    let (status, vendor, body) = http_failure(message)?;
-    let refused = MODEL_REFUSALS.iter().any(|(code, named, phrases)| {
-        *code == status && *named == vendor && phrases.iter().all(|p| body.contains(p))
-    });
-    if !refused {
-        return None;
+    let (status, vendor, class, refusal) = canonical_failure(message)?;
+    let refusal = refusal && class == Some(ProviderErrorClass::Client);
+    match (status, vendor, refusal) {
+        (400, "Codex", true) | (404, "OpenAI" | "Anthropic", true) =>
+            Some("This model is unavailable for this account. Choose an available model or check account access.".to_string()),
+        _ => None,
     }
-    let reason = refusal_message(body).unwrap_or_else(|| body.trim().to_string());
-    debug_assert!(!reason.is_empty(), "a matched refusal has a body");
-    Some(bounded(reason, MODEL_REFUSAL_REASON_MAX_BYTES))
 }
 
-/// `(status, vendor, body)` of the first `HTTP <status> from <vendor>:
-/// <body>` in `message`.
-fn http_failure(message: &str) -> Option<(u16, &str, &str)> {
+/// Pure finite grammar. A relay prefix is compatible; the entire suffix
+/// must match. Domain code has no JSON, HTTP client or infrastructure dependency.
+fn canonical_failure(message: &str) -> Option<(u16, &str, Option<ProviderErrorClass>, bool)> {
     let start = message.find("HTTP ")?;
-    let rest = &message[start + "HTTP ".len()..];
+    let rest = &message[start + 5..];
     let (status, rest) = rest.split_once(" from ")?;
-    let status = status.parse::<u16>().ok()?;
-    let (vendor, body) = rest.split_once(": ")?;
-    Some((status, vendor, body))
-}
-
-/// The message a JSON error body carries: `detail` (Codex) or
-/// `error.message` (OpenAI, Anthropic). Text after the JSON value (a
-/// retry hint) is ignored.
-fn refusal_message(body: &str) -> Option<String> {
-    let value: serde_json::Value = serde_json::Deserializer::from_str(body.trim())
-        .into_iter()
-        .next()?
-        .ok()?;
-    value
-        .get("detail")
-        .or_else(|| value.get("error").and_then(|error| error.get("message")))
-        .and_then(serde_json::Value::as_str)
-        .map(str::to_string)
-        .filter(|message| !message.trim().is_empty())
-}
-
-/// `text` cut to at most `max` bytes, at a character boundary.
-fn bounded(mut text: String, max: usize) -> String {
-    if text.len() > max {
-        let mut end = max;
-        while !text.is_char_boundary(end) {
-            end -= 1;
+    let status =
+        (status.len() == 3 && status.bytes().all(|b| b.is_ascii_digit())).then_some(status)?;
+    let status = status
+        .parse::<u16>()
+        .ok()
+        .filter(|s| (100..=599).contains(s))?;
+    let (vendor, body) = rest.split_once(": class=")?;
+    if ["OpenAI", "Codex", "Anthropic"].contains(&vendor) {
+        let (class, refusal) = body.split_once("; refusal=")?;
+        let class = match class {
+            "rate_limit" => ProviderErrorClass::RateLimit,
+            "billing" => ProviderErrorClass::Billing,
+            "auth" => ProviderErrorClass::Auth,
+            "server" => ProviderErrorClass::Server,
+            "client" => ProviderErrorClass::Client,
+            "unknown" => ProviderErrorClass::Unknown,
+            _ => return None,
+        };
+        let refusal = match refusal {
+            "model" => true,
+            "none" | "none; limit=context length" => false,
+            "encrypted" if vendor == "Codex" && status == 400 => false,
+            _ => return None,
+        };
+        let expected = ProviderErrorClass::from_status(status);
+        if class == expected
+            || class == ProviderErrorClass::Billing
+            || (expected == ProviderErrorClass::Server && class == ProviderErrorClass::Client)
+        {
+            return Some((status, vendor, Some(class), refusal));
         }
-        text.truncate(end);
     }
-    text
+    None
 }
 
 /// Best-effort HTTP status extracted from a provider error, if the body
@@ -326,23 +283,6 @@ fn extract_parenthesized_status(lowered: &str) -> Option<u16> {
     None
 }
 
-/// Does the (lowercased) error body declare an explicit client error code,
-/// e.g. Fireworks/OpenAI `invalid_request_error` (as a `code` or `type`)? Such
-/// a code means the request is malformed and will never succeed on retry, even
-/// when wrapped in a 5xx status (#935).
-///
-/// The match is anchored to the structured JSON position (`"code":"..."` or
-/// `"type":"..."`, whitespace-tolerant) rather than a bare substring: provider
-/// and gateway error bodies frequently echo request/prompt content, so a plain
-/// `contains` would let a genuine transient 5xx whose free-text `message`
-/// merely mentions `invalid_request_error` be force-classified as non-retryable
-/// — turning a recoverable outage into a hard failure on attacker/echo-able
-/// content.
-fn declares_client_error_code(lowered: &str) -> bool {
-    json_field_is(lowered, "code", "invalid_request_error")
-        || json_field_is(lowered, "type", "invalid_request_error")
-}
-
 /// Every provider's billing and quota error names, as an error's `type` or
 /// `code` (OpenAI, Codex, Anthropic): the one list every layer reads
 /// (#2155 review). A billing error is terminal, never a throttle, whatever
@@ -357,46 +297,6 @@ pub const BILLING_ERROR_NAMES: &[&str] = &[
 /// Whether `name`, an error's `type` or `code`, is a billing error.
 pub fn is_billing_error_name(name: &str) -> bool {
     BILLING_ERROR_NAMES.contains(&name)
-}
-
-/// Recognise terminal quota/billing failures that may arrive with HTTP 429 but
-/// are not transient rate limits. OpenAI uses `insufficient_quota` in both
-/// `type` and `code` for exhausted-credit accounts; retrying those failures only
-/// delays surfacing the actionable billing error to the operator.
-fn declares_billing_or_quota_error(lowered: &str) -> bool {
-    BILLING_ERROR_NAMES
-        .iter()
-        .any(|name| json_field_is(lowered, "code", name) || json_field_is(lowered, "type", name))
-}
-
-/// Whitespace-tolerant match for a JSON `"field": "value"` pair in an already
-/// lowercased body, e.g. `json_field_is(body, "code", "invalid_request_error")`
-/// matches `"code":"invalid_request_error"` and `"code" : "invalid_request_error"`.
-fn json_field_is(lowered: &str, field: &str, value: &str) -> bool {
-    let key = format!("\"{field}\"");
-    let mut from = 0;
-    while let Some(rel) = lowered[from..].find(&key) {
-        let after = &lowered[from + rel + key.len()..];
-        let trimmed = after.trim_start();
-        if let Some(rest) = trimmed.strip_prefix(':') {
-            let rest = rest.trim_start();
-            let expected = format!("\"{value}\"");
-            if rest.starts_with(&expected) {
-                return true;
-            }
-        }
-        from += rel + key.len();
-    }
-    false
-}
-
-/// Recognise xAI's transient 403 capacity rejection on the chat endpoint —
-/// body `"Access to the chat endpoint is denied…"`. This is a load-shedding
-/// refusal that succeeds on retry, not a terminal auth failure, so it is
-/// promoted from `Auth` to retryable `Server`. Matched on the exact phrase
-/// (already lowercased) to avoid catching genuine permission failures.
-fn is_transient_chat_endpoint_denial(lowered: &str) -> bool {
-    lowered.contains("access to the chat endpoint is denied")
 }
 
 /// Errors raised by the inference-admission gate (#2024 S3) before any

@@ -131,7 +131,7 @@ async fn does_not_retry_streaming_provider_failures_after_output() {
 #[tokio::test]
 async fn does_not_retry_non_streaming_openai_insufficient_quota_429() {
     let provider = Arc::new(MockProvider::new_results(vec![Err(DomainError::Provider(
-        r#"HTTP 429 from OpenAI: {"error":{"message":"You exceeded your current quota, please check your plan and billing details.","type":"insufficient_quota","param":null,"code":"insufficient_quota"}}"#.to_string(),
+        "HTTP 429 from OpenAI: class=billing; refusal=none".to_string(),
     ))]));
     let retrying = Arc::new(
         crate::infrastructure::providers::retry::RetryingProvider::new(
@@ -163,7 +163,7 @@ async fn does_not_retry_non_streaming_openai_insufficient_quota_429() {
     let err = agent.process(&mut messages).await.unwrap_err().to_string();
 
     assert!(err.contains("HTTP 429 from OpenAI"), "{err}");
-    assert!(err.contains("insufficient_quota"), "{err}");
+    assert!(err.contains("class=billing"), "{err}");
     assert_eq!(provider.request_count(), 1, "quota failures are terminal");
 }
 
@@ -171,7 +171,7 @@ async fn does_not_retry_non_streaming_openai_insufficient_quota_429() {
 async fn does_not_retry_streaming_openai_insufficient_quota_429() {
     let provider = Arc::new(MockStreamingProvider::new(vec![vec![
         crate::domain::inference::value_objects::provider::StreamEvent::Error(
-            r#"HTTP 429 from OpenAI: {"error":{"message":"You exceeded your current quota, please check your plan and billing details.","type":"insufficient_quota","param":null,"code":"insufficient_quota"}}"#.to_string(),
+            "HTTP 429 from OpenAI: class=billing; refusal=none".to_string(),
         ),
     ]]));
     let mut agent = AgentLoopImpl::new(AgentLoopConfig {
@@ -198,7 +198,7 @@ async fn does_not_retry_streaming_openai_insufficient_quota_429() {
     let err = agent.process(&mut messages).await.unwrap_err().to_string();
 
     assert!(err.contains("HTTP 429 from OpenAI"), "{err}");
-    assert!(err.contains("insufficient_quota"), "{err}");
+    assert!(err.contains("class=billing"), "{err}");
     assert_eq!(provider.request_count(), 1, "quota failures are terminal");
 }
 

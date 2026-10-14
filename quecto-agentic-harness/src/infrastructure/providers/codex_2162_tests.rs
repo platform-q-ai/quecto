@@ -682,3 +682,56 @@ fn the_longest_chat_key_keeps_its_prefix() {
         "{key}"
     );
 }
+
+/// Arbitrary encrypted prose has no replay authority, on either read path.
+#[tokio::test]
+async fn s1_replay_refusal_boundary_family() {
+    let oversized = serde_json::json!({"error":{"code":"invalid_encrypted_content","message":"secret-canary".repeat(400)}}).to_string();
+    for body in [
+        r#"{"error":{"message":"The encrypted content could not be verified secret-canary"}}"#,
+        r#"{"error":{"code":"unknown","message":"encrypted secret-canary"}}"#,
+        "secret-canary malformed encrypted",
+        &oversized,
+    ] {
+        for incremental in [false, true] {
+            let server = server_refusing_replay(body).await;
+            let provider = oauth_at(&server);
+            let messages = replaying(&provider.reasoning_origin("gpt-6-sol"));
+            let outward = if incremental {
+                let mut events = provider
+                    .chat_stream_incremental(chat_request(&messages, None))
+                    .await;
+                match tokio::time::timeout(std::time::Duration::from_secs(5), events.recv())
+                    .await
+                    .unwrap()
+                    .unwrap()
+                {
+                    StreamEvent::Error(message) => message,
+                    other => panic!("expected error: {other:?}"),
+                }
+            } else {
+                tokio::time::timeout(
+                    std::time::Duration::from_secs(5),
+                    provider.chat(chat_request(&messages, None)),
+                )
+                .await
+                .unwrap()
+                .unwrap_err()
+                .to_string()
+            };
+            assert!(outward.contains("HTTP 400 from Codex: class=client; refusal=none"));
+            assert!(!outward.contains("secret-canary"));
+            assert_eq!(server.received_requests().await.unwrap().len(), 1);
+        }
+    }
+    assert!(CodexProvider::is_replay_refusal(
+        "provider error: HTTP 400 from Codex: class=client; refusal=encrypted"
+    ));
+    for text in [
+        "HTTP 500 from Codex: class=server; refusal=encrypted",
+        "HTTP 400 from OpenAI: class=client; refusal=encrypted",
+        "HTTP 400 from Codex: encrypted secret-canary",
+    ] {
+        assert!(!CodexProvider::is_replay_refusal(text));
+    }
+}

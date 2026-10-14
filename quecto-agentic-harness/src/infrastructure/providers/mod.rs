@@ -506,3 +506,5 @@ mod stream_end_2249_tests;
 #[cfg(test)]
 #[path = "tool_schema_adapter_tests.rs"]
 mod tool_schema_adapter_tests;
+
+mod provider_diagnostics;

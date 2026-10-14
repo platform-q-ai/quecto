@@ -313,6 +313,7 @@ impl CodexProvider {
 
         for line in raw.lines() {
             // Only line ends are trimmed: an indented line is no event.
+            let raw_data = super::sse_common::event_data(line);
             let line = line.trim_end();
             let Some(data) = super::sse_common::event_data(line) else {
                 continue;
@@ -323,7 +324,12 @@ impl CodexProvider {
                 break;
             }
             if let Ok(event) = serde_json::from_str::<serde_json::Value>(data) {
-                if let Some(error) = Self::format_stream_failure(&event) {
+                if Self::format_stream_failure(&event).is_some() {
+                    let error = super::provider_diagnostics::stream_raw(
+                        "Codex",
+                        raw_data.unwrap_or(data),
+                        &event,
+                    );
                     return Err(DomainError::Provider(error).into());
                 }
                 acc.handle_event(&event)?;
@@ -358,44 +364,15 @@ impl CodexProvider {
     /// top level (`code`, `message`); both are read. A `response.*`
     /// failure keeps its established rendering (type and message).
     fn format_stream_failure(event: &serde_json::Value) -> Option<String> {
-        let kind = match event["type"].as_str() {
-            Some(kind @ ("response.failed" | "response.incomplete" | "error")) => kind,
-            None if super::attempt_profile::is_untyped_error_chunk(event) => "error",
-            _ => return None,
-        };
-        let mut parts = vec![format!("Responses stream {kind}")];
-        if let Some(status) = event["response"]["status"].as_str() {
-            parts.push(format!("status={status}"));
-        }
-        if let Some(reason) = event["response"]["incomplete_details"]["reason"].as_str() {
-            parts.push(format!("reason={reason}"));
-        }
-        // An `error` event's own top-level fields; no other kind has any.
-        let top = match kind {
-            "error" => event,
-            _ => &serde_json::Value::Null,
-        };
-        let error = match kind {
-            "error" => &event["error"],
-            _ => &event["response"]["error"],
-        };
-        if let Some(error_type) = error["type"].as_str() {
-            parts.push(format!("type={error_type}"));
-        }
-        if kind == "error" {
-            if let Some(code) = error["code"].as_str().or_else(|| top["code"].as_str()) {
-                parts.push(format!("code={code}"));
+        match event["type"].as_str() {
+            Some("response.failed" | "response.incomplete" | "error") => {
+                Some(super::provider_diagnostics::stream("Codex", event))
             }
+            None if super::attempt_profile::is_untyped_error_chunk(event) => {
+                Some(super::provider_diagnostics::stream("Codex", event))
+            }
+            _ => None,
         }
-        // A bare string `error` (#2236) is the message itself.
-        if let Some(message) = error
-            .as_str()
-            .or_else(|| error["message"].as_str())
-            .or_else(|| top["message"].as_str())
-        {
-            parts.push(message.to_string());
-        }
-        Some(parts.join(": "))
     }
 
     /// Sanitize a session key for use as `prompt_cache_key`.
@@ -474,12 +451,12 @@ impl CodexProvider {
         }
         let status = response.status().as_u16();
         if status != 200 {
-            let read = idle.text(response).await;
+            let read = super::provider_diagnostics::read(response, idle).await;
             attempt.iter().for_each(|a| a.error_read(status, &read));
-            let text = super::sse_common::truncate_error_body(super::stream_idle::error_text(read));
+            let text = super::stream_idle::error_text(read);
             let _ = tx
-                .send(StreamEvent::Error(format!(
-                    "HTTP {status} from Codex: {text}"
+                .send(StreamEvent::Error(super::provider_diagnostics::http(
+                    status, "Codex", &text,
                 )))
                 .await;
             return;
@@ -621,3 +598,7 @@ mod issue_2398_tests;
 #[cfg(test)]
 #[path = "codex_2421_tests.rs"]
 mod issue_2421_tests;
+
+#[cfg(test)]
+#[path = "codex_payload_tests.rs"]
+mod payload_tests;

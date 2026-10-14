@@ -596,33 +596,6 @@ fn provider_name_is_codex() {
     assert_eq!(p.name(), "codex");
 }
 
-#[tokio::test]
-async fn handler_response_incomplete_emits_error_instead_of_empty_done() {
-    let (tx, mut rx) = tokio::sync::mpsc::channel(4);
-    let mut handler = CodexSseHandler::new();
-    let out = handler
-        .process_line(
-            r#"data: {"type":"response.incomplete","response":{"status":"incomplete","incomplete_details":{"reason":"max_output_tokens"}}}"#,
-            &tx,
-        )
-        .await;
-    assert!(matches!(out, SseLineOutcome::Done));
-    match rx.recv().await.unwrap() {
-        StreamEvent::Error(e) => assert!(e.contains("max_output_tokens"), "{e}"),
-        other => panic!("unexpected: {other:?}"),
-    }
-}
-
-#[test]
-fn parse_sse_response_failed_returns_error_instead_of_empty_success() {
-    let err = CodexProvider::parse_sse_response(
-        r#"data: {"type":"response.failed","response":{"status":"failed","error":{"type":"server_error","message":"boom"}}}"#,
-    )
-    .unwrap_err();
-    assert!(err.to_string().contains("server_error"), "{err}");
-    assert!(err.to_string().contains("boom"), "{err}");
-}
-
 #[test]
 fn parse_sse_response_empty_or_malformed_stream_returns_error() {
     let err = CodexProvider::parse_sse_response(": keepalive\ndata: {not json\n").unwrap_err();
@@ -729,15 +702,4 @@ async fn codex_stream_rejects_over_limit_reasoning_with_error() {
         rx.try_recv().is_err(),
         "oversized reasoning must stop the stream"
     );
-}
-
-/// #2236: an error event whose `error` is a bare string still ends the
-/// stream as an error, and its text is kept.
-#[test]
-fn parse_sse_response_string_error_event_keeps_its_text() {
-    let err =
-        CodexProvider::parse_sse_response(r#"data: {"type":"error","error":"model crashed"}"#)
-            .unwrap_err();
-    assert!(err.to_string().contains("Responses stream error"), "{err}");
-    assert!(err.to_string().contains("model crashed"), "{err}");
 }

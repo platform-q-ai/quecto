@@ -267,9 +267,7 @@ fn synthetic_empty_stream_guidance_does_not_claim_http_failure_or_overload() {
 /// unavailable and how to move on.
 #[test]
 fn a_model_refused_for_the_account_says_it_will_not_be_offered_again() {
-    let out = enhanced(
-        r#"HTTP 400 from Codex: {"detail":"The 'mini' model is not supported when using Codex with a ChatGPT account."}"#,
-    );
+    let out = enhanced("HTTP 400 from Codex: class=client; refusal=model");
     assert!(
         out.ends_with(
             "Model unavailable: the provider refused this model for the account or auth mode in \
@@ -284,8 +282,6 @@ fn a_model_refused_for_the_account_says_it_will_not_be_offered_again() {
 /// #2435 review round 1: the refusal guidance is appended once.
 #[test]
 fn the_refusal_guidance_is_appended_once() {
-    let once = enhanced(
-        r#"HTTP 400 from Codex: {"detail":"The 'mini' model is not supported when using Codex with a ChatGPT account."}"#,
-    );
+    let once = enhanced("HTTP 400 from Codex: class=client; refusal=model");
     assert_eq!(enhanced(&once), once);
 }

@@ -403,13 +403,16 @@ impl LlmProvider for AnthropicProvider {
                 )
                 .await;
             }
-            let (status, retry_after, response_text) = self.read_whole(request_builder).await?;
+            let (status, response_text) = self.read_whole(request_builder).await?;
 
             if status != 200 {
-                return Err(DomainError::Provider(format!(
-                    "HTTP {} from Anthropic: {}{}",
-                    status, response_text, retry_after
-                )));
+                return Err(DomainError::Provider(
+                    crate::infrastructure::providers::provider_diagnostics::http(
+                        status,
+                        "Anthropic",
+                        &response_text,
+                    ),
+                ));
             }
 
             let response_json: serde_json::Value =

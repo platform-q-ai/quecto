@@ -114,7 +114,10 @@ async fn invoke(
 }
 
 fn safe(text: &str) -> bool {
-    text.len() <= 4096 && CANARIES.iter().all(|canary| text.contains(canary) == false)
+    text.len() <= 4096
+        && CANARIES
+            .iter()
+            .all(|canary| !text.contains(canary))
 }
 
 async fn inspect(
@@ -156,7 +159,7 @@ async fn inspect(
     }
     if diagnostics
         .iter()
-        .all(|d| d.generated_text == false && d.generated_thinking == false)
+        .all(|d| !d.generated_text && !d.generated_thinking)
     {
     } else {
         failures.push("generated output recorded on error".into());
@@ -182,7 +185,7 @@ fn report(label: String, failures: Vec<String>, rows: &mut Vec<(String, Vec<Stri
 fn conclude(rows: Vec<(String, Vec<String>)>) {
     let failures: Vec<_> = rows
         .iter()
-        .filter(|(_, failures)| failures.is_empty() == false)
+        .filter(|(_, failures)| !failures.is_empty())
         .collect();
     println!(
         "S1_MATRIX exercised={} violating={}",
@@ -436,7 +439,7 @@ async fn succeed(provider: &dyn LlmProvider, surface: Surface) -> bool {
                         _ => {}
                     }
                 }
-                done && error == false
+                done && !error
             }
         }
     })
@@ -520,10 +523,9 @@ async fn catalogue_holds_only_known_refusals_with_safe_reasons_and_success_clear
                             reason.is_some()
                         ));
                     }
-                    if reason
-                        .as_deref()
-                        .is_none_or(|reason| safe(reason) && reason.trim().is_empty() == false)
-                    {
+                    if reason.as_deref().is_none_or(|reason| {
+                        safe(reason) && !reason.trim().is_empty()
+                    }) {
                     } else {
                         failures.push("refusal reason exposes untrusted fields or is empty".into());
                     }

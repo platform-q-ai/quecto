@@ -321,7 +321,7 @@ async fn the_replaying_body_is_the_one_compared() {
 #[tokio::test]
 async fn a_refused_replay_leaves_the_accepted_plain_body_as_the_baseline() {
     for path in [Path::Assembled, Path::Streamed] {
-        let refusal = "{\"error\":{\"message\":\"The encrypted content could not be verified\"}}";
+        let refusal = "{\"error\":{\"code\":\"invalid_encrypted_content\",\"message\":\"The encrypted content could not be verified\"}}";
         let server = server(Some((BLOB, 400, refusal))).await;
         let provider = provider_at(&server);
         let baseline = InputBaseline::default();

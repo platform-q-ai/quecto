@@ -367,17 +367,16 @@ impl AnthropicProvider {
 
         let status = response.status().as_u16();
         if status != 200 {
-            let retry_after = crate::infrastructure::providers::sse_common::retry_after_suffix(
-                response.headers(),
-            );
-            let read = idle.text(response).await;
+            let read =
+                crate::infrastructure::providers::provider_diagnostics::read(response, idle).await;
             attempt.iter().for_each(|a| a.error_read(status, &read));
-            return Err(DomainError::Provider(format!(
-                "HTTP {} from Anthropic: {}{}",
-                status,
-                error_text(read),
-                retry_after
-            )));
+            return Err(DomainError::Provider(
+                crate::infrastructure::providers::provider_diagnostics::http(
+                    status,
+                    "Anthropic",
+                    &error_text(read),
+                ),
+            ));
         }
 
         let full = match &attempt {
@@ -395,27 +394,28 @@ impl AnthropicProvider {
         parsed
     }
 
-    /// Send a non-streaming request and read its whole reply: its status,
-    /// `Retry-After` suffix and body. A whole reply sends nothing until it is
+    /// Send a non-streaming request and read its reply: its status and body. A whole reply sends nothing until it is
     /// complete, so the exchange is bounded in total (#2210 review).
     pub(super) async fn read_whole(
         &self,
         request_builder: reqwest::RequestBuilder,
-    ) -> Result<(u16, String, String), DomainError> {
+    ) -> Result<(u16, String), DomainError> {
         let exchange = async {
             let response = request_builder
                 .send()
                 .await
                 .map_err(|e| DomainError::Provider(format!("HTTP error: {}", e)))?;
             let status = response.status().as_u16();
-            let retry_after = crate::infrastructure::providers::sse_common::retry_after_suffix(
-                response.headers(),
-            );
-            let text = response
-                .text()
-                .await
-                .map_err(|e| DomainError::Provider(format!("failed to read response: {}", e)))?;
-            Ok((status, retry_after, text))
+
+            let text = match status {
+                200 => response.text().await.map_err(BodyError::Read),
+                _ => {
+                    crate::infrastructure::providers::provider_diagnostics::read_reply(response)
+                        .await
+                }
+            }
+            .map_err(|e| DomainError::Provider(format!("failed to read response: {}", e)))?;
+            Ok((status, text))
         };
         match self.stream_idle.whole(exchange).await {
             Ok(read) => read,
@@ -451,6 +451,7 @@ impl AnthropicProvider {
 
         for line in raw.lines() {
             // Only line ends are trimmed: an indented line is no event.
+            let raw_data = crate::infrastructure::providers::sse_common::event_data(line);
             let line = line.trim_end();
             if let Some(event) = line.strip_prefix("event: ") {
                 saw_event = true;
@@ -461,7 +462,14 @@ impl AnthropicProvider {
                 continue;
             };
             saw_event = true;
-            let chunk: serde_json::Value = serde_json::from_str(data).unwrap_or_default();
+            let chunk: serde_json::Value = match (
+                current_event.as_str(),
+                raw_data.unwrap_or(data).len()
+                    <= crate::infrastructure::providers::provider_diagnostics::BODY_LIMIT,
+            ) {
+                ("error", false) => serde_json::Value::Null,
+                _ => serde_json::from_str(data).unwrap_or_default(),
+            };
 
             match current_event.as_str() {
                 "message_start" => acc.handle_message_start(&chunk),
@@ -532,18 +540,18 @@ impl AnthropicProvider {
 
         let status = response.status().as_u16();
         if status != 200 {
-            let retry_after = crate::infrastructure::providers::sse_common::retry_after_suffix(
-                response.headers(),
-            );
-            let read = idle.text(response).await;
+            let read =
+                crate::infrastructure::providers::provider_diagnostics::read(response, idle).await;
             attempt.iter().for_each(|a| a.error_read(status, &read));
-            let text =
-                crate::infrastructure::providers::sse_common::truncate_error_body(error_text(read));
+            let text = error_text(read);
             let _ = tx
-                .send(StreamEvent::Error(format!(
-                    "HTTP {} from Anthropic: {}{}",
-                    status, text, retry_after
-                )))
+                .send(StreamEvent::Error(
+                    crate::infrastructure::providers::provider_diagnostics::http(
+                        status,
+                        "Anthropic",
+                        &text,
+                    ),
+                ))
                 .await;
             return;
         }
@@ -570,14 +578,7 @@ mod handler;
 pub(crate) use handler::{ANTHROPIC_CUT_SHORT, AnthropicSseHandler};
 
 fn format_anthropic_stream_error(chunk: &serde_json::Value) -> String {
-    let error = &chunk["error"];
-    let kind = error["type"].as_str().unwrap_or("error");
-    // A bare string `error` (#2236) is the message itself.
-    let message = error
-        .as_str()
-        .or_else(|| error["message"].as_str())
-        .unwrap_or("Anthropic stream error");
-    format!("Anthropic stream error: type={kind}: {message}")
+    crate::infrastructure::providers::provider_diagnostics::stream("Anthropic", chunk)
 }
 
 /// Dispatch one parsed SSE event to the accumulator and channel.

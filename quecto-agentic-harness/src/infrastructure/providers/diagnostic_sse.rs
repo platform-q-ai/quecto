@@ -200,8 +200,11 @@ pub(super) async fn error_body(
 ) -> DomainError {
     use super::super::stream_idle::BodyError;
     let status = response.status().as_u16();
-    let suffix = profile.suffix(response.headers());
-    let text = match profile.text(response).await {
+    let read = match profile.streams() {
+        true => super::super::provider_diagnostics::read(response, profile.idle).await,
+        false => super::super::provider_diagnostics::read_reply(response).await,
+    };
+    let text = match read {
         Ok(text) => text,
         Err(BodyError::Read(error)) if profile.strict_error_body() => {
             receipt.termination(Termination::ReadError);
@@ -220,9 +223,9 @@ pub(super) async fn error_body(
         receipt.termination(Termination::HttpError);
     }
     receipt.http_error(status, &text);
-    let text = profile.error_body(text);
-    DomainError::Provider(format!(
-        "HTTP {status} from {}: {text}{suffix}",
-        profile.name()
+    DomainError::Provider(super::super::provider_diagnostics::http(
+        status,
+        profile.name(),
+        &text,
     ))
 }

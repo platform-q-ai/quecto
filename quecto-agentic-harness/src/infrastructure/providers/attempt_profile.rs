@@ -1,6 +1,6 @@
 //! Existing wire/error behavior is a property of a provider and call surface,
 //! not admission policy. Keep these compatibility decisions out of ownership.
-use super::stream_idle::{BodyError, Idle, StreamIdle};
+use super::stream_idle::{Idle, StreamIdle};
 use crate::domain::error::DomainError;
 
 #[derive(Clone, Copy)]
@@ -52,13 +52,6 @@ impl Profile {
         assert!(self.streams(), "only a streaming reply has an SSE body");
         super::stream_idle::EventIdle::events(self.idle)
     }
-    /// Read a whole body: each read bounded when the reply streams.
-    pub async fn text(self, response: reqwest::Response) -> Result<String, BodyError> {
-        match self.streams() {
-            true => self.idle.text(response).await,
-            false => response.text().await.map_err(BodyError::Read),
-        }
-    }
     pub fn name(self) -> &'static str {
         match self.vendor {
             Vendor::OpenAi => "OpenAI",
@@ -96,20 +89,6 @@ impl Profile {
             (self.vendor, self.surface),
             (Vendor::OpenAi | Vendor::Anthropic, Surface::Chat)
         )
-    }
-    pub fn suffix(self, headers: &reqwest::header::HeaderMap) -> String {
-        if matches!(self.vendor, Vendor::Codex) {
-            String::new()
-        } else {
-            super::sse_common::retry_after_suffix(headers)
-        }
-    }
-    pub fn error_body(self, body: String) -> String {
-        if matches!(self.surface, Surface::Incremental) {
-            super::sse_common::truncate_error_body(body)
-        } else {
-            body
-        }
     }
 }
 
@@ -207,6 +186,7 @@ pub(super) fn is_untyped_error_chunk(value: &serde_json::Value) -> bool {
 /// was shown once, and the retry owner never replays a reply after output),
 /// and no completed reply follows the error, so a reply cut short by a
 /// provider failure is never taken as a whole answer.
+#[cfg(test)]
 pub(super) fn openai_stream_error(value: &serde_json::Value) -> String {
     assert!(
         is_stream_error_chunk(value),
@@ -217,7 +197,7 @@ pub(super) fn openai_stream_error(value: &serde_json::Value) -> String {
         (400..=599).contains(&status),
         "an error chunk always renders an HTTP error status"
     );
-    format!("HTTP {status} OpenAI stream error: {value}")
+    super::provider_diagnostics::stream("OpenAI", value)
 }
 
 /// The HTTP status an OpenAI-compatible error chunk stands for; see

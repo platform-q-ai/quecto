@@ -475,8 +475,7 @@ async fn a_whole_reply_that_cannot_be_parsed_ends_as_rejected() {
 /// the caller's message is cut to its limit as before; streamed whole and
 /// incrementally.
 #[tokio::test]
-async fn a_long_error_body_is_typed_from_the_whole_body() {
-    use crate::domain::inference::value_objects::attempt_diagnostics::ErrorCode;
+async fn a_long_error_body_has_status_only_diagnostics() {
     let body = serde_json::json!({
         "error": {
             "message": "m".repeat(2 * crate::infrastructure::providers::sse_common::MAX_ERROR_BODY_BYTES),
@@ -497,17 +496,16 @@ async fn a_long_error_body_is_typed_from_the_whole_body() {
     )
     .unwrap();
     let (events, attempts) = incremental(&provider).await;
-    assert_eq!(
-        attempts[0].error_code,
-        Some(ErrorCode::InsufficientQuota),
-        "{attempts:?}"
-    );
+    assert_eq!(attempts[0].error_code, None, "{attempts:?}");
     assert_eq!(
         format!("{events:?}"),
         format!("{:?}", untraced(&provider).await),
         "observation changed handling"
     );
-    assert!(format!("{events:?}").contains("(truncated)"), "{events:?}");
+    assert_eq!(events.len(), 1);
+    assert!(
+        matches!(&events[0], crate::domain::inference::value_objects::provider::StreamEvent::Error(m) if m == "HTTP 429 from OpenAI: class=rate_limit; refusal=none")
+    );
 
     let trace = Arc::new(RequestTrace::default());
     trace.start();
@@ -529,11 +527,7 @@ async fn a_long_error_body_is_typed_from_the_whole_body() {
     };
     assert!(provider.chat_stream(request).await.is_err());
     let attempts = trace.attempt_diagnostics();
-    assert_eq!(
-        attempts[0].error_code,
-        Some(ErrorCode::InsufficientQuota),
-        "{attempts:?}"
-    );
+    assert_eq!(attempts[0].error_code, None, "{attempts:?}");
 }
 
 /// The same class: an error status whose body could not be read ends as a
