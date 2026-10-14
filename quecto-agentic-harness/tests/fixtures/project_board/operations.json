@@ -1977,16 +1977,16 @@
       "op": "end_run",
       "task": "epic",
       "run": 1,
-      "outcome": "succeeded"
+      "outcome": "completed"
     },
     "answer": {
       "ok": false,
       "op": "end_run",
       "error": {
         "code": "invalid_request",
-        "message": "outcome: must be one of stopped, failed, lost",
+        "message": "outcome: must be one of succeeded, stopped, failed, lost",
         "field": "outcome",
-        "problem": "must be one of stopped, failed, lost"
+        "problem": "must be one of succeeded, stopped, failed, lost"
       }
     }
   },

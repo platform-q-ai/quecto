@@ -52,7 +52,7 @@ fn keys(code: ErrorCode) -> &'static [&'static str] {
         C::DuplicateArtifact => &["kind", "task", "number"],
         C::NoLauncher => &[],
         C::Brief => &["brief"],
-        C::LaunchFailed => &["reason", "run", "run_state", "released"],
+        C::LaunchFailed => &["reason", "run", "run_state", "released", "restored"],
     }
 }
 
@@ -168,6 +168,7 @@ board_errors! {
         run: 1,
         run_state: crate::application::project_board::dto::RunAfterUndo::Folded,
         released: Some(true),
+        restored: None,
     },
 }
 

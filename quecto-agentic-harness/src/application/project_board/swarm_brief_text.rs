@@ -21,7 +21,7 @@ const _: () = assert!(INSTRUCTIONS.len() < TEMPLATE_BYTES / 4);
 
 /// `brief` as its coordinator's task text.
 pub fn render(brief: &SwarmBrief) -> String {
-    let data = data_of(brief).to_string();
+    let data = ascii(&data_of(brief).to_string());
     // One line of JSON holds no line break, so no line of it is a fence;
     // the tag keeps even the fence's words out of the data's text.
     let tag = (1..)
@@ -38,6 +38,28 @@ pub fn render(brief: &SwarmBrief) -> String {
         begin = fence("BEGIN", tag),
         end = fence("END", tag),
     )
+}
+
+/// `json` with every character past ASCII escaped as JSON spells it, a backslash, `u` and four hex digits (a pair of
+/// them past the basic plane): its JSON reads back the same, and no
+/// character in it can look like another (a right-to-left mark, a
+/// lookalike letter) to the coordinator reading it. Outside strings JSON
+/// holds only ASCII, so every such character is inside one.
+fn ascii(json: &str) -> String {
+    let mut escaped = String::with_capacity(json.len());
+    for character in json.chars() {
+        match character.is_ascii() {
+            true => escaped.push(character),
+            false => {
+                let mut units = [0; 2];
+                for unit in character.encode_utf16(&mut units) {
+                    escaped.push_str(&format!("\\u{unit:04x}"));
+                }
+            }
+        }
+    }
+    assert!(escaped.is_ascii(), "the brief's data is ASCII");
+    escaped
 }
 
 /// The fence line `edge` (`BEGIN` or `END`) of tag `tag`.

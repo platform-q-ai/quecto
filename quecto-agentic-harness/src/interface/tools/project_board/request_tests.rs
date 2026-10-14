@@ -330,7 +330,7 @@ fn samples(kind: Kind) -> (Value, Value, Value) {
         Kind::Version => (json!(1), json!(2), json!(0)),
         Kind::AcceptedVersion => (json!(1), Value::Null, json!("1")),
         Kind::Run => (json!(1), json!(2), json!(0)),
-        Kind::RunEnd => (json!("failed"), json!("lost"), json!("succeeded")),
+        Kind::RunEnd => (json!("failed"), json!("lost"), json!("completed")),
         Kind::PlanItems => (
             json!([{"id": "a", "title": "A"}]),
             json!([{"id": "b", "title": "B"}]),
@@ -569,9 +569,9 @@ fn end_run_reads_its_run_outcome_and_pin() {
     );
     for (value, field, problem) in [
         (
-            json!({"op": "end_run", "task": "a", "run": 1, "outcome": "succeeded"}),
+            json!({"op": "end_run", "task": "a", "run": 1, "outcome": "completed"}),
             "outcome",
-            "must be one of stopped, failed, lost",
+            "must be one of succeeded, stopped, failed, lost",
         ),
         (
             json!({"op": "end_run", "task": "a", "run": 0, "outcome": "lost"}),

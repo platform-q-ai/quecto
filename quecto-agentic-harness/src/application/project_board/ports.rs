@@ -568,9 +568,15 @@ pub trait CoordinatorLaunch: Send + Sync {
     /// A start asks before it writes anything; the launch asks again.
     fn may_launch(&self) -> bool;
 
-    /// Launches the coordinator `request` describes.
+    /// Launches the coordinator `request` describes, giving up once
+    /// `cancelled` is set (the call it serves was cancelled): what it began
+    /// is stopped, and the launch refused.
     ///
     /// # Errors
-    /// The launch's refusal: nothing is left running.
-    fn launch(&self, request: &CoordinatorRequest) -> Result<LaunchedCoordinator, LaunchRefused>;
+    /// The launch's refusal, a cancel's included: nothing is left running.
+    fn launch(
+        &self,
+        request: &CoordinatorRequest,
+        cancelled: &std::sync::atomic::AtomicBool,
+    ) -> Result<LaunchedCoordinator, LaunchRefused>;
 }

@@ -69,10 +69,13 @@ fn run_1(store: &MemoryBoardStore) -> Run {
 }
 
 /// The holder ends the stranded run as stopped or failed: every item as
-/// a swarm that never ran left it, no cost; then the task can leave them.
+/// a swarm that never ran left it, its cost as a fold-back of a swarm that
+/// reported nothing records it (0); then the task can leave them. A
+/// success is recorded the same way, so the task can go on to done.
 #[test]
 fn the_holder_ends_a_stranded_run_and_can_then_release_the_task() {
     for (outcome, want) in [
+        (RunEndOutcome::Succeeded, RunOutcome::Succeeded),
         (RunEndOutcome::Stopped, RunOutcome::Stopped),
         (RunEndOutcome::Failed, RunOutcome::Failed),
     ] {
@@ -83,7 +86,7 @@ fn the_holder_ends_a_stranded_run_and_can_then_release_the_task() {
             .unwrap();
         assert_eq!(ended, run_1(&store));
         let fields = ended.fields();
-        assert_eq!((fields.outcome, fields.cost), (Some(want), None));
+        assert_eq!((fields.outcome, fields.cost), (Some(want), Some(0)));
         assert_eq!(fields.ended, Some(at("10:30:00")));
         let states: Vec<ItemState> = fields.items.iter().map(|item| item.state).collect();
         assert_eq!(states.len(), 3, "every plan item is accounted for");
@@ -196,7 +199,7 @@ fn an_outcome_is_named_by_its_allowlist() {
     for outcome in RunEndOutcome::ALL {
         assert_eq!(RunEndOutcome::parse(outcome.as_str()), Some(outcome));
     }
-    for other in ["succeeded", "Lost", "", "running"] {
+    for other in ["Succeeded", "Lost", "", "running", "completed"] {
         assert_eq!(RunEndOutcome::parse(other), None, "{other}");
     }
 }

@@ -137,7 +137,9 @@ pub enum ErrorCode {
     Brief,
     /// `reason` (the launch's), `run`, `run_state` (`folded`,
     /// `ended_already`, or `open`: for `end_run`), `released` (`null` when
-    /// the start did not take the claim): the coordinator did not launch,
+    /// the start did not take the claim), `restored` (`null`, or the review
+    /// or blocked `status` the task was held in and whether it `moved`
+    /// back): the coordinator did not launch,
     /// and the start was undone as far as it could be (S4c).
     LaunchFailed,
 }
@@ -601,6 +603,7 @@ fn error_fields(error: &ProjectBoardError) -> (ErrorCode, Map<String, Value>) {
             run,
             run_state,
             released,
+            restored,
         } => (
             C::LaunchFailed,
             fields([
@@ -608,6 +611,13 @@ fn error_fields(error: &ProjectBoardError) -> (ErrorCode, Map<String, Value>) {
                 ("run", json!(run)),
                 ("run_state", json!(run_state.as_str())),
                 ("released", json!(released)),
+                (
+                    "restored",
+                    json!(restored.map(|restored| json!({
+                        "status": restored.status.as_str(),
+                        "moved": restored.moved,
+                    }))),
+                ),
             ]),
         ),
         E::NotSetAside { path, object } => (
