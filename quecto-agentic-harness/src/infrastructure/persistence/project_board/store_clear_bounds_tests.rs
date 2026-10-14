@@ -133,6 +133,11 @@ fn a_clear_and_its_refusals_are_bounded() {
         matches!(judged, Ok(BoardWrite::Refused(_))),
         "past one folder's share: {judged:?}"
     );
+    let judged = clear_of(&many(MAX_BOARD_ENTRIES / 2));
+    assert!(
+        matches!(judged, Ok(BoardWrite::Refused(_))),
+        "at the bound: {judged:?}"
+    );
     let invalid = clear_of(&many(MAX_BOARD_ENTRIES / 2 + 1));
     assert!(
         matches!(invalid, Err(BoardStoreError::InvalidWrite(_))),
