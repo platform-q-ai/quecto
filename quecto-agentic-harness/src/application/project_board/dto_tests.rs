@@ -363,6 +363,31 @@ fn a_named_plan_version_is_refused_while_a_file_that_may_hold_it_is_set_aside() 
         Ok(&plan("a", 1)),
         "a plan read is the board's"
     );
+    // A keyed file of another version holds none of this one.
+    let other = shown(vec![file(
+        "plans/a.5.md",
+        Some(ArtifactKey::Plan(slug("a"), 5)),
+    )]);
+    assert_eq!(
+        other.version(3),
+        Err(ProjectBoardError::Rule(BoardRuleError::UnknownPlanVersion(
+            3
+        )))
+    );
+    // Of two keyless files, the least by path is named, however ordered.
+    let two = |first: &str, second: &str| shown(vec![file(first, None), file(second, None)]);
+    for keyless in [
+        two("plans/b c.md", "plans/a b.md"),
+        two("plans/a b.md", "plans/b c.md"),
+    ] {
+        assert_eq!(
+            keyless.version(3),
+            Err(ProjectBoardError::SetAsideFile {
+                path: "plans/a b.md".into(),
+                object: "0".repeat(40)
+            })
+        );
+    }
     let clear = shown(vec![file("runs/x.md", None)]);
     assert_eq!(
         clear.version(3),

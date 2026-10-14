@@ -187,11 +187,7 @@ impl BoardCall {
         self.note(|record| {
             let (rule, schema) = refusal_parts(error);
             record.outcome = refused(answer::error_code(error).as_str(), rule);
-            record.fault = schema.map(|schema| RequestFault {
-                field: schema_field(&schema.field),
-                fault: FaultKind::InvalidValue,
-                unexpected_count: None,
-            });
+            record.fault = schema.map(|schema| schema_fault(error, schema));
         });
         answer::board_refused(op, error)
     }
@@ -346,6 +342,26 @@ fn refusal_parts(error: &ProjectBoardError) -> (Option<&'static str>, Option<&Sc
         | E::NotSetAside { .. }
         | E::NoPullRequestHost(_)
         | E::Stale { .. } => (None, None),
+    }
+}
+
+/// The fault a board's schema refusal records: a plan's text as a whole
+/// past the most a plan holds (`invalid_plan`'s `text`, #2481 M4b) is the
+/// request as a whole, too large, as it was recorded when the request
+/// judged it; any other field is its schema field, of a value refused.
+fn schema_fault(error: &ProjectBoardError, schema: &SchemaError) -> RequestFault {
+    let plan_text = matches!(
+        error,
+        ProjectBoardError::Rule(BoardRuleError::InvalidPlan(_))
+    ) && schema.field == "text";
+    let (field, fault) = match plan_text {
+        true => (StaticKind::new("request"), FaultKind::TooLarge),
+        false => (schema_field(&schema.field), FaultKind::InvalidValue),
+    };
+    RequestFault {
+        field,
+        fault,
+        unexpected_count: None,
     }
 }
 

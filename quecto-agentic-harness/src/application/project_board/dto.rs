@@ -432,7 +432,8 @@ impl ShownTask {
         let keyless = self
             .set_aside
             .iter()
-            .find(|file| file.key.is_none() && plans.holds(file));
+            .filter(|file| file.key.is_none() && plans.holds(file))
+            .min_by(|a, b| (&a.path, &a.object).cmp(&(&b.path, &b.object)));
         match keyless {
             Some(file) => Err(ProjectBoardError::SetAsideFile {
                 path: file.path.clone(),

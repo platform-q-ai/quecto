@@ -146,17 +146,22 @@ a change to a plan writes that file alone: the task's file is left as it is.
 Anyone may propose a plan or edit a draft. Both are refused for a task that is
 done or archived (`task_finished`), while the task's own file is set aside
 (`set_aside`), and while a file named as one of the task's plans is set aside
-(`artifact_set_aside`), since the next version's number may be that file's. An edit is refused for a version the task does not
-have (`unknown_plan_version`), one that is not a draft (`plan_not_draft`), and
-one that changes nothing (`no_edit`). Text is normalised as it enters, as a
-task's is: the approach as markdown, and each task item's title and criteria as
-one line. A number out of its range is refused naming the field as the request
-spells it (a role's `members` outside 1 to 32 is `team/roles/0/members`). A
-plan the board's own schema refuses, with what the draft keeps, is the rule
-`invalid_plan`, naming the plan's field: `text` for text past the most a plan
-holds (320 KiB, counted as it enters the board). Both ops answer `plan`: its `task`, `version`, `state`,
-`proposed_by`, `edited_by`, `created` and `updated`. They do not echo its text.
-The CLI takes `--items` and `--team` as JSON.
+(`artifact_set_aside`), since the next version's number may be that file's. A
+set-aside file in `plans/` whose name spells no plan holds neither up: its name
+can never be a version's, so no write lands on it, where `show(task, version)`
+refuses a version it cannot find while such a file is set aside
+(`set_aside_file`), since that file may hold it. An edit is refused for a version
+the task does not have (`unknown_plan_version`), one that is not a draft
+(`plan_not_draft`), and one that changes nothing (`no_edit`). Text is normalised
+as it enters, as a task's is: the approach as markdown, and each task item's title
+and criteria as one line. A number out of its range is refused naming the field as
+the request spells it (a role's `members` outside 1 to 32 is
+`team/roles/0/members`). A plan the board's own schema refuses, with what the
+draft keeps, is the rule `invalid_plan`, naming the plan's field: `text` for text
+past the most a plan holds (320 KiB, counted as it enters the board). Both ops
+answer `plan`: its `task`, `version`, `state`, `proposed_by`, `edited_by`,
+`created` and `updated`. They do not echo its text. The CLI takes `--items` and
+`--team` as JSON.
 
 ## Telemetry
 
@@ -223,7 +228,7 @@ as given. It is for the pocket relay to set; an older quecto ignores it.
 | `access` | `read` or `write`: what the op does, even when it was refused before it was read |
 | `outcome` | `ok` or `refused` |
 | `code`, `rule` | For a refusal, the answer's error code (`invalid_request`, `rule`, `not_found`, `stale`, `contended`, `clock_ahead`, ...) and, for `rule`, the rule's code (`not_holder`, `claim_expired`, `not_allowed`, ...). `internal` is no answer's code: an agent tool call whose work ended without an answer (it panicked) is recorded as it unwinds, refused as `internal`. A `quecto board` panic aborts the process and writes no record |
-| `field`, `fault`, `unexpected_count` | For `invalid_request`, `invalid_task` and the rules `invalid` and `invalid_plan`, which field was wrong: a schema field as the board's table spells it (`depends_on/2` is `depends_on`, `items/3/criteria/0` is `items`), `op`, `request` (the request as a whole), or `other`; and how: `missing`, `unexpected`, `wrong_type`, `invalid_value`, `too_large`, `not_json`, `duplicate_key`. A key no schema of the op names is `other`, `unexpected`, and `unexpected_count` counts such keys, never naming one, even when another op takes a field of that name |
+| `field`, `fault`, `unexpected_count` | For `invalid_request`, `invalid_task` and the rules `invalid` and `invalid_plan`, which field was wrong: a schema field as the board's table spells it (`depends_on/2` is `depends_on`, `items/3/criteria/0` is `items`), `op`, `request` (the request as a whole; a plan's text past the most a plan holds, `invalid_plan`'s `text`, is recorded as `request`, `too_large`), or `other`; and how: `missing`, `unexpected`, `wrong_type`, `invalid_value`, `too_large`, `not_json`, `duplicate_key`. A key no schema of the op names is `other`, `unexpected`, and `unexpected_count` counts such keys, never naming one, even when another op takes a field of that name |
 | `task`, `pr` | The task the op's `task` names, and the pull request `link_pr` or `unlink_pr` names, once the request was read |
 | `head` | The board's head an answer named, only when it is a full commit id git produced |
 | `listed`, `shown`, `truncated_more`, `set_aside`, `set_aside_more` | For an answered listing: the tasks it listed, those its answer showed and those it left out, and the set-aside files it listed and left out. The agent tool's listing is cut to 32 KiB; the CLI leaves nothing out |

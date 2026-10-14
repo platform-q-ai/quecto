@@ -224,3 +224,53 @@ fn a_plans_schema_refusal_says_plan() {
     );
     assert_eq!(store.writes(), writes);
 }
+
+/// Review round 3: an edit that gives only task items, past the most a
+/// plan holds beside the large approach the draft keeps, is refused by
+/// the domain as `invalid_plan` naming `text`, writes nothing, and is
+/// recorded as the request as a whole, too large.
+#[test]
+fn an_items_only_edit_past_the_most_beside_a_kept_approach_is_refused() {
+    use super::recording::BoardCall;
+    use super::recording::tests::{Records, recording};
+    use super::run_recorded;
+    use crate::domain::audit::AuditEvent;
+    use crate::domain::project_board::value_objects::telemetry::{Client, FrontEnd};
+    let (store, ada, _bob) = drafted();
+    ok(
+        &ada,
+        json!({"op": "propose_plan", "task": "a", "approach": "\u{1f600}".repeat(65_536),
+               "items": []}),
+    );
+    let writes = store.writes();
+    let criteria: Vec<String> = (b'a'..b'q')
+        .map(|letter| char::from(letter).to_string().repeat(500))
+        .collect();
+    let items: Vec<Value> = (0..8)
+        .map(|index| json!({"id": format!("i{index}"), "title": "t".repeat(500), "criteria": criteria}))
+        .collect();
+    let edit = json!({"op": "edit_plan", "task": "a", "version": 3, "items": items});
+    let records = Arc::new(Records::default());
+    let mut call = BoardCall::start(Some(recording(&records)), FrontEnd::Tool, Client::Agent);
+    let refused = run_recorded(&ada, &edit.to_string(), &mut call);
+    call.finish(&refused, false);
+    let rule = &refused["error"]["rule"];
+    assert_eq!(
+        (&rule["code"], &rule["field"]),
+        (&json!("invalid_plan"), &json!("text")),
+        "{refused}"
+    );
+    assert_eq!(store.writes(), writes, "nothing written");
+    let line =
+        serde_json::to_value(AuditEvent::BoardOp(Box::new(records.taken().remove(0)))).unwrap();
+    assert_eq!(
+        [&line["code"], &line["rule"], &line["field"], &line["fault"]],
+        [
+            &json!("rule"),
+            &json!("invalid_plan"),
+            &json!("request"),
+            &json!("too_large")
+        ],
+        "{line}"
+    );
+}
