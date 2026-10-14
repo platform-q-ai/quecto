@@ -378,7 +378,7 @@ fn an_id_in_use_refusal_records_its_code() {
         id: Slug::parse("a").unwrap(),
         by: IdUser::Run(1),
     };
-    let answer = call.refuse_as_board("create", &error);
+    let answer = call.refuse_as_board("create", &error, None);
     assert_eq!(answer["error"]["code"], json!("id_in_use"));
     call.finish(&answer, false);
     let record = records.taken().remove(0);

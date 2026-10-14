@@ -295,8 +295,9 @@ pub fn outcome(op: &str, outcome: &BoardOutcome, clock: Option<String>) -> Value
 /// What `start` answers (S4c): the `task` as written, its `run`, the
 /// `coordinator` launched for it (its `agent` and the container it runs
 /// in, `environment_ref`), the worker roles whose models were not applied
-/// (`not_applied`: `role`, `model`, `effort`), and whether the start took
-/// the claim (`claim`: `fresh`) or found it held by the starter (`held`).
+/// (`not_applied`: `role`, `model`, `effort`), whether the start took
+/// the claim (`claim`: `fresh`) or found it held by the starter (`held`),
+/// and the `steps` for running it ([`start_steps::running`]).
 fn started_fields(started: &StartedTask) -> Map<String, Value> {
     let not_applied: Vec<Value> = started
         .not_applied
@@ -322,6 +323,13 @@ fn started_fields(started: &StartedTask) -> Map<String, Value> {
         ),
         ("not_applied", Value::Array(not_applied)),
         ("claim", json!(started.claim.as_str())),
+        (
+            "steps",
+            json!(start_steps::running(
+                &started.task.fields().id,
+                started.run.fields().number
+            )),
+        ),
     ])
 }
 
@@ -459,6 +467,11 @@ fn refused(op: Option<&str>, code: ErrorCode, message: &str, fields: Map<String,
     error.insert("code".into(), Value::String(code.as_str().into()));
     error.insert("message".into(), shown_json(message));
     error.extend(fields);
+    // A start refused before the board answered is told to stop, as one
+    // the board refused is.
+    if let Some(steps) = start_steps::refused_before_board(op) {
+        error.insert("steps".into(), json!(steps));
+    }
     json!({"ok": false, "op": op, "error": Value::Object(error)})
 }
 
@@ -502,7 +515,17 @@ pub fn reason_refused(op: Option<&str>, refusal: FrontEndRefusal, reason: &str) 
 
 /// An operation the board refused.
 pub fn board_refused(op: &str, error: &ProjectBoardError) -> Value {
-    json!({"ok": false, "op": op, "error": error_json(error)})
+    board_refused_with(op, error, None)
+}
+
+/// An operation the board refused, its error carrying the `steps` its
+/// caller takes next, when it has any (a start's, [`start_steps`]).
+pub fn board_refused_with(op: &str, error: &ProjectBoardError, steps: Option<String>) -> Value {
+    let mut error = error_json(error);
+    if let Some(steps) = steps {
+        error["steps"] = Value::String(steps);
+    }
+    json!({"ok": false, "op": op, "error": error})
 }
 
 /// The code an answer refusing `error` carries.
@@ -671,6 +694,9 @@ fn error_fields(error: &ProjectBoardError) -> (ErrorCode, Map<String, Value>) {
         ),
     }
 }
+
+#[path = "answer_start.rs"]
+pub mod start_steps;
 
 #[path = "answer_rules.rs"]
 mod rules;

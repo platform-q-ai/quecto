@@ -2001,7 +2001,8 @@
       "op": "start",
       "error": {
         "code": "no_launcher",
-        "message": "this session may not spawn, so it cannot launch a coordinator: start the task from a session that may"
+        "message": "this session may not spawn, so it cannot launch a coordinator: start the task from a session that may",
+        "steps": "If start is refused for any other reason, say why in a sentence and stop; do not start the task any other way."
       }
     }
   }

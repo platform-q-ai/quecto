@@ -208,14 +208,20 @@ impl BoardCall {
         answer::reason_refused(op, refusal, reason)
     }
 
-    /// The answer of the board's refusal of `op`.
-    pub fn refuse_as_board(&mut self, op: &str, error: &ProjectBoardError) -> Value {
+    /// The answer of the board's refusal of `op`, carrying the `steps`
+    /// its caller takes next, when it has any.
+    pub fn refuse_as_board(
+        &mut self,
+        op: &str,
+        error: &ProjectBoardError,
+        steps: Option<String>,
+    ) -> Value {
         self.note(|record| {
             let (rule, schema) = refusal_parts(error);
             record.outcome = refused(answer::error_code(error).as_str(), rule);
             record.fault = schema.map(|schema| schema_fault(error, schema));
         });
-        answer::board_refused(op, error)
+        answer::board_refused_with(op, error, steps)
     }
 
     /// The answer to `op`, which came to `outcome`; `clock` as
