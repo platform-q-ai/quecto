@@ -121,7 +121,7 @@ const ALLOWED: &[(&str, &str, &str)] = &[
     (
         "src/infrastructure/tools/coordinator_launch/mod.rs",
         "impl SpawnCoordinatorLauncher::stopped",
-        "drives the session's agent_cmd kill of a coordinator that came up outside a container to completion in place, on the same board call's blocking thread (no new task): its panic is the board call's",
+        "waits, on the same board call's blocking thread and at most its kill bound, for the session's agent_cmd kill of a coordinator that came up wrong, run as the call's own carried task (call_work::spawn_in_call) so it goes on to its end past the wait: a kill dropped half-way would leave the child claimed as stopping",
     ),
     (
         "src/infrastructure/tools/find_fd.rs",
