@@ -10,11 +10,16 @@
 //! direct child of `<common>/worktrees`, which only whoever can write the
 //! repository's `.git` creates (a pointer, back-link and `commondir`
 //! fabricated in the checkout itself never borrow another repository);
-//! `<admin>/gitdir` names `<dir>/.git` back (a registered pointer copied
-//! anywhere else is not that worktree); the common directory is a main
-//! worktree's `.git` — named `.git`, its `core.bare` explicitly false, no
-//! `core.worktree`, no includes — and the main worktree is its parent
-//! directory. Anything else is [`WorktreeLink::Unresolved`], so the caller
+//! `<admin>/gitdir` names `<canonical dir>/.git` back, and the entry there
+//! is the very file read (same device and inode, so a pointer swapped by a
+//! concurrent local process after the read is refused; `.git` itself is
+//! never canonicalised); a registered pointer copied anywhere else is not
+//! that worktree. Registration is git's own: a worktree deleted without
+//! `git worktree prune` stays registered, and a directory recreated at its
+//! path with the same pointer is accepted, exactly as git accepts it; the
+//! common directory is a main worktree's `.git` — named `.git`, its
+//! `core.bare` explicitly false, no `core.worktree`, no includes — and the
+//! main worktree is its parent directory. Anything else is [`WorktreeLink::Unresolved`], so the caller
 //! shares nothing.
 
 use std::io::Read;
@@ -41,7 +46,23 @@ impl MainWorktreeLocator for GitMetadataWorktreeLocator {
 
 /// `Ok(None)` when `directory` is not the root of a linked worktree.
 fn main_worktree_of(directory: &Path) -> Result<Option<PathBuf>, String> {
-    let dot_git = directory.join(".git");
+    main_worktree_with_seam(directory, &mut || {})
+}
+
+/// [`main_worktree_of`], with `after_pointer_read` run right after the
+/// `.git` pointer is read: the seam a test uses to swap the pointer the
+/// way a concurrent local attacker would.
+fn main_worktree_with_seam(
+    directory: &Path,
+    after_pointer_read: &mut dyn FnMut(),
+) -> Result<Option<PathBuf>, String> {
+    // Canonical once, up front: the back-link must name `<root>/.git`
+    // itself, and `.git` is never canonicalised (a link swapped in after
+    // the read would be followed).
+    let root = directory
+        .canonicalize()
+        .map_err(|error| format!("{}: {error}", directory.display()))?;
+    let dot_git = root.join(".git");
     match std::fs::symlink_metadata(&dot_git) {
         Ok(entry) if entry.is_dir() => return Ok(None),
         Ok(entry) if entry.is_file() => {}
@@ -54,10 +75,11 @@ fn main_worktree_of(directory: &Path) -> Result<Option<PathBuf>, String> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(format!("{}: {error}", dot_git.display())),
     }
-    let pointer = read_metadata(&dot_git)?.ok_or_else(|| vanished(&dot_git))?;
+    let (pointer, pointer_read) = read_identified(&dot_git)?.ok_or_else(|| vanished(&dot_git))?;
+    after_pointer_read();
     let named = gitdir_pointer(&pointer)
         .ok_or_else(|| format!("{} is not a gitdir pointer", dot_git.display()))?;
-    let admin = real_directory(directory, named)?;
+    let admin = real_directory(&root, named)?;
     // No `commondir`: the git directory is its own common directory (a
     // submodule, a `--separate-git-dir` repository), not a linked worktree.
     let Some(common) = read_metadata(&admin.join("commondir"))? else {
@@ -75,14 +97,21 @@ fn main_worktree_of(directory: &Path) -> Result<Option<PathBuf>, String> {
     let back_file = admin.join("gitdir");
     let back = read_metadata(&back_file)?.ok_or_else(|| vanished(&back_file))?;
     let back = admin.join(single_line(&back, &back_file)?);
-    let names_us = match (back.canonicalize(), dot_git.canonicalize()) {
-        (Ok(back), Ok(ours)) => back == ours,
-        _ => false,
-    };
+    let names_us = back.canonicalize().is_ok_and(|back| back == dot_git);
     if !names_us {
         return Err(format!(
             "{} does not name {} back",
             back_file.display(),
+            dot_git.display()
+        ));
+    }
+    // The path is ours; the entry there now must be the file read.
+    let now = std::fs::symlink_metadata(&dot_git)
+        .ok()
+        .map(|entry| FileIdentity::of(&entry));
+    if now != Some(pointer_read) {
+        return Err(format!(
+            "{} is not the file read (it changed while being resolved)",
             dot_git.display()
         ));
     }
@@ -104,11 +133,12 @@ fn main_worktree_of(directory: &Path) -> Result<Option<PathBuf>, String> {
         .parent()
         .ok_or_else(|| format!("{} has no parent directory", common.display()))?
         .to_path_buf();
-    match std::fs::symlink_metadata(&main) {
-        Ok(entry) if entry.is_dir() => {}
-        _ => return Err(format!("{} is not a directory", main.display())),
-    }
-    assert!(main.is_absolute(), "a canonical path is absolute");
+    // `common` is a canonical directory (checked when it was resolved), so
+    // its parent is a real, absolute directory: never a link.
+    assert!(
+        main.is_absolute() && common.starts_with(&main),
+        "the main worktree is the canonical common directory's parent"
+    );
     Ok(Some(main))
 }
 
@@ -143,10 +173,33 @@ fn real_directory(base: &Path, named: &str) -> Result<PathBuf, String> {
 /// link and never blocks (a FIFO), and the opened handle is what is
 /// checked, so nothing swapped in between a check and the read is read.
 fn read_metadata(path: &Path) -> Result<Option<String>, String> {
+    Ok(read_identified(path)?.map(|(text, _)| text))
+}
+
+/// The (device, inode) of a file, to tell the file read from whatever is
+/// at its path later.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct FileIdentity {
+    device: u64,
+    inode: u64,
+}
+
+impl FileIdentity {
+    fn of(entry: &std::fs::Metadata) -> Self {
+        use std::os::unix::fs::MetadataExt;
+        Self {
+            device: entry.dev(),
+            inode: entry.ino(),
+        }
+    }
+}
+
+/// [`read_metadata`], with the identity of the handle actually read.
+fn read_identified(path: &Path) -> Result<Option<(String, FileIdentity)>, String> {
     use std::os::unix::fs::OpenOptionsExt;
     let opened = std::fs::OpenOptions::new()
         .read(true)
-        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_NOCTTY)
         .open(path);
     let file = match opened {
         Ok(file) => file,
@@ -166,11 +219,12 @@ fn read_metadata(path: &Path) -> Result<Option<String>, String> {
         ));
     }
     // Bounded even if the file grows after the check.
+    let identity = FileIdentity::of(&entry);
     let mut text = String::new();
     file.take(METADATA_LIMIT)
         .read_to_string(&mut text)
         .map_err(|error| format!("{}: {error}", path.display()))?;
-    Ok(Some(text))
+    Ok(Some((text, identity)))
 }
 
 fn vanished(path: &Path) -> String {

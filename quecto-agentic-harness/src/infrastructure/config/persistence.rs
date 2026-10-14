@@ -121,7 +121,7 @@ pub fn prompt_preview(content: &[u8]) -> String {
 
 /// The question the prompt asks: the file, whose it is when it is shared
 /// from the main worktree, its fingerprint and its (bounded) content.
-pub fn prompt_question(
+pub(crate) fn prompt_question(
     path: &Path,
     fingerprint: &str,
     content: &[u8],

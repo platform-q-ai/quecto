@@ -176,6 +176,18 @@ fn an_overlay_entry_is_probed_without_reading_it() {
         "a dangling link"
     );
 
+    // A linked `.quecto` with nothing behind it is an entry too: the link
+    // alone is what the overlay read refuses.
+    let empty = TempDir::new().unwrap();
+    let to_empty = TempDir::new().unwrap();
+    std::os::unix::fs::symlink(empty.path(), to_empty.path().join(".quecto")).unwrap();
+    assert!(
+        store
+            .has_overlay_entry(&to_empty.path().join(".quecto").join("config.json"))
+            .unwrap(),
+        "a .quecto link to an empty directory"
+    );
+
     let linked = TempDir::new().unwrap();
     std::os::unix::fs::symlink(dir.path().join(".quecto"), linked.path().join(".quecto")).unwrap();
     let through = linked.path().join(".quecto").join("config.json");

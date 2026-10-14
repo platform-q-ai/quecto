@@ -227,3 +227,90 @@ fn a_metadata_file_at_the_limit_is_read_and_one_byte_over_is_refused() {
     std::fs::write(layout.linked.join(".git"), padded(64 * 1024 + 1)).unwrap();
     unresolved(&layout.linked, "too large");
 }
+
+/// Review round 2 MED-1: the `.git` pointer read is the one the back-link
+/// is checked against. A looping attacker who swaps their checkout's
+/// `.git` for a link to a registered worktree's `.git` right after the
+/// read must not have the link followed: the back-link is compared with
+/// `<canonical directory>/.git`, never with a canonicalised `.git`.
+#[test]
+fn a_dot_git_swapped_for_a_link_after_the_read_is_refused() {
+    let layout = layout();
+    let attacker = layout.tmp.path().join("attacker");
+    std::fs::create_dir(&attacker).unwrap();
+    std::fs::copy(layout.linked.join(".git"), attacker.join(".git")).unwrap();
+    let victim = layout.linked.join(".git");
+    let mut swap = || {
+        std::fs::remove_file(attacker.join(".git")).unwrap();
+        std::os::unix::fs::symlink(&victim, attacker.join(".git")).unwrap();
+    };
+    let reason = main_worktree_with_seam(&attacker, &mut swap).unwrap_err();
+    assert!(reason.contains("does not name"), "{reason}");
+}
+
+/// Review round 2 MED-1: the back-link must name the very file read — the
+/// same (device, inode) — not merely the same path, so a pointer swapped
+/// for another file after the read is refused.
+#[test]
+fn a_dot_git_replaced_after_the_read_is_refused() {
+    let layout = layout();
+    let dot_git = layout.linked.join(".git");
+    let mut replace = || {
+        let content = std::fs::read(&dot_git).unwrap();
+        let fresh = layout.tmp.path().join("fresh");
+        std::fs::write(&fresh, content).unwrap();
+        std::fs::rename(&fresh, &dot_git).unwrap();
+    };
+    let reason = main_worktree_with_seam(&layout.linked, &mut replace).unwrap_err();
+    assert!(reason.contains("is not the file read"), "{reason}");
+    // Without a swap the same worktree resolves.
+    assert_eq!(
+        main_worktree_with_seam(&layout.linked, &mut || {}),
+        Ok(Some(layout.main.clone()))
+    );
+}
+
+/// Review round 2 LOW-3: a back-link naming a worktree that no longer
+/// exists (it cannot be canonicalised) names nobody.
+#[test]
+fn a_back_link_to_a_deleted_worktree_is_refused() {
+    let layout = layout();
+    let admin = layout.main.join(".git/worktrees/task");
+    let gone = layout.tmp.path().join("deleted/.git");
+    std::fs::write(admin.join("gitdir"), format!("{}\n", gone.display())).unwrap();
+    unresolved(&layout.linked, "does not name");
+}
+
+/// Review round 2 LOW-1: parity with git. A worktree deleted without
+/// `git worktree prune` stays registered; recreating its path with the
+/// same pointer is accepted, as git itself accepts it.
+#[test]
+fn a_recreated_path_of_an_unpruned_worktree_is_accepted_as_git_accepts_it() {
+    let layout = layout();
+    let pointer = std::fs::read(layout.linked.join(".git")).unwrap();
+    std::fs::remove_dir_all(&layout.linked).unwrap();
+    std::fs::create_dir_all(&layout.linked).unwrap();
+    std::fs::write(layout.linked.join(".git"), pointer).unwrap();
+    assert_eq!(
+        locate(&layout.linked),
+        WorktreeLink::Linked {
+            main_worktree: layout.main.clone()
+        }
+    );
+}
+
+#[test]
+fn a_pointer_or_commondir_holding_more_than_one_line_is_refused() {
+    let layout = layout();
+    let pointer = std::fs::read_to_string(layout.linked.join(".git")).unwrap();
+    std::fs::write(
+        layout.linked.join(".git"),
+        format!("{pointer}gitdir: /elsewhere\n"),
+    )
+    .unwrap();
+    unresolved(&layout.linked, "is not a gitdir pointer");
+    std::fs::write(layout.linked.join(".git"), pointer).unwrap();
+    let commondir = layout.main.join(".git/worktrees/task/commondir");
+    std::fs::write(&commondir, "../..\n../../x\n").unwrap();
+    unresolved(&layout.linked, "does not hold one path");
+}

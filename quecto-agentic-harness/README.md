@@ -510,11 +510,17 @@ own, copy the main overlay to its `.quecto/config.json`, edit it, and run
 `quecto config trust` there. The main worktree is read from git's metadata
 files (`.git` → `gitdir` → `commondir`), never by running git, and only in the
 shape `git worktree add` registers: the worktree's git directory must sit
-directly in the common directory's `worktrees/` (so a pointer fabricated
-inside a checkout never borrows another repository's overlay) and name the
-worktree back, the common directory must be the main worktree's `.git` with
-`core.bare` false, no `core.worktree` and no includes, and the main worktree
-an existing directory. Anything else — a broken `.git` pointer, a bare
+directly in the common directory's `worktrees/`, and name back this
+directory's `.git` — the very file read, by device and inode, so a pointer
+swapped in by another local process while it is resolved is refused; the
+common directory must be the main worktree's `.git` with `core.bare` false,
+no `core.worktree` and no includes. So a directory shares a repository's
+overlay only when that repository registered it as a worktree: a `.git`
+pointer, back-link or `commondir` fabricated in a checkout, or swapped
+concurrently, never borrows another repository's overlay. Registration is
+git's: a worktree deleted without `git worktree prune` stays registered, and
+a directory recreated at its path is accepted, as git accepts it (prune
+removed worktrees). Anything else — a broken `.git` pointer, a bare
 repository — shares nothing, and `quecto status` says why. The choice is made
 once, when a run starts: a running session reloads the file it chose (and its
 trust record), but an overlay created later in the main worktree, or in the
