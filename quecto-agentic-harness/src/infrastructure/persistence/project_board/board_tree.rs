@@ -192,11 +192,11 @@ impl TreeCopy {
         format!("{} {} {}", self.mode, self.kind, self.oid)
     }
 
-    /// Its size, when a read of the board reads it (a regular file of at
-    /// most a task file's size).
-    pub fn read_size(&self) -> Option<usize> {
+    /// Its size, when a read of the board reads it: a regular file of at
+    /// most its kind's cap, `file_bytes`.
+    pub fn read_size(&self, file_bytes: usize) -> Option<usize> {
         let read = self.mode == REGULAR_FILE && self.kind == "blob";
-        (read && self.size <= MAX_TASK_FILE_BYTES).then_some(self.size)
+        (read && self.size <= file_bytes).then_some(self.size)
     }
 }
 
@@ -220,21 +220,28 @@ impl Board {
     /// Why no write is taken, when a task file's name is listed twice.
     pub fn repeated_refusal(&self, head: &str) -> Option<String> {
         let (name, copies) = self.repeated.first()?;
-        let oids: Vec<&str> = copies.iter().map(|copy| copy.oid.as_str()).collect();
-        Some(format!(
-            "tasks/{} is named more than once in board commit {head} (objects {}). quecto \
-             never writes such a tree, so a hand edit did, and git rejects it (fsck: \
-             duplicateEntries): no write can carry it forward, and quecto will not choose a \
-             copy. To mend the board, clear it (clear set-aside), naming the copy to keep for \
-             every name listed more than once, or {RECOVERY}",
-            quoted(name.as_bytes()),
-            oids.join(", ")
-        ))
+        let path = format!("tasks/{}", quoted(name.as_bytes()));
+        Some(named_twice(&path, head, copies, "no write"))
     }
 
     pub fn is_quarantined(&self, id: &Slug) -> Option<&QuarantinedFile> {
         self.quarantined.iter().find(|file| file.id() == Some(id))
     }
+}
+
+/// Why `writes` (every write, or every write in one folder) is refused
+/// while `path` is listed more than once, as `copies`, in board commit
+/// `head`.
+pub(super) fn named_twice(path: &str, head: &str, copies: &[TreeCopy], writes: &str) -> String {
+    let oids: Vec<&str> = copies.iter().map(|copy| copy.oid.as_str()).collect();
+    format!(
+        "{path} is named more than once in board commit {head} (objects {}). quecto never \
+         writes such a tree, so a hand edit did, and git rejects any new tree holding it (fsck: \
+         duplicateEntries): {writes} can carry it forward, and quecto will not choose a copy. To mend the board, \
+         clear it (clear set-aside), naming the copy to keep for every name listed more than \
+         once, or {RECOVERY}",
+        oids.join(", ")
+    )
 }
 
 /// One entry of a listed tree.
@@ -592,15 +599,15 @@ pub fn object_id(text: &str) -> Result<String, BoardStoreError> {
 
 #[path = "board_bounds.rs"]
 mod bounds;
-pub use bounds::within;
 use bounds::within_read;
+pub use bounds::{ClearKeeps, within};
 #[path = "board_entries.rs"]
 mod entries;
 pub use entries::TASK_NAMING;
 use entries::{TaskFile, task_name};
 #[path = "board_folders.rs"]
 mod folders;
-pub use folders::{ARCHIVE, CarriedTree, MAX_BOARD_ENTRIES};
+pub use folders::{ARCHIVE, CarriedTree, MAX_BOARD_ENTRIES, is_folder, read_size_in};
 use folders::{FOLDERS, FolderScan, load_folder, root_tree, scan_folder};
 #[path = "board_tasks.rs"]
 mod tasks;

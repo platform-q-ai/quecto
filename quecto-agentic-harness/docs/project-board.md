@@ -22,8 +22,19 @@ alone is carried as the same tree. A folder it writes in, or one holding a stray
 (any entry a write drops), is rebuilt from the files it carries, and a folder left
 with nothing in it is omitted. A file set aside is carried as it is, and writes to
 its key are refused, unless it is one a write drops: a write of its key replaces
-it. A clear removes one file set aside, in any folder. While a name outside `tasks/` is listed more than once, every
-write and clear is refused (`folder_set_aside`) until a later quecto can clear it.
+it. A clear removes one file set aside, in any folder.
+
+A name listed more than once (a hand edit; git rejects such a tree) is resolved
+only by a clear, which names, for every such name on the board, the copy to keep or
+that none is; quecto never picks a copy. While one is listed in `tasks/`, every
+write is refused. While one is listed in another folder, a write into that folder
+is refused, and any other write carries the folder as the tree it was, so no write
+makes a tree holding a name twice. A clear that keeps a copy is refused when the
+copy would take a folder or the board past what a read takes: keep a smaller copy,
+or drop every copy. A clear resolving thousands of names, near its caps (8,192
+names, 16,384 copies), may not fit in one 1 MiB tool request; the refusal's other
+way out, moving `quecto/board` back to the commit before the hand edit, covers it.
+
 Listings are unavailable (`folder_set_aside`) while a file set aside outside
 `tasks/` names a plan, run, change, review or discussion, since the index holds
 tasks alone for now. `show` reads the store itself, so it still answers then (see

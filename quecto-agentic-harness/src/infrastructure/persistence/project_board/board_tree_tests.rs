@@ -292,24 +292,38 @@ fn a_key_is_written_where_a_read_finds_it() {
     assert!(big.is_err_and(|why| why.contains("8193 bytes")));
 }
 
-/// Only a name listed twice outside `tasks/` stops a write or a clear.
+/// A name listed twice outside `tasks/` holds only its own folder: a write
+/// that writes nothing there carries the folder as its very tree, however
+/// many entries it drops, and a write into it is refused, naming the clear.
 #[test]
-fn a_name_listed_twice_outside_tasks_stops_writes_and_clears() {
+fn a_name_listed_twice_outside_tasks_holds_only_its_folder() {
     let mut board = carried(1, 0);
-    assert_eq!(board.folders_repeated_refusal(), None);
-    board.folders.get_mut("plans").unwrap().repeated = Some("plans/a.1.md".into());
-    let refusal = board.folders_repeated_refusal();
+    assert_eq!(board.folder_repeated_refusal("c", &plan_file(1)), None);
+    let copy = |oid: char| TreeCopy {
+        mode: REGULAR_FILE.into(),
+        kind: "blob".into(),
+        oid: oid.to_string().repeat(40),
+        size: 1,
+    };
+    let tree = board.folders.get_mut("plans").unwrap();
+    tree.entries = 3;
+    tree.repeated = vec![("a.1.md".into(), vec![copy('d'), copy('e')])];
+    let after = board.folders_after(&[]);
+    assert!(matches!(after["plans"], FolderAfter::Carried(tree) if tree.oid == "b".repeat(40)));
+    let mut run = plan_file(1);
+    run[0].folder = "runs";
+    assert_eq!(board.folder_repeated_refusal("c", &run), None);
+    let refusal = board.folder_repeated_refusal("c", &plan_file(1));
     assert!(
         refusal
             .as_deref()
-            .is_some_and(|why| why.starts_with("plans/a.1.md is named more than once")),
+            .is_some_and(|why| why.starts_with(&format!(
+                "plans/a.1.md is named more than once in board commit c (objects {}, {})",
+                "d".repeat(40),
+                "e".repeat(40)
+            )) && why.contains("no write in plans/ can carry it forward")
+                && why.contains("git rejects any new tree holding it")),
         "{refusal:?}"
-    );
-    assert!(
-        refusal
-            .as_deref()
-            .is_some_and(|why| why.contains("this quecto writes nothing over such a board")),
-        "the remedy says what moving the board back undoes: {refusal:?}"
     );
 }
 

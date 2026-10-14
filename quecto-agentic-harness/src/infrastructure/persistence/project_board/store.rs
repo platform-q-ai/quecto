@@ -525,12 +525,15 @@ impl GitBoardStore {
         folders: BTreeMap<String, String>,
         message: &str,
     ) -> Result<BoardWrite, BoardStoreError> {
-        // A name listed twice in a folder would be carried or chosen
-        // unjudged: write and clear refuse first.
-        assert!(
-            board.folders_repeated_refusal().is_none(),
-            "no folder with a name listed twice is written"
-        );
+        // No new tree holds a name twice: a folder that does is carried as
+        // the very tree read (the remote holds it), never rebuilt.
+        for (name, tree) in &board.folders {
+            let carried = folders.get(*name) == Some(&format!("{TREE} tree {}", tree.oid));
+            assert!(
+                tree.repeated.is_empty() || carried,
+                "a folder with a name listed twice is carried as it was read: {name}"
+            );
+        }
         let readme = self.blob(README)?;
         let format = self.format_tree()?;
         let mut root = BTreeMap::from([
