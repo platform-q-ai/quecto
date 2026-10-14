@@ -66,6 +66,7 @@ const USE_CASES: &[&str] = &[
     "DiscardPlan",
     "DriveExternalAgentSession",
     "EditPlan",
+    "EndRun",
     "EndedTranscriptPage",
     "ExecuteHarnessShutdown",
     "ExecuteHarnessShutdownPorts",

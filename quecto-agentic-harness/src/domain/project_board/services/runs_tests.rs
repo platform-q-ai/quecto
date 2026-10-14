@@ -374,3 +374,62 @@ fn a_fold_back_finds_its_run_by_number_and_the_plan_it_ran_by_version() {
         Err(BoardRuleError::UnknownPlanVersion(2))
     );
 }
+
+/// The holder of a live claim ends its task's open run as stopped or
+/// failed, folded back with the items it gives; nobody else does, nor the
+/// holder once the claim expired (renew first), nor any run twice.
+#[test]
+fn the_holder_ends_an_open_run_as_stopped_or_failed() {
+    let held = task(InProgress);
+    let accepted = plan(1, PlanState::Accepted);
+    for (end, outcome) in [
+        (HeldEnd::Stopped, RunOutcome::Stopped),
+        (HeldEnd::Failed, RunOutcome::Failed),
+    ] {
+        let ended = end_held(
+            &held,
+            (&open_run(1, 1), &accepted),
+            end,
+            vec![],
+            &person("Ada"),
+            &at("10:00:00"),
+        )
+        .unwrap();
+        assert_eq!(ended.fields().outcome, Some(outcome));
+        assert_eq!(ended.fields().ended, Some(at("10:00:00")));
+        assert_eq!(end.outcome(), outcome);
+    }
+    let end = |task: &Task, run: &Run, who: &str, when: &str| {
+        end_held(
+            task,
+            (run, &accepted),
+            HeldEnd::Failed,
+            vec![],
+            &person(who),
+            &at(when),
+        )
+    };
+    let running = open_run(1, 1);
+    assert_eq!(
+        end(&held, &running, "Bob", "10:00:00"),
+        Err(BoardRuleError::NotHolder)
+    );
+    assert_eq!(
+        end(&held, &running, "Ada", "11:00:00"),
+        Err(BoardRuleError::ClaimExpired)
+    );
+    assert_eq!(
+        end(&task(Ready), &running, "Ada", "10:00:00"),
+        Err(BoardRuleError::NoClaim)
+    );
+    assert_eq!(
+        end(&held, &ended(&running), "Ada", "10:00:00"),
+        Err(BoardRuleError::RunEnded(1))
+    );
+    let mut elsewhere = running.into_fields();
+    elsewhere.task = Slug::parse("other").unwrap();
+    assert_eq!(
+        end(&held, &Run::new(elsewhere).unwrap(), "Ada", "10:00:00"),
+        Err(BoardRuleError::NotThisTasks)
+    );
+}

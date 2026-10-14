@@ -130,6 +130,10 @@ pub enum Kind {
     /// A plan's version, from 1, or `null` for none: the version a task
     /// was seen naming as accepted (#2481 M4c).
     AcceptedVersion,
+    /// A run's number, from 1 (S4c).
+    Run,
+    /// How a run is ended by hand: `stopped`, `failed` or `lost` (S4c).
+    RunEnd,
     /// A plan's task items: `[{"id", "title", "criteria", "depends_on"}]`,
     /// as `show` gives them.
     PlanItems,
@@ -257,6 +261,15 @@ pub const OPS: &[(&str, &[Field])] = &[
         &[
             TASK,
             required("version", Kind::Version),
+            optional("expected_updated", Kind::Timestamp),
+        ],
+    ),
+    (
+        "end_run",
+        &[
+            TASK,
+            required("run", Kind::Run),
+            required("outcome", Kind::RunEnd),
             optional("expected_updated", Kind::Timestamp),
         ],
     ),
@@ -487,6 +500,7 @@ fn build(op: &str, read: &Read<'_>) -> Result<BoardRequest, RequestError> {
         "edit_plan" => plans::edit_plan(read),
         "accept_plan" => plans::accept_plan(read),
         "discard_plan" => plans::discard_plan(read),
+        "end_run" => plans::end_run(read),
         "clear_set_aside" => clear(read),
         other => unreachable!("op {other} is in OPS but not built"),
     }

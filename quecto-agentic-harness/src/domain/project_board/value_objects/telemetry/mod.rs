@@ -67,7 +67,7 @@ kinds!(
         TakeOver => "take_over", LinkPr => "link_pr", UnlinkPr => "unlink_pr",
         Complete => "complete", ClearSetAside => "clear_set_aside", Unknown => "unknown",
         ProposePlan => "propose_plan", EditPlan => "edit_plan",
-        AcceptPlan => "accept_plan", DiscardPlan => "discard_plan",
+        AcceptPlan => "accept_plan", DiscardPlan => "discard_plan", EndRun => "end_run",
     }
 );
 
@@ -182,6 +182,11 @@ pub struct BoardOpRecord {
     pub plan_state_from: Option<StaticKind>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub plan_state_to: Option<StaticKind>,
+    /// The run an `end_run` named, and the outcome it ends it with (S4c).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub run: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub run_outcome: Option<RunOutcomeKind>,
     /// The task's status as a change last read it (T4).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub status_from: Option<StaticKind>,

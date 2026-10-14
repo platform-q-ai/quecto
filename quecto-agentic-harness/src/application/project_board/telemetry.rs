@@ -9,9 +9,9 @@ use super::ports::ProjectBoardOpLog;
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::telemetry::{
     Access, BoardOpRecord, ClaimFacts, CompletionFacts, CompletionKind, FoldBackRecord, Normalised,
-    OpKind, StaticKind,
+    OpKind, RunOutcomeKind, StaticKind,
 };
-use crate::domain::project_board::value_objects::vocabulary::{PlanState, TaskStatus};
+use crate::domain::project_board::value_objects::vocabulary::{PlanState, RunOutcome, TaskStatus};
 
 /// The op `request` is. Exhaustive with no catch-all: a new request or
 /// change op does not compile until it has its kind.
@@ -35,6 +35,7 @@ pub fn op_kind(request: &BoardRequest) -> OpKind {
         BoardRequest::EditPlan(_) => OpKind::EditPlan,
         BoardRequest::AcceptPlan(_) => OpKind::AcceptPlan,
         BoardRequest::DiscardPlan(_) => OpKind::DiscardPlan,
+        BoardRequest::EndRun(_) => OpKind::EndRun,
     }
 }
 
@@ -57,7 +58,8 @@ pub fn access_of(kind: OpKind) -> Access {
         | OpKind::ProposePlan
         | OpKind::EditPlan
         | OpKind::AcceptPlan
-        | OpKind::DiscardPlan => Access::Write,
+        | OpKind::DiscardPlan
+        | OpKind::EndRun => Access::Write,
         OpKind::List
         | OpKind::ListReady
         | OpKind::ListTakeable
@@ -78,6 +80,7 @@ pub fn task_of(request: &BoardRequest) -> Option<&Slug> {
         BoardRequest::EditPlan(edit) => Some(&edit.task),
         BoardRequest::AcceptPlan(acceptance) => Some(&acceptance.task),
         BoardRequest::DiscardPlan(discard) => Some(&discard.task),
+        BoardRequest::EndRun(end) => Some(&end.task),
         BoardRequest::Bootstrap
         | BoardRequest::List(_)
         | BoardRequest::ListReady
@@ -103,6 +106,7 @@ pub fn pr_of(request: &BoardRequest) -> Option<u64> {
         | BoardRequest::EditPlan(_)
         | BoardRequest::AcceptPlan(_)
         | BoardRequest::DiscardPlan(_)
+        | BoardRequest::EndRun(_)
         | BoardRequest::Clear { .. } => None,
     }
 }
@@ -141,6 +145,9 @@ pub struct OpFacts {
     /// it, and as it wrote it (#2481 M4c).
     pub plan_state_from: Option<PlanState>,
     pub plan_state_to: Option<PlanState>,
+    /// The run an `end_run` named, and the outcome it ends it with (S4c).
+    pub run: Option<u64>,
+    pub run_outcome: Option<RunOutcome>,
     /// What a `start` saw, for its own `board_start` record (S4c): set by
     /// every start that reached its use case, and filled as far as it got.
     pub start: Option<super::start::StartFacts>,
@@ -176,6 +183,11 @@ impl OpFacts {
         put(&mut record.plan_version, self.plan_version.as_ref());
         put(&mut record.items, self.items.as_ref());
         put(&mut record.roles, self.roles.as_ref());
+        put(&mut record.run, self.run.as_ref());
+        put(
+            &mut record.run_outcome,
+            self.run_outcome.map(RunOutcomeKind::of).as_ref(),
+        );
         let plan_state = |state: &PlanState| StaticKind::new(state.as_str());
         put(
             &mut record.plan_state_from,

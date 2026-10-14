@@ -51,7 +51,7 @@ pub fn request(op: &str, flags: &[String]) -> Result<Value, RequestError> {
             }
             Kind::OptionalSlug if text.is_empty() => Value::Null,
             Kind::AcceptedVersion if text.is_empty() || text == "null" => Value::Null,
-            Kind::Pr | Kind::Offset | Kind::Version | Kind::AcceptedVersion => text
+            Kind::Pr | Kind::Offset | Kind::Version | Kind::AcceptedVersion | Kind::Run => text
                 .parse::<u64>()
                 .map(Value::from)
                 .unwrap_or_else(|_| Value::String(text.clone())),
@@ -62,6 +62,7 @@ pub fn request(op: &str, flags: &[String]) -> Result<Value, RequestError> {
             | Kind::Status
             | Kind::NewStatus
             | Kind::TaskKind
+            | Kind::RunEnd
             | Kind::Path
             | Kind::ObjectId => Value::String(text.clone()),
             Kind::Repeated | Kind::PlanItems | Kind::Team => strict(text).map_err(|error| {

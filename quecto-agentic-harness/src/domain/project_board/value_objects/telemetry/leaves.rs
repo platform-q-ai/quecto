@@ -75,6 +75,10 @@ const KNOWN_KINDS: &[&str] = &[
     "no_launcher",
     "brief",
     "launch_failed",
+    // A run ended by hand (S4c): its op and fields; its outcomes are S4's.
+    "end_run",
+    "run",
+    "outcome",
     // Outcomes, front ends, clients, accesses, faults.
     "ok",
     "refused",

@@ -148,6 +148,48 @@ pub fn end_lost(
     lost_at(run, &stamp(task, now)?)
 }
 
+/// How a run's holder ends it by hand (S4c's `end_run`): an allowlist,
+/// for a run whose swarm will never fold it back (its coordinator never
+/// launched, or a start's undo could not end it).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HeldEnd {
+    Stopped,
+    Failed,
+}
+
+impl HeldEnd {
+    /// The board's outcome of a run ended so.
+    pub fn outcome(self) -> RunOutcome {
+        match self {
+            Self::Stopped => RunOutcome::Stopped,
+            Self::Failed => RunOutcome::Failed,
+        }
+    }
+}
+
+/// The open run of `task` ended by `actor`, the holder of a live claim
+/// on the task, as `end` says: folded back at `now` against the plan it
+/// `ran` (the run and its plan, as [`run_and_plan`] finds them) with
+/// `items`, its cost unknown. One the holder cannot account for is ended
+/// as lost ([`end_lost`]) instead.
+///
+/// # Errors
+/// A claim `actor` does not hold live; a run of another task, or one that
+/// has ended; as [`fold_back`].
+pub fn end_held(
+    task: &Task,
+    ran: (&Run, &Plan),
+    end: HeldEnd,
+    items: Vec<RunItem>,
+    actor: &Identity,
+    now: &Timestamp,
+) -> Result<Run, BoardRuleError> {
+    let (run, plan) = ran;
+    held_live_by(task, actor, now)?;
+    of_task(task, std::slice::from_ref(run))?;
+    fold_back(run, plan, end.outcome(), None, items, now)
+}
+
 /// A task may leave its holder (for ready, done or archived) only once
 /// its runs have ended; it may move among the held statuses while one is
 /// going.

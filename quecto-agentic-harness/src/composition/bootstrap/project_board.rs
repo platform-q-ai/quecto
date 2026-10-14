@@ -24,7 +24,7 @@ use crate::application::project_board::ports::{
 use crate::application::project_board::telemetry::{BoardRecording, RecordingSwitch};
 use crate::application::project_board::use_cases::{
     AcceptPlan, BootstrapProjectBoard, ChangeBoardTask, ClearSetAside, CompleteMergedTask,
-    CreateBoardTask, DiscardPlan, EditPlan, ProposePlan, QueryBoard, RunBoardOperation,
+    CreateBoardTask, DiscardPlan, EditPlan, EndRun, ProposePlan, QueryBoard, RunBoardOperation,
     UpdateDraftTask,
 };
 use crate::domain::redaction::{redact_secrets, redact_url_userinfo};
@@ -40,6 +40,7 @@ use crate::infrastructure::persistence::project_board::op_log::{
     EventLogProjectBoardOps, TracingProjectBoardOps,
 };
 use crate::infrastructure::persistence::project_board::store::GitBoardStore;
+use crate::infrastructure::persistence::project_board::text_cells::MarkdownTextCells;
 use crate::infrastructure::time::remote_time::ReferencedBoardClock;
 use crate::interface::cli::board::{
     Access, BuildError, ProjectBoardEnvironment, ProjectBoardHandles,
@@ -122,6 +123,12 @@ fn build_with_warnings(
         edit_plan: EditPlan::new(Arc::clone(&store), Arc::clone(&clock)).map_err(built)?,
         accept_plan: AcceptPlan::new(Arc::clone(&store), Arc::clone(&clock)).map_err(built)?,
         discard_plan: DiscardPlan::new(Arc::clone(&store), Arc::clone(&clock)).map_err(built)?,
+        end_run: EndRun::new(
+            Arc::clone(&store),
+            Arc::clone(&clock),
+            Arc::new(MarkdownTextCells),
+        )
+        .map_err(built)?,
         clear: ClearSetAside::new(Arc::clone(&store), Arc::clone(&clock)).map_err(built)?,
         complete,
         clock,

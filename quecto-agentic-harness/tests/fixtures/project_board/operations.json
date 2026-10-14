@@ -978,9 +978,9 @@
       "op": null,
       "error": {
         "code": "invalid_request",
-        "message": "op: must be one of bootstrap, list, list_ready, list_takeable, show, create, update_draft, move, renew, take_over, link_pr, unlink_pr, complete, propose_plan, edit_plan, accept_plan, discard_plan, clear_set_aside",
+        "message": "op: must be one of bootstrap, list, list_ready, list_takeable, show, create, update_draft, move, renew, take_over, link_pr, unlink_pr, complete, propose_plan, edit_plan, accept_plan, discard_plan, end_run, clear_set_aside",
         "field": "op",
-        "problem": "must be one of bootstrap, list, list_ready, list_takeable, show, create, update_draft, move, renew, take_over, link_pr, unlink_pr, complete, propose_plan, edit_plan, accept_plan, discard_plan, clear_set_aside"
+        "problem": "must be one of bootstrap, list, list_ready, list_takeable, show, create, update_draft, move, renew, take_over, link_pr, unlink_pr, complete, propose_plan, edit_plan, accept_plan, discard_plan, end_run, clear_set_aside"
       }
     }
   },
@@ -1949,6 +1949,44 @@
           "code": "accepted_plan_changed",
           "accepted": 2
         }
+      }
+    }
+  },
+  {
+    "request": {
+      "op": "end_run",
+      "task": "epic",
+      "run": 1,
+      "outcome": "failed"
+    },
+    "answer": {
+      "ok": false,
+      "op": "end_run",
+      "error": {
+        "code": "rule",
+        "message": "the task has no run 1",
+        "rule": {
+          "code": "no_such_run",
+          "run": 1
+        }
+      }
+    }
+  },
+  {
+    "request": {
+      "op": "end_run",
+      "task": "epic",
+      "run": 1,
+      "outcome": "succeeded"
+    },
+    "answer": {
+      "ok": false,
+      "op": "end_run",
+      "error": {
+        "code": "invalid_request",
+        "message": "outcome: must be one of stopped, failed, lost",
+        "field": "outcome",
+        "problem": "must be one of stopped, failed, lost"
       }
     }
   }

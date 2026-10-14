@@ -79,6 +79,13 @@ pub fn assembled(
         edit_plan: EditPlan::new(Arc::clone(&store), Arc::clone(&clock))?,
         accept_plan: AcceptPlan::new(Arc::clone(&store), Arc::clone(&clock))?,
         discard_plan: DiscardPlan::new(Arc::clone(&store), Arc::clone(&clock))?,
+        end_run: crate::application::project_board::use_cases::EndRun::new(
+            Arc::clone(&store),
+            Arc::clone(&clock),
+            Arc::new(
+                crate::infrastructure::persistence::project_board::text_cells::MarkdownTextCells,
+            ),
+        )?,
         clear: ClearSetAside::new(Arc::clone(&store), Arc::clone(&clock))?,
         complete,
         clock,

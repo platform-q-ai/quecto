@@ -673,7 +673,7 @@ mod plans;
 #[path = "dto_start.rs"]
 mod start;
 pub use plans::{PlanAcceptance, PlanDiscard, PlanEdit, PlanProposal};
-pub use start::TaskStart;
+pub use start::{RunEnd, RunEndOutcome, TaskStart};
 
 #[cfg(test)]
 #[path = "dto_tests.rs"]

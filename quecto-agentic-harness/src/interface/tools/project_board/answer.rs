@@ -50,7 +50,9 @@ use crate::domain::redaction::{redact_secrets, redact_url_userinfo};
 
 #[path = "answer_artifacts.rs"]
 mod artifacts;
-use artifacts::{artifact_folder, page_fields, planned_json, quarantined_json, shown_fields};
+use artifacts::{
+    artifact_folder, page_fields, planned_json, quarantined_json, run_json, shown_fields,
+};
 
 /// The most characters of an error's message an answer carries.
 pub const MAX_MESSAGE_CHARS: usize = 2_000;
@@ -227,6 +229,9 @@ pub fn outcome(op: &str, outcome: &BoardOutcome, clock: Option<String>) -> Value
         }
         BoardOutcome::Planned(plan) => {
             fields.insert("plan".into(), planned_json(plan));
+        }
+        BoardOutcome::RunEnded(run) => {
+            fields.insert("run".into(), run_json(run));
         }
         BoardOutcome::Accepted(accepted) => {
             fields.insert("task".into(), task_json(&accepted.task));
