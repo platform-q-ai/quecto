@@ -198,6 +198,11 @@ fn a_clear_keeping_a_copy_past_its_folders_bytes_is_invalid() {
         vec![
             ("40000", "tasks", Node::Tree(vec![])),
             ("40000", "plans", Node::Tree(files)),
+            (
+                "40000",
+                "runs",
+                twice("a.1.md", bytes::<RunCodec>(&run("a", 1))),
+            ),
         ]
     });
     let remote = repos.remote();
@@ -206,12 +211,23 @@ fn a_clear_keeping_a_copy_past_its_folders_bytes_is_invalid() {
         blob_in(&repos.bob, b"{"),
     );
     let copies = seen(&[big.as_str(), bad.as_str()]);
+    let one = at(&remote, &head, "runs/a.1.md");
+    let runs = seen(&[one.as_str(), bad.as_str()]);
     let bob = store(&repos.bob);
     let keep = KeepCopy::Object {
         keep: big.clone(),
         seen: copies.clone(),
     };
-    let clear = resolving("plans/c.1.md", &bad, &[("plans/c.1.md", keep)]);
+    let keep_run = KeepCopy::Object {
+        keep: one.clone(),
+        seen: runs.clone(),
+    };
+    // Only the copy kept in the folder past its bytes is named.
+    let clear = resolving(
+        "plans/c.1.md",
+        &bad,
+        &[("plans/c.1.md", keep), ("runs/a.1.md", keep_run.clone())],
+    );
     let past = bob.clear_set_aside(&head, &clear, "board: keep c 1");
     assert!(
         matches!(&past, Err(BoardStoreError::InvalidWrite(why)) if why.contains("bytes of plan files") && why.ends_with(", once this clear keeps its copy of plans/c.1.md: keep a smaller copy, or drop every copy instead")),
@@ -220,10 +236,56 @@ fn a_clear_keeping_a_copy_past_its_folders_bytes_is_invalid() {
     let clear = resolving(
         "plans/c.1.md",
         &bad,
-        &[("plans/c.1.md", KeepCopy::Drop(copies))],
+        &[
+            ("plans/c.1.md", KeepCopy::Drop(copies)),
+            ("runs/a.1.md", keep_run),
+        ],
     );
     let cleared = written(bob.clear_set_aside(&head, &clear, "board: drop c 1"));
     assert_eq!(names(&remote, &cleared, "plans").len(), 16);
+}
+
+/// A refusal names at most eight kept copies, then how many more.
+#[test]
+fn a_refusal_names_eight_kept_copies_and_how_many_more() {
+    let repos = fresh();
+    let one = bytes::<PlanCodec>(&plan("a", 1));
+    let head = board_of(&repos, |_| {
+        let files = (1..=9)
+            .flat_map(|n| {
+                [
+                    ("100644", format!("a.{n}.md"), one.clone()),
+                    ("100644", format!("a.{n}.md"), b"{".to_vec()),
+                ]
+            })
+            .collect();
+        vec![
+            ("40000", "tasks", Node::Tree(vec![])),
+            ("40000", "plans", Node::Tree(files)),
+        ]
+    });
+    let remote = repos.remote();
+    let (good, bad) = (
+        at(&remote, &head, "plans/a.1.md"),
+        blob_in(&repos.bob, b"{"),
+    );
+    let keep = KeepCopy::Object {
+        keep: good.clone(),
+        seen: seen(&[good.as_str(), bad.as_str()]),
+    };
+    let paths: Vec<String> = (1..=9).map(|n| format!("plans/a.{n}.md")).collect();
+    let all: Vec<(&str, KeepCopy)> = paths
+        .iter()
+        .map(|path| (path.as_str(), keep.clone()))
+        .collect();
+    let mut bob = store(&repos.bob);
+    bob.limits.board_bytes = one.len();
+    let past = bob.clear_set_aside(&head, &resolving("plans/a.1.md", &bad, &all), "board: keep");
+    let shown = paths[..8].join(", ");
+    assert!(
+        matches!(&past, Err(BoardStoreError::InvalidWrite(why)) if why.ends_with(&format!(", once this clear keeps its copies of {shown} and 1 more: keep a smaller copy, or drop every copy instead"))),
+        "{past:?}"
+    );
 }
 
 /// A kept copy a read reads counts towards the board's bytes in all: one
