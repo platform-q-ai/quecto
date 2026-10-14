@@ -56,6 +56,7 @@ impl Rig {
             global: self.base.path().join("config.json"),
             overlay: Some(self.overlay()),
             legacy_local: None,
+            overlay_origin: Default::default(),
         });
         load_selected_config(
             crate::composition::configuration::build_configuration_handles,

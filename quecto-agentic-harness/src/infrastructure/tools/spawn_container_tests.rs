@@ -511,6 +511,7 @@ async fn a_named_launch_over_a_withheld_overlay_carries_the_diagnostic() {
                     global: base.join("config.json"),
                     overlay: Some(overlay.clone()),
                     legacy_local: None,
+                    overlay_origin: Default::default(),
                 },
             ),
         ),

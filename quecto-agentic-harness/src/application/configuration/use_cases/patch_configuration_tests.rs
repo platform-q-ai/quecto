@@ -12,6 +12,7 @@ pub(super) fn layered() -> ConfigSelection {
         global: PathBuf::from(GLOBAL),
         overlay: Some(PathBuf::from(OVERLAY)),
         legacy_local: None,
+        overlay_origin: Default::default(),
     })
 }
 
