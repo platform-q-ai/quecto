@@ -15,8 +15,16 @@
 //!
 //! Every filtered fetch passes the clone's own fetch filter on (`-c
 //! remote.<name>.partialclonefilter`), so git never records ours as the
-//! clone's. A server that refuses filters, or knows none, is fetched from
-//! whole. A clone whose remote is no promisor fetches with `--no-filter`
+//! clone's. A server that refuses a filter is fetched from again whole; one
+//! that does not know filters sends every file anyway.
+//!
+//! git skips a head it already holds: when the user's own fetch moved the
+//! board first, the delta brings nothing, and each live folder that
+//! changed since the last read is fetched again whole (`--refetch`), never
+//! one that did not, and never a file it remembers as left. Each such
+//! fetch leaves a pack holding copies of objects the clone has; git's own
+//! maintenance (`git maintenance run`, `git gc`) folds them, and this store
+//! runs none. A clone whose remote is no promisor fetches with `--no-filter`
 //! and never `--refetch`: a filter there would make it a partial clone, and
 //! a file it lacks is no file past a cap but a clone to mend.
 use super::fetch_state::FetchState;
@@ -120,7 +128,10 @@ impl GitBoardStore {
             Partial::Full => vec![(None, wanted.iter().map(oid_of).collect())],
         };
         let mut filtered = vec![];
-        for (filter, oids) in calls.iter().filter(|(_, oids)| !oids.is_empty()) {
+        for (filter, oids) in calls
+            .iter()
+            .filter(|(_, oids)| matches!(oids.as_slice(), [_, ..]))
+        {
             let refetch: &[&str] = match filter {
                 Some(_) => &["--refetch"],
                 None => &[],
@@ -233,11 +244,7 @@ impl GitBoardStore {
         // as left on the remote.
         match run(filter) {
             Ok(_) => Ok(Came::Filtered),
-            // A server that refuses this filter: `filter '<kind>' not
-            // supported`.
-            Err(why) if why.contains("filter '") && why.contains("' not supported") => {
-                run("--no-filter").map(|_| Came::Whole)
-            }
+            Err(why) if refused_filter(&why) => run("--no-filter").map(|_| Came::Whole),
             Err(why) => Err(why),
         }
     }
@@ -290,10 +297,13 @@ fn oid_of(wanted: &Wanted) -> &str {
     }
 }
 
-/// Red stub (#2481 S10b review round 2).
-#[cfg(test)]
+/// Whether git said the server refuses a filter: `filter '<kind>' not
+/// supported`.
 fn refused_filter(why: &str) -> bool {
-    why.contains("filter '") && why.contains("' not supported")
+    why.split("filter '").skip(1).any(|rest| {
+        rest.split_once('\'')
+            .is_some_and(|(_, tail)| tail.starts_with(" not supported"))
+    })
 }
 
 #[cfg(test)]
