@@ -1,15 +1,18 @@
 //! S4c: a start writes the task and run 1 together, then launches the
 //! coordinator; a failed launch is undone as far as it can be.
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 
 use super::StartBoardTask;
-use crate::application::project_board::dto::{PlanAcceptance, ProjectBoardError, TaskStart};
+use crate::application::project_board::dto::{
+    PlanAcceptance, ProjectBoardError, RunAfterUndo, TaskStart,
+};
 use crate::application::project_board::ports::{
     BoardArtifact, CoordinatorLaunch, CoordinatorRequest, LaunchRefused, LaunchedCoordinator,
     ProjectBoardStore,
 };
-use crate::application::project_board::start::StartFacts;
 use crate::application::project_board::swarm_brief::BriefRefusal;
+use crate::application::project_board::telemetry::OpFacts;
 use crate::application::project_board::use_cases::AcceptPlan;
 use crate::application::project_board::use_cases::fixtures_tests::{
     SetClock, at, board, fields, person, plan_item, slug,
@@ -27,10 +30,12 @@ use crate::domain::project_board::value_objects::vocabulary::{
 use crate::infrastructure::persistence::project_board::text_cells::MarkdownTextCells;
 use crate::infrastructure::test_support::memory_board_store::MemoryBoardStore;
 
-/// A launcher that answers as told and keeps every request it was given.
+/// A launcher that answers as told and keeps every request it was given;
+/// one that may not launch says so when asked.
 struct Launcher {
     answer: Result<LaunchedCoordinator, LaunchRefused>,
     asked: Mutex<Vec<CoordinatorRequest>>,
+    may: bool,
 }
 
 impl Launcher {
@@ -41,6 +46,7 @@ impl Launcher {
                 environment_ref: "C7".into(),
             }),
             asked: Mutex::default(),
+            may: true,
         })
     }
 
@@ -48,6 +54,15 @@ impl Launcher {
         Arc::new(Self {
             answer: Err(LaunchRefused("no container runtime".into())),
             asked: Mutex::default(),
+            may: true,
+        })
+    }
+
+    /// A session whose policy no longer allows spawn.
+    fn forbidden() -> Arc<Self> {
+        Arc::new(Self {
+            may: false,
+            ..Arc::into_inner(Self::launching()).unwrap()
         })
     }
 
@@ -57,6 +72,10 @@ impl Launcher {
 }
 
 impl CoordinatorLaunch for Launcher {
+    fn may_launch(&self) -> bool {
+        self.may
+    }
+
     fn launch(&self, request: &CoordinatorRequest) -> Result<LaunchedCoordinator, LaunchRefused> {
         self.asked.lock().unwrap().push(request.clone());
         self.answer.clone()
@@ -90,7 +109,7 @@ fn plan(version: u32, state: PlanState) -> Plan {
         items: vec![plan_item("schema", &[]), plan_item("api", &["schema"])],
         team: Some(Team {
             roles: vec![
-                role("coordinator", "claude-opus", 1),
+                role("coordinator", "anthropic/claude-opus", 1),
                 role("builder", "gpt-5.5", 2),
             ],
             budget: None,
@@ -149,11 +168,23 @@ fn held_by_ada(fields: TaskFields) -> TaskFields {
 
 fn starter(store: &MemoryBoardStore, launcher: Option<Arc<Launcher>>) -> StartBoardTask {
     let launcher = launcher.map(|launcher| launcher as Arc<dyn CoordinatorLaunch>);
+    starter_of(store, launcher, None)
+}
+
+/// A start by Ada on `store` (its undo too), launching with `launcher`,
+/// cancelled by `cancelled` when given.
+fn starter_of(
+    store: &MemoryBoardStore,
+    launcher: Option<Arc<dyn CoordinatorLaunch>>,
+    cancelled: Option<Arc<AtomicBool>>,
+) -> StartBoardTask {
     StartBoardTask::new(
+        Arc::new(store.client_as(person("Ada"))),
         Arc::new(store.client_as(person("Ada"))),
         SetClock::at("10:00:00"),
         Arc::new(MarkdownTextCells),
         launcher,
+        cancelled,
     )
     .unwrap()
 }
@@ -174,10 +205,11 @@ fn task_and_runs(store: &MemoryBoardStore) -> (Task, Vec<Run>) {
 fn a_launched_start_leaves_the_task_in_progress_with_run_1_open() {
     let store = seeded(ready, vec![plan(1, PlanState::Accepted)], vec![]);
     let launcher = Launcher::launching();
-    let mut facts = StartFacts::default();
+    let mut op = OpFacts::default();
     let started = starter(&store, Some(launcher.clone()))
-        .execute_noted(&confirmed(1), Some(&mut facts))
+        .execute_noted(&confirmed(1), Some(&mut op))
         .unwrap();
+    let facts = op.start.clone().expect("a start notes its facts");
     assert_eq!(
         (
             &started.coordinator.agent,
@@ -210,15 +242,15 @@ fn a_launched_start_leaves_the_task_in_progress_with_run_1_open() {
             request.model.as_deref(),
             request.effort
         ),
-        (1, 1, Some("claude-opus"), Some(Effort::High))
+        (1, 1, Some("anthropic/claude-opus"), Some(Effort::High))
     );
     assert!(
-        request.brief.contains("title: schema: Item schema\n"),
+        request.brief.contains(r#""title":"schema: Item schema""#),
         "{}",
         request.brief
     );
     assert!(
-        request.brief.contains("member_limit: 3\n"),
+        request.brief.contains(r#""member_limit":3"#),
         "{}",
         request.brief
     );
@@ -241,9 +273,15 @@ fn a_launched_start_leaves_the_task_in_progress_with_run_1_open() {
         (facts.not_applied, facts.claim),
         (Some(1), Some(StartClaim::Fresh))
     );
-    assert!(facts.launch_us.is_some());
+    // The clock stands still: the launch took no time on it.
+    assert_eq!(facts.launch_us, Some(0));
     assert_eq!(
-        (facts.op.attempts, facts.op.status_from, facts.op.status_to),
+        (facts.folded, facts.released, &facts.fold_back),
+        (None, None, &None)
+    );
+    assert_eq!(op.plan_version, Some(1));
+    assert_eq!(
+        (op.attempts, op.status_from, op.status_to),
         (
             Some(1),
             Some(TaskStatus::Ready),
@@ -264,7 +302,7 @@ fn a_failed_launch_folds_run_1_back_as_failed_and_releases_the_claim() {
         Err(ProjectBoardError::LaunchFailed {
             reason: "no container runtime".into(),
             run: 1,
-            folded: true,
+            run_state: RunAfterUndo::Folded,
             released: Some(true),
         })
     );
@@ -288,7 +326,7 @@ fn a_failed_launch_of_a_held_task_keeps_the_claim() {
         matches!(
             &refused,
             Err(ProjectBoardError::LaunchFailed {
-                folded: true,
+                run_state: RunAfterUndo::Folded,
                 released: None,
                 ..
             })
@@ -312,6 +350,13 @@ fn a_start_that_cannot_launch_writes_nothing() {
         starter(&store, None).execute(&confirmed(1)),
         Err(ProjectBoardError::NoLauncher)
     );
+    let forbidden = Launcher::forbidden();
+    assert_eq!(
+        starter(&store, Some(forbidden.clone())).execute(&confirmed(1)),
+        Err(ProjectBoardError::NoLauncher),
+        "a session whose policy stopped allowing spawn starts nothing"
+    );
+    assert!(forbidden.asked().is_empty());
     let unaccepted = seeded(
         |fields| TaskFields {
             accepted_plan: None,
@@ -366,6 +411,40 @@ fn a_start_that_cannot_launch_writes_nothing() {
     assert_eq!(store.writes(), writes);
 }
 
+/// A brief the plan's text grows past a coordinator's room once escaped
+/// (quotes take two bytes each in its JSON) is refused while it is built,
+/// before anything is written: never after the start's write.
+#[test]
+fn a_brief_escaped_past_its_room_is_refused_before_any_write() {
+    use crate::domain::project_board::entities::plan::PlanItem;
+    let quoted = "\"".repeat(260);
+    let mut fields = plan(1, PlanState::Accepted).into_fields();
+    fields.items = (0..14)
+        .map(|n| PlanItem {
+            id: slug(&format!("item-{n}")),
+            title: format!("Item {n}"),
+            criteria: (0..15).map(|c| format!("{c}{quoted}")).collect(),
+            depends_on: vec![],
+        })
+        .collect();
+    let store = seeded(ready, vec![Plan::new(fields).unwrap()], vec![]);
+    let writes = store.writes();
+    let launcher = Launcher::launching();
+    let refused = starter(&store, Some(launcher.clone())).execute(&confirmed(1));
+    assert!(
+        matches!(
+            &refused,
+            Err(ProjectBoardError::Brief {
+                code: "brief_too_large",
+                ..
+            })
+        ),
+        "{refused:?}"
+    );
+    assert_eq!(store.writes(), writes, "nothing written");
+    assert!(launcher.asked().is_empty(), "nothing launched");
+}
+
 /// The plan launched is the one confirmed: an acceptance that lands
 /// between the confirmation and the start (here, while it is written) is
 /// refused on the retry, and nothing is launched.
@@ -389,7 +468,7 @@ fn a_start_racing_an_acceptance_launches_nothing_unconfirmed() {
             .unwrap();
     });
     let launcher = Launcher::launching();
-    let mut facts = StartFacts::default();
+    let mut facts = OpFacts::default();
     let refused =
         starter(&store, Some(launcher.clone())).execute_noted(&confirmed(1), Some(&mut facts));
     assert_eq!(
@@ -401,8 +480,8 @@ fn a_start_racing_an_acceptance_launches_nothing_unconfirmed() {
     assert!(launcher.asked().is_empty(), "nothing launched");
     let (task, runs) = task_and_runs(&store);
     assert_eq!((task.fields().status, runs.len()), (TaskStatus::Ready, 0));
-    assert_eq!((facts.op.attempts, facts.op.lost), (Some(2), Some(1)));
-    assert_eq!(facts.run, None);
+    assert_eq!((facts.attempts, facts.lost), (Some(2), Some(1)));
+    assert_eq!(facts.start.and_then(|start| start.run), None);
 }
 
 /// A launcher that fails, and while it runs, freezes the board against
@@ -411,6 +490,10 @@ fn a_start_racing_an_acceptance_launches_nothing_unconfirmed() {
 struct FreezingLauncher(MemoryBoardStore);
 
 impl CoordinatorLaunch for FreezingLauncher {
+    fn may_launch(&self) -> bool {
+        true
+    }
+
     fn launch(&self, _: &CoordinatorRequest) -> Result<LaunchedCoordinator, LaunchRefused> {
         self.0.refuse_next_write("the board is frozen");
         Err(LaunchRefused("no container runtime".into()))
@@ -421,20 +504,14 @@ impl CoordinatorLaunch for FreezingLauncher {
 fn an_undo_that_cannot_fold_back_says_so_and_keeps_the_claim() {
     let store = seeded(ready, vec![plan(1, PlanState::Accepted)], vec![]);
     let launcher: Arc<dyn CoordinatorLaunch> = Arc::new(FreezingLauncher(store.client()));
-    let starting = StartBoardTask::new(
-        Arc::new(store.client_as(person("Ada"))),
-        SetClock::at("10:00:00"),
-        Arc::new(MarkdownTextCells),
-        Some(launcher),
-    )
-    .unwrap();
+    let starting = starter_of(&store, Some(launcher), None);
     let refused = starting.execute(&confirmed(1));
     assert_eq!(
         refused,
         Err(ProjectBoardError::LaunchFailed {
             reason: "no container runtime".into(),
             run: 1,
-            folded: false,
+            run_state: RunAfterUndo::Open,
             released: Some(false),
         })
     );
@@ -445,6 +522,10 @@ fn an_undo_that_cannot_fold_back_says_so_and_keeps_the_claim() {
     assert_eq!(
         message,
         "the coordinator did not launch: no container runtime; run 1 could not be folded back: \
-         it is still open, but the task could not be moved back to ready: you still hold it"
+         it is still open; end it with end_run(task, run 1, outcome failed), but the task could \
+         not be moved back to ready: you still hold it"
     );
 }
+
+#[path = "start_board_task_cancel_tests.rs"]
+mod cancel;

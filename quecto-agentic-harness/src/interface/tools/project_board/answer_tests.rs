@@ -52,7 +52,7 @@ fn keys(code: ErrorCode) -> &'static [&'static str] {
         C::DuplicateArtifact => &["kind", "task", "number"],
         C::NoLauncher => &[],
         C::Brief => &["brief"],
-        C::LaunchFailed => &["reason", "run", "folded", "released"],
+        C::LaunchFailed => &["reason", "run", "run_state", "released"],
     }
 }
 
@@ -166,7 +166,7 @@ board_errors! {
     E::LaunchFailed { .. } => E::LaunchFailed {
         reason: "no container runtime".into(),
         run: 1,
-        folded: true,
+        run_state: crate::application::project_board::dto::RunAfterUndo::Folded,
         released: Some(true),
     },
 }

@@ -2,7 +2,7 @@
 //! words), moved beside `dto.rs` unchanged as it grew past its room.
 use std::fmt;
 
-use super::{IdUser, ProjectBoardError};
+use super::{IdUser, ProjectBoardError, RunAfterUndo};
 use crate::application::project_board::ports::{
     ArtifactKey, BoardClockError, BoardStoreError, PullRequestStatesError,
 };
@@ -126,13 +126,18 @@ impl fmt::Display for ProjectBoardError {
             Self::LaunchFailed {
                 reason,
                 run,
-                folded,
+                run_state,
                 released,
             } => {
                 write!(f, "the coordinator did not launch: {reason}; ")?;
-                match folded {
-                    true => write!(f, "run {run} was folded back as failed")?,
-                    false => write!(f, "run {run} could not be folded back: it is still open")?,
+                match run_state {
+                    RunAfterUndo::Folded => write!(f, "run {run} was folded back as failed")?,
+                    RunAfterUndo::EndedAlready => write!(f, "run {run} had already ended")?,
+                    RunAfterUndo::Open => write!(
+                        f,
+                        "run {run} could not be folded back: it is still open; end it with \
+                         end_run(task, run {run}, outcome failed)"
+                    )?,
                 }
                 match released {
                     Some(true) => f.write_str(", and the task is ready again"),

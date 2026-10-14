@@ -314,6 +314,7 @@ mod facts {
             plan_state_to: Some(
                 crate::domain::project_board::value_objects::vocabulary::PlanState::Discarded,
             ),
+            start: None,
         };
         let mut record = record();
         facts.fill(&mut record);

@@ -482,6 +482,27 @@ impl IdUser {
     }
 }
 
+/// Where a start's undo left its run (S4c).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RunAfterUndo {
+    /// The undo folded it back as failed.
+    Folded,
+    /// It had ended already (another writer ended it).
+    EndedAlready,
+    /// It could not be folded back: it is still open, for `end_run`.
+    Open,
+}
+
+impl RunAfterUndo {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Folded => "folded",
+            Self::EndedAlready => "ended_already",
+            Self::Open => "open",
+        }
+    }
+}
+
 /// Why a board operation did nothing.
 /// Why the board's remote reports no pull requests.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -606,14 +627,14 @@ pub enum ProjectBoardError {
         reason: String,
     },
     /// The task and run `run` were written, but the coordinator did not
-    /// launch (`reason`, as the launch said). The start was undone as far
-    /// as it could be: the run folded back as failed (`folded`), and, when
-    /// the start took the claim, the task back to ready with it released
-    /// (`released`).
+    /// launch (`reason`, as the launch said, or the call cancelled before
+    /// it). The start was undone as far as it could be: the run where the
+    /// undo left it (`run_state`), and, when the start took the claim,
+    /// whether the task went back to ready, releasing it (`released`).
     LaunchFailed {
         reason: String,
         run: u32,
-        folded: bool,
+        run_state: RunAfterUndo,
         released: Option<bool>,
     },
 }

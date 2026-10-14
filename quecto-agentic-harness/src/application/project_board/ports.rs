@@ -555,10 +555,14 @@ pub struct LaunchRefused(pub String);
 
 /// Port: launches a started task's swarm coordinator in a new container
 /// (S4c). Its adapter goes through the session's own spawn path, so it
-/// launches only what the session itself could spawn; a session whose
-/// policy allows no spawn is given none. Blocking: it returns once the
+/// launches only what the session itself could spawn, and only while its
+/// policy allows spawn. Blocking: it returns once the
 /// coordinator is running, or refused.
 pub trait CoordinatorLaunch: Send + Sync {
+    /// Whether the session may launch one now: its policy allows spawn.
+    /// A start asks before it writes anything; the launch asks again.
+    fn may_launch(&self) -> bool;
+
     /// Launches the coordinator `request` describes.
     ///
     /// # Errors

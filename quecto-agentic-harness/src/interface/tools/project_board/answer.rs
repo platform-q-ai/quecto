@@ -133,7 +133,8 @@ pub enum ErrorCode {
     NoLauncher,
     /// `brief`: `{"code"}`, why the plan cannot brief a swarm (S4c).
     Brief,
-    /// `reason` (the launch's), `run`, `folded`, `released` (`null` when
+    /// `reason` (the launch's), `run`, `run_state` (`folded`,
+    /// `ended_already`, or `open`: for `end_run`), `released` (`null` when
     /// the start did not take the claim): the coordinator did not launch,
     /// and the start was undone as far as it could be (S4c).
     LaunchFailed,
@@ -559,14 +560,14 @@ fn error_fields(error: &ProjectBoardError) -> (ErrorCode, Map<String, Value>) {
         E::LaunchFailed {
             reason,
             run,
-            folded,
+            run_state,
             released,
         } => (
             C::LaunchFailed,
             fields([
                 ("reason", shown_json(reason)),
                 ("run", json!(run)),
-                ("folded", json!(folded)),
+                ("run_state", json!(run_state.as_str())),
                 ("released", json!(released)),
             ]),
         ),

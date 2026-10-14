@@ -212,6 +212,7 @@ const KNOWN_KINDS: &[&str] = &[
     "no_task_items",
     "item_too_large",
     "brief_too_large",
+    "coordinator_model",
     "image",
     "turns",
     "members",

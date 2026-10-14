@@ -197,6 +197,9 @@ pub enum BriefRefusal {
     BriefTooLarge {
         bytes: usize,
     },
+    /// The coordinator role names a model with no provider: spawn takes
+    /// `provider/model`, and none is guessed (S4c).
+    CoordinatorModel,
 }
 
 impl BriefRefusal {
@@ -210,6 +213,7 @@ impl BriefRefusal {
             Self::NoTaskItems => "no_task_items",
             Self::ItemTooLarge { .. } => "item_too_large",
             Self::BriefTooLarge { .. } => "brief_too_large",
+            Self::CoordinatorModel => "coordinator_model",
         }
     }
 }
@@ -263,6 +267,10 @@ impl fmt::Display for BriefRefusal {
                 "task item {}'s criteria are {bytes} bytes once encoded; \
                  a swarm takes at most {TEXT_MAX_BYTES}",
                 item.as_str()
+            ),
+            Self::CoordinatorModel => f.write_str(
+                "the coordinator role's model must name its provider, as provider/model: \
+                 propose a plan that does",
             ),
             Self::BriefTooLarge { bytes } => write!(
                 f,
@@ -471,6 +479,11 @@ fn terms_of(team: &Team) -> Result<Terms<'_>, BriefRefusal> {
         }
         match (name.as_str() == COORDINATOR_ROLE, *size) {
             (true, 1) => {
+                // Spawn takes `provider/model`; no provider is guessed.
+                match model.split_once('/') {
+                    Some((provider, id)) if !provider.is_empty() && !id.is_empty() => {}
+                    Some(_) | None => return Err(BriefRefusal::CoordinatorModel),
+                }
                 coordinator = Some(RoleChoice {
                     model: model.clone(),
                     effort: *effort,

@@ -11,32 +11,47 @@
 //!   attempt before the write: a plan that cannot brief a swarm is refused
 //!   with nothing written. With no launcher (this session may not spawn)
 //!   nothing is read or written at all.
+//! - **The brief is rendered before the write.** Each attempt renders the
+//!   coordinator's text and checks its size, so nothing after the write
+//!   can refuse it.
 //! - **A failed launch is undone.** The run is folded back as failed, and
 //!   only then (a held task leaves its holder only once its run ended),
 //!   when the start took the claim, the task is moved back to ready,
-//!   releasing it. The refusal says how far that got.
+//!   releasing it. The refusal says how far that got; a run left open is
+//!   for `end_run`. A call cancelled after the write launches nothing and
+//!   is undone the same way. The undo writes through a store that ignores
+//!   the call's cancel, so a cancel never strands a run.
 //!
 //! Blocking: the store's calls, a pause before a retried write and the
 //! launch itself hold the calling thread.
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use super::board_change::{checked_writer, commit, owned, task_on};
 use super::{ChangeBoardTask, FoldBackRun, board_view};
-use crate::application::project_board::dto::{BoardOp, ProjectBoardError, TaskStart};
+use crate::application::project_board::dto::{
+    BoardOp, FoldBackFacts, FoldedBack, ProjectBoardError, RunAfterUndo, TaskStart,
+};
 use crate::application::project_board::fold_back::{SwarmEnd, SwarmRunView};
 use crate::application::project_board::ports::{
     BoardArtifact, BoardClock, BoardTextCells, CoordinatorLaunch, CoordinatorRequest,
     LaunchRefused, ProjectBoardStore,
 };
-use crate::application::project_board::start::{StartFacts, StartedTask};
-use crate::application::project_board::swarm_brief::{SwarmBrief, brief_of, render};
-use crate::application::project_board::telemetry::counted;
+use crate::application::project_board::start::{StartFacts, StartedTask, UndoFoldBack};
+use crate::application::project_board::swarm_brief::{
+    BriefRefusal, MAX_BRIEF_BYTES, SwarmBrief, brief_of, render,
+};
+use crate::application::project_board::telemetry::{OpFacts, counted};
 use crate::domain::project_board::entities::claim::Identity;
 use crate::domain::project_board::services::plans::as_accepted;
 use crate::domain::project_board::services::starts::{Started, start};
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::telemetry::StartClaim;
 use crate::domain::project_board::value_objects::vocabulary::TaskStatus;
+
+/// Why a start launched nothing when its call was cancelled after its
+/// write.
+const CANCELLED: &str = "the call was cancelled before the coordinator launched";
 
 pub struct StartBoardTask {
     store: Arc<dyn ProjectBoardStore>,
@@ -45,27 +60,51 @@ pub struct StartBoardTask {
     actor: Identity,
     /// `None`: this session may not spawn, so nothing is started.
     launcher: Option<Arc<dyn CoordinatorLaunch>>,
+    /// Set when the call this start serves was cancelled.
+    cancelled: Option<Arc<AtomicBool>>,
+    /// The undo's, over a store that ignores the call's cancel.
     fold_back: FoldBackRun,
     change: ChangeBoardTask,
 }
 
+/// A start as its write left it: the start, its brief and the brief's
+/// text, as the last attempt built them.
+struct Written {
+    started: Started,
+    brief: SwarmBrief,
+    text: String,
+}
+
 impl StartBoardTask {
+    /// A start writing to `store` (which stops writing once `cancelled` is
+    /// set), its undo writing to `undo_store` (the same board, never
+    /// cancelled), launching with `launcher`.
+    ///
     /// # Errors
-    /// The store writes as an invalid identity.
+    /// Either store writes as an invalid identity, or the two write as
+    /// different ones.
     pub fn new(
         store: Arc<dyn ProjectBoardStore>,
+        undo_store: Arc<dyn ProjectBoardStore>,
         clock: Arc<dyn BoardClock>,
         cells: Arc<dyn BoardTextCells>,
         launcher: Option<Arc<dyn CoordinatorLaunch>>,
+        cancelled: Option<Arc<AtomicBool>>,
     ) -> Result<Self, ProjectBoardError> {
         let actor = checked_writer(&*store)?;
-        let fold_back = FoldBackRun::new(Arc::clone(&store), Arc::clone(&clock), cells)?;
-        let change = ChangeBoardTask::new(Arc::clone(&store), Arc::clone(&clock))?;
+        assert_eq!(
+            checked_writer(&*undo_store)?,
+            actor,
+            "a start and its undo write as one identity"
+        );
+        let fold_back = FoldBackRun::new(Arc::clone(&undo_store), Arc::clone(&clock), cells)?;
+        let change = ChangeBoardTask::new(undo_store, Arc::clone(&clock))?;
         Ok(Self {
             store,
             clock,
             actor,
             launcher,
+            cancelled,
             fold_back,
             change,
         })
@@ -74,34 +113,60 @@ impl StartBoardTask {
     /// The task `request` names, started and its coordinator launched.
     ///
     /// # Errors
-    /// No launcher; no such task, or its file, one of its plans' or runs'
-    /// set aside; a task stamped ahead; another plan accepted than the one
-    /// confirmed; the rules' (no accepted plan, a task not startable or
-    /// held by another, a run still going); a plan that cannot brief a
-    /// swarm; the clock's; a board that kept moving; the store's; a launch
-    /// that failed, undone as far as it could be.
+    /// No launcher, or one that may not launch now; no such task, or its
+    /// file, one of its plans' or runs' set aside; a task stamped ahead;
+    /// another plan accepted than the one confirmed; the rules' (no
+    /// accepted plan, a task not startable or held by another, a run still
+    /// going); a plan that cannot brief a swarm; the clock's; a board that
+    /// kept moving; the store's; a launch that failed or a call cancelled
+    /// after the write, undone as far as it could be.
     pub fn execute(&self, request: &TaskStart) -> Result<StartedTask, ProjectBoardError> {
         self.execute_noted(request, None)
     }
 
-    /// [`Self::execute`], noting in `facts`, when given, the start's write
-    /// and what it started: counts and kinds only.
+    /// [`Self::execute`], noting in `facts` (epic #2481 T4), when given,
+    /// the start's write (its attempts, and the task's status as last read
+    /// and as written), the version it names, and, as `start`, what it
+    /// started and undid, as far as it got: counts and kinds only.
     ///
     /// # Errors
     /// As [`Self::execute`].
     pub fn execute_noted(
         &self,
         request: &TaskStart,
+        facts: Option<&mut OpFacts>,
+    ) -> Result<StartedTask, ProjectBoardError> {
+        let Some(facts) = facts else {
+            return self.started(request, None, None);
+        };
+        facts.plan_version = Some(u64::from(request.plan_version));
+        let mut start = StartFacts {
+            plan_version: facts.plan_version,
+            ..StartFacts::default()
+        };
+        let result = self.started(request, Some(&mut *facts), Some(&mut start));
+        facts.start = Some(start);
+        result
+    }
+
+    /// [`Self::execute_noted`]'s work, its write noted in `op` and what it
+    /// started in `facts`, when given.
+    fn started(
+        &self,
+        request: &TaskStart,
+        op: Option<&mut OpFacts>,
         mut facts: Option<&mut StartFacts>,
     ) -> Result<StartedTask, ProjectBoardError> {
         let launcher = self
             .launcher
             .as_ref()
+            .filter(|launcher| launcher.may_launch())
             .ok_or(ProjectBoardError::NoLauncher)?;
-        if let Some(facts) = facts.as_deref_mut() {
-            facts.plan_version = Some(u64::from(request.plan_version));
-        }
-        let (started, brief) = self.write(request, facts.as_deref_mut())?;
+        let Written {
+            started,
+            brief,
+            text,
+        } = self.write(request, op)?;
         let run = started.run().fields().number;
         let claim = match started.took_claim() {
             true => StartClaim::Fresh,
@@ -116,12 +181,21 @@ impl StartBoardTask {
             facts.not_applied = Some(counted(brief.not_applied.len()));
             facts.claim = Some(claim);
         }
+        // A call cancelled after its write launches nothing: it is undone.
+        let cancelled = self
+            .cancelled
+            .as_ref()
+            .is_some_and(|flag| flag.load(Ordering::SeqCst));
+        if cancelled {
+            let refused = LaunchRefused(CANCELLED.into());
+            return Err(self.undone(&request.task, &started, refused, facts));
+        }
         let coordinator = brief.coordinator.as_ref();
         let launch = CoordinatorRequest {
             task: request.task.clone(),
             run,
             plan_version: brief.plan_version,
-            brief: render(&brief),
+            brief: text,
             model: coordinator.map(|choice| choice.model.clone()),
             effort: coordinator.map(|choice| choice.effort),
         };
@@ -142,90 +216,131 @@ impl StartBoardTask {
                     claim,
                 })
             }
-            Err(refused) => Err(self.undone(&request.task, &started, refused)),
+            Err(refused) => Err(self.undone(&request.task, &started, refused, facts)),
         }
     }
 
-    /// The task and run 1 written in one change, with the start and its
-    /// brief as the last attempt built them.
+    /// The task and run 1 written in one change, with the start, its brief
+    /// and its text as the last attempt built them.
     fn write(
         &self,
         request: &TaskStart,
-        facts: Option<&mut StartFacts>,
-    ) -> Result<(Started, SwarmBrief), ProjectBoardError> {
+        mut facts: Option<&mut OpFacts>,
+    ) -> Result<Written, ProjectBoardError> {
         let id = &request.task;
         let message = format!("board: start {}", id.as_str());
         let (store, clock, actor) = (&*self.store, &*self.clock, &self.actor);
         let noting = facts.is_some();
         let mut read = None;
         let mut built = None;
-        let mut op = facts.as_ref().map(|_| Default::default());
-        let written = commit(store, clock, &message, op.as_mut(), |board, when| {
-            // This attempt's read and build, or none: never an earlier one's.
-            (read, built) = (None, None);
-            let task = task_on(board, id)?;
-            if noting {
-                read = Some(task.fields().status);
-            }
-            when.may_build_on(task)?;
-            match task.fields().accepted_plan {
-                // The domain's start refuses a task with no accepted plan.
-                None => {}
-                Some(_) => as_accepted(task, Some(request.plan_version))?,
-            }
-            let versions = board_view::plans_of(board, id)?;
-            let runs = owned(board_view::runs_of(board, id)?);
-            let plan = task.fields().accepted_plan.and_then(|accepted| {
-                versions
-                    .into_iter()
-                    .find(|plan| plan.fields().version == accepted)
-            });
-            let started = start(task, &runs, plan, actor, &when.now)?;
-            let brief = brief_of(&started, &when.now).map_err(ProjectBoardError::from)?;
-            let (task, run) = started.clone().into_writes();
-            built = Some((started, brief));
-            Ok(vec![BoardArtifact::Task(task), BoardArtifact::Run(run)])
-        });
+        let written = commit(
+            store,
+            clock,
+            &message,
+            facts.as_deref_mut(),
+            |board, when| {
+                // This attempt's read and build, or none: never an earlier one's.
+                (read, built) = (None, None);
+                let task = task_on(board, id)?;
+                if noting {
+                    read = Some(task.fields().status);
+                }
+                when.may_build_on(task)?;
+                match task.fields().accepted_plan {
+                    // The domain's start refuses a task with no accepted plan.
+                    None => {}
+                    Some(_) => as_accepted(task, Some(request.plan_version))?,
+                }
+                let versions = board_view::plans_of(board, id)?;
+                let runs = owned(board_view::runs_of(board, id)?);
+                let plan = task.fields().accepted_plan.and_then(|accepted| {
+                    versions
+                        .into_iter()
+                        .find(|plan| plan.fields().version == accepted)
+                });
+                let started = start(task, &runs, plan, actor, &when.now)?;
+                let brief = brief_of(&started, &when.now)?;
+                // The text the coordinator gets, measured before the write.
+                let text = render(&brief);
+                if text.len() > MAX_BRIEF_BYTES {
+                    let bytes = text.len();
+                    return Err(BriefRefusal::BriefTooLarge { bytes }.into());
+                }
+                let (task, run) = started.clone().into_writes();
+                built = Some(Written {
+                    started,
+                    brief,
+                    text,
+                });
+                Ok(vec![BoardArtifact::Task(task), BoardArtifact::Run(run)])
+            },
+        );
         if let Some(facts) = facts {
-            let mut op = op.unwrap_or_default();
-            op.status_from = read;
-            op.status_to = written.as_ref().ok().map(|_| TaskStatus::InProgress);
-            facts.op = op;
+            facts.status_from = read;
+            facts.status_to = written.as_ref().ok().map(|_| TaskStatus::InProgress);
         }
         let written = written?;
-        let (started, brief) = built.expect("a written start was built");
-        let (task, run) = started.clone().into_writes();
+        let built = built.expect("a written start was built");
+        let (task, run) = built.started.clone().into_writes();
         assert_eq!(
             written,
             [BoardArtifact::Task(task), BoardArtifact::Run(run)],
             "the start written is the last one built"
         );
-        Ok((started, brief))
+        Ok(built)
     }
 
     /// The refusal of a start whose coordinator did not launch, once the
     /// start is undone as far as it can be: its run folded back as failed
     /// (or found ended already), then, only when the start took the claim
-    /// and the run is ended, the task moved back to ready.
-    fn undone(&self, id: &Slug, started: &Started, refused: LaunchRefused) -> ProjectBoardError {
+    /// and the run is ended, the task moved back to ready. Noted in
+    /// `facts`, when given, with the undo's fold-back.
+    fn undone(
+        &self,
+        id: &Slug,
+        started: &Started,
+        refused: LaunchRefused,
+        facts: Option<&mut StartFacts>,
+    ) -> ProjectBoardError {
         let run = started.run().fields().number;
         let failed = SwarmRunView {
             end: SwarmEnd::Failed,
             items: vec![],
             observed_tokens: 0,
         };
-        let folded = self.fold_back.execute(id, run, &failed).is_ok();
+        let noting = facts.is_some();
+        let before = self.clock.elapsed();
+        let mut fold_facts = FoldBackFacts::default();
+        let folded =
+            self.fold_back
+                .execute_noted(id, run, &failed, noting.then_some(&mut fold_facts));
+        let run_state = match &folded {
+            Ok(FoldedBack::Folded(_)) => RunAfterUndo::Folded,
+            Ok(FoldedBack::Ended(_)) => RunAfterUndo::EndedAlready,
+            Err(_) => RunAfterUndo::Open,
+        };
         let released = started.took_claim().then(|| {
-            folded
+            run_state != RunAfterUndo::Open
                 && self
                     .change
                     .execute(id, &BoardOp::Move(TaskStatus::Ready))
                     .is_ok()
         });
+        if let Some(facts) = facts {
+            facts.folded = Some(run_state == RunAfterUndo::Folded);
+            facts.released = released;
+            facts.fold_back = Some(UndoFoldBack {
+                task: id.clone(),
+                run,
+                result: folded,
+                facts: fold_facts,
+                elapsed: self.clock.elapsed().saturating_sub(before),
+            });
+        }
         ProjectBoardError::LaunchFailed {
             reason: refused.0,
             run,
-            folded,
+            run_state,
             released,
         }
     }
