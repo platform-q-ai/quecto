@@ -4,8 +4,10 @@
 //! start's write and its launch. Without it such a run would hold its task
 //! for good.
 //!
-//! The claim's holder ends it as `stopped` or `failed`, folded back as a
-//! swarm that ended so with nothing reported is ([`run_items`]); as `lost`
+//! The claim's holder ends it as `succeeded`, `stopped` or `failed`, folded
+//! back as a swarm that ended so with nothing reported is ([`run_items`],
+//! [`cost_of`]), so a holder can record a success the keeper did not;
+//! never while its swarm is still running. As `lost`
 //! it is ended by whoever the domain lets ([`end_lost`]: the holder of a
 //! live claim, or anyone when nobody claims the task; one who finds the
 //! claim expired takes the task over first). With `expected_updated`, the
@@ -17,7 +19,9 @@ use std::sync::Arc;
 use super::board_change::{checked_writer, commit_run, task_on};
 use super::board_view;
 use crate::application::project_board::dto::{ProjectBoardError, RunEnd, RunEndOutcome};
-use crate::application::project_board::fold_back::{Evidence, SwarmEnd, SwarmRunView, run_items};
+use crate::application::project_board::fold_back::{
+    Evidence, SwarmEnd, SwarmRunView, cost_of, run_items,
+};
 use crate::application::project_board::ports::{
     BoardArtifact, BoardClock, BoardTextCells, ProjectBoardStore,
 };
@@ -25,7 +29,9 @@ use crate::application::project_board::telemetry::OpFacts;
 use crate::domain::project_board::entities::claim::Identity;
 use crate::domain::project_board::entities::run::Run;
 use crate::domain::project_board::services::claims::claim_facts;
-use crate::domain::project_board::services::runs::{HeldEnd, end_held, end_lost, run_and_plan};
+use crate::domain::project_board::services::runs::{
+    HeldEnd, Reported, end_held, end_lost, run_and_plan,
+};
 
 pub struct EndRun {
     store: Arc<dyn ProjectBoardStore>,
@@ -114,17 +120,22 @@ impl EndRun {
                 let plans = board_view::plans_of(board, id)?;
                 let (run, plan) = run_and_plan(&runs, &plans, number)?;
                 let held = |end: HeldEnd, swarm: SwarmEnd| {
-                    // Nothing reported: every item as a swarm that never ran
-                    // left it.
+                    // Nothing reported: every item and the cost as a
+                    // fold-back maps a swarm that reported nothing (a
+                    // start's undo's included).
                     let view = SwarmRunView {
                         end: swarm,
                         items: vec![],
                         observed_tokens: 0,
                     };
-                    let items = run_items(plan, &view, &*self.cells, Evidence::Left).items;
-                    end_held(task, (run, plan), end, items, actor, &when.now)
+                    let reported = Reported {
+                        items: run_items(plan, &view, &*self.cells, Evidence::Left).items,
+                        cost: Some(cost_of(&view)),
+                    };
+                    end_held(task, (run, plan), end, reported, actor, &when.now)
                 };
                 let ended = match request.outcome {
+                    RunEndOutcome::Succeeded => held(HeldEnd::Succeeded, SwarmEnd::Succeeded)?,
                     RunEndOutcome::Stopped => held(HeldEnd::Stopped, SwarmEnd::Cancelled)?,
                     RunEndOutcome::Failed => held(HeldEnd::Failed, SwarmEnd::Failed)?,
                     RunEndOutcome::Lost => end_lost(task, run, actor, &when.now)?,

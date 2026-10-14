@@ -25,21 +25,23 @@ pub struct RunEnd {
 }
 
 /// How a run is ended by hand: an allowlist. The claim's holder ends it
-/// as stopped or failed; anyone who may end it as lost (the holder, or
-/// anyone when nobody claims the task) does so when nobody can account
-/// for it.
+/// as succeeded, stopped or failed, as a fold-back of a swarm that ended
+/// so would; anyone who may end it as lost (the holder, or anyone when
+/// nobody claims the task) does so when nobody can account for it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RunEndOutcome {
+    Succeeded,
     Stopped,
     Failed,
     Lost,
 }
 
 impl RunEndOutcome {
-    pub const ALL: [Self; 3] = [Self::Stopped, Self::Failed, Self::Lost];
+    pub const ALL: [Self; 4] = [Self::Succeeded, Self::Stopped, Self::Failed, Self::Lost];
 
     pub fn as_str(self) -> &'static str {
         match self {
+            Self::Succeeded => "succeeded",
             Self::Stopped => "stopped",
             Self::Failed => "failed",
             Self::Lost => "lost",
@@ -49,6 +51,7 @@ impl RunEndOutcome {
     /// The board's outcome of a run ended so.
     pub fn outcome(self) -> RunOutcome {
         match self {
+            Self::Succeeded => RunOutcome::Succeeded,
             Self::Stopped => RunOutcome::Stopped,
             Self::Failed => RunOutcome::Failed,
             Self::Lost => RunOutcome::Lost,

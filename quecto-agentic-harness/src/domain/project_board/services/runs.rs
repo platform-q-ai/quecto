@@ -150,9 +150,11 @@ pub fn end_lost(
 
 /// How a run's holder ends it by hand (S4c's `end_run`): an allowlist,
 /// for a run whose swarm will never fold it back (its coordinator never
-/// launched, or a start's undo could not end it).
+/// launched, or a start's undo could not end it), or whose success the
+/// holder records, as a fold-back of a swarm that succeeded would.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HeldEnd {
+    Succeeded,
     Stopped,
     Failed,
 }
@@ -161,17 +163,27 @@ impl HeldEnd {
     /// The board's outcome of a run ended so.
     pub fn outcome(self) -> RunOutcome {
         match self {
+            Self::Succeeded => RunOutcome::Succeeded,
             Self::Stopped => RunOutcome::Stopped,
             Self::Failed => RunOutcome::Failed,
         }
     }
 }
 
+/// What a run ended by hand reports: where each of its plan's task items
+/// stood, and what it cost, as a fold-back reports them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Reported {
+    pub items: Vec<RunItem>,
+    pub cost: Option<u64>,
+}
+
 /// The open run of `task` ended by `actor`, the holder of a live claim
-/// on the task, as `end` says: folded back at `now` against the plan it
-/// `ran` (the run and its plan, as [`run_and_plan`] finds them) with
-/// `items`, its cost unknown. One the holder cannot account for is ended
-/// as lost ([`end_lost`]) instead.
+/// on the task, as `end` says: folded back against the plan it `ran` (the
+/// run and its plan, as [`run_and_plan`] finds them) with what it
+/// `reported`, at the task's stamp for `now` (never before the task's last
+/// change), as [`end_lost`] ends one. One the holder cannot account for is
+/// ended as lost instead.
 ///
 /// # Errors
 /// A claim `actor` does not hold live; a run of another task, or one that
@@ -180,14 +192,15 @@ pub fn end_held(
     task: &Task,
     ran: (&Run, &Plan),
     end: HeldEnd,
-    items: Vec<RunItem>,
+    reported: Reported,
     actor: &Identity,
     now: &Timestamp,
 ) -> Result<Run, BoardRuleError> {
     let (run, plan) = ran;
     held_live_by(task, actor, now)?;
     of_task(task, std::slice::from_ref(run))?;
-    fold_back(run, plan, end.outcome(), None, items, now)
+    let Reported { items, cost } = reported;
+    fold_back(run, plan, end.outcome(), cost, items, &stamp(task, now)?)
 }
 
 /// A task may leave its holder (for ready, done or archived) only once
