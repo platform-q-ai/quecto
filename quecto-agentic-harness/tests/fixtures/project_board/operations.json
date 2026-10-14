@@ -978,9 +978,9 @@
       "op": null,
       "error": {
         "code": "invalid_request",
-        "message": "op: must be one of bootstrap, list, list_ready, list_takeable, show, create, update_draft, move, renew, take_over, link_pr, unlink_pr, complete, propose_plan, edit_plan, accept_plan, discard_plan, end_run, clear_set_aside",
+        "message": "op: must be one of bootstrap, list, list_ready, list_takeable, show, create, update_draft, move, renew, take_over, link_pr, unlink_pr, complete, propose_plan, edit_plan, accept_plan, discard_plan, start, end_run, clear_set_aside",
         "field": "op",
-        "problem": "must be one of bootstrap, list, list_ready, list_takeable, show, create, update_draft, move, renew, take_over, link_pr, unlink_pr, complete, propose_plan, edit_plan, accept_plan, discard_plan, end_run, clear_set_aside"
+        "problem": "must be one of bootstrap, list, list_ready, list_takeable, show, create, update_draft, move, renew, take_over, link_pr, unlink_pr, complete, propose_plan, edit_plan, accept_plan, discard_plan, start, end_run, clear_set_aside"
       }
     }
   },
@@ -1987,6 +1987,21 @@
         "message": "outcome: must be one of stopped, failed, lost",
         "field": "outcome",
         "problem": "must be one of stopped, failed, lost"
+      }
+    }
+  },
+  {
+    "request": {
+      "op": "start",
+      "task": "epic",
+      "plan_version": 2
+    },
+    "answer": {
+      "ok": false,
+      "op": "start",
+      "error": {
+        "code": "no_launcher",
+        "message": "this session may not spawn, so it cannot launch a coordinator: start the task from a session that may"
       }
     }
   }

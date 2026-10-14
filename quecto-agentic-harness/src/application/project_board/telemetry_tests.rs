@@ -13,6 +13,12 @@ impl ProjectBoardOpLog for Log {
         self.0.lock().unwrap().push(record);
     }
 
+    fn record_start(
+        &self,
+        _record: crate::domain::project_board::value_objects::telemetry::BoardStartRecord,
+    ) {
+    }
+
     fn record_fold_back(&self, _record: FoldBackRecord) {
         unreachable!("a board_op test writes no fold-back");
     }
@@ -153,6 +159,10 @@ fn every_request() -> Vec<BoardRequest> {
             outcome: crate::application::project_board::dto::RunEndOutcome::Lost,
             expected_updated: None,
         }),
+        BoardRequest::Start(super::super::dto::TaskStart {
+            task: a.clone(),
+            plan_version: 1,
+        }),
     ]
 }
 
@@ -217,6 +227,7 @@ fn a_request_names_its_task_and_pull_request() {
             task(OpKind::AcceptPlan),
             task(OpKind::DiscardPlan),
             task(OpKind::EndRun),
+            task(OpKind::Start),
         ]
     );
 }
@@ -327,7 +338,8 @@ mod facts {
             run_outcome: Some(
                 crate::domain::project_board::value_objects::vocabulary::RunOutcome::Lost,
             ),
-            start: None,
+            // A start's facts go to its own record, never the board_op's.
+            start: Some(Default::default()),
         };
         let mut record = record();
         facts.fill(&mut record);

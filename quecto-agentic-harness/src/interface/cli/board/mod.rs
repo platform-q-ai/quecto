@@ -59,7 +59,7 @@ use serde_json::Value;
 use super::CliContext;
 use crate::application::project_board::telemetry::BoardRecording;
 use crate::domain::project_board::value_objects::telemetry::{Client, FaultKind, FrontEnd};
-use crate::interface::tools::project_board::recording::BoardCall;
+use crate::interface::tools::project_board::recording::{BoardCall, CLIENT_VARIABLE, named_client};
 use crate::interface::tools::project_board::request::{RequestError, fields_of};
 use crate::interface::tools::project_board::site::{self, BoardSite};
 use crate::interface::tools::project_board::{MAX_REQUEST_BYTES, command_line, json};
@@ -86,17 +86,15 @@ pub struct BoardToolRecordingBuilder(
 #[derive(Debug, Clone, Copy)]
 pub struct CliRecordingBuilder(pub fn(&Path) -> Option<BoardRecording>);
 
-/// The variable a caller names itself in.
-const CLIENT_VARIABLE: &str = "QUECTO_BOARD_CLIENT";
+/// Why `quecto board start` is refused (owner-approved, S4c).
+const START_NEEDS_A_SESSION: &str =
+    "start needs an agent session: ask a quecto agent, or use Pocket";
 
 /// The client a call is for, by allowlist, as `QUECTO_BOARD_CLIENT` names
-/// it (`None`: unset): the value itself is never recorded.
+/// it (`None`: unset, the command line's own): the value itself is never
+/// recorded.
 fn client(named: Option<&OsStr>) -> Client {
-    match named.map(OsStr::to_str) {
-        None => Client::Cli,
-        Some(Some("pocket-relay")) => Client::PocketRelay,
-        Some(Some(_) | None) => Client::Other,
-    }
+    named_client(named, Client::Cli)
 }
 
 const USAGE: &str = "usage: quecto board <op> [--<field> <value>]... [--input <json>|-] \
@@ -327,6 +325,14 @@ fn answer(ctx: &CliContext, args: &[String], call: &mut BoardCall) -> Value {
             return call.refuse_request(op.as_deref(), &error);
         }
     };
+    // `start` launches a swarm coordinator, which only an agent session
+    // can host (S4c, owner-approved words): refused here, as the request
+    // it is, before anything is built.
+    if value.get("op").and_then(Value::as_str) == Some("start") {
+        call.named(Some("start"));
+        let refusal = RequestError::of("op", START_NEEDS_A_SESSION, FaultKind::InvalidValue);
+        return call.refuse_request(Some("start"), &refusal);
+    }
     let repo = line
         .repo
         .clone()
@@ -337,6 +343,7 @@ fn answer(ctx: &CliContext, args: &[String], call: &mut BoardCall) -> Value {
         repo,
         remote: line.remote.clone(),
         build: ctx.project_board,
+        launcher: None,
     };
     site::answer(&site, &value.to_string(), None, call)
 }

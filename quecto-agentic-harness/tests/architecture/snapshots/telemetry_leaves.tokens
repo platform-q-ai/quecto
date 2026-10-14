@@ -44,6 +44,8 @@ const KNOWN_KINDS : & [
 "end_run" ,
 "run" ,
 "outcome" ,
+"start" ,
+"plan_version" ,
 "ok" ,
 "refused" ,
 "tool" ,

@@ -79,6 +79,9 @@ const KNOWN_KINDS: &[&str] = &[
     "end_run",
     "run",
     "outcome",
+    // The start op and its field (S4c).
+    "start",
+    "plan_version",
     // Outcomes, front ends, clients, accesses, faults.
     "ok",
     "refused",

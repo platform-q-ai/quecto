@@ -153,6 +153,7 @@ fn each_op_reads_its_own_fields() {
             "edit_plan",
             "accept_plan",
             "discard_plan",
+            "start",
             "end_run",
             "clear_set_aside"
         ],

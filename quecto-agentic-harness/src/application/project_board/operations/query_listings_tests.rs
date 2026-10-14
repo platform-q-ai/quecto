@@ -7,16 +7,18 @@ use std::sync::Arc;
 use super::{BoardOperationParts, NoPullRequestHost};
 use crate::application::project_board::dto::{BoardListing, ProjectBoardError};
 use crate::application::project_board::ports::{
-    BoardClock, BoardListings, BoardStoreError, ProjectBoardStore, PullRequestStates,
+    BoardClock, BoardListings, BoardStoreError, CoordinatorLaunch, ProjectBoardStore,
+    PullRequestStates,
 };
 use crate::application::project_board::use_cases::{
     AcceptPlan, BootstrapProjectBoard, ChangeBoardTask, ClearSetAside, CompleteMergedTask,
     CreateBoardTask, DiscardPlan, EditPlan, ProposePlan, QueryBoard, RunBoardOperation,
-    UpdateDraftTask,
+    StartBoardTask, UpdateDraftTask,
 };
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
 use crate::domain::project_board::value_objects::vocabulary::TaskStatus;
+use crate::infrastructure::persistence::project_board::text_cells::MarkdownTextCells;
 
 pub struct QueryListings(pub QueryBoard);
 
@@ -62,6 +64,17 @@ pub fn assembled(
     listings: Arc<dyn BoardListings>,
     prs: Result<Arc<dyn PullRequestStates>, NoPullRequestHost>,
 ) -> Result<RunBoardOperation, ProjectBoardError> {
+    assembled_launching(store, clock, listings, prs, None)
+}
+
+/// [`assembled`], starting tasks with `launcher` (S4c).
+pub fn assembled_launching(
+    store: Arc<dyn ProjectBoardStore>,
+    clock: Arc<dyn BoardClock>,
+    listings: Arc<dyn BoardListings>,
+    prs: Result<Arc<dyn PullRequestStates>, NoPullRequestHost>,
+    launcher: Option<Arc<dyn CoordinatorLaunch>>,
+) -> Result<RunBoardOperation, ProjectBoardError> {
     let complete = match prs {
         Ok(prs) => Ok(CompleteMergedTask::new(
             Arc::clone(&store),
@@ -82,9 +95,15 @@ pub fn assembled(
         end_run: crate::application::project_board::use_cases::EndRun::new(
             Arc::clone(&store),
             Arc::clone(&clock),
-            Arc::new(
-                crate::infrastructure::persistence::project_board::text_cells::MarkdownTextCells,
-            ),
+            Arc::new(MarkdownTextCells),
+        )?,
+        start: StartBoardTask::new(
+            Arc::clone(&store),
+            Arc::clone(&store),
+            Arc::clone(&clock),
+            Arc::new(MarkdownTextCells),
+            launcher,
+            None,
         )?,
         clear: ClearSetAside::new(Arc::clone(&store), Arc::clone(&clock))?,
         complete,

@@ -68,6 +68,7 @@ kinds!(
         Complete => "complete", ClearSetAside => "clear_set_aside", Unknown => "unknown",
         ProposePlan => "propose_plan", EditPlan => "edit_plan",
         AcceptPlan => "accept_plan", DiscardPlan => "discard_plan", EndRun => "end_run",
+        Start => "start",
     }
 );
 

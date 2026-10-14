@@ -114,6 +114,11 @@ const ALLOWED: &[(&str, &str, &str)] = &[
         "the call's own detached thread, carried into its scope: a panic fails the call through execute_contained's backstop",
     ),
     (
+        "src/infrastructure/tools/coordinator_launch/mod.rs",
+        "impl SpawnCoordinatorLauncher::launch",
+        "drives the session's spawn tool to completion in place, on the board call's own blocking thread (no new task): its panic is the board call's",
+    ),
+    (
         "src/infrastructure/tools/find_fd.rs",
         "impl FdFindPaths::find",
         "drives its own current-thread runtime on the find owner's thread (call_work::std_thread_in_call), never a worker",

@@ -57,6 +57,7 @@ fn environment(repo: &Path, access: Access) -> ProjectBoardEnvironment {
         access,
         vars,
         cancelled: None,
+        launcher: None,
     }
 }
 
@@ -496,4 +497,66 @@ fn a_committer_spaced_with_a_chat_space_fails_fast_for_every_write() {
     let reader = build_project_board_handles(&environment(&work, Access::Read)).unwrap();
     let listed = run(&reader.operations, r#"{"op": "list"}"#);
     assert_eq!(listed["ok"], json!(true), "{listed}");
+}
+
+/// Q10: `QUECTO_BOARD_COMMITTER` changes who the board's commits and
+/// claims are by, and nothing else git does: the clone keeps its own
+/// identity for every other commit. A malformed value is refused, never
+/// ignored for the clone's own.
+#[test]
+fn the_board_committer_override_changes_only_the_boards_commits() {
+    let (_dir, work) = repository();
+    let mut pocket = environment(&work, Access::Write);
+    pocket.vars.push((
+        "QUECTO_BOARD_COMMITTER".into(),
+        "quecto pocket <pocket@quecto.invalid>".into(),
+    ));
+    let handles = build_project_board_handles(&pocket).unwrap();
+    let ops = |request: Value| run(&handles.operations, &request.to_string());
+    assert_eq!(ops(json!({"op": "bootstrap"}))["ok"], json!(true));
+    let created = ops(json!({"op": "create", "task": "a", "title": "A", "status": "ready"}));
+    assert_eq!(created["ok"], json!(true), "{created}");
+    assert_eq!(
+        board_commit_identities(&work),
+        "quecto pocket <pocket@quecto.invalid>|quecto pocket <pocket@quecto.invalid>"
+    );
+    let claimed = ops(json!({"op": "move", "task": "a", "to": "claimed"}));
+    assert_eq!(
+        claimed["task"]["claim"]["holder"],
+        json!({"name": "quecto pocket", "email": "pocket@quecto.invalid"})
+    );
+    // The clone's own configuration still names its own committer.
+    let output = Command::new("git")
+        .args(["config", "user.name"])
+        .current_dir(&work)
+        .env_clear()
+        .env("PATH", std::env::var_os("PATH").unwrap())
+        .env(
+            "QUECTO_BOARD_COMMITTER",
+            "quecto pocket <pocket@quecto.invalid>",
+        )
+        .envs([
+            ("GIT_CONFIG_GLOBAL", "/dev/null"),
+            ("GIT_CONFIG_NOSYSTEM", "1"),
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "Ada");
+    for malformed in [
+        "quecto pocket",
+        "<pocket@quecto.invalid>",
+        "x <not an email>",
+    ] {
+        let mut wrong = environment(&work, Access::Write);
+        wrong
+            .vars
+            .push(("QUECTO_BOARD_COMMITTER".into(), malformed.into()));
+        match build_project_board_handles(&wrong) {
+            Err(BuildError::NoCommitter(why)) => assert!(
+                why.starts_with("QUECTO_BOARD_COMMITTER must be \"name <email>\""),
+                "{why}"
+            ),
+            other => panic!("{malformed:?}: {:?}", other.err()),
+        }
+    }
 }

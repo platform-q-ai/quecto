@@ -393,11 +393,19 @@ pub(crate) fn build_tool_runtime(
     // The project board (#2477): a parent's tool, on the repository of the
     // workspace it works in.
     if let (ToolRuntimeProfileContext::Parent, Some(build)) = (profile_context, project_board) {
+        // A start launches its coordinator through this session's own spawn
+        // while the policy allows it (S4c), the permit following every change.
+        use crate::infrastructure::tools::coordinator_launch as launch;
+        let permit = launch::SpawnPermit::default();
+        registry.watch_spawn_permit(permit.clone());
+        let launcher =
+            launch::SpawnCoordinatorLauncher::new(agent_control.spawn_tool.clone(), permit);
         let board = crate::interface::tools::project_board::tool::BoardTool::new(
             crate::interface::tools::project_board::site::BoardSite {
                 repo: board_repo,
                 remote: "origin".into(),
                 build: Some(build),
+                launcher: Some(std::sync::Arc::new(launcher)),
             },
         );
         register_bundled_native_tools_with_scope(

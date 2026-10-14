@@ -198,6 +198,54 @@ set aside (it may be the open one), and while the task's plans or runs
 contradict each other (`plans_inconsistent`, `runs_inconsistent`): mend them
 first.
 
+## Starting a task
+
+`start(task, plan_version)` hands a task to a swarm (#2481 S4c). It is the agent
+tool's alone: only an agent session can host a swarm, so `quecto board start`
+is refused ("start needs an agent session: ask a quecto agent, or use Pocket").
+
+One commit writes the task and its next run, task first: a ready task is
+claimed by the starter (a task the starter holds has its claim renewed), moved
+to `in_progress`, and run 1 (or the next) of its accepted plan begins, all at
+one stamp. Then the run's coordinator is launched in a new container with the
+plan's brief: the run to create, its task items in dependency order, each
+title exactly as the board matches it back. The coordinator gets the plan's
+`coordinator` role's model and effort; other roles' models are not applied yet,
+and the answer lists them as `not_applied`.
+
+- `plan_version` is the accepted plan the caller confirmed. A task that names
+  another by the time the start is written is refused (`accepted_plan_changed`),
+  so only a confirmed plan is ever launched. A task with no accepted plan is
+  refused (`no_accepted_plan`), and so is one with a run going (`run_open`).
+- A plan a swarm cannot take is refused before anything is written (`brief`,
+  with the brief's own code: `team_too_large`, `team_unsupported`,
+  `deadline_passed`, `deadline_too_soon`, `no_task_items`, `item_too_large`,
+  `brief_too_large`, and `coordinator_model` for a coordinator role whose model
+  does not name its provider as `provider/model`: none is guessed).
+- A session that may not spawn starts nothing (`no_launcher`): `start`
+  launches only what the session's own `spawn` would, and asks again as it
+  launches.
+- If the coordinator does not launch, or the call is cancelled after the write
+  and before the launch (then nothing is launched), the start is undone as far
+  as it can be: the run is folded back as `failed`, and, when the start took
+  the claim and the run has ended, the task moves back to ready, releasing it.
+  The undo writes even when the call was cancelled. `launch_failed` gives the
+  launch's `reason`, the `run`, `run_state` (`folded` when the undo folded it
+  back, `ended_already` when another writer had ended it, `open` when it could
+  not be folded back: end it with `end_run`, below), and whether the claim was
+  `released` (`null` when the start did not take it).
+
+A harness the pocket relay launches for a board task writes the board as the
+relay's bot: `QUECTO_BOARD_COMMITTER`, `name <email>` (`quecto pocket
+<pocket@quecto.invalid>`), names who the board's commits and claims are by,
+for every write of that harness's board, and nothing else git does: the
+agent's own commits stay its clone's. A value not so shaped is refused
+(`no_committer`), never ignored for the clone's own.
+
+The answer gives the `task`, the `run`, the `coordinator` (`agent`,
+`environment_ref`), `not_applied` (`role`, `model`, `effort`) and `claim`:
+`fresh` when the start took it, `held` when the starter held it already.
+
 ## Ending a run by hand
 
 A run is folded back by its swarm when the swarm ends. A run no swarm will fold
@@ -275,15 +323,17 @@ not from these records.
 
 A caller names itself in `QUECTO_BOARD_CLIENT`, read by allowlist:
 `pocket-relay` is recorded as `pocket_relay`, any other value as `other`, never
-as given. It is for the pocket relay to set; an older quecto ignores it.
+as given. It is for the pocket relay to set, for `quecto board` and for the
+harness it launches, whose agent tool's calls are then recorded as the relay's;
+an older quecto ignores it.
 
 | Field | Meaning |
 |---|---|
 | `session` | As on every event-log record: the agent's session for the tool; `board-cli:<UTC date>` for `quecto board` |
 | `turn` | Always `null`: a board call is filed under no agent turn |
-| `op` | The op the request named: `bootstrap`, `list`, `list_ready`, `list_takeable`, `show`, `create`, `update_draft`, `move`, `renew`, `take_over`, `link_pr`, `unlink_pr`, `complete`, `clear_set_aside`, `propose_plan`, `edit_plan`, `accept_plan`, `discard_plan`, `end_run`; `unknown` for a request that names none, or none the board has. A request the agent tool does not take (`bootstrap`) records its op, refused, and a `quecto board` line refused as it is read records the op it named before the refusal |
+| `op` | The op the request named: `bootstrap`, `list`, `list_ready`, `list_takeable`, `show`, `create`, `update_draft`, `move`, `renew`, `take_over`, `link_pr`, `unlink_pr`, `complete`, `clear_set_aside`, `propose_plan`, `edit_plan`, `accept_plan`, `discard_plan`, `end_run`, `start`; `unknown` for a request that names none, or none the board has. A request the agent tool does not take (`bootstrap`) records its op, refused, and a `quecto board` line refused as it is read records the op it named before the refusal |
 | `front_end` | `tool` (the agent `board` tool) or `cli` (`quecto board`) |
-| `client` | `agent` for the tool; for the CLI `cli`, or as `QUECTO_BOARD_CLIENT` names it: `pocket_relay` or `other` |
+| `client` | For the tool `agent`, for the CLI `cli`, or, for either, as `QUECTO_BOARD_CLIENT` names it: `pocket_relay` or `other` |
 | `access` | `read` or `write`: what the op does, even when it was refused before it was read |
 | `outcome` | `ok` or `refused` |
 | `code`, `rule` | For a refusal, the answer's error code (`invalid_request`, `rule`, `not_found`, `stale`, `contended`, `clock_ahead`, ...) and, for `rule`, the rule's code (`not_holder`, `claim_expired`, `not_allowed`, ...). `internal` is no answer's code: an agent tool call whose work ended without an answer (it panicked) is recorded as it unwinds, refused as `internal`. A `quecto board` panic aborts the process and writes no record |
@@ -292,7 +342,7 @@ as given. It is for the pocket relay to set; an older quecto ignores it.
 | `head` | The board's head an answer named, only when it is a full commit id git produced |
 | `listed`, `shown`, `truncated_more`, `set_aside`, `set_aside_more` | For an answered listing: the tasks it listed, those its answer showed and those it left out, and the set-aside files it listed and left out. The agent tool's listing is cut to 32 KiB; the CLI leaves nothing out |
 | `plans`, `runs` | For an answered `show`: how many versions of its plan and how many runs the task holds, as the board read them; counts only, never their text |
-| `plan_version`, `items`, `roles` | For `propose_plan`, the version it wrote, only once written. For `edit_plan`, `accept_plan` and `discard_plan`, the version it named, also when the board refused the change. For `show(task, version)`, the version it named once the task was read, also when that version was refused; a `show` of a task the board refused records none. A request refused as it is read records none. For `propose_plan` and `edit_plan`, once written, how many task items and team roles the plan holds (`roles` is 0 with no team); counts only |
+| `plan_version`, `items`, `roles` | For `propose_plan`, the version it wrote, only once written. For `edit_plan`, `accept_plan`, `discard_plan` and `start`, the version it named, also when the board refused the change. For `show(task, version)`, the version it named once the task was read, also when that version was refused; a `show` of a task the board refused records none. A request refused as it is read records none. For `propose_plan` and `edit_plan`, once written, how many task items and team roles the plan holds (`roles` is 0 with no team); counts only |
 | `plan_state_from`, `plan_state_to` | For `accept_plan` and `discard_plan`: the state of the version it named as the change last read it (`draft`, `accepted`, `superseded` or `discarded`; none when the task has no such version, or the read was refused first), and the state it wrote (`accepted` or `discarded`; none for a refused change) |
 | `run`, `run_outcome` | For `end_run`, once the request was read: the run it named and the outcome it ends it with (`stopped`, `failed` or `lost`), also when the board refused the change |
 | `status_from`, `status_to` | For a write of a task (`create`, `update_draft`, `move`, `renew`, `take_over`, `link_pr`, `unlink_pr`, `complete`): the task's status as the write last read it (none for `create`), and the status it moved to: a `move`'s target, made or refused, otherwise the status of the task it wrote (`create`'s `draft` or `ready`, `complete`'s `done`), so a refused write other than `move` writes no `status_to`. A `link_pr` or move to `review` that completes its task records its own write's status here; what came of completing it is in `completion`. An `end_run` records only `status_from`, the status of the task whose run it ends: it writes no task |
@@ -374,3 +424,24 @@ bare host with no dot (`localhost/x?sig=…`), or one glued to a CJK letter or a
 | `cost_tokens` | The tokens the swarm was observed to spend |
 | `attempts`, `lost`, `bytes` | The writes' attempts and lost races (both passes, when the evidence was left out), on every outcome; and the bytes of the run's text |
 | `duration_us` | The whole fold-back |
+
+### Start records
+
+Each `start` that reaches the board writes one `board_start` record besides its
+`board_op`, under the same switch, gate and rules (written to `tracing` at
+`INFO` as `board start`). Like every record, it holds kinds and counts only.
+
+| Field | Meaning |
+|---|---|
+| `task` | The task started, as `board_op` names it |
+| `client` | As on its `board_op` |
+| `outcome`, `code`, `rule` | As on its `board_op`; a brief's refusal names its code as `rule` |
+| `run` | The run begun, once written |
+| `plan_version` | The accepted version the start named |
+| `members` | The member limit the brief gives, its coordinator included; none when the plan names no team |
+| `roles` | The plan's team roles |
+| `items` | The task items the brief seeds |
+| `not_applied` | The worker roles whose models were not applied |
+| `claim` | `fresh` when the start took the claim, `held` when the starter held it |
+| `launch_us` | How long the coordinator's launch took |
+| `duration_us` | The whole call |

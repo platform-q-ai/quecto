@@ -41,6 +41,8 @@ pub struct ToolRegistryImpl {
     /// Entrypoint-only tools this runtime could build but withheld
     /// (`--no-workflow`, a swarm member): closed to its children (#2216).
     pub(super) withheld_entrypoint_only: std::collections::BTreeSet<String>,
+    /// Told whether a parent may call `spawn`, at every policy change (S4c).
+    pub(super) spawn_permit: Option<super::coordinator_launch::SpawnPermit>,
 }
 
 impl std::fmt::Debug for ToolRegistryImpl {
@@ -79,6 +81,7 @@ impl ToolRegistryImpl {
             inherited_policy_default_scope: None,
             persisted_policy_scopes: HashMap::new(),
             withheld_entrypoint_only: std::collections::BTreeSet::new(),
+            spawn_permit: None,
         }
     }
 
@@ -602,6 +605,7 @@ impl ToolRegistryImpl {
         self.definitions = parent.clone();
         self.parent_definitions = parent;
         self.child_definitions = child;
+        self.refresh_spawn_permit();
     }
 
     /// Look up a tool by name.

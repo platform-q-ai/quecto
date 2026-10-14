@@ -33,6 +33,7 @@ EditPlan => "edit_plan" ,
 AcceptPlan => "accept_plan" ,
 DiscardPlan => "discard_plan" ,
 EndRun => "end_run" ,
+Start => "start" ,
 }
 ) ;
 impl OpKind { pub fn named ( name : & str  ) -> Self { Self :: ALL . iter (  ) . copied (  ) . find ( | kind | * kind != Self :: Unknown && kind . as_str (  ) == name  ) . unwrap_or ( Self :: Unknown  )  }  }

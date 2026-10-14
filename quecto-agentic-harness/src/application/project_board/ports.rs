@@ -11,7 +11,9 @@ use crate::domain::project_board::entities::review::Review;
 use crate::domain::project_board::entities::run::Run;
 use crate::domain::project_board::entities::task::Task;
 use crate::domain::project_board::value_objects::slug::Slug;
-use crate::domain::project_board::value_objects::telemetry::{BoardOpRecord, FoldBackRecord};
+use crate::domain::project_board::value_objects::telemetry::{
+    BoardOpRecord, BoardStartRecord, FoldBackRecord,
+};
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
 use crate::domain::project_board::value_objects::vocabulary::{Effort, TaskStatus};
 
@@ -526,6 +528,10 @@ pub trait ProjectBoardOpLog: Send + Sync {
     /// Appends a fold-back's `board_fold_back` record (S4), as
     /// [`Self::record`] appends a `board_op`.
     fn record_fold_back(&self, record: FoldBackRecord);
+
+    /// Appends a start's `board_start` record (S4c), as [`Self::record`]
+    /// appends a `board_op`.
+    fn record_start(&self, record: BoardStartRecord);
 }
 
 /// What a started task's coordinator is launched with (S4c): the run it

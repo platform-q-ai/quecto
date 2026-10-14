@@ -13,6 +13,7 @@ fn tool(recordings: &Arc<SessionRecording>) -> BoardTool {
         repo: ".".into(),
         remote: "origin".into(),
         build: None,
+        launcher: None,
     };
     BoardTool::recorded_in(site, Arc::clone(recordings))
 }

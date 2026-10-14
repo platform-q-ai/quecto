@@ -624,14 +624,24 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
         };
         ToolResult {
             content: format!(
-                "Subagent '{}' is running (uuid={}){}. Use agent_cmd to interact.{diagnostics}",
-                identity.session_name, identity.registry_key, env_ref
+                "{}{diagnostics}",
+                running_line(&identity.session_name, &identity.registry_key, &env_ref)
             ),
             is_error: false,
             image_blocks: vec![],
             delivery_metadata: None,
         }
     }
+}
+
+/// The line a spawn answers once its child runs: the child's name, its
+/// `uuid`, and its container's ` environment_ref=…` and details (empty for
+/// a local child). The board's coordinator launcher reads it back
+/// ([`super::coordinator_launch`]), so the two stay together.
+pub(super) fn running_line(session: &str, uuid: &str, environment: &str) -> String {
+    format!(
+        "Subagent '{session}' is running (uuid={uuid}){environment}. Use agent_cmd to interact."
+    )
 }
 
 #[cfg(test)]

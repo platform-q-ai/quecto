@@ -12,6 +12,7 @@ use super::answer::FrontEndRefusal;
 use super::recording::BoardCall;
 use super::request::{op_of, parse};
 use super::{read, run_recorded};
+use crate::application::project_board::ports::CoordinatorLaunch;
 use crate::application::project_board::use_cases::RunBoardOperation;
 
 /// What a request does with the board.
@@ -33,7 +34,14 @@ pub struct ProjectBoardEnvironment {
     /// Set when the call the request came from was cancelled: the board
     /// then pushes nothing more (`None`: the request runs to its end).
     pub cancelled: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    /// What launches a started task's coordinator: the agent tool's, only
+    /// while its session may spawn (S4c); `None` for a front end that
+    /// starts nothing (the CLI), so a start is refused.
+    pub launcher: Option<Launcher>,
 }
+
+/// A front end's coordinator launcher (S4c).
+pub type Launcher = std::sync::Arc<dyn CoordinatorLaunch>;
 
 /// The board's operations, built by composition.
 pub struct ProjectBoardHandles {
@@ -51,13 +59,26 @@ pub enum BuildError {
 pub type ProjectBoardHandlesBuilder =
     fn(&ProjectBoardEnvironment) -> Result<ProjectBoardHandles, BuildError>;
 
-/// A front end's board: its repository and board remote, and how
-/// composition builds its operations (`None` when it is not composed).
-#[derive(Debug, Clone)]
+/// A front end's board: its repository and board remote, how composition
+/// builds its operations (`None` when it is not composed), and what
+/// launches a started task's coordinator (`None`: it starts nothing).
+#[derive(Clone)]
 pub struct BoardSite {
     pub repo: PathBuf,
     pub remote: String,
     pub build: Option<ProjectBoardHandlesBuilder>,
+    pub launcher: Option<Launcher>,
+}
+
+impl std::fmt::Debug for BoardSite {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BoardSite")
+            .field("repo", &self.repo)
+            .field("remote", &self.remote)
+            .field("build", &self.build.is_some())
+            .field("launcher", &self.launcher.is_some())
+            .finish()
+    }
 }
 
 /// The answer to the request `text` on `site`'s board, noted on `call`;
@@ -97,6 +118,7 @@ pub fn answer(
         },
         vars: std::env::vars_os().collect(),
         cancelled,
+        launcher: site.launcher.clone(),
     };
     match call.built(|| build(&environment)) {
         // The one entry point every front end's request goes through.

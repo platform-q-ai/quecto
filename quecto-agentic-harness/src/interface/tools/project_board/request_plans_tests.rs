@@ -366,3 +366,31 @@ fn an_acceptance_requires_the_updated_it_read_and_a_discard_may_give_one() {
     let zero = refused(json!({"op": "discard_plan", "task": "a", "version": 0}));
     assert_eq!(zero.field, "version");
 }
+
+/// S4c: a start names its task and the accepted plan version its caller
+/// confirmed.
+#[test]
+fn a_start_names_the_plan_version_it_confirmed() {
+    use crate::application::project_board::dto::TaskStart;
+    assert_eq!(
+        parse(&json!({"op": "start", "task": "a", "plan_version": 2})),
+        Ok(BoardRequest::Start(TaskStart {
+            task: slug("a"),
+            plan_version: 2,
+        }))
+    );
+    let unconfirmed = refused(json!({"op": "start", "task": "a"}));
+    assert_eq!(
+        (
+            unconfirmed.field.as_str(),
+            unconfirmed.fault.field.as_str(),
+            unconfirmed.fault.fault.as_str()
+        ),
+        ("plan_version", "plan_version", "missing")
+    );
+    let zero = refused(json!({"op": "start", "task": "a", "plan_version": 0}));
+    assert_eq!(
+        (zero.field.as_str(), zero.fault.fault.as_str()),
+        ("plan_version", "invalid_value")
+    );
+}
