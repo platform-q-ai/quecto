@@ -41,12 +41,19 @@ written, rather than taking its folders for someone else's branch.
 A read takes at most the following. Past any of these it answers
 `board_too_large` before it reads any file's bytes.
 
-In a partial clone whose promisor is the board's remote, a read fetches the board's
-commits alone, then its root tree, then each folder with every file but those past
-1.5 MiB (`--filter=blob:limit`), and the archive's tree alone: nothing under the
-archive is fetched. A file the filter left on the remote is past every cap, so it
-is set aside as too large and every write carries it by its id, unfetched. A clone
-whose remote is not its promisor fetches what it lacks whole, as before.
+In a partial clone whose promisor is the board's remote, the first read fetches
+the board's commits alone, then its root, then each folder with every file but
+those past 1.5 MiB (`--filter=blob:limit`), and the archive's tree alone: nothing
+under the archive is fetched. A file the filter left on the remote is past every
+cap, so it is set aside as too large and every write carries it by its id,
+unfetched. The clone remembers, in `.git/quecto/project-board/fetch-<remote>`, the
+last board it read whole and the files left on the remote, so each new head is one
+fetch of what changed since, as in a full clone, and a folder holding such a file is
+never fetched whole again. These fetches keep the clone's own fetch filter. A server
+that refuses filters is fetched from whole. A clone whose remote is not its promisor
+fetches what it lacks whole, as before.
+
+The board store needs git 2.44 or later (`GIT_NO_LAZY_FETCH`).
 
 | Folder | Entries | File bytes | One file |
 |---|---|---|---|

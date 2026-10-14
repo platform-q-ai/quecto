@@ -29,8 +29,6 @@ use crate::infrastructure::persistence::project_board::board_tree::{
 /// root, then the folders and the archive, then (for a clone that holds
 /// the trees but not their files) the folders' files.
 const FETCH_ROUNDS: usize = 3;
-/// What git says of a server that knows no filters, fetching whole.
-const NO_FILTERS: &[u8] = b"filtering not recognized by server";
 
 /// Whether the board's remote is this clone's promisor.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -205,7 +203,7 @@ impl GitBoardStore {
             (Ok(_), _) => None,
             (Err(error), _) => return Err(told(&error).to_string()),
         };
-        let run = |filter: &str| -> Result<super::super::git::Output, String> {
+        let run = |filter: &str| -> Result<(), String> {
             let mut args: Vec<&str> = vec![];
             for setting in config.iter().copied().chain(own.as_deref()) {
                 args.extend(["-c", setting]);
@@ -223,15 +221,17 @@ impl GitBoardStore {
                 .network_with(&args, input, SHORT_OUTPUT)
                 .map_err(|error| error.to_string())?;
             match output.status.success() {
-                true => Ok(output),
+                true => Ok(()),
                 false => Err(failed(&args, &output).to_string()),
             }
         };
         let Some(filter) = filter else {
             return run("--no-filter").map(|_| Came::Whole);
         };
+        // A server that knows no filters sends every file (git warns): a
+        // tree taken as filtered then misses nothing, so nothing is taken
+        // as left on the remote.
         match run(filter) {
-            Ok(output) if contains(&output.stderr, NO_FILTERS) => Ok(Came::Whole),
             Ok(_) => Ok(Came::Filtered),
             // A server that refuses this filter: `filter '<kind>' not
             // supported`.
@@ -281,11 +281,6 @@ impl GitBoardStore {
             _ => Err(unavailable(failed(args, &output))),
         }
     }
-}
-
-/// Whether `bytes` hold `needle`.
-fn contains(bytes: &[u8], needle: &[u8]) -> bool {
-    bytes.windows(needle.len()).any(|window| window == needle)
 }
 
 /// The object `wanted` names.
