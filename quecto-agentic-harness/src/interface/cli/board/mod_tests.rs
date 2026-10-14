@@ -358,6 +358,18 @@ fn stdin_input_failures_are_recorded_as_the_requests() {
 fn the_client_is_named_by_allowlist() {
     use std::ffi::OsStr;
     assert_eq!(client(None), Client::Cli);
+    // The agent tool's own when unset (Q10), the relay's when it names
+    // itself in the harness it launched.
+    use crate::interface::tools::project_board::recording::named_client;
+    assert_eq!(named_client(None, Client::Agent), Client::Agent);
+    assert_eq!(
+        named_client(Some(OsStr::new("pocket-relay")), Client::Agent),
+        Client::PocketRelay
+    );
+    assert_eq!(
+        named_client(Some(OsStr::new("x")), Client::Agent),
+        Client::Other
+    );
     assert_eq!(
         client(Some(OsStr::new("pocket-relay"))),
         Client::PocketRelay
@@ -520,4 +532,48 @@ fn a_line_refused_as_it_is_read_records_the_op_it_named() {
         .map(|line| line["op"].clone())
         .collect();
     assert_eq!(ops, [json!("renew"), json!("unknown")]);
+}
+
+/// S4c: `quecto board start` is refused in the owner's words before
+/// anything is built: only an agent session can host a swarm.
+#[test]
+fn the_command_line_takes_every_op_but_start() {
+    use crate::interface::tools::project_board::request::OPS;
+    let table: Vec<&str> = OPS.iter().map(|(op, _)| *op).collect();
+    let mut taken: Vec<&str> = CLI_OPS.to_vec();
+    taken.push("start");
+    taken.sort_unstable();
+    let mut every = table.clone();
+    every.sort_unstable();
+    assert_eq!(
+        taken, every,
+        "each op of the table is taken or refused by name"
+    );
+    assert!(not_taken("start").starts_with("start needs an agent session"));
+    assert_eq!(
+        not_taken("other"),
+        "other is not taken by quecto board: ask a quecto agent"
+    );
+}
+
+#[test]
+fn start_is_refused_on_the_command_line() {
+    let (code, answer, _) = cli(
+        Some(never_built),
+        &["start", "--task", "a", "--plan-version", "1"],
+    );
+    assert_eq!(
+        (
+            code,
+            &answer["op"],
+            &answer["error"]["code"],
+            &answer["error"]["problem"]
+        ),
+        (
+            1,
+            &json!("start"),
+            &json!("invalid_request"),
+            &json!("start needs an agent session: ask a quecto agent, or use Pocket")
+        )
+    );
 }

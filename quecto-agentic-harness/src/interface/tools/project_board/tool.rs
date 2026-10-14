@@ -30,13 +30,15 @@ use std::time::Instant;
 use serde_json::{Map, Value, json};
 
 use super::read;
-use super::recording::BoardCall;
+use super::recording::{BoardCall, CLIENT_VARIABLE, named_client};
 use super::request::{Kind, OPS, RequestError};
 use super::session_recording::SessionRecording;
 use super::site::{self, BoardSite};
+use crate::application::project_board::dto::RunEndOutcome;
 use crate::application::tools::ports::Tool;
 use crate::domain::error::DomainError;
 use crate::domain::project_board::entities::plan::MAX_PLAN_VERSION;
+use crate::domain::project_board::entities::run::MAX_RUN_NUMBER;
 use crate::domain::project_board::entities::team::MAX_MEMBERS;
 use crate::domain::project_board::value_objects::telemetry::{Client, FaultKind, FrontEnd};
 use crate::domain::project_board::value_objects::vocabulary::{Effort, TaskKind, TaskStatus};
@@ -49,13 +51,15 @@ pub const BOARD_TOOL_NAME: &str = "board";
 /// The tool's description: the approved text, with only the changes the
 /// ops on master need and the ones the owner approved (#2477 S2b, #2513;
 /// listed in its pull request). The Read line's `show` sentences (#2481
-/// M4a) are owner-approved (2026-10-13). The Plans line (#2481 M4b) awaits
-/// the owner's approval.
+/// M4a) are owner-approved (2026-10-13). The Plans line (#2481 M4b), the
+/// Start and Runs lines (S4c) await the owner's approval.
 pub const BOARD_TOOL_DESCRIPTION: &str = r#"Project board for this repo: the shared list of tasks people and agents plan, claim and finish. Tasks live on the repo's quecto/board branch and are written only through this tool, never by editing the branch. Each op is one call, {"op":"<name>", ...named fields}, answering JSON: {"ok":true,...} or {"ok":false,"error":{"code","field","message"}}. Ids are slugs (a-z, 0-9, -). Statuses: draft, ready, claimed, in_progress, review, blocked, done, archived.
 Read: list(status|parent|dependents_of, at most one filter), show(task), list_ready (ready tasks whose dependencies are done or archived), list_takeable (held tasks whose claim expired). Listings show a summary per task; show(task) gives the whole task, its accepted plan, each plan version in brief and its runs (the latest readable one in full); "may_be_incomplete" means a file that may hold one of its plans or runs is set aside. What does not fit in 64 KiB beside the task (which is never cut, and may take more alone) is cut, with counts of what was left out and approach_next/items_next to read on with show(task, approach_from, items_from). Listings are advice; every change is checked against the board when it is written.
 Plan: create(task,title,kind,description,status draft|ready,parent,depends_on); update_draft(task, any of title,description,parent,depends_on, expected_updated) edits a draft only; pass the updated you read as expected_updated so a newer edit is never overwritten. Anyone may create, edit a draft, move it to ready, or archive a draft, ready or done task with move(task,to archived). Anyone may move a ready task back to draft.
-Plans: show(task, version) gives that version of the task's plan whole, a draft included, in place of the accepted one, and pages it with approach_from/items_from as it pages the accepted plan. propose_plan(task, approach, items, team) adds a draft version of a task's plan; items are [{"id","title","criteria":[lines],"depends_on":[item ids]}] and team is null or {"roles":[{"name","model","effort","members","turns"}],"budget_tokens","deadline","image"}, as show gives them. Every page names the plan's version and updated: if either differs from your first read, read again from 0. To propose from a plan you read, read all of its approach and items first (show again with approach_from at approach_next and items_from at items_next until none is given): never propose an approach or items show cut. edit_plan(task, version, any of approach,items,team, expected_updated) edits a draft: a field you leave out stays as it is and one you give replaces it whole (team null removes the team), so items change without resending the approach. Anyone may propose a plan or edit a draft of a task that is not done or archived; pass the draft's updated as expected_updated so a newer edit is never overwritten, and on "plan_changed" re-read it with show(task, version) and redo your edit.
+Plans: show(task, version) gives that version of the task's plan whole, a draft included, in place of the accepted one, and pages it with approach_from/items_from as it pages the accepted plan. propose_plan(task, approach, items, team) adds a draft version of a task's plan; items are [{"id","title","criteria":[lines],"depends_on":[item ids]}] and team is null or {"roles":[{"name","model","effort","members","turns"}],"budget_tokens","deadline","image"}, as show gives them. Every page names the plan's version and updated: if either differs from your first read, read again from 0. To propose from a plan you read, read all of its approach and items first (show again with approach_from at approach_next and items_from at items_next until none is given): never propose an approach or items show cut. edit_plan(task, version, any of approach,items,team, expected_updated) edits a draft: a field you leave out stays as it is and one you give replaces it whole (team null removes the team), so items change without resending the approach. Anyone may propose a plan or edit a draft of a task that is not done or archived; pass the draft's updated as expected_updated so a newer edit is never overwritten, and on "plan_changed" re-read it with show(task, version) and redo your edit. accept_plan(task, version, expected_updated, expected_accepted) makes a draft the task's plan and supersedes the plan accepted before (accepting an older draft over it is a rollback; a superseded plan is never accepted again: propose it anew); both pins are required: expected_updated is the updated show(task, version) gave you, and expected_accepted the task's accepted_plan as you read it (null for none), so what you accept is what you read and you never supersede an acceptance you did not see (on "accepted_plan_changed" re-read with show(task, version) and decide again). discard_plan(task, version, expected_updated optional) discards a draft (it is kept, as discarded). On a held task only the claim holder accepts or discards, on an unclaimed one anyone; nothing is accepted while a run of the task is going ("run_open"), only a draft is accepted or discarded ("plan_not_draft"), and on "plans_inconsistent" stop and report: the task's plans contradict each other.
+Start: start(task, plan_version) hands a ready task, or one you hold, to a swarm: it claims the task if it is ready, moves it to in_progress, begins its next run on the accepted plan and launches the run's coordinator in a new container with the plan's brief. plan_version is the accepted plan you confirmed from show(task); a task that accepts another by then is refused ("accepted_plan_changed"), so only the plan you confirmed runs. It needs a session that may spawn ("no_launcher"); a plan a swarm cannot take is refused ("brief"). If the coordinator does not launch ("launch_failed"), the start is undone as far as it can be: the run is folded back as failed and a claim the start took is released (with run_state "open" the fold-back failed: end the run with end_run). If launch_failed names still_running, nothing is undone: kill that coordinator, then end_run failed. The answer names the run, the coordinator (agent, environment_ref), the worker roles whose models were not applied (not_applied) and whether the claim was taken (claim: fresh) or yours already (held). The task stays yours while the swarm runs. To end it: when the run is paused holding an outcome, close it (agent_cmd swarm_control close on the coordinator; a cancelled run needs no close); stop the coordinator with agent_cmd kill (end_run answers "run_live" until it has stopped); then end_run with succeeded, stopped or failed. Renew the claim before it lapses (2 hours, not renewed while the swarm runs); if it has expired, renew it if it is yours, or take_over if it is another's, then end_run.
 Work: move(task,to claimed) takes a ready task for 2 hours; renew(task) before it lapses while you work; take_over(task) only once a claim has expired; move(task,to ready) hands it back to ready. Only the claim holder moves a held task: claimed to in_progress|blocked|ready, in_progress to review|blocked|ready, review to in_progress|ready (or done when no pull request is linked), blocked to in_progress|ready. Once its claim has expired, or a task has none, anyone may move a review or blocked task to ready. link_pr(task,pr) and unlink_pr(task,pr) are the holder's. A task with linked pull requests is done only when all of them have merged: link_pr and moving to review check this automatically, and complete(task) asks again (anyone may call it). Never move a task to done by hand while a pull request is linked.
+Runs: end_run(task, run, outcome, expected_updated optional) records how a started run ended, in this order: when the run is paused holding an outcome, close it (agent_cmd swarm_control close on the coordinator; a cancelled run needs no close); stop the coordinator with agent_cmd kill (end_run answers "run_live", naming the agent, until it has stopped; it sees only this session's subagents with the run's label); then end_run with "succeeded", "stopped" or "failed". Renew the claim before it lapses (2 hours, not renewed while the swarm runs); if it has expired, renew it if it is yours, or take_over if it is another's, then end_run. A start that answered "launch_failed" with run_state "open" leaves a run to end the same way. When nobody can account for a run, end it as "lost" (the holder, or anyone when the task has no claim). The task stays held: move it on afterwards.
 Repair: clear_set_aside(path, object, repeated) removes a file the board could not read (listed under quarantined, with its object); repeated, for a file that appears twice, maps its path to {"keep":object,"seen":[objects]} or {"drop":[objects]}, the objects its copies list. Use it only when told to.
 On "stale" re-read with show and redo your change; on "contended" call again; on "clock_ahead" or "task_ahead" stop and report: this machine's clock is wrong. A "clock" note on an answer means writes ran without an outside time check."#;
 
@@ -86,6 +90,10 @@ const TOOL_OPS: &[&str] = &[
     "complete",
     "propose_plan",
     "edit_plan",
+    "accept_plan",
+    "discard_plan",
+    "end_run",
+    "start",
     "clear_set_aside",
 ];
 
@@ -136,12 +144,20 @@ fn field_schema(kind: Kind) -> Value {
         Kind::Pr => json!({"type": "integer", "minimum": 1}),
         Kind::Offset => json!({"type": ["integer", "null"], "minimum": 0}),
         Kind::Version => json!({"type": "integer", "minimum": 1, "maximum": MAX_PLAN_VERSION}),
+        Kind::AcceptedVersion => {
+            json!({"type": ["integer", "null"], "minimum": 1, "maximum": MAX_PLAN_VERSION})
+        }
         Kind::PlanItems => plan_items_schema(),
         Kind::Team => team_schema(),
         // A path to {"keep", "seen"} or {"drop"}: the portable schema
         // subset types no values under names it does not know, so the
         // description gives the shape.
         Kind::Repeated => json!({"type": "object"}),
+        Kind::Run => json!({"type": "integer", "minimum": 1, "maximum": MAX_RUN_NUMBER}),
+        Kind::RunEnd => {
+            let outcomes: Vec<&str> = RunEndOutcome::ALL.iter().map(|end| end.as_str()).collect();
+            json!({"type": "string", "enum": outcomes})
+        }
     }
 }
 
@@ -395,6 +411,9 @@ impl Tool for BoardTool {
             .recordings
             .current()
             .map(|recording| (recording, Instant::now()));
+        // Who the session acts for (S4c): the pocket relay names itself
+        // in the harness's environment; unset, the agent itself.
+        let client = named_client(std::env::var_os(CLIENT_VARIABLE).as_deref(), Client::Agent);
         Box::pin(async move {
             let cancelled = Arc::new(AtomicBool::new(false));
             let mut guard = CancelOnDrop(Some(Arc::clone(&cancelled)));
@@ -402,7 +421,7 @@ impl Tool for BoardTool {
             // in this call's panic scope. The record is written there too,
             // once the answer is summarised, even when the call was dropped.
             let work = off_the_workers(move || {
-                let mut call = BoardCall::arrived(arrival, FrontEnd::Tool, Client::Agent);
+                let mut call = BoardCall::arrived(arrival, FrontEnd::Tool, client);
                 let answer = summarised(answered(&site, &text, Arc::clone(&cancelled), &mut call));
                 call.finish(&answer, cancelled.load(Ordering::SeqCst));
                 answer
@@ -427,3 +446,7 @@ impl Tool for BoardTool {
 #[cfg(test)]
 #[path = "tool_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "tool_start_tests.rs"]
+mod start_tests;

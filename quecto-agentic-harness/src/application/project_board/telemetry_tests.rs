@@ -13,6 +13,12 @@ impl ProjectBoardOpLog for Log {
         self.0.lock().unwrap().push(record);
     }
 
+    fn record_start(
+        &self,
+        _record: crate::domain::project_board::value_objects::telemetry::BoardStartRecord,
+    ) {
+    }
+
     fn record_fold_back(&self, _record: FoldBackRecord) {
         unreachable!("a board_op test writes no fold-back");
     }
@@ -35,6 +41,10 @@ fn record() -> BoardOpRecord {
         plan_version: None,
         items: None,
         roles: None,
+        plan_state_from: None,
+        plan_state_to: None,
+        run: None,
+        run_outcome: None,
         status_from: None,
         status_to: None,
         claim: None,
@@ -73,7 +83,8 @@ fn a_recording_writes_to_its_log_while_on() {
 /// One request of every kind, each naming task `a` where it names one.
 fn every_request() -> Vec<BoardRequest> {
     use super::super::dto::{
-        DraftUpdate, NewBoardTask, NewBoardTaskStatus, PlanEdit, PlanProposal,
+        DraftUpdate, NewBoardTask, NewBoardTaskStatus, PlanAcceptance, PlanDiscard, PlanEdit,
+        PlanProposal,
     };
     use super::super::operations::ListFilter;
     use crate::domain::project_board::value_objects::vocabulary::{TaskKind, TaskStatus};
@@ -126,6 +137,31 @@ fn every_request() -> Vec<BoardRequest> {
             items: None,
             team: None,
             expected_updated: None,
+        }),
+        BoardRequest::AcceptPlan(PlanAcceptance {
+            task: a.clone(),
+            version: 1,
+            expected_updated:
+                crate::domain::project_board::value_objects::timestamp::Timestamp::parse(
+                    "2026-10-10T09:00:00Z",
+                )
+                .unwrap(),
+            expected_accepted: None,
+        }),
+        BoardRequest::DiscardPlan(PlanDiscard {
+            task: a.clone(),
+            version: 1,
+            expected_updated: None,
+        }),
+        BoardRequest::EndRun(crate::application::project_board::dto::RunEnd {
+            task: a.clone(),
+            run: 1,
+            outcome: crate::application::project_board::dto::RunEndOutcome::Lost,
+            expected_updated: None,
+        }),
+        BoardRequest::Start(super::super::dto::TaskStart {
+            task: a.clone(),
+            plan_version: 1,
         }),
     ]
 }
@@ -188,6 +224,10 @@ fn a_request_names_its_task_and_pull_request() {
             none(OpKind::ClearSetAside),
             task(OpKind::ProposePlan),
             task(OpKind::EditPlan),
+            task(OpKind::AcceptPlan),
+            task(OpKind::DiscardPlan),
+            task(OpKind::EndRun),
+            task(OpKind::Start),
         ]
     );
 }
@@ -288,6 +328,18 @@ mod facts {
             plan_version: Some(3),
             items: Some(7),
             roles: Some(0),
+            plan_state_from: Some(
+                crate::domain::project_board::value_objects::vocabulary::PlanState::Draft,
+            ),
+            plan_state_to: Some(
+                crate::domain::project_board::value_objects::vocabulary::PlanState::Discarded,
+            ),
+            run: Some(2),
+            run_outcome: Some(
+                crate::domain::project_board::value_objects::vocabulary::RunOutcome::Lost,
+            ),
+            // A start's facts go to its own record, never the board_op's.
+            start: Some(Default::default()),
         };
         let mut record = record();
         facts.fill(&mut record);
@@ -301,6 +353,8 @@ mod facts {
             "completion": "pending", "prs_linked": 1,
             "normalised": {"description": ["crlf"]}, "plans": 4, "runs": 0,
             "plan_version": 3, "items": 7, "roles": 0,
+            "plan_state_from": "draft", "plan_state_to": "discarded",
+            "run": 2, "run_outcome": "lost",
         });
         assert_eq!(line, want);
     }

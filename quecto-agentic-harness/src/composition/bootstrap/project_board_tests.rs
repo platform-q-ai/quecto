@@ -57,6 +57,7 @@ fn environment(repo: &Path, access: Access) -> ProjectBoardEnvironment {
         access,
         vars,
         cancelled: None,
+        launcher: None,
     }
 }
 
@@ -496,4 +497,168 @@ fn a_committer_spaced_with_a_chat_space_fails_fast_for_every_write() {
     let reader = build_project_board_handles(&environment(&work, Access::Read)).unwrap();
     let listed = run(&reader.operations, r#"{"op": "list"}"#);
     assert_eq!(listed["ok"], json!(true), "{listed}");
+}
+
+/// Q10: `QUECTO_BOARD_COMMITTER` changes who the board's commits and
+/// claims are by, and nothing else git does: the clone keeps its own
+/// identity for every other commit. A malformed value is refused, never
+/// ignored for the clone's own.
+#[test]
+fn the_board_committer_override_changes_only_the_boards_commits() {
+    let (_dir, work) = repository();
+    let mut pocket = environment(&work, Access::Write);
+    pocket.vars.push((
+        "QUECTO_BOARD_COMMITTER".into(),
+        "quecto pocket <pocket@quecto.invalid>".into(),
+    ));
+    let handles = build_project_board_handles(&pocket).unwrap();
+    let ops = |request: Value| run(&handles.operations, &request.to_string());
+    assert_eq!(ops(json!({"op": "bootstrap"}))["ok"], json!(true));
+    let created = ops(json!({"op": "create", "task": "a", "title": "A", "status": "ready"}));
+    assert_eq!(created["ok"], json!(true), "{created}");
+    assert_eq!(
+        board_commit_identities(&work),
+        "quecto pocket <pocket@quecto.invalid>|quecto pocket <pocket@quecto.invalid>"
+    );
+    let claimed = ops(json!({"op": "move", "task": "a", "to": "claimed"}));
+    assert_eq!(
+        claimed["task"]["claim"]["holder"],
+        json!({"name": "quecto pocket", "email": "pocket@quecto.invalid"})
+    );
+    // The clone's own configuration still names its own committer.
+    let output = Command::new("git")
+        .args(["config", "user.name"])
+        .current_dir(&work)
+        .env_clear()
+        .env("PATH", std::env::var_os("PATH").unwrap())
+        .env(
+            "QUECTO_BOARD_COMMITTER",
+            "quecto pocket <pocket@quecto.invalid>",
+        )
+        .envs([
+            ("GIT_CONFIG_GLOBAL", "/dev/null"),
+            ("GIT_CONFIG_NOSYSTEM", "1"),
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "Ada");
+    for malformed in [
+        "quecto pocket",
+        "<pocket@quecto.invalid>",
+        "x <not an email>",
+    ] {
+        let mut wrong = environment(&work, Access::Write);
+        wrong
+            .vars
+            .push(("QUECTO_BOARD_COMMITTER".into(), malformed.into()));
+        match build_project_board_handles(&wrong) {
+            Err(BuildError::NoCommitter(why)) => assert!(
+                why.starts_with("QUECTO_BOARD_COMMITTER must be \"name <email>\""),
+                "{why}"
+            ),
+            other => panic!("{malformed:?}: {:?}", other.err()),
+        }
+    }
+}
+
+/// Q10: the committer's email is the last `<...>` of the value, so a name
+/// that holds ` <` is judged as the name (refused: a name holds no `<`),
+/// never read as the start of the email; unset, it names none.
+#[test]
+fn the_board_committer_is_read_from_its_last_angle_brackets() {
+    let named = |value: &str| {
+        board_committer(&[(
+            OsString::from("QUECTO_BOARD_COMMITTER"),
+            OsString::from(value),
+        )])
+    };
+    assert_eq!(
+        named("quecto pocket <pocket@quecto.invalid>"),
+        Some(Ok(Identity {
+            name: "quecto pocket".into(),
+            email: "pocket@quecto.invalid".into(),
+        }))
+    );
+    let refused = named("a <b <c@d.example>").unwrap().unwrap_err();
+    assert!(refused.contains("committer/name"), "{refused}");
+    let bare = named("pocket@quecto.invalid").unwrap().unwrap_err();
+    assert!(
+        bare.ends_with("it names no email in angle brackets"),
+        "{bare}"
+    );
+    assert_eq!(board_committer(&[]), None);
+}
+
+/// A session's swarms whose every launch fails while run 1's coordinator
+/// is still seen running.
+struct FailedButRunning;
+
+impl crate::application::project_board::ports::RunLiveness for FailedButRunning {
+    fn running_coordinator(
+        &self,
+        _: &crate::domain::project_board::value_objects::slug::Slug,
+        run: u32,
+    ) -> Option<String> {
+        (run == 1).then(|| "7f3a".into())
+    }
+}
+
+impl crate::application::project_board::ports::CoordinatorLaunch for FailedButRunning {
+    fn may_launch(&self) -> bool {
+        true
+    }
+
+    fn launch(
+        &self,
+        _: &crate::application::project_board::ports::CoordinatorRequest,
+        _: &std::sync::atomic::AtomicBool,
+    ) -> Result<
+        crate::application::project_board::ports::LaunchedCoordinator,
+        crate::application::project_board::ports::LaunchRefused,
+    > {
+        Err(
+            crate::application::project_board::ports::LaunchRefused::because(
+                "the call was cancelled while the coordinator launched: the launch was dropped",
+            ),
+        )
+    }
+}
+
+/// S4c review (L1): composition hands the start the session's liveness, so
+/// a failed launch whose coordinator is still seen running undoes nothing
+/// and names it, over the real board.
+#[test]
+fn a_composed_start_asks_whether_its_coordinator_still_runs() {
+    let (_dir, work) = repository();
+    let mut writing = environment(&work, Access::Write);
+    writing.launcher = Some(std::sync::Arc::new(FailedButRunning));
+    let handles = build_project_board_handles(&writing).unwrap();
+    let ops = |request: Value| run(&handles.operations, &request.to_string());
+    assert_eq!(ops(json!({"op": "bootstrap"}))["ok"], json!(true));
+    let created = ops(json!({"op": "create", "task": "a", "title": "A", "status": "ready"}));
+    assert_eq!(created["ok"], json!(true), "{created}");
+    let proposed = ops(
+        json!({"op": "propose_plan", "task": "a", "approach": "Build it.",
+                              "items": [{"id": "schema", "title": "Schema"}]}),
+    );
+    let updated = proposed["plan"]["updated"].clone();
+    let accepted = ops(json!({"op": "accept_plan", "task": "a", "version": 1,
+                              "expected_updated": updated, "expected_accepted": null}));
+    assert_eq!(accepted["ok"], json!(true), "{accepted}");
+    let started = ops(json!({"op": "start", "task": "a", "plan_version": 1}));
+    assert_eq!(
+        (
+            &started["error"]["code"],
+            &started["error"]["still_running"],
+            &started["error"]["run_state"],
+            &started["error"]["released"]
+        ),
+        (
+            &json!("launch_failed"),
+            &json!("7f3a"),
+            &json!("open"),
+            &json!(false)
+        ),
+        "{started}"
+    );
 }

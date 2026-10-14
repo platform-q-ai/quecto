@@ -20,6 +20,8 @@ use super::answer::{self, FrontEndRefusal, rule_code};
 use super::request::{RequestError, schema_field};
 use crate::application::project_board::dto::ProjectBoardError;
 use crate::application::project_board::operations::{BoardOutcome, BoardRequest, Completion};
+use crate::application::project_board::ports::{FoldBackOutcome, FoldBackRecorder};
+use crate::application::project_board::start::StartFacts;
 use crate::application::project_board::telemetry::{
     BoardRecording, OpFacts, access_of, op_kind, pr_of, task_of,
 };
@@ -28,9 +30,25 @@ use crate::domain::project_board::value_objects::code_ref::CommitId;
 use crate::domain::project_board::value_objects::rule_error::BoardRuleError;
 use crate::domain::project_board::value_objects::schema_error::SchemaError;
 use crate::domain::project_board::value_objects::telemetry::{
-    Access, BoardOpRecord, Client, CompletionKind, FaultKind, FrontEnd, ListingCounts, OpKind,
-    OpOutcome, RequestFault, StaticKind, TaskRef,
+    Access, BoardOpRecord, BoardStartRecord, Client, CompletionKind, FaultKind, FrontEnd,
+    ListingCounts, OpKind, OpOutcome, RequestFault, StaticKind, TaskRef,
 };
+
+/// The variable a board's caller names itself in: the pocket relay sets it
+/// for `quecto board` and for the harness it launches (S4c).
+pub const CLIENT_VARIABLE: &str = "QUECTO_BOARD_CLIENT";
+
+/// The client a front end's call is for, by allowlist, as
+/// [`CLIENT_VARIABLE`] names it: `pocket-relay` is the relay, any other
+/// value `other`, never as given, and none (unset) the front end's own
+/// (`unset`: the CLI's `cli`, the agent tool's `agent`).
+pub fn named_client(named: Option<&std::ffi::OsStr>, unset: Client) -> Client {
+    match named.map(std::ffi::OsStr::to_str) {
+        None => unset,
+        Some(Some("pocket-relay")) => Client::PocketRelay,
+        Some(Some(_) | None) => Client::Other,
+    }
+}
 
 /// One front end call on the board, and its record while it is recorded.
 pub struct BoardCall {
@@ -43,6 +61,8 @@ struct Open {
     recording: Arc<BoardRecording>,
     started: Instant,
     record: BoardOpRecord,
+    /// What a start saw, for its own `board_start` record (S4c).
+    start: Option<StartFacts>,
 }
 
 impl BoardCall {
@@ -68,6 +88,7 @@ impl BoardCall {
         let open = arrival.map(|(recording, started)| Open {
             recording,
             started,
+            start: None,
             record: BoardOpRecord {
                 op: OpKind::Unknown,
                 front_end,
@@ -84,6 +105,10 @@ impl BoardCall {
                 plan_version: None,
                 items: None,
                 roles: None,
+                plan_state_from: None,
+                plan_state_to: None,
+                run: None,
+                run_outcome: None,
                 status_from: None,
                 status_to: None,
                 claim: None,
@@ -149,6 +174,7 @@ impl BoardCall {
         let mut facts = OpFacts::default();
         let result = operations.execute_noted(request, Some(&mut facts));
         facts.fill(&mut open.record);
+        open.start = facts.start.take();
         result
     }
 
@@ -202,7 +228,11 @@ impl BoardCall {
                 }
                 BoardOutcome::Shown(shown, _) => Some(&shown.head),
                 BoardOutcome::Listing(listing) => Some(&listing.head),
-                BoardOutcome::Changed { .. } | BoardOutcome::Planned(_) => None,
+                BoardOutcome::Changed { .. }
+                | BoardOutcome::Planned(_)
+                | BoardOutcome::Accepted(_)
+                | BoardOutcome::RunEnded(_) => None,
+                BoardOutcome::Started(_) => None,
             };
             record.outcome = OpOutcome::Ok;
             record.head = head.and_then(|head| CommitId::parse(&head.0).ok());
@@ -231,6 +261,7 @@ impl BoardCall {
             recording,
             started,
             mut record,
+            start,
         }) = self.open.take()
         else {
             return;
@@ -245,7 +276,24 @@ impl BoardCall {
         record.cancelled = cancelled;
         record.result_bytes = u64::try_from(answer.to_string().len()).unwrap_or(u64::MAX);
         record.duration_us = micros(started.elapsed());
+        let undo = start.as_ref().and_then(|facts| facts.fold_back.clone());
+        let start = start.and_then(|facts| start_record(&record, facts));
         recording.record(record);
+        if let Some(start) = start {
+            recording.record_start(start);
+        }
+        // A start's undo folded its run back: that fold-back's own record.
+        if let Some(undo) = undo {
+            super::fold_back_call::FoldBackCall::new(Arc::clone(&recording)).record(
+                FoldBackOutcome {
+                    task: &undo.task,
+                    run: undo.run,
+                    result: &undo.result,
+                    facts: &undo.facts,
+                    elapsed: undo.elapsed,
+                },
+            );
+        }
         // Written first; the message holds the answer's `ok` and the
         // noted kinds only, never the answer's text.
         debug_assert!(
@@ -266,6 +314,7 @@ impl Drop for BoardCall {
             recording,
             started,
             mut record,
+            start: _,
         }) = self.open.take()
         {
             match std::thread::panicking() {
@@ -322,6 +371,8 @@ pub(super) fn refusal_parts(
     use ProjectBoardError as E;
     match error {
         E::Rule(rule) => (Some(rule_code(rule)), rule_schema(rule)),
+        // A brief's refusal names its code as a rule's does.
+        E::Brief { code, .. } => (Some(*code), None),
         E::Invalid(schema) => (None, Some(schema)),
         E::Store(_)
         | E::NotFound(_)
@@ -343,7 +394,10 @@ pub(super) fn refusal_parts(
         | E::Refused(_)
         | E::NotSetAside { .. }
         | E::NoPullRequestHost(_)
-        | E::Stale { .. } => (None, None),
+        | E::Stale { .. }
+        | E::NoLauncher
+        | E::RunLive { .. }
+        | E::LaunchFailed { .. } => (None, None),
     }
 }
 
@@ -387,6 +441,7 @@ fn rule_schema(rule: &BoardRuleError) -> Option<&SchemaError> {
         | R::TaskFinished(..)
         | R::UnknownPlanVersion(..)
         | R::PlanChanged { .. }
+        | R::AcceptedPlanChanged { .. }
         | R::PlansInconsistent(..)
         | R::PlanAhead { .. }
         | R::RunsInconsistent(..)
@@ -444,6 +499,30 @@ fn listing_counts(answer: &Value) -> Option<ListingCounts> {
     })
 }
 
+/// A start's `board_start` record (S4c), from its call's `board_op`
+/// record and what the start saw: its outcome is the call's, and it is
+/// written only for a start that named its task.
+fn start_record(record: &BoardOpRecord, facts: StartFacts) -> Option<BoardStartRecord> {
+    let task = record.task.clone()?;
+    debug_assert_eq!(record.op, OpKind::Start, "only a start notes start facts");
+    Some(BoardStartRecord {
+        task,
+        client: record.client,
+        outcome: record.outcome.clone(),
+        run: facts.run,
+        plan_version: facts.plan_version,
+        members: facts.members,
+        roles: facts.roles,
+        items: facts.items,
+        not_applied: facts.not_applied,
+        claim: facts.claim,
+        launch_us: facts.launch_us,
+        run_state: facts.run_state.map(|state| StaticKind::new(state.as_str())),
+        released: facts.released,
+        duration_us: record.duration_us,
+    })
+}
+
 pub(super) fn micros(elapsed: Duration) -> u64 {
     u64::try_from(elapsed.as_micros()).unwrap_or(u64::MAX)
 }
@@ -453,3 +532,7 @@ pub(super) fn micros(elapsed: Duration) -> u64 {
 #[cfg(test)]
 #[path = "recording_tests.rs"]
 pub(crate) mod tests;
+
+#[cfg(test)]
+#[path = "recording_plan_tests.rs"]
+mod plan_tests;

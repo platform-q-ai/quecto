@@ -27,6 +27,10 @@ fn bare() -> BoardOpRecord {
         plan_version: None,
         items: None,
         roles: None,
+        plan_state_from: None,
+        plan_state_to: None,
+        run: None,
+        run_outcome: None,
         status_from: None,
         status_to: None,
         claim: None,
@@ -73,6 +77,10 @@ fn full() -> BoardOpRecord {
         plan_version: Some(2),
         items: Some(5),
         roles: Some(2),
+        plan_state_from: Some(StaticKind::new("draft")),
+        plan_state_to: Some(StaticKind::new("accepted")),
+        run: Some(1),
+        run_outcome: Some(RunOutcomeKind::Failed),
         status_from: Some(StaticKind::new("in_progress")),
         status_to: Some(StaticKind::new("review")),
         claim: Some(ClaimFacts {
@@ -129,6 +137,7 @@ fn every_field_serializes_as_its_golden_line() {
     let mut golden = golden;
     let plan = json!({
         "plan_version": 2, "items": 5, "roles": 2,
+        "plan_state_from": "draft", "plan_state_to": "accepted", "run": 1, "run_outcome": "failed",
         "normalised": {
             "title": [], "description": ["crlf", "trailing_space"],
             "approach": ["edge_blank_lines"], "items": ["edge_space"],
@@ -206,6 +215,8 @@ fn no_kind_is_ever_renamed_or_removed() {
         "unknown",
         "propose_plan",
         "edit_plan",
+        "accept_plan",
+        "discard_plan",
     ];
     frozen(OpKind::ALL, OpKind::as_str, &ops);
     frozen(FrontEnd::ALL, FrontEnd::as_str, &["tool", "cli"]);
@@ -262,13 +273,16 @@ fn a_start_serializes_as_its_golden_line() {
         not_applied: Some(1),
         claim: Some(StartClaim::Fresh),
         launch_us: Some(250_000),
+        run_state: Some(StaticKind::new("folded")),
+        released: Some(false),
         duration_us: 900_000,
     };
     let line = serde_json::to_value(AuditEvent::BoardStart(Box::new(started))).unwrap();
     let golden = json!({
         "event": "board_start", "task": "demo-hello", "client": "pocket_relay",
         "outcome": "ok", "run": 1, "plan_version": 2, "members": 3, "roles": 2, "items": 4,
-        "not_applied": 1, "claim": "fresh", "launch_us": 250_000, "duration_us": 900_000,
+        "not_applied": 1, "claim": "fresh", "launch_us": 250_000, "run_state": "folded",
+        "released": false, "duration_us": 900_000,
     });
     assert_eq!(line, golden);
     let refused = BoardStartRecord {
@@ -286,6 +300,8 @@ fn a_start_serializes_as_its_golden_line() {
         not_applied: None,
         claim: None,
         launch_us: None,
+        run_state: None,
+        released: None,
         duration_us: 40,
     };
     let line = serde_json::to_value(AuditEvent::BoardStart(Box::new(refused))).unwrap();

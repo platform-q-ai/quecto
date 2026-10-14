@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex};
 
 use serde_json::Value;
 
+use crate::application::configuration::dto::OverlayOrigin;
 use crate::application::configuration::dto::config_selection::OVERLAY_RELATIVE_PATH;
 use crate::application::configuration::ports::{
     ConfigDocumentStore, ConfigDocumentWriter, ConfigValidator, DocumentLock, OverlayApproval,
@@ -70,6 +71,16 @@ impl ConfigDocumentStore for MemoryStore {
         Ok(self
             .read(path)?
             .map_or(OverlayDocument::Absent, OverlayDocument::Present))
+    }
+
+    /// As the overlay read, never reading content: a link on the stretch
+    /// or a file (broken or not) is an entry.
+    fn has_overlay_entry(&self, path: &Path) -> Result<bool, String> {
+        let linked = path
+            .ancestors()
+            .take(2)
+            .any(|entry| self.symlinks.contains(entry));
+        Ok(linked || self.broken.contains(path) || self.files.lock().unwrap().contains_key(path))
     }
 }
 
@@ -152,6 +163,7 @@ pub struct FakeTrust {
     pub fail_approve: bool,
     pub consents: bool,
     pub offered: Mutex<Vec<PathBuf>>,
+    pub offered_origins: Mutex<Vec<OverlayOrigin>>,
 }
 
 impl FakeTrust {
@@ -184,8 +196,15 @@ impl OverlayTrustStore for FakeTrust {
         }
     }
 
-    fn offer(&self, path: &Path, _fingerprint: &str, _content: &[u8]) -> bool {
+    fn offer(
+        &self,
+        path: &Path,
+        _fingerprint: &str,
+        _content: &[u8],
+        origin: &OverlayOrigin,
+    ) -> bool {
         self.offered.lock().unwrap().push(path.to_path_buf());
+        self.offered_origins.lock().unwrap().push(origin.clone());
         self.consents
     }
 

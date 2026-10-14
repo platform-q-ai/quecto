@@ -589,11 +589,14 @@ pub fn on_handled(f: fn(&HandledPanic)) {
 /// The most of a panic's message a result or event carries, in bytes.
 pub const MAX_PANIC_MESSAGE_BYTES: usize = 1024;
 
-/// A panic's message as it may leave the process: known secret shapes
+/// A panic's message as it may leave the process, the one helper every
+/// sink uses (the stderr line, the call's result, the crash record and a
+/// fatal report's struck panic): known secret shapes and URL userinfo
 /// redacted first (so a cut never hides one from the redaction), then cut
 /// on a character boundary to [`MAX_PANIC_MESSAGE_BYTES`], marked "…".
 pub fn shown_panic_message(message: &str) -> String {
-    let redacted = crate::domain::redaction::redact_secrets(message);
+    use crate::domain::redaction::{redact_secrets, redact_url_userinfo};
+    let redacted = redact_secrets(&redact_url_userinfo(message));
     let mut end = redacted.len().min(MAX_PANIC_MESSAGE_BYTES);
     while !redacted.is_char_boundary(end) {
         end -= 1;

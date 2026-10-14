@@ -60,6 +60,34 @@ const KNOWN_KINDS: &[&str] = &[
     // Ops (#2481 M4b).
     "propose_plan",
     "edit_plan",
+    // Ops and plan states (#2481 M4c); `draft` and `superseded` are
+    // listed already.
+    "accept_plan",
+    "discard_plan",
+    "accepted",
+    "discarded",
+    // An acceptance's pin on the plan it saw accepted (#2481 M4c review
+    // round 1): its field and its refusal.
+    "expected_accepted",
+    "accepted_plan_changed",
+    // A start's refusals (S4c): no launcher, a plan that cannot brief a
+    // swarm (its own codes are S4's, above), a launch that failed.
+    "no_launcher",
+    "brief",
+    "launch_failed",
+    // A start's undo (S4c review round 2): where it left the run.
+    "folded",
+    "ended_already",
+    "open",
+    // A run ended by hand (S4c): its op and fields; its outcomes are S4's;
+    // its refusal while the run's swarm runs here.
+    "run_live",
+    "end_run",
+    "run",
+    "outcome",
+    // The start op and its field (S4c).
+    "start",
+    "plan_version",
     // Outcomes, front ends, clients, accesses, faults.
     "ok",
     "refused",
@@ -196,6 +224,7 @@ const KNOWN_KINDS: &[&str] = &[
     "no_task_items",
     "item_too_large",
     "brief_too_large",
+    "coordinator_model",
     "image",
     "turns",
     "members",

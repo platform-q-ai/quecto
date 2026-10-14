@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 
 use rusqlite::Connection;
 
-use super::{SqliteBoardCallMeter, Tally, busy_delay, unwait_metered, wait_metered};
+use super::{MeteredConnection, SqliteBoardCallMeter, Tally, busy_delay, unwait_metered};
 use crate::application::swarm::dto::{BoardLocation, CallMeasure, RunRoles};
 use crate::application::swarm::ports::{BoardCallMeter, BoardRepository, MeteredCall};
 use crate::domain::swarm::BoardError;
@@ -78,15 +78,6 @@ impl Holder {
         }
     }
 
-    /// Lets go of the lock `after` from now, from another thread.
-    fn release_after(&mut self, after: Duration) -> thread::JoinHandle<()> {
-        let release = self.release.take().unwrap();
-        thread::spawn(move || {
-            thread::sleep(after);
-            let _gone = release.send(());
-        })
-    }
-
     fn release(mut self) {
         drop(self.release.take());
         self.thread.take().unwrap().join().unwrap();
@@ -102,22 +93,20 @@ impl Drop for Holder {
     }
 }
 
-/// The lock is held when the call begins and let go 150 ms later: the
+/// The lock is held until BEGIN has accounted at least 100 ms: the
 /// call waits it out, busy, for no longer than the timeout.
 #[test]
 fn a_held_lock_is_measured_as_a_busy_wait() {
     let (_dir, store, _plain, meter) = created();
-    let mut holder = Holder::take(&store);
-    let releaser = holder.release_after(Duration::from_millis(150));
-    let call = meter.open();
+    let holder = super::observation::HeldLock::take(store.path().to_path_buf());
+    let call = meter.open_observed(holder.observer());
     let outcome = transact(&*call);
-    releaser.join().unwrap();
-    holder.release();
+    holder.finish();
     outcome.unwrap();
     let measure = measured(&*call);
     assert!(measure.busy, "{measure:?}");
     assert_eq!(measure.transactions, 1, "{measure:?}");
-    // The call sat out the ~150 ms hold inside `BEGIN` (#2303 round-3
+    // The call accounted at least 100 ms inside `BEGIN` (#2303 round-3
     // review L2: the criterion's number, not merely a first delay).
     assert!(
         measure.busy_wait >= Duration::from_millis(100),
@@ -139,7 +128,7 @@ fn an_unregistered_busy_handler_never_reaches_the_tally() {
     let (_dir, store, _plain, _meter) = created();
     let tally = Tally::new();
     let connection = Connection::open(store.path()).unwrap();
-    wait_metered(&connection, &tally).unwrap();
+    let connection = MeteredConnection::new(connection, Some(&tally)).unwrap();
     unwait_metered(&connection).unwrap();
     let holder = Holder::take(&store);
     let started = Instant::now();
@@ -378,5 +367,304 @@ fn a_call_with_a_fixed_role_reads_no_run_roles() {
         measured(&*unread).run_id.as_deref(),
         Some(generated),
         "a call that read no run row still reads its id"
+    );
+}
+
+/// Deterministic accounting driver: gaps/setup have no account operation.
+#[test]
+fn accounted_notifications_are_immutable_attributed_and_post_unlock() {
+    use super::observation::{Observation, Phase, Scope};
+    use std::sync::{Arc, Mutex};
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let kept = events.clone();
+    let mut tally = Tally::new();
+    tally.observe(Arc::new(move |event| kept.lock().unwrap().push(event)));
+    let handler = super::Handler {
+        tally: &tally,
+        observation: Some(super::HandlerObservation {
+            scope: Scope {
+                call: 1,
+                connection: 2,
+                transaction: 3,
+                phase: Phase::Setup,
+            },
+            phase: Arc::new(super::AtomicU8::new(1)),
+            actual: Mutex::new((Phase::Setup, Duration::ZERO)),
+        }),
+    };
+    for (callback, millis) in [1, 2, 5, 10, 15, 20].into_iter().enumerate() {
+        handler.account(callback as i32, Duration::from_millis(millis));
+    }
+    handler.account(6, Duration::from_millis(52));
+    let events = events.lock().unwrap();
+    let Observation::Accounted(earlier) = events[5] else {
+        panic!("accounted sample")
+    };
+    let Observation::Accounted(later) = events[6] else {
+        panic!("accounted sample")
+    };
+    assert_eq!(earlier.actual, Duration::from_millis(53));
+    assert_eq!(later.actual, Duration::from_millis(105));
+    assert_eq!(
+        later.scope,
+        Scope {
+            phase: Phase::Begin,
+            ..handler.observation.as_ref().unwrap().scope
+        }
+    );
+    assert_eq!(later.callback, 6);
+    assert_eq!(tally.held().busy_wait, later.actual);
+}
+
+#[test]
+fn observer_can_read_tally_after_accounting_without_deadlock() {
+    // The observer holds a Weak to the call's own tally, avoiding a cycle.
+    use super::observation::{Observation, Phase, Scope};
+    use std::sync::{Arc, Mutex};
+    let notifications = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let counted = notifications.clone();
+    let tally = Arc::new_cyclic(|weak: &std::sync::Weak<Tally>| {
+        let weak = weak.clone();
+        let mut tally = Tally::new();
+        tally.observe(Arc::new(move |event| {
+            if let Observation::Accounted(sample) = event {
+                let tally = weak.upgrade().unwrap();
+                let measured = tally
+                    .measure
+                    .try_lock()
+                    .expect("notification after tally unlock");
+                assert_eq!(measured.busy_wait, sample.actual);
+                counted.fetch_add(1, super::Ordering::Relaxed);
+            }
+        }));
+        tally
+    });
+    let handler = super::Handler {
+        tally: &tally,
+        observation: Some(super::HandlerObservation {
+            scope: Scope {
+                call: 1,
+                connection: 2,
+                transaction: 3,
+                phase: Phase::Begin,
+            },
+            phase: Arc::new(super::AtomicU8::new(1)),
+            actual: Mutex::new((Phase::Setup, Duration::ZERO)),
+        }),
+    };
+    handler.account(0, Duration::from_millis(105));
+    assert_eq!(notifications.load(super::Ordering::Relaxed), 1);
+}
+
+#[test]
+fn observer_panic_is_contained_at_the_ffi_boundary_after_accounting() {
+    use super::observation::{Phase, Scope};
+    use std::sync::{Arc, Mutex};
+    let mut tally = Tally::new();
+    tally.observe(Arc::new(|_| panic!("observer panic")));
+    let mut handler = super::Handler {
+        tally: &tally,
+        observation: Some(super::HandlerObservation {
+            scope: Scope {
+                call: 1,
+                connection: 2,
+                transaction: 3,
+                phase: Phase::Begin,
+            },
+            phase: Arc::new(super::AtomicU8::new(1)),
+            actual: Mutex::new((Phase::Setup, Duration::ZERO)),
+        }),
+    };
+    // SAFETY: the same live boxed-argument contract, without invoking SQLite.
+    let retry = unsafe { super::busy_callback(std::ptr::from_mut(&mut handler).cast(), 0) };
+    assert_eq!(retry, 0, "panic means refusal, never unwind through C");
+    assert!(tally.held().busy);
+    assert!(tally.held().busy_wait >= Duration::from_millis(1));
+}
+
+#[test]
+fn begin_observer_error_unwinds_raii_and_releases_connection() {
+    use std::sync::Arc;
+    let (_dir, _store, _plain, meter) = created();
+    let observer = Arc::new(|_| panic!("begin observer panic"));
+    let weak = Arc::downgrade(&observer);
+    let call = meter.open_observed(observer);
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| transact(&*call)));
+    assert!(outcome.is_err());
+    assert_eq!(call.measure(), None, "BEGIN was never attempted");
+    drop(call);
+    assert!(weak.upgrade().is_none(), "observer owned solely by call");
+    transact(&*meter.open()).unwrap();
+}
+
+#[test]
+fn holder_cancellation_is_joined_and_does_not_fake_success() {
+    let (_dir, store, _plain, meter) = created();
+    let holder = super::observation::HeldLock::take(store.path().to_path_buf());
+    let observer = holder.observer();
+    drop(holder);
+    drop(observer);
+    transact(&*meter.open()).unwrap();
+    let holder = super::observation::HeldLock::take(store.path().to_path_buf());
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| holder.finish()));
+    assert!(
+        outcome.is_err(),
+        "cancellation is not qualified successful release"
+    );
+    transact(&*meter.open()).unwrap();
+}
+
+#[test]
+fn setup_and_commit_accounting_cannot_credit_the_begin_sample() {
+    use super::observation::{Observation, Phase, Scope};
+    use std::sync::{Arc, Mutex};
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let kept = events.clone();
+    let mut tally = Tally::new();
+    tally.observe(Arc::new(move |event| kept.lock().unwrap().push(event)));
+    let handler = super::Handler {
+        tally: &tally,
+        observation: Some(super::HandlerObservation {
+            scope: Scope {
+                call: 1,
+                connection: 2,
+                transaction: 3,
+                phase: Phase::Setup,
+            },
+            phase: Arc::new(super::AtomicU8::new(0)),
+            actual: Mutex::new((Phase::Setup, Duration::ZERO)),
+        }),
+    };
+    handler.account(0, Duration::from_millis(100));
+    handler
+        .observation
+        .as_ref()
+        .unwrap()
+        .phase
+        .store(1, super::Ordering::Release);
+    handler.account(0, Duration::from_millis(53));
+    handler
+        .observation
+        .as_ref()
+        .unwrap()
+        .phase
+        .store(3, super::Ordering::Release);
+    handler.account(0, Duration::from_millis(7));
+    let events = events.lock().unwrap();
+    let Observation::Accounted(begin) = events[1] else {
+        panic!("BEGIN sample")
+    };
+    let Observation::Accounted(commit) = events[2] else {
+        panic!("COMMIT sample")
+    };
+    assert_eq!(begin.scope.phase, Phase::Begin);
+    assert_eq!(
+        begin.actual,
+        Duration::from_millis(53),
+        "setup credit is excluded"
+    );
+    assert_eq!(
+        commit.actual,
+        Duration::from_millis(7),
+        "BEGIN credit is excluded"
+    );
+    assert_eq!(
+        tally.held().busy_wait,
+        Duration::from_millis(160),
+        "existing call-wide math is unchanged"
+    );
+    assert_eq!(tally.held().lock_wait, Duration::ZERO);
+}
+
+#[test]
+fn call_connection_and_transaction_identities_are_never_reused() {
+    let mut first = Tally::new();
+    let mut second = Tally::new();
+    first.observe(std::sync::Arc::new(|_| {}));
+    second.observe(std::sync::Arc::new(|_| {}));
+    assert_ne!(
+        first.observation.as_ref().unwrap().call_id,
+        second.observation.as_ref().unwrap().call_id
+    );
+    let one = MeteredConnection::new(Connection::open_in_memory().unwrap(), Some(&first)).unwrap();
+    let two = MeteredConnection::new(Connection::open_in_memory().unwrap(), Some(&first)).unwrap();
+    let one = one
+        .handler
+        .as_ref()
+        .unwrap()
+        .observation
+        .as_ref()
+        .unwrap()
+        .scope;
+    let two = two
+        .handler
+        .as_ref()
+        .unwrap()
+        .observation
+        .as_ref()
+        .unwrap()
+        .scope;
+    assert_eq!(one.call, two.call);
+    assert_ne!(one.connection, two.connection);
+    assert_ne!(one.transaction, two.transaction);
+}
+
+#[test]
+fn holder_startup_error_is_joined_without_a_lock_acknowledgement() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let path = dir.path().join("absent-parent").join("swarm.sqlite");
+    let outcome = std::panic::catch_unwind(|| super::observation::HeldLock::take(path));
+    assert!(outcome.is_err());
+    assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+}
+
+#[test]
+fn ffi_null_argument_and_exhausted_planned_budget_refuse_without_sleep_credit() {
+    use super::observation::{Phase, Scope};
+    use std::sync::{Arc, Mutex};
+    // SAFETY: null is explicitly refused without dereferencing it.
+    assert_eq!(unsafe { super::busy_callback(std::ptr::null_mut(), 0) }, 0);
+    let tally = Tally::new();
+    let handler = super::Handler {
+        tally: &tally,
+        observation: Some(super::HandlerObservation {
+            scope: Scope {
+                call: 1,
+                connection: 2,
+                transaction: 3,
+                phase: Phase::Begin,
+            },
+            phase: Arc::new(super::AtomicU8::new(1)),
+            actual: Mutex::new((Phase::Setup, Duration::ZERO)),
+        }),
+    };
+    assert!(!handler.busy(14));
+    assert_eq!(tally.held().busy_wait, Duration::ZERO);
+    handler.account(0, Duration::MAX);
+    handler.account(1, Duration::from_millis(1));
+    assert_eq!(
+        tally.held().busy_wait,
+        Duration::MAX,
+        "saturating totals preserved"
+    );
+}
+
+#[test]
+fn retained_call_identity_is_a_full_per_call_uuid_not_an_ambient_counter() {
+    let mut first = Tally::new();
+    first.observe(std::sync::Arc::new(|_| {}));
+    let retained = first.observation.as_ref().unwrap().call_id;
+    drop(first);
+    let mut next = Tally::new();
+    next.observe(std::sync::Arc::new(|_| {}));
+    assert_ne!(
+        retained,
+        next.observation.as_ref().unwrap().call_id,
+        "retained call identity cannot alias a later call"
+    );
+    assert_eq!(
+        uuid::Uuid::from_u128(retained).get_version_num(),
+        4,
+        "call identity is locally generated UUIDv4, not ambient sequence state"
     );
 }

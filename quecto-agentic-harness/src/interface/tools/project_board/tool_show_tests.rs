@@ -539,3 +539,37 @@ fn a_cut_keeps_clusters_whole_where_it_can_and_always_moves_on() {
         assert!(kept % 2 == 0, "{room}: {kept}");
     }
 }
+
+/// Review round 4: an end_run's answer says whether its front end looked
+/// for the run's swarm still running, and, when it could not, what that
+/// leaves its caller; a holder's end says its items were recorded as todo.
+#[test]
+fn an_end_runs_answer_says_whether_its_swarm_was_looked_for() {
+    use crate::application::project_board::dto::{EndedRun, LivenessCheck};
+    let answered = |liveness| {
+        crate::interface::tools::project_board::answer::outcome(
+            "end_run",
+            &BoardOutcome::RunEnded(EndedRun {
+                run: run(1, 1, 0),
+                liveness,
+            }),
+            None,
+        )
+    };
+    let unchecked = answered(LivenessCheck::NotChecked);
+    assert_eq!(unchecked["liveness"], json!("not_checked"));
+    assert_eq!(
+        unchecked["liveness_note"],
+        json!(
+            "this end was not checked against running swarms: if the run's coordinator still \
+             runs, stop it"
+        )
+    );
+    assert_eq!(
+        unchecked["items_recorded"],
+        json!("items recorded as todo: no swarm report")
+    );
+    let checked = answered(LivenessCheck::Checked);
+    assert_eq!(checked["liveness"], json!("checked"));
+    assert_eq!(checked.get("liveness_note"), None);
+}

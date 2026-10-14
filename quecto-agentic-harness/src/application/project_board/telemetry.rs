@@ -8,10 +8,10 @@ use super::operations::{BoardRequest, Completion};
 use super::ports::ProjectBoardOpLog;
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::telemetry::{
-    Access, BoardOpRecord, ClaimFacts, CompletionFacts, CompletionKind, FoldBackRecord, Normalised,
-    OpKind, StaticKind,
+    Access, BoardOpRecord, BoardStartRecord, ClaimFacts, CompletionFacts, CompletionKind,
+    FoldBackRecord, Normalised, OpKind, RunOutcomeKind, StaticKind,
 };
-use crate::domain::project_board::value_objects::vocabulary::TaskStatus;
+use crate::domain::project_board::value_objects::vocabulary::{PlanState, RunOutcome, TaskStatus};
 
 /// The op `request` is. Exhaustive with no catch-all: a new request or
 /// change op does not compile until it has its kind.
@@ -33,6 +33,10 @@ pub fn op_kind(request: &BoardRequest) -> OpKind {
         BoardRequest::Clear { .. } => OpKind::ClearSetAside,
         BoardRequest::ProposePlan(_) => OpKind::ProposePlan,
         BoardRequest::EditPlan(_) => OpKind::EditPlan,
+        BoardRequest::AcceptPlan(_) => OpKind::AcceptPlan,
+        BoardRequest::DiscardPlan(_) => OpKind::DiscardPlan,
+        BoardRequest::EndRun(_) => OpKind::EndRun,
+        BoardRequest::Start(_) => OpKind::Start,
     }
 }
 
@@ -53,7 +57,11 @@ pub fn access_of(kind: OpKind) -> Access {
         | OpKind::Complete
         | OpKind::ClearSetAside
         | OpKind::ProposePlan
-        | OpKind::EditPlan => Access::Write,
+        | OpKind::EditPlan
+        | OpKind::AcceptPlan
+        | OpKind::DiscardPlan
+        | OpKind::EndRun => Access::Write,
+        OpKind::Start => Access::Write,
         OpKind::List
         | OpKind::ListReady
         | OpKind::ListTakeable
@@ -72,6 +80,10 @@ pub fn task_of(request: &BoardRequest) -> Option<&Slug> {
         BoardRequest::UpdateDraft(update) => Some(&update.id),
         BoardRequest::ProposePlan(proposal) => Some(&proposal.task),
         BoardRequest::EditPlan(edit) => Some(&edit.task),
+        BoardRequest::AcceptPlan(acceptance) => Some(&acceptance.task),
+        BoardRequest::DiscardPlan(discard) => Some(&discard.task),
+        BoardRequest::EndRun(end) => Some(&end.task),
+        BoardRequest::Start(start) => Some(&start.task),
         BoardRequest::Bootstrap
         | BoardRequest::List(_)
         | BoardRequest::ListReady
@@ -95,6 +107,10 @@ pub fn pr_of(request: &BoardRequest) -> Option<u64> {
         | BoardRequest::Complete(_)
         | BoardRequest::ProposePlan(_)
         | BoardRequest::EditPlan(_)
+        | BoardRequest::AcceptPlan(_)
+        | BoardRequest::DiscardPlan(_)
+        | BoardRequest::EndRun(_)
+        | BoardRequest::Start(_)
         | BoardRequest::Clear { .. } => None,
     }
 }
@@ -129,6 +145,16 @@ pub struct OpFacts {
     pub plan_version: Option<u64>,
     pub items: Option<u64>,
     pub roles: Option<u64>,
+    /// The plan's state as an `accept_plan` or `discard_plan` last read
+    /// it, and as it wrote it (#2481 M4c).
+    pub plan_state_from: Option<PlanState>,
+    pub plan_state_to: Option<PlanState>,
+    /// The run an `end_run` named, and the outcome it ends it with (S4c).
+    pub run: Option<u64>,
+    pub run_outcome: Option<RunOutcome>,
+    /// What a `start` saw, for its own `board_start` record (S4c): set by
+    /// every start that reached its use case, and filled as far as it got.
+    pub start: Option<super::start::StartFacts>,
 }
 
 impl OpFacts {
@@ -161,6 +187,20 @@ impl OpFacts {
         put(&mut record.plan_version, self.plan_version.as_ref());
         put(&mut record.items, self.items.as_ref());
         put(&mut record.roles, self.roles.as_ref());
+        put(&mut record.run, self.run.as_ref());
+        put(
+            &mut record.run_outcome,
+            self.run_outcome.map(RunOutcomeKind::of).as_ref(),
+        );
+        let plan_state = |state: &PlanState| StaticKind::new(state.as_str());
+        put(
+            &mut record.plan_state_from,
+            self.plan_state_from.as_ref().map(plan_state).as_ref(),
+        );
+        put(
+            &mut record.plan_state_to,
+            self.plan_state_to.as_ref().map(plan_state).as_ref(),
+        );
     }
 }
 
@@ -263,6 +303,12 @@ impl BoardRecording {
     /// Writes a fold-back's `record` to the log, as [`Self::record`].
     pub fn record_fold_back(&self, record: FoldBackRecord) {
         self.log.record_fold_back(record);
+    }
+
+    /// Writes a start's `board_start` record (S4c) to the log, as
+    /// [`Self::record`] writes a `board_op`.
+    pub fn record_start(&self, record: BoardStartRecord) {
+        self.log.record_start(record);
     }
 }
 

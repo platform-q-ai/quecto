@@ -39,6 +39,7 @@ fn the_composed_graph_selects_trusts_and_merges_a_real_overlay() {
             global: global.clone(),
             overlay: Some(overlay.clone()),
             legacy_local: Some(cwd.path().join("config.json")),
+            overlay_origin: Default::default(),
         })
     );
     let untrusted = handles.resolve.execute(&selection).unwrap();
@@ -102,6 +103,7 @@ fn a_reload_watches_the_trust_record_while_the_overlay_exists() {
         global: base.path().join("config.json"),
         overlay: Some(overlay.clone()),
         legacy_local: None,
+        overlay_origin: Default::default(),
     });
     let paths = |selection: &ConfigSelection| -> Vec<PathBuf> {
         watched_config_sources(base.path(), selection)

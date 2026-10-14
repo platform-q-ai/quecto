@@ -41,6 +41,9 @@ pub struct ToolRegistryImpl {
     /// Entrypoint-only tools this runtime could build but withheld
     /// (`--no-workflow`, a swarm member): closed to its children (#2216).
     pub(super) withheld_entrypoint_only: std::collections::BTreeSet<String>,
+    /// Told whether a parent may call `spawn`, at every policy change (S4c).
+    /// What follows the policy and guards (S4c), told of each change.
+    pub(super) policy_observers: Vec<Arc<dyn ToolPolicyObserver>>,
 }
 
 impl std::fmt::Debug for ToolRegistryImpl {
@@ -79,6 +82,7 @@ impl ToolRegistryImpl {
             inherited_policy_default_scope: None,
             persisted_policy_scopes: HashMap::new(),
             withheld_entrypoint_only: std::collections::BTreeSet::new(),
+            policy_observers: Vec::new(),
         }
     }
 
@@ -91,6 +95,7 @@ impl ToolRegistryImpl {
     /// Guards run in registration order. The first `Err` short-circuits.
     pub fn register_guard(&mut self, guard: Arc<dyn ToolGuard>) {
         self.guards.push(guard);
+        self.notify_policy_observers();
     }
 
     /// Return the number of registered guards.
@@ -602,6 +607,7 @@ impl ToolRegistryImpl {
         self.definitions = parent.clone();
         self.parent_definitions = parent;
         self.child_definitions = child;
+        self.notify_policy_observers();
     }
 
     /// Look up a tool by name.
@@ -718,6 +724,7 @@ mod inherited_tool_policy_tests;
 mod registry_persistence;
 #[path = "registry_policy_ceiling.rs"]
 mod registry_policy_ceiling;
+pub use registry_policy_ceiling::ToolPolicyObserver;
 #[cfg(test)]
 #[path = "registry_policy_tests/mod.rs"]
 mod registry_policy_tests;

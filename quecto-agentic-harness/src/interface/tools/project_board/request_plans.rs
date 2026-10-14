@@ -11,9 +11,12 @@
 use serde_json::{Map, Value};
 
 use super::{Read, misfit, text, timestamp};
-use crate::application::project_board::dto::{PlanEdit, PlanProposal};
+use crate::application::project_board::dto::{
+    PlanAcceptance, PlanDiscard, PlanEdit, PlanProposal, RunEnd, RunEndOutcome, TaskStart,
+};
 use crate::application::project_board::operations::BoardRequest;
 use crate::domain::project_board::entities::plan::{MAX_PLAN_VERSION, PlanItem};
+use crate::domain::project_board::entities::run::MAX_RUN_NUMBER;
 use crate::domain::project_board::entities::task_parts::MAX_BUDGET_TOKENS;
 use crate::domain::project_board::entities::team::{Budget, MAX_MEMBERS, Role, RoleLimits, Team};
 use crate::domain::project_board::value_objects::slug::Slug;
@@ -55,10 +58,78 @@ pub(super) fn edit_plan(read: &Read<'_>) -> Result<BoardRequest, RequestError> {
     }
 }
 
-/// A plan's version, from 1.
+/// A draft accepted, pinned to the draft as it was read (#2481 M4c).
+pub(super) fn accept_plan(read: &Read<'_>) -> Result<BoardRequest, RequestError> {
+    let present = "a required field is present";
+    Ok(BoardRequest::AcceptPlan(PlanAcceptance {
+        task: read.task()?,
+        version: version(read.value("version").expect(present))?,
+        expected_updated: read.timestamp("expected_updated")?.expect(present),
+        expected_accepted: accepted(read.value("expected_accepted").expect(present))?,
+    }))
+}
+
+/// A draft discarded, pinned to the draft as it was read when the
+/// request gives `expected_updated`.
+pub(super) fn discard_plan(read: &Read<'_>) -> Result<BoardRequest, RequestError> {
+    Ok(BoardRequest::DiscardPlan(PlanDiscard {
+        task: read.task()?,
+        version: version(read.value("version").expect("a required field is present"))?,
+        expected_updated: read.timestamp("expected_updated")?,
+    }))
+}
+
+/// A run ended by hand (S4c): its outcome one of [`RunEndOutcome::ALL`],
+/// pinned to the task as it was read when the request gives
+/// `expected_updated`.
+pub(super) fn end_run(read: &Read<'_>) -> Result<BoardRequest, RequestError> {
+    let present = "a required field is present";
+    let words: Vec<&str> = RunEndOutcome::ALL.iter().map(|end| end.as_str()).collect();
+    let problem = format!("must be a run number from 1 to {MAX_RUN_NUMBER}");
+    Ok(BoardRequest::EndRun(RunEnd {
+        task: read.task()?,
+        run: number(
+            "run",
+            read.value("run").expect(present),
+            1..=MAX_RUN_NUMBER,
+            &problem,
+        )?,
+        outcome: read
+            .word("outcome", RunEndOutcome::parse, &words)?
+            .expect(present),
+        expected_updated: read.timestamp("expected_updated")?,
+    }))
+}
+
+/// A plan's version, from 1, as `version` names it.
 pub(super) fn version(value: &Value) -> Result<u32, RequestError> {
+    version_at("version", value)
+}
+
+/// A plan's version, from 1, as field `name` names it.
+fn version_at(name: &str, value: &Value) -> Result<u32, RequestError> {
     let problem = format!("must be a plan version from 1 to {MAX_PLAN_VERSION}");
-    number("version", value, 1..=MAX_PLAN_VERSION, &problem)
+    number(name, value, 1..=MAX_PLAN_VERSION, &problem)
+}
+
+/// A task started on the accepted plan version its caller confirmed
+/// (S4c).
+pub(super) fn start(read: &Read<'_>) -> Result<BoardRequest, RequestError> {
+    let present = "a required field is present";
+    Ok(BoardRequest::Start(TaskStart {
+        task: read.task()?,
+        plan_version: version_at("plan_version", read.value("plan_version").expect(present))?,
+    }))
+}
+
+/// The version a task was seen naming as accepted, or none for `null`.
+fn accepted(value: &Value) -> Result<Option<u32>, RequestError> {
+    if value.is_null() {
+        return Ok(None);
+    }
+    let problem =
+        format!("must be the accepted plan's version, 1 to {MAX_PLAN_VERSION}, or null for none");
+    number("expected_accepted", value, 1..=MAX_PLAN_VERSION, &problem).map(Some)
 }
 
 /// The object at `at`, taking only `keys` (an allowlist); `what` it must

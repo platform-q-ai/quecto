@@ -171,6 +171,8 @@ impl crate::application::tools::ports::ToolPolicyMutator for ToolRegistryImpl {
             self.persisted_policy_scopes
                 .insert(stable_id, result.requested_scope);
         }
+        // A configured scope is part of the policy observers follow (S4c).
+        self.notify_policy_observers();
     }
 
     fn rollback_tool_policy_results(&mut self, reconciliation: &ToolPolicyReconciliation) {

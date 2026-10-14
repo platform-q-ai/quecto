@@ -71,6 +71,10 @@ fn full() -> BoardOpRecord {
         plan_version: Some(2),
         items: Some(5),
         roles: Some(2),
+        plan_state_from: Some(StaticKind::new("draft")),
+        plan_state_to: Some(StaticKind::new("accepted")),
+        run: Some(1),
+        run_outcome: Some(RunOutcomeKind::Failed),
         status_from: Some(StaticKind::new("in_progress")),
         status_to: Some(StaticKind::new("review")),
         claim: Some(ClaimFacts {
@@ -213,4 +217,48 @@ fn the_readme_points_to_the_board_telemetry() {
     let readme = read_repo_file("README.md");
     assert!(readme.contains("docs/project-board.md#telemetry"));
     assert!(readme.contains("audit/board-cli_<UTC date>.jsonl"));
+}
+
+/// The telemetry section's part on start records, up to the next heading.
+fn start_doc() -> String {
+    let doc = read_repo_file("docs/project-board.md");
+    let (_, part) = doc
+        .split_once("\n### Start records\n")
+        .expect("docs/project-board.md has a part on start records");
+    let end = part.find("\n#").unwrap_or(part.len());
+    part[..end].to_owned()
+}
+
+/// S4c: every field a `board_start` record writes is documented, and no
+/// other.
+#[test]
+fn every_field_a_start_record_writes_is_documented_and_no_other() {
+    use quecto::domain::project_board::value_objects::telemetry::{BoardStartRecord, StartClaim};
+    let record = BoardStartRecord {
+        task: TaskRef::of(&Slug::parse("a").unwrap()),
+        client: Client::Agent,
+        outcome: OpOutcome::Refused {
+            code: StaticKind::new("brief"),
+            rule: Some(StaticKind::new("no_task_items")),
+        },
+        run: Some(1),
+        plan_version: Some(1),
+        members: Some(3),
+        roles: Some(2),
+        items: Some(1),
+        not_applied: Some(1),
+        claim: Some(StartClaim::Fresh),
+        launch_us: Some(1),
+        run_state: Some(StaticKind::new("open")),
+        released: Some(true),
+        duration_us: 1,
+    };
+    let line = serde_json::to_value(AuditEvent::BoardStart(Box::new(record))).unwrap();
+    let mut written: BTreeSet<String> = line.as_object().unwrap().keys().cloned().collect();
+    assert!(written.remove("event"));
+    let section = start_doc();
+    assert_eq!(documented_fields(&section), written);
+    for told in ["board_start", "board start", "`INFO`", "`fresh`", "`held`"] {
+        assert!(section.contains(told), "{told} is not told");
+    }
 }

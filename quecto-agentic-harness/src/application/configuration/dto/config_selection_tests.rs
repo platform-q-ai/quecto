@@ -5,6 +5,7 @@ fn layers(overlay: bool) -> ConfigLayers {
         global: PathBuf::from("/home/u/.quecto/config.json"),
         overlay: overlay.then(|| PathBuf::from("/work/.quecto/config.json")),
         legacy_local: overlay.then(|| PathBuf::from("/work/config.json")),
+        overlay_origin: Default::default(),
     }
 }
 

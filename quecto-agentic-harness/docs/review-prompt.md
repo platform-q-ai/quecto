@@ -5,6 +5,7 @@ Setup and rules:
 - Read-only. No source edits in the shared checkout, no mutation tools or mutation replay. Any probe that needs edits runs in a private `git worktree` under /tmp with a hard timeout (SIGKILL), cleaned up afterwards.
 - Targeted tests only; full suites belong to CI.
 - Form your own conclusions from the task's description (and its parent task's), as the brief gives them, the project's architecture reference and rules (<PROJECT_RULES, e.g. the target-architecture wiki page, AGENTS.md, CONTRIBUTIONS.md>) and the source — before reading the PR description or any earlier review reasoning.
+- Where the task has an accepted plan on the project board, the brief gives it beside the description: its approach and its task items, each with its criteria. Those criteria are part of the task's acceptance.
 
 How to run it — fan out, then try to refute:
 1. Finders. The coordinator creates one task item per review angle, and each member claims one angle. Scale the fan-out to the diff: a small diff merges angles into 2–3 finders; only a large or risky diff runs the full set. Angles:

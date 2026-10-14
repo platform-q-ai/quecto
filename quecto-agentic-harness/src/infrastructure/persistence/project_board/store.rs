@@ -189,6 +189,21 @@ impl GitBoardStore {
         self
     }
 
+    /// This store's board as another store that ignores any cancel: for an
+    /// undo that must land even when its call was cancelled (S4c).
+    #[must_use]
+    pub fn without_cancel(&self) -> Self {
+        Self {
+            git: self.git.clone(),
+            remote: self.remote.clone(),
+            last: Mutex::new(None),
+            limits: self.limits,
+            cancelled: None,
+            // What this store found of its remote holds for the same board.
+            partial: self.partial.clone(),
+        }
+    }
+
     /// Moves the remote board from `base` (absent when `None`) to `commit`.
     /// A push that reports our ref updated landed. Any other outcome (a
     /// rejection, a failure, no report, a timeout) is judged by the board

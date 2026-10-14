@@ -1945,7 +1945,7 @@ fn public_ports_have_contract_tests() {
     // Ports declared ahead of their adapters (epic #2481): each entry goes
     // when its contract suite lands on the production adapter, and fails
     // here once any contract module names it, whatever the module is
-    // called. Empty since T2 gave `ProjectBoardOpLog` its suite.
+    // called. Empty since S4c gave `CoordinatorLaunch` its suite.
     let allowlisted: BTreeSet<&str> = BTreeSet::new();
     for port in &allowlisted {
         assert!(

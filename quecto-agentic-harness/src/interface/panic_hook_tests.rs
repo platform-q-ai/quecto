@@ -151,6 +151,18 @@ fn the_contained_report_names_the_tool_where_and_why() {
         contained_report("edit", &unlocated),
         "quecto: tool 'edit' panicked at an unknown location: boom (contained to its call unless a fatal report follows)"
     );
+    // Review round 3 (L3): a message quoting a credential never reaches
+    // stderr as it was.
+    let leaky = PanicSite {
+        message: "token ghp_0123456789abcdef0123456789abcdef0123 at https://user:pw@host/x".into(),
+        location: None,
+    };
+    let line = contained_report("edit", &leaky);
+    assert!(
+        !line.contains("ghp_0123456789") && !line.contains("user:pw"),
+        "{line}"
+    );
+    assert!(line.contains("[REDACTED]"), "{line}");
 }
 
 /// Run this test binary again with only [`child_entry`], as `scenario`.
@@ -728,3 +740,6 @@ fn the_fatal_event_is_filed_under_the_turn_it_happened_in() {
     assert_eq!(event["turn"], 5, "{event}");
     assert!(event["tool"].is_null(), "{event}");
 }
+
+#[path = "panic_hook_message_tests.rs"]
+mod message;

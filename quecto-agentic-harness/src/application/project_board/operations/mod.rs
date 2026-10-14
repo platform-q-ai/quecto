@@ -10,16 +10,18 @@ use std::sync::Arc;
 
 pub use super::dto::NoPullRequestHost;
 use super::dto::{
-    BoardListing, BoardOp, DraftUpdate, NewBoardTask, PlanEdit, PlanProposal, ProjectBoardError,
-    ShownTask,
+    BoardListing, BoardOp, DraftUpdate, EndedRun, NewBoardTask, PlanAcceptance, PlanDiscard,
+    PlanEdit, PlanProposal, ProjectBoardError, RunEnd, ShownTask, TaskStart,
 };
 use super::ports::{BoardClock, BoardHead, BoardListings, KeepCopy};
 use super::use_cases::{
-    BootstrapProjectBoard, ChangeBoardTask, ClearSetAside, CompleteMergedTask, CreateBoardTask,
-    EditPlan, ProposePlan, QueryBoard, UpdateDraftTask,
+    AcceptPlan, BootstrapProjectBoard, ChangeBoardTask, ClearSetAside, CompleteMergedTask,
+    CreateBoardTask, DiscardPlan, EditPlan, EndRun, ProposePlan, QueryBoard, StartBoardTask,
+    UpdateDraftTask,
 };
 use crate::domain::project_board::entities::plan::Plan;
 use crate::domain::project_board::entities::task::Task;
+use crate::domain::project_board::services::plans::Accepted;
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::vocabulary::TaskStatus;
 
@@ -56,6 +58,15 @@ pub enum BoardRequest {
     ProposePlan(PlanProposal),
     /// A draft plan patched: only the fields it gives change.
     EditPlan(PlanEdit),
+    /// A draft plan made the task's plan (#2481 M4c).
+    AcceptPlan(PlanAcceptance),
+    /// A draft plan discarded; it is kept.
+    DiscardPlan(PlanDiscard),
+    /// A run ended by hand (S4c), for a run no swarm will fold back.
+    EndRun(RunEnd),
+    /// A task started on its accepted plan and its coordinator launched
+    /// (S4c).
+    Start(TaskStart),
     /// Clear the file set aside at `path` whose contents are `object`,
     /// resolving every name listed more than once (`repeated`).
     Clear {
@@ -77,6 +88,10 @@ impl BoardRequest {
             | Self::Complete(_)
             | Self::ProposePlan(_)
             | Self::EditPlan(_)
+            | Self::AcceptPlan(_)
+            | Self::DiscardPlan(_)
+            | Self::EndRun(_)
+            | Self::Start(_)
             | Self::Clear { .. } => true,
             Self::List(_) | Self::ListReady | Self::ListTakeable | Self::Show(..) => false,
         }
@@ -93,6 +108,10 @@ impl BoardRequest {
             | Self::Complete(_)
             | Self::ProposePlan(_)
             | Self::EditPlan(_)
+            | Self::AcceptPlan(_)
+            | Self::DiscardPlan(_)
+            | Self::EndRun(_)
+            | Self::Start(_)
             | Self::ListTakeable => true,
             Self::Bootstrap
             | Self::Clear { .. }
@@ -175,8 +194,17 @@ pub enum BoardOutcome {
     Cleared {
         head: BoardHead,
     },
-    /// A plan version proposed or edited, as written (#2481 M4b).
+    /// A plan version proposed, edited or discarded, as written (#2481
+    /// M4b).
     Planned(Plan),
+    /// A draft accepted (#2481 M4c): the task naming it, the plan now
+    /// accepted, and the version it superseded, if one was accepted
+    /// (boxed: three artifacts).
+    Accepted(Box<Accepted>),
+    /// A run ended by hand, as written (S4c).
+    RunEnded(EndedRun),
+    /// A task started and its coordinator launched (S4c).
+    Started(Box<crate::application::project_board::start::StartedTask>),
 }
 
 /// The use cases and ports one run of [`RunBoardOperation`] is made of,
@@ -196,6 +224,10 @@ pub struct BoardOperationParts {
     pub change: ChangeBoardTask,
     pub propose_plan: ProposePlan,
     pub edit_plan: EditPlan,
+    pub accept_plan: AcceptPlan,
+    pub discard_plan: DiscardPlan,
+    pub end_run: EndRun,
+    pub start: StartBoardTask,
     pub clear: ClearSetAside,
     pub complete: Result<CompleteMergedTask, NoPullRequestHost>,
 }

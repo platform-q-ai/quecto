@@ -26,7 +26,7 @@ use std::time::Duration;
 use crate::application::project_board::ports::ProjectBoardOpLog;
 use crate::domain::audit::AuditEvent;
 use crate::domain::project_board::value_objects::telemetry::{
-    Access, BoardOpRecord, FoldBackRecord,
+    Access, BoardOpRecord, BoardStartRecord, FoldBackRecord,
 };
 use crate::infrastructure::persistence::audit_log::AuditCrashLine;
 
@@ -168,6 +168,10 @@ impl ProjectBoardOpLog for EventLogProjectBoardOps {
     fn record_fold_back(&self, record: FoldBackRecord) {
         self.append(AuditEvent::BoardFoldBack(Box::new(record)));
     }
+
+    fn record_start(&self, record: BoardStartRecord) {
+        self.append(AuditEvent::BoardStart(Box::new(record)));
+    }
 }
 
 /// [`ProjectBoardOpLog`] that writes each record to `tracing` (target
@@ -211,6 +215,14 @@ impl ProjectBoardOpLog for TracingProjectBoardOps {
             tracing::info!(target: TARGET, record = %fields, "board fold back");
         }
         self.inner.record_fold_back(record);
+    }
+
+    fn record_start(&self, record: BoardStartRecord) {
+        if self.inner.line.get().is_some() {
+            let fields = Fields(&record);
+            tracing::info!(target: TARGET, record = %fields, "board start");
+        }
+        self.inner.record_start(record);
     }
 }
 

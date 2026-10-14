@@ -5,8 +5,10 @@
 //!   after a change that may complete it, `completion`: `{"done": true,
 //!   "task"}`, `{"done": false, "pending": [prs]}` while some have not
 //!   merged, or `{"done": false, "error"}`), a listing's `head`, `tasks`
-//!   and `quarantined`, `show`'s ([`shown_fields`]), a plan proposed or
-//!   edited as `plan` ([`planned_json`]), or `head` alone; and
+//!   and `quarantined`, `show`'s ([`shown_fields`]), a plan proposed,
+//!   edited or discarded as `plan` ([`planned_json`]), a plan accepted as
+//!   the `task` naming it, the `plan` and the version it `superseded`
+//!   (`null` when none was accepted), or `head` alone; and
 //!   `clock` when a request that reads the clock was not bounded against
 //!   an outside time.
 //! - Refusal: `{"ok": false, "op": …, "error": {"code", "message", …}}`.
@@ -32,23 +34,27 @@
 use serde_json::{Map, Value, json};
 
 use super::request::RequestError;
-use crate::application::project_board::dto::{BoardListing, ProjectBoardError};
+use crate::application::project_board::dto::{BoardListing, LivenessCheck, ProjectBoardError};
 use crate::application::project_board::operations::{BoardOutcome, Completion};
 use crate::application::project_board::ports::{
     ArtifactKey, BoardClockError, BoardHead, BoardStoreError, PullRequestStatesError,
     QuarantinedFile,
 };
+use crate::application::project_board::start::StartedTask;
 use crate::domain::project_board::entities::claim::Identity;
 use crate::domain::project_board::entities::task::Task;
 use crate::domain::project_board::value_objects::shown_text::{
     shown_artifact_path, shown_board_path,
 };
 use crate::domain::project_board::value_objects::slug::Slug;
+use crate::domain::project_board::value_objects::vocabulary::RunOutcome;
 use crate::domain::redaction::{redact_secrets, redact_url_userinfo};
 
 #[path = "answer_artifacts.rs"]
 mod artifacts;
-use artifacts::{artifact_folder, page_fields, planned_json, quarantined_json, shown_fields};
+use artifacts::{
+    artifact_folder, page_fields, planned_json, quarantined_json, run_json, shown_fields,
+};
 
 /// The most characters of an error's message an answer carries.
 pub const MAX_MESSAGE_CHARS: usize = 2_000;
@@ -126,6 +132,21 @@ pub enum ErrorCode {
     NotSetAside,
     /// `reason`: the board's remote reports no pull requests.
     NoPullRequestHost,
+    /// This session may not spawn, so it starts nothing (S4c).
+    NoLauncher,
+    /// `task`, `run`: the run's swarm still runs here, so it is not ended
+    /// by hand (S4c).
+    RunLive,
+    /// `brief`: `{"code"}`, why the plan cannot brief a swarm (S4c).
+    Brief,
+    /// `reason` (the launch's), `run`, `run_state` (`folded`,
+    /// `ended_already`, or `open`: for `end_run`), `released` (`null` when
+    /// the start did not take the claim), `restored` (`null`, or the review
+    /// or blocked `status` the task was held in and whether it `moved`
+    /// back), `still_running` (`null`, or the coordinator that may still
+    /// run: nothing was undone): the coordinator did not launch,
+    /// and the start was undone as far as it could be (S4c).
+    LaunchFailed,
 }
 
 impl ErrorCode {
@@ -162,6 +183,10 @@ impl ErrorCode {
             Self::Stale => "stale",
             Self::NotSetAside => "not_set_aside",
             Self::NoPullRequestHost => "no_pull_request_host",
+            Self::NoLauncher => "no_launcher",
+            Self::RunLive => "run_live",
+            Self::Brief => "brief",
+            Self::LaunchFailed => "launch_failed",
         }
     }
 }
@@ -182,6 +207,15 @@ fn shown_json(text: &str) -> Value {
 
 /// The answer to `op`, which came to `outcome`; `clock` says why its
 /// changes were not bounded against an outside time.
+/// What an `end_run` by its holder recorded of the run's task items: no
+/// swarm reported them (S4c).
+const NO_SWARM_REPORT: &str = "items recorded as todo: no swarm report";
+
+/// What an `end_run` from a front end that cannot see running swarms (the
+/// CLI) leaves its caller to have made sure of (S4c).
+const NOT_CHECKED: &str =
+    "this end was not checked against running swarms: if the run's coordinator still runs, stop it";
+
 pub fn outcome(op: &str, outcome: &BoardOutcome, clock: Option<String>) -> Value {
     let mut fields = Map::new();
     match outcome {
@@ -213,6 +247,37 @@ pub fn outcome(op: &str, outcome: &BoardOutcome, clock: Option<String>) -> Value
         BoardOutcome::Planned(plan) => {
             fields.insert("plan".into(), planned_json(plan));
         }
+        BoardOutcome::RunEnded(ended) => {
+            let run = &ended.run;
+            fields.insert("run".into(), run_json(run));
+            // Whether this front end could see the run's swarm still
+            // running; one that could not says what that leaves its caller.
+            fields.insert("liveness".into(), json!(ended.liveness.as_str()));
+            match ended.liveness {
+                LivenessCheck::Checked => {}
+                LivenessCheck::NotChecked => {
+                    fields.insert("liveness_note".into(), json!(NOT_CHECKED));
+                }
+            }
+            // A hand end reports no swarm: what it recorded of the items.
+            let report = match run.fields().outcome {
+                Some(RunOutcome::Succeeded | RunOutcome::Stopped | RunOutcome::Failed) => {
+                    Some(NO_SWARM_REPORT)
+                }
+                Some(RunOutcome::Lost) | None => None,
+            };
+            if let Some(report) = report {
+                fields.insert("items_recorded".into(), json!(report));
+            }
+        }
+        BoardOutcome::Started(started) => fields.extend(started_fields(started)),
+        BoardOutcome::Accepted(accepted) => {
+            fields.insert("task".into(), task_json(&accepted.task));
+            fields.insert("plan".into(), planned_json(&accepted.plan));
+            let superseded = accepted.superseded.as_ref();
+            let superseded = superseded.map(|plan| plan.fields().version);
+            fields.insert("superseded".into(), json!(superseded));
+        }
     }
     if let Some(why) = clock {
         fields.insert(
@@ -225,6 +290,39 @@ pub fn outcome(op: &str, outcome: &BoardOutcome, clock: Option<String>) -> Value
     answer.insert("op".into(), Value::String(op.into()));
     answer.extend(fields);
     Value::Object(answer)
+}
+
+/// What `start` answers (S4c): the `task` as written, its `run`, the
+/// `coordinator` launched for it (its `agent` and the container it runs
+/// in, `environment_ref`), the worker roles whose models were not applied
+/// (`not_applied`: `role`, `model`, `effort`), and whether the start took
+/// the claim (`claim`: `fresh`) or found it held by the starter (`held`).
+fn started_fields(started: &StartedTask) -> Map<String, Value> {
+    let not_applied: Vec<Value> = started
+        .not_applied
+        .iter()
+        .map(|role| {
+            json!({
+                "role": slug_json(&role.role),
+                "model": shown(&role.model),
+                "effort": role.effort.as_str(),
+            })
+        })
+        .collect();
+    let coordinator = &started.coordinator;
+    fields([
+        ("task", task_json(&started.task)),
+        ("run", run_json(&started.run)),
+        (
+            "coordinator",
+            json!({
+                "agent": shown(&coordinator.agent),
+                "environment_ref": shown(&coordinator.environment_ref),
+            }),
+        ),
+        ("not_applied", Value::Array(not_applied)),
+        ("claim", json!(started.claim.as_str())),
+    ])
 }
 
 fn listing_fields(listing: &BoardListing) -> Map<String, Value> {
@@ -532,6 +630,40 @@ fn error_fields(error: &ProjectBoardError) -> (ErrorCode, Map<String, Value>) {
         E::NoPullRequestHost(why) => (
             C::NoPullRequestHost,
             fields([("reason", shown_json(&why.to_string()))]),
+        ),
+        E::NoLauncher => (C::NoLauncher, Map::new()),
+        E::RunLive { task, run, agent } => (
+            C::RunLive,
+            fields([
+                ("task", slug_json(task)),
+                ("run", json!(run)),
+                ("agent", shown_json(agent)),
+            ]),
+        ),
+        E::Brief { code, .. } => (C::Brief, fields([("brief", json!({"code": code}))])),
+        E::LaunchFailed {
+            reason,
+            run,
+            run_state,
+            released,
+            restored,
+            still_running,
+        } => (
+            C::LaunchFailed,
+            fields([
+                ("reason", shown_json(reason)),
+                ("run", json!(run)),
+                ("run_state", json!(run_state.as_str())),
+                ("released", json!(released)),
+                ("still_running", json!(still_running.as_deref().map(shown))),
+                (
+                    "restored",
+                    json!(restored.map(|restored| json!({
+                        "status": restored.status.as_str(),
+                        "moved": restored.moved,
+                    }))),
+                ),
+            ]),
         ),
         E::NotSetAside { path, object } => (
             C::NotSetAside,

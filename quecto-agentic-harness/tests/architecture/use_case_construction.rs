@@ -33,6 +33,7 @@ use super::teardown_authority::{production_code, production_files, walk};
 /// Every use case and ports bundle declared under an application
 /// `use_cases` folder.
 const USE_CASES: &[&str] = &[
+    "AcceptPlan",
     "AcceptWake",
     "AcknowledgeMessage",
     "ActivateMember",
@@ -62,8 +63,10 @@ const USE_CASES: &[&str] = &[
     "CreateTask",
     "DepartingChildren",
     "DiagnoseContainerRuntime",
+    "DiscardPlan",
     "DriveExternalAgentSession",
     "EditPlan",
+    "EndRun",
     "EndedTranscriptPage",
     "ExecuteHarnessShutdown",
     "ExecuteHarnessShutdownPorts",
@@ -147,6 +150,7 @@ const USE_CASES: &[&str] = &[
     "SetTaskDependencies",
     "SettleDelegatedChild",
     "SettleDelegatedChildPorts",
+    "StartBoardTask",
     "StartFreshConversation",
     "StopRun",
     "SubmitTask",

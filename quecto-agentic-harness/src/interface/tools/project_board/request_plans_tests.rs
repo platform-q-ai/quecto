@@ -294,3 +294,103 @@ fn a_nested_fault_names_its_path_and_records_its_field() {
         assert_eq!(fault(value), at(&path, "team", "missing"), "{key}");
     }
 }
+
+/// #2481 M4c: an acceptance names the draft and the `updated` it read;
+/// a discard may.
+#[test]
+fn an_acceptance_requires_the_updated_it_read_and_a_discard_may_give_one() {
+    use crate::application::project_board::dto::{PlanAcceptance, PlanDiscard};
+    let read = Timestamp::parse("2026-10-10T09:00:00Z").unwrap();
+    assert_eq!(
+        parse(&json!({"op": "accept_plan", "task": "a", "version": 2,
+                      "expected_updated": "2026-10-10T09:00:00Z", "expected_accepted": 1})),
+        Ok(BoardRequest::AcceptPlan(PlanAcceptance {
+            task: slug("a"),
+            version: 2,
+            expected_updated: read.clone(),
+            expected_accepted: Some(1),
+        }))
+    );
+    let none = parse(&json!({"op": "accept_plan", "task": "a", "version": 2,
+                             "expected_updated": "2026-10-10T09:00:00Z", "expected_accepted": null}));
+    assert!(
+        matches!(&none, Ok(BoardRequest::AcceptPlan(acceptance)) if acceptance.expected_accepted.is_none()),
+        "{none:?}"
+    );
+    let fault = |error: RequestError| {
+        let recorded = error.fault;
+        (
+            error.field,
+            recorded.field.as_str(),
+            recorded.fault.as_str(),
+        )
+    };
+    let unread = refused(json!({"op": "accept_plan", "task": "a", "version": 2,
+                                "expected_accepted": null}));
+    assert_eq!(
+        fault(unread),
+        (
+            "expected_updated".to_string(),
+            "expected_updated",
+            "missing"
+        )
+    );
+    let unseen = refused(json!({"op": "accept_plan", "task": "a", "version": 2,
+                                "expected_updated": "2026-10-10T09:00:00Z"}));
+    assert_eq!(
+        fault(unseen),
+        (
+            "expected_accepted".to_string(),
+            "expected_accepted",
+            "missing"
+        )
+    );
+    let zero = refused(json!({"op": "accept_plan", "task": "a", "version": 2,
+                              "expected_updated": "2026-10-10T09:00:00Z", "expected_accepted": 0}));
+    assert_eq!(
+        fault(zero),
+        (
+            "expected_accepted".to_string(),
+            "expected_accepted",
+            "invalid_value"
+        )
+    );
+    assert_eq!(
+        parse(&json!({"op": "discard_plan", "task": "a", "version": 1})),
+        Ok(BoardRequest::DiscardPlan(PlanDiscard {
+            task: slug("a"),
+            version: 1,
+            expected_updated: None,
+        }))
+    );
+    let zero = refused(json!({"op": "discard_plan", "task": "a", "version": 0}));
+    assert_eq!(zero.field, "version");
+}
+
+/// S4c: a start names its task and the accepted plan version its caller
+/// confirmed.
+#[test]
+fn a_start_names_the_plan_version_it_confirmed() {
+    use crate::application::project_board::dto::TaskStart;
+    assert_eq!(
+        parse(&json!({"op": "start", "task": "a", "plan_version": 2})),
+        Ok(BoardRequest::Start(TaskStart {
+            task: slug("a"),
+            plan_version: 2,
+        }))
+    );
+    let unconfirmed = refused(json!({"op": "start", "task": "a"}));
+    assert_eq!(
+        (
+            unconfirmed.field.as_str(),
+            unconfirmed.fault.field.as_str(),
+            unconfirmed.fault.fault.as_str()
+        ),
+        ("plan_version", "plan_version", "missing")
+    );
+    let zero = refused(json!({"op": "start", "task": "a", "plan_version": 0}));
+    assert_eq!(
+        (zero.field.as_str(), zero.fault.fault.as_str()),
+        ("plan_version", "invalid_value")
+    );
+}
