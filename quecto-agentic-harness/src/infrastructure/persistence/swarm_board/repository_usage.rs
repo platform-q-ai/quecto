@@ -19,7 +19,6 @@
 use rusqlite::{OptionalExtension, Row, params};
 use serde_json::{Value, json};
 
-use super::py_json::{self, PyJson};
 use super::repository::{SqliteBoard, cell_at, failed, fetched};
 use super::repository_tasks::loaded;
 use super::usage_sums::{self, UsageSums};
@@ -132,23 +131,6 @@ impl BoardUsage for SqliteBoard<'_> {
 
     fn usage_tables(&self) -> Result<(), BoardError> {
         self.usage_schema()
-    }
-
-    fn configure_usage_budget(&self, budget: &Value) -> Result<(), BoardError> {
-        debug_assert!(budget.is_object(), "a budget is an object: {budget}");
-        self.usage_schema()?;
-        let payload = PyJson::try_from(budget)
-            .and_then(|budget| py_json::dumps(&budget))
-            .map_err(|error| BoardError::new(RefusalKind::Invalid, error.to_string()))?;
-        let changed = self
-            .connection
-            .execute(
-                "INSERT INTO usage_budget VALUES(1,?) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload",
-                [payload],
-            )
-            .map_err(failed)?;
-        debug_assert_eq!(changed, 1, "the one budget row");
-        Ok(())
     }
 
     fn request_usage(&self, request_id: &str) -> Result<Option<StoredRequestUsage>, BoardError> {

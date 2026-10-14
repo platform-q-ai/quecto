@@ -261,10 +261,6 @@ pub enum RunControlAction {
     Wake {
         generation: u64,
     },
-    UsageBudget {
-        token_limit: Option<u64>,
-        strict_unknown: bool,
-    },
     Pause {
         reason: String,
     },
@@ -290,8 +286,8 @@ pub struct RunControlReceipt {
     pub generation: u64,
     /// Members a resume could not wake (#1721); empty for other actions.
     pub wake_warnings: Vec<String>,
-    /// Why a resume would refuse right now (#1924): a passed deadline, an
-    /// exhausted budget or a lost coordinator. Empty for a live run.
+    /// Why a resume would refuse right now (#1924): a passed deadline or a
+    /// lost coordinator. Empty for a live run.
     pub resume_blockers: Vec<String>,
 }
 

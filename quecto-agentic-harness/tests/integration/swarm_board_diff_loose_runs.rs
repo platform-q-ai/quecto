@@ -388,41 +388,32 @@ fn outside_edited_control_records() {
             );
         }
     }
-    // A budget without `token_limit`, or without `strict_unknown` where the
-    // limit is the one asked for, meets `usage_budget`'s idempotence check,
-    // where Python raises a `KeyError`.
-    for (edit, limit) in [
-        (
-            r#"INSERT INTO usage_budget VALUES(1, '{"strict_unknown": true, "warned": false}')"#,
-            json!(5),
-        ),
-        (
-            r#"INSERT INTO usage_budget VALUES(1, '{"token_limit": 5, "warned": false}')"#,
-            json!(5),
-        ),
-        (
-            r#"INSERT INTO usage_budget VALUES(1, '{"token_limit": null, "warned": false}')"#,
-            json!(null),
-        ),
+    // A budget without `token_limit` or `strict_unknown` met
+    // `usage_budget`'s idempotence check, where Python raised a `KeyError`;
+    // with that op gone (owner decision, 2026-10-14), such a stored budget
+    // is only reported, as stored.
+    for edit in [
+        r#"INSERT INTO usage_budget VALUES(1, '{"strict_unknown": true, "warned": false}')"#,
+        r#"INSERT INTO usage_budget VALUES(1, '{"token_limit": 5, "warned": false}')"#,
+        r#"INSERT INTO usage_budget VALUES(1, '{"token_limit": null, "warned": false}')"#,
     ] {
-        assert_eq!(
-            run_rust(&[
-                create(5),
-                at(0.5, "parent", "usage_report", json!([])),
-                sql(edit),
-                at(1.0, "parent", "usage_budget", json!([limit, true])),
-            ]),
-            refused("usage budget"),
-            "{edit}"
-        );
+        let report = run_rust(&[
+            create(5),
+            at(0.5, "parent", "usage_report", json!([])),
+            sql(edit),
+            at(1.0, "parent", "usage_report", json!([])),
+        ]);
+        let Outcome::Ok(report) = report else {
+            panic!("{edit}: {report:?}");
+        };
+        assert_eq!(report["budget"]["warned"], json!(false), "{edit}");
     }
 }
 
-/// Usage totals that are not counts (a REAL or a negative sum) are refused
-/// only where a paused run's budget with a non-null token limit is checked
-/// for a resume (#2318 final review): a running run's receipt and usage
-/// report, and a paused run's under a null limit, carry them as Python
-/// does.
+/// Usage totals that are not counts (a REAL or a negative sum) are carried
+/// as Python carries them (#2318 final review): a running run's receipt
+/// and usage report, and a paused run's under a null limit. No budget
+/// refuses them anywhere any more (owner decision, 2026-10-14).
 #[test]
 fn uncounted_usage_totals_pass_through_elsewhere() {
     for tokens in ["1.5", "-3"] {
@@ -500,46 +491,37 @@ fn unread_ledger_rows_and_totals() {
         }
     }
     // Another of the report's sums overflowing (two rows of i64::MAX
-    // attempts), with or without a limit: Python raises SQLite's `integer
-    // overflow` as the store's refusal; the standing sums no attempts, so
-    // the Rust board answers, and `_record_request` records its row.
+    // attempts): Python raised SQLite's `integer overflow` as the store's
+    // refusal; the standing sums no attempts, so the Rust board answers,
+    // and `_record_request` records its row. A REAL token total is carried
+    // as it is. Python's goldens of these set a budget first, retired with
+    // budgets (owner decision, 2026-10-14), so the Rust board's answers are
+    // asserted.
     let overflowing = "INSERT INTO request_usage VALUES('e1','parent','{}',0,0,9223372036854775807,NULL,NULL,NULL,NULL); INSERT INTO request_usage VALUES('e2','parent','{}',0,0,9223372036854775807,NULL,NULL,NULL,NULL)";
-    for budget in [json!([null]), json!([1_000, false])] {
-        for (method, args) in calls.iter().cloned() {
-            let steps = [
-                create(5),
-                at(0.5, "parent", "usage_budget", budget.clone()),
-                sql(overflowing),
-                at(1.0, "parent", method, args),
-            ];
-            assert_eq!(
-                golden_answer(&steps),
-                Outcome::Refused(
-                    "coordination store unavailable or contended: integer overflow".to_owned()
-                ),
-                "{budget}: {method}"
-            );
-            let unknown = u64::from(method == "_record_request");
-            assert_answered(method, &run_rust(&steps), (0, Some(unknown)), "overflow");
-        }
+    for (method, args) in calls.iter().cloned() {
+        let steps = [
+            create(5),
+            at(0.5, "parent", "usage_report", json!([])),
+            sql(overflowing),
+            at(1.0, "parent", method, args),
+        ];
+        let unknown = u64::from(method == "_record_request");
+        assert_answered(method, &run_rust(&steps), (0, Some(unknown)), "overflow");
     }
-    // A REAL token total on a running run under a limit: no budget decides
-    // any more (owner decision, 2026-10-14), so every call answers, as
-    // Python's did (which compared 10.5 with the limit and allowed it), and
-    // the receipt carries the total on both boards.
     let real = "INSERT INTO request_usage(request_id, actor, payload, tokens) VALUES('e','parent','{}',10.5)";
     for (method, args) in calls {
         let steps = [
             create(5),
-            at(0.5, "parent", "usage_budget", json!([1_000, false])),
+            at(0.5, "parent", "usage_report", json!([])),
             sql(real),
             at(1.0, "parent", method, args),
         ];
-        let (rust, golden) = (run_rust(&steps), golden_answer(&steps));
-        assert!(matches!(golden, Outcome::Ok(_)), "{method}: {golden:?}");
-        assert_eq!(rust, golden, "{method}");
-        if let (Outcome::Ok(answer), "_record_request") = (&golden, method) {
-            assert_eq!(answer["budget"]["observed_tokens"], json!(10.5));
+        let Outcome::Ok(answer) = run_rust(&steps) else {
+            panic!("{method}: refused");
+        };
+        match method {
+            "_request_admission" => assert_eq!(answer["status"], json!("running")),
+            _ => assert_eq!(answer["budget"]["observed_tokens"], json!(10.5), "{method}"),
         }
     }
 }

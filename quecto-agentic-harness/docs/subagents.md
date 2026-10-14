@@ -405,10 +405,8 @@ A finished child's report is complete. The child saves its session after every t
       "description": "Message for prompt/steer/follow_up commands"
     },
     "export_raw": {"type": "boolean", "description": "With get_report, export retained wire records and spills"},
-    "action": {"type": "string", "enum": ["pause", "resume", "status", "usage_budget"]},
+    "action": {"type": "string", "enum": ["pause", "resume", "close", "extend", "status"]},
     "reason": {"type": "string"},
-    "token_limit": {"type": ["integer", "null"], "minimum": 1},
-    "strict_unknown": {"type": "boolean"},
     "count": {
       "type": "integer",
       "description": "Explicit history page size for get_messages; omit/null for the default unread report; does not move the report cursor"
@@ -459,7 +457,7 @@ A finished child's report is complete. The child saves its session after every t
 
 | Command | Description | Requires `message` |
 |---------|-------------|--------------------|
-| `swarm_control` | Durable pause/resume/status/usage_budget control, independent of the model queue; supports descendant routing | No |
+| `swarm_control` | Durable pause/resume/close/extend/status control, independent of the model queue; supports descendant routing | No |
 | `get_report` | Latest substantive assistant report without advancing unread cursors; optional export_raw writes retained records and a checksum manifest | No |
 | `prompt` | Send a task/message to the subagent | Yes |
 | `steer` | Interrupt and redirect the agent (takes precedence over the workflow auto-continue nudge) | Yes |

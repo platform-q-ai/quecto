@@ -409,16 +409,30 @@ fn only_the_listed_arguments_widen_a_workbench_signature() {
     }
 }
 
-/// Every method of Python's `Workbench` ([`WORKBENCH_METHODS`]) is a
-/// dispatcher method or a named internal helper, and the dispatcher serves
-/// nothing else.
+/// The `Workbench` methods the Rust board serves no more, by owner
+/// decision: `usage_budget`, as no token budget limits a swarm
+/// (2026-10-14).
+const RETIRED: [&str; 1] = ["usage_budget"];
+
+/// Every method of Python's `Workbench` ([`WORKBENCH_METHODS`]) but the
+/// [`RETIRED`] is a dispatcher method or a named internal helper, and the
+/// dispatcher serves nothing else.
 #[test]
 fn the_dispatcher_serves_every_workbench_method() {
+    for retired in RETIRED {
+        assert!(WORKBENCH_METHODS.contains(&retired), "{retired}");
+        assert!(!BOARD_OPS.contains(&retired), "{retired} is served");
+    }
     let golden: BTreeSet<String> = WORKBENCH_METHODS
         .iter()
+        .filter(|name| !RETIRED.contains(name))
         .map(|name| (*name).to_owned())
         .collect();
-    assert_eq!(golden.len(), WORKBENCH_METHODS.len(), "listed once each");
+    assert_eq!(
+        golden.len() + RETIRED.len(),
+        WORKBENCH_METHODS.len(),
+        "listed once each"
+    );
     let served: BTreeSet<String> = BOARD_OPS
         .iter()
         .filter(|op| !TEST_ONLY.contains(op) && !RUST_ONLY.contains(op))

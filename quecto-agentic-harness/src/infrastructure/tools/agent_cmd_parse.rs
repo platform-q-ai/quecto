@@ -104,14 +104,9 @@ pub(super) fn build_command(args: &serde_json::Value) -> Result<(String, String,
             let action = args["action"]
                 .as_str()
                 .filter(|action| {
-                    matches!(
-                        *action,
-                        "pause" | "resume" | "close" | "extend" | "status" | "usage_budget"
-                    )
+                    matches!(*action, "pause" | "resume" | "close" | "extend" | "status")
                 })
-                .ok_or(
-                    "swarm_control action must be pause, resume, close, extend, status or usage_budget",
-                )?;
+                .ok_or("swarm_control action must be pause, resume, close, extend, status")?;
             let mut command = serde_json::json!({"type":"swarm_control","action":action});
             if action == "extend" {
                 let seconds = args
@@ -120,20 +115,6 @@ pub(super) fn build_command(args: &serde_json::Value) -> Result<(String, String,
                     .filter(|seconds| *seconds > 0)
                     .ok_or("deadline_seconds must be a positive integer for extend")?;
                 command["deadline_seconds"] = serde_json::json!(seconds);
-            }
-            if action == "usage_budget" {
-                let limit = args
-                    .get("token_limit")
-                    .ok_or("token_limit is required; null disables the budget")?;
-                if limit.is_null() || limit.as_u64().is_some_and(|limit| limit > 0) {
-                    command["token_limit"] = limit.clone();
-                } else {
-                    return Err("token_limit must be positive or null".into());
-                }
-                command["strict_unknown"] = serde_json::json!(match args.get("strict_unknown") {
-                    None => true,
-                    Some(value) => value.as_bool().ok_or("strict_unknown must be boolean")?,
-                });
             }
             if let Some(reason) = args.get("reason") {
                 command["reason"] =

@@ -23,7 +23,7 @@ fn an_op_refused_when_paused_names_every_allowed_op_and_the_supervisor() {
     }
     // A worker told to cancel_run would only be refused: it is coordinator-only.
     assert!(
-        message.contains("the coordinator may also usage_budget and cancel_run"),
+        message.contains("the coordinator may also cancel_run"),
         "{message}"
     );
     assert!(message.contains("supervisor"), "{message}");
@@ -69,7 +69,6 @@ fn the_valid_ops_are_the_harness_ops_and_the_board_ops() {
         "resume",
         "events",
         "usage",
-        "usage_budget",
         "task_item",
         "task_items",
         "file_owners",

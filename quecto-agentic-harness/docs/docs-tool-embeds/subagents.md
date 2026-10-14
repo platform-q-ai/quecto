@@ -80,7 +80,7 @@ Generic agent state is not the swarm board. A terminal coordinator permits
 read-only swarm reports and supervisor-channel export only. Request the final
 revision, criterion evidence and blockers; preserve artifacts (under
 `artifact_base`) before teardown.
-Typed `agent_cmd` `swarm_control` actions `pause`, `resume`, `close`, `extend`, `status`, `usage_budget` bypass the model queue; every end of a swarm run is a pause only these controls resume or close.
+Typed `agent_cmd` `swarm_control` actions `pause`, `resume`, `close`, `extend`, `status` bypass the model queue; every end of a swarm run is a pause only these controls resume or close.
 
 ## See also
 

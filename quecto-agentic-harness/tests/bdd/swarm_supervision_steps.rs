@@ -54,12 +54,10 @@ async fn exercise(workspace: std::path::PathBuf) -> serde_json::Value {
         .await;
     runtime.wait_report("APPROVED").await;
     let receipt = runtime.wait_receipt(&approval["id"], "completed").await;
-    let budget = runtime.command(json!({"type":"swarm_control","action":"usage_budget","token_limit":1,"strict_unknown":false})).await;
-    runtime
-        .command(json!({"type":"swarm_control","action":"usage_budget","token_limit":null}))
-        .await;
-    runtime
-        .command(json!({"type":"swarm_control","action":"resume"}))
+    // No token budget limits a swarm (owner decision, 2026-10-14): after
+    // the real usage above, the run is still running.
+    let budget = runtime
+        .command(json!({"type":"swarm_control","action":"status"}))
         .await;
     let report = runtime
         .command(json!({"type":"get_report","export_raw":true}))
@@ -88,9 +86,9 @@ fn approved(world: &mut QuectoWorld) {
     assert_eq!(evidence["report"], "APPROVED");
     assert_eq!(evidence["raw_has_approval"], true);
 }
-/// Owner decision, 2026-10-14: no token budget limits a swarm. A
-/// one-token budget set after real usage leaves the run running, and the
-/// usage is still measured and reported.
+/// Owner decision, 2026-10-14: no token budget limits a swarm. After real
+/// usage the run is still running, and the usage is still measured and
+/// reported.
 #[then("heavy usage never pauses the run and request accounting is available")]
 fn usage_never_pauses(world: &mut QuectoWorld) {
     let evidence = result_json(world);
