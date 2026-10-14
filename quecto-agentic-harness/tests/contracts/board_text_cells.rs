@@ -28,6 +28,7 @@ fn run_holding(line: &str) -> Run {
             owner: Some(line.into()),
             evidence: vec![line.into()],
         }],
+        environment: None,
     })
     .unwrap()
 }

@@ -105,6 +105,7 @@ fn run(number: u32, version: u32, outcome: RunOutcome, evidence: &[&str]) -> Run
             owner: Some("w-1".into()),
             evidence: evidence.iter().map(|line| line.to_string()).collect(),
         }],
+        environment: None,
     })
     .unwrap()
 }

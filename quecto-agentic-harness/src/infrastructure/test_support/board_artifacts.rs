@@ -64,6 +64,7 @@ pub fn run(task: &str, number: u32) -> Run {
         outcome: None,
         cost: None,
         items: vec![],
+        environment: None,
     })
     .expect("fixture run is valid")
 }

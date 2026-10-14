@@ -321,6 +321,7 @@ fn owners_come_first_and_the_folded_run_stays_within_its_text_budget() {
         outcome: None,
         cost: None,
         items: vec![],
+        environment: None,
     })
     .unwrap();
     let run = fold_back(

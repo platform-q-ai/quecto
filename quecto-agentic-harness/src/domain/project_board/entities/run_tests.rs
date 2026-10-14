@@ -148,3 +148,41 @@ fn a_run_ran_its_own_plan_version_and_its_task_items() {
         "task"
     );
 }
+
+/// A run names its environment as `C` and 1 to 9 digits, the first not 0.
+#[test]
+fn an_environment_ref_is_c_and_up_to_nine_digits() {
+    for good in ["C1", "C10", "C999999999", "C123456789"] {
+        assert!(is_environment_ref(good), "{good}");
+        let mut kept = open_run(1, 1).into_fields();
+        kept.environment = Some(good.to_owned());
+        assert!(Run::new(kept).is_ok(), "{good}");
+    }
+    for bad in [
+        "",
+        "C",
+        "C0",
+        "C01",
+        "C1000000000",
+        "c1",
+        "1",
+        "CC1",
+        "C1a",
+        "C 1",
+        "C-1",
+        "C\u{0661}",
+    ] {
+        assert!(!is_environment_ref(bad), "{bad}");
+        let mut kept = open_run(1, 1).into_fields();
+        kept.environment = Some(bad.to_owned());
+        let error = Run::new(kept).expect_err(bad);
+        assert_eq!(
+            (error.field.as_str(), error.problem.as_str()),
+            (
+                "environment",
+                "must be C and 1 to 9 digits, the first not 0"
+            ),
+            "{bad}"
+        );
+    }
+}

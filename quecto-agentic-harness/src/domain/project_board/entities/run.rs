@@ -46,6 +46,23 @@ pub struct RunFields {
     /// Tokens the run spent, once known.
     pub cost: Option<u64>,
     pub items: Vec<RunItem>,
+    /// The environment its swarm's coordinator runs in (`C` and its number,
+    /// #2481 S4d), once the session that started it keeps it: what a later
+    /// session of the same holder reads to take the keeping up again.
+    pub environment: Option<String>,
+}
+
+/// The most digits of an environment's number a run names.
+const MAX_ENVIRONMENT_DIGITS: usize = 9;
+
+/// Whether `environment` is an environment ref a run names: `C`, then 1
+/// to 9 digits, the first not `0`.
+pub fn is_environment_ref(environment: &str) -> bool {
+    environment.strip_prefix('C').is_some_and(|digits| {
+        (1..=MAX_ENVIRONMENT_DIGITS).contains(&digits.len())
+            && digits.bytes().all(|b| b.is_ascii_digit())
+            && !digits.starts_with('0')
+    })
 }
 
 /// A run whose fields keep every rule of its schema.
@@ -193,6 +210,15 @@ fn validate(run: &RunFields) -> Result<(), SchemaError> {
             return Err(SchemaError::new(
                 "cost",
                 format!("must be at most {MAX_BUDGET_TOKENS}"),
+            ));
+        }
+    }
+    match run.environment.as_deref().is_none_or(is_environment_ref) {
+        true => {}
+        false => {
+            return Err(SchemaError::new(
+                "environment",
+                "must be C and 1 to 9 digits, the first not 0",
             ));
         }
     }

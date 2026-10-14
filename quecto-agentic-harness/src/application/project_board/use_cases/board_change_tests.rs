@@ -40,6 +40,7 @@ fn run(task: &str) -> BoardArtifact {
             outcome: None,
             cost: None,
             items: vec![],
+            environment: None,
         })
         .unwrap(),
     )

@@ -667,6 +667,10 @@ impl std::error::Error for ProjectBoardError {}
 mod fold_back;
 pub use fold_back::{FoldBackFacts, FoldedBack};
 
+#[path = "dto_keeper.rs"]
+mod keeper;
+pub use keeper::{SwarmBoardSight, SwarmSight, SwarmStage};
+
 #[path = "dto_plans.rs"]
 mod plans;
 

@@ -83,6 +83,7 @@ const USE_CASES: &[&str] = &[
     "InstallAuthorityService",
     "JoinMember",
     "JoinRun",
+    "KeepStartedRun",
     "KillDelegatedAgent",
     "KillDelegatedAgentPorts",
     "KillEnvironment",

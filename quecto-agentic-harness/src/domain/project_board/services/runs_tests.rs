@@ -433,3 +433,45 @@ fn the_holder_ends_an_open_run_as_stopped_or_failed() {
         Err(BoardRuleError::NotThisTasks)
     );
 }
+
+/// An open run names the environment its swarm runs in, and keeps it when
+/// it is folded back; an ended run, or a ref that is not one, is refused
+/// (#2481 S4d).
+#[test]
+fn an_open_run_is_kept_in_its_swarms_environment() {
+    let kept = kept_in(&open_run(1, 1), "C12").unwrap();
+    assert_eq!(kept.fields().environment.as_deref(), Some("C12"));
+    assert_eq!(
+        RunFields {
+            environment: None,
+            ..kept.fields().clone()
+        },
+        open_run(1, 1).fields().clone()
+    );
+    let again = kept_in(&kept, "C3").unwrap();
+    assert_eq!(again.fields().environment.as_deref(), Some("C3"));
+    let folded = fold_back(
+        &kept,
+        &plan(1, PlanState::Accepted),
+        RunOutcome::Succeeded,
+        None,
+        vec![],
+        &at("09:30:00"),
+    )
+    .unwrap();
+    assert_eq!(folded.fields().environment.as_deref(), Some("C12"));
+    assert_eq!(kept_in(&folded, "C12"), Err(BoardRuleError::RunEnded(1)));
+    assert_eq!(
+        kept_in(&ended(&kept), "C12"),
+        Err(BoardRuleError::RunEnded(1))
+    );
+    for bad in ["C0", "C01", "12", "c1", "C", "C1234567890", "C1 "] {
+        assert!(
+            matches!(
+                kept_in(&open_run(1, 1), bad),
+                Err(BoardRuleError::Invalid(error)) if error.field == "environment"
+            ),
+            "{bad}"
+        );
+    }
+}

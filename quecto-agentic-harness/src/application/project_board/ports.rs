@@ -511,6 +511,16 @@ pub trait FoldBackRecorder: Send + Sync {
     fn record(&self, outcome: FoldBackOutcome<'_>);
 }
 
+/// Port: a started run's swarm (S4d), as the session's live board view
+/// (`get_swarm_board`) answers it of the environment its coordinator runs
+/// in. Blocking: the run's keeper reads it from its own thread.
+pub trait StartedSwarm: Send + Sync {
+    /// The board `environment_ref` hosts, as seen now; or that the
+    /// environment is gone for good; or why it could not be read this
+    /// time.
+    fn board(&self, environment_ref: &str) -> super::dto::SwarmBoardSight;
+}
+
 /// Port: where each board request's `board_op` record goes (epic #2481):
 /// the event log (a session's, or the CLI's daily `board-cli_<date>`
 /// log) and `tracing`. It is held only inside a

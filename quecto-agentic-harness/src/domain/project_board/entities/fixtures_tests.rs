@@ -80,6 +80,7 @@ pub fn open_run(number: u32, version: u32) -> Run {
         outcome: None,
         cost: None,
         items: vec![],
+        environment: None,
     })
     .expect("fixture run is valid")
 }

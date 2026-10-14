@@ -22,6 +22,7 @@ const STATE: &str = "State";
 const STARTED: &str = "Started";
 const ENDED: &str = "Ended";
 const COST: &str = "Cost tokens";
+const ENVIRONMENT: &str = "Environment";
 const TASK_ITEMS: &str = "Task items";
 /// The column naming a task item, in every table.
 const TASK_ITEM: &str = "Task item";
@@ -38,6 +39,7 @@ const FIELDS: &[Column<'static>] = &[
     column(STARTED, CellKind::Ascii),
     column(ENDED, CellKind::Ascii),
     column(COST, CellKind::Ascii),
+    column(ENVIRONMENT, CellKind::Ascii),
 ];
 
 const SECTIONS: &[SectionShape<'static>] = &[
@@ -106,6 +108,9 @@ impl ArtifactCodec for RunCodec {
         }
         if let Some(cost) = run.cost {
             fields.push((COST, cells::number(cost)));
+        }
+        if let Some(environment) = &run.environment {
+            fields.push((ENVIRONMENT, cells::word(environment)));
         }
         let id = |item: &RunItem| cells::slug(&item.id);
         let items = run
@@ -200,6 +205,7 @@ impl ArtifactCodec for RunCodec {
                 .map(|cell| cells::read_number(COST, cell))
                 .transpose()?,
             items,
+            environment: field(ENVIRONMENT).map(str::to_owned),
         };
         Run::new(fields)
             .map_err(|error| refused("Run", format!("{}: {}", error.field, error.problem)))

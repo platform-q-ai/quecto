@@ -90,6 +90,7 @@ fn example() -> RunFields {
             ),
             item("docs", ItemState::Blocked, None, &[]),
         ],
+        environment: None,
     }
 }
 
@@ -171,6 +172,32 @@ fn a_running_run_has_no_end_cost_or_task_items() {
             ..running()
         };
         round_trips(ended);
+    }
+}
+
+/// A kept run names its swarm's environment in one row after the cost; a
+/// ref that is not one is refused (#2481 S4d).
+#[test]
+fn a_kept_run_names_its_environment() {
+    let kept = RunFields {
+        environment: Some("C12".to_owned()),
+        ..running()
+    };
+    let file = round_trips(kept);
+    assert!(
+        file.ends_with("| Started | 2026-10-11T12:05:00Z |\n| Environment | C12 |\n"),
+        "{file}"
+    );
+    let ended = round_trips(RunFields {
+        environment: Some("C7".to_owned()),
+        ..example()
+    });
+    assert!(
+        ended.contains("| Cost tokens | 1840000 |\n| Environment | C7 |\n"),
+        "{ended}"
+    );
+    for bad in ["C0", "C012", "c12", "12", "C", "C1234567890", "C1x"] {
+        refused_at(&file.replace("| C12 |", &format!("| {bad} |")), "Run");
     }
 }
 
@@ -289,6 +316,7 @@ fn widest(evidence: impl Fn(usize, usize) -> String) -> RunFields {
         outcome: Some(RunOutcome::Succeeded),
         cost: Some((1 << 53) - 1),
         items,
+        environment: Some("C999999999".to_owned()),
     }
 }
 
@@ -322,9 +350,9 @@ fn the_widest_run_fits() {
         );
     }
     let (bytes, lines, longest) = seen;
-    // The whole budget spent: 691,587 bytes, pinned so a change to the
+    // The whole budget spent: 691,616 bytes, pinned so a change to the
     // codec's rows is seen.
-    assert_eq!(bytes, 691_587);
+    assert_eq!(bytes, 691_616);
     assert!(bytes <= RUN_LIMITS.file_bytes, "{bytes}");
     assert!(lines <= RUN_LIMITS.lines && lines > 2_300, "{lines}");
     assert!(

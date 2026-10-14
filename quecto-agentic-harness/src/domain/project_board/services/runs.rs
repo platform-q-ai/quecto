@@ -75,6 +75,7 @@ pub fn begin_run(
         outcome: None,
         cost: None,
         items: vec![],
+        environment: None,
     })
     .map_err(BoardRuleError::Invalid)
 }
@@ -255,6 +256,22 @@ fn of_task(task: &Task, runs: &[Run]) -> Result<(), BoardRuleError> {
         true => Ok(()),
         false => Err(BoardRuleError::NotThisTasks),
     }
+}
+
+/// `run`, still going, as kept by the session that started it, its swarm's
+/// coordinator in `environment` (#2481 S4d): the ref a later session of
+/// its holder reads to take the keeping up again.
+///
+/// # Errors
+/// The run has ended, or `environment` is no environment ref.
+pub fn kept_in(run: &Run, environment: &str) -> Result<Run, BoardRuleError> {
+    match run.is_open() {
+        true => {}
+        false => return Err(BoardRuleError::RunEnded(run.fields().number)),
+    }
+    let mut next = run.fields().clone();
+    next.environment = Some(environment.to_owned());
+    Run::new(next).map_err(BoardRuleError::Invalid)
 }
 
 fn ended(

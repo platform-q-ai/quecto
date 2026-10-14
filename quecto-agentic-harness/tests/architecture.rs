@@ -635,6 +635,9 @@ const CONTRACTS_OUTSIDE_PORTS: &[(&str, &[&str])] = &[
         &["AdmissionJournal", "AdmissionSecretSource", "JournalError"],
     ),
     ("inference_observation", &["AdmissionObservation"]),
+    // The swarm's run as a keeper folds it back, carried by `StartedSwarm`
+    // (#2481 S4d).
+    ("project_board::fold_back", &["SwarmRunView"]),
     (
         "provider_runtime",
         &[
@@ -1945,8 +1948,9 @@ fn public_ports_have_contract_tests() {
     // Ports declared ahead of their adapters (epic #2481): each entry goes
     // when its contract suite lands on the production adapter, and fails
     // here once any contract module names it, whatever the module is
-    // called. Empty since S4c gave `CoordinatorLaunch` its suite.
-    let allowlisted: BTreeSet<&str> = BTreeSet::new();
+    // called. `StartedSwarm` (S4d, Q9a) gets its suite with its adapter
+    // in Q9b.
+    let allowlisted: BTreeSet<&str> = BTreeSet::from(["StartedSwarm"]);
     for port in &allowlisted {
         assert!(
             ports.contains(*port),
