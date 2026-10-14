@@ -289,3 +289,13 @@ fn oid_of(wanted: &Wanted) -> &str {
         Wanted::Alone(oid) | Wanted::Filtered(oid) => oid,
     }
 }
+
+/// Red stub (#2481 S10b review round 2).
+#[cfg(test)]
+fn refused_filter(why: &str) -> bool {
+    why.contains("filter '") && why.contains("' not supported")
+}
+
+#[cfg(test)]
+#[path = "store_fetch_tests.rs"]
+mod tests;

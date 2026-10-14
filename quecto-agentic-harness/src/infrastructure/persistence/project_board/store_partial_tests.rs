@@ -371,3 +371,6 @@ fn a_marker_left_on_the_remote_is_told_at_least_its_size() {
             .starts_with("its format marker (format/board) is 2097152 bytes,"),
     );
 }
+
+#[path = "store_partial_state_tests.rs"]
+mod state;

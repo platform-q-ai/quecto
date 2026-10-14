@@ -1,5 +1,11 @@
-//! The fetch state's file is read only when it is exactly its shape.
+//! The fetch state's file is read only when it is exactly its shape, of
+//! this quecto's filter limit, and within its bounds.
 use super::*;
+use crate::infrastructure::persistence::project_board::board_tree::FILTER_BYTES;
+
+fn header() -> String {
+    format!("quecto-board-fetch 1 {FILTER_BYTES}\n")
+}
 
 #[test]
 fn only_a_state_of_exactly_its_shape_is_read() {
@@ -8,19 +14,45 @@ fn only_a_state_of_exactly_its_shape_is_read() {
         read: Some(commit.clone()),
         omitted: BTreeSet::from([blob.clone()]),
     };
+    assert!(state.render().starts_with(&header()));
     assert_eq!(FetchState::parse(&state.render()), Some(state));
-    assert_eq!(
-        FetchState::parse(&format!("{HEADER}\n")),
-        Some(FetchState::default())
-    );
+    assert_eq!(FetchState::parse(&header()), Some(FetchState::default()));
     for text in [
         String::new(),
-        format!("quecto-board-fetch 2\nread {commit}\n"),
-        format!("{HEADER}\nread {commit}\nread {commit}\n"),
-        format!("{HEADER}\nomitted {blob}\nread {commit}\n"),
-        format!("{HEADER}\nread HEAD\n"),
-        format!("{HEADER}\nkept {blob}\n"),
+        "quecto-board-fetch 1\n".to_string(),
+        format!("quecto-board-fetch 1 {}\n", FILTER_BYTES + 1),
+        format!("quecto-board-fetch 2 {FILTER_BYTES}\nread {commit}\n"),
+        format!("{}read {commit}\nread {commit}\n", header()),
+        format!("{}omitted {blob}\nread {commit}\n", header()),
+        format!("{}read HEAD\n", header()),
+        format!("{}kept {blob}\n", header()),
     ] {
         assert_eq!(FetchState::parse(&text), None, "{text:?}");
     }
+}
+
+/// The most a state holds: a commit and a blob for each entry a read
+/// takes in `tasks/` and in all the folders; its bytes at most that many
+/// lines of the longest ids.
+#[test]
+fn a_state_is_read_within_its_bounds() {
+    let id = |n: usize, width: usize| format!("{n:0width$x}");
+    let omitted = |count: usize, width: usize| -> String {
+        (0..count)
+            .map(|n| format!("omitted {}\n", id(n, width)))
+            .collect()
+    };
+    let longest = format!(
+        "{}read {}\n{}",
+        header(),
+        id(0, 64),
+        omitted(MAX_STATE_ENTRIES, 64)
+    );
+    assert_eq!(longest.len(), MAX_STATE_BYTES);
+    assert!(read_bounded(longest.as_bytes()).is_some());
+    let one_more = format!("{}{}", header(), omitted(MAX_STATE_ENTRIES + 1, 40));
+    assert!(one_more.len() < MAX_STATE_BYTES);
+    assert_eq!(read_bounded(one_more.as_bytes()), None);
+    let past = format!("{longest} ");
+    assert_eq!(read_bounded(past.as_bytes()), None);
 }

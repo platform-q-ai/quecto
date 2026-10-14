@@ -19,6 +19,14 @@ const HEADER: &str = "quecto-board-fetch 1";
 /// The most of the file read: its header, a commit, and one line for each
 /// entry a board may hold.
 const MAX_STATE_BYTES: usize = 128 + 80 * MAX_BOARD_ENTRIES;
+/// Red stub (#2481 S10b review round 2).
+const MAX_STATE_ENTRIES: usize = MAX_BOARD_ENTRIES;
+
+/// Red stub.
+fn read_bounded(bytes: &[u8]) -> Option<FetchState> {
+    (bytes.len() <= MAX_STATE_BYTES).then_some(())?;
+    FetchState::parse(std::str::from_utf8(bytes).ok()?)
+}
 
 /// What a partial clone remembers between reads.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
