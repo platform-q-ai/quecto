@@ -17,8 +17,8 @@
 //! next write does with a file, as one in `tasks/` does.
 use super::entries::{Disposition, Naming, TaskFile, disposition};
 use super::{
-    Board, Entry, Limits, REGULAR_FILE, Unread, capped, contents, entry_path, kind_of_mode, listed,
-    looked_up, missing, objects, sanitised, too_large,
+    Board, Entry, LeftOnRemote, Limits, MAX_TASK_FILE_BYTES, REGULAR_FILE, TreeCopy, Unread,
+    capped, contents, entry_path, kind_of_mode, kinds_in, listed, omitted_in, sanitised, too_large,
 };
 use crate::application::project_board::ports::{
     ArtifactKey, BoardArtifact, BoardHead, BoardSnapshot, QuarantinedFile,
@@ -45,6 +45,19 @@ const MIB: usize = 1024 * 1024;
 
 /// The archive's name at a board's root.
 pub const ARCHIVE: &str = "archive";
+
+/// The size from which a partial clone's fetch of a folder leaves a blob
+/// on the remote: one past the largest file a read reads (a plan's), so
+/// every file a read may read is fetched and none past every cap is.
+pub const FILTER_BYTES: usize = PLAN_LIMITS.file_bytes + 1;
+const _: () = assert!(
+    MAX_TASK_FILE_BYTES < FILTER_BYTES
+        && RUN_LIMITS.file_bytes < FILTER_BYTES
+        && CHANGE_LIMITS.file_bytes < FILTER_BYTES
+        && REVIEW_LIMITS.file_bytes < FILTER_BYTES
+        && DISCUSSION_LIMITS.file_bytes < FILTER_BYTES,
+    "every file a read reads is fetched"
+);
 
 /// The most entries one read takes in all the board's folders.
 pub const MAX_BOARD_ENTRIES: usize = 16_384;
@@ -138,6 +151,19 @@ pub(super) fn root_tree(name: &str) -> bool {
     name == "tasks" || name == ARCHIVE || FOLDERS.iter().any(|folder| folder.naming.folder == name)
 }
 
+/// Whether `name` is one of the folders besides `tasks/`.
+pub fn is_folder(name: &str) -> bool {
+    FOLDERS.iter().any(|folder| folder.naming.folder == name)
+}
+
+/// The bytes a read reads of `copy` kept as `name` in the folder named
+/// `folder`: a regular file within its kind's cap whose name spells a key.
+pub fn read_size_in(folder: &str, name: &str, copy: &TreeCopy) -> Option<usize> {
+    let found = FOLDERS.iter().find(|found| found.naming.folder == folder)?;
+    let spelled = name.strip_suffix(".md").and_then(found.spell);
+    spelled.and(copy.read_size(found.naming.file_bytes))
+}
+
 /// The task and number `stem` spells: `<id>.<n>`, `n` from 1 to `max`
 /// written with no leading zero.
 fn numbered(stem: &str, max: u32) -> Option<(Slug, u32)> {
@@ -167,10 +193,11 @@ pub struct CarriedTree {
     pub files: BTreeMap<String, String>,
     /// The bytes of each file a read reads, by name: some of `files`.
     pub sizes: BTreeMap<String, usize>,
-    /// A name listed more than once among the copies a write carries, as
-    /// its path shows: a write would carry them all (a tree git rejects)
-    /// or choose one, so none is made until a clear resolves it.
-    pub repeated: Option<String>,
+    /// Names listed more than once among the copies a write carries, each
+    /// with every copy: a tree git rejects (`Board::repeated`), so a write
+    /// into the folder waits until a clear resolves them, and any other
+    /// write carries the folder as its very tree, making no tree of them.
+    pub repeated: Vec<(String, Vec<TreeCopy>)>,
 }
 
 impl CarriedTree {
@@ -184,6 +211,8 @@ impl CarriedTree {
 /// What a read of one folder found.
 pub(super) struct FolderRead {
     pub tree: CarriedTree,
+    /// Blobs a partial clone's filter left on the remote.
+    pub omitted: Vec<String>,
     pub artifacts: Vec<BoardArtifact>,
     pub quarantined: Vec<QuarantinedFile>,
 }
@@ -195,6 +224,7 @@ pub(super) struct FolderScan {
     tree: CarriedTree,
     quarantined: Vec<QuarantinedFile>,
     to_read: Vec<(ArtifactKey, Entry, usize)>,
+    omitted: Vec<String>,
 }
 
 impl FolderScan {
@@ -245,6 +275,7 @@ pub(super) fn scan_folder(
     tree: &str,
     folder: &'static Folder,
     limits: Limits,
+    left: &LeftOnRemote,
 ) -> Result<FolderScan, Unread> {
     let name = folder.naming.folder;
     let entries = listed(git, tree, limits.tree_bytes)?;
@@ -255,11 +286,7 @@ pub(super) fn scan_folder(
             folder.max_entries
         )));
     }
-    let kinds = objects(git, looked_up(&entries))?;
-    let missing = missing(&entries, &kinds);
-    if !missing.is_empty() {
-        return Err(Unread::Missing(missing));
-    }
+    let kinds = kinds_in(git, tree, &entries, left)?;
     let mut counts: BTreeMap<&[u8], usize> = BTreeMap::new();
     for entry in entries.iter().filter(|entry| entry.carried(&kinds)) {
         *counts.entry(entry.raw.as_slice()).or_default() += 1;
@@ -308,14 +335,25 @@ pub(super) fn scan_folder(
     }
     // Only names a write would carry, as in `tasks/`: a stray is dropped,
     // however often it is named.
-    let repeated = entries
-        .iter()
-        .find(|entry| {
-            let twice = counts.get(entry.raw.as_slice()).copied().unwrap_or(0) > 1;
-            let named = entry.kept_name(folder.naming.max_name) && entry.name.ends_with(".md");
-            named && twice && entry.carried(&kinds)
-        })
-        .map(|entry| entry_path(name, &entry.raw, &entry.oid));
+    let mut repeated: BTreeMap<String, Vec<TreeCopy>> = BTreeMap::new();
+    for entry in &entries {
+        let twice = counts.get(entry.raw.as_slice()).copied().unwrap_or(0) > 1;
+        let named = entry.kept_name(folder.naming.max_name) && entry.name.ends_with(".md");
+        // A twin a write drops (a gitlink, a mode over another type) is
+        // no copy.
+        let copy = named && twice && entry.carried(&kinds);
+        if let (true, Some(super::Found::Present(object))) = (copy, kinds.get(&entry.oid)) {
+            repeated
+                .entry(entry.name.clone())
+                .or_default()
+                .push(TreeCopy {
+                    mode: entry.mode.clone(),
+                    kind: object.kind.clone(),
+                    oid: entry.oid.clone(),
+                    size: object.size,
+                });
+        }
+    }
     let bytes: usize = to_read.iter().map(|(_, _, size)| size).sum();
     if bytes > folder.max_bytes {
         return Err(too_large(format!(
@@ -329,13 +367,14 @@ pub(super) fn scan_folder(
         bytes,
         files,
         sizes,
-        repeated,
+        repeated: repeated.into_iter().collect(),
     };
     Ok(FolderScan {
         folder,
         tree,
         quarantined,
         to_read,
+        omitted: omitted_in(&kinds).collect(),
     })
 }
 
@@ -349,6 +388,7 @@ pub(super) fn load_folder(git: &super::Git, scan: FolderScan) -> Result<FolderRe
         tree,
         mut quarantined,
         to_read,
+        omitted,
     } = scan;
     let wanted: Vec<(&str, usize)> = to_read
         .iter()
@@ -374,6 +414,7 @@ pub(super) fn load_folder(git: &super::Git, scan: FolderScan) -> Result<FolderRe
     quarantined.sort_by(|left, right| left.path.cmp(&right.path));
     Ok(FolderRead {
         tree,
+        omitted,
         artifacts,
         quarantined,
     })
@@ -389,6 +430,7 @@ impl Board {
     ) -> Self {
         for (name, folder) in read {
             self.artifacts.extend(folder.artifacts);
+            self.omitted.extend(folder.omitted);
             self.quarantined.extend(folder.quarantined);
             self.folders.insert(name, folder.tree);
         }
