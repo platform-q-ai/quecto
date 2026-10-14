@@ -230,7 +230,7 @@ fn a_clear_keeping_a_copy_past_its_folders_bytes_is_invalid() {
     );
     let past = bob.clear_set_aside(&head, &clear, "board: keep c 1");
     assert!(
-        matches!(&past, Err(BoardStoreError::InvalidWrite(why)) if why.contains("bytes of plan files") && why.ends_with(", once this clear keeps its copy of plans/c.1.md: keep a smaller copy, or drop every copy instead")),
+        matches!(&past, Err(BoardStoreError::WriteTooLarge(why)) if why.contains("bytes of plan files") && why.ends_with(", once this clear keeps its copy of plans/c.1.md: keep a smaller copy, or drop every copy instead")),
         "{past:?}"
     );
     let clear = resolving(
@@ -283,7 +283,7 @@ fn a_refusal_names_eight_kept_copies_and_how_many_more() {
     let past = bob.clear_set_aside(&head, &resolving("plans/a.1.md", &bad, &all), "board: keep");
     let shown = paths[..8].join(", ");
     assert!(
-        matches!(&past, Err(BoardStoreError::InvalidWrite(why)) if why.ends_with(&format!(", once this clear keeps its copies of {shown} and 1 more: keep a smaller copy, or drop every copy instead"))),
+        matches!(&past, Err(BoardStoreError::WriteTooLarge(why)) if why.ends_with(&format!(", once this clear keeps its copies of {shown} and 1 more: keep a smaller copy, or drop every copy instead"))),
         "{past:?}"
     );
 }
@@ -332,7 +332,7 @@ fn only_a_kept_copy_a_read_reads_counts_towards_the_boards_bytes() {
     );
     let past = bob.clear_set_aside(&head, &keeping_the_plan, "board: keep c 1");
     assert!(
-        matches!(&past, Err(BoardStoreError::InvalidWrite(why)) if why.starts_with("the board would hold") && why.ends_with(", once this clear keeps its copy of plans/c.1.md: keep a smaller copy, or drop every copy instead")),
+        matches!(&past, Err(BoardStoreError::WriteTooLarge(why)) if why.starts_with("the board would hold") && why.ends_with(", once this clear keeps its copy of plans/c.1.md: keep a smaller copy, or drop every copy instead")),
         "{past:?}"
     );
     let keeping_the_notes = resolving(

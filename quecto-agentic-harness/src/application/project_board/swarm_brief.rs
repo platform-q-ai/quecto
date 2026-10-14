@@ -55,7 +55,7 @@ pub const MIN_DEADLINE_SECONDS: u64 = 10 * 60;
 pub const DEFAULT_DEADLINE_SECONDS: u64 = 24 * 60 * 60;
 /// The role whose model and effort are the coordinator's.
 pub const COORDINATOR_ROLE: &str = "coordinator";
-/// What ends an approach cut to fit (wording pending the owner's approval).
+/// What ends an approach cut to fit.
 pub const CUT_MARKER: &str = "… (cut here; the rest is in the plan on the board)";
 
 // The swarm's bounds, read as whole numbers, are what they say.
@@ -71,7 +71,7 @@ pub struct RunCriterion {
     pub description: &'static str,
 }
 
-/// Every started run's criteria (wording pending the owner's approval).
+/// Every started run's criteria.
 pub const RUN_CRITERIA: [RunCriterion; 2] = [
     RunCriterion {
         id: "task_items",
@@ -174,7 +174,7 @@ impl ItemLimit {
     }
 }
 
-/// Why a plan cannot brief a swarm (wording pending the owner's approval).
+/// Why a plan cannot brief a swarm.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BriefRefusal {
     /// The coordinator and the workers together: more than a swarm holds.
@@ -512,9 +512,15 @@ fn in_order(items: &[PlanItem]) -> Vec<&PlanItem> {
     taken
 }
 
+/// The title a swarm task item is created with for plan item `item`,
+/// `<slug>: <title>`: the key a fold-back matches it back by.
+pub fn item_title(item: &PlanItem) -> String {
+    format!("{}: {}", item.id.as_str(), item.title)
+}
+
 /// `item` as a swarm task item, within the swarm's bounds.
 fn brief_item(item: &PlanItem) -> Result<BriefItem, BriefRefusal> {
-    let title = format!("{}: {}", item.id.as_str(), item.title);
+    let title = item_title(item);
     let acceptance = match item.criteria.as_slice() {
         [] => vec![item.title.clone()],
         criteria => criteria.to_vec(),

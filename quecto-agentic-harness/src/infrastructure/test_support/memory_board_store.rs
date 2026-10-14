@@ -2,7 +2,9 @@
 //! [`MemoryBoardStore::client`] share one board, so one can move it under
 //! another; [`MemoryBoardStore::before_next_write`] runs another writer's
 //! change just before a write is judged, and
-//! [`MemoryBoardStore::refuse_next_write`] makes the store refuse one.
+//! [`MemoryBoardStore::refuse_next_write`] makes the store refuse one, and
+//! [`MemoryBoardStore::fail_next_write`] fails one with a store error (as
+//! a git store fails a write past its bounds).
 //!
 //! It judges a write as the git store does: every kind is written through
 //! its codec (a value it refuses is an invalid write, #2481 S10a).
@@ -30,6 +32,7 @@ struct Board {
     interleaved: Vec<Interleaved>,
     after_read: Vec<Interleaved>,
     refusal: Option<String>,
+    failure: Option<BoardStoreError>,
     writes: usize,
     /// Who made the board at each revision a write made.
     committers: BTreeMap<u64, Identity>,
@@ -87,6 +90,12 @@ impl MemoryBoardStore {
     /// The next write is refused with `reason`.
     pub fn refuse_next_write(&self, reason: &str) {
         self.lock().refusal = Some(reason.into());
+    }
+
+    /// The next write fails with `error` (an invalid write, or one past
+    /// the store's bounds), as a git store fails it; nothing is written.
+    pub fn fail_next_write(&self, error: BoardStoreError) {
+        self.lock().failure = Some(error);
     }
 
     /// Sets the file `tasks/<id>.md` aside, as a store that found it
@@ -323,6 +332,9 @@ impl ProjectBoardStore for MemoryBoardStore {
         }
         if let Some(reason) = board.refusal.take() {
             return Ok(BoardWrite::Refused(reason));
+        }
+        if let Some(error) = board.failure.take() {
+            return Err(error);
         }
         let set_aside = |key: &ArtifactKey| {
             board

@@ -316,7 +316,9 @@ fn refused(code: &'static str, rule: Option<&'static str>) -> OpOutcome {
 /// schema error whose field was wrong (a task's, `invalid_task`, or a
 /// rule's, `invalid`). Exhaustive, so a new refusal does not compile until
 /// it says which it names.
-fn refusal_parts(error: &ProjectBoardError) -> (Option<&'static str>, Option<&SchemaError>) {
+pub(super) fn refusal_parts(
+    error: &ProjectBoardError,
+) -> (Option<&'static str>, Option<&SchemaError>) {
     use ProjectBoardError as E;
     match error {
         E::Rule(rule) => (Some(rule_code(rule)), rule_schema(rule)),
@@ -392,6 +394,7 @@ fn rule_schema(rule: &BoardRuleError) -> Option<&SchemaError> {
         | R::NoAcceptedPlan
         | R::ChangeAlreadyLinked { .. }
         | R::NoSuchChange(..)
+        | R::NoSuchRun(..)
         | R::ChangeAhead { .. }
         | R::DiscussionClosed(..)
         | R::DiscussionLinked { .. }
@@ -441,7 +444,7 @@ fn listing_counts(answer: &Value) -> Option<ListingCounts> {
     })
 }
 
-fn micros(elapsed: Duration) -> u64 {
+pub(super) fn micros(elapsed: Duration) -> u64 {
     u64::try_from(elapsed.as_micros()).unwrap_or(u64::MAX)
 }
 

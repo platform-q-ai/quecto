@@ -2,7 +2,7 @@
 //! (the S1d git store implements [`ProjectBoardStore`] over the
 //! repository's `quecto/board` branch), its listings from a local view of
 //! it (the S1e index implements [`BoardListings`]) and what time it is.
-use super::dto::BoardListing;
+use super::dto::{BoardListing, FoldBackFacts, FoldedBack, ProjectBoardError};
 use crate::domain::project_board::entities::change::Change;
 use crate::domain::project_board::entities::claim::Identity;
 use crate::domain::project_board::entities::discussion::Discussion;
@@ -11,7 +11,7 @@ use crate::domain::project_board::entities::review::Review;
 use crate::domain::project_board::entities::run::Run;
 use crate::domain::project_board::entities::task::Task;
 use crate::domain::project_board::value_objects::slug::Slug;
-use crate::domain::project_board::value_objects::telemetry::BoardOpRecord;
+use crate::domain::project_board::value_objects::telemetry::{BoardOpRecord, FoldBackRecord};
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
 use crate::domain::project_board::value_objects::vocabulary::TaskStatus;
 
@@ -251,12 +251,18 @@ pub enum BoardStoreError {
     Clash(String),
     /// A write no store takes: no artifacts, one key twice, a kind the
     /// store does not keep yet, a value its codec refuses, a message that is
-    /// not one short line, a board past its bounds, or a head that is not
+    /// not one short line, a board past its bounds of entries (its bytes
+    /// are [`Self::WriteTooLarge`]), or a head that is not
     /// on the board. That includes a head the board held before its
     /// history was rewritten (a force push): such a write is invalid, not
     /// [`BoardWrite::Lost`], since no store can tell it from a head it
     /// never held. Read the board again. Nothing was written.
     InvalidWrite(String),
+    /// A write that would leave its files' total bytes, on the board or in
+    /// one of its folders, past what a read takes. Nothing was written; a
+    /// write of smaller files may land. Front ends answer it as an invalid
+    /// write.
+    WriteTooLarge(String),
     /// The store could not be reached or read, or cannot tell whether a
     /// write landed.
     Unavailable(String),
@@ -472,6 +478,37 @@ pub trait PullRequestStates: Send + Sync {
     fn state(&self, pr: u64) -> Result<PullRequestState, PullRequestStatesError>;
 }
 
+/// Port: whether the board's file format holds a line of text as a
+/// table's text cell, exactly as the store's codec judges the cells it
+/// writes (a run's owners and evidence among them). Text from outside the
+/// board (a swarm's evidence) is checked here line by line, so one line
+/// the codec would refuse is left out rather than sink the whole write.
+pub trait BoardTextCells: Send + Sync {
+    /// Whether a text cell holds `line` as it is.
+    fn holds(&self, line: &str) -> bool;
+}
+
+/// What one fold-back came to, as its recorder is given it.
+#[derive(Debug, Clone, Copy)]
+pub struct FoldBackOutcome<'a> {
+    pub task: &'a Slug,
+    pub run: u32,
+    pub result: &'a Result<FoldedBack, ProjectBoardError>,
+    pub facts: &'a FoldBackFacts,
+    /// The whole fold-back, on the board clock's monotonic time.
+    pub elapsed: std::time::Duration,
+}
+
+/// Port: where a fold-back's outcome goes, its `board_fold_back` record
+/// (S4), for the caller in this layer that folds a run back (the keeper).
+/// The front end implements it, naming its error and rule codes. A caller
+/// holds one only while the event log is on, so with it off no fact is
+/// gathered and nothing is timed.
+pub trait FoldBackRecorder: Send + Sync {
+    /// Records `outcome`, never failing the fold-back.
+    fn record(&self, outcome: FoldBackOutcome<'_>);
+}
+
 /// Port: where each board request's `board_op` record goes (epic #2481):
 /// the event log (a session's, or the CLI's daily `board-cli_<date>`
 /// log) and `tracing`. It is held only inside a
@@ -484,4 +521,8 @@ pub trait ProjectBoardOpLog: Send + Sync {
     /// dropped write is the adapter's to count and report, and never
     /// changes the request's answer.
     fn record(&self, record: BoardOpRecord);
+
+    /// Appends a fold-back's `board_fold_back` record (S4), as
+    /// [`Self::record`] appends a `board_op`.
+    fn record_fold_back(&self, record: FoldBackRecord);
 }

@@ -19,7 +19,7 @@ fn a_write_past_the_read_bound_is_invalid_and_one_at_it_is_written() {
     assert_eq!(ids(&bob.read().unwrap()), ["a", "b"]);
     let refused = alice.write_tasks(&full, &[task("c")], "board: add c");
     assert!(
-        matches!(&refused, Err(BoardStoreError::InvalidWrite(why)) if why.contains("bytes")),
+        matches!(&refused, Err(BoardStoreError::WriteTooLarge(why)) if why.contains("bytes")),
         "{refused:?}"
     );
     let mut longer = task("a").into_fields();
@@ -27,7 +27,7 @@ fn a_write_past_the_read_bound_is_invalid_and_one_at_it_is_written() {
     let longer = Task::new(longer).unwrap();
     let refused = alice.write_tasks(&full, &[longer], "board: rename a");
     assert!(
-        matches!(&refused, Err(BoardStoreError::InvalidWrite(_))),
+        matches!(&refused, Err(BoardStoreError::WriteTooLarge(_))),
         "{refused:?}"
     );
     written(alice.write_tasks(&full, &[task("a")], "board: write a again"));
@@ -69,7 +69,7 @@ fn only_task_files_a_read_reads_count_toward_the_read_bound() {
                 "{bound}: {write:?}"
             ),
             false => assert!(
-                matches!(write, Err(BoardStoreError::InvalidWrite(_))),
+                matches!(write, Err(BoardStoreError::WriteTooLarge(_))),
                 "{bound}: {write:?}"
             ),
         }

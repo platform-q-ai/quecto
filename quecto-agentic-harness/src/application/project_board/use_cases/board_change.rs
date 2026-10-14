@@ -81,11 +81,64 @@ fn checked_now(clock: &dyn BoardClock) -> Result<When, ProjectBoardError> {
 /// one change, retried against a fresh board when another writer moved it
 /// first. Every change is about one task ([`one_tasks_change`]): it
 /// writes that task first ([`written_task`]), or only other artifacts of
-/// it (a plan, [`written_plan`]). Given
+/// it (a plan, [`written_plan`]); a fold-back writes its run alone
+/// ([`commit_run`]). Given
 /// `facts` (epic #2481 T4), it notes the attempts it began, how many lost
 /// the race and how long it paused between them; given none, it notes
 /// nothing and reads no monotonic time.
 pub(super) fn commit(
+    store: &dyn ProjectBoardStore,
+    clock: &dyn BoardClock,
+    message: &str,
+    facts: Option<&mut OpFacts>,
+    change: impl FnMut(&BoardSnapshot, &When) -> Result<Vec<BoardArtifact>, ProjectBoardError>,
+) -> Result<Vec<BoardArtifact>, ProjectBoardError> {
+    shaped(Writes::OneTask, store, clock, message, facts, change)
+}
+
+/// [`commit`] of a change that writes one run alone: a fold-back, which
+/// leaves its task as it is.
+pub(super) fn commit_run(
+    store: &dyn ProjectBoardStore,
+    clock: &dyn BoardClock,
+    message: &str,
+    facts: Option<&mut OpFacts>,
+    change: impl FnMut(&BoardSnapshot, &When) -> Result<Vec<BoardArtifact>, ProjectBoardError>,
+) -> Result<Vec<BoardArtifact>, ProjectBoardError> {
+    shaped(Writes::OneRun, store, clock, message, facts, change)
+}
+
+/// What a change writes, as its use case declares it.
+#[derive(Debug, Clone, Copy)]
+enum Writes {
+    /// One task's change ([`one_tasks_change`]).
+    OneTask,
+    /// One run, and nothing else.
+    OneRun,
+}
+
+impl Writes {
+    /// Whether `artifacts` are written as declared (an allowlist).
+    fn holds(self, artifacts: &[BoardArtifact]) -> bool {
+        match self {
+            Self::OneTask => one_tasks_change(artifacts),
+            Self::OneRun => matches!(artifacts, [BoardArtifact::Run(_)]),
+        }
+    }
+
+    /// What a change breaks when it writes otherwise.
+    fn rule(self) -> &'static str {
+        match self {
+            Self::OneTask => {
+                "a board change writes its task first, or only one task's other artifacts"
+            }
+            Self::OneRun => "a board change writes as it declares: one run alone",
+        }
+    }
+}
+
+fn shaped(
+    writes: Writes,
     store: &dyn ProjectBoardStore,
     clock: &dyn BoardClock,
     message: &str,
@@ -96,10 +149,7 @@ pub(super) fn commit(
         let snapshot = store.read()?;
         let when = checked_now(clock)?;
         let artifacts = change(&snapshot, &when)?;
-        assert!(
-            one_tasks_change(&artifacts),
-            "a board change writes its task first, or only one task's other artifacts"
-        );
+        assert!(writes.holds(&artifacts), "{}", writes.rule());
         match store.write(&snapshot.head, &artifacts, message)? {
             BoardWrite::Written(head) => {
                 assert_ne!(
