@@ -199,6 +199,7 @@ impl GitBoardStore {
             last: Mutex::new(None),
             limits: self.limits,
             cancelled: None,
+            partial: std::sync::OnceLock::new(),
         }
     }
 
