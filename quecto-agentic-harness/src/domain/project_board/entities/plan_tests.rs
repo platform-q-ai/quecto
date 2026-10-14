@@ -189,11 +189,28 @@ fn the_items_and_the_text_stop_exactly_at_their_limits() {
     assert_eq!(Plan::new(wide).unwrap_err().field, "text", "a byte past it");
 }
 
-/// A deadline is informational: one already past when the plan was made
-/// is allowed, so proposing and editing agree.
+/// A deadline is a duration from Start, so it never passes before the
+/// plan starts: one from ten minutes to seven days is a plan's, and one
+/// outside them is refused as the plan is made.
 #[test]
-fn a_past_deadline_is_allowed() {
-    let mut past = fields();
-    past.team.as_mut().unwrap().deadline = Some(at("07:00:00"));
-    assert!(Plan::new(past).is_ok());
+fn a_deadline_is_seconds_from_start_within_its_bounds() {
+    use crate::domain::project_board::entities::team::{
+        MAX_DEADLINE_SECONDS, MIN_DEADLINE_SECONDS,
+    };
+    assert_eq!((MIN_DEADLINE_SECONDS, MAX_DEADLINE_SECONDS), (600, 604_800));
+    for (seconds, kept) in [
+        (MIN_DEADLINE_SECONDS, true),
+        (MAX_DEADLINE_SECONDS, true),
+        (MIN_DEADLINE_SECONDS - 1, false),
+        (MAX_DEADLINE_SECONDS + 1, false),
+    ] {
+        let mut timed = fields();
+        timed.team.as_mut().unwrap().deadline_seconds = Some(seconds);
+        let made = Plan::new(timed).map_err(|error| error.field);
+        let want = match kept {
+            true => Ok(()),
+            false => Err("team/deadline_seconds".to_string()),
+        };
+        assert_eq!(made.map(|_| ()), want, "{seconds}");
+    }
 }

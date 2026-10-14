@@ -8,7 +8,13 @@
 //! - Criteria `[Task item | Criterion]`, grouped in task item order;
 //! - Roles `[Role | Model | Effort | Members | Turns]`, present exactly
 //!   when the plan names a team (Turns `-` for no limit). The team's
-//!   budget, deadline and image rows are taken only with Roles.
+//!   deadline seconds and image rows are taken only with Roles.
+//!
+//! A file written before a team's deadline became seconds from Start, and
+//! its budget was dropped (owner decision, 2026-10-14), may still hold a
+//! `Budget tokens` or an absolute `Deadline` row: each is read past and
+//! dropped, so such a plan reads with no budget and the default deadline,
+//! and no write holds either again.
 //!
 //! A missing field row or section is "not set" or "none". The Model and
 //! Image cells are code: a model or image reference may hold a `_` an
@@ -16,7 +22,7 @@
 use super::cells::{self, column, refused};
 use super::{ArtifactCodec, CodecError};
 use crate::domain::project_board::entities::plan::{Plan, PlanFields, PlanItem};
-use crate::domain::project_board::entities::team::{Budget, Role, RoleLimits, Team};
+use crate::domain::project_board::entities::team::{Role, RoleLimits, Team};
 use crate::domain::project_board::value_objects::vocabulary::{Effort, PlanState};
 use crate::infrastructure::persistence::project_board::markdown::{
     Body, BodyShape, CellKind, Column, Document, Limits, Section, SectionShape, Shape, blocks_of,
@@ -30,8 +36,11 @@ const PROPOSED_BY: &str = "Proposed by";
 const EDITED_BY: &str = "Edited by";
 const ACCEPTED_BY: &str = "Accepted by";
 const ACCEPTED_AT: &str = "Accepted at";
-const BUDGET: &str = "Budget tokens";
-const DEADLINE: &str = "Deadline";
+/// Read past, never written: a team's token budget, dropped.
+const LEGACY_BUDGET: &str = "Budget tokens";
+/// Read past, never written: a team's absolute deadline, now seconds.
+const LEGACY_DEADLINE: &str = "Deadline";
+const DEADLINE_SECONDS: &str = "Deadline seconds";
 const IMAGE: &str = "Image";
 const CREATED: &str = "Created";
 const UPDATED: &str = "Updated";
@@ -51,8 +60,9 @@ const FIELDS: &[Column<'static>] = &[
     column(EDITED_BY, CellKind::Text),
     column(ACCEPTED_BY, CellKind::Text),
     column(ACCEPTED_AT, CellKind::Ascii),
-    column(BUDGET, CellKind::Ascii),
-    column(DEADLINE, CellKind::Ascii),
+    column(LEGACY_BUDGET, CellKind::Ascii),
+    column(LEGACY_DEADLINE, CellKind::Ascii),
+    column(DEADLINE_SECONDS, CellKind::Ascii),
     column(IMAGE, CellKind::Code),
     column(CREATED, CellKind::Ascii),
     column(UPDATED, CellKind::Ascii),
@@ -142,16 +152,10 @@ impl ArtifactCodec for PlanCodec {
             fields.push((ACCEPTED_AT, cells::time(at)));
         }
         if let Some(team) = &plan.team {
-            let budget = team
-                .budget
-                .as_ref()
-                .map(|budget| cells::number(budget.tokens));
-            let deadline = team.deadline.as_ref().map(cells::time);
-            let held = [
-                (BUDGET, budget),
-                (DEADLINE, deadline),
-                (IMAGE, team.image.clone()),
-            ];
+            let deadline = team
+                .deadline_seconds
+                .map(|seconds| cells::number(seconds.into()));
+            let held = [(DEADLINE_SECONDS, deadline), (IMAGE, team.image.clone())];
             fields.extend(
                 held.into_iter()
                     .filter_map(|(name, cell)| Some((name, cell?))),
@@ -224,6 +228,23 @@ impl ArtifactCodec for PlanCodec {
         })
     }
 
+    /// Every field but the legacy ones, which are read past.
+    fn keeps(name: &str) -> bool {
+        matches!(
+            name,
+            TASK | VERSION
+                | STATE
+                | PROPOSED_BY
+                | EDITED_BY
+                | ACCEPTED_BY
+                | ACCEPTED_AT
+                | DEADLINE_SECONDS
+                | IMAGE
+                | CREATED
+                | UPDATED
+        )
+    }
+
     fn from_document(document: &Document) -> Result<Plan, CodecError> {
         let fields = cells::Fields::of(document);
         let field = |name: &str| fields.get(name);
@@ -250,18 +271,15 @@ impl ArtifactCodec for PlanCodec {
         let team = match read.roles {
             Some(roles) => Some(Team {
                 roles,
-                budget: match field(BUDGET) {
-                    Some(cell) => Some(Budget {
-                        tokens: cells::read_number(BUDGET, cell)?,
-                    }),
-                    None => None,
-                },
-                deadline: field(DEADLINE)
-                    .map(|cell| cells::read_time(DEADLINE, cell))
+                deadline_seconds: field(DEADLINE_SECONDS)
+                    .map(|cell| {
+                        let seconds = cells::read_number(DEADLINE_SECONDS, cell)?;
+                        u32::try_from(seconds).map_err(|_| refused(DEADLINE_SECONDS, "past u32"))
+                    })
                     .transpose()?,
                 image: field(IMAGE).map(str::to_string),
             }),
-            None => match [BUDGET, DEADLINE, IMAGE]
+            None => match [DEADLINE_SECONDS, IMAGE]
                 .into_iter()
                 .find(|name| field(name).is_some())
             {

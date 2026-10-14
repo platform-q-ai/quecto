@@ -191,8 +191,7 @@ fn ready_board(store: &MemoryBoardStore) {
                     role("coordinator", "anthropic/claude-opus"),
                     role("builder", "gpt-5.5"),
                 ],
-                budget: None,
-                deadline: None,
+                deadline_seconds: None,
                 image: None,
             }),
         })

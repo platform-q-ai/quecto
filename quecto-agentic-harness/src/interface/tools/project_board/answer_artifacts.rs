@@ -57,8 +57,7 @@ pub(super) fn shown_fields(shown: &ShownTask, version: Option<u32>) -> Map<Strin
 
 /// A plan in the board's own field names, as its file holds them, every
 /// field present (`null` or `[]` when unset), in a fixed order: who
-/// accepted it and when as `accepted_by` and `accepted_at`, and its team's
-/// budget as `budget_tokens`.
+/// accepted it and when as `accepted_by` and `accepted_at`.
 pub(super) fn plan_json(plan: &Plan) -> Value {
     let plan = plan.fields();
     let items: Vec<Value> = plan.items.iter().map(item_json).collect();
@@ -145,8 +144,7 @@ fn team_json(team: &Team) -> Value {
         .collect();
     json!({
         "roles": roles,
-        "budget_tokens": team.budget.as_ref().map(|budget| budget.tokens),
-        "deadline": team.deadline.as_ref().map(|deadline| deadline.as_str()),
+        "deadline_seconds": team.deadline_seconds,
         "image": team.image,
     })
 }

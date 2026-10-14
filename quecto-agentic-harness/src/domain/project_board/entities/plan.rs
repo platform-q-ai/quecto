@@ -145,7 +145,6 @@ fn validate(plan: &PlanFields) -> Result<(), SchemaError> {
             ));
         }
     }
-    // A deadline is informational: one already past is allowed.
     match &plan.team {
         Some(team) => team.validate("team"),
         None => Ok(()),

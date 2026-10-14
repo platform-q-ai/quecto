@@ -5,7 +5,9 @@ use super::*;
 use crate::domain::project_board::entities::claim::{Identity, MAX_EMAIL_BYTES};
 use crate::domain::project_board::entities::plan::{MAX_APPROACH_CHARS, MAX_PLAN_TEXT_BYTES};
 use crate::domain::project_board::entities::task_parts::{MAX_ITEMS, MAX_PER_ITEM};
-use crate::domain::project_board::entities::team::{MAX_IMAGE_BYTES, MAX_MODEL_BYTES, MAX_ROLES};
+use crate::domain::project_board::entities::team::{
+    MAX_DEADLINE_SECONDS, MAX_IMAGE_BYTES, MAX_MODEL_BYTES, MAX_ROLES,
+};
 use crate::domain::project_board::value_objects::board_text;
 use crate::domain::project_board::value_objects::schema_error::{PLAIN_SPACES_ONLY, SchemaError};
 use crate::domain::project_board::value_objects::slug::Slug;
@@ -26,8 +28,7 @@ const EXAMPLE: &str = r#"<!-- quecto-plan schema=1 -->
 | Edited by | Bo (`bo@example.com`) |
 | Accepted by | Shane (work) (`shane@example.com`) |
 | Accepted at | 2026-10-11T12:00:00Z |
-| Budget tokens | 2000000 |
-| Deadline | 2026-10-18T17:00:00Z |
+| Deadline seconds | 345600 |
 | Image | `ghcr.io/platform-q-ai/quecto_dev:1.2` |
 | Created | 2026-10-11T09:30:00Z |
 | Updated | 2026-10-11T12:00:00Z |
@@ -135,8 +136,7 @@ fn example() -> PlanFields {
                 role("builder", "gpt-5_codex", Effort::High, 2, Some(40)),
                 role("reviewer", "claude-opus/4.5", Effort::Max, 1, None),
             ],
-            budget: Some(Budget { tokens: 2_000_000 }),
-            deadline: Some(at("2026-10-18T17:00:00Z")),
+            deadline_seconds: Some(345_600),
             image: Some("ghcr.io/platform-q-ai/quecto_dev:1.2".into()),
         }),
         proposed_by: person("Ada Lovelace", "ada@example.com"),
@@ -198,8 +198,7 @@ fn every_plan_state_round_trips() {
         };
         let lean_team = Team {
             roles: vec![role("solo", "m", Effort::Low, 1, None)],
-            budget: None,
-            deadline: None,
+            deadline_seconds: None,
             image: None,
         };
         let variants = [
@@ -286,15 +285,13 @@ fn team_rows_without_roles_are_refused() {
         matches!(
             &read,
             Err(CodecError::Cell {
-                field: "Budget tokens",
+                field: "Deadline seconds",
                 ..
             })
         ),
         "{read:?}"
     );
-    let image_only = without_roles
-        .replacen("| Budget tokens | 2000000 |\n", "", 1)
-        .replacen("| Deadline | 2026-10-18T17:00:00Z |\n", "", 1);
+    let image_only = without_roles.replacen("| Deadline seconds | 345600 |\n", "", 1);
     let read = decode::<PlanCodec>(image_only.as_bytes());
     assert!(
         matches!(&read, Err(CodecError::Cell { field: "Image", .. })),
@@ -308,6 +305,66 @@ fn team_rows_without_roles_are_refused() {
     );
     let read = decode::<PlanCodec>(no_team.as_bytes()).unwrap();
     assert_eq!(read.fields().team, None);
+}
+
+/// A file written before a team's budget was dropped and its deadline
+/// became seconds from Start still reads: its `Budget tokens` and
+/// absolute `Deadline` rows are read past, with a team or without, so the
+/// plan has the default deadline; and it is never written back with them.
+#[test]
+fn a_legacy_budget_and_deadline_are_read_past_and_never_written() {
+    let legacy = edited(
+        "| Deadline seconds | 345600 |\n",
+        "| Budget tokens | 2000000 |\n| Deadline | 2026-10-18T17:00:00Z |\n",
+    );
+    let read = decode::<PlanCodec>(legacy.as_bytes()).unwrap();
+    let team = read.fields().team.clone().unwrap();
+    assert_eq!(team.deadline_seconds, None, "the default deadline");
+    assert_eq!(team.roles, example().team.unwrap().roles);
+    let written = encode::<PlanCodec>(&read).unwrap();
+    assert!(!written.contains("Budget tokens"), "{written}");
+    assert!(!written.contains("| Deadline |"), "{written}");
+    assert_eq!(written, edited("| Deadline seconds | 345600 |\n", ""));
+    // Even unreadable, a legacy row sets nothing, nor holds a plan up.
+    let odd = legacy.replacen("| Budget tokens | 2000000 |", "| Budget tokens | lots |", 1);
+    assert_eq!(decode::<PlanCodec>(odd.as_bytes()), Ok(read));
+    let roles = legacy.find("\n## Roles").unwrap();
+    let teamless = legacy[..roles].replacen(
+        "| Image | `ghcr.io/platform-q-ai/quecto_dev:1.2` |\n",
+        "",
+        1,
+    );
+    let read = decode::<PlanCodec>(teamless.as_bytes()).unwrap();
+    assert_eq!(read.fields().team, None);
+    // The legacy rows are the only ones the plan does not keep.
+    let dropped: Vec<&str> = FIELDS
+        .iter()
+        .map(|column| column.name)
+        .filter(|name| !PlanCodec::keeps(name))
+        .collect();
+    assert_eq!(dropped, [LEGACY_BUDGET, LEGACY_DEADLINE]);
+}
+
+/// A deadline past its bounds is refused as the plan is read.
+#[test]
+fn a_deadline_out_of_its_bounds_is_refused() {
+    for seconds in ["599", "604801", "99999999999"] {
+        let file = edited(
+            "| Deadline seconds | 345600 |",
+            &format!("| Deadline seconds | {seconds} |"),
+        );
+        let read = decode::<PlanCodec>(file.as_bytes());
+        assert!(
+            matches!(
+                &read,
+                Err(CodecError::Cell {
+                    field: "Plan" | "Deadline seconds",
+                    ..
+                })
+            ),
+            "{seconds}: {read:?}"
+        );
+    }
 }
 
 #[test]
@@ -369,10 +426,7 @@ fn widest(approach: String, criterion: impl Fn(usize, usize) -> String) -> PlanF
         items,
         team: Some(Team {
             roles,
-            budget: Some(Budget {
-                tokens: (1 << 53) - 1,
-            }),
-            deadline: Some(at("9999-12-31T23:59:59Z")),
+            deadline_seconds: Some(MAX_DEADLINE_SECONDS),
             image: Some(image),
         }),
         proposed_by: person(&name, &email),
@@ -430,9 +484,11 @@ fn the_widest_plan_fits_its_limits() {
     }
     let (bytes, lines, longest) = seen;
     // The whole budget spent on cells that write it twice: at least
-    // 1,077,156 bytes (a lower bound; no search proves it the domain's most).
+    // 1,077,113 bytes (a lower bound; no search proves it the domain's most;
+    // 43 fewer than when a team held a token budget and an absolute
+    // deadline, whose rows a deadline in seconds replaced).
     assert!(
-        (1_077_156..=PLAN_LIMITS.file_bytes).contains(&bytes),
+        (1_077_113..=PLAN_LIMITS.file_bytes).contains(&bytes),
         "{bytes}"
     );
     // Past the plan's first estimate of 53,000: a fence's blank lines.
