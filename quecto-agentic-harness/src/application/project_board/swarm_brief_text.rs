@@ -45,9 +45,17 @@ pub fn render(brief: &SwarmBrief) -> String {
 
 /// The characters a reader cannot see that change how text reads: format
 /// characters (bidi controls and isolates, zero-width characters, tags),
-/// controls, and the line and paragraph separators.
-static HIDDEN: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^[\p{Cf}\p{Cc}\p{Zl}\p{Zp}]$").expect("a valid class"));
+/// controls, the line and paragraph separators, and the other invisible
+/// code points: the combining grapheme joiner, the Hangul fillers and the
+/// variation selectors (the Mongolian free ones included).
+static HIDDEN: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(concat!(
+        r"^[\p{Cf}\p{Cc}\p{Zl}\p{Zp}",
+        r"\x{034F}\x{115F}\x{1160}\x{3164}\x{FFA0}",
+        r"\x{180B}-\x{180F}\x{FE00}-\x{FE0F}\x{E0100}-\x{E01EF}]$",
+    ))
+    .expect("a valid class")
+});
 
 /// `json` with every hidden character ([`HIDDEN`]) escaped as JSON spells
 /// it, a backslash, `u` and four hex digits (a pair of them past the basic

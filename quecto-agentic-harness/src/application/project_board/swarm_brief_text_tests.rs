@@ -228,3 +228,32 @@ fn hidden_characters_are_escaped_and_the_rest_kept() {
     assert_eq!(data["items"][0]["acceptance"][0], json!(titled));
     assert_eq!(data["run"]["constraints"][0], json!(plan.constraints[0]));
 }
+
+/// Review round 4: the other invisible code points are escaped too (the
+/// combining grapheme joiner, the Hangul fillers, variation selectors);
+/// a visible Hangul syllable is kept.
+#[test]
+fn the_other_invisible_code_points_are_escaped() {
+    let hidden = [
+        '\u{34f}',
+        '\u{115f}',
+        '\u{1160}',
+        '\u{3164}',
+        '\u{ffa0}',
+        '\u{180b}',
+        '\u{fe00}',
+        '\u{fe0f}',
+        '\u{e0100}',
+        '\u{e01ef}',
+    ];
+    let mut titled: String = hidden.iter().collect();
+    titled.push('\u{ac00}');
+    let plan = brief(vec![item("schema", &[titled.as_str()], &[])]);
+    let text = render(&plan);
+    for character in hidden {
+        assert!(!text.contains(character), "{character:?} is escaped");
+    }
+    assert!(text.contains('\u{ac00}'), "a visible syllable is kept");
+    let (_, data) = fenced(&text);
+    assert_eq!(data["items"][0]["acceptance"][0], json!(titled));
+}

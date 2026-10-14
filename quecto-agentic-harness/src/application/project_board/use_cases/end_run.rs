@@ -23,14 +23,15 @@ use std::sync::Arc;
 
 use super::board_change::{checked_writer, commit_run, task_on};
 use super::board_view;
-use crate::application::project_board::dto::{ProjectBoardError, RunEnd, RunEndOutcome};
+use crate::application::project_board::dto::{
+    EndedRun, LivenessCheck, ProjectBoardError, RunEnd, RunEndOutcome,
+};
 use crate::application::project_board::fold_back::{Evidence, SwarmEnd, SwarmRunView, run_items};
 use crate::application::project_board::ports::{
     BoardArtifact, BoardClock, BoardTextCells, ProjectBoardStore, RunLiveness,
 };
 use crate::application::project_board::telemetry::OpFacts;
 use crate::domain::project_board::entities::claim::Identity;
-use crate::domain::project_board::entities::run::Run;
 use crate::domain::project_board::services::claims::claim_facts;
 use crate::domain::project_board::services::runs::{
     HeldEnd, Reported, end_held, end_lost, run_and_plan,
@@ -74,7 +75,7 @@ impl EndRun {
     /// changed since it was read; the rules' (an
     /// actor who may not end it, a run that has ended); the clock's; a
     /// board that kept moving; the store's.
-    pub fn execute(&self, request: &RunEnd) -> Result<Run, ProjectBoardError> {
+    pub fn execute(&self, request: &RunEnd) -> Result<EndedRun, ProjectBoardError> {
         self.execute_noted(request, None)
     }
 
@@ -88,7 +89,7 @@ impl EndRun {
         &self,
         request: &RunEnd,
         mut facts: Option<&mut OpFacts>,
-    ) -> Result<Run, ProjectBoardError> {
+    ) -> Result<EndedRun, ProjectBoardError> {
         let noting = facts.is_some();
         if let Some(facts) = facts.as_deref_mut() {
             facts.run = Some(u64::from(request.run));
@@ -96,11 +97,15 @@ impl EndRun {
         }
         let (id, number) = (&request.task, request.run);
         // A swarm still running here is stopped before its run is ended.
-        let live = self.liveness.as_ref();
-        if live.is_some_and(|liveness| liveness.is_running(id, number)) {
+        let running = self
+            .liveness
+            .as_ref()
+            .and_then(|liveness| liveness.running_coordinator(id, number));
+        if let Some(agent) = running {
             return Err(ProjectBoardError::RunLive {
                 task: id.clone(),
                 run: number,
+                agent,
             });
         }
         let message = format!(
@@ -172,7 +177,15 @@ impl EndRun {
                     number,
                     "the run ended is the one named"
                 );
-                Ok(run.clone())
+                // Whether this front end looked for the swarm still running.
+                let liveness = match self.liveness {
+                    Some(_) => LivenessCheck::Checked,
+                    None => LivenessCheck::NotChecked,
+                };
+                Ok(EndedRun {
+                    run: run.clone(),
+                    liveness,
+                })
             }
             other => panic!("an end_run writes its run alone, not {other:?}"),
         }

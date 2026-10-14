@@ -35,8 +35,9 @@ pub struct ProjectBoardEnvironment {
     /// then pushes nothing more (`None`: the request runs to its end).
     pub cancelled: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     /// What launches a started task's coordinator, and sees whether a
-    /// run's swarm still runs: the agent tool's, only while its session
-    /// may spawn (S4c); `None` for a front end that starts nothing and sees
+    /// run's swarm still runs: the agent tool's (S4c), which launches only
+    /// while its session's policy allows spawn (it asks before a start and
+    /// as it launches); `None` for a front end that starts nothing and sees
     /// no swarm (the CLI), so a start is refused and an end_run sees none
     /// running.
     pub launcher: Option<Launcher>,

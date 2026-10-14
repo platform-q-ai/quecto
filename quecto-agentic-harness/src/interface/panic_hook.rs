@@ -31,7 +31,6 @@ use std::sync::Once;
 
 use crate::application::tool_panic_scope::{self, PanicSite, Recording, ToolScope};
 use crate::domain::crash_record::{CrashRecord, PanicReport};
-use crate::domain::redaction::{redact_secrets, redact_url_userinfo};
 use crate::infrastructure::persistence::crash_record;
 
 /// What the hook does with one panic.
@@ -91,12 +90,13 @@ pub fn can_unwind_in(debug: &str) -> bool {
 /// panic while it unwinds) from one that reaches the call's containment,
 /// and those end with a fatal report after this line.
 pub fn contained_report(tool: &str, site: &PanicSite) -> String {
-    // A panic's message may quote what the call held: never a credential.
-    redact_secrets(&redact_url_userinfo(&format!(
+    // A panic's message may quote what the call held: shown as every
+    // sink shows it.
+    format!(
         "quecto: tool '{tool}' panicked at {}: {} (contained to its call unless a fatal report follows)",
         site.location.as_deref().unwrap_or("an unknown location"),
-        site.message
-    )))
+        tool_panic_scope::shown_panic_message(&site.message)
+    )
 }
 
 /// Write one line to stderr, ignoring a failed write: the printing macros panic
@@ -117,7 +117,7 @@ pub fn fatal_context(running: &[String], struck: Option<&PanicSite>) -> Option<S
     let struck = struck.map(|site| {
         format!(
             "it struck the call's own panic while that unwound: {} at {}",
-            site.message,
+            tool_panic_scope::shown_panic_message(&site.message),
             site.location.as_deref().unwrap_or("an unknown location")
         )
     });
@@ -267,11 +267,11 @@ fn crash(site: &PanicSite, earlier: Option<&PanicSite>) -> CrashRecord {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|since| u64::try_from(since.as_millis()).unwrap_or(u64::MAX))
         .unwrap_or_default();
-    // Secret shapes redacted, as in the call's own result (#2192 review);
-    // the report bounds the text.
+    // Shown as in the call's own result (#2192 review); the report bounds
+    // the text too.
     let report = |site: &PanicSite| {
         PanicReport::new(
-            &crate::domain::redaction::redact_secrets(&site.message),
+            &tool_panic_scope::shown_panic_message(&site.message),
             site.location.as_deref(),
         )
     };

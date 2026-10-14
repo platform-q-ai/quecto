@@ -58,7 +58,8 @@ fn recovered_by_end_run(store: &MemoryBoardStore) {
             outcome: RunEndOutcome::Failed,
             expected_updated: Some(task.fields().updated.clone()),
         })
-        .unwrap();
+        .unwrap()
+        .run;
     assert_eq!(ended.fields().outcome, Some(RunOutcome::Failed));
     let release = ChangeBoardTask::new(
         Arc::new(store.client_as(person("Ada"))),

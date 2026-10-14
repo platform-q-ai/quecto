@@ -10,6 +10,7 @@ use crate::application::project_board::use_cases::ChangeBoardTask;
 use crate::application::project_board::use_cases::fixtures_tests::{
     SetClock, at, board, fields, person, slug,
 };
+use crate::domain::project_board::entities::run::Run;
 use crate::domain::project_board::entities::task::Task;
 use crate::domain::project_board::services::starts::start;
 use crate::domain::project_board::value_objects::rule_error::BoardRuleError;
@@ -83,7 +84,8 @@ fn the_holder_ends_a_stranded_run_and_can_then_release_the_task() {
         let mut facts = OpFacts::default();
         let ended = ender(&store, "Ada", "10:30:00")
             .execute_noted(&ending(outcome), Some(&mut facts))
-            .unwrap();
+            .unwrap()
+            .run;
         assert_eq!(ended, run_1(&store));
         let fields = ended.fields();
         assert_eq!((fields.outcome, fields.cost), (Some(want), None));
@@ -138,7 +140,8 @@ fn another_ends_a_stranded_run_as_lost_once_they_hold_the_task() {
     .unwrap();
     let ended = ender(&store, "Bob", "12:01:00")
         .execute(&ending(RunEndOutcome::Lost))
-        .unwrap();
+        .unwrap()
+        .run;
     assert_eq!(ended.fields().outcome, Some(RunOutcome::Lost));
     assert_eq!(run_1(&store), ended);
 }
@@ -204,22 +207,23 @@ fn an_outcome_is_named_by_its_allowlist() {
     }
 }
 
-/// Whether a run's swarm runs here, as told.
+/// Whether a run's swarm runs here, as told: coordinator `7f3a`.
 struct Running(bool);
 
 impl crate::application::project_board::ports::RunLiveness for Running {
-    fn is_running(
+    fn running_coordinator(
         &self,
         task: &crate::domain::project_board::value_objects::slug::Slug,
         run: u32,
-    ) -> bool {
-        self.0 && task.as_str() == "board-store" && run == 1
+    ) -> Option<String> {
+        (self.0 && task.as_str() == "board-store" && run == 1).then(|| "7f3a".into())
     }
 }
 
-/// Review round 3 (M2): a run whose swarm still runs where this front end
-/// can see it is never ended by hand, by any outcome; nothing is written.
-/// One it does not see running ends as ever.
+/// Review rounds 3-4 (M2, L3): a run whose swarm still runs where this
+/// front end can see it is never ended by hand, by any outcome; nothing is
+/// written, and the refusal names the coordinator to stop. One it does not
+/// see running ends as ever, and says the front end checked.
 #[test]
 fn a_run_whose_swarm_still_runs_is_not_ended() {
     let (store, _) = stranded();
@@ -233,30 +237,36 @@ fn a_run_whose_swarm_still_runs_is_not_ended() {
         )
         .unwrap()
     };
+    let live = ProjectBoardError::RunLive {
+        task: slug("board-store"),
+        run: 1,
+        agent: "7f3a".into(),
+    };
     for outcome in RunEndOutcome::ALL {
         let refused = watching(true).execute(&ending(outcome));
-        assert_eq!(
-            refused,
-            Err(ProjectBoardError::RunLive {
-                task: slug("board-store"),
-                run: 1,
-            }),
-            "{outcome:?}"
-        );
+        assert_eq!(refused, Err(live.clone()), "{outcome:?}");
     }
     assert_eq!(store.writes(), writes, "nothing written");
     assert_eq!(
-        ProjectBoardError::RunLive {
-            task: slug("board-store"),
-            run: 1,
-        }
-        .to_string(),
+        live.to_string(),
         "run 1 of board-store still has its swarm running in this session: stop its \
-         coordinator first (agent_cmd kill), then end the run"
+         coordinator first (agent_cmd kill 7f3a), then end the run"
     );
-    assert!(
-        watching(false)
-            .execute(&ending(RunEndOutcome::Failed))
-            .is_ok()
-    );
+    let ended = watching(false)
+        .execute(&ending(RunEndOutcome::Failed))
+        .unwrap();
+    assert_eq!(ended.liveness, LivenessCheck::Checked);
+}
+
+/// A front end that sees no swarm (the CLI) ends the run unchecked, and
+/// says so.
+#[test]
+fn a_front_end_that_sees_no_swarm_ends_the_run_unchecked() {
+    let (store, _) = stranded();
+    let ended = ender(&store, "Ada", "10:30:00")
+        .execute(&ending(RunEndOutcome::Failed))
+        .unwrap();
+    assert_eq!(ended.liveness, LivenessCheck::NotChecked);
+    assert_eq!(LivenessCheck::NotChecked.as_str(), "not_checked");
+    assert_eq!(LivenessCheck::Checked.as_str(), "checked");
 }

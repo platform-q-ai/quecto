@@ -118,12 +118,12 @@ fn launching_board(
 struct Launching;
 
 impl crate::application::project_board::ports::RunLiveness for Launching {
-    fn is_running(
+    fn running_coordinator(
         &self,
         _: &crate::domain::project_board::value_objects::slug::Slug,
         _: u32,
-    ) -> bool {
-        false
+    ) -> Option<String> {
+        None
     }
 }
 
@@ -242,12 +242,12 @@ fn tool_without_launcher() -> super::BoardTool {
 struct Failing;
 
 impl crate::application::project_board::ports::RunLiveness for Failing {
-    fn is_running(
+    fn running_coordinator(
         &self,
         _: &crate::domain::project_board::value_objects::slug::Slug,
         _: u32,
-    ) -> bool {
-        false
+    ) -> Option<String> {
+        None
     }
 }
 
@@ -327,12 +327,12 @@ async fn a_failed_launch_records_its_undo() {
 struct StillRunning;
 
 impl crate::application::project_board::ports::RunLiveness for StillRunning {
-    fn is_running(
+    fn running_coordinator(
         &self,
         task: &crate::domain::project_board::value_objects::slug::Slug,
         run: u32,
-    ) -> bool {
-        (task.as_str(), run) == ("a", 1)
+    ) -> Option<String> {
+        ((task.as_str(), run) == ("a", 1)).then(|| "7f3a".into())
     }
 }
 
@@ -370,15 +370,19 @@ async fn the_tool_refuses_to_end_a_run_its_session_still_runs() {
     assert!(refused.is_error, "{answer}");
     assert_eq!(answer["error"]["code"], json!("run_live"), "{answer}");
     assert_eq!(
-        (&answer["error"]["task"], &answer["error"]["run"]),
-        (&json!("a"), &json!(1)),
+        (
+            &answer["error"]["task"],
+            &answer["error"]["run"],
+            &answer["error"]["agent"]
+        ),
+        (&json!("a"), &json!(1), &json!("7f3a")),
         "{answer}"
     );
     assert_eq!(
         answer["error"]["message"],
         json!(
             "run 1 of a still has its swarm running in this session: stop its coordinator \
-             first (agent_cmd kill), then end the run"
+             first (agent_cmd kill 7f3a), then end the run"
         )
     );
     let ops = records.taken();

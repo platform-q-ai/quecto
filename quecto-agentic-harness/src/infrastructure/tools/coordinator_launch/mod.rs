@@ -234,23 +234,25 @@ impl CoordinatorLaunch for SpawnCoordinatorLauncher {
 }
 
 impl RunLiveness for SpawnCoordinatorLauncher {
-    /// A subagent of this session labelled as the run's coordinator, live
-    /// and not exited.
-    fn is_running(&self, task: &Slug, run: u32) -> bool {
+    /// Any subagent of this session with the run's label that runs: its
+    /// agent id (its registry key, the uuid `agent_cmd kill` takes).
+    fn running_coordinator(&self, task: &Slug, run: u32) -> Option<String> {
         let label = label(task.as_str(), run);
         let entries = self.subagents.lock().unwrap_or_else(|e| e.into_inner());
         entries
             .iter()
-            .any(|(key, entry)| entry.effective_display_name(key) == label && runs(entry))
+            .find(|(key, entry)| entry.effective_display_name(key) == label && runs(entry))
+            .map(|(key, _)| key.clone())
     }
 }
 
-/// Whether a subagent `entry` runs: live, and in a status of one that
-/// runs (an allowlist).
+/// Whether a subagent `entry` may run: live or detached (a detached child
+/// still runs, out of reach), and in a status of one that runs (an
+/// allowlist).
 fn runs(entry: &super::subagent_registry::SubagentEntry) -> bool {
     let live = match entry.persisted_liveness {
-        SubagentLiveness::Live => true,
-        SubagentLiveness::Detached | SubagentLiveness::Dead => false,
+        SubagentLiveness::Live | SubagentLiveness::Detached => true,
+        SubagentLiveness::Dead => false,
     };
     live && match entry.status {
         SubagentStatus::Starting

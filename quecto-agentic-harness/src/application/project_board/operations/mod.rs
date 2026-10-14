@@ -10,8 +10,8 @@ use std::sync::Arc;
 
 pub use super::dto::NoPullRequestHost;
 use super::dto::{
-    BoardListing, BoardOp, DraftUpdate, NewBoardTask, PlanAcceptance, PlanDiscard, PlanEdit,
-    PlanProposal, ProjectBoardError, RunEnd, ShownTask, TaskStart,
+    BoardListing, BoardOp, DraftUpdate, EndedRun, NewBoardTask, PlanAcceptance, PlanDiscard,
+    PlanEdit, PlanProposal, ProjectBoardError, RunEnd, ShownTask, TaskStart,
 };
 use super::ports::{BoardClock, BoardHead, BoardListings, KeepCopy};
 use super::use_cases::{
@@ -20,7 +20,6 @@ use super::use_cases::{
     UpdateDraftTask,
 };
 use crate::domain::project_board::entities::plan::Plan;
-use crate::domain::project_board::entities::run::Run;
 use crate::domain::project_board::entities::task::Task;
 use crate::domain::project_board::services::plans::Accepted;
 use crate::domain::project_board::value_objects::slug::Slug;
@@ -203,7 +202,7 @@ pub enum BoardOutcome {
     /// (boxed: three artifacts).
     Accepted(Box<Accepted>),
     /// A run ended by hand, as written (S4c).
-    RunEnded(Run),
+    RunEnded(EndedRun),
     /// A task started and its coordinator launched (S4c).
     Started(Box<crate::application::project_board::start::StartedTask>),
 }

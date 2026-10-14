@@ -65,3 +65,29 @@ impl RunEndOutcome {
             .find(|outcome| outcome.as_str() == text)
     }
 }
+
+/// A run ended by hand, as written, and whether its front end could see
+/// that its swarm had stopped.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EndedRun {
+    pub run: crate::domain::project_board::entities::run::Run,
+    pub liveness: LivenessCheck,
+}
+
+/// Whether an end_run's front end looked for the run's swarm still running
+/// (S4c): one that can see none (the CLI) did not, and its caller makes
+/// sure the coordinator has stopped.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LivenessCheck {
+    Checked,
+    NotChecked,
+}
+
+impl LivenessCheck {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Checked => "checked",
+            Self::NotChecked => "not_checked",
+        }
+    }
+}

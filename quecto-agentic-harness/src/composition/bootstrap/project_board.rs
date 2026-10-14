@@ -152,7 +152,13 @@ fn build_with_warnings(
                 .map(|swarms| swarms as Arc<dyn CoordinatorLaunch>),
             environment.cancelled.clone(),
         )
-        .map_err(built)?,
+        .map_err(built)?
+        .seeing(
+            environment
+                .launcher
+                .clone()
+                .map(|swarms| swarms as Arc<dyn RunLiveness>),
+        ),
         clear: ClearSetAside::new(Arc::clone(&store), Arc::clone(&clock)).map_err(built)?,
         complete,
         clock,

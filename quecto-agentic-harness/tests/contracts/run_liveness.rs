@@ -1,7 +1,7 @@
 //! The run liveness port's contract (S4c review round 3), run against its
 //! spawn-backed adapter: a run's swarm still runs while a subagent of this
-//! session labelled as its coordinator is live and not exited; any other
-//! run, task or subagent is not seen running.
+//! session with the run's label is live or detached and not exited, and
+//! the port names it; any other run, task or subagent is not seen running.
 use std::future::Future;
 use std::pin::Pin;
 
@@ -76,18 +76,34 @@ fn a_runs_swarm_runs_while_its_coordinator_is_live() {
     );
     let seen = liveness(&subagents);
     let task = Slug::parse("demo-hello").unwrap();
-    assert!(seen.is_running(&task, 1));
-    assert!(!seen.is_running(&task, 2), "another run's");
-    assert!(
-        !seen.is_running(&Slug::parse("other").unwrap(), 1),
+    assert_eq!(seen.running_coordinator(&task, 1), Some(key.clone()));
+    assert_eq!(seen.running_coordinator(&task, 2), None, "another run's");
+    assert_eq!(
+        seen.running_coordinator(&Slug::parse("other").unwrap(), 1),
+        None,
         "another task's"
     );
+    subagents
+        .lock()
+        .unwrap()
+        .get_mut(&key)
+        .unwrap()
+        .persisted_liveness = SubagentLiveness::Detached;
+    assert_eq!(
+        seen.running_coordinator(&task, 1),
+        Some(key.clone()),
+        "a detached one still runs"
+    );
     subagents.lock().unwrap().get_mut(&key).unwrap().status = SubagentStatus::Exited;
-    assert!(!seen.is_running(&task, 1), "an exited one runs nothing");
+    assert_eq!(
+        seen.running_coordinator(&task, 1),
+        None,
+        "an exited one runs nothing"
+    );
 }
 
 #[test]
-fn a_dead_or_detached_coordinator_runs_nothing_and_neither_does_another_label() {
+fn a_dead_coordinator_runs_nothing_and_neither_does_another_label() {
     let subagents = new_registry();
     let seen = liveness(&subagents);
     let task = Slug::parse("demo-hello").unwrap();
@@ -99,15 +115,9 @@ fn a_dead_or_detached_coordinator_runs_nothing_and_neither_does_another_label() 
     );
     holding(
         &subagents,
-        "board-demo-hello-run-1",
-        SubagentLiveness::Detached,
-        SubagentStatus::Idle,
-    );
-    holding(
-        &subagents,
         "worker-demo-hello-run-1",
         SubagentLiveness::Live,
         SubagentStatus::Running,
     );
-    assert!(!seen.is_running(&task, 1));
+    assert_eq!(seen.running_coordinator(&task, 1), None);
 }

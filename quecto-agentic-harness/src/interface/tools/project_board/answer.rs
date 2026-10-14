@@ -34,7 +34,7 @@
 use serde_json::{Map, Value, json};
 
 use super::request::RequestError;
-use crate::application::project_board::dto::{BoardListing, ProjectBoardError};
+use crate::application::project_board::dto::{BoardListing, LivenessCheck, ProjectBoardError};
 use crate::application::project_board::operations::{BoardOutcome, Completion};
 use crate::application::project_board::ports::{
     ArtifactKey, BoardClockError, BoardHead, BoardStoreError, PullRequestStatesError,
@@ -211,6 +211,11 @@ fn shown_json(text: &str) -> Value {
 /// swarm reported them (S4c).
 const NO_SWARM_REPORT: &str = "items recorded as todo: no swarm report";
 
+/// What an `end_run` from a front end that cannot see running swarms (the
+/// CLI) leaves its caller to have made sure of (S4c).
+const NOT_CHECKED: &str = "this front end cannot see running swarms: make sure the run's \
+coordinator has stopped (agent_cmd kill) before ending its run";
+
 pub fn outcome(op: &str, outcome: &BoardOutcome, clock: Option<String>) -> Value {
     let mut fields = Map::new();
     match outcome {
@@ -242,8 +247,18 @@ pub fn outcome(op: &str, outcome: &BoardOutcome, clock: Option<String>) -> Value
         BoardOutcome::Planned(plan) => {
             fields.insert("plan".into(), planned_json(plan));
         }
-        BoardOutcome::RunEnded(run) => {
+        BoardOutcome::RunEnded(ended) => {
+            let run = &ended.run;
             fields.insert("run".into(), run_json(run));
+            // Whether this front end could see the run's swarm still
+            // running; one that could not says what that leaves its caller.
+            fields.insert("liveness".into(), json!(ended.liveness.as_str()));
+            match ended.liveness {
+                LivenessCheck::Checked => {}
+                LivenessCheck::NotChecked => {
+                    fields.insert("liveness_note".into(), json!(NOT_CHECKED));
+                }
+            }
             // A hand end reports no swarm: what it recorded of the items.
             let report = match run.fields().outcome {
                 Some(RunOutcome::Succeeded | RunOutcome::Stopped | RunOutcome::Failed) => {
@@ -617,9 +632,13 @@ fn error_fields(error: &ProjectBoardError) -> (ErrorCode, Map<String, Value>) {
             fields([("reason", shown_json(&why.to_string()))]),
         ),
         E::NoLauncher => (C::NoLauncher, Map::new()),
-        E::RunLive { task, run } => (
+        E::RunLive { task, run, agent } => (
             C::RunLive,
-            fields([("task", slug_json(task)), ("run", json!(run))]),
+            fields([
+                ("task", slug_json(task)),
+                ("run", json!(run)),
+                ("agent", shown_json(agent)),
+            ]),
         ),
         E::Brief { code, .. } => (C::Brief, fields([("brief", json!({"code": code}))])),
         E::LaunchFailed {

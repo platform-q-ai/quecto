@@ -392,8 +392,8 @@ fn a_deadline_has_come_at_it() {
     assert!(!past(now + Duration::from_millis(1), now));
 }
 
-/// Review round 3: a subagent runs while it is live and in each status of
-/// one that runs; a detached, dead or exited one does not.
+/// Review rounds 3-4: a subagent runs while it is live or detached and in
+/// each status of one that runs; a dead or exited one does not.
 #[test]
 fn a_coordinator_runs_while_it_is_live_and_running() {
     use crate::domain::ids::AgentUuid;
@@ -425,12 +425,11 @@ fn a_coordinator_runs_while_it_is_live_and_running() {
             "dead {status:?}"
         );
         assert!(
-            !runs(&entry(SubagentLiveness::Detached, status.clone())),
+            runs(&entry(SubagentLiveness::Detached, status.clone())),
             "detached {status:?}"
         );
     }
-    assert!(!runs(&entry(
-        SubagentLiveness::Live,
-        SubagentStatus::Exited
-    )));
+    for liveness in [SubagentLiveness::Live, SubagentLiveness::Detached] {
+        assert!(!runs(&entry(liveness, SubagentStatus::Exited)));
+    }
 }
