@@ -154,24 +154,31 @@ impl Receipt {
     fn http_error(&self, status: u16, body: &str) {
         let value = super::provider_diagnostics::raw_json(body).unwrap_or_default();
         let error = super::provider_diagnostics::http_error_envelope(&value);
-        let terminal = [error, &value["response"]["error"]].iter().any(|error| {
-            ["type", "code"].iter().any(|field| {
-                error[*field].as_str().is_some_and(|name| {
-                    crate::domain::inference::services::provider_error::is_billing_error_name(name)
-                        || matches!(
-                            name,
-                            "authentication_error"
-                                | "permission_error"
-                                | "invalid_request_error"
-                                | "invalid_api_key"
-                        )
-                })
+        let terminal = ["type", "code"].iter().any(|field| {
+            error[*field].as_str().is_some_and(|name| {
+                crate::domain::inference::services::provider_error::is_billing_error_name(name)
+                    || matches!(
+                        name,
+                        "authentication_error"
+                            | "permission_error"
+                            | "invalid_request_error"
+                            | "invalid_api_key"
+                    )
             })
         });
         let mut state = self.0.lock().unwrap();
         diagnostics::typed_http(&mut state.diagnostics, &value);
         state.failure = true;
-        let throttled = matches!(status, 429 | 529) || is_typed_throttle(&value);
+        // Re-envelope only the selected object; ignored competing fields cannot
+        // supply throttle authority. The bounded parse caps this small clone.
+        let selected = serde_json::json!({"error": error});
+        let body_throttle = match std::ptr::eq(error, &value) {
+            // Root throttle declarations retain their existing explicit-event
+            // requirement; HTTP status and headers are independent authority.
+            true => is_typed_throttle(error),
+            false => is_typed_throttle(&selected),
+        };
+        let throttled = matches!(status, 429 | 529) || body_throttle;
         let state = &mut *state;
         if let (false, false, true, Some(permit)) =
             (state.hinted, terminal, throttled, state.permit.as_mut())

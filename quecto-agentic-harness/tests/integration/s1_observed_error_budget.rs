@@ -58,6 +58,7 @@ async fn observe(
     let mut req = request();
     req.trace = Some(trace.clone());
     let output = bounded(invoke_request(provider.as_ref(), surface, req)).await;
+    assert_eq!(server.starts(), 1, "one physical provider request");
     (output, trace, gate.snapshot())
 }
 fn outward(output: &Observation) -> &Error {
@@ -495,5 +496,242 @@ async fn s1_semantic_authority_active_oversized_parse() {
         let body =
             envelope(leaf, 128, true).replace("\n\n", &format!("{}\n\n", " ".repeat(4097 - 128)));
         boundary_body(leaf, surface, admitted, true, 4097, body).await;
+    }
+}
+
+// One finite HTTP envelope policy: direct object > response.error object > root.
+// Selecting an empty direct object deliberately shadows a nested declaration.
+#[tokio::test]
+async fn s1_e1_e2_http_envelope_precedence() {
+    let mut failures = Vec::new();
+    let mut count = 0;
+    for leaf in [Leaf::OpenAi, Leaf::Anthropic, Leaf::Responses, Leaf::OAuth] {
+        for surface in [Surface::Chat, Surface::Assembled, Surface::Incremental] {
+            for admitted in [false, true] {
+                for (status, body, class, code, throttle) in [
+                    (
+                        429,
+                        r#"{"response":{"error":{"code":"insufficient_quota","message":"CANARY"}}}"#,
+                        ProviderErrorClass::Billing,
+                        Some(ErrorCode::InsufficientQuota),
+                        false,
+                    ),
+                    (
+                        500,
+                        r#"{"response":{"error":{"type":"invalid_request_error","message":"CANARY"}}}"#,
+                        ProviderErrorClass::Client,
+                        Some(ErrorCode::InvalidRequestError),
+                        false,
+                    ),
+                    (
+                        429,
+                        r#"{"code":"insufficient_quota"}"#,
+                        ProviderErrorClass::Billing,
+                        Some(ErrorCode::InsufficientQuota),
+                        false,
+                    ),
+                    (
+                        429,
+                        r#"{"error":{"code":"insufficient_quota"}}"#,
+                        ProviderErrorClass::Billing,
+                        Some(ErrorCode::InsufficientQuota),
+                        false,
+                    ),
+                    (
+                        500,
+                        r#"{"type":"invalid_request_error"}"#,
+                        ProviderErrorClass::Client,
+                        Some(ErrorCode::InvalidRequestError),
+                        false,
+                    ),
+                    (
+                        500,
+                        r#"{"error":{"type":"invalid_request_error"}}"#,
+                        ProviderErrorClass::Client,
+                        Some(ErrorCode::InvalidRequestError),
+                        false,
+                    ),
+                    (
+                        429,
+                        r#"{"error":{"type":"rate_limit_error"},"response":{"error":{"code":"insufficient_quota"}}}"#,
+                        ProviderErrorClass::RateLimit,
+                        Some(ErrorCode::RateLimitExceeded),
+                        true,
+                    ),
+                    (
+                        429,
+                        r#"{"error":{"code":"insufficient_quota"},"response":{"error":{"type":"rate_limit_error"}}}"#,
+                        ProviderErrorClass::Billing,
+                        Some(ErrorCode::InsufficientQuota),
+                        false,
+                    ),
+                    (
+                        429,
+                        r#"{"error":{},"response":{"error":{"code":"insufficient_quota"}}}"#,
+                        ProviderErrorClass::RateLimit,
+                        None,
+                        true,
+                    ),
+                    (
+                        429,
+                        r#"{"error":null,"response":{"error":{"code":"insufficient_quota"}},"type":"rate_limit_error"}"#,
+                        ProviderErrorClass::Billing,
+                        Some(ErrorCode::InsufficientQuota),
+                        false,
+                    ),
+                ] {
+                    let server = Server::start(WireReply {
+                        status,
+                        headers: String::new(),
+                        body: body.into(),
+                        stalled: false,
+                    })
+                    .await;
+                    let gate = Arc::new(Gate::default());
+                    let provider = leaf.provider(&server.url, admitted.then(|| gate.clone()));
+                    let trace = Arc::new(RequestTrace::default());
+                    trace.start();
+                    let mut req = request();
+                    req.trace = Some(trace.clone());
+                    let output = bounded(invoke_request(provider.as_ref(), surface, req)).await;
+                    let error = outward(&output);
+                    let state = gate.snapshot();
+                    assert_eq!(server.starts(), 1);
+                    let attempts = trace.attempt_diagnostics();
+                    // Only passive Anthropic non-SSE chat has no observed receipt.
+                    assert_eq!(
+                        attempts.len(),
+                        usize::from(
+                            admitted
+                                || !matches!((leaf, surface), (Leaf::Anthropic, Surface::Chat))
+                        )
+                    );
+                    let receipt_ok = attempts.iter().all(|a| a.error_code == code);
+                    assert_eq!(state.grants, usize::from(admitted));
+                    assert_eq!(state.abandoned, 0);
+                    assert_eq!(
+                        state.finishes,
+                        if admitted {
+                            vec![Feedback::Failure]
+                        } else {
+                            vec![]
+                        }
+                    );
+                    assert!(!format!("{output:?}{attempts:?}").contains("CANARY"));
+                    if error.class != class
+                        || error.status != Some(status)
+                        || error.retryable != class.is_retryable()
+                        || !receipt_ok
+                        || state.blocked != (admitted && throttle)
+                        || state.receipts
+                            != if admitted && throttle {
+                                vec![ThrottleFeedback::NoHint { jitter: u64::MAX }]
+                            } else {
+                                vec![]
+                            }
+                    {
+                        failures.push(format!("{leaf:?}/{surface:?}/{admitted}/{count}: class={:?} code={:?} feedback={:?}",error.class,attempts.iter().map(|a| a.error_code).collect::<Vec<_>>(),state.receipts));
+                    }
+                    count += 1;
+                }
+            }
+        }
+    }
+    assert_eq!(count, 240);
+    assert!(
+        failures.is_empty(),
+        "{} / {count} cells: {failures:?}",
+        failures.len()
+    );
+}
+
+#[tokio::test]
+async fn s1_e1_e2_first_error_stops_tail_authority() {
+    let mut failures = Vec::new();
+    let mut count = 0;
+    for (leaf, surface, admitted) in cells() {
+        for suffix in ["\u{a0}", "\u{2003}", "\u{202f}", " ", "\t"] {
+            let first = envelope(leaf, 128, true).replace("\n\n", &format!("{suffix}\n\n"));
+            let body = format!("{first}{}", envelope(leaf, 128, false));
+            let (output, trace, state) = observe(leaf, surface, admitted, body).await;
+            let error = outward(&output);
+            let attempts = trace.attempt_diagnostics();
+            assert_eq!(attempts.len(), 1);
+            assert!(!format!("{output:?}{attempts:?}").contains("CANARY"));
+            assert_eq!(state.grants, usize::from(admitted));
+            assert_eq!(state.abandoned, 0);
+            assert_eq!(
+                state.finishes,
+                if admitted {
+                    vec![Feedback::Failure]
+                } else {
+                    vec![]
+                }
+            );
+            let valid = suffix == " " || suffix == "\t";
+            let assembled_codex = matches!(leaf, Leaf::Responses | Leaf::OAuth)
+                && matches!(surface, Surface::Chat | Surface::Assembled);
+            let explicit_anthropic = matches!(leaf, Leaf::Anthropic);
+            // Exact incremental/OpenAI parsers ignore malformed first data;
+            // their valid tail really is consumed and remains authoritative.
+            let tail = !valid && !assembled_codex && !explicit_anthropic;
+            let expected_code = if valid {
+                Some(ErrorCode::InvalidRequestError)
+            } else if tail {
+                Some(ErrorCode::RateLimitExceeded)
+            } else {
+                None
+            };
+            let expected_class = if valid {
+                ProviderErrorClass::Billing
+            } else if tail {
+                ProviderErrorClass::RateLimit
+            } else {
+                ProviderErrorClass::Server
+            };
+            let expected_status = if valid {
+                402
+            } else if tail {
+                429
+            } else {
+                502
+            };
+            if error.class != expected_class
+                || error.status != Some(expected_status)
+                || error.retryable != expected_class.is_retryable()
+                || attempts[0].error_code != expected_code
+                || attempts[0].parse_errors != u32::from(!valid)
+                || state.blocked != (admitted && tail)
+                || state.receipts
+                    != if admitted && tail {
+                        vec![ThrottleFeedback::NoHint { jitter: u64::MAX }]
+                    } else {
+                        vec![]
+                    }
+            {
+                failures.push(format!("{leaf:?}/{surface:?}/{admitted}/{suffix:?}: class={:?} code={:?} feedback={:?}",error.class,attempts[0].error_code,state.receipts));
+            }
+            count += 1;
+        }
+    }
+    assert_eq!(count, 100);
+    assert!(
+        failures.is_empty(),
+        "{} / {count} cells: {failures:?}",
+        failures.len()
+    );
+}
+
+#[tokio::test]
+async fn s1_e1_e2_valid_first_terminal_controls() {
+    for (leaf, surface, admitted) in cells() {
+        for billing in [false, true] {
+            let body = format!(
+                "{}{}",
+                envelope(leaf, 128, billing),
+                envelope(leaf, 128, !billing)
+            );
+            boundary_body(leaf, surface, admitted, billing, 4096, body).await;
+        }
     }
 }

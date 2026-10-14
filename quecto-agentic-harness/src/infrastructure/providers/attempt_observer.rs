@@ -54,6 +54,7 @@ impl LineObserver {
 
 pub(super) struct ProtocolObserver {
     vendor: Vendor,
+    surface: super::super::attempt_profile::Surface,
     pub(super) terminal: bool,
     event: String,
 }
@@ -61,6 +62,7 @@ impl ProtocolObserver {
     pub(super) fn new(profile: Profile) -> Self {
         Self {
             vendor: profile.vendor,
+            surface: profile.surface,
             terminal: false,
             event: String::new(),
         }
@@ -258,6 +260,25 @@ impl ProtocolObserver {
             }
         } else {
             let Some(value) = parsed else {
+                // Codex whole-read consumers trim Unicode whitespace for
+                // dispatch, but reject its RAW semantics. Mirror only that
+                // terminal shape, never its type/code or later ignored bytes.
+                if matches!(self.vendor, Vendor::Codex)
+                    && matches!(
+                        self.surface,
+                        super::super::attempt_profile::Surface::Chat
+                            | super::super::attempt_profile::Surface::Assembled
+                    )
+                {
+                    if let Ok(Some(terminal)) = error_shape::failure(data.trim_end(), self.vendor) {
+                        let mut state = receipt.0.lock().unwrap();
+                        state.diagnostics.terminal_event = Some(terminal);
+                        state.diagnostics.termination = Termination::Completed;
+                        drop(state);
+                        receipt.fail();
+                        self.terminal = true;
+                    }
+                }
                 return;
             };
             let (failed, completed) = match self.vendor {

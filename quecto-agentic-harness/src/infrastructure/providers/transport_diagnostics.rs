@@ -77,7 +77,6 @@ pub(super) fn typed_http(d: &mut AttemptDiagnostics, value: &serde_json::Value) 
         d,
         crate::infrastructure::providers::provider_diagnostics::http_error_envelope(value),
     );
-    typed(d, value);
 }
 pub(super) fn unix_ms() -> u64 {
     std::time::SystemTime::now()

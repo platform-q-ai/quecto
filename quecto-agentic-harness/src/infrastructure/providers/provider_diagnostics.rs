@@ -53,11 +53,19 @@ fn render(status: u16, vendor: &str, class: ProviderErrorClass, refusal: &str) -
     text
 }
 
-/// The HTTP formatter and receipt share the same accepted error envelope.
+/// Finite, non-recursive HTTP precedence shared by formatting and receipts:
+/// direct error object > response.error object > root. An empty selected object
+/// still shadows lower-priority envelopes; ignored fields grant no authority.
 pub(super) fn http_error_envelope(value: &serde_json::Value) -> &serde_json::Value {
     value
         .get("error")
         .filter(|v| v.is_object())
+        .or_else(|| {
+            value
+                .get("response")?
+                .get("error")
+                .filter(|v| v.is_object())
+        })
         .unwrap_or(value)
 }
 
@@ -106,8 +114,8 @@ pub(super) fn http(status: u16, vendor: &str, body: &str) -> String {
     } else if vendor == "Codex"
         && status == 400
         && value.as_ref().is_some_and(|v| {
-            v["error"]["code"].as_str() == Some("invalid_encrypted_content")
-                && refusal_compatible(&v["error"])
+            http_error_envelope(v)["code"].as_str() == Some("invalid_encrypted_content")
+                && refusal_compatible(http_error_envelope(v))
         })
     {
         "encrypted"
@@ -119,7 +127,7 @@ pub(super) fn http(status: u16, vendor: &str, body: &str) -> String {
             if class == ProviderErrorClass::Client
                 && matches!(status, 400 | 422 | 500..=599)
                 && marker == "none"
-                && is_context_limit(value.get("error").unwrap_or(value)) =>
+                && is_context_limit(http_error_envelope(value)) =>
         {
             "none; limit=context length"
         }
