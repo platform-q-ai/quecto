@@ -3,8 +3,10 @@
 //! last version as last read, so two proposals that race get two
 //! versions. Anyone with access to the board proposes, as the store's
 //! committer; a done or archived task's plans are settled. Its text is
-//! normalised as it enters ([`plan_text`](super::plan_text)). Only the
-//! plan is written: the task is left as it is. Refused while any plan of
+//! normalised as it enters ([`plan_text`](super::plan_text)). A team
+//! whose coordinator role's model names no provider is refused, as a
+//! start would refuse it. Only the plan is written: the task is left as
+//! it is. Refused while any plan of
 //! the task is set aside, since the next number may be that file's.
 //! Blocking: a lost write pauses the calling thread before it is tried
 //! again.
@@ -14,6 +16,7 @@ use super::board_change::{checked_writer, commit, owned, task_on, written_plan};
 use super::{board_view, plan_text};
 use crate::application::project_board::dto::{PlanProposal, ProjectBoardError};
 use crate::application::project_board::ports::{BoardArtifact, BoardClock, ProjectBoardStore};
+use crate::application::project_board::swarm_brief::coordinator_model_named;
 use crate::application::project_board::telemetry::OpFacts;
 use crate::domain::project_board::entities::claim::Identity;
 use crate::domain::project_board::entities::plan::Plan;
@@ -47,7 +50,8 @@ impl ProposePlan {
     /// # Errors
     /// No such task, or its file or one of its plans' set aside; a done or
     /// archived task, plans that contradict each other, no version left,
-    /// or the plan's schema; the clock's; a board that kept moving; the
+    /// or the plan's schema; a coordinator model that names no provider;
+    /// the clock's; a board that kept moving; the
     /// store's.
     pub fn execute(&self, proposal: &PlanProposal) -> Result<Plan, ProjectBoardError> {
         self.execute_noted(proposal, None)
@@ -86,6 +90,7 @@ impl ProposePlan {
                 let task = task_on(board, id)?;
                 let versions = owned(board_view::plans_of(board, id)?);
                 let plan = propose(task, &versions, content.clone(), actor, &when.now)?;
+                coordinator_model_named(plan.fields().team.as_ref())?;
                 Ok(vec![BoardArtifact::Plan(plan)])
             },
         )

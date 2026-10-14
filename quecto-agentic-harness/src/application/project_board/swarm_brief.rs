@@ -437,6 +437,33 @@ pub fn brief_of(started: &Started, now: &Timestamp) -> Result<SwarmBrief, BriefR
 
 /// What a team makes of the run: its member limit, the coordinator's
 /// choice, the worker roles not applied, its budget and its deadline.
+/// Whether `model` names its provider as spawn takes it,
+/// `provider/model`, neither empty: no provider is guessed (S4c).
+pub fn names_provider(model: &str) -> bool {
+    matches!(model.split_once('/'), Some((provider, id)) if !provider.is_empty() && !id.is_empty())
+}
+
+/// `team`'s coordinator role, when it names one, names its model's
+/// provider: the one rule a plan is judged by when it is proposed, edited
+/// and started, so the planner learns it before the user taps Start. No
+/// team, or one with no coordinator role, lets the coordinator be chosen;
+/// a worker role's model is not applied, so not judged.
+///
+/// # Errors
+/// [`BriefRefusal::CoordinatorModel`]: a coordinator role whose model
+/// names no provider.
+pub fn coordinator_model_named(team: Option<&Team>) -> Result<(), BriefRefusal> {
+    let named = team
+        .into_iter()
+        .flat_map(|team| &team.roles)
+        .filter(|role| role.name.as_str() == COORDINATOR_ROLE)
+        .all(|role| names_provider(&role.model));
+    match named {
+        true => Ok(()),
+        false => Err(BriefRefusal::CoordinatorModel),
+    }
+}
+
 #[derive(Default)]
 struct Terms<'a> {
     member_limit: Option<u32>,
@@ -479,10 +506,10 @@ fn terms_of(team: &Team) -> Result<Terms<'_>, BriefRefusal> {
         }
         match (name.as_str() == COORDINATOR_ROLE, *size) {
             (true, 1) => {
-                // Spawn takes `provider/model`; no provider is guessed.
-                match model.split_once('/') {
-                    Some((provider, id)) if !provider.is_empty() && !id.is_empty() => {}
-                    Some(_) | None => return Err(BriefRefusal::CoordinatorModel),
+                // The rule a proposal and an edit judged: kept as a backstop.
+                match names_provider(model) {
+                    true => {}
+                    false => return Err(BriefRefusal::CoordinatorModel),
                 }
                 coordinator = Some(RoleChoice {
                     model: model.clone(),
