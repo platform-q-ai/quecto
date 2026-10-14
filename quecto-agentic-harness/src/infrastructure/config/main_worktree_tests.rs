@@ -314,3 +314,28 @@ fn a_pointer_or_commondir_holding_more_than_one_line_is_refused() {
     std::fs::write(&commondir, "../..\n../../x\n").unwrap();
     unresolved(&layout.linked, "does not hold one path");
 }
+
+/// The identity compared is the file's device and inode, both taken from
+/// the metadata: a file on another device with the same inode is another
+/// file.
+#[test]
+fn a_file_identity_is_its_device_and_inode() {
+    use std::os::unix::fs::MetadataExt;
+    let layout = layout();
+    let entry = std::fs::symlink_metadata(layout.linked.join(".git")).unwrap();
+    let identity = FileIdentity::of(&entry);
+    assert_eq!(
+        identity,
+        FileIdentity {
+            device: entry.dev(),
+            inode: entry.ino()
+        }
+    );
+    assert_ne!(
+        identity,
+        FileIdentity {
+            device: entry.dev() + 1,
+            inode: entry.ino()
+        }
+    );
+}

@@ -150,3 +150,14 @@ fn a_worktree_of_a_bare_repository_is_unresolved() {
     );
     unresolved(&tmp.path().join("wt2"), "core.bare");
 }
+
+/// A working directory that no longer exists is not a linked worktree:
+/// there is nothing to resolve, so nothing is reported (not a diagnostic).
+#[test]
+fn a_deleted_working_directory_is_not_linked() {
+    let tmp = tempfile::tempdir().unwrap();
+    let gone = tmp.path().join("gone");
+    std::fs::create_dir(&gone).unwrap();
+    std::fs::remove_dir(&gone).unwrap();
+    assert_eq!(locate(&gone), WorktreeLink::NotLinked);
+}

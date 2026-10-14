@@ -19,8 +19,8 @@
 //! path with the same pointer is accepted, exactly as git accepts it; the
 //! common directory is a main worktree's `.git` — named `.git`, its
 //! `core.bare` explicitly false, no `core.worktree`, no includes — and the
-//! main worktree is its parent directory. Anything else is [`WorktreeLink::Unresolved`], so the caller
-//! shares nothing.
+//! main worktree is its parent directory. Anything else is
+//! [`WorktreeLink::Unresolved`], so the caller shares nothing.
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -46,22 +46,26 @@ impl MainWorktreeLocator for GitMetadataWorktreeLocator {
 
 /// `Ok(None)` when `directory` is not the root of a linked worktree.
 fn main_worktree_of(directory: &Path) -> Result<Option<PathBuf>, String> {
-    main_worktree_with_seam(directory, &mut || {})
+    main_worktree_with_seam(directory, || {})
 }
 
 /// [`main_worktree_of`], with `after_pointer_read` run right after the
 /// `.git` pointer is read: the seam a test uses to swap the pointer the
-/// way a concurrent local attacker would.
-fn main_worktree_with_seam(
+/// way a concurrent local attacker would. Generic, so the release path is
+/// monomorphised over the empty closure and carries no seam.
+fn main_worktree_with_seam<F: FnMut()>(
     directory: &Path,
-    after_pointer_read: &mut dyn FnMut(),
+    mut after_pointer_read: F,
 ) -> Result<Option<PathBuf>, String> {
     // Canonical once, up front: the back-link must name `<root>/.git`
     // itself, and `.git` is never canonicalised (a link swapped in after
-    // the read would be followed).
-    let root = directory
-        .canonicalize()
-        .map_err(|error| format!("{}: {error}", directory.display()))?;
+    // the read would be followed). A directory that no longer exists is no
+    // worktree at all.
+    let root = match directory.canonicalize() {
+        Ok(root) => root,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(format!("{}: {error}", directory.display())),
+    };
     let dot_git = root.join(".git");
     match std::fs::symlink_metadata(&dot_git) {
         Ok(entry) if entry.is_dir() => return Ok(None),
@@ -87,40 +91,45 @@ fn main_worktree_with_seam(
     };
     let common = real_directory(&admin, single_line(&common, &admin.join("commondir"))?)?;
     let registry = common.join("worktrees");
-    if admin.parent() != Some(registry.as_path()) {
+    let Some(_registered) = admin.parent().filter(|parent| *parent == registry) else {
         return Err(format!(
             "{} is not registered in {}",
             admin.display(),
             registry.display()
         ));
-    }
+    };
     let back_file = admin.join("gitdir");
     let back = read_metadata(&back_file)?.ok_or_else(|| vanished(&back_file))?;
     let back = admin.join(single_line(&back, &back_file)?);
-    let names_us = back.canonicalize().is_ok_and(|back| back == dot_git);
-    if !names_us {
+    let Some(_names_us) = back.canonicalize().ok().filter(|back| *back == dot_git) else {
         return Err(format!(
             "{} does not name {} back",
             back_file.display(),
             dot_git.display()
         ));
+    };
+    // The path is ours; the entry there now must be the file read. An
+    // entry that cannot be examined says so, never "changed".
+    match std::fs::symlink_metadata(&dot_git) {
+        Ok(entry) if FileIdentity::of(&entry) == pointer_read => {}
+        Ok(_) => {
+            return Err(format!(
+                "{} is not the file read (it changed while being resolved)",
+                dot_git.display()
+            ));
+        }
+        Err(error) => return Err(format!("{}: {error}", dot_git.display())),
     }
-    // The path is ours; the entry there now must be the file read.
-    let now = std::fs::symlink_metadata(&dot_git)
-        .ok()
-        .map(|entry| FileIdentity::of(&entry));
-    if now != Some(pointer_read) {
-        return Err(format!(
-            "{} is not the file read (it changed while being resolved)",
-            dot_git.display()
-        ));
-    }
-    if common.file_name() != Some(std::ffi::OsStr::new(".git")) {
+    let Some(main) = common
+        .parent()
+        .filter(|_| common.file_name() == Some(std::ffi::OsStr::new(".git")))
+        .map(Path::to_path_buf)
+    else {
         return Err(format!(
             "{} is not a main worktree's .git directory (a bare repository has no main worktree)",
             common.display()
         ));
-    }
+    };
     let config_file = common.join("config");
     let config = read_metadata(&config_file)?.ok_or_else(|| vanished(&config_file))?;
     core_layout(&config, true).map_err(|why| format!("{}: {why}", config_file.display()))?;
@@ -129,15 +138,12 @@ fn main_worktree_with_seam(
         core_layout(&config, false)
             .map_err(|why| format!("{}: {why}", worktree_config.display()))?;
     }
-    let main = common
-        .parent()
-        .ok_or_else(|| format!("{} has no parent directory", common.display()))?
-        .to_path_buf();
-    // `common` is a canonical directory (checked when it was resolved), so
-    // its parent is a real, absolute directory: never a link.
-    assert!(
-        main.is_absolute() && common.starts_with(&main),
-        "the main worktree is the canonical common directory's parent"
+    // The repository's own work tree: its `.git` is the common directory
+    // every check above was made against (canonical, so never a link).
+    assert_eq!(
+        main.join(".git"),
+        common,
+        "the main worktree holds the common directory"
     );
     Ok(Some(main))
 }

@@ -45,10 +45,7 @@ impl ConfigDocumentStore for FilesystemConfigDocumentStore {
                 reason: symlink_refusal(link),
             });
         }
-        Ok(match self.read(path)? {
-            Some(bytes) => OverlayDocument::Present(bytes),
-            None => OverlayDocument::Absent,
-        })
+        open_overlay_file(path)
     }
 
     fn has_overlay_entry(&self, path: &Path) -> Result<bool, String> {
@@ -61,6 +58,40 @@ impl ConfigDocumentStore for FilesystemConfigDocumentStore {
             Err(error) => Err(format!("{}: {error}", path.display())),
         }
     }
+}
+
+/// The overlay file itself, opened without following a final link and
+/// without blocking (a FIFO), and judged by the opened handle: a link
+/// swapped in after the stretch was checked is refused as a link, and only
+/// a regular file's bytes are returned.
+fn open_overlay_file(path: &Path) -> Result<OverlayDocument, String> {
+    use std::io::Read;
+    use std::os::unix::fs::OpenOptionsExt;
+    let opened = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_NOCTTY)
+        .open(path);
+    let mut file = match opened {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(OverlayDocument::Absent);
+        }
+        Err(error) if error.raw_os_error() == Some(libc::ELOOP) => {
+            return Ok(OverlayDocument::Refused {
+                reason: symlink_refusal(path),
+            });
+        }
+        Err(error) => return Err(error.to_string()),
+    };
+    match file.metadata() {
+        Ok(entry) if entry.is_file() => {}
+        Ok(_) => return Err("not a regular file; move it aside or pass --config".into()),
+        Err(error) => return Err(format!("cannot be read: {error}")),
+    }
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)
+        .map_err(|error| error.to_string())?;
+    Ok(OverlayDocument::Present(bytes))
 }
 
 /// The first symbolic link on the overlay's stretch below the working
