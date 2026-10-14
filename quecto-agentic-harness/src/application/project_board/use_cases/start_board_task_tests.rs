@@ -76,7 +76,11 @@ impl CoordinatorLaunch for Launcher {
         self.may
     }
 
-    fn launch(&self, request: &CoordinatorRequest) -> Result<LaunchedCoordinator, LaunchRefused> {
+    fn launch(
+        &self,
+        request: &CoordinatorRequest,
+        _: &std::sync::atomic::AtomicBool,
+    ) -> Result<LaunchedCoordinator, LaunchRefused> {
         self.asked.lock().unwrap().push(request.clone());
         self.answer.clone()
     }
@@ -276,7 +280,7 @@ fn a_launched_start_leaves_the_task_in_progress_with_run_1_open() {
     // The clock stands still: the launch took no time on it.
     assert_eq!(facts.launch_us, Some(0));
     assert_eq!(
-        (facts.folded, facts.released, &facts.fold_back),
+        (facts.run_state, facts.released, &facts.fold_back),
         (None, None, &None)
     );
     assert_eq!(op.plan_version, Some(1));
@@ -304,6 +308,7 @@ fn a_failed_launch_folds_run_1_back_as_failed_and_releases_the_claim() {
             run: 1,
             run_state: RunAfterUndo::Folded,
             released: Some(true),
+            restored: None,
         })
     );
     let (task, runs) = task_and_runs(&store);
@@ -494,7 +499,11 @@ impl CoordinatorLaunch for FreezingLauncher {
         true
     }
 
-    fn launch(&self, _: &CoordinatorRequest) -> Result<LaunchedCoordinator, LaunchRefused> {
+    fn launch(
+        &self,
+        _: &CoordinatorRequest,
+        _: &std::sync::atomic::AtomicBool,
+    ) -> Result<LaunchedCoordinator, LaunchRefused> {
         self.0.refuse_next_write("the board is frozen");
         Err(LaunchRefused("no container runtime".into()))
     }
@@ -513,6 +522,7 @@ fn an_undo_that_cannot_fold_back_says_so_and_keeps_the_claim() {
             run: 1,
             run_state: RunAfterUndo::Open,
             released: Some(false),
+            restored: None,
         })
     );
     let (task, runs) = task_and_runs(&store);
@@ -523,7 +533,8 @@ fn an_undo_that_cannot_fold_back_says_so_and_keeps_the_claim() {
         message,
         "the coordinator did not launch: no container runtime; run 1 could not be folded back: \
          it is still open; end it with end_run(task, run 1, outcome failed), but the task could \
-         not be moved back to ready: you still hold it"
+         not be moved back to ready: you still hold it; once its run has ended, move it with \
+         move(task, to ready)"
     );
 }
 

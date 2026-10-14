@@ -482,6 +482,15 @@ impl IdUser {
     }
 }
 
+/// A held task's status a start's undo moved it back to, or tried to
+/// (S4c): a task started from review or blocked returns there once its
+/// run has ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Restored {
+    pub status: TaskStatus,
+    pub moved: bool,
+}
+
 /// Where a start's undo left its run (S4c).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RunAfterUndo {
@@ -629,13 +638,16 @@ pub enum ProjectBoardError {
     /// The task and run `run` were written, but the coordinator did not
     /// launch (`reason`, as the launch said, or the call cancelled before
     /// it). The start was undone as far as it could be: the run where the
-    /// undo left it (`run_state`), and, when the start took the claim,
-    /// whether the task went back to ready, releasing it (`released`).
+    /// undo left it (`run_state`); when the start took the claim, whether
+    /// the task went back to ready, releasing it (`released`); and, for a
+    /// task held in review or blocked before, whether it went back there
+    /// (`restored`).
     LaunchFailed {
         reason: String,
         run: u32,
         run_state: RunAfterUndo,
         released: Option<bool>,
+        restored: Option<Restored>,
     },
 }
 

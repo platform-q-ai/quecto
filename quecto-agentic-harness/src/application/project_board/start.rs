@@ -37,9 +37,9 @@ pub struct StartFacts {
     pub claim: Option<StartClaim>,
     /// How long the launch took, on the board clock's monotonic time.
     pub launch_us: Option<u64>,
-    /// For a start undone: whether its own fold-back ended the run, and,
-    /// when it took the claim, whether it released it.
-    pub folded: Option<bool>,
+    /// For a start undone: where its undo left the run, and, when it took
+    /// the claim, whether it released it.
+    pub run_state: Option<super::dto::RunAfterUndo>,
     pub released: Option<bool>,
     /// The undo's fold-back, for its own `board_fold_back` record.
     pub fold_back: Option<UndoFoldBack>,

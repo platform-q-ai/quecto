@@ -2,7 +2,7 @@
 //! words), moved beside `dto.rs` unchanged as it grew past its room.
 use std::fmt;
 
-use super::{IdUser, ProjectBoardError, RunAfterUndo};
+use super::{IdUser, ProjectBoardError, Restored, RunAfterUndo};
 use crate::application::project_board::ports::{
     ArtifactKey, BoardClockError, BoardStoreError, PullRequestStatesError,
 };
@@ -128,6 +128,7 @@ impl fmt::Display for ProjectBoardError {
                 run,
                 run_state,
                 released,
+                restored,
             } => {
                 write!(f, "the coordinator did not launch: {reason}; ")?;
                 match run_state {
@@ -139,12 +140,34 @@ impl fmt::Display for ProjectBoardError {
                          end_run(task, run {run}, outcome failed)"
                     )?,
                 }
-                match released {
-                    Some(true) => f.write_str(", and the task is ready again"),
-                    Some(false) => f.write_str(
-                        ", but the task could not be moved back to ready: you still hold it",
+                match (released, restored) {
+                    (Some(true), _) => f.write_str(", and the task is ready again"),
+                    (Some(false), _) => f.write_str(
+                        ", but the task could not be moved back to ready: you still hold it; \
+                         once its run has ended, move it with move(task, to ready)",
                     ),
-                    None => f.write_str(", and you still hold the task"),
+                    (
+                        None,
+                        Some(Restored {
+                            status,
+                            moved: true,
+                        }),
+                    ) => {
+                        write!(f, ", and the task is back in {}", status.as_str())
+                    }
+                    (
+                        None,
+                        Some(Restored {
+                            status,
+                            moved: false,
+                        }),
+                    ) => write!(
+                        f,
+                        ", but the task could not be moved back to {status}: it stays in \
+                         progress, and you still hold it",
+                        status = status.as_str()
+                    ),
+                    (None, None) => f.write_str(", and you still hold the task"),
                 }
             }
         }

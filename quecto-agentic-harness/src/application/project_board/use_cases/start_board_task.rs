@@ -17,20 +17,23 @@
 //! - **A failed launch is undone.** The run is folded back as failed, and
 //!   only then (a held task leaves its holder only once its run ended),
 //!   when the start took the claim, the task is moved back to ready,
-//!   releasing it. The refusal says how far that got; a run left open is
-//!   for `end_run`. A call cancelled after the write launches nothing and
-//!   is undone the same way. The undo writes through a store that ignores
+//!   releasing it (one held in review or blocked goes back there). The
+//!   refusal says how far that got; a run left open is for `end_run`. A
+//!   call cancelled after the write launches nothing, and one cancelled
+//!   during the launch stops it; either is undone the same way, as is a
+//!   launch that panicked. The undo writes through a store that ignores
 //!   the call's cancel, so a cancel never strands a run.
 //!
 //! Blocking: the store's calls, a pause before a retried write and the
 //! launch itself hold the calling thread.
+use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use super::board_change::{checked_writer, commit, owned, task_on};
 use super::{ChangeBoardTask, FoldBackRun, board_view};
 use crate::application::project_board::dto::{
-    BoardOp, FoldBackFacts, FoldedBack, ProjectBoardError, RunAfterUndo, TaskStart,
+    BoardOp, FoldBackFacts, FoldedBack, ProjectBoardError, Restored, RunAfterUndo, TaskStart,
 };
 use crate::application::project_board::fold_back::{SwarmEnd, SwarmRunView};
 use crate::application::project_board::ports::{
@@ -42,6 +45,7 @@ use crate::application::project_board::swarm_brief::{
     BriefRefusal, MAX_BRIEF_BYTES, SwarmBrief, brief_of, render,
 };
 use crate::application::project_board::telemetry::{OpFacts, counted};
+use crate::application::tool_panic_scope::catch_in_call_site;
 use crate::domain::project_board::entities::claim::Identity;
 use crate::domain::project_board::services::plans::as_accepted;
 use crate::domain::project_board::services::starts::{Started, start};
@@ -52,6 +56,9 @@ use crate::domain::project_board::value_objects::vocabulary::TaskStatus;
 /// Why a start launched nothing when its call was cancelled after its
 /// write.
 const CANCELLED: &str = "the call was cancelled before the coordinator launched";
+
+/// Why a start whose launch panicked launched nothing.
+const PANICKED: &str = "the coordinator's launch failed unexpectedly (it panicked)";
 
 pub struct StartBoardTask {
     store: Arc<dyn ProjectBoardStore>,
@@ -182,11 +189,9 @@ impl StartBoardTask {
             facts.claim = Some(claim);
         }
         // A call cancelled after its write launches nothing: it is undone.
-        let cancelled = self
-            .cancelled
-            .as_ref()
-            .is_some_and(|flag| flag.load(Ordering::SeqCst));
-        if cancelled {
+        let never = AtomicBool::new(false);
+        let cancel = self.cancelled.as_deref().unwrap_or(&never);
+        if cancel.load(Ordering::SeqCst) {
             let refused = LaunchRefused(CANCELLED.into());
             return Err(self.undone(&request.task, &started, refused, facts));
         }
@@ -200,7 +205,10 @@ impl StartBoardTask {
             effort: coordinator.map(|choice| choice.effort),
         };
         let before = facts.as_ref().map(|_| self.clock.elapsed());
-        let launched = launcher.launch(&launch);
+        // A launch that panics is undone as one that failed: the write it
+        // follows is never left behind.
+        let launched = catch_in_call_site(AssertUnwindSafe(|| launcher.launch(&launch, cancel)))
+            .unwrap_or_else(|_| Err(LaunchRefused(PANICKED.into())));
         if let (Some(facts), Some(before)) = (facts.as_mut(), before) {
             let took = self.clock.elapsed().saturating_sub(before);
             facts.launch_us = Some(u64::try_from(took.as_micros()).unwrap_or(u64::MAX));
@@ -292,8 +300,9 @@ impl StartBoardTask {
 
     /// The refusal of a start whose coordinator did not launch, once the
     /// start is undone as far as it can be: its run folded back as failed
-    /// (or found ended already), then, only when the start took the claim
-    /// and the run is ended, the task moved back to ready. Noted in
+    /// (or found ended already), then, only once the run has ended, the
+    /// task moved back to ready when the start took the claim, or to the
+    /// review or blocked status it was held in. Noted in
     /// `facts`, when given, with the undo's fold-back.
     fn undone(
         &self,
@@ -319,15 +328,26 @@ impl StartBoardTask {
             Ok(FoldedBack::Ended(_)) => RunAfterUndo::EndedAlready,
             Err(_) => RunAfterUndo::Open,
         };
-        let released = started.took_claim().then(|| {
-            run_state != RunAfterUndo::Open
-                && self
-                    .change
-                    .execute(id, &BoardOp::Move(TaskStatus::Ready))
-                    .is_ok()
-        });
+        // A held task leaves progress only once its run has ended.
+        let ended = matches!(run_state, RunAfterUndo::Folded | RunAfterUndo::EndedAlready);
+        let moved_to = |status| ended && self.change.execute(id, &BoardOp::Move(status)).is_ok();
+        let released = started.took_claim().then(|| moved_to(TaskStatus::Ready));
+        // A task held in review or blocked goes back there; one claimed or
+        // in progress stays in progress (no row of the table moves it back).
+        let restored = match started.from() {
+            status @ (TaskStatus::Review | TaskStatus::Blocked) => Some(Restored {
+                status,
+                moved: moved_to(status),
+            }),
+            TaskStatus::Draft
+            | TaskStatus::Ready
+            | TaskStatus::Claimed
+            | TaskStatus::InProgress
+            | TaskStatus::Done
+            | TaskStatus::Archived => None,
+        };
         if let Some(facts) = facts {
-            facts.folded = Some(run_state == RunAfterUndo::Folded);
+            facts.run_state = Some(run_state);
             facts.released = released;
             facts.fold_back = Some(UndoFoldBack {
                 task: id.clone(),
@@ -342,6 +362,7 @@ impl StartBoardTask {
             run,
             run_state,
             released,
+            restored,
         }
     }
 }
