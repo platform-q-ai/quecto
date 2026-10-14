@@ -94,6 +94,7 @@ pub fn told(error: &BoardStoreError) -> &str {
         BoardStoreError::NoBoard => "there is no board",
         BoardStoreError::Clash(why)
         | BoardStoreError::InvalidWrite(why)
+        | BoardStoreError::WriteTooLarge(why)
         | BoardStoreError::Unavailable(why)
         | BoardStoreError::TooLarge(why)
         | BoardStoreError::FolderSetAside(why) => why,

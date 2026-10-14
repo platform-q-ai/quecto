@@ -283,3 +283,69 @@ as given. It is for the pocket relay to set; an older quecto ignores it.
 
 Kinds are added, never renamed or reused, so a reader of the log must accept a
 kind or a field it does not know.
+
+### Fold-back records
+
+A started task's run, once its swarm has ended, is folded back onto the board
+(epic #2481 S4): its outcome, where each of its plan's task items stood, owners,
+evidence and cost, written to the run alone in one commit. Each fold-back
+writes one `board_fold_back` record under the same switch, gate and rules
+(written to `tracing` at `INFO` as `board fold back`). It holds no titles,
+owners or evidence, only kinds and counts.
+
+The run's own owners and evidence are scrubbed before they reach the board,
+which is public, so a line in doubt is dropped whole (counted in
+`evidence_dropped`; an owner in doubt is left out), never rewritten further. A
+line is in doubt when it holds:
+
+- a part past its board limit in characters (500 for an evidence part, 100 for
+  an owner): it is never cut, since a cut may strip the `@` that marks a
+  secret;
+- an invisible character: a format character or another default ignorable one
+  (a soft hyphen, a direction mark, a zero-width space, a variation selector, a
+  tag);
+- a credential word as any part of a word, once the text is folded (NFKC, so a
+  fullwidth form reads as its letters, then lower case): `authorization`,
+  `bearer`, `password`, `passwd`, `pwd=`, `secret`, `token`, `api_key`,
+  `apikey`, `api-key`, `credential`, `private_key`, `private-key`, or `basic`
+  before anything but a letter (so "basically" is kept);
+- an address whose fragment is no short anchor (up to 64 letters, digits, `_`,
+  `.` or `-`), whose path holds `%25`, or a bare host whose word holds a `;`;
+- an at sign (`@`, fullwidth `＠`, small `﹫`, or `%40` encoded once or more)
+  outside an address, judged after secrets are redacted, but in a `worker@1` or
+  `HEAD@{1}` word.
+
+Otherwise its spaces are made plain, and every address (`scheme://…`, `//host…`
+or a bare `host.tld` before a `/`, `?` or `#`, in a code span or a link too)
+that holds no at sign and has an unambiguous authority (an ASCII host and
+perhaps a port of digits) keeps that authority, its path up to its first `?`,
+`#`, `;` or `%3F`, and a short anchor such as `#L10-L20` straight after it; any
+other address is written `scheme://***`. Secret-shaped spans are then redacted.
+
+Accepted costs: a line that merely mentions a credential word ("basic CI-check
+passed", "token budget") is dropped, so a task item about auth, token or
+credential code may show little or no evidence (drops are counted in
+`evidence_dropped`, not shown); a line holding an invisible character, or past
+its limit, is dropped too; an address
+with an at sign anywhere (an npm `/@scope`, vite's `/@vite/client`,
+`?to=a@b.co`), an IPv6 or a non-ASCII host is written `scheme://***`; a line
+holding an email, a `pkg@1.2.3`, an `@types/node`, a `git@host:repo` or any
+other at sign outside an address is dropped. Known limits: a secret with no at
+sign and no credential word (`-u admin:hunter2`), or in an address's path (a
+Slack or Discord webhook), is kept, as is a credential word spelt with a
+lookalike from another script (a Cyrillic `е` in `sеcret`) or `basic` glued to
+letters (`basicAuth=…`); a bare `host.com;sig=…` with no `/`, a
+bare host with no dot (`localhost/x?sig=…`), or one glued to a CJK letter or a
+`_`, keeps what follows it. A line split by a line break is dropped whole.
+
+| Field | Meaning |
+|---|---|
+| `task`, `run` | The task (its slug, redacted and capped as above) and the run's number |
+| `outcome`, `code`, `rule` | `ok`, or `refused` with the error and rule codes a `board_op` would carry. A run that had already ended (folded back, or ended as lost by the merge that completed its task) is `ok` with only `attempts` and `lost` |
+| `run_outcome` | How the run ended: `succeeded`; `failed` (the swarm failed or exhausted its budget); `stopped` (blocked or cancelled) |
+| `items` | The run's task items by state: `todo`, `doing`, `review`, `done`, `blocked` |
+| `unmatched`, `extra` | Plan items no swarm item matched by its title (`<slug>: <title>`) or, failing that, by its `<slug>: ` prefix, left `todo`; swarm items no plan item took (of several under one key, all but the most progressed, then newest), not kept |
+| `evidence`, `evidence_dropped` | Evidence lines kept, and those left out: refused by the board's schema or file format, repeated, or past an item's 16 or the run's 256 KiB (owners counted first). A run that would leave the board, or its `runs/`, past the bytes a read takes is written again without any, every line counted dropped; any other invalid write is refused, with nothing left out |
+| `cost_tokens` | The tokens the swarm was observed to spend |
+| `attempts`, `lost`, `bytes` | The writes' attempts and lost races (both passes, when the evidence was left out), on every outcome; and the bytes of the run's text |
+| `duration_us` | The whole fold-back |

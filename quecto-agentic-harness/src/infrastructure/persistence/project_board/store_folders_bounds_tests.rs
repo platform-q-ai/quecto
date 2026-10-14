@@ -112,7 +112,7 @@ fn tasks_are_read_and_written_within_their_own_bytes() {
     let head = bob.read().unwrap().head;
     let write = bob.write_tasks(&head, &[task("b")], "board: add b");
     assert!(
-        matches!(&write, Err(BoardStoreError::InvalidWrite(why)) if why.contains("bytes of task files")),
+        matches!(&write, Err(BoardStoreError::WriteTooLarge(why)) if why.contains("bytes of task files")),
         "{write:?}"
     );
 }

@@ -199,7 +199,7 @@ fn a_write_counts_the_folders_it_leaves() {
     let board = folder(91);
     let past = board.within_bounds(&written, &board.folders_after(&[]), limits);
     assert!(
-        matches!(&past, Err(BoardStoreError::InvalidWrite(why)) if why.contains("bytes of files")),
+        matches!(&past, Err(BoardStoreError::WriteTooLarge(why)) if why.contains("bytes of files")),
         "{past:?}"
     );
 }
@@ -225,7 +225,7 @@ fn a_write_keeps_each_folder_within_its_own_bounds() {
     assert!(within(&board, &files).is_ok());
     let past = within(&board, &plan_file(11));
     assert!(
-        matches!(&past, Err(BoardStoreError::InvalidWrite(why)) if why.contains(&format!("{} bytes of plan files", most + 1))),
+        matches!(&past, Err(BoardStoreError::WriteTooLarge(why)) if why.contains(&format!("{} bytes of plan files", most + 1))),
         "{past:?}"
     );
 }
@@ -331,7 +331,7 @@ fn a_write_keeps_tasks_within_their_own_bytes() {
     );
     let past = Board::default().within_bounds(&written, &none, limits(9));
     assert!(
-        matches!(&past, Err(BoardStoreError::InvalidWrite(why)) if why.contains("10 bytes of task files")),
+        matches!(&past, Err(BoardStoreError::WriteTooLarge(why)) if why.contains("10 bytes of task files")),
         "{past:?}"
     );
 }
