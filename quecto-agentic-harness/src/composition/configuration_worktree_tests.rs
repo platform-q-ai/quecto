@@ -213,3 +213,46 @@ fn a_shared_overlay_is_never_written_from_the_linked_worktree() {
     assert_eq!(std::fs::read_to_string(&main_overlay).unwrap(), MAIN_MODEL);
     assert_eq!(rig.trust_record(), record);
 }
+
+/// An unresolved main worktree fails closed to the worktree's own
+/// location, and that location is the worktree's to write: a patch there
+/// creates its own overlay (recording trust for it), never the main's.
+#[test]
+fn a_patch_from_an_unresolved_worktree_writes_its_own_overlay() {
+    let rig = Rig::new();
+    let main_overlay = rig.write_overlay(&rig.layout.main, MAIN_MODEL);
+    rig.trust(&main_overlay);
+    std::fs::write(rig.layout.linked.join(".git"), "gitdir: /nonexistent/x\n").unwrap();
+
+    let receipt = rig
+        .handles
+        .patch
+        .execute(ConfigPatch {
+            selection: rig.select(&rig.layout.linked),
+            layer: ConfigLayer::Overlay,
+            key_path: "agents.defaults.model".into(),
+            value: serde_json::json!("own"),
+        })
+        .unwrap();
+    let own = rig.layout.linked.join(".quecto/config.json");
+    assert_eq!(receipt.path, own);
+    assert_eq!(std::fs::read_to_string(&main_overlay).unwrap(), MAIN_MODEL);
+    assert_eq!(model(&rig.resolve(&rig.layout.linked)), "own");
+}
+
+/// The refusal says how to give the worktree an overlay of its own.
+#[test]
+fn the_shared_overlay_refusal_says_how_to_make_an_own_overlay() {
+    let message = ConfigPatchError::SharedOverlay {
+        path: PathBuf::from("/main/.quecto/config.json"),
+    }
+    .to_string();
+    for needle in [
+        "/main/.quecto/config.json",
+        "shared with this linked worktree",
+        "replaces the main worktree's entirely",
+        "quecto config trust",
+    ] {
+        assert!(message.contains(needle), "{needle:?} in {message}");
+    }
+}

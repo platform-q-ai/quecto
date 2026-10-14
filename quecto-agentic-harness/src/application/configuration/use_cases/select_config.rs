@@ -19,7 +19,7 @@ use crate::application::configuration::dto::{
     ConfigLayers, ConfigSelection, ConfigSelectionRequest, OverlayOrigin,
 };
 use crate::application::configuration::ports::{
-    ConfigDocumentStore, MainWorktreeLocator, OverlayDocument, WorktreeLink,
+    ConfigDocumentStore, MainWorktreeLocator, WorktreeLink,
 };
 
 pub struct SelectConfig {
@@ -93,13 +93,14 @@ impl SelectConfig {
         }
     }
 
-    /// Whether an entry is at the overlay location, by the overlay policy's
-    /// own read: only a clean "absent" is no entry. A refused or unreadable
-    /// one is there, and is reported as itself when it is loaded.
+    /// Whether an entry is at the overlay location (never reading it): only
+    /// a clean "absent" is no entry. A link, an unreadable file, or one
+    /// that cannot be examined is there, and is reported as itself when it
+    /// is loaded.
     fn has_entry(&self, overlay: &Path) -> bool {
-        match self.store.read_overlay(overlay) {
-            Ok(OverlayDocument::Absent) => false,
-            Ok(OverlayDocument::Present(_) | OverlayDocument::Refused { .. }) | Err(_) => true,
+        match self.store.has_overlay_entry(overlay) {
+            Ok(false) => false,
+            Ok(true) | Err(_) => true,
         }
     }
 }

@@ -40,25 +40,46 @@ impl ConfigDocumentStore for FilesystemConfigDocumentStore {
     /// itself and everything above it is selection's business (it is
     /// canonicalised before the candidate is named), not the overlay's.
     fn read_overlay(&self, path: &Path) -> Result<OverlayDocument, String> {
-        let mut entry = path;
-        for _ in Path::new(OVERLAY_RELATIVE_PATH).components() {
-            if is_symlink(entry) {
-                return Ok(OverlayDocument::Refused {
-                    reason: symlink_refusal(entry),
-                });
-            }
-            entry = entry.parent().ok_or_else(|| {
-                format!(
-                    "{} is not an overlay location (expected <working directory>/{OVERLAY_RELATIVE_PATH})",
-                    path.display()
-                )
-            })?;
+        if let Some(link) = link_on_overlay_stretch(path)? {
+            return Ok(OverlayDocument::Refused {
+                reason: symlink_refusal(link),
+            });
         }
         Ok(match self.read(path)? {
             Some(bytes) => OverlayDocument::Present(bytes),
             None => OverlayDocument::Absent,
         })
     }
+
+    fn has_overlay_entry(&self, path: &Path) -> Result<bool, String> {
+        if link_on_overlay_stretch(path)?.is_some() {
+            return Ok(true);
+        }
+        match std::fs::symlink_metadata(path) {
+            Ok(_) => Ok(true),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(error) => Err(format!("{}: {error}", path.display())),
+        }
+    }
+}
+
+/// The first symbolic link on the overlay's stretch below the working
+/// directory (as many trailing entries of `path` as
+/// `OVERLAY_RELATIVE_PATH` has), from the file up.
+fn link_on_overlay_stretch(path: &Path) -> Result<Option<&Path>, String> {
+    let mut entry = path;
+    for _ in Path::new(OVERLAY_RELATIVE_PATH).components() {
+        if is_symlink(entry) {
+            return Ok(Some(entry));
+        }
+        entry = entry.parent().ok_or_else(|| {
+            format!(
+                "{} is not an overlay location (expected <working directory>/{OVERLAY_RELATIVE_PATH})",
+                path.display()
+            )
+        })?;
+    }
+    Ok(None)
 }
 
 fn is_symlink(path: &Path) -> bool {

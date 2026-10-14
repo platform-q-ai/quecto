@@ -321,7 +321,7 @@ impl ResolveEffectiveConfig {
             }
             OverlayTrust::Untrusted { fingerprint } => {
                 match self.checked_overlay(path, &bytes, check, Repair::EditThenTrust) {
-                    Ok(overlay) if self.trust.offer(path, fingerprint, &bytes) => overlay,
+                    Ok(overlay) if self.trust.offer(path, fingerprint, &bytes, origin) => overlay,
                     checked => {
                         // The withheld document's top-level keys travel with
                         // the report: a reader may learn what the overlay

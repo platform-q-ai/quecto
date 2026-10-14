@@ -9,7 +9,9 @@ use std::path::Path;
 
 use super::ConfigurationHandlesBuilder;
 use super::configuration_handles::ConfigurationEnvironment;
-use crate::application::configuration::dto::{ConfigSelection, ConfigSources, OverlayState};
+use crate::application::configuration::dto::{
+    ConfigSelection, ConfigSources, OverlayOrigin, OverlayState,
+};
 use crate::infrastructure::config::Config;
 
 pub(crate) struct LoadedConfig {
@@ -67,9 +69,11 @@ pub(crate) fn layer_diagnostics(sources: &ConfigSources) -> Vec<String> {
 pub(crate) fn overlay_summary(sources: &ConfigSources) -> String {
     match &sources.overlay {
         Some(report) => {
-            let shared = match report.origin.is_shared() {
-                true => ", from the main worktree",
-                false => "",
+            let shared = match report.origin {
+                OverlayOrigin::MainWorktree => ", from the main worktree",
+                OverlayOrigin::WorkingDirectory | OverlayOrigin::MainWorktreeUnresolved { .. } => {
+                    ""
+                }
             };
             let path = report.path.display();
             match &report.state {

@@ -3,14 +3,19 @@
 //! from git's own metadata files, never by running git (no hooks, no
 //! fsmonitor, no filters, no configuration of the user's in play).
 //!
-//! The chain is followed only along git's documented layout, and every
-//! link must vouch for the next: `<dir>/.git` is a regular file holding
-//! `gitdir: <admin>`; `<admin>/gitdir` names `<dir>/.git` back (a pointer
-//! copied anywhere else is not a worktree); `<admin>/commondir` names the
-//! common directory, which is a main worktree's `.git` — named `.git`, its
-//! `core.bare` explicitly false, no `core.worktree`, no includes — and the
-//! main worktree is its parent directory. Anything else is
-//! [`WorktreeLink::Unresolved`], so the caller shares nothing.
+//! The chain is accepted only in the shape `git worktree add` registers,
+//! and every link must vouch for the next: `<dir>/.git` is a regular file
+//! holding `gitdir: <admin>`; `<admin>/commondir` names the common
+//! directory, and `<admin>` must be registered there — canonically a
+//! direct child of `<common>/worktrees`, which only whoever can write the
+//! repository's `.git` creates (a pointer, back-link and `commondir`
+//! fabricated in the checkout itself never borrow another repository);
+//! `<admin>/gitdir` names `<dir>/.git` back (a registered pointer copied
+//! anywhere else is not that worktree); the common directory is a main
+//! worktree's `.git` — named `.git`, its `core.bare` explicitly false, no
+//! `core.worktree`, no includes — and the main worktree is its parent
+//! directory. Anything else is [`WorktreeLink::Unresolved`], so the caller
+//! shares nothing.
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -59,6 +64,14 @@ fn main_worktree_of(directory: &Path) -> Result<Option<PathBuf>, String> {
         return Ok(None);
     };
     let common = real_directory(&admin, single_line(&common, &admin.join("commondir"))?)?;
+    let registry = common.join("worktrees");
+    if admin.parent() != Some(registry.as_path()) {
+        return Err(format!(
+            "{} is not registered in {}",
+            admin.display(),
+            registry.display()
+        ));
+    }
     let back_file = admin.join("gitdir");
     let back = read_metadata(&back_file)?.ok_or_else(|| vanished(&back_file))?;
     let back = admin.join(single_line(&back, &back_file)?);
@@ -95,15 +108,6 @@ fn main_worktree_of(directory: &Path) -> Result<Option<PathBuf>, String> {
         Ok(entry) if entry.is_dir() => {}
         _ => return Err(format!("{} is not a directory", main.display())),
     }
-    let ours = directory
-        .canonicalize()
-        .map_err(|error| error.to_string())?;
-    if main == ours {
-        return Err(format!(
-            "{} names itself as its main worktree",
-            directory.display()
-        ));
-    }
     assert!(main.is_absolute(), "a canonical path is absolute");
     Ok(Some(main))
 }
@@ -135,27 +139,38 @@ fn real_directory(base: &Path, named: &str) -> Result<PathBuf, String> {
 }
 
 /// A metadata file's text: `None` when absent; an error when it is not a
-/// regular (never a link, a FIFO that would block, a device), small, UTF-8
-/// file.
+/// regular, small, UTF-8 file. The open itself refuses a final symbolic
+/// link and never blocks (a FIFO), and the opened handle is what is
+/// checked, so nothing swapped in between a check and the read is read.
 fn read_metadata(path: &Path) -> Result<Option<String>, String> {
-    match std::fs::symlink_metadata(path) {
-        Ok(entry) if entry.is_file() => {}
-        Ok(_) => return Err(format!("{} is not a regular file", path.display())),
+    use std::os::unix::fs::OpenOptionsExt;
+    let opened = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(path);
+    let file = match opened {
+        Ok(file) => file,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(format!("{}: {error}", path.display())),
-    }
-    let file = std::fs::File::open(path).map_err(|error| format!("{}: {error}", path.display()))?;
-    let mut text = String::new();
-    file.take(METADATA_LIMIT + 1)
-        .read_to_string(&mut text)
+    };
+    let entry = file
+        .metadata()
         .map_err(|error| format!("{}: {error}", path.display()))?;
-    match text.len() as u64 > METADATA_LIMIT {
-        true => Err(format!(
+    if !entry.is_file() {
+        return Err(format!("{} is not a regular file", path.display()));
+    }
+    if entry.len() > METADATA_LIMIT {
+        return Err(format!(
             "{} is too large to be git metadata",
             path.display()
-        )),
-        false => Ok(Some(text)),
+        ));
     }
+    // Bounded even if the file grows after the check.
+    let mut text = String::new();
+    file.take(METADATA_LIMIT)
+        .read_to_string(&mut text)
+        .map_err(|error| format!("{}: {error}", path.display()))?;
+    Ok(Some(text))
 }
 
 fn vanished(path: &Path) -> String {

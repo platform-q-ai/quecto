@@ -704,3 +704,27 @@ fn a_prompt_is_offered_only_for_an_overlay_that_would_apply_and_an_absent_global
     ));
     assert!(error.to_string().contains("no global file"), "{error}");
 }
+
+/// The interactive offer is told where the overlay comes from, so a
+/// prompt in a linked worktree says it is the main worktree's file.
+#[test]
+fn the_trust_offer_carries_the_overlays_origin() {
+    let store = MemoryStore::with(&[(GLOBAL, "{}"), (OVERLAY, "{}")]);
+    let trust = Arc::new(FakeTrust {
+        consents: true,
+        ..FakeTrust::default()
+    });
+    let (resolve, _) = use_case(store, trust.clone());
+    let shared = ConfigSelection::Layered(ConfigLayers {
+        global: PathBuf::from(GLOBAL),
+        overlay: Some(PathBuf::from(OVERLAY)),
+        legacy_local: None,
+        overlay_origin: OverlayOrigin::MainWorktree,
+    });
+    resolve.execute(&shared).unwrap();
+    resolve.execute(&layered()).unwrap();
+    assert_eq!(
+        *trust.offered_origins.lock().unwrap(),
+        [OverlayOrigin::MainWorktree]
+    );
+}

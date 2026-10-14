@@ -504,17 +504,31 @@ and no trust is recorded for the linked worktree; `quecto config trust` run
 there approves the main worktree's file, and `quecto config set` /
 `quecto container init` refuse to write it from the linked worktree (change it
 from the main worktree). A linked worktree with its own overlay keeps today's
-behaviour: its own file, its own trust. The main worktree is read from git's
-metadata files (`.git` → `gitdir` → `commondir`), never by running git, and
-only along git's own layout: the worktree's git directory must name it back,
-the common directory must be the main worktree's `.git` with `core.bare`
-false, no `core.worktree` and no includes, and the main worktree an existing
-directory. Anything else — a broken `.git` pointer, a bare repository — shares
-nothing, and `quecto status` says why. `quecto status` names the shared file:
+behaviour: its own file, its own trust — and that file replaces the main
+worktree's entirely (nothing is merged between them); to give a worktree its
+own, copy the main overlay to its `.quecto/config.json`, edit it, and run
+`quecto config trust` there. The main worktree is read from git's metadata
+files (`.git` → `gitdir` → `commondir`), never by running git, and only in the
+shape `git worktree add` registers: the worktree's git directory must sit
+directly in the common directory's `worktrees/` (so a pointer fabricated
+inside a checkout never borrows another repository's overlay) and name the
+worktree back, the common directory must be the main worktree's `.git` with
+`core.bare` false, no `core.worktree` and no includes, and the main worktree
+an existing directory. Anything else — a broken `.git` pointer, a bare
+repository — shares nothing, and `quecto status` says why. The choice is made
+once, when a run starts: a running session reloads the file it chose (and its
+trust record), but an overlay created later in the main worktree, or in the
+linked worktree itself, takes effect on the next start. `quecto status` names
+the shared file:
 
 ```
   Overlay:   /home/me/src/app/.quecto/config.json (trusted, from the main worktree)
 ```
+
+**Behaviour change.** Linked worktrees — including agent worktrees such as
+`.claude/worktrees/*` and host-side local spawns started in one — now apply the
+main worktree's trusted overlay where they previously ran on the global file
+alone.
 
 **Migration.** Until #2024 a `./config.json` directly in the working directory
 *replaced* the global file. That selection is retired: such a file is no longer

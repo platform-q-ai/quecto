@@ -145,7 +145,7 @@ impl std::fmt::Display for ConfigPatchError {
             ),
             Self::SharedOverlay { path } => write!(
                 f,
-                "refusing to write {}: it is the main worktree's repo-local overlay, shared with this linked worktree; change it from the main worktree",
+                "refusing to write {}: it is the main worktree's repo-local overlay, shared with this linked worktree; change it from the main worktree, or give this worktree its own .quecto/config.json — which replaces the main worktree's entirely (copy the main overlay to .quecto/config.json here, edit it, then run `quecto config trust` here)",
                 path.display()
             ),
             Self::Refused { path, reason } => {

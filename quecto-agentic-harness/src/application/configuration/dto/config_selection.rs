@@ -73,13 +73,6 @@ pub enum OverlayOrigin {
     MainWorktreeUnresolved { reason: String },
 }
 
-impl OverlayOrigin {
-    /// Whether the candidate is another worktree's file, shared here.
-    pub fn is_shared(&self) -> bool {
-        matches!(self, Self::MainWorktree)
-    }
-}
-
 impl ConfigSelection {
     /// Whether the base file must exist when it is loaded. An explicit
     /// override was asked for by name; a file that has vanished since is

@@ -18,7 +18,7 @@ pub enum WorktreeLink {
     /// is an existing directory (never a symbolic link), given absolute.
     Linked { main_worktree: PathBuf },
     /// A `.git` pointer is there but does not resolve to a main worktree
-    /// (a broken or foreign gitdir, a bare repository, a relocated work
+    /// (a broken, foreign or unregistered gitdir, a bare repository, a relocated work
     /// tree). Nothing is shared; `reason` says what could not be resolved.
     Unresolved { reason: String },
 }

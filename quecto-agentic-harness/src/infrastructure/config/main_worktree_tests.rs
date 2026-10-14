@@ -149,6 +149,7 @@ fn core_layout_accepts_only_an_explicitly_non_bare_unrelocated_repository() {
         "[core]\nbare = false\n[include]\n\tpath = other\n",
         "[core]\nbare = false\n[includeIf \"gitdir:x\"]\n\tpath = other\n",
         "[core] bare = true\n",
+        "[core] worktree=/x\nbare = false\n",
     ] {
         assert!(
             core_layout(refused, true).is_err(),
@@ -160,20 +161,69 @@ fn core_layout_accepts_only_an_explicitly_non_bare_unrelocated_repository() {
     assert!(core_layout("[core]\n\tworktree = /x\n", false).is_err());
 }
 
-/// A pointer naming a directory whose metadata is not regular files (a
-/// FIFO would block the read) is refused before anything is opened.
+/// Review round 1 M1: an admin directory fabricated outside the common
+/// directory's `worktrees/` (pointer, back-link and `commondir` all
+/// written by whoever controls the checkout) names a trusted repository's
+/// `.git` as its common directory. Git never registered it, so nothing of
+/// that repository is borrowed.
 #[test]
-fn metadata_that_is_not_a_regular_file_is_unresolved() {
+fn an_admin_directory_git_never_registered_is_unresolved() {
+    let layout = layout();
+    let fake = layout.tmp.path().join("fake");
+    let admin = fake.join("adm");
+    std::fs::create_dir_all(&admin).unwrap();
+    std::fs::write(fake.join(".git"), "gitdir: ./adm\n").unwrap();
+    std::fs::write(admin.join("gitdir"), "../.git\n").unwrap();
+    std::fs::write(
+        admin.join("commondir"),
+        format!("{}\n", layout.main.join(".git").display()),
+    )
+    .unwrap();
+    unresolved(&fake, "is not registered in");
+    // Relative, as in the review's reproduction.
+    std::fs::write(admin.join("commondir"), "../../main/.git\n").unwrap();
+    unresolved(&fake, "is not registered in");
+}
+
+/// Review round 1 L1: a metadata file swapped for a symbolic link or a
+/// FIFO is refused by the open itself (no follow, no blocking), not by a
+/// check that a swap could race.
+#[test]
+fn a_pointer_swapped_for_a_link_or_a_fifo_is_refused_without_blocking() {
     let layout = layout();
     let admin = layout.main.join(".git/worktrees/task");
-    std::fs::remove_file(admin.join("commondir")).unwrap();
-    std::os::unix::fs::symlink("../..", admin.join("commondir")).unwrap();
-    unresolved(&layout.linked, "is not a regular file");
-    std::fs::remove_file(admin.join("commondir")).unwrap();
+    let real = admin.join("gitdir.real");
+    std::fs::rename(admin.join("gitdir"), &real).unwrap();
+    std::os::unix::fs::symlink(&real, admin.join("gitdir")).unwrap();
+    unresolved(&layout.linked, "gitdir");
+    std::fs::remove_file(admin.join("gitdir")).unwrap();
     let status = Command::new("mkfifo")
-        .arg(admin.join("commondir"))
+        .arg(admin.join("gitdir"))
         .status()
         .unwrap();
     assert!(status.success());
     unresolved(&layout.linked, "is not a regular file");
+}
+
+/// The metadata limit is inclusive: a pointer padded to exactly 64 KiB is
+/// read; one byte more is not git's.
+#[test]
+fn a_metadata_file_at_the_limit_is_read_and_one_byte_over_is_refused() {
+    let layout = layout();
+    let pointer = std::fs::read_to_string(layout.linked.join(".git")).unwrap();
+    let padded = |len: usize| {
+        let mut text = pointer.clone();
+        text.push_str(&"\n".repeat(len - pointer.len()));
+        assert_eq!(text.len(), len);
+        text
+    };
+    std::fs::write(layout.linked.join(".git"), padded(64 * 1024)).unwrap();
+    assert_eq!(
+        locate(&layout.linked),
+        WorktreeLink::Linked {
+            main_worktree: layout.main.clone()
+        }
+    );
+    std::fs::write(layout.linked.join(".git"), padded(64 * 1024 + 1)).unwrap();
+    unresolved(&layout.linked, "too large");
 }
