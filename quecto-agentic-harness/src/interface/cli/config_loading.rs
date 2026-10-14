@@ -9,7 +9,9 @@ use std::path::Path;
 
 use super::ConfigurationHandlesBuilder;
 use super::configuration_handles::ConfigurationEnvironment;
-use crate::application::configuration::dto::{ConfigSelection, ConfigSources, OverlayState};
+use crate::application::configuration::dto::{
+    ConfigSelection, ConfigSources, OverlayOrigin, OverlayState,
+};
 use crate::infrastructure::config::Config;
 
 pub(crate) struct LoadedConfig {
@@ -62,15 +64,25 @@ pub(crate) fn layer_diagnostics(sources: &ConfigSources) -> Vec<String> {
     sources.diagnostics()
 }
 
-/// The `Overlay:` line of `quecto status`.
+/// The `Overlay:` line of `quecto status`; an overlay shared from a linked
+/// worktree's main worktree says so after its trust state.
 pub(crate) fn overlay_summary(sources: &ConfigSources) -> String {
     match &sources.overlay {
-        Some(report) => match &report.state {
-            OverlayState::Applied => format!("{} (trusted)", report.path.display()),
-            OverlayState::Untrusted { .. } => format!("{} (untrusted)", report.path.display()),
-            OverlayState::Refused { .. } => format!("{} (refused)", report.path.display()),
-            OverlayState::Absent => "none".to_string(),
-        },
+        Some(report) => {
+            let shared = match report.origin {
+                OverlayOrigin::MainWorktree => ", from the main worktree",
+                OverlayOrigin::WorkingDirectory | OverlayOrigin::MainWorktreeUnresolved { .. } => {
+                    ""
+                }
+            };
+            let path = report.path.display();
+            match &report.state {
+                OverlayState::Applied => format!("{path} (trusted{shared})"),
+                OverlayState::Untrusted { .. } => format!("{path} (untrusted{shared})"),
+                OverlayState::Refused { .. } => format!("{path} (refused{shared})"),
+                OverlayState::Absent => "none".to_string(),
+            }
+        }
         None if sources.explicit => "none (--config replaces both layers)".to_string(),
         None => "none".to_string(),
     }

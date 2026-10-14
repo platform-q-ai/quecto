@@ -173,6 +173,8 @@ mod llm_provider;
 mod loaded_catalogue_inputs;
 #[path = "contracts/loaded_refresh_inputs.rs"]
 mod loaded_refresh_inputs;
+#[path = "contracts/main_worktree_locator.rs"]
+mod main_worktree_locator;
 #[path = "contracts/metered_call.rs"]
 mod metered_call;
 #[path = "common/mock_claude.rs"]

@@ -15,6 +15,7 @@ pub(crate) fn selection_for_test(path: &std::path::Path, must_exist: bool) -> Co
             global: path.to_path_buf(),
             overlay: None,
             legacy_local: None,
+            overlay_origin: Default::default(),
         })
     }
 }

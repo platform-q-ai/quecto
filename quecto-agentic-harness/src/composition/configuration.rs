@@ -15,6 +15,7 @@ use crate::application::configuration::use_cases::{
     PatchConfiguration, ReadConfiguration, ResolveEffectiveConfig, SelectConfig, TrustConfigOverlay,
 };
 use crate::infrastructure::config::loaders::FilesystemConfigDocumentStore;
+use crate::infrastructure::config::main_worktree::GitMetadataWorktreeLocator;
 use crate::infrastructure::config::mapping::{
     ConfigValidatorAdapter, realize_config, realize_inherited_child_config,
 };
@@ -42,7 +43,10 @@ pub fn build_configuration_handles(env: &ConfigurationEnvironment) -> Configurat
         trust.clone(),
     ));
     ConfigurationHandles {
-        select: Arc::new(SelectConfig::new()),
+        select: Arc::new(SelectConfig::new(
+            store.clone(),
+            Arc::new(GitMetadataWorktreeLocator),
+        )),
         read: Arc::new(ReadConfiguration::new(store.clone(), resolve.clone())),
         patch: Arc::new(PatchConfiguration::new(
             store.clone(),
@@ -117,6 +121,11 @@ pub fn build_config_loader(
 /// file for every overlay on the host, so a session with no overlay is
 /// not rebuilt every time some other repository's overlay is trusted; an
 /// overlay created mid-run brings the record into the watch on the spot.
+/// A reload re-reads the files `selection` named; it never selects again.
+/// In a linked worktree that means the one candidate chosen at start (its
+/// own location, or the main worktree's overlay): an overlay created later
+/// at the other one applies from the next start. Watching both would not
+/// help, since the reload resolves the same selection.
 pub fn watched_config_sources(base_dir: &Path, selection: &ConfigSelection) -> Vec<ReloadSource> {
     let mut watched = vec![ReloadSource::new(selection.path())];
     if let Some(overlay) = selection.overlay_path() {
@@ -131,3 +140,7 @@ pub fn watched_config_sources(base_dir: &Path, selection: &ConfigSelection) -> V
 #[cfg(test)]
 #[path = "configuration_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "configuration_worktree_tests.rs"]
+mod worktree_tests;

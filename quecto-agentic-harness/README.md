@@ -441,7 +441,8 @@ these layers (#1966, #2024):
 3. `./.quecto/config.json` — the **repo-local overlay** in the process working
    directory, merged *over* the global file. Only the working directory itself
    is probed, never its parents. It is applied only when trusted (below); an
-   absent overlay is simply not there.
+   absent overlay is simply not there. A linked git worktree with no overlay
+   of its own shares its main worktree's (below).
 
 The overlay is merged section by section, so a repository needs at most a
 small file and never duplicates your secrets or policy:
@@ -492,6 +493,48 @@ quecto Status
   Effort:    default
   ...
 ```
+
+**Linked git worktrees.** The overlay is untracked, so `git worktree add`
+never brings it along. When the working directory is the root of a linked
+worktree and has no `.quecto/config.json` of its own, the main worktree's
+`<main worktree>/.quecto/config.json` is the overlay instead: that file,
+under that file's trust record, applied exactly when a run in the main
+worktree would apply it (a hand edit revokes it for both). Nothing is copied
+and no trust is recorded for the linked worktree; `quecto config trust` run
+there approves the main worktree's file, and `quecto config set` /
+`quecto container init` refuse to write it from the linked worktree (change it
+from the main worktree). A linked worktree with its own overlay keeps today's
+behaviour: its own file, its own trust — and that file replaces the main
+worktree's entirely (nothing is merged between them); to give a worktree its
+own, copy the main overlay to its `.quecto/config.json`, edit it, and run
+`quecto config trust` there. The main worktree is read from git's metadata
+files (`.git` → `gitdir` → `commondir`), never by running git, and only in the
+shape `git worktree add` registers: the worktree's git directory must sit
+directly in the common directory's `worktrees/`, and name back this
+directory's `.git` — the very file read, by device and inode, so a pointer
+swapped in by another local process while it is resolved is refused; the
+common directory must be the main worktree's `.git` with `core.bare` false,
+no `core.worktree` and no includes. So a directory shares a repository's
+overlay only when that repository registered it as a worktree: a `.git`
+pointer, back-link or `commondir` fabricated in a checkout, or swapped
+concurrently, never borrows another repository's overlay. Registration is
+git's: a worktree deleted without `git worktree prune` stays registered, and
+a directory recreated at its path is accepted, as git accepts it (prune
+removed worktrees). Anything else — a broken `.git` pointer, a bare
+repository — shares nothing, and `quecto status` says why. The choice is made
+once, when a run starts: a running session reloads the file it chose (and its
+trust record), but an overlay created later in the main worktree, or in the
+linked worktree itself, takes effect on the next start. `quecto status` names
+the shared file:
+
+```
+  Overlay:   /home/me/src/app/.quecto/config.json (trusted, from the main worktree)
+```
+
+**Behaviour change.** Linked worktrees — including agent worktrees such as
+`.claude/worktrees/*` and host-side local spawns started in one — now apply the
+main worktree's trusted overlay where they previously ran on the global file
+alone.
 
 **Migration.** Until #2024 a `./config.json` directly in the working directory
 *replaced* the global file. That selection is retired: such a file is no longer

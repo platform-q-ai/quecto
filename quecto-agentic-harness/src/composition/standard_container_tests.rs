@@ -41,6 +41,7 @@ impl Rig {
             global: self.base_dir.join("config.json"),
             overlay: Some(self.overlay()),
             legacy_local: None,
+            overlay_origin: Default::default(),
         })
     }
 }
@@ -250,4 +251,32 @@ fn a_symbolic_link_in_the_overlays_place_is_refused_in_the_patchs_words() {
         "{refusal}"
     );
     assert_eq!(std::fs::read_to_string(&elsewhere).unwrap(), "{}");
+}
+
+/// `container init` from a linked worktree never writes the main
+/// worktree's overlay it shares: refused before anything is read or
+/// written, in the patch's own words.
+#[test]
+fn the_overlay_writer_refuses_an_overlay_shared_from_the_main_worktree() {
+    let rig = Rig::new();
+    std::fs::create_dir_all(rig.checkout.join(".quecto")).unwrap();
+    std::fs::write(rig.overlay(), "{}").unwrap();
+    let shared = ConfigSelection::Layered(ConfigLayers {
+        global: rig.base_dir.join("config.json"),
+        overlay: Some(rig.overlay()),
+        legacy_local: None,
+        overlay_origin: crate::application::configuration::dto::OverlayOrigin::MainWorktree,
+    });
+    let port = build_container_config_persistence(&rig.base_dir, &shared);
+    let refusal = port.check().unwrap_err();
+    assert!(
+        refusal.contains("shared with this linked worktree"),
+        "{refusal}"
+    );
+    let refusal = port.persist("standard", &entry(true), None).unwrap_err();
+    assert!(
+        refusal.contains("shared with this linked worktree"),
+        "{refusal}"
+    );
+    assert_eq!(std::fs::read_to_string(rig.overlay()).unwrap(), "{}");
 }

@@ -24,15 +24,14 @@
 //! a remote whose `pushurl` names another repository than its `url` is
 //! not a board remote, and a push to it is judged by what `url` serves.
 //!
-//! In a partial clone, the board is fetched with all its files
-//! (`--no-filter`), and what a clone still misses (a board commit it
-//! fetched with a filter before) is fetched in one call per tree level,
-//! never one object at a time.
+//! In a partial clone, the board's commits are fetched alone and what a
+//! read reads under them one tree level at a time, never one object at a
+//! time and never what lies under the archive (`store_fetch`, #2481 S10b).
 #[cfg(test)]
 use super::artifacts::{encode, task::TaskCodec};
 use super::board_tree::{
     Board, FORMAT, FORMAT_FILE, FORMAT_TREE, LIMITS, Limits, MAX_READ_ENTRIES, REGULAR_FILE, TREE,
-    Unread, object_id, read_board, task_file, told, unavailable, within,
+    object_id, task_file, told, unavailable, within,
 };
 use super::git::{Git, GitError, SHORT_OUTPUT, failed, quoted};
 use super::push_report::{PushReport, RefStatus, Rejection, ref_status, remote_rejection};
@@ -50,9 +49,6 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 pub use super::board_tree::MAX_TASK_ENTRIES as MAX_ENTRIES;
 
 pub const BOARD_REF: &str = "refs/heads/quecto/board";
-/// Fetches of what a partial clone misses, one per tree level: the root,
-/// `tasks/`, then their files.
-const FETCH_ROUNDS: usize = 3;
 /// The most a listing of a repository's branches takes.
 const MAX_REF_LISTING: usize = 16 * 1024 * 1024;
 const README: &[u8] = b"# quecto board\n\nThis branch holds the project's board: one `tasks/<id>.md` per task. It is\nwritten only by quecto's board operations; do not edit, merge or rebase it by hand.\nIf a hand edit breaks it, move `quecto/board` back to the commit before that edit.\n";
@@ -67,6 +63,9 @@ pub struct GitBoardStore {
     pub(super) limits: Limits,
     /// Set when the call this store serves was cancelled.
     cancelled: Option<Arc<std::sync::atomic::AtomicBool>>,
+    /// Whether the remote is this clone's promisor (a partial clone), and
+    /// the fetch filter the clone keeps for it, once asked.
+    partial: std::sync::OnceLock<fetching::Partial>,
 }
 
 /// What became of a push.
@@ -104,6 +103,7 @@ impl GitBoardStore {
                 last: Mutex::new(None),
                 limits: LIMITS,
                 cancelled: None,
+                partial: std::sync::OnceLock::new(),
             }),
             Err(error) => Err(BoardStoreError::Unavailable(format!(
                 "{remote:?} is not a remote of this repository: {error}"
@@ -157,67 +157,6 @@ impl GitBoardStore {
         Ok(board)
     }
 
-    /// The board at `commit`, fetching in one call per round what this
-    /// clone does not hold yet (a partial clone).
-    fn read_fetching(&self, commit: &str) -> Result<Board, BoardStoreError> {
-        let mut fetched: BTreeSet<String> = BTreeSet::new();
-        for round in 0..=FETCH_ROUNDS {
-            let missing = match read_board(&self.git, commit, self.limits) {
-                Ok(board) => return Ok(board),
-                Err(Unread::Failed(BoardStoreError::Clash(why))) => {
-                    return Err(BoardStoreError::Clash(format!(
-                        "`quecto/board` on {} is a branch of its own: {why}; rename it",
-                        self.remote
-                    )));
-                }
-                Err(Unread::Failed(error)) => return Err(error),
-                Err(Unread::Missing(missing)) => missing,
-            };
-            assert!(!missing.is_empty(), "a read misses at least one object");
-            let again = missing.iter().any(|oid| fetched.contains(oid));
-            if again || round == FETCH_ROUNDS {
-                return Err(BoardStoreError::Unavailable(format!(
-                    "objects of board commit {commit} are missing here and were not fetched: {}",
-                    missing.join(" ")
-                )));
-            }
-            self.fetch_objects(&missing)?;
-            fetched.extend(missing);
-        }
-        unreachable!("the last round returns")
-    }
-
-    /// Fetches `oids` and everything under them in one call, as git's own
-    /// lazy fetch does, but with every file.
-    fn fetch_objects(&self, oids: &[String]) -> Result<(), BoardStoreError> {
-        let args = [
-            "-c",
-            "fetch.negotiationAlgorithm=noop",
-            "fetch",
-            "--quiet",
-            "--no-tags",
-            "--no-write-fetch-head",
-            "--no-recurse-submodules",
-            "--no-filter",
-            "--stdin",
-            &self.remote,
-        ];
-        let input: String = oids.iter().map(|oid| format!("{oid}\n")).collect();
-        let output = self
-            .git
-            .network_with(&args, Some(input.as_bytes()), SHORT_OUTPUT)
-            .map_err(unavailable)?;
-        match output.status.success() {
-            true => Ok(()),
-            false => Err(BoardStoreError::Unavailable(format!(
-                "objects missing here could not be fetched from {}: {}: {}",
-                self.remote,
-                oids.join(" "),
-                failed(&args, &output)
-            ))),
-        }
-    }
-
     /// The remote's commit for `reference`, if it has one.
     fn remote_head(&self, reference: &str) -> Result<Option<String>, BoardStoreError> {
         let heads = self.remote_heads(&[reference])?;
@@ -241,34 +180,6 @@ impl GitBoardStore {
             .filter_map(|row| row.split_once('\t'))
             .map(|(oid, name)| Ok((object_id(oid)?, name.to_string())))
             .collect()
-    }
-
-    /// Fetches the board alone into the tracking ref (no tags, no
-    /// `FETCH_HEAD`), with all its files even in a partial clone; its
-    /// commit.
-    fn fetch(&self) -> Result<String, BoardStoreError> {
-        let spec = format!("+{BOARD_REF}:{}", self.tracking());
-        let args = [
-            "fetch",
-            "--quiet",
-            "--no-tags",
-            "--no-write-fetch-head",
-            "--no-recurse-submodules",
-            "--no-filter",
-            &self.remote,
-            &spec,
-        ];
-        let output = self.git.network(&args).map_err(unavailable)?;
-        if !output.status.success() {
-            return Err(unavailable(failed(&args, &output)));
-        }
-        let commit = format!("{}^{{commit}}", self.tracking());
-        object_id(
-            &self
-                .git
-                .text(&["rev-parse", "--verify", "--quiet", &commit], None)
-                .map_err(unavailable)?,
-        )
     }
 
     /// This store, pushing nothing once `cancelled` is set.
@@ -467,7 +378,9 @@ impl GitBoardStore {
     }
 
     /// A tree of `entries`, refused as invalid past the tree bound a read
-    /// takes.
+    /// takes. Every entry carried is one a read typed, so git is not asked
+    /// to find it (`--missing`): a partial clone carries the archive and a
+    /// blob past every cap by their ids, never holding what they name.
     fn tree(&self, entries: &BTreeMap<String, String>) -> Result<String, BoardStoreError> {
         within(entries, self.limits)?;
         let listing: String = entries
@@ -477,7 +390,7 @@ impl GitBoardStore {
         object_id(
             &self
                 .git
-                .text(&["mktree", "-z"], Some(listing.as_bytes()))
+                .text(&["mktree", "-z", "--missing"], Some(listing.as_bytes()))
                 .map_err(unavailable)?,
         )
     }
@@ -538,12 +451,15 @@ impl GitBoardStore {
         folders: BTreeMap<String, String>,
         message: &str,
     ) -> Result<BoardWrite, BoardStoreError> {
-        // A name listed twice in a folder would be carried or chosen
-        // unjudged: write and clear refuse first.
-        assert!(
-            board.folders_repeated_refusal().is_none(),
-            "no folder with a name listed twice is written"
-        );
+        // No new tree holds a name twice: a folder that does is carried as
+        // the very tree read (the remote holds it), never rebuilt.
+        for (name, tree) in &board.folders {
+            let carried = folders.get(*name) == Some(&format!("{TREE} tree {}", tree.oid));
+            assert!(
+                tree.repeated.is_empty() || carried,
+                "a folder with a name listed twice is carried as it was read: {name}"
+            );
+        }
         let readme = self.blob(README)?;
         let format = self.format_tree()?;
         let mut root = BTreeMap::from([
@@ -706,6 +622,10 @@ impl ProjectBoardStore for GitBoardStore {
 mod clear;
 #[path = "store_committer.rs"]
 mod committer;
+#[path = "store_fetch_state.rs"]
+mod fetch_state;
+#[path = "store_fetch.rs"]
+mod fetching;
 #[path = "store_write.rs"]
 mod writing;
 
