@@ -229,6 +229,8 @@ const KNOWN_KINDS: &[&str] = &[
     "succeeded",
     "stopped",
     "lost",
+    // A kept run's swarm given up as lost (S4d).
+    "swarm_lost",
     // Schema fields and pseudo-fields.
     "task",
     "title",

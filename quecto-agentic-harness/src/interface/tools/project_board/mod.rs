@@ -10,14 +10,17 @@ pub mod answer;
 pub mod command_line;
 pub mod fold_back_call;
 pub mod json;
+pub mod keeper;
 pub mod recording;
 pub mod request;
 pub mod session_recording;
+pub mod session_site;
 pub mod site;
 pub mod tool;
 
 use serde_json::Value;
 
+use crate::application::project_board::operations::BoardOutcome;
 use crate::application::project_board::use_cases::RunBoardOperation;
 use crate::domain::project_board::value_objects::telemetry::FaultKind;
 use recording::BoardCall;
@@ -53,6 +56,17 @@ pub fn run(operations: &RunBoardOperation, text: &str) -> Value {
 
 /// The answer to the request `text`, noted on `call` (epic #2481 T3).
 pub fn run_recorded(operations: &RunBoardOperation, text: &str, call: &mut BoardCall) -> Value {
+    run_recorded_then(operations, text, call, |_, _| {})
+}
+
+/// [`run_recorded`], handing a request's outcome to `then`, with `call`,
+/// once it was executed (a start's keeper is started so, S4d).
+pub fn run_recorded_then(
+    operations: &RunBoardOperation,
+    text: &str,
+    call: &mut BoardCall,
+    then: impl FnOnce(&BoardOutcome, &BoardCall),
+) -> Value {
     let value = match read(text) {
         Ok(value) => value,
         Err(error) => return call.refuse_request(None, &error),
@@ -66,7 +80,10 @@ pub fn run_recorded(operations: &RunBoardOperation, text: &str, call: &mut Board
     call.parsed(&request);
     let op = op.expect("a parsed request names an op");
     match call.executed(operations, &request) {
-        Ok(outcome) => call.answer(&op, &outcome, operations.clock_note(&request)),
+        Ok(outcome) => {
+            then(&outcome, call);
+            call.answer(&op, &outcome, operations.clock_note(&request))
+        }
         Err(error) => call.refuse_as_board(&op, &error),
     }
 }

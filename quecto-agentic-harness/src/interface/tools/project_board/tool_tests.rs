@@ -64,7 +64,10 @@ fn memory_board(_: &ProjectBoardEnvironment) -> Result<ProjectBoardHandles, Buil
         Err(NoPullRequestHost::NotAPullRequestHost),
     )
     .map_err(|error| BuildError::Unavailable(error.to_string()))?;
-    Ok(ProjectBoardHandles { operations })
+    Ok(ProjectBoardHandles {
+        operations,
+        keeper: None,
+    })
 }
 
 pub(super) fn site(
@@ -75,6 +78,7 @@ pub(super) fn site(
         remote: "origin".into(),
         build,
         launcher: None,
+        keeper: None,
     }
 }
 
@@ -148,6 +152,7 @@ fn environment() -> ProjectBoardEnvironment {
         vars: vec![],
         cancelled: None,
         launcher: None,
+        swarm: None,
     }
 }
 
@@ -315,7 +320,10 @@ fn seeded_board(_: &ProjectBoardEnvironment) -> Result<ProjectBoardHandles, Buil
         r#"{"op":"create","task":"a","title":"A","status":"ready"}"#,
     );
     assert_eq!(created["ok"], json!(true), "{created}");
-    Ok(ProjectBoardHandles { operations })
+    Ok(ProjectBoardHandles {
+        operations,
+        keeper: None,
+    })
 }
 
 /// A non-listing answer is the shared path's, unchanged: no key added, a
@@ -373,7 +381,10 @@ fn quarantined_board(_: &ProjectBoardEnvironment) -> Result<ProjectBoardHandles,
         Err(NoPullRequestHost::NotAPullRequestHost),
     )
     .map_err(|error| BuildError::Unavailable(error.to_string()))?;
-    Ok(ProjectBoardHandles { operations })
+    Ok(ProjectBoardHandles {
+        operations,
+        keeper: None,
+    })
 }
 
 /// The files a listing shows set aside are within the cap too, ending with
@@ -418,7 +429,10 @@ fn mixed_board(_: &ProjectBoardEnvironment) -> Result<ProjectBoardHandles, Build
             "a stray",
         );
     }
-    Ok(ProjectBoardHandles { operations })
+    Ok(ProjectBoardHandles {
+        operations,
+        keeper: None,
+    })
 }
 
 /// Tasks take the room first: files set aside never crowd a listing's

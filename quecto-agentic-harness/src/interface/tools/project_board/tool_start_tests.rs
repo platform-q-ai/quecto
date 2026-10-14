@@ -105,7 +105,19 @@ fn launching_board(
         environment.launcher.clone(),
     )
     .map_err(|error| BuildError::Unavailable(error.to_string()))?;
-    Ok(ProjectBoardHandles { operations })
+    // A run started is kept when the session keeps runs (S4d).
+    let keeper = environment.swarm.clone().map(|swarm| {
+        crate::application::project_board::use_cases::KeepStartedRun::new(
+            Arc::new(store.client()),
+            Arc::new(SystemBoardClock::default()),
+            Arc::new(
+                crate::infrastructure::persistence::project_board::text_cells::MarkdownTextCells,
+            ),
+            swarm,
+        )
+        .unwrap()
+    });
+    Ok(ProjectBoardHandles { operations, keeper })
 }
 
 /// A launcher that launches every coordinator it is asked to.
@@ -286,5 +298,60 @@ async fn a_failed_launch_records_its_undo() {
         ),
         (&json!("a"), &json!(1), &json!("ok"), &json!("failed")),
         "{line}"
+    );
+}
+
+/// A swarm that has ended, as the coordinator's environment `C3` hosts it.
+struct Succeeded;
+
+impl crate::application::project_board::ports::StartedSwarm for Succeeded {
+    fn board(&self, environment_ref: &str) -> Result<Value, String> {
+        assert_eq!(environment_ref, "C3", "the started run's own swarm is read");
+        Ok(
+            json!({"run": {"status": "succeeded", "budget": {"observed_tokens": 5}},
+                  "items": [{"title": "schema: Schema", "state": "completed"}],
+                  "members": []}),
+        )
+    }
+}
+
+/// S4d: a start through the tool hands its run to the session's keeper,
+/// which keeps it on a thread of its own and folds it back once its swarm
+/// has ended, recorded as a `board_fold_back`.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_start_hands_its_run_to_the_sessions_keeper() {
+    use super::super::keeper::{SessionEnd, SessionKeeper};
+    let records = Arc::new(Records::default());
+    let keeping = BoardSite {
+        launcher: Some(Arc::new(Launching)),
+        keeper: Some(SessionKeeper {
+            end: Arc::new(SessionEnd::default()),
+            swarm: Arc::new(Succeeded),
+            period: std::time::Duration::ZERO,
+        }),
+        ..site(Some(launching_board))
+    };
+    let tool = recorded_tool(keeping, &records);
+    let request = json!({"op": "start", "task": "a", "plan_version": 1});
+    let started = tool.execute(&request.to_string()).await.unwrap();
+    assert!(!started.is_error, "{}", started.content);
+    let mut folded = vec![];
+    for _ in 0..500 {
+        folded = records.fold_backs();
+        if !folded.is_empty() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    assert_eq!(folded.len(), 1, "the keeper folded the run back once");
+    let line = serde_json::to_value(&folded[0]).unwrap();
+    assert_eq!(
+        (
+            &line["task"],
+            &line["run"],
+            &line["outcome"],
+            &line["run_outcome"]
+        ),
+        (&json!("a"), &json!(1), &json!("ok"), &json!("succeeded"))
     );
 }

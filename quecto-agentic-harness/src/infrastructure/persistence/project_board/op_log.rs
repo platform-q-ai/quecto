@@ -26,7 +26,7 @@ use std::time::Duration;
 use crate::application::project_board::ports::ProjectBoardOpLog;
 use crate::domain::audit::AuditEvent;
 use crate::domain::project_board::value_objects::telemetry::{
-    Access, BoardOpRecord, BoardStartRecord, FoldBackRecord,
+    Access, BoardOpRecord, BoardStartRecord, ClaimRenewalsRecord, FoldBackRecord,
 };
 use crate::infrastructure::persistence::audit_log::AuditCrashLine;
 
@@ -172,6 +172,10 @@ impl ProjectBoardOpLog for EventLogProjectBoardOps {
     fn record_start(&self, record: BoardStartRecord) {
         self.append(AuditEvent::BoardStart(Box::new(record)));
     }
+
+    fn record_claim_renewals(&self, record: ClaimRenewalsRecord) {
+        self.append(AuditEvent::BoardClaimRenewals(Box::new(record)));
+    }
 }
 
 /// [`ProjectBoardOpLog`] that writes each record to `tracing` (target
@@ -223,6 +227,16 @@ impl ProjectBoardOpLog for TracingProjectBoardOps {
             tracing::info!(target: TARGET, record = %fields, "board start");
         }
         self.inner.record_start(record);
+    }
+
+    /// Traced at INFO (`board claim renewals`: a renewal writes the
+    /// board), then written as [`Self::record`] writes a `board_op`.
+    fn record_claim_renewals(&self, record: ClaimRenewalsRecord) {
+        if self.inner.line.get().is_some() {
+            let fields = Fields(&record);
+            tracing::info!(target: TARGET, record = %fields, "board claim renewals");
+        }
+        self.inner.record_claim_renewals(record);
     }
 }
 

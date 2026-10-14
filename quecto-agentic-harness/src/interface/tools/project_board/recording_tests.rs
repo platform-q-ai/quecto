@@ -19,13 +19,14 @@ use crate::infrastructure::test_support::memory_board_store::MemoryBoardStore;
 use crate::infrastructure::time::board_clock::SystemBoardClock;
 use crate::interface::tools::project_board::run_recorded;
 
-/// The records written, in order: `board_op`s, `board_fold_back`s and
-/// `board_start`s.
+/// The records written, in order: `board_op`s, `board_fold_back`s,
+/// `board_start`s and `board_claim_renewals`.
 #[derive(Default)]
 pub(crate) struct Records(
     Mutex<Vec<BoardOpRecord>>,
     Mutex<Vec<FoldBackRecord>>,
     Mutex<Vec<crate::domain::project_board::value_objects::telemetry::BoardStartRecord>>,
+    Mutex<Vec<crate::domain::project_board::value_objects::telemetry::ClaimRenewalsRecord>>,
 );
 
 impl ProjectBoardOpLog for Records {
@@ -41,6 +42,12 @@ impl ProjectBoardOpLog for Records {
     ) {
         self.2.lock().unwrap().push(record);
     }
+    fn record_claim_renewals(
+        &self,
+        record: crate::domain::project_board::value_objects::telemetry::ClaimRenewalsRecord,
+    ) {
+        self.3.lock().unwrap().push(record);
+    }
 }
 
 impl Records {
@@ -54,6 +61,11 @@ impl Records {
     }
     pub(crate) fn fold_backs(&self) -> Vec<FoldBackRecord> {
         std::mem::take(&mut *self.1.lock().unwrap())
+    }
+    pub(crate) fn renewals(
+        &self,
+    ) -> Vec<crate::domain::project_board::value_objects::telemetry::ClaimRenewalsRecord> {
+        std::mem::take(&mut *self.3.lock().unwrap())
     }
 }
 

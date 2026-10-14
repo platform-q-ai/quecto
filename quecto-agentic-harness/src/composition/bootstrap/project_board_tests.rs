@@ -58,6 +58,7 @@ fn environment(repo: &Path, access: Access) -> ProjectBoardEnvironment {
         vars,
         cancelled: None,
         launcher: None,
+        swarm: None,
     }
 }
 

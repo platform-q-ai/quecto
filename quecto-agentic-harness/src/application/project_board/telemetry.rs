@@ -8,8 +8,8 @@ use super::operations::{BoardRequest, Completion};
 use super::ports::ProjectBoardOpLog;
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::telemetry::{
-    Access, BoardOpRecord, BoardStartRecord, ClaimFacts, CompletionFacts, CompletionKind,
-    FoldBackRecord, Normalised, OpKind, RunOutcomeKind, StaticKind,
+    Access, BoardOpRecord, BoardStartRecord, ClaimFacts, ClaimRenewalsRecord, CompletionFacts,
+    CompletionKind, FoldBackRecord, Normalised, OpKind, RunOutcomeKind, StaticKind,
 };
 use crate::domain::project_board::value_objects::vocabulary::{PlanState, RunOutcome, TaskStatus};
 
@@ -309,6 +309,12 @@ impl BoardRecording {
     /// [`Self::record`] writes a `board_op`.
     pub fn record_start(&self, record: BoardStartRecord) {
         self.log.record_start(record);
+    }
+
+    /// Writes a kept run's `board_claim_renewals` record (S4d) to the log,
+    /// as [`Self::record`] writes a `board_op`.
+    pub fn record_claim_renewals(&self, record: ClaimRenewalsRecord) {
+        self.log.record_claim_renewals(record);
     }
 }
 

@@ -12,7 +12,7 @@ use crate::domain::project_board::entities::run::Run;
 use crate::domain::project_board::entities::task::Task;
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::telemetry::{
-    BoardOpRecord, BoardStartRecord, FoldBackRecord,
+    BoardOpRecord, BoardStartRecord, ClaimRenewalsRecord, FoldBackRecord,
 };
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
 use crate::domain::project_board::value_objects::vocabulary::{Effort, TaskStatus};
@@ -544,6 +544,10 @@ pub trait ProjectBoardOpLog: Send + Sync {
     /// Appends a start's `board_start` record (S4c), as [`Self::record`]
     /// appends a `board_op`.
     fn record_start(&self, record: BoardStartRecord);
+
+    /// Appends a kept run's `board_claim_renewals` record (S4d), as
+    /// [`Self::record`] appends a `board_op`.
+    fn record_claim_renewals(&self, record: ClaimRenewalsRecord);
 }
 
 /// What a started task's coordinator is launched with (S4c): the run it

@@ -22,6 +22,13 @@ impl ProjectBoardOpLog for Log {
     fn record_fold_back(&self, _record: FoldBackRecord) {
         unreachable!("a board_op test writes no fold-back");
     }
+
+    fn record_claim_renewals(
+        &self,
+        _record: crate::domain::project_board::value_objects::telemetry::ClaimRenewalsRecord,
+    ) {
+        unreachable!("a board_op test keeps no run");
+    }
 }
 
 fn record() -> BoardOpRecord {

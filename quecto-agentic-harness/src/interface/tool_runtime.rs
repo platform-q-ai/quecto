@@ -400,14 +400,10 @@ pub(crate) fn build_tool_runtime(
         registry.watch_spawn_permit(permit.clone());
         let (spawn, kill) = (&agent_control.spawn_tool, &agent_control.agent_cmd_tool);
         let launcher = launch::SpawnCoordinatorLauncher::new(spawn.clone(), kill.clone(), permit);
-        let board = crate::interface::tools::project_board::tool::BoardTool::new(
-            crate::interface::tools::project_board::site::BoardSite {
-                repo: board_repo,
-                remote: "origin".into(),
-                build: Some(build),
-                launcher: Some(std::sync::Arc::new(launcher)),
-            },
-        );
+        use crate::interface::tools::project_board::{session_site::session_site, tool::BoardTool};
+        let launcher = std::sync::Arc::new(launcher);
+        let site = session_site(board_repo, build, launcher, environment_control.clone());
+        let board = BoardTool::new(site);
         register_bundled_native_tools_with_scope(
             &mut registry,
             build_project_board_tool_extension(std::sync::Arc::new(board)),

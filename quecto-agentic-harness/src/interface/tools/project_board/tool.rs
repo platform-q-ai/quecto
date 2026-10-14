@@ -390,6 +390,16 @@ impl Drop for CancelOnDrop {
     }
 }
 
+/// A board tool dropped ends its session's keeping (S4d): every keeper of
+/// a run it started stops before its next look.
+impl Drop for BoardTool {
+    fn drop(&mut self) {
+        if let Some(keeper) = &self.site.keeper {
+            keeper.end.end();
+        }
+    }
+}
+
 impl Tool for BoardTool {
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {

@@ -113,6 +113,7 @@ async fn the_board_tools_records_follow_the_session() {
         remote: "origin".into(),
         build: None,
         launcher: None,
+        keeper: None,
     };
     let tool = BoardTool::recorded_in(site, recordings);
     tool.execute(r#"{"op": "list"}"#).await.unwrap();

@@ -107,7 +107,10 @@ fn memory_board(environment: &ProjectBoardEnvironment) -> Result<ProjectBoardHan
         r#"{"op": "create", "task": "a", "title": "A", "status": "ready"}"#,
     );
     assert_eq!(created["ok"], json!(true), "{created}");
-    Ok(ProjectBoardHandles { operations })
+    Ok(ProjectBoardHandles {
+        operations,
+        keeper: None,
+    })
 }
 
 fn unbuildable(_: &ProjectBoardEnvironment) -> Result<ProjectBoardHandles, BuildError> {

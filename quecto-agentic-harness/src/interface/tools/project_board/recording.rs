@@ -77,6 +77,11 @@ impl BoardCall {
         Self::arrived(arrival, front_end, client)
     }
 
+    /// The recording the call goes to, while it is recorded.
+    pub fn recording(&self) -> Option<Arc<BoardRecording>> {
+        self.open.as_ref().map(|open| Arc::clone(&open.recording))
+    }
+
     /// A call from `front_end` for `client` that arrived when `arrival`
     /// says, with the recording it is recorded in (`None`: recorded
     /// nowhere, so its arrival was never timed either).

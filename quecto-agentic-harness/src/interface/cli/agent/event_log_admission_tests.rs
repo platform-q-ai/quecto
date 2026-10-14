@@ -286,6 +286,7 @@ async fn an_attached_session_records_the_board_tools_calls() {
             remote: "origin".into(),
             build: None,
             launcher: None,
+            keeper: None,
         };
         BoardTool::recorded_in(site, recordings)
             .execute(r#"{"op": "list"}"#)
@@ -348,6 +349,7 @@ async fn a_session_with_the_event_log_off_records_no_board_tool_call() {
         remote: "origin".into(),
         build: None,
         launcher: None,
+        keeper: None,
     };
     let tool = BoardTool::recorded_in(site, recordings);
     tool.execute(r#"{"op": "list"}"#).await.unwrap();

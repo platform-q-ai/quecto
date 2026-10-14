@@ -24,8 +24,8 @@ use crate::application::project_board::ports::{
 use crate::application::project_board::telemetry::{BoardRecording, RecordingSwitch};
 use crate::application::project_board::use_cases::{
     AcceptPlan, BootstrapProjectBoard, ChangeBoardTask, ClearSetAside, CompleteMergedTask,
-    CreateBoardTask, DiscardPlan, EditPlan, EndRun, ProposePlan, QueryBoard, RunBoardOperation,
-    StartBoardTask, UpdateDraftTask,
+    CreateBoardTask, DiscardPlan, EditPlan, EndRun, KeepStartedRun, ProposePlan, QueryBoard,
+    RunBoardOperation, StartBoardTask, UpdateDraftTask,
 };
 use crate::domain::project_board::entities::claim::Identity;
 use crate::domain::redaction::{redact_secrets, redact_url_userinfo};
@@ -93,7 +93,8 @@ fn build_with_warnings(
     };
     let board = GitBoardStore::new(git, &environment.remote)
         .map_err(|error| unavailable(store_reason(&error)))?;
-    // A start's undo writes past the call's cancel, so no run is stranded.
+    // A start's undo writes past the call's cancel, so no run is stranded;
+    // so does a started run's keeper, which outlives the call (S4d).
     let undo_store: Arc<dyn ProjectBoardStore> = Arc::new(board.without_cancel());
     let store = Arc::new(board.with_cancel(environment.cancelled.clone()));
     let url = store
@@ -114,6 +115,18 @@ fn build_with_warnings(
     let store: Arc<dyn ProjectBoardStore> = store;
     let built = |error: crate::application::project_board::dto::ProjectBoardError| {
         unavailable(error.to_string())
+    };
+    let keeper = match (&environment.swarm, environment.access) {
+        (Some(swarm), Access::Write) => Some(
+            KeepStartedRun::new(
+                Arc::clone(&undo_store),
+                Arc::clone(&clock),
+                Arc::new(MarkdownTextCells),
+                Arc::clone(swarm),
+            )
+            .map_err(built)?,
+        ),
+        (Some(_), Access::Read) | (None, _) => None,
     };
     let complete = match prs {
         Ok(prs) => Ok(
@@ -153,6 +166,7 @@ fn build_with_warnings(
     };
     Ok(ProjectBoardHandles {
         operations: RunBoardOperation::new(parts),
+        keeper,
     })
 }
 

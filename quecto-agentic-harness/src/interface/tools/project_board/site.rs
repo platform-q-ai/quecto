@@ -9,11 +9,14 @@ use std::path::PathBuf;
 use serde_json::Value;
 
 use super::answer::FrontEndRefusal;
+use super::keeper::SessionKeeper;
 use super::recording::BoardCall;
 use super::request::{op_of, parse};
-use super::{read, run_recorded};
-use crate::application::project_board::ports::CoordinatorLaunch;
-use crate::application::project_board::use_cases::RunBoardOperation;
+use super::{read, run_recorded_then};
+use crate::application::project_board::keeper::KeptRun;
+use crate::application::project_board::operations::BoardOutcome;
+use crate::application::project_board::ports::{CoordinatorLaunch, StartedSwarm};
+use crate::application::project_board::use_cases::{KeepStartedRun, RunBoardOperation};
 
 /// What a request does with the board.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -38,6 +41,9 @@ pub struct ProjectBoardEnvironment {
     /// while its session may spawn (S4c); `None` for a front end that
     /// starts nothing (the CLI), so a start is refused.
     pub launcher: Option<Launcher>,
+    /// The swarm boards a started run's keeper reads (S4d): the agent
+    /// tool's; `None` for a front end that keeps no run.
+    pub swarm: Option<std::sync::Arc<dyn StartedSwarm>>,
 }
 
 /// A front end's coordinator launcher (S4c).
@@ -46,6 +52,9 @@ pub type Launcher = std::sync::Arc<dyn CoordinatorLaunch>;
 /// The board's operations, built by composition.
 pub struct ProjectBoardHandles {
     pub operations: RunBoardOperation,
+    /// A started run's keeper, over a store no call cancels: built when
+    /// the environment names swarm boards to read (S4d).
+    pub keeper: Option<KeepStartedRun>,
 }
 
 /// Why composition could not build the board's operations.
@@ -60,14 +69,16 @@ pub type ProjectBoardHandlesBuilder =
     fn(&ProjectBoardEnvironment) -> Result<ProjectBoardHandles, BuildError>;
 
 /// A front end's board: its repository and board remote, how composition
-/// builds its operations (`None` when it is not composed), and what
-/// launches a started task's coordinator (`None`: it starts nothing).
+/// builds its operations (`None` when it is not composed), what launches
+/// a started task's coordinator (`None`: it starts nothing), and what
+/// keeps a run once started (`None`: no run is kept).
 #[derive(Clone)]
 pub struct BoardSite {
     pub repo: PathBuf,
     pub remote: String,
     pub build: Option<ProjectBoardHandlesBuilder>,
     pub launcher: Option<Launcher>,
+    pub keeper: Option<SessionKeeper>,
 }
 
 impl std::fmt::Debug for BoardSite {
@@ -77,6 +88,7 @@ impl std::fmt::Debug for BoardSite {
             .field("remote", &self.remote)
             .field("build", &self.build.is_some())
             .field("launcher", &self.launcher.is_some())
+            .field("keeper", &self.keeper.is_some())
             .finish()
     }
 }
@@ -119,10 +131,25 @@ pub fn answer(
         vars: std::env::vars_os().collect(),
         cancelled,
         launcher: site.launcher.clone(),
+        swarm: site.keeper.as_ref().map(|keeper| keeper.swarm.clone()),
     };
     match call.built(|| build(&environment)) {
-        // The one entry point every front end's request goes through.
-        Ok(handles) => run_recorded(&handles.operations, text, call),
+        // The one entry point every front end's request goes through; a
+        // run it started is kept from then on (S4d).
+        Ok(ProjectBoardHandles { operations, keeper }) => {
+            run_recorded_then(&operations, text, call, |outcome, call| {
+                if let (BoardOutcome::Started(started), Some(keeper), Some(session)) =
+                    (outcome, keeper, &site.keeper)
+                {
+                    let kept = KeptRun {
+                        task: started.task.fields().id.clone(),
+                        run: started.run.fields().number,
+                        environment_ref: started.coordinator.environment_ref.clone(),
+                    };
+                    session.keep(keeper, kept, call.recording());
+                }
+            })
+        }
         Err(BuildError::NoCommitter(why)) => {
             call.refuse_as_front_end(op.as_deref(), FrontEndRefusal::NoCommitter, &why)
         }
