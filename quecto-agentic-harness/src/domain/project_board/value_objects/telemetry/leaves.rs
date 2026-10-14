@@ -57,6 +57,9 @@ const KNOWN_KINDS: &[&str] = &[
     "complete",
     "clear_set_aside",
     "unknown",
+    // Ops (#2481 M4b).
+    "propose_plan",
+    "edit_plan",
     // Outcomes, front ends, clients, accesses, faults.
     "ok",
     "refused",
@@ -169,6 +172,8 @@ const KNOWN_KINDS: &[&str] = &[
     "own_pr_referenced",
     "invalid",
     "no_accepted_plan",
+    // A plan's schema refusal (#2481 M4b).
+    "invalid_plan",
     // Completions and normaliser changes (T4).
     "pending",
     "failed",
@@ -218,6 +223,11 @@ const KNOWN_KINDS: &[&str] = &[
     // A show's page of its plan (#2481 M4a review round 2).
     "approach_from",
     "items_from",
+    // A plan's fields (#2481 M4b); `criteria` is S4's.
+    "version",
+    "approach",
+    "items",
+    "team",
     "op",
     "request",
     "other",

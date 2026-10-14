@@ -24,6 +24,9 @@ fn bare() -> BoardOpRecord {
         listing: None,
         plans: None,
         runs: None,
+        plan_version: None,
+        items: None,
+        roles: None,
         status_from: None,
         status_to: None,
         claim: None,
@@ -67,6 +70,9 @@ fn full() -> BoardOpRecord {
         }),
         plans: Some(3),
         runs: Some(2),
+        plan_version: Some(2),
+        items: Some(5),
+        roles: Some(2),
         status_from: Some(StaticKind::new("in_progress")),
         status_to: Some(StaticKind::new("review")),
         claim: Some(ClaimFacts {
@@ -90,6 +96,8 @@ fn full() -> BoardOpRecord {
         normalised: Some(Normalised {
             title: Some(vec![]),
             description: Some(vec![TextChange::Crlf, TextChange::TrailingSpace]),
+            approach: Some(vec![TextChange::EdgeBlankLines]),
+            items: Some(vec![TextChange::EdgeSpace]),
         }),
         cancelled: true,
         build_us: Some(41_000),
@@ -113,10 +121,23 @@ fn every_field_serializes_as_its_golden_line() {
         "completion_code": "rule", "completion_rule": "prs_unmerged", "prs_linked": 2,
         "prs_pending": 1, "completion_attempts": 2, "completion_lost": 1,
         "completion_pause_ms": 20,
-        "normalised": {"title": [], "description": ["crlf", "trailing_space"]},
         "cancelled": true,
         "build_us": 41_000, "result_bytes": 412, "duration_us": 1_830_000,
     });
+    // A plan's counts and the normaliser's kinds (#2481 M4b), apart: one
+    // macro holds only so many.
+    let mut golden = golden;
+    let plan = json!({
+        "plan_version": 2, "items": 5, "roles": 2,
+        "normalised": {
+            "title": [], "description": ["crlf", "trailing_space"],
+            "approach": ["edge_blank_lines"], "items": ["edge_space"],
+        },
+    });
+    golden
+        .as_object_mut()
+        .unwrap()
+        .extend(plan.as_object().unwrap().clone());
     assert_eq!(line, golden);
 }
 
@@ -183,6 +204,8 @@ fn no_kind_is_ever_renamed_or_removed() {
         "complete",
         "clear_set_aside",
         "unknown",
+        "propose_plan",
+        "edit_plan",
     ];
     frozen(OpKind::ALL, OpKind::as_str, &ops);
     frozen(FrontEnd::ALL, FrontEnd::as_str, &["tool", "cli"]);

@@ -320,6 +320,15 @@ fn no_request_text_ever_reaches_a_record() {
             json!({"op": "clear_set_aside", "path": title, "object": "0".repeat(40),
                    "repeated": {key.clone(): {"drop": [description]}}}),
             json!({"op": "move", "task": task, "to": description}),
+            // A plan's nested text and keys (#2481 M4b).
+            json!({"op": "propose_plan", "task": task, "approach": description,
+                   "items": [{"id": "i", "title": title, "criteria": [description]}],
+                   "team": {"roles": [{"name": "w", "model": "m", "effort": "low", "members": 1}],
+                            "image": title}}),
+            json!({"op": "propose_plan", "task": task, "approach": "",
+                   "items": [{"id": "i", "title": "T", key.clone(): title}]}),
+            json!({"op": "edit_plan", "task": task, "version": 1, "approach": title,
+                   "items": [{"id": "i", "title": description}]}),
         ];
         let texts: Vec<String> = requests.iter().map(Value::to_string).collect();
         for (line, text) in recorded(&board, &texts).iter().zip(&texts) {
@@ -523,6 +532,83 @@ fn a_call_records_what_its_use_case_saw() {
     );
 }
 
+/// #2481 M4b: a plan's op records the version, its task items and team
+/// roles, and what the normaliser changed, by kind; a nested fault, or a
+/// plan's own schema refusal, records the top field it lies under.
+#[test]
+fn a_plan_op_records_its_version_counts_and_normalised_kinds() {
+    let board = board();
+    let team = json!({"roles": [{"name": "w", "model": "m", "effort": "low", "members": 2}]});
+    let lines = recorded(
+        &board,
+        &[
+            json!({"op": "create", "task": "a", "title": "A"}).to_string(),
+            json!({"op": "propose_plan", "task": "a", "approach": "Do.\r\n",
+                   "items": [{"id": "i", "title": " I", "criteria": ["x\ty"]}], "team": team})
+            .to_string(),
+            json!({"op": "edit_plan", "task": "a", "version": 1, "team": null}).to_string(),
+            json!({"op": "edit_plan", "task": "a", "version": 1, "items": [{"id": "i", "title": "Two\nlines"}]})
+                .to_string(),
+            json!({"op": "propose_plan", "task": "a", "approach": "", "items": [{"id": "i", "title": 7}]})
+                .to_string(),
+        ],
+    );
+    let facts = |line: &Value| {
+        let field = |key: &str| line.get(key).cloned().unwrap_or(Value::Null);
+        [
+            "op",
+            "access",
+            "plan_version",
+            "items",
+            "roles",
+            "normalised",
+            "attempts",
+        ]
+        .map(field)
+    };
+    assert_eq!(
+        facts(&lines[1]),
+        [
+            json!("propose_plan"),
+            json!("write"),
+            json!(1),
+            json!(1),
+            json!(1),
+            json!({"approach": ["crlf", "edge_blank_lines"], "items": ["tab", "edge_space"]}),
+            json!(1),
+        ]
+    );
+    // An edit that gives no text tells nothing normalised.
+    let edited = facts(&lines[2]);
+    assert_eq!(edited[2..6], [json!(1), json!(1), json!(0), Value::Null]);
+    let invalid = &lines[3];
+    assert_eq!(
+        [
+            &invalid["code"],
+            &invalid["rule"],
+            &invalid["field"],
+            &invalid["plan_version"]
+        ],
+        [
+            &json!("rule"),
+            &json!("invalid_plan"),
+            &json!("items"),
+            &json!(1)
+        ],
+        "{invalid}"
+    );
+    let wrong = &lines[4];
+    assert_eq!(
+        [&wrong["code"], &wrong["field"], &wrong["fault"]],
+        [
+            &json!("invalid_request"),
+            &json!("items"),
+            &json!("wrong_type")
+        ],
+        "{wrong}"
+    );
+}
+
 /// A board clock that counts the reads of its monotonic time.
 #[derive(Default)]
 struct CountingClock {
@@ -614,7 +700,7 @@ fn a_rule_failed_completion_records_its_rule() {
     let BoardOutcome::Shown(shown, _) = board
         .execute(&BoardRequest::Show(
             crate::domain::project_board::value_objects::slug::Slug::parse("a").unwrap(),
-            None,
+            crate::application::project_board::operations::PlanView::default(),
         ))
         .unwrap()
     else {

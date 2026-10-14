@@ -11,7 +11,7 @@ use crate::application::project_board::ports::{
 };
 use crate::application::project_board::use_cases::{
     BootstrapProjectBoard, ChangeBoardTask, ClearSetAside, CompleteMergedTask, CreateBoardTask,
-    QueryBoard, RunBoardOperation, UpdateDraftTask,
+    EditPlan, ProposePlan, QueryBoard, RunBoardOperation, UpdateDraftTask,
 };
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
@@ -74,6 +74,8 @@ pub fn assembled(
         create: CreateBoardTask::new(Arc::clone(&store), Arc::clone(&clock))?,
         update: UpdateDraftTask::new(Arc::clone(&store), Arc::clone(&clock))?,
         change: ChangeBoardTask::new(Arc::clone(&store), Arc::clone(&clock))?,
+        propose_plan: ProposePlan::new(Arc::clone(&store), Arc::clone(&clock))?,
+        edit_plan: EditPlan::new(Arc::clone(&store), Arc::clone(&clock))?,
         clear: ClearSetAside::new(Arc::clone(&store), Arc::clone(&clock))?,
         complete,
         clock,

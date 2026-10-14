@@ -382,6 +382,69 @@ impl ShownTask {
         })
     }
 
+    /// The plan a show gives: version `version` when one is named, the
+    /// accepted plan (if any) otherwise.
+    ///
+    /// # Panics
+    /// A version named that [`Self::version`] refuses: a show is answered
+    /// only once `RunBoardOperation` found the version it names.
+    pub fn plan(&self, version: Option<u32>) -> Option<&Plan> {
+        match version {
+            Some(version) => match self.version(version) {
+                Ok(plan) => Some(plan),
+                Err(error) => panic!("a show names only a version it found, not: {error}"),
+            },
+            None => self.accepted_plan(),
+        }
+    }
+
+    /// Version `version` of the task's plan, whatever its state (#2481
+    /// M4b: a draft is read before it is edited or accepted).
+    ///
+    /// # Errors
+    /// [`ProjectBoardError::Quarantined`] while its own file is set aside
+    /// (checked first: what the board holds of it is then unknown);
+    /// [`ProjectBoardError::SetAsideFile`] when the task has none read
+    /// while a kept file in `plans/` whose name spells no key is set aside
+    /// (it may hold that version); otherwise the rule
+    /// [`BoardRuleError::UnknownPlanVersion`] when the task has none.
+    pub fn version(&self, version: u32) -> Result<&Plan, ProjectBoardError> {
+        let id = &self.task.fields().id;
+        let key = ArtifactKey::Plan(id.clone(), version);
+        if let Some(file) = self
+            .set_aside
+            .iter()
+            .find(|file| file.key.as_ref() == Some(&key))
+        {
+            return Err(ProjectBoardError::Quarantined {
+                key,
+                path: file.path.clone(),
+            });
+        }
+        if let Some(plan) = self
+            .plans
+            .iter()
+            .find(|plan| plan.fields().version == version)
+        {
+            return Ok(plan);
+        }
+        let plans = ArtifactScope::Plans { task: id.clone() };
+        let keyless = self
+            .set_aside
+            .iter()
+            .filter(|file| file.key.is_none() && plans.holds(file))
+            .min_by(|a, b| (&a.path, &a.object).cmp(&(&b.path, &b.object)));
+        match keyless {
+            Some(file) => Err(ProjectBoardError::SetAsideFile {
+                path: file.path.clone(),
+                object: file.object.clone(),
+            }),
+            None => Err(ProjectBoardError::Rule(BoardRuleError::UnknownPlanVersion(
+                version,
+            ))),
+        }
+    }
+
     /// The task's latest run: the one numbered last.
     pub fn latest_run(&self) -> Option<&Run> {
         self.runs.last()
@@ -668,6 +731,10 @@ impl fmt::Display for ProjectBoardError {
 }
 
 impl std::error::Error for ProjectBoardError {}
+
+#[path = "dto_plans.rs"]
+mod plans;
+pub use plans::{PlanEdit, PlanProposal};
 
 #[cfg(test)]
 #[path = "dto_tests.rs"]

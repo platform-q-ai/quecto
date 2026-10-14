@@ -66,6 +66,7 @@ kinds!(
         UpdateDraft => "update_draft", Move => "move", Renew => "renew",
         TakeOver => "take_over", LinkPr => "link_pr", UnlinkPr => "unlink_pr",
         Complete => "complete", ClearSetAside => "clear_set_aside", Unknown => "unknown",
+        ProposePlan => "propose_plan", EditPlan => "edit_plan",
     }
 );
 
@@ -164,6 +165,16 @@ pub struct BoardOpRecord {
     pub plans: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub runs: Option<u64>,
+    /// The plan version a `propose_plan` wrote, or an `edit_plan` named
+    /// (#2481 M4b).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plan_version: Option<u64>,
+    /// The task items and team roles of the plan a `propose_plan` or
+    /// `edit_plan` wrote (#2481 M4b).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub items: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub roles: Option<u64>,
     /// The task's status as a change last read it (T4).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub status_from: Option<StaticKind>,
@@ -258,6 +269,13 @@ pub struct Normalised {
     pub title: Option<Vec<TextChange>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<Vec<TextChange>>,
+    /// A plan's approach (#2481 M4b).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub approach: Option<Vec<TextChange>>,
+    /// A plan's task items: every change made to any of their titles
+    /// and criteria (#2481 M4b).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub items: Option<Vec<TextChange>>,
 }
 
 kinds!(
