@@ -74,3 +74,55 @@ fn prompt_role_follows_the_launch_flags() {
     assert_eq!(PromptRole::of(true, false), PromptRole::Subagent);
     assert_eq!(PromptRole::of(true, true), PromptRole::Coordinator);
 }
+
+/// The board ops the parent playbook calls, `op(…)` in backticks (#2481
+/// Q11): every one is an op of the board tool, so a renamed op cannot
+/// leave the playbook calling one the tool refuses.
+#[test]
+fn the_parent_playbook_calls_only_the_board_tools_ops() {
+    let ops: Vec<&str> = crate::interface::tools::project_board::request::OPS
+        .iter()
+        .map(|(op, _)| *op)
+        .collect();
+    let called: Vec<&str> = parent_coordination_policy()
+        .split('`')
+        .skip(1)
+        .step_by(2)
+        .filter_map(|code| code.split_once('(').map(|(name, _)| name))
+        .filter(|name| {
+            !name.is_empty() && name.bytes().all(|b| b.is_ascii_lowercase() || b == b'_')
+        })
+        .collect();
+    for op in [
+        "propose_plan",
+        "edit_plan",
+        "accept_plan",
+        "start",
+        "end_run",
+        "renew",
+        "take_over",
+    ] {
+        assert!(called.contains(&op), "{op} is called");
+    }
+    for op in &called {
+        assert!(ops.contains(op), "{op} is a board op");
+    }
+}
+
+/// The parent reads a swarm through supported calls, never its database
+/// (#2481 Q11).
+#[test]
+fn the_parent_reads_a_swarm_through_calls_never_its_database() {
+    let playbook = parent_coordination_policy();
+    for database in ["sqlite3", "mode=ro", "PRAGMA"] {
+        assert!(!playbook.contains(database), "{database}");
+    }
+    for call in [
+        "`swarm_control` `status`",
+        "`swarm_control` `close`",
+        "`get_messages`",
+        "Do not open `swarm.sqlite`",
+    ] {
+        assert!(playbook.contains(call), "{call}");
+    }
+}
