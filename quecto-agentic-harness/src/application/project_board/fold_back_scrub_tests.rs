@@ -1,4 +1,4 @@
-//! S4 review rounds 2 to 4: what the scrubber keeps of an address in an
+//! S4 review rounds 2 to 5: what the scrubber keeps of an address in an
 //! owner or evidence part, and what a link holds. The board is public:
 //! when a rule is in doubt, it scrubs.
 use super::tests::kept_line;
@@ -7,7 +7,18 @@ use super::*;
 /// What [`scrubbed`] makes of each row's text, row by row.
 fn scrubs(rows: &[(&str, &str)]) {
     for (raw, kept) in rows {
-        assert_eq!(scrubbed(raw), *kept, "{raw}");
+        assert_eq!(
+            scrubbed(raw, MAX_LINE_CHARS).as_deref(),
+            Some(*kept),
+            "{raw}"
+        );
+    }
+}
+
+/// Each of `raws` is in doubt: its line is dropped.
+fn doubted(raws: &[&str]) {
+    for raw in raws {
+        assert_eq!(scrubbed(raw, MAX_LINE_CHARS), None, "{raw}");
     }
 }
 
@@ -82,44 +93,111 @@ fn an_authority_is_kept_only_when_it_is_unambiguous() {
 }
 
 #[test]
-fn a_word_holding_an_at_sign_before_a_host_is_scrubbed_whole() {
+fn an_at_sign_outside_an_address_drops_the_line_but_for_an_exempt_word() {
+    doubted(&[
+        "root:secret@tcp(127.0.0.1:3306)/db",
+        "user:pass@db:5432/app",
+        "user:pass@localhost:6379",
+        "u:p@[::1]:5432/x",
+        "u:p@h\u{f4}st.com/x",
+        "pkg@1.2.3",
+        "@types/node",
+        "git@github.com:o/r",
+        "mailed ada@example.com.",
+        "oauth2:glpat-abc@gitlab.com/o/r.git",
+        "`oauth2:glpat-abc@gitlab.com/o/r.git`",
+        "user@bucket.s3.amazonaws.com/x?sig=y",
+        // Fullwidth and small at signs are at signs.
+        "ada\u{ff20}example.com",
+        "ada\u{fe6b}example.com",
+        "worker@1x",
+        // A numeric password before a space: its tail holds the `@`.
+        "https://user:1234 5678@host.com/",
+    ]);
     scrubs(&[
-        ("oauth2:glpat-abc@gitlab.com/o/r.git", "***"),
-        ("`oauth2:glpat-abc@gitlab.com/o/r.git`", "`***`"),
-        ("mailed ada@example.com.", "mailed ***."),
-        ("user@bucket.s3.amazonaws.com/x?sig=y", "***"),
-        // An `@` before no host is left.
         ("worker@1 done", "worker@1 done"),
+        ("by worker-2@12.", "by worker-2@12."),
+        ("HEAD@{1}", "HEAD@{1}"),
+        ("`main@{0}`", "`main@{0}`"),
     ]);
 }
 
 #[test]
-fn a_unicode_space_inside_an_address_ends_it_and_leaves_no_password() {
-    scrubs(&[
-        ("https://u:pa\u{a0}ss@h/x", "https://*** ***"),
-        ("https://u:pa\u{2003}ss@h.example/x", "https://*** ***"),
-    ]);
-    let line = kept_line("https://u:pa\u{a0}ss@h/x", "abc");
-    assert!(
-        line.as_deref().is_none_or(|line| !line.contains("ss")),
-        "{line:?}"
-    );
+fn userinfo_outside_a_named_scheme_is_never_kept() {
+    // No scheme the address pattern reads: the at sign drops the line.
+    doubted(&["x_://u:p@h", "1://tok@db", "://tok@db"]);
 }
 
 #[test]
-fn only_an_anchor_fragment_straight_after_the_path_is_kept() {
+fn a_credential_header_drops_the_line() {
+    doubted(&[
+        "Authorization: Basic dXNlcjpwYXNzd29yZA==",
+        "authorization:token",
+        "basic dXNlcjpw",
+        "BASIC YWRhOjEyMzQ1Njc4",
+        "Bearer abcdef0123456789",
+        "bearer\u{a0}eyJhbGciOi",
+    ]);
     scrubs(&[
-        ("https://h.example/p#code=abc", "https://h.example/p"),
-        ("https://h.example/p#sig=x", "https://h.example/p"),
-        ("https://h.example/p?token=ab#cd", "https://h.example/p"),
+        ("a basic understanding", "a basic understanding"),
+        ("Basic Authentication set", "Basic Authentication set"),
+        // A short one is the shared redactor's.
+        ("bearer abc", "[REDACTED]"),
+    ]);
+}
+
+#[test]
+fn a_unicode_space_inside_an_address_ends_it_and_drops_the_line() {
+    doubted(&[
+        "https://u:pa\u{a0}ss@h/x",
+        "https://u:pa\u{2003}ss@h.example/x",
+    ]);
+    assert_eq!(kept_line("https://u:pa\u{a0}ss@h/x", "abc"), None);
+}
+
+#[test]
+fn each_line_break_keeps_its_line_two_lines() {
+    for break_ in ['\n', '\r', '\u{2028}', '\u{2029}', '\u{85}', '\u{b}'] {
+        assert_eq!(
+            kept_line(&format!("src{break_}api.rs"), "abc"),
+            None,
+            "{break_:?}"
+        );
+    }
+}
+
+#[test]
+fn only_a_short_anchor_fragment_is_kept_and_any_other_drops_the_line() {
+    scrubs(&[
         ("https://h.example/p#L10-L20", "https://h.example/p#L10-L20"),
         (
             "https://h.example/p#readme.md",
             "https://h.example/p#readme.md",
         ),
-        // An empty fragment is no anchor.
-        ("https://h/p#", "https://h/p"),
+        // A short anchor after a dropped query goes with the query.
+        ("https://h.example/p?token=ab#cd", "https://h.example/p"),
     ]);
+    let long = format!("https://h.example/p#{}", "a".repeat(MAX_FRAGMENT_CHARS + 1));
+    doubted(&[
+        "https://h.example/p#code=abc",
+        "https://h.example/p#sig=x",
+        "https://h.example/p?a=b#sig=x",
+        // An empty fragment is no anchor.
+        "https://h/p#",
+        &long,
+    ]);
+    let longest = format!("https://h.example/p#{}", "a".repeat(MAX_FRAGMENT_CHARS));
+    scrubs(&[(&longest, &longest)]);
+}
+
+#[test]
+fn a_doubly_encoded_path_or_a_bare_host_with_a_semicolon_drops_the_line() {
+    doubted(&[
+        "https://h.example/a%253Fsig=x",
+        "https://h.example/a%25",
+        "h.example/app;jsessionid=A1",
+    ]);
+    scrubs(&[("https://h.example/a%20b", "https://h.example/a%20b")]);
 }
 
 #[test]
@@ -164,8 +242,8 @@ fn a_scheme_in_any_case_or_none_still_loses_its_query() {
 fn the_marks_that_close_a_dropped_query_are_given_back() {
     for mark in [".", ",", ";", ":", "!", "]", "\"", "'", "`", ")", ">", "?"] {
         assert_eq!(
-            scrubbed(&format!("see https://h/p?sig=S{mark}")),
-            format!("see https://h/p{mark}"),
+            scrubbed(&format!("see https://h/p?sig=S{mark}"), MAX_LINE_CHARS),
+            Some(format!("see https://h/p{mark}")),
             "{mark}"
         );
     }
@@ -248,5 +326,25 @@ fn a_close_that_balances_an_open_in_the_address_stays_in_its_link() {
     assert_eq!(
         kept_line("(https://x.com/a)", "abc"),
         Some("([link](https://x.com/a)) at abc".into())
+    );
+}
+
+#[test]
+fn a_long_run_of_parentheses_is_judged_in_one_pass() {
+    let started = std::time::Instant::now();
+    let (opens, closes) = ("(".repeat(32_768), ")".repeat(32_768));
+    let linked = linked_word(&format!("https://h.example/a{opens}{closes}"));
+    assert!(
+        linked.starts_with("[link](https://h.example/a%28"),
+        "{}",
+        &linked[..40]
+    );
+    assert_eq!(balanced(&format!("h?{opens}"), "h", &closes), "");
+    let kept = scrubbed(&format!("https://h.example?a={opens}{closes}"), usize::MAX);
+    assert_eq!(kept.as_deref(), Some("https://h.example"));
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(2),
+        "{:?}",
+        started.elapsed()
     );
 }

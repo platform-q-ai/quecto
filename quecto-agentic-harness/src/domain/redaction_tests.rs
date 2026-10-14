@@ -240,28 +240,20 @@ fn a_key_lead_is_one_of_the_allowed_word_starts() {
     }
 }
 
+/// A `basic` before a password never shields it (#2481 Q7 review round
+/// 5): no rule reads `basic <word>` as one span, so the password rules
+/// still meet the password.
 #[test]
-fn a_basic_credential_is_redacted_in_any_case_and_prose_is_not() {
-    for header in [
-        "Authorization: Basic dXNlcjpwYXNzd29yZA==",
-        "authorization: basic dXNlcjpwYXNzd29yZA==",
-        "AUTHORIZATION: BASIC dXNlcjpw",
-        "Basic YWRhOjEyMzQ1Njc4",
-        "basic\tQWxhZGRpbjpvcGVuIHNlc2FtZQ==",
+fn a_basic_before_a_password_leaves_the_password_redacted() {
+    for (text, kept) in [
+        (
+            "auth:\n  type: basic\n  password: hunter2",
+            "auth:\n  type: basic\n  [REDACTED]",
+        ),
+        ("basic password: hunter2", "basic [REDACTED]"),
+        ("basic PASSWORD=hunter2", "basic [REDACTED]"),
+        ("mode=basic\npassword=hunter2", "mode=basic\n[REDACTED]"),
     ] {
-        let redacted = redact_secrets(header);
-        assert!(redacted.ends_with("[REDACTED]"), "{header}: {redacted}");
-        assert!(
-            !redacted.contains("dXNl") && !redacted.contains("YWRh"),
-            "{redacted}"
-        );
-    }
-    for prose in [
-        "a basic understanding of it",
-        "Basic Authentication is set",
-        "the basic setup",
-        "basic abc",
-    ] {
-        assert_eq!(redact_secrets(prose), prose);
+        assert_eq!(redact_secrets(text), kept, "{text:?}");
     }
 }

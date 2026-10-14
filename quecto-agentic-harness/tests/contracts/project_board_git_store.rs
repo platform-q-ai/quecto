@@ -440,10 +440,8 @@ fn the_git_store_takes_a_run_folded_back_alone_with_no_secret_in_its_file() {
     assert!(!file.contains(TOKEN) && !file.contains("$5"), "{file}");
     assert!(!file.contains("sig=") && !file.contains("sv="), "{file}");
     assert!(!file.contains("S3cr") && !file.contains("app:"), "{file}");
-    assert!(
-        file.contains("[link](https://h.example/p) at 4f2a9c1"),
-        "{file}"
-    );
+    // A fragment that is no anchor puts its line in doubt: dropped whole.
+    assert!(!file.contains("h.example/p"), "{file}");
     assert!(
         file.contains("`https://acct.blob.core.windows.net/c/b` at 4f2a9c1"),
         "{file}"

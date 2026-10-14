@@ -510,7 +510,7 @@ fn secrets_never_reach_the_run() {
         [
             "[link](https://github.com/o/r/pull/7) at 4f2a9c1",
             "[REDACTED] at 4f2a9c1",
-            "deployed at [REDACTED]",
+            // `Bearer …` is a credential: its line is dropped whole.
             "[REDACTED] at main",
             "[link](https://bucket.s3.amazonaws.com/build.tgz) at v1",
         ]

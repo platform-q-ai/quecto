@@ -15,28 +15,35 @@
 //!   done, blocked blocked. A plan item the swarm never seeded is todo
 //!   (`unmatched`); a swarm item no plan item takes is counted (`extra`),
 //!   never kept.
-//! - **Secrets:** the board is public, so when a rule is in doubt it
-//!   scrubs. Spaces are made plain first, so an address ends where a
-//!   reader sees it end. Every address in an owner or evidence part,
-//!   wherever it stands (bare, in a code span, in a link; `scheme://…`,
-//!   `//host…` or a bare `host.tld` before a `/`, `?` or `#`), keeps only
-//!   what [`kept`] allows: when it holds no `@` and its authority is
-//!   unambiguous, that authority, its path up to its first `?`, `#`, `;` or
-//!   `%3F`, and an anchor fragment straight after it; otherwise it is
-//!   written `scheme://***`. A word holding an `@` before a host
-//!   (`oauth2:token@gitlab.com/…`, an email) is written `***`. Then every
-//!   secret-shaped span is redacted, and any URL userinfo left with it.
-//! - **Accepted costs:** an address with an `@` anywhere (an npm `/@scope`,
-//!   vite's `/@vite/client`, `?to=a@b.co`) is scrubbed whole, as are IPv6
-//!   and non-ASCII hosts; a bare address with no usable host becomes `***`.
+//! - **Secrets:** the board is public, so a line in doubt is dropped
+//!   whole (and counted), never rewritten further. Each owner and evidence
+//!   part is cut to its board limit first, and its spaces made plain, so an
+//!   address ends where a reader sees it end. A part is in doubt when it
+//!   holds an `Authorization:` header or a credential after `basic` or
+//!   `bearer`; an address whose fragment is no short anchor (up to 64 of
+//!   `[A-Za-z0-9_.-]`), whose path holds `%25`, or a bare host whose word
+//!   holds a `;`; or an at sign (`@`, fullwidth or small) outside an
+//!   address, but in a `worker@1` or `HEAD@{1}` word. Otherwise every
+//!   address (`scheme://…`, `//host…` or a bare `host.tld` before a `/`, `?`
+//!   or `#`, in a code span or a link too) that holds no at sign and has an
+//!   unambiguous authority (an ASCII host, perhaps a port of digits) keeps
+//!   that authority, its path up to its first `?`, `#`, `;` or `%3F`, and a
+//!   short anchor straight after it; any other is written `scheme://***`.
+//!   Then every secret-shaped span is redacted.
+//! - **Accepted costs:** an address with an at sign anywhere (an npm
+//!   `/@scope`, vite's `/@vite/client`, `?to=a@b.co`), an IPv6 or a
+//!   non-ASCII host is written `scheme://***`; a line holding an email, a
+//!   `pkg@1.2.3`, an `@types/node`, a `git@host:repo` or any other at sign
+//!   outside an address is dropped, as is one holding `basic` or `bearer`
+//!   before a credential-like word; an owner holding one is left out.
 //! - **Known limits** (best effort, as the shared redactor is): a secret in
 //!   an address's path (a Slack or Discord webhook's token) is kept, since
 //!   no pattern of the redactor names one; a bare host with no dot
 //!   (`localhost/x?sig=…`), or one glued to a CJK letter or a `_`, is not
 //!   read as an address, so it keeps its query; and a secret that is no
-//!   address and matches no redactor pattern (a bare `sig=…` pair) is
-//!   kept. A line split by a line break is never one board line, so it is
-//!   dropped whole.
+//!   address, holds no at sign and matches no redactor pattern (a bare
+//!   `sig=…` pair) is kept. A line split by a line break is never one board
+//!   line, so it is dropped whole.
 //! - **Owner:** the member id, as one board line cut to
 //!   [`MAX_OWNER_CHARS`]; none when the board cannot hold it.
 //! - **Evidence:** one line per entry, `<artifact> at <revision>`, each
@@ -59,9 +66,10 @@ use crate::domain::project_board::value_objects::board_text;
 use crate::domain::project_board::value_objects::schema_error::line;
 use crate::domain::project_board::value_objects::telemetry::ItemCounts;
 use crate::domain::project_board::value_objects::vocabulary::{ItemState, RunOutcome};
-use crate::domain::redaction::{redact_secrets, redact_url_userinfo};
+use crate::domain::redaction::redact_secrets;
 use crate::domain::swarm::{RunState, TaskState};
 use regex::{Captures, Regex};
+use std::cell::Cell;
 use std::sync::LazyLock;
 
 /// The scheme of the one address a board line links.
@@ -85,17 +93,24 @@ static ADDRESS: LazyLock<Regex> = LazyLock::new(|| {
     .expect("a valid pattern")
 });
 /// What an address holding an `@`, or whose authority is ambiguous, is
-/// written as past its scheme; and what a word holding an `@` before a
-/// host is written as.
+/// written as past its scheme.
 const SCRUBBED: &str = "***";
-/// A word holding an `@` before what may be a host (a letter or digit,
-/// then a `.` or `/` before the next space): userinfo glued to a host with
-/// no scheme (`oauth2:token@gitlab.com/…`), an email, or the tail of an
-/// address a space cut.
-static AT_HOST: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"\S*@[A-Za-z0-9][A-Za-z0-9.\-]*[./]\S*").expect("a valid pattern")
+/// The at signs: ASCII, fullwidth and small.
+const AT_SIGNS: [char; 3] = ['@', '\u{ff20}', '\u{fe6b}'];
+/// The only words outside an address that may hold an at sign: a name and
+/// a number (`worker@1`), or a reflog reference (`HEAD@{1}`).
+static AT_EXEMPT: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^(?:[A-Za-z0-9._\-]+@[0-9]+|[A-Za-z0-9._/\-]*@\{[0-9]+\})$")
+        .expect("a valid pattern")
 });
-/// What may open a word and stays when the word is scrubbed.
+/// A credential's scheme before a credential-like word (`Basic dXNl…`,
+/// `bearer eyJ…`), in any case.
+static CREDENTIAL: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)\b(?:basic|bearer)\s+(?P<word>\S{8,})").expect("a valid pattern")
+});
+/// The longest fragment an address keeps: a short anchor.
+const MAX_FRAGMENT_CHARS: usize = 64;
+/// What may open a word, set apart before the word is judged.
 const WORD_OPENERS: [char; 6] = ['`', '(', '[', '<', '"', '\''];
 /// The line breaks [`board_text::line`] reads as one: kept by [`spaced`],
 /// so a line they break is still refused as two.
@@ -369,13 +384,15 @@ fn matched<'v>(item: &PlanItem, view: &'v SwarmRunView) -> Option<(usize, &'v Sw
 }
 
 /// `entry` as one evidence line: `<artifact> at <revision>`, each part one
-/// board line, its secrets redacted and its bare addresses linked. Empty
-/// when either part is.
+/// board line, scrubbed ([`scrubbed`]) and its bare addresses linked.
+/// Empty, so the line is dropped and counted, when either part is empty or
+/// in doubt.
 pub fn evidence_line(entry: &SwarmEvidence) -> String {
-    let artifact = linked(&scrubbed(&entry.artifact));
-    let revision = linked(&scrubbed(&entry.revision));
-    match (artifact.is_empty(), revision.is_empty()) {
-        (false, false) => format!("{artifact} at {revision}"),
+    let part = |raw: &str| scrubbed(raw, MAX_LINE_CHARS).map(|kept| linked(&kept));
+    match (part(&entry.artifact), part(&entry.revision)) {
+        (Some(artifact), Some(revision)) if !artifact.is_empty() && !revision.is_empty() => {
+            format!("{artifact} at {revision}")
+        }
         _ => String::new(),
     }
 }
@@ -386,16 +403,68 @@ pub fn cost_of(view: &SwarmRunView) -> u64 {
     view.observed_tokens.min(MAX_BUDGET_TOKENS)
 }
 
-/// `raw` from outside the board as one board line: its spaces made plain
-/// ([`spaced`]); each address in it kept to what [`kept`] keeps; each
-/// word holding an `@` before a host written [`SCRUBBED`] ([`at_host`]);
-/// every secret-shaped span redacted; and, as a backstop, any URL userinfo
-/// still left redacted.
-fn scrubbed(raw: &str) -> String {
-    let spaced = spaced(raw);
-    let addressed = ADDRESS.replace_all(&spaced, kept_address);
-    let worded = AT_HOST.replace_all(&addressed, at_host);
-    board_text::line(&redact_url_userinfo(&redact_secrets(&worded)))
+/// `raw` from outside the board as one board line, or none when in doubt
+/// (the board is public: a doubtful line is dropped, never rewritten
+/// further). `raw` is cut to `cap` characters first (its board limit, so
+/// no work grows past it) and its spaces made plain ([`spaced`]). In doubt:
+/// an `Authorization:` header or a credential after `basic` or `bearer`
+/// ([`credentialed`]); an address [`kept`] doubts; or an at sign left
+/// outside an address that is no [`AT_EXEMPT`] word. Otherwise each
+/// address is kept to what [`kept`] keeps, and every secret-shaped span
+/// redacted.
+fn scrubbed(raw: &str, cap: usize) -> Option<String> {
+    let capped: String = raw.chars().take(cap).collect();
+    let spaced = spaced(&capped);
+    match credentialed(&spaced) {
+        false => {}
+        true => return None,
+    }
+    let doubt = Cell::new(false);
+    let addressed = ADDRESS.replace_all(&spaced, |found: &Captures<'_>| {
+        kept_address(found).unwrap_or_else(|| {
+            doubt.set(true);
+            found[0].to_string()
+        })
+    });
+    match (doubt.get(), at_signs_exempt(&addressed)) {
+        (false, true) => {}
+        _ => return None,
+    }
+    let redacted = redact_secrets(&addressed);
+    debug_assert!(
+        at_signs_exempt(&redacted)
+            && redacted
+                .split(' ')
+                .filter(|word| word.contains("://"))
+                .all(|word| !word.contains(AT_SIGNS)),
+        "no userinfo and no at sign but an exempt word survive: {redacted:?}"
+    );
+    Some(board_text::line(&redacted))
+}
+
+/// Whether `text` holds an `Authorization:` header, or `basic` or
+/// `bearer` before a credential-like word (one that is no prose: not
+/// letters alone, lower case past the first), in any case.
+fn credentialed(text: &str) -> bool {
+    let prose = |word: &str| {
+        word.chars().all(|c| c.is_ascii_alphabetic())
+            && word.chars().skip(1).all(|c| c.is_ascii_lowercase())
+    };
+    text.to_lowercase().contains("authorization:")
+        || CREDENTIAL
+            .captures_iter(text)
+            .any(|found| !prose(&found["word"]))
+}
+
+/// Whether every word of `text` that holds an at sign, its opening and
+/// closing marks set apart, is an [`AT_EXEMPT`] one (an allowlist).
+fn at_signs_exempt(text: &str) -> bool {
+    text.split(' ')
+        .map(|word| {
+            word.trim_start_matches(WORD_OPENERS)
+                .trim_end_matches(QUERY_CLOSERS)
+        })
+        .all(|word| !word.contains(AT_SIGNS) || AT_EXEMPT.is_match(word))
 }
 
 /// `raw` with every space but a line break a plain one, so an address ends
@@ -410,69 +479,88 @@ fn spaced(raw: &str) -> String {
         .collect()
 }
 
-/// A word [`AT_HOST`] found, written [`SCRUBBED`] but for the marks that
-/// open and close it (a code span's backticks, a link's or quote's marks).
-fn at_host(found: &Captures<'_>) -> String {
-    let word = &found[0];
-    let opened = word.trim_start_matches(WORD_OPENERS);
-    let core = opened.trim_end_matches(QUERY_CLOSERS);
-    let (lead, trail) = (&word[..word.len() - opened.len()], &opened[core.len()..]);
-    format!("{lead}{SCRUBBED}{trail}")
-}
-
 /// What an address in text keeps of itself ([`kept`]), its scheme, its
 /// `//` or the start of its bare host as they were, and the text before
-/// it (`lead`) left alone.
-fn kept_address(found: &Captures<'_>) -> String {
+/// it (`lead`) left alone; none when [`kept`] doubts it.
+fn kept_address(found: &Captures<'_>) -> Option<String> {
     let part = |name: &str| found.name(name).map(|part| part.as_str());
     match (part("scheme"), part("relative"), part("bare")) {
-        (Some(scheme), _, _) => kept(scheme, part("rest").unwrap_or("")),
+        (Some(scheme), _, _) => kept(scheme, part("rest").unwrap_or(""), Form::Named),
         (None, Some(relative), _) => {
             let rest = relative.strip_prefix("//").unwrap_or(relative);
-            format!("{}{}", part("lead").unwrap_or(""), kept("//", rest))
+            let kept = kept("//", rest, Form::Named)?;
+            Some(format!("{}{kept}", part("lead").unwrap_or("")))
         }
-        (None, None, Some(bare)) => kept("", bare),
+        (None, None, Some(bare)) => kept("", bare, Form::Bare),
         (None, None, None) => unreachable!("ADDRESS matches one of its forms"),
     }
 }
 
-/// What an address keeps of `span` (all of it past `prefix`, up to the
-/// next space), an allowlist. An address holding no `@` anywhere, whose
-/// authority is unambiguous ([`unambiguous`]), keeps it, its path up to its
-/// first `?`, `#`, `;` or `%3F`, and a fragment only when it is an anchor
-/// straight after that path; a query, matrix parameters or any other
-/// fragment (where a signed URL's signature or a token rides) is dropped.
-/// Any other address is written `prefix***`: an `@` may end a userinfo
-/// anywhere in it (a password may hold `/`, `?` or `#`), and the board is
-/// public, so it is never guessed where. The [`QUERY_CLOSERS`] that end the
-/// span belong to the text around it (a code span's backtick, a link's
-/// close) and are given back, but for a parenthesis or bracket that closes
-/// one opened in what was dropped.
-fn kept(prefix: &str, span: &str) -> String {
-    let core = span.trim_end_matches(QUERY_CLOSERS);
-    let address = parts(core).unwrap_or_else(|| SCRUBBED.to_string());
-    let closing = balanced(core, &address, &span[core.len()..]);
-    format!("{prefix}{address}{closing}")
+/// How an address was written: with a scheme or `//`, or as a bare host.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Form {
+    Named,
+    Bare,
 }
 
-/// The parts of `core` (an address past its scheme) an address keeps, or
-/// none when it holds an `@` or its authority is ambiguous.
-fn parts(core: &str) -> Option<String> {
+/// What came of judging an address.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Judged {
+    /// Kept: its unambiguous authority, path and anchor.
+    Kept(String),
+    /// Written [`SCRUBBED`]: it holds an at sign, or an ambiguous
+    /// authority.
+    Scrubbed,
+    /// In doubt: its line is dropped.
+    Doubt,
+}
+
+/// What an address keeps of `span` (all of it past `prefix`, up to the
+/// next space), an allowlist ([`judged`]): kept, written `prefix***`, or
+/// none when in doubt. The [`QUERY_CLOSERS`] that end the span belong to
+/// the text around it (a code span's backtick, a link's close) and are
+/// given back, but for a parenthesis or bracket that closes one opened in
+/// what was dropped.
+fn kept(prefix: &str, span: &str, form: Form) -> Option<String> {
+    let core = span.trim_end_matches(QUERY_CLOSERS);
+    let address = match judged(core, form) {
+        Judged::Kept(address) => address,
+        Judged::Scrubbed => SCRUBBED.to_string(),
+        Judged::Doubt => return None,
+    };
+    let closing = balanced(core, &address, &span[core.len()..]);
+    Some(format!("{prefix}{address}{closing}"))
+}
+
+/// What `core` (an address past its scheme) comes to. Kept only when it
+/// holds no at sign and its authority is unambiguous ([`unambiguous`]):
+/// that authority, its path up to its first `?`, `#`, `;` or `%3F`, and a
+/// short anchor fragment straight after that path; a query or matrix
+/// parameters (and any fragment after them) are dropped. An at sign may
+/// end a userinfo anywhere (a password may hold `/`, `?` or `#`), so one
+/// anywhere, or an ambiguous authority, is [`Judged::Scrubbed`]. In doubt:
+/// a fragment that is no short anchor ([`anchor_shaped`]), a `%25` (a
+/// doubly encoded mark) in its path, or a `;` in a bare host's word.
+fn judged(core: &str, form: Form) -> Judged {
     let (authority, rest) = core.split_at(core.find(['/', '?', '#']).unwrap_or(core.len()));
-    match !core.contains('@') && unambiguous(authority) {
-        true => {}
-        false => return None,
+    let at_free = core.chars().all(|c| !AT_SIGNS.contains(&c));
+    match (at_free, unambiguous(authority)) {
+        (true, true) => {}
+        _ => return Judged::Scrubbed,
     }
     let (path, after) = rest.split_at(path_end(rest));
-    Some(
-        match after
-            .strip_prefix('#')
-            .filter(|fragment| anchor_shaped(fragment))
-        {
-            Some(fragment) => format!("{authority}{path}#{fragment}"),
-            None => format!("{authority}{path}"),
-        },
-    )
+    let fragment = core.split_once('#').map(|(_, fragment)| fragment);
+    let plain = !path.to_ascii_lowercase().contains("%25")
+        && fragment.is_none_or(anchor_shaped)
+        && (form == Form::Named || !core.contains(';'));
+    match plain {
+        true => {}
+        false => return Judged::Doubt,
+    }
+    Judged::Kept(match after.strip_prefix('#') {
+        Some(fragment) => format!("{authority}{path}#{fragment}"),
+        None => format!("{authority}{path}"),
+    })
 }
 
 /// Where a path ends in `rest` (what follows an authority): at its first
@@ -485,20 +573,29 @@ fn path_end(rest: &str) -> usize {
 
 /// `closing`, the marks after an address, less each `)` or `]` that
 /// closes a `(` or `[` opened in what was dropped of `core` to keep
-/// `kept`: the link or text around it stays balanced.
+/// `kept`: the link or text around it stays balanced. One pass.
 fn balanced(core: &str, kept: &str, closing: &str) -> String {
-    let mut given = closing.to_string();
-    for (open, close) in [('(', ')'), ('[', ']')] {
-        let count = |text: &str, mark: char| text.matches(mark).count();
+    let count = |text: &str, mark: char| text.matches(mark).count();
+    let unclosed = |open: char, close: char| {
         let opened = count(core, open).saturating_sub(count(kept, open));
         let closed = count(core, close).saturating_sub(count(kept, close));
-        for _ in 0..opened.saturating_sub(closed) {
-            if let Some(at) = given.find(close) {
-                given.remove(at);
+        opened.saturating_sub(closed)
+    };
+    let (mut parens, mut brackets) = (unclosed('(', ')'), unclosed('[', ']'));
+    closing
+        .chars()
+        .filter(|c| match (c, parens, brackets) {
+            (')', 1.., _) => {
+                parens -= 1;
+                false
             }
-        }
-    }
-    given
+            (']', _, 1..) => {
+                brackets -= 1;
+                false
+            }
+            _ => true,
+        })
+        .collect()
 }
 
 /// Whether `host`, an authority, is unambiguous: an ASCII host name and,
@@ -514,10 +611,11 @@ fn unambiguous(host: &str) -> bool {
         && port.chars().all(|c| c.is_ascii_digit())
 }
 
-/// Whether `fragment` is an anchor: letters, digits, `_`, `.` and `-`
-/// (`L10-L20`, `readme.md`), and nothing else.
+/// Whether `fragment` is a short anchor: 1 to [`MAX_FRAGMENT_CHARS`]
+/// letters, digits, `_`, `.` and `-` (`L10-L20`, `readme.md`), and nothing
+/// else.
 fn anchor_shaped(fragment: &str) -> bool {
-    !fragment.is_empty()
+    (1..=MAX_FRAGMENT_CHARS).contains(&fragment.chars().count())
         && fragment
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || "_.-".contains(c))
@@ -538,14 +636,18 @@ fn linked(text: &str) -> String {
 /// what is left is no [`address`].
 fn linked_word(word: &str) -> String {
     let opened = word.trim_start_matches(OPENERS);
-    let mut core = opened.trim_end_matches(CLOSERS);
+    let trimmed = opened.trim_end_matches(CLOSERS);
     // A close that balances an open inside the address is the address's
-    // (`…/Rust_(programming_language)`).
-    while core.matches('(').count() > core.matches(')').count()
-        && opened[core.len()..].starts_with(')')
-    {
-        core = &opened[..core.len() + 1];
-    }
+    // (`…/Rust_(programming_language)`): counted once, taken in one step.
+    let unclosed = trimmed
+        .matches('(')
+        .count()
+        .saturating_sub(trimmed.matches(')').count());
+    let closes = opened[trimmed.len()..]
+        .chars()
+        .take_while(|c| *c == ')')
+        .count();
+    let core = &opened[..trimmed.len() + unclosed.min(closes)];
     let (lead, trail) = (&word[..word.len() - opened.len()], &opened[core.len()..]);
     match address(core) {
         Some(address) => format!(
@@ -596,11 +698,15 @@ fn path_char(c: char) -> bool {
     host_char(c) || "/?#".contains(c)
 }
 
-/// Member id `raw` as an owner: one board line, its secrets redacted, cut
-/// to [`MAX_OWNER_CHARS`] and trimmed again; none when the board cannot
-/// hold what is left.
+/// Member id `raw` as an owner: scrubbed as an evidence part is
+/// ([`scrubbed`], cut to [`MAX_OWNER_CHARS`] first), cut again and trimmed;
+/// none when in doubt (an at sign but `worker@1`'s, a credential) or when
+/// the board cannot hold what is left.
 fn owner_of(raw: &str, cells: &dyn BoardTextCells) -> Option<String> {
-    let cut: String = scrubbed(raw).chars().take(MAX_OWNER_CHARS).collect();
+    let cut: String = scrubbed(raw, MAX_OWNER_CHARS)?
+        .chars()
+        .take(MAX_OWNER_CHARS)
+        .collect();
     let owner = board_text::line(&cut);
     held_line(&owner, MAX_OWNER_CHARS, cells).then_some(owner)
 }
