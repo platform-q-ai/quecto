@@ -79,6 +79,30 @@ pub fn begin_run(
     .map_err(BoardRuleError::Invalid)
 }
 
+/// Run `number` among `runs` and the plan among `plans` it ran: what a
+/// fold-back folds, and against what.
+///
+/// # Errors
+/// No run of that number; no plan of the version it ran.
+pub fn run_and_plan<'a>(
+    runs: &[&'a Run],
+    plans: &[&'a Plan],
+    number: u32,
+) -> Result<(&'a Run, &'a Plan), BoardRuleError> {
+    let run = runs
+        .iter()
+        .copied()
+        .find(|run| run.fields().number == number)
+        .ok_or(BoardRuleError::NoSuchRun(number))?;
+    let version = run.fields().plan_version;
+    let plan = plans
+        .iter()
+        .copied()
+        .find(|plan| plan.fields().version == version)
+        .ok_or(BoardRuleError::UnknownPlanVersion(version))?;
+    Ok((run, plan))
+}
+
 /// `run` folded back at `now`: its `outcome`, its `cost` and where each of
 /// `plan`'s task items stood. A run folds back once.
 ///

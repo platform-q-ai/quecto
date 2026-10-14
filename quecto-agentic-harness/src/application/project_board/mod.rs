@@ -4,6 +4,7 @@
 //! read again and the change re-applied to the fresh task, a bounded number
 //! of times.
 pub mod dto;
+pub mod fold_back;
 pub mod operations;
 pub mod ports;
 pub mod swarm_brief;

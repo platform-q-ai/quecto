@@ -12,6 +12,7 @@ use crate::application::project_board::ports::{
 };
 use crate::application::project_board::telemetry::OpFacts;
 use crate::domain::project_board::entities::claim::Identity;
+use crate::domain::project_board::entities::plan::Plan;
 use crate::domain::project_board::entities::task::Task;
 use crate::domain::project_board::services::claims::{CLOCK_AHEAD_SECONDS, within_slack};
 use crate::domain::project_board::services::plans::Moment;
@@ -78,11 +79,66 @@ fn checked_now(clock: &dyn BoardClock) -> Result<When, ProjectBoardError> {
 
 /// Writes the artifacts `change` builds from the board and the time, in
 /// one change, retried against a fresh board when another writer moved it
-/// first. Every change writes its task first ([`written_task`]). Given
+/// first. Every change is about one task ([`one_tasks_change`]): it
+/// writes that task first ([`written_task`]), or only other artifacts of
+/// it (a plan, [`written_plan`]); a fold-back writes its run alone
+/// ([`commit_run`]). Given
 /// `facts` (epic #2481 T4), it notes the attempts it began, how many lost
 /// the race and how long it paused between them; given none, it notes
 /// nothing and reads no monotonic time.
 pub(super) fn commit(
+    store: &dyn ProjectBoardStore,
+    clock: &dyn BoardClock,
+    message: &str,
+    facts: Option<&mut OpFacts>,
+    change: impl FnMut(&BoardSnapshot, &When) -> Result<Vec<BoardArtifact>, ProjectBoardError>,
+) -> Result<Vec<BoardArtifact>, ProjectBoardError> {
+    shaped(Writes::OneTask, store, clock, message, facts, change)
+}
+
+/// [`commit`] of a change that writes one run alone: a fold-back, which
+/// leaves its task as it is.
+pub(super) fn commit_run(
+    store: &dyn ProjectBoardStore,
+    clock: &dyn BoardClock,
+    message: &str,
+    facts: Option<&mut OpFacts>,
+    change: impl FnMut(&BoardSnapshot, &When) -> Result<Vec<BoardArtifact>, ProjectBoardError>,
+) -> Result<Vec<BoardArtifact>, ProjectBoardError> {
+    shaped(Writes::OneRun, store, clock, message, facts, change)
+}
+
+/// What a change writes, as its use case declares it.
+#[derive(Debug, Clone, Copy)]
+enum Writes {
+    /// One task's change ([`one_tasks_change`]).
+    OneTask,
+    /// One run, and nothing else.
+    OneRun,
+}
+
+impl Writes {
+    /// Whether `artifacts` are written as declared (an allowlist).
+    fn holds(self, artifacts: &[BoardArtifact]) -> bool {
+        match self {
+            Self::OneTask => one_tasks_change(artifacts),
+            Self::OneRun => matches!(artifacts, [BoardArtifact::Run(_)]),
+        }
+    }
+
+    /// What a change breaks when it writes otherwise.
+    fn rule(self) -> &'static str {
+        match self {
+            Self::OneTask => {
+                "a board change writes its task first, or only one task's other artifacts"
+            }
+            Self::OneRun => "a board change writes as it declares: one run alone",
+        }
+    }
+}
+
+fn shaped(
+    writes: Writes,
     store: &dyn ProjectBoardStore,
     clock: &dyn BoardClock,
     message: &str,
@@ -93,10 +149,7 @@ pub(super) fn commit(
         let snapshot = store.read()?;
         let when = checked_now(clock)?;
         let artifacts = change(&snapshot, &when)?;
-        assert!(
-            matches!(artifacts.first(), Some(BoardArtifact::Task(_))),
-            "a board change writes its task first"
-        );
+        assert!(writes.holds(&artifacts), "{}", writes.rule());
         match store.write(&snapshot.head, &artifacts, message)? {
             BoardWrite::Written(head) => {
                 assert_ne!(
@@ -108,6 +161,31 @@ pub(super) fn commit(
             BoardWrite::Lost => Ok(Attempt::Lost),
             BoardWrite::Refused(reason) => Err(ProjectBoardError::Refused(reason)),
         }
+    })
+}
+
+/// Whether `artifacts` are one task's change (an allowlist): that task
+/// first, then only plans, runs, changes and reviews of it; or, writing
+/// no task, only plans, runs, changes and reviews of one and the same
+/// task. A second task, or a discussion (keyed by its own id, and maybe
+/// about no task yet: the slice that writes discussions decides their
+/// shape), is no one task's change, nor is nothing.
+pub(super) fn one_tasks_change(artifacts: &[BoardArtifact]) -> bool {
+    let task_of = |artifact: &BoardArtifact| match artifact {
+        BoardArtifact::Plan(plan) => Some(plan.fields().task.clone()),
+        BoardArtifact::Run(run) => Some(run.fields().task.clone()),
+        BoardArtifact::Change(change) => Some(change.fields().task.clone()),
+        BoardArtifact::Review(review) => Some(review.fields().task.clone()),
+        BoardArtifact::Task(_) | BoardArtifact::Discussion(_) => None,
+    };
+    let (task, rest) = match artifacts.split_first() {
+        Some((BoardArtifact::Task(task), rest)) => (Some(task.fields().id.clone()), rest),
+        Some((first, rest)) => (task_of(first), rest),
+        None => return false,
+    };
+    task.is_some_and(|task| {
+        rest.iter()
+            .all(|other| task_of(other).as_ref() == Some(&task))
     })
 }
 
@@ -176,6 +254,14 @@ pub(super) fn written_task(artifacts: Vec<BoardArtifact>) -> Task {
     }
 }
 
+/// The plan a plan's change wrote: its one artifact.
+pub(super) fn written_plan(artifacts: Vec<BoardArtifact>) -> Plan {
+    match artifacts.as_slice() {
+        [BoardArtifact::Plan(plan)] => plan.clone(),
+        other => panic!("a plan's change writes its plan alone, not {other:?}"),
+    }
+}
+
 /// `views` as a rule takes them: owned, in the view's order.
 pub(super) fn owned<T: Clone>(views: Vec<&T>) -> Vec<T> {
     views.into_iter().cloned().collect()
@@ -199,3 +285,7 @@ pub(super) fn task_on<'b>(
 ) -> Result<&'b Task, ProjectBoardError> {
     super::board_view::task(board, id)
 }
+
+#[cfg(test)]
+#[path = "board_change_tests.rs"]
+mod tests;

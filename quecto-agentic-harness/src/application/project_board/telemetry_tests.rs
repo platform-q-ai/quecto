@@ -12,6 +12,10 @@ impl ProjectBoardOpLog for Log {
     fn record(&self, record: BoardOpRecord) {
         self.0.lock().unwrap().push(record);
     }
+
+    fn record_fold_back(&self, _record: FoldBackRecord) {
+        unreachable!("a board_op test writes no fold-back");
+    }
 }
 
 fn record() -> BoardOpRecord {
@@ -28,6 +32,9 @@ fn record() -> BoardOpRecord {
         listing: None,
         plans: None,
         runs: None,
+        plan_version: None,
+        items: None,
+        roles: None,
         status_from: None,
         status_to: None,
         claim: None,
@@ -65,7 +72,9 @@ fn a_recording_writes_to_its_log_while_on() {
 
 /// One request of every kind, each naming task `a` where it names one.
 fn every_request() -> Vec<BoardRequest> {
-    use super::super::dto::{DraftUpdate, NewBoardTask, NewBoardTaskStatus};
+    use super::super::dto::{
+        DraftUpdate, NewBoardTask, NewBoardTaskStatus, PlanEdit, PlanProposal,
+    };
     use super::super::operations::ListFilter;
     use crate::domain::project_board::value_objects::vocabulary::{TaskKind, TaskStatus};
     let a = Slug::parse("a").unwrap();
@@ -75,7 +84,7 @@ fn every_request() -> Vec<BoardRequest> {
         BoardRequest::List(ListFilter::Children(a.clone())),
         BoardRequest::ListReady,
         BoardRequest::ListTakeable,
-        BoardRequest::Show(a.clone(), None),
+        BoardRequest::Show(a.clone(), super::super::operations::PlanView::default()),
         BoardRequest::Create(NewBoardTask {
             id: a.clone(),
             title: "A".into(),
@@ -104,6 +113,20 @@ fn every_request() -> Vec<BoardRequest> {
             object: "0".repeat(40),
             repeated: Default::default(),
         },
+        BoardRequest::ProposePlan(PlanProposal {
+            task: a.clone(),
+            approach: String::new(),
+            items: vec![],
+            team: None,
+        }),
+        BoardRequest::EditPlan(PlanEdit {
+            task: a.clone(),
+            version: 1,
+            approach: Some("A".into()),
+            items: None,
+            team: None,
+            expected_updated: None,
+        }),
     ]
 }
 
@@ -163,6 +186,8 @@ fn a_request_names_its_task_and_pull_request() {
             (OpKind::UnlinkPr, Some("a"), Some(8)),
             task(OpKind::Complete),
             none(OpKind::ClearSetAside),
+            task(OpKind::ProposePlan),
+            task(OpKind::EditPlan),
         ]
     );
 }
@@ -212,6 +237,8 @@ mod facts {
             normalised: Some(Normalised {
                 title: Some(vec![]),
                 description: None,
+                approach: None,
+                items: None,
             }),
             plans: Some(2),
             runs: Some(1),
@@ -253,9 +280,14 @@ mod facts {
             normalised: Some(Normalised {
                 title: None,
                 description: Some(vec![TextChange::Crlf]),
+                approach: None,
+                items: None,
             }),
             plans: Some(4),
             runs: Some(0),
+            plan_version: Some(3),
+            items: Some(7),
+            roles: Some(0),
         };
         let mut record = record();
         facts.fill(&mut record);
@@ -268,6 +300,7 @@ mod facts {
             "attempts": 2, "lost": 1, "pause_ms": 70,
             "completion": "pending", "prs_linked": 1,
             "normalised": {"description": ["crlf"]}, "plans": 4, "runs": 0,
+            "plan_version": 3, "items": 7, "roles": 0,
         });
         assert_eq!(line, want);
     }
@@ -292,6 +325,83 @@ mod facts {
         assert_eq!(
             completion_facts_of(&failed, 1),
             completion(CompletionKind::Failed)
+        );
+    }
+}
+
+mod fold_back_facts {
+    use super::*;
+    use crate::application::project_board::dto::FoldBackFacts;
+    use crate::domain::project_board::value_objects::telemetry::{
+        ItemCounts, RunOutcomeKind, TaskRef,
+    };
+
+    fn bare() -> FoldBackRecord {
+        FoldBackRecord {
+            task: TaskRef::of(&Slug::parse("board-store").unwrap()),
+            run: 1,
+            outcome: OpOutcome::Ok,
+            run_outcome: None,
+            items: None,
+            unmatched: None,
+            extra: None,
+            evidence: None,
+            evidence_dropped: None,
+            cost_tokens: None,
+            attempts: Some(9),
+            lost: None,
+            bytes: None,
+            duration_us: 5,
+        }
+    }
+
+    #[test]
+    fn fill_writes_every_fact_it_has_and_keeps_the_rest() {
+        let mut record = bare();
+        FoldBackFacts::default().fill(&mut record);
+        assert_eq!(record, bare());
+        let counts = ItemCounts {
+            todo: 1,
+            doing: 2,
+            review: 3,
+            done: 4,
+            blocked: 5,
+        };
+        let facts = FoldBackFacts {
+            run_outcome: Some(RunOutcomeKind::Stopped),
+            items: Some(counts),
+            unmatched: Some(1),
+            extra: Some(2),
+            evidence: Some(3),
+            evidence_dropped: Some(4),
+            cost_tokens: Some(5),
+            attempts: Some(6),
+            lost: Some(7),
+            bytes: Some(8),
+        };
+        facts.fill(&mut record);
+        let expected = FoldBackRecord {
+            run_outcome: Some(RunOutcomeKind::Stopped),
+            items: Some(counts),
+            unmatched: Some(1),
+            extra: Some(2),
+            evidence: Some(3),
+            evidence_dropped: Some(4),
+            cost_tokens: Some(5),
+            attempts: Some(6),
+            lost: Some(7),
+            bytes: Some(8),
+            ..bare()
+        };
+        assert_eq!(record, expected);
+    }
+
+    #[test]
+    fn a_count_is_held_whole_or_saturated() {
+        assert_eq!(counted(7), 7);
+        assert_eq!(
+            counted(usize::MAX),
+            u64::try_from(usize::MAX).unwrap_or(u64::MAX)
         );
     }
 }

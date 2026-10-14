@@ -124,11 +124,11 @@ impl Board {
         let bytes = tasks + folders.values().map(FolderAfter::bytes).sum::<usize>();
         match (tasks <= limits.tasks_bytes, bytes <= limits.board_bytes) {
             (true, true) => Ok(()),
-            (false, _) => Err(BoardStoreError::InvalidWrite(format!(
+            (false, _) => Err(BoardStoreError::WriteTooLarge(format!(
                 "the board would hold {tasks} bytes of task files; a read takes at most {}",
                 limits.tasks_bytes
             ))),
-            (true, false) => Err(BoardStoreError::InvalidWrite(format!(
+            (true, false) => Err(BoardStoreError::WriteTooLarge(format!(
                 "the board would hold {bytes} bytes of files a read reads; a read takes at most {}",
                 limits.board_bytes
             ))),
@@ -160,7 +160,7 @@ fn folders_within(
                 )));
             }
             (true, false) => {
-                return Err(BoardStoreError::InvalidWrite(format!(
+                return Err(BoardStoreError::WriteTooLarge(format!(
                     "the board would hold {bytes} bytes of {noun} files; a read takes at most {}",
                     folder.max_bytes
                 )));

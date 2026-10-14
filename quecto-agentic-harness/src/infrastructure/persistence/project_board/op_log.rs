@@ -25,7 +25,9 @@ use std::time::Duration;
 
 use crate::application::project_board::ports::ProjectBoardOpLog;
 use crate::domain::audit::AuditEvent;
-use crate::domain::project_board::value_objects::telemetry::{Access, BoardOpRecord};
+use crate::domain::project_board::value_objects::telemetry::{
+    Access, BoardOpRecord, FoldBackRecord,
+};
 use crate::infrastructure::persistence::audit_log::AuditCrashLine;
 
 /// The tracing target of the board's records.
@@ -120,13 +122,10 @@ impl EventLogProjectBoardOps {
             "board_op records are not being written to the event log"
         );
     }
-}
 
-impl ProjectBoardOpLog for EventLogProjectBoardOps {
-    /// Filed under no turn: a board request knows none. Preceded by the
-    /// note of the records dropped since the last one written, when any
-    /// were.
-    fn record(&self, record: BoardOpRecord) {
+    /// Appends `event`, filed under no turn, preceded by the note of the
+    /// records dropped since the last one written, when any were.
+    fn append(&self, event: AuditEvent) {
         // Taken, not read: a concurrent record notes only what it took,
         // and what a record held off the gate took is put back below.
         let unnoted = self.dropped.swap(0, Ordering::AcqRel);
@@ -134,7 +133,7 @@ impl ProjectBoardOpLog for EventLogProjectBoardOps {
         if unnoted > 0 {
             events.push(AuditEvent::BoardOpsDropped { dropped: unnoted });
         }
-        events.push(AuditEvent::BoardOp(Box::new(record)));
+        events.push(event);
         let appended = match self.line.get() {
             Some(line) => line.append(None, events, BOARD_OP_GATE_WAIT),
             // Nothing to note the drops in: they go unnoted.
@@ -153,6 +152,21 @@ impl ProjectBoardOpLog for EventLogProjectBoardOps {
             // unnoted rather than be counted twice.
             Err(error) => self.warn(&error),
         }
+    }
+}
+
+impl ProjectBoardOpLog for EventLogProjectBoardOps {
+    /// Filed under no turn: a board request knows none. Preceded by the
+    /// note of the records dropped since the last one written, when any
+    /// were.
+    fn record(&self, record: BoardOpRecord) {
+        self.append(AuditEvent::BoardOp(Box::new(record)));
+    }
+
+    /// As [`Self::record`]: a fold-back's record shares the log's gate,
+    /// its bound and its count of drops.
+    fn record_fold_back(&self, record: FoldBackRecord) {
+        self.append(AuditEvent::BoardFoldBack(Box::new(record)));
     }
 }
 
@@ -188,12 +202,22 @@ impl ProjectBoardOpLog for TracingProjectBoardOps {
         }
         self.inner.record(record);
     }
+
+    /// Traced at INFO (`board fold back`: a fold-back writes the board),
+    /// then written as [`Self::record`] writes a `board_op`.
+    fn record_fold_back(&self, record: FoldBackRecord) {
+        if self.inner.line.get().is_some() {
+            let fields = Fields(&record);
+            tracing::info!(target: TARGET, record = %fields, "board fold back");
+        }
+        self.inner.record_fold_back(record);
+    }
 }
 
-/// A record as its `board_op` line's JSON fields.
-struct Fields<'a>(&'a BoardOpRecord);
+/// A record as its line's JSON fields.
+struct Fields<'a, T: serde::Serialize>(&'a T);
 
-impl std::fmt::Display for Fields<'_> {
+impl<T: serde::Serialize> std::fmt::Display for Fields<'_, T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match serde_json::to_string(self.0) {
             Ok(json) => f.write_str(&json),

@@ -81,6 +81,9 @@ impl BoardCall {
                 listing: None,
                 plans: None,
                 runs: None,
+                plan_version: None,
+                items: None,
+                roles: None,
                 status_from: None,
                 status_to: None,
                 claim: None,
@@ -184,11 +187,7 @@ impl BoardCall {
         self.note(|record| {
             let (rule, schema) = refusal_parts(error);
             record.outcome = refused(answer::error_code(error).as_str(), rule);
-            record.fault = schema.map(|schema| RequestFault {
-                field: schema_field(&schema.field),
-                fault: FaultKind::InvalidValue,
-                unexpected_count: None,
-            });
+            record.fault = schema.map(|schema| schema_fault(error, schema));
         });
         answer::board_refused(op, error)
     }
@@ -203,7 +202,7 @@ impl BoardCall {
                 }
                 BoardOutcome::Shown(shown, _) => Some(&shown.head),
                 BoardOutcome::Listing(listing) => Some(&listing.head),
-                BoardOutcome::Changed { .. } => None,
+                BoardOutcome::Changed { .. } | BoardOutcome::Planned(_) => None,
             };
             record.outcome = OpOutcome::Ok;
             record.head = head.and_then(|head| CommitId::parse(&head.0).ok());
@@ -317,7 +316,9 @@ fn refused(code: &'static str, rule: Option<&'static str>) -> OpOutcome {
 /// schema error whose field was wrong (a task's, `invalid_task`, or a
 /// rule's, `invalid`). Exhaustive, so a new refusal does not compile until
 /// it says which it names.
-fn refusal_parts(error: &ProjectBoardError) -> (Option<&'static str>, Option<&SchemaError>) {
+pub(super) fn refusal_parts(
+    error: &ProjectBoardError,
+) -> (Option<&'static str>, Option<&SchemaError>) {
     use ProjectBoardError as E;
     match error {
         E::Rule(rule) => (Some(rule_code(rule)), rule_schema(rule)),
@@ -346,12 +347,33 @@ fn refusal_parts(error: &ProjectBoardError) -> (Option<&'static str>, Option<&Sc
     }
 }
 
-/// The schema error a rule's refusal names: only `invalid` names one.
+/// The fault a board's schema refusal records: a plan's text as a whole
+/// past the most a plan holds (`invalid_plan`'s `text`, #2481 M4b) is the
+/// request as a whole, too large, as it was recorded when the request
+/// judged it; any other field is its schema field, of a value refused.
+fn schema_fault(error: &ProjectBoardError, schema: &SchemaError) -> RequestFault {
+    let plan_text = matches!(
+        error,
+        ProjectBoardError::Rule(BoardRuleError::InvalidPlan(_))
+    ) && schema.field == "text";
+    let (field, fault) = match plan_text {
+        true => (StaticKind::new("request"), FaultKind::TooLarge),
+        false => (schema_field(&schema.field), FaultKind::InvalidValue),
+    };
+    RequestFault {
+        field,
+        fault,
+        unexpected_count: None,
+    }
+}
+
+/// The schema error a rule's refusal names: only `invalid` and
+/// `invalid_plan` name one.
 /// Exhaustive, as [`refusal_parts`].
 fn rule_schema(rule: &BoardRuleError) -> Option<&SchemaError> {
     use BoardRuleError as R;
     match rule {
-        R::Invalid(schema) => Some(schema),
+        R::Invalid(schema) | R::InvalidPlan(schema) => Some(schema),
         R::NotAllowed { .. }
         | R::NotHolder
         | R::NoClaim
@@ -372,6 +394,7 @@ fn rule_schema(rule: &BoardRuleError) -> Option<&SchemaError> {
         | R::NoAcceptedPlan
         | R::ChangeAlreadyLinked { .. }
         | R::NoSuchChange(..)
+        | R::NoSuchRun(..)
         | R::ChangeAhead { .. }
         | R::DiscussionClosed(..)
         | R::DiscussionLinked { .. }
@@ -421,7 +444,7 @@ fn listing_counts(answer: &Value) -> Option<ListingCounts> {
     })
 }
 
-fn micros(elapsed: Duration) -> u64 {
+pub(super) fn micros(elapsed: Duration) -> u64 {
     u64::try_from(elapsed.as_micros()).unwrap_or(u64::MAX)
 }
 

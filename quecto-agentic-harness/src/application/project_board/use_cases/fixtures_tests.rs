@@ -149,3 +149,88 @@ pub fn finished(fields: TaskFields) -> TaskFields {
         ..fields
     }
 }
+
+/// Task item `id` of a plan, after `depends_on`.
+pub fn plan_item(
+    id: &str,
+    depends_on: &[&str],
+) -> crate::domain::project_board::entities::plan::PlanItem {
+    crate::domain::project_board::entities::plan::PlanItem {
+        id: slug(id),
+        title: format!("Item {id}"),
+        criteria: vec![format!("{id} proved")],
+        depends_on: depends_on.iter().map(|id| slug(id)).collect(),
+    }
+}
+
+/// A team of one worker role.
+pub fn plan_team() -> crate::domain::project_board::entities::team::Team {
+    use crate::domain::project_board::entities::team::{Role, RoleLimits, Team};
+    Team {
+        roles: vec![Role {
+            name: slug("worker"),
+            model: "gpt-5.5".into(),
+            effort: crate::domain::project_board::value_objects::vocabulary::Effort::High,
+            limits: RoleLimits {
+                members: 2,
+                turns: None,
+            },
+        }],
+        budget: None,
+        deadline: None,
+        image: None,
+    }
+}
+
+/// Version `version` of task `task`'s plan in `state`, proposed by Bob at
+/// 09:00 with two task items (`api` after `schema`) and a team.
+pub fn plan_of(
+    task: &str,
+    version: u32,
+    state: crate::domain::project_board::value_objects::vocabulary::PlanState,
+) -> crate::domain::project_board::entities::plan::Plan {
+    use crate::domain::project_board::entities::plan::{Plan, PlanFields};
+    use crate::domain::project_board::value_objects::vocabulary::PlanState;
+    let accepted = match state {
+        PlanState::Accepted | PlanState::Superseded => Some((person("Bob"), at("09:00:00"))),
+        PlanState::Draft | PlanState::Discarded => None,
+    };
+    Plan::new(PlanFields {
+        task: slug(task),
+        version,
+        state,
+        approach: "Spike, then build.".into(),
+        items: vec![plan_item("schema", &[]), plan_item("api", &["schema"])],
+        team: Some(plan_team()),
+        proposed_by: person("Bob"),
+        edited_by: None,
+        accepted,
+        created: at("09:00:00"),
+        updated: at("09:00:00"),
+    })
+    .unwrap()
+}
+
+/// A board holding task `id` in `status` (written at 09:00) and `plans`.
+pub fn holding_plans(
+    id: &str,
+    status: TaskStatus,
+    plans: Vec<crate::domain::project_board::entities::plan::Plan>,
+) -> MemoryBoardStore {
+    use crate::application::project_board::ports::BoardArtifact;
+    use crate::domain::project_board::entities::task::Task;
+    let store = board();
+    let head = store.read().unwrap().head;
+    let task = Task::new(finished(TaskFields {
+        status,
+        created: at("09:00:00"),
+        updated: at("09:00:00"),
+        ..fields(id)
+    }))
+    .unwrap();
+    let artifacts: Vec<BoardArtifact> = std::iter::once(BoardArtifact::Task(task))
+        .chain(plans.into_iter().map(BoardArtifact::Plan))
+        .collect();
+    store.write(&head, &artifacts, "seed").unwrap();
+    store
+}

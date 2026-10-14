@@ -8,8 +8,8 @@ use super::operations::{BoardRequest, Completion};
 use super::ports::ProjectBoardOpLog;
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::telemetry::{
-    Access, BoardOpRecord, ClaimFacts, CompletionFacts, CompletionKind, Normalised, OpKind,
-    StaticKind,
+    Access, BoardOpRecord, ClaimFacts, CompletionFacts, CompletionKind, FoldBackRecord, Normalised,
+    OpKind, StaticKind,
 };
 use crate::domain::project_board::value_objects::vocabulary::TaskStatus;
 
@@ -31,6 +31,8 @@ pub fn op_kind(request: &BoardRequest) -> OpKind {
         BoardRequest::Change(_, BoardOp::RemovePr(_)) => OpKind::UnlinkPr,
         BoardRequest::Complete(_) => OpKind::Complete,
         BoardRequest::Clear { .. } => OpKind::ClearSetAside,
+        BoardRequest::ProposePlan(_) => OpKind::ProposePlan,
+        BoardRequest::EditPlan(_) => OpKind::EditPlan,
     }
 }
 
@@ -49,7 +51,9 @@ pub fn access_of(kind: OpKind) -> Access {
         | OpKind::LinkPr
         | OpKind::UnlinkPr
         | OpKind::Complete
-        | OpKind::ClearSetAside => Access::Write,
+        | OpKind::ClearSetAside
+        | OpKind::ProposePlan
+        | OpKind::EditPlan => Access::Write,
         OpKind::List
         | OpKind::ListReady
         | OpKind::ListTakeable
@@ -66,6 +70,8 @@ pub fn task_of(request: &BoardRequest) -> Option<&Slug> {
         }
         BoardRequest::Create(task) => Some(&task.id),
         BoardRequest::UpdateDraft(update) => Some(&update.id),
+        BoardRequest::ProposePlan(proposal) => Some(&proposal.task),
+        BoardRequest::EditPlan(edit) => Some(&edit.task),
         BoardRequest::Bootstrap
         | BoardRequest::List(_)
         | BoardRequest::ListReady
@@ -87,6 +93,8 @@ pub fn pr_of(request: &BoardRequest) -> Option<u64> {
         | BoardRequest::Create(_)
         | BoardRequest::UpdateDraft(_)
         | BoardRequest::Complete(_)
+        | BoardRequest::ProposePlan(_)
+        | BoardRequest::EditPlan(_)
         | BoardRequest::Clear { .. } => None,
     }
 }
@@ -115,6 +123,12 @@ pub struct OpFacts {
     /// The plan versions and runs a `show` gave (#2481 M4a).
     pub plans: Option<u64>,
     pub runs: Option<u64>,
+    /// The plan version a `propose_plan` wrote or an `edit_plan` named,
+    /// and the task items and team roles of the plan either wrote (#2481
+    /// M4b).
+    pub plan_version: Option<u64>,
+    pub items: Option<u64>,
+    pub roles: Option<u64>,
 }
 
 impl OpFacts {
@@ -144,7 +158,15 @@ impl OpFacts {
         put(&mut record.normalised, self.normalised.as_ref());
         put(&mut record.plans, self.plans.as_ref());
         put(&mut record.runs, self.runs.as_ref());
+        put(&mut record.plan_version, self.plan_version.as_ref());
+        put(&mut record.items, self.items.as_ref());
+        put(&mut record.roles, self.roles.as_ref());
     }
+}
+
+/// A count as a record holds it.
+pub fn counted(count: usize) -> u64 {
+    u64::try_from(count).unwrap_or(u64::MAX)
 }
 
 /// A completion of `kind` for a task linking `linked` pull requests,
@@ -236,6 +258,11 @@ impl BoardRecording {
     /// Writes `record` to the log: synchronously, never panicking.
     pub fn record(&self, record: BoardOpRecord) {
         self.log.record(record);
+    }
+
+    /// Writes a fold-back's `record` to the log, as [`Self::record`].
+    pub fn record_fold_back(&self, record: FoldBackRecord) {
+        self.log.record_fold_back(record);
     }
 }
 

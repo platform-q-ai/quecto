@@ -114,10 +114,7 @@ async fn invoke(
 }
 
 fn safe(text: &str) -> bool {
-    text.len() <= 4096
-        && CANARIES
-            .iter()
-            .all(|canary| !text.contains(canary))
+    text.len() <= 4096 && CANARIES.iter().all(|canary| !text.contains(canary))
 }
 
 async fn inspect(
@@ -523,9 +520,10 @@ async fn catalogue_holds_only_known_refusals_with_safe_reasons_and_success_clear
                             reason.is_some()
                         ));
                     }
-                    if reason.as_deref().is_none_or(|reason| {
-                        safe(reason) && !reason.trim().is_empty()
-                    }) {
+                    if reason
+                        .as_deref()
+                        .is_none_or(|reason| safe(reason) && !reason.trim().is_empty())
+                    {
                     } else {
                         failures.push("refusal reason exposes untrusted fields or is empty".into());
                     }
