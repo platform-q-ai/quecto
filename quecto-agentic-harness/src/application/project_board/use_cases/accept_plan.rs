@@ -22,9 +22,7 @@ use crate::application::project_board::ports::{BoardArtifact, BoardClock, Projec
 use crate::application::project_board::telemetry::OpFacts;
 use crate::domain::project_board::entities::claim::Identity;
 use crate::domain::project_board::entities::plan::Plan;
-use crate::domain::project_board::services::plans::{
-    Accepted, Moment, TaskPlans, accept, as_accepted,
-};
+use crate::domain::project_board::services::plans::{Accepted, AsRead, Moment, TaskPlans, accept};
 use crate::domain::project_board::value_objects::vocabulary::PlanState;
 
 pub struct AcceptPlan {
@@ -55,9 +53,9 @@ impl AcceptPlan {
     /// No such task, or its file, one of its plans' or runs' set aside; a
     /// task stamped ahead; the rules' (a done or archived task, plans or
     /// runs that contradict each other, no such version, not a draft,
-    /// changed since it was read, stamped ahead, an actor who may not
-    /// decide, a run going); the clock's; a board that kept moving; the
-    /// store's.
+    /// changed since it was read, another version accepted than the one
+    /// seen, stamped ahead, an actor who may not decide, a run going); the
+    /// clock's; a board that kept moving; the store's.
     pub fn execute(&self, acceptance: &PlanAcceptance) -> Result<Accepted, ProjectBoardError> {
         self.execute_noted(acceptance, None)
     }
@@ -97,13 +95,15 @@ impl AcceptPlan {
                 if noting {
                     read = state_of(&versions, version);
                 }
-                as_accepted(task, acceptance.expected_accepted)?;
                 let board = TaskPlans {
                     task,
                     versions: &versions,
                     runs: &runs,
                 };
-                let expected = Some(&acceptance.expected_updated);
+                let expected = Some(AsRead {
+                    updated: &acceptance.expected_updated,
+                    accepted: acceptance.expected_accepted,
+                });
                 let done = accept(&board, version, expected, actor, &Moment::from(when))?;
                 let artifacts = artifacts_of(&done);
                 accepted = Some(done);
@@ -120,6 +120,14 @@ impl AcceptPlan {
                 artifacts,
                 artifacts_of(&accepted),
                 "the acceptance written is the last one built"
+            );
+            let superseded = accepted
+                .superseded
+                .as_ref()
+                .map(|plan| plan.fields().version);
+            assert_eq!(
+                superseded, acceptance.expected_accepted,
+                "an acceptance supersedes the version its caller saw accepted, or none"
             );
             accepted
         })

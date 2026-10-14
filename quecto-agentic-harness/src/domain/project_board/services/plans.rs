@@ -68,6 +68,16 @@ pub struct TaskPlans<'a> {
     pub runs: &'a [Run],
 }
 
+/// What an acceptance's caller read (#2481 M4c): the draft's `updated`,
+/// so the content accepted is the content reviewed, and the version the
+/// task named as accepted (`None`: none), so no acceptance the caller did
+/// not see is superseded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AsRead<'a> {
+    pub updated: &'a Timestamp,
+    pub accepted: Option<u32>,
+}
+
 /// An acceptance: the task naming the version, that version accepted, and
 /// the version it supersedes, if one was accepted before.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -181,20 +191,22 @@ fn entered(content: &PlanContent) -> Result<(), BoardRuleError> {
 /// Version `version` of the `board` task's plan accepted by `actor` at
 /// `now`: the task names it, and the version accepted before is
 /// superseded. With `expected`, the draft must still be as the caller read
-/// it (its `updated`), so the content accepted is the content reviewed.
+/// it (its `updated`), so the content accepted is the content reviewed,
+/// and the task must still name the accepted version the caller saw.
 /// The task, both plans and the acceptance share one stamp, later than
 /// each one's last change (a proposer's clock may have run ahead).
 ///
 /// # Errors
 /// A done or archived task; plans or runs that contradict each other; no
 /// version of that number, or one that is not a draft, or changed since it
-/// was read; a plan stamped ahead of `when`'s bound; an actor who may not
+/// was read; another accepted version than the caller saw; a plan stamped
+/// ahead of `when`'s bound; an actor who may not
 /// decide for the task; a run of the task still going, or a run of another
 /// task.
 pub fn accept(
     board: &TaskPlans<'_>,
     version: u32,
-    expected: Option<&Timestamp>,
+    expected: Option<AsRead<'_>>,
     actor: &Identity,
     when: &Moment,
 ) -> Result<Accepted, BoardRuleError> {
@@ -211,7 +223,10 @@ pub fn accept(
         .find(|plan| plan.fields().version == version)
         .ok_or(BoardRuleError::UnknownPlanVersion(version))?;
     draft(chosen)?;
-    as_read(chosen, expected)?;
+    if let Some(read) = expected {
+        as_read(chosen, Some(read.updated))?;
+        as_accepted(task, read.accepted)?;
+    }
     decides(task, actor, now)?;
     match open_of(task, runs)? {
         None => {}
@@ -273,7 +288,7 @@ pub fn accept(
 /// The draft `plan` of `task` discarded by `actor` at `when`; it is kept,
 /// as discarded.
 /// With `expected`, the draft must still be as the caller read it (its
-/// `updated`), so the draft set aside is the one reviewed (#2481 M4c).
+/// `updated`), so the draft discarded is the one reviewed (#2481 M4c).
 ///
 /// # Errors
 /// A done or archived task; a plan of another task, or not a draft, or

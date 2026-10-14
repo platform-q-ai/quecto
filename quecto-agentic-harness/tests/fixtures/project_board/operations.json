@@ -1909,10 +1909,34 @@
   },
   {
     "request": {
+      "op": "propose_plan",
+      "task": "epic",
+      "approach": "Fourth.",
+      "items": []
+    },
+    "answer": {
+      "ok": true,
+      "op": "propose_plan",
+      "plan": {
+        "task": "epic",
+        "version": 4,
+        "state": "draft",
+        "proposed_by": {
+          "name": "Ada",
+          "email": "ada@example.com"
+        },
+        "edited_by": null,
+        "created": "2026-10-10T10:00:00Z",
+        "updated": "2026-10-10T10:00:00Z"
+      }
+    }
+  },
+  {
+    "request": {
       "op": "accept_plan",
       "task": "epic",
-      "version": 2,
-      "expected_updated": "2026-10-10T10:00:03Z",
+      "version": 4,
+      "expected_updated": "2026-10-10T10:00:00Z",
       "expected_accepted": 1
     },
     "answer": {
