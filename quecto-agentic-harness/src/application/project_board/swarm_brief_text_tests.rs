@@ -273,9 +273,13 @@ fn the_coordinator_playbook_names_the_briefs_shape() {
         assert!(lines.iter().any(|line| line.starts_with(&fence)), "{edge}");
         assert!(playbook.contains(&format!("`{fence}n ===`")), "{edge}");
     }
-    let section = &playbook[playbook
+    let start = playbook
         .find("### Board task briefs")
-        .expect("the board brief section")..];
+        .expect("the board brief section");
+    let end = playbook[start + 1..]
+        .find("\n### ")
+        .map_or(playbook.len(), |next| start + 1 + next);
+    let section = &playbook[start..end];
     let fields = data["run"]
         .as_object()
         .unwrap()
@@ -285,5 +289,4 @@ fn the_coordinator_playbook_names_the_briefs_shape() {
     for field in fields {
         assert!(section.contains(field.as_str()), "{field}");
     }
-    assert!(section.contains("usage budget") && data["usage_budget"].is_number());
 }

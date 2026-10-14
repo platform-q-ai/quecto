@@ -623,3 +623,34 @@ async fn a_calls_duration_covers_its_wait_before_its_work_ran() {
     let record = records.taken().remove(0);
     assert!(record.duration_us >= 50_000, "{}", record.duration_us);
 }
+
+/// The board ops the parent playbook calls, `op(…)` in backticks (#2481
+/// Q11): every one is an op this tool takes, so a renamed op cannot leave
+/// the playbook calling one the tool refuses.
+#[test]
+fn the_parent_playbook_calls_only_the_tools_ops() {
+    let called: Vec<&str> = include_str!("../../../../../PARENT_PLAYBOOK.md")
+        .split('`')
+        .skip(1)
+        .step_by(2)
+        .filter_map(|code| code.split_once('(').map(|(name, _)| name))
+        .filter(|name| {
+            !name.is_empty() && name.bytes().all(|b| b.is_ascii_lowercase() || b == b'_')
+        })
+        .collect();
+    for op in [
+        "propose_plan",
+        "edit_plan",
+        "accept_plan",
+        "start",
+        "end_run",
+        "renew",
+        "take_over",
+        "move",
+    ] {
+        assert!(called.contains(&op), "{op} is called");
+    }
+    for op in &called {
+        assert!(TOOL_OPS.contains(op), "{op} is an op of the tool");
+    }
+}
