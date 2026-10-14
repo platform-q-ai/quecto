@@ -239,8 +239,8 @@ fn budget_text(limit: u64, strict_unknown: bool, warned: bool) -> String {
 /// A budget one writer configured is the other writer's budget, byte for
 /// byte (Python's `json.dumps` text): configuring the same budget again on
 /// the other writes nothing (no second `usage-budget` event, the payload's
-/// bytes unchanged), and the warning either marks re-dumps the payload the
-/// other wrote.
+/// bytes unchanged). Neither writer marks a warning, whatever the usage
+/// (owner decision, 2026-10-14): the payload stays as configured.
 #[test]
 fn a_budget_either_side_configured_is_the_same_budget() {
     let board = Mixed::running();
@@ -255,37 +255,25 @@ fn a_budget_either_side_configured_is_the_same_budget() {
     assert_eq!(other, rust, "the same budget, unchanged by the second");
     assert_eq!(board.events("usage-budget"), "1", "Rust wrote nothing");
     assert_eq!(board.budget_payload(), budget_text(100, false, false));
-    // Rust marks the warning on the budget the other wrote: 85 of 100.
+    // 85, then 165, of 100: neither writer warns or pauses.
     assert!(matches!(
         board.rust_records(&measured("r1", 85), 5.0),
         Outcome::Ok(_)
     ));
-    assert_eq!(board.events("usage-warning"), "1");
-    assert_eq!(board.budget_payload(), budget_text(100, false, true));
-
-    let rust = board
-        .rust
-        .call("parent", "usage_budget", &json!([200, true]), NOW + 6.0);
-    assert_eq!(board.events("usage-budget"), "2");
-    assert_eq!(board.budget_payload(), budget_text(200, true, false));
-    let other = board
-        .other
-        .call("parent", "usage_budget", &json!([200, true]), NOW + 7.0);
-    assert_eq!(other, rust);
-    assert_eq!(
-        board.events("usage-budget"),
-        "2",
-        "the other writer wrote nothing"
-    );
-    assert_eq!(board.budget_payload(), budget_text(200, true, false));
-    // The other marks the warning on the budget Rust wrote: 165 of 200.
     assert!(matches!(
-        board.other_records(&measured("r2", 80), 8.0),
+        board.other_records(&measured("r2", 80), 6.0),
         Outcome::Ok(_)
     ));
-    assert_eq!(board.events("usage-warning"), "2");
-    assert_eq!(board.budget_payload(), budget_text(200, true, true));
-    assert_eq!(board.report(9.0)["budget"]["warned"], json!(true));
+    assert_eq!(board.events("usage-warning"), "0");
+    assert_eq!(board.budget_payload(), budget_text(100, false, false));
+    let report = board.report(7.0);
+    assert_eq!(
+        (
+            &report["budget"]["warned"],
+            &report["totals"]["observed_tokens"]
+        ),
+        (&json!(false), &json!(165))
+    );
 }
 
 // ─── S13 (#2278): the harness's board beside other writers ───────────────

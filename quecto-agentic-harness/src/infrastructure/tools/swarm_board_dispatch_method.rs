@@ -607,20 +607,12 @@ impl Method {
         }
     }
 
-    /// The level a served call records at: [`Method::level`], raised to
-    /// [`Level::Mutation`] for a method the token budget applies in when
-    /// the decision is the budget's own (`paused` ends the run as
-    /// `budget-exhausted`, `warned` writes the warning), so a read that
-    /// changes the run is visible at INFO. Only the usage methods decide
-    /// `paused` or `warned` as the budget's; another method's decision of
-    /// the same name (`pause`'s `paused`) keeps its own level. It is
-    /// lowered to [`Level::Read`] for a quarantine still inside its grace.
+    /// The level a served call records at: [`Method::level`], lowered to
+    /// [`Level::Read`] for a quarantine still inside its grace. No usage
+    /// method decides `paused` or `warned` any more: no token budget
+    /// changes a run (owner decision, 2026-10-14).
     pub(super) fn served_level(self, decision: &str) -> Level {
         match (self, decision) {
-            (
-                Self::UsageBudget | Self::RecordRequest | Self::RequestAdmission,
-                "paused" | "warned",
-            ) => Level::Mutation,
             // #2277 review N6: a reconcile retries a quarantine until its
             // grace ends, so one still inside the grace (which writes at
             // most the observer's first observation) is DEBUG; every other

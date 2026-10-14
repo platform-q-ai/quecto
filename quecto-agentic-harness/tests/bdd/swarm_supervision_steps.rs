@@ -88,10 +88,13 @@ fn approved(world: &mut QuectoWorld) {
     assert_eq!(evidence["report"], "APPROVED");
     assert_eq!(evidence["raw_has_approval"], true);
 }
-#[then("the observed usage budget pauses the run and request accounting is available")]
-fn observed_budget(world: &mut QuectoWorld) {
+/// Owner decision, 2026-10-14: no token budget limits a swarm. A
+/// one-token budget set after real usage leaves the run running, and the
+/// usage is still measured and reported.
+#[then("heavy usage never pauses the run and request accounting is available")]
+fn usage_never_pauses(world: &mut QuectoWorld) {
     let evidence = result_json(world);
-    assert_eq!(evidence["budget"], "paused");
+    assert_eq!(evidence["budget"], "running");
     assert!(evidence["requests"].as_u64().unwrap() >= 4);
     assert!(
         evidence["usage"]["totals"]["observed_tokens"]

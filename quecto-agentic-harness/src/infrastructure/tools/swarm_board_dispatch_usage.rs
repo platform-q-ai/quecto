@@ -1,16 +1,15 @@
 //! The usage methods of the board dispatch (#2274): their Python
 //! signatures and their serving. `usage_budget` answers the usage report,
 //! `_record_request` the control receipt and `_request_admission` the run
-//! and its members, each after the token budget applied. Every argument
-//! reaches the use case as the JSON value passed. The decision names what
-//! the budget did (`paused`, `warned`) and otherwise what the call did.
+//! and its members. Every argument reaches the use case as the JSON value
+//! passed. The decision names what the call did: no token budget warns or
+//! pauses a run (owner decision, 2026-10-14), so none of them controls it.
 use serde_json::Value;
 
 use super::control::{receipt, report};
 use super::{Parameter, Served, float, member_row, object, required, take};
 use crate::application::swarm::dto::{
-    BudgetChange, BudgetEffect, ConfigureUsageBudgetRequest, RecordRequestUsageRequest,
-    RequestDelivery,
+    BudgetChange, ConfigureUsageBudgetRequest, RecordRequestUsageRequest, RequestDelivery,
 };
 use crate::application::swarm::use_cases::{
     ConfigureUsageBudget, ReadRequestAdmission, RecordRequestUsage,
@@ -39,24 +38,6 @@ pub(super) const REQUEST_ADMISSION: [Parameter; 1] = [Parameter {
     default: Some(|| Value::String(AdmissionGate::Model.as_str().to_owned())),
 }];
 
-/// Whether the budget's effect changed the run's control state (#2390
-/// review M2): a budget pause did.
-fn pauses(effect: BudgetEffect) -> bool {
-    match effect {
-        BudgetEffect::Paused => true,
-        BudgetEffect::Warned | BudgetEffect::Unchanged => false,
-    }
-}
-
-/// The budget's effect as the decision, or `otherwise` when it had none.
-fn decided(effect: BudgetEffect, otherwise: &'static str) -> &'static str {
-    match effect {
-        BudgetEffect::Paused => "paused",
-        BudgetEffect::Warned => "warned",
-        BudgetEffect::Unchanged => otherwise,
-    }
-}
-
 pub(super) fn usage_budget(
     configure_usage_budget: &ConfigureUsageBudget,
     actor: &str,
@@ -68,19 +49,19 @@ pub(super) fn usage_budget(
         token_limit,
         strict_unknown,
     })?;
-    let otherwise = match configured.change {
+    let decision = match configured.change {
         BudgetChange::Configured => "configured",
         BudgetChange::Unchanged => "unchanged",
     };
     Ok(Served {
         value: report(configured.report),
-        decision: decided(configured.effect, otherwise),
+        decision,
         task_id: None,
         message_id: None,
         cursor_moved: None,
         detail: BoardOpDetail::NONE,
         refused: None,
-        controls_run: pauses(configured.effect),
+        controls_run: false,
     })
 }
 
@@ -94,26 +75,26 @@ pub(super) fn record_request(
         actor: actor.to_owned(),
         record,
     })?;
-    let otherwise = match recorded.delivery {
+    let decision = match recorded.delivery {
         RequestDelivery::Recorded => "recorded",
         RequestDelivery::Redelivered => "redelivered",
         RequestDelivery::Replaced => "replaced",
     };
     Ok(Served {
         value: receipt(recorded.receipt),
-        decision: decided(recorded.effect, otherwise),
+        decision,
         task_id: None,
         message_id: None,
         cursor_moved: None,
         detail: BoardOpDetail::NONE,
         refused: None,
-        controls_run: pauses(recorded.effect),
+        controls_run: false,
     })
 }
 
 /// `_request_admission()`'s dict, in Python's key order, its decision the
-/// gate's (#2339) unless the budget warned or paused. A gate off the
-/// allowlist is refused before the board is read, its text never echoed.
+/// gate's (#2339). A gate off the allowlist is refused before the board is
+/// read, its text never echoed.
 pub(super) fn request_admission(
     read_request_admission: &ReadRequestAdmission,
     actor: &str,
@@ -144,13 +125,13 @@ pub(super) fn request_admission(
             ("outcome", text(view.outcome)),
             ("control_generation", Value::from(view.control_generation)),
         ]),
-        decision: decided(admission.effect, gate.decision()),
+        decision: gate.decision(),
         task_id: None,
         message_id: None,
         cursor_moved: None,
         detail: BoardOpDetail::NONE,
         refused: None,
-        controls_run: pauses(admission.effect),
+        controls_run: false,
     })
 }
 

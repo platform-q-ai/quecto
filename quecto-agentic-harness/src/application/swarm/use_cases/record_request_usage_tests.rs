@@ -5,9 +5,7 @@ use crate::application::swarm::board_test_support::{
     BoardState, CompactEncoding, MemoryBoard, SteppingClock, UsageReads, member_row, running_board,
     usage,
 };
-use crate::application::swarm::dto::{
-    BudgetEffect, NewRequestUsage, RecordRequestUsageRequest, RequestDelivery,
-};
+use crate::application::swarm::dto::{NewRequestUsage, RecordRequestUsageRequest, RequestDelivery};
 use crate::application::swarm::ports::BoardEncoding;
 use crate::domain::swarm::{BoardError, RefusalKind, RunState};
 
@@ -69,7 +67,6 @@ fn a_new_record_is_inserted_with_its_measurement() {
     let (board, service) = service(state);
     let recorded = service.execute(record("gone", measured())).unwrap();
     assert_eq!(recorded.delivery, RequestDelivery::Recorded);
-    assert_eq!(recorded.effect, BudgetEffect::Unchanged);
     assert_eq!(recorded.receipt.status.as_deref(), Some("running"));
     assert_eq!(
         board.snapshot().request_usage,
@@ -170,46 +167,49 @@ fn the_ledger_holds_ten_thousand_rows() {
     assert!(board.journal().is_empty());
 }
 
-/// `test_usage_budget_is_idempotent_warns_once_and_pauses_without_losing_claims`:
-/// crossing 80% warns once; reaching the limit pauses the running run.
+/// Owner decision, 2026-10-14: no token budget limits a swarm. Heavy
+/// usage, far past a strict budget stored before budgets were dropped,
+/// unmeasured requests included, is recorded and reported and never warns
+/// or pauses the run: no `warned` is written, no `usage-warning` event,
+/// and no `budget-exhausted` pause.
 #[test]
-fn the_budget_warns_once_then_pauses() {
+fn heavy_usage_never_warns_or_pauses_the_run() {
+    let stored = json!({"token_limit": 100, "strict_unknown": true, "warned": false});
     let mut state = with_worker();
-    state.usage = Some(usage(
-        json!({"token_limit": 100, "strict_unknown": true, "warned": false}),
-        0,
-        0,
-    ));
+    state.usage = Some(usage(stored.clone(), 0, 0));
     let (board, service) = service(state);
-    let first = service.execute(record("worker", measured())).unwrap();
-    assert_eq!(first.effect, BudgetEffect::Warned);
-    assert_eq!(
-        first.receipt.budget.get("warned"),
-        Some(&json!(true)),
-        "the receipt reads the warning"
-    );
-    let mut second = measured();
-    second["request_id"] = json!("r2");
-    second["context_input_tokens"] = json!(20);
-    second["output_tokens"] = json!(5);
-    let paused = service.execute(record("worker", second)).unwrap();
-    assert_eq!(paused.effect, BudgetEffect::Paused);
-    assert_eq!(paused.receipt.outcome.as_deref(), Some("budget-exhausted"));
+    for (index, tokens) in [70_u64, 4_000_000, 4_000_000_000].into_iter().enumerate() {
+        let mut heavy = measured();
+        heavy["request_id"] = json!(format!("r{index}"));
+        heavy["context_input_tokens"] = json!(tokens);
+        let recorded = service.execute(record("worker", heavy)).unwrap();
+        assert_eq!(
+            recorded.receipt.status.as_deref(),
+            Some("running"),
+            "{tokens}"
+        );
+        assert_eq!(recorded.receipt.outcome, None, "{tokens}");
+        assert_eq!(recorded.receipt.budget.get("warned"), Some(&json!(false)));
+    }
+    let unmeasured = json!({"request_id": "u", "instrumented_attempts": 1, "outcome": "failed"});
+    let recorded = service.execute(record("worker", unmeasured)).unwrap();
+    assert_eq!(recorded.receipt.status.as_deref(), Some("running"));
     let state = board.snapshot();
-    assert_eq!(state.run.unwrap().record.status, Some(RunState::PAUSED));
-    let actions: Vec<_> = state.events.iter().map(|e| e.action.as_str()).collect();
-    assert_eq!(actions, ["usage-warning", "stop", "paused"]);
-    assert_eq!(
-        state.events[1].actor, "worker",
-        "the recording member ends it"
+    assert_eq!(state.run.unwrap().record.status, Some(RunState::RUNNING));
+    assert!(state.events.is_empty(), "no warning or pause event");
+    assert_eq!(state.request_usage.len(), 4, "every request recorded");
+    assert!(
+        board
+            .journal()
+            .iter()
+            .all(|line| !line.starts_with("configure_usage_budget")),
+        "the stored budget is never written"
     );
 }
 
-/// #2340: a recorded request reads the ledger once, for the budget's
+/// #2340: a recorded request reads the ledger once, for the receipt's
 /// standing, and never the whole usage report (its per-member aggregates
-/// and latest observations), whose cost grows with the run; the receipt
-/// reuses the totals the budget decided on, even when the budget warns
-/// and pauses the run in between.
+/// and latest observations), whose cost grows with the run.
 #[test]
 fn a_recorded_request_reads_the_ledger_once_and_never_the_whole_report() {
     let mut state = with_worker();
@@ -230,7 +230,7 @@ fn a_recorded_request_reads_the_ledger_once_and_never_the_whole_report() {
     }
     assert_eq!(
         board.snapshot().run.unwrap().record.status,
-        Some(RunState::PAUSED),
-        "the second request paused the run, and its receipt listed blockers"
+        Some(RunState::RUNNING),
+        "a spent budget pauses nothing"
     );
 }

@@ -44,10 +44,11 @@ fn a_running_runs_receipt_merges_the_totals_into_the_budget() {
 
 /// `resume_refuses_members_and_lists_blockers_for_the_supervisor` (the
 /// blockers half): a paused run lists, in Python's order, a coordinator
-/// lost after its latest activation, a deadline that the paused interval
-/// does not carry past now, and an exhausted budget.
+/// lost after its latest activation and a deadline that the paused
+/// interval does not carry past now. A spent budget stored before budgets
+/// were dropped blocks nothing (owner decision, 2026-10-14).
 #[test]
-fn a_paused_runs_blockers_name_the_loss_the_deadline_and_the_budget() {
+fn a_paused_runs_blockers_name_the_loss_and_the_deadline_never_a_budget() {
     let mut state = paused(running_board(40.0), 50.0, Some(("blocked", "why")));
     state.usage = limited(10, 10);
     state.events.push(recorded(
@@ -67,15 +68,13 @@ fn a_paused_runs_blockers_name_the_loss_the_deadline_and_the_budget() {
         [
             "relaunch the lost coordinator 'parent' into the retained environment before resuming",
             "extend the deadline (swarm_control extend) before resuming",
-            "raise or disable the token budget (swarm_control usage_budget) before resuming",
         ]
     );
-    // Reactivated, carried past now by the paused interval, and within
-    // budget: nothing blocks.
+    // Reactivated and carried past now by the paused interval, its budget
+    // still spent: nothing blocks.
     state
         .events
         .push(recorded("parent", "activated", json!({"member": "parent"})));
-    state.usage = limited(10, 9);
     state.run.as_mut().unwrap().record.deadline = 100.0;
     let receipt = read(state, 189.0).unwrap();
     assert!(receipt.resume_blockers.is_empty(), "{receipt:?}");
@@ -84,11 +83,11 @@ fn a_paused_runs_blockers_name_the_loss_the_deadline_and_the_budget() {
 /// A paused run whose pause was never recorded is refused with Python's
 /// text; records only a file edited outside the board holds are refused
 /// naming the record (`outside_edited_control_records`): a pause start
-/// that is not a number (a boolean included, which Python counts as 0 or
-/// 1), a budget that is not an object or whose limit is not a count, and
-/// usage totals that are not counts (a REAL or a negative sum, which
-/// Python compares with the limit as they are) where a paused run's
-/// budget, with a token limit, is checked for a resume.
+/// that is not a number (a boolean included, which Python counts as zero
+/// or one) and a budget that is not an object. A budget's fields and the
+/// usage totals are reported as they are: no budget decides on them any
+/// more (owner decision, 2026-10-14), so a limit that is not a count, or
+/// a total that is a REAL or negative, reads.
 #[test]
 fn missing_and_edited_control_records_are_refused() {
     let mut unrecorded = paused(running_board(40.0), 50.0, None);
@@ -107,6 +106,13 @@ fn missing_and_edited_control_records_are_refused() {
         0,
         0,
     ));
+    let text_limit = read(text_limit, 60.0).unwrap();
+    assert_eq!(text_limit.budget["token_limit"], json!("10"));
+    assert_eq!(
+        text_limit.resume_blockers,
+        ["extend the deadline (swarm_control extend) before resuming"],
+        "the deadline alone"
+    );
     let mut true_start = paused(running_board(40.0), 50.0, None);
     true_start.events[0].detail = json!({"started": true});
     let uncounted = |total: Value| {
@@ -124,13 +130,14 @@ fn missing_and_edited_control_records_are_refused() {
         state.usage = Some(report);
         state
     };
+    for total in [json!(1.5), json!(-3)] {
+        let receipt = read(uncounted(total.clone()), 60.0).unwrap();
+        assert_eq!(receipt.budget["observed_tokens"], total);
+    }
     for (state, record) in [
         (text_start, "pause record"),
         (true_start, "pause record"),
         (list_budget, "usage budget"),
-        (text_limit, "usage budget"),
-        (uncounted(json!(1.5)), "usage totals record"),
-        (uncounted(json!(-3)), "usage totals record"),
     ] {
         assert_eq!(
             read(state, 60.0).unwrap_err(),
@@ -151,9 +158,9 @@ fn the_paused_interval_is_the_integer_zero_unless_positive() {
     assert_eq!(paused_for(12.5, 10.0), (2.5, json!(2.5)));
 }
 
-/// #2340: the receipt reads the ledger once, for the budget's standing,
-/// and never the whole usage report; a paused run's blockers decide on
-/// that same standing.
+/// #2340: the receipt reads the ledger once, for the standing it reports,
+/// and never the whole usage report; a paused run's blockers read no usage
+/// at all.
 #[test]
 fn the_receipt_reads_the_usage_standing_once_and_never_the_whole_report() {
     let running = {
@@ -166,7 +173,7 @@ fn the_receipt_reads_the_usage_standing_once_and_never_the_whole_report() {
         state.usage = limited(10, 10);
         state
     };
-    for (state, blockers) in [(running, 0), (exhausted, 1)] {
+    for (state, blockers) in [(running, 0), (exhausted, 0)] {
         let board = MemoryBoard::with(state);
         let clock = SteppingClock::fixed(60.0);
         let receipt = atomic(&*board, false, |transaction| receipt(transaction, &*clock)).unwrap();

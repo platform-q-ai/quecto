@@ -52,8 +52,7 @@ pub use telemetry::{
     RefusalKind, RunStatusKind, UnexpectedArgs, WrongTypeArg,
 };
 pub use usage::{
-    MAX_REQUEST_PAYLOAD_BYTES, MAX_REQUEST_ROWS, Redelivery, UsageBudget, UsageDecision,
-    UsageTotals, redelivery, request_measurement, usage_budget_decision,
+    MAX_REQUEST_PAYLOAD_BYTES, MAX_REQUEST_ROWS, Redelivery, redelivery, request_measurement,
 };
 pub use validation::{
     bounded, bounded_text, completion_revision, criteria, edited_criteria, stored_criteria,

@@ -1,42 +1,10 @@
-//! Usage-budget policy ported from `swarm_policy.py` (#2267): the budget
-//! decision and the validation of one request's usage record.
+//! Usage policy ported from `swarm_policy.py` (#2267): the validation of
+//! one request's usage record. Usage is measured, never limited: the token
+//! budget's decision is gone (owner decision, 2026-10-14).
 use serde_json::{Map, Value};
 
 use super::python_value::python_equal;
 use super::{BoardError, RefusalKind};
-
-/// A run's token budget.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct UsageBudget {
-    pub token_limit: Option<u64>,
-    pub strict_unknown: bool,
-    pub warned: bool,
-}
-
-/// A run's accumulated usage.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct UsageTotals {
-    pub observed_tokens: u64,
-    pub unknown_usage_requests: u64,
-}
-
-/// What the budget allows next.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum UsageDecision {
-    Allow,
-    Warn,
-    Pause,
-}
-
-impl UsageDecision {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Allow => "allow",
-            Self::Warn => "warn",
-            Self::Pause => "pause",
-        }
-    }
-}
 
 /// The fields a request record may measure, each null or a count.
 pub const MEASURED_FIELDS: [&str; 5] = [
@@ -52,25 +20,6 @@ pub const REQUEST_OUTCOMES: [&str; 4] = ["succeeded", "failed", "cancelled", "re
 pub const MAX_REQUEST_COUNT: u64 = (1 << 32) - 1;
 /// The most characters (code points, as Python counts) in a request id.
 pub const MAX_REQUEST_ID_CHARS: usize = 128;
-
-/// No limit allows; a strict budget pauses on any unmeasured request; the
-/// limit pauses; 80% of it warns (integer math, as Python's unbounded ints).
-pub fn usage_budget_decision(budget: &UsageBudget, totals: &UsageTotals) -> UsageDecision {
-    let Some(limit) = budget.token_limit else {
-        return UsageDecision::Allow;
-    };
-    if budget.strict_unknown && totals.unknown_usage_requests > 0 {
-        return UsageDecision::Pause;
-    }
-    let (observed, limit) = (u128::from(totals.observed_tokens), u128::from(limit));
-    if observed >= limit {
-        UsageDecision::Pause
-    } else if observed * 5 >= limit * 4 {
-        UsageDecision::Warn
-    } else {
-        UsageDecision::Allow
-    }
-}
 
 /// One request's measurement: `(tokens, unknown, attempts)`. `tokens` is the
 /// context input plus output when both are measured, else 0; `unknown` is 1

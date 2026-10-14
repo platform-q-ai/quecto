@@ -8,7 +8,6 @@ use super::OverRepository;
 
 use crate::application::swarm::board_control::edited;
 use crate::application::swarm::board_operation::{detail, operation};
-use crate::application::swarm::board_usage::apply_usage_budget;
 use crate::application::swarm::dto::{BudgetChange, ConfigureUsageBudgetRequest, ConfiguredBudget};
 use crate::application::swarm::ports::{BoardRepository, Clock};
 use crate::domain::swarm::{Access, BoardError, RefusalKind, python_equal};
@@ -22,8 +21,8 @@ pub const BUDGET_ARGUMENTS: &str =
 /// float), the strictness a boolean. Through the gate (the coordinator, a
 /// run in any state) a budget equal to the stored one by Python's `==` is
 /// left as it is; any other is written, `warned` false, with the event
-/// `usage-budget{token_limit,strict_unknown}`. The budget then applies,
-/// and the answer is the report.
+/// `usage-budget{token_limit,strict_unknown}`. The answer is the report: a
+/// stored budget is reported, never applied (owner decision, 2026-10-14).
 pub struct ConfigureUsageBudget {
     repository: Arc<dyn BoardRepository>,
     clock: Arc<dyn Clock + Send + Sync>,
@@ -79,10 +78,8 @@ impl ConfigureUsageBudget {
                         )?;
                         BudgetChange::Configured
                     };
-                let effect = apply_usage_budget(transaction, &*self.clock, &actor)?;
                 Ok(ConfiguredBudget {
                     change,
-                    effect,
                     report: transaction.usage_report()?,
                 })
             },
