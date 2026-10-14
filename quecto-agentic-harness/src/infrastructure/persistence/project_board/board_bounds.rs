@@ -5,7 +5,9 @@
 //! reads in all.
 use super::folders::FOLDERS;
 use super::writes::FolderAfter;
-use super::{Board, Limits, MAX_BOARD_ENTRIES, MAX_TASK_ENTRIES, Unread, task_file, too_large};
+use super::{
+    Board, Limits, MAX_BOARD_ENTRIES, MAX_TASK_ENTRIES, TASKS, Unread, task_file, too_large,
+};
 use crate::application::project_board::ports::BoardStoreError;
 use crate::domain::project_board::entities::task::Task;
 use crate::domain::project_board::value_objects::slug::Slug;
@@ -22,6 +24,28 @@ pub enum ClearKeeps {
 
 /// The most kept paths a refusal names before it says how many more.
 const SHOWN_PATHS: usize = 8;
+
+/// Where a bound was passed: one folder besides `tasks/`, `tasks/`, or the
+/// board in all.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Scope {
+    Folder(&'static str),
+    Tasks,
+    Board,
+}
+
+impl Scope {
+    /// Whether the kept copy at `path` lies in this scope.
+    fn holds(self, path: &str) -> bool {
+        match self {
+            Self::Folder(name) => path
+                .strip_prefix(name)
+                .is_some_and(|rest| rest.starts_with('/')),
+            Self::Tasks => path.starts_with(TASKS),
+            Self::Board => true,
+        }
+    }
+}
 
 /// A board of `entries` in all its folders, and `bytes` of files to read,
 /// keeps within what a read takes: [`MAX_BOARD_ENTRIES`] and
@@ -84,28 +108,30 @@ impl Board {
         keeps: &ClearKeeps,
     ) -> Result<(), BoardStoreError> {
         let cap = MAX_TASK_ENTRIES.max(before.entries(&[]));
-        let told = |error: BoardStoreError| match (keeps, error) {
-            (ClearKeeps::Copies(paths), BoardStoreError::InvalidWrite(why)) => {
-                let shown: Vec<&str> = paths.iter().take(SHOWN_PATHS).map(String::as_str).collect();
-                let more = match paths.len().saturating_sub(SHOWN_PATHS) {
-                    0 => String::new(),
-                    more => format!(" and {more} more"),
-                };
-                let copies = match paths.len() {
-                    1 => "copy",
-                    _ => "copies",
-                };
-                BoardStoreError::InvalidWrite(format!(
-                    "{why}, once this clear keeps its {copies} of {}{more}: keep a smaller copy, \
-                     or drop every copy instead",
-                    shown.join(", ")
-                ))
+        if let ClearKeeps::Copies(paths) = keeps {
+            debug_assert!(!paths.is_empty(), "a clear that keeps copies names them");
+        }
+        // Names the copies kept in the scope past its bound: only a kept
+        // copy grows one.
+        let told = |(scope, error): (Scope, BoardStoreError)| {
+            let paths: Vec<&str> = match keeps {
+                ClearKeeps::Copies(paths) => paths
+                    .iter()
+                    .map(String::as_str)
+                    .filter(|path| scope.holds(path))
+                    .collect(),
+                ClearKeeps::Nothing => vec![],
+            };
+            match (paths.as_slice(), error) {
+                ([_, ..], BoardStoreError::InvalidWrite(why)) => {
+                    BoardStoreError::InvalidWrite(kept_told(&why, &paths))
+                }
+                (_, other) => other,
             }
-            (ClearKeeps::Copies(_) | ClearKeeps::Nothing, other) => other,
         };
-        folders_within(folders).map_err(told)?;
+        folders_scoped(folders).map_err(told)?;
         self.entries_within(&[], cap, folders)?;
-        self.bytes_within(&[], limits, folders).map_err(told)
+        self.bytes_scoped(&[], limits, folders).map_err(told)
     }
 
     /// The entries of the `tasks/` tree with `written` in place. A file a
@@ -146,6 +172,18 @@ impl Board {
         limits: Limits,
         folders: &BTreeMap<&'static str, FolderAfter<'_>>,
     ) -> Result<(), BoardStoreError> {
+        self.bytes_scoped(written, limits, folders)
+            .map_err(|(_, error)| error)
+    }
+
+    /// [`Self::bytes_within`], saying which bound was passed: `tasks/`'s
+    /// or the board's.
+    fn bytes_scoped(
+        &self,
+        written: &[(&Task, Vec<u8>)],
+        limits: Limits,
+        folders: &BTreeMap<&'static str, FolderAfter<'_>>,
+    ) -> Result<(), (Scope, BoardStoreError)> {
         let replaced: BTreeSet<String> = written
             .iter()
             .map(|(task, _)| task_file(&task.fields().id))
@@ -159,14 +197,21 @@ impl Board {
         let bytes = tasks + folders.values().map(FolderAfter::bytes).sum::<usize>();
         match (tasks <= limits.tasks_bytes, bytes <= limits.board_bytes) {
             (true, true) => Ok(()),
-            (false, _) => Err(BoardStoreError::InvalidWrite(format!(
-                "the board would hold {tasks} bytes of task files; a read takes at most {}",
-                limits.tasks_bytes
-            ))),
-            (true, false) => Err(BoardStoreError::InvalidWrite(format!(
-                "the board would hold {bytes} bytes of files a read reads; a read takes at most {}",
-                limits.board_bytes
-            ))),
+            (false, _) => Err((
+                Scope::Tasks,
+                BoardStoreError::InvalidWrite(format!(
+                    "the board would hold {tasks} bytes of task files; a read takes at most {}",
+                    limits.tasks_bytes
+                )),
+            )),
+            (true, false) => Err((
+                Scope::Board,
+                BoardStoreError::InvalidWrite(format!(
+                    "the board would hold {bytes} bytes of files a read reads; a read takes at \
+                     most {}",
+                    limits.board_bytes
+                )),
+            )),
         }
     }
 }
@@ -179,6 +224,13 @@ impl Board {
 fn folders_within(
     folders: &BTreeMap<&'static str, FolderAfter<'_>>,
 ) -> Result<(), BoardStoreError> {
+    folders_scoped(folders).map_err(|(_, error)| error)
+}
+
+/// [`folders_within`], saying which folder passed its bound.
+fn folders_scoped(
+    folders: &BTreeMap<&'static str, FolderAfter<'_>>,
+) -> Result<(), (Scope, BoardStoreError)> {
     for folder in &FOLDERS {
         let (name, noun) = (folder.naming.folder, folder.naming.noun);
         let Some(after) = folders.get(name) else {
@@ -188,21 +240,52 @@ fn folders_within(
         match (entries <= folder.max_entries, bytes <= folder.max_bytes) {
             (true, true) => {}
             (false, _) => {
-                return Err(BoardStoreError::InvalidWrite(format!(
-                    "the board is full: its {name}/ holds at most {} {noun} files and files set \
-                     aside, and would hold {entries}",
-                    folder.max_entries
-                )));
+                return Err((
+                    Scope::Folder(name),
+                    BoardStoreError::InvalidWrite(format!(
+                        "the board is full: its {name}/ holds at most {} {noun} files and files \
+                         set aside, and would hold {entries}",
+                        folder.max_entries
+                    )),
+                ));
             }
             (true, false) => {
-                return Err(BoardStoreError::InvalidWrite(format!(
-                    "the board would hold {bytes} bytes of {noun} files; a read takes at most {}",
-                    folder.max_bytes
-                )));
+                return Err((
+                    Scope::Folder(name),
+                    BoardStoreError::InvalidWrite(format!(
+                        "the board would hold {bytes} bytes of {noun} files; a read takes at most \
+                         {}",
+                        folder.max_bytes
+                    )),
+                ));
             }
         }
     }
     Ok(())
+}
+
+/// `why`, a bound passed, once a clear keeps its copies of `paths` (at
+/// least one): which copies, at most [`SHOWN_PATHS`] of them, and the ways
+/// out.
+fn kept_told(why: &str, paths: &[&str]) -> String {
+    let shown = paths
+        .iter()
+        .take(SHOWN_PATHS)
+        .copied()
+        .collect::<Vec<_>>()
+        .join(", ");
+    let more = match paths.len().saturating_sub(SHOWN_PATHS) {
+        0 => String::new(),
+        more => format!(" and {more} more"),
+    };
+    let copies = match paths {
+        [_] => "copy",
+        _ => "copies",
+    };
+    format!(
+        "{why}, once this clear keeps its {copies} of {shown}{more}: keep a smaller copy, or drop \
+         every copy instead"
+    )
 }
 
 /// A tree of `entries` fits what a read takes, or it is an invalid write,
