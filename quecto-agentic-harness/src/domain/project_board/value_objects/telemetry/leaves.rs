@@ -141,6 +141,7 @@ const KNOWN_KINDS: &[&str] = &[
     "plan_not_accepted",
     "change_already_linked",
     "no_such_change",
+    "no_such_run",
     "change_ahead",
     "discussion_closed",
     "discussion_linked",

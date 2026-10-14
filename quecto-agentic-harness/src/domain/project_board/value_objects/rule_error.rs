@@ -56,6 +56,8 @@ pub enum BoardRuleError {
     ChangeAlreadyLinked { task: Slug, change: Option<u32> },
     /// The task has no change of that number.
     NoSuchChange(u32),
+    /// The task has no run of that number.
+    NoSuchRun(u32),
     /// The change was stamped by a clock running ahead of the outside
     /// time: building on it would drag the board ahead too.
     ChangeAhead { change: u32, updated: Timestamp },
@@ -212,6 +214,7 @@ impl fmt::Display for BoardRuleError {
                 write!(f, "task {} already links that pull request", task.as_str())
             }
             Self::NoSuchChange(number) => write!(f, "the task has no change {number}"),
+            Self::NoSuchRun(number) => write!(f, "the task has no run {number}"),
             Self::ChangeAhead { change, updated } => write!(
                 f,
                 "change {change} was stamped {} by a clock that ran ahead",

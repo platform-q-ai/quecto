@@ -122,9 +122,11 @@ impl Board {
                     .collect(),
                 ClearKeeps::Nothing => vec![],
             };
+            // Only a byte bound can be passed by a clear (one too large):
+            // a kept copy takes the place of two or more entries.
             match (paths.as_slice(), error) {
-                ([_, ..], BoardStoreError::InvalidWrite(why)) => {
-                    BoardStoreError::InvalidWrite(kept_told(&why, &paths))
+                ([_, ..], BoardStoreError::WriteTooLarge(why)) => {
+                    BoardStoreError::WriteTooLarge(kept_told(&why, &paths))
                 }
                 (_, other) => other,
             }
@@ -199,14 +201,14 @@ impl Board {
             (true, true) => Ok(()),
             (false, _) => Err((
                 Scope::Tasks,
-                BoardStoreError::InvalidWrite(format!(
+                BoardStoreError::WriteTooLarge(format!(
                     "the board would hold {tasks} bytes of task files; a read takes at most {}",
                     limits.tasks_bytes
                 )),
             )),
             (true, false) => Err((
                 Scope::Board,
-                BoardStoreError::InvalidWrite(format!(
+                BoardStoreError::WriteTooLarge(format!(
                     "the board would hold {bytes} bytes of files a read reads; a read takes at \
                      most {}",
                     limits.board_bytes
@@ -252,7 +254,7 @@ fn folders_scoped(
             (true, false) => {
                 return Err((
                     Scope::Folder(name),
-                    BoardStoreError::InvalidWrite(format!(
+                    BoardStoreError::WriteTooLarge(format!(
                         "the board would hold {bytes} bytes of {noun} files; a read takes at most \
                          {}",
                         folder.max_bytes
