@@ -79,14 +79,18 @@ impl RunBoardOperation {
                 let now = self.parts.clock.now()?;
                 listing(self.parts.listings.takeable(&now))
             }
-            BoardRequest::Show(id, page) => {
+            BoardRequest::Show(id, view) => {
                 let shown = self.parts.query.show(id)?;
                 if let Some(facts) = facts {
                     let count = |items: usize| u64::try_from(items).unwrap_or(u64::MAX);
                     facts.plans = Some(count(shown.plans.len()));
                     facts.runs = Some(count(shown.runs.len()));
+                    facts.plan_version = view.version.map(u64::from);
                 }
-                Ok(BoardOutcome::Shown(shown, *page))
+                if let Some(version) = view.version {
+                    shown.version(version)?;
+                }
+                Ok(BoardOutcome::Shown(shown, *view))
             }
             BoardRequest::Create(new) => {
                 Ok(changed(self.parts.create.execute_noted(new, facts)?, None))
@@ -118,6 +122,12 @@ impl RunBoardOperation {
                 Ok(changed(task, completion))
             }
             BoardRequest::Complete(id) => Ok(changed(self.complete(id, facts)?, None)),
+            BoardRequest::ProposePlan(proposal) => Ok(BoardOutcome::Planned(
+                self.parts.propose_plan.execute_noted(proposal, facts)?,
+            )),
+            BoardRequest::EditPlan(edit) => Ok(BoardOutcome::Planned(
+                self.parts.edit_plan.execute_noted(edit, facts)?,
+            )),
             BoardRequest::Clear {
                 path,
                 object,

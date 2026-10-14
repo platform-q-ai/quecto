@@ -150,6 +150,8 @@ pub enum BoardRuleError {
     NoEdit,
     /// The result would break the task schema.
     Invalid(SchemaError),
+    /// The plan would break the plan schema (#2481 M4b).
+    InvalidPlan(SchemaError),
 }
 
 impl fmt::Display for BoardRuleError {
@@ -316,6 +318,7 @@ impl fmt::Display for BoardRuleError {
                 task.as_str()
             ),
             Self::Invalid(error) => write!(f, "invalid task: {error}"),
+            Self::InvalidPlan(error) => write!(f, "invalid plan: {error}"),
         }
     }
 }

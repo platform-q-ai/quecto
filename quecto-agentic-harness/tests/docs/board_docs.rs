@@ -68,6 +68,9 @@ fn full() -> BoardOpRecord {
         }),
         plans: Some(3),
         runs: Some(2),
+        plan_version: Some(2),
+        items: Some(5),
+        roles: Some(2),
         status_from: Some(StaticKind::new("in_progress")),
         status_to: Some(StaticKind::new("review")),
         claim: Some(ClaimFacts {
@@ -91,6 +94,8 @@ fn full() -> BoardOpRecord {
         normalised: Some(Normalised {
             title: Some(vec![TextChange::Crlf]),
             description: Some(vec![]),
+            approach: Some(vec![TextChange::EdgeBlankLines]),
+            items: Some(vec![TextChange::EdgeSpace]),
         }),
         cancelled: true,
         build_us: Some(1),

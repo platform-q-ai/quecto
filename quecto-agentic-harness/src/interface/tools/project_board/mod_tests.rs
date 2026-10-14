@@ -136,6 +136,38 @@ fn a_command_line_reaches_the_same_request_as_the_tools_json() {
         line("move", &["--task", "a", "--to", "ready"]),
         Ok(json!({"op": "move", "task": "a", "to": "ready"}))
     );
+    // A plan's nested fields are JSON, as the tool's (#2481 M4b).
+    let items = r#"[{"id":"i","title":"I","criteria":["c"]}]"#;
+    assert_eq!(
+        line(
+            "edit-plan",
+            &[
+                "--task",
+                "a",
+                "--version",
+                "2",
+                "--items",
+                items,
+                "--team",
+                "null"
+            ]
+        ),
+        Ok(json!({"op": "edit_plan", "task": "a", "version": 2,
+                  "items": [{"id": "i", "title": "I", "criteria": ["c"]}], "team": null}))
+    );
+    assert_eq!(
+        line("show", &["--task", "a", "--version", "2"]),
+        Ok(json!({"op": "show", "task": "a", "version": 2}))
+    );
+    assert_eq!(
+        line(
+            "propose-plan",
+            &["--task", "a", "--items", "[", "--approach", "A"]
+        )
+        .unwrap_err()
+        .field,
+        "items"
+    );
     let pr_word = line("link-pr", &["--task", "a", "--pr", "twelve"]).unwrap();
     assert_eq!(
         request::parse(&pr_word).unwrap_err().field,

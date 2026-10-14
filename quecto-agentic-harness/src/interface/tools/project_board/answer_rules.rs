@@ -71,6 +71,7 @@ pub fn rule_code(rule: &BoardRuleError) -> &'static str {
         R::IssueIsPr { .. } => "issue_is_pr",
         R::OwnPrReferenced { .. } => "own_pr_referenced",
         R::Invalid(..) => "invalid",
+        R::InvalidPlan(..) => "invalid_plan",
     }
 }
 
@@ -191,7 +192,7 @@ fn rule_fields(rule: &BoardRuleError) -> Map<String, Value> {
             "pr": pr,
             "change": change,
         }),
-        R::Invalid(schema) => object!({
+        R::Invalid(schema) | R::InvalidPlan(schema) => object!({
             "field": shown(&schema.field),
             "problem": shown(&schema.problem),
         }),

@@ -66,6 +66,8 @@ impl UpdateDraftTask {
             let normalised = Normalised {
                 title: update.title.as_deref().map(board_text::line_changes),
                 description: update.description.as_deref().map(board_text::text_changes),
+                approach: None,
+                items: None,
             };
             // An edit that gives no text has nothing normalised to tell.
             let gives_text = normalised.title.is_some() || normalised.description.is_some();

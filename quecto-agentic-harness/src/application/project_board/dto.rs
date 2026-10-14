@@ -15,9 +15,6 @@ use crate::domain::project_board::services::artifacts_of;
 use crate::domain::project_board::value_objects::rule_error::BoardRuleError;
 use crate::domain::project_board::value_objects::schema_error::SchemaError;
 use crate::domain::project_board::value_objects::slug::Slug;
-use crate::domain::project_board::value_objects::telemetry::{
-    FoldBackRecord, ItemCounts, RunOutcomeKind,
-};
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
 use crate::domain::project_board::value_objects::vocabulary::{PlanState, TaskKind, TaskStatus};
 
@@ -385,6 +382,69 @@ impl ShownTask {
         })
     }
 
+    /// The plan a show gives: version `version` when one is named, the
+    /// accepted plan (if any) otherwise.
+    ///
+    /// # Panics
+    /// A version named that [`Self::version`] refuses: a show is answered
+    /// only once `RunBoardOperation` found the version it names.
+    pub fn plan(&self, version: Option<u32>) -> Option<&Plan> {
+        match version {
+            Some(version) => match self.version(version) {
+                Ok(plan) => Some(plan),
+                Err(error) => panic!("a show names only a version it found, not: {error}"),
+            },
+            None => self.accepted_plan(),
+        }
+    }
+
+    /// Version `version` of the task's plan, whatever its state (#2481
+    /// M4b: a draft is read before it is edited or accepted).
+    ///
+    /// # Errors
+    /// [`ProjectBoardError::Quarantined`] while its own file is set aside
+    /// (checked first: what the board holds of it is then unknown);
+    /// [`ProjectBoardError::SetAsideFile`] when the task has none read
+    /// while a kept file in `plans/` whose name spells no key is set aside
+    /// (it may hold that version); otherwise the rule
+    /// [`BoardRuleError::UnknownPlanVersion`] when the task has none.
+    pub fn version(&self, version: u32) -> Result<&Plan, ProjectBoardError> {
+        let id = &self.task.fields().id;
+        let key = ArtifactKey::Plan(id.clone(), version);
+        if let Some(file) = self
+            .set_aside
+            .iter()
+            .find(|file| file.key.as_ref() == Some(&key))
+        {
+            return Err(ProjectBoardError::Quarantined {
+                key,
+                path: file.path.clone(),
+            });
+        }
+        if let Some(plan) = self
+            .plans
+            .iter()
+            .find(|plan| plan.fields().version == version)
+        {
+            return Ok(plan);
+        }
+        let plans = ArtifactScope::Plans { task: id.clone() };
+        let keyless = self
+            .set_aside
+            .iter()
+            .filter(|file| file.key.is_none() && plans.holds(file))
+            .min_by(|a, b| (&a.path, &a.object).cmp(&(&b.path, &b.object)));
+        match keyless {
+            Some(file) => Err(ProjectBoardError::SetAsideFile {
+                path: file.path.clone(),
+                object: file.object.clone(),
+            }),
+            None => Err(ProjectBoardError::Rule(BoardRuleError::UnknownPlanVersion(
+                version,
+            ))),
+        }
+    }
+
     /// The task's latest run: the one numbered last.
     pub fn latest_run(&self) -> Option<&Run> {
         self.runs.last()
@@ -674,72 +734,13 @@ impl fmt::Display for ProjectBoardError {
 
 impl std::error::Error for ProjectBoardError {}
 
-/// What came of a fold-back.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum FoldedBack {
-    /// The run as the board now holds it.
-    Folded(Run),
-    /// The run (by its number) had ended already: nothing was written.
-    Ended(u32),
-}
+#[path = "dto_fold_back.rs"]
+mod fold_back;
+pub use fold_back::{FoldBackFacts, FoldedBack};
 
-/// What a fold-back saw (S4), for its `board_fold_back` record: gathered
-/// only for a recorded fold-back (one given none notes nothing), and only
-/// ever kinds and counts. Each fact is `None` where the fold-back did not
-/// get that far, or (a run already ended) had nothing to fold.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct FoldBackFacts {
-    pub run_outcome: Option<RunOutcomeKind>,
-    pub items: Option<ItemCounts>,
-    pub unmatched: Option<u64>,
-    pub extra: Option<u64>,
-    pub evidence: Option<u64>,
-    pub evidence_dropped: Option<u64>,
-    pub cost_tokens: Option<u64>,
-    /// The write's attempts, and how many lost the race.
-    pub attempts: Option<u64>,
-    pub lost: Option<u64>,
-    /// The UTF-8 bytes of the folded run's text.
-    pub bytes: Option<u64>,
-}
-
-impl FoldBackFacts {
-    /// Writes each fact there is into `record`, leaving every field it has
-    /// none for as it was.
-    pub fn fill(&self, record: &mut FoldBackRecord) {
-        let FoldBackRecord {
-            task: _,
-            run: _,
-            outcome: _,
-            run_outcome,
-            items,
-            unmatched,
-            extra,
-            evidence,
-            evidence_dropped,
-            cost_tokens,
-            attempts,
-            lost,
-            bytes,
-            duration_us: _,
-        } = record;
-        let facts = [
-            (unmatched, self.unmatched),
-            (extra, self.extra),
-            (evidence, self.evidence),
-            (evidence_dropped, self.evidence_dropped),
-            (cost_tokens, self.cost_tokens),
-            (attempts, self.attempts),
-            (lost, self.lost),
-            (bytes, self.bytes),
-        ];
-        for (field, fact) in facts {
-            *field = fact.or(*field);
-        }
-        *run_outcome = self.run_outcome.or(*run_outcome);
-        *items = self.items.or(*items);
-    }
-}
+#[path = "dto_plans.rs"]
+mod plans;
+pub use plans::{PlanEdit, PlanProposal};
 
 #[cfg(test)]
 #[path = "dto_tests.rs"]
