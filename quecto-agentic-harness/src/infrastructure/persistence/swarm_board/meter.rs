@@ -103,11 +103,16 @@ impl MeteredCall for SqliteMeteredCall {
 
 #[cfg(any(test, feature = "test-support"))]
 fn next_identity(sequence: &std::sync::atomic::AtomicU64) -> u64 {
-    sequence
-        .try_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
-            value.checked_add(1)
-        })
-        .expect("meter identity space exhausted")
+    let mut prior = sequence.load(Ordering::Relaxed);
+    loop {
+        let next = prior
+            .checked_add(1)
+            .expect("meter identity space exhausted");
+        match sequence.compare_exchange_weak(prior, next, Ordering::Relaxed, Ordering::Relaxed) {
+            Ok(identity) => return identity,
+            Err(current) => prior = current,
+        }
+    }
 }
 
 /// What one metered call has measured so far.

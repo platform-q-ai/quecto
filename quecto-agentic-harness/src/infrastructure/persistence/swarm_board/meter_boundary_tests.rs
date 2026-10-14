@@ -94,3 +94,45 @@ fn unobserved_connection_has_no_observation_phase_or_identity_work() {
     );
     connection.close().unwrap();
 }
+
+#[test]
+fn identity_sequence_returns_prior_value_and_advances_once() {
+    let sequence = std::sync::atomic::AtomicU64::new(1);
+    assert_eq!(super::next_identity(&sequence), 1);
+    assert_eq!(super::next_identity(&sequence), 2);
+    assert_eq!(sequence.load(super::Ordering::Relaxed), 3);
+}
+
+#[test]
+fn identity_sequence_is_unique_under_concurrent_contention() {
+    let sequence = std::sync::atomic::AtomicU64::new(1);
+    let identities = thread::scope(|scope| {
+        let workers: Vec<_> = (0..8)
+            .map(|_| {
+                let sequence = &sequence;
+                scope.spawn(move || {
+                    (0..256)
+                        .map(|_| super::next_identity(sequence))
+                        .collect::<Vec<_>>()
+                })
+            })
+            .collect();
+        workers
+            .into_iter()
+            .flat_map(|worker| worker.join().expect("identity worker"))
+            .collect::<std::collections::BTreeSet<_>>()
+    });
+    assert_eq!(identities.len(), 2048);
+    assert_eq!(identities.first(), Some(&1));
+    assert_eq!(identities.last(), Some(&2048));
+    assert_eq!(sequence.load(super::Ordering::Relaxed), 2049);
+}
+
+#[test]
+fn identity_exhaustion_panics_without_wrapping_or_mutating_sequence() {
+    let sequence = std::sync::atomic::AtomicU64::new(u64::MAX - 1);
+    assert_eq!(super::next_identity(&sequence), u64::MAX - 1);
+    let exhausted = std::panic::catch_unwind(|| super::next_identity(&sequence));
+    assert!(exhausted.is_err(), "exhaustion is an invariant failure");
+    assert_eq!(sequence.load(super::Ordering::Relaxed), u64::MAX);
+}
