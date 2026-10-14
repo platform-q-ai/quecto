@@ -14,7 +14,11 @@ const OBJECT_ROW_BYTES: usize = 128;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Object {
     pub kind: String,
+    /// Its size, or for an object a partial clone's fetch left on the
+    /// remote (`omitted`), the least it may be.
     pub size: usize,
+    /// A blob this clone never fetched, being past every file a read reads.
+    pub omitted: bool,
 }
 
 /// What `cat-file --batch-check` found for one object.
@@ -55,6 +59,7 @@ pub fn objects<'a>(
                 Found::Present(Object {
                     kind: (*kind).into(),
                     size: size.parse().map_err(|_| malformed(row))?,
+                    omitted: false,
                 }),
             ),
             _ => return Err(malformed(row)),

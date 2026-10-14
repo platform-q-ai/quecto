@@ -43,8 +43,34 @@ build that reads only format 2 asks for an upgrade on a board this build has
 written, rather than taking its folders for someone else's branch.
 
 A read takes at most the following. Past any of these it answers
-`board_too_large` before it reads any file's bytes. In a partial clone, objects the
-clone lacks are still fetched before their sizes can be judged.
+`board_too_large` before it reads any file's bytes.
+
+In a partial clone whose promisor is the board's remote, the first read fetches
+the board's commits alone, then its root, then each folder with every file but
+those past 1.5 MiB (`--filter=blob:limit`), and the archive's tree alone. Files at
+the root (the README, strays) are fetched by their ids, and git sends a file asked
+for by id at any size. A file the filter left on the remote is past every cap, so
+it is set aside as too large and every write carries it by its id, unfetched.
+
+The clone remembers, in `.git/quecto/project-board/fetch-<remote>`, the last board
+it read whole and the files left on the remote. Each new head is then one fetch of
+what changed since, as in a full clone, archive changes included (the archive is
+never fetched whole, but what a new head adds to it comes with the head). A folder
+holding a file left on the remote is never fetched whole again for it. These
+fetches keep the clone's own fetch filter. A server that refuses filters is fetched
+from whole. A clone whose remote is not its promisor fetches what it lacks whole,
+as before.
+
+git skips a head it already holds, so when the user's own `git fetch` (or an
+editor's) moved the board first, that one fetch brings nothing: each folder that
+changed since the last read is then fetched again whole, and no other folder. That
+brings every file in the folder under 1.5 MiB, whether a read reads it or sets it
+aside, so at worst about 4,096 files of 1.5 MiB for one folder, far past the 24 MiB
+a read takes of `plans/`. Each such fetch leaves a pack holding
+copies of objects the clone already has; git's own maintenance (`git maintenance
+run`, `git gc`) folds them away, and quecto runs none itself.
+
+The board store needs git 2.44 or later (`GIT_NO_LAZY_FETCH`).
 
 | Folder | Entries | File bytes | One file |
 |---|---|---|---|
