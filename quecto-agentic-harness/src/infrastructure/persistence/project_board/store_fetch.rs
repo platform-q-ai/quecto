@@ -20,8 +20,10 @@
 //!
 //! git skips a head it already holds: when the user's own fetch moved the
 //! board first, the delta brings nothing, and each live folder that
-//! changed since the last read is fetched again whole (`--refetch`), never
-//! one that did not, and never a file it remembers as left. Each such
+//! changed since the last read is fetched again whole (`--refetch`): every
+//! file in it under [`FILTER_BYTES`], read or set aside, so up to about
+//! 4,096 files of 1.5 MiB for one folder. Never a folder that did not
+//! change, and never a file it remembers as left. Each such
 //! fetch leaves a pack holding copies of objects the clone has; git's own
 //! maintenance (`git maintenance run`, `git gc`) folds them, and this store
 //! runs none. A clone whose remote is no promisor fetches with `--no-filter`

@@ -63,8 +63,10 @@ as before.
 
 git skips a head it already holds, so when the user's own `git fetch` (or an
 editor's) moved the board first, that one fetch brings nothing: each folder that
-changed since the last read is then fetched again whole, up to its folder's bytes
-(24 MiB for `plans/`), and no other folder. Each such fetch leaves a pack holding
+changed since the last read is then fetched again whole, and no other folder. That
+brings every file in the folder under 1.5 MiB, whether a read reads it or sets it
+aside, so at worst about 4,096 files of 1.5 MiB for one folder, far past the 24 MiB
+a read takes of `plans/`. Each such fetch leaves a pack holding
 copies of objects the clone already has; git's own maintenance (`git maintenance
 run`, `git gc`) folds them away, and quecto runs none itself.
 

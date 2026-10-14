@@ -51,24 +51,35 @@ fn read_bounded(bytes: &[u8]) -> Option<FetchState> {
     }
 }
 
-/// Red stub (#2481 S10b review round 3).
-#[cfg(test)]
-fn draft_name(remote: &str) -> String {
-    format!(
-        "fetch-{remote}.{}.0.{}.draft",
-        std::process::id(),
-        thread_number()
-    )
-}
-
-/// This thread's number, as its id spells it.
-fn thread_number() -> String {
-    let id = format!("{:?}", std::thread::current().id());
-    id.chars().filter(char::is_ascii_digit).collect()
-}
-
 /// Names each draft of this process apart, across threads and stores.
 static DRAFTS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// A draft of `remote`'s state of its own: `fetch-<remote>.<pid>.<n>.draft`,
+/// this process's id and a number no other draft of it takes.
+fn draft_name(remote: &str) -> String {
+    let n = DRAFTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    format!("fetch-{remote}.{}.{n}.draft", std::process::id())
+}
+
+/// The process id a draft of `remote`'s state named `name` was made by,
+/// when `name` is exactly such a draft's.
+fn drafted_by(remote: &str, name: &str) -> Option<i32> {
+    let rest = name.strip_prefix(&format!("fetch-{remote}."))?;
+    let (pid, rest) = rest.split_once('.')?;
+    let n = rest.strip_suffix(".draft")?;
+    let digits = |text: &str| !text.is_empty() && text.bytes().all(|b| b.is_ascii_digit());
+    match (digits(pid), digits(n)) {
+        (true, true) => pid.parse().ok(),
+        _ => None,
+    }
+}
+
+/// Whether no process of id `pid` runs now.
+fn gone(pid: i32) -> bool {
+    // SAFETY: kill(2) with signal 0 sends nothing; it only checks `pid`.
+    let sent = unsafe { libc::kill(pid, 0) };
+    sent == -1 && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
+}
 
 /// What a partial clone remembers between reads.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -136,10 +147,20 @@ impl GitBoardStore {
         read().unwrap_or_default()
     }
 
-    /// Keeps `state` for the next read, when it differs from `before`; a
-    /// failure only makes the next read fetch more.
+    /// Keeps `state` for the next read, when it differs from `before` and
+    /// the state kept now is of no newer head (another read's, of a
+    /// descendant); a failure only makes the next read fetch more.
     pub(super) fn keep_fetch_state(&self, before: &FetchState, state: &FetchState) {
         if before == state {
+            return;
+        }
+        let newer = match (self.fetch_state().read, &state.read) {
+            (Some(kept), Some(ours)) if kept != *ours => {
+                self.is_ancestor(ours, &kept).unwrap_or(false)
+            }
+            _ => false,
+        };
+        if newer {
             return;
         }
         let Some(path) = self.state_path() else {
@@ -156,14 +177,8 @@ impl GitBoardStore {
         {
             return;
         }
-        // A draft of its own: this process, this thread, this keeping.
-        let draft = dir.join(format!(
-            "fetch-{}.{}.{}.{}.draft",
-            self.remote,
-            std::process::id(),
-            thread_number(),
-            DRAFTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-        ));
+        self.sweep_drafts(dir);
+        let draft = dir.join(draft_name(&self.remote));
         let written = std::fs::OpenOptions::new()
             .write(true)
             .create_new(true)
@@ -174,6 +189,23 @@ impl GitBoardStore {
             .and_then(|()| std::fs::rename(&draft, &path));
         if written.is_err() {
             let _ = std::fs::remove_file(&draft);
+        }
+    }
+
+    /// Removes the drafts of this remote's state that processes no longer
+    /// running left in `dir`: only names exactly a draft's.
+    fn sweep_drafts(&self, dir: &std::path::Path) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let drafted = name
+                .to_str()
+                .and_then(|name| drafted_by(&self.remote, name));
+            if drafted.is_some_and(gone) {
+                let _ = std::fs::remove_file(entry.path());
+            }
         }
     }
 }
