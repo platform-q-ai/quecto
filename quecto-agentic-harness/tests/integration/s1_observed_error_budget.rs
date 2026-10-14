@@ -1,10 +1,10 @@
-//! Actual leaf wrappers, not bare SSE handlers. Nine SSE surfaces times two
-//! admission modes: OpenAI incremental; Anthropic assembled/incremental;
-//! Responses and OAuth chat/assembled/incremental. Other chat surfaces consume
-//! non-SSE JSON and OpenAI assembled uses its JSON chat path, so are not rows. Eighteen admission rows are exercised.
+//! Actual leaf wrappers: ten SSE surfaces times two admission modes = 20 cells.
+//! OpenAI assembled/incremental; Anthropic assembled/incremental;
+//! Responses API-key and OAuth chat/assembled/incremental, passive/admitted.
+//! Non-SSE OpenAI and Anthropic chat are not SSE boundary cells.
 use super::fixture::*;
 use crate::inference_admission_feedback_transport::fixture::{Reply as WireReply, Server};
-use quecto::domain::admission::value_objects::inference_admission::Feedback;
+use quecto::domain::admission::value_objects::inference_admission::{Feedback, ThrottleFeedback};
 use quecto::domain::inference::events::request_observation::RequestTrace;
 use quecto::domain::inference::services::provider_error::ProviderErrorClass;
 use quecto::domain::inference::value_objects::attempt_diagnostics::ErrorCode;
@@ -19,8 +19,13 @@ fn envelope(leaf: Leaf, bytes: usize, billing: bool) -> String {
     };
     let padding = bytes.checked_sub(value.to_string().len()).unwrap();
     match leaf {
-        Leaf::OpenAi | Leaf::Anthropic => value["error"]["message"] = "x".repeat(padding).into(),
-        _ => value["response"]["error"]["message"] = "x".repeat(padding).into(),
+        Leaf::OpenAi | Leaf::Anthropic => {
+            value["error"]["message"] = format!("CANARY{}", "x".repeat(padding - 6)).into()
+        }
+        _ => {
+            value["response"]["error"]["message"] =
+                format!("CANARY{}", "x".repeat(padding - 6)).into()
+        }
     }
     let raw = value.to_string();
     assert_eq!(raw.len(), bytes);
@@ -73,8 +78,25 @@ fn outward(output: &Observation) -> &Error {
     }
 }
 async fn boundary(leaf: Leaf, surface: Surface, admitted: bool, billing: bool, bytes: usize) {
-    let (output, trace, state) =
-        observe(leaf, surface, admitted, envelope(leaf, bytes, billing)).await;
+    boundary_body(
+        leaf,
+        surface,
+        admitted,
+        billing,
+        bytes,
+        envelope(leaf, bytes, billing),
+    )
+    .await;
+}
+async fn boundary_body(
+    leaf: Leaf,
+    surface: Surface,
+    admitted: bool,
+    billing: bool,
+    bytes: usize,
+    body: String,
+) {
+    let (output, trace, state) = observe(leaf, surface, admitted, body).await;
     let error = outward(&output);
     let allowed = bytes == 4096;
     assert_eq!(
@@ -99,9 +121,11 @@ async fn boundary(leaf: Leaf, surface: Surface, admitted: bool, billing: bool, b
         })
     );
     assert!(error.display.contains("refusal=none"), "{}", error.display);
+    assert!(!error.display.contains("CANARY"));
     eprintln!("ROW {leaf:?}/{surface:?}/{admitted}/{billing}/{bytes} permit={state:?}");
     let attempts = trace.attempt_diagnostics();
     assert_eq!(attempts.len(), 1);
+    assert!(!format!("{attempts:?}").contains("CANARY"));
     assert_eq!(
         attempts[0].error_code,
         if allowed {
@@ -125,8 +149,12 @@ async fn boundary(leaf: Leaf, surface: Surface, admitted: bool, billing: bool, b
         }
     );
     assert_eq!(
-        state.receipts.len(),
-        usize::from(admitted && allowed && !billing)
+        state.receipts,
+        if admitted && allowed && !billing {
+            vec![ThrottleFeedback::NoHint { jitter: u64::MAX }]
+        } else {
+            vec![]
+        }
     );
     // This captured permit closes its recording gate on feedback:
     // prove cooldown-trigger neutrality, not production expiry policy.
@@ -155,6 +183,7 @@ macro_rules! row {
         }
     };
 }
+row!(s1_observed_error_budget_openai_assembled, OpenAi, Assembled);
 row!(
     s1_observed_error_budget_openai_incremental,
     OpenAi,
@@ -189,95 +218,106 @@ row!(
     Incremental
 );
 
+#[path = "s1_observed_error_controls.rs"]
+mod error_controls;
+#[path = "s1_observed_output_budget.rs"]
+mod output_budget;
+
+fn cells() -> impl Iterator<Item = (Leaf, Surface, bool)> {
+    [
+        (Leaf::OpenAi, Surface::Assembled),
+        (Leaf::OpenAi, Surface::Incremental),
+        (Leaf::Anthropic, Surface::Assembled),
+        (Leaf::Anthropic, Surface::Incremental),
+        (Leaf::Responses, Surface::Chat),
+        (Leaf::Responses, Surface::Assembled),
+        (Leaf::Responses, Surface::Incremental),
+        (Leaf::OAuth, Surface::Chat),
+        (Leaf::OAuth, Surface::Assembled),
+        (Leaf::OAuth, Surface::Incremental),
+    ]
+    .into_iter()
+    .flat_map(|(leaf, surface)| {
+        [false, true]
+            .into_iter()
+            .map(move |admitted| (leaf, surface, admitted))
+    })
+}
 #[tokio::test]
-async fn s1_observed_error_budget_large_output_and_terminal() {
-    for leaf in [Leaf::OpenAi, Leaf::Anthropic, Leaf::Responses, Leaf::OAuth] {
-        for admitted in [false, true] {
-            let text = "t".repeat(6000);
-            let (delta, terminal) = match leaf {
-                Leaf::OpenAi => (
-                    format!(
-                        "data: {}",
-                        serde_json::json!({"choices":[{"delta":{"content":text}}]})
-                    ),
-                    "data: [DONE]".to_owned(),
-                ),
-                _ => (leaf.delta(&text), leaf.terminal().to_owned()),
-            };
-            let body = format!("{delta}\n\n{terminal}\n\n{}", envelope(leaf, 4096, false));
-            let (output, trace, state) = observe(leaf, Surface::Incremental, admitted, body).await;
-            let Observation::Events(events) = output else {
-                panic!("expected events")
-            };
-            assert!(
-                events
-                    .iter()
-                    .any(|e| matches!(e, Event::Other(s) if s.contains(&text)))
-            );
-            assert!(events.iter().all(|e| matches!(e, Event::Other(_))));
-            assert_eq!(trace.attempt_diagnostics()[0].error_code, None);
-            assert!(state.receipts.is_empty());
-            assert!(!state.blocked);
-            assert_eq!(
-                state.finishes,
-                if admitted {
-                    vec![Feedback::Success]
-                } else {
-                    vec![]
+async fn s1_observed_error_budget_raw_whitespace() {
+    for (leaf, surface, admitted) in cells() {
+        for billing in [false, true] {
+            for bytes in [4096, 4097] {
+                for suffix in [" ", "\t", "\r "] {
+                    let body = envelope(leaf, bytes - suffix.len(), billing);
+                    let body = body.replace("\n\n", &format!("{suffix}\n\n"));
+                    boundary_body(leaf, surface, admitted, billing, bytes, body).await;
                 }
-            );
+            }
+        }
+    }
+}
+#[tokio::test]
+async fn s1_observed_error_budget_utf8() {
+    for (leaf, surface, admitted) in cells() {
+        for bytes in [4096, 4097] {
+            let body = envelope(leaf, bytes, false).replacen("xx", "é", 1);
+            boundary_body(leaf, surface, admitted, false, bytes, body).await;
         }
     }
 }
 
 #[tokio::test]
-async fn s1_observed_error_budget_large_tool() {
-    for leaf in [Leaf::OpenAi, Leaf::Anthropic, Leaf::Responses, Leaf::OAuth] {
-        for admitted in [false, true] {
-            let arguments = "a".repeat(6000);
-            let data = match leaf {
-                Leaf::OpenAi => {
-                    serde_json::json!({"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call","type":"function","function":{"name":"fixture","arguments":arguments}}]}}]})
-                }
-                Leaf::Anthropic => {
-                    serde_json::json!({"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"call","name":"fixture","input":{"arg":arguments}}})
-                }
-                _ => {
-                    serde_json::json!({"type":"response.output_item.added","item":{"type":"function_call","id":"call","call_id":"call","name":"fixture","arguments":arguments}})
-                }
-            };
-            let body = format!(
-                "{}data: {data}\n\n{}\n\n",
-                if matches!(leaf, Leaf::Anthropic) {
-                    "event: content_block_start\n"
+async fn s1_observed_error_budget_codex_success_metadata() {
+    // 2 credential paths x 3 surfaces x 2 admission modes x 2 error locations = 24.
+    for (leaf, surface, admitted) in
+        cells().filter(|(leaf, _, _)| matches!(leaf, Leaf::Responses | Leaf::OAuth))
+    {
+        for nested in [false, true] {
+            for size in [8, 6000] {
+                let text = "t".repeat(size);
+                let mut value =
+                    serde_json::json!({"type":"response.output_text.delta","delta":text});
+                let error = serde_json::json!({"type":"rate_limit_error","code":"rate_limit_exceeded","message":"CANARY_METADATA"});
+                if nested {
+                    value["response"] = serde_json::json!({"error":error});
                 } else {
-                    ""
-                },
-                if matches!(leaf, Leaf::OpenAi) {
-                    "data: [DONE]"
-                } else {
-                    leaf.terminal()
+                    value["error"] = error;
                 }
-            );
-            let (output, trace, state) = observe(leaf, Surface::Incremental, admitted, body).await;
-            let Observation::Events(events) = output else {
-                panic!("expected events")
-            };
-            assert!(events.iter().all(|e| matches!(e, Event::Other(_))));
-            let attempts = trace.attempt_diagnostics();
-            assert_eq!(attempts.len(), 1);
-            assert!(attempts[0].generated_tool_call);
-            assert_eq!(attempts[0].error_code, None);
-            assert!(state.receipts.is_empty());
-            assert!(!state.blocked);
-            assert_eq!(
-                state.finishes,
-                if admitted {
-                    vec![Feedback::Success]
-                } else {
-                    vec![]
-                }
-            );
+                let body = format!("data: {value}\n\n{}", leaf.terminal());
+                let (output, trace, state) = observe(leaf, surface, admitted, body).await;
+                assert!(
+                    format!("{output:?}").contains(&text),
+                    "{leaf:?}/{surface:?}/{admitted}/{nested}/{size}: {output:?}"
+                );
+                assert_eq!(
+                    trace.attempt_diagnostics()[0].error_code,
+                    None,
+                    "{leaf:?}/{surface:?}/{admitted}/{nested}/{size}"
+                );
+                assert!(state.receipts.is_empty());
+                assert!(!state.blocked);
+                assert_eq!(
+                    state.finishes,
+                    if admitted {
+                        vec![Feedback::Success]
+                    } else {
+                        vec![]
+                    }
+                );
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn s1_observed_error_budget_crlf_framing() {
+    for (leaf, surface, admitted) in cells() {
+        for bytes in [4096, 4097] {
+            let body = envelope(leaf, bytes - 1, false)
+                .replace("\n\n", " \n\n")
+                .replace('\n', "\r\n");
+            boundary_body(leaf, surface, admitted, false, bytes, body).await;
         }
     }
 }

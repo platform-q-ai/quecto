@@ -41,8 +41,10 @@ impl LineObserver {
         }
         if !self.oversized {
             if let Ok(line) = std::str::from_utf8(&self.carry) {
-                // Only line ends are trimmed: an indented line is no event.
-                self.protocol.observe(line.trim_end(), receipt);
+                // The newline was consumed by push; only its optional CR is
+                // framing. JSON spaces/tabs remain part of raw byte admission.
+                self.protocol
+                    .observe(line.strip_suffix('\r').unwrap_or(line), receipt);
             }
         }
         self.carry.clear();
@@ -141,7 +143,21 @@ impl ProtocolObserver {
             };
             match decoded {
                 Some(value) => {
-                    diagnostics::typed(&mut state.diagnostics, &value);
+                    // Ordinary output metadata is not an error authority. Its
+                    // framing-bounded parse still accounts for legitimate output.
+                    let error_event = match self.vendor {
+                        Vendor::Anthropic => self.event == "error",
+                        Vendor::OpenAi => is_error_chunk(self.vendor, &value),
+                        Vendor::Codex => {
+                            matches!(
+                                value["type"].as_str(),
+                                Some("response.failed" | "response.incomplete" | "error")
+                            ) || is_error_chunk(self.vendor, &value)
+                        }
+                    };
+                    if semantic_admitted && error_event {
+                        diagnostics::typed(&mut state.diagnostics, &value);
+                    }
                     let nonempty =
                         |v: &serde_json::Value| v.as_str().is_some_and(|s| !s.is_empty());
                     state.diagnostics.generated_text |= nonempty(&value["delta"]["text"])
