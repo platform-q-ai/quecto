@@ -441,7 +441,8 @@ these layers (#1966, #2024):
 3. `./.quecto/config.json` — the **repo-local overlay** in the process working
    directory, merged *over* the global file. Only the working directory itself
    is probed, never its parents. It is applied only when trusted (below); an
-   absent overlay is simply not there.
+   absent overlay is simply not there. A linked git worktree with no overlay
+   of its own shares its main worktree's (below).
 
 The overlay is merged section by section, so a repository needs at most a
 small file and never duplicates your secrets or policy:
@@ -491,6 +492,28 @@ quecto Status
   Model:     openai-api/gpt-6.1-sol
   Effort:    default
   ...
+```
+
+**Linked git worktrees.** The overlay is untracked, so `git worktree add`
+never brings it along. When the working directory is the root of a linked
+worktree and has no `.quecto/config.json` of its own, the main worktree's
+`<main worktree>/.quecto/config.json` is the overlay instead: that file,
+under that file's trust record, applied exactly when a run in the main
+worktree would apply it (a hand edit revokes it for both). Nothing is copied
+and no trust is recorded for the linked worktree; `quecto config trust` run
+there approves the main worktree's file, and `quecto config set` /
+`quecto container init` refuse to write it from the linked worktree (change it
+from the main worktree). A linked worktree with its own overlay keeps today's
+behaviour: its own file, its own trust. The main worktree is read from git's
+metadata files (`.git` → `gitdir` → `commondir`), never by running git, and
+only along git's own layout: the worktree's git directory must name it back,
+the common directory must be the main worktree's `.git` with `core.bare`
+false, no `core.worktree` and no includes, and the main worktree an existing
+directory. Anything else — a broken `.git` pointer, a bare repository — shares
+nothing, and `quecto status` says why. `quecto status` names the shared file:
+
+```
+  Overlay:   /home/me/src/app/.quecto/config.json (trusted, from the main worktree)
 ```
 
 **Migration.** Until #2024 a `./config.json` directly in the working directory
