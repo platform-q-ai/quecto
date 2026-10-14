@@ -4,6 +4,9 @@
 //! request's trace follows live and the output cap bounds.
 use super::*;
 
+#[path = "attempt_error_shape.rs"]
+mod error_shape;
+
 pub(super) struct LineObserver {
     carry: Vec<u8>,
     oversized: bool,
@@ -98,11 +101,46 @@ impl ProtocolObserver {
             state.diagnostics.termination = Termination::Completed;
             return;
         }
+        // Error semantics are admitted before either diagnostics or permit
+        // feedback. Ordinary output keeps the framing budget, not BODY_LIMIT.
+        let semantic_admitted = data.len() <= super::super::provider_diagnostics::BODY_LIMIT;
+        let shape = if semantic_admitted {
+            Ok(None)
+        } else if matches!(self.vendor, Vendor::Anthropic) && self.event == "error" {
+            Ok(Some(TerminalEvent::Error))
+        } else {
+            error_shape::failure(data, self.vendor)
+        };
+        let parse_admitted = shape.is_ok();
+        let terminal_error = shape.unwrap_or(None);
+        if let Some(terminal) = terminal_error {
+            let mut state = receipt.0.lock().unwrap();
+            count_kind(
+                &mut state,
+                match terminal {
+                    TerminalEvent::ResponseFailed => "response.failed",
+                    TerminalEvent::ResponseIncomplete => "response.incomplete",
+                    _ => "error",
+                },
+            );
+            live(&state, 0);
+            state.diagnostics.terminal_event = Some(terminal);
+            state.diagnostics.termination = Termination::Completed;
+            drop(state);
+            receipt.fail();
+            self.terminal = true;
+            return;
+        }
         // Parsed once: the diagnostics below and the failure check after.
         let parsed = {
             let mut state = receipt.0.lock().unwrap();
-            match serde_json::from_str::<serde_json::Value>(data) {
-                Ok(value) => {
+            let decoded = if parse_admitted {
+                serde_json::from_str::<serde_json::Value>(data).ok()
+            } else {
+                None
+            };
+            match decoded {
+                Some(value) => {
                     diagnostics::typed(&mut state.diagnostics, &value);
                     let nonempty =
                         |v: &serde_json::Value| v.as_str().is_some_and(|s| !s.is_empty());
@@ -172,7 +210,7 @@ impl ProtocolObserver {
                     }
                     Some(value)
                 }
-                Err(_) => {
+                None => {
                     state.diagnostics.parse_errors =
                         state.diagnostics.parse_errors.saturating_add(1);
                     live(&state, 0);

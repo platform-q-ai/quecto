@@ -39,6 +39,8 @@ pub struct Snapshot {
     pub grants: usize,
     pub finishes: Vec<Feedback>,
     pub abandoned: usize,
+    pub receipts: Vec<ThrottleFeedback>,
+    pub blocked: bool,
 }
 #[derive(Debug, Default, Clone)]
 pub struct Gate(Arc<Mutex<Snapshot>>);
@@ -63,7 +65,11 @@ impl Drop for Permit {
     }
 }
 impl AttemptPermit for Permit {
-    fn feedback(&mut self, _: ThrottleFeedback) {}
+    fn feedback(&mut self, feedback: ThrottleFeedback) {
+        let mut state = self.gate.0.lock().unwrap();
+        state.receipts.push(feedback);
+        state.blocked = true;
+    }
     fn finish(mut self: Box<Self>, feedback: Feedback) {
         self.finished = true;
         self.gate.0.lock().unwrap().finishes.push(feedback);
@@ -173,7 +179,7 @@ impl Leaf {
         }
     }
 }
-fn request() -> ChatRequest<'static> {
+pub fn request() -> ChatRequest<'static> {
     static MESSAGES: std::sync::LazyLock<Vec<quecto::domain::message::Message>> =
         std::sync::LazyLock::new(|| {
             vec![quecto::domain::message::Message::system(
@@ -238,19 +244,26 @@ fn response(response: LlmResponse) -> Observation {
     }
 }
 pub async fn invoke(provider: &dyn LlmProvider, surface: Surface) -> Observation {
+    invoke_request(provider, surface, request()).await
+}
+pub async fn invoke_request(
+    provider: &dyn LlmProvider,
+    surface: Surface,
+    request: ChatRequest<'_>,
+) -> Observation {
     match surface {
         Surface::Chat => provider
-            .chat(request())
+            .chat(request)
             .await
             .map(response)
             .unwrap_or_else(|e| Observation::Error(Error::new(e))),
         Surface::Assembled => provider
-            .chat_stream(request())
+            .chat_stream(request)
             .await
             .map(response)
             .unwrap_or_else(|e| Observation::Error(Error::new(e))),
         Surface::Incremental => {
-            let mut rx = provider.chat_stream_incremental(request()).await;
+            let mut rx = provider.chat_stream_incremental(request).await;
             let mut events = Vec::new();
             while let Some(event) = rx.recv().await {
                 events.push(match event {

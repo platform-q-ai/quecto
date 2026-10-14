@@ -425,6 +425,7 @@ fn fixture_oracles_reject_each_isolated_counterexample() {
         grants: 1,
         finishes: vec![Feedback::Failure],
         abandoned: 0,
+        ..Snapshot::default()
     };
     oracle::permit(&good);
     for field in 0..3 {
@@ -625,3 +626,6 @@ async fn nonstandard_transport_status_chat_and_incremental_admitted_and_passive(
         }
     }
 }
+
+#[path = "s1_observed_error_budget.rs"]
+mod s1_observed_error_budget;
