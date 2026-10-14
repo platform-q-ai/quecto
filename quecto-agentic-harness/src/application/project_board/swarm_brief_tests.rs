@@ -122,7 +122,7 @@ fn long_lines(fill: &str) -> Vec<String> {
 
 fn full_team() -> Team {
     team(vec![
-        role("coordinator", "claude-opus", 1),
+        role("coordinator", "anthropic/claude-opus", 1),
         role("builder", "gpt-5.5", 2),
         role("reviewer", "glm-5", 1),
     ])
@@ -174,7 +174,7 @@ fn a_plan_maps_onto_the_swarms_inputs() {
             },
         ],
         coordinator: Some(RoleChoice {
-            model: "claude-opus".into(),
+            model: "anthropic/claude-opus".into(),
             effort: Effort::High,
         }),
         not_applied: vec![
@@ -195,10 +195,10 @@ fn a_plan_maps_onto_the_swarms_inputs() {
     // hand: the template 4096; the task 12; the goal 45; the constraints
     // 19 + 106; the criteria 11 + 7 + 76 and 16 + 7 + 100; the items 3 x 64
     // for the template, then schema 25 + 17, api 19 + 18 + 31 + 7 (its
-    // dependency), docs 21 + 18 + 4 + 7; the coordinator 12 + 12 + 5; the
+    // dependency), docs 21 + 18 + 4 + 7; the coordinator 12 + 22 + 5; the
     // workers 8 + 8 + 5 and 9 + 6 + 5; the numbers v1 2, limit 4 2,
     // deadline 21600 6 and budget 2000000 8.
-    assert_eq!(got.bytes(), 4942);
+    assert_eq!(got.bytes(), 4952);
 }
 
 /// No team: the coordinator picks its pool, its model is the launcher's,
@@ -233,7 +233,7 @@ fn the_member_limit_is_the_coordinator_and_every_worker() {
     let refused = |members| Err(BriefRefusal::TeamTooLarge { members });
     assert_eq!(limit(&[12, 13]), refused(26));
     assert_eq!(limit(&[32, 32]), refused(65));
-    let alone = team(vec![role("coordinator", "claude-opus", 1)]);
+    let alone = team(vec![role("coordinator", "anthropic/claude-opus", 1)]);
     assert_eq!(
         with_team(alone),
         Err(BriefRefusal::TeamUnsupported {
@@ -387,7 +387,7 @@ fn the_size_counts_roles_models_and_numbers() {
     renamed.roles[2].name = slug("reviewers");
     assert_eq!(size(renamed), base + 1);
     let mut coordinated = full_team();
-    coordinated.roles[0].model = "claude-opus-x".into();
+    coordinated.roles[0].model = "anthropic/claude-opus-x".into();
     assert_eq!(size(coordinated), base + 2);
     let mut funded = full_team();
     funded.budget = Some(Budget { tokens: 20_000_000 });
@@ -575,4 +575,26 @@ fn a_brief_of_exactly_64_kib_is_taken() {
             bytes: MAX_BRIEF_BYTES + 1
         })
     );
+}
+
+/// S4c review round 1 (M2): the coordinator's model must name its
+/// provider, as spawn takes it; none is guessed, and a worker role's model
+/// (not applied) is not judged.
+#[test]
+fn the_coordinators_model_must_name_its_provider() {
+    let unqualified = team(vec![
+        role("coordinator", "claude-opus", 1),
+        role("builder", "gpt-5.5", 2),
+    ]);
+    assert_eq!(with_team(unqualified), Err(BriefRefusal::CoordinatorModel));
+    let qualified = team(vec![
+        role("coordinator", "anthropic/claude-opus", 1),
+        role("builder", "gpt-5.5", 2),
+    ]);
+    let brief = with_team(qualified).unwrap();
+    assert_eq!(
+        brief.coordinator.map(|choice| choice.model),
+        Some("anthropic/claude-opus".to_string())
+    );
+    assert_eq!(BriefRefusal::CoordinatorModel.code(), "coordinator_model");
 }

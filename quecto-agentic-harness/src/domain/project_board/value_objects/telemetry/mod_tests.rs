@@ -29,6 +29,8 @@ fn bare() -> BoardOpRecord {
         roles: None,
         plan_state_from: None,
         plan_state_to: None,
+        run: None,
+        run_outcome: None,
         status_from: None,
         status_to: None,
         claim: None,
@@ -77,6 +79,8 @@ fn full() -> BoardOpRecord {
         roles: Some(2),
         plan_state_from: Some(StaticKind::new("draft")),
         plan_state_to: Some(StaticKind::new("accepted")),
+        run: Some(1),
+        run_outcome: Some(RunOutcomeKind::Failed),
         status_from: Some(StaticKind::new("in_progress")),
         status_to: Some(StaticKind::new("review")),
         claim: Some(ClaimFacts {
@@ -133,7 +137,7 @@ fn every_field_serializes_as_its_golden_line() {
     let mut golden = golden;
     let plan = json!({
         "plan_version": 2, "items": 5, "roles": 2,
-        "plan_state_from": "draft", "plan_state_to": "accepted",
+        "plan_state_from": "draft", "plan_state_to": "accepted", "run": 1, "run_outcome": "failed",
         "normalised": {
             "title": [], "description": ["crlf", "trailing_space"],
             "approach": ["edge_blank_lines"], "items": ["edge_space"],

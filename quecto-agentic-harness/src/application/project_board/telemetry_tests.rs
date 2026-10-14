@@ -37,6 +37,8 @@ fn record() -> BoardOpRecord {
         roles: None,
         plan_state_from: None,
         plan_state_to: None,
+        run: None,
+        run_outcome: None,
         status_from: None,
         status_to: None,
         claim: None,
@@ -145,6 +147,12 @@ fn every_request() -> Vec<BoardRequest> {
             version: 1,
             expected_updated: None,
         }),
+        BoardRequest::EndRun(crate::application::project_board::dto::RunEnd {
+            task: a.clone(),
+            run: 1,
+            outcome: crate::application::project_board::dto::RunEndOutcome::Lost,
+            expected_updated: None,
+        }),
     ]
 }
 
@@ -208,6 +216,7 @@ fn a_request_names_its_task_and_pull_request() {
             task(OpKind::EditPlan),
             task(OpKind::AcceptPlan),
             task(OpKind::DiscardPlan),
+            task(OpKind::EndRun),
         ]
     );
 }
@@ -314,6 +323,11 @@ mod facts {
             plan_state_to: Some(
                 crate::domain::project_board::value_objects::vocabulary::PlanState::Discarded,
             ),
+            run: Some(2),
+            run_outcome: Some(
+                crate::domain::project_board::value_objects::vocabulary::RunOutcome::Lost,
+            ),
+            start: None,
         };
         let mut record = record();
         facts.fill(&mut record);
@@ -328,6 +342,7 @@ mod facts {
             "normalised": {"description": ["crlf"]}, "plans": 4, "runs": 0,
             "plan_version": 3, "items": 7, "roles": 0,
             "plan_state_from": "draft", "plan_state_to": "discarded",
+            "run": 2, "run_outcome": "lost",
         });
         assert_eq!(line, want);
     }

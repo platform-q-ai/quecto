@@ -11,9 +11,12 @@
 use serde_json::{Map, Value};
 
 use super::{Read, misfit, text, timestamp};
-use crate::application::project_board::dto::{PlanAcceptance, PlanDiscard, PlanEdit, PlanProposal};
+use crate::application::project_board::dto::{
+    PlanAcceptance, PlanDiscard, PlanEdit, PlanProposal, RunEnd, RunEndOutcome,
+};
 use crate::application::project_board::operations::BoardRequest;
 use crate::domain::project_board::entities::plan::{MAX_PLAN_VERSION, PlanItem};
+use crate::domain::project_board::entities::run::MAX_RUN_NUMBER;
 use crate::domain::project_board::entities::task_parts::MAX_BUDGET_TOKENS;
 use crate::domain::project_board::entities::team::{Budget, MAX_MEMBERS, Role, RoleLimits, Team};
 use crate::domain::project_board::value_objects::slug::Slug;
@@ -72,6 +75,28 @@ pub(super) fn discard_plan(read: &Read<'_>) -> Result<BoardRequest, RequestError
     Ok(BoardRequest::DiscardPlan(PlanDiscard {
         task: read.task()?,
         version: version(read.value("version").expect("a required field is present"))?,
+        expected_updated: read.timestamp("expected_updated")?,
+    }))
+}
+
+/// A run ended by hand (S4c): its outcome one of [`RunEndOutcome::ALL`],
+/// pinned to the task as it was read when the request gives
+/// `expected_updated`.
+pub(super) fn end_run(read: &Read<'_>) -> Result<BoardRequest, RequestError> {
+    let present = "a required field is present";
+    let words: Vec<&str> = RunEndOutcome::ALL.iter().map(|end| end.as_str()).collect();
+    let problem = format!("must be a run number from 1 to {MAX_RUN_NUMBER}");
+    Ok(BoardRequest::EndRun(RunEnd {
+        task: read.task()?,
+        run: number(
+            "run",
+            read.value("run").expect(present),
+            1..=MAX_RUN_NUMBER,
+            &problem,
+        )?,
+        outcome: read
+            .word("outcome", RunEndOutcome::parse, &words)?
+            .expect(present),
         expected_updated: read.timestamp("expected_updated")?,
     }))
 }

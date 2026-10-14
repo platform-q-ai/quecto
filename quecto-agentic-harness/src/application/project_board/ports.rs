@@ -13,7 +13,7 @@ use crate::domain::project_board::entities::task::Task;
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::telemetry::{BoardOpRecord, FoldBackRecord};
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
-use crate::domain::project_board::value_objects::vocabulary::TaskStatus;
+use crate::domain::project_board::value_objects::vocabulary::{Effort, TaskStatus};
 
 /// The board's head: the store's revision a write must start from (the
 /// git store's commit id).
@@ -525,4 +525,89 @@ pub trait ProjectBoardOpLog: Send + Sync {
     /// Appends a fold-back's `board_fold_back` record (S4), as
     /// [`Self::record`] appends a `board_op`.
     fn record_fold_back(&self, record: FoldBackRecord);
+}
+
+/// What a started task's coordinator is launched with (S4c): the run it
+/// coordinates, the brief it is given as its task text, rendered, and the
+/// model and effort the plan's coordinator role names (none: the
+/// session's own).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CoordinatorRequest {
+    pub task: Slug,
+    pub run: u32,
+    pub plan_version: u32,
+    pub brief: String,
+    pub model: Option<String>,
+    pub effort: Option<Effort>,
+}
+
+/// A coordinator launched: its agent's id and the container it runs in.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LaunchedCoordinator {
+    pub agent: String,
+    pub environment_ref: String,
+}
+
+/// Why a coordinator did not launch, as the launch reported it, and the
+/// coordinator it may have left running (its agent id): one that came up
+/// wrong and could not be stopped. While one may be running, its run is
+/// never folded back, nor its claim released.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LaunchRefused {
+    pub reason: String,
+    pub still_running: Option<String>,
+}
+
+impl LaunchRefused {
+    /// A launch refused with nothing left running.
+    pub fn because(reason: impl Into<String>) -> Self {
+        Self {
+            reason: reason.into(),
+            still_running: None,
+        }
+    }
+
+    /// A launch refused that may have left coordinator `agent` running.
+    pub fn leaving(reason: impl Into<String>, agent: impl Into<String>) -> Self {
+        Self {
+            reason: reason.into(),
+            still_running: Some(agent.into()),
+        }
+    }
+}
+
+/// Port: whether a run's swarm is still running, as far as this front end
+/// can tell (S4c): a subagent of this session with the run's label still
+/// runs. A front end that launches none (the CLI) has none, and a
+/// coordinator another session launched is not seen: `end_run` from there
+/// relies on its caller to have stopped it.
+pub trait RunLiveness: Send + Sync {
+    /// The agent id of the coordinator of run `run` of `task` still
+    /// running here, if one is: what `agent_cmd kill` stops.
+    fn running_coordinator(&self, task: &Slug, run: u32) -> Option<String>;
+}
+
+/// Port: launches a started task's swarm coordinator in a new container
+/// (S4c). Its adapter goes through the session's own spawn path, so it
+/// launches only what the session itself could spawn, and only while its
+/// policy allows spawn. Blocking: it returns once the
+/// coordinator is running, or refused.
+pub trait CoordinatorLaunch: Send + Sync {
+    /// Whether the session may launch one now: its policy allows spawn.
+    /// A start asks before it writes anything; the launch asks again.
+    fn may_launch(&self) -> bool;
+
+    /// Launches the coordinator `request` describes, giving up once
+    /// `cancelled` is set (the call it serves was cancelled): what it began
+    /// is stopped, and the launch refused.
+    ///
+    /// # Errors
+    /// The launch's refusal, a cancel's included: nothing is left running,
+    /// or the refusal names the coordinator that may be
+    /// ([`LaunchRefused::still_running`]).
+    fn launch(
+        &self,
+        request: &CoordinatorRequest,
+        cancelled: &std::sync::atomic::AtomicBool,
+    ) -> Result<LaunchedCoordinator, LaunchRefused>;
 }

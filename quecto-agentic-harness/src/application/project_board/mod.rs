@@ -7,6 +7,7 @@ pub mod dto;
 pub mod fold_back;
 pub mod operations;
 pub mod ports;
+pub mod start;
 pub mod swarm_brief;
 pub mod telemetry;
 pub mod use_cases;

@@ -482,6 +482,36 @@ impl IdUser {
     }
 }
 
+/// A held task's status a start's undo moved it back to, or tried to
+/// (S4c): a task started from review or blocked returns there once its
+/// run has ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Restored {
+    pub status: TaskStatus,
+    pub moved: bool,
+}
+
+/// Where a start's undo left its run (S4c).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RunAfterUndo {
+    /// The undo folded it back as failed.
+    Folded,
+    /// It had ended already (another writer ended it).
+    EndedAlready,
+    /// It could not be folded back: it is still open, for `end_run`.
+    Open,
+}
+
+impl RunAfterUndo {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Folded => "folded",
+            Self::EndedAlready => "ended_already",
+            Self::Open => "open",
+        }
+    }
+}
+
 /// Why a board operation did nothing.
 /// Why the board's remote reports no pull requests.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -596,6 +626,40 @@ pub enum ProjectBoardError {
         expected: Timestamp,
         updated: Timestamp,
     },
+    /// This session may not spawn, so it has no launcher: nothing is
+    /// started (S4c).
+    NoLauncher,
+    /// Run `run` of task `task` still has its swarm running in this
+    /// session, its coordinator `agent`, so it is not ended by hand: the
+    /// coordinator is stopped first (S4c).
+    RunLive {
+        task: Slug,
+        run: u32,
+        agent: String,
+    },
+    /// The task's accepted plan cannot brief a swarm (`code`, the brief's
+    /// refusal code, and `reason`, its words): nothing is started.
+    Brief {
+        code: &'static str,
+        reason: String,
+    },
+    /// The task and run `run` were written, but the coordinator did not
+    /// launch (`reason`, as the launch said, or the call cancelled before
+    /// it). The start was undone as far as it could be: the run where the
+    /// undo left it (`run_state`); when the start took the claim, whether
+    /// the task went back to ready, releasing it (`released`); and, for a
+    /// task held in review or blocked before, whether it went back there
+    /// (`restored`). With `still_running` (a coordinator that came up wrong
+    /// and could not be stopped) nothing was undone: the run is open and
+    /// the claim held.
+    LaunchFailed {
+        reason: String,
+        run: u32,
+        run_state: RunAfterUndo,
+        released: Option<bool>,
+        restored: Option<Restored>,
+        still_running: Option<String>,
+    },
 }
 
 impl From<BoardStoreError> for ProjectBoardError {
@@ -617,120 +681,8 @@ impl From<BoardClockError> for ProjectBoardError {
     }
 }
 
-impl fmt::Display for ProjectBoardError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Store(BoardStoreError::NoBoard) => f.write_str("the project has no board yet"),
-            Self::Store(BoardStoreError::Clash(why)) => {
-                write!(f, "the board clashes with the repository: {why}")
-            }
-            Self::Store(
-                BoardStoreError::InvalidWrite(why) | BoardStoreError::WriteTooLarge(why),
-            ) => {
-                write!(f, "the board refused an invalid write: {why}")
-            }
-            Self::Store(BoardStoreError::Unavailable(why)) => {
-                write!(f, "the board store is unavailable: {why}")
-            }
-            Self::Store(BoardStoreError::TooLarge(why)) => {
-                write!(f, "the board is too large to read: {why}")
-            }
-            Self::Store(BoardStoreError::FolderSetAside(why)) => f.write_str(why),
-            Self::Rule(error) => write!(f, "{error}"),
-            Self::Clock(BoardClockError::OutOfRange(read)) => {
-                write!(
-                    f,
-                    "this clock reads {read}, a time the board cannot spell; fix the clock"
-                )
-            }
-            Self::Invalid(error) => write!(f, "invalid task: {error}"),
-            Self::NotFound(id) => write!(f, "no task {}", id.as_str()),
-            Self::Exists(id) => write!(f, "task {} already exists", id.as_str()),
-            // Owner-approved wording (#2481 S7).
-            Self::IdInUse { id, by } => {
-                let name = id.as_str();
-                write!(f, "no task {name} is on the board, but ")?;
-                match by {
-                    IdUser::Discussion(discussion) => {
-                        write!(f, "discussion {} is about {name}", discussion.as_str())?;
-                    }
-                    IdUser::Plan(_) | IdUser::Run(_) | IdUser::Change(_) | IdUser::Review(_) => {
-                        write!(f, "{} is still there", by.key(id))?;
-                    }
-                }
-                write!(f, " and uses that id; choose another id")
-            }
-            Self::SetAsideFile { path, object } => write!(
-                f,
-                "the file {path:?} (object {object}) is set aside as unreadable and its task is \
-                 unknown; mend or clear it"
-            ),
-            Self::Duplicate { key } => write!(
-                f,
-                "{key} is on the board more than once; its store must be mended"
-            ),
-            // A task's message is the one agents already know.
-            Self::Quarantined {
-                key: key @ ArtifactKey::Task(_),
-                ..
-            } => write!(f, "{key} is set aside as unreadable; mend its file"),
-            Self::Quarantined { key, path } => {
-                write!(f, "{key} is set aside as unreadable; mend or clear {path}")
-            }
-            Self::UnknownReference(id) => {
-                write!(f, "no task {} on the board to refer to", id.as_str())
-            }
-            Self::ClosesCycle { id, by } => write!(
-                f,
-                "task {id} would close a cycle: it leads to task {by}, which already names {id} \
-                 as its parent or a dependency",
-                id = id.as_str(),
-                by = by.as_str()
-            ),
-            Self::InvalidWriter(error) => write!(f, "the board's writer is invalid: {error}"),
-            Self::PrStateUnknown(pr) => write!(f, "pull request {pr} is not known to the host"),
-            Self::PullRequests(PullRequestStatesError::Unavailable(why)) => {
-                write!(f, "the pull requests' states are unavailable: {why}")
-            }
-            Self::TaskAhead { id, updated } => write!(
-                f,
-                "task {} was stamped {} by a clock that ran ahead",
-                id.as_str(),
-                updated.as_str()
-            ),
-            Self::ClockOutOfRange(reference) => write!(
-                f,
-                "the reference time {} is out of range",
-                reference.as_str()
-            ),
-            Self::ClockAhead { now, reference } => write!(
-                f,
-                "this clock reads {} but the board's reference reads {}; fix the clock",
-                now.as_str(),
-                reference.as_str()
-            ),
-            Self::Contended { attempts } => {
-                write!(f, "the board kept moving: {attempts} attempts lost")
-            }
-            Self::Refused(why) => write!(f, "the board refused the write: {why}"),
-            Self::NoPullRequestHost(why) => write!(f, "{why}"),
-            Self::NotSetAside { path, object } => {
-                write!(f, "no file is set aside at {path:?} as {object:?}")
-            }
-            Self::Stale {
-                id,
-                expected,
-                updated,
-            } => write!(
-                f,
-                "task {} changed since it was read (updated {}, not {}); read it again",
-                id.as_str(),
-                updated.as_str(),
-                expected.as_str()
-            ),
-        }
-    }
-}
+#[path = "dto_errors.rs"]
+mod errors;
 
 impl std::error::Error for ProjectBoardError {}
 
@@ -740,7 +692,11 @@ pub use fold_back::{FoldBackFacts, FoldedBack};
 
 #[path = "dto_plans.rs"]
 mod plans;
+
+#[path = "dto_start.rs"]
+mod start;
 pub use plans::{PlanAcceptance, PlanDiscard, PlanEdit, PlanProposal};
+pub use start::{EndedRun, LivenessCheck, RunEnd, RunEndOutcome, TaskStart};
 
 #[cfg(test)]
 #[path = "dto_tests.rs"]

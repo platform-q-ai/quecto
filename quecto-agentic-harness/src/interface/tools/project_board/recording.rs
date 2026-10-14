@@ -86,6 +86,8 @@ impl BoardCall {
                 roles: None,
                 plan_state_from: None,
                 plan_state_to: None,
+                run: None,
+                run_outcome: None,
                 status_from: None,
                 status_to: None,
                 claim: None,
@@ -206,7 +208,8 @@ impl BoardCall {
                 BoardOutcome::Listing(listing) => Some(&listing.head),
                 BoardOutcome::Changed { .. }
                 | BoardOutcome::Planned(_)
-                | BoardOutcome::Accepted(_) => None,
+                | BoardOutcome::Accepted(_)
+                | BoardOutcome::RunEnded(_) => None,
             };
             record.outcome = OpOutcome::Ok;
             record.head = head.and_then(|head| CommitId::parse(&head.0).ok());
@@ -326,6 +329,8 @@ pub(super) fn refusal_parts(
     use ProjectBoardError as E;
     match error {
         E::Rule(rule) => (Some(rule_code(rule)), rule_schema(rule)),
+        // A brief's refusal names its code as a rule's does.
+        E::Brief { code, .. } => (Some(*code), None),
         E::Invalid(schema) => (None, Some(schema)),
         E::Store(_)
         | E::NotFound(_)
@@ -347,7 +352,10 @@ pub(super) fn refusal_parts(
         | E::Refused(_)
         | E::NotSetAside { .. }
         | E::NoPullRequestHost(_)
-        | E::Stale { .. } => (None, None),
+        | E::Stale { .. }
+        | E::NoLauncher
+        | E::RunLive { .. }
+        | E::LaunchFailed { .. } => (None, None),
     }
 }
 

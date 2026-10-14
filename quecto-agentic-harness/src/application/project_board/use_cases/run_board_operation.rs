@@ -134,6 +134,9 @@ impl RunBoardOperation {
             BoardRequest::DiscardPlan(discard) => Ok(BoardOutcome::Planned(
                 self.parts.discard_plan.execute_noted(discard, facts)?,
             )),
+            BoardRequest::EndRun(end) => Ok(BoardOutcome::RunEnded(
+                self.parts.end_run.execute_noted(end, facts)?,
+            )),
             BoardRequest::Clear {
                 path,
                 object,
