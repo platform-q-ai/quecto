@@ -79,10 +79,11 @@ fn a_change_writes_its_task_first_or_only_one_tasks_other_artifacts() {
     for (case, artifacts) in taken {
         assert!(one_tasks_change(&artifacts), "{case}");
     }
-    let refused: [(&str, Vec<BoardArtifact>); 8] = [
+    let refused: [(&str, Vec<BoardArtifact>); 9] = [
         ("nothing", vec![]),
         ("a task, then another's plan", vec![task("a"), plan("b", 1)]),
         ("two tasks", vec![task("a"), task("b")]),
+        ("one task twice", vec![task("a"), task("a")]),
         ("a task, then a discussion", vec![task("a"), discussion()]),
         ("plans of two tasks", vec![plan("a", 1), plan("b", 1)]),
         ("a plan, then its task", vec![plan("a", 1), task("a")]),

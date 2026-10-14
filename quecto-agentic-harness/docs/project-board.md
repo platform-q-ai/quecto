@@ -67,8 +67,10 @@ cap is set aside, not read.
 `show(task, version)` gives that version of the task's plan as `plan`, whole and
 in the same shape, whatever its state, a draft included (#2481 M4b), in place of
 the accepted plan; everything else in the answer is the same. A version the task
-does not have is refused (`unknown_plan_version`), and one whose file is set
-aside is refused as `artifact_set_aside`.
+does not have is refused (`unknown_plan_version`); one whose file is set aside is
+refused as `artifact_set_aside`; and one the board does not hold while a kept file
+in `plans/` whose name spells no plan is set aside (it may hold that version) is
+refused as `set_aside_file`.
 
 The CLI gives the answer whole. The agent tool gives an answer within 64 KiB as
 it is, and cuts a longer one to fit. The task is never cut, so a task whose own
@@ -99,9 +101,10 @@ A plan at the board's limits, with every run and version, is about 1.6 MB whole.
 of its task items, each from 0 (`null` is the same as leaving it out). A
 character here is a Unicode scalar value, not what a reader sees as one, so an
 agent passes back only the `approach_next` and `items_next` an answer gave,
-never an offset it counted itself. With `version`, they page through that version instead. Given either, `show` answers only the task's id
-(`task`), `may_be_incomplete`, and `plan`: the accepted plan's `version` with
-the approach from `approach_from` (as `approach_from` and `approach`) and the
+never an offset it counted itself. With `version`, they page through that
+version instead. Given either, `show` answers only the task's id (`task`),
+`may_be_incomplete`, and `plan`: the plan's `version` and `updated`, with the
+approach from `approach_from` (as `approach_from` and `approach`) and the
 task items from `items_from` (as `items_from` and `items`), whichever were
 named; a part not named is left out. With no plan to page through, `plan` is
 `null`. The agent tool cuts a page as it cuts a whole `show`, with
@@ -109,8 +112,9 @@ named; a part not named is left out. With no plan to page through, `plan` is
 reads on with `show(task, approach_from: approach_next, items_from: items_next)`
 until no `_next` is given. Every page moves on: where no cut keeps a character
 as read whole, a page cuts inside it rather than read nothing. Every page names
-the accepted plan's `version`; if it differs from the first answer's, the plan
-changed while it was read, so read again from 0.
+the plan's `version` and `updated`; if either differs from the first answer's,
+the plan changed while it was read (a draft edited between two pages, say), so
+read again from 0.
 
 ## Proposing and editing a plan
 
@@ -124,8 +128,9 @@ a change to a plan writes that file alone: the task's file is left as it is.
   required (`""` and `[]` are allowed); `team` is optional, and `null` or
   leaving it out means no team.
 - `show(task, version)` reads a draft whole before it is built on. An agent that
-  proposes from a plan it read must read all of its approach first, following
-  `approach_next` with `approach_from` until no `_next` is given: an approach the
+  proposes from a plan it read must read all of its approach and task items
+  first, following `approach_next` with `approach_from` and `items_next` with
+  `items_from` until no `_next` is given: an approach or a list of items the
   tool's 64 KiB cap cut must never be written back as if whole.
 - `edit_plan(task, version, approach, items, team, expected_updated)` edits a
   draft as a patch. A field left out keeps what the draft holds, byte for byte.
@@ -145,11 +150,11 @@ done or archived (`task_finished`), while the task's own file is set aside
 have (`unknown_plan_version`), one that is not a draft (`plan_not_draft`), and
 one that changes nothing (`no_edit`). Text is normalised as it enters, as a
 task's is: the approach as markdown, and each task item's title and criteria as
-one line. A request is refused naming the field as it spells it (a role's
-`members` outside 1 to 32 is `team/roles/0/members`), and so is plan text past the
-most a plan holds (320 KiB as it enters, the field `request`); a plan the board's
-own schema refuses, against what the draft keeps too, is the rule
-`invalid_plan`. Both ops answer `plan`: its `task`, `version`, `state`,
+one line. A number out of its range is refused naming the field as the request
+spells it (a role's `members` outside 1 to 32 is `team/roles/0/members`). A
+plan the board's own schema refuses, with what the draft keeps, is the rule
+`invalid_plan`, naming the plan's field: `text` for text past the most a plan
+holds (320 KiB, counted as it enters the board). Both ops answer `plan`: its `task`, `version`, `state`,
 `proposed_by`, `edited_by`, `created` and `updated`. They do not echo its text.
 The CLI takes `--items` and `--team` as JSON.
 
@@ -223,7 +228,7 @@ as given. It is for the pocket relay to set; an older quecto ignores it.
 | `head` | The board's head an answer named, only when it is a full commit id git produced |
 | `listed`, `shown`, `truncated_more`, `set_aside`, `set_aside_more` | For an answered listing: the tasks it listed, those its answer showed and those it left out, and the set-aside files it listed and left out. The agent tool's listing is cut to 32 KiB; the CLI leaves nothing out |
 | `plans`, `runs` | For an answered `show`: how many versions of its plan and how many runs the task holds, as the board read them; counts only, never their text |
-| `plan_version`, `items`, `roles` | For `propose_plan`, the version it wrote; for `edit_plan` and `show(task, version)`, the version it named, even when the board refused it (a request refused as it is read records none). For `propose_plan` and `edit_plan`, once written, how many task items and team roles the plan holds (`roles` is 0 with no team); counts only |
+| `plan_version`, `items`, `roles` | For `propose_plan`, the version it wrote, only once written. For `edit_plan`, the version it named, also when the board refused the edit. For `show(task, version)`, the version it named once the task was read, also when that version was refused; a `show` of a task the board refused records none. A request refused as it is read records none. For `propose_plan` and `edit_plan`, once written, how many task items and team roles the plan holds (`roles` is 0 with no team); counts only |
 | `status_from`, `status_to` | For a write of a task (`create`, `update_draft`, `move`, `renew`, `take_over`, `link_pr`, `unlink_pr`, `complete`): the task's status as the write last read it (none for `create`), and the status it moved to: a `move`'s target, made or refused, otherwise the status of the task it wrote (`create`'s `draft` or `ready`, `complete`'s `done`), so a refused write other than `move` writes no `status_to`. A `link_pr` or move to `review` that completes its task records its own write's status here; what came of completing it is in `completion` |
 | `claim` | For a `move`, `renew`, `take_over`, `link_pr` or `unlink_pr` of a task that holds a claim, the claim as the change found it, never its holder: `held_s` (seconds since it began, below zero when the writer's clock reads before that), `left_s` (seconds until it expires, below zero once it has lapsed) and `holder_is_writer` |
 | `attempts`, `lost`, `pause_ms` | For a write (every op that writes but `bootstrap`): the attempts it began (at most 3), how many of them lost the race to another writer, and, when it paused between attempts, the time it paused in milliseconds. A `link_pr` or `move` that completes its task counts only its own write's attempts here; the completion's write is counted in `completion_attempts` |

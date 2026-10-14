@@ -104,11 +104,66 @@ fn a_named_version_is_paged() {
         &bob,
         json!({"op": "show", "task": "a", "version": 2, "items_from": 1, "approach_from": 6}),
     );
+    let whole = ok(&bob, json!({"op": "show", "task": "a", "version": 2}));
     assert_eq!(
         page["plan"],
-        json!({"version": 2, "approach_from": 6, "approach": "approach.",
-               "items_from": 1, "items": [item("api")]})
+        json!({"version": 2, "updated": whole["plan"]["updated"], "approach_from": 6,
+               "approach": "approach.", "items_from": 1, "items": [item("api")]})
     );
+}
+
+/// Review round 2: a page names the version's `updated`, so a reader
+/// paging through a draft sees when another edit landed between its
+/// pages, and reads again rather than mixing two edits.
+#[test]
+fn a_page_after_an_edit_names_the_new_updated() {
+    let (_store, ada, bob) = drafted();
+    let first = ok(
+        &bob,
+        json!({"op": "show", "task": "a", "version": 2, "approach_from": 0}),
+    );
+    ok(
+        &ada,
+        json!({"op": "edit_plan", "task": "a", "version": 2, "items": [item("other")]}),
+    );
+    let next = ok(
+        &bob,
+        json!({"op": "show", "task": "a", "version": 2, "items_from": 0}),
+    );
+    let (was, now) = (&first["plan"]["updated"], &next["plan"]["updated"]);
+    assert!(was.is_string() && now.is_string(), "{first} {next}");
+    assert_ne!(was, now, "the edit between the pages shows");
+    assert_eq!(next["plan"]["items"], json!([item("other")]));
+}
+
+/// Review round 2: a plan's text past the most a plan holds is the
+/// domain's one refusal, `invalid_plan` naming `text`, with the count.
+#[test]
+fn plan_text_past_the_most_reaches_the_agent_as_invalid_plan_text() {
+    let (store, ada, _bob) = drafted();
+    let writes = store.writes();
+    let criteria: Vec<String> = (b'a'..b'q')
+        .map(|letter| char::from(letter).to_string().repeat(500))
+        .collect();
+    let items: Vec<Value> = (0..8)
+        .map(|index| json!({"id": format!("i{index}"), "title": "t".repeat(500), "criteria": criteria}))
+        .collect();
+    let refused = call(
+        &ada,
+        json!({"op": "propose_plan", "task": "a", "approach": "\u{1f600}".repeat(65_536),
+               "items": items}),
+    );
+    let rule = &refused["error"]["rule"];
+    assert_eq!(
+        (&rule["code"], &rule["field"], &rule["problem"]),
+        (
+            &json!("invalid_plan"),
+            &json!("text"),
+            &json!("the plan's text is 330144 bytes; the most is 327680")
+        ),
+        "{refused}"
+    );
+    assert_eq!(store.writes(), writes);
 }
 
 /// A version the task does not have, or whose file is set aside, is

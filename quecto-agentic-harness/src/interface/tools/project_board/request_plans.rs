@@ -3,20 +3,19 @@
 //! them. Each nested value is read by an allowlist of its keys, every key
 //! by checked access, and a fault names its path (`items/3/criteria/0`,
 //! `team/roles/0/members`), which a record holds as its schema field
-//! (`items`, `team`). Ranges are checked here against the domain's own
-//! limits, so a refusal names the field as the request spells it; the
-//! domain's checks stay as the backstop.
+//! (`items`, `team`). A number's range is checked here against the
+//! domain's own limits, so its refusal names the field as the request
+//! spells it; the domain's checks stay as the backstop. A plan's text as
+//! a whole is the domain's alone to judge, once normalised (`invalid_plan`,
+//! field `text`).
 use serde_json::{Map, Value};
 
 use super::{Read, misfit, text, timestamp};
 use crate::application::project_board::dto::{PlanEdit, PlanProposal};
 use crate::application::project_board::operations::BoardRequest;
-use crate::domain::project_board::entities::plan::{
-    MAX_PLAN_TEXT_BYTES, MAX_PLAN_VERSION, PlanItem, text_bytes,
-};
+use crate::domain::project_board::entities::plan::{MAX_PLAN_VERSION, PlanItem};
 use crate::domain::project_board::entities::task_parts::MAX_BUDGET_TOKENS;
 use crate::domain::project_board::entities::team::{Budget, MAX_MEMBERS, Role, RoleLimits, Team};
-use crate::domain::project_board::value_objects::board_text;
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::telemetry::FaultKind;
 use crate::domain::project_board::value_objects::vocabulary::Effort;
@@ -26,18 +25,12 @@ use super::RequestError;
 /// A new draft: its approach, its task items, and its team, if any.
 pub(super) fn propose_plan(read: &Read<'_>) -> Result<BoardRequest, RequestError> {
     let present = "a required field is present";
-    let proposal = PlanProposal {
+    Ok(BoardRequest::ProposePlan(PlanProposal {
         task: read.task()?,
         approach: read.text("approach")?.expect(present),
         items: items(read.value("items").expect(present))?,
         team: read.value("team").map(team).transpose()?.flatten(),
-    };
-    fits(
-        Some(&proposal.approach),
-        Some(&proposal.items),
-        proposal.team.as_ref(),
-    )?;
-    Ok(BoardRequest::ProposePlan(proposal))
+    }))
 }
 
 /// An edit of a draft: only the fields it gives change, so it names at
@@ -52,57 +45,20 @@ pub(super) fn edit_plan(read: &Read<'_>) -> Result<BoardRequest, RequestError> {
         expected_updated: read.timestamp("expected_updated")?,
     };
     match edit.sets_something() {
-        true => {}
+        true => Ok(BoardRequest::EditPlan(edit)),
         // No field to change was given.
-        false => {
-            return Err(RequestError::of(
-                "op",
-                "edit_plan sets nothing: name a field to change",
-                FaultKind::Missing,
-            ));
-        }
-    }
-    // The text it gives alone; with what the draft keeps, the domain's.
-    let team = edit.team.as_ref().and_then(Option::as_ref);
-    fits(edit.approach.as_deref(), edit.items.as_deref(), team)?;
-    Ok(BoardRequest::EditPlan(edit))
-}
-
-/// The plan text given, as it enters the board (normalised), within the
-/// most a plan holds.
-fn fits(
-    approach: Option<&str>,
-    items: Option<&[PlanItem]>,
-    team: Option<&Team>,
-) -> Result<(), RequestError> {
-    let approach = approach.map(board_text::text).unwrap_or_default();
-    let items: Vec<PlanItem> = items
-        .unwrap_or_default()
-        .iter()
-        .map(|item| PlanItem {
-            title: board_text::line(&item.title),
-            criteria: item
-                .criteria
-                .iter()
-                .map(|line| board_text::line(line))
-                .collect(),
-            ..item.clone()
-        })
-        .collect();
-    let bytes = text_bytes(&approach, &items, team);
-    match bytes <= MAX_PLAN_TEXT_BYTES {
-        true => Ok(()),
         false => Err(RequestError::of(
-            "request",
-            format!("holds {bytes} bytes of plan text; a plan holds at most {MAX_PLAN_TEXT_BYTES}"),
-            FaultKind::TooLarge,
+            "op",
+            "edit_plan sets nothing: name a field to change",
+            FaultKind::Missing,
         )),
     }
 }
 
 /// A plan's version, from 1.
 pub(super) fn version(value: &Value) -> Result<u32, RequestError> {
-    number("version", value, 1..=MAX_PLAN_VERSION, "a plan version")
+    let problem = format!("must be a plan version from 1 to {MAX_PLAN_VERSION}");
+    number("version", value, 1..=MAX_PLAN_VERSION, &problem)
 }
 
 /// The object at `at`, taking only `keys` (an allowlist); `what` it must
@@ -166,26 +122,22 @@ fn list<T>(
         .collect()
 }
 
-/// A whole number at `at` within `range`, `what` it counts: of the
-/// wrong type, or out of range, refused naming both.
+/// A whole number at `at` within `range`: of the wrong type, or out of
+/// range, refused with `problem`.
 fn number<T>(
     at: &str,
     value: &Value,
     range: std::ops::RangeInclusive<T>,
-    what: &str,
+    problem: &str,
 ) -> Result<T, RequestError>
 where
-    T: TryFrom<u64> + PartialOrd + std::fmt::Display,
+    T: TryFrom<u64> + PartialOrd,
 {
     value
         .as_u64()
         .and_then(|number| T::try_from(number).ok())
         .filter(|number| range.contains(number))
-        .ok_or_else(|| {
-            let (low, high) = (range.start(), range.end());
-            let problem = format!("must be {what} from {low} to {high}");
-            RequestError::of(at, problem, misfit(value.is_number()))
-        })
+        .ok_or_else(|| RequestError::of(at, problem, misfit(value.is_number())))
 }
 
 /// The value of the required `key` of `object`, at `at`: refused, never
@@ -247,14 +199,11 @@ fn team(value: &Value) -> Result<Option<Team>, RequestError> {
             RequestError::of(&field("effort"), problem, misfit(effort.is_string()))
         })?;
         let members = required(at, role, "members")?;
-        let members = number(
-            &field("members"),
-            members,
-            1..=MAX_MEMBERS,
-            "a number of members",
-        )?;
+        let problem = format!("must be a number of members from 1 to {MAX_MEMBERS}");
+        let members = number(&field("members"), members, 1..=MAX_MEMBERS, &problem)?;
+        let problem = "must be a number of turns, at least 1";
         let turns = given(role, "turns")
-            .map(|turns| number(&field("turns"), turns, 1..=u32::MAX, "a number of turns"))
+            .map(|turns| number(&field("turns"), turns, 1..=u32::MAX, problem))
             .transpose()?;
         Ok(Role {
             name,
@@ -265,12 +214,12 @@ fn team(value: &Value) -> Result<Option<Team>, RequestError> {
     })?;
     let budget = given(team, "budget_tokens")
         .map(|tokens| {
-            let tokens_range = 1..=MAX_BUDGET_TOKENS;
+            let problem = format!("must be a number of tokens from 1 to {MAX_BUDGET_TOKENS}");
             number(
                 "team/budget_tokens",
                 tokens,
-                tokens_range,
-                "a number of tokens",
+                1..=MAX_BUDGET_TOKENS,
+                &problem,
             )
         })
         .transpose()?

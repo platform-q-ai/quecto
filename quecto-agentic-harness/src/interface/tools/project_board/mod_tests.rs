@@ -156,6 +156,10 @@ fn a_command_line_reaches_the_same_request_as_the_tools_json() {
                   "items": [{"id": "i", "title": "I", "criteria": ["c"]}], "team": null}))
     );
     assert_eq!(
+        line("show", &["--task", "a", "--version", "2"]),
+        Ok(json!({"op": "show", "task": "a", "version": 2}))
+    );
+    assert_eq!(
         line(
             "propose-plan",
             &["--task", "a", "--items", "[", "--approach", "A"]

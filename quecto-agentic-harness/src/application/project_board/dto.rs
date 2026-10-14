@@ -382,11 +382,18 @@ impl ShownTask {
         })
     }
 
-    /// The plan a show gives: version `version` when one is named, as
-    /// [`Self::version`] finds it; the accepted plan otherwise.
+    /// The plan a show gives: version `version` when one is named, the
+    /// accepted plan (if any) otherwise.
+    ///
+    /// # Panics
+    /// A version named that [`Self::version`] refuses: a show is answered
+    /// only once `RunBoardOperation` found the version it names.
     pub fn plan(&self, version: Option<u32>) -> Option<&Plan> {
         match version {
-            Some(version) => self.version(version).ok(),
+            Some(version) => match self.version(version) {
+                Ok(plan) => Some(plan),
+                Err(error) => panic!("a show names only a version it found, not: {error}"),
+            },
             None => self.accepted_plan(),
         }
     }
@@ -395,8 +402,12 @@ impl ShownTask {
     /// M4b: a draft is read before it is edited or accepted).
     ///
     /// # Errors
-    /// [`ProjectBoardError::Quarantined`] while its file is set aside; the
-    /// rule [`BoardRuleError::UnknownPlanVersion`] when the task has none.
+    /// [`ProjectBoardError::Quarantined`] while its own file is set aside
+    /// (checked first: what the board holds of it is then unknown);
+    /// [`ProjectBoardError::SetAsideFile`] when the task has none read
+    /// while a kept file in `plans/` whose name spells no key is set aside
+    /// (it may hold that version); otherwise the rule
+    /// [`BoardRuleError::UnknownPlanVersion`] when the task has none.
     pub fn version(&self, version: u32) -> Result<&Plan, ProjectBoardError> {
         let id = &self.task.fields().id;
         let key = ArtifactKey::Plan(id.clone(), version);
@@ -410,12 +421,27 @@ impl ShownTask {
                 path: file.path.clone(),
             });
         }
-        self.plans
+        if let Some(plan) = self
+            .plans
             .iter()
             .find(|plan| plan.fields().version == version)
-            .ok_or(ProjectBoardError::Rule(BoardRuleError::UnknownPlanVersion(
+        {
+            return Ok(plan);
+        }
+        let plans = ArtifactScope::Plans { task: id.clone() };
+        let keyless = self
+            .set_aside
+            .iter()
+            .find(|file| file.key.is_none() && plans.holds(file));
+        match keyless {
+            Some(file) => Err(ProjectBoardError::SetAsideFile {
+                path: file.path.clone(),
+                object: file.object.clone(),
+            }),
+            None => Err(ProjectBoardError::Rule(BoardRuleError::UnknownPlanVersion(
                 version,
-            )))
+            ))),
+        }
     }
 
     /// The task's latest run: the one numbered last.

@@ -5,7 +5,7 @@ use serde_json::{Value, json};
 use super::super::{RequestError, parse};
 use crate::application::project_board::dto::{PlanEdit, PlanProposal};
 use crate::application::project_board::operations::BoardRequest;
-use crate::domain::project_board::entities::plan::{MAX_PLAN_TEXT_BYTES, PlanItem};
+use crate::domain::project_board::entities::plan::PlanItem;
 use crate::domain::project_board::entities::team::{Budget, Role, RoleLimits, Team};
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
@@ -293,26 +293,4 @@ fn a_nested_fault_names_its_path_and_records_its_field() {
         let path = format!("team/roles/0/{key}");
         assert_eq!(fault(value), at(&path, "team", "missing"), "{key}");
     }
-}
-
-/// The plan's text, as it would enter the board, is held to the most a
-/// plan holds: the whole proposal's, or the text an edit gives.
-#[test]
-fn plan_text_past_the_most_a_plan_holds_is_refused() {
-    let most = MAX_PLAN_TEXT_BYTES;
-    let long = "a".repeat(most - 1);
-    let past = json!({"op": "propose_plan", "task": "a", "approach": long,
-                      "items": [{"id": "i", "title": "TT"}]});
-    assert!(parse(&past).is_err(), "one title byte past the most");
-    let crlf = format!("{}\r\n\r\n", "a".repeat(most - 1));
-    let normalised = json!({"op": "propose_plan", "task": "a", "approach": crlf, "items": []});
-    assert!(parse(&normalised).is_ok(), "counted as it enters");
-    let refused = fault(past);
-    assert_eq!(
-        (refused.0.as_str(), refused.1, refused.2),
-        ("request", "request", "too_large")
-    );
-    let edit = json!({"op": "edit_plan", "task": "a", "version": 1,
-                      "items": [{"id": "i", "title": "T", "criteria": ["c".repeat(most)]}]});
-    assert_eq!(fault(edit).2, "too_large");
 }

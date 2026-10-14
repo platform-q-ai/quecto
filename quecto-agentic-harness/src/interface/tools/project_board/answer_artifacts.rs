@@ -89,7 +89,8 @@ fn item_json(item: &PlanItem) -> Value {
 
 /// What a `show` given a page answers (#2481 M4a review round 2): its
 /// `head`; the task's id as `task`; `plan`, the `version` of the plan
-/// `version` names, or of the accepted plan,
+/// `version` names, or of the accepted plan, and its `updated` (#2481
+/// M4b review round 2: a reader sees an edit land between its pages),
 /// with only the parts the page names: `approach_from` and the
 /// `approach` from that character, `items_from` and the task `items` from
 /// that index (`null` while the task has no plan to page through); and
@@ -101,7 +102,10 @@ pub(super) fn page_fields(
 ) -> Map<String, Value> {
     let plan = shown.plan(version).map(|plan| {
         let plan = plan.fields();
-        let mut part = fields([("version", json!(plan.version))]);
+        let mut part = fields([
+            ("version", json!(plan.version)),
+            ("updated", json!(plan.updated.as_str())),
+        ]);
         if let Some(from) = page.approach_from() {
             let approach: String = plan.approach.chars().skip(from).collect();
             part.insert("approach_from".into(), json!(from));

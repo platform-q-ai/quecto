@@ -398,6 +398,7 @@ fn a_page_answers_only_the_parts_it_names_from_where_it_names() {
             "ok": true, "op": "show", "head": "0".repeat(40), "task": "a",
             "plan": {
                 "version": 2,
+                "updated": "2026-10-10T08:30:00Z",
                 "approach_from": 7,
                 "approach": "then build.",
                 "items_from": 0,
@@ -409,12 +410,12 @@ fn a_page_answers_only_the_parts_it_names_from_where_it_names() {
     let items_only = paged(accepted(), PlanPage::of(None, Some(1)));
     assert_eq!(
         items_only["plan"],
-        json!({"version": 2, "items_from": 1, "items": []})
+        json!({"version": 2, "updated": "2026-10-10T08:30:00Z", "items_from": 1, "items": []})
     );
     let past = paged(accepted(), PlanPage::of(Some(9_999), None));
     assert_eq!(
         past["plan"],
-        json!({"version": 2, "approach_from": 9_999, "approach": ""})
+        json!({"version": 2, "updated": "2026-10-10T08:30:00Z", "approach_from": 9_999, "approach": ""})
     );
     let none = paged(
         vec![plan(1, PlanState::Superseded)],

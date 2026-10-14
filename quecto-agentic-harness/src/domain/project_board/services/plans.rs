@@ -399,3 +399,7 @@ fn restamped(mut next: PlanFields, plan: &Plan, now: &Timestamp) -> Result<Plan,
 #[cfg(test)]
 #[path = "plans_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "plans_limits_tests.rs"]
+mod limits_tests;
