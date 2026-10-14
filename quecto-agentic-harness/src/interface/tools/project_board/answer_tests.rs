@@ -50,6 +50,9 @@ fn keys(code: ErrorCode) -> &'static [&'static str] {
         // A discussion's and a task's shapes are their own
         // (a_duplicate_artifact_is_named_by_its_kind_task_and_number).
         C::DuplicateArtifact => &["kind", "task", "number"],
+        C::NoLauncher => &[],
+        C::Brief => &["brief"],
+        C::LaunchFailed => &["reason", "run", "folded", "released"],
     }
 }
 
@@ -157,6 +160,14 @@ board_errors! {
         id: slug("a"),
         expected: at("09:00:00"),
         updated: at("10:00:00"),
+    },
+    E::NoLauncher => E::NoLauncher,
+    E::Brief { .. } => E::from(crate::application::project_board::swarm_brief::BriefRefusal::NoTaskItems),
+    E::LaunchFailed { .. } => E::LaunchFailed {
+        reason: "no container runtime".into(),
+        run: 1,
+        folded: true,
+        released: Some(true),
     },
 }
 

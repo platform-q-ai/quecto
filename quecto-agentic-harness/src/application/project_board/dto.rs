@@ -596,6 +596,26 @@ pub enum ProjectBoardError {
         expected: Timestamp,
         updated: Timestamp,
     },
+    /// This session may not spawn, so it has no launcher: nothing is
+    /// started (S4c).
+    NoLauncher,
+    /// The task's accepted plan cannot brief a swarm (`code`, the brief's
+    /// refusal code, and `reason`, its words): nothing is started.
+    Brief {
+        code: &'static str,
+        reason: String,
+    },
+    /// The task and run `run` were written, but the coordinator did not
+    /// launch (`reason`, as the launch said). The start was undone as far
+    /// as it could be: the run folded back as failed (`folded`), and, when
+    /// the start took the claim, the task back to ready with it released
+    /// (`released`).
+    LaunchFailed {
+        reason: String,
+        run: u32,
+        folded: bool,
+        released: Option<bool>,
+    },
 }
 
 impl From<BoardStoreError> for ProjectBoardError {
@@ -628,7 +648,11 @@ pub use fold_back::{FoldBackFacts, FoldedBack};
 
 #[path = "dto_plans.rs"]
 mod plans;
+
+#[path = "dto_start.rs"]
+mod start;
 pub use plans::{PlanAcceptance, PlanDiscard, PlanEdit, PlanProposal};
+pub use start::TaskStart;
 
 #[cfg(test)]
 #[path = "dto_tests.rs"]

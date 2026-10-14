@@ -13,7 +13,7 @@ use crate::domain::project_board::entities::task::Task;
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::telemetry::{BoardOpRecord, FoldBackRecord};
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
-use crate::domain::project_board::value_objects::vocabulary::TaskStatus;
+use crate::domain::project_board::value_objects::vocabulary::{Effort, TaskStatus};
 
 /// The board's head: the store's revision a write must start from (the
 /// git store's commit id).
@@ -526,4 +526,42 @@ pub trait ProjectBoardOpLog: Send + Sync {
     /// Appends a fold-back's `board_fold_back` record (S4), as
     /// [`Self::record`] appends a `board_op`.
     fn record_fold_back(&self, record: FoldBackRecord);
+}
+
+/// What a started task's coordinator is launched with (S4c): the run it
+/// coordinates, the brief it is given as its task text, rendered, and the
+/// model and effort the plan's coordinator role names (none: the
+/// session's own).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CoordinatorRequest {
+    pub task: Slug,
+    pub run: u32,
+    pub plan_version: u32,
+    pub brief: String,
+    pub model: Option<String>,
+    pub effort: Option<Effort>,
+}
+
+/// A coordinator launched: its agent's id and the container it runs in.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LaunchedCoordinator {
+    pub agent: String,
+    pub environment_ref: String,
+}
+
+/// Why a coordinator did not launch, as the launch reported it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LaunchRefused(pub String);
+
+/// Port: launches a started task's swarm coordinator in a new container
+/// (S4c). Its adapter goes through the session's own spawn path, so it
+/// launches only what the session itself could spawn; a session whose
+/// policy allows no spawn is given none. Blocking: it returns once the
+/// coordinator is running, or refused.
+pub trait CoordinatorLaunch: Send + Sync {
+    /// Launches the coordinator `request` describes.
+    ///
+    /// # Errors
+    /// The launch's refusal: nothing is left running.
+    fn launch(&self, request: &CoordinatorRequest) -> Result<LaunchedCoordinator, LaunchRefused>;
 }

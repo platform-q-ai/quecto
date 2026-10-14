@@ -275,6 +275,16 @@ impl fmt::Display for BriefRefusal {
 
 impl std::error::Error for BriefRefusal {}
 
+/// A plan that cannot brief a swarm, refused by its code and words (S4c).
+impl From<BriefRefusal> for super::dto::ProjectBoardError {
+    fn from(refusal: BriefRefusal) -> Self {
+        Self::Brief {
+            code: refusal.code(),
+            reason: refusal.to_string(),
+        }
+    }
+}
+
 // The goal always fits: its words, a slug, a version (at most three
 // digits) and a task title (at most four bytes a character).
 const _: () = assert!(
@@ -611,6 +621,10 @@ fn json_list_bytes<'a>(texts: impl IntoIterator<Item = &'a str>) -> usize {
         });
     2 + bytes + count.saturating_sub(1)
 }
+
+#[path = "swarm_brief_text.rs"]
+mod text;
+pub use text::render;
 
 #[cfg(test)]
 #[path = "swarm_brief_tests.rs"]

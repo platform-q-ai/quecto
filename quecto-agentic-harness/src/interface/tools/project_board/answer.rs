@@ -129,6 +129,14 @@ pub enum ErrorCode {
     NotSetAside,
     /// `reason`: the board's remote reports no pull requests.
     NoPullRequestHost,
+    /// This session may not spawn, so it starts nothing (S4c).
+    NoLauncher,
+    /// `brief`: `{"code"}`, why the plan cannot brief a swarm (S4c).
+    Brief,
+    /// `reason` (the launch's), `run`, `folded`, `released` (`null` when
+    /// the start did not take the claim): the coordinator did not launch,
+    /// and the start was undone as far as it could be (S4c).
+    LaunchFailed,
 }
 
 impl ErrorCode {
@@ -165,6 +173,9 @@ impl ErrorCode {
             Self::Stale => "stale",
             Self::NotSetAside => "not_set_aside",
             Self::NoPullRequestHost => "no_pull_request_host",
+            Self::NoLauncher => "no_launcher",
+            Self::Brief => "brief",
+            Self::LaunchFailed => "launch_failed",
         }
     }
 }
@@ -542,6 +553,22 @@ fn error_fields(error: &ProjectBoardError) -> (ErrorCode, Map<String, Value>) {
         E::NoPullRequestHost(why) => (
             C::NoPullRequestHost,
             fields([("reason", shown_json(&why.to_string()))]),
+        ),
+        E::NoLauncher => (C::NoLauncher, Map::new()),
+        E::Brief { code, .. } => (C::Brief, fields([("brief", json!({"code": code}))])),
+        E::LaunchFailed {
+            reason,
+            run,
+            folded,
+            released,
+        } => (
+            C::LaunchFailed,
+            fields([
+                ("reason", shown_json(reason)),
+                ("run", json!(run)),
+                ("folded", json!(folded)),
+                ("released", json!(released)),
+            ]),
         ),
         E::NotSetAside { path, object } => (
             C::NotSetAside,

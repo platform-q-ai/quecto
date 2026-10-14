@@ -118,6 +118,30 @@ impl fmt::Display for ProjectBoardError {
                 updated.as_str(),
                 expected.as_str()
             ),
+            Self::NoLauncher => f.write_str(
+                "this session may not spawn, so it cannot launch a coordinator: \
+                 start the task from a session that may",
+            ),
+            Self::Brief { reason, .. } => write!(f, "the plan cannot brief a swarm: {reason}"),
+            Self::LaunchFailed {
+                reason,
+                run,
+                folded,
+                released,
+            } => {
+                write!(f, "the coordinator did not launch: {reason}; ")?;
+                match folded {
+                    true => write!(f, "run {run} was folded back as failed")?,
+                    false => write!(f, "run {run} could not be folded back: it is still open")?,
+                }
+                match released {
+                    Some(true) => f.write_str(", and the task is ready again"),
+                    Some(false) => f.write_str(
+                        ", but the task could not be moved back to ready: you still hold it",
+                    ),
+                    None => f.write_str(", and you still hold the task"),
+                }
+            }
         }
     }
 }
