@@ -24,7 +24,8 @@
 use super::*;
 use crate::application::project_board::ports::{KeepCopy, QuarantinedFile, SetAsideClear};
 use crate::infrastructure::persistence::project_board::board_tree::{
-    MAX_BOARD_ENTRIES, MAX_TASK_FILE_BYTES, TASK_NAMING, TASKS, TreeCopy, read_size_in, spells_id,
+    ClearKeeps, FolderAfter, MAX_BOARD_ENTRIES, MAX_TASK_FILE_BYTES, TASK_NAMING, TASKS, TreeCopy,
+    is_folder, read_size_in, spells_id,
 };
 
 /// The most names a refusal lists before it says how many more there are.
@@ -93,8 +94,8 @@ impl GitBoardStore {
             None => return Err(BoardStoreError::NoBoard),
         }
         let board = self.board_at(&base)?;
-        let after = match cleared(&board, clear) {
-            Ok(after) => after,
+        let (after, keeps) = match cleared(&board, clear) {
+            Ok(cleared) => cleared,
             Err(refusal) => return Ok(BoardWrite::Refused(refusal)),
         };
         // So every folder is rebuilt or carried as a write leaves it.
@@ -105,7 +106,15 @@ impl GitBoardStore {
         );
         // A clear is a write: the other folders drop what a write drops.
         let folders = after.folders_after(&[]);
-        after.within_clear_bounds(&board, &folders, self.limits)?;
+        // A folder that listed a name twice is rebuilt, holding it once.
+        for (name, tree) in &board.folders {
+            let rebuilt = matches!(folders.get(name), Some(FolderAfter::Rebuilt { .. }));
+            assert!(
+                tree.repeated.is_empty() || rebuilt,
+                "{name}/ listed a name twice and is rebuilt"
+            );
+        }
+        after.within_clear_bounds(&board, &folders, self.limits, &keeps)?;
         let tasks = self.tasks_tree(&after, &[])?;
         let folders = self.folder_trees(&folders)?;
         self.land(&base, &after, &tasks, folders, message)
@@ -132,8 +141,8 @@ fn repeated_names(board: &Board) -> BTreeMap<String, Repeated<'_>> {
     tasks.chain(folders).collect()
 }
 
-/// `board` once `clear` is made, or why it is refused.
-fn cleared(board: &Board, clear: &SetAsideClear) -> Result<Board, String> {
+/// `board` once `clear` is made, and what it keeps, or why it is refused.
+fn cleared(board: &Board, clear: &SetAsideClear) -> Result<(Board, ClearKeeps), String> {
     let shown = |text: &str| quoted(text.as_bytes());
     let objects = |copies: &[TreeCopy]| listed(copies.iter().map(|copy| copy.oid.clone()));
     let repeated = repeated_names(board);
@@ -152,24 +161,43 @@ fn cleared(board: &Board, clear: &SetAsideClear) -> Result<Board, String> {
             ));
         }
     }
+    // Every file set aside, by path, grouped once: a clear may name
+    // thousands of paths.
+    let mut by_path: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
+    for file in &board.quarantined {
+        by_path
+            .entry(file.path.as_str())
+            .or_default()
+            .insert(file.object.as_str());
+    }
+    let none = BTreeSet::new();
+    let listed_at = |path: &str| by_path.get(path).unwrap_or(&none);
     let mut after = board.clone();
+    let mut kept: Vec<String> = vec![];
     for (path, keep) in &clear.repeated {
         let Some((folder, name, copies)) = repeated.get(path) else {
             return Err(format!("{} is not listed more than once", shown(path)));
         };
-        if let Some(copy) = resolve(path, copies, &listed_at(board, path), keep)? {
+        if let Some(copy) = resolve(path, copies, listed_at(path), keep)? {
             keep_copy(&mut after, folder, name, copy);
+            kept.push(path.clone());
         }
-        after.quarantined.retain(|file| file.path != *path);
     }
+    after
+        .quarantined
+        .retain(|file| !clear.repeated.contains_key(&file.path));
+    let keeps = match kept.is_empty() {
+        true => ClearKeeps::Nothing,
+        false => ClearKeeps::Copies(kept),
+    };
     after.repeated.clear();
     for tree in after.folders.values_mut() {
         tree.repeated.clear();
     }
     match repeated.get(&clear.path) {
         // Resolved with the rest above; the object named is one of its copies.
-        Some(_) => match listed_at(board, &clear.path).contains(clear.object.as_str()) {
-            true => Ok(after),
+        Some(_) => match listed_at(&clear.path).contains(clear.object.as_str()) {
+            true => Ok((after, keeps)),
             false => Err(format!(
                 "{} is not one of the files set aside at {}",
                 clear.object,
@@ -179,7 +207,7 @@ fn cleared(board: &Board, clear: &SetAsideClear) -> Result<Board, String> {
         None => {
             let file = named(board, clear)?;
             drop_file(&mut after, file);
-            Ok(after)
+            Ok((after, keeps))
         }
     }
 }
@@ -244,29 +272,20 @@ fn keep_copy(board: &mut Board, folder: &str, name: &str, copy: &TreeCopy) {
         }
         false => {
             let size = read_size_in(folder, name, copy);
-            let tree = board.folders.get_mut(folder);
-            // A name listed twice lies in a folder the read read.
-            assert!(tree.is_some(), "{folder}/ was read");
-            if let Some(tree) = tree {
-                tree.files.insert(name.to_string(), copy.entry());
-                if let Some(size) = size {
-                    tree.sizes.insert(name.to_string(), size);
+            // A name listed twice lies in one of the folders a read read.
+            match (is_folder(folder), board.folders.get_mut(folder)) {
+                (true, Some(tree)) => {
+                    tree.files.insert(name.to_string(), copy.entry());
+                    if let Some(size) = size {
+                        tree.sizes.insert(name.to_string(), size);
+                    }
+                }
+                (true, None) | (false, _) => {
+                    unreachable!("a name listed twice lies in a folder read: {folder}/")
                 }
             }
         }
     }
-}
-
-/// The objects of every file set aside at `path`, as the listing shows
-/// them: the copies a write carries, copies it drops, and twins that show
-/// the same path.
-fn listed_at<'a>(board: &'a Board, path: &str) -> BTreeSet<&'a str> {
-    board
-        .quarantined
-        .iter()
-        .filter(|file| file.path == path)
-        .map(|file| file.object.as_str())
-        .collect()
 }
 
 /// The file set aside that `clear` names by path and object. Entries that

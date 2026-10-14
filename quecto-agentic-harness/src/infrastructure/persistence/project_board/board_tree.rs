@@ -598,15 +598,15 @@ pub fn object_id(text: &str) -> Result<String, BoardStoreError> {
 
 #[path = "board_bounds.rs"]
 mod bounds;
-pub use bounds::within;
 use bounds::within_read;
+pub use bounds::{ClearKeeps, within};
 #[path = "board_entries.rs"]
 mod entries;
 pub use entries::TASK_NAMING;
 use entries::{TaskFile, task_name};
 #[path = "board_folders.rs"]
 mod folders;
-pub use folders::{ARCHIVE, CarriedTree, MAX_BOARD_ENTRIES, read_size_in};
+pub use folders::{ARCHIVE, CarriedTree, MAX_BOARD_ENTRIES, is_folder, read_size_in};
 use folders::{FOLDERS, FolderScan, load_folder, root_tree, scan_folder};
 #[path = "board_tasks.rs"]
 mod tasks;

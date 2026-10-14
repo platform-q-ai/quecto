@@ -138,6 +138,11 @@ pub(super) fn root_tree(name: &str) -> bool {
     name == "tasks" || name == ARCHIVE || FOLDERS.iter().any(|folder| folder.naming.folder == name)
 }
 
+/// Whether `name` is one of the folders besides `tasks/`.
+pub fn is_folder(name: &str) -> bool {
+    FOLDERS.iter().any(|folder| folder.naming.folder == name)
+}
+
 /// The bytes a read reads of `copy` kept as `name` in the folder named
 /// `folder`: a regular file within its kind's cap whose name spells a key.
 pub fn read_size_in(folder: &str, name: &str, copy: &TreeCopy) -> Option<usize> {
