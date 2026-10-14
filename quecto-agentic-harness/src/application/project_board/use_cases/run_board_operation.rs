@@ -131,6 +131,9 @@ impl RunBoardOperation {
             BoardRequest::AcceptPlan(acceptance) => Ok(BoardOutcome::Accepted(Box::new(
                 self.parts.accept_plan.execute_noted(acceptance, facts)?,
             ))),
+            BoardRequest::Start(start) => Ok(BoardOutcome::Started(Box::new(
+                self.parts.start.execute_noted(start, facts)?,
+            ))),
             BoardRequest::DiscardPlan(discard) => Ok(BoardOutcome::Planned(
                 self.parts.discard_plan.execute_noted(discard, facts)?,
             )),

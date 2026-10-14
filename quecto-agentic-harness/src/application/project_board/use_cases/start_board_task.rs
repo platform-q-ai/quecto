@@ -38,7 +38,7 @@ use crate::application::project_board::dto::{
 use crate::application::project_board::fold_back::{SwarmEnd, SwarmRunView};
 use crate::application::project_board::ports::{
     BoardArtifact, BoardClock, BoardTextCells, CoordinatorLaunch, CoordinatorRequest,
-    LaunchRefused, ProjectBoardStore,
+    LaunchRefused, ProjectBoardStore, RunLiveness,
 };
 use crate::application::project_board::start::{StartFacts, StartedTask, UndoFoldBack};
 use crate::application::project_board::swarm_brief::{
@@ -72,6 +72,9 @@ pub struct StartBoardTask {
     /// The undo's, over a store that ignores the call's cancel.
     fold_back: FoldBackRun,
     change: ChangeBoardTask,
+    /// Whether the run's coordinator still runs here, asked before an
+    /// undo (`None`: this front end can see none).
+    liveness: Option<Arc<dyn RunLiveness>>,
 }
 
 /// A start as its write left it: the start, its brief and the brief's
@@ -114,7 +117,15 @@ impl StartBoardTask {
             cancelled,
             fold_back,
             change,
+            liveness: None,
         })
+    }
+
+    /// This start, asking `liveness` whether a coordinator still runs
+    /// before it undoes anything (`None`: it can see none).
+    #[must_use]
+    pub fn seeing(self, liveness: Option<Arc<dyn RunLiveness>>) -> Self {
+        Self { liveness, ..self }
     }
 
     /// The task `request` names, started and its coordinator launched.
@@ -322,6 +333,14 @@ impl StartBoardTask {
             reason,
             still_running,
         } = refused;
+        // A coordinator that came up anyway (a launch that panicked, was
+        // cancelled or timed out after spawn began) may still be running
+        // where this front end can see it: undone the same as one the
+        // launch said it could not stop.
+        let still_running = still_running.or_else(|| {
+            let liveness = self.liveness.as_ref();
+            liveness.and_then(|liveness| liveness.running_coordinator(id, run))
+        });
         let (run_state, undo) = match &still_running {
             // Never fold back, nor release, under a swarm that may run.
             Some(_) => (RunAfterUndo::Open, None),

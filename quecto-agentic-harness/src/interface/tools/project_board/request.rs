@@ -264,6 +264,7 @@ pub const OPS: &[(&str, &[Field])] = &[
             optional("expected_updated", Kind::Timestamp),
         ],
     ),
+    ("start", &[TASK, required("plan_version", Kind::Version)]),
     (
         "end_run",
         &[
@@ -501,6 +502,7 @@ fn build(op: &str, read: &Read<'_>) -> Result<BoardRequest, RequestError> {
         "accept_plan" => plans::accept_plan(read),
         "discard_plan" => plans::discard_plan(read),
         "end_run" => plans::end_run(read),
+        "start" => plans::start(read),
         "clear_set_aside" => clear(read),
         other => unreachable!("op {other} is in OPS but not built"),
     }

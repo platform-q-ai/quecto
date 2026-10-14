@@ -68,6 +68,7 @@ kinds!(
         Complete => "complete", ClearSetAside => "clear_set_aside", Unknown => "unknown",
         ProposePlan => "propose_plan", EditPlan => "edit_plan",
         AcceptPlan => "accept_plan", DiscardPlan => "discard_plan", EndRun => "end_run",
+        Start => "start",
     }
 );
 
@@ -343,6 +344,13 @@ pub struct BoardStartRecord {
     pub claim: Option<StartClaim>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub launch_us: Option<u64>,
+    /// For a start undone (S4c review rounds 1-2): where its undo left the
+    /// run (`folded`, `ended_already`, `open`), and, when it took the
+    /// claim, whether it released it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub run_state: Option<StaticKind>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub released: Option<bool>,
     pub duration_us: u64,
 }
 

@@ -624,14 +624,76 @@ impl<'a> SubagentLaunchPortsTrait for SpawnLaunchPorts<'a> {
         };
         ToolResult {
             content: format!(
-                "Subagent '{}' is running (uuid={}){}. Use agent_cmd to interact.{diagnostics}",
-                identity.session_name, identity.registry_key, env_ref
+                "{}{diagnostics}",
+                running_line(&identity.session_name, &identity.registry_key, &env_ref)
             ),
             is_error: false,
             image_blocks: vec![],
-            delivery_metadata: None,
+            delivery_metadata: Some(
+                SpawnedChild {
+                    uuid: identity.registry_key.clone(),
+                    environment_ref: environment_ref.map(str::to_owned),
+                }
+                .metadata(),
+            ),
         }
     }
+}
+
+/// What a spawn launched, for its callers, never the model (S4c): the
+/// child's `uuid` and its container's `environment_ref` (`None` for a local
+/// child). Every spawn that answers a running child carries it as its
+/// result's delivery metadata, `{"spawned": {...}}`, and the board's
+/// coordinator launcher ([`super::coordinator_launch`]) reads it back: one
+/// type, written and read.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(super) struct SpawnedChild {
+    pub uuid: String,
+    pub environment_ref: Option<String>,
+}
+
+/// [`SpawnedChild`]'s envelope in the metadata.
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Spawned {
+    spawned: SpawnedChild,
+}
+
+impl SpawnedChild {
+    /// A child `uuid` running in no container.
+    pub fn local(uuid: String) -> Self {
+        Self {
+            uuid,
+            environment_ref: None,
+        }
+    }
+
+    /// This child as a result's delivery metadata.
+    pub fn metadata(self) -> String {
+        serde_json::to_string(&Spawned { spawned: self })
+            .expect("a launched child serializes as JSON")
+    }
+
+    /// The child `result`'s delivery metadata names, when it names one
+    /// with a uuid (an empty environment_ref names none).
+    pub fn of(result: &ToolResult) -> Option<Self> {
+        let metadata = result.delivery_metadata.as_deref()?;
+        let Spawned { spawned } = serde_json::from_str(metadata).ok()?;
+        let named = |text: String| Some(text).filter(|text| text.chars().count() > 0);
+        Some(Self {
+            uuid: named(spawned.uuid)?,
+            environment_ref: spawned.environment_ref.and_then(named),
+        })
+    }
+}
+
+/// The line a spawn answers once its child runs: the child's name, its
+/// `uuid`, and its container's ` environment_ref=…` and details (empty for
+/// a local child).
+fn running_line(session: &str, uuid: &str, environment: &str) -> String {
+    format!(
+        "Subagent '{session}' is running (uuid={uuid}){environment}. Use agent_cmd to interact."
+    )
 }
 
 #[cfg(test)]

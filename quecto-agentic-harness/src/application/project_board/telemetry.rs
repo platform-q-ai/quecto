@@ -8,8 +8,8 @@ use super::operations::{BoardRequest, Completion};
 use super::ports::ProjectBoardOpLog;
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::telemetry::{
-    Access, BoardOpRecord, ClaimFacts, CompletionFacts, CompletionKind, FoldBackRecord, Normalised,
-    OpKind, RunOutcomeKind, StaticKind,
+    Access, BoardOpRecord, BoardStartRecord, ClaimFacts, CompletionFacts, CompletionKind,
+    FoldBackRecord, Normalised, OpKind, RunOutcomeKind, StaticKind,
 };
 use crate::domain::project_board::value_objects::vocabulary::{PlanState, RunOutcome, TaskStatus};
 
@@ -36,6 +36,7 @@ pub fn op_kind(request: &BoardRequest) -> OpKind {
         BoardRequest::AcceptPlan(_) => OpKind::AcceptPlan,
         BoardRequest::DiscardPlan(_) => OpKind::DiscardPlan,
         BoardRequest::EndRun(_) => OpKind::EndRun,
+        BoardRequest::Start(_) => OpKind::Start,
     }
 }
 
@@ -60,6 +61,7 @@ pub fn access_of(kind: OpKind) -> Access {
         | OpKind::AcceptPlan
         | OpKind::DiscardPlan
         | OpKind::EndRun => Access::Write,
+        OpKind::Start => Access::Write,
         OpKind::List
         | OpKind::ListReady
         | OpKind::ListTakeable
@@ -81,6 +83,7 @@ pub fn task_of(request: &BoardRequest) -> Option<&Slug> {
         BoardRequest::AcceptPlan(acceptance) => Some(&acceptance.task),
         BoardRequest::DiscardPlan(discard) => Some(&discard.task),
         BoardRequest::EndRun(end) => Some(&end.task),
+        BoardRequest::Start(start) => Some(&start.task),
         BoardRequest::Bootstrap
         | BoardRequest::List(_)
         | BoardRequest::ListReady
@@ -107,6 +110,7 @@ pub fn pr_of(request: &BoardRequest) -> Option<u64> {
         | BoardRequest::AcceptPlan(_)
         | BoardRequest::DiscardPlan(_)
         | BoardRequest::EndRun(_)
+        | BoardRequest::Start(_)
         | BoardRequest::Clear { .. } => None,
     }
 }
@@ -299,6 +303,12 @@ impl BoardRecording {
     /// Writes a fold-back's `record` to the log, as [`Self::record`].
     pub fn record_fold_back(&self, record: FoldBackRecord) {
         self.log.record_fold_back(record);
+    }
+
+    /// Writes a start's `board_start` record (S4c) to the log, as
+    /// [`Self::record`] writes a `board_op`.
+    pub fn record_start(&self, record: BoardStartRecord) {
+        self.log.record_start(record);
     }
 }
 

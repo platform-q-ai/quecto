@@ -218,6 +218,7 @@ fn built_in_definitions(workspace: &std::path::Path) -> Vec<ToolDefinition> {
                     repo: workspace.to_path_buf(),
                     remote: "origin".into(),
                     build: None,
+                    launcher: None,
                 },
             ),
         ),

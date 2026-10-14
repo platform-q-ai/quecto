@@ -23,6 +23,7 @@ const STORED: &str = r#"Project board for this repo: the shared list of tasks pe
 Read: list(status|parent|dependents_of, at most one filter), show(task), list_ready (ready tasks whose dependencies are done or archived), list_takeable (held tasks whose claim expired). Listings show a summary per task; show(task) gives the whole task, its accepted plan, each plan version in brief and its runs (the latest readable one in full); "may_be_incomplete" means a file that may hold one of its plans or runs is set aside. What does not fit in 64 KiB beside the task (which is never cut, and may take more alone) is cut, with counts of what was left out and approach_next/items_next to read on with show(task, approach_from, items_from). Listings are advice; every change is checked against the board when it is written.
 Plan: create(task,title,kind,description,status draft|ready,parent,depends_on); update_draft(task, any of title,description,parent,depends_on, expected_updated) edits a draft only; pass the updated you read as expected_updated so a newer edit is never overwritten. Anyone may create, edit a draft, move it to ready, or archive a draft, ready or done task with move(task,to archived). Anyone may move a ready task back to draft.
 Plans: show(task, version) gives that version of the task's plan whole, a draft included, in place of the accepted one, and pages it with approach_from/items_from as it pages the accepted plan. propose_plan(task, approach, items, team) adds a draft version of a task's plan; items are [{"id","title","criteria":[lines],"depends_on":[item ids]}] and team is null or {"roles":[{"name","model","effort","members","turns"}],"budget_tokens","deadline","image"}, as show gives them. Every page names the plan's version and updated: if either differs from your first read, read again from 0. To propose from a plan you read, read all of its approach and items first (show again with approach_from at approach_next and items_from at items_next until none is given): never propose an approach or items show cut. edit_plan(task, version, any of approach,items,team, expected_updated) edits a draft: a field you leave out stays as it is and one you give replaces it whole (team null removes the team), so items change without resending the approach. Anyone may propose a plan or edit a draft of a task that is not done or archived; pass the draft's updated as expected_updated so a newer edit is never overwritten, and on "plan_changed" re-read it with show(task, version) and redo your edit. accept_plan(task, version, expected_updated, expected_accepted) makes a draft the task's plan and supersedes the plan accepted before (accepting an older draft over it is a rollback; a superseded plan is never accepted again: propose it anew); both pins are required: expected_updated is the updated show(task, version) gave you, and expected_accepted the task's accepted_plan as you read it (null for none), so what you accept is what you read and you never supersede an acceptance you did not see (on "accepted_plan_changed" re-read with show(task, version) and decide again). discard_plan(task, version, expected_updated optional) discards a draft (it is kept, as discarded). On a held task only the claim holder accepts or discards, on an unclaimed one anyone; nothing is accepted while a run of the task is going ("run_open"), only a draft is accepted or discarded ("plan_not_draft"), and on "plans_inconsistent" stop and report: the task's plans contradict each other.
+Start: start(task, plan_version) hands a ready task, or one you hold, to a swarm: it claims the task if it is ready, moves it to in_progress, begins its next run on the accepted plan and launches the run's coordinator in a new container with the plan's brief. plan_version is the accepted plan you confirmed from show(task); a task that accepts another by then is refused ("accepted_plan_changed"), so only the plan you confirmed runs. It needs a session that may spawn ("no_launcher"); a plan a swarm cannot take is refused ("brief"). If the coordinator does not launch ("launch_failed"), the start is undone as far as it can be: the run is folded back as failed and a claim the start took is released (with run_state "open" the fold-back failed: end the run with end_run). If launch_failed names still_running, nothing is undone: kill that coordinator, then end_run failed. The answer names the run, the coordinator (agent, environment_ref), the worker roles whose models were not applied (not_applied) and whether the claim was taken (claim: fresh) or yours already (held). The task stays yours while the swarm runs. To end it: when the run is paused holding an outcome, close it (agent_cmd swarm_control close on the coordinator; a cancelled run needs no close); stop the coordinator with agent_cmd kill (end_run answers "run_live" until it has stopped); then end_run with succeeded, stopped or failed. Renew the claim before it lapses (2 hours, not renewed while the swarm runs); if it has expired, renew it if it is yours, or take_over if it is another's, then end_run.
 Work: move(task,to claimed) takes a ready task for 2 hours; renew(task) before it lapses while you work; take_over(task) only once a claim has expired; move(task,to ready) hands it back to ready. Only the claim holder moves a held task: claimed to in_progress|blocked|ready, in_progress to review|blocked|ready, review to in_progress|ready (or done when no pull request is linked), blocked to in_progress|ready. Once its claim has expired, or a task has none, anyone may move a review or blocked task to ready. link_pr(task,pr) and unlink_pr(task,pr) are the holder's. A task with linked pull requests is done only when all of them have merged: link_pr and moving to review check this automatically, and complete(task) asks again (anyone may call it). Never move a task to done by hand while a pull request is linked.
 Runs: end_run(task, run, outcome, expected_updated optional) records how a started run ended, in this order: when the run is paused holding an outcome, close it (agent_cmd swarm_control close on the coordinator; a cancelled run needs no close); stop the coordinator with agent_cmd kill (end_run answers "run_live", naming the agent, until it has stopped; it sees only this session's subagents with the run's label); then end_run with "succeeded", "stopped" or "failed". Renew the claim before it lapses (2 hours, not renewed while the swarm runs); if it has expired, renew it if it is yours, or take_over if it is another's, then end_run. A start that answered "launch_failed" with run_state "open" leaves a run to end the same way. When nobody can account for a run, end it as "lost" (the holder, or anyone when the task has no claim). The task stays held: move it on afterwards.
 Repair: clear_set_aside(path, object, repeated) removes a file the board could not read (listed under quarantined, with its object); repeated, for a file that appears twice, maps its path to {"keep":object,"seen":[objects]} or {"drop":[objects]}, the objects its copies list. Use it only when told to.
@@ -41,12 +42,12 @@ fn the_description_is_the_stored_text_within_the_budget() {
 
 /// The tool over `site`, recording into a slot of its own (bound to no
 /// session), never the process's.
-fn tool(site: BoardSite) -> BoardTool {
+pub(super) fn tool(site: BoardSite) -> BoardTool {
     BoardTool::recorded_in(site, Arc::default())
 }
 
 /// The tool over `site`, recording into `records`.
-fn recorded_tool(site: BoardSite, records: &Arc<Records>) -> BoardTool {
+pub(super) fn recorded_tool(site: BoardSite, records: &Arc<Records>) -> BoardTool {
     let recordings = Arc::new(SessionRecording::default());
     recordings.bind(Some(recording_into(records)));
     BoardTool::recorded_in(site, recordings)
@@ -66,13 +67,14 @@ fn memory_board(_: &ProjectBoardEnvironment) -> Result<ProjectBoardHandles, Buil
     Ok(ProjectBoardHandles { operations })
 }
 
-fn site(
+pub(super) fn site(
     build: Option<crate::interface::tools::project_board::site::ProjectBoardHandlesBuilder>,
 ) -> BoardSite {
     BoardSite {
         repo: std::path::PathBuf::from("."),
         remote: "origin".into(),
         build,
+        launcher: None,
     }
 }
 
@@ -145,6 +147,7 @@ fn environment() -> ProjectBoardEnvironment {
         access: crate::interface::tools::project_board::site::Access::Read,
         vars: vec![],
         cancelled: None,
+        launcher: None,
     }
 }
 

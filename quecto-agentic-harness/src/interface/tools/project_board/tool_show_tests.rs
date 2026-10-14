@@ -561,8 +561,8 @@ fn an_end_runs_answer_says_whether_its_swarm_was_looked_for() {
     assert_eq!(
         unchecked["liveness_note"],
         json!(
-            "this front end cannot see running swarms: make sure the run's coordinator has \
-             stopped (agent_cmd kill) before ending its run"
+            "this end was not checked against running swarms: if the run's coordinator still \
+             runs, stop it"
         )
     );
     assert_eq!(
