@@ -5,9 +5,9 @@
 |---|---|
 | Id | find-bronze-blanking-plates-for-wall-lights-by |
 | Kind | task |
-| Status | ready |
+| Status | archived |
 | Created | 2026-10-12T21:24:02Z |
-| Updated | 2026-10-12T21:24:02Z |
+| Updated | 2026-10-14T09:59:36Z |
 
 ## Description
 Find bronze blanking plates for wall lights by soho lighting, we need 4 blanking plates for blanking switches.
