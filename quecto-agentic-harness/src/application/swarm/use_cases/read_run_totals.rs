@@ -43,11 +43,14 @@ impl ReadRunTotals {
             actor,
             reading,
             |transaction, run| {
-                let run_id = transaction
-                    .run_row()?
-                    .and_then(|row| row.get("id").and_then(Value::as_str).map(str::to_owned));
+                let row = transaction.run_row()?;
+                let text = |key: &str| {
+                    row.as_ref()
+                        .and_then(|row| row.get(key).and_then(Value::as_str).map(str::to_owned))
+                };
                 Ok(RunTotalsView {
-                    run_id,
+                    run_id: text("id"),
+                    goal: text("goal"),
                     task_count: transaction.task_count()?,
                     counts: counts(transaction, run.coordinator.as_deref())?,
                     messages: transaction.message_tally()?,

@@ -146,7 +146,8 @@ pub fn answer(
                         run: started.run.fields().number,
                         environment_ref: started.coordinator.environment_ref.clone(),
                     };
-                    session.keep(keeper, kept, call.recording());
+                    // A keeper that could not start leaves the run for end_run.
+                    let _started = session.keep(keeper, kept, call.recording());
                 }
             })
         }

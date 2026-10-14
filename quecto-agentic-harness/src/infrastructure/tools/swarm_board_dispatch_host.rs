@@ -101,6 +101,7 @@ fn totals(view: RunTotalsView) -> Result<Value, BoardError> {
     let counts = view.counts;
     Ok(object([
         ("run_id", view.run_id.map_or(Value::Null, Value::String)),
+        ("goal", view.goal.map_or(Value::Null, Value::String)),
         (
             "tasks",
             object([

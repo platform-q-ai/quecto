@@ -315,9 +315,17 @@ impl RunFold {
             match run.as_mut() {
                 Some(folding) if folding.open => {
                     folding.open = false;
-                    let totals =
-                        totals.and_then(|totals| run_totals(totals, folding.fold.run_id()));
-                    folding.fold.summary(self.now_us(), totals)
+                    let run_id = folding.fold.run_id();
+                    // The goal only names the summary's board task; its
+                    // text is never written.
+                    let goal = totals
+                        .filter(|totals| {
+                            totals.get("run_id").and_then(Value::as_str) == Some(run_id)
+                        })
+                        .and_then(|totals| totals.get("goal"))
+                        .and_then(Value::as_str);
+                    let totals = totals.and_then(|totals| run_totals(totals, run_id));
+                    folding.fold.summary(self.now_us(), totals).for_goal(goal)
                 }
                 Some(_) | None => return false,
             }

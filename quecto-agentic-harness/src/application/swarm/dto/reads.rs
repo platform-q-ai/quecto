@@ -201,6 +201,9 @@ pub struct BootstrappedSummary {
 pub struct RunTotalsView {
     /// The run row's id as stored, when it is text.
     pub run_id: Option<String>,
+    /// The run row's goal as stored, when it is text: the summary names
+    /// the board task a board start's goal names (#2481 S4d).
+    pub goal: Option<String>,
     pub task_count: i64,
     /// The tasks by state, as `summary` counts them.
     pub counts: SummaryCounts,

@@ -173,7 +173,7 @@ impl SwarmRunSummary {
     /// The summary, naming the board task `goal` names, if it names one.
     #[must_use]
     pub fn for_goal(mut self, goal: Option<&str>) -> Self {
-        self.board_task = goal.and_then(board_task_of).map(|task| Redacted::new(task));
+        self.board_task = goal.and_then(board_task_of).map(Redacted::new);
         self
     }
 }

@@ -180,6 +180,7 @@ const KNOWN_KINDS : & [
 "succeeded" ,
 "stopped" ,
 "lost" ,
+"swarm_lost" ,
 "task" ,
 "title" ,
 "kind" ,

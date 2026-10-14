@@ -124,6 +124,16 @@ const ALLOWED: &[(&str, &str, &str)] = &[
         "drives the session's agent_cmd kill of a coordinator that came up outside a container to completion in place, on the same board call's blocking thread (no new task): its panic is the board call's",
     ),
     (
+        "src/interface/tools/project_board/keeper.rs",
+        "impl SessionKeeper::keep",
+        "a started run's keeper (#2481 S4d) outlives the board call that started the run, so it is no call's work: its own named thread, waiting on its session's end between looks; a panic ends that keeper alone, and the run is left for end_run",
+    ),
+    (
+        "src/interface/tools/project_board/keeper.rs",
+        "impl SessionSwarmBoards::board",
+        "a keeper's own thread drives the session's swarm board read to completion on the session's runtime; it refuses on any runtime thread",
+    ),
+    (
         "src/infrastructure/tools/find_fd.rs",
         "impl FdFindPaths::find",
         "drives its own current-thread runtime on the find owner's thread (call_work::std_thread_in_call), never a worker",

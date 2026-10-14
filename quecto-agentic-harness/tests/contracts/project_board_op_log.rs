@@ -334,3 +334,30 @@ fn the_cli_builder_traces_no_fold_back_when_its_log_cannot_be_opened() {
         "one warning: {output}"
     );
 }
+
+/// A kept run's claim renewals (S4d) go the same way: one
+/// `board_claim_renewals` line under no turn, traced at INFO, through a
+/// recording only while the log is on.
+#[test]
+fn a_claim_renewals_record_is_appended_under_no_turn_while_on() {
+    use quecto::domain::project_board::value_objects::telemetry::ClaimRenewalsRecord;
+    let base = tempfile::tempdir().unwrap();
+    let log = AuditLog::open_sync(base.path(), "cli:renewed").unwrap();
+    let recording = session_board_recording_decided(true, &log).expect("a recording while on");
+    let output = traced(|| {
+        recording.record_claim_renewals(ClaimRenewalsRecord {
+            task: TaskRef::of(&Slug::parse("board-store").unwrap()),
+            run: 1,
+            outcome: OpOutcome::Ok,
+            renewals: 3,
+            min_left_s: Some(2_640),
+        });
+    });
+    assert!(output.contains("board claim renewals"), "{output}");
+    let lines = parsed(base.path(), "cli:renewed");
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    assert_eq!(lines[0]["event"], "board_claim_renewals");
+    assert_eq!(lines[0]["renewals"], 3);
+    assert_eq!(lines[0]["min_left_s"], 2_640);
+    assert_eq!(lines[0]["turn"], Value::Null);
+}

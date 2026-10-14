@@ -73,21 +73,19 @@ impl std::fmt::Debug for SessionKeeper {
 
 impl SessionKeeper {
     /// Keeps `kept` with `keeper` on a thread of its own, recording in
-    /// `recording` when there is one. A keeper that cannot be started
-    /// leaves the run for `end_run`, and says so on the trace.
+    /// `recording` when there is one; whether its thread started. A keeper
+    /// that could not start leaves the run for `end_run`.
     pub fn keep(
         &self,
         keeper: KeepStartedRun,
         kept: KeptRun,
         recording: Option<Arc<BoardRecording>>,
-    ) {
+    ) -> bool {
         let (end, period) = (Arc::clone(&self.end), self.period);
-        let spawned = std::thread::Builder::new()
+        std::thread::Builder::new()
             .name("board-keeper".into())
-            .spawn(move || kept_until_done(&keeper, &kept, &end, recording, period));
-        if let Err(error) = spawned {
-            tracing::warn!(%error, "the started run's keeper did not start");
-        }
+            .spawn(move || kept_until_done(&keeper, &kept, &end, recording, period))
+            .is_ok()
     }
 }
 

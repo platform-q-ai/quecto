@@ -262,3 +262,42 @@ fn every_field_a_start_record_writes_is_documented_and_no_other() {
         assert!(section.contains(told), "{told} is not told");
     }
 }
+
+fn renewals_doc() -> String {
+    let doc = read_repo_file("docs/project-board.md");
+    let (_, part) = doc
+        .split_once("\n### Claim renewal records\n")
+        .expect("docs/project-board.md has a part on claim renewal records");
+    let end = part.find("\n#").unwrap_or(part.len());
+    part[..end].to_owned()
+}
+
+/// S4d: every field a `board_claim_renewals` record writes is documented,
+/// and no other.
+#[test]
+fn every_field_a_claim_renewals_record_writes_is_documented_and_no_other() {
+    use quecto::domain::project_board::value_objects::telemetry::ClaimRenewalsRecord;
+    let record = ClaimRenewalsRecord {
+        task: TaskRef::of(&Slug::parse("a").unwrap()),
+        run: 1,
+        outcome: OpOutcome::Refused {
+            code: StaticKind::new("rule"),
+            rule: Some(StaticKind::new("not_holder")),
+        },
+        renewals: 0,
+        min_left_s: Some(900),
+    };
+    let line = serde_json::to_value(AuditEvent::BoardClaimRenewals(Box::new(record))).unwrap();
+    let mut written: BTreeSet<String> = line.as_object().unwrap().keys().cloned().collect();
+    assert!(written.remove("event"));
+    let section = renewals_doc();
+    assert_eq!(documented_fields(&section), written);
+    for told in [
+        "board_claim_renewals",
+        "board claim renewals",
+        "`INFO`",
+        "`swarm_lost`",
+    ] {
+        assert!(section.contains(told), "{told} is not told");
+    }
+}

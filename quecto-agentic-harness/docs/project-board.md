@@ -283,6 +283,42 @@ The answer gives the `task`, the `run`, the `coordinator` (`agent`,
 `environment_ref`), `not_applied` (`role`, `model`, `effort`) and `claim`:
 `fresh` when the start took it, `held` when the starter held it already.
 
+## Keeping a started run
+
+The agent session that started a run keeps it (#2481 S4d): once a start through
+the agent tool answered, the run's keeper looks at it every 60 seconds, on a
+thread of its own, until the run is done or the session ends.
+
+- **The board first.** A run that has ended (by `end_run`, or as `lost` by the
+  merge that completed its task) or a task no longer on the board (archived)
+  ends the keeping: nothing is written.
+- **The swarm next**, by the coordinator's `environment_ref`, as the session's
+  live board view (`get_swarm_board`) reads it. A swarm that has ended
+  (`succeeded`, `failed`, `budget-exhausted`, `blocked` or `cancelled`) is
+  folded back once, as "Fold-back records" below says; still going, or paused
+  while it waits for its parent to close it, it is watched on. A fold-back the
+  board could not take this time (a race lost to other writers, an unreachable
+  remote, the clock) is tried again at the next look; any other refusal ends
+  the keeping, the run left open for `end_run`.
+- **Then the claim**, renewed while less than 45 minutes are left of it. A
+  renewal refused because another holds the task now (it took it over) or none
+  does stops the renewing, but the keeper still watches, so it can still fold
+  the run back; any other refusal is tried again at the next look.
+- **A coordinator lost.** A swarm whose board cannot be read, or whose
+  coordinator is no live member, while it never showed an end, is stalled.
+  Stalled for 30 minutes in a row, the keeper gives up: it writes nothing (a
+  board unreadable for a while is no proof the run failed, and a fold-back
+  cannot be taken back), stops renewing so the claim lapses within two hours,
+  and leaves the run open for `end_run` (as `lost`, once the claim has lapsed
+  and the task is taken over).
+- **The session's end** stops the keeper before its next look. Nothing keeps a
+  run whose session ended: it is left for `end_run`.
+
+A run's swarm summary (`swarm_run_summary`, written by its coordinator's
+harness when the run settles) names its board task as `board_task`, read from
+the run's goal when the coordinator kept the brief's (`Board task <id>, plan
+v<n>: <title>`).
+
 ## Ending a run by hand
 
 A run is folded back by its swarm when the swarm ends. A run no swarm will fold
@@ -486,3 +522,19 @@ Each `start` that reaches the board writes one `board_start` record besides its
 
 A start undone writes its fold-back's own `board_fold_back` record too, as
 below.
+
+### Claim renewal records
+
+A kept run's claim renewals (S4d) write `board_claim_renewals` records under the
+same switch, gate and rules (written to `tracing` at `INFO` as
+`board claim renewals`). Consecutive renewals that succeeded fold into one
+record, written when a refusal ends them or the keeping ends; each refusal is a
+record of its own, and so is a swarm given up as lost (`swarm_lost`). Kinds and
+counts only.
+
+| Field | Meaning |
+|---|---|
+| `task`, `run` | The task (its slug, redacted and capped as above) and the run kept |
+| `outcome`, `code`, `rule` | `ok` for renewals that succeeded; `refused` with the renewal's error and rule codes, as a `board_op` would carry them (`not_holder` once the task was taken over), or `swarm_lost` for a swarm given up |
+| `renewals` | The renewals the record folds: `0` on a refusal |
+| `min_left_s` | The least time, in seconds, the claim had left before a renewal (on a refusal, before the renewal refused); none for `swarm_lost` |

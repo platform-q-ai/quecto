@@ -223,3 +223,28 @@ fn the_run_totals_read_no_payload_and_create_no_table() {
     assert_eq!(totals["usage"][0]["member"], "parent", "{totals}");
     assert_eq!(totals["usage"][0]["requests"], 1, "{totals}");
 }
+
+/// #2481 S4d: a run a board start briefed names its board task in its
+/// summary, read from its goal at settle; the goal's text is never written.
+#[test]
+fn the_summary_of_a_board_started_run_names_its_board_task() {
+    let checkout = tempfile::tempdir().unwrap();
+    let (parent, parent_log) = process(checkout.path(), "parent");
+    std::fs::create_dir_all(parent.checkout.join(".quecto")).unwrap();
+    let goal = "Board task demo-hello, plan v1: Say hello";
+    let criteria = json!([{"id": "tests", "kind": "command", "description": "pass"}]);
+    let deadline = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        + 300;
+    parent
+        .call("create", json!([goal, [], criteria, 3, deadline]))
+        .unwrap();
+    parent.cancel_run().unwrap();
+    assert!(parent.summarize_settled(&parent.snapshot().unwrap()));
+    let summaries = parent_log.summaries();
+    let line = serde_json::to_value(&summaries[0]).unwrap();
+    assert_eq!(line["board_task"], json!("demo-hello"));
+    assert!(!line.to_string().contains("Say hello"), "{line}");
+}
