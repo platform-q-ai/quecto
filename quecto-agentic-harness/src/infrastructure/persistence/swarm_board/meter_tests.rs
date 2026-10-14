@@ -14,6 +14,9 @@ use std::time::{Duration, Instant};
 
 use rusqlite::Connection;
 
+#[path = "../../../../tests/support/held_lock_timer_policy.rs"]
+mod held_lock_timer_policy;
+
 use super::{SqliteBoardCallMeter, Tally, busy_delay, unwait_metered, wait_metered};
 use crate::application::swarm::dto::{BoardLocation, CallMeasure, RunRoles};
 use crate::application::swarm::ports::{BoardCallMeter, BoardRepository, MeteredCall};
@@ -82,8 +85,9 @@ impl Holder {
     fn release_after(&mut self, after: Duration) -> thread::JoinHandle<()> {
         let release = self.release.take().unwrap();
         thread::spawn(move || {
-            thread::sleep(after);
-            let _gone = release.send(());
+            held_lock_timer_policy::timer_release(after, thread::sleep, || {
+                let _gone = release.send(());
+            });
         })
     }
 
