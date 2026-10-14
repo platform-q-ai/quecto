@@ -588,3 +588,77 @@ fn the_board_committer_is_read_from_its_last_angle_brackets() {
     );
     assert_eq!(board_committer(&[]), None);
 }
+
+/// A session's swarms whose every launch fails while run 1's coordinator
+/// is still seen running.
+struct FailedButRunning;
+
+impl crate::application::project_board::ports::RunLiveness for FailedButRunning {
+    fn running_coordinator(
+        &self,
+        _: &crate::domain::project_board::value_objects::slug::Slug,
+        run: u32,
+    ) -> Option<String> {
+        (run == 1).then(|| "7f3a".into())
+    }
+}
+
+impl crate::application::project_board::ports::CoordinatorLaunch for FailedButRunning {
+    fn may_launch(&self) -> bool {
+        true
+    }
+
+    fn launch(
+        &self,
+        _: &crate::application::project_board::ports::CoordinatorRequest,
+        _: &std::sync::atomic::AtomicBool,
+    ) -> Result<
+        crate::application::project_board::ports::LaunchedCoordinator,
+        crate::application::project_board::ports::LaunchRefused,
+    > {
+        Err(
+            crate::application::project_board::ports::LaunchRefused::because(
+                "the call was cancelled while the coordinator launched: the launch was dropped",
+            ),
+        )
+    }
+}
+
+/// S4c review (L1): composition hands the start the session's liveness, so
+/// a failed launch whose coordinator is still seen running undoes nothing
+/// and names it, over the real board.
+#[test]
+fn a_composed_start_asks_whether_its_coordinator_still_runs() {
+    let (_dir, work) = repository();
+    let mut writing = environment(&work, Access::Write);
+    writing.launcher = Some(std::sync::Arc::new(FailedButRunning));
+    let handles = build_project_board_handles(&writing).unwrap();
+    let ops = |request: Value| run(&handles.operations, &request.to_string());
+    assert_eq!(ops(json!({"op": "bootstrap"}))["ok"], json!(true));
+    let created = ops(json!({"op": "create", "task": "a", "title": "A", "status": "ready"}));
+    assert_eq!(created["ok"], json!(true), "{created}");
+    let proposed = ops(
+        json!({"op": "propose_plan", "task": "a", "approach": "Build it.",
+                              "items": [{"id": "schema", "title": "Schema"}]}),
+    );
+    let updated = proposed["plan"]["updated"].clone();
+    let accepted = ops(json!({"op": "accept_plan", "task": "a", "version": 1,
+                              "expected_updated": updated, "expected_accepted": null}));
+    assert_eq!(accepted["ok"], json!(true), "{accepted}");
+    let started = ops(json!({"op": "start", "task": "a", "plan_version": 1}));
+    assert_eq!(
+        (
+            &started["error"]["code"],
+            &started["error"]["still_running"],
+            &started["error"]["run_state"],
+            &started["error"]["released"]
+        ),
+        (
+            &json!("launch_failed"),
+            &json!("7f3a"),
+            &json!("open"),
+            &json!(false)
+        ),
+        "{started}"
+    );
+}

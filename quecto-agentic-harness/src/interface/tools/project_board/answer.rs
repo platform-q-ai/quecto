@@ -213,8 +213,8 @@ const NO_SWARM_REPORT: &str = "items recorded as todo: no swarm report";
 
 /// What an `end_run` from a front end that cannot see running swarms (the
 /// CLI) leaves its caller to have made sure of (S4c).
-const NOT_CHECKED: &str = "this front end cannot see running swarms: make sure the run's \
-coordinator has stopped (agent_cmd kill) before ending its run";
+const NOT_CHECKED: &str =
+    "this end was not checked against running swarms: if the run's coordinator still runs, stop it";
 
 pub fn outcome(op: &str, outcome: &BoardOutcome, clock: Option<String>) -> Value {
     let mut fields = Map::new();

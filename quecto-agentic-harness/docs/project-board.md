@@ -279,7 +279,7 @@ and the answer lists them as `not_applied`.
   undone. A launch waits for spawn at most 15 minutes.
 - Nothing is undone while a coordinator may still be running: one that came
   up wrong and could not be stopped (its stop failed, or took past 30
-  seconds), or one the session still runs after a launch that was cancelled,
+  seconds; a slow stop still goes on to its end), or one the session still runs after a launch that was cancelled,
   panicked or timed out. Then `launch_failed` names it as `still_running`,
   `run_state` is `open` and the claim is kept: kill it (`agent_cmd kill`),
   then `end_run` the run as `failed`.
@@ -338,8 +338,8 @@ is refused (`run_live`, with its `task`, `run` and the running coordinator's
 `agent`) while the asking session holds any running subagent with the run's
 label (`board-<task>-run-<n>`). A coordinator another session launched is not
 seen, and the CLI sees none: its answer says `liveness: "not_checked"` (the
-agent tool's, `"checked"`), with a `liveness_note` to make sure the run's
-coordinator has stopped.
+agent tool's, `"checked"`), with a `liveness_note`: "this end was not
+checked against running swarms: if the run's coordinator still runs, stop it".
 
 Only the run is written; the task stays as it is, for its holder to move on
 (back to `ready`, say). A run that has ended is refused (`run_ended`), as is

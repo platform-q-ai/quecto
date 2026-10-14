@@ -244,7 +244,10 @@ fn a_coordinator_outside_a_container_is_stopped_before_the_refusal() {
         ),
         (
             Answering::stalling("agent_cmd"),
-            LaunchRefused::leaving(format!("{why}stopping it timed out"), "7f3a-uuid"),
+            LaunchRefused::leaving(
+                format!("{why}stopping it timed out (the stop goes on)"),
+                "7f3a-uuid",
+            ),
         ),
     ] {
         let spawn = Answering::new("spawn", answered("running", local()));
@@ -432,4 +435,87 @@ fn a_coordinator_runs_while_it_is_live_and_running() {
     for liveness in [SubagentLiveness::Live, SubagentLiveness::Detached] {
         assert!(!runs(&entry(liveness, SubagentStatus::Exited)));
     }
+}
+
+/// An `agent_cmd` whose kill takes 300 ms, then notes that it finished.
+struct SlowKill(Arc<std::sync::atomic::AtomicBool>);
+
+impl Tool for SlowKill {
+    fn definition(&self) -> ToolDefinition {
+        ToolDefinition {
+            name: "agent_cmd".into(),
+            description: "a slow kill".into(),
+            parameters_schema: r#"{"type":"object"}"#.into(),
+        }
+    }
+
+    fn execute(
+        &self,
+        _: &str,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<ToolResult, DomainError>> + Send + '_>,
+    > {
+        let finished = Arc::clone(&self.0);
+        Box::pin(async move {
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            finished.store(true, std::sync::atomic::Ordering::SeqCst);
+            answered("killed", None)
+        })
+    }
+}
+
+/// Review (MED-3): a kill that outlasts the wait is not dropped half-way
+/// (that would leave the child claimed as stopping, refusing every later
+/// kill): it goes on to its end, while the launch already says the
+/// coordinator may still run.
+#[test]
+fn a_kill_past_its_wait_goes_on_to_its_end() {
+    let finished = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let spawn = Answering::new(
+        "spawn",
+        answered(
+            "running",
+            Some(
+                SpawnedChild {
+                    uuid: "7f3a-uuid".into(),
+                    environment_ref: None,
+                }
+                .metadata(),
+            ),
+        ),
+    );
+    let kill: Arc<dyn Tool> = Arc::new(SlowKill(Arc::clone(&finished)));
+    let launching = SpawnCoordinatorLauncher::new(
+        spawn as Arc<dyn Tool>,
+        kill,
+        open_permit(vec![]),
+        super::super::subagent_registry::new_registry(),
+    )
+    .with_timeouts(LAUNCH_TIMEOUT, Duration::from_millis(50));
+    let seen = Arc::clone(&finished);
+    let (refused, finished_at_once, finished_later) = on_a_board_thread(move || {
+        let refused = launching.launch(&request("a", 1), &AtomicBool::new(false));
+        let at_once = seen.load(std::sync::atomic::Ordering::SeqCst);
+        let began = std::time::Instant::now();
+        while !seen.load(std::sync::atomic::Ordering::SeqCst)
+            && began.elapsed() < Duration::from_secs(5)
+        {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        (
+            refused,
+            at_once,
+            seen.load(std::sync::atomic::Ordering::SeqCst),
+        )
+    });
+    assert_eq!(
+        refused,
+        Err(LaunchRefused::leaving(
+            "the coordinator came up outside a container, so stopping it timed out (the stop \
+             goes on)",
+            "7f3a-uuid",
+        ))
+    );
+    assert!(!finished_at_once, "the launch did not wait for the kill");
+    assert!(finished_later, "the kill went on to its end");
 }

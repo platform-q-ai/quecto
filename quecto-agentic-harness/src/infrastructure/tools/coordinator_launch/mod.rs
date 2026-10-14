@@ -95,14 +95,21 @@ impl SpawnCoordinatorLauncher {
     /// out, so the start leaves its run open and its claim held.
     fn stopped(&self, runtime: &tokio::runtime::Handle, why: &str, uuid: &str) -> LaunchRefused {
         let kill = json!({"agent_id": uuid, "command": "kill"}).to_string();
-        let stop = tokio::time::timeout(self.kill_timeout, self.agent_cmd.execute(&kill));
+        // The kill runs to its end as the call's own task, even past the
+        // wait: one dropped half-way would leave the child claimed as
+        // stopping, so every later kill of it, and end_run, would refuse.
+        let agent_cmd = Arc::clone(&self.agent_cmd);
+        let killing =
+            super::call_work::spawn_in_call(async move { agent_cmd.execute(&kill).await });
+        let stop = tokio::time::timeout(self.kill_timeout, killing);
         let failed = match runtime.block_on(stop) {
-            Ok(Ok(result)) => match result.is_error {
+            Ok(Ok(Ok(result))) => match result.is_error {
                 false => return LaunchRefused::because(format!("{why}, so it was stopped")),
                 true => format!("stopping it failed: {}", result.content),
             },
+            Ok(Ok(Err(error))) => format!("stopping it failed: {error}"),
             Ok(Err(error)) => format!("stopping it failed: {error}"),
-            Err(_) => "stopping it timed out".into(),
+            Err(_) => "stopping it timed out (the stop goes on)".into(),
         };
         LaunchRefused::leaving(format!("{why}, so {failed}"), uuid)
     }
