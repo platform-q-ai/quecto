@@ -1,5 +1,5 @@
-//! Differential scenarios (#2274, epic #2265): usage accounting, the token
-//! budget and the inference admission read on the Python board and the
+//! Differential scenarios (#2274, epic #2265): usage accounting and the
+//! inference admission read on the Python board and the
 //! Rust board, compared after every step by result, refusal text and
 //! logical database dump (so every `request_usage` and `usage_budget`
 //! payload byte). Ported from the deleted Python suite `tests/swarm_helpers_test.py`, plus the
@@ -12,7 +12,10 @@ use serde_json::{Value, json};
 
 use crate::swarm_board_diff_membership::{at, create, snapshot};
 use crate::swarm_board_diff_runs::NOW;
-use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{Step, run_golden, sql, step_text};
+use crate::swarm_board_diff_runs::swarm_board_diff::Outcome;
+use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
+    Step, run_golden, run_rust, sql, step_text,
+};
 
 /// A running run of five coordinated by `parent`, with `worker` live.
 pub(crate) fn with_worker(more: impl IntoIterator<Item = Step>) -> Vec<Step> {
@@ -37,27 +40,6 @@ pub(crate) fn request(offset: f64, member: &str, record: Value) -> Step {
 
 fn read(offset: f64, member: &str, method: &str) -> Step {
     at(offset, member, method, json!([]))
-}
-
-/// `test_rejected_request_without_attempt_does_not_pause_usage_budget`.
-#[test]
-fn rejected_request_without_attempt_does_not_pause_usage_budget() {
-    run_golden(&with_worker([
-        at(3.0, "parent", "usage_budget", json!([100])),
-        at(
-            4.0,
-            "parent",
-            "usage_budget",
-            json!({"token_limit": 100, "strict_unknown": true}),
-        ),
-        request(
-            5.0,
-            "worker",
-            json!({"request_id": "rejected", "instrumented_attempts": 0, "outcome": "rejected"}),
-        ),
-        read(6.0, "parent", "usage_report"),
-        snapshot(7.0),
-    ]));
 }
 
 /// `test_request_redelivery_accepts_runtime_digest_becoming_available`:
@@ -189,67 +171,36 @@ fn a_real_request_observation_round_trips_identically() {
         "the fixed identity has the real one's shape"
     );
     let text = json!([value]).to_string();
-    run_golden(&with_worker([
-        at(3.0, "parent", "usage_budget", json!([4_000, false])),
-        step_text("worker", "_record_request", &text, NOW + 4.0),
-        step_text("worker", "_record_request", &text, NOW + 5.0),
-        read(6.0, "parent", "usage_report"),
-        read(7.0, "worker", "_request_admission"),
-    ]));
-}
-
-/// P3: `usage_budget` takes a limit Python's `type(limit) is int` accepts
-/// (`-0` is the int 0, refused; a bool, a float, text and `2**63` are
-/// refused) and a strictness that is a bool; a record's counts are ints
-/// (never a bool or a float) of 0 through `2**32 - 1`, `-0` included.
-#[test]
-fn loose_usage_arguments_are_taken_as_python_takes_them() {
-    let mut steps = with_worker([]);
-    let mut offset = 3.0;
-    let mut next = |member: &str, method: &str, args: &str| {
-        offset += 1.0;
-        step_text(member, method, args, NOW + offset)
+    // Python's golden of this scenario set a budget first (retired with
+    // budgets, owner decision 2026-10-14): the Rust board's answers are
+    // asserted instead.
+    let last = |more: Vec<Step>| match run_rust(&with_worker(more)) {
+        Outcome::Ok(answer) => answer,
+        other => panic!("{other:?}"),
     };
-    for args in [
-        "[0]",
-        "[-0]",
-        "[true]",
-        "[1.0]",
-        "[\"5\"]",
-        "[9223372036854775808]",
-        "[9223372036854775807, 1]",
-        "[5, null]",
-        "{\"token_limit\": null}",
-        "{\"token_limit\": 9223372036854775807, \"strict_unknown\": false}",
-        "[null, false]",
-    ] {
-        steps.push(next("parent", "usage_budget", args));
-    }
-    for args in [
-        "[[]]",
-        "[{\"request_id\": \"\", \"instrumented_attempts\": 0, \"outcome\": \"failed\"}]",
-        "[{\"request_id\": 5, \"instrumented_attempts\": 0, \"outcome\": \"failed\"}]",
-        "[{\"request_id\": \"r\", \"instrumented_attempts\": true, \"outcome\": \"failed\"}]",
-        "[{\"request_id\": \"r\", \"instrumented_attempts\": 1, \"outcome\": \"odd\"}]",
-        "[{\"request_id\": \"r\", \"instrumented_attempts\": 1, \"outcome\": \"failed\", \"output_tokens\": 1.0}]",
-        "[{\"request_id\": \"r\", \"instrumented_attempts\": 1, \"outcome\": \"failed\", \"input_tokens\": 4294967296}]",
-        "[{\"request_id\": \"r\", \"instrumented_attempts\": 1, \"outcome\": \"failed\", \"cache_write_tokens\": false}]",
-        "[{\"request_id\": \"r-0\", \"instrumented_attempts\": -0, \"outcome\": \"succeeded\", \"output_tokens\": -0, \"context_input_tokens\": 4294967295}]",
-        "[{\"request_id\": \"\\u00e9\\ud83d\\ude00\", \"instrumented_attempts\": 1, \"outcome\": \"succeeded\", \"input_tokens\": 3, \"extra\": [1.5, 1e16, {\"b\": 1, \"a\": null}]}]",
-        "{\"record\": {\"request_id\": \"named\", \"instrumented_attempts\": 0, \"outcome\": \"cancelled\"}}",
-    ] {
-        steps.push(next("worker", "_record_request", args));
-    }
-    let long_id = "i".repeat(129);
-    steps.push(next(
-        "worker",
-        "_record_request",
-        &json!([{"request_id": long_id, "instrumented_attempts": 0, "outcome": "failed"}])
-            .to_string(),
-    ));
-    steps.push(next("parent", "usage_report", "[]"));
-    steps.push(next("stranger", "_request_admission", "[]"));
-    steps.push(next("stranger", "_record_request", "[{}]"));
-    steps.push(next("worker", "_request_admission", "{}"));
-    run_golden(&steps);
+    let recorded = || step_text("worker", "_record_request", &text, NOW + 4.0);
+    let again = || step_text("worker", "_record_request", &text, NOW + 5.0);
+    let first = last(vec![recorded()]);
+    let redelivered = last(vec![recorded(), again()]);
+    assert_eq!(
+        (&first["status"], &first["budget"]["observed_tokens"]),
+        (&json!("running"), &json!(1_800))
+    );
+    assert_eq!(redelivered, first, "a redelivery changes nothing");
+    let report = last(vec![
+        recorded(),
+        again(),
+        read(6.0, "parent", "usage_report"),
+    ]);
+    assert_eq!(report["totals"]["requests"], json!(1), "{report}");
+    assert_eq!(
+        report["recent_requests"][0]["observation"], value,
+        "the stored record reads back as written"
+    );
+    let admission = last(vec![
+        recorded(),
+        again(),
+        read(7.0, "worker", "_request_admission"),
+    ]);
+    assert_eq!(admission["status"], json!("running"));
 }

@@ -1274,7 +1274,6 @@ const SWARM_BOARD_USE_CASES: &[&str] = &[
     "RecordEvidence",
     "RevalidateTask",
     // Usage accounting and the inference admission (#2274).
-    "ConfigureUsageBudget",
     "ReadRequestAdmission",
     "RecordRequestUsage",
     // Reservations, recovery and revocation (#2275).
@@ -1395,9 +1394,6 @@ const SWARM_BOARD_DTOS: &[&str] = &[
     "RevalidateTaskRequest",
     "StoredContract",
     // Usage accounting and the inference admission (#2274).
-    "BudgetChange",
-    "BudgetEffect",
-    "ConfigureUsageBudgetRequest",
     "NewRequestUsage",
     "RecordRequestUsageRequest",
     "RequestDelivery",

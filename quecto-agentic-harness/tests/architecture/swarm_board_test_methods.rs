@@ -21,7 +21,7 @@ const TEST_ONLY: [(&str, &str); 4] = [
 ];
 
 /// Method names every build serves.
-const SERVED: [(&str, &str); 56] = [
+const SERVED: [(&str, &str); 55] = [
     ("_status", "Status"),
     ("_board", "Board"),
     ("_board_revision", "BoardRevision"),
@@ -54,7 +54,6 @@ const SERVED: [(&str, &str); 56] = [
     ("revalidate_task", "RevalidateTask"),
     ("amend", "Amend"),
     ("evidence", "Evidence"),
-    ("usage_budget", "UsageBudget"),
     ("_record_request", "RecordRequest"),
     ("_request_admission", "RequestAdmission"),
     ("reserve", "Reserve"),

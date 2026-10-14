@@ -552,13 +552,11 @@ pub trait BoardUsage {
     /// nothing else: what the control receipt needs on every request.
     fn usage_standing(&self) -> Result<UsageStanding, BoardError>;
     /// `usage_report()['budget']`: the stored payload, or the default.
+    /// Reported only: nothing writes a budget (owner decision,
+    /// 2026-10-14), so a row is one an older board stored.
     fn usage_budget(&self) -> Result<Value, BoardError>;
     /// Makes the usage tables when absent, reading nothing.
     fn usage_tables(&self) -> Result<(), BoardError>;
-    /// `INSERT INTO usage_budget VALUES(1,?) ON CONFLICT(id) DO UPDATE`:
-    /// the budget row's payload becomes `budget` written by plain
-    /// `json.dumps` (insertion order, `", "` and `": "`).
-    fn configure_usage_budget(&self, budget: &Value) -> Result<(), BoardError>;
     /// The row of `request_id`, when the ledger holds one.
     fn request_usage(&self, request_id: &str) -> Result<Option<StoredRequestUsage>, BoardError>;
     /// `INSERT INTO request_usage VALUES(?,?,?,?,?,?,?,?,?,?)`, the

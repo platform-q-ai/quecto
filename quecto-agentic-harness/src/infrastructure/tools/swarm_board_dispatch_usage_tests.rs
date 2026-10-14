@@ -23,25 +23,23 @@ fn request_admission_answers_pythons_shape() {
     );
 }
 
-/// `usage_budget` answers the report with the budget in Python's
-/// insertion order; `_record_request` answers the control receipt, the
-/// run still running: a strict budget and an unmeasured request pause
-/// nothing (owner decision, 2026-10-14).
+/// `_record_request` answers the control receipt in Python's key order,
+/// the run still running, its budget the default no board writes over any
+/// more: an unmeasured request pauses nothing (owner decision,
+/// 2026-10-14). `usage_budget` is no method.
 #[test]
-fn usage_budget_and_record_request_answer_pythons_shapes() {
+fn record_request_answers_pythons_shape_and_usage_budget_is_gone() {
     let (_dir, handles) = board(1_000.0);
     running(&handles);
-    let report = call(&handles, "parent", "usage_budget", json!([100])).unwrap();
-    assert_eq!(
-        serde_json::to_string(&report["budget"]).unwrap(),
-        r#"{"token_limit":100,"strict_unknown":true,"warned":false}"#
-    );
-    assert_eq!(report["totals"]["requests"], json!(0));
     let receipt = call(&handles, "parent", "_record_request", json!([failed("r1")])).unwrap();
     assert_eq!(
         serde_json::to_string(&receipt).unwrap(),
-        r#"{"status":"running","outcome":null,"reason":null,"generation":0,"budget":{"token_limit":100,"strict_unknown":true,"warned":false,"observed_tokens":0,"unknown_usage_requests":1},"resume_blockers":[]}"#
+        r#"{"status":"running","outcome":null,"reason":null,"generation":0,"budget":{"token_limit":null,"strict_unknown":false,"warned":false,"observed_tokens":0,"unknown_usage_requests":1},"resume_blockers":[]}"#
     );
+    for args in [json!([100]), json!([null, false])] {
+        let refused = call(&handles, "parent", "usage_budget", args).unwrap_err();
+        assert_eq!(refused.kind(), RefusalKind::Calling, "{refused}");
+    }
 }
 
 /// Each argument binds Python's signature: `strict_unknown` defaults to
@@ -51,16 +49,6 @@ fn usage_methods_bind_pythons_signatures() {
     let (_dir, handles) = board(1_000.0);
     running(&handles);
     for (method, args, message) in [
-        (
-            "usage_budget",
-            json!([]),
-            "usage_budget: missing required argument token_limit",
-        ),
-        (
-            "usage_budget",
-            json!([1, true, 3]),
-            "usage_budget: takes 2 arguments, 3 given",
-        ),
         (
             "_record_request",
             json!({}),
@@ -82,36 +70,24 @@ fn usage_methods_bind_pythons_signatures() {
             BoardError::new(RefusalKind::Calling, message)
         );
     }
-    let report = call(
-        &handles,
-        "parent",
-        "usage_budget",
-        json!({"token_limit": null, "strict_unknown": false}),
-    )
-    .unwrap();
-    assert_eq!(report["budget"]["strict_unknown"], json!(false));
 }
 
-/// Each usage call leaves one record: INFO for `usage_budget` and
-/// `_record_request`, DEBUG for the admission read, each with the decision
-/// it took (a budget below the usage pauses nothing); a secret-shaped
-/// request id or record field never reaches the log.
+/// Each usage call leaves one record: INFO for `_record_request`, DEBUG
+/// for the admission read, each with the decision it took; a
+/// secret-shaped request id or record field never reaches the log.
 #[test]
 fn usage_calls_record_their_decisions_without_argument_text() {
     let secret = "sk-ant-api03-DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD";
-    let log = captured(9, |handles| {
+    let log = captured(6, |handles| {
         running(handles);
         let mut record = failed(secret);
         record["error_class"] = json!(format!("see {secret}"));
         record["context_input_tokens"] = json!(40);
         record["output_tokens"] = json!(0);
         for (method, args) in [
-            ("usage_budget", json!([100, false])),
-            ("usage_budget", json!([100, false])),
             ("_request_admission", json!([])),
             ("_record_request", json!([record.clone()])),
             ("_record_request", json!([record])),
-            ("usage_budget", json!([40, false])),
             ("_request_admission", json!([])),
         ] {
             call(handles, "parent", method, args).unwrap();
@@ -124,12 +100,9 @@ fn usage_calls_record_their_decisions_without_argument_text() {
         .skip(1)
         .collect();
     let expected = [
-        (" INFO ", "usage_budget", "ok", "configured"),
-        (" INFO ", "usage_budget", "ok", "unchanged"),
         ("DEBUG ", "_request_admission", "ok", "model_gate"),
         (" INFO ", "_record_request", "ok", "recorded"),
         (" INFO ", "_record_request", "ok", "redelivered"),
-        (" INFO ", "usage_budget", "ok", "configured"),
         ("DEBUG ", "_request_admission", "ok", "model_gate"),
         (" INFO ", "_record_request", "refused", "none"),
     ];
@@ -162,15 +135,16 @@ fn an_admission_read_under_a_spent_budget_records_its_gate_at_debug() {
     let known = json!({"request_id": "k", "instrumented_attempts": 1, "outcome": "succeeded",
         "context_input_tokens": 45, "output_tokens": 5,
         "runtime": {"process_instance_id": "p", "executable_sha256": "abc"}});
-    let log = captured_on(6, |handles, database| {
+    let log = captured_on(5, |handles, database| {
         running(handles);
         call(handles, "parent", "_record_request", json!([known.clone()])).unwrap();
         call(handles, "parent", "_record_request", json!([known.clone()])).unwrap();
+        // A budget row an older board stored: nothing writes one now.
         let budget = |limit: u64| {
             let written = rusqlite::Connection::open(database)
                 .unwrap()
                 .execute(
-                    "UPDATE usage_budget SET payload=? WHERE id=1",
+                    "INSERT OR REPLACE INTO usage_budget VALUES(1, ?)",
                     [format!(
                         r#"{{"token_limit": {limit}, "strict_unknown": false, "warned": false}}"#
                     )],
@@ -178,7 +152,6 @@ fn an_admission_read_under_a_spent_budget_records_its_gate_at_debug() {
                 .unwrap();
             assert_eq!(written, 1, "the budget row");
         };
-        call(handles, "parent", "usage_budget", json!([1_000, false])).unwrap();
         budget(60);
         let admitted = call(handles, "parent", "_request_admission", json!([])).unwrap();
         assert_eq!(admitted["status"], json!("running"));
@@ -194,7 +167,6 @@ fn an_admission_read_under_a_spent_budget_records_its_gate_at_debug() {
     let expected = [
         (" INFO ", "_record_request", "recorded"),
         (" INFO ", "_record_request", "replaced"),
-        (" INFO ", "usage_budget", "configured"),
         ("DEBUG ", "_request_admission", "model_gate"),
         ("DEBUG ", "_request_admission", "model_gate"),
     ];
@@ -299,15 +271,15 @@ fn a_retry_or_tool_gate_read_under_a_spent_budget_records_its_gate() {
     let known = json!({"request_id": "k", "instrumented_attempts": 1, "outcome": "succeeded",
         "context_input_tokens": 45, "output_tokens": 5,
         "runtime": {"process_instance_id": "p", "executable_sha256": "abc"}});
-    let log = captured_on(5, |handles, database| {
+    let log = captured_on(4, |handles, database| {
         running(handles);
         call(handles, "parent", "_record_request", json!([known.clone()])).unwrap();
-        call(handles, "parent", "usage_budget", json!([1_000, false])).unwrap();
+        // A budget row an older board stored: nothing writes one now.
         let budget = |limit: u64| {
             let written = rusqlite::Connection::open(database)
                 .unwrap()
                 .execute(
-                    "UPDATE usage_budget SET payload=? WHERE id=1",
+                    "INSERT OR REPLACE INTO usage_budget VALUES(1, ?)",
                     [format!(
                         r#"{{"token_limit": {limit}, "strict_unknown": false, "warned": false}}"#
                     )],

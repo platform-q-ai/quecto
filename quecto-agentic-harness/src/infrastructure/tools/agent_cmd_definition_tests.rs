@@ -33,16 +33,25 @@ fn latest_report_is_a_separate_cursor_neutral_command() {
     );
 }
 
+/// Owner decision, 2026-10-14: no token budget limits a swarm, so
+/// `swarm_control` takes no `usage_budget` action, and neither the action
+/// nor its fields are in the schema.
 #[test]
-fn supervisor_budget_command_preserves_explicit_limit_and_unknown_usage_policy() {
-    let (_, wire, _) = super::super::agent_cmd_parse::build_command(&serde_json::json!({
+fn swarm_control_takes_no_usage_budget_action() {
+    let refused = super::super::agent_cmd_parse::build_command(&serde_json::json!({
         "agent_id":"11111111-1111-4111-8111-111111111111", "command":"swarm_control",
         "action":"usage_budget", "token_limit":1000, "strict_unknown":false
     }))
-    .unwrap();
-    let command: serde_json::Value = serde_json::from_str(&wire).unwrap();
-    assert_eq!(command["token_limit"], 1000);
-    assert_eq!(command["strict_unknown"], false);
+    .unwrap_err();
+    assert_eq!(
+        refused.to_string(),
+        "swarm_control action must be pause, resume, close, extend, status"
+    );
+    let definition = AgentCmdTool::new(new_registry()).definition();
+    for gone in ["usage_budget", "token_limit", "strict_unknown"] {
+        assert!(!definition.parameters_schema.contains(gone), "{gone}");
+        assert!(!definition.description.contains(gone), "{gone}");
+    }
 }
 
 #[test]

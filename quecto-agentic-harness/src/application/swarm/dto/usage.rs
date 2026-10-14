@@ -1,7 +1,6 @@
 //! Usage accounting and inference admission (#2274): the
-//! requests and answers of `ConfigureUsageBudget`, `RecordRequestUsage` and
-//! `ReadRequestAdmission`, and the `request_usage` rows `BoardUsage` reads
-//! and writes.
+//! requests and answers of `RecordRequestUsage` and `ReadRequestAdmission`,
+//! and the `request_usage` rows `BoardUsage` reads and writes.
 //!
 //! As in [`super::control`], `actor` is the member the call acts as and
 //! every other argument stays the JSON value the caller passed: Python
@@ -9,37 +8,13 @@
 //! run time.
 use serde_json::Value;
 
-use super::{ControlReceipt, RunSnapshotView, UsageReport};
-
-/// `Workbench.usage_budget(token_limit, strict_unknown=True)` as `actor`.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ConfigureUsageBudgetRequest {
-    pub actor: String,
-    pub token_limit: Value,
-    pub strict_unknown: Value,
-}
+use super::{ControlReceipt, RunSnapshotView};
 
 /// `Workbench._record_request(record)` as `actor`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RecordRequestUsageRequest {
     pub actor: String,
     pub record: Value,
-}
-
-/// Whether `usage_budget` wrote a new budget or found it as asked.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum BudgetChange {
-    Configured,
-    Unchanged,
-}
-
-/// `usage_budget`'s answer: the report. A stored budget is reported, never
-/// applied: no token budget warns or pauses a run (owner decision,
-/// 2026-10-14).
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ConfiguredBudget {
-    pub change: BudgetChange,
-    pub report: UsageReport,
 }
 
 /// How `_record_request` took a record.

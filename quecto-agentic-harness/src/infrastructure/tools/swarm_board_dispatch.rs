@@ -70,14 +70,14 @@ use crate::application::swarm::ports::{BoardCallMeter, BoardOpLog, BoardReposito
 use crate::application::swarm::use_cases::{
     AcceptWake, AcknowledgeMessage, ActivateMember, AdmitMember, AmendRunContract, BlockTask,
     BootstrapMember, BootstrapRun, ClaimNotifications, ClaimTask, CloseRun, CompleteRun,
-    ConfigureUsageBudget, ConfirmMemberDead, CreateRun, CreateTask, ExtendRunDeadline, JoinMember,
-    JoinRun, ListFileOwners, ListTasks, LoseCoordinator, OverRepository, PauseRun,
-    QuarantineMember, ReadControlStatus, ReadEventCursor, ReadInbox, ReadRequestAdmission,
-    ReadRunEvents, ReadRunSnapshot, ReadRunStatus, ReadRunSummary, ReadRunTotals, ReadTask,
-    ReadUsageReport, RecordEvidence, RecordMemberLaunch, RecordRequestUsage, RecoverTask,
-    RegisterMemberSocket, ReleaseFiles, ReleaseTask, ReleaseUnlaunchedMember, ReserveFiles,
-    ResumeRun, ResumeRunExternally, RevalidateTask, RevokeTask, SendMessage, SetTaskDependencies,
-    StopRun, SubmitTask, UnblockTask, VerifyTask, WithdrawMessage,
+    ConfirmMemberDead, CreateRun, CreateTask, ExtendRunDeadline, JoinMember, JoinRun,
+    ListFileOwners, ListTasks, LoseCoordinator, OverRepository, PauseRun, QuarantineMember,
+    ReadControlStatus, ReadEventCursor, ReadInbox, ReadRequestAdmission, ReadRunEvents,
+    ReadRunSnapshot, ReadRunStatus, ReadRunSummary, ReadRunTotals, ReadTask, ReadUsageReport,
+    RecordEvidence, RecordMemberLaunch, RecordRequestUsage, RecoverTask, RegisterMemberSocket,
+    ReleaseFiles, ReleaseTask, ReleaseUnlaunchedMember, ReserveFiles, ResumeRun,
+    ResumeRunExternally, RevalidateTask, RevokeTask, SendMessage, SetTaskDependencies, StopRun,
+    SubmitTask, UnblockTask, VerifyTask, WithdrawMessage,
 };
 use crate::domain::swarm::{BoardError, BoardOpDetail, NameForm, RefusalKind};
 
@@ -134,7 +134,6 @@ pub struct SwarmBoardHandles {
     pub revalidate_task: Arc<RevalidateTask>,
     pub amend_run_contract: Arc<AmendRunContract>,
     pub record_evidence: Arc<RecordEvidence>,
-    pub configure_usage_budget: Arc<ConfigureUsageBudget>,
     pub record_request_usage: Arc<RecordRequestUsage>,
     pub read_request_admission: Arc<ReadRequestAdmission>,
     pub reserve_files: Arc<ReserveFiles>,
@@ -235,7 +234,6 @@ pub const BOARD_OPS: &[&str] = &[
     "revalidate_task",
     "amend",
     "evidence",
-    "usage_budget",
     "_record_request",
     "_request_admission",
     "reserve",
@@ -543,11 +541,6 @@ fn serve(
         Method::Evidence => {
             completion::evidence(&serving(&*handles.record_evidence, over), member, arguments)
         }
-        Method::UsageBudget => usage::usage_budget(
-            &serving(&*handles.configure_usage_budget, over),
-            member,
-            arguments,
-        ),
         Method::RecordRequest => usage::record_request(
             &serving(&*handles.record_request_usage, over),
             member,

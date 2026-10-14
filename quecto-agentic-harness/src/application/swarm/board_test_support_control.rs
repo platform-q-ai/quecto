@@ -62,13 +62,6 @@ impl BoardUsage for MemoryTransaction<'_> {
         Ok(())
     }
 
-    fn configure_usage_budget(&self, budget: &Value) -> Result<(), BoardError> {
-        self.note(format!("configure_usage_budget {budget}"));
-        let mut state = self.state.borrow_mut();
-        state.usage.get_or_insert_with(default_usage).budget = budget.clone();
-        Ok(())
-    }
-
     fn request_usage(&self, request_id: &str) -> Result<Option<StoredRequestUsage>, BoardError> {
         Ok(self
             .state

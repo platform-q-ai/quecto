@@ -11,8 +11,8 @@
 //! `resume`, `stop`, `_resume_external`, `_close`, `_extend_deadline`,
 //! `_control_status` and `usage_report` (#2273) by [`control`]; `complete`,
 //! `revalidate_task`, `amend` and the criterion `evidence` success needs
-//! (#2273) by [`completion`]; the usage methods `usage_budget`,
-//! `_record_request` and `_request_admission` (#2274, its gate #2339) by
+//! (#2273) by [`completion`]; the usage methods `_record_request` and
+//! `_request_admission` (#2274, its gate #2339) by
 //! [`usage`]; and the file reservations `reserve`, `release_files` and
 //! `file_owners`, with the coordinator's `recover` and `revoke` (#2275), by
 //! [`reservations`]; and the durable messages `send`, `withdraw`, `inbox`
@@ -72,7 +72,6 @@ pub(super) enum Method {
     RevalidateTask,
     Amend,
     Evidence,
-    UsageBudget,
     RecordRequest,
     RequestAdmission,
     Reserve,
@@ -155,7 +154,6 @@ impl Method {
             "revalidate_task" => Some(Self::RevalidateTask),
             "amend" => Some(Self::Amend),
             "evidence" => Some(Self::Evidence),
-            "usage_budget" => Some(Self::UsageBudget),
             "_record_request" => Some(Self::RecordRequest),
             "_request_admission" => Some(Self::RequestAdmission),
             "reserve" => Some(Self::Reserve),
@@ -225,7 +223,6 @@ impl Method {
             Self::RevalidateTask => "revalidate_task",
             Self::Amend => "amend",
             Self::Evidence => "evidence",
-            Self::UsageBudget => "usage_budget",
             Self::RecordRequest => "_record_request",
             Self::RequestAdmission => "_request_admission",
             Self::Reserve => "reserve",
@@ -305,7 +302,6 @@ impl Method {
             | Self::RevalidateTask
             | Self::Amend
             | Self::Evidence
-            | Self::UsageBudget
             | Self::RecordRequest
             | Self::Reserve
             | Self::ReleaseFiles
@@ -379,7 +375,6 @@ impl Method {
             | Self::RevalidateTask
             | Self::Amend
             | Self::Evidence
-            | Self::UsageBudget
             | Self::Reserve
             | Self::ReleaseFiles
             | Self::FileOwners
@@ -414,7 +409,6 @@ impl Method {
             | Self::ExtendDeadline
             | Self::Stop
             | Self::Complete
-            | Self::UsageBudget
             | Self::RecordRequest
             | Self::RequestAdmission
             | Self::Quarantine
@@ -481,7 +475,6 @@ impl Method {
             | Self::ResumeExternal
             | Self::ExtendDeadline
             | Self::Complete
-            | Self::UsageBudget
             | Self::RecordRequest
             | Self::RequestAdmission
             | Self::Quarantine
@@ -571,7 +564,6 @@ impl Method {
             | Self::RevalidateTask
             | Self::Amend
             | Self::Evidence
-            | Self::UsageBudget
             | Self::RecordRequest
             | Self::RequestAdmission
             | Self::Reserve
@@ -656,7 +648,6 @@ impl Method {
             Self::RevalidateTask => &completion::REVALIDATE_TASK,
             Self::Amend => &completion::AMEND,
             Self::Evidence => &completion::EVIDENCE,
-            Self::UsageBudget => &usage::USAGE_BUDGET,
             Self::RecordRequest => &usage::RECORD_REQUEST,
             Self::RequestAdmission => &usage::REQUEST_ADMISSION,
             Self::Reserve => &reservations::RESERVE,
