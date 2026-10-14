@@ -41,6 +41,8 @@ mod panic_strategy;
 /// kind (epic #2481 T1).
 #[path = "architecture/project_board_telemetry.rs"]
 mod project_board_telemetry;
+#[path = "architecture/provider_serialization.rs"]
+mod provider_serialization;
 /// Sessions capability (#1968, D1 #1970): plural capability, one
 /// construction site, one layout owner, retirement of the singular path.
 #[path = "architecture/sessions_capability.rs"]

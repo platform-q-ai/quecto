@@ -9,12 +9,16 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 pub use super::dto::NoPullRequestHost;
-use super::dto::{BoardListing, BoardOp, DraftUpdate, NewBoardTask, ProjectBoardError, ShownTask};
+use super::dto::{
+    BoardListing, BoardOp, DraftUpdate, NewBoardTask, PlanEdit, PlanProposal, ProjectBoardError,
+    ShownTask,
+};
 use super::ports::{BoardClock, BoardHead, BoardListings, KeepCopy};
 use super::use_cases::{
     BootstrapProjectBoard, ChangeBoardTask, ClearSetAside, CompleteMergedTask, CreateBoardTask,
-    QueryBoard, UpdateDraftTask,
+    EditPlan, ProposePlan, QueryBoard, UpdateDraftTask,
 };
+use crate::domain::project_board::entities::plan::Plan;
 use crate::domain::project_board::entities::task::Task;
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::vocabulary::TaskStatus;
@@ -42,12 +46,16 @@ pub enum BoardRequest {
     ListReady,
     ListTakeable,
     /// A task with its plans and runs; or, given a page, only that page of
-    /// its accepted plan.
-    Show(Slug, Option<PlanPage>),
+    /// its plan: the accepted one, or the version the view names.
+    Show(Slug, PlanView),
     Create(NewBoardTask),
     UpdateDraft(DraftUpdate),
     Change(Slug, BoardOp),
     Complete(Slug),
+    /// A new draft version of a task's plan (#2481 M4b).
+    ProposePlan(PlanProposal),
+    /// A draft plan patched: only the fields it gives change.
+    EditPlan(PlanEdit),
     /// Clear the file set aside at `path` whose contents are `object`,
     /// resolving every name listed more than once (`repeated`).
     Clear {
@@ -67,6 +75,8 @@ impl BoardRequest {
             | Self::UpdateDraft(_)
             | Self::Change(..)
             | Self::Complete(_)
+            | Self::ProposePlan(_)
+            | Self::EditPlan(_)
             | Self::Clear { .. } => true,
             Self::List(_) | Self::ListReady | Self::ListTakeable | Self::Show(..) => false,
         }
@@ -81,6 +91,8 @@ impl BoardRequest {
             | Self::UpdateDraft(_)
             | Self::Change(..)
             | Self::Complete(_)
+            | Self::ProposePlan(_)
+            | Self::EditPlan(_)
             | Self::ListTakeable => true,
             Self::Bootstrap
             | Self::Clear { .. }
@@ -89,6 +101,15 @@ impl BoardRequest {
             | Self::Show(..) => false,
         }
     }
+}
+
+/// Which plan a `show` gives and how much of it (#2481 M4b): the version
+/// named (`None`: the task's accepted plan), whole, or only the page
+/// named. The default is the accepted plan, whole.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct PlanView {
+    pub version: Option<u32>,
+    pub page: Option<PlanPage>,
 }
 
 /// Where a `show` reads on in its task's accepted plan (#2481 M4a review
@@ -143,8 +164,8 @@ pub enum BoardOutcome {
     },
     Listing(BoardListing),
     /// A task with its plans and runs, as one read of the board found it,
-    /// and the page of its accepted plan the request asked for, if any.
-    Shown(ShownTask, Option<PlanPage>),
+    /// and which plan the request asked for, and how much of it.
+    Shown(ShownTask, PlanView),
     /// A task changed; after a change that may complete it (and when it
     /// links pull requests), what came of completing it.
     Changed {
@@ -154,6 +175,8 @@ pub enum BoardOutcome {
     Cleared {
         head: BoardHead,
     },
+    /// A plan version proposed or edited, as written (#2481 M4b).
+    Planned(Plan),
 }
 
 /// The use cases and ports one run of [`RunBoardOperation`] is made of,
@@ -171,6 +194,8 @@ pub struct BoardOperationParts {
     pub create: CreateBoardTask,
     pub update: UpdateDraftTask,
     pub change: ChangeBoardTask,
+    pub propose_plan: ProposePlan,
+    pub edit_plan: EditPlan,
     pub clear: ClearSetAside,
     pub complete: Result<CompleteMergedTask, NoPullRequestHost>,
 }

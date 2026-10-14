@@ -28,6 +28,9 @@ fn record() -> BoardOpRecord {
         listing: None,
         plans: None,
         runs: None,
+        plan_version: None,
+        items: None,
+        roles: None,
         status_from: None,
         status_to: None,
         claim: None,
@@ -65,7 +68,9 @@ fn a_recording_writes_to_its_log_while_on() {
 
 /// One request of every kind, each naming task `a` where it names one.
 fn every_request() -> Vec<BoardRequest> {
-    use super::super::dto::{DraftUpdate, NewBoardTask, NewBoardTaskStatus};
+    use super::super::dto::{
+        DraftUpdate, NewBoardTask, NewBoardTaskStatus, PlanEdit, PlanProposal,
+    };
     use super::super::operations::ListFilter;
     use crate::domain::project_board::value_objects::vocabulary::{TaskKind, TaskStatus};
     let a = Slug::parse("a").unwrap();
@@ -75,7 +80,7 @@ fn every_request() -> Vec<BoardRequest> {
         BoardRequest::List(ListFilter::Children(a.clone())),
         BoardRequest::ListReady,
         BoardRequest::ListTakeable,
-        BoardRequest::Show(a.clone(), None),
+        BoardRequest::Show(a.clone(), super::super::operations::PlanView::default()),
         BoardRequest::Create(NewBoardTask {
             id: a.clone(),
             title: "A".into(),
@@ -104,6 +109,20 @@ fn every_request() -> Vec<BoardRequest> {
             object: "0".repeat(40),
             repeated: Default::default(),
         },
+        BoardRequest::ProposePlan(PlanProposal {
+            task: a.clone(),
+            approach: String::new(),
+            items: vec![],
+            team: None,
+        }),
+        BoardRequest::EditPlan(PlanEdit {
+            task: a.clone(),
+            version: 1,
+            approach: Some("A".into()),
+            items: None,
+            team: None,
+            expected_updated: None,
+        }),
     ]
 }
 
@@ -163,6 +182,8 @@ fn a_request_names_its_task_and_pull_request() {
             (OpKind::UnlinkPr, Some("a"), Some(8)),
             task(OpKind::Complete),
             none(OpKind::ClearSetAside),
+            task(OpKind::ProposePlan),
+            task(OpKind::EditPlan),
         ]
     );
 }
@@ -212,6 +233,8 @@ mod facts {
             normalised: Some(Normalised {
                 title: Some(vec![]),
                 description: None,
+                approach: None,
+                items: None,
             }),
             plans: Some(2),
             runs: Some(1),
@@ -253,9 +276,14 @@ mod facts {
             normalised: Some(Normalised {
                 title: None,
                 description: Some(vec![TextChange::Crlf]),
+                approach: None,
+                items: None,
             }),
             plans: Some(4),
             runs: Some(0),
+            plan_version: Some(3),
+            items: Some(7),
+            roles: Some(0),
         };
         let mut record = record();
         facts.fill(&mut record);
@@ -268,6 +296,7 @@ mod facts {
             "attempts": 2, "lost": 1, "pause_ms": 70,
             "completion": "pending", "prs_linked": 1,
             "normalised": {"description": ["crlf"]}, "plans": 4, "runs": 0,
+            "plan_version": 3, "items": 7, "roles": 0,
         });
         assert_eq!(line, want);
     }

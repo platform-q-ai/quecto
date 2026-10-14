@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use super::*;
 use crate::application::project_board::dto::{NewBoardTask, NewBoardTaskStatus};
-use crate::application::project_board::operations::NoPullRequestHost;
 use crate::application::project_board::operations::query_listings::{QueryListings, assembled};
+use crate::application::project_board::operations::{NoPullRequestHost, PlanView};
 use crate::application::project_board::ports::{PullRequestState, PullRequestStates};
 use crate::application::project_board::use_cases::QueryBoard;
 use crate::application::project_board::use_cases::fixtures_tests::{
@@ -75,7 +75,9 @@ fn a_completion_is_pending_until_the_pull_requests_merge() {
         panic!("{review:?}")
     };
     assert_eq!(done.fields().status, TaskStatus::Done);
-    let shown = ops.execute(&BoardRequest::Show(a, None)).unwrap();
+    let shown = ops
+        .execute(&BoardRequest::Show(a, PlanView::default()))
+        .unwrap();
     let BoardOutcome::Shown(shown, _) = shown else {
         panic!("{shown:?}")
     };
@@ -154,11 +156,11 @@ fn show_tells_a_task_set_aside_from_one_not_on_the_board() {
     ops.execute(&ready_task("b")).unwrap();
     store.quarantine("b", "malformed");
     assert_eq!(
-        ops.execute(&BoardRequest::Show(slug("b"), None)),
+        ops.execute(&BoardRequest::Show(slug("b"), PlanView::default())),
         Err(set_aside_task("b"))
     );
     assert_eq!(
-        ops.execute(&BoardRequest::Show(slug("c"), None)),
+        ops.execute(&BoardRequest::Show(slug("c"), PlanView::default())),
         Err(ProjectBoardError::NotFound(slug("c")))
     );
     // With no pull request host, a task not on the board is answered as
@@ -250,7 +252,7 @@ fn a_complete_with_no_host_looks_the_task_up_alone() {
     let listings = Arc::new(QueryListings(QueryBoard::new(Arc::clone(&store))));
     let ops = assembled(store, SetClock::at("10:00:00"), listings, no_host()).unwrap();
     assert!(matches!(
-        ops.execute(&BoardRequest::Show(slug("a"), None)),
+        ops.execute(&BoardRequest::Show(slug("a"), PlanView::default())),
         Err(ProjectBoardError::Duplicate { .. })
     ));
     assert_eq!(
@@ -306,6 +308,8 @@ mod noted {
         let normalised = Normalised {
             title: Some(vec![TextChange::EdgeSpace]),
             description: Some(vec![TextChange::Crlf, TextChange::TrailingSpace]),
+            approach: None,
+            items: None,
         };
         let want = OpFacts {
             status_to: Some(TaskStatus::Draft),
@@ -333,6 +337,8 @@ mod noted {
             normalised: Some(Normalised {
                 title: None,
                 description: Some(vec![]),
+                approach: None,
+                items: None,
             }),
             ..OpFacts::default()
         };
@@ -554,7 +560,7 @@ mod noted {
         let ops = operations(&store, SetClock::at("10:00:00"), no_host());
         ops.execute(&BoardRequest::Bootstrap).unwrap();
         ops.execute(&ready_task("a")).unwrap();
-        let (_, facts) = noted(&ops, &BoardRequest::Show(slug("a"), None));
+        let (_, facts) = noted(&ops, &BoardRequest::Show(slug("a"), PlanView::default()));
         let none = OpFacts {
             plans: Some(0),
             runs: Some(0),
@@ -569,7 +575,7 @@ mod noted {
             BoardArtifact::Plan(plan("b", 1)),
         ];
         store.write(&head, &seeded, "board: seed").unwrap();
-        let (shown, facts) = noted(&ops, &BoardRequest::Show(slug("a"), None));
+        let (shown, facts) = noted(&ops, &BoardRequest::Show(slug("a"), PlanView::default()));
         assert!(shown.is_ok(), "{shown:?}");
         let want = OpFacts {
             plans: Some(2),
@@ -577,8 +583,19 @@ mod noted {
             ..OpFacts::default()
         };
         assert_eq!(facts, want);
-        let (refused, facts) = noted(&ops, &BoardRequest::Show(slug("b"), None));
+        let (refused, facts) = noted(&ops, &BoardRequest::Show(slug("b"), PlanView::default()));
         assert_eq!(refused, Err(ProjectBoardError::NotFound(slug("b"))));
         assert_eq!(facts, OpFacts::default());
+        // #2481 M4b: a show of a named version records it, found or not.
+        let named = |version| PlanView {
+            version: Some(version),
+            page: None,
+        };
+        let (shown, facts) = noted(&ops, &BoardRequest::Show(slug("a"), named(2)));
+        assert!(shown.is_ok(), "{shown:?}");
+        assert_eq!(facts.plan_version, Some(2));
+        let (unknown, facts) = noted(&ops, &BoardRequest::Show(slug("a"), named(7)));
+        assert!(unknown.is_err(), "{unknown:?}");
+        assert_eq!((facts.plan_version, facts.plans), (Some(7), Some(2)));
     }
 }

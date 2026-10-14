@@ -167,7 +167,14 @@ fn widest(description: String) -> ShownTask {
 }
 
 fn answered(shown: ShownTask) -> Value {
-    outcome("show", &BoardOutcome::Shown(shown, None), None)
+    outcome(
+        "show",
+        &BoardOutcome::Shown(
+            shown,
+            crate::application::project_board::operations::PlanView::default(),
+        ),
+        None,
+    )
 }
 
 fn bytes(value: &Value) -> usize {
@@ -403,7 +410,13 @@ fn pages_read_on_through_the_whole_plan() {
         assert!(pages < 100, "pages always read on");
         let answer = outcome(
             "show",
-            &BoardOutcome::Shown(shown.clone(), Some(page)),
+            &BoardOutcome::Shown(
+                shown.clone(),
+                crate::application::project_board::operations::PlanView {
+                    version: None,
+                    page: Some(page),
+                },
+            ),
             None,
         );
         let cut = capped(answer);

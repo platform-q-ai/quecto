@@ -978,9 +978,9 @@
       "op": null,
       "error": {
         "code": "invalid_request",
-        "message": "op: must be one of bootstrap, list, list_ready, list_takeable, show, create, update_draft, move, renew, take_over, link_pr, unlink_pr, complete, clear_set_aside",
+        "message": "op: must be one of bootstrap, list, list_ready, list_takeable, show, create, update_draft, move, renew, take_over, link_pr, unlink_pr, complete, propose_plan, edit_plan, clear_set_aside",
         "field": "op",
-        "problem": "must be one of bootstrap, list, list_ready, list_takeable, show, create, update_draft, move, renew, take_over, link_pr, unlink_pr, complete, clear_set_aside"
+        "problem": "must be one of bootstrap, list, list_ready, list_takeable, show, create, update_draft, move, renew, take_over, link_pr, unlink_pr, complete, propose_plan, edit_plan, clear_set_aside"
       }
     }
   },
@@ -1369,6 +1369,250 @@
         "task": "epic",
         "by": "d1"
       }
+    }
+  },
+  {
+    "request": {
+      "op": "propose_plan",
+      "task": "epic",
+      "approach": "Spike the store.\r\nThen build. \r\n",
+      "items": [
+        {
+          "id": "schema",
+          "title": " Schema",
+          "criteria": [
+            "Migrates\tcleanly"
+          ]
+        },
+        {
+          "id": "api",
+          "title": "API",
+          "criteria": [
+            "Serves the CLI"
+          ],
+          "depends_on": [
+            "schema"
+          ]
+        }
+      ],
+      "team": {
+        "roles": [
+          {
+            "name": "coordinator",
+            "model": "gpt-5.5",
+            "effort": "high",
+            "members": 1
+          },
+          {
+            "name": "worker",
+            "model": "gpt-5.5-mini",
+            "effort": "medium",
+            "members": 2,
+            "turns": 40
+          }
+        ],
+        "budget_tokens": 2000000,
+        "deadline": null,
+        "image": null
+      }
+    },
+    "answer": {
+      "ok": true,
+      "op": "propose_plan",
+      "plan": {
+        "task": "epic",
+        "version": 1,
+        "state": "draft",
+        "proposed_by": {
+          "name": "Ada",
+          "email": "ada@example.com"
+        },
+        "edited_by": null,
+        "created": "2026-10-10T10:00:00Z",
+        "updated": "2026-10-10T10:00:00Z"
+      }
+    }
+  },
+  {
+    "as": "Bob",
+    "request": {
+      "op": "edit_plan",
+      "task": "epic",
+      "version": 1,
+      "items": [
+        {
+          "id": "schema",
+          "title": "Schema",
+          "criteria": [
+            "Migrates cleanly"
+          ]
+        }
+      ],
+      "expected_updated": "2026-10-10T10:00:00Z"
+    },
+    "answer": {
+      "ok": true,
+      "op": "edit_plan",
+      "plan": {
+        "task": "epic",
+        "version": 1,
+        "state": "draft",
+        "proposed_by": {
+          "name": "Ada",
+          "email": "ada@example.com"
+        },
+        "edited_by": {
+          "name": "Bob",
+          "email": "bob@example.com"
+        },
+        "created": "2026-10-10T10:00:00Z",
+        "updated": "2026-10-10T10:00:01Z"
+      }
+    }
+  },
+  {
+    "request": {
+      "op": "edit_plan",
+      "task": "epic",
+      "version": 1,
+      "team": null,
+      "expected_updated": "2026-10-10T10:00:00Z"
+    },
+    "answer": {
+      "ok": false,
+      "op": "edit_plan",
+      "error": {
+        "code": "rule",
+        "message": "plan version 1 changed since it was read (updated 2026-10-10T10:00:01Z); read it again",
+        "rule": {
+          "code": "plan_changed",
+          "version": 1,
+          "updated": "2026-10-10T10:00:01Z"
+        }
+      }
+    }
+  },
+  {
+    "request": {
+      "op": "edit_plan",
+      "task": "epic",
+      "version": 1
+    },
+    "answer": {
+      "ok": false,
+      "op": "edit_plan",
+      "error": {
+        "code": "invalid_request",
+        "message": "op: edit_plan sets nothing: name a field to change",
+        "field": "op",
+        "problem": "edit_plan sets nothing: name a field to change"
+      }
+    }
+  },
+  {
+    "request": {
+      "op": "edit_plan",
+      "task": "epic",
+      "version": 2,
+      "approach": "Other."
+    },
+    "answer": {
+      "ok": false,
+      "op": "edit_plan",
+      "error": {
+        "code": "rule",
+        "message": "the task has no plan version 2",
+        "rule": {
+          "code": "unknown_plan_version",
+          "version": 2
+        }
+      }
+    }
+  },
+  {
+    "request": {
+      "op": "propose_plan",
+      "task": "t3",
+      "approach": "Late.",
+      "items": []
+    },
+    "answer": {
+      "ok": false,
+      "op": "propose_plan",
+      "error": {
+        "code": "rule",
+        "message": "a done task's plans are settled",
+        "rule": {
+          "code": "task_finished",
+          "status": "done"
+        }
+      }
+    }
+  },
+  {
+    "request": {
+      "op": "propose_plan",
+      "task": "epic",
+      "approach": "",
+      "items": [
+        {
+          "id": "x",
+          "title": "X",
+          "criteria": [
+            7
+          ]
+        }
+      ]
+    },
+    "answer": {
+      "ok": false,
+      "op": "propose_plan",
+      "error": {
+        "code": "invalid_request",
+        "message": "items/0/criteria/0: must be text",
+        "field": "items/0/criteria/0",
+        "problem": "must be text"
+      }
+    }
+  },
+  {
+    "request": {
+      "op": "show",
+      "task": "epic"
+    },
+    "answer": {
+      "ok": true,
+      "op": "show",
+      "head": "r37",
+      "task": {
+        "id": "epic",
+        "title": "Project boards",
+        "kind": "epic",
+        "description": "",
+        "status": "draft",
+        "parent": null,
+        "depends_on": [],
+        "accepted_plan": null,
+        "claim": null,
+        "prs": [],
+        "created": "2026-10-10T10:00:00Z",
+        "updated": "2026-10-10T10:00:01Z"
+      },
+      "plan": null,
+      "plans": [
+        {
+          "version": 1,
+          "state": "draft",
+          "proposed_by": {
+            "name": "Ada",
+            "email": "ada@example.com"
+          },
+          "updated": "2026-10-10T10:00:01Z"
+        }
+      ],
+      "runs": [],
+      "may_be_incomplete": false,
+      "quarantined": []
     }
   }
 ]

@@ -120,7 +120,14 @@ fn shown(plans: Vec<Plan>, runs: Vec<Run>, set_aside: Vec<QuarantinedFile>) -> S
 }
 
 fn answered(shown: ShownTask) -> Value {
-    outcome("show", &BoardOutcome::Shown(shown, None), None)
+    outcome(
+        "show",
+        &BoardOutcome::Shown(
+            shown,
+            crate::application::project_board::operations::PlanView::default(),
+        ),
+        None,
+    )
 }
 
 /// The golden answer: every field in its order.
@@ -373,7 +380,13 @@ fn a_page_answers_only_the_parts_it_names_from_where_it_names() {
     let paged = |plans: Vec<Plan>, page: Option<PlanPage>| {
         outcome(
             "show",
-            &BoardOutcome::Shown(shown(plans, vec![], vec![]), page),
+            &BoardOutcome::Shown(
+                shown(plans, vec![], vec![]),
+                crate::application::project_board::operations::PlanView {
+                    version: None,
+                    page,
+                },
+            ),
             None,
         )
     };
@@ -385,6 +398,7 @@ fn a_page_answers_only_the_parts_it_names_from_where_it_names() {
             "ok": true, "op": "show", "head": "0".repeat(40), "task": "a",
             "plan": {
                 "version": 2,
+                "updated": "2026-10-10T08:30:00Z",
                 "approach_from": 7,
                 "approach": "then build.",
                 "items_from": 0,
@@ -396,12 +410,12 @@ fn a_page_answers_only_the_parts_it_names_from_where_it_names() {
     let items_only = paged(accepted(), PlanPage::of(None, Some(1)));
     assert_eq!(
         items_only["plan"],
-        json!({"version": 2, "items_from": 1, "items": []})
+        json!({"version": 2, "updated": "2026-10-10T08:30:00Z", "items_from": 1, "items": []})
     );
     let past = paged(accepted(), PlanPage::of(Some(9_999), None));
     assert_eq!(
         past["plan"],
-        json!({"version": 2, "approach_from": 9_999, "approach": ""})
+        json!({"version": 2, "updated": "2026-10-10T08:30:00Z", "approach_from": 9_999, "approach": ""})
     );
     let none = paged(
         vec![plan(1, PlanState::Superseded)],

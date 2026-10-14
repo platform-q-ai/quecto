@@ -9,12 +9,13 @@ use super::request::{Kind, RequestError, fields_of};
 use crate::domain::project_board::value_objects::telemetry::FaultKind;
 
 /// The request `op` and `flags` name. A list of ids is comma-separated (an
-/// empty value is the empty list); `--repeated` is JSON; `--parent ""`
+/// empty value is the empty list); `--repeated`, `--items` and `--team`
+/// are JSON (`--team null` takes a draft's team away); `--parent ""`
 /// takes a draft's parent away.
 ///
 /// # Errors
 /// An unknown op, a flag the op does not take or gives twice, a flag
-/// without a value, an empty id in a list, or `--repeated` that is not
+/// without a value, an empty id in a list, or a JSON flag that is not
 /// JSON.
 pub fn request(op: &str, flags: &[String]) -> Result<Value, RequestError> {
     let refused = |field: &str, problem: &str, fault| RequestError::of(field, problem, fault);
@@ -48,7 +49,7 @@ pub fn request(op: &str, flags: &[String]) -> Result<Value, RequestError> {
                 Value::Array(ids.into_iter().map(|id| Value::String(id.into())).collect())
             }
             Kind::OptionalSlug if text.is_empty() => Value::Null,
-            Kind::Pr | Kind::Offset => text
+            Kind::Pr | Kind::Offset | Kind::Version => text
                 .parse::<u64>()
                 .map(Value::from)
                 .unwrap_or_else(|_| Value::String(text.clone())),
@@ -61,7 +62,7 @@ pub fn request(op: &str, flags: &[String]) -> Result<Value, RequestError> {
             | Kind::TaskKind
             | Kind::Path
             | Kind::ObjectId => Value::String(text.clone()),
-            Kind::Repeated => strict(text).map_err(|error| {
+            Kind::Repeated | Kind::PlanItems | Kind::Team => strict(text).map_err(|error| {
                 refused(&name, &format!("must be JSON: {error}"), error.fault())
             })?,
         };

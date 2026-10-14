@@ -183,9 +183,19 @@ fn cleared(board: &Board, clear: &SetAsideClear) -> Result<(Board, ClearKeeps), 
             kept.push(path.clone());
         }
     }
-    after
-        .quarantined
-        .retain(|file| !clear.repeated.contains_key(&file.path));
+    // The copies of the names this clear resolved leave the listing; every
+    // other file set aside stays listed as it was.
+    let (resolved, left): (Vec<QuarantinedFile>, Vec<QuarantinedFile>) =
+        std::mem::take(&mut after.quarantined)
+            .into_iter()
+            .partition(|file| clear.repeated.contains_key(&file.path));
+    debug_assert!(
+        resolved
+            .iter()
+            .all(|file| repeated.contains_key(&file.path)),
+        "a clear resolves only names listed twice"
+    );
+    after.quarantined = left;
     let keeps = match kept.is_empty() {
         true => ClearKeeps::Nothing,
         false => ClearKeeps::Copies(kept),
