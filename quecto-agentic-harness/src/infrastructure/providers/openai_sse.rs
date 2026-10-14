@@ -126,7 +126,7 @@ impl SseHandler for OpenAiSseHandler {
             // or end of file would send the partial reply as a whole one.
             if crate::infrastructure::providers::attempt_profile::is_stream_error_chunk(&chunk) {
                 let message = crate::infrastructure::providers::provider_diagnostics::stream_raw(
-                    "OpenAI", data, &chunk,
+                    "OpenAI", data,
                 );
                 let _ = tx.send(StreamEvent::Error(message)).await;
                 return SseLineOutcome::Done;

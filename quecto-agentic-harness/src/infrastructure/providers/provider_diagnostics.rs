@@ -53,18 +53,27 @@ fn render(status: u16, vendor: &str, class: ProviderErrorClass, refusal: &str) -
     text
 }
 
-pub(super) fn http(status: u16, vendor: &str, body: &str) -> String {
-    let value = match body.len() <= BODY_LIMIT {
-        true => serde_json::from_str::<serde_json::Value>(body).ok(),
+/// The HTTP formatter and receipt share the same accepted error envelope.
+pub(super) fn http_error_envelope(value: &serde_json::Value) -> &serde_json::Value {
+    value
+        .get("error")
+        .filter(|v| v.is_object())
+        .unwrap_or(value)
+}
+
+pub(super) fn raw_json(raw: &str) -> Option<serde_json::Value> {
+    match raw.len() <= BODY_LIMIT {
+        true => serde_json::from_str(raw).ok(),
         false => None,
-    };
+    }
+}
+
+pub(super) fn http(status: u16, vendor: &str, body: &str) -> String {
+    let value = raw_json(body);
     let mut class = ProviderErrorClass::from_status(status);
     let mut refusal = false;
     if let Some(value) = value.as_ref().filter(|v| v.is_object()) {
-        let error = value
-            .get("error")
-            .filter(|v| v.is_object())
-            .unwrap_or(value);
+        let error = http_error_envelope(value);
         let fields = [error["type"].as_str(), error["code"].as_str()];
         if fields.into_iter().flatten().any(is_billing_error_name) {
             class = ProviderErrorClass::Billing;
@@ -134,10 +143,12 @@ impl std::io::Write for Budget {
     }
 }
 
-pub(super) fn stream_raw(vendor: &str, raw: &str, value: &serde_json::Value) -> String {
-    match raw.len() <= BODY_LIMIT {
-        true => stream(vendor, value),
-        false => render(502, vendor, ProviderErrorClass::Server, "none"),
+pub(super) fn stream_raw(vendor: &str, raw: &str) -> String {
+    // Legacy assembled framing may trim Unicode whitespace. Only the valid
+    // bounded RAW JSON, not that normalized value, grants error semantics.
+    match raw_json(raw) {
+        Some(value) => stream(vendor, &value),
+        None => render(502, vendor, ProviderErrorClass::Server, "none"),
     }
 }
 

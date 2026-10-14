@@ -47,27 +47,37 @@ pub(super) fn headers<'a>(values: impl IntoIterator<Item = (&'a str, &'a str)>) 
 }
 pub(super) fn typed(d: &mut AttemptDiagnostics, value: &serde_json::Value) {
     for error in [&value["error"], &value["response"]["error"]] {
-        for field in ["code", "type"] {
-            let code = match error[field].as_str() {
-                Some("rate_limit_exceeded" | "rate_limit_error") => ErrorCode::RateLimitExceeded,
-                Some("overloaded_error") => ErrorCode::Overloaded,
-                Some("server_error") => ErrorCode::ServerError,
-                Some("insufficient_quota") => ErrorCode::InsufficientQuota,
-                Some("usage_limit_reached") => ErrorCode::UsageLimitReached,
-                Some("authentication_error") => ErrorCode::AuthenticationError,
-                Some("permission_error") => ErrorCode::PermissionError,
-                Some("invalid_request_error") => ErrorCode::InvalidRequestError,
-                Some("invalid_api_key") => ErrorCode::InvalidApiKey,
-                _ => continue,
-            };
-            d.error_code = Some(code);
-        }
+        typed_error(d, error);
     }
     d.incomplete_reason = match value["response"]["incomplete_details"]["reason"].as_str() {
         Some("max_output_tokens") => Some(IncompleteReason::MaxOutputTokens),
         Some("content_filter") => Some(IncompleteReason::ContentFilter),
         _ => d.incomplete_reason,
     };
+}
+fn typed_error(d: &mut AttemptDiagnostics, error: &serde_json::Value) {
+    for field in ["code", "type"] {
+        let code = match error[field].as_str() {
+            Some("rate_limit_exceeded" | "rate_limit_error") => ErrorCode::RateLimitExceeded,
+            Some("overloaded_error") => ErrorCode::Overloaded,
+            Some("server_error") => ErrorCode::ServerError,
+            Some("insufficient_quota") => ErrorCode::InsufficientQuota,
+            Some("usage_limit_reached") => ErrorCode::UsageLimitReached,
+            Some("authentication_error") => ErrorCode::AuthenticationError,
+            Some("permission_error") => ErrorCode::PermissionError,
+            Some("invalid_request_error") => ErrorCode::InvalidRequestError,
+            Some("invalid_api_key") => ErrorCode::InvalidApiKey,
+            _ => continue,
+        };
+        d.error_code = Some(code);
+    }
+}
+pub(super) fn typed_http(d: &mut AttemptDiagnostics, value: &serde_json::Value) {
+    typed_error(
+        d,
+        crate::infrastructure::providers::provider_diagnostics::http_error_envelope(value),
+    );
+    typed(d, value);
 }
 pub(super) fn unix_ms() -> u64 {
     std::time::SystemTime::now()

@@ -152,26 +152,24 @@ impl Receipt {
         }
     }
     fn http_error(&self, status: u16, body: &str) {
-        let value = serde_json::from_str::<serde_json::Value>(body).unwrap_or_default();
-        let terminal = [&value["error"], &value["response"]["error"]]
-            .iter()
-            .any(|error| {
-                ["type", "code"].iter().any(|field| {
-                    error[*field].as_str().is_some_and(|name| {
-                        crate::domain::inference::services::provider_error::is_billing_error_name(
-                            name,
-                        ) || matches!(
+        let value = super::provider_diagnostics::raw_json(body).unwrap_or_default();
+        let error = super::provider_diagnostics::http_error_envelope(&value);
+        let terminal = [error, &value["response"]["error"]].iter().any(|error| {
+            ["type", "code"].iter().any(|field| {
+                error[*field].as_str().is_some_and(|name| {
+                    crate::domain::inference::services::provider_error::is_billing_error_name(name)
+                        || matches!(
                             name,
                             "authentication_error"
                                 | "permission_error"
                                 | "invalid_request_error"
                                 | "invalid_api_key"
                         )
-                    })
                 })
-            });
+            })
+        });
         let mut state = self.0.lock().unwrap();
-        diagnostics::typed(&mut state.diagnostics, &value);
+        diagnostics::typed_http(&mut state.diagnostics, &value);
         state.failure = true;
         let throttled = matches!(status, 429 | 529) || is_typed_throttle(&value);
         let state = &mut *state;

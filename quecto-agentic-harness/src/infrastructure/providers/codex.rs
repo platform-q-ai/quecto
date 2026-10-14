@@ -325,11 +325,8 @@ impl CodexProvider {
             }
             if let Ok(event) = serde_json::from_str::<serde_json::Value>(data) {
                 if Self::is_stream_failure(&event) {
-                    let error = super::provider_diagnostics::stream_raw(
-                        "Codex",
-                        raw_data.unwrap_or(data),
-                        &event,
-                    );
+                    let error =
+                        super::provider_diagnostics::stream_raw("Codex", raw_data.unwrap_or(data));
                     return Err(DomainError::Provider(error).into());
                 }
                 acc.handle_event(&event)?;

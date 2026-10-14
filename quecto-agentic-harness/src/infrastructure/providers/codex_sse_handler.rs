@@ -84,7 +84,7 @@ impl SseHandler for CodexSseHandler {
         if let Ok(event) = serde_json::from_str::<serde_json::Value>(data) {
             if CodexProvider::is_stream_failure(&event) {
                 let error = crate::infrastructure::providers::provider_diagnostics::stream_raw(
-                    "Codex", data, &event,
+                    "Codex", data,
                 );
                 self.saw_terminal = true;
                 let _ = tx.send(StreamEvent::Error(error)).await;

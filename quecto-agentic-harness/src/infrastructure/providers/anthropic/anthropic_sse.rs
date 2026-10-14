@@ -467,7 +467,12 @@ impl AnthropicProvider {
                 raw_data.unwrap_or(data).len()
                     <= crate::infrastructure::providers::provider_diagnostics::BODY_LIMIT,
             ) {
-                ("error", true) => serde_json::from_str(data).unwrap_or_default(),
+                ("error", true) => {
+                    crate::infrastructure::providers::provider_diagnostics::raw_json(
+                        raw_data.unwrap_or(data),
+                    )
+                    .unwrap_or_default()
+                }
                 ("error", _) => serde_json::Value::Null,
                 _ => serde_json::from_str(data).unwrap_or_default(),
             };

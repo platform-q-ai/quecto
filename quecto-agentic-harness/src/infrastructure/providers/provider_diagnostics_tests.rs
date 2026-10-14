@@ -120,13 +120,24 @@ fn finite_payload_boundaries_and_refusal_controls() {
                 format!("HTTP 429 from {vendor}: class=rate_limit; refusal=none")
             );
         }
-        let value: serde_json::Value = serde_json::from_str(core).unwrap();
+        for suffix in [" ", "\t", "\r", "\n"] {
+            assert_eq!(
+                stream_raw(vendor, &format!("{core}{suffix}")),
+                format!("HTTP 402 from {vendor}: class=billing; refusal=none")
+            );
+        }
+        for suffix in ["\u{00a0}", "\u{2003}", "\u{202f}"] {
+            assert_eq!(
+                stream_raw(vendor, &format!("{core}{suffix}")),
+                format!("HTTP 502 from {vendor}: class=server; refusal=none")
+            );
+        }
         assert_eq!(
-            stream_raw(vendor, &at_limit, &value),
+            stream_raw(vendor, &at_limit),
             format!("HTTP 402 from {vendor}: class=billing; refusal=none")
         );
         assert_eq!(
-            stream_raw(vendor, &(at_limit + " "), &value),
+            stream_raw(vendor, &(at_limit + " ")),
             format!("HTTP 502 from {vendor}: class=server; refusal=none")
         );
     }
@@ -320,18 +331,5 @@ fn provider_diagnostics_each_recognized_declaration_must_allow_refusal() {
     ] {
         let body = serde_json::json!({"error":{"type":kind,"code":code}}).to_string();
         assert!(model_refusal(&DomainError::Provider(http(404, "OpenAI", &body))).is_some());
-    }
-}
-
-#[test]
-fn anthropic_error_budget_parse_admission_is_affirmative() {
-    for source in [
-        include_str!("anthropic/anthropic_sse.rs"),
-        include_str!("anthropic/anthropic_sse_handler.rs"),
-    ] {
-        assert!(
-            source.contains("(\"error\", true) => serde_json::from_str(data).unwrap_or_default()")
-        );
-        assert!(source.contains("(\"error\", _) => serde_json::Value::Null"));
     }
 }
