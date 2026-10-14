@@ -625,20 +625,36 @@ async fn a_calls_duration_covers_its_wait_before_its_work_ran() {
 }
 
 /// The board ops the parent playbook calls, `op(…)` in backticks (#2481
-/// Q11): every one is an op this tool takes, so a renamed op cannot leave
-/// the playbook calling one the tool refuses.
+/// Q11): exactly these, a contract on the playbook's op names, and every
+/// one an op this tool takes, so a renamed op cannot leave the playbook
+/// calling one the tool refuses.
 #[test]
 fn the_parent_playbook_calls_only_the_tools_ops() {
-    let called: Vec<&str> = include_str!("../../../../../PARENT_PLAYBOOK.md")
-        .split('`')
-        .skip(1)
-        .step_by(2)
-        .filter_map(|code| code.split_once('(').map(|(name, _)| name))
-        .filter(|name| {
-            !name.is_empty() && name.bytes().all(|b| b.is_ascii_lowercase() || b == b'_')
-        })
-        .collect();
-    assert!(!called.is_empty(), "the playbook calls board ops");
+    let called: std::collections::BTreeSet<&str> =
+        include_str!("../../../../../PARENT_PLAYBOOK.md")
+            .split('`')
+            .skip(1)
+            .step_by(2)
+            .filter_map(|code| code.split_once('(').map(|(name, _)| name))
+            .filter(|name| {
+                name.bytes().next().is_some_and(|b| b.is_ascii_lowercase())
+                    && name.bytes().all(|b| b.is_ascii_lowercase() || b == b'_')
+            })
+            .collect();
+    let expected = [
+        "accept_plan",
+        "complete",
+        "edit_plan",
+        "end_run",
+        "link_pr",
+        "move",
+        "propose_plan",
+        "renew",
+        "show",
+        "start",
+        "take_over",
+    ];
+    assert_eq!(called, expected.into_iter().collect());
     for op in &called {
         assert!(TOOL_OPS.contains(op), "{op} is an op of the tool");
     }
