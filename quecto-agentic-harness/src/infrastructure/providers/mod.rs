@@ -23,6 +23,9 @@ pub mod stream_idle;
 pub mod usage;
 
 #[cfg(test)]
+mod s1_security_red;
+
+#[cfg(test)]
 #[path = "sse_wire_cov_tests.rs"]
 mod sse_wire_cov_tests;
 
