@@ -81,8 +81,11 @@ impl SseHandler for CodexSseHandler {
             let _ = tx.send(StreamEvent::Done(self.take_response())).await;
             return SseLineOutcome::Done;
         }
-        if let Ok(event) = serde_json::from_str::<serde_json::Value>(data) {
-            if CodexProvider::is_stream_failure(&event) {
+        if let Ok(decoded) = crate::infrastructure::providers::codex_event::decode(
+            data,
+            crate::infrastructure::providers::attempt_profile::Surface::Incremental,
+        ) {
+            if decoded.failed() {
                 let error = crate::infrastructure::providers::provider_diagnostics::stream_raw(
                     "Codex", data,
                 );
@@ -90,6 +93,8 @@ impl SseHandler for CodexSseHandler {
                 let _ = tx.send(StreamEvent::Error(error)).await;
                 return SseLineOutcome::Done;
             }
+            let completed = decoded.completed();
+            let event = decoded.value.expect("an accepted nonfailure has a payload");
             match event["type"].as_str() {
                 Some("response.output_text.delta") => {
                     if let Some(delta) = event["delta"].as_str() {
@@ -129,7 +134,7 @@ impl SseHandler for CodexSseHandler {
                     return SseLineOutcome::Done;
                 }
             }
-            if event["type"].as_str() == Some("response.completed") {
+            if completed {
                 self.saw_terminal = true;
                 let _ = tx.send(StreamEvent::Done(self.take_response())).await;
                 return SseLineOutcome::Done;

@@ -323,14 +323,18 @@ impl CodexProvider {
                 saw_terminal = true;
                 break;
             }
-            if let Ok(event) = serde_json::from_str::<serde_json::Value>(data) {
-                if Self::is_stream_failure(&event) {
+            if let Ok(decoded) =
+                super::codex_event::decode(data, super::attempt_profile::Surface::Assembled)
+            {
+                if decoded.failed() {
                     let error =
                         super::provider_diagnostics::stream_raw("Codex", raw_data.unwrap_or(data));
                     return Err(DomainError::Provider(error).into());
                 }
+                let completed = decoded.completed();
+                let event = decoded.value.expect("an accepted nonfailure has a payload");
                 acc.handle_event(&event)?;
-                if event["type"].as_str() == Some("response.completed") {
+                if completed {
                     saw_terminal = true;
                     break;
                 }
@@ -360,12 +364,9 @@ impl CodexProvider {
     /// `error.code`, `error.message`) or, as OpenAI documents it, at the
     /// top level (`code`, `message`); both are read. A `response.*`
     /// failure keeps its established rendering (type and message).
+    #[cfg(test)]
     fn is_stream_failure(event: &serde_json::Value) -> bool {
-        match event["type"].as_str() {
-            Some("response.failed" | "response.incomplete" | "error") => true,
-            None => super::attempt_profile::is_untyped_error_chunk(event),
-            _ => false,
-        }
+        super::codex_event::failed(super::codex_event::terminal(event))
     }
 
     /// Sanitize a session key for use as `prompt_cache_key`.

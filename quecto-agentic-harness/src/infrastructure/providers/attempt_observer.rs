@@ -4,8 +4,7 @@
 //! request's trace follows live and the output cap bounds.
 use super::*;
 
-#[path = "attempt_error_shape.rs"]
-mod error_shape;
+use super::super::codex_event;
 
 pub(super) struct LineObserver {
     carry: Vec<u8>,
@@ -40,7 +39,24 @@ impl LineObserver {
             state.diagnostics.oversized_lines = state.diagnostics.oversized_lines.saturating_add(1);
         }
         if !self.oversized {
-            if let Ok(line) = std::str::from_utf8(&self.carry) {
+            let raw = std::str::from_utf8(&self.carry);
+            if matches!(
+                (self.protocol.vendor, self.protocol.surface),
+                (
+                    Vendor::Codex,
+                    super::super::attempt_profile::Surface::Chat
+                        | super::super::attempt_profile::Surface::Assembled
+                )
+            ) {
+                // Mirror only existing whole-read byte decoding for dispatch.
+                // Invalid original UTF8 never grants semantic authority.
+                let line = String::from_utf8_lossy(&self.carry);
+                self.protocol.observe_raw(
+                    line.strip_suffix('\r').unwrap_or(&line),
+                    receipt,
+                    raw.is_ok(),
+                );
+            } else if let Ok(line) = raw {
                 // The newline was consumed by push; only its optional CR is
                 // framing. JSON spaces/tabs remain part of raw byte admission.
                 self.protocol
@@ -50,6 +66,11 @@ impl LineObserver {
         self.carry.clear();
         self.oversized = false;
     }
+}
+
+struct DispatchPrelude {
+    semantic_admitted: bool,
+    codex: Option<Result<codex_event::Decoded, serde_json::Error>>,
 }
 
 pub(super) struct ProtocolObserver {
@@ -68,6 +89,38 @@ impl ProtocolObserver {
         }
     }
     pub(super) fn observe(&mut self, line: &str, receipt: &Receipt) {
+        self.observe_raw(line, receipt, true);
+    }
+    /// Admit raw error semantics separately from consumer-compatible dispatch.
+    fn dispatch_prelude(&self, data: &str, receipt: &Receipt, raw_valid: bool) -> DispatchPrelude {
+        // Error semantics are admitted before either diagnostics or permit
+        // feedback. Ordinary output keeps the framing budget, not BODY_LIMIT.
+        let raw_accepted = raw_valid
+            && match self.vendor {
+                Vendor::Codex => {
+                    codex_event::data(data, self.surface) == data
+                        || codex_event::failure_shape(data, Vendor::Codex).is_ok()
+                }
+                _ => true,
+            };
+        let semantic_admitted =
+            raw_accepted && data.len() <= super::super::provider_diagnostics::BODY_LIMIT;
+        let codex = match self.vendor {
+            Vendor::Codex => Some(codex_event::decode(data, self.surface)),
+            _ => None,
+        };
+        if matches!((&codex, raw_accepted), (Some(Ok(_)), false)) {
+            // A whole consumer may dispatch after trim/lossy repair; preserve
+            // the raw rejection diagnostic without letting it own semantics.
+            let mut state = receipt.0.lock().unwrap();
+            state.diagnostics.parse_errors = state.diagnostics.parse_errors.saturating_add(1);
+        }
+        DispatchPrelude {
+            semantic_admitted,
+            codex,
+        }
+    }
+    fn observe_raw(&mut self, line: &str, receipt: &Receipt, raw_valid: bool) {
         if self.terminal {
             return;
         }
@@ -95,7 +148,10 @@ impl ProtocolObserver {
             state.diagnostics.event_count = state.diagnostics.event_count.saturating_add(1);
         }
         if matches!(self.vendor, Vendor::OpenAi | Vendor::Codex)
-            && crate::infrastructure::providers::sse_end::is_done_marker(data)
+            && crate::infrastructure::providers::sse_end::is_done_marker(match self.vendor {
+                Vendor::Codex => codex_event::data(data, self.surface),
+                _ => data,
+            })
         {
             self.terminal = true;
             let mut state = receipt.0.lock().unwrap();
@@ -105,15 +161,28 @@ impl ProtocolObserver {
             state.diagnostics.termination = Termination::Completed;
             return;
         }
-        // Error semantics are admitted before either diagnostics or permit
-        // feedback. Ordinary output keeps the framing budget, not BODY_LIMIT.
-        let semantic_admitted = data.len() <= super::super::provider_diagnostics::BODY_LIMIT;
-        let shape = if semantic_admitted {
+        let DispatchPrelude {
+            semantic_admitted,
+            codex,
+        } = self.dispatch_prelude(data, receipt, raw_valid);
+        let codex_terminal = codex
+            .as_ref()
+            .and_then(|result| result.as_ref().ok())
+            .and_then(|decoded| decoded.terminal);
+        let shape = if let Some(decoded) = &codex {
+            decoded
+                .as_ref()
+                .map(|decoded| match &decoded.value {
+                    None => decoded.terminal,
+                    Some(_) => None,
+                })
+                .map_err(|_| ())
+        } else if semantic_admitted {
             Ok(None)
         } else if matches!(self.vendor, Vendor::Anthropic) && self.event == "error" {
             Ok(Some(TerminalEvent::Error))
         } else {
-            error_shape::failure(data, self.vendor)
+            codex_event::failure_shape(data, self.vendor).map_err(|_| ())
         };
         let parse_admitted = shape.is_ok();
         let terminal_error = shape.unwrap_or(None);
@@ -138,10 +207,10 @@ impl ProtocolObserver {
         // Parsed once: the diagnostics below and the failure check after.
         let parsed = {
             let mut state = receipt.0.lock().unwrap();
-            let decoded = if parse_admitted {
-                serde_json::from_str::<serde_json::Value>(data).ok()
-            } else {
-                None
+            let decoded = match codex {
+                Some(result) => result.ok().and_then(|decoded| decoded.value),
+                None if parse_admitted => serde_json::from_str::<serde_json::Value>(data).ok(),
+                None => None,
             };
             match decoded {
                 Some(value) => {
@@ -150,12 +219,7 @@ impl ProtocolObserver {
                     let error_event = match self.vendor {
                         Vendor::Anthropic => self.event == "error",
                         Vendor::OpenAi => is_error_chunk(self.vendor, &value),
-                        Vendor::Codex => {
-                            matches!(
-                                value["type"].as_str(),
-                                Some("response.failed" | "response.incomplete" | "error")
-                            ) || is_error_chunk(self.vendor, &value)
-                        }
+                        Vendor::Codex => codex_event::failed(codex_terminal),
                     };
                     if semantic_admitted && error_event {
                         diagnostics::typed(&mut state.diagnostics, &value);
@@ -207,14 +271,17 @@ impl ProtocolObserver {
                     } else {
                         value["type"].as_str().unwrap_or("")
                     };
-                    let terminal = match event {
-                        _ if is_error_chunk(self.vendor, &value) => Some(TerminalEvent::Error),
-                        "response.completed" => Some(TerminalEvent::ResponseCompleted),
-                        "response.failed" => Some(TerminalEvent::ResponseFailed),
-                        "response.incomplete" => Some(TerminalEvent::ResponseIncomplete),
-                        "error" => Some(TerminalEvent::Error),
-                        "message_stop" => Some(TerminalEvent::MessageStop),
-                        _ => None,
+                    let terminal = match (self.vendor, codex_terminal) {
+                        (Vendor::Codex, terminal) => terminal,
+                        _ => match event {
+                            _ if is_error_chunk(self.vendor, &value) => Some(TerminalEvent::Error),
+                            "response.completed" => Some(TerminalEvent::ResponseCompleted),
+                            "response.failed" => Some(TerminalEvent::ResponseFailed),
+                            "response.incomplete" => Some(TerminalEvent::ResponseIncomplete),
+                            "error" => Some(TerminalEvent::Error),
+                            "message_stop" => Some(TerminalEvent::MessageStop),
+                            _ => None,
+                        },
                     };
                     if terminal.is_some() {
                         state.diagnostics.terminal_event = terminal;
@@ -260,35 +327,13 @@ impl ProtocolObserver {
             }
         } else {
             let Some(value) = parsed else {
-                // Codex whole-read consumers trim Unicode whitespace for
-                // dispatch, but reject its RAW semantics. Mirror only that
-                // terminal shape, never its type/code or later ignored bytes.
-                if matches!(self.vendor, Vendor::Codex)
-                    && matches!(
-                        self.surface,
-                        super::super::attempt_profile::Surface::Chat
-                            | super::super::attempt_profile::Surface::Assembled
-                    )
-                {
-                    if let Ok(Some(terminal)) = error_shape::failure(data.trim_end(), self.vendor) {
-                        let mut state = receipt.0.lock().unwrap();
-                        state.diagnostics.terminal_event = Some(terminal);
-                        state.diagnostics.termination = Termination::Completed;
-                        drop(state);
-                        receipt.fail();
-                        self.terminal = true;
-                    }
-                }
                 return;
             };
             let (failed, completed) = match self.vendor {
                 Vendor::OpenAi => (is_error_chunk(self.vendor, &value), false),
                 Vendor::Codex => (
-                    matches!(
-                        value["type"].as_str(),
-                        Some("response.failed" | "response.incomplete" | "error")
-                    ) || is_error_chunk(self.vendor, &value),
-                    value["type"].as_str() == Some("response.completed"),
+                    codex_event::failed(codex_terminal),
+                    codex_terminal == Some(TerminalEvent::ResponseCompleted),
                 ),
                 Vendor::Anthropic => unreachable!("Anthropic dispatch handled above"),
             };
@@ -300,7 +345,9 @@ impl ProtocolObserver {
                         is_typed_throttle(&value)
                             || super::super::attempt_profile::is_throttle_chunk(&value),
                     ),
-                    _ => receipt.typed(&value),
+                    Vendor::Codex if semantic_admitted => receipt.typed(&value),
+                    Vendor::Codex => {}
+                    Vendor::Anthropic => unreachable!("Anthropic dispatch handled above"),
                 }
                 receipt.fail();
             }

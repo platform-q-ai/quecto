@@ -629,3 +629,5 @@ async fn nonstandard_transport_status_chat_and_incremental_admitted_and_passive(
 
 #[path = "s1_observed_error_budget.rs"]
 mod s1_observed_error_budget;
+#[path = "s1_terminal_authority.rs"]
+mod s1_terminal_authority;

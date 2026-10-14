@@ -507,4 +507,5 @@ mod stream_end_2249_tests;
 #[path = "tool_schema_adapter_tests.rs"]
 mod tool_schema_adapter_tests;
 
+mod codex_event;
 mod provider_diagnostics;
