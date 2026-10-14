@@ -1,8 +1,7 @@
 //! S4c review round 2 (H-A): a cancel during the launch, through the real
 //! launcher. A spawn that never answers is dropped once the call is
 //! cancelled, and the start is undone. A spawn that came up as the call was
-//! cancelled is stopped. The launcher also tells which run's coordinator
-//! this session still runs.
+//! cancelled is stopped.
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -91,7 +90,7 @@ async fn a_cancel_during_the_launch_drops_spawns_work() {
     let refused = tokio::task::spawn_blocking(move || launching.launch(&request(), &flag))
         .await
         .unwrap();
-    assert_eq!(refused, Err(LaunchRefused(CANCELLED.into())));
+    assert_eq!(refused, Err(LaunchRefused::because(CANCELLED)));
     assert!(dropped.load(Ordering::SeqCst), "spawn's work was dropped");
     assert!(
         began.elapsed() < Duration::from_secs(5),
@@ -138,8 +137,8 @@ async fn a_coordinator_that_came_up_as_the_call_was_cancelled_is_stopped() {
         .unwrap();
     assert_eq!(
         refused,
-        Err(LaunchRefused(
-            "the call was cancelled as the coordinator came up, so it was stopped".into()
+        Err(LaunchRefused::because(
+            "the call was cancelled as the coordinator came up, so it was stopped"
         ))
     );
     let kill: serde_json::Value = serde_json::from_str(&stopper.calls.lock().unwrap()[0]).unwrap();
@@ -250,6 +249,7 @@ async fn a_start_cancelled_during_its_launch_drops_it_and_is_undone() {
             run_state: RunAfterUndo::Folded,
             released: Some(true),
             restored: None,
+            still_running: None,
         })
     );
     assert!(dropped.load(Ordering::SeqCst), "spawn's work was dropped");
@@ -262,46 +262,4 @@ async fn a_start_cancelled_during_its_launch_drops_it_and_is_undone() {
         (TaskStatus::Ready, &None)
     );
     assert_eq!(board.runs[0].fields().outcome, Some(RunOutcome::Failed));
-}
-
-/// The launcher finds a run's coordinator among the session's live
-/// subagents by its label, and only a live one.
-#[test]
-fn a_runs_coordinator_is_found_while_it_runs() {
-    use quecto::domain::ids::AgentUuid;
-    use quecto::infrastructure::tools::subagent_registry::{SubagentEntry, new_registry};
-    let subagents = new_registry();
-    let uuid = AgentUuid::mint();
-    let entry = SubagentEntry::with_identity(
-        uuid.clone(),
-        "board-demo-hello-run-1".into(),
-        "/tmp/coordinator.sock".into(),
-        0,
-    );
-    subagents
-        .lock()
-        .unwrap()
-        .insert(uuid.as_str().to_owned(), entry);
-    use quecto::infrastructure::tools::coordinator_launch::{
-        SpawnCoordinatorLauncher, SpawnPermit,
-    };
-    let launching = SpawnCoordinatorLauncher::new(
-        super::spawn("", false),
-        agent_cmd(),
-        SpawnPermit::default(),
-        subagents.clone(),
-    );
-    let task = Slug::parse("demo-hello").unwrap();
-    assert!(launching.runs_coordinator(&task, 1));
-    assert!(!launching.runs_coordinator(&task, 2), "another run's");
-    let other = Slug::parse("other").unwrap();
-    assert!(!launching.runs_coordinator(&other, 1), "another task's");
-    let exited = |entry: &mut SubagentEntry| {
-        entry.status = quecto::infrastructure::tools::subagent_registry::SubagentStatus::Exited;
-    };
-    exited(subagents.lock().unwrap().get_mut(uuid.as_str()).unwrap());
-    assert!(
-        !launching.runs_coordinator(&task, 1),
-        "an exited one runs nothing"
-    );
 }

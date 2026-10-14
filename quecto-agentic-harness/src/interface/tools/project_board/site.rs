@@ -12,8 +12,7 @@ use super::answer::FrontEndRefusal;
 use super::recording::BoardCall;
 use super::request::{op_of, parse};
 use super::{read, run_recorded};
-use crate::application::project_board::operations::BoardRequest;
-use crate::application::project_board::ports::CoordinatorLaunch;
+use crate::application::project_board::ports::{CoordinatorLaunch, RunLiveness};
 use crate::application::project_board::use_cases::RunBoardOperation;
 
 /// What a request does with the board.
@@ -35,14 +34,22 @@ pub struct ProjectBoardEnvironment {
     /// Set when the call the request came from was cancelled: the board
     /// then pushes nothing more (`None`: the request runs to its end).
     pub cancelled: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
-    /// What launches a started task's coordinator: the agent tool's, only
-    /// while its session may spawn (S4c); `None` for a front end that
-    /// starts nothing (the CLI), so a start is refused.
+    /// What launches a started task's coordinator, and sees whether a
+    /// run's swarm still runs: the agent tool's, only while its session
+    /// may spawn (S4c); `None` for a front end that starts nothing and sees
+    /// no swarm (the CLI), so a start is refused and an end_run sees none
+    /// running.
     pub launcher: Option<Launcher>,
 }
 
+/// A session's swarms as a front end reaches them (S4c): it launches a
+/// started task's coordinator, and sees whether a run's still runs.
+pub trait SessionSwarms: CoordinatorLaunch + RunLiveness {}
+
+impl<T: CoordinatorLaunch + RunLiveness> SessionSwarms for T {}
+
 /// A front end's coordinator launcher (S4c).
-pub type Launcher = std::sync::Arc<dyn CoordinatorLaunch>;
+pub type Launcher = std::sync::Arc<dyn SessionSwarms>;
 
 /// The board's operations, built by composition.
 pub struct ProjectBoardHandles {
@@ -103,20 +110,6 @@ pub fn answer(
         Err(error) => return call.refuse_request(op.as_deref(), &error),
     };
     call.parsed(&parsed);
-    // A run whose swarm this session still runs is not ended by hand: its
-    // coordinator is stopped first (S4c).
-    if let BoardRequest::EndRun(end) = &parsed {
-        let live = site.launcher.as_ref();
-        if live.is_some_and(|launcher| launcher.runs_coordinator(&end.task, end.run)) {
-            let reason = format!(
-                "run {run} of {task} still has its swarm running in this session: stop its \
-                 coordinator first (agent_cmd kill), then end the run",
-                run = end.run,
-                task = end.task.as_str()
-            );
-            return call.refuse_as_front_end(op.as_deref(), FrontEndRefusal::RunLive, &reason);
-        }
-    }
     let Some(build) = site.build else {
         return call.refuse_as_front_end(
             op.as_deref(),

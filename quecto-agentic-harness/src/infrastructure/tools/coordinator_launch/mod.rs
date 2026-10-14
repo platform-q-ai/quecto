@@ -30,7 +30,7 @@ use super::spawn_launch_ports::SpawnedChild;
 use super::subagent_registry::SubagentRegistry;
 use super::subagent_status::SubagentStatus;
 use crate::application::project_board::ports::{
-    CoordinatorLaunch, CoordinatorRequest, LaunchRefused, LaunchedCoordinator,
+    CoordinatorLaunch, CoordinatorRequest, LaunchRefused, LaunchedCoordinator, RunLiveness,
 };
 use crate::application::tools::ports::Tool;
 use crate::domain::agents::services::subagent::{MAX_AGENT_ID_CHARS, validate_agent_id_format};
@@ -59,6 +59,7 @@ pub struct SpawnCoordinatorLauncher {
     permit: SpawnPermit,
     subagents: SubagentRegistry,
     timeout: Duration,
+    kill_timeout: Duration,
 }
 
 impl SpawnCoordinatorLauncher {
@@ -74,27 +75,36 @@ impl SpawnCoordinatorLauncher {
             permit,
             subagents,
             timeout: LAUNCH_TIMEOUT,
+            kill_timeout: KILL_TIMEOUT,
         }
     }
 
-    /// This launcher, waiting at most `timeout` for spawn.
+    /// This launcher, waiting at most `timeout` for spawn and
+    /// `kill_timeout` for a stop.
     #[must_use]
-    pub fn with_timeout(self, timeout: Duration) -> Self {
-        Self { timeout, ..self }
+    pub fn with_timeouts(self, timeout: Duration, kill_timeout: Duration) -> Self {
+        Self {
+            timeout,
+            kill_timeout,
+            ..self
+        }
     }
 
-    /// Stops the child `uuid` spawn launched, telling how that went.
-    fn stopped(&self, runtime: &tokio::runtime::Handle, uuid: &str) -> String {
+    /// The refusal `why` once the child `uuid` spawn launched is stopped:
+    /// one that names it as still running when the stop failed or timed
+    /// out, so the start leaves its run open and its claim held.
+    fn stopped(&self, runtime: &tokio::runtime::Handle, why: &str, uuid: &str) -> LaunchRefused {
         let kill = json!({"agent_id": uuid, "command": "kill"}).to_string();
-        let stop = tokio::time::timeout(KILL_TIMEOUT, self.agent_cmd.execute(&kill));
-        match runtime.block_on(stop) {
+        let stop = tokio::time::timeout(self.kill_timeout, self.agent_cmd.execute(&kill));
+        let failed = match runtime.block_on(stop) {
             Ok(Ok(result)) => match result.is_error {
-                false => "it was stopped".into(),
+                false => return LaunchRefused::because(format!("{why}, so it was stopped")),
                 true => format!("stopping it failed: {}", result.content),
             },
             Ok(Err(error)) => format!("stopping it failed: {error}"),
             Err(_) => "stopping it timed out".into(),
-        }
+        };
+        LaunchRefused::leaving(format!("{why}, so {failed}"), uuid)
     }
 
     /// What spawn's answer `result` comes to: the coordinator running in
@@ -106,12 +116,7 @@ impl SpawnCoordinatorLauncher {
         result: ToolResult,
         cancelled: &AtomicBool,
     ) -> Result<LaunchedCoordinator, LaunchRefused> {
-        let stop = |why: &str, uuid: &str| {
-            Err(LaunchRefused(format!(
-                "{why}, so {}",
-                self.stopped(runtime, uuid)
-            )))
-        };
+        let stop = |why: &str, uuid: &str| Err(self.stopped(runtime, why, uuid));
         match (SpawnedChild::of(&result), cancelled.load(Ordering::SeqCst)) {
             (Some(child), true) => stop(
                 "the call was cancelled as the coordinator came up",
@@ -137,7 +142,7 @@ impl SpawnCoordinatorLauncher {
             // No structured answer: stop whatever its words name.
             (None, _) => match uuid_in(&result.content) {
                 Some(uuid) => stop("spawn named no container for the coordinator", uuid),
-                None => Err(LaunchRefused(format!(
+                None => Err(LaunchRefused::because(format!(
                     "spawn answered no running coordinator: {}",
                     result.content
                 ))),
@@ -186,13 +191,15 @@ impl CoordinatorLaunch for SpawnCoordinatorLauncher {
     ) -> Result<LaunchedCoordinator, LaunchRefused> {
         match self.permit.allowed() {
             true => {}
-            false => return Err(LaunchRefused(NOT_ALLOWED.into())),
+            false => return Err(LaunchRefused::because(NOT_ALLOWED)),
         }
         let arguments = spawn_arguments(request).to_string();
         // The registry's guards judge this call as they judge the model's.
-        self.permit.check(&arguments).map_err(LaunchRefused)?;
-        let runtime =
-            tokio::runtime::Handle::try_current().map_err(|_| LaunchRefused(NO_RUNTIME.into()))?;
+        self.permit
+            .check(&arguments)
+            .map_err(LaunchRefused::because)?;
+        let runtime = tokio::runtime::Handle::try_current()
+            .map_err(|_| LaunchRefused::because(NO_RUNTIME))?;
         let waited = runtime.block_on(async {
             let mut work = std::pin::pin!(self.spawn.execute(&arguments));
             let deadline = tokio::time::Instant::now() + self.timeout;
@@ -203,7 +210,7 @@ impl CoordinatorLaunch for SpawnCoordinatorLauncher {
                 // Dropping `work` (returning) abandons spawn's launch.
                 match (
                     cancelled.load(Ordering::SeqCst),
-                    tokio::time::Instant::now() >= deadline,
+                    past(deadline, tokio::time::Instant::now()),
                 ) {
                     (true, _) => break Waited::Cancelled,
                     (false, true) => break Waited::TimedOut,
@@ -214,35 +221,49 @@ impl CoordinatorLaunch for SpawnCoordinatorLauncher {
         match waited {
             Waited::Answered(Ok(result)) => match result.is_error {
                 false => self.running(&runtime, result, cancelled),
-                true => Err(LaunchRefused(result.content)),
+                true => Err(LaunchRefused::because(result.content)),
             },
-            Waited::Answered(Err(error)) => Err(LaunchRefused(error.to_string())),
-            Waited::Cancelled => Err(LaunchRefused(CANCELLED.into())),
-            Waited::TimedOut => Err(LaunchRefused(format!(
+            Waited::Answered(Err(error)) => Err(LaunchRefused::because(error.to_string())),
+            Waited::Cancelled => Err(LaunchRefused::because(CANCELLED)),
+            Waited::TimedOut => Err(LaunchRefused::because(format!(
                 "spawn did not answer within {:?}",
                 self.timeout
             ))),
         }
     }
+}
 
-    fn runs_coordinator(&self, task: &Slug, run: u32) -> bool {
+impl RunLiveness for SpawnCoordinatorLauncher {
+    /// A subagent of this session labelled as the run's coordinator, live
+    /// and not exited.
+    fn is_running(&self, task: &Slug, run: u32) -> bool {
         let label = label(task.as_str(), run);
         let entries = self.subagents.lock().unwrap_or_else(|e| e.into_inner());
-        entries.iter().any(|(key, entry)| {
-            entry.effective_display_name(key) == label
-                && matches!(
-                    entry.persisted_liveness,
-                    SubagentLiveness::Live | SubagentLiveness::Detached
-                )
-                && matches!(
-                    entry.status,
-                    SubagentStatus::Starting
-                        | SubagentStatus::Idle
-                        | SubagentStatus::Running
-                        | SubagentStatus::Error
-                )
-        })
+        entries
+            .iter()
+            .any(|(key, entry)| entry.effective_display_name(key) == label && runs(entry))
     }
+}
+
+/// Whether a subagent `entry` runs: live, and in a status of one that
+/// runs (an allowlist).
+fn runs(entry: &super::subagent_registry::SubagentEntry) -> bool {
+    let live = match entry.persisted_liveness {
+        SubagentLiveness::Live => true,
+        SubagentLiveness::Detached | SubagentLiveness::Dead => false,
+    };
+    live && match entry.status {
+        SubagentStatus::Starting
+        | SubagentStatus::Idle
+        | SubagentStatus::Running
+        | SubagentStatus::Error => true,
+        SubagentStatus::Exited => false,
+    }
+}
+
+/// Whether `deadline` has come by `now`: at it, or past it.
+fn past(deadline: tokio::time::Instant, now: tokio::time::Instant) -> bool {
+    now >= deadline
 }
 
 /// The uuid spawn's words `(uuid=…)` name, when they name one.

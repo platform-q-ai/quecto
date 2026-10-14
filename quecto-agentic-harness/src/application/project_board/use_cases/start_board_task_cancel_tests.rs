@@ -118,6 +118,7 @@ fn a_start_cancelled_before_its_launch_launches_nothing_and_is_undone() {
             run_state: RunAfterUndo::Folded,
             released: Some(true),
             restored: None,
+            still_running: None,
         })
     );
     assert!(cancelled.load(Ordering::SeqCst));
@@ -151,14 +152,6 @@ fn a_start_cancelled_before_its_write_writes_nothing() {
 struct Panicking;
 
 impl CoordinatorLaunch for Panicking {
-    fn runs_coordinator(
-        &self,
-        _: &crate::domain::project_board::value_objects::slug::Slug,
-        _: u32,
-    ) -> bool {
-        false
-    }
-
     fn may_launch(&self) -> bool {
         true
     }
@@ -186,6 +179,7 @@ fn a_launch_that_panics_is_undone() {
             run_state: RunAfterUndo::Folded,
             released: Some(true),
             restored: None,
+            still_running: None,
         })
     );
     assert_undone(&store);
@@ -235,6 +229,7 @@ fn a_held_start_undone_goes_back_to_its_status() {
                 run_state: RunAfterUndo::Folded,
                 released: None,
                 restored: got,
+                still_running: None,
                 ..
             }) => assert_eq!(got, restored, "{from:?}"),
             other => panic!("{from:?}: {other:?}"),
@@ -253,6 +248,7 @@ fn a_held_start_undone_goes_back_to_its_status() {
             status: TaskStatus::Review,
             moved: true,
         }),
+        still_running: None,
     };
     assert_eq!(
         moved_back.to_string(),
@@ -268,6 +264,7 @@ fn a_held_start_undone_goes_back_to_its_status() {
             status: TaskStatus::Blocked,
             moved: false,
         }),
+        still_running: None,
     };
     assert!(
         stuck

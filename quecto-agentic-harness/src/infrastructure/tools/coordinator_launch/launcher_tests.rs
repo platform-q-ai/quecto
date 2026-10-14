@@ -203,7 +203,8 @@ fn a_launch_reads_what_spawn_launched_from_its_structured_answer() {
 }
 
 /// A coordinator that came up outside a container is stopped before the
-/// launch is refused; one whose stop fails says so.
+/// launch is refused; one whose stop failed or timed out is named as
+/// still running, so the start undoes nothing under it.
 #[test]
 fn a_coordinator_outside_a_container_is_stopped_before_the_refusal() {
     let local = || {
@@ -215,24 +216,43 @@ fn a_coordinator_outside_a_container_is_stopped_before_the_refusal() {
             .metadata(),
         )
     };
-    for (kill_answer, said) in [
-        (answered("killed", None), "it was stopped"),
+    let why = "the coordinator came up outside a container, so ";
+    let error_result = Ok(ToolResult {
+        content: "Error: no such agent".into(),
+        is_error: true,
+        image_blocks: vec![],
+        delivery_metadata: None,
+    });
+    for (kill, want) in [
         (
-            Err(DomainError::Tool("no such agent".into())),
-            "stopping it failed: ",
+            Answering::new("agent_cmd", answered("killed", None)),
+            LaunchRefused::because(format!("{why}it was stopped")),
+        ),
+        (
+            Answering::new("agent_cmd", Err(DomainError::Tool("no such agent".into()))),
+            LaunchRefused::leaving(
+                format!("{why}stopping it failed: tool error: no such agent"),
+                "7f3a-uuid",
+            ),
+        ),
+        (
+            Answering::new("agent_cmd", error_result),
+            LaunchRefused::leaving(
+                format!("{why}stopping it failed: Error: no such agent"),
+                "7f3a-uuid",
+            ),
+        ),
+        (
+            Answering::stalling("agent_cmd"),
+            LaunchRefused::leaving(format!("{why}stopping it timed out"), "7f3a-uuid"),
         ),
     ] {
         let spawn = Answering::new("spawn", answered("running", local()));
-        let kill = Answering::new("agent_cmd", kill_answer);
-        let launching = launcher(&spawn, &kill, open_permit(vec![]));
+        let launching = launcher(&spawn, &kill, open_permit(vec![]))
+            .with_timeouts(LAUNCH_TIMEOUT, Duration::from_millis(50));
         let refused =
             on_a_board_thread(move || launching.launch(&request("a", 1), &AtomicBool::new(false)));
-        let reason = refused.unwrap_err().0;
-        assert!(
-            reason.starts_with("the coordinator came up outside a container, so ")
-                && reason.contains(said),
-            "{reason}"
-        );
+        assert_eq!(refused, Err(want));
         assert_eq!(
             kill.called(),
             vec![json!({"agent_id": "7f3a-uuid", "command": "kill"})]
@@ -270,7 +290,7 @@ fn a_spawn_that_launched_nothing_is_refused_in_its_words() {
         let launching = launcher(&spawn, &kill, open_permit(vec![]));
         let refused =
             on_a_board_thread(move || launching.launch(&request("a", 1), &AtomicBool::new(false)));
-        assert_eq!(refused, Err(LaunchRefused(reason.into())));
+        assert_eq!(refused, Err(LaunchRefused::because(reason)));
         assert!(kill.called().is_empty());
     }
 }
@@ -299,18 +319,18 @@ fn a_launch_the_session_could_not_make_never_asks_spawn() {
     assert!(!closed.may_launch());
     assert_eq!(
         closed.launch(&request("a", 1), &AtomicBool::new(false)),
-        Err(LaunchRefused(NOT_ALLOWED.into()))
+        Err(LaunchRefused::because(NOT_ALLOWED))
     );
     let guarded = launcher(&spawn, &kill, open_permit(vec![Arc::new(NoSpawn)]));
     assert!(guarded.may_launch());
     assert_eq!(
         guarded.launch(&request("a", 1), &AtomicBool::new(false)),
-        Err(LaunchRefused("spawn is guarded".into()))
+        Err(LaunchRefused::because("spawn is guarded"))
     );
     let unhosted = launcher(&spawn, &kill, open_permit(vec![]));
     assert_eq!(
         unhosted.launch(&request("a", 1), &AtomicBool::new(false)),
-        Err(LaunchRefused(NO_RUNTIME.into())),
+        Err(LaunchRefused::because(NO_RUNTIME)),
         "no runtime here"
     );
     assert!(spawn.called().is_empty(), "spawn never asked");
@@ -321,13 +341,13 @@ fn a_launch_the_session_could_not_make_never_asks_spawn() {
 fn a_spawn_that_never_answers_times_out() {
     let spawn = Answering::stalling("spawn");
     let kill = Answering::new("agent_cmd", answered("", None));
-    let launching =
-        launcher(&spawn, &kill, open_permit(vec![])).with_timeout(Duration::from_millis(50));
+    let launching = launcher(&spawn, &kill, open_permit(vec![]))
+        .with_timeouts(Duration::from_millis(50), KILL_TIMEOUT);
     let refused =
         on_a_board_thread(move || launching.launch(&request("a", 1), &AtomicBool::new(false)));
     assert_eq!(
         refused,
-        Err(LaunchRefused("spawn did not answer within 50ms".into()))
+        Err(LaunchRefused::because("spawn did not answer within 50ms"))
     );
     assert_eq!(LAUNCH_TIMEOUT, Duration::from_secs(900));
 }
@@ -350,8 +370,8 @@ fn a_running_spawn_without_its_metadata_is_stopped_by_its_words() {
         on_a_board_thread(move || launching.launch(&request("a", 1), &AtomicBool::new(false)));
     assert_eq!(
         refused,
-        Err(LaunchRefused(
-            "spawn named no container for the coordinator, so it was stopped".into()
+        Err(LaunchRefused::because(
+            "spawn named no container for the coordinator, so it was stopped"
         ))
     );
     assert_eq!(
@@ -361,4 +381,56 @@ fn a_running_spawn_without_its_metadata_is_stopped_by_its_words() {
     assert_eq!(uuid_in("running (uuid=) now"), None);
     assert_eq!(uuid_in("no uuid here"), None);
     assert_eq!(KILL_TIMEOUT, Duration::from_secs(30));
+}
+
+/// Review round 3: the deadline has come at it, not only past it.
+#[test]
+fn a_deadline_has_come_at_it() {
+    let now = tokio::time::Instant::now();
+    assert!(past(now, now), "at the deadline");
+    assert!(past(now, now + Duration::from_millis(1)));
+    assert!(!past(now + Duration::from_millis(1), now));
+}
+
+/// Review round 3: a subagent runs while it is live and in each status of
+/// one that runs; a detached, dead or exited one does not.
+#[test]
+fn a_coordinator_runs_while_it_is_live_and_running() {
+    use crate::domain::ids::AgentUuid;
+    use crate::domain::sessions::entities::session::SubagentLiveness;
+    use crate::infrastructure::tools::subagent_registry::{SubagentEntry, SubagentStatus};
+    let entry = |liveness, status| {
+        let mut entry = SubagentEntry::with_identity(
+            AgentUuid::mint(),
+            "board-a-run-1".into(),
+            "/tmp/coordinator.sock".into(),
+            0,
+        );
+        entry.persisted_liveness = liveness;
+        entry.status = status;
+        entry
+    };
+    for status in [
+        SubagentStatus::Starting,
+        SubagentStatus::Idle,
+        SubagentStatus::Running,
+        SubagentStatus::Error,
+    ] {
+        assert!(
+            runs(&entry(SubagentLiveness::Live, status.clone())),
+            "{status:?}"
+        );
+        assert!(
+            !runs(&entry(SubagentLiveness::Dead, status.clone())),
+            "dead {status:?}"
+        );
+        assert!(
+            !runs(&entry(SubagentLiveness::Detached, status.clone())),
+            "detached {status:?}"
+        );
+    }
+    assert!(!runs(&entry(
+        SubagentLiveness::Live,
+        SubagentStatus::Exited
+    )));
 }

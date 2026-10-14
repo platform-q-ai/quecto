@@ -199,7 +199,8 @@ impl GitBoardStore {
             last: Mutex::new(None),
             limits: self.limits,
             cancelled: None,
-            partial: std::sync::OnceLock::new(),
+            // What this store found of its remote holds for the same board.
+            partial: self.partial.clone(),
         }
     }
 

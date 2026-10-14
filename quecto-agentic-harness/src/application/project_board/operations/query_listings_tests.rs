@@ -64,16 +64,18 @@ pub fn assembled(
     listings: Arc<dyn BoardListings>,
     prs: Result<Arc<dyn PullRequestStates>, NoPullRequestHost>,
 ) -> Result<RunBoardOperation, ProjectBoardError> {
-    assembled_launching(store, clock, listings, prs, None)
+    assembled_launching(store, clock, listings, prs, None, None)
 }
 
-/// [`assembled`], starting tasks with `launcher` (S4c).
+/// [`assembled`], starting tasks with `launcher` and seeing runs' swarms
+/// through `liveness` (S4c).
 pub fn assembled_launching(
     store: Arc<dyn ProjectBoardStore>,
     clock: Arc<dyn BoardClock>,
     listings: Arc<dyn BoardListings>,
     prs: Result<Arc<dyn PullRequestStates>, NoPullRequestHost>,
     launcher: Option<Arc<dyn CoordinatorLaunch>>,
+    liveness: Option<Arc<dyn crate::application::project_board::ports::RunLiveness>>,
 ) -> Result<RunBoardOperation, ProjectBoardError> {
     let complete = match prs {
         Ok(prs) => Ok(CompleteMergedTask::new(
@@ -96,6 +98,7 @@ pub fn assembled_launching(
             Arc::clone(&store),
             Arc::clone(&clock),
             Arc::new(MarkdownTextCells),
+            liveness,
         )?,
         start: StartBoardTask::new(
             Arc::clone(&store),

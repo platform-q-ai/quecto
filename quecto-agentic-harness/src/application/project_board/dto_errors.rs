@@ -123,14 +123,30 @@ impl fmt::Display for ProjectBoardError {
                  start the task from a session that may",
             ),
             Self::Brief { reason, .. } => write!(f, "the plan cannot brief a swarm: {reason}"),
+            Self::RunLive { task, run } => write!(
+                f,
+                "run {run} of {task} still has its swarm running in this session: stop its \
+                 coordinator first (agent_cmd kill), then end the run",
+                task = task.as_str()
+            ),
             Self::LaunchFailed {
                 reason,
                 run,
                 run_state,
                 released,
                 restored,
+                still_running,
             } => {
                 write!(f, "the coordinator did not launch: {reason}; ")?;
+                if let Some(agent) = still_running {
+                    // Nothing was undone: the coordinator may still run.
+                    return write!(
+                        f,
+                        "coordinator {agent} may still be running, so run {run} is left open \
+                         and you still hold the task: stop it with agent_cmd kill {agent}, \
+                         then end the run with end_run(task, run {run}, outcome failed)"
+                    );
+                }
                 match run_state {
                     RunAfterUndo::Folded => write!(f, "run {run} was folded back as failed")?,
                     RunAfterUndo::EndedAlready => write!(f, "run {run} had already ended")?,

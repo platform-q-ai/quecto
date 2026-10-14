@@ -629,6 +629,13 @@ pub enum ProjectBoardError {
     /// This session may not spawn, so it has no launcher: nothing is
     /// started (S4c).
     NoLauncher,
+    /// Run `run` of task `task` still has its swarm running in this
+    /// session, so it is not ended by hand: its coordinator is stopped
+    /// first (S4c).
+    RunLive {
+        task: Slug,
+        run: u32,
+    },
     /// The task's accepted plan cannot brief a swarm (`code`, the brief's
     /// refusal code, and `reason`, its words): nothing is started.
     Brief {
@@ -641,13 +648,16 @@ pub enum ProjectBoardError {
     /// undo left it (`run_state`); when the start took the claim, whether
     /// the task went back to ready, releasing it (`released`); and, for a
     /// task held in review or blocked before, whether it went back there
-    /// (`restored`).
+    /// (`restored`). With `still_running` (a coordinator that came up wrong
+    /// and could not be stopped) nothing was undone: the run is open and
+    /// the claim held.
     LaunchFailed {
         reason: String,
         run: u32,
         run_state: RunAfterUndo,
         released: Option<bool>,
         restored: Option<Restored>,
+        still_running: Option<String>,
     },
 }
 

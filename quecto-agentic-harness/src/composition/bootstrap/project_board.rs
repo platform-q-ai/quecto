@@ -19,7 +19,8 @@ use std::time::SystemTime;
 
 use crate::application::project_board::operations::{BoardOperationParts, NoPullRequestHost};
 use crate::application::project_board::ports::{
-    BoardClock, BoardStoreError, ProjectBoardStore, PullRequestStates, PullRequestStatesError,
+    BoardClock, BoardStoreError, CoordinatorLaunch, ProjectBoardStore, PullRequestStates,
+    PullRequestStatesError, RunLiveness,
 };
 use crate::application::project_board::telemetry::{BoardRecording, RecordingSwitch};
 use crate::application::project_board::use_cases::{
@@ -134,6 +135,10 @@ fn build_with_warnings(
             Arc::clone(&store),
             Arc::clone(&clock),
             Arc::new(MarkdownTextCells),
+            environment
+                .launcher
+                .clone()
+                .map(|swarms| swarms as Arc<dyn RunLiveness>),
         )
         .map_err(built)?,
         start: StartBoardTask::new(
@@ -141,7 +146,10 @@ fn build_with_warnings(
             undo_store,
             Arc::clone(&clock),
             Arc::new(MarkdownTextCells),
-            environment.launcher.clone(),
+            environment
+                .launcher
+                .clone()
+                .map(|swarms| swarms as Arc<dyn CoordinatorLaunch>),
             environment.cancelled.clone(),
         )
         .map_err(built)?,

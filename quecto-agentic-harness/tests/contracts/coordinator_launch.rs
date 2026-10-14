@@ -185,7 +185,9 @@ async fn a_policy_that_denies_spawn_launches_nothing() {
     let (launching, _registry) = launcher(spawned.clone(), false);
     assert!(!launching.may_launch());
     let refused = launched(Arc::new(launching)).await;
-    assert!(matches!(&refused, Err(LaunchRefused(why)) if why.contains("does not allow spawn")));
+    assert!(
+        matches!(&refused, Err(LaunchRefused { reason: why, .. }) if why.contains("does not allow spawn"))
+    );
     assert!(
         spawned.calls.lock().unwrap().is_empty(),
         "spawn never asked"
@@ -198,7 +200,7 @@ async fn spawns_refusal_or_an_answer_naming_no_container_is_a_refusal() {
     let (launching, _registry) = launcher(failing, true);
     assert_eq!(
         launched(Arc::new(launching)).await,
-        Err(LaunchRefused("no container runtime is available".into()))
+        Err(LaunchRefused::because("no container runtime is available"))
     );
     // Words alone launch nothing: only spawn's structured answer names a
     // coordinator; a uuid its words name is stopped.
@@ -206,15 +208,15 @@ async fn spawns_refusal_or_an_answer_naming_no_container_is_a_refusal() {
     let (launching, _registry) = launcher_stopping_with(spawn(RUNNING, false), named.clone(), true);
     assert_eq!(
         launched(Arc::new(launching)).await,
-        Err(LaunchRefused(
-            "spawn named no container for the coordinator, so it was stopped".into()
+        Err(LaunchRefused::because(
+            "spawn named no container for the coordinator, so it was stopped"
         ))
     );
     assert_eq!(named.calls.lock().unwrap().len(), 1);
     let (launching, _registry) = launcher(spawn("odd", false), true);
     let refused = launched(Arc::new(launching)).await;
     assert!(
-        matches!(&refused, Err(LaunchRefused(why)) if why.starts_with("spawn answered no running coordinator")),
+        matches!(&refused, Err(LaunchRefused { reason: why, .. }) if why.starts_with("spawn answered no running coordinator")),
         "{refused:?}"
     );
     // A coordinator outside a container is stopped, then refused.
@@ -224,8 +226,8 @@ async fn spawns_refusal_or_an_answer_naming_no_container_is_a_refusal() {
     let refused = launched(Arc::new(launching)).await;
     assert_eq!(
         refused,
-        Err(LaunchRefused(
-            "the coordinator came up outside a container, so it was stopped".into()
+        Err(LaunchRefused::because(
+            "the coordinator came up outside a container, so it was stopped"
         ))
     );
     let kill: serde_json::Value = serde_json::from_str(&stopper.calls.lock().unwrap()[0]).unwrap();

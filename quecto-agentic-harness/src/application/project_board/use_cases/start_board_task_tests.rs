@@ -52,7 +52,7 @@ impl Launcher {
 
     fn failing() -> Arc<Self> {
         Arc::new(Self {
-            answer: Err(LaunchRefused("no container runtime".into())),
+            answer: Err(LaunchRefused::because("no container runtime")),
             asked: Mutex::default(),
             may: true,
         })
@@ -72,14 +72,6 @@ impl Launcher {
 }
 
 impl CoordinatorLaunch for Launcher {
-    fn runs_coordinator(
-        &self,
-        _: &crate::domain::project_board::value_objects::slug::Slug,
-        _: u32,
-    ) -> bool {
-        false
-    }
-
     fn may_launch(&self) -> bool {
         self.may
     }
@@ -317,6 +309,7 @@ fn a_failed_launch_folds_run_1_back_as_failed_and_releases_the_claim() {
             run_state: RunAfterUndo::Folded,
             released: Some(true),
             restored: None,
+            still_running: None,
         })
     );
     let (task, runs) = task_and_runs(&store);
@@ -506,14 +499,6 @@ fn a_start_racing_an_acceptance_launches_nothing_unconfirmed() {
 struct FreezingLauncher(MemoryBoardStore);
 
 impl CoordinatorLaunch for FreezingLauncher {
-    fn runs_coordinator(
-        &self,
-        _: &crate::domain::project_board::value_objects::slug::Slug,
-        _: u32,
-    ) -> bool {
-        false
-    }
-
     fn may_launch(&self) -> bool {
         true
     }
@@ -524,7 +509,7 @@ impl CoordinatorLaunch for FreezingLauncher {
         _: &std::sync::atomic::AtomicBool,
     ) -> Result<LaunchedCoordinator, LaunchRefused> {
         self.0.refuse_next_write("the board is frozen");
-        Err(LaunchRefused("no container runtime".into()))
+        Err(LaunchRefused::because("no container runtime"))
     }
 }
 
@@ -542,6 +527,7 @@ fn an_undo_that_cannot_fold_back_says_so_and_keeps_the_claim() {
             run_state: RunAfterUndo::Open,
             released: Some(false),
             restored: None,
+            still_running: None,
         })
     );
     let (task, runs) = task_and_runs(&store);
@@ -562,3 +548,6 @@ mod cancel;
 
 #[path = "start_board_task_stuck_tests.rs"]
 mod stuck;
+
+#[path = "start_board_task_undo_tests.rs"]
+mod undo;

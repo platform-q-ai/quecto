@@ -29,7 +29,6 @@ fn keys(code: ErrorCode) -> &'static [&'static str] {
         | C::BoardTooLarge
         | C::FolderSetAside
         | C::PullRequestsUnavailable
-        | C::RunLive
         | C::Refused => &["reason"],
         C::NoBoard => &[],
         C::Rule => &["rule"],
@@ -52,8 +51,16 @@ fn keys(code: ErrorCode) -> &'static [&'static str] {
         // (a_duplicate_artifact_is_named_by_its_kind_task_and_number).
         C::DuplicateArtifact => &["kind", "task", "number"],
         C::NoLauncher => &[],
+        C::RunLive => &["task", "run"],
         C::Brief => &["brief"],
-        C::LaunchFailed => &["reason", "run", "run_state", "released", "restored"],
+        C::LaunchFailed => &[
+            "reason",
+            "run",
+            "run_state",
+            "released",
+            "restored",
+            "still_running",
+        ],
     }
 }
 
@@ -163,6 +170,10 @@ board_errors! {
         updated: at("10:00:00"),
     },
     E::NoLauncher => E::NoLauncher,
+    E::RunLive { .. } => E::RunLive {
+        task: slug("a"),
+        run: 1,
+    },
     E::Brief { .. } => E::from(crate::application::project_board::swarm_brief::BriefRefusal::NoTaskItems),
     E::LaunchFailed { .. } => E::LaunchFailed {
         reason: "no container runtime".into(),
@@ -170,6 +181,7 @@ board_errors! {
         run_state: crate::application::project_board::dto::RunAfterUndo::Folded,
         released: Some(true),
         restored: None,
+        still_running: None,
     },
 }
 
@@ -210,7 +222,6 @@ fn a_front_ends_own_refusals_have_their_codes_shapes() {
             FrontEndRefusal::StoreUnavailable,
             ErrorCode::StoreUnavailable,
         ),
-        (FrontEndRefusal::RunLive, ErrorCode::RunLive),
     ] {
         let answer = reason_refused(Some("list"), refusal, "why");
         assert_eq!(answer["error"]["code"], json!(code.as_str()));

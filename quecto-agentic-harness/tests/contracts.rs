@@ -299,6 +299,8 @@ mod owned_child_termination;
 mod owner_exit_announcement;
 #[path = "contracts/retained_environment_teardown.rs"]
 mod retained_environment_teardown;
+#[path = "contracts/run_liveness.rs"]
+mod run_liveness;
 #[path = "contracts/shutdown_clock.rs"]
 mod shutdown_clock;
 #[path = "contracts/shutdown_run_spawner.rs"]

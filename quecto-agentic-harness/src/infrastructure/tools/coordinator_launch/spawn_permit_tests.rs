@@ -133,3 +133,38 @@ fn the_permit_judges_a_spawn_by_the_registrys_guards() {
     guarded.observe_policy(std::sync::Arc::new(early.clone()));
     assert_eq!(early.check("{}"), Err("spawn is guarded".into()));
 }
+
+/// Review round 3: a recorded persisted policy result changes the
+/// configured scope, and the permit follows it.
+#[test]
+fn the_permit_follows_a_recorded_policy_result() {
+    use crate::application::tools::ports::ToolPolicyMutator;
+    use crate::domain::tool::{
+        ToolPolicyApplyMode, ToolPolicyMutationResult, ToolPolicyMutationStatus,
+        ToolPolicyReconciliation,
+    };
+    use crate::domain::tool_descriptor::{ProfileAvailabilityScope, ToolAvailability};
+    let permit = SpawnPermit::default();
+    let mut registry = ToolRegistryImpl::new();
+    registry.register(Arc::new(Named("spawn")));
+    registry.observe_policy(Arc::new(permit.clone()));
+    assert!(permit.allowed());
+    let recorded = |scope| ToolPolicyReconciliation {
+        mode: ToolPolicyApplyMode::ImmediateIfIdle,
+        results: vec![ToolPolicyMutationResult {
+            name: "spawn".into(),
+            requested_identifier: None,
+            requested_availability: ToolAvailability::Enabled,
+            requested_scope: scope,
+            status: ToolPolicyMutationStatus::Applied,
+            before: None,
+            after: None,
+            reason: "test".into(),
+        }],
+        correlation_id: None,
+    };
+    registry.record_persisted_tool_policy_results(&recorded(ProfileAvailabilityScope::Child));
+    assert!(!permit.allowed(), "a child-only spawn is no parent's");
+    registry.record_persisted_tool_policy_results(&recorded(ProfileAvailabilityScope::Both));
+    assert!(permit.allowed());
+}

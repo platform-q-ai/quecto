@@ -23,14 +23,6 @@ use crate::infrastructure::test_support::memory_board_store::MemoryBoardStore;
 struct CancelledAndFrozen(MemoryBoardStore, Arc<AtomicBool>);
 
 impl CoordinatorLaunch for CancelledAndFrozen {
-    fn runs_coordinator(
-        &self,
-        _: &crate::domain::project_board::value_objects::slug::Slug,
-        _: u32,
-    ) -> bool {
-        false
-    }
-
     fn may_launch(&self) -> bool {
         true
     }
@@ -42,7 +34,7 @@ impl CoordinatorLaunch for CancelledAndFrozen {
     ) -> Result<LaunchedCoordinator, LaunchRefused> {
         self.1.store(true, Ordering::SeqCst);
         self.0.refuse_next_write("the board is frozen");
-        Err(LaunchRefused("the call was cancelled".into()))
+        Err(LaunchRefused::because("the call was cancelled"))
     }
 }
 
@@ -56,6 +48,7 @@ fn recovered_by_end_run(store: &MemoryBoardStore) {
         Arc::new(store.client_as(person("Ada"))),
         SetClock::at("10:05:00"),
         Arc::new(MarkdownTextCells),
+        None,
     )
     .unwrap();
     let ended = ending
@@ -115,6 +108,7 @@ fn a_cancelled_start_whose_undo_could_not_fold_back_is_recovered() {
             run_state: RunAfterUndo::Open,
             released: Some(false),
             restored: None,
+            still_running: None,
         })
     );
     assert!(cancelled.load(Ordering::SeqCst));

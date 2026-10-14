@@ -554,9 +554,43 @@ pub struct LaunchedCoordinator {
     pub environment_ref: String,
 }
 
-/// Why a coordinator did not launch, as the launch reported it.
+/// Why a coordinator did not launch, as the launch reported it, and the
+/// coordinator it may have left running (its agent id): one that came up
+/// wrong and could not be stopped. While one may be running, its run is
+/// never folded back, nor its claim released.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LaunchRefused(pub String);
+pub struct LaunchRefused {
+    pub reason: String,
+    pub still_running: Option<String>,
+}
+
+impl LaunchRefused {
+    /// A launch refused with nothing left running.
+    pub fn because(reason: impl Into<String>) -> Self {
+        Self {
+            reason: reason.into(),
+            still_running: None,
+        }
+    }
+
+    /// A launch refused that may have left coordinator `agent` running.
+    pub fn leaving(reason: impl Into<String>, agent: impl Into<String>) -> Self {
+        Self {
+            reason: reason.into(),
+            still_running: Some(agent.into()),
+        }
+    }
+}
+
+/// Port: whether a run's swarm is still running, as far as this front end
+/// can tell (S4c): the coordinator this session launched for it still
+/// runs. A front end that launches none (the CLI) has none, and a
+/// coordinator another session launched is not seen: `end_run` from there
+/// relies on its caller to have stopped it.
+pub trait RunLiveness: Send + Sync {
+    /// Whether run `run` of `task` still has its swarm running here.
+    fn is_running(&self, task: &Slug, run: u32) -> bool;
+}
 
 /// Port: launches a started task's swarm coordinator in a new container
 /// (S4c). Its adapter goes through the session's own spawn path, so it
@@ -568,17 +602,14 @@ pub trait CoordinatorLaunch: Send + Sync {
     /// A start asks before it writes anything; the launch asks again.
     fn may_launch(&self) -> bool;
 
-    /// Whether this session still runs the coordinator it launched for run
-    /// `run` of `task` (its swarm is then still going): `end_run` is
-    /// refused while it does.
-    fn runs_coordinator(&self, task: &Slug, run: u32) -> bool;
-
     /// Launches the coordinator `request` describes, giving up once
     /// `cancelled` is set (the call it serves was cancelled): what it began
     /// is stopped, and the launch refused.
     ///
     /// # Errors
-    /// The launch's refusal, a cancel's included: nothing is left running.
+    /// The launch's refusal, a cancel's included: nothing is left running,
+    /// or the refusal names the coordinator that may be
+    /// ([`LaunchRefused::still_running`]).
     fn launch(
         &self,
         request: &CoordinatorRequest,

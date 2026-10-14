@@ -102,7 +102,13 @@ fn launching_board(
         Arc::new(SystemBoardClock::default()),
         Arc::new(QueryListings(QueryBoard::new(Arc::new(store.client())))),
         Err(NoPullRequestHost::NotAPullRequestHost),
-        environment.launcher.clone(),
+        environment.launcher.clone().map(|swarms| {
+            swarms as Arc<dyn crate::application::project_board::ports::CoordinatorLaunch>
+        }),
+        environment
+            .launcher
+            .clone()
+            .map(|swarms| swarms as Arc<dyn crate::application::project_board::ports::RunLiveness>),
     )
     .map_err(|error| BuildError::Unavailable(error.to_string()))?;
     Ok(ProjectBoardHandles { operations })
@@ -111,15 +117,17 @@ fn launching_board(
 /// A launcher that launches every coordinator it is asked to.
 struct Launching;
 
-impl crate::application::project_board::ports::CoordinatorLaunch for Launching {
-    fn runs_coordinator(
+impl crate::application::project_board::ports::RunLiveness for Launching {
+    fn is_running(
         &self,
         _: &crate::domain::project_board::value_objects::slug::Slug,
         _: u32,
     ) -> bool {
         false
     }
+}
 
+impl crate::application::project_board::ports::CoordinatorLaunch for Launching {
     fn may_launch(&self) -> bool {
         true
     }
@@ -233,15 +241,17 @@ fn tool_without_launcher() -> super::BoardTool {
 /// A launcher whose every launch fails.
 struct Failing;
 
-impl crate::application::project_board::ports::CoordinatorLaunch for Failing {
-    fn runs_coordinator(
+impl crate::application::project_board::ports::RunLiveness for Failing {
+    fn is_running(
         &self,
         _: &crate::domain::project_board::value_objects::slug::Slug,
         _: u32,
     ) -> bool {
         false
     }
+}
 
+impl crate::application::project_board::ports::CoordinatorLaunch for Failing {
     fn may_launch(&self) -> bool {
         true
     }
@@ -254,9 +264,11 @@ impl crate::application::project_board::ports::CoordinatorLaunch for Failing {
         crate::application::project_board::ports::LaunchedCoordinator,
         crate::application::project_board::ports::LaunchRefused,
     > {
-        Err(crate::application::project_board::ports::LaunchRefused(
-            "no container runtime".into(),
-        ))
+        Err(
+            crate::application::project_board::ports::LaunchRefused::because(
+                "no container runtime",
+            ),
+        )
     }
 }
 
@@ -314,15 +326,17 @@ async fn a_failed_launch_records_its_undo() {
 /// A launcher whose session still runs run 1's coordinator of task `a`.
 struct StillRunning;
 
-impl crate::application::project_board::ports::CoordinatorLaunch for StillRunning {
-    fn runs_coordinator(
+impl crate::application::project_board::ports::RunLiveness for StillRunning {
+    fn is_running(
         &self,
         task: &crate::domain::project_board::value_objects::slug::Slug,
         run: u32,
     ) -> bool {
         (task.as_str(), run) == ("a", 1)
     }
+}
 
+impl crate::application::project_board::ports::CoordinatorLaunch for StillRunning {
     fn may_launch(&self) -> bool {
         true
     }
@@ -335,15 +349,13 @@ impl crate::application::project_board::ports::CoordinatorLaunch for StillRunnin
         crate::application::project_board::ports::LaunchedCoordinator,
         crate::application::project_board::ports::LaunchRefused,
     > {
-        Err(crate::application::project_board::ports::LaunchRefused(
-            "not in this test".into(),
-        ))
+        Err(crate::application::project_board::ports::LaunchRefused::because("not in this test"))
     }
 }
 
-/// Review round 2 (M-A): the tool refuses to end a run whose swarm this
-/// session still runs (`run_live`), before the board is built, and
-/// records the refusal; another run reaches the board.
+/// Review rounds 2-3 (M-A, M2): the tool's end_run of a run whose swarm
+/// this session still runs is refused by the use case (`run_live`), and
+/// recorded; another run reaches the board's rules.
 #[tokio::test(flavor = "multi_thread")]
 async fn the_tool_refuses_to_end_a_run_its_session_still_runs() {
     let records = Arc::new(Records::default());
@@ -358,7 +370,12 @@ async fn the_tool_refuses_to_end_a_run_its_session_still_runs() {
     assert!(refused.is_error, "{answer}");
     assert_eq!(answer["error"]["code"], json!("run_live"), "{answer}");
     assert_eq!(
-        answer["error"]["reason"],
+        (&answer["error"]["task"], &answer["error"]["run"]),
+        (&json!("a"), &json!(1)),
+        "{answer}"
+    );
+    assert_eq!(
+        answer["error"]["message"],
         json!(
             "run 1 of a still has its swarm running in this session: stop its coordinator \
              first (agent_cmd kill), then end the run"
