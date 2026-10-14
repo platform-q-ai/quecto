@@ -382,6 +382,8 @@ fn an_acceptance_waits_for_a_known_unchanged_draft_and_no_run_going() {
     let now = at("10:00:00");
     let versions = [plan(1, PlanState::Accepted), plan(2, PlanState::Draft)];
     let accept_with = |version: u32, expected: Option<&Timestamp>, runs: &[Run]| {
+        let accepted = held.fields().accepted_plan;
+        let expected = expected.map(|updated| AsRead { updated, accepted });
         accept(
             &TaskPlans {
                 task: &held,

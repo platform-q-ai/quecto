@@ -168,6 +168,30 @@ fn a_command_line_reaches_the_same_request_as_the_tools_json() {
         .field,
         "items"
     );
+    // An acceptance's pin on none accepted is null, as `""` or `null`;
+    // a version reads as its number (Q5 review round 2).
+    let accept = |seen: &str| {
+        line(
+            "accept-plan",
+            &[
+                "--task",
+                "a",
+                "--version",
+                "2",
+                "--expected-updated",
+                "2026-10-10T09:00:00Z",
+                "--expected-accepted",
+                seen,
+            ],
+        )
+    };
+    let pinned = |seen: Value| {
+        Ok(json!({"op": "accept_plan", "task": "a", "version": 2,
+                  "expected_updated": "2026-10-10T09:00:00Z", "expected_accepted": seen}))
+    };
+    assert_eq!(accept(""), pinned(Value::Null));
+    assert_eq!(accept("null"), pinned(Value::Null));
+    assert_eq!(accept("3"), pinned(json!(3)));
     let pr_word = line("link-pr", &["--task", "a", "--pr", "twelve"]).unwrap();
     assert_eq!(
         request::parse(&pr_word).unwrap_err().field,

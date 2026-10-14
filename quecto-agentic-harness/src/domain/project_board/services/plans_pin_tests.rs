@@ -43,3 +43,49 @@ fn a_changed_acceptance_names_what_the_task_accepts_now() {
         "the task's accepted plan changed since it was read (it is now none); read it again"
     );
 }
+
+/// Review round 2 (LOW-3): the pin is the acceptance's own, judged after
+/// the task is open to plans and the version is a draft, beside its
+/// `updated`: a stale reader of a done task hears it is done, and one who
+/// saw another acceptance hears that, never building on it.
+#[test]
+fn an_acceptance_judges_its_pin_beside_its_read() {
+    use crate::domain::project_board::services::fixtures_tests::{at, person, plan};
+    use crate::domain::project_board::value_objects::vocabulary::PlanState;
+    use crate::domain::project_board::value_objects::vocabulary::TaskStatus::Done;
+    let versions = [plan(1, PlanState::Accepted), plan(2, PlanState::Draft)];
+    let updated = at("08:30:00");
+    let accepting = |task: &Task, seen: Option<u32>| {
+        accept(
+            &TaskPlans {
+                task,
+                versions: &versions,
+                runs: &[],
+            },
+            2,
+            Some(AsRead {
+                updated: &updated,
+                accepted: seen,
+            }),
+            &person("Ada"),
+            &Moment {
+                now: at("10:00:00"),
+                latest: None,
+            },
+        )
+        .map(|accepted| accepted.plan.fields().version)
+    };
+    let mut done = task(Done).into_fields();
+    done.accepted_plan = Some(1);
+    let done = Task::new(done).unwrap();
+    assert_eq!(
+        accepting(&done, None),
+        Err(BoardRuleError::TaskFinished(Done)),
+        "a done task is said done before a stale pin"
+    );
+    assert_eq!(
+        accepting(&naming(Some(1)), None),
+        Err(BoardRuleError::AcceptedPlanChanged { accepted: Some(1) })
+    );
+    assert_eq!(accepting(&naming(Some(1)), Some(1)), Ok(2));
+}

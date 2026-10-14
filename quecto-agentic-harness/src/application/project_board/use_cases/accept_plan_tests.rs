@@ -400,3 +400,68 @@ fn a_task_stamped_ahead_is_not_accepted_on() {
         })
     );
 }
+
+/// Review round 2 (LOW-4): Ada accepts version 3 between Bob's read and
+/// his write. Bob's acceptance of version 2, pinned to none accepted, is
+/// judged again on the fresh board and refused: he never supersedes an
+/// acceptance he did not see, and writes nothing.
+#[test]
+fn an_acceptance_racing_another_is_refused_on_its_retry() {
+    let store = seeded(
+        naming(None),
+        vec![
+            plan_of("a", 2, PlanState::Draft),
+            plan_of("a", 3, PlanState::Draft),
+        ],
+        vec![],
+    );
+    let ada = store.client_as(person("Ada"));
+    store.after_next_read(move |_| {
+        let accepting = AcceptPlan::new(Arc::new(ada), SetClock::at("09:30:00")).unwrap();
+        accepting.execute(&of(3, None)).unwrap();
+    });
+    let mut facts = OpFacts::default();
+    assert_eq!(
+        accept_as(&store, "Bob")
+            .execute_noted(&of(2, None), Some(&mut facts))
+            .map(|_| ()),
+        rule(BoardRuleError::AcceptedPlanChanged { accepted: Some(3) })
+    );
+    assert_eq!((facts.attempts, facts.lost), (Some(2), Some(1)));
+    let board = store.read().unwrap();
+    assert_eq!(
+        store.committed_by(&board.head).map(|writer| writer.name),
+        Some("Ada".to_string()),
+        "the last write is Ada's: Bob wrote nothing"
+    );
+    assert_eq!(
+        states(&store),
+        [(2, PlanState::Draft), (3, PlanState::Accepted)]
+    );
+}
+
+/// Review round 2 (LOW-3): a stale reader of a done task hears it is
+/// done, before its pin is judged.
+#[test]
+fn a_stale_reader_of_a_done_task_hears_it_is_done() {
+    let done = |fields: TaskFields| TaskFields {
+        status: TaskStatus::Done,
+        resolution: Some(
+            crate::domain::project_board::value_objects::vocabulary::Resolution::Completed,
+        ),
+        accepted_plan: Some(1),
+        ..fields
+    };
+    let store = seeded(
+        done,
+        vec![
+            plan_of("a", 1, PlanState::Accepted),
+            plan_of("a", 2, PlanState::Draft),
+        ],
+        vec![],
+    );
+    assert_eq!(
+        accept_as(&store, "Ada").execute(&of(2, None)).map(|_| ()),
+        rule(BoardRuleError::TaskFinished(TaskStatus::Done))
+    );
+}

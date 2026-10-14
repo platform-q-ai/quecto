@@ -11,7 +11,8 @@ use crate::domain::project_board::value_objects::telemetry::FaultKind;
 /// The request `op` and `flags` name. A list of ids is comma-separated (an
 /// empty value is the empty list); `--repeated`, `--items` and `--team`
 /// are JSON (`--team null` takes a draft's team away); `--parent ""`
-/// takes a draft's parent away.
+/// takes a draft's parent away; `--expected-accepted ""` (or `null`) says
+/// the task named no accepted plan.
 ///
 /// # Errors
 /// An unknown op, a flag the op does not take or gives twice, a flag
@@ -48,7 +49,8 @@ pub fn request(op: &str, flags: &[String]) -> Result<Value, RequestError> {
                 }
                 Value::Array(ids.into_iter().map(|id| Value::String(id.into())).collect())
             }
-            Kind::OptionalSlug | Kind::AcceptedVersion if text.is_empty() => Value::Null,
+            Kind::OptionalSlug if text.is_empty() => Value::Null,
+            Kind::AcceptedVersion if text.is_empty() || text == "null" => Value::Null,
             Kind::Pr | Kind::Offset | Kind::Version | Kind::AcceptedVersion => text
                 .parse::<u64>()
                 .map(Value::from)
