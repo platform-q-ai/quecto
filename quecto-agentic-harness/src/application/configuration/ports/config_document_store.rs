@@ -41,4 +41,11 @@ pub trait ConfigDocumentStore: Send + Sync {
     /// a write to it. Otherwise as [`Self::read`]: absent, bytes, or an
     /// error naming a present-but-broken entry.
     fn read_overlay(&self, path: &Path) -> Result<OverlayDocument, String>;
+
+    /// Whether anything is at the overlay location `path`, from directory
+    /// entries alone (the file is never opened): `false` only when
+    /// [`Self::read_overlay`] would answer [`OverlayDocument::Absent`]; a
+    /// link on the stretch, a file, or any other entry is `true`. An entry
+    /// that cannot be examined is an error.
+    fn has_overlay_entry(&self, path: &Path) -> Result<bool, String>;
 }

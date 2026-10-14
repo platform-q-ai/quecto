@@ -104,3 +104,37 @@ fn nix_is_root() -> bool {
         })
         .unwrap_or(false)
 }
+
+/// Review round 3 LOW-3: the overlay file is opened without following a
+/// final link and without blocking, and the handle is what is checked: a
+/// link swapped in after the stretch check is refused as a link, a FIFO is
+/// not a regular file, and neither is followed or waited on.
+#[test]
+fn the_overlay_open_refuses_a_link_and_a_fifo_by_the_handle() {
+    let dir = TempDir::new().unwrap();
+    let target = dir.path().join("target.json");
+    std::fs::write(&target, "{}").unwrap();
+    let link = dir.path().join("config.json");
+    std::os::unix::fs::symlink(&target, &link).unwrap();
+    match open_overlay_file(&link).unwrap() {
+        OverlayDocument::Refused { reason } => {
+            assert!(reason.contains("symbolic link"), "{reason}")
+        }
+        other => panic!("a link is refused, got {other:?}"),
+    }
+    std::fs::remove_file(&link).unwrap();
+    let status = std::process::Command::new("mkfifo")
+        .arg(&link)
+        .status()
+        .unwrap();
+    assert!(status.success());
+    let error = open_overlay_file(&link).unwrap_err();
+    assert!(error.contains("not a regular file"), "{error}");
+    std::fs::remove_file(&link).unwrap();
+    assert_eq!(open_overlay_file(&link).unwrap(), OverlayDocument::Absent);
+    std::fs::write(&link, "{}").unwrap();
+    assert_eq!(
+        open_overlay_file(&link).unwrap(),
+        OverlayDocument::Present(b"{}".to_vec())
+    );
+}

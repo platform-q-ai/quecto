@@ -45,8 +45,16 @@
 //!
 //! An object a partial clone does not hold yet is not fetched here (every
 //! local call runs with `GIT_NO_LAZY_FETCH`): the read answers
-//! [`Unread::Missing`] with every object it found missing, so the store
-//! fetches them in one call and reads again.
+//! [`Unread::Missing`] with what to fetch for every object it found
+//! missing, so the store fetches them in one round and reads again
+//! (#2481 S10b): the root and the archive as trees alone ([`Wanted::Alone`]:
+//! a read only judges their type), and a live folder whole but for any
+//! blob past every cap ([`Wanted::Filtered`], [`FILTER_BYTES`]). A blob
+//! still missing in a folder fetched so is one past every cap: set aside
+//! as too large and carried by its id, never fetched, and remembered
+//! ([`LeftOnRemote`]) so no later read fetches its folder whole again. A
+//! file at the root is fetched by its id, so a damaged root is judged by
+//! its real objects, as in a full clone.
 use super::artifacts::task::TASK_LIMITS;
 pub use super::cat_file::contents;
 use super::cat_file::{Found, Object, objects};
@@ -55,7 +63,7 @@ use crate::application::project_board::ports::{BoardArtifact, BoardStoreError, Q
 use crate::domain::project_board::entities::task::Task;
 use crate::domain::project_board::value_objects::shown_text::shown_board_path;
 use crate::domain::project_board::value_objects::slug::{MAX_SLUG_BYTES, Slug};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// The punctuation a name kept in `tasks/` may hold besides letters and
 /// numbers.
@@ -125,9 +133,9 @@ pub fn unavailable(error: GitError) -> BoardStoreError {
 /// Why a board commit was not read.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Unread {
-    /// Objects the commit names that this clone does not hold (a partial
-    /// clone): fetch them, then read again.
-    Missing(Vec<String>),
+    /// What to fetch for the objects the commit names that this clone
+    /// does not hold (a partial clone); then read again.
+    Missing(Vec<Wanted>),
     Failed(BoardStoreError),
 }
 
@@ -175,6 +183,8 @@ pub struct Board {
     pub folders: BTreeMap<&'static str, CarriedTree>,
     /// The archive's tree, never read: every write carries it as it is.
     pub archive: Option<String>,
+    /// Blobs a partial clone's filter left on the remote, past every cap.
+    pub omitted: BTreeSet<String>,
 }
 
 /// One copy of a name a write would carry, as its tree entry holds it.
@@ -192,11 +202,11 @@ impl TreeCopy {
         format!("{} {} {}", self.mode, self.kind, self.oid)
     }
 
-    /// Its size, when a read of the board reads it (a regular file of at
-    /// most a task file's size).
-    pub fn read_size(&self) -> Option<usize> {
+    /// Its size, when a read of the board reads it: a regular file of at
+    /// most its kind's cap, `file_bytes`.
+    pub fn read_size(&self, file_bytes: usize) -> Option<usize> {
         let read = self.mode == REGULAR_FILE && self.kind == "blob";
-        (read && self.size <= MAX_TASK_FILE_BYTES).then_some(self.size)
+        (read && self.size <= file_bytes).then_some(self.size)
     }
 }
 
@@ -220,21 +230,28 @@ impl Board {
     /// Why no write is taken, when a task file's name is listed twice.
     pub fn repeated_refusal(&self, head: &str) -> Option<String> {
         let (name, copies) = self.repeated.first()?;
-        let oids: Vec<&str> = copies.iter().map(|copy| copy.oid.as_str()).collect();
-        Some(format!(
-            "tasks/{} is named more than once in board commit {head} (objects {}). quecto \
-             never writes such a tree, so a hand edit did, and git rejects it (fsck: \
-             duplicateEntries): no write can carry it forward, and quecto will not choose a \
-             copy. To mend the board, clear it (clear set-aside), naming the copy to keep for \
-             every name listed more than once, or {RECOVERY}",
-            quoted(name.as_bytes()),
-            oids.join(", ")
-        ))
+        let path = format!("tasks/{}", quoted(name.as_bytes()));
+        Some(named_twice(&path, head, copies, "no write"))
     }
 
     pub fn is_quarantined(&self, id: &Slug) -> Option<&QuarantinedFile> {
         self.quarantined.iter().find(|file| file.id() == Some(id))
     }
+}
+
+/// Why `writes` (every write, or every write in one folder) is refused
+/// while `path` is listed more than once, as `copies`, in board commit
+/// `head`.
+pub(super) fn named_twice(path: &str, head: &str, copies: &[TreeCopy], writes: &str) -> String {
+    let oids: Vec<&str> = copies.iter().map(|copy| copy.oid.as_str()).collect();
+    format!(
+        "{path} is named more than once in board commit {head} (objects {}). quecto never \
+         writes such a tree, so a hand edit did, and git rejects any new tree holding it (fsck: \
+         duplicateEntries): {writes} can carry it forward, and quecto will not choose a copy. To mend the board, \
+         clear it (clear set-aside), naming the copy to keep for every name listed more than \
+         once, or {RECOVERY}",
+        oids.join(", ")
+    )
 }
 
 /// One entry of a listed tree.
@@ -291,7 +308,12 @@ fn kind_of_mode(mode: &str) -> Option<&'static str> {
 /// # Errors
 /// Objects this clone does not hold; git fails, a tree is past its bounds,
 /// or the commit is not a board (a clash).
-pub fn read_board(git: &Git, commit: &str, limits: Limits) -> Result<Board, Unread> {
+pub fn read_board(
+    git: &Git,
+    commit: &str,
+    limits: Limits,
+    left: &LeftOnRemote,
+) -> Result<Board, Unread> {
     let root = listed(git, &tree_of(git, commit)?, limits.tree_bytes)?;
     let kinds = objects(git, looked_up(&root))?;
     let named = |name: &'static str| root.iter().filter(move |entry| entry.name == name);
@@ -305,7 +327,7 @@ pub fn read_board(git: &Git, commit: &str, limits: Limits) -> Result<Board, Unre
     // before it.
     let marker = match named(FORMAT_TREE).collect::<Vec<_>>().as_slice() {
         [] => None,
-        [entry] if is_tree(entry, &kinds) => Some(read_format(git, &entry.oid, limits)),
+        [entry] if is_tree(entry, &kinds) => Some(read_format(git, &entry.oid, limits, left)),
         [entry] if is_file(entry, &kinds) => None,
         [entry] => Some(Ok(Marker::Damaged(format!(
             "format at the root is mode {} over a {}",
@@ -325,7 +347,7 @@ pub fn read_board(git: &Git, commit: &str, limits: Limits) -> Result<Board, Unre
         Some(Ok(Marker::Newer(version))) => return Err(Unread::Failed(newer(version))),
         Some(Ok(Marker::Oversized(size))) => {
             return Err(Unread::Failed(BoardStoreError::Unavailable(format!(
-                "its format marker (format/board) is {size} bytes, more than this quecto reads: \
+                "its format marker (format/board) is {size}, more than this quecto reads: \
                  if a newer quecto wrote the board, upgrade quecto; if a hand edit did, mend the \
                  board: {RECOVERY}"
             ))));
@@ -337,15 +359,32 @@ pub fn read_board(git: &Git, commit: &str, limits: Limits) -> Result<Board, Unre
     let tasks = named("tasks")
         .next()
         .filter(|entry| is_tree(entry, &kinds))
-        .map(|entry| scan_tasks(git, &entry.oid, limits));
+        .map(|entry| scan_tasks(git, &entry.oid, limits, left));
     let folders: Vec<(&'static str, Result<FolderScan, Unread>)> = FOLDERS
         .iter()
         .filter_map(|folder| {
             let name = folder.naming.folder;
-            once(name).map(|entry| (name, scan_folder(git, &entry.oid, folder, limits)))
+            once(name).map(|entry| (name, scan_folder(git, &entry.oid, folder, limits, left)))
         })
         .collect();
-    let mut missing = missing(&root, &kinds);
+    // A live tree, named, is fetched with what a read reads under it, and
+    // a file by its id (whole), in one call; any other tree at the root
+    // (the archive, a stray) alone. Each is judged by its real object.
+    let live = |entry: &Entry| {
+        let name = entry.name.as_str();
+        let named = name == "tasks"
+            || name == FORMAT_TREE
+            || FOLDERS.iter().any(|folder| folder.naming.folder == name);
+        (named && entry.mode == TREE) || kind_of_mode(&entry.mode) == Some("blob")
+    };
+    let mut missing: Vec<Wanted> = root
+        .iter()
+        .filter(|entry| matches!(kinds.get(&entry.oid), Some(Found::Missing)))
+        .map(|entry| match live(entry) {
+            true => Wanted::Filtered(entry.oid.clone()),
+            false => Wanted::Alone(entry.oid.clone()),
+        })
+        .collect();
     let (tasks, marker) = (gather(tasks, &mut missing), gather(marker, &mut missing));
     let folders: Vec<(&'static str, Option<Result<FolderScan, Unread>>)> = folders
         .into_iter()
@@ -444,10 +483,10 @@ pub(super) fn entry_path(folder: &str, raw: &[u8], oid: &str) -> String {
     odd
 }
 
-/// `result`, its missing objects moved to `missing`.
+/// `result`, what it misses moved to `missing`.
 fn gather<T>(
     result: Option<Result<T, Unread>>,
-    missing: &mut Vec<String>,
+    missing: &mut Vec<Wanted>,
 ) -> Option<Result<T, Unread>> {
     match result {
         Some(Err(Unread::Missing(more))) => {
@@ -478,14 +517,6 @@ fn looked_up(entries: &[Entry]) -> impl Iterator<Item = &str> {
         .iter()
         .filter(|entry| matches!(kind_of_mode(&entry.mode), Some("blob" | "tree")))
         .map(|entry| entry.oid.as_str())
-}
-
-fn missing(entries: &[Entry], kinds: &BTreeMap<String, Found>) -> Vec<String> {
-    entries
-        .iter()
-        .filter(|entry| matches!(kinds.get(&entry.oid), Some(Found::Missing)))
-        .map(|entry| entry.oid.clone())
-        .collect()
 }
 
 /// A board's root: a README file (a hand edit may have deleted it), a
@@ -545,7 +576,8 @@ fn listed(git: &Git, tree: &str, max_bytes: usize) -> Result<Vec<Entry>, Unread>
         Some(Found::Present(object)) => {
             return Err(not_read(format!("{tree} is a {}, not a tree", object.kind)));
         }
-        Some(Found::Missing) => return Err(Unread::Missing(vec![tree.to_string()])),
+        // Only the root is listed before its type is known: fetched alone.
+        Some(Found::Missing) => return Err(Unread::Missing(vec![Wanted::Alone(tree.to_string())])),
         None => return Err(not_read(format!("cat-file did not report {tree}"))),
     }
     let listing = git
@@ -592,16 +624,20 @@ pub fn object_id(text: &str) -> Result<String, BoardStoreError> {
 
 #[path = "board_bounds.rs"]
 mod bounds;
-pub use bounds::within;
 use bounds::within_read;
+pub use bounds::{ClearKeeps, within};
 #[path = "board_entries.rs"]
 mod entries;
 pub use entries::TASK_NAMING;
 use entries::{TaskFile, task_name};
 #[path = "board_folders.rs"]
 mod folders;
-pub use folders::{ARCHIVE, CarriedTree, MAX_BOARD_ENTRIES};
+pub use folders::{ARCHIVE, CarriedTree, FILTER_BYTES, MAX_BOARD_ENTRIES, is_folder, read_size_in};
 use folders::{FOLDERS, FolderScan, load_folder, root_tree, scan_folder};
+#[path = "board_left_on_remote.rs"]
+mod left;
+pub use left::{LeftOnRemote, Wanted};
+use left::{kinds_in, omitted_in};
 #[path = "board_tasks.rs"]
 mod tasks;
 #[path = "board_writes.rs"]

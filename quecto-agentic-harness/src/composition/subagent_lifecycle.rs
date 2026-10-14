@@ -9,12 +9,14 @@ use std::path::Path;
 use std::sync::Arc;
 
 use crate::application::configuration::dto::{
-    ConfigLayers, ConfigSelection, ConfigSelectionRequest,
+    ConfigLayers, ConfigSelection, ConfigSelectionRequest, OverlayOrigin,
 };
 use crate::application::configuration::use_cases::SelectConfig;
 use crate::application::subagents::use_cases::{
     CompensateFailedLaunch, CompensateFailedLaunchPorts, InspectEndedChild, ObserveOwnedChildExit,
 };
+use crate::infrastructure::config::loaders::FilesystemConfigDocumentStore;
+use crate::infrastructure::config::main_worktree::GitMetadataWorktreeLocator;
 use crate::infrastructure::processes::direct_child_routing::UdsDirectChildRouting;
 use crate::infrastructure::processes::owned_child_termination::SupervisedChildTermination;
 use crate::infrastructure::tools::spawn::SpawnTool;
@@ -83,6 +85,7 @@ pub fn compose_launcher(tool: SpawnTool) -> SpawnTool {
             global: global.to_path_buf(),
             overlay: None,
             legacy_local: None,
+            overlay_origin: OverlayOrigin::WorkingDirectory,
         })
     });
     compose_launcher_with_selection(tool, selection)
@@ -94,7 +97,11 @@ pub fn compose_launcher(tool: SpawnTool) -> SpawnTool {
 /// build discovers them for the working directory.
 pub fn compose_launcher_in_checkout(tool: SpawnTool, checkout: &Path) -> SpawnTool {
     let selection = tool.parent_config_path().map(|global| {
-        SelectConfig::new().execute(ConfigSelectionRequest {
+        SelectConfig::new(
+            Arc::new(FilesystemConfigDocumentStore),
+            Arc::new(GitMetadataWorktreeLocator),
+        )
+        .execute(ConfigSelectionRequest {
             explicit: None,
             working_directory: Some(checkout.to_path_buf()),
             global: global.to_path_buf(),

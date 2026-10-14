@@ -128,8 +128,9 @@ pub struct QuarantinedFile {
     /// could not read): what it holds stays on the board. A file not
     /// carried (a stray) is dropped by the next write. The one exception:
     /// the copies of a name listed more than once are not carried, yet not
-    /// dropped either: every write is refused until a clear resolves them
-    /// (it names the copy kept, or that none is).
+    /// dropped either: every write that would rebuild their folder (every
+    /// write, in `tasks/`) is refused until a clear resolves them (it names
+    /// the copy kept, or that none is).
     pub carried: bool,
 }
 
@@ -268,11 +269,9 @@ pub enum BoardStoreError {
     /// The board is past what a read takes: too many entries, or too many
     /// bytes, in a folder or in all. Nothing is read.
     TooLarge(String),
-    /// A file set aside outside `tasks/` holds the board where a store or
-    /// index cannot yet judge it: no write or clear is made while a name
-    /// there is listed more than once (a store that cannot yet resolve one
-    /// there), and no listing is given while one names an artifact other
-    /// than a task (an index that does not yet hold that kind).
+    /// A file set aside outside `tasks/` holds the board where an index
+    /// cannot yet judge it: no listing is given while one names an artifact
+    /// other than a task (an index that does not yet hold that kind).
     FolderSetAside(String),
 }
 

@@ -32,8 +32,10 @@ impl GitBoardStore {
         if let Some(refusal) = board.repeated_refusal(&base) {
             return Ok(BoardWrite::Refused(refusal));
         }
-        if let Some(refusal) = board.folders_repeated_refusal() {
-            return Err(BoardStoreError::FolderSetAside(refusal));
+        let (tasks, files) = encoded(artifacts).map_err(invalid)?;
+        // A folder with a name listed twice holds only writes into it.
+        if let Some(refusal) = board.folder_repeated_refusal(&base, &files) {
+            return Ok(BoardWrite::Refused(refusal));
         }
         // A file the next write drops holds no key: the write replaces it.
         let set_aside = board
@@ -46,7 +48,6 @@ impl GitBoardStore {
                 file.path, file.reason
             )));
         }
-        let (tasks, files) = encoded(artifacts).map_err(invalid)?;
         let folders = board.folders_after(&files);
         // A read takes at most so much, so no write makes a board that
         // cannot be read.
