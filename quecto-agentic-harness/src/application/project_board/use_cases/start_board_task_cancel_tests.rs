@@ -118,6 +118,7 @@ fn a_start_cancelled_before_its_launch_launches_nothing_and_is_undone() {
             run_state: RunAfterUndo::Folded,
             released: Some(true),
             restored: None,
+            still_running: None,
         })
     );
     assert!(cancelled.load(Ordering::SeqCst));
@@ -140,7 +141,7 @@ impl CoordinatorLaunch for CancelledLaunch {
         _: &std::sync::atomic::AtomicBool,
     ) -> Result<LaunchedCoordinator, LaunchRefused> {
         self.0.store(true, Ordering::SeqCst);
-        Err(LaunchRefused("the call was cancelled".into()))
+        Err(LaunchRefused::because("the call was cancelled"))
     }
 }
 
@@ -158,6 +159,7 @@ fn a_start_cancelled_during_its_launch_is_still_undone() {
             run_state: RunAfterUndo::Folded,
             released: Some(true),
             restored: None,
+            still_running: None,
         })
     );
     assert_undone(&store);
@@ -212,6 +214,7 @@ fn a_launch_that_panics_is_undone() {
             run_state: RunAfterUndo::Folded,
             released: Some(true),
             restored: None,
+            still_running: None,
         })
     );
     assert_undone(&store);
@@ -261,6 +264,7 @@ fn a_held_start_undone_goes_back_to_its_status() {
                 run_state: RunAfterUndo::Folded,
                 released: None,
                 restored: got,
+                still_running: None,
                 ..
             }) => assert_eq!(got, restored, "{from:?}"),
             other => panic!("{from:?}: {other:?}"),
@@ -279,6 +283,7 @@ fn a_held_start_undone_goes_back_to_its_status() {
             status: TaskStatus::Review,
             moved: true,
         }),
+        still_running: None,
     };
     assert_eq!(
         moved_back.to_string(),
@@ -294,6 +299,7 @@ fn a_held_start_undone_goes_back_to_its_status() {
             status: TaskStatus::Blocked,
             moved: false,
         }),
+        still_running: None,
     };
     assert!(
         stuck

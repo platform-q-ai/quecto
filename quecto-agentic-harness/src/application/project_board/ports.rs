@@ -548,9 +548,33 @@ pub struct LaunchedCoordinator {
     pub environment_ref: String,
 }
 
-/// Why a coordinator did not launch, as the launch reported it.
+/// Why a coordinator did not launch, as the launch reported it, and the
+/// coordinator it may have left running (its agent id): one that came up
+/// wrong and could not be stopped. While one may be running, its run is
+/// never folded back, nor its claim released.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LaunchRefused(pub String);
+pub struct LaunchRefused {
+    pub reason: String,
+    pub still_running: Option<String>,
+}
+
+impl LaunchRefused {
+    /// A launch refused with nothing left running.
+    pub fn because(reason: impl Into<String>) -> Self {
+        Self {
+            reason: reason.into(),
+            still_running: None,
+        }
+    }
+
+    /// A launch refused that may have left coordinator `agent` running.
+    pub fn leaving(reason: impl Into<String>, agent: impl Into<String>) -> Self {
+        Self {
+            reason: reason.into(),
+            still_running: Some(agent.into()),
+        }
+    }
+}
 
 /// Port: launches a started task's swarm coordinator in a new container
 /// (S4c). Its adapter goes through the session's own spawn path, so it
@@ -567,7 +591,9 @@ pub trait CoordinatorLaunch: Send + Sync {
     /// is stopped, and the launch refused.
     ///
     /// # Errors
-    /// The launch's refusal, a cancel's included: nothing is left running.
+    /// The launch's refusal, a cancel's included: nothing is left running,
+    /// or the refusal names the coordinator that may be
+    /// ([`LaunchRefused::still_running`]).
     fn launch(
         &self,
         request: &CoordinatorRequest,

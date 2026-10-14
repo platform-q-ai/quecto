@@ -34,7 +34,7 @@ impl CoordinatorLaunch for CancelledAndFrozen {
     ) -> Result<LaunchedCoordinator, LaunchRefused> {
         self.1.store(true, Ordering::SeqCst);
         self.0.refuse_next_write("the board is frozen");
-        Err(LaunchRefused("the call was cancelled".into()))
+        Err(LaunchRefused::because("the call was cancelled"))
     }
 }
 
@@ -107,6 +107,7 @@ fn a_cancelled_start_whose_undo_could_not_fold_back_is_recovered() {
             run_state: RunAfterUndo::Open,
             released: Some(false),
             restored: None,
+            still_running: None,
         })
     );
     assert!(cancelled.load(Ordering::SeqCst));

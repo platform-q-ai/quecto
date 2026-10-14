@@ -192,7 +192,7 @@ impl StartBoardTask {
         let never = AtomicBool::new(false);
         let cancel = self.cancelled.as_deref().unwrap_or(&never);
         if cancel.load(Ordering::SeqCst) {
-            let refused = LaunchRefused(CANCELLED.into());
+            let refused = LaunchRefused::because(CANCELLED);
             return Err(self.undone(&request.task, &started, refused, facts));
         }
         let coordinator = brief.coordinator.as_ref();
@@ -206,9 +206,12 @@ impl StartBoardTask {
         };
         let before = facts.as_ref().map(|_| self.clock.elapsed());
         // A launch that panics is undone as one that failed: the write it
-        // follows is never left behind.
+        // follows is never left behind. The catch holds while the call's
+        // scope is open; a panic after a cancelled call's scope closed (its
+        // work left running) is outside any scope, and the hook ends the
+        // process, as for any carried work (`call_work`'s limit).
         let launched = catch_in_call_site(AssertUnwindSafe(|| launcher.launch(&launch, cancel)))
-            .unwrap_or_else(|_| Err(LaunchRefused(PANICKED.into())));
+            .unwrap_or_else(|_| Err(LaunchRefused::because(PANICKED)));
         if let (Some(facts), Some(before)) = (facts.as_mut(), before) {
             let took = self.clock.elapsed().saturating_sub(before);
             facts.launch_us = Some(u64::try_from(took.as_micros()).unwrap_or(u64::MAX));
@@ -302,8 +305,11 @@ impl StartBoardTask {
     /// start is undone as far as it can be: its run folded back as failed
     /// (or found ended already), then, only once the run has ended, the
     /// task moved back to ready when the start took the claim, or to the
-    /// review or blocked status it was held in. Noted in
-    /// `facts`, when given, with the undo's fold-back.
+    /// review or blocked status it was held in. A coordinator that may
+    /// still be running (one that came up wrong and could not be stopped)
+    /// leaves the start as it is: its run open, for `end_run` once it is
+    /// stopped, and the claim held. Noted in `facts`, when given, with the
+    /// undo's fold-back.
     fn undone(
         &self,
         id: &Slug,
@@ -312,21 +318,17 @@ impl StartBoardTask {
         facts: Option<&mut StartFacts>,
     ) -> ProjectBoardError {
         let run = started.run().fields().number;
-        let failed = SwarmRunView {
-            end: SwarmEnd::Failed,
-            items: vec![],
-            observed_tokens: 0,
-        };
-        let noting = facts.is_some();
-        let before = self.clock.elapsed();
-        let mut fold_facts = FoldBackFacts::default();
-        let folded =
-            self.fold_back
-                .execute_noted(id, run, &failed, noting.then_some(&mut fold_facts));
-        let run_state = match &folded {
-            Ok(FoldedBack::Folded(_)) => RunAfterUndo::Folded,
-            Ok(FoldedBack::Ended(_)) => RunAfterUndo::EndedAlready,
-            Err(_) => RunAfterUndo::Open,
+        let LaunchRefused {
+            reason,
+            still_running,
+        } = refused;
+        let (run_state, undo) = match &still_running {
+            // Never fold back, nor release, under a swarm that may run.
+            Some(_) => (RunAfterUndo::Open, None),
+            None => {
+                let (run_state, undo) = self.folded_back(id, run, facts.is_some());
+                (run_state, Some(undo))
+            }
         };
         // A held task leaves progress only once its run has ended.
         let ended = matches!(run_state, RunAfterUndo::Folded | RunAfterUndo::EndedAlready);
@@ -349,21 +351,45 @@ impl StartBoardTask {
         if let Some(facts) = facts {
             facts.run_state = Some(run_state);
             facts.released = released;
-            facts.fold_back = Some(UndoFoldBack {
-                task: id.clone(),
-                run,
-                result: folded,
-                facts: fold_facts,
-                elapsed: self.clock.elapsed().saturating_sub(before),
-            });
+            facts.fold_back = undo;
         }
         ProjectBoardError::LaunchFailed {
-            reason: refused.0,
+            reason,
             run,
             run_state,
             released,
             restored,
+            still_running,
         }
+    }
+
+    /// Run `run` of task `id` folded back as failed, as a swarm that
+    /// reported nothing: where that left it, and the fold-back, timed and
+    /// with its facts when `noting`.
+    fn folded_back(&self, id: &Slug, run: u32, noting: bool) -> (RunAfterUndo, UndoFoldBack) {
+        let failed = SwarmRunView {
+            end: SwarmEnd::Failed,
+            items: vec![],
+            observed_tokens: 0,
+        };
+        let before = self.clock.elapsed();
+        let mut facts = FoldBackFacts::default();
+        let folded = self
+            .fold_back
+            .execute_noted(id, run, &failed, noting.then_some(&mut facts));
+        let run_state = match &folded {
+            Ok(FoldedBack::Folded(_)) => RunAfterUndo::Folded,
+            Ok(FoldedBack::Ended(_)) => RunAfterUndo::EndedAlready,
+            Err(_) => RunAfterUndo::Open,
+        };
+        let undo = UndoFoldBack {
+            task: id.clone(),
+            run,
+            result: folded,
+            facts,
+            elapsed: self.clock.elapsed().saturating_sub(before),
+        };
+        (run_state, undo)
     }
 }
 

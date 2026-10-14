@@ -186,13 +186,12 @@ fn titles_and_criteria_hold_no_line_break() {
     assert!(broken_criterion.validate("items/0").is_err());
 }
 
-/// Review round 2: the data is ASCII only, every other character escaped
-/// as JSON spells it (a backslash, `u` and four hex digits; a surrogate pair past the basic plane),
-/// and it reads back as written.
+/// Review round 3: only characters a reader cannot see are escaped (a
+/// bidi override, a zero-width space, a line separator, a C1 control), as
+/// JSON spells them; a diacritic, CJK and an emoji keep their size, and the
+/// whole reads back as written.
 #[test]
-fn the_plans_data_is_ascii_and_reads_back_as_written() {
-    // A diacritic, a right-to-left override and a character past the
-    // basic plane, spelled by their code points.
+fn hidden_characters_are_escaped_and_the_rest_kept() {
     let titled: String = [
         'n',
         'a',
@@ -205,18 +204,26 @@ fn the_plans_data_is_ascii_and_reads_back_as_written() {
         'v',
         'i',
         'l',
+        '\u{200b}',
         ' ',
+        '\u{4e2d}',
         '\u{1f980}',
+        '\u{2028}',
+        '\u{85}',
+        '\u{2066}',
     ]
     .iter()
     .collect();
     let mut plan = brief(vec![item("schema", &[titled.as_str()], &[])]);
     plan.constraints[0] = ['\u{dc}', 'n'].iter().collect();
     let text = render(&plan);
-    assert!(text.is_ascii(), "{text}");
     let b = '\\';
-    let escaped = format!("na{b}u00efve {b}u202eevil {b}ud83e{b}udd80");
+    let escaped =
+        format!("na\u{ef}ve {b}u202eevil{b}u200b \u{4e2d}\u{1f980}{b}u2028{b}u0085{b}u2066");
     assert!(text.contains(&escaped), "{text}");
+    for hidden in ['\u{202e}', '\u{200b}', '\u{2028}', '\u{85}', '\u{2066}'] {
+        assert!(!text.contains(hidden), "{hidden:?} is escaped");
+    }
     let (_, data) = fenced(&text);
     assert_eq!(data["items"][0]["acceptance"][0], json!(titled));
     assert_eq!(data["run"]["constraints"][0], json!(plan.constraints[0]));
