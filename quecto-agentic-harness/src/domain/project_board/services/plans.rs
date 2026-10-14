@@ -270,20 +270,27 @@ pub fn accept(
     })
 }
 
-/// The draft `plan` of `task` discarded by `actor` at `now`; it is kept.
+/// The draft `plan` of `task` discarded by `actor` at `when`; it is kept.
+/// With `expected`, the draft must still be as the caller read it (its
+/// `updated`), so the draft set aside is the one reviewed (#2481 M4c).
 ///
 /// # Errors
-/// A done or archived task; a plan of another task, or not a draft; or an
+/// A done or archived task; a plan of another task, or not a draft, or
+/// changed since it was read, or stamped ahead of `when`'s bound; or an
 /// actor who may not decide for the task.
 pub fn discard(
     task: &Task,
     plan: &Plan,
+    expected: Option<&Timestamp>,
     actor: &Identity,
-    now: &Timestamp,
+    when: &Moment,
 ) -> Result<Plan, BoardRuleError> {
+    let now = &when.now;
     open_to_plans(task)?;
     of_task(task, std::slice::from_ref(plan))?;
     draft(plan)?;
+    as_read(plan, expected)?;
+    when.may_build_on(plan)?;
     decides(task, actor, now)?;
     moved(plan, PlanState::Discarded, now)
 }
@@ -403,3 +410,7 @@ mod tests;
 #[cfg(test)]
 #[path = "plans_limits_tests.rs"]
 mod limits_tests;
+
+#[cfg(test)]
+#[path = "plans_discard_tests.rs"]
+mod discard_tests;

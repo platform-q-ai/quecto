@@ -241,6 +241,22 @@ pub const OPS: &[(&str, &[Field])] = &[
         ],
     ),
     (
+        "accept_plan",
+        &[
+            TASK,
+            required("version", Kind::Version),
+            required("expected_updated", Kind::Timestamp),
+        ],
+    ),
+    (
+        "discard_plan",
+        &[
+            TASK,
+            required("version", Kind::Version),
+            optional("expected_updated", Kind::Timestamp),
+        ],
+    ),
+    (
         "clear_set_aside",
         &[
             required("path", Kind::Path),
@@ -465,6 +481,8 @@ fn build(op: &str, read: &Read<'_>) -> Result<BoardRequest, RequestError> {
         "complete" => Ok(BoardRequest::Complete(read.task()?)),
         "propose_plan" => plans::propose_plan(read),
         "edit_plan" => plans::edit_plan(read),
+        "accept_plan" => plans::accept_plan(read),
+        "discard_plan" => plans::discard_plan(read),
         "clear_set_aside" => clear(read),
         other => unreachable!("op {other} is in OPS but not built"),
     }

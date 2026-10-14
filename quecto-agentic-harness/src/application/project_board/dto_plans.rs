@@ -1,5 +1,5 @@
-//! What a plan's use cases take (#2481 M4b): a new version proposed, and
-//! an edit of a draft.
+//! What a plan's use cases take (#2481 M4b, M4c): a new version
+//! proposed, an edit of a draft, and a draft accepted or discarded.
 use crate::domain::project_board::entities::plan::PlanItem;
 use crate::domain::project_board::entities::team::Team;
 use crate::domain::project_board::value_objects::slug::Slug;
@@ -42,4 +42,24 @@ impl PlanEdit {
     pub fn sets_something(&self) -> bool {
         self.approach.is_some() || self.items.is_some() || self.team.is_some()
     }
+}
+
+/// Draft `version` of `task`'s plan accepted as the task's plan (#2481
+/// M4c), as the caller read it: `expected_updated` is the draft's
+/// `updated` then, so the content accepted is the content reviewed. It is
+/// required: an acceptance is never of a draft unread.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlanAcceptance {
+    pub task: Slug,
+    pub version: u32,
+    pub expected_updated: Timestamp,
+}
+
+/// Draft `version` of `task`'s plan discarded (it is kept), pinned to the
+/// draft as the caller read it when `expected_updated` is given.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlanDiscard {
+    pub task: Slug,
+    pub version: u32,
+    pub expected_updated: Option<Timestamp>,
 }

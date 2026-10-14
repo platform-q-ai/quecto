@@ -60,6 +60,12 @@ const KNOWN_KINDS: &[&str] = &[
     // Ops (#2481 M4b).
     "propose_plan",
     "edit_plan",
+    // Ops and plan states (#2481 M4c); `draft` and `superseded` are
+    // listed already.
+    "accept_plan",
+    "discard_plan",
+    "accepted",
+    "discarded",
     // Outcomes, front ends, clients, accesses, faults.
     "ok",
     "refused",

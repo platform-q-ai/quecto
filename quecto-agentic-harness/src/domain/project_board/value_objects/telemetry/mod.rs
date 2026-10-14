@@ -67,6 +67,7 @@ kinds!(
         TakeOver => "take_over", LinkPr => "link_pr", UnlinkPr => "unlink_pr",
         Complete => "complete", ClearSetAside => "clear_set_aside", Unknown => "unknown",
         ProposePlan => "propose_plan", EditPlan => "edit_plan",
+        AcceptPlan => "accept_plan", DiscardPlan => "discard_plan",
     }
 );
 
@@ -175,6 +176,12 @@ pub struct BoardOpRecord {
     pub items: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub roles: Option<u64>,
+    /// The plan's state as an `accept_plan` or `discard_plan` last read
+    /// it, and as it wrote it, by its own name (#2481 M4c).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plan_state_from: Option<StaticKind>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plan_state_to: Option<StaticKind>,
     /// The task's status as a change last read it (T4).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub status_from: Option<StaticKind>,

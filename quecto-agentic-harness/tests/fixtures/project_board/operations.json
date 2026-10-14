@@ -978,9 +978,9 @@
       "op": null,
       "error": {
         "code": "invalid_request",
-        "message": "op: must be one of bootstrap, list, list_ready, list_takeable, show, create, update_draft, move, renew, take_over, link_pr, unlink_pr, complete, propose_plan, edit_plan, clear_set_aside",
+        "message": "op: must be one of bootstrap, list, list_ready, list_takeable, show, create, update_draft, move, renew, take_over, link_pr, unlink_pr, complete, propose_plan, edit_plan, accept_plan, discard_plan, clear_set_aside",
         "field": "op",
-        "problem": "must be one of bootstrap, list, list_ready, list_takeable, show, create, update_draft, move, renew, take_over, link_pr, unlink_pr, complete, propose_plan, edit_plan, clear_set_aside"
+        "problem": "must be one of bootstrap, list, list_ready, list_takeable, show, create, update_draft, move, renew, take_over, link_pr, unlink_pr, complete, propose_plan, edit_plan, accept_plan, discard_plan, clear_set_aside"
       }
     }
   },
@@ -1603,6 +1603,294 @@
         {
           "version": 1,
           "state": "draft",
+          "proposed_by": {
+            "name": "Ada",
+            "email": "ada@example.com"
+          },
+          "updated": "2026-10-10T10:00:01Z"
+        }
+      ],
+      "runs": [],
+      "may_be_incomplete": false,
+      "quarantined": []
+    }
+  },
+  {
+    "request": {
+      "op": "accept_plan",
+      "task": "epic",
+      "version": 1,
+      "expected_updated": "2026-10-10T10:00:00Z"
+    },
+    "answer": {
+      "ok": false,
+      "op": "accept_plan",
+      "error": {
+        "code": "rule",
+        "message": "plan version 1 changed since it was read (updated 2026-10-10T10:00:01Z); read it again",
+        "rule": {
+          "code": "plan_changed",
+          "version": 1,
+          "updated": "2026-10-10T10:00:01Z"
+        }
+      }
+    }
+  },
+  {
+    "request": {
+      "op": "accept_plan",
+      "task": "epic",
+      "version": 1,
+      "expected_updated": "2026-10-10T10:00:01Z"
+    },
+    "answer": {
+      "ok": true,
+      "op": "accept_plan",
+      "task": {
+        "id": "epic",
+        "title": "Project boards",
+        "kind": "epic",
+        "description": "",
+        "status": "draft",
+        "parent": null,
+        "depends_on": [],
+        "accepted_plan": 1,
+        "claim": null,
+        "prs": [],
+        "created": "2026-10-10T10:00:00Z",
+        "updated": "2026-10-10T10:00:02Z"
+      },
+      "plan": {
+        "task": "epic",
+        "version": 1,
+        "state": "accepted",
+        "proposed_by": {
+          "name": "Ada",
+          "email": "ada@example.com"
+        },
+        "edited_by": {
+          "name": "Bob",
+          "email": "bob@example.com"
+        },
+        "created": "2026-10-10T10:00:00Z",
+        "updated": "2026-10-10T10:00:02Z"
+      },
+      "superseded": null
+    }
+  },
+  {
+    "request": {
+      "op": "propose_plan",
+      "task": "epic",
+      "approach": "Second.",
+      "items": []
+    },
+    "answer": {
+      "ok": true,
+      "op": "propose_plan",
+      "plan": {
+        "task": "epic",
+        "version": 2,
+        "state": "draft",
+        "proposed_by": {
+          "name": "Ada",
+          "email": "ada@example.com"
+        },
+        "edited_by": null,
+        "created": "2026-10-10T10:00:00Z",
+        "updated": "2026-10-10T10:00:00Z"
+      }
+    }
+  },
+  {
+    "as": "Bob",
+    "request": {
+      "op": "accept_plan",
+      "task": "epic",
+      "version": 2,
+      "expected_updated": "2026-10-10T10:00:00Z"
+    },
+    "answer": {
+      "ok": true,
+      "op": "accept_plan",
+      "task": {
+        "id": "epic",
+        "title": "Project boards",
+        "kind": "epic",
+        "description": "",
+        "status": "draft",
+        "parent": null,
+        "depends_on": [],
+        "accepted_plan": 2,
+        "claim": null,
+        "prs": [],
+        "created": "2026-10-10T10:00:00Z",
+        "updated": "2026-10-10T10:00:03Z"
+      },
+      "plan": {
+        "task": "epic",
+        "version": 2,
+        "state": "accepted",
+        "proposed_by": {
+          "name": "Ada",
+          "email": "ada@example.com"
+        },
+        "edited_by": null,
+        "created": "2026-10-10T10:00:00Z",
+        "updated": "2026-10-10T10:00:03Z"
+      },
+      "superseded": 1
+    }
+  },
+  {
+    "request": {
+      "op": "discard_plan",
+      "task": "epic",
+      "version": 1
+    },
+    "answer": {
+      "ok": false,
+      "op": "discard_plan",
+      "error": {
+        "code": "rule",
+        "message": "a superseded plan is not a draft: only drafts are edited, accepted or discarded",
+        "rule": {
+          "code": "plan_not_draft",
+          "state": "superseded"
+        }
+      }
+    }
+  },
+  {
+    "request": {
+      "op": "propose_plan",
+      "task": "epic",
+      "approach": "Third.",
+      "items": []
+    },
+    "answer": {
+      "ok": true,
+      "op": "propose_plan",
+      "plan": {
+        "task": "epic",
+        "version": 3,
+        "state": "draft",
+        "proposed_by": {
+          "name": "Ada",
+          "email": "ada@example.com"
+        },
+        "edited_by": null,
+        "created": "2026-10-10T10:00:00Z",
+        "updated": "2026-10-10T10:00:00Z"
+      }
+    }
+  },
+  {
+    "request": {
+      "op": "discard_plan",
+      "task": "epic",
+      "version": 3,
+      "expected_updated": "2026-10-10T10:00:00Z"
+    },
+    "answer": {
+      "ok": true,
+      "op": "discard_plan",
+      "plan": {
+        "task": "epic",
+        "version": 3,
+        "state": "discarded",
+        "proposed_by": {
+          "name": "Ada",
+          "email": "ada@example.com"
+        },
+        "edited_by": null,
+        "created": "2026-10-10T10:00:00Z",
+        "updated": "2026-10-10T10:00:01Z"
+      }
+    }
+  },
+  {
+    "request": {
+      "op": "accept_plan",
+      "task": "epic",
+      "version": 3
+    },
+    "answer": {
+      "ok": false,
+      "op": "accept_plan",
+      "error": {
+        "code": "invalid_request",
+        "message": "expected_updated: is required",
+        "field": "expected_updated",
+        "problem": "is required"
+      }
+    }
+  },
+  {
+    "request": {
+      "op": "show",
+      "task": "epic"
+    },
+    "answer": {
+      "ok": true,
+      "op": "show",
+      "head": "r42",
+      "task": {
+        "id": "epic",
+        "title": "Project boards",
+        "kind": "epic",
+        "description": "",
+        "status": "draft",
+        "parent": null,
+        "depends_on": [],
+        "accepted_plan": 2,
+        "claim": null,
+        "prs": [],
+        "created": "2026-10-10T10:00:00Z",
+        "updated": "2026-10-10T10:00:03Z"
+      },
+      "plan": {
+        "task": "epic",
+        "version": 2,
+        "state": "accepted",
+        "approach": "Second.",
+        "items": [],
+        "team": null,
+        "proposed_by": {
+          "name": "Ada",
+          "email": "ada@example.com"
+        },
+        "edited_by": null,
+        "accepted_by": {
+          "name": "Bob",
+          "email": "bob@example.com"
+        },
+        "accepted_at": "2026-10-10T10:00:03Z",
+        "created": "2026-10-10T10:00:00Z",
+        "updated": "2026-10-10T10:00:03Z"
+      },
+      "plans": [
+        {
+          "version": 1,
+          "state": "superseded",
+          "proposed_by": {
+            "name": "Ada",
+            "email": "ada@example.com"
+          },
+          "updated": "2026-10-10T10:00:03Z"
+        },
+        {
+          "version": 2,
+          "state": "accepted",
+          "proposed_by": {
+            "name": "Ada",
+            "email": "ada@example.com"
+          },
+          "updated": "2026-10-10T10:00:03Z"
+        },
+        {
+          "version": 3,
+          "state": "discarded",
           "proposed_by": {
             "name": "Ada",
             "email": "ada@example.com"

@@ -388,3 +388,98 @@ fn the_git_store_takes_a_plan_proposed_then_patched() {
     assert_eq!(read.items, vec![item("schema"), item("api")]);
     assert_eq!(bob.committed_by(&board.head.0).unwrap().name, "Alice");
 }
+
+/// #2481 M4c: an acceptance through the git store is one commit of three
+/// files, task first (the change shape the commit allowlist takes): the
+/// task naming the version, the plan accepted and the plan superseded,
+/// read back from another clone as written.
+#[test]
+fn the_git_store_takes_an_acceptance_of_three_files_in_one_commit() {
+    use quecto::application::project_board::dto::{
+        NewBoardTask, NewBoardTaskStatus, PlanAcceptance, PlanProposal,
+    };
+    use quecto::application::project_board::ports::ProjectBoardStore;
+    use quecto::application::project_board::use_cases::{
+        AcceptPlan, BootstrapProjectBoard, CreateBoardTask, ProposePlan,
+    };
+    use quecto::domain::project_board::value_objects::slug::Slug;
+    use quecto::domain::project_board::value_objects::vocabulary::{PlanState, TaskKind};
+    use quecto::infrastructure::time::board_clock::SystemBoardClock;
+    use std::sync::Arc;
+
+    let remote = Remote::new();
+    let alice: Box<dyn ProjectBoardStore> = remote.client(0, "Alice");
+    let store: Arc<dyn ProjectBoardStore> = Arc::from(alice);
+    let clock = Arc::new(SystemBoardClock::default());
+    let id = Slug::parse("board-store").unwrap();
+    BootstrapProjectBoard::new(Arc::clone(&store))
+        .execute()
+        .unwrap();
+    CreateBoardTask::new(Arc::clone(&store), clock.clone())
+        .unwrap()
+        .execute(&NewBoardTask {
+            id: id.clone(),
+            title: "Board store".into(),
+            kind: TaskKind::Task,
+            description: String::new(),
+            status: NewBoardTaskStatus::Ready,
+            parent: None,
+            depends_on: vec![],
+        })
+        .unwrap();
+    let propose = ProposePlan::new(Arc::clone(&store), clock.clone()).unwrap();
+    let accept = AcceptPlan::new(Arc::clone(&store), clock).unwrap();
+    let proposal = |approach: &str| PlanProposal {
+        task: id.clone(),
+        approach: approach.into(),
+        items: vec![],
+        team: None,
+    };
+    let first = propose.execute(&proposal("First.")).unwrap();
+    let acceptance = |plan: &quecto::domain::project_board::entities::plan::Plan| PlanAcceptance {
+        task: id.clone(),
+        version: plan.fields().version,
+        expected_updated: plan.fields().updated.clone(),
+    };
+    accept.execute(&acceptance(&first)).unwrap();
+    let second = propose.execute(&proposal("Second.")).unwrap();
+    let before = remote.object("plans/board-store.1.md");
+    let accepted = accept.execute(&acceptance(&second)).unwrap();
+    assert_ne!(
+        remote.object("plans/board-store.1.md"),
+        before,
+        "superseded"
+    );
+    let bob = remote.client(1, "Bob");
+    let board = bob.read().unwrap();
+    assert_eq!(board.tasks, vec![accepted.task.clone()]);
+    assert_eq!(board.tasks[0].fields().accepted_plan, Some(2));
+    let states: Vec<(u32, PlanState)> = board
+        .plans
+        .iter()
+        .map(|plan| (plan.fields().version, plan.fields().state))
+        .collect();
+    assert_eq!(
+        states,
+        [(1, PlanState::Superseded), (2, PlanState::Accepted)]
+    );
+    assert_eq!(board.plans[1], accepted.plan);
+    assert_eq!(Some(&board.plans[0]), accepted.superseded.as_ref());
+    // One commit wrote all three files, and no other.
+    let args = [
+        "diff-tree",
+        "--no-commit-id",
+        "--name-only",
+        "-r",
+        BOARD_REF,
+    ];
+    let changed = sh(&remote.bare, &args, b"");
+    assert_eq!(
+        changed.lines().collect::<Vec<_>>(),
+        [
+            "plans/board-store.1.md",
+            "plans/board-store.2.md",
+            "tasks/board-store.md"
+        ]
+    );
+}

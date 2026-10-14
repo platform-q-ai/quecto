@@ -10,8 +10,9 @@ use crate::application::project_board::ports::{
     BoardClock, BoardListings, BoardStoreError, ProjectBoardStore, PullRequestStates,
 };
 use crate::application::project_board::use_cases::{
-    BootstrapProjectBoard, ChangeBoardTask, ClearSetAside, CompleteMergedTask, CreateBoardTask,
-    EditPlan, ProposePlan, QueryBoard, RunBoardOperation, UpdateDraftTask,
+    AcceptPlan, BootstrapProjectBoard, ChangeBoardTask, ClearSetAside, CompleteMergedTask,
+    CreateBoardTask, DiscardPlan, EditPlan, ProposePlan, QueryBoard, RunBoardOperation,
+    UpdateDraftTask,
 };
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
@@ -76,6 +77,8 @@ pub fn assembled(
         change: ChangeBoardTask::new(Arc::clone(&store), Arc::clone(&clock))?,
         propose_plan: ProposePlan::new(Arc::clone(&store), Arc::clone(&clock))?,
         edit_plan: EditPlan::new(Arc::clone(&store), Arc::clone(&clock))?,
+        accept_plan: AcceptPlan::new(Arc::clone(&store), Arc::clone(&clock))?,
+        discard_plan: DiscardPlan::new(Arc::clone(&store), Arc::clone(&clock))?,
         clear: ClearSetAside::new(Arc::clone(&store), Arc::clone(&clock))?,
         complete,
         clock,

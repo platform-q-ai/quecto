@@ -151,6 +151,8 @@ fn each_op_reads_its_own_fields() {
             "complete",
             "propose_plan",
             "edit_plan",
+            "accept_plan",
+            "discard_plan",
             "clear_set_aside"
         ],
         "no op is named plain ready; status changes are moves"

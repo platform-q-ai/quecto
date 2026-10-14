@@ -11,7 +11,7 @@ use crate::domain::project_board::value_objects::telemetry::{
     Access, BoardOpRecord, ClaimFacts, CompletionFacts, CompletionKind, Normalised, OpKind,
     StaticKind,
 };
-use crate::domain::project_board::value_objects::vocabulary::TaskStatus;
+use crate::domain::project_board::value_objects::vocabulary::{PlanState, TaskStatus};
 
 /// The op `request` is. Exhaustive with no catch-all: a new request or
 /// change op does not compile until it has its kind.
@@ -33,6 +33,8 @@ pub fn op_kind(request: &BoardRequest) -> OpKind {
         BoardRequest::Clear { .. } => OpKind::ClearSetAside,
         BoardRequest::ProposePlan(_) => OpKind::ProposePlan,
         BoardRequest::EditPlan(_) => OpKind::EditPlan,
+        BoardRequest::AcceptPlan(_) => OpKind::AcceptPlan,
+        BoardRequest::DiscardPlan(_) => OpKind::DiscardPlan,
     }
 }
 
@@ -53,7 +55,9 @@ pub fn access_of(kind: OpKind) -> Access {
         | OpKind::Complete
         | OpKind::ClearSetAside
         | OpKind::ProposePlan
-        | OpKind::EditPlan => Access::Write,
+        | OpKind::EditPlan
+        | OpKind::AcceptPlan
+        | OpKind::DiscardPlan => Access::Write,
         OpKind::List
         | OpKind::ListReady
         | OpKind::ListTakeable
@@ -72,6 +76,8 @@ pub fn task_of(request: &BoardRequest) -> Option<&Slug> {
         BoardRequest::UpdateDraft(update) => Some(&update.id),
         BoardRequest::ProposePlan(proposal) => Some(&proposal.task),
         BoardRequest::EditPlan(edit) => Some(&edit.task),
+        BoardRequest::AcceptPlan(acceptance) => Some(&acceptance.task),
+        BoardRequest::DiscardPlan(discard) => Some(&discard.task),
         BoardRequest::Bootstrap
         | BoardRequest::List(_)
         | BoardRequest::ListReady
@@ -95,6 +101,8 @@ pub fn pr_of(request: &BoardRequest) -> Option<u64> {
         | BoardRequest::Complete(_)
         | BoardRequest::ProposePlan(_)
         | BoardRequest::EditPlan(_)
+        | BoardRequest::AcceptPlan(_)
+        | BoardRequest::DiscardPlan(_)
         | BoardRequest::Clear { .. } => None,
     }
 }
@@ -129,6 +137,10 @@ pub struct OpFacts {
     pub plan_version: Option<u64>,
     pub items: Option<u64>,
     pub roles: Option<u64>,
+    /// The plan's state as an `accept_plan` or `discard_plan` last read
+    /// it, and as it wrote it (#2481 M4c).
+    pub plan_state_from: Option<PlanState>,
+    pub plan_state_to: Option<PlanState>,
 }
 
 impl OpFacts {
@@ -161,6 +173,15 @@ impl OpFacts {
         put(&mut record.plan_version, self.plan_version.as_ref());
         put(&mut record.items, self.items.as_ref());
         put(&mut record.roles, self.roles.as_ref());
+        let plan_state = |state: &PlanState| StaticKind::new(state.as_str());
+        put(
+            &mut record.plan_state_from,
+            self.plan_state_from.as_ref().map(plan_state).as_ref(),
+        );
+        put(
+            &mut record.plan_state_to,
+            self.plan_state_to.as_ref().map(plan_state).as_ref(),
+        );
     }
 }
 

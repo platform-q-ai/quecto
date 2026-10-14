@@ -27,6 +27,8 @@ fn bare() -> BoardOpRecord {
         plan_version: None,
         items: None,
         roles: None,
+        plan_state_from: None,
+        plan_state_to: None,
         status_from: None,
         status_to: None,
         claim: None,
@@ -73,6 +75,8 @@ fn full() -> BoardOpRecord {
         plan_version: Some(2),
         items: Some(5),
         roles: Some(2),
+        plan_state_from: Some(StaticKind::new("draft")),
+        plan_state_to: Some(StaticKind::new("accepted")),
         status_from: Some(StaticKind::new("in_progress")),
         status_to: Some(StaticKind::new("review")),
         claim: Some(ClaimFacts {
@@ -129,6 +133,7 @@ fn every_field_serializes_as_its_golden_line() {
     let mut golden = golden;
     let plan = json!({
         "plan_version": 2, "items": 5, "roles": 2,
+        "plan_state_from": "draft", "plan_state_to": "accepted",
         "normalised": {
             "title": [], "description": ["crlf", "trailing_space"],
             "approach": ["edge_blank_lines"], "items": ["edge_space"],
@@ -206,6 +211,8 @@ fn no_kind_is_ever_renamed_or_removed() {
         "unknown",
         "propose_plan",
         "edit_plan",
+        "accept_plan",
+        "discard_plan",
     ];
     frozen(OpKind::ALL, OpKind::as_str, &ops);
     frozen(FrontEnd::ALL, FrontEnd::as_str, &["tool", "cli"]);

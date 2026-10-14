@@ -29,6 +29,8 @@ fn record(access: Access) -> BoardOpRecord {
         plan_version: None,
         items: None,
         roles: None,
+        plan_state_from: None,
+        plan_state_to: None,
         status_from: None,
         status_to: None,
         claim: None,

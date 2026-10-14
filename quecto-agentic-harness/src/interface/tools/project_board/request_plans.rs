@@ -11,7 +11,7 @@
 use serde_json::{Map, Value};
 
 use super::{Read, misfit, text, timestamp};
-use crate::application::project_board::dto::{PlanEdit, PlanProposal};
+use crate::application::project_board::dto::{PlanAcceptance, PlanDiscard, PlanEdit, PlanProposal};
 use crate::application::project_board::operations::BoardRequest;
 use crate::domain::project_board::entities::plan::{MAX_PLAN_VERSION, PlanItem};
 use crate::domain::project_board::entities::task_parts::MAX_BUDGET_TOKENS;
@@ -53,6 +53,26 @@ pub(super) fn edit_plan(read: &Read<'_>) -> Result<BoardRequest, RequestError> {
             FaultKind::Missing,
         )),
     }
+}
+
+/// A draft accepted, pinned to the draft as it was read (#2481 M4c).
+pub(super) fn accept_plan(read: &Read<'_>) -> Result<BoardRequest, RequestError> {
+    let present = "a required field is present";
+    Ok(BoardRequest::AcceptPlan(PlanAcceptance {
+        task: read.task()?,
+        version: version(read.value("version").expect(present))?,
+        expected_updated: read.timestamp("expected_updated")?.expect(present),
+    }))
+}
+
+/// A draft discarded, pinned to the draft as it was read when the
+/// request gives `expected_updated`.
+pub(super) fn discard_plan(read: &Read<'_>) -> Result<BoardRequest, RequestError> {
+    Ok(BoardRequest::DiscardPlan(PlanDiscard {
+        task: read.task()?,
+        version: version(read.value("version").expect("a required field is present"))?,
+        expected_updated: read.timestamp("expected_updated")?,
+    }))
 }
 
 /// A plan's version, from 1.

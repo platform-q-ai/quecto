@@ -163,6 +163,35 @@ answer `plan`: its `task`, `version`, `state`, `proposed_by`, `edited_by`,
 `created` and `updated`. They do not echo its text. The CLI takes `--items` and
 `--team` as JSON.
 
+## Accepting or discarding a plan
+
+A draft becomes the task's plan by `accept_plan(task, version, expected_updated)`
+(#2481 M4c). One commit writes the task, naming the version (`accepted_plan`),
+the plan, `accepted` with who accepted it and when, and the version accepted
+before, now `superseded`. All three share one stamp. An older draft accepted
+over a newer accepted version is a rollback: the newer one is superseded. A
+superseded plan is never accepted again; propose a new version instead.
+`expected_updated` is required: the `updated` that `show(task, version)` gave,
+so what is accepted is what was read. A draft changed since is refused
+(`plan_changed`), also when an edit lands while the acceptance is being
+written. The answer gives the `task`, the `plan` and the version it
+`superseded` (`null` when none was accepted).
+
+`discard_plan(task, version, expected_updated)` sets a draft aside for good: it
+is kept, as `discarded`, and only it is written. `expected_updated` is optional,
+as for `edit_plan`. The answer gives the `plan`.
+
+On a task someone holds, only the holder of a live claim accepts or discards
+(`not_holder`, or `claim_expired` for the holder: renew first); on a task
+nobody holds, anyone does. Both are refused for a done or archived task
+(`task_finished`), for a version that is not a draft (`plan_not_draft`) or that
+the task does not have (`unknown_plan_version`), and while the task's file or a
+file named as one of its plans is set aside. An acceptance is also refused
+while a run of the task is going (`run_open`) or a file named as one of its
+runs is set aside (it may be the open one), and while the task's plans or runs
+contradict each other (`plans_inconsistent`, `runs_inconsistent`): mend them
+first.
+
 ## Telemetry
 
 Each board call, from either front end, writes one `board_op` record (epic #2481
@@ -222,7 +251,7 @@ as given. It is for the pocket relay to set; an older quecto ignores it.
 |---|---|
 | `session` | As on every event-log record: the agent's session for the tool; `board-cli:<UTC date>` for `quecto board` |
 | `turn` | Always `null`: a board call is filed under no agent turn |
-| `op` | The op the request named: `bootstrap`, `list`, `list_ready`, `list_takeable`, `show`, `create`, `update_draft`, `move`, `renew`, `take_over`, `link_pr`, `unlink_pr`, `complete`, `clear_set_aside`, `propose_plan`, `edit_plan`; `unknown` for a request that names none, or none the board has. A request the agent tool does not take (`bootstrap`) records its op, refused, and a `quecto board` line refused as it is read records the op it named before the refusal |
+| `op` | The op the request named: `bootstrap`, `list`, `list_ready`, `list_takeable`, `show`, `create`, `update_draft`, `move`, `renew`, `take_over`, `link_pr`, `unlink_pr`, `complete`, `clear_set_aside`, `propose_plan`, `edit_plan`, `accept_plan`, `discard_plan`; `unknown` for a request that names none, or none the board has. A request the agent tool does not take (`bootstrap`) records its op, refused, and a `quecto board` line refused as it is read records the op it named before the refusal |
 | `front_end` | `tool` (the agent `board` tool) or `cli` (`quecto board`) |
 | `client` | `agent` for the tool; for the CLI `cli`, or as `QUECTO_BOARD_CLIENT` names it: `pocket_relay` or `other` |
 | `access` | `read` or `write`: what the op does, even when it was refused before it was read |
@@ -233,7 +262,8 @@ as given. It is for the pocket relay to set; an older quecto ignores it.
 | `head` | The board's head an answer named, only when it is a full commit id git produced |
 | `listed`, `shown`, `truncated_more`, `set_aside`, `set_aside_more` | For an answered listing: the tasks it listed, those its answer showed and those it left out, and the set-aside files it listed and left out. The agent tool's listing is cut to 32 KiB; the CLI leaves nothing out |
 | `plans`, `runs` | For an answered `show`: how many versions of its plan and how many runs the task holds, as the board read them; counts only, never their text |
-| `plan_version`, `items`, `roles` | For `propose_plan`, the version it wrote, only once written. For `edit_plan`, the version it named, also when the board refused the edit. For `show(task, version)`, the version it named once the task was read, also when that version was refused; a `show` of a task the board refused records none. A request refused as it is read records none. For `propose_plan` and `edit_plan`, once written, how many task items and team roles the plan holds (`roles` is 0 with no team); counts only |
+| `plan_version`, `items`, `roles` | For `propose_plan`, the version it wrote, only once written. For `edit_plan`, `accept_plan` and `discard_plan`, the version it named, also when the board refused the change. For `show(task, version)`, the version it named once the task was read, also when that version was refused; a `show` of a task the board refused records none. A request refused as it is read records none. For `propose_plan` and `edit_plan`, once written, how many task items and team roles the plan holds (`roles` is 0 with no team); counts only |
+| `plan_state_from`, `plan_state_to` | For `accept_plan` and `discard_plan`: the state of the version it named as the change last read it (`draft`, `accepted`, `superseded` or `discarded`; none when the task has no such version, or the read was refused first), and the state it wrote (`accepted` or `discarded`; none for a refused change) |
 | `status_from`, `status_to` | For a write of a task (`create`, `update_draft`, `move`, `renew`, `take_over`, `link_pr`, `unlink_pr`, `complete`): the task's status as the write last read it (none for `create`), and the status it moved to: a `move`'s target, made or refused, otherwise the status of the task it wrote (`create`'s `draft` or `ready`, `complete`'s `done`), so a refused write other than `move` writes no `status_to`. A `link_pr` or move to `review` that completes its task records its own write's status here; what came of completing it is in `completion` |
 | `claim` | For a `move`, `renew`, `take_over`, `link_pr` or `unlink_pr` of a task that holds a claim, the claim as the change found it, never its holder: `held_s` (seconds since it began, below zero when the writer's clock reads before that), `left_s` (seconds until it expires, below zero once it has lapsed) and `holder_is_writer` |
 | `attempts`, `lost`, `pause_ms` | For a write (every op that writes but `bootstrap`): the attempts it began (at most 3), how many of them lost the race to another writer, and, when it paused between attempts, the time it paused in milliseconds. A `link_pr` or `move` that completes its task counts only its own write's attempts here; the completion's write is counted in `completion_attempts` |
