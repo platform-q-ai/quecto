@@ -7,23 +7,36 @@
 //! writes anything and again as it launches, and the guards judge the very
 //! call made, so `start` never launches what the session could not spawn.
 //!
-//! What spawn launched is read from its structured answer (its delivery
-//! metadata), never its words. A coordinator that came up outside a
-//! container is stopped before the launch is refused.
+//! What spawn launched is read from its structured answer
+//! ([`SpawnedChild`]), never its words. A coordinator that came up outside
+//! a container, or after its call was cancelled, is stopped before the
+//! launch is refused. A cancel during the launch drops spawn's work, which
+//! rolls back a launch not yet registered or still awaiting its prompt
+//! (#2173).
+//!
+//! It also tells whether this session still runs the coordinator of a
+//! given run, by its label among the session's subagents.
 //!
 //! Blocking: a launch waits on the session's runtime for the spawn to
 //! answer, at most [`LAUNCH_TIMEOUT`], on the board call's blocking thread.
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 
+use super::spawn_launch_ports::SpawnedChild;
+use super::subagent_registry::SubagentRegistry;
+use super::subagent_status::SubagentStatus;
 use crate::application::project_board::ports::{
     CoordinatorLaunch, CoordinatorRequest, LaunchRefused, LaunchedCoordinator,
 };
 use crate::application::tools::ports::Tool;
 use crate::domain::agents::services::subagent::{MAX_AGENT_ID_CHARS, validate_agent_id_format};
+use crate::domain::error::DomainError;
+use crate::domain::project_board::value_objects::slug::Slug;
+use crate::domain::sessions::entities::session::SubagentLiveness;
 use crate::domain::tool::ToolResult;
 pub use spawn_permit::SpawnPermit;
 
@@ -31,21 +44,35 @@ pub use spawn_permit::SpawnPermit;
 /// be built first. A launch past it is refused, and the start undone.
 pub const LAUNCH_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 
+/// The longest a stop of a coordinator that came up wrong waits.
+pub const KILL_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// How often a launch looks at its call's cancel while spawn works.
+const CANCEL_POLL: Duration = Duration::from_millis(250);
+
 /// Launches coordinators through `spawn` while `permit` allows it,
-/// stopping one that came up wrong with `agent_cmd`.
+/// stopping one that came up wrong with `agent_cmd`; finds the ones this
+/// session still runs among its `subagents`.
 pub struct SpawnCoordinatorLauncher {
     spawn: Arc<dyn Tool>,
     agent_cmd: Arc<dyn Tool>,
     permit: SpawnPermit,
+    subagents: SubagentRegistry,
     timeout: Duration,
 }
 
 impl SpawnCoordinatorLauncher {
-    pub fn new(spawn: Arc<dyn Tool>, agent_cmd: Arc<dyn Tool>, permit: SpawnPermit) -> Self {
+    pub fn new(
+        spawn: Arc<dyn Tool>,
+        agent_cmd: Arc<dyn Tool>,
+        permit: SpawnPermit,
+        subagents: SubagentRegistry,
+    ) -> Self {
         Self {
             spawn,
             agent_cmd,
             permit,
+            subagents,
             timeout: LAUNCH_TIMEOUT,
         }
     }
@@ -59,72 +86,170 @@ impl SpawnCoordinatorLauncher {
     /// Stops the child `uuid` spawn launched, telling how that went.
     fn stopped(&self, runtime: &tokio::runtime::Handle, uuid: &str) -> String {
         let kill = json!({"agent_id": uuid, "command": "kill"}).to_string();
-        match runtime.block_on(tokio::time::timeout(
-            self.timeout,
-            self.agent_cmd.execute(&kill),
-        )) {
-            Ok(Ok(result)) if !result.is_error => "it was stopped".into(),
-            Ok(Ok(result)) => format!("stopping it failed: {}", result.content),
+        let stop = tokio::time::timeout(KILL_TIMEOUT, self.agent_cmd.execute(&kill));
+        match runtime.block_on(stop) {
+            Ok(Ok(result)) => match result.is_error {
+                false => "it was stopped".into(),
+                true => format!("stopping it failed: {}", result.content),
+            },
             Ok(Err(error)) => format!("stopping it failed: {error}"),
             Err(_) => "stopping it timed out".into(),
         }
     }
+
+    /// What spawn's answer `result` comes to: the coordinator running in
+    /// its container, or a refusal once whatever it launched otherwise
+    /// (outside a container, or after the call was cancelled) is stopped.
+    fn running(
+        &self,
+        runtime: &tokio::runtime::Handle,
+        result: ToolResult,
+        cancelled: &AtomicBool,
+    ) -> Result<LaunchedCoordinator, LaunchRefused> {
+        let stop = |why: &str, uuid: &str| {
+            Err(LaunchRefused(format!(
+                "{why}, so {}",
+                self.stopped(runtime, uuid)
+            )))
+        };
+        match (SpawnedChild::of(&result), cancelled.load(Ordering::SeqCst)) {
+            (Some(child), true) => stop(
+                "the call was cancelled as the coordinator came up",
+                &child.uuid,
+            ),
+            (
+                Some(SpawnedChild {
+                    uuid,
+                    environment_ref: Some(environment_ref),
+                }),
+                false,
+            ) => Ok(LaunchedCoordinator {
+                agent: uuid,
+                environment_ref,
+            }),
+            (
+                Some(SpawnedChild {
+                    uuid,
+                    environment_ref: None,
+                }),
+                false,
+            ) => stop("the coordinator came up outside a container", &uuid),
+            // No structured answer: stop whatever its words name.
+            (None, _) => match uuid_in(&result.content) {
+                Some(uuid) => stop("spawn named no container for the coordinator", uuid),
+                None => Err(LaunchRefused(format!(
+                    "spawn answered no running coordinator: {}",
+                    result.content
+                ))),
+            },
+        }
+    }
 }
 
-/// Why a launch was refused before spawn was asked.
+/// The session's launcher: through its own `spawn` and `agent_cmd`, its
+/// permit observing `registry`'s policy, its coordinators found among its
+/// subagents.
+pub fn session_launcher(
+    registry: &mut super::registry::ToolRegistryImpl,
+    spawn: &Arc<dyn Tool>,
+    agent_cmd: &Arc<dyn Tool>,
+    subagents: &SubagentRegistry,
+) -> SpawnCoordinatorLauncher {
+    let permit = SpawnPermit::default();
+    registry.observe_policy(Arc::new(permit.clone()));
+    let (spawn, agent_cmd) = (Arc::clone(spawn), Arc::clone(agent_cmd));
+    SpawnCoordinatorLauncher::new(spawn, agent_cmd, permit, subagents.clone())
+}
+
+/// Why a launch was refused before spawn answered.
 const NOT_ALLOWED: &str = "this session's policy does not allow spawn";
 const NO_RUNTIME: &str = "no runtime to launch the coordinator on";
+const CANCELLED: &str =
+    "the call was cancelled while the coordinator launched: the launch was dropped";
+
+/// How a wait on spawn ended.
+enum Waited {
+    Answered(Result<ToolResult, DomainError>),
+    Cancelled,
+    TimedOut,
+}
 
 impl CoordinatorLaunch for SpawnCoordinatorLauncher {
     fn may_launch(&self) -> bool {
         self.permit.allowed()
     }
 
-    fn launch(&self, request: &CoordinatorRequest) -> Result<LaunchedCoordinator, LaunchRefused> {
-        if !self.permit.allowed() {
-            return Err(LaunchRefused(NOT_ALLOWED.into()));
+    fn launch(
+        &self,
+        request: &CoordinatorRequest,
+        cancelled: &AtomicBool,
+    ) -> Result<LaunchedCoordinator, LaunchRefused> {
+        match self.permit.allowed() {
+            true => {}
+            false => return Err(LaunchRefused(NOT_ALLOWED.into())),
         }
         let arguments = spawn_arguments(request).to_string();
         // The registry's guards judge this call as they judge the model's.
         self.permit.check(&arguments).map_err(LaunchRefused)?;
         let runtime =
             tokio::runtime::Handle::try_current().map_err(|_| LaunchRefused(NO_RUNTIME.into()))?;
-        let answered = runtime.block_on(tokio::time::timeout(
-            self.timeout,
-            self.spawn.execute(&arguments),
-        ));
-        let result = match answered {
-            Ok(Ok(result)) if !result.is_error => result,
-            Ok(Ok(result)) => return Err(LaunchRefused(result.content)),
-            Ok(Err(error)) => return Err(LaunchRefused(error.to_string())),
-            Err(_) => {
-                return Err(LaunchRefused(format!(
-                    "spawn did not answer within {:?}",
-                    self.timeout
-                )));
+        let waited = runtime.block_on(async {
+            let mut work = std::pin::pin!(self.spawn.execute(&arguments));
+            let deadline = tokio::time::Instant::now() + self.timeout;
+            loop {
+                if let Ok(answered) = tokio::time::timeout(CANCEL_POLL, &mut work).await {
+                    break Waited::Answered(answered);
+                }
+                // Dropping `work` (returning) abandons spawn's launch.
+                match (
+                    cancelled.load(Ordering::SeqCst),
+                    tokio::time::Instant::now() >= deadline,
+                ) {
+                    (true, _) => break Waited::Cancelled,
+                    (false, true) => break Waited::TimedOut,
+                    (false, false) => {}
+                }
             }
-        };
-        match spawned(&result) {
-            Some(Spawned {
-                uuid,
-                environment_ref: Some(environment_ref),
-            }) => Ok(LaunchedCoordinator {
-                agent: uuid,
-                environment_ref,
-            }),
-            Some(Spawned {
-                uuid,
-                environment_ref: None,
-            }) => Err(LaunchRefused(format!(
-                "the coordinator came up outside a container, so {}",
-                self.stopped(&runtime, &uuid)
-            ))),
-            None => Err(LaunchRefused(format!(
-                "spawn answered no running coordinator: {}",
-                result.content
+        });
+        match waited {
+            Waited::Answered(Ok(result)) => match result.is_error {
+                false => self.running(&runtime, result, cancelled),
+                true => Err(LaunchRefused(result.content)),
+            },
+            Waited::Answered(Err(error)) => Err(LaunchRefused(error.to_string())),
+            Waited::Cancelled => Err(LaunchRefused(CANCELLED.into())),
+            Waited::TimedOut => Err(LaunchRefused(format!(
+                "spawn did not answer within {:?}",
+                self.timeout
             ))),
         }
     }
+
+    fn runs_coordinator(&self, task: &Slug, run: u32) -> bool {
+        let label = label(task.as_str(), run);
+        let entries = self.subagents.lock().unwrap_or_else(|e| e.into_inner());
+        entries.iter().any(|(key, entry)| {
+            entry.effective_display_name(key) == label
+                && matches!(
+                    entry.persisted_liveness,
+                    SubagentLiveness::Live | SubagentLiveness::Detached
+                )
+                && matches!(
+                    entry.status,
+                    SubagentStatus::Starting
+                        | SubagentStatus::Idle
+                        | SubagentStatus::Running
+                        | SubagentStatus::Error
+                )
+        })
+    }
+}
+
+/// The uuid spawn's words `(uuid=…)` name, when they name one.
+fn uuid_in(content: &str) -> Option<&str> {
+    let (_, rest) = content.split_once("(uuid=")?;
+    let (uuid, _) = rest.split_once(')')?;
+    Some(uuid).filter(|uuid| uuid.chars().count() > 0)
 }
 
 /// The spawn call that launches `request`'s coordinator.
@@ -166,31 +291,6 @@ fn label(task: &str, run: u32) -> String {
         "a board label is a valid agent_id: {label}"
     );
     label
-}
-
-/// What spawn's structured answer says it launched.
-#[derive(Debug, PartialEq, Eq)]
-struct Spawned {
-    uuid: String,
-    environment_ref: Option<String>,
-}
-
-/// The child `result` names in its delivery metadata, spawn's
-/// machine-readable answer; none when it names none.
-fn spawned(result: &ToolResult) -> Option<Spawned> {
-    let metadata: Value = serde_json::from_str(result.delivery_metadata.as_deref()?).ok()?;
-    let spawned = metadata.get("spawned")?;
-    let text = |key: &str| {
-        spawned
-            .get(key)
-            .and_then(Value::as_str)
-            .filter(|text| !text.is_empty())
-            .map(str::to_owned)
-    };
-    Some(Spawned {
-        uuid: text("uuid")?,
-        environment_ref: text("environment_ref"),
-    })
 }
 
 mod spawn_permit;

@@ -1,15 +1,18 @@
 //! Whether this session may spawn (S4c), as its tool registry's policy
-//! says now, and its registry's guards: the registry sets both each time
-//! they change, and the board's coordinator launcher reads them before
-//! each launch, so `start` never launches what the session's own `spawn`
-//! could not. The registry depends on this, never the other way.
+//! says now, and its registry's guards: the permit observes the registry
+//! ([`ToolPolicyObserver`]), told each time either changes, and the
+//! board's coordinator launcher reads it before each launch, so `start`
+//! never launches what the session's own `spawn` could not. The registry
+//! knows nothing of the board: this module depends on it, never the other
+//! way.
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
 
 use crate::application::tools::ports::ToolGuard;
+use crate::infrastructure::tools::registry::{ToolPolicyObserver, ToolRegistryImpl};
 
 /// The session's spawn permission, shared: closed, with no guards, until a
-/// registry watching it says otherwise.
+/// registry it observes says otherwise.
 #[derive(Clone, Default)]
 pub struct SpawnPermit {
     allowed: Arc<AtomicBool>,
@@ -44,15 +47,17 @@ impl SpawnPermit {
             .iter()
             .try_for_each(|guard| guard.check("spawn", arguments))
     }
+}
 
-    /// Set by the registry it follows: whether its policy allows spawn,
-    /// and its guards.
-    pub fn set(&self, allowed: bool, guards: &[Arc<dyn ToolGuard>]) {
+impl ToolPolicyObserver for SpawnPermit {
+    /// Whether a parent may call `spawn` now, and the guards it passes.
+    fn policy_changed(&self, registry: &ToolRegistryImpl) {
         *self
             .guards
             .write()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) = guards.to_vec();
-        self.allowed.store(allowed, Ordering::SeqCst);
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = registry.guards().to_vec();
+        self.allowed
+            .store(registry.parent_may_call("spawn"), Ordering::SeqCst);
     }
 }
 

@@ -72,6 +72,14 @@ impl Launcher {
 }
 
 impl CoordinatorLaunch for Launcher {
+    fn runs_coordinator(
+        &self,
+        _: &crate::domain::project_board::value_objects::slug::Slug,
+        _: u32,
+    ) -> bool {
+        false
+    }
+
     fn may_launch(&self) -> bool {
         self.may
     }
@@ -498,6 +506,14 @@ fn a_start_racing_an_acceptance_launches_nothing_unconfirmed() {
 struct FreezingLauncher(MemoryBoardStore);
 
 impl CoordinatorLaunch for FreezingLauncher {
+    fn runs_coordinator(
+        &self,
+        _: &crate::domain::project_board::value_objects::slug::Slug,
+        _: u32,
+    ) -> bool {
+        false
+    }
+
     fn may_launch(&self) -> bool {
         true
     }

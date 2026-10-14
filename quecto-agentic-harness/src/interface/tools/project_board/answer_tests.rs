@@ -29,6 +29,7 @@ fn keys(code: ErrorCode) -> &'static [&'static str] {
         | C::BoardTooLarge
         | C::FolderSetAside
         | C::PullRequestsUnavailable
+        | C::RunLive
         | C::Refused => &["reason"],
         C::NoBoard => &[],
         C::Rule => &["rule"],
@@ -209,6 +210,7 @@ fn a_front_ends_own_refusals_have_their_codes_shapes() {
             FrontEndRefusal::StoreUnavailable,
             ErrorCode::StoreUnavailable,
         ),
+        (FrontEndRefusal::RunLive, ErrorCode::RunLive),
     ] {
         let answer = reason_refused(Some("list"), refusal, "why");
         assert_eq!(answer["error"]["code"], json!(code.as_str()));

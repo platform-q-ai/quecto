@@ -146,7 +146,7 @@ fn a_start_is_traced_at_info_then_written_as_its_own_event() {
         not_applied: Some(0),
         claim: Some(StartClaim::Held),
         launch_us: Some(7),
-        folded: None,
+        run_state: None,
         released: None,
         duration_us: 9,
     };

@@ -112,6 +112,14 @@ fn launching_board(
 struct Launching;
 
 impl crate::application::project_board::ports::CoordinatorLaunch for Launching {
+    fn runs_coordinator(
+        &self,
+        _: &crate::domain::project_board::value_objects::slug::Slug,
+        _: u32,
+    ) -> bool {
+        false
+    }
+
     fn may_launch(&self) -> bool {
         true
     }
@@ -119,6 +127,7 @@ impl crate::application::project_board::ports::CoordinatorLaunch for Launching {
     fn launch(
         &self,
         request: &crate::application::project_board::ports::CoordinatorRequest,
+        _: &std::sync::atomic::AtomicBool,
     ) -> Result<
         crate::application::project_board::ports::LaunchedCoordinator,
         crate::application::project_board::ports::LaunchRefused,
@@ -225,6 +234,14 @@ fn tool_without_launcher() -> super::BoardTool {
 struct Failing;
 
 impl crate::application::project_board::ports::CoordinatorLaunch for Failing {
+    fn runs_coordinator(
+        &self,
+        _: &crate::domain::project_board::value_objects::slug::Slug,
+        _: u32,
+    ) -> bool {
+        false
+    }
+
     fn may_launch(&self) -> bool {
         true
     }
@@ -232,6 +249,7 @@ impl crate::application::project_board::ports::CoordinatorLaunch for Failing {
     fn launch(
         &self,
         _: &crate::application::project_board::ports::CoordinatorRequest,
+        _: &std::sync::atomic::AtomicBool,
     ) -> Result<
         crate::application::project_board::ports::LaunchedCoordinator,
         crate::application::project_board::ports::LaunchRefused,
@@ -268,8 +286,12 @@ async fn a_failed_launch_records_its_undo() {
     );
     let starts = records.starts();
     assert_eq!(
-        (starts.len(), starts[0].folded, starts[0].released),
-        (1, Some(true), Some(true))
+        (
+            starts.len(),
+            starts[0].run_state.map(|kind| kind.as_str()),
+            starts[0].released
+        ),
+        (1, Some("folded"), Some(true))
     );
     let folds = records.fold_backs();
     assert_eq!(folds.len(), 1, "the undo's fold-back is recorded");
@@ -286,5 +308,74 @@ async fn a_failed_launch_records_its_undo() {
         ),
         (&json!("a"), &json!(1), &json!("ok"), &json!("failed")),
         "{line}"
+    );
+}
+
+/// A launcher whose session still runs run 1's coordinator of task `a`.
+struct StillRunning;
+
+impl crate::application::project_board::ports::CoordinatorLaunch for StillRunning {
+    fn runs_coordinator(
+        &self,
+        task: &crate::domain::project_board::value_objects::slug::Slug,
+        run: u32,
+    ) -> bool {
+        (task.as_str(), run) == ("a", 1)
+    }
+
+    fn may_launch(&self) -> bool {
+        true
+    }
+
+    fn launch(
+        &self,
+        _: &crate::application::project_board::ports::CoordinatorRequest,
+        _: &std::sync::atomic::AtomicBool,
+    ) -> Result<
+        crate::application::project_board::ports::LaunchedCoordinator,
+        crate::application::project_board::ports::LaunchRefused,
+    > {
+        Err(crate::application::project_board::ports::LaunchRefused(
+            "not in this test".into(),
+        ))
+    }
+}
+
+/// Review round 2 (M-A): the tool refuses to end a run whose swarm this
+/// session still runs (`run_live`), before the board is built, and
+/// records the refusal; another run reaches the board.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_tool_refuses_to_end_a_run_its_session_still_runs() {
+    let records = Arc::new(Records::default());
+    let running = BoardSite {
+        launcher: Some(Arc::new(StillRunning)),
+        ..site(Some(launching_board))
+    };
+    let tool = recorded_tool(running, &records);
+    let request = json!({"op": "end_run", "task": "a", "run": 1, "outcome": "failed"});
+    let refused = tool.execute(&request.to_string()).await.unwrap();
+    let answer: Value = serde_json::from_str(&refused.content).unwrap();
+    assert!(refused.is_error, "{answer}");
+    assert_eq!(answer["error"]["code"], json!("run_live"), "{answer}");
+    assert_eq!(
+        answer["error"]["reason"],
+        json!(
+            "run 1 of a still has its swarm running in this session: stop its coordinator \
+             first (agent_cmd kill), then end the run"
+        )
+    );
+    let ops = records.taken();
+    let line = serde_json::to_value(&ops[0]).unwrap();
+    assert_eq!(
+        (&line["op"], &line["code"]),
+        (&json!("end_run"), &json!("run_live"))
+    );
+    let other = json!({"op": "end_run", "task": "a", "run": 2, "outcome": "failed"});
+    let answered = tool.execute(&other.to_string()).await.unwrap();
+    let answer: Value = serde_json::from_str(&answered.content).unwrap();
+    assert_eq!(
+        answer["error"]["code"],
+        json!("rule"),
+        "the board's: {answer}"
     );
 }

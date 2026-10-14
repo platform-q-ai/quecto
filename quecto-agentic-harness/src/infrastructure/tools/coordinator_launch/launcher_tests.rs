@@ -3,8 +3,9 @@
 //! what spawn launched from its structured answer, and stops a coordinator
 //! that came up outside a container.
 use std::sync::Mutex;
+use std::sync::atomic::AtomicBool;
 
-use super::super::spawn_launch_ports::spawned_metadata;
+use super::super::spawn_launch_ports::SpawnedChild;
 use super::*;
 use crate::application::tools::ports::ToolGuard;
 use crate::domain::error::DomainError;
@@ -147,7 +148,7 @@ fn open_permit(guards: Vec<Arc<dyn ToolGuard>>) -> SpawnPermit {
     for guard in guards {
         registry.register_guard(guard);
     }
-    registry.watch_spawn_permit(permit.clone());
+    registry.observe_policy(std::sync::Arc::new(permit.clone()));
     assert!(permit.allowed());
     permit
 }
@@ -162,6 +163,7 @@ fn launcher(
         Arc::clone(spawn) as Arc<dyn Tool>,
         Arc::clone(kill) as Arc<dyn Tool>,
         permit,
+        super::super::subagent_registry::new_registry(),
     )
 }
 
@@ -178,12 +180,17 @@ fn on_a_board_thread<T: Send + 'static>(launch: impl FnOnce() -> T + Send + 'sta
 
 #[test]
 fn a_launch_reads_what_spawn_launched_from_its_structured_answer() {
-    let metadata = spawned_metadata("7f3a-uuid", Some("C12"));
+    let metadata = SpawnedChild {
+        uuid: "7f3a-uuid".into(),
+        environment_ref: Some("C12".into()),
+    }
+    .metadata();
     // The words are no source: only the metadata names the coordinator.
     let spawn = Answering::new("spawn", answered("Subagent 'x' is running", Some(metadata)));
     let kill = Answering::new("agent_cmd", answered("", None));
     let launching = launcher(&spawn, &kill, open_permit(vec![]));
-    let launched = on_a_board_thread(move || launching.launch(&request("a", 1)));
+    let launched =
+        on_a_board_thread(move || launching.launch(&request("a", 1), &AtomicBool::new(false)));
     assert_eq!(
         launched,
         Ok(LaunchedCoordinator {
@@ -199,7 +206,15 @@ fn a_launch_reads_what_spawn_launched_from_its_structured_answer() {
 /// launch is refused; one whose stop fails says so.
 #[test]
 fn a_coordinator_outside_a_container_is_stopped_before_the_refusal() {
-    let local = || Some(spawned_metadata("7f3a-uuid", None));
+    let local = || {
+        Some(
+            SpawnedChild {
+                uuid: "7f3a-uuid".into(),
+                environment_ref: None,
+            }
+            .metadata(),
+        )
+    };
     for (kill_answer, said) in [
         (answered("killed", None), "it was stopped"),
         (
@@ -210,7 +225,8 @@ fn a_coordinator_outside_a_container_is_stopped_before_the_refusal() {
         let spawn = Answering::new("spawn", answered("running", local()));
         let kill = Answering::new("agent_cmd", kill_answer);
         let launching = launcher(&spawn, &kill, open_permit(vec![]));
-        let refused = on_a_board_thread(move || launching.launch(&request("a", 1)));
+        let refused =
+            on_a_board_thread(move || launching.launch(&request("a", 1), &AtomicBool::new(false)));
         let reason = refused.unwrap_err().0;
         assert!(
             reason.starts_with("the coordinator came up outside a container, so ")
@@ -252,7 +268,8 @@ fn a_spawn_that_launched_nothing_is_refused_in_its_words() {
         let spawn = Answering::new("spawn", answer);
         let kill = Answering::new("agent_cmd", answered("", None));
         let launching = launcher(&spawn, &kill, open_permit(vec![]));
-        let refused = on_a_board_thread(move || launching.launch(&request("a", 1)));
+        let refused =
+            on_a_board_thread(move || launching.launch(&request("a", 1), &AtomicBool::new(false)));
         assert_eq!(refused, Err(LaunchRefused(reason.into())));
         assert!(kill.called().is_empty());
     }
@@ -281,18 +298,18 @@ fn a_launch_the_session_could_not_make_never_asks_spawn() {
     let closed = launcher(&spawn, &kill, SpawnPermit::default());
     assert!(!closed.may_launch());
     assert_eq!(
-        closed.launch(&request("a", 1)),
+        closed.launch(&request("a", 1), &AtomicBool::new(false)),
         Err(LaunchRefused(NOT_ALLOWED.into()))
     );
     let guarded = launcher(&spawn, &kill, open_permit(vec![Arc::new(NoSpawn)]));
     assert!(guarded.may_launch());
     assert_eq!(
-        guarded.launch(&request("a", 1)),
+        guarded.launch(&request("a", 1), &AtomicBool::new(false)),
         Err(LaunchRefused("spawn is guarded".into()))
     );
     let unhosted = launcher(&spawn, &kill, open_permit(vec![]));
     assert_eq!(
-        unhosted.launch(&request("a", 1)),
+        unhosted.launch(&request("a", 1), &AtomicBool::new(false)),
         Err(LaunchRefused(NO_RUNTIME.into())),
         "no runtime here"
     );
@@ -306,10 +323,42 @@ fn a_spawn_that_never_answers_times_out() {
     let kill = Answering::new("agent_cmd", answered("", None));
     let launching =
         launcher(&spawn, &kill, open_permit(vec![])).with_timeout(Duration::from_millis(50));
-    let refused = on_a_board_thread(move || launching.launch(&request("a", 1)));
+    let refused =
+        on_a_board_thread(move || launching.launch(&request("a", 1), &AtomicBool::new(false)));
     assert_eq!(
         refused,
         Err(LaunchRefused("spawn did not answer within 50ms".into()))
     );
     assert_eq!(LAUNCH_TIMEOUT, Duration::from_secs(900));
+}
+
+/// Review round 2: a running spawn that carries no structured answer has
+/// whatever uuid its words name stopped, and the launch refused; the
+/// stop has its own short bound.
+#[test]
+fn a_running_spawn_without_its_metadata_is_stopped_by_its_words() {
+    let spawn = Answering::new(
+        "spawn",
+        answered(
+            "Subagent 'x' is running (uuid=9a1c). Use agent_cmd to interact.",
+            None,
+        ),
+    );
+    let kill = Answering::new("agent_cmd", answered("killed", None));
+    let launching = launcher(&spawn, &kill, open_permit(vec![]));
+    let refused =
+        on_a_board_thread(move || launching.launch(&request("a", 1), &AtomicBool::new(false)));
+    assert_eq!(
+        refused,
+        Err(LaunchRefused(
+            "spawn named no container for the coordinator, so it was stopped".into()
+        ))
+    );
+    assert_eq!(
+        kill.called(),
+        vec![json!({"agent_id": "9a1c", "command": "kill"})]
+    );
+    assert_eq!(uuid_in("running (uuid=) now"), None);
+    assert_eq!(uuid_in("no uuid here"), None);
+    assert_eq!(KILL_TIMEOUT, Duration::from_secs(30));
 }

@@ -568,6 +568,11 @@ pub trait CoordinatorLaunch: Send + Sync {
     /// A start asks before it writes anything; the launch asks again.
     fn may_launch(&self) -> bool;
 
+    /// Whether this session still runs the coordinator it launched for run
+    /// `run` of `task` (its swarm is then still going): `end_run` is
+    /// refused while it does.
+    fn runs_coordinator(&self, task: &Slug, run: u32) -> bool;
+
     /// Launches the coordinator `request` describes, giving up once
     /// `cancelled` is set (the call it serves was cancelled): what it began
     /// is stopped, and the launch refused.

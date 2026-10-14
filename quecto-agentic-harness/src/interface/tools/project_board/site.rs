@@ -12,6 +12,7 @@ use super::answer::FrontEndRefusal;
 use super::recording::BoardCall;
 use super::request::{op_of, parse};
 use super::{read, run_recorded};
+use crate::application::project_board::operations::BoardRequest;
 use crate::application::project_board::ports::CoordinatorLaunch;
 use crate::application::project_board::use_cases::RunBoardOperation;
 
@@ -102,6 +103,20 @@ pub fn answer(
         Err(error) => return call.refuse_request(op.as_deref(), &error),
     };
     call.parsed(&parsed);
+    // A run whose swarm this session still runs is not ended by hand: its
+    // coordinator is stopped first (S4c).
+    if let BoardRequest::EndRun(end) = &parsed {
+        let live = site.launcher.as_ref();
+        if live.is_some_and(|launcher| launcher.runs_coordinator(&end.task, end.run)) {
+            let reason = format!(
+                "run {run} of {task} still has its swarm running in this session: stop its \
+                 coordinator first (agent_cmd kill), then end the run",
+                run = end.run,
+                task = end.task.as_str()
+            );
+            return call.refuse_as_front_end(op.as_deref(), FrontEndRefusal::RunLive, &reason);
+        }
+    }
     let Some(build) = site.build else {
         return call.refuse_as_front_end(
             op.as_deref(),

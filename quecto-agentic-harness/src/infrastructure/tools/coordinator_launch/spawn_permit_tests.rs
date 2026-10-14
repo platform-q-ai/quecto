@@ -35,7 +35,7 @@ fn the_permit_follows_the_registrys_policy_over_spawn() {
     let permit = SpawnPermit::default();
     assert!(!permit.allowed(), "closed until a registry says otherwise");
     let mut registry = ToolRegistryImpl::new();
-    registry.watch_spawn_permit(permit.clone());
+    registry.observe_policy(std::sync::Arc::new(permit.clone()));
     assert!(!permit.allowed(), "no spawn tool, no spawn");
     registry.register(Arc::new(Named("spawn")));
     assert!(permit.allowed(), "a registered, enabled spawn");
@@ -48,7 +48,7 @@ fn the_permit_follows_the_registrys_policy_over_spawn() {
     let other = SpawnPermit::default();
     let mut unrelated = ToolRegistryImpl::new();
     unrelated.register(Arc::new(Named("read")));
-    unrelated.watch_spawn_permit(other.clone());
+    unrelated.observe_policy(std::sync::Arc::new(other.clone()));
     assert!(!other.allowed(), "another tool is no spawn");
 }
 
@@ -62,7 +62,7 @@ fn the_permit_follows_a_persisted_policy() {
     let permit = SpawnPermit::default();
     let mut registry = ToolRegistryImpl::new();
     registry.register(Arc::new(Named("spawn")));
-    registry.watch_spawn_permit(permit.clone());
+    registry.observe_policy(std::sync::Arc::new(permit.clone()));
     assert!(permit.allowed());
     let stable_id = ToolRegistration::official_native()
         .identity_for_name("spawn")
@@ -93,7 +93,7 @@ fn the_permit_follows_an_inherited_policy() {
         let permit = SpawnPermit::default();
         let mut registry = ToolRegistryImpl::new();
         registry.register(Arc::new(Named("spawn")));
-        registry.watch_spawn_permit(permit.clone());
+        registry.observe_policy(std::sync::Arc::new(permit.clone()));
         let snapshot = InheritedToolPolicySnapshot::new(BTreeMap::from([("spawn".into(), scope)]));
         registry.apply_inherited_tool_policy_snapshot(&snapshot);
         permit.allowed()
@@ -123,13 +123,13 @@ fn the_permit_judges_a_spawn_by_the_registrys_guards() {
     assert_eq!(permit.check("{}"), Ok(()), "no guards, no refusal");
     let mut registry = ToolRegistryImpl::new();
     registry.register(Arc::new(Named("spawn")));
-    registry.watch_spawn_permit(permit.clone());
+    registry.observe_policy(std::sync::Arc::new(permit.clone()));
     assert_eq!(permit.check("{}"), Ok(()));
     registry.register_guard(Arc::new(NoSpawn));
     assert_eq!(permit.check("{}"), Err("spawn is guarded".into()));
     let early = SpawnPermit::default();
     let mut guarded = ToolRegistryImpl::new();
     guarded.register_guard(Arc::new(NoSpawn));
-    guarded.watch_spawn_permit(early.clone());
+    guarded.observe_policy(std::sync::Arc::new(early.clone()));
     assert_eq!(early.check("{}"), Err("spawn is guarded".into()));
 }

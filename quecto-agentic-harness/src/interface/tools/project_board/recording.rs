@@ -516,7 +516,7 @@ fn start_record(record: &BoardOpRecord, facts: StartFacts) -> Option<BoardStartR
         not_applied: facts.not_applied,
         claim: facts.claim,
         launch_us: facts.launch_us,
-        folded: facts.folded,
+        run_state: facts.run_state.map(|state| StaticKind::new(state.as_str())),
         released: facts.released,
         duration_us: record.duration_us,
     })

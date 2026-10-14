@@ -262,15 +262,26 @@ and the answer lists them as `not_applied`.
 - A session that may not spawn starts nothing (`no_launcher`): `start`
   launches only what the session's own `spawn` would, and asks again as it
   launches.
-- If the coordinator does not launch, or the call is cancelled after the write
-  and before the launch (then nothing is launched), the start is undone as far
-  as it can be: the run is folded back as `failed`, and, when the start took
-  the claim and the run has ended, the task moves back to ready, releasing it.
-  The undo writes even when the call was cancelled. `launch_failed` gives the
-  launch's `reason`, the `run`, `run_state` (`folded` when the undo folded it
-  back, `ended_already` when another writer had ended it, `open` when it could
-  not be folded back: end it with `end_run`, below), and whether the claim was
-  `released` (`null` when the start did not take it).
+- If the coordinator does not launch, the call is cancelled (after the write,
+  then nothing is launched; or during the launch, then the launch is dropped
+  and a coordinator that came up anyway is stopped), or the launch fails
+  unexpectedly, the start is undone as far as it can be: the run is folded
+  back as `failed`, and, once the run has ended, a task the start claimed moves
+  back to ready, releasing it, and one held in review or blocked goes back
+  there (one claimed or in progress stays in progress). The undo writes even
+  when the call was cancelled. `launch_failed` gives the launch's `reason`, the
+  `run`, `run_state` (`folded` when the undo folded it back, `ended_already`
+  when another writer had ended it, `open` when it could not be folded back:
+  end it with `end_run`, below), whether the claim was `released` (`null` when
+  the start did not take it), and `restored` (`null`, or the `status` the task
+  was held in and whether it `moved` back there).
+- A coordinator that came up outside a container is stopped, and the start
+  undone. A launch waits for spawn at most 15 minutes.
+
+Once launched, the run is the swarm's: when the swarm ends, or its coordinator
+dies, the keeper that watches it folds the run back, and the task stays held by
+its starter until then. A run the keeper never folds back is ended by hand with
+`end_run`, below.
 
 A harness the pocket relay launches for a board task writes the board as the
 relay's bot: `QUECTO_BOARD_COMMITTER`, `name <email>` (`quecto pocket
@@ -305,7 +316,9 @@ the claim expired takes the task over with `take_over` first, and then ends the
 run as its holder. `expected_updated` is optional: when given, the task must
 still be as it was read (`stale`).
 
-Never end a run whose swarm is still running: stop it first.
+Never end a run whose swarm is still running: stop it first. The agent tool
+refuses that (`run_live`) while its own session still runs the run's
+coordinator.
 
 Only the run is written; the task stays as it is, for its holder to move on
 (back to `ready`, say). A run that has ended is refused (`run_ended`), as is
@@ -486,7 +499,7 @@ Each `start` that reaches the board writes one `board_start` record besides its
 | `not_applied` | The worker roles whose models were not applied |
 | `claim` | `fresh` when the start took the claim, `held` when the starter held it |
 | `launch_us` | How long the coordinator's launch took |
-| `folded`, `released` | For a start undone (its coordinator did not launch, or its call was cancelled before the launch): whether its own fold-back ended the run, and, when the start took the claim, whether it released it |
+| `run_state`, `released` | For a start undone (its coordinator did not launch, its call was cancelled, or its launch failed unexpectedly): where its undo left the run (`folded`, `ended_already` or `open`), and, when the start took the claim, whether it released it |
 | `duration_us` | The whole call |
 
 A start undone writes its fold-back's own `board_fold_back` record too, as

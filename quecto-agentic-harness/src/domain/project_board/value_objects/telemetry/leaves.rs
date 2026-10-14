@@ -75,6 +75,12 @@ const KNOWN_KINDS: &[&str] = &[
     "no_launcher",
     "brief",
     "launch_failed",
+    // A start's undo (S4c review round 2): where it left the run; the
+    // agent tool's refusal of an end_run while the run's swarm runs.
+    "folded",
+    "ended_already",
+    "open",
+    "run_live",
     // A run ended by hand (S4c): its op and fields; its outcomes are S4's.
     "end_run",
     "run",

@@ -172,10 +172,8 @@ async fn success_names_the_container_config_and_relays_the_selection_diagnostics
         serde_json::json!({"spawned": {"uuid": identity.registry_key, "environment_ref": env_ref}})
     );
     let local = ports.success(&identity, None);
-    assert_eq!(
-        local.delivery_metadata.as_deref(),
-        Some(spawned_metadata(&identity.registry_key, None).as_str())
-    );
+    let named = SpawnedChild::local(identity.registry_key.clone());
+    assert_eq!(SpawnedChild::of(&local), Some(named));
     assert!(
         local
             .delivery_metadata

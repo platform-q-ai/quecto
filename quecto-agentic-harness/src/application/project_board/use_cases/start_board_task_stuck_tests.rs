@@ -23,6 +23,14 @@ use crate::infrastructure::test_support::memory_board_store::MemoryBoardStore;
 struct CancelledAndFrozen(MemoryBoardStore, Arc<AtomicBool>);
 
 impl CoordinatorLaunch for CancelledAndFrozen {
+    fn runs_coordinator(
+        &self,
+        _: &crate::domain::project_board::value_objects::slug::Slug,
+        _: u32,
+    ) -> bool {
+        false
+    }
+
     fn may_launch(&self) -> bool {
         true
     }

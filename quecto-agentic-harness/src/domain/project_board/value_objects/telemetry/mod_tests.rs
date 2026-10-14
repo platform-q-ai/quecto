@@ -273,7 +273,7 @@ fn a_start_serializes_as_its_golden_line() {
         not_applied: Some(1),
         claim: Some(StartClaim::Fresh),
         launch_us: Some(250_000),
-        folded: Some(true),
+        run_state: Some(StaticKind::new("folded")),
         released: Some(false),
         duration_us: 900_000,
     };
@@ -281,7 +281,7 @@ fn a_start_serializes_as_its_golden_line() {
     let golden = json!({
         "event": "board_start", "task": "demo-hello", "client": "pocket_relay",
         "outcome": "ok", "run": 1, "plan_version": 2, "members": 3, "roles": 2, "items": 4,
-        "not_applied": 1, "claim": "fresh", "launch_us": 250_000, "folded": true,
+        "not_applied": 1, "claim": "fresh", "launch_us": 250_000, "run_state": "folded",
         "released": false, "duration_us": 900_000,
     });
     assert_eq!(line, golden);
@@ -300,7 +300,7 @@ fn a_start_serializes_as_its_golden_line() {
         not_applied: None,
         claim: None,
         launch_us: None,
-        folded: None,
+        run_state: None,
         released: None,
         duration_us: 40,
     };

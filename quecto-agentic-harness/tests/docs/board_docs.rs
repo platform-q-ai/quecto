@@ -249,7 +249,7 @@ fn every_field_a_start_record_writes_is_documented_and_no_other() {
         not_applied: Some(1),
         claim: Some(StartClaim::Fresh),
         launch_us: Some(1),
-        folded: Some(true),
+        run_state: Some(StaticKind::new("open")),
         released: Some(true),
         duration_us: 1,
     };

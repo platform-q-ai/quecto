@@ -142,6 +142,9 @@ pub enum ErrorCode {
     /// back): the coordinator did not launch,
     /// and the start was undone as far as it could be (S4c).
     LaunchFailed,
+    /// `reason`: the run's swarm still runs in this session, so `end_run`
+    /// is refused until it is stopped (S4c).
+    RunLive,
 }
 
 impl ErrorCode {
@@ -181,6 +184,7 @@ impl ErrorCode {
             Self::NoLauncher => "no_launcher",
             Self::Brief => "brief",
             Self::LaunchFailed => "launch_failed",
+            Self::RunLive => "run_live",
         }
     }
 }
@@ -447,6 +451,8 @@ pub enum FrontEndRefusal {
     NoCommitter,
     /// The board's store could not be built, or is not composed.
     StoreUnavailable,
+    /// An `end_run` of a run whose swarm this session still runs.
+    RunLive,
 }
 
 impl FrontEndRefusal {
@@ -455,6 +461,7 @@ impl FrontEndRefusal {
         match self {
             Self::NoCommitter => ErrorCode::NoCommitter,
             Self::StoreUnavailable => ErrorCode::StoreUnavailable,
+            Self::RunLive => ErrorCode::RunLive,
         }
     }
 }

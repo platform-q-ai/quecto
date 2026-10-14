@@ -5,6 +5,7 @@
 //! answer says runs, stopping a coordinator that came up outside one.
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 
 use quecto::application::project_board::ports::{
@@ -88,6 +89,23 @@ fn launcher(spawn: Arc<Spawn>, allowed: bool) -> (SpawnCoordinatorLauncher, Tool
     launcher_stopping_with(spawn, agent_cmd(), allowed)
 }
 
+/// A launcher over any `spawn`, its policy allowing it, stopping with
+/// `agent_cmd`.
+fn launcher_over(
+    spawn: Arc<dyn Tool>,
+    agent_cmd: Arc<Spawn>,
+) -> (SpawnCoordinatorLauncher, ToolRegistryImpl) {
+    let permit = SpawnPermit::default();
+    let mut registry = ToolRegistryImpl::new();
+    registry.register(Arc::clone(&spawn));
+    registry.observe_policy(Arc::new(permit.clone()));
+    let subagents = quecto::infrastructure::tools::subagent_registry::new_registry();
+    (
+        SpawnCoordinatorLauncher::new(spawn, agent_cmd, permit, subagents),
+        registry,
+    )
+}
+
 fn launcher_stopping_with(
     spawn: Arc<Spawn>,
     agent_cmd: Arc<Spawn>,
@@ -96,12 +114,13 @@ fn launcher_stopping_with(
     let permit = SpawnPermit::default();
     let mut registry = ToolRegistryImpl::new();
     registry.register(spawn.clone());
-    registry.watch_spawn_permit(permit.clone());
+    registry.observe_policy(std::sync::Arc::new(permit.clone()));
     if !allowed {
         registry.disable_tool("spawn");
     }
+    let subagents = quecto::infrastructure::tools::subagent_registry::new_registry();
     (
-        SpawnCoordinatorLauncher::new(spawn, agent_cmd, permit),
+        SpawnCoordinatorLauncher::new(spawn, agent_cmd, permit, subagents),
         registry,
     )
 }
@@ -122,7 +141,7 @@ fn request() -> CoordinatorRequest {
 async fn launched(
     launcher: Arc<SpawnCoordinatorLauncher>,
 ) -> Result<LaunchedCoordinator, LaunchRefused> {
-    tokio::task::spawn_blocking(move || launcher.launch(&request()))
+    tokio::task::spawn_blocking(move || launcher.launch(&request(), &AtomicBool::new(false)))
         .await
         .unwrap()
 }
@@ -181,8 +200,18 @@ async fn spawns_refusal_or_an_answer_naming_no_container_is_a_refusal() {
         launched(Arc::new(launching)).await,
         Err(LaunchRefused("no container runtime is available".into()))
     );
-    // Words alone name nothing: only spawn's structured answer does.
-    let (launching, _registry) = launcher(spawn(RUNNING, false), true);
+    // Words alone launch nothing: only spawn's structured answer names a
+    // coordinator; a uuid its words name is stopped.
+    let named = agent_cmd();
+    let (launching, _registry) = launcher_stopping_with(spawn(RUNNING, false), named.clone(), true);
+    assert_eq!(
+        launched(Arc::new(launching)).await,
+        Err(LaunchRefused(
+            "spawn named no container for the coordinator, so it was stopped".into()
+        ))
+    );
+    assert_eq!(named.calls.lock().unwrap().len(), 1);
+    let (launching, _registry) = launcher(spawn("odd", false), true);
     let refused = launched(Arc::new(launching)).await;
     assert!(
         matches!(&refused, Err(LaunchRefused(why)) if why.starts_with("spawn answered no running coordinator")),
@@ -205,3 +234,6 @@ async fn spawns_refusal_or_an_answer_naming_no_container_is_a_refusal() {
         serde_json::json!({"agent_id": "0b5e", "command": "kill"})
     );
 }
+
+#[path = "coordinator_launch_cancel.rs"]
+mod cancel;
