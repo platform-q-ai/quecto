@@ -79,6 +79,47 @@ fn a_read_is_traced_at_debug_and_a_write_at_info_then_written() {
 }
 
 #[test]
+fn a_fold_back_is_traced_at_info_then_written_as_its_own_event() {
+    use crate::domain::project_board::value_objects::slug::Slug;
+    use crate::domain::project_board::value_objects::telemetry::{RunOutcomeKind, TaskRef};
+    let base = tempfile::tempdir().unwrap();
+    let log = AuditLog::open_sync(base.path(), "cli:folded").unwrap();
+    let ops = TracingProjectBoardOps::over(EventLogProjectBoardOps::new(log.crash_line().unwrap()));
+    let record = FoldBackRecord {
+        task: TaskRef::of(&Slug::parse("board-store").unwrap()),
+        run: 2,
+        outcome: OpOutcome::Ok,
+        run_outcome: Some(RunOutcomeKind::Succeeded),
+        items: None,
+        unmatched: Some(1),
+        extra: None,
+        evidence: Some(3),
+        evidence_dropped: Some(1),
+        cost_tokens: Some(1234),
+        attempts: Some(1),
+        lost: Some(0),
+        bytes: Some(40),
+        duration_us: 9,
+    };
+    let traced = traced(tracing::Level::INFO, || {
+        ops.record_fold_back(record.clone())
+    });
+    assert!(
+        traced.contains("INFO") && traced.contains("board fold back"),
+        "{traced}"
+    );
+    assert!(
+        traced.contains(&serde_json::to_string(&record).unwrap()),
+        "{traced}"
+    );
+    let text = std::fs::read_to_string(AuditLog::file_path(base.path(), "cli:folded")).unwrap();
+    let line: serde_json::Value = serde_json::from_str(text.lines().last().unwrap()).unwrap();
+    assert_eq!(line["event"], "board_fold_back", "{line}");
+    assert_eq!(line["run_outcome"], "succeeded", "{line}");
+    assert_eq!(line["cost_tokens"], 1234, "{line}");
+}
+
+#[test]
 fn a_dropped_record_warns_once() {
     let base = tempfile::tempdir().unwrap();
     let log = AuditLog::open_sync(base.path(), "cli:full")

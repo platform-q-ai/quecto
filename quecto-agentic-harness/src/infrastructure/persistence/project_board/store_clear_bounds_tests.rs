@@ -29,7 +29,7 @@ fn a_clear_keeps_every_bound_a_write_keeps() {
     bob.limits.board_bytes = size(&task("a")) + size(&task("b")) + size(&task("dup")) - 1;
     let past = bob.clear_set_aside(&head, &keeping, "board: clear");
     assert!(
-        matches!(&past, Err(BoardStoreError::InvalidWrite(why)) if why.contains("bytes")),
+        matches!(&past, Err(BoardStoreError::WriteTooLarge(why)) if why.contains("bytes")),
         "the copy kept counts: {past:?}"
     );
     bob.limits.board_bytes += 1;

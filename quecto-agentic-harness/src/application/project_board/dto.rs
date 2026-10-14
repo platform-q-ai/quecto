@@ -624,7 +624,9 @@ impl fmt::Display for ProjectBoardError {
             Self::Store(BoardStoreError::Clash(why)) => {
                 write!(f, "the board clashes with the repository: {why}")
             }
-            Self::Store(BoardStoreError::InvalidWrite(why)) => {
+            Self::Store(
+                BoardStoreError::InvalidWrite(why) | BoardStoreError::WriteTooLarge(why),
+            ) => {
                 write!(f, "the board refused an invalid write: {why}")
             }
             Self::Store(BoardStoreError::Unavailable(why)) => {
@@ -731,6 +733,10 @@ impl fmt::Display for ProjectBoardError {
 }
 
 impl std::error::Error for ProjectBoardError {}
+
+#[path = "dto_fold_back.rs"]
+mod fold_back;
+pub use fold_back::{FoldBackFacts, FoldedBack};
 
 #[path = "dto_plans.rs"]
 mod plans;

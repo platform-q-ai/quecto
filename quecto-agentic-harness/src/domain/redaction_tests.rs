@@ -239,3 +239,21 @@ fn a_key_lead_is_one_of_the_allowed_word_starts() {
         assert!(!is_key_lead(lead), "{lead:?}");
     }
 }
+
+/// A `basic` before a password never shields it (#2481 Q7 review round
+/// 5): no rule reads `basic <word>` as one span, so the password rules
+/// still meet the password.
+#[test]
+fn a_basic_before_a_password_leaves_the_password_redacted() {
+    for (text, kept) in [
+        (
+            "auth:\n  type: basic\n  password: hunter2",
+            "auth:\n  type: basic\n  [REDACTED]",
+        ),
+        ("basic password: hunter2", "basic [REDACTED]"),
+        ("basic PASSWORD=hunter2", "basic [REDACTED]"),
+        ("mode=basic\npassword=hunter2", "mode=basic\n[REDACTED]"),
+    ] {
+        assert_eq!(redact_secrets(text), kept, "{text:?}");
+    }
+}

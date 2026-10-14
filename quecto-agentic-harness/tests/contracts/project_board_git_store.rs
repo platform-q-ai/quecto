@@ -388,3 +388,159 @@ fn the_git_store_takes_a_plan_proposed_then_patched() {
     assert_eq!(read.items, vec![item("schema"), item("api")]);
     assert_eq!(bob.committed_by(&board.head.0).unwrap().name, "Alice");
 }
+
+/// A started task's run folded back through the git store (#2481 S4): the
+/// run alone lands in `runs/`, its addresses linked and its secrets never
+/// written, and the board reads it back as folded.
+#[test]
+fn the_git_store_takes_a_run_folded_back_alone_with_no_secret_in_its_file() {
+    use quecto::application::project_board::dto::FoldedBack;
+    use quecto::application::project_board::fold_back::{
+        SwarmEnd, SwarmEvidence, SwarmItemState, SwarmItemView, SwarmRunView,
+    };
+    use quecto::application::project_board::ports::{BoardArtifact, BoardWrite};
+    use quecto::application::project_board::use_cases::FoldBackRun;
+    use quecto::domain::project_board::entities::plan::{Plan, PlanFields, PlanItem};
+    use quecto::domain::project_board::entities::task::{Task, TaskFields};
+    use quecto::domain::project_board::services::starts::start;
+    use quecto::domain::project_board::value_objects::slug::Slug;
+    use quecto::domain::project_board::value_objects::timestamp::Timestamp;
+    use quecto::domain::project_board::value_objects::vocabulary::{
+        ItemState, PlanState, RunOutcome, TaskKind, TaskStatus,
+    };
+    use quecto::infrastructure::persistence::project_board::text_cells::MarkdownTextCells;
+    use quecto::infrastructure::time::board_clock::SystemBoardClock;
+    use std::sync::Arc;
+
+    const TOKEN: &str = "ghp_abcdefghijklmnopqrstuvwxyz0123456789";
+    let remote = Remote::new();
+    let (alice, bob) = remote.clients();
+    alice.bootstrap().unwrap();
+    let slug = |text: &str| Slug::parse(text).unwrap();
+    let at = Timestamp::parse("2026-10-10T08:00:00Z").unwrap();
+    let ada = Identity {
+        name: "Alice".into(),
+        email: "alice@example.com".into(),
+    };
+    let ready = Task::new(TaskFields {
+        id: slug("board-store"),
+        title: "Board store".into(),
+        kind: TaskKind::Task,
+        description: String::new(),
+        status: TaskStatus::Ready,
+        parent: None,
+        depends_on: vec![],
+        accepted_plan: Some(1),
+        claim: None,
+        prs: vec![],
+        github_issue: None,
+        resolution: None,
+        superseded_by: vec![],
+        references: vec![],
+        created: at.clone(),
+        updated: at.clone(),
+    })
+    .unwrap();
+    let plan = Plan::new(PlanFields {
+        task: slug("board-store"),
+        version: 1,
+        state: PlanState::Accepted,
+        approach: "Build it.".into(),
+        items: ["api", "docs"]
+            .map(|id| PlanItem {
+                id: slug(id),
+                title: format!("Build the {id}"),
+                criteria: vec![],
+                depends_on: vec![],
+            })
+            .to_vec(),
+        team: None,
+        proposed_by: ada.clone(),
+        edited_by: None,
+        accepted: Some((ada.clone(), at.clone())),
+        created: at.clone(),
+        updated: at.clone(),
+    })
+    .unwrap();
+    let started = Timestamp::parse("2026-10-10T09:00:00Z").unwrap();
+    let (task, run) = start(&ready, &[], Some(&plan), &ada, &started)
+        .unwrap()
+        .into_writes();
+    let head = alice.read().unwrap().head;
+    let artifacts = [
+        BoardArtifact::Task(task.clone()),
+        BoardArtifact::Plan(plan),
+        BoardArtifact::Run(run),
+    ];
+    let written = alice.write(&head, &artifacts, "board: board-store started");
+    assert!(matches!(written, Ok(BoardWrite::Written(_))), "{written:?}");
+
+    let view = SwarmRunView {
+        end: SwarmEnd::Succeeded,
+        items: vec![SwarmItemView {
+            title: "api: Build the api".into(),
+            state: SwarmItemState::Completed,
+            owner: Some("worker-1".into()),
+            evidence: [
+                (
+                    format!("https://github.com/o/r/pull/7?token={TOKEN}"),
+                    "4f2a9c1",
+                ),
+                (TOKEN.to_string(), "4f2a9c1"),
+                ("costs $5".to_string(), "4f2a9c1"),
+                ("postgres://app:S3cr#t@db:5432/app".to_string(), "4f2a9c1"),
+                ("https://h.example/p#sig=ab".to_string(), "4f2a9c1"),
+                (
+                    "`https://acct.blob.core.windows.net/c/b?sv=2024&sig=AbC%2Bs3cr3t`".into(),
+                    "4f2a9c1",
+                ),
+            ]
+            .map(|(artifact, revision)| SwarmEvidence {
+                artifact,
+                revision: revision.into(),
+            })
+            .to_vec(),
+        }],
+        observed_tokens: 52_000,
+    };
+    let use_case = FoldBackRun::new(
+        Arc::from(bob),
+        Arc::new(SystemBoardClock::default()),
+        Arc::new(MarkdownTextCells),
+    )
+    .unwrap();
+    let folded = use_case.execute(&slug("board-store"), 1, &view).unwrap();
+    assert!(matches!(folded, FoldedBack::Folded(_)), "{folded:?}");
+
+    let board = alice.read().unwrap();
+    assert_eq!(board.tasks, [task], "the task is left as it was");
+    let [run] = board.runs.as_slice() else {
+        panic!("one run: {:?}", board.runs);
+    };
+    let fields = run.fields();
+    assert_eq!(
+        (fields.outcome, fields.cost),
+        (Some(RunOutcome::Succeeded), Some(52_000))
+    );
+    let states: Vec<ItemState> = fields.items.iter().map(|item| item.state).collect();
+    assert_eq!(states, [ItemState::Done, ItemState::Todo]);
+    let file = sh(
+        &remote.bare,
+        &["show", &format!("{BOARD_REF}:runs/board-store.1.md")],
+        b"",
+    );
+    assert!(!file.contains(TOKEN) && !file.contains("$5"), "{file}");
+    assert!(!file.contains("sig=") && !file.contains("sv="), "{file}");
+    assert!(!file.contains("S3cr") && !file.contains("app:"), "{file}");
+    // A fragment that is no anchor puts its line in doubt: dropped whole.
+    assert!(!file.contains("h.example/p"), "{file}");
+    assert!(
+        file.contains("`https://acct.blob.core.windows.net/c/b` at 4f2a9c1"),
+        "{file}"
+    );
+    // A line naming a credential word (`token`) is dropped whole.
+    assert!(!file.contains("pull/7"), "{file}");
+    assert!(file.contains("[REDACTED] at 4f2a9c1"), "{file}");
+    let log = sh(&remote.bare, &["log", "-1", "--format=%s", BOARD_REF], b"");
+    assert_eq!(log, "board: run 1 of board-store folded back, succeeded");
+}

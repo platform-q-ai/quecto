@@ -8,8 +8,8 @@ use super::operations::{BoardRequest, Completion};
 use super::ports::ProjectBoardOpLog;
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::telemetry::{
-    Access, BoardOpRecord, ClaimFacts, CompletionFacts, CompletionKind, Normalised, OpKind,
-    StaticKind,
+    Access, BoardOpRecord, ClaimFacts, CompletionFacts, CompletionKind, FoldBackRecord, Normalised,
+    OpKind, StaticKind,
 };
 use crate::domain::project_board::value_objects::vocabulary::TaskStatus;
 
@@ -164,6 +164,11 @@ impl OpFacts {
     }
 }
 
+/// A count as a record holds it.
+pub fn counted(count: usize) -> u64 {
+    u64::try_from(count).unwrap_or(u64::MAX)
+}
+
 /// A completion of `kind` for a task linking `linked` pull requests,
 /// `pending` of them not merged yet. A failed one's code and rule are
 /// the front end's to name (its error codes are the answer's), and the
@@ -253,6 +258,11 @@ impl BoardRecording {
     /// Writes `record` to the log: synchronously, never panicking.
     pub fn record(&self, record: BoardOpRecord) {
         self.log.record(record);
+    }
+
+    /// Writes a fold-back's `record` to the log, as [`Self::record`].
+    pub fn record_fold_back(&self, record: FoldBackRecord) {
+        self.log.record_fold_back(record);
     }
 }
 

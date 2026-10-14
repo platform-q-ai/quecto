@@ -3223,10 +3223,11 @@ fn normal_build_excludes_removed_tool_installer_archive_dependencies() {
     );
 }
 
-/// `unicode-normalization` serves two users only: macOS path matching
-/// (filenames there are NFD) and the board's canonical markdown, which
-/// refuses text that is not NFC on every platform (#2481). Nothing else
-/// may take it up.
+/// `unicode-normalization` serves three users only: macOS path matching
+/// (filenames there are NFD), the board's canonical markdown, which
+/// refuses text that is not NFC on every platform (#2481), and the
+/// fold-back's credential-word check, which reads text folded by NFKC
+/// (#2481 S4). Nothing else may take it up.
 #[test]
 fn text_normalization_serves_only_macos_paths_and_the_board_markdown() {
     let manifest = fs::read_to_string("Cargo.toml").expect("read Cargo.toml");
@@ -3244,10 +3245,12 @@ fn text_normalization_serves_only_macos_paths_and_the_board_markdown() {
     assert_eq!(
         users,
         [
+            "src/application/project_board/fold_back_scrub.rs",
             "src/infrastructure/persistence/project_board/markdown/chars.rs",
             "src/infrastructure/tools/path_utils.rs",
         ],
-        "unicode-normalization serves macOS paths and the board markdown alone"
+        "unicode-normalization serves macOS paths, the board markdown and the fold-back's \
+         credential-word fold alone"
     );
 }
 

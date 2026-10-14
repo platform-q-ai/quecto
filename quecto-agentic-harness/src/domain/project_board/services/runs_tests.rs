@@ -355,3 +355,22 @@ fn a_run_holds_moves_to_the_statuses_that_hold_no_claim() {
         assert_eq!(holds_moves_to(to), !to.may_hold_claim(), "{to:?}");
     }
 }
+
+#[test]
+fn a_fold_back_finds_its_run_by_number_and_the_plan_it_ran_by_version() {
+    let first = plan(1, PlanState::Superseded);
+    let second = plan(2, PlanState::Accepted);
+    let (one, two) = (open_run(1, 1), open_run(2, 2));
+    let (runs, plans) = ([&one, &two], [&first, &second]);
+    let (run, ran) = run_and_plan(&runs, &plans, 2).unwrap();
+    assert_eq!((run, ran), (&two, &second));
+    assert_eq!(run_and_plan(&runs, &plans, 1).unwrap().1, &first);
+    assert_eq!(
+        run_and_plan(&runs, &plans, 3),
+        Err(BoardRuleError::NoSuchRun(3))
+    );
+    assert_eq!(
+        run_and_plan(&runs, &plans[..1], 2),
+        Err(BoardRuleError::UnknownPlanVersion(2))
+    );
+}
