@@ -255,28 +255,31 @@ fn a_state_of_a_newer_head_is_never_overwritten_by_an_older_one() {
     assert_eq!(std::fs::read_to_string(state_file(&carol)).unwrap(), kept);
 }
 
-/// A keeping sweeps the drafts dead processes left of this remote's state,
-/// and only those: a live process's draft, and any other file, stay.
+/// A keeping sweeps the drafts dead keepings left of this remote's state
+/// (older than any keeping lasts), and only those: a fresh draft, and any
+/// other file however old, stay.
 #[test]
-fn a_keeping_sweeps_only_drafts_dead_processes_left() {
+fn a_keeping_sweeps_only_drafts_dead_keepings_left() {
     let repos = fresh();
     board_with(&repos, vec![]);
     let carol = partial(&repos, "tree:0", "carol");
-    let mut child = std::process::Command::new("true").spawn().unwrap();
-    let dead = child.id();
-    child.wait().unwrap();
     let dir = state_file(&carol).parent().unwrap().to_path_buf();
     std::fs::create_dir_all(&dir).unwrap();
-    let ours = std::process::id();
     let names = [
-        format!("fetch-origin.{dead}.7.draft"),
-        format!("fetch-origin.{ours}.7.draft"),
-        format!("fetch-other.{dead}.7.draft"),
-        format!("fetch-origin.{dead}.x.draft"),
-        "notes.txt".to_string(),
-    ];
-    for name in &names {
-        std::fs::write(dir.join(name), "x").unwrap();
+        "fetch-origin.4242.7.draft",
+        "fetch-origin.4243.8.draft",
+        "fetch-other.4242.7.draft",
+        "fetch-origin.4242.x.draft",
+        "notes.txt",
+    ]
+    .map(String::from);
+    let hour_ago = std::time::SystemTime::now() - std::time::Duration::from_secs(3600);
+    for (n, name) in names.iter().enumerate() {
+        let file = std::fs::File::create(dir.join(name)).unwrap();
+        // All but the second are old: it is a keeping still under way.
+        if n != 1 {
+            file.set_modified(hour_ago).unwrap();
+        }
     }
     store(&carol).read().unwrap();
     let mut left: Vec<String> = std::fs::read_dir(&dir)

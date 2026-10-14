@@ -61,24 +61,19 @@ fn draft_name(remote: &str) -> String {
     format!("fetch-{remote}.{}.{n}.draft", std::process::id())
 }
 
-/// The process id a draft of `remote`'s state named `name` was made by,
-/// when `name` is exactly such a draft's.
-fn drafted_by(remote: &str, name: &str) -> Option<i32> {
-    let rest = name.strip_prefix(&format!("fetch-{remote}."))?;
-    let (pid, rest) = rest.split_once('.')?;
-    let n = rest.strip_suffix(".draft")?;
-    let digits = |text: &str| !text.is_empty() && text.bytes().all(|b| b.is_ascii_digit());
-    match (digits(pid), digits(n)) {
-        (true, true) => pid.parse().ok(),
-        _ => None,
-    }
-}
+/// How long a draft lives at most: a keeping writes and renames it at
+/// once, so one older than this was left by a process that died between.
+const DRAFT_LIFE: std::time::Duration = std::time::Duration::from_secs(10 * 60);
 
-/// Whether no process of id `pid` runs now.
-fn gone(pid: i32) -> bool {
-    // SAFETY: kill(2) with signal 0 sends nothing; it only checks `pid`.
-    let sent = unsafe { libc::kill(pid, 0) };
-    sent == -1 && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
+/// Whether `name` is exactly a draft of `remote`'s state, as
+/// [`draft_name`] spells one.
+fn is_draft(remote: &str, name: &str) -> bool {
+    let fields = name
+        .strip_prefix(&format!("fetch-{remote}."))
+        .and_then(|rest| rest.strip_suffix(".draft"))
+        .and_then(|rest| rest.split_once('.'));
+    let digits = |text: &str| !text.is_empty() && text.bytes().all(|b| b.is_ascii_digit());
+    fields.is_some_and(|(pid, n)| digits(pid) && digits(n))
 }
 
 /// What a partial clone remembers between reads.
@@ -192,20 +187,30 @@ impl GitBoardStore {
         }
     }
 
-    /// Removes the drafts of this remote's state that processes no longer
-    /// running left in `dir`: only names exactly a draft's.
+    /// Removes the drafts of this remote's state that dead keepings left
+    /// in `dir`: files named exactly as a draft, older than [`DRAFT_LIFE`].
+    /// (A process's liveness is not asked: quecto signals no process it
+    /// does not own, not even with signal 0.)
     fn sweep_drafts(&self, dir: &std::path::Path) {
         let Ok(entries) = std::fs::read_dir(dir) else {
             return;
         };
-        for entry in entries.flatten() {
-            let name = entry.file_name();
-            let drafted = name
+        let stale = |entry: &std::fs::DirEntry| {
+            let age = entry
+                .metadata()
+                .and_then(|meta| meta.modified())
+                .ok()
+                .and_then(|modified| modified.elapsed().ok());
+            let named = entry
+                .file_name()
                 .to_str()
-                .and_then(|name| drafted_by(&self.remote, name));
-            if drafted.is_some_and(gone) {
-                let _ = std::fs::remove_file(entry.path());
-            }
+                .is_some_and(|name| is_draft(&self.remote, name));
+            named
+                && entry.file_type().is_ok_and(|kind| kind.is_file())
+                && age.is_some_and(|age| age > DRAFT_LIFE)
+        };
+        for entry in entries.flatten().filter(stale) {
+            let _ = std::fs::remove_file(entry.path());
         }
     }
 }
