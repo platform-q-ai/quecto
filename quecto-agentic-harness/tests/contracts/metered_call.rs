@@ -1,10 +1,8 @@
 //! `MeteredCall` on the SQLite adapter (#2303): a call is the repository
 //! it measures. It has measured nothing until a transaction begins through
-//! it, and a lock held for ~150 ms is measured as a lock wait and a busy
+//! it, and a lock held through accounted BEGIN sleeps is measured as a lock wait and a busy
 //! wait of at least 100 ms each (the criterion's number, round-3 review
 //! L2).
-use std::sync::mpsc;
-use std::thread;
 use std::time::Duration;
 
 use quecto::application::swarm::ports::{BoardCallMeter, BoardRepository};
@@ -27,26 +25,11 @@ fn a_call_measures_the_transactions_begun_through_it() {
 #[test]
 fn a_held_lock_is_measured_as_its_wait() {
     let (dir, _plain, meter) = board();
-    let (held, taken) = mpsc::channel();
-    let (release, released) = mpsc::channel::<()>();
-    let path = dir.path().join("swarm.sqlite");
-    let holder = thread::spawn(move || {
-        let connection = rusqlite::Connection::open(path).unwrap();
-        connection.execute_batch("BEGIN IMMEDIATE").unwrap();
-        held.send(()).unwrap();
-        let _told = released.recv_timeout(Duration::from_secs(30));
-        connection.execute_batch("COMMIT").unwrap();
-    });
-    taken.recv_timeout(Duration::from_secs(30)).unwrap();
-    let releaser = thread::spawn(move || {
-        held_lock_timer_policy::timer_release(Duration::from_millis(150), thread::sleep, || {
-            release.send(()).unwrap();
-        });
-    });
-    let call = meter.open();
-    call.atomic(false, &mut |_| Ok(())).unwrap();
-    releaser.join().unwrap();
-    holder.join().unwrap();
+    let holder = held_lock_timer_policy::HeldLock::take(dir.path().join("swarm.sqlite"));
+    let call = meter.open_observed(holder.observer());
+    let outcome = call.atomic(false, &mut |_| Ok(()));
+    holder.finish();
+    outcome.unwrap();
     let measure = call.measure().expect("a transaction began");
     assert!(measure.busy, "{measure:?}");
     assert!(
@@ -59,7 +42,7 @@ fn a_held_lock_is_measured_as_its_wait() {
     );
 }
 
-/// Policy-only fake evidence: this does not exercise the production meter,
+/// Deterministic evidence for the same policy as both fixtures. This does not exercise the production meter,
 /// observer lifetime, tally mutex, SQLite callback or FFI unwind boundary.
 mod held_lock_release_policy {
     use std::cell::Cell;
@@ -119,35 +102,52 @@ mod held_lock_release_policy {
     ) {
         // The gate is explicit immutable driver state. Advancing the independent
         // timer does not advance the contender into BEGIN or create a sample.
-        let timer_fired = Cell::new(false);
         let releases = Cell::new(0_u32);
         let observed = Cell::new(None);
-        held_lock_timer_policy::timer_release(
-            Duration::from_millis(150),
-            |after| {
-                assert_eq!(after, Duration::from_millis(150));
-                timer_fired.set(true);
+        let scope = |scope: Scope| held_lock_timer_policy::Scope {
+            call: u128::from(scope.call),
+            connection: scope.connection,
+            transaction: scope.transaction,
+            phase: match scope.phase {
+                Phase::Begin => held_lock_timer_policy::Phase::Begin,
+                Phase::Work => held_lock_timer_policy::Phase::Work,
             },
-            || {
-                assert!(timer_fired.get(), "the actual shared timer policy fired");
-                releases.set(releases.get() + 1);
-                observed.set(Some(ReleaseSnapshot {
+        };
+        let qualifies_policy = accounted.is_some_and(|sample| {
+            begin_entered
+                && held_lock_timer_policy::release_qualified(
                     held_ack,
-                    intended: INTENDED,
-                    begin_entered,
-                    sample: accounted,
-                    outside_sleep_gap_ms,
-                }));
-            },
-        );
+                    scope(INTENDED),
+                    held_lock_timer_policy::AccountedSample {
+                        scope: scope(sample.scope),
+                        callback: 6,
+                        actual: Duration::from_millis(sample.actual_accounted_ms),
+                    },
+                )
+        });
+        if qualifies_policy {
+            releases.set(releases.get() + 1);
+            observed.set(Some(ReleaseSnapshot {
+                held_ack,
+                intended: INTENDED,
+                begin_entered,
+                sample: accounted,
+                outside_sleep_gap_ms,
+            }));
+        }
+        let expected = held_ack
+            && begin_entered
+            && accounted.is_some_and(|sample| {
+                sample.scope == INTENDED && sample.actual_accounted_ms >= 100
+            });
         assert_eq!(
             releases.get(),
-            1,
-            "observe the shared policy's real release event"
+            u32::from(expected),
+            "unqualified holder must remain held; qualified holder must release exactly once"
         );
-        let released = observed
-            .get()
-            .expect("timer policy emitted a release snapshot");
+        let Some(released) = observed.get() else {
+            return;
+        };
         // An affirmative oracle, NOT an implementation of a new release policy.
         // Only ACTUALLY ALREADY accounted sleep can qualify; neither planned
         // duration nor outside-sleep time is credited. Scope equality includes

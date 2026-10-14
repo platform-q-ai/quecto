@@ -1,8 +1,4 @@
-//! Shared existing held-lock fixture policy, not a production synchronization API.
-//! The real drivers sleep; deterministic policy tests advance a fake timer.
-use std::time::Duration;
-
-pub fn timer_release(after: Duration, wait: impl FnOnce(Duration), release: impl FnOnce()) {
-    wait(after);
-    release();
-}
+//! Shared adapter-local accounting policy and joined holder fixture.
+pub use quecto::infrastructure::persistence::swarm_board::meter::observation::{
+    AccountedSample, HeldLock, Phase, Scope, release_qualified,
+};
