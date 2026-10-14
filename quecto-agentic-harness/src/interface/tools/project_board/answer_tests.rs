@@ -51,7 +51,7 @@ fn keys(code: ErrorCode) -> &'static [&'static str] {
         // (a_duplicate_artifact_is_named_by_its_kind_task_and_number).
         C::DuplicateArtifact => &["kind", "task", "number"],
         C::NoLauncher => &[],
-        C::RunLive => &["task", "run"],
+        C::RunLive => &["task", "run", "agent"],
         C::Brief => &["brief"],
         C::LaunchFailed => &[
             "reason",
@@ -173,6 +173,7 @@ board_errors! {
     E::RunLive { .. } => E::RunLive {
         task: slug("a"),
         run: 1,
+        agent: "7f3a".into(),
     },
     E::Brief { .. } => E::from(crate::application::project_board::swarm_brief::BriefRefusal::NoTaskItems),
     E::LaunchFailed { .. } => E::LaunchFailed {

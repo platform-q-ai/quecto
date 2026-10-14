@@ -238,41 +238,50 @@ first.
 ## Ending a run
 
 Nothing records a started run's end by itself: the swarm never writes the
-board. Once the swarm has ended (its parent closes it with `swarm_control
-close`), the claim holder records how it ended with `end_run(task, run,
-outcome, expected_updated)`: `succeeded`, `stopped` or `failed`. Until then the
-run holds its task, since a held task leaves its holder only once its runs have
-ended. The same ends a run no swarm will ever finish: a start whose coordinator
-never launched and whose undo could not end the run (its answer's `run_state`
-is `open`), or a start that wrote and then stopped (the process died) before it
-launched.
+board, and the run holds its task until it ends, since a held task leaves its
+holder only once its runs have ended. Its claim holder ends it, in this order:
 
-The claim a start takes or renews lasts 2 hours and is not renewed while the
-swarm runs. Once it has expired, its holder renews it (`renew`), or anyone else
-takes the task over (`take_over`), and then ends the run.
+1. When the run is paused holding an outcome, close it: `agent_cmd`
+   `swarm_control` `close` on the coordinator. A cancelled run needs no close.
+2. Stop the coordinator with `agent_cmd kill`. Until it has stopped, `end_run`
+   answers `run_live`, naming the coordinator's `agent` to kill.
+3. `end_run(task, run, outcome, expected_updated)` with `succeeded`, `stopped`
+   or `failed`.
+4. Renew the claim before it lapses: it lasts 2 hours, and nothing renews it
+   while the swarm runs. If it has expired, renew it if it is yours
+   (`renew`), or take the task over if it is another's (`take_over`), then
+   `end_run`.
+
+The same ends a run no swarm will ever finish: a start whose coordinator never
+launched and whose undo could not end the run (its answer's `run_state` is
+`open`), or a start that wrote and then stopped (the process died) before it
+launched.
 
 `outcome` is one of `succeeded`, `stopped`, `failed` or `lost`; any other word
 is refused. The holder of a live claim on the task ends the run as `succeeded`,
 `stopped` or `failed` (`not_holder` for anyone else, `claim_expired` for a
 holder whose claim lapsed: renew first): it is recorded as a swarm that ended
 so and reported nothing would be, each of its plan's task items as todo, its
-cost unknown. So a success is recorded, and the task can go on to done. As `lost`, the run is ended by the
-holder of a live claim, or by anyone when the task has no claim; whoever finds
-the claim expired takes the task over with `take_over` first, and then ends the
-run as its holder. `expected_updated` is optional: when given, the task must
-still be as it was read (`stale`).
+cost unknown. So a success is recorded, and the task can go on to done. As
+`lost`, the run is ended by the holder of a live claim, or by anyone when the
+task has no claim; whoever finds the claim expired takes the task over with
+`take_over` first, and then ends the run as its holder. `expected_updated` is
+optional: when given, the task must still be as it was read (`stale`).
 
-Never end a run whose swarm is still running: stop it first. An `end_run`
-refuses a run whose coordinator the session asking launched and still runs
-(`run_live`, with its `task` and `run`), whatever its front end; a coordinator
-another session launched is not seen, so from there (the CLI included) the
-caller makes sure it has stopped.
+Never end a run whose swarm is still running. An `end_run` from the agent tool
+is refused (`run_live`, with its `task`, `run` and the running coordinator's
+`agent`) while the asking session holds any running subagent with the run's
+label (`board-<task>-run-<n>`). A coordinator another session launched is not
+seen, and the CLI sees none: its answer says `liveness: "not_checked"` (the
+agent tool's, `"checked"`), with a `liveness_note` to make sure the run's
+coordinator has stopped.
 
 Only the run is written; the task stays as it is, for its holder to move on
 (back to `ready`, say). A run that has ended is refused (`run_ended`), as is
 one the task does not have (`no_such_run`). The answer gives the `run`, as
-`show` gives a run in full, and, for a run its holder ended,
-`items_recorded`: "items recorded as todo: no swarm report". `quecto board end-run` takes the same fields.
+`show` gives a run in full, `liveness`, and, for a run its holder ended,
+`items_recorded`: "items recorded as todo: no swarm report". `quecto board
+end-run` takes the same fields.
 
 ## Telemetry
 
