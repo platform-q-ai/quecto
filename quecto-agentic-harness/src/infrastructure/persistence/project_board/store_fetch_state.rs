@@ -51,6 +51,16 @@ fn read_bounded(bytes: &[u8]) -> Option<FetchState> {
     }
 }
 
+/// Red stub (#2481 S10b review round 3).
+#[cfg(test)]
+fn draft_name(remote: &str) -> String {
+    format!(
+        "fetch-{remote}.{}.0.{}.draft",
+        std::process::id(),
+        thread_number()
+    )
+}
+
 /// This thread's number, as its id spells it.
 fn thread_number() -> String {
     let id = format!("{:?}", std::thread::current().id());

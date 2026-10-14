@@ -56,3 +56,24 @@ fn a_state_is_read_within_its_bounds() {
     let past = format!("{longest} ");
     assert_eq!(read_bounded(past.as_bytes()), None);
 }
+
+/// Each draft a process makes has a name of its own, whatever store or
+/// thread makes it.
+#[test]
+fn every_draft_name_is_its_own() {
+    let names: BTreeSet<String> = (0..64)
+        .map(|n| match n % 2 {
+            0 => draft_name("origin"),
+            _ => std::thread::spawn(|| draft_name("origin")).join().unwrap(),
+        })
+        .collect();
+    assert_eq!(names.len(), 64);
+    let pid = std::process::id().to_string();
+    for name in &names {
+        let fields: Vec<&str> = name.split('.').collect();
+        assert!(
+            matches!(fields.as_slice(), ["fetch-origin", p, n, "draft"] if *p == pid && n.bytes().all(|b| b.is_ascii_digit())),
+            "{name}"
+        );
+    }
+}

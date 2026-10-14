@@ -226,3 +226,66 @@ fn a_state_is_kept_when_it_changes_and_leaves_no_draft() {
         .collect();
     assert_eq!(left, ["fetch-origin"], "no draft is left behind");
 }
+
+/// A full clone keeps no state at all.
+#[test]
+fn a_full_clone_keeps_no_state() {
+    let repos = fresh();
+    board_with(&repos, vec![]);
+    store(&repos.bob).read().unwrap();
+    assert!(!state_file(&repos.bob).exists());
+}
+
+/// A read of an older head never overwrites a state another read kept of
+/// a newer one, a descendant of it.
+#[test]
+fn a_state_of_a_newer_head_is_never_overwritten_by_an_older_one() {
+    let repos = fresh();
+    let older = board_with(&repos, vec![]);
+    let carol = partial(&repos, "tree:0", "carol");
+    store(&carol).read().unwrap();
+    let alice = store(&repos.alice);
+    let three = [BoardArtifact::Plan(plan("a", 3))];
+    let newer = written(alice.write(&older, &three, "board: plan a 3"));
+    store(&carol).read().unwrap();
+    let kept = std::fs::read_to_string(state_file(&carol)).unwrap();
+    assert!(kept.contains(&format!("read {}\n", newer.0)), "{kept}");
+    sh(&repos.remote(), &["update-ref", BOARD_REF, &older.0]);
+    assert_eq!(store(&carol).read().unwrap().head, older);
+    assert_eq!(std::fs::read_to_string(state_file(&carol)).unwrap(), kept);
+}
+
+/// A keeping sweeps the drafts dead processes left of this remote's state,
+/// and only those: a live process's draft, and any other file, stay.
+#[test]
+fn a_keeping_sweeps_only_drafts_dead_processes_left() {
+    let repos = fresh();
+    board_with(&repos, vec![]);
+    let carol = partial(&repos, "tree:0", "carol");
+    let mut child = std::process::Command::new("true").spawn().unwrap();
+    let dead = child.id();
+    child.wait().unwrap();
+    let dir = state_file(&carol).parent().unwrap().to_path_buf();
+    std::fs::create_dir_all(&dir).unwrap();
+    let ours = std::process::id();
+    let names = [
+        format!("fetch-origin.{dead}.7.draft"),
+        format!("fetch-origin.{ours}.7.draft"),
+        format!("fetch-other.{dead}.7.draft"),
+        format!("fetch-origin.{dead}.x.draft"),
+        "notes.txt".to_string(),
+    ];
+    for name in &names {
+        std::fs::write(dir.join(name), "x").unwrap();
+    }
+    store(&carol).read().unwrap();
+    let mut left: Vec<String> = std::fs::read_dir(&dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    left.sort();
+    let mut expected: Vec<String> = names[1..].to_vec();
+    expected.push("fetch-origin".into());
+    expected.sort();
+    assert_eq!(left, expected);
+}
