@@ -149,6 +149,7 @@ const USE_CASES: &[&str] = &[
     "SetTaskDependencies",
     "SettleDelegatedChild",
     "SettleDelegatedChildPorts",
+    "StartBoardTask",
     "StartFreshConversation",
     "StopRun",
     "SubmitTask",

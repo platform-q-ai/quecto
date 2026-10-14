@@ -141,6 +141,9 @@ pub struct OpFacts {
     /// it, and as it wrote it (#2481 M4c).
     pub plan_state_from: Option<PlanState>,
     pub plan_state_to: Option<PlanState>,
+    /// What a `start` saw, for its own `board_start` record (S4c): set by
+    /// every start that reached its use case, and filled as far as it got.
+    pub start: Option<super::start::StartFacts>,
 }
 
 impl OpFacts {

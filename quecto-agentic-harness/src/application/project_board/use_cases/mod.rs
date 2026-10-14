@@ -14,6 +14,7 @@ mod plan_text;
 mod propose_plan;
 mod query_board;
 mod run_board_operation;
+mod start_board_task;
 mod task_pointers;
 mod update_draft_task;
 
@@ -30,6 +31,7 @@ pub use fold_back_run::FoldBackRun;
 pub use propose_plan::ProposePlan;
 pub use query_board::QueryBoard;
 pub use run_board_operation::RunBoardOperation;
+pub use start_board_task::StartBoardTask;
 pub use update_draft_task::UpdateDraftTask;
 
 #[cfg(test)]

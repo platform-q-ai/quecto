@@ -31,6 +31,7 @@ use std::sync::Once;
 
 use crate::application::tool_panic_scope::{self, PanicSite, Recording, ToolScope};
 use crate::domain::crash_record::{CrashRecord, PanicReport};
+use crate::domain::redaction::{redact_secrets, redact_url_userinfo};
 use crate::infrastructure::persistence::crash_record;
 
 /// What the hook does with one panic.
@@ -90,11 +91,12 @@ pub fn can_unwind_in(debug: &str) -> bool {
 /// panic while it unwinds) from one that reaches the call's containment,
 /// and those end with a fatal report after this line.
 pub fn contained_report(tool: &str, site: &PanicSite) -> String {
-    format!(
+    // A panic's message may quote what the call held: never a credential.
+    redact_secrets(&redact_url_userinfo(&format!(
         "quecto: tool '{tool}' panicked at {}: {} (contained to its call unless a fatal report follows)",
         site.location.as_deref().unwrap_or("an unknown location"),
         site.message
-    )
+    )))
 }
 
 /// Write one line to stderr, ignoring a failed write: the printing macros panic

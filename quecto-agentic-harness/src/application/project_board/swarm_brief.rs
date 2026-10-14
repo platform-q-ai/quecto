@@ -197,6 +197,9 @@ pub enum BriefRefusal {
     BriefTooLarge {
         bytes: usize,
     },
+    /// The coordinator role names a model with no provider: spawn takes
+    /// `provider/model`, and none is guessed (S4c).
+    CoordinatorModel,
 }
 
 impl BriefRefusal {
@@ -210,6 +213,7 @@ impl BriefRefusal {
             Self::NoTaskItems => "no_task_items",
             Self::ItemTooLarge { .. } => "item_too_large",
             Self::BriefTooLarge { .. } => "brief_too_large",
+            Self::CoordinatorModel => "coordinator_model",
         }
     }
 }
@@ -264,6 +268,10 @@ impl fmt::Display for BriefRefusal {
                  a swarm takes at most {TEXT_MAX_BYTES}",
                 item.as_str()
             ),
+            Self::CoordinatorModel => f.write_str(
+                "the coordinator role's model must name its provider, as provider/model: \
+                 propose a plan that does",
+            ),
             Self::BriefTooLarge { bytes } => write!(
                 f,
                 "the brief is {bytes} bytes and a coordinator takes at most \
@@ -274,6 +282,16 @@ impl fmt::Display for BriefRefusal {
 }
 
 impl std::error::Error for BriefRefusal {}
+
+/// A plan that cannot brief a swarm, refused by its code and words (S4c).
+impl From<BriefRefusal> for super::dto::ProjectBoardError {
+    fn from(refusal: BriefRefusal) -> Self {
+        Self::Brief {
+            code: refusal.code(),
+            reason: refusal.to_string(),
+        }
+    }
+}
 
 // The goal always fits: its words, a slug, a version (at most three
 // digits) and a task title (at most four bytes a character).
@@ -461,6 +479,11 @@ fn terms_of(team: &Team) -> Result<Terms<'_>, BriefRefusal> {
         }
         match (name.as_str() == COORDINATOR_ROLE, *size) {
             (true, 1) => {
+                // Spawn takes `provider/model`; no provider is guessed.
+                match model.split_once('/') {
+                    Some((provider, id)) if !provider.is_empty() && !id.is_empty() => {}
+                    Some(_) | None => return Err(BriefRefusal::CoordinatorModel),
+                }
                 coordinator = Some(RoleChoice {
                     model: model.clone(),
                     effort: *effort,
@@ -611,6 +634,10 @@ fn json_list_bytes<'a>(texts: impl IntoIterator<Item = &'a str>) -> usize {
         });
     2 + bytes + count.saturating_sub(1)
 }
+
+#[path = "swarm_brief_text.rs"]
+mod text;
+pub use text::render;
 
 #[cfg(test)]
 #[path = "swarm_brief_tests.rs"]

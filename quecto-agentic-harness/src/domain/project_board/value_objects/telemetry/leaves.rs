@@ -70,6 +70,11 @@ const KNOWN_KINDS: &[&str] = &[
     // round 1): its field and its refusal.
     "expected_accepted",
     "accepted_plan_changed",
+    // A start's refusals (S4c): no launcher, a plan that cannot brief a
+    // swarm (its own codes are S4's, above), a launch that failed.
+    "no_launcher",
+    "brief",
+    "launch_failed",
     // Outcomes, front ends, clients, accesses, faults.
     "ok",
     "refused",
@@ -206,6 +211,7 @@ const KNOWN_KINDS: &[&str] = &[
     "no_task_items",
     "item_too_large",
     "brief_too_large",
+    "coordinator_model",
     "image",
     "turns",
     "members",
