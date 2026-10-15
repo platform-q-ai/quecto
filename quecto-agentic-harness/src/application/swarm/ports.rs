@@ -552,7 +552,7 @@ pub trait BoardUsage {
     /// nothing else: what the control receipt needs on every request.
     fn usage_standing(&self) -> Result<UsageStanding, BoardError>;
     /// `usage_report()['budget']`: the stored payload, or the default.
-    /// Reported only: nothing writes a budget (owner decision,
+    /// Read only: nothing writes a budget (owner decision,
     /// 2026-10-14), so a row is one an older board stored.
     fn usage_budget(&self) -> Result<Value, BoardError>;
     /// Makes the usage tables when absent, reading nothing.
