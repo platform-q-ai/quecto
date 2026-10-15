@@ -470,6 +470,7 @@ fn rule_schema(rule: &BoardRuleError) -> Option<&SchemaError> {
         | R::ChangeAlreadyLinked { .. }
         | R::NoSuchChange(..)
         | R::NoSuchRun(..)
+        | R::ItemsNotDone { .. }
         | R::ChangeAhead { .. }
         | R::DiscussionClosed(..)
         | R::DiscussionLinked { .. }

@@ -392,7 +392,7 @@ fn the_holder_ends_an_open_run_as_stopped_or_failed() {
             (&open_run(1, 1), &accepted),
             end,
             Reported {
-                items: vec![],
+                items: vec![item("schema"), item("api")],
                 cost: Some(0),
             },
             &person("Ada"),
@@ -469,5 +469,107 @@ fn a_held_end_is_stamped_after_the_tasks_last_change() {
         lost.fields().ended,
         ended.fields().ended,
         "as end_lost stamps"
+    );
+}
+
+/// The false success of a board run (light-well-tanking, run 1): its
+/// swarm did the work, but nothing of it reached the board, so the run was
+/// recorded as succeeded with every task item still todo. A run ends as
+/// succeeded only when every task item of the plan it ran is reported
+/// done; it ends as stopped or failed whatever its items show.
+#[test]
+fn a_run_ends_as_succeeded_only_when_every_task_item_is_done() {
+    let held = task(InProgress);
+    let accepted = plan(1, PlanState::Accepted);
+    let todo = |id: &str| RunItem {
+        state: ItemState::Todo,
+        evidence: vec![],
+        ..item(id)
+    };
+    let end = |end: HeldEnd, items: Vec<RunItem>| {
+        end_held(
+            &held,
+            (&open_run(1, 1), &accepted),
+            end,
+            Reported { items, cost: None },
+            &person("Ada"),
+            &at("10:00:00"),
+        )
+    };
+    let undone = |items: &[&str]| {
+        Err(BoardRuleError::ItemsNotDone {
+            run: 1,
+            items: items.iter().map(|id| Slug::parse(id).unwrap()).collect(),
+        })
+    };
+    assert_eq!(
+        end(HeldEnd::Succeeded, vec![todo("schema"), todo("api")]),
+        undone(&["schema", "api"]),
+        "nothing reported: every item todo"
+    );
+    assert_eq!(
+        end(HeldEnd::Succeeded, vec![]),
+        undone(&["schema", "api"]),
+        "an item not reported at all is not done"
+    );
+    assert_eq!(
+        end(HeldEnd::Succeeded, vec![item("schema"), todo("api")]),
+        undone(&["api"]),
+    );
+    for state in [
+        ItemState::Todo,
+        ItemState::Doing,
+        ItemState::Review,
+        ItemState::Blocked,
+    ] {
+        let short = RunItem {
+            state,
+            ..item("api")
+        };
+        assert_eq!(
+            end(HeldEnd::Succeeded, vec![item("schema"), short]),
+            undone(&["api"]),
+            "{state:?} is not done"
+        );
+    }
+    let done = end(HeldEnd::Succeeded, vec![item("schema"), item("api")]).unwrap();
+    assert_eq!(done.fields().outcome, Some(RunOutcome::Succeeded));
+    for (stop, outcome) in [
+        (HeldEnd::Stopped, RunOutcome::Stopped),
+        (HeldEnd::Failed, RunOutcome::Failed),
+    ] {
+        let ended = end(stop, vec![todo("schema"), todo("api")]).unwrap();
+        assert_eq!(ended.fields().outcome, Some(outcome));
+    }
+    assert_eq!(
+        BoardRuleError::ItemsNotDone {
+            run: 1,
+            items: vec![Slug::parse("schema").unwrap(), Slug::parse("api").unwrap()],
+        }
+        .to_string(),
+        "run 1 cannot end as succeeded: its task items schema, api are not done on its \
+         swarm's board as its coordinator stopped (or that board was not read); end it as \
+         \"stopped\" and tell the user"
+    );
+}
+
+/// A run that has ended answers so, before any rule on its items.
+#[test]
+fn a_run_ended_already_is_refused_before_its_items_are_judged() {
+    let held = task(InProgress);
+    let accepted = plan(1, PlanState::Accepted);
+    assert_eq!(
+        end_held(
+            &held,
+            (&ended(&open_run(1, 1)), &accepted),
+            HeldEnd::Succeeded,
+            Reported {
+                items: vec![],
+                cost: None,
+            },
+            &person("Ada"),
+            &at("10:00:00"),
+        ),
+        Err(BoardRuleError::RunEnded(1))
     );
 }

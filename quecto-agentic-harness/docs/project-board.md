@@ -360,10 +360,27 @@ launched.
 `outcome` is one of `succeeded`, `stopped`, `failed` or `lost`; any other word
 is refused. The holder of a live claim on the task ends the run as `succeeded`,
 `stopped` or `failed` (`not_holder` for anyone else, `claim_expired` for a
-holder whose claim lapsed: renew first): it is recorded as a swarm that ended
-so and reported nothing would be, each of its plan's task items as todo, its
-cost unknown. So a success is recorded, and the task can go on to done. As
-`lost`, the run is ended by the holder of a live claim, or by anyone when the
+holder whose claim lapsed: renew first). The run is recorded from its swarm's
+board as it stood when the coordinator stopped: each of its plan's task items
+in the state its swarm item reached (matched by its brief title, as a
+fold-back matches it), with its owner and evidence, and the swarm's observed
+tokens as its cost. The swarm's board lives in the coordinator's container and
+goes with it once a closed run's coordinator is killed, so the final-member
+teardown reads it first and keeps it in the session's process, under the
+coordinator's agent id; the agent tool's launcher finds it by the run it
+launched. Where no board was kept (the CLI, a run another session launched, a
+board that could not be read, a session restarted since the coordinator
+stopped), the run is recorded as a swarm that ended so and reported nothing
+would be: each task item as todo, its cost unknown.
+
+A run ends as `succeeded` only when every task item of its plan is done there:
+otherwise the end is refused (`items_not_done`, a rule refusal naming the
+`run` and the `items` not done) and nothing is written, so the board never
+shows a succeeded run over work it shows undone. Such a run is ended as
+`stopped` instead. A run past the board's bytes with its evidence is ended
+once more without it, as a fold-back is.
+
+As `lost`, the run is ended by the holder of a live claim, or by anyone when the
 task has no claim; whoever finds the claim expired takes the task over with
 `take_over` first, and then ends the run as its holder. `expected_updated` is
 optional: when given, the task must still be as it was read (`stale`).

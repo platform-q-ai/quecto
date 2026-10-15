@@ -1,10 +1,12 @@
-//! S4c: a run no swarm will fold back is ended by hand: as stopped or
-//! failed by its task's holder, as lost by whoever the domain lets.
+//! S4c: a run is ended by hand: as succeeded, stopped or failed by its
+//! task's holder, from its swarm's board as this front end kept it (or as
+//! a swarm that reported nothing), as lost by whoever the domain lets.
 use std::sync::Arc;
 
 use super::*;
 use crate::application::project_board::dto::BoardOp;
-use crate::application::project_board::fold_back::tests::plan;
+use crate::application::project_board::fold_back::tests::{plan, swarm_item};
+use crate::application::project_board::fold_back::{SwarmItemState, SwarmRunView};
 use crate::application::project_board::ports::BoardWrite;
 use crate::application::project_board::use_cases::ChangeBoardTask;
 use crate::application::project_board::use_cases::fixtures_tests::{
@@ -14,6 +16,7 @@ use crate::domain::project_board::entities::run::Run;
 use crate::domain::project_board::entities::task::Task;
 use crate::domain::project_board::services::starts::start;
 use crate::domain::project_board::value_objects::rule_error::BoardRuleError;
+use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::vocabulary::{ItemState, RunOutcome, TaskStatus};
 use crate::infrastructure::persistence::project_board::text_cells::MarkdownTextCells;
 use crate::infrastructure::test_support::memory_board_store::MemoryBoardStore;
@@ -53,8 +56,58 @@ fn ender(store: &MemoryBoardStore, who: &str, when: &str) -> EndRun {
         SetClock::at(when),
         Arc::new(MarkdownTextCells),
         None,
+        None,
     )
     .unwrap()
+}
+
+/// The board run 1 of `board-store`'s swarm left as its coordinator
+/// stopped, as a front end kept it: none for any other run.
+struct Kept(Option<SwarmRunView>);
+
+impl SwarmRunReports for Kept {
+    fn ended_run(&self, task: &Slug, run: u32) -> Option<SwarmRunView> {
+        match (task.as_str(), run) {
+            ("board-store", 1) => self.0.clone(),
+            _ => None,
+        }
+    }
+}
+
+/// Ada's end of the run, at 10:30, seeing no swarm running and reading
+/// the board `kept` holds.
+fn ender_keeping(store: &MemoryBoardStore, kept: Option<SwarmRunView>) -> EndRun {
+    EndRun::new(
+        Arc::new(store.client_as(person("Ada"))),
+        SetClock::at("10:30:00"),
+        Arc::new(MarkdownTextCells),
+        None,
+        Some(Arc::new(Kept(kept))),
+    )
+    .unwrap()
+}
+
+/// A swarm that ended as `end`, its items `api`, `store` and `docs` in
+/// `states`, each with its evidence, held by `worker-1`, having spent
+/// 52,000 tokens.
+fn swarm(end: SwarmEnd, states: [SwarmItemState; 3]) -> SwarmRunView {
+    let items = ["api", "store", "docs"]
+        .iter()
+        .zip(states)
+        .map(|(id, state)| {
+            swarm_item(
+                &format!("{id}: Build the {id}"),
+                state,
+                Some("worker-1"),
+                &[(&format!("docs/{id}.md"), "abc123")],
+            )
+        })
+        .collect();
+    SwarmRunView {
+        end,
+        items,
+        observed_tokens: 52_000,
+    }
 }
 
 fn ending(outcome: RunEndOutcome) -> RunEnd {
@@ -72,11 +125,9 @@ fn run_1(store: &MemoryBoardStore) -> Run {
 
 /// The holder ends the stranded run as stopped or failed: every item as
 /// todo (no swarm report), its cost unknown; then the task can leave them.
-/// A success is recorded the same way, so the task can go on to done.
 #[test]
 fn the_holder_ends_a_stranded_run_and_can_then_release_the_task() {
     for (outcome, want) in [
-        (RunEndOutcome::Succeeded, RunOutcome::Succeeded),
         (RunEndOutcome::Stopped, RunOutcome::Stopped),
         (RunEndOutcome::Failed, RunOutcome::Failed),
     ] {
@@ -112,6 +163,149 @@ fn the_holder_ends_a_stranded_run_and_can_then_release_the_task() {
             .unwrap();
         assert_eq!(task.fields().status, TaskStatus::Ready);
     }
+}
+
+/// The false success (light-well-tanking, run 1): the swarm did every
+/// item, but nothing of it reached the board, so `end_run(succeeded)`
+/// recorded a succeeded run with every task item todo, no owner, no
+/// evidence and no cost. A success with nothing reported is refused, with
+/// the items not done, and nothing is written; the run stays open, to be
+/// ended as stopped.
+#[test]
+fn a_success_with_nothing_reported_is_refused_not_recorded_over_todo_items() {
+    let (store, _) = stranded();
+    let writes = store.writes();
+    let undone = ProjectBoardError::Rule(BoardRuleError::ItemsNotDone {
+        run: 1,
+        items: vec![slug("api"), slug("store"), slug("docs")],
+    });
+    assert_eq!(
+        ender(&store, "Ada", "10:30:00").execute(&ending(RunEndOutcome::Succeeded)),
+        Err(undone.clone()),
+        "a front end that keeps no board (the CLI)"
+    );
+    assert_eq!(
+        ender_keeping(&store, None).execute(&ending(RunEndOutcome::Succeeded)),
+        Err(undone),
+        "a front end that kept no board for this run"
+    );
+    assert_eq!(store.writes(), writes, "nothing written");
+    assert_eq!(run_1(&store).fields().outcome, None, "the run stays open");
+    let stopped = ender(&store, "Ada", "10:30:00")
+        .execute(&ending(RunEndOutcome::Stopped))
+        .unwrap();
+    assert_eq!(stopped.run.fields().outcome, Some(RunOutcome::Stopped));
+}
+
+/// The fix: the board the swarm left as its coordinator stopped is kept,
+/// and `end_run(succeeded)` records the run from it: every task item
+/// done, with its owner and evidence, and the swarm's spend as its cost.
+#[test]
+fn a_success_is_recorded_from_the_board_its_swarm_left() {
+    let (store, _) = stranded();
+    let done = [SwarmItemState::Completed; 3];
+    let ended = ender_keeping(&store, Some(swarm(SwarmEnd::Succeeded, done)))
+        .execute(&ending(RunEndOutcome::Succeeded))
+        .unwrap()
+        .run;
+    assert_eq!(ended, run_1(&store));
+    let fields = ended.fields();
+    assert_eq!(
+        (fields.outcome, fields.cost),
+        (Some(RunOutcome::Succeeded), Some(52_000))
+    );
+    for (item, id) in fields.items.iter().zip(["api", "store", "docs"]) {
+        assert_eq!(item.id, slug(id));
+        assert_eq!(item.state, ItemState::Done, "{id}");
+        assert_eq!(item.owner.as_deref(), Some("worker-1"), "{id}");
+        assert_eq!(item.evidence, [format!("docs/{id}.md at abc123")], "{id}");
+    }
+}
+
+/// A board that shows an item short of done refuses the success, naming
+/// it; a stop records what the board showed.
+#[test]
+fn a_success_is_refused_while_the_board_its_swarm_left_shows_an_item_undone() {
+    let (store, _) = stranded();
+    let short = [
+        SwarmItemState::Completed,
+        SwarmItemState::Submitted,
+        SwarmItemState::Completed,
+    ];
+    let kept = swarm(SwarmEnd::Succeeded, short);
+    assert_eq!(
+        ender_keeping(&store, Some(kept.clone())).execute(&ending(RunEndOutcome::Succeeded)),
+        Err(ProjectBoardError::Rule(BoardRuleError::ItemsNotDone {
+            run: 1,
+            items: vec![slug("store")],
+        }))
+    );
+    let mut unseeded = kept.clone();
+    unseeded.items.remove(1);
+    unseeded
+        .items
+        .iter_mut()
+        .for_each(|item| item.state = SwarmItemState::Completed);
+    assert_eq!(
+        ender_keeping(&store, Some(unseeded)).execute(&ending(RunEndOutcome::Succeeded)),
+        Err(ProjectBoardError::Rule(BoardRuleError::ItemsNotDone {
+            run: 1,
+            items: vec![slug("store")],
+        })),
+        "an item the swarm never seeded is not done"
+    );
+    let stopped = ender_keeping(&store, Some(kept))
+        .execute(&ending(RunEndOutcome::Stopped))
+        .unwrap()
+        .run;
+    let fields = stopped.fields();
+    assert_eq!(
+        (fields.outcome, fields.cost),
+        (Some(RunOutcome::Stopped), Some(52_000))
+    );
+    let states: Vec<ItemState> = fields.items.iter().map(|item| item.state).collect();
+    assert_eq!(
+        states,
+        [ItemState::Done, ItemState::Review, ItemState::Done]
+    );
+}
+
+/// A run past the board's bytes with its evidence is ended once more
+/// without it, as a fold-back is; any other refusal is not retried.
+#[test]
+fn a_run_too_large_with_its_evidence_is_ended_without_it() {
+    let (store, _) = stranded();
+    store.fail_next_write(BoardStoreError::WriteTooLarge(
+        "runs/ past its bytes".into(),
+    ));
+    let mut facts = OpFacts::default();
+    let ended = ender_keeping(
+        &store,
+        Some(swarm(SwarmEnd::Succeeded, [SwarmItemState::Completed; 3])),
+    )
+    .execute_noted(&ending(RunEndOutcome::Succeeded), Some(&mut facts))
+    .unwrap()
+    .run;
+    let fields = ended.fields();
+    assert_eq!(fields.outcome, Some(RunOutcome::Succeeded));
+    assert!(
+        fields.items.iter().all(|item| item.evidence.is_empty()
+            && item.state == ItemState::Done
+            && item.owner.as_deref() == Some("worker-1")),
+        "states and owners kept, evidence left out: {:?}",
+        fields.items
+    );
+    assert_eq!(facts.attempts, Some(2), "both passes' attempts");
+    let (store, _) = stranded();
+    store.fail_next_write(BoardStoreError::InvalidWrite("no".into()));
+    assert!(matches!(
+        ender_keeping(
+            &store,
+            Some(swarm(SwarmEnd::Succeeded, [SwarmItemState::Completed; 3]))
+        )
+        .execute(&ending(RunEndOutcome::Succeeded)),
+        Err(ProjectBoardError::Store(BoardStoreError::InvalidWrite(_)))
+    ));
 }
 
 /// Another person ends nothing while Ada's claim is live; once it expired
@@ -234,6 +428,7 @@ fn a_run_whose_swarm_still_runs_is_not_ended() {
             SetClock::at("10:30:00"),
             Arc::new(MarkdownTextCells),
             Some(Arc::new(Running(running))),
+            None,
         )
         .unwrap()
     };

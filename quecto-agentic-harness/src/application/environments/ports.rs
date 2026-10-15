@@ -106,6 +106,17 @@ pub trait HostedSwarmBoard: Send + Sync {
     ) -> PortFuture<'a, Result<Option<HostedBoardRevision>, String>>;
 }
 
+/// Where the board of a swarm environment is kept as its member leaves
+/// (#2481 S4c follow-up): read before anything tears the box down, and
+/// kept under the leaving member's agent id, so the session that launched
+/// that member can still read how its run ended (its items, owners,
+/// evidence and spend) once the box and its board are gone.
+pub trait EndedSwarmBoards: Send + Sync {
+    /// Keeps `board`, the board `member`'s environment held as it left,
+    /// in place of any kept for it before. Never fails the teardown.
+    fn keep(&self, member: &str, board: SwarmBoardSnapshot);
+}
+
 /// The swarm run a checkout hosts, read synchronously and without a
 /// session (round 4 M1, #2033): what [`HostedSwarmRunObservation`] learns
 /// for the finalizer, for the startup restore and the CLI collector —

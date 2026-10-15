@@ -6,9 +6,17 @@
 //! write and its launch. Without it a run would hold its task for good.
 //!
 //! The claim's holder ends it as `succeeded`, `stopped` or `failed`, folded
-//! back as a swarm that ended so with nothing reported is ([`run_items`]:
-//! every task item as todo), its cost unknown, so a holder can record a
-//! success. Never while its swarm is still running:
+//! back from its swarm's board as this front end kept it when the run's
+//! coordinator stopped ([`SwarmRunReports`]): where each task item stood,
+//! with owners and evidence, and what it cost, mapped as a fold-back maps
+//! them ([`run_items`], [`cost_of`]). With no board kept (the CLI, a run
+//! another session launched, a board that could not be read), it is folded
+//! back as a swarm that ended so with nothing reported is: every task item
+//! as todo, its cost unknown. A run ends as `succeeded` only when every
+//! task item is done there (`items_not_done` otherwise, from the domain),
+//! so no success is recorded over items the board shows undone. A run
+//! that would leave the board past its bytes is ended once more without
+//! its evidence, as a fold-back is. Never while its swarm is still running:
 //! while this front end sees it running ([`RunLiveness`]: its session
 //! launched the coordinator, and it still runs) the end is refused
 //! (`run_live`); a coordinator another session launched is not seen. As
@@ -26,9 +34,12 @@ use super::board_view;
 use crate::application::project_board::dto::{
     EndedRun, LivenessCheck, ProjectBoardError, RunEnd, RunEndOutcome,
 };
-use crate::application::project_board::fold_back::{Evidence, SwarmEnd, SwarmRunView, run_items};
+use crate::application::project_board::fold_back::{
+    Evidence, SwarmEnd, SwarmRunView, cost_of, run_items,
+};
 use crate::application::project_board::ports::{
-    BoardArtifact, BoardClock, BoardTextCells, ProjectBoardStore, RunLiveness,
+    BoardArtifact, BoardClock, BoardStoreError, BoardTextCells, ProjectBoardStore, RunLiveness,
+    SwarmRunReports,
 };
 use crate::application::project_board::telemetry::OpFacts;
 use crate::domain::project_board::entities::claim::Identity;
@@ -44,6 +55,9 @@ pub struct EndRun {
     /// Whether a run's swarm still runs here (`None`: this front end can
     /// see none).
     liveness: Option<Arc<dyn RunLiveness>>,
+    /// How a run's swarm ended, as this front end kept its board (`None`:
+    /// it keeps none).
+    reports: Option<Arc<dyn SwarmRunReports>>,
     /// The store's committer, checked valid when built: who ends the run.
     actor: Identity,
 }
@@ -56,6 +70,7 @@ impl EndRun {
         clock: Arc<dyn BoardClock>,
         cells: Arc<dyn BoardTextCells>,
         liveness: Option<Arc<dyn RunLiveness>>,
+        reports: Option<Arc<dyn SwarmRunReports>>,
     ) -> Result<Self, ProjectBoardError> {
         let actor = checked_writer(&*store)?;
         Ok(Self {
@@ -63,6 +78,7 @@ impl EndRun {
             clock,
             cells,
             liveness,
+            reports,
             actor,
         })
     }
@@ -90,7 +106,6 @@ impl EndRun {
         request: &RunEnd,
         mut facts: Option<&mut OpFacts>,
     ) -> Result<EndedRun, ProjectBoardError> {
-        let noting = facts.is_some();
         if let Some(facts) = facts.as_deref_mut() {
             facts.run = Some(u64::from(request.run));
             facts.run_outcome = Some(request.outcome.outcome());
@@ -108,17 +123,83 @@ impl EndRun {
                 agent,
             });
         }
+        // Read once, before any write: the board its swarm left, if kept.
+        let report = self
+            .reports
+            .as_ref()
+            .and_then(|reports| reports.ended_run(id, number));
         let message = format!(
             "board: run {number} of {} ended, {}",
             id.as_str(),
             request.outcome.as_str()
         );
+        let mut written = self.write(
+            request,
+            &message,
+            report.as_ref(),
+            Evidence::Kept,
+            &mut facts,
+        );
+        // Only a run past the board's bytes is ended again, smaller (an
+        // allowlist), as a fold-back is: any other refusal is the caller's.
+        if let Err(ProjectBoardError::Store(BoardStoreError::WriteTooLarge(_))) = &written {
+            let first = facts.as_deref().map(|facts| (facts.attempts, facts.lost));
+            written = self.write(
+                request,
+                &message,
+                report.as_ref(),
+                Evidence::Left,
+                &mut facts,
+            );
+            if let (Some(facts), Some((attempts, lost))) = (facts, first) {
+                let sum = |one: Option<u64>, two: Option<u64>| {
+                    Some(one.unwrap_or(0).saturating_add(two.unwrap_or(0)))
+                };
+                facts.attempts = sum(attempts, facts.attempts);
+                facts.lost = sum(lost, facts.lost);
+            }
+        }
+        match written?.as_slice() {
+            [BoardArtifact::Run(run)] => {
+                assert_eq!(
+                    run.fields().number,
+                    number,
+                    "the run ended is the one named"
+                );
+                // Whether this front end looked for the swarm still running.
+                let liveness = match self.liveness {
+                    Some(_) => LivenessCheck::Checked,
+                    None => LivenessCheck::NotChecked,
+                };
+                Ok(EndedRun {
+                    run: run.clone(),
+                    liveness,
+                })
+            }
+            other => panic!("an end_run writes its run alone, not {other:?}"),
+        }
+    }
+
+    /// One pass at ending the run, as `request` says, with `report`'s
+    /// items, owners and cost when there is one (its evidence kept or left
+    /// out as `evidence` says), noting in `facts`, when given, the write's
+    /// attempts and the task as last read.
+    fn write(
+        &self,
+        request: &RunEnd,
+        message: &str,
+        report: Option<&SwarmRunView>,
+        evidence: Evidence,
+        facts: &mut Option<&mut OpFacts>,
+    ) -> Result<Vec<BoardArtifact>, ProjectBoardError> {
+        let (id, number) = (&request.task, request.run);
+        let noting = facts.is_some();
         let (store, clock, actor) = (&*self.store, &*self.clock, &self.actor);
         let mut read = None;
         let written = commit_run(
             store,
             clock,
-            &message,
+            message,
             facts.as_deref_mut(),
             |board, when| {
                 // This attempt's read, or none: never an earlier one's.
@@ -142,18 +223,27 @@ impl EndRun {
                 let plans = board_view::plans_of(board, id)?;
                 let (run, plan) = run_and_plan(&runs, &plans, number)?;
                 let held = |end: HeldEnd, swarm: SwarmEnd| {
-                    // Nothing reported: every item and the cost as a
-                    // fold-back maps a swarm that reported nothing (a
-                    // start's undo's included).
-                    let view = SwarmRunView {
-                        end: swarm,
-                        items: vec![],
-                        observed_tokens: 0,
-                    };
-                    let reported = Reported {
-                        items: run_items(plan, &view, &*self.cells, Evidence::Left).items,
-                        // A hand end has no report: its cost is unknown.
-                        cost: None,
+                    let reported = match report {
+                        // What the swarm's board showed as it ended.
+                        Some(view) => Reported {
+                            items: run_items(plan, view, &*self.cells, evidence).items,
+                            cost: Some(cost_of(view)),
+                        },
+                        // Nothing reported: every item as a fold-back maps
+                        // a swarm that reported nothing (a start's undo's
+                        // included), its cost unknown.
+                        None => {
+                            let nothing = SwarmRunView {
+                                end: swarm,
+                                items: vec![],
+                                observed_tokens: 0,
+                            };
+                            Reported {
+                                items: run_items(plan, &nothing, &*self.cells, Evidence::Left)
+                                    .items,
+                                cost: None,
+                            }
+                        }
                     };
                     end_held(task, (run, plan), end, reported, actor, &when.now)
                 };
@@ -166,29 +256,11 @@ impl EndRun {
                 Ok(vec![BoardArtifact::Run(ended)])
             },
         );
-        if let Some(facts) = facts {
+        if let Some(facts) = facts.as_deref_mut() {
             facts.status_from = read.map(|(status, _)| status);
             facts.claim = read.and_then(|(_, claim)| claim);
         }
-        match written?.as_slice() {
-            [BoardArtifact::Run(run)] => {
-                assert_eq!(
-                    run.fields().number,
-                    number,
-                    "the run ended is the one named"
-                );
-                // Whether this front end looked for the swarm still running.
-                let liveness = match self.liveness {
-                    Some(_) => LivenessCheck::Checked,
-                    None => LivenessCheck::NotChecked,
-                };
-                Ok(EndedRun {
-                    run: run.clone(),
-                    liveness,
-                })
-            }
-            other => panic!("an end_run writes its run alone, not {other:?}"),
-        }
+        written
     }
 }
 

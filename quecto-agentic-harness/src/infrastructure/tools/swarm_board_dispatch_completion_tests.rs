@@ -140,3 +140,84 @@ fn completion_calls_record_their_decisions_without_argument_text() {
     assert!(!log.contains("sk-ant"), "{log}");
     assert!(!log.contains("see "), "argument text never logged: {log}");
 }
+
+/// #2481 S4c follow-up: the board a supervising session reads as a closed
+/// run's coordinator stops (`_board`, what the final-member teardown
+/// keeps) reads as the view the project board folds its run back from:
+/// the run's end, each item's title, state, owner and evidence, and the
+/// tokens it spent.
+#[test]
+fn a_closed_runs_board_reads_as_the_view_its_board_run_is_folded_from() {
+    use super::super::{CallOrigin, call_as};
+    use crate::application::project_board::fold_back::{SwarmEnd, SwarmEvidence, SwarmItemState};
+    use crate::infrastructure::tools::coordinator_launch::swarm_run_view;
+    let (_dir, handles) = board(1_000.0);
+    running(&handles);
+    call(&handles, "parent", "_admit", json!(["worker", "r"])).unwrap();
+    call(
+        &handles,
+        "parent",
+        "_activate",
+        json!(["worker", "r", 7, "t", null]),
+    )
+    .unwrap();
+    call(
+        &handles,
+        "worker",
+        "task_create",
+        json!(["r1", "api: Build the api", ["tests pass"]]),
+    )
+    .unwrap();
+    let token = call(&handles, "worker", "claim", json!([1])).unwrap()["token"].clone();
+    let evidence = json!([{"artifact": "docs/api.md", "revision": "R1"}]);
+    call(&handles, "worker", "submit", json!([1, token, evidence])).unwrap();
+    call(
+        &handles,
+        "parent",
+        "verify_task",
+        json!({"revision": "R1", "token": token, "task_id": 1}),
+    )
+    .unwrap();
+    call(
+        &handles,
+        "parent",
+        "evidence",
+        json!(["t", "ci.log", "R1", "command", true]),
+    )
+    .unwrap();
+    call(&handles, "parent", "complete", json!(["R1"])).unwrap();
+    let read = || {
+        call_as(
+            &handles,
+            "supervisor",
+            "_board",
+            json!([]),
+            CallOrigin::Supervisor,
+        )
+        .unwrap()
+    };
+    assert_eq!(
+        swarm_run_view(&read()),
+        None,
+        "paused holding its outcome, it has not ended"
+    );
+    call(&handles, "parent", "_close", json!([])).unwrap();
+    let view = swarm_run_view(&read()).expect("a closed run's board is a view");
+    assert_eq!(view.end, SwarmEnd::Succeeded);
+    let [item] = view.items.as_slice() else {
+        panic!("one item: {view:?}");
+    };
+    assert_eq!(
+        (item.title.as_str(), item.state),
+        ("api: Build the api", SwarmItemState::Completed)
+    );
+    assert_eq!(
+        item.evidence,
+        [SwarmEvidence {
+            artifact: "docs/api.md".into(),
+            revision: "R1".into(),
+        }]
+    );
+    assert_eq!(item.owner.as_deref(), Some("worker"), "its holder stays");
+    assert_eq!(view.observed_tokens, 0, "no usage was reported");
+}

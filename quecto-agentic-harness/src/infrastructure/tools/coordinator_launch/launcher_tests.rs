@@ -519,3 +519,68 @@ fn a_kill_past_its_wait_goes_on_to_its_end() {
     assert!(!finished_at_once, "the launch did not wait for the kill");
     assert!(finished_later, "the kill went on to its end");
 }
+
+/// #2481 S4c follow-up: once its coordinator has stopped (and its box,
+/// with its board, may be gone), the board the teardown kept under that
+/// coordinator is how the launcher reports the run's swarm ended: for a
+/// run it launched only, and only once a board was kept.
+#[test]
+fn a_launched_runs_swarm_is_reported_from_the_board_kept_under_its_coordinator() {
+    use crate::application::environments::dto::SwarmBoardSnapshot;
+    use crate::application::environments::ports::EndedSwarmBoards;
+    use crate::application::project_board::fold_back::{SwarmEnd, SwarmItemState};
+    let metadata = SpawnedChild {
+        uuid: "7f3a-uuid".into(),
+        environment_ref: Some("C12".into()),
+    }
+    .metadata();
+    let spawn = Answering::new("spawn", answered("", Some(metadata)));
+    let kill = Answering::new("agent_cmd", answered("", None));
+    let kept = Arc::new(KeptSwarmBoards::default());
+    let launching =
+        Arc::new(launcher(&spawn, &kill, open_permit(vec![])).keeping(Arc::clone(&kept)));
+    let task = Slug::parse("light-well-tanking").unwrap();
+    assert_eq!(launching.ended_run(&task, 1), None, "nothing launched");
+    let launcher = Arc::clone(&launching);
+    let launched = on_a_board_thread(move || {
+        launcher.launch(&request("light-well-tanking", 1), &AtomicBool::new(false))
+    });
+    assert!(launched.is_ok(), "{launched:?}");
+    assert_eq!(launching.ended_run(&task, 1), None, "no board kept yet");
+    let board = json!({
+        "run": {"status": "succeeded", "budget": {"observed_tokens": 52_000}},
+        "items": [{"title": "assess-failure: Assess", "state": "completed", "owner": "w1",
+                   "evidence": [{"artifact": "docs/a.md", "revision": "abc"}]}],
+    });
+    kept.keep(
+        "other-uuid",
+        SwarmBoardSnapshot::object(json!({"run": null})).unwrap(),
+    );
+    kept.keep("7f3a-uuid", SwarmBoardSnapshot::object(board).unwrap());
+    let view = launching.ended_run(&task, 1).unwrap();
+    assert_eq!(
+        (view.end, view.observed_tokens, view.items.len()),
+        (SwarmEnd::Succeeded, 52_000, 1)
+    );
+    assert_eq!(view.items[0].state, SwarmItemState::Completed);
+    assert_eq!(launching.ended_run(&task, 2), None, "another run");
+    assert_eq!(
+        launching.ended_run(&Slug::parse("other").unwrap(), 1),
+        None,
+        "another task"
+    );
+}
+
+/// A launch refused notes no coordinator, so no board is ever read for
+/// its run.
+#[test]
+fn a_refused_launch_reports_no_swarm() {
+    let spawn = Answering::new("spawn", answered("spawn answered nothing", None));
+    let kill = Answering::new("agent_cmd", answered("", None));
+    let launching = Arc::new(launcher(&spawn, &kill, open_permit(vec![])));
+    let launcher = Arc::clone(&launching);
+    let launched =
+        on_a_board_thread(move || launcher.launch(&request("a", 1), &AtomicBool::new(false)));
+    assert!(launched.is_err(), "{launched:?}");
+    assert_eq!(launching.ended_run(&Slug::parse("a").unwrap(), 1), None);
+}

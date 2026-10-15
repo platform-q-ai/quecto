@@ -20,7 +20,7 @@ use std::time::SystemTime;
 use crate::application::project_board::operations::{BoardOperationParts, NoPullRequestHost};
 use crate::application::project_board::ports::{
     BoardClock, BoardStoreError, CoordinatorLaunch, ProjectBoardStore, PullRequestStates,
-    PullRequestStatesError, RunLiveness,
+    PullRequestStatesError, RunLiveness, SwarmRunReports,
 };
 use crate::application::project_board::telemetry::{BoardRecording, RecordingSwitch};
 use crate::application::project_board::use_cases::{
@@ -139,6 +139,10 @@ fn build_with_warnings(
                 .launcher
                 .clone()
                 .map(|swarms| swarms as Arc<dyn RunLiveness>),
+            environment
+                .launcher
+                .clone()
+                .map(|swarms| swarms as Arc<dyn SwarmRunReports>),
         )
         .map_err(built)?,
         start: StartBoardTask::new(

@@ -61,6 +61,10 @@ pub enum BoardRuleError {
     NoSuchChange(u32),
     /// The task has no run of that number.
     NoSuchRun(u32),
+    /// The run would end as succeeded while these task items of the plan
+    /// it ran are not done: a success is recorded only over work the
+    /// board shows done.
+    ItemsNotDone { run: u32, items: Vec<Slug> },
     /// The change was stamped by a clock running ahead of the outside
     /// time: building on it would drag the board ahead too.
     ChangeAhead { change: u32, updated: Timestamp },
@@ -229,6 +233,16 @@ impl fmt::Display for BoardRuleError {
             }
             Self::NoSuchChange(number) => write!(f, "the task has no change {number}"),
             Self::NoSuchRun(number) => write!(f, "the task has no run {number}"),
+            Self::ItemsNotDone { run, items } => {
+                let items: Vec<&str> = items.iter().map(Slug::as_str).collect();
+                write!(
+                    f,
+                    "run {run} cannot end as succeeded: its task items {} are not done on its \
+                     swarm's board as its coordinator stopped (or that board was not read); \
+                     end it as \"stopped\" and tell the user",
+                    items.join(", ")
+                )
+            }
             Self::ChangeAhead { change, updated } => write!(
                 f,
                 "change {change} was stamped {} by a clock that ran ahead",

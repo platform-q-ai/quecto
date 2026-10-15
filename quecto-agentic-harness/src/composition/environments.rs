@@ -77,11 +77,20 @@ fn supervisor_board() -> SwarmBoard {
 /// The final-member use case over the production script adapters, for one
 /// entry's environment registry. The cleanup jobs already run on a blocking
 /// worker, so the scripts run inline.
+///
+/// It keeps the board of a created swarm run as its member leaves, before
+/// any teardown, in the process's kept boards, where the board's
+/// coordinator launcher reads it back to fold the run onto the project
+/// board (#2481 S4c follow-up).
 pub fn build_member_finalizer(environments: EnvironmentRegistry) -> FinalizeEnvironmentMember {
     FinalizeEnvironmentMember::new(
         environments,
         Arc::new(ScriptEnvironmentCommands::inline()),
         Arc::new(hosted_store_observation()),
+    )
+    .keeping_ended_boards(
+        Arc::new(hosted_store_observation()),
+        crate::infrastructure::tools::coordinator_launch::process_kept_boards(),
     )
 }
 

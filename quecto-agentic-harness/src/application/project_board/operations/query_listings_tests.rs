@@ -99,6 +99,7 @@ pub fn assembled_launching(
             Arc::clone(&clock),
             Arc::new(MarkdownTextCells),
             liveness,
+            None,
         )?,
         start: StartBoardTask::new(
             Arc::clone(&store),

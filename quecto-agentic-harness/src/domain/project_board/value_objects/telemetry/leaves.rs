@@ -237,6 +237,8 @@ const KNOWN_KINDS: &[&str] = &[
     "succeeded",
     "stopped",
     "lost",
+    // A success refused while a task item is not done (#2481 follow-up).
+    "items_not_done",
     // Schema fields and pseudo-fields.
     "task",
     "title",

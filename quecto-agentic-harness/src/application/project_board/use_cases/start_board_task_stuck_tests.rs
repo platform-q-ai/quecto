@@ -49,6 +49,7 @@ fn recovered_by_end_run(store: &MemoryBoardStore) {
         SetClock::at("10:05:00"),
         Arc::new(MarkdownTextCells),
         None,
+        None,
     )
     .unwrap();
     let ended = ending
