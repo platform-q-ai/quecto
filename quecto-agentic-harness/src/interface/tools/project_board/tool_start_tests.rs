@@ -493,9 +493,30 @@ async fn a_start_the_strict_read_refuses_still_says_to_stop() {
             &text[..60]
         );
     }
-    let unknown = r#"{"op": "start", "op": "start", "task": "a", "plan_version": 1}"#;
-    let refused = board.execute(unknown).await.unwrap();
-    let answer: Value = serde_json::from_str(&refused.content).unwrap();
-    assert_eq!(answer["op"], json!(null), "{answer}");
-    assert!(answer["error"].get("steps").is_none(), "{answer}");
+    // Review round 3: an `op` named twice, an array (never a request,
+    // however it pads), and another op's strict refusal name no op and
+    // carry no steps, through the tool and through the site path.
+    let array = format!(
+        r#"["start"{}]"#,
+        " ".repeat(super::super::MAX_REQUEST_BYTES)
+    );
+    for text in [
+        r#"{"op": "start", "op": "start", "task": "a", "plan_version": 1}"#.to_owned(),
+        array,
+        r#"{"op": "move", "task": "a", "to": "ready", "to": "done"}"#.to_owned(),
+    ] {
+        let refused = board.execute(&text).await.unwrap();
+        let answer: Value = serde_json::from_str(&refused.content).unwrap();
+        assert_eq!(answer["op"], json!(null), "{}", &text[..40]);
+        assert!(answer["error"].get("steps").is_none(), "{}", &text[..40]);
+        let mut call = super::super::recording::BoardCall::unrecorded();
+        let answer =
+            super::super::site::answer(&site(Some(launching_board)), &text, None, &mut call);
+        assert_eq!(answer["op"], json!(null), "site: {}", &text[..40]);
+        assert!(
+            answer["error"].get("steps").is_none(),
+            "site: {}",
+            &text[..40]
+        );
+    }
 }

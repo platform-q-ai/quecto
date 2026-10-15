@@ -127,13 +127,18 @@ pub fn refused(request: &BoardRequest, error: &ProjectBoardError) -> Option<Stri
 /// twice, a request past its bytes) but it is a start, read as plain JSON
 /// names it: so its refusal still carries the stop (review round 2,
 /// #2567). `None` for any other op, and when the op itself cannot be read
-/// (not JSON, not an object, or `op` named twice).
+/// (not JSON, not an object (an array included), or `op` named twice).
 pub fn start_in_unread(text: &str) -> Option<&'static str> {
     #[derive(serde::Deserialize)]
     struct Named {
         op: Option<String>,
     }
-    let named = serde_json::from_str::<Named>(text).ok()?.op?;
+    // Only an object is a request: serde would read an array's first
+    // element as `op` (review round 3, #2567).
+    let object = text.trim_start().starts_with('{');
+    let named = object
+        .then(|| serde_json::from_str::<Named>(text).ok())??
+        .op?;
     match named.as_str() {
         START_OP => Some(START_OP),
         _ => None,

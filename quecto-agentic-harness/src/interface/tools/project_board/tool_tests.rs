@@ -540,6 +540,23 @@ async fn a_request_the_tool_refuses_itself_is_recorded_as_the_shared_path_would(
         (r#"{"op": 3}"#, ("unknown", "read", "op", "wrong_type")),
         (r#"["op"]"#, ("unknown", "read", "request", "wrong_type")),
     ];
+    // Review round 3 (#2567): a start the strict read refuses records its
+    // op, as its answer names it.
+    let duplicate = r#"{"op": "start", "task": "a", "task": "b", "plan_version": 1}"#;
+    let answer: Value =
+        serde_json::from_str(&tool.execute(duplicate).await.unwrap().content).unwrap();
+    assert_eq!(answer["op"], json!("start"), "{answer}");
+    let line = serde_json::to_value(records.taken().remove(0)).unwrap();
+    assert_eq!(
+        (&line["op"], &line["access"], &line["field"], &line["fault"]),
+        (
+            &json!("start"),
+            &json!("write"),
+            &json!("request"),
+            &json!("duplicate_key")
+        ),
+        "{line}"
+    );
     for (text, (op, access, field, fault)) in cases {
         let answer: Value =
             serde_json::from_str(&tool.execute(text).await.unwrap().content).unwrap();
