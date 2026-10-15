@@ -383,6 +383,26 @@ one the task does not have (`no_such_run`). The answer gives the `run`, as
 `items_recorded`: "items recorded as todo: no swarm report". `quecto board
 end-run` takes the same fields.
 
+## Archiving a task
+
+`move(task, to archived)` archives a task (Pocket's Delete task): the board
+never deletes one, and never moves one out of `archived`. Anyone archives a
+`draft`, `ready` or `done` task; a `claimed`, `in_progress` or `blocked` one is
+refused (`not_allowed`). A task in review is archived by its holder while the
+claim is live, and by anyone once nobody holds it (its claim lapsed or gone),
+as it goes back to ready (`not_holder` for anyone else while the claim is
+live); its claim is cleared, as it is when the task is done. A draft, ready or
+review task is archived on review to done's terms: it is refused while it links
+a pull request (`prs_linked`) or a change does (`changes_linked`), so releasing
+a task first (review to ready, on to draft) never archives its links either,
+and an archived task pins none that has not merged (unlink them first). Any
+task is refused while a run of it is going (`run_open`), or while a file named
+as one of its runs (or, for those three, its changes) is set aside (it may be
+the open one): end the run first (Ending a run, above), so an archive never
+races a live run. An archived task
+keeps its done one's resolution (`completed`), is `superseded` when others took
+it over, and otherwise has none.
+
 ## Telemetry
 
 Each board call, from either front end, writes one `board_op` record (epic #2481
