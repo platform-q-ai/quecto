@@ -936,7 +936,7 @@ Add `agent_id` to ask a descendant for a board it hosts. It is routed as `swarm_
 | Field | Meaning |
 |---|---|
 | `revision` | Grows with every board write the snapshot shows (the latest board event plus the usage ledger's latest row). A board made again starts again, under another `run.id`; `swarm_board_changed` carries both |
-| `run` | `null` before a run is created; else `id`, `goal`, `status`, `outcome`, `outcome_reason`, `generation` (the latest pause or resume), `criteria`, `member_limit`, `deadline`, `coordinator`, `integrator` and `budget` (`token_limit`, `strict_unknown`, `warned`, `observed_tokens`, `unknown_usage_requests`) |
+| `run` | `null` before a run is created; else `id`, `goal`, `status`, `outcome`, `outcome_reason`, `generation` (the latest pause or resume), `criteria`, `member_limit`, `deadline`, `coordinator`, `integrator` and `budget` (`token_limit`, `strict_unknown`, `warned`, `observed_tokens`, `unknown_usage_requests`: the usage totals, and a budget an older board stored, reported and never applied) |
 | `items` | The board's tasks, by id: `id`, `title`, `criteria`, `depends_on`, `state` (the swarm's own: `ready`, `claimed`, `blocked`, `submitted`, `completed`), `waiting` (ready, but a dependency is not completed), `owner`, `blocker`, `reserved_paths` and `evidence` |
 | `members` | `id`, `role` (`coordinator`, `integrator`, `worker`), `status` (`live`, `reserved`, `dead`), `claims` (every item it holds claimed, blocked or submitted, listed or not) and `last_activity` (the time of its latest board event, or `null`) |
 | `evidence` | The run's criterion evidence: `criterion`, `artifact`, `revision`, `kind`, `actor`, `accepted` |
@@ -2084,9 +2084,9 @@ All flags for `quecto agent` that affect UDS mode:
 
 `{"type":"swarm_control","id":"pause-1","action":"pause","reason":"approval"}`
 applies a durable pause independently of the prompt queue. Actions are `pause`,
-`resume`, `close`, `extend`, `status`, and `usage_budget`; `usage_budget` requires
-`token_limit` (positive integer or explicit null) and optionally `strict_unknown`
-(default true); `extend` requires `deadline_seconds` (positive integer). Add
+`resume`, `close`, `extend` and `status` (`usage_budget` is gone: no token budget
+limits a swarm, owner decision 2026-10-14); `extend` requires `deadline_seconds`
+(positive integer). Add
 `agent_id` to route to a descendant. Successful responses include `applied`,
 `status`, `generation`, `budget`, and, for a run holding a proposed outcome
 (#1729), `outcome` and `reason`. Every end of a run is such a pause; only these

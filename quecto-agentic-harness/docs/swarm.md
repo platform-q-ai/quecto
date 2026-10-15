@@ -212,8 +212,8 @@ old names. The table below names the board's own methods.
 
 Where a board method already had a harness op, the harness op is it:
 `summary` (`since`), `events` (`after`, `limit`), `pause` (`reason`),
-`resume` (refused for every member), `usage_budget` (`token_limit`,
-`strict_unknown`) and `usage`. `create` stays the harness op (it creates,
+`resume` (refused for every member) and `usage`. `usage_budget` is gone:
+no token budget limits a swarm (owner decision, 2026-10-14). `create` stays the harness op (it creates,
 activates and supervises the run, and takes `deadline_in_seconds`); the
 board's own `create` is not exposed. `reconcile` and `cancel_run` are
 harness ops too.
@@ -715,8 +715,8 @@ scope); under Docker use `docker logs quecto-env-<id>`. An environment that vani
 it. See [Container runtimes](../../docs/container-runtimes.md#the-official-dockerpodman-adapter).
 
 The compiled [agent manual](docs-tool-embeds/swarm.md#durable-supervisor-controls-and-reports)
-contains supervisor command examples, receipt semantics, raw export and budget
-configuration. `swarm_control` pause/resume/close/extend/status/usage_budget
+contains supervisor command examples, receipt semantics and raw export.
+`swarm_control` pause/resume/close/extend/status
 bypass the model queue and route through ancestors to the addressed member. Swarm creation and a
 general dashboard event API remain separate follow-on work.
 

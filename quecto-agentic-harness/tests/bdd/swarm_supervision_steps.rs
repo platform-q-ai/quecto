@@ -54,12 +54,29 @@ async fn exercise(workspace: std::path::PathBuf) -> serde_json::Value {
         .await;
     runtime.wait_report("APPROVED").await;
     let receipt = runtime.wait_receipt(&approval["id"], "completed").await;
-    let budget = runtime.command(json!({"type":"swarm_control","action":"usage_budget","token_limit":1,"strict_unknown":false})).await;
-    runtime
-        .command(json!({"type":"swarm_control","action":"usage_budget","token_limit":null}))
-        .await;
-    runtime
-        .command(json!({"type":"swarm_control","action":"resume"}))
+    let context = quecto::infrastructure::tools::swarm_bridge::SwarmContext {
+        board: quecto::composition::swarm::swarm_board(),
+        checkout: workspace.clone(),
+        member: "coordinator".into(),
+        lifecycle: std::sync::Arc::new(quecto::application::swarm::LifecycleService),
+    };
+    // No token budget limits a swarm (owner decision, 2026-10-14): a
+    // strict one-token budget an older board stored, far below the real
+    // usage above, pauses nothing at the next admission read, the one
+    // every model request makes first.
+    rusqlite::Connection::open(context.database())
+        .unwrap()
+        .execute(
+            "INSERT OR REPLACE INTO usage_budget VALUES(1, ?)",
+            [r#"{"token_limit": 1, "strict_unknown": true, "warned": false}"#],
+        )
+        .unwrap();
+    quecto::infrastructure::tools::call_work::off_the_runtime(|| {
+        context.inference_snapshot(quecto::domain::swarm::AdmissionGate::Model)
+    })
+    .unwrap();
+    let budget = runtime
+        .command(json!({"type":"swarm_control","action":"status"}))
         .await;
     let report = runtime
         .command(json!({"type":"get_report","export_raw":true}))
@@ -67,12 +84,6 @@ async fn exercise(workspace: std::path::PathBuf) -> serde_json::Value {
     let raw =
         std::fs::read_to_string(report["data"]["rawExport"]["path"].as_str().unwrap()).unwrap();
     let stats = runtime.command(json!({"type":"get_session_stats"})).await;
-    let context = quecto::infrastructure::tools::swarm_bridge::SwarmContext {
-        board: quecto::composition::swarm::swarm_board(),
-        checkout: workspace.clone(),
-        member: "coordinator".into(),
-        lifecycle: std::sync::Arc::new(quecto::application::swarm::LifecycleService),
-    };
     quecto::infrastructure::tools::call_work::off_the_runtime(|| context.cancel_run()).unwrap();
     let terminal = runtime.command(json!({"type":"get_report"})).await;
     let evidence = json!({"paused":paused["data"]["status"],"approval":receipt["status"],"budget":budget["data"]["status"],"raw_has_approval":raw.contains("Approved schema v2"),"report":terminal["data"]["report"]["content"],"requests":stats["data"]["requestDiagnostics"]["logical_requests"],"usage":quecto::infrastructure::tools::call_work::off_the_runtime(|| context.usage_report()).unwrap()});
@@ -88,9 +99,9 @@ fn approved(world: &mut QuectoWorld) {
     assert_eq!(evidence["report"], "APPROVED");
     assert_eq!(evidence["raw_has_approval"], true);
 }
-/// Owner decision, 2026-10-14: no token budget limits a swarm. A
-/// one-token budget set after real usage leaves the run running, and the
-/// usage is still measured and reported.
+/// Owner decision, 2026-10-14: no token budget limits a swarm. After real
+/// usage, under a spent strict budget an older board stored, the run is
+/// still running, and the usage is still measured and reported.
 #[then("heavy usage never pauses the run and request accounting is available")]
 fn usage_never_pauses(world: &mut QuectoWorld) {
     let evidence = result_json(world);

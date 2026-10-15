@@ -176,11 +176,13 @@ fn raw_rows(database: &std::path::Path, sql: &str) -> Vec<Vec<rusqlite::types::V
         .unwrap()
 }
 
-/// The budget reads as the default without a row (and writes none), and
-/// a configured budget is stored as plain `json.dumps` writes it: insertion
-/// order, `", "` and `": "`, byte for byte; a second write replaces it.
+/// The budget reads as the default without a row (and writes none). No
+/// board writes a budget any more (owner decision, 2026-10-14): a row an
+/// older board stored, as plain `json.dumps` wrote it (insertion order,
+/// `", "` and `": "`), still reads, back in its stored order, `warned`
+/// included, and is left as it is.
 #[test]
-fn the_budget_payload_is_stored_as_json_dumps_writes_it() {
+fn an_older_boards_budget_row_still_reads_as_stored() {
     let (_dir, database, repository) = usage_board();
     repository
         .atomic(false, &mut |transaction| {
@@ -192,26 +194,11 @@ fn the_budget_payload_is_stored_as_json_dumps_writes_it() {
         })
         .unwrap();
     assert!(raw_rows(&database, "SELECT * FROM usage_budget").is_empty());
-    repository
-        .atomic(false, &mut |transaction| {
-            transaction.configure_usage_budget(
-                &json!({"token_limit": 100, "strict_unknown": true, "warned": false}),
-            )?;
-            transaction.configure_usage_budget(
-                &json!({"warned": true, "token_limit": 9_223_372_036_854_775_807_i64, "strict_unknown": false, "é": "é"}),
-            )
-        })
+    let stored = r#"{"warned": true, "token_limit": 9223372036854775807, "strict_unknown": false, "\u00e9": "\u00e9"}"#;
+    rusqlite::Connection::open(&database)
+        .unwrap()
+        .execute("INSERT INTO usage_budget VALUES(1, ?)", [stored])
         .unwrap();
-    assert_eq!(
-        raw_rows(&database, "SELECT id, payload FROM usage_budget"),
-        [vec![
-            rusqlite::types::Value::Integer(1),
-            rusqlite::types::Value::Text(
-                r#"{"warned": true, "token_limit": 9223372036854775807, "strict_unknown": false, "\u00e9": "\u00e9"}"#
-                    .to_owned()
-            ),
-        ]]
-    );
     repository
         .atomic(false, &mut |transaction| {
             let budget = transaction.usage_budget()?;
@@ -223,6 +210,14 @@ fn the_budget_payload_is_stored_as_json_dumps_writes_it() {
             Ok(())
         })
         .unwrap();
+    assert_eq!(
+        raw_rows(&database, "SELECT id, payload FROM usage_budget"),
+        [vec![
+            rusqlite::types::Value::Integer(1),
+            rusqlite::types::Value::Text(stored.to_owned()),
+        ]],
+        "the row is left as it is"
+    );
 }
 
 /// A request row is inserted in the table's column order (the payload

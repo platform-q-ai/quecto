@@ -555,13 +555,6 @@ impl crate::application::swarm::ports::SwarmRunControl for SwarmContext {
                 use crate::domain::swarm::RunControlAction;
                 let mut wake_allowed = false;
                 let value = match action {
-                    RunControlAction::UsageBudget {
-                        token_limit,
-                        strict_unknown,
-                    } => {
-                        context.usage_budget(token_limit, strict_unknown)?;
-                        context.control_status()?
-                    }
                     RunControlAction::Wake { generation } => {
                         wake_allowed = context.accept_wake(generation)?;
                         context.control_status()?

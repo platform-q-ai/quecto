@@ -49,8 +49,7 @@ Use the **bash** tool for Git, builds, tests, scripts and any other command or
 computation, subject to its configured policy. Read the resulting artifacts
 with normal file tools and record their references on the board with the
 board ops below. Only the integrator may change branches, commit or
-integrate. Do not raise limits or route around policy from agent code. An
-optional observed-token budget is described below.
+integrate. Do not raise limits or route around policy from agent code.
 
 ## Create once
 
@@ -344,17 +343,12 @@ response contains paths, not the raw transcript. Paths belong to the target
 agent's filesystem. Exports cannot reconstruct data already cleared or evicted.
 Unpersisted messages have a null ordinal; do not invent cursors from list indices.
 
-## Observed usage budget
+## Observed usage
 
 The coordinator uses `swarm {"op":"usage"}` for per-member totals and recent
-request diagnostics. Configure `swarm {"op":"usage_budget","token_limit":1000000,
-"strict_unknown":true}` or master `agent_cmd` `swarm_control` with
-`action:"usage_budget"` and the same fields. Explicit `token_limit:null` disables
-it; budgets are disabled by default.
+request diagnostics.
 
-The limit counts reported context-input plus output tokens. It is an observed
-usage guard, not a provider quota or billing limit: in-flight requests can finish
-and exceed it, and unavailable usage is not zero. Retry counters measure
+Retry counters measure
 instrumented call attempts, cache-prefix hashes compare logical system/tool
 prefixes, and reported costs are estimates. `get_session_stats` includes request
 diagnostics and runtime identity; unknown build revision/digest stays unknown.

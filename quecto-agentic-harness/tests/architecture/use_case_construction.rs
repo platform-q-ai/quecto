@@ -53,7 +53,6 @@ const USE_CASES: &[&str] = &[
     "CloseRun",
     "CompleteMergedTask",
     "CompleteRun",
-    "ConfigureUsageBudget",
     "ConfirmMemberDead",
     "CompensateFailedLaunch",
     "CompensateFailedLaunchPorts",

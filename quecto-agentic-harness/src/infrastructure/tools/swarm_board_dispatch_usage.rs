@@ -1,29 +1,17 @@
 //! The usage methods of the board dispatch (#2274): their Python
-//! signatures and their serving. `usage_budget` answers the usage report,
-//! `_record_request` the control receipt and `_request_admission` the run
-//! and its members. Every argument reaches the use case as the JSON value
-//! passed. The decision names what the call did: no token budget warns or
-//! pauses a run (owner decision, 2026-10-14), so none of them controls it.
+//! signatures and their serving. `_record_request` answers the control
+//! receipt and `_request_admission` the run and its members. Every
+//! argument reaches the use case as the JSON value passed. The decision
+//! names what the call did: no token budget limits a run (owner decision,
+//! 2026-10-14), so `usage_budget` is gone and neither call controls it.
 use serde_json::Value;
 
-use super::control::{receipt, report};
+use super::control::receipt;
 use super::{Parameter, Served, float, member_row, object, required, take};
-use crate::application::swarm::dto::{
-    BudgetChange, ConfigureUsageBudgetRequest, RecordRequestUsageRequest, RequestDelivery,
-};
-use crate::application::swarm::use_cases::{
-    ConfigureUsageBudget, ReadRequestAdmission, RecordRequestUsage,
-};
+use crate::application::swarm::dto::{RecordRequestUsageRequest, RequestDelivery};
+use crate::application::swarm::use_cases::{ReadRequestAdmission, RecordRequestUsage};
 use crate::domain::swarm::{AdmissionGate, BoardError, BoardOpDetail, RefusalKind};
 
-/// `usage_budget(token_limit, strict_unknown=True)`.
-pub(super) const USAGE_BUDGET: [Parameter; 2] = [
-    required("token_limit"),
-    Parameter {
-        name: "strict_unknown",
-        default: Some(|| Value::Bool(true)),
-    },
-];
 /// `_record_request(record)`.
 pub(super) const RECORD_REQUEST: [Parameter; 1] = [required("record")];
 /// `_request_admission(gate="model")` (#2339): the gate that reads the
@@ -37,33 +25,6 @@ pub(super) const REQUEST_ADMISSION: [Parameter; 1] = [Parameter {
     name: "gate",
     default: Some(|| Value::String(AdmissionGate::Model.as_str().to_owned())),
 }];
-
-pub(super) fn usage_budget(
-    configure_usage_budget: &ConfigureUsageBudget,
-    actor: &str,
-    arguments: Vec<Value>,
-) -> Result<Served, BoardError> {
-    let [token_limit, strict_unknown] = take(arguments)?;
-    let configured = configure_usage_budget.execute(ConfigureUsageBudgetRequest {
-        actor: actor.to_owned(),
-        token_limit,
-        strict_unknown,
-    })?;
-    let decision = match configured.change {
-        BudgetChange::Configured => "configured",
-        BudgetChange::Unchanged => "unchanged",
-    };
-    Ok(Served {
-        value: report(configured.report),
-        decision,
-        task_id: None,
-        message_id: None,
-        cursor_moved: None,
-        detail: BoardOpDetail::NONE,
-        refused: None,
-        controls_run: false,
-    })
-}
 
 pub(super) fn record_request(
     record_request_usage: &RecordRequestUsage,

@@ -37,11 +37,11 @@ pub(crate) fn op_refused(op: &str, status: Option<&str>) -> String {
              Next: swarm {{\"op\":\"create\",\"goal\":\"...\",\"constraints\":[],\"criteria\":\
              [{{\"id\":\"tests\",\"kind\":\"command\",\"description\":\"...\"}}],\
              \"member_limit\":3,\"deadline_in_seconds\":3600}}. Allowed now: create, summary, \
-             events, {USAGE}, usage_budget, reconcile."
+             events, {USAGE}, reconcile."
         ),
         Some("paused") => format!(
             "the swarm run is paused, so op={op} is unavailable. Allowed: \
-             summary, events, {USAGE}, reconcile; the coordinator may also usage_budget and \
+             summary, events, {USAGE}, reconcile; the coordinator may also \
              cancel_run; the supervisor outside the swarm resumes or closes it (agent_cmd \
              swarm_control)."
         ),

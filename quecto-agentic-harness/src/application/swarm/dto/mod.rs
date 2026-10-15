@@ -77,7 +77,6 @@ pub use tasks::{
     SetTaskDependenciesRequest, TaskRow, TaskUpdate,
 };
 pub use usage::{
-    BudgetChange, ConfigureUsageBudgetRequest, ConfiguredBudget, NewRequestUsage,
-    RecordRequestUsageRequest, RecordedRequest, RequestAdmission, RequestDelivery,
+    NewRequestUsage, RecordRequestUsageRequest, RecordedRequest, RequestAdmission, RequestDelivery,
     StoredRequestUsage,
 };
