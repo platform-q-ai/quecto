@@ -176,8 +176,7 @@ pub fn plan_team() -> crate::domain::project_board::entities::team::Team {
                 turns: None,
             },
         }],
-        budget: None,
-        deadline: None,
+        deadline_seconds: None,
         image: None,
     }
 }

@@ -6,7 +6,7 @@ use super::super::{RequestError, parse};
 use crate::application::project_board::dto::{PlanEdit, PlanProposal};
 use crate::application::project_board::operations::BoardRequest;
 use crate::domain::project_board::entities::plan::PlanItem;
-use crate::domain::project_board::entities::team::{Budget, Role, RoleLimits, Team};
+use crate::domain::project_board::entities::team::{Role, RoleLimits, Team};
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
 use crate::domain::project_board::value_objects::vocabulary::Effort;
@@ -37,8 +37,7 @@ fn team_json() -> Value {
             {"name": "coordinator", "model": "gpt-5.5", "effort": "high", "members": 1},
             {"name": "worker", "model": "gpt-5.5-mini", "effort": "low", "members": 3, "turns": 40},
         ],
-        "budget_tokens": 2_000_000,
-        "deadline": "2026-10-20T08:00:00Z",
+        "deadline_seconds": 7_200,
         "image": null,
     })
 }
@@ -55,8 +54,7 @@ fn team() -> Team {
             role("coordinator", "gpt-5.5", Effort::High, 1, None),
             role("worker", "gpt-5.5-mini", Effort::Low, 3, Some(40)),
         ],
-        budget: Some(Budget { tokens: 2_000_000 }),
-        deadline: Some(Timestamp::parse("2026-10-20T08:00:00Z").unwrap()),
+        deadline_seconds: Some(7_200),
         image: None,
     }
 }
@@ -213,8 +211,26 @@ fn a_nested_fault_names_its_path_and_records_its_field() {
             ("team/budget".to_string(), "other", "unexpected", Some(1)),
         ),
         (
-            propose(json!([]), json!({"budget_tokens": 5})),
+            propose(json!([]), json!({"deadline_seconds": 600})),
             at("team/roles", "team", "missing"),
+        ),
+        // A team sets no token budget, and its deadline is seconds from
+        // Start: a plan's old keys are refused, as every unknown key is.
+        (
+            propose(json!([]), json!({"roles": [], "budget_tokens": 5})),
+            (
+                "team/budget_tokens".to_string(),
+                "other",
+                "unexpected",
+                Some(1),
+            ),
+        ),
+        (
+            propose(
+                json!([]),
+                json!({"roles": [], "deadline": "2026-10-20T08:00:00Z"}),
+            ),
+            ("team/deadline".to_string(), "other", "unexpected", Some(1)),
         ),
         (
             propose(json!([]), role(json!({"effort": "extreme"}))),
@@ -229,8 +245,8 @@ fn a_nested_fault_names_its_path_and_records_its_field() {
             at("team/roles/0/turns", "team", "wrong_type"),
         ),
         (
-            propose(json!([]), json!({"roles": [], "deadline": "soon"})),
-            at("team/deadline", "team", "invalid_value"),
+            propose(json!([]), json!({"roles": [], "deadline_seconds": "soon"})),
+            at("team/deadline_seconds", "team", "wrong_type"),
         ),
         (
             json!({"op": "edit_plan", "task": "a", "version": 1000, "approach": ""}),
@@ -270,15 +286,16 @@ fn a_nested_fault_names_its_path_and_records_its_field() {
             at("team/roles/0/turns", "team", "invalid_value"),
         ),
         (
-            propose(json!([]), json!({"roles": [], "budget_tokens": 0})),
-            at("team/budget_tokens", "team", "invalid_value"),
+            propose(json!([]), json!({"roles": [], "deadline_seconds": 599})),
+            at("team/deadline_seconds", "team", "invalid_value"),
         ),
         (
-            propose(
-                json!([]),
-                json!({"roles": [], "budget_tokens": 1_u64 << 53}),
-            ),
-            at("team/budget_tokens", "team", "invalid_value"),
+            propose(json!([]), json!({"roles": [], "deadline_seconds": 604_801})),
+            at("team/deadline_seconds", "team", "invalid_value"),
+        ),
+        (
+            propose(json!([]), json!({"roles": [], "deadline_seconds": 0})),
+            at("team/deadline_seconds", "team", "invalid_value"),
         ),
     ];
     for (value, want) in cases {

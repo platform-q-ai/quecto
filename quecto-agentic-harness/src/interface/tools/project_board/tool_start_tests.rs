@@ -65,8 +65,7 @@ fn launching_board(
         }],
         team: Some(Team {
             roles: vec![role("coordinator", 1), role("builder", 2)],
-            budget: None,
-            deadline: None,
+            deadline_seconds: None,
             image: None,
         }),
         proposed_by: ada.clone(),

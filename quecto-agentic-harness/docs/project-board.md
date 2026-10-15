@@ -160,6 +160,19 @@ A plan says how a task will be done: its approach (markdown), its task items
 gives them (#2481 M4b). Each version is its own file, `plans/<task>.<n>.md`, and
 a change to a plan writes that file alone: the task's file is left as it is.
 
+A team is `{"roles": [{"name", "model", "effort", "members", "turns"}],
+"deadline_seconds", "image"}`. `deadline_seconds` is how long the run has, in
+seconds from Start, 600 to 604800 (ten minutes to seven days), and a day when
+it is null or left out; it is a duration, so a plan accepted long before it
+starts never starts past its deadline. A team sets no token budget: a run
+started from a plan has none (owner decision, 2026-10-14), and `budget_tokens`,
+like the old absolute `deadline`, is refused as an unknown key. A plan file
+written before then may still hold a `Budget tokens` or `Deadline` row: it is
+read past, so the plan reads with no budget and the default deadline, and no
+write holds either again. A running board run's deadline is extended as any
+swarm's is: `agent_cmd` `swarm_control` `extend` with `deadline_seconds` on its
+coordinator.
+
 - `propose_plan(task, approach, items, team)` adds a draft, numbered after the
   task's last version, proposed by the committer. `approach` and `items` are
   required (`""` and `[]` are allowed); `team` is optional, and `null` or
@@ -264,7 +277,7 @@ and the answer lists them as `not_applied`.
   refused (`no_accepted_plan`), and so is one with a run going (`run_open`).
 - A plan a swarm cannot take is refused before anything is written (`brief`,
   with the brief's own code: `team_too_large`, `team_unsupported`,
-  `deadline_passed`, `deadline_too_soon`, `no_task_items`, `item_too_large`,
+  `no_task_items`, `item_too_large`,
   `brief_too_large`, and `coordinator_model` for a coordinator role whose model
   does not name its provider as `provider/model`: none is guessed; the same
   rule refuses such a plan when it is proposed or edited, and is kept here as a

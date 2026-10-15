@@ -55,8 +55,7 @@ fn plan_fields() -> PlanFields {
                     turns: Some(200),
                 },
             }],
-            budget: Some(Budget { tokens: 5_000_000 }),
-            deadline: Some(at("23:00:00")),
+            deadline_seconds: Some(4 * 60 * 60),
             image: Some("ghcr.io/platform-q-ai/quecto:0.107".into()),
         }),
         proposed_by: ada(),
@@ -179,13 +178,14 @@ fn plan_parts_that_break_a_rule_build_no_plan() {
         ("team/roles/0/limits/turns", |t| {
             team(t).roles[0].limits.turns = Some(0)
         }),
-        ("team/budget/tokens", |t| {
-            team(t).budget = Some(Budget { tokens: 0 })
+        ("team/deadline_seconds", |t| {
+            team(t).deadline_seconds = Some(MIN_DEADLINE_SECONDS - 1)
         }),
-        ("team/budget/tokens", |t| {
-            team(t).budget = Some(Budget {
-                tokens: MAX_BUDGET_TOKENS + 1,
-            })
+        ("team/deadline_seconds", |t| {
+            team(t).deadline_seconds = Some(MAX_DEADLINE_SECONDS + 1)
+        }),
+        ("team/deadline_seconds", |t| {
+            team(t).deadline_seconds = Some(0)
         }),
         ("team/image", |t| team(t).image = Some("Foo/bar".into())),
         ("team/image", |t| {
@@ -234,13 +234,9 @@ fn every_part_bound_admits_exactly_its_limit() {
         |t| team(t).image = Some("ghcr.io/team/app:1..2".into()),
         |t| team(t).roles[0].model = "fireworks/models/glm-4.6:thinking".into(),
         |t| team(t).roles[0].model = "gpt..5".into(),
-        |t| team(t).deadline = Some(at("08:00:01")),
-        |t| team(t).deadline = Some(at("07:00:00")),
-        |t| {
-            team(t).budget = Some(Budget {
-                tokens: MAX_BUDGET_TOKENS,
-            })
-        },
+        |t| team(t).deadline_seconds = Some(MIN_DEADLINE_SECONDS),
+        |t| team(t).deadline_seconds = Some(MAX_DEADLINE_SECONDS),
+        |t| team(t).deadline_seconds = None,
         |t| team(t).image = Some("quecto".into()),
         |t| team(t).image = Some("library/ubuntu:24.04".into()),
         |t| team(t).image = Some("localhost/x".into()),
