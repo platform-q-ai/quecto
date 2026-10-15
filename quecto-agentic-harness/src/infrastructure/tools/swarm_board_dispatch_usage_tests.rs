@@ -24,7 +24,9 @@ fn request_admission_answers_pythons_shape() {
 }
 
 /// `usage_budget` answers the report with the budget in Python's
-/// insertion order; `_record_request` answers the control receipt.
+/// insertion order; `_record_request` answers the control receipt, the
+/// run still running: a strict budget and an unmeasured request pause
+/// nothing (owner decision, 2026-10-14).
 #[test]
 fn usage_budget_and_record_request_answer_pythons_shapes() {
     let (_dir, handles) = board(1_000.0);
@@ -38,7 +40,7 @@ fn usage_budget_and_record_request_answer_pythons_shapes() {
     let receipt = call(&handles, "parent", "_record_request", json!([failed("r1")])).unwrap();
     assert_eq!(
         serde_json::to_string(&receipt).unwrap(),
-        r#"{"status":"paused","outcome":"budget-exhausted","reason":"observed usage budget or unavailable measurement","generation":5,"budget":{"token_limit":100,"strict_unknown":true,"warned":true,"observed_tokens":0,"unknown_usage_requests":1},"resume_blockers":["raise or disable the token budget (swarm_control usage_budget) before resuming"]}"#
+        r#"{"status":"running","outcome":null,"reason":null,"generation":0,"budget":{"token_limit":100,"strict_unknown":true,"warned":false,"observed_tokens":0,"unknown_usage_requests":1},"resume_blockers":[]}"#
     );
 }
 
@@ -92,8 +94,8 @@ fn usage_methods_bind_pythons_signatures() {
 
 /// Each usage call leaves one record: INFO for `usage_budget` and
 /// `_record_request`, DEBUG for the admission read, each with the decision
-/// it took (the budget's effect first); a secret-shaped request id or
-/// record field never reaches the log.
+/// it took (a budget below the usage pauses nothing); a secret-shaped
+/// request id or record field never reaches the log.
 #[test]
 fn usage_calls_record_their_decisions_without_argument_text() {
     let secret = "sk-ant-api03-DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD";
@@ -127,7 +129,7 @@ fn usage_calls_record_their_decisions_without_argument_text() {
         ("DEBUG ", "_request_admission", "ok", "model_gate"),
         (" INFO ", "_record_request", "ok", "recorded"),
         (" INFO ", "_record_request", "ok", "redelivered"),
-        (" INFO ", "usage_budget", "ok", "paused"),
+        (" INFO ", "usage_budget", "ok", "configured"),
         ("DEBUG ", "_request_admission", "ok", "model_gate"),
         (" INFO ", "_record_request", "refused", "none"),
     ];
@@ -150,12 +152,13 @@ fn usage_calls_record_their_decisions_without_argument_text() {
     assert!(!log.contains("see "), "argument text never logged: {log}");
 }
 
-/// The admission read records at DEBUG, but one whose budget warns or
-/// pauses the run (a budget another writer set, here written straight into
-/// the file) records at INFO, so every budget pause is visible at the
-/// default level; a redelivery that rewrites the record is `replaced`.
+/// The admission read records at DEBUG with its gate, whatever budget
+/// another writer stored (here written straight into the file, below and
+/// then far below the usage): no budget warns or pauses the run (owner
+/// decision, 2026-10-14). A redelivery that rewrites the record is
+/// `replaced`.
 #[test]
-fn an_admission_read_that_warns_or_pauses_records_at_info() {
+fn an_admission_read_under_a_spent_budget_records_its_gate_at_debug() {
     let known = json!({"request_id": "k", "instrumented_attempts": 1, "outcome": "succeeded",
         "context_input_tokens": 45, "output_tokens": 5,
         "runtime": {"process_instance_id": "p", "executable_sha256": "abc"}});
@@ -177,9 +180,11 @@ fn an_admission_read_that_warns_or_pauses_records_at_info() {
         };
         call(handles, "parent", "usage_budget", json!([1_000, false])).unwrap();
         budget(60);
-        call(handles, "parent", "_request_admission", json!([])).unwrap();
+        let admitted = call(handles, "parent", "_request_admission", json!([])).unwrap();
+        assert_eq!(admitted["status"], json!("running"));
         budget(40);
-        call(handles, "parent", "_request_admission", json!([])).unwrap();
+        let admitted = call(handles, "parent", "_request_admission", json!([])).unwrap();
+        assert_eq!(admitted["status"], json!("running"));
     });
     let records: Vec<&str> = log
         .lines()
@@ -190,8 +195,8 @@ fn an_admission_read_that_warns_or_pauses_records_at_info() {
         (" INFO ", "_record_request", "recorded"),
         (" INFO ", "_record_request", "replaced"),
         (" INFO ", "usage_budget", "configured"),
-        (" INFO ", "_request_admission", "warned"),
-        (" INFO ", "_request_admission", "paused"),
+        ("DEBUG ", "_request_admission", "model_gate"),
+        ("DEBUG ", "_request_admission", "model_gate"),
     ];
     assert_eq!(records.len(), expected.len(), "{log}");
     for (record, (level, op, decision)) in records.iter().zip(expected) {
@@ -205,18 +210,15 @@ fn an_admission_read_that_warns_or_pauses_records_at_info() {
     }
 }
 
-/// Only the usage methods raise their level for the budget's `paused` or
-/// `warned`: another method's decision of the same name keeps its own
-/// level, and a usage method's other decisions keep the method's.
+/// No method raises its level for a decision named `paused` or `warned`
+/// as a budget's: the usage methods never decide either (owner decision,
+/// 2026-10-14), and `pause`'s own `paused` keeps its level.
 #[test]
-fn only_a_usage_method_is_raised_by_the_budgets_decision() {
+fn no_usage_method_is_raised_by_a_budget_decision() {
     use super::super::Level;
     use super::super::method::Method;
     for decision in ["paused", "warned"] {
-        assert_eq!(
-            Method::RequestAdmission.served_level(decision),
-            Level::Mutation
-        );
+        assert_eq!(Method::RequestAdmission.served_level(decision), Level::Read);
         for method in [Method::Status, Method::Snapshot, Method::UsageReport] {
             assert_eq!(method.served_level(decision), Level::Read, "{method:?}");
         }
@@ -289,11 +291,11 @@ fn the_admission_read_records_the_gate_that_read_it() {
     assert!(!log.contains("sk-ant"), "{log}");
 }
 
-/// #2339 review N4: a retry or tool gate's read in which the budget warns
-/// or pauses the run records the budget's `warned` or `paused` at INFO in
-/// place of the gate, as the model gate's does.
+/// #2339 review N4: a retry or tool gate's read records its gate, at
+/// DEBUG, under a stored budget the usage has passed: no budget warns or
+/// pauses the run (owner decision, 2026-10-14).
 #[test]
-fn a_retry_or_tool_gate_read_that_warns_or_pauses_records_the_budget() {
+fn a_retry_or_tool_gate_read_under_a_spent_budget_records_its_gate() {
     let known = json!({"request_id": "k", "instrumented_attempts": 1, "outcome": "succeeded",
         "context_input_tokens": 45, "output_tokens": 5,
         "runtime": {"process_instance_id": "p", "executable_sha256": "abc"}});
@@ -322,7 +324,7 @@ fn a_retry_or_tool_gate_read_that_warns_or_pauses_records_the_budget() {
         .lines()
         .filter(|line| line.contains(TELEMETRY_TARGET) && line.contains("_request_admission"))
         .collect();
-    let expected = [(" INFO ", "warned"), (" INFO ", "paused")];
+    let expected = [("DEBUG ", "retry_gate"), ("DEBUG ", "tool_gate")];
     assert_eq!(records.len(), expected.len(), "{log}");
     for (record, (level, decision)) in records.iter().zip(expected) {
         for field in [level.to_owned(), format!("decision=\"{decision}\"")] {

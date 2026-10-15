@@ -4,7 +4,7 @@ use super::{BUDGET_ARGUMENTS, ConfigureUsageBudget};
 use crate::application::swarm::board_test_support::{
     MemoryBoard, SteppingClock, member_row, running_board, usage,
 };
-use crate::application::swarm::dto::{BudgetChange, BudgetEffect, ConfigureUsageBudgetRequest};
+use crate::application::swarm::dto::{BudgetChange, ConfigureUsageBudgetRequest};
 use crate::domain::swarm::{BoardError, RefusalKind, RunState};
 
 fn budget(actor: &str, token_limit: Value, strict_unknown: Value) -> ConfigureUsageBudgetRequest {
@@ -71,7 +71,6 @@ fn a_new_budget_is_written_once_and_the_same_budget_is_left_as_it_is() {
         .execute(budget("parent", json!(200), json!(true)))
         .unwrap();
     assert_eq!(configured.change, BudgetChange::Configured);
-    assert_eq!(configured.effect, BudgetEffect::Unchanged);
     assert_eq!(
         serde_json::to_string(&configured.report.budget).unwrap(),
         r#"{"token_limit":200,"strict_unknown":true,"warned":false}"#
@@ -108,10 +107,11 @@ fn a_new_budget_is_written_once_and_the_same_budget_is_left_as_it_is() {
     assert!(default.journal().is_empty());
 }
 
-/// A budget the observed usage already exceeds warns once and pauses the
-/// running run holding `budget-exhausted`.
+/// A budget the observed usage already exceeds is stored and reported,
+/// and never applied: it neither warns nor pauses the running run (owner
+/// decision, 2026-10-14).
 #[test]
-fn a_budget_already_exceeded_warns_and_pauses_the_run() {
+fn a_budget_already_exceeded_neither_warns_nor_pauses_the_run() {
     let mut state = running_board(100.0);
     state.usage = Some(usage(
         json!({"token_limit": null, "strict_unknown": false, "warned": false}),
@@ -123,22 +123,13 @@ fn a_budget_already_exceeded_warns_and_pauses_the_run() {
     let configured = service
         .execute(budget("parent", json!(50), json!(false)))
         .unwrap();
-    assert_eq!(configured.effect, BudgetEffect::Paused);
     assert_eq!(
         configured.report.budget,
-        json!({"token_limit": 50, "strict_unknown": false, "warned": true})
+        json!({"token_limit": 50, "strict_unknown": false, "warned": false})
     );
     let state = board.snapshot();
     let run = state.run.unwrap().record;
-    assert_eq!(
-        (run.status, run.outcome.as_deref()),
-        (Some(RunState::PAUSED), Some("budget-exhausted"))
-    );
+    assert_eq!((run.status, run.outcome), (Some(RunState::RUNNING), None));
     let actions: Vec<_> = state.events.iter().map(|e| e.action.as_str()).collect();
-    assert_eq!(actions, ["usage-budget", "usage-warning", "stop", "paused"]);
-    assert_eq!(
-        state.events[1].detail,
-        json!({"decision": "pause", "observed_tokens": 80, "token_limit": 50,
-               "unknown_usage_requests": 0})
-    );
+    assert_eq!(actions, ["usage-budget"]);
 }

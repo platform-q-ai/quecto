@@ -10,17 +10,18 @@
 //! - [`Retry`](AdmissionGate::Retry): before each reattempt of a request
 //!   (a transient-failure retry, a stream re-initiation, a resend after an
 //!   OAuth refresh), because the run may have been paused, stopped or run
-//!   out of budget while the failed send and its backoff took their time.
+//!   past its deadline while the failed send and its backoff took their
+//!   time.
 //! - [`Tool`](AdmissionGate::Tool): before each tool call the reply asked
-//!   for, because the model took its own time to answer, the reply's usage
-//!   may just have spent the budget, and each earlier call in the batch
-//!   (a long command) takes its own; and a terminal run's coordinator may
-//!   still read its report, where no other tool runs.
+//!   for, because the model took its own time to answer, and each earlier
+//!   call in the batch (a long command) takes its own; and a terminal
+//!   run's coordinator may still read its report, where no other tool
+//!   runs.
 //!
 //! A member therefore reads its admission about `1 + t` times per model
 //! request, `t` being the request's tool calls (plus one per reattempt).
-//! A read at any gate in which the token budget warns or pauses the run
-//! records the budget's `warned` or `paused` in place of the gate.
+//! No token budget warns or pauses a run (owner decision, 2026-10-14), so
+//! every read records its gate.
 use crate::domain::inference::value_objects::provider::RequestAttempt;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -51,9 +52,7 @@ impl AdmissionGate {
         }
     }
 
-    /// The decision the board records for a read at this gate, unless the
-    /// token budget warned or paused the run in it (the budget's decision
-    /// then wins, as for every usage method).
+    /// The decision the board records for a read at this gate.
     pub fn decision(self) -> &'static str {
         match self {
             Self::Model => "model_gate",

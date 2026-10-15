@@ -9,8 +9,9 @@ use serde_json::json;
 
 use crate::swarm_board_diff_membership::{HOUR, at, create, snapshot};
 use crate::swarm_board_diff_runs::NOW;
+use crate::swarm_board_diff_runs::swarm_board_diff::Outcome;
 use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
-    Step, run_golden, sql, step, step_text,
+    Step, run_golden, run_rust, sql, step, step_text,
 };
 
 /// A running run of five coordinated by `parent`, with `worker` live.
@@ -284,7 +285,10 @@ fn cancellation_and_expiry_prevent_new_work() {
 /// `usage_report_on_a_fresh_board_creates_the_usage_tables_identically`:
 /// the first report creates the two tables at the same `sqlite_master`
 /// positions and no budget row; the receipt and the report read what a
-/// later slice's writes leave, and a budget at its limit blocks a resume.
+/// later slice's writes leave. A budget stored before budgets were
+/// dropped (owner decision, 2026-10-14), spent and warned, is reported as
+/// stored and blocks no resume: Python's golden of that half, which
+/// blocked it, is retired, and the Rust board's answers are asserted.
 #[test]
 fn usage_report_on_a_fresh_board_creates_the_usage_tables_identically() {
     run_golden(&with_worker([
@@ -302,20 +306,41 @@ fn usage_report_on_a_fresh_board_creates_the_usage_tables_identically() {
             )
         })
         .collect::<String>();
-    run_golden(&with_worker([
-        control(3.0, "parent", "_control_status"),
-        sql(&requests),
-        sql(
-            r#"INSERT INTO usage_budget VALUES(1, '{"token_limit": 60, "strict_unknown": false, "warned": true}')"#,
+    let old_budget = |last: &[Step]| {
+        let mut steps = with_worker([
+            control(3.0, "parent", "_control_status"),
+            sql(&requests),
+            sql(
+                r#"INSERT INTO usage_budget VALUES(1, '{"token_limit": 60, "strict_unknown": false, "warned": true}')"#,
+            ),
+        ]);
+        steps.extend_from_slice(last);
+        match run_rust(&steps) {
+            Outcome::Ok(answer) => answer,
+            other => panic!("{other:?}"),
+        }
+    };
+    let report = old_budget(&[control(4.0, "parent", "usage_report")]);
+    assert_eq!(
+        (&report["budget"], &report["totals"]["observed_tokens"]),
+        (
+            &json!({"token_limit": 60, "strict_unknown": false, "warned": true}),
+            &json!(66)
         ),
-        control(4.0, "parent", "usage_report"),
-        at(5.0, "parent", "stop", json!(["blocked", "over budget"])),
-        control(6.0, "parent", "_resume_external"),
-        sql(
-            r#"UPDATE usage_budget SET payload='{"token_limit": null, "strict_unknown": true, "warned": false}'"#,
-        ),
-        control(7.0, "parent", "_resume_external"),
-    ]));
+        "the stored budget is displayed as stored, the usage measured"
+    );
+    let stop = at(5.0, "parent", "stop", json!(["blocked", "over budget"]));
+    let stopped = old_budget(std::slice::from_ref(&stop));
+    assert_eq!(
+        (&stopped["status"], &stopped["resume_blockers"]),
+        (&json!("paused"), &json!([])),
+        "a spent budget blocks no resume"
+    );
+    let resumed = old_budget(&[stop, control(6.0, "parent", "_resume_external")]);
+    assert_eq!(
+        (&resumed["status"], &resumed["outcome"]),
+        (&json!("running"), &json!(null))
+    );
 }
 
 /// A coordinator whose harness was lost after its latest activation

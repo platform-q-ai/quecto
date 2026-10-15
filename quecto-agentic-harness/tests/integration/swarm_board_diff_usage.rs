@@ -91,83 +91,6 @@ fn request_redelivery_accepts_runtime_digest_becoming_available() {
     ]));
 }
 
-/// `test_usage_budget_is_idempotent_warns_once_and_pauses_without_losing_claims`.
-#[test]
-fn usage_budget_is_idempotent_warns_once_and_pauses_without_losing_claims() {
-    let first = json!({"request_id": "r1", "context_input_tokens": 70, "input_tokens": 50,
-        "output_tokens": 10, "cache_read_tokens": 20, "cache_write_tokens": 0,
-        "instrumented_attempts": 2, "outcome": "succeeded"});
-    let mut second = first.clone();
-    second["request_id"] = json!("r2");
-    second["context_input_tokens"] = json!(20);
-    second["output_tokens"] = json!(5);
-    run_golden(&with_worker([
-        at(
-            3.0,
-            "worker",
-            "task_create",
-            json!(["work", "work", ["ok"]]),
-        ),
-        at(4.0, "worker", "claim", json!([1])),
-        at(5.0, "parent", "usage_budget", json!([100])),
-        at(6.0, "parent", "usage_budget", json!([100])),
-        request(7.0, "worker", first.clone()),
-        request(8.0, "worker", first),
-        read(9.0, "parent", "usage_report"),
-        request(10.0, "worker", second),
-        snapshot(11.0),
-        at(12.0, "worker", "task_raw", json!([1])),
-        read(13.0, "parent", "_resume_external"),
-        read(14.0, "parent", "_request_admission"),
-        at(15.0, "parent", "usage_budget", json!([200])),
-        read(16.0, "parent", "_resume_external"),
-        read(17.0, "parent", "_request_admission"),
-        read(18.0, "worker", "_request_admission"),
-    ]));
-}
-
-/// `test_unknown_usage_is_explicit_and_strict_budget_suspends`.
-#[test]
-fn unknown_usage_is_explicit_and_strict_budget_suspends() {
-    run_golden(&with_worker([
-        at(3.0, "parent", "usage_budget", json!([100, true])),
-        request(
-            4.0,
-            "worker",
-            json!({"request_id": "unknown", "context_input_tokens": null, "input_tokens": null,
-                   "output_tokens": null, "instrumented_attempts": 1, "outcome": "failed"}),
-        ),
-        read(5.0, "parent", "usage_report"),
-        snapshot(6.0),
-        at(7.0, "worker", "usage_budget", json!([200])),
-        read(8.0, "parent", "_control_status"),
-    ]));
-}
-
-/// `test_cancelled_attempt_does_not_keep_a_strict_budget_paused`.
-#[test]
-fn cancelled_attempt_does_not_keep_a_strict_budget_paused() {
-    run_golden(&with_worker([
-        at(3.0, "parent", "usage_budget", json!([100, true])),
-        request(
-            4.0,
-            "worker",
-            json!({"request_id": "cancelled", "instrumented_attempts": 1, "outcome": "cancelled"}),
-        ),
-        read(5.0, "parent", "usage_report"),
-        at(6.0, "parent", "pause", json!(["supervisor pause"])),
-        read(7.0, "parent", "_resume_external"),
-        snapshot(8.0),
-        request(
-            9.0,
-            "worker",
-            json!({"request_id": "hidden", "instrumented_attempts": 1, "outcome": "failed"}),
-        ),
-        read(10.0, "parent", "usage_report"),
-        snapshot(11.0),
-    ]));
-}
-
 /// `test_request_diagnostic_ledger_bounds_are_explicit`: a record over
 /// 32,768 encoded bytes is refused, and so is the 10,001st row, without
 /// pausing the run.
@@ -329,24 +252,4 @@ fn loose_usage_arguments_are_taken_as_python_takes_them() {
     steps.push(next("stranger", "_record_request", "[{}]"));
     steps.push(next("worker", "_request_admission", "{}"));
     run_golden(&steps);
-}
-
-/// A dead member still records and reads the admission (`read_only`),
-/// never sets the budget; a run past its deadline is ended first.
-#[test]
-fn a_dead_member_records_and_an_expired_run_ends_first() {
-    run_golden(&with_worker([
-        sql("UPDATE members SET status='dead' WHERE id='worker'"),
-        request(
-            4.0,
-            "worker",
-            json!({"request_id": "late", "instrumented_attempts": 1, "outcome": "succeeded",
-                   "context_input_tokens": 3, "output_tokens": 4}),
-        ),
-        read(5.0, "worker", "_request_admission"),
-        at(6.0, "worker", "usage_budget", json!([10])),
-        read(3_700.0, "parent", "_request_admission"),
-        at(3_701.0, "parent", "usage_budget", json!([1])),
-        read(3_702.0, "parent", "_control_status"),
-    ]));
 }

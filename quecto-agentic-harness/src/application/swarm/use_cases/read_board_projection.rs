@@ -370,33 +370,23 @@ fn typed_run(run: &StoredRunColumns, rows: &ProjectionRows) -> Result<RunProject
     })
 }
 
-/// The budget's three settings as the board writes them (none set: no
-/// limit, not strict, not warned) and the ledger's two totals. A stored
-/// budget holds all three, as the board writes and requires them
-/// (`board_usage`, round 3 L5): a limit that is null or a whole number of
-/// tokens, and two flags.
+/// The budget's three settings as a board stored them (none set: no
+/// limit, not strict, not warned) and the ledger's two totals. No budget
+/// is applied (owner decision, 2026-10-14), so each setting is reported
+/// when it reads as the board wrote it (a limit null or a whole number of
+/// tokens, two flags) and as unset when it does not, never refusing the
+/// projection (review round 1, #2569).
 fn budget(rows: &ProjectionRows) -> Result<BudgetProjection, BoardError> {
-    let (token_limit, strict_unknown, warned) = match &rows.budget {
-        None => (None, false, false),
-        Some(Value::Object(stored)) => {
-            let flag = |name: &str| match stored.get(name) {
-                Some(Value::Bool(flag)) => Ok(*flag),
-                Some(_) | None => Err(edited("usage budget")),
-            };
-            let limit = match stored.get("token_limit") {
-                Some(Value::Null) => None,
-                Some(limit) => Some(
-                    limit
-                        .as_u64()
-                        .and_then(|limit| i64::try_from(limit).ok())
-                        .ok_or_else(|| edited("usage budget"))?,
-                ),
-                None => return Err(edited("usage budget")),
-            };
-            (limit, flag("strict_unknown")?, flag("warned")?)
-        }
-        Some(_) => return Err(edited("usage budget")),
+    let stored = match &rows.budget {
+        Some(Value::Object(stored)) => Some(stored),
+        Some(_) | None => None,
     };
+    let setting = |name: &str| stored.and_then(|stored| stored.get(name));
+    let flag = |name: &str| matches!(setting(name), Some(Value::Bool(true)));
+    let token_limit = setting("token_limit")
+        .and_then(Value::as_u64)
+        .and_then(|limit| i64::try_from(limit).ok());
+    let (strict_unknown, warned) = (flag("strict_unknown"), flag("warned"));
     Ok(BudgetProjection {
         token_limit,
         strict_unknown,

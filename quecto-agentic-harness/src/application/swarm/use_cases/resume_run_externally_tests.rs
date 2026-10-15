@@ -8,29 +8,31 @@ use crate::application::swarm::dto::RunTransition;
 use crate::domain::swarm::{BoardError, RefusalKind, RunState};
 
 /// `resume_refuses_members_and_lists_blockers_for_the_supervisor` (the
-/// supervisor half): a pause whose resume would end again at once is
-/// refused listing why; otherwise the deadline moves on by the paused
-/// interval, the held outcome clears and `resumed` names both.
+/// supervisor half): a pause whose resume would end again at once (its
+/// deadline not carried past now) is refused listing why; otherwise the
+/// deadline moves on by the paused interval, the held outcome clears and
+/// `resumed` names both. A strict budget stored before budgets were
+/// dropped, with unmeasured usage, blocks nothing (owner decision,
+/// 2026-10-14).
 #[test]
 fn the_supervisor_resumes_unless_a_blocker_remains() {
+    let late = paused(running_board(30.0), 40.0, Some(("blocked", "why")));
+    let board = MemoryBoard::with(late);
+    let service = ResumeRunExternally::new(board.clone(), SteppingClock::fixed(70.0));
+    assert_eq!(
+        service.execute("parent").unwrap_err(),
+        BoardError::new(
+            RefusalKind::BudgetExhausted,
+            "resume would pause again at once: extend the deadline (swarm_control extend) \
+             before resuming"
+        )
+    );
     let mut state = paused(running_board(100.0), 40.0, Some(("blocked", "why")));
     state.usage = Some(usage(
         json!({"token_limit": 10, "strict_unknown": true, "warned": false}),
         0,
         1,
     ));
-    let board = MemoryBoard::with(state);
-    let service = ResumeRunExternally::new(board.clone(), SteppingClock::fixed(70.0));
-    assert_eq!(
-        service.execute("parent").unwrap_err(),
-        BoardError::new(
-            RefusalKind::BudgetExhausted,
-            "resume would pause again at once: raise or disable the token budget \
-             (swarm_control usage_budget) before resuming"
-        )
-    );
-    let mut state = board.snapshot();
-    state.usage = None;
     let board = MemoryBoard::with(state);
     let service = ResumeRunExternally::new(board.clone(), SteppingClock::fixed(70.0));
     let answer = service.execute("parent").unwrap();

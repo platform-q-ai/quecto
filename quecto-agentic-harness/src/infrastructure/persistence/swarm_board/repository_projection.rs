@@ -343,27 +343,21 @@ impl SqliteBoard<'_> {
     /// when the tables were never made. A payload longer than the board
     /// writes (three settings) is refused unread.
     fn usage(&self) -> Result<(Option<Value>, Value, Value), BoardError> {
+        // No budget is applied (owner decision, 2026-10-14): a payload no
+        // board writes (past the bound, NULL or not JSON) reads as none,
+        // never refusing the projection (review round 1, #2569).
         let budget = match self.table("usage_budget")? {
             true => self
                 .projected(
                     "SELECT coalesce(octet_length(payload),0) <= ?1, CASE WHEN coalesce(octet_length(payload),0) <= ?1 THEN payload END FROM usage_budget WHERE id=1",
                     BUDGET_BYTES,
-                    |row| {
-                        Ok((
-                            row.get::<_, bool>(0)?,
-                            json(row, 1, "usage_budget payload")?,
-                        ))
-                    },
+                    |row| Ok((row.get::<_, bool>(0)?, json(row, 1, "usage_budget payload").ok())),
                 )?
                 .pop()
-                .map(|(bounded, payload)| match bounded {
-                    true => Ok(payload),
-                    false => Err(BoardError::new(
-                        RefusalKind::Store,
-                        "the board's usage budget is not as the board writes it",
-                    )),
-                })
-                .transpose()?,
+                .and_then(|(bounded, payload)| match bounded {
+                    true => payload,
+                    false => None,
+                }),
             false => None,
         };
         let totals = match self.table("request_usage")? {

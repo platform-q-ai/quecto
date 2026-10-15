@@ -421,8 +421,8 @@ blockers and evidence. History is opt-in through `op=events` (`after`, `limit` 1
 entries beyond the first page. File reservations are bounded to 1000 per run. The full
 audit remains in SQLite. Every end of a run is a resumable pause that only the
 supervisor outside the swarm lifts (#1729): `stop` with `status`
-`blocked`, `failed` or `budget-exhausted`, `complete` (`succeeded`),
-an observed-token budget and the wall-clock deadline all move the run to
+`blocked`, `failed` or `budget-exhausted`, `complete` (`succeeded`)
+and the wall-clock deadline all move the run to
 `paused` holding that outcome and reason (`summary.outcome`,
 `summary.outcome_reason`, the control receipt's `outcome`). Nothing is killed:
 members stay live with their claims, reservations, inboxes and evidence; their
@@ -445,8 +445,8 @@ this harness launched itself; a member reachable neither way is reported as
 a settlement failure — no member is ever ended by its pid, and a member's
 recorded pid is only the store's liveness observation), and the
 coordinator harness stays for reporting. A run paused for `budget-exhausted` refuses to resume until
-the supervisor grants budget (`swarm_control extend` with `deadline_seconds`,
-or `usage_budget`); the refusal names what to grant. Members, including the
+the supervisor grants time (`swarm_control extend` with `deadline_seconds`);
+the refusal names what to grant. Members, including the
 coordinator's `swarm {"op":"resume"}`, cannot resume or close a run. Only
 `cancelled` (`op=cancel_run`, the parent cancellation operation) is terminal at
 once. Put final report data on the board before calling `complete` or `stop`:
@@ -522,7 +522,8 @@ the surviving store is not wired yet; a join into the retained environment is
 admitted for inspection but does not revive it.
 
 The required run budget is wall-clock time. A harness timer supervises the deadline
-even when agents are idle. There is no turn cap. An optional observed-token budget can durably pause admission; it does not cancel already billed usage or guarantee a provider-side spending cap.
+even when agents are idle. There is no turn cap, and no token budget: usage is
+measured and reported, never limited (owner decision, 2026-10-14).
 The board holds no SQLite transaction across model/tool execution or lifecycle
 notifications. SQLite uses short immediate transactions and a bounded contention
 timeout, on a suitable **local filesystem** only. Corrupt, missing or locked state
@@ -540,7 +541,7 @@ inward:
   stable `RefusalKind`, and the pure policy (`policy.rs`, `validation.rs`,
   `dependencies.rs`, `notification.rs`, `owner.rs`, `usage.rs`,
   `telemetry.rs`): authorization, deadline, admission, completion,
-  revalidation, wake-notification, owner-liveness and usage-budget decisions,
+  revalidation, wake-notification and owner-liveness decisions,
   without I/O. `mod.rs` also holds the membership, process identity and
   outcome vocabulary.
 - **Application** (`src/application/swarm/`): the capability's role-segregated
@@ -752,11 +753,11 @@ at capacity. Duplicate request IDs are counted once. An accounting outbox retain
 cancelled and unacknowledged observations for idempotent retry at turn boundaries;
 persistence failure stops automatic work.
 
-`op=usage` exposes per-member totals and the latest 10 observations. Budget limits
-count observed context-input plus output tokens, warn once at 80%, and pause at
-the limit. Strict unknown-usage handling pauses on an attempted request lacking
-usage. Budgets default off; explicit null disables them. Concurrent requests can
-overshoot before their usage arrives. This is not a provider billing guarantee.
+`op=usage` exposes per-member totals and the latest 10 observations. No token
+budget limits a run (owner decision, 2026-10-14): usage never warns or pauses
+it. A budget a board stored before then still loads and is reported as stored,
+`warned` included, and is never applied; a `usage-warning` event or a
+`budget-exhausted` outcome an old run recorded still reads.
 
 Runtime provenance reports process identity, package version, optional build-time
 revision/dirty status, and a background-computed executable SHA-256. A workload
@@ -805,11 +806,8 @@ member suspended by a provider failure (#1712); `agent_cmd` `set_model` moves
 it off a failing provider; `{"op":"revoke","task_item_id":<id>,"reason":"..."}` reassigns its work
 so another member can claim it. `recover` applies once the member's
 death is confirmed (its harness exited under the coordinator's own
-observation, for instance after `agent_cmd kill`). A run paused because a
-strict budget saw an answered request without usage re-pauses on the next
-admission until `strict_unknown` is disabled (or the budget removed); raising
-the limit alone does not clear it. Cancelled and rejected attempts never count
-as unknown usage. A coordinator issuing `swarm {"op":"pause"}` from inside its own
+observation, for instance after `agent_cmd kill`). Cancelled and rejected
+attempts never count as unknown usage. A coordinator issuing `swarm {"op":"pause"}` from inside its own
 turn suspends that turn: the pause receipt is durable on the board but the
 calling turn ends without a tool result. Send an explicit prompt to
 continue processing retained instructions. Paused queued instructions remain
@@ -863,7 +861,7 @@ body, evidence, reason, path or other board text:
 | `commit_us` | The time the op's `COMMIT`s took, summed over its transactions, a failed one included. The whole `COMMIT` is timed, so when a reader holds off the commit the busy handler's sleep is in it too (and in `busy_wait_us`). For an op that wrote, the rollback journal's and the database's `fsync`s, which are most of a writing op's time on a disk-backed board (#2340: about 2.4 ms each on an idle btrfs disk, tens to hundreds of milliseconds while other processes write to the same disk); `0`, not `null`, for an op whose transactions all ended before a `COMMIT` (a refusal rolls back); `null` when nothing was measured (the op began no transaction). Absent from records written before #2340 |
 | `cursor_moved` | Whether the op moved the caller's cursor: its notification cursor for `_notifications`, its wake cursor for `_accept_wake`; for a `summary` given a cursor, whether the board's cursor is no longer it (`false` for the `unchanged` answer); `null` for an op that has no cursor to move, and for a refusal |
 | `result_bytes` | The size of the JSON the op answered, as its compact serialization (`serde_json`'s, which is not the size of Python's `json.dumps` text with its spaced separators); 0 for a refusal |
-| `decision` | What an answered op decided, as a snake_case kind the board names (`recorded`, `grace_pending`, `already_dead`, `coordinator_confirmed`, `lost`, ...); left out for a refusal, but for a `committed` one. `_request_admission`'s names the gate that read it (#2339): `model_gate` once per model request, before its first send (each request also records one `_record_request`, which may add `redelivered` records of its own), `retry_gate` before each reattempt of one (a retry, a stream re-initiation, a resend after an OAuth refresh), `tool_gate` before each tool call; a read at any gate in which the token budget warns or pauses the run records `warned` or `paused` in place of the gate. A member so reads its admission about `1 + t` times per request, `t` being the request's tool calls |
+| `decision` | What an answered op decided, as a snake_case kind the board names (`recorded`, `grace_pending`, `already_dead`, `coordinator_confirmed`, `lost`, ...); left out for a refusal, but for a `committed` one. `_request_admission`'s names the gate that read it (#2339): `model_gate` once per model request, before its first send (each request also records one `_record_request`, which may add `redelivered` records of its own), `retry_gate` before each reattempt of one (a retry, a stream re-initiation, a resend after an OAuth refresh), `tool_gate` before each tool call. A member so reads its admission about `1 + t` times per request, `t` being the request's tool calls |
 | `run_status` | For the loss and death ops (`_quarantine`, `_confirmed_dead`, `_lose_coordinator`), the run's status as the op found it, before it wrote anything: `setup`, `running`, `paused`, `succeeded`, `blocked`, `failed`, `cancelled`, `budget_exhausted`, or `unknown` for a NULL or edited status (whose text is never recorded); left out for other ops |
 | `exit` | For `_confirmed_dead`, the exit kind it was given: `orderly` or `abrupt` |
 | `reservations_retained` | For a confirmed death, the file reservations it left held: an abrupt exit's, or 0 once an orderly exit released them |
@@ -927,8 +925,7 @@ repository built for it alone, never through state shared with another op.
 
 Every call also leaves a `tracing` record on target `quecto::swarm_board`
 (DEBUG for a read, including the wake claims `_notifications` and
-`_accept_wake`, which run as reads after every board change, unless the token
-budget warned or paused the run in it; INFO otherwise), at WARN for a
+`_accept_wake`, which run as reads after every board change; INFO otherwise), at WARN for a
 `contended` refusal or a busy wait over 250 ms; `RUST_LOG=quecto::swarm_board=debug` shows them live.
 Because the owner decided the event log is off by default and nothing is
 measured while it is off (decision T1), the tracing record's waits are
@@ -946,7 +943,7 @@ It is nudged:
 - by a board op in its own process that changed the run's control state,
   as the board's dispatcher says next to the op's decision (a run created,
   fresh or over the container's placeholder; a pause, resume, close,
-  cancellation, stop, completion, deadline extension or budget pause; a
+  cancellation, stop, completion or deadline extension; a
   loss that ended the run, recorded by `reconcile` or the launcher's
   reaper). Only the watch of that run's board file is nudged: a change this
   process makes to another run's board (a nested launcher's, the host's)
