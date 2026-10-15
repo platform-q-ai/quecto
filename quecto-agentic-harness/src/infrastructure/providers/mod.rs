@@ -509,3 +509,5 @@ mod tool_schema_adapter_tests;
 
 mod codex_event;
 mod provider_diagnostics;
+
+mod error_fields;

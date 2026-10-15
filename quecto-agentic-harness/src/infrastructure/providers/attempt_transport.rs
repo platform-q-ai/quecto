@@ -6,7 +6,7 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 
-use super::admission_feedback::{CooldownHint, is_typed_throttle, normalize_throttle};
+use super::admission_feedback::{CooldownHint, normalize_throttle};
 use super::attempt_profile::{Profile, Vendor};
 use super::sse_common::{SseHandler, SseLineOutcome};
 use crate::application::ports::{AttemptAdmission, AttemptPermit};
@@ -157,33 +157,39 @@ impl Receipt {
             state.hinted = true;
         }
     }
+    fn finite_error(&self, packet: super::error_fields::Packet) {
+        let throttled = matches!(
+            super::attempt_profile::status_fields(packet.stream()),
+            429 | 529
+        );
+        let mut state = self.0.lock().unwrap();
+        diagnostics::finite(&mut state.diagnostics, packet, false);
+        state.failure = true;
+        let state = &mut *state;
+        if let (false, true, Some(permit)) = (state.hinted, throttled, state.permit.as_mut()) {
+            permit.throttle_without_hint();
+            state.hinted = true;
+        }
+    }
     fn http_error(&self, status: u16, body: &str) {
-        let value = super::provider_diagnostics::raw_json(body).unwrap_or_default();
-        let error = super::provider_diagnostics::http_error_envelope(&value);
-        let terminal = ["type", "code"].iter().any(|field| {
-            error[*field].as_str().is_some_and(|name| {
-                crate::domain::inference::services::provider_error::is_billing_error_name(name)
-                    || matches!(
-                        name,
-                        "authentication_error"
-                            | "permission_error"
-                            | "invalid_request_error"
-                            | "invalid_api_key"
-                    )
-            })
+        let packet = super::provider_diagnostics::packet(body).unwrap_or_default();
+        let error = packet.http();
+        let terminal = error.names().into_iter().flatten().any(|name| {
+            crate::domain::inference::services::provider_error::is_billing_error_name(name)
+                || matches!(
+                    name,
+                    "authentication_error"
+                        | "permission_error"
+                        | "invalid_request_error"
+                        | "invalid_api_key"
+                )
         });
         let mut state = self.0.lock().unwrap();
-        diagnostics::typed_http(&mut state.diagnostics, &value);
+        diagnostics::finite(&mut state.diagnostics, packet, true);
         state.failure = true;
-        // Re-envelope only the selected object; ignored competing fields cannot
-        // supply throttle authority. The bounded parse caps this small clone.
-        let selected = serde_json::json!({"error": error});
-        let body_throttle = match std::ptr::eq(error, &value) {
-            // Root throttle declarations retain their existing explicit-event
-            // requirement; HTTP status and headers are independent authority.
-            true => is_typed_throttle(error),
-            false => is_typed_throttle(&selected),
-        };
+        let selected = packet.fields[1].kind == 1 || packet.fields[2].kind == 1;
+        let body_throttle = (selected || packet.event() == Some("error"))
+            && matches!(super::attempt_profile::status_fields(error), 429 | 529);
         let throttled = matches!(status, 429 | 529) || body_throttle;
         let state = &mut *state;
         if let (false, false, true, Some(permit)) =

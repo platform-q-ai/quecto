@@ -636,3 +636,6 @@ mod s1_terminal_authority;
 
 #[path = "s1_c123.rs"]
 mod s1_c123;
+
+#[path = "s1_remediation.rs"]
+mod s1_remediation;

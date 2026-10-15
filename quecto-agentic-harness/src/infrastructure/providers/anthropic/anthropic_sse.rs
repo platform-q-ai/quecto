@@ -462,20 +462,16 @@ impl AnthropicProvider {
                 continue;
             };
             saw_event = true;
-            let chunk: serde_json::Value = match (
-                current_event.as_str(),
-                raw_data.unwrap_or(data).len()
-                    <= crate::infrastructure::providers::provider_diagnostics::BODY_LIMIT,
-            ) {
-                ("error", true) => {
-                    crate::infrastructure::providers::provider_diagnostics::raw_json(
+            if current_event == "error" {
+                return Err(DomainError::Provider(
+                    crate::infrastructure::providers::provider_diagnostics::stream_raw(
+                        "Anthropic",
                         raw_data.unwrap_or(data),
-                    )
-                    .unwrap_or_default()
-                }
-                ("error", _) => serde_json::Value::Null,
-                _ => serde_json::from_str(data).unwrap_or_default(),
-            };
+                    ),
+                )
+                .into());
+            }
+            let chunk: serde_json::Value = serde_json::from_str(data).unwrap_or_default();
 
             match current_event.as_str() {
                 "message_start" => acc.handle_message_start(&chunk),

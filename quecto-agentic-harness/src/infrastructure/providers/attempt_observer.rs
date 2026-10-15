@@ -120,6 +120,63 @@ impl ProtocolObserver {
             codex,
         }
     }
+    fn private_error(&mut self, data: &str, receipt: &Receipt, raw_valid: bool) -> bool {
+        let dispatch = match self.vendor {
+            Vendor::Codex => codex_event::data(data, self.surface),
+            _ => data,
+        };
+        let parsed = super::super::error_fields::parse(dispatch);
+        let parse_error = parsed.is_err();
+        let terminal = match self.vendor {
+            Vendor::Anthropic if self.event == "error" => Some(TerminalEvent::Error),
+            _ => parsed
+                .as_ref()
+                .ok()
+                .and_then(|packet| packet.failure(self.vendor)),
+        };
+        if let Some(terminal) = terminal {
+            let raw_packet =
+                if raw_valid && data.len() <= super::super::provider_diagnostics::BODY_LIMIT {
+                    if dispatch == data {
+                        parsed.ok()
+                    } else {
+                        super::super::error_fields::parse(data).ok()
+                    }
+                } else {
+                    None
+                };
+            let mut state = receipt.0.lock().unwrap();
+            count_kind(
+                &mut state,
+                match terminal {
+                    TerminalEvent::ResponseFailed => "response.failed",
+                    TerminalEvent::ResponseIncomplete => "response.incomplete",
+                    _ => "error",
+                },
+            );
+            live(&state, 0);
+            state.diagnostics.terminal_event = Some(terminal);
+            state.diagnostics.termination = Termination::Completed;
+            match (raw_valid, parse_error) {
+                (true, false)
+                    if dispatch == data || super::super::error_fields::parse(data).is_ok() => {}
+                _ => {
+                    state.diagnostics.parse_errors =
+                        state.diagnostics.parse_errors.saturating_add(1);
+                }
+            }
+            drop(state);
+            if let Some(packet) = raw_packet {
+                receipt.finite_error(packet);
+            } else {
+                receipt.fail();
+            }
+            self.terminal = true;
+            true
+        } else {
+            false
+        }
+    }
     fn observe_raw(&mut self, line: &str, receipt: &Receipt, raw_valid: bool) {
         if self.terminal {
             return;
@@ -159,6 +216,9 @@ impl ProtocolObserver {
             live(&state, 0);
             state.diagnostics.terminal_event = Some(TerminalEvent::Done);
             state.diagnostics.termination = Termination::Completed;
+            return;
+        }
+        if self.private_error(data, receipt, raw_valid) {
             return;
         }
         let DispatchPrelude {

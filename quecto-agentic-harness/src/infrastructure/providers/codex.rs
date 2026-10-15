@@ -323,12 +323,15 @@ impl CodexProvider {
                 saw_terminal = true;
                 break;
             }
-            if let Ok(decoded) =
-                super::codex_event::decode(data, super::attempt_profile::Surface::Assembled)
-            {
+            if let Ok(decoded) = super::codex_event::decode(
+                raw_data.unwrap_or(data),
+                super::attempt_profile::Surface::Assembled,
+            ) {
                 if decoded.failed() {
-                    let error =
-                        super::provider_diagnostics::stream_raw("Codex", raw_data.unwrap_or(data));
+                    let error = super::provider_diagnostics::stream_packet(
+                        "Codex",
+                        decoded.error.unwrap_or_default(),
+                    );
                     return Err(DomainError::Provider(error).into());
                 }
                 let completed = decoded.completed();

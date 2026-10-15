@@ -209,10 +209,12 @@ pub(super) fn refusal_compatible_declaration(name: &str) -> bool {
         .find(|(n, _)| *n == name)
         .map(|(_, status)| *status)
         .or_else(|| {
-            let value = serde_json::json!({"error":{"type":name}});
             match (
                 crate::domain::inference::services::provider_error::is_billing_error_name(name),
-                super::admission_feedback::is_typed_throttle(&value),
+                matches!(
+                    name,
+                    "rate_limit_error" | "overloaded_error" | "rate_limit_exceeded"
+                ),
             ) {
                 (true, _) => Some(BILLING_STATUS),
                 (_, true) => Some(429),
@@ -225,11 +227,13 @@ pub(super) fn refusal_compatible_declaration(name: &str) -> bool {
 /// The HTTP status an OpenAI-compatible error chunk stands for; see
 /// [`openai_stream_error`].
 pub(super) fn stream_error_status(value: &serde_json::Value) -> u16 {
+    status_fields(super::error_fields::value_fields(&value["error"]))
+}
+pub(super) fn status_fields(error: super::error_fields::Fields) -> u16 {
     use crate::domain::inference::services::provider_error::{
         ProviderErrorClass, is_billing_error_name,
     };
-    let error = &value["error"];
-    let fields = [error["type"].as_str(), error["code"].as_str()];
+    let fields = error.names();
     if fields.into_iter().flatten().any(is_billing_error_name) {
         return BILLING_STATUS;
     }
@@ -242,7 +246,7 @@ pub(super) fn stream_error_status(value: &serde_json::Value) -> u16 {
     if let Some(status) = named(CLIENT_ERRORS) {
         return status;
     }
-    if super::admission_feedback::is_typed_throttle(value) {
+    if super::error_fields::throttle(error) {
         return if fields.contains(&Some("overloaded_error")) {
             529
         } else {
@@ -252,10 +256,9 @@ pub(super) fn stream_error_status(value: &serde_json::Value) -> u16 {
     if let Some(status) = named(SERVER_ERRORS) {
         return status;
     }
-    let numeric = error["code"]
-        .as_u64()
-        .filter(|code| (400..=599).contains(code))
-        .and_then(|code| u16::try_from(code).ok());
+    let numeric = (400..=599)
+        .contains(&error.numeric)
+        .then_some(error.numeric);
     match numeric {
         Some(status) if ProviderErrorClass::from_status(status) != ProviderErrorClass::Unknown => {
             status

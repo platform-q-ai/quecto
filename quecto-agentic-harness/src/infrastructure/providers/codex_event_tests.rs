@@ -98,7 +98,7 @@ fn dispatch_trim_is_surface_specific_and_raw_semantics_remain_strict() {
     assert!(decode(raw, Surface::Assembled).unwrap().failed());
     assert!(decode(raw, Surface::Chat).unwrap().failed());
     assert!(decode(raw, Surface::Incremental).is_err());
-    assert!(super::super::provider_diagnostics::raw_json(raw).is_none());
+    assert!(super::super::provider_diagnostics::packet(raw).is_none());
 }
 
 #[test]
@@ -225,4 +225,48 @@ fn s1_c123_generated_strict_json_differential() {
     }
     eprintln!("C123 DIFFERENTIAL SUMMARY selected={rows} failed=0");
     assert!(rows > 20_000);
+}
+
+#[test]
+fn remediation_raw4097_whitespace_never_materializes_private_error_value() {
+    let core = r#"{"type":"response.failed","response":{"error":{"type":"rate_limit_error"}}}"#;
+    for suffix in [" ", "\t", "\r", "\n"] {
+        let raw = format!("{core}{}", suffix.repeat(4097 - core.len()));
+        assert_eq!(raw.len(), 4097);
+        for surface in [Surface::Chat, Surface::Assembled, Surface::Incremental] {
+            let decoded = decode(&raw, surface).unwrap();
+            assert!(decoded.failed());
+            assert!(
+                decoded.value.is_none(),
+                "raw4097 error must not own a Value"
+            );
+        }
+    }
+}
+
+#[test]
+fn remediation_in_limit_decoder_private_ownership_is_finite_all_surfaces() {
+    for escaped in [false, true] {
+        let message = if escaped {
+            "\\u0078".repeat(640)
+        } else {
+            "x".repeat(3900)
+        };
+        let key = if escaped { "\\u006dessage" } else { "message" };
+        let raw = format!(
+            r#"{{"type":"response.failed","response":{{"error":{{"type":"rate_limit_error","{key}":"{message}"}}}}}}"#
+        );
+        assert!(raw.len() <= 4096);
+        for surface in [Surface::Chat, Surface::Assembled, Surface::Incremental] {
+            let scope = crate::s1_c123_alloc::Scope::start();
+            let decoded = decode(&raw, surface).unwrap();
+            let peak = scope.finish_live();
+            assert!(decoded.failed());
+            assert!(
+                decoded.value.is_none(),
+                "in-limit private error has no Value"
+            );
+            assert!(peak + super::super::error_fields::SCRATCH_BOUND <= 4096);
+        }
+    }
 }

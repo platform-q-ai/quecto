@@ -1,12 +1,32 @@
 //! Strict string validation with a fixed finite-name prefix, never serde scratch.
 //! Input is already UTF-8; unescaped bytes are borrowed and escapes are checked
 //! (including surrogate pairs) without materializing decoded provider strings.
-#[derive(Default)]
+
 pub(super) struct Token {
-    prefix: [u8; 20],
+    prefix: [u8; 64],
     len: usize,
+    matched: u8,
+    refusal: bool,
 }
+impl Default for Token {
+    fn default() -> Self {
+        Self {
+            prefix: [0; 64],
+            len: 0,
+            matched: 0,
+            refusal: false,
+        }
+    }
+}
+const REFUSAL: &[u8] = b"model is not supported when using Codex with a ChatGPT account";
 impl Token {
+    pub(super) fn model_prefix(&self) -> bool {
+        self.prefix.starts_with(b"model:") && self.len >= 6
+    }
+    pub(super) fn refusal(&self) -> bool {
+        self.refusal
+    }
+
     pub(super) fn is(&self, expected: &str) -> bool {
         self.len == expected.len() && self.prefix.get(..self.len) == Some(expected.as_bytes())
     }
@@ -18,6 +38,15 @@ impl Token {
             *slot = byte;
         }
         self.len = self.len.saturating_add(1);
+        if REFUSAL.get(usize::from(self.matched)) == Some(&byte) {
+            self.matched += 1;
+            if usize::from(self.matched) == REFUSAL.len() {
+                self.refusal = true;
+                self.matched = 0;
+            }
+        } else {
+            self.matched = u8::from(byte == REFUSAL[0]);
+        }
     }
 }
 pub(super) fn string(bytes: &[u8], at: &mut usize) -> Result<Token, ()> {

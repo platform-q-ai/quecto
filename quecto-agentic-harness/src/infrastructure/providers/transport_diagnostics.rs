@@ -73,12 +73,6 @@ fn typed_error(d: &mut AttemptDiagnostics, error: &serde_json::Value) {
         d.error_code = Some(code);
     }
 }
-pub(super) fn typed_http(d: &mut AttemptDiagnostics, value: &serde_json::Value) {
-    typed_error(
-        d,
-        crate::infrastructure::providers::provider_diagnostics::http_error_envelope(value),
-    );
-}
 pub(super) fn unix_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -89,3 +83,29 @@ pub(super) fn unix_ms() -> u64 {
 #[cfg(test)]
 #[path = "transport_diagnostics_tests.rs"]
 mod tests;
+
+pub(super) fn finite(
+    d: &mut AttemptDiagnostics,
+    packet: super::super::error_fields::Packet,
+    http: bool,
+) {
+    let error = if http { packet.http() } else { packet.stream() };
+    for name in error.names().into_iter().rev().flatten() {
+        let code = match name {
+            "rate_limit_exceeded" | "rate_limit_error" => ErrorCode::RateLimitExceeded,
+            "overloaded_error" => ErrorCode::Overloaded,
+            "server_error" => ErrorCode::ServerError,
+            "insufficient_quota" => ErrorCode::InsufficientQuota,
+            "usage_limit_reached" => ErrorCode::UsageLimitReached,
+            "authentication_error" => ErrorCode::AuthenticationError,
+            "permission_error" => ErrorCode::PermissionError,
+            "invalid_request_error" => ErrorCode::InvalidRequestError,
+            "invalid_api_key" => ErrorCode::InvalidApiKey,
+            _ => continue,
+        };
+        d.error_code = Some(code);
+    }
+    if let Some(reason) = super::super::error_fields::reason(packet.reason) {
+        d.incomplete_reason = Some(reason);
+    }
+}

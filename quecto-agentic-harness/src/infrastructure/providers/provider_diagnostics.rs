@@ -48,92 +48,75 @@ fn render(status: u16, vendor: &str, class: ProviderErrorClass, refusal: &str) -
     assert!(["OpenAI", "Codex", "Anthropic"].contains(&vendor));
     assert!(["model", "none", "encrypted", "none; limit=context length"].contains(&refusal));
     assert!((100..=999).contains(&status));
-    let text = format!("HTTP {status} from {vendor}: class={class}; refusal={refusal}");
+    use std::fmt::Write;
+    let mut text = String::with_capacity(128);
+    write!(
+        &mut text,
+        "HTTP {status} from {vendor}: class={class}; refusal={refusal}"
+    )
+    .expect("writing finite diagnostic");
+    assert!(text.len() <= 128);
+    assert_eq!(text.capacity(), 128);
     assert!(text.len() <= BODY_LIMIT);
     text
 }
 
-/// Finite, non-recursive HTTP precedence shared by formatting and receipts:
-/// direct error object > response.error object > root. An empty selected object
-/// still shadows lower-priority envelopes; ignored fields grant no authority.
-pub(super) fn http_error_envelope(value: &serde_json::Value) -> &serde_json::Value {
-    value
-        .get("error")
-        .filter(|v| v.is_object())
-        .or_else(|| {
-            value
-                .get("response")?
-                .get("error")
-                .filter(|v| v.is_object())
-        })
-        .unwrap_or(value)
+pub(super) fn packet(raw: &str) -> Option<super::error_fields::Packet> {
+    (raw.len() <= BODY_LIMIT)
+        .then(|| super::error_fields::parse(raw).ok())
+        .flatten()
 }
-
-pub(super) fn raw_json(raw: &str) -> Option<serde_json::Value> {
-    match raw.len() <= BODY_LIMIT {
-        true => serde_json::from_str(raw).ok(),
-        false => None,
-    }
-}
-
 pub(super) fn http(status: u16, vendor: &str, body: &str) -> String {
-    let value = raw_json(body);
+    let value = packet(body).unwrap_or_default();
+    let error = value.http();
+    let fields = error.names();
     let mut class = ProviderErrorClass::from_status(status);
-    let mut refusal = false;
-    if let Some(value) = value.as_ref().filter(|v| v.is_object()) {
-        let error = http_error_envelope(value);
-        let fields = [error["type"].as_str(), error["code"].as_str()];
-        if fields.into_iter().flatten().any(is_billing_error_name) {
-            class = ProviderErrorClass::Billing;
-        } else if class == ProviderErrorClass::Server
-            && fields.contains(&Some("invalid_request_error"))
-        {
-            class = ProviderErrorClass::Client;
-        }
-        refusal = class == ProviderErrorClass::Client
-            && refusal_compatible(error)
-            && match (vendor, status) {
-                ("OpenAI", 404) => fields.contains(&Some("model_not_found")),
-                ("Anthropic", 404) => {
-                    fields.contains(&Some("not_found_error"))
-                        && error["message"]
-                            .as_str()
-                            .is_some_and(|m| m.starts_with("model:"))
-                }
-                ("Codex", 400) => value["detail"]
-                    .as_str()
-                    .or_else(|| error["message"].as_str())
-                    .is_some_and(|m| {
-                        m.contains("model is not supported when using Codex with a ChatGPT account")
-                    }),
-                _ => false,
-            };
+    if fields.into_iter().flatten().any(is_billing_error_name) {
+        class = ProviderErrorClass::Billing;
+    } else if class == ProviderErrorClass::Server && fields.contains(&Some("invalid_request_error"))
+    {
+        class = ProviderErrorClass::Client;
     }
+    let root_selected = matches!(value.fields[1].kind, 0 | 2 | 3 | 4)
+        && matches!(value.fields[2].kind, 0 | 2 | 3 | 4);
+    let refusal = class == ProviderErrorClass::Client
+        && compatible(error)
+        && match (vendor, status) {
+            ("OpenAI", 404) => error.has("model_not_found"),
+            ("Anthropic", 404) => error.has("not_found_error") && error.message_model,
+            ("Codex", 400) => {
+                if root_selected {
+                    error.detail_refusal || error.message_refusal
+                } else {
+                    error.message_refusal
+                }
+            }
+            _ => false,
+        };
     let marker = if refusal {
         "model"
     } else if vendor == "Codex"
         && status == 400
-        && value.as_ref().is_some_and(|v| {
-            http_error_envelope(v)["code"].as_str() == Some("invalid_encrypted_content")
-                && refusal_compatible(http_error_envelope(v))
-        })
+        && error.has("invalid_encrypted_content")
+        && compatible(error)
     {
         "encrypted"
+    } else if class == ProviderErrorClass::Client
+        && matches!(status, 400 | 422 | 500..=599)
+        && error.has("context_length_exceeded")
+    {
+        "none; limit=context length"
     } else {
         "none"
     };
-    let marker = match value.as_ref() {
-        Some(value)
-            if class == ProviderErrorClass::Client
-                && matches!(status, 400 | 422 | 500..=599)
-                && marker == "none"
-                && is_context_limit(http_error_envelope(value)) =>
-        {
-            "none; limit=context length"
-        }
-        _ => marker,
-    };
     render(status, vendor, class, marker)
+}
+fn compatible(error: super::error_fields::Fields) -> bool {
+    error
+        .names()
+        .into_iter()
+        .flatten()
+        .all(super::attempt_profile::refusal_compatible_declaration)
 }
 
 /// Count serialization without allocating another copy of an SSE payload.
@@ -154,23 +137,29 @@ impl std::io::Write for Budget {
 pub(super) fn stream_raw(vendor: &str, raw: &str) -> String {
     // Legacy assembled framing may trim Unicode whitespace. Only the valid
     // bounded RAW JSON, not that normalized value, grants error semantics.
-    match raw_json(raw) {
-        Some(value) => stream(vendor, &value),
+    match packet(raw) {
+        Some(value) => stream_packet(vendor, value),
         None => render(502, vendor, ProviderErrorClass::Server, "none"),
     }
 }
-
-/// Contradictory known auth, billing or server declarations cannot establish
-/// refusal authority. Unknown fields are inert (the known vendor shape wins).
-fn refusal_compatible(error: &serde_json::Value) -> bool {
-    [error["type"].as_str(), error["code"].as_str()]
-        .into_iter()
-        .flatten()
-        .all(super::attempt_profile::refusal_compatible_declaration)
+pub(super) fn stream_packet(vendor: &str, value: super::error_fields::Packet) -> String {
+    if value.event() == Some("response.incomplete") && value.fields[2].kind == 0 {
+        return format!("{vendor} stream incomplete");
+    }
+    stream_fields(vendor, value.stream())
 }
-
-fn is_context_limit(error: &serde_json::Value) -> bool {
-    [error["type"].as_str(), error["code"].as_str()].contains(&Some("context_length_exceeded"))
+fn stream_fields(vendor: &str, error: super::error_fields::Fields) -> String {
+    let status = super::attempt_profile::status_fields(error);
+    render(
+        status,
+        vendor,
+        ProviderErrorClass::from_status(status),
+        if error.has("context_length_exceeded") {
+            "none; limit=context length"
+        } else {
+            "none"
+        },
+    )
 }
 
 /// Exact consumer-selected SSE envelope, not an aggregate of declarations.
@@ -188,39 +177,28 @@ pub(super) fn stream_error_envelope(value: &serde_json::Value) -> &serde_json::V
 }
 
 pub(super) fn stream_throttle(value: &serde_json::Value) -> bool {
-    let selected = serde_json::json!({"error": stream_error_envelope(value)});
-    super::attempt_profile::is_throttle_chunk(&selected)
+    matches!(
+        super::attempt_profile::status_fields(super::error_fields::value_fields(
+            stream_error_envelope(value)
+        )),
+        429 | 529
+    )
 }
 
 pub(super) fn stream(vendor: &str, value: &serde_json::Value) -> String {
-    assert!(["OpenAI", "Codex", "Anthropic"].contains(&vendor));
-    let (status, marker) = match serde_json::to_writer(&mut Budget(0), value).is_ok() {
-        true => {
-            if value["type"].as_str() == Some("response.incomplete")
-                && value["response"]["error"].is_null()
-            {
-                return format!("{vendor} stream incomplete");
-            }
-            let error = stream_error_envelope(value);
-            // Reuse the typed protocol allowlist, never arbitrary message text.
-            let normalized = serde_json::json!({"error": error});
-            (
-                super::attempt_profile::stream_error_status(&normalized),
-                if is_context_limit(error) {
-                    "none; limit=context length"
-                } else {
-                    "none"
-                },
-            )
+    if serde_json::to_writer(&mut Budget(0), value).is_ok() {
+        if value["type"].as_str() == Some("response.incomplete")
+            && value["response"]["error"].is_null()
+        {
+            return format!("{vendor} stream incomplete");
         }
-        false => (502, "none"),
-    };
-    render(
-        status,
-        vendor,
-        ProviderErrorClass::from_status(status),
-        marker,
-    )
+        stream_fields(
+            vendor,
+            super::error_fields::value_fields(stream_error_envelope(value)),
+        )
+    } else {
+        render(502, vendor, ProviderErrorClass::Server, "none")
+    }
 }
 
 #[cfg(test)]

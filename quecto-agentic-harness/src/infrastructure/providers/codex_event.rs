@@ -2,7 +2,7 @@
 //! Dispatch follows existing surface acceptance. Raw semantic admission remains
 //! separate: neither trimming nor lossy byte repair grants typed authority.
 use super::attempt_profile::{Surface, Vendor};
-use crate::domain::inference::value_objects::attempt_diagnostics::TerminalEvent;
+pub(super) use crate::domain::inference::value_objects::attempt_diagnostics::TerminalEvent;
 use serde_json::Value;
 
 #[path = "attempt_error_shape.rs"]
@@ -17,6 +17,7 @@ pub(super) fn failure_shape(
 pub(super) struct Decoded {
     pub value: Option<Value>,
     pub terminal: Option<TerminalEvent>,
+    pub error: Option<super::error_fields::Packet>,
 }
 impl Decoded {
     pub fn completed(&self) -> bool {
@@ -56,21 +57,28 @@ pub(super) fn terminal(value: &Value) -> Option<TerminalEvent> {
 }
 pub(super) fn decode(raw: &str, surface: Surface) -> Result<Decoded, serde_json::Error> {
     let data = data(raw, surface);
-    if data.len() > super::provider_diagnostics::BODY_LIMIT {
-        if let Some(terminal) = failure_shape(data, Vendor::Codex)? {
-            // The strict scanner is also the actual consumer decision. No
-            // oversized error Value or typed semantic declarations are built.
-            return Ok(Decoded {
-                value: None,
-                terminal: Some(terminal),
-            });
-        }
+    let packet = super::error_fields::parse(data)?;
+    if let Some(terminal) = packet.failure(Vendor::Codex) {
+        return Ok(Decoded {
+            value: None,
+            terminal: Some(terminal),
+            error: if raw.len() <= super::provider_diagnostics::BODY_LIMIT {
+                if raw == data {
+                    Some(packet)
+                } else {
+                    super::error_fields::parse(raw).ok()
+                }
+            } else {
+                None
+            },
+        });
     }
     let value: Value = serde_json::from_str(data)?;
     let terminal = terminal(&value);
     Ok(Decoded {
         value: Some(value),
         terminal,
+        error: None,
     })
 }
 

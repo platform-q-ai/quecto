@@ -333,3 +333,48 @@ fn provider_diagnostics_each_recognized_declaration_must_allow_refusal() {
         assert!(model_refusal(&DomainError::Provider(http(404, "OpenAI", &body))).is_some());
     }
 }
+
+#[test]
+fn remediation_codex_selected_refusal_ignores_root_detail_but_root_only_survives() {
+    let detail = "The 'm' model is not supported when using Codex with a ChatGPT account.";
+    for (body, refused) in [
+        (serde_json::json!({"detail":detail}).to_string(), true),
+        (serde_json::json!({"detail":detail,"error":{}}).to_string(), false),
+        (serde_json::json!({"detail":detail,"error":{"type":"invalid_request_error","message":"bad field"}}).to_string(), false),
+        (serde_json::json!({"detail":"bad field","error":{"message":detail}}).to_string(), true),
+        (serde_json::json!({"detail":detail,"response":{"error":{}}}).to_string(), false),
+    ] {
+        let diagnostic = http(400, "Codex", &body);
+        assert_eq!(model_refusal(&DomainError::Provider(diagnostic.clone())).is_some(), refused, "{body}: {diagnostic}");
+    }
+}
+
+#[test]
+fn remediation_in_limit_live_private_aggregate_not_cumulative() {
+    for escaped in [false, true] {
+        let message = if escaped {
+            "\\u0078".repeat(650)
+        } else {
+            "x".repeat(3960)
+        };
+        let key = if escaped { "\\u006dessage" } else { "message" };
+        let raw = format!(
+            r#"{{"error":{{"type":"rate_limit_error","{key}":"{message}"}},"ignored":null}}"#
+        );
+        assert!(raw.len() <= 4096);
+        let scope = crate::s1_c123_alloc::Scope::start();
+        for _ in 0..20 {
+            let diagnostic = stream_raw("OpenAI", &raw);
+            std::hint::black_box(&diagnostic);
+        }
+        let peak = scope.finish_live();
+        eprintln!(
+            "PRIVATE LIVE escaped={escaped} raw={} peak={peak}",
+            raw.len()
+        );
+        assert!(
+            peak + super::super::error_fields::SCRATCH_BOUND <= 4096,
+            "aggregate live private key/value/scratch={peak}"
+        );
+    }
+}

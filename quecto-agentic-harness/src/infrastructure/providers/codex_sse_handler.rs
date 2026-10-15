@@ -86,8 +86,9 @@ impl SseHandler for CodexSseHandler {
             crate::infrastructure::providers::attempt_profile::Surface::Incremental,
         ) {
             if decoded.failed() {
-                let error = crate::infrastructure::providers::provider_diagnostics::stream_raw(
-                    "Codex", data,
+                let error = crate::infrastructure::providers::provider_diagnostics::stream_packet(
+                    "Codex",
+                    decoded.error.unwrap_or_default(),
                 );
                 self.saw_terminal = true;
                 let _ = tx.send(StreamEvent::Error(error)).await;

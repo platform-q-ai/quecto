@@ -550,3 +550,48 @@ async fn an_error_chunk_of_either_shape_ends_an_admitted_stream_as_an_error() {
         assert_eq!(state.diagnostics.terminal_event, Some(TerminalEvent::Error));
     }
 }
+
+#[test]
+fn remediation_http_receipt_and_observer_live_private_ownership() {
+    use super::super::attempt_profile::Surface;
+    for escaped in [false, true] {
+        let message = if escaped {
+            "\\u0078".repeat(640)
+        } else {
+            "x".repeat(3900)
+        };
+        let key = if escaped { "\\u006dessage" } else { "message" };
+        let body = format!(r#"{{"error":{{"type":"rate_limit_error","{key}":"{message}"}}}}"#);
+        let line = format!("data: {body}");
+        for vendor in [Vendor::OpenAi, Vendor::Codex, Vendor::Anthropic] {
+            let receipt = Receipt(Arc::new(Mutex::new(State {
+                permit: None,
+                failure: false,
+                hinted: false,
+                trace: None,
+                diagnostics: Default::default(),
+                started: std::time::Instant::now(),
+            })));
+            let mut observer = ProtocolObserver::new(Profile::new(
+                vendor,
+                Surface::Incremental,
+                Default::default(),
+            ));
+            observer.observe("event: error", &receipt);
+            let scope = crate::s1_c123_alloc::Scope::start();
+            receipt.http_error(429, &body);
+            observer.observe(&line, &receipt);
+            let peak = scope.finish_live();
+            assert!(
+                peak + super::super::error_fields::SCRATCH_BOUND <= 4096,
+                "peak={peak}"
+            );
+            let state = receipt.0.lock().unwrap();
+            assert_eq!(
+                state.diagnostics.error_code,
+                Some(ErrorCode::RateLimitExceeded)
+            );
+            assert!(state.failure);
+        }
+    }
+}
