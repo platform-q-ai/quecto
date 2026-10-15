@@ -219,6 +219,10 @@ const KNOWN_KINDS: &[&str] = &[
     // outcomes.
     "team_too_large",
     "team_unsupported",
+    // Retired, no longer emitted (#2568): a plan's deadline is seconds
+    // from Start, so no start refuses one. Kinds are additive.
+    "deadline_passed",
+    "deadline_too_soon",
     "no_task_items",
     "item_too_large",
     "brief_too_large",
