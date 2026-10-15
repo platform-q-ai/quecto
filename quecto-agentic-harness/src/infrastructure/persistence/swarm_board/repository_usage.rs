@@ -124,11 +124,6 @@ impl BoardUsage for SqliteBoard<'_> {
         })
     }
 
-    fn usage_budget(&self) -> Result<Value, BoardError> {
-        self.usage_schema()?;
-        self.stored_budget()
-    }
-
     fn usage_tables(&self) -> Result<(), BoardError> {
         self.usage_schema()
     }
