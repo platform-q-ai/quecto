@@ -531,9 +531,9 @@ pub trait CheckoutPaths: Send + Sync {
     fn normalize(&self, path: &str) -> Result<String, BoardError>;
 }
 
-/// The request-usage ledger and the token budget (#2273, #2274). Each
-/// method creates `request_usage` and `usage_budget` when absent, as
-/// Python's `_usage_schema` does, before it reads or writes them.
+/// The request-usage ledger and the stored budget, never applied
+/// (#2273, #2274). Each method creates `request_usage` and `usage_budget`
+/// when absent, as Python's `_usage_schema` does, before it reads them.
 pub trait BoardUsage {
     /// `Transaction.usage_report`: `request_usage` and `usage_budget` are
     /// created when absent (Python's statements, in its order), then the
@@ -549,12 +549,12 @@ pub trait BoardUsage {
     /// The budget and the two totals of [`Self::usage_report`] (#2340),
     /// read as it reads them (the tables created when absent, the default
     /// budget without a row) but with one aggregate over the ledger and
-    /// nothing else: what the budget decision and the control receipt
-    /// need, on every recorded request.
+    /// nothing else: what the control receipt needs on every request.
     fn usage_standing(&self) -> Result<UsageStanding, BoardError>;
-    /// `usage_report()['budget']`: the stored budget payload as
-    /// `json.loads` reads it, or the default budget when there is no row.
+    /// `usage_report()['budget']`: the stored payload, or the default.
     fn usage_budget(&self) -> Result<Value, BoardError>;
+    /// Makes the usage tables when absent, reading nothing.
+    fn usage_tables(&self) -> Result<(), BoardError>;
     /// `INSERT INTO usage_budget VALUES(1,?) ON CONFLICT(id) DO UPDATE`:
     /// the budget row's payload becomes `budget` written by plain
     /// `json.dumps` (insertion order, `", "` and `": "`).

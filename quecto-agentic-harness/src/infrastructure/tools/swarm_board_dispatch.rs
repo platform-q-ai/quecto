@@ -41,8 +41,7 @@
 //! own repository, all metered, #2303); the dispatcher calls one use case.
 //!
 //! Each call leaves one `tracing` record on [`TELEMETRY_TARGET`] (DEBUG
-//! for a read-only method, unless the token budget warned or paused the
-//! run in it; INFO otherwise; WARN for a contended refusal or,
+//! for a read-only method; INFO otherwise; WARN for a contended refusal or,
 //! while the event log is on, a busy wait over 250 ms) and, when the event
 //! log is switched on ([`SwarmBoardHandles::telemetry`], #2303), one
 //! `swarm_op` record in it, with the lock wait, busy wait and busy flag

@@ -38,9 +38,9 @@ impl ReadRequestAdmission {
             reading,
             |transaction, _| {
                 // The usage tables are made as Python's budget read made
-                // them, so the board file is the one it wrote; the budget
-                // read is never applied (owner decision, 2026-10-14).
-                let _reported_only = transaction.usage_budget()?;
+                // them, so the board file is the one it wrote; no budget is
+                // read (owner decision, 2026-10-14), so none can refuse it.
+                transaction.usage_tables()?;
                 let run = current(transaction)?;
                 let members = transaction.members()?;
                 let control_generation = transaction.control_generation()?;

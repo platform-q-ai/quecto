@@ -84,10 +84,10 @@ fn a_paused_runs_blockers_name_the_loss_and_the_deadline_never_a_budget() {
 /// text; records only a file edited outside the board holds are refused
 /// naming the record (`outside_edited_control_records`): a pause start
 /// that is not a number (a boolean included, which Python counts as zero
-/// or one) and a budget that is not an object. A budget's fields and the
-/// usage totals are reported as they are: no budget decides on them any
-/// more (owner decision, 2026-10-14), so a limit that is not a count, or
-/// a total that is a REAL or negative, reads.
+/// or one). A budget and the usage totals are reported, never refused: no
+/// budget decides on them any more (owner decision, 2026-10-14), so a
+/// limit that is not a count, a total that is a REAL or negative, and a
+/// budget that is no object (read as no budget) all read.
 #[test]
 fn missing_and_edited_control_records_are_refused() {
     let mut unrecorded = paused(running_board(40.0), 50.0, None);
@@ -98,8 +98,18 @@ fn missing_and_edited_control_records_are_refused() {
     );
     let mut text_start = paused(running_board(40.0), 50.0, None);
     text_start.events[0].detail = json!({"started": "soon"});
-    let mut list_budget = running_board(40.0);
-    list_budget.usage = Some(usage(json!([]), 0, 0));
+    // A budget that is no object reads as no budget (review round 1,
+    // #2569): it is reported, never applied.
+    for stored in [json!([]), json!(null), json!("x")] {
+        let mut odd = running_board(40.0);
+        odd.usage = Some(usage(stored.clone(), 0, 0));
+        let receipt = read(odd, 30.0).unwrap();
+        assert_eq!(
+            Value::Object(receipt.budget).to_string(),
+            r#"{"token_limit":null,"strict_unknown":false,"warned":false,"observed_tokens":0,"unknown_usage_requests":0}"#,
+            "{stored}"
+        );
+    }
     let mut text_limit = paused(running_board(40.0), 50.0, None);
     text_limit.usage = Some(usage(
         json!({"token_limit": "10", "strict_unknown": false, "warned": false}),
@@ -134,11 +144,7 @@ fn missing_and_edited_control_records_are_refused() {
         let receipt = read(uncounted(total.clone()), 60.0).unwrap();
         assert_eq!(receipt.budget["observed_tokens"], total);
     }
-    for (state, record) in [
-        (text_start, "pause record"),
-        (true_start, "pause record"),
-        (list_budget, "usage budget"),
-    ] {
+    for (state, record) in [(text_start, "pause record"), (true_start, "pause record")] {
         assert_eq!(
             read(state, 60.0).unwrap_err(),
             BoardError::new(

@@ -246,23 +246,6 @@ fn values_the_board_never_writes_are_refused() {
         ("task dependencies", |state| {
             state.tasks[1].columns[3].1 = json!(["one"])
         }),
-        ("usage budget", |state| {
-            state.usage.as_mut().unwrap().budget = json!({"token_limit": "many"})
-        }),
-        ("usage budget", |state| {
-            state.usage.as_mut().unwrap().budget =
-                json!({"token_limit": 1000, "strict_unknown": true})
-        }),
-        ("usage budget", |state| {
-            state.usage.as_mut().unwrap().budget = json!({"token_limit": 1000, "warned": false})
-        }),
-        ("usage budget", |state| {
-            state.usage.as_mut().unwrap().budget = json!({"strict_unknown": true, "warned": false})
-        }),
-        ("usage budget", |state| {
-            state.usage.as_mut().unwrap().budget =
-                json!({"token_limit": -1, "strict_unknown": true, "warned": false})
-        }),
         ("evidence", |state| {
             state.evidence[0].1.accepted = json!("yes")
         }),
@@ -286,6 +269,49 @@ fn values_the_board_never_writes_are_refused() {
                 format!("the board's {record} is not as the board writes it").as_str()
             ),
             "{record}"
+        );
+    }
+}
+
+/// Review round 1 (#2569): no budget is applied (owner decision,
+/// 2026-10-14), so a stored budget no board writes never refuses the
+/// projection: each setting it holds as written is reported, any other as
+/// unset.
+#[test]
+fn a_budget_no_board_writes_is_reported_as_far_as_it_reads() {
+    for (stored, want) in [
+        (json!({"token_limit": "many"}), (None, false, false)),
+        (
+            json!({"token_limit": 1000, "strict_unknown": true}),
+            (Some(1000), true, false),
+        ),
+        (
+            json!({"token_limit": 1000, "warned": false}),
+            (Some(1000), false, false),
+        ),
+        (
+            json!({"strict_unknown": true, "warned": true}),
+            (None, true, true),
+        ),
+        (
+            json!({"token_limit": -1, "strict_unknown": "yes"}),
+            (None, false, false),
+        ),
+        (json!([]), (None, false, false)),
+        (json!(null), (None, false, false)),
+    ] {
+        let mut state = board();
+        state.usage.as_mut().unwrap().budget = stored.clone();
+        let budget = ReadBoardProjection::new(MemoryBoard::with(state))
+            .execute()
+            .unwrap()
+            .run
+            .unwrap()
+            .budget;
+        assert_eq!(
+            (budget.token_limit, budget.strict_unknown, budget.warned),
+            want,
+            "{stored}"
         );
     }
 }

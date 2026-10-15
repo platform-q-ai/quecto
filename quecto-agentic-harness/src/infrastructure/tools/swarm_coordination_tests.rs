@@ -26,16 +26,31 @@ fn paused_snapshot_is_readable_and_does_not_request_terminal_cleanup() {
     assert!(!snapshot.status.terminal());
 }
 
+/// A receipt needs its typed status and generation. Its budget is only
+/// reported (no budget is applied, owner decision 2026-10-14), so one it
+/// cannot read, as an older board's damaged row gives, reads as none
+/// rather than failing the control (review round 1, #2569).
 #[test]
-fn control_receipts_require_typed_status_generation_and_budget() {
+fn control_receipts_require_typed_status_and_generation() {
     for value in [
         json!({}),
         json!({"status":"running"}),
         json!({"status":"unknown","generation":1}),
         json!({"status":"running","generation":-1}),
-        json!({"status":"running","generation":1,"budget":{}}),
     ] {
         assert!(SwarmContext::decode_control_receipt(value, false).is_err());
+    }
+    for budget in [
+        json!({}),
+        json!({"token_limit":"10","strict_unknown":false,"warned":true,
+               "observed_tokens":3,"unknown_usage_requests":0}),
+    ] {
+        let receipt = SwarmContext::decode_control_receipt(
+            json!({"status":"running","generation":1,"budget":budget}),
+            false,
+        )
+        .unwrap();
+        assert!(receipt.budget.is_none(), "{budget}");
     }
     let receipt =
         SwarmContext::decode_control_receipt(json!({"status":"paused","generation":7}), false)

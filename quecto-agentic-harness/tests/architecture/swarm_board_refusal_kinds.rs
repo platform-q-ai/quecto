@@ -570,11 +570,6 @@ pub(super) const REFUSALS: &[(&str, &str, &str)] = &[
         "Store",
     ),
     (
-        "src/infrastructure/persistence/swarm_board/repository_projection.rs:SqliteBoard::usage",
-        "the board's usage budget is not as the board writes it",
-        "Store",
-    ),
-    (
         "src/infrastructure/persistence/swarm_board/repository_projection.rs:edited_run",
         "the board's run is not as the board writes it",
         "Store",

@@ -124,9 +124,9 @@ fn outside_edited_text_reads_as_python_reads_it() {
 
 /// `outside_edited_control_records` (#2273), records only a file edited
 /// outside the board holds: a pause record whose `started` is not a
-/// number (a boolean included, which Python counts as 0 or 1), or a
-/// budget payload that is not an object, is refused naming the record; a
-/// token limit that is not a count, and usage totals that are not counts
+/// number (a boolean included, which Python counts as 0 or 1), is refused
+/// naming the record; a budget payload that is not an object (read as no
+/// budget), a token limit that is not a count, and usage totals that are not counts
 /// (a REAL or a negative sum), are reported as they are, since no budget
 /// decides on them any more (owner decision, 2026-10-14; a receipt and the
 /// report carry them, as `uncounted_usage_totals_pass_through_elsewhere`
@@ -168,10 +168,12 @@ fn outside_edited_control_records() {
         paused(r#"UPDATE events SET detail='{"started": "soon"}' WHERE action='paused'"#),
         refused("pause record")
     );
-    assert_eq!(
-        paused("INSERT INTO usage_budget VALUES(1, '[]')"),
-        refused("usage budget")
-    );
+    // A budget that is no object reads as no budget (review round 1,
+    // #2569): it is reported, never refused.
+    match paused("INSERT INTO usage_budget VALUES(1, '[]')") {
+        Outcome::Ok(receipt) => assert_eq!(receipt["budget"]["token_limit"], json!(null)),
+        other => panic!("{other:?}"),
+    }
     // No budget decides any more (owner decision, 2026-10-14): a stored
     // budget's fields and the usage totals are reported as they are.
     let reported = |edit: &str| match paused(edit) {
@@ -564,6 +566,33 @@ fn assert_answered(method: &str, rust: &Outcome, totals: (u64, Option<u64>), cas
                     "{case}: {method}"
                 );
             }
+        }
+    }
+}
+
+/// Review round 1 (#2569): a damaged budget an older board stored (a NULL
+/// or non-JSON payload, a list, a text token limit) never blocks a run:
+/// no budget is applied, so the admission read, the control receipt and
+/// the board projection all answer, the damaged budget read as no budget.
+#[test]
+fn a_damaged_stored_budget_blocks_nothing() {
+    for edit in [
+        "INSERT INTO usage_budget VALUES(1, NULL)",
+        "INSERT INTO usage_budget VALUES(1, 'x')",
+        "INSERT INTO usage_budget VALUES(1, '[]')",
+        r#"INSERT INTO usage_budget VALUES(1, '{"token_limit": "10", "strict_unknown": false, "warned": true}')"#,
+    ] {
+        for method in ["_request_admission", "_control_status", "_board"] {
+            let answered = run_rust(&[
+                create(5),
+                at(0.5, "parent", "usage_report", json!([])),
+                sql(edit),
+                at(1.0, "parent", method, json!([])),
+            ]);
+            assert!(
+                matches!(answered, Outcome::Ok(_)),
+                "{edit}: {method}: {answered:?}"
+            );
         }
     }
 }

@@ -58,6 +58,10 @@ impl BoardUsage for MemoryTransaction<'_> {
         Ok(self.stored_usage().budget)
     }
 
+    fn usage_tables(&self) -> Result<(), BoardError> {
+        Ok(())
+    }
+
     fn configure_usage_budget(&self, budget: &Value) -> Result<(), BoardError> {
         self.note(format!("configure_usage_budget {budget}"));
         let mut state = self.state.borrow_mut();

@@ -17,7 +17,7 @@
 //! edit makes unreadable (a payload that is not JSON among the ten latest,
 //! an actor that is not UTF-8) refuses Python's receipt and not this one,
 //! part of the same divergence.
-use serde_json::Value;
+use serde_json::{Map, Value};
 
 use super::dto::{ControlReceipt, UsageStanding};
 use super::ports::{BoardEvents, BoardMembers, BoardRuns, BoardUsage, Clock};
@@ -76,6 +76,15 @@ pub(crate) fn receipt_from(
     assembled(transaction, clock, generation, standing)
 }
 
+/// The settings of no budget, as a board without a budget row reads them.
+fn no_budget() -> Map<String, Value> {
+    Map::from_iter([
+        ("token_limit".to_owned(), Value::Null),
+        ("strict_unknown".to_owned(), Value::Bool(false)),
+        ("warned".to_owned(), Value::Bool(false)),
+    ])
+}
+
 /// The receipt of `generation` and `standing`, in Python's order: the run,
 /// the budget merged with the totals, then the resume blockers.
 fn assembled(
@@ -85,10 +94,14 @@ fn assembled(
     standing: UsageStanding,
 ) -> Result<ControlReceipt, BoardError> {
     let run = current(transaction)?;
-    let Value::Object(stored) = &standing.budget else {
-        return Err(edited("usage budget"));
+    // A budget is reported, never applied (owner decision, 2026-10-14): one
+    // no board writes reads as no budget (review round 1, #2569).
+    let mut budget = match &standing.budget {
+        Value::Object(stored) => stored.clone(),
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Array(_) => {
+            no_budget()
+        }
     };
-    let mut budget = stored.clone();
     budget.insert(
         "observed_tokens".to_owned(),
         standing.observed_tokens.clone(),

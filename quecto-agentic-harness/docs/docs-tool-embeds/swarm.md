@@ -306,8 +306,7 @@ coordinator's `stop("blocked"|"failed"|"budget-exhausted", ...)`, its
 `complete(...)` (`succeeded`) and a passed deadline.
 `status` reports `outcome` and `reason`. Only the master resumes (`resume`
 continues the same run with everything intact) or closes (`close` makes the
-held outcome terminal and settles the members). A run holding
-`budget-exhausted` resumes only after `extend`.
+held outcome terminal and settles the members).
 The coordinator may `swarm {"op":"pause","reason":"..."}`; `swarm
 {"op":"resume"}` is refused for every member, and `cancel_run` is the only
 immediate terminal transition. `status` also reports `resume_blockers`: what a

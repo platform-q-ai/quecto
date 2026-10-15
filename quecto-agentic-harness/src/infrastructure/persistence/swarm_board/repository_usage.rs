@@ -130,6 +130,10 @@ impl BoardUsage for SqliteBoard<'_> {
         self.stored_budget()
     }
 
+    fn usage_tables(&self) -> Result<(), BoardError> {
+        self.usage_schema()
+    }
+
     fn configure_usage_budget(&self, budget: &Value) -> Result<(), BoardError> {
         debug_assert!(budget.is_object(), "a budget is an object: {budget}");
         self.usage_schema()?;
@@ -250,19 +254,23 @@ impl SqliteBoard<'_> {
     }
 
     /// The budget row's payload as `json.loads` reads it, or the default
-    /// budget without a row (none is written).
+    /// budget without a row (none is written). No budget is applied (owner
+    /// decision, 2026-10-14), so a payload no board writes (NULL, not JSON)
+    /// reads as `null`, reported and never refused (review round 1, #2569).
     fn stored_budget(&self) -> Result<Value, BoardError> {
-        Ok(self
+        let stored = self
             .connection
             .query_row("SELECT payload FROM usage_budget WHERE id=1", [], |row| {
                 fetched(row)?;
-                loaded(row, 0)
+                Ok(loaded(row, 0).ok())
             })
             .optional()
-            .map_err(failed)?
-            .unwrap_or_else(
-                || json!({"token_limit": null, "strict_unknown": false, "warned": false}),
-            ))
+            .map_err(failed)?;
+        Ok(match stored {
+            None => json!({"token_limit": null, "strict_unknown": false, "warned": false}),
+            Some(Some(budget)) => budget,
+            Some(None) => Value::Null,
+        })
     }
 
     fn usage_rows(&self, sql: &str) -> Result<Vec<UsageRow>, BoardError> {

@@ -444,7 +444,7 @@ endpoint each member registered, the locally owned handle only for a member
 this harness launched itself; a member reachable neither way is reported as
 a settlement failure — no member is ever ended by its pid, and a member's
 recorded pid is only the store's liveness observation), and the
-coordinator harness stays for reporting. A run paused for `budget-exhausted` (its deadline passed) refuses to resume until
+coordinator harness stays for reporting. A run paused for `budget-exhausted` refuses to resume until
 the supervisor grants time (`swarm_control extend` with `deadline_seconds`);
 the refusal names what to grant. Members, including the
 coordinator's `swarm {"op":"resume"}`, cannot resume or close a run. Only

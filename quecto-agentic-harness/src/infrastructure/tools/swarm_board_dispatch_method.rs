@@ -263,10 +263,9 @@ impl Method {
     /// [`Level::Read`] only for the methods listed as read-only.
     pub(super) fn level(self) -> Level {
         match self {
-            // The admission read may pause the run by its budget; it runs
-            // before every model request, so it records at DEBUG as the
-            // read Python's `read_only` operation makes it, unless the
-            // budget warned or paused (`served_level`).
+            // The admission read runs before every model request, so it
+            // records at DEBUG as the read Python's `read_only` operation
+            // makes it.
             Self::Status
             | Self::Board
             | Self::BoardRevision
