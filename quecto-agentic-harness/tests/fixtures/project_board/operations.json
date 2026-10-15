@@ -1467,8 +1467,7 @@
             "turns": 40
           }
         ],
-        "budget_tokens": 2000000,
-        "deadline": null,
+        "deadline_seconds": null,
         "image": null
       }
     },
