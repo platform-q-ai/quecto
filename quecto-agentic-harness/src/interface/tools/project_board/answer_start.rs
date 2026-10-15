@@ -6,8 +6,29 @@
 //! other refusal of a start the stop. Only the task's id and the run's
 //! number are filled in; every other word is the prompt's.
 use crate::application::project_board::dto::ProjectBoardError;
-use crate::application::project_board::operations::BoardRequest;
+use crate::application::project_board::operations::{BoardOutcome, BoardRequest};
 use crate::domain::project_board::value_objects::slug::Slug;
+use crate::domain::project_board::value_objects::telemetry::FrontEnd;
+
+/// Whether `front_end`'s answers carry steps: the agent tool's alone, as
+/// the steps tell an agent what to call next (review round 1, #2567).
+pub fn carried_by(front_end: FrontEnd) -> bool {
+    match front_end {
+        FrontEnd::Tool => true,
+        FrontEnd::Cli => false,
+    }
+}
+
+/// The steps an answered `outcome` carries: a started task's.
+pub fn started(outcome: &BoardOutcome) -> Option<String> {
+    let BoardOutcome::Started(started) = outcome else {
+        return None;
+    };
+    Some(running(
+        &started.task.fields().id,
+        started.run.fields().number,
+    ))
+}
 
 /// The op whose answers carry steps.
 const START_OP: &str = "start";

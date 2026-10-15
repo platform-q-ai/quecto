@@ -687,3 +687,30 @@ fn a_rule_failed_completion_records_its_rule() {
         "{line}"
     );
 }
+
+/// Review round 1 (#2567): the start steps are agent-directed, so only the
+/// agent tool's answers carry them, recorded or not; the command line's
+/// refusal of the same start carries none.
+#[test]
+fn only_the_tool_front_end_answers_start_steps() {
+    use crate::interface::tools::project_board::answer::start_steps::REFUSED;
+    for request in [
+        json!({"op": "start", "task": "a", "plan_version": 1}),
+        json!({"op": "start", "task": "a"}),
+    ] {
+        let text = request.to_string();
+        for (front_end, client, steps) in [
+            (FrontEnd::Tool, Client::Agent, Some(json!(REFUSED))),
+            (FrontEnd::Cli, Client::Cli, None),
+        ] {
+            let mut call = BoardCall::start(None, front_end, client);
+            let answer = run_recorded(&board(), &text, &mut call);
+            assert_eq!(answer["ok"], json!(false), "{answer}");
+            assert_eq!(
+                answer["error"].get("steps").cloned(),
+                steps,
+                "{front_end:?} {request}"
+            );
+        }
+    }
+}

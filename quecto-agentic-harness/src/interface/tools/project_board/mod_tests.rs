@@ -226,7 +226,7 @@ fn a_command_line_reaches_the_same_request_as_the_tools_json() {
         (stranger.field.as_str(), stranger.problem.as_str()),
         ("op", "is not an op of the board")
     );
-    let answer = answer::request_refused(None, &stranger);
+    let answer = answer::request_refused(None, &stranger, None);
     assert_eq!(
         answer["error"]["message"],
         json!("op: is not an op of the board")
@@ -254,6 +254,7 @@ fn messages_are_redacted_and_bounded_and_every_code_has_its_one_shape() {
         Some("bootstrap"),
         answer::FrontEndRefusal::StoreUnavailable,
         &format!("https://user:hunter2@github.com/x {}", "y".repeat(5000)),
+        None,
     );
     let message = leaky["error"]["message"].as_str().unwrap();
     assert!(!message.contains("hunter2"), "{message}");

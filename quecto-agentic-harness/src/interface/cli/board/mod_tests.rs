@@ -576,4 +576,7 @@ fn start_is_refused_on_the_command_line() {
             &json!("start needs an agent session: ask a quecto agent, or use Pocket")
         )
     );
+    // The start steps are the agent tool's: the command line's refusal
+    // carries none (review round 1, #2567).
+    assert!(answer["error"].get("steps").is_none(), "{answer}");
 }

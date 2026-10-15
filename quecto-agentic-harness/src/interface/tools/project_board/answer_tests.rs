@@ -1,6 +1,11 @@
 use std::collections::BTreeSet;
 
 use super::*;
+
+/// The board's refusal of `op`, carrying no steps.
+fn board_refused(op: &str, error: &ProjectBoardError) -> Value {
+    board_refused_with(op, error, None)
+}
 use crate::domain::project_board::value_objects::rule_error::BoardRuleError;
 use crate::domain::project_board::value_objects::schema_error::SchemaError;
 use crate::domain::project_board::value_objects::slug::Slug;
@@ -224,7 +229,7 @@ fn a_front_ends_own_refusals_have_their_codes_shapes() {
             ErrorCode::StoreUnavailable,
         ),
     ] {
-        let answer = reason_refused(Some("list"), refusal, "why");
+        let answer = reason_refused(Some("list"), refusal, "why", None);
         assert_eq!(answer["error"]["code"], json!(code.as_str()));
         let got: BTreeSet<&str> = answer["error"]
             .as_object()
@@ -261,6 +266,7 @@ fn text_from_outside_is_redacted_wherever_it_is_shown() {
             None,
             FrontEndRefusal::StoreUnavailable,
             &format!("password={secret}"),
+            None,
         ),
         json!({"quarantined": quarantined_json(&QuarantinedFile {
             path: "tasks/x.md".into(),
@@ -677,14 +683,14 @@ fn every_code_the_board_answers_is_a_known_kind() {
         FrontEndRefusal::NoCommitter,
         FrontEndRefusal::StoreUnavailable,
     ] {
-        codes.push(code(&reason_refused(Some("list"), refusal, "why")));
+        codes.push(code(&reason_refused(Some("list"), refusal, "why", None)));
     }
     let request = RequestError::of(
         "op",
         "must name an op",
         crate::domain::project_board::value_objects::telemetry::FaultKind::Missing,
     );
-    codes.push(code(&request_refused(None, &request)));
+    codes.push(code(&request_refused(None, &request, None)));
     let rules = every_rule().into_iter().map(|(rule, ..)| rule_json(&rule));
     codes.extend(rules.map(|rule| rule["code"].as_str().unwrap().to_owned()));
     let unknown: Vec<&String> = codes
