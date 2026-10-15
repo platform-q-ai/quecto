@@ -362,7 +362,11 @@ fn answered(
 ) -> Value {
     let request = match read(text) {
         Ok(request) => request,
-        Err(error) => return call.refuse_request(None, &error),
+        Err(error) => {
+            let op = super::answer::start_steps::start_in_unread(text);
+            call.named(op);
+            return call.refuse_request(op, &error);
+        }
     };
     let ops: Vec<&str> = tool_ops().map(|(op, _)| *op).collect();
     let problem = format!("must be one of {}", ops.join(", "));

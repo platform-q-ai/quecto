@@ -123,6 +123,23 @@ pub fn refused(request: &BoardRequest, error: &ProjectBoardError) -> Option<Stri
     })
 }
 
+/// The op `text` names when the strict read refused it (a key named
+/// twice, a request past its bytes) but it is a start, read as plain JSON
+/// names it: so its refusal still carries the stop (review round 2,
+/// #2567). `None` for any other op, and when the op itself cannot be read
+/// (not JSON, not an object, or `op` named twice).
+pub fn start_in_unread(text: &str) -> Option<&'static str> {
+    #[derive(serde::Deserialize)]
+    struct Named {
+        op: Option<String>,
+    }
+    let named = serde_json::from_str::<Named>(text).ok()?.op?;
+    match named.as_str() {
+        START_OP => Some(START_OP),
+        _ => None,
+    }
+}
+
 /// The step a refusal of `op` made before the board answered carries
 /// (an invalid request, or a front end's own refusal): only a start's.
 pub fn refused_before_board(op: Option<&str>) -> Option<&'static str> {
