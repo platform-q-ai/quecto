@@ -313,3 +313,24 @@ fn a_coordinator_model_without_its_provider_is_refused_at_edit() {
         "the kept team is judged too"
     );
 }
+
+/// Review round 2 (#2566): an edit judges the model of every coordinator
+/// role, whatever its members.
+#[test]
+fn a_bare_coordinator_model_is_refused_at_edit_whatever_its_members() {
+    let store = holding_plans(
+        "a",
+        TaskStatus::Ready,
+        vec![plan_of("a", 1, PlanState::Draft)],
+    );
+    let mut team = coordinated_team("claude-opus");
+    team.roles[0].limits.members = 2;
+    let pair = PlanEdit {
+        team: Some(Some(team)),
+        ..of(1)
+    };
+    assert_eq!(
+        edit_as(&store, "Ada").execute(&pair),
+        Err(unqualified_coordinator())
+    );
+}

@@ -226,3 +226,21 @@ fn a_coordinator_model_without_its_provider_is_refused_at_proposal() {
         assert_eq!(written.fields().team, team);
     }
 }
+
+/// Review round 2 (#2566): the model of every coordinator role is judged,
+/// whatever its members, so a bare model on a coordinator role of two is
+/// refused here, where a start would refuse the members first.
+#[test]
+fn a_bare_coordinator_model_is_refused_whatever_its_members() {
+    let store = holding_plans("a", TaskStatus::Ready, vec![]);
+    let mut team = coordinated_team("claude-opus");
+    team.roles[0].limits.members = 2;
+    let pair = PlanProposal {
+        team: Some(team),
+        ..proposal("a")
+    };
+    assert_eq!(
+        propose(&store).execute(&pair),
+        Err(unqualified_coordinator())
+    );
+}
