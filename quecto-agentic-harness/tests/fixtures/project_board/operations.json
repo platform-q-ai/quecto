@@ -1420,7 +1420,7 @@
       "op": "propose_plan",
       "error": {
         "code": "brief",
-        "message": "the plan cannot brief a swarm: the coordinator role's model must name its provider, as provider/model: propose a plan that does",
+        "message": "the plan cannot brief a swarm: the coordinator role's model must name its provider, as provider/model: give it one",
         "brief": {
           "code": "coordinator_model"
         }

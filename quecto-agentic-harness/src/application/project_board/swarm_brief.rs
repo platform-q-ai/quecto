@@ -261,7 +261,7 @@ impl fmt::Display for BriefRefusal {
             ),
             Self::CoordinatorModel => f.write_str(
                 "the coordinator role's model must name its provider, as provider/model: \
-                 propose a plan that does",
+                 give it one",
             ),
             Self::BriefTooLarge { bytes } => write!(
                 f,

@@ -574,6 +574,11 @@ fn the_coordinators_model_must_name_its_provider() {
         Some("anthropic/claude-opus".to_string())
     );
     assert_eq!(BriefRefusal::CoordinatorModel.code(), "coordinator_model");
+    // Owner-approved words (2026-10-15).
+    assert_eq!(
+        BriefRefusal::CoordinatorModel.to_string(),
+        "the coordinator role's model must name its provider, as provider/model: give it one"
+    );
 }
 
 /// One rule judges the coordinator's model wherever a plan is written or
