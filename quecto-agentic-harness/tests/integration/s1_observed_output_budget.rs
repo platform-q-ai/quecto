@@ -233,3 +233,30 @@ async fn s1_observed_error_budget_large_tool() {
         }
     }
 }
+
+#[tokio::test]
+async fn s1_c123_large_exact_text_tool_controls() {
+    let text = "large 世界 ".repeat(6000);
+    let arguments = serde_json::json!({"payload": "tool 世界 ".repeat(6000)}).to_string();
+    let mut rows = 0;
+    for (leaf, surface, admitted) in cells() {
+        for tool in [false, true] {
+            let body = if tool {
+                tool_body(leaf, &arguments, false)
+            } else {
+                text_body(leaf, &text, false)
+            };
+            let (response, _, trace, state) = payload(leaf, surface, admitted, body).await;
+            neutral(&trace, &state, admitted);
+            if tool {
+                assert_eq!(response.tool_calls.len(), 1);
+                assert_eq!(response.tool_calls[0].arguments, arguments);
+            } else {
+                assert_eq!(response.content.as_deref(), Some(text.as_str()));
+            }
+            rows += 1;
+        }
+    }
+    eprintln!("C123 ACTUAL OUTPUT SUMMARY selected={rows} failed=0");
+    assert_eq!(rows, 40);
+}

@@ -1,74 +1,12 @@
-//! Strict, non-retaining identification above the semantic error budget.
-//! The line observer already bounds input to MAX_SSE_LINE_BYTES. This visitor
-//! retains only two booleans and an event category, discarding nested payloads
-//! with StrictDiscard: no oversized error Value or typed declarations are built.
-use serde::de::{MapAccess, SeqAccess, Visitor};
-use serde::{Deserialize, Deserializer};
-use std::fmt;
+//! Borrowed strict oversized-event recognition, before error Value allocation.
+//! No owned provider keys/values, decoded string scratch, or payload tree. Only
+//! root type/error shape survives; fixed token prefixes and bounded recursion
+//! validate all other data. Framing storage remains the caller's separate bound.
+#[path = "attempt_error_string.rs"]
+mod strings;
+use strings::{Token, string, take};
 
-#[derive(Default)]
-struct Envelope {
-    kind: Kind,
-    error: ErrorShape,
-}
-impl<'de> Deserialize<'de> for Envelope {
-    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-        #[derive(Deserialize)]
-        #[serde(field_identifier)]
-        enum Field {
-            #[serde(rename = "type")]
-            Kind,
-            #[serde(rename = "error")]
-            Error,
-            #[serde(other)]
-            Other,
-        }
-        struct EnvelopeVisitor;
-        impl<'de> Visitor<'de> for EnvelopeVisitor {
-            type Value = Envelope;
-            fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
-                f.write_str("event object")
-            }
-            fn visit_unit<E: serde::de::Error>(self) -> Result<Envelope, E> {
-                Ok(Envelope::default())
-            }
-            fn visit_bool<E: serde::de::Error>(self, _: bool) -> Result<Envelope, E> {
-                Ok(Envelope::default())
-            }
-            fn visit_i64<E: serde::de::Error>(self, _: i64) -> Result<Envelope, E> {
-                Ok(Envelope::default())
-            }
-            fn visit_u64<E: serde::de::Error>(self, _: u64) -> Result<Envelope, E> {
-                Ok(Envelope::default())
-            }
-            fn visit_f64<E: serde::de::Error>(self, _: f64) -> Result<Envelope, E> {
-                Ok(Envelope::default())
-            }
-            fn visit_str<E: serde::de::Error>(self, _: &str) -> Result<Envelope, E> {
-                Ok(Envelope::default())
-            }
-            fn visit_seq<A: SeqAccess<'de>>(self, mut a: A) -> Result<Envelope, A::Error> {
-                while a.next_element::<StrictDiscard>()?.is_some() {}
-                Ok(Envelope::default())
-            }
-            fn visit_map<A: MapAccess<'de>>(self, mut a: A) -> Result<Envelope, A::Error> {
-                let mut envelope = Envelope::default();
-                while let Some(field) = a.next_key::<Field>()? {
-                    match field {
-                        Field::Kind => envelope.kind = a.next_value()?,
-                        Field::Error => envelope.error = a.next_value()?,
-                        Field::Other => {
-                            a.next_value::<StrictDiscard>()?;
-                        }
-                    }
-                }
-                Ok(envelope)
-            }
-        }
-        d.deserialize_any(EnvelopeVisitor)
-    }
-}
-#[derive(Default)]
+#[derive(Clone, Copy, Default)]
 enum Kind {
     #[default]
     Untyped,
@@ -77,151 +15,186 @@ enum Kind {
     Incomplete,
     Other,
 }
-impl<'de> Deserialize<'de> for Kind {
-    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-        struct KindVisitor;
-        impl<'de> Visitor<'de> for KindVisitor {
-            type Value = Kind;
-            fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
-                f.write_str("event type")
+#[derive(Default)]
+struct Shape {
+    kind: Kind,
+    error: bool,
+    object: bool,
+    nonempty_string: bool,
+}
+struct Scanner<'a> {
+    input: &'a str,
+    at: usize,
+}
+impl Scanner<'_> {
+    fn whitespace(&mut self) {
+        while matches!(
+            self.input.as_bytes().get(self.at),
+            Some(b' ' | b'\t' | b'\n' | b'\r')
+        ) {
+            self.at += 1;
+        }
+    }
+    fn value(&mut self, depth: u8) -> Result<Shape, ()> {
+        debug_assert!(depth <= 127, "serde-compatible container depth is bounded");
+        debug_assert!(self.at <= self.input.len(), "scanner offset stays in input");
+        self.whitespace();
+        match self.input.as_bytes().get(self.at).ok_or(())? {
+            b'{' if depth < 127 => self.object(depth + 1),
+            b'[' if depth < 127 => {
+                self.at += 1;
+                self.whitespace();
+                if self.input.as_bytes().get(self.at) == Some(&b']') {
+                    self.at += 1;
+                    return Ok(Shape::default());
+                }
+                loop {
+                    self.value(depth + 1)?;
+                    if self.end_or_comma(b']')? {
+                        return Ok(Shape::default());
+                    }
+                }
             }
-            fn visit_str<E: serde::de::Error>(self, s: &str) -> Result<Kind, E> {
-                Ok(match s {
-                    "error" => Kind::Error,
-                    "response.failed" => Kind::Failed,
-                    "response.incomplete" => Kind::Incomplete,
-                    _ => Kind::Other,
+            b'"' => {
+                let token = string(self.input.as_bytes(), &mut self.at)?;
+                Ok(Shape {
+                    kind: kind(&token),
+                    nonempty_string: token.nonempty(),
+                    ..Shape::default()
                 })
             }
-            fn visit_unit<E: serde::de::Error>(self) -> Result<Kind, E> {
-                Ok(Kind::Untyped)
+            b't' => self.literal("true"),
+            b'f' => self.literal("false"),
+            b'n' => self.literal("null"),
+            b'-' | b'0'..=b'9' => self.number(),
+            _ => Err(()),
+        }
+    }
+    fn object(&mut self, depth: u8) -> Result<Shape, ()> {
+        self.at += 1;
+        let mut shape = Shape {
+            object: true,
+            ..Shape::default()
+        };
+        self.whitespace();
+        if self.input.as_bytes().get(self.at) == Some(&b'}') {
+            self.at += 1;
+            return Ok(shape);
+        }
+        loop {
+            self.whitespace();
+            // Convert the finite key before descending; no key buffer remains
+            // live during recursion. Duplicates overwrite, exactly like Value.
+            let field = {
+                let key = string(self.input.as_bytes(), &mut self.at)?;
+                if key.is("type") {
+                    1
+                } else if key.is("error") {
+                    2
+                } else {
+                    0
+                }
+            };
+            self.whitespace();
+            take(self.input.as_bytes(), &mut self.at, b':')?;
+            let value = self.value(depth)?;
+            match field {
+                1 => {
+                    shape.kind = if value.object {
+                        Kind::Untyped
+                    } else {
+                        value.kind
+                    }
+                }
+                2 => shape.error = value.object || value.nonempty_string,
+                _ => {}
             }
-            fn visit_bool<E: serde::de::Error>(self, _: bool) -> Result<Kind, E> {
-                Ok(Kind::Untyped)
-            }
-            fn visit_i64<E: serde::de::Error>(self, _: i64) -> Result<Kind, E> {
-                Ok(Kind::Untyped)
-            }
-            fn visit_u64<E: serde::de::Error>(self, _: u64) -> Result<Kind, E> {
-                Ok(Kind::Untyped)
-            }
-            fn visit_f64<E: serde::de::Error>(self, _: f64) -> Result<Kind, E> {
-                Ok(Kind::Untyped)
-            }
-            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut a: A) -> Result<Kind, A::Error> {
-                while a.next_element::<StrictDiscard>()?.is_some() {}
-                Ok(Kind::Untyped)
-            }
-            fn visit_map<A: MapAccess<'de>>(self, mut a: A) -> Result<Kind, A::Error> {
-                while a.next_entry::<String, StrictDiscard>()?.is_some() {}
-                Ok(Kind::Untyped)
+            if self.end_or_comma(b'}')? {
+                return Ok(shape);
             }
         }
-        d.deserialize_any(KindVisitor)
     }
-}
-#[derive(Default)]
-struct ErrorShape(bool);
-impl<'de> Deserialize<'de> for ErrorShape {
-    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-        struct ErrorVisitor;
-        impl<'de> Visitor<'de> for ErrorVisitor {
-            type Value = ErrorShape;
-            fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
-                f.write_str("error shape")
+    fn end_or_comma(&mut self, end: u8) -> Result<bool, ()> {
+        self.whitespace();
+        match self.input.as_bytes().get(self.at) {
+            Some(byte) if *byte == end => {
+                self.at += 1;
+                Ok(true)
             }
-            fn visit_str<E: serde::de::Error>(self, s: &str) -> Result<ErrorShape, E> {
-                Ok(ErrorShape(!s.is_empty()))
+            Some(b',') => {
+                self.at += 1;
+                Ok(false)
             }
-            fn visit_unit<E: serde::de::Error>(self) -> Result<ErrorShape, E> {
-                Ok(ErrorShape(false))
-            }
-            fn visit_bool<E: serde::de::Error>(self, _: bool) -> Result<ErrorShape, E> {
-                Ok(ErrorShape(false))
-            }
-            fn visit_i64<E: serde::de::Error>(self, _: i64) -> Result<ErrorShape, E> {
-                Ok(ErrorShape(false))
-            }
-            fn visit_u64<E: serde::de::Error>(self, _: u64) -> Result<ErrorShape, E> {
-                Ok(ErrorShape(false))
-            }
-            fn visit_f64<E: serde::de::Error>(self, _: f64) -> Result<ErrorShape, E> {
-                Ok(ErrorShape(false))
-            }
-            fn visit_seq<A: serde::de::SeqAccess<'de>>(
-                self,
-                mut a: A,
-            ) -> Result<ErrorShape, A::Error> {
-                while a.next_element::<StrictDiscard>()?.is_some() {}
-                Ok(ErrorShape(false))
-            }
-            fn visit_map<A: MapAccess<'de>>(self, mut a: A) -> Result<ErrorShape, A::Error> {
-                while a.next_entry::<String, StrictDiscard>()?.is_some() {}
-                Ok(ErrorShape(true))
-            }
+            _ => Err(()),
         }
-        d.deserialize_any(ErrorVisitor)
+    }
+    fn literal(&mut self, literal: &str) -> Result<Shape, ()> {
+        match self
+            .input
+            .get(self.at..)
+            .is_some_and(|tail| tail.starts_with(literal))
+        {
+            true => {
+                self.at += literal.len();
+                Ok(Shape::default())
+            }
+            false => Err(()),
+        }
+    }
+    fn number(&mut self) -> Result<Shape, ()> {
+        let start = self.at;
+        while matches!(
+            self.input.as_bytes().get(self.at),
+            Some(b'-' | b'+' | b'.' | b'e' | b'E' | b'0'..=b'9')
+        ) {
+            self.at += 1;
+        }
+        // Borrow numeric tokens only. The locked serde_json configuration uses
+        // finite numeric accumulators (no arbitrary_precision/float_roundtrip).
+        // This preserves Value's exact syntax, exponent and range acceptance;
+        // no string token ever reaches serde's scratch decoder here.
+        serde_json::from_str::<f64>(&self.input[start..self.at]).map_err(|_| ())?;
+        Ok(Shape::default())
     }
 }
-
+fn kind(token: &Token) -> Kind {
+    if token.is("error") {
+        Kind::Error
+    } else if token.is("response.failed") {
+        Kind::Failed
+    } else if token.is("response.incomplete") {
+        Kind::Incomplete
+    } else {
+        Kind::Other
+    }
+}
 pub(super) fn failure(
     data: &str,
     vendor: super::Vendor,
 ) -> Result<Option<super::TerminalEvent>, serde_json::Error> {
-    let shape = serde_json::from_str::<Envelope>(data)?;
+    let mut scanner = Scanner { input: data, at: 0 };
+    let parsed = scanner.value(0);
+    scanner.whitespace();
+    let shape = match parsed {
+        Ok(shape) if scanner.at == data.len() => shape,
+        _ => return Err(serde::de::Error::custom("invalid oversized event JSON")),
+    };
     use super::TerminalEvent;
-    Ok(match vendor {
-        super::Vendor::OpenAi if shape.error.0 => Some(TerminalEvent::Error),
-        super::Vendor::Codex => match shape.kind {
-            Kind::Error => Some(TerminalEvent::Error),
-            Kind::Failed => Some(TerminalEvent::ResponseFailed),
-            Kind::Incomplete => Some(TerminalEvent::ResponseIncomplete),
-            Kind::Untyped if shape.error.0 => Some(TerminalEvent::Error),
+    // Non-object JSON cannot contain an error field or event type. Internal
+    // nested summaries must not grant root authority (e.g. type: {type:error}).
+    if shape.object {
+        Ok(match vendor {
+            super::Vendor::OpenAi if shape.error => Some(TerminalEvent::Error),
+            super::Vendor::Codex => match shape.kind {
+                Kind::Error => Some(TerminalEvent::Error),
+                Kind::Failed => Some(TerminalEvent::ResponseFailed),
+                Kind::Incomplete => Some(TerminalEvent::ResponseIncomplete),
+                Kind::Untyped if shape.error => Some(TerminalEvent::Error),
+                _ => None,
+            },
             _ => None,
-        },
-        _ => None, // Anthropic dispatch uses the event line.
-    })
-}
-
-/// Unlike serde's IgnoredAny, deserialize_any visits every JSON string through
-/// the normal string decoder. Invalid escapes, map keys, numbers and recursion
-/// therefore have the same acceptance as Value, without retaining the payload.
-struct StrictDiscard;
-impl<'de> Deserialize<'de> for StrictDiscard {
-    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-        struct DiscardVisitor;
-        impl<'de> Visitor<'de> for DiscardVisitor {
-            type Value = StrictDiscard;
-            fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
-                f.write_str("JSON value")
-            }
-            fn visit_unit<E: serde::de::Error>(self) -> Result<StrictDiscard, E> {
-                Ok(StrictDiscard)
-            }
-            fn visit_bool<E: serde::de::Error>(self, _: bool) -> Result<StrictDiscard, E> {
-                Ok(StrictDiscard)
-            }
-            fn visit_i64<E: serde::de::Error>(self, _: i64) -> Result<StrictDiscard, E> {
-                Ok(StrictDiscard)
-            }
-            fn visit_u64<E: serde::de::Error>(self, _: u64) -> Result<StrictDiscard, E> {
-                Ok(StrictDiscard)
-            }
-            fn visit_f64<E: serde::de::Error>(self, _: f64) -> Result<StrictDiscard, E> {
-                Ok(StrictDiscard)
-            }
-            fn visit_str<E: serde::de::Error>(self, _: &str) -> Result<StrictDiscard, E> {
-                Ok(StrictDiscard)
-            }
-            fn visit_seq<A: SeqAccess<'de>>(self, mut a: A) -> Result<StrictDiscard, A::Error> {
-                while a.next_element::<StrictDiscard>()?.is_some() {}
-                Ok(StrictDiscard)
-            }
-            fn visit_map<A: MapAccess<'de>>(self, mut a: A) -> Result<StrictDiscard, A::Error> {
-                while a.next_entry::<String, StrictDiscard>()?.is_some() {}
-                Ok(StrictDiscard)
-            }
-        }
-        d.deserialize_any(DiscardVisitor)
+        })
+    } else {
+        Ok(None)
     }
 }

@@ -100,3 +100,129 @@ fn dispatch_trim_is_surface_specific_and_raw_semantics_remain_strict() {
     assert!(decode(raw, Surface::Incremental).is_err());
     assert!(super::super::provider_diagnostics::raw_json(raw).is_none());
 }
+
+#[test]
+fn s1_c123_scanner_owns_no_attacker_sized_tokens() {
+    let mut failures = Vec::new();
+    let mut rows = 0;
+    for token in ["x".repeat(900_000), "\\u0061".repeat(140_000)] {
+        for raw in [
+            format!(r#"{{"type":"response.failed","response":{{"error":{{"{token}":null}}}}}}"#),
+            format!(r#"{{"type":"response.failed","ignored":{{"{token}":null}}}}"#),
+            format!(r#"{{"type":"response.failed","ignored":"{token}"}}"#),
+            format!(r#"{{"type":{{"{token}":null}},"error":{{}}}}"#),
+            format!(r#"{{"error":{{"{token}":null}}}}"#),
+        ] {
+            assert!(raw.len() < 1_048_576);
+            let scope = crate::s1_c123_alloc::Scope::start();
+            let scanned = failure_shape(&raw, Vendor::Codex);
+            let (maximum, total) = scope.finish();
+            assert!(scanned.is_ok());
+            rows += 1;
+            eprintln!(
+                "C123 SCANNER row={rows} input={} maximum={maximum} total={total}",
+                raw.len()
+            );
+            if maximum > 4096 || total > 4096 {
+                failures.push((rows, maximum, total));
+            }
+        }
+    }
+    eprintln!(
+        "C123 SCANNER SUMMARY selected={rows} failed={}",
+        failures.len()
+    );
+    assert_eq!(rows, 10);
+    assert!(
+        failures.is_empty(),
+        "private scanner allocation budget: {failures:?}"
+    );
+}
+
+#[test]
+fn s1_c123_strict_shape_parity() {
+    strict_scanner_matches_value_strings_keys_numbers_depth_and_shapes();
+    oversized_decoder_matches_actual_value_dispatch_without_error_payload();
+    dispatch_trim_is_surface_specific_and_raw_semantics_remain_strict();
+    for raw in [
+        r#"{"\u0074ype":"response.fa\u0069led","error":{}}"#,
+        r#"{"type":"response.failed","ignored":"\uDBFF\uDFFF"}"#,
+        r#"{"type":"response.failed","ignored":"\uDFFF\uDBFF"}"#,
+        r#"{"type":"response.failed","ignored":1e-9999}"#,
+        r#"{"type":"response.failed","ignored":-18446744073709551616000000}"#,
+        r#"{"type":"response.failed","ignored":0e9999}"#,
+        r#"{"type":"response.failed","error":{},"type":[]}"#,
+    ] {
+        compare(raw);
+    }
+}
+
+#[test]
+fn s1_c123_generated_strict_json_differential() {
+    let mut rows = 0;
+    let mut check = |raw: &str| {
+        compare(raw);
+        let value = serde_json::from_str::<Value>(raw);
+        let scanned = failure_shape(raw, Vendor::OpenAi);
+        assert_eq!(scanned.is_ok(), value.is_ok(), "OpenAI validity {raw:?}");
+        if let (Ok(actual), Ok(value)) = (scanned, value) {
+            assert_eq!(
+                actual,
+                super::super::attempt_profile::is_stream_error_chunk(&value)
+                    .then_some(TerminalEvent::Error),
+                "OpenAI shape {raw:?}"
+            );
+        }
+        rows += 1;
+    };
+    let values = [
+        "null",
+        "false",
+        "0",
+        "1e400",
+        "-1e-400",
+        "[]",
+        "{}",
+        r#""""#,
+        r#""error""#,
+        r#""response.failed""#,
+        r#""response.incomplete""#,
+        r#""\uD800""#,
+        r#""\uDBFF\uDFFF""#,
+        r#""世界""#,
+    ];
+    for left in values {
+        for right in values {
+            for key in ["type", "error", "ignored", "\\u0074ype"] {
+                let raw = format!(r#"{{"{key}":{left},"type":{right},"error":{left}}}"#);
+                check(&raw);
+                // Mutations retain valid UTF-8 and exercise every byte boundary
+                // in a bounded deterministic ASCII structural corpus.
+                for (at, character) in raw.char_indices() {
+                    let mut deleted = raw.clone();
+                    deleted.replace_range(at..at + character.len_utf8(), "");
+                    check(&deleted);
+                }
+            }
+        }
+    }
+    for token in [
+        "1".repeat(6000),
+        format!("0.{}1", "0".repeat(9000)),
+        format!("1{}e-9000", "0".repeat(9000)),
+        format!("0e{}", "9".repeat(9000)),
+    ] {
+        let raw = format!(r#"{{"type":"response.failed","ignored":{token}}}"#);
+        check(&raw);
+        let scope = crate::s1_c123_alloc::Scope::start();
+        let result = failure_shape(&raw, Vendor::Codex);
+        let (maximum, total) = scope.finish();
+        eprintln!(
+            "C123 NUMERIC bounded maximum={maximum} total={total} valid={}",
+            result.is_ok()
+        );
+        assert!(maximum <= 4096 && total <= 4096);
+    }
+    eprintln!("C123 DIFFERENTIAL SUMMARY selected={rows} failed=0");
+    assert!(rows > 20_000);
+}

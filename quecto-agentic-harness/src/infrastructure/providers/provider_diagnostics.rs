@@ -189,7 +189,7 @@ pub(super) fn stream_error_envelope(value: &serde_json::Value) -> &serde_json::V
 
 pub(super) fn stream_throttle(value: &serde_json::Value) -> bool {
     let selected = serde_json::json!({"error": stream_error_envelope(value)});
-    super::admission_feedback::is_typed_throttle(&selected)
+    super::attempt_profile::is_throttle_chunk(&selected)
 }
 
 pub(super) fn stream(vendor: &str, value: &serde_json::Value) -> String {

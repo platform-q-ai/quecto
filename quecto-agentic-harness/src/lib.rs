@@ -90,3 +90,7 @@ mod swarm_run_control_contracts;
 mod tool_execution_admission_contracts;
 
 pub mod composition;
+
+#[cfg(test)]
+#[path = "../tests/common/s1_c123_alloc.rs"]
+mod s1_c123_alloc;

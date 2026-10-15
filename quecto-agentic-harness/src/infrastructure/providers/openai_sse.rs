@@ -120,6 +120,26 @@ impl SseHandler for OpenAiSseHandler {
             let _ = tx.send(StreamEvent::Done(self.take_response())).await;
             return SseLineOutcome::Done;
         }
+        // Error semantics have a separate private budget from ordinary model
+        // output. Strictly recognize oversized errors before owning a Value;
+        // invalid JSON keeps the existing ignore policy without parsing again.
+        if data.len() > crate::infrastructure::providers::provider_diagnostics::BODY_LIMIT {
+            match crate::infrastructure::providers::codex_event::failure_shape(
+                data,
+                crate::infrastructure::providers::attempt_profile::Vendor::OpenAi,
+            ) {
+                Ok(Some(_)) => {
+                    let message =
+                        crate::infrastructure::providers::provider_diagnostics::stream_raw(
+                            "OpenAI", data,
+                        );
+                    let _ = tx.send(StreamEvent::Error(message)).await;
+                    return SseLineOutcome::Done;
+                }
+                Ok(None) => {} // Valid ordinary output retains its larger budget.
+                Err(_) => return SseLineOutcome::Continue,
+            }
+        }
         if let Ok(chunk) = serde_json::from_str::<serde_json::Value>(data) {
             // A mid-stream error chunk ends the stream as an error (#2236),
             // on this path too, which runs without admission: never skipped,

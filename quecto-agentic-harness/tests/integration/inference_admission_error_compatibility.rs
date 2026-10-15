@@ -633,3 +633,6 @@ mod s1_observed_error_budget;
 mod s1_operative_envelope;
 #[path = "s1_terminal_authority.rs"]
 mod s1_terminal_authority;
+
+#[path = "s1_c123.rs"]
+mod s1_c123;

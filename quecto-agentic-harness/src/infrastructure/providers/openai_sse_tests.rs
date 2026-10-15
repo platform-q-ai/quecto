@@ -268,3 +268,113 @@ async fn s1_sse_payload_budget_family() {
     handler.on_eof(&tx).await;
     assert!(matches!(rx.recv().await, Some(StreamEvent::Error(m)) if !m.contains("secret-canary")));
 }
+
+#[tokio::test(flavor = "current_thread")]
+async fn s1_c123_openai_rejects_before_error_value_materialization() {
+    use crate::infrastructure::providers::sse_common::{SseHandler, SseLineOutcome};
+    let mut failures = Vec::new();
+    for (index, token) in ["x".repeat(900_000), "\\u0061".repeat(140_000)]
+        .into_iter()
+        .enumerate()
+    {
+        for key in [false, true] {
+            let payload = if key {
+                format!(r#"{{"error":{{"{token}":null}}}}"#)
+            } else {
+                format!(r#"{{"error":{{"message":"{token}"}}}}"#)
+            };
+            let line = format!("data: {payload}");
+            let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+            let mut handler = super::OpenAiSseHandler::with_model("fixture");
+            let scope = crate::s1_c123_alloc::Scope::start();
+            let outcome = handler.process_line(&line, &tx).await;
+            let (maximum, total) = scope.finish();
+            assert!(matches!(outcome, SseLineOutcome::Done));
+            let Some(crate::domain::inference::value_objects::provider::StreamEvent::Error(error)) =
+                rx.recv().await
+            else {
+                panic!("expected one terminal error")
+            };
+            assert_eq!(error, "HTTP 502 from OpenAI: class=server; refusal=none");
+            eprintln!("C123 OPENAI MATERIALIZE row={index}/{key} maximum={maximum} total={total}");
+            if maximum > 4096 || total > 4096 {
+                failures.push((index, key, maximum, total));
+            }
+        }
+    }
+    eprintln!(
+        "C123 OPENAI MATERIALIZE SUMMARY selected=4 failed={}",
+        failures.len()
+    );
+    assert!(
+        failures.is_empty(),
+        "private OpenAI error allocation budget: {failures:?}"
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn s1_c123_malformed_oversized_error_skips_owned_parse_and_keeps_tail() {
+    use crate::domain::inference::value_objects::provider::StreamEvent;
+    use crate::infrastructure::providers::sse_common::{SseHandler, SseLineOutcome};
+    let mut failures = Vec::new();
+    let mut rows = 0;
+    for token in ["x".repeat(900_000), "\\u0061".repeat(140_000)] {
+        for key in [false, true] {
+            for invalid in ["\\q", "\\uD800", "trailing"] {
+                let suffix = if invalid == "trailing" { "" } else { invalid };
+                let mut payload = if key {
+                    format!(r#"{{"error":{{"{token}{suffix}":null}}}}"#)
+                } else {
+                    format!(r#"{{"error":{{"message":"{token}{suffix}"}}}}"#)
+                };
+                if invalid == "trailing" {
+                    payload.push_str(" CANARY_JUNK");
+                }
+                assert!(serde_json::from_str::<serde_json::Value>(&payload).is_err());
+                let line = format!("data: {payload}");
+                let (tx, mut rx) = tokio::sync::mpsc::channel(4);
+                let mut handler = super::OpenAiSseHandler::with_model("fixture");
+                let scope = crate::s1_c123_alloc::Scope::start();
+                let outcome = handler.process_line(&line, &tx).await;
+                let (maximum, total) = scope.finish();
+                assert!(matches!(outcome, SseLineOutcome::Continue));
+                assert!(rx.try_recv().is_err(), "malformed ignored, not terminal");
+                let outcome = handler
+                    .process_line(
+                        r#"data: {"choices":[{"delta":{"content":"safe tail 世界"}}]}"#,
+                        &tx,
+                    )
+                    .await;
+                assert!(matches!(outcome, SseLineOutcome::Continue));
+                let Some(StreamEvent::TextDelta(text)) = rx.recv().await else {
+                    panic!("valid tail notification must remain accepted")
+                };
+                assert_eq!(text, "safe tail 世界");
+                let outcome = handler.process_line("data: [DONE]", &tx).await;
+                assert!(matches!(outcome, SseLineOutcome::Done));
+                let Some(StreamEvent::Done(response)) = rx.recv().await else {
+                    panic!("valid tail must complete")
+                };
+                assert_eq!(response.content.as_deref(), Some("safe tail 世界"));
+                assert!(response.tool_calls.is_empty());
+                assert!(rx.try_recv().is_err());
+                rows += 1;
+                eprintln!(
+                    "C123 MALFORMED ALLOCATION row={rows} key={key} invalid={invalid:?} maximum={maximum} total={total}"
+                );
+                if maximum > 4096 || total > 4096 {
+                    failures.push((rows, maximum, total));
+                }
+            }
+        }
+    }
+    eprintln!(
+        "C123 MALFORMED ALLOCATION SUMMARY selected={rows} failed={}",
+        failures.len()
+    );
+    assert_eq!(rows, 12);
+    assert!(
+        failures.is_empty(),
+        "malformed private error allocation: {failures:?}"
+    );
+}

@@ -377,3 +377,18 @@ async fn s1_terminal_authority_lossy_throttle_no_semantics() {
 async fn s1_terminal_authority_inert_shape_success_control() {
     matrix(Scenario::InertShapeSuccess, false).await;
 }
+
+#[tokio::test]
+async fn s1_c123_preserves_existing_surrogate_utf8_surface_policy() {
+    for scenario in [
+        Scenario::RejectedThrottle,
+        Scenario::RejectedSuccess,
+        Scenario::LossyTerminal,
+        Scenario::LossyThrottle,
+    ] {
+        matrix(scenario, false).await;
+    }
+    matrix(Scenario::RejectedThrottle, true).await;
+    matrix(Scenario::RejectedSuccess, true).await;
+    eprintln!("C123 MALFORMED POLICY SUMMARY selected=80 failed=0");
+}

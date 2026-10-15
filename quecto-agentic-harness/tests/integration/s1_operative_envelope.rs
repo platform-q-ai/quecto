@@ -330,3 +330,18 @@ async fn s1_operative_envelope_selected_billing_code() {
 async fn s1_operative_envelope_output_control() {
     matrix(Case::Output).await;
 }
+
+#[tokio::test]
+async fn s1_c123_ignored_envelopes_billing_exact_output_controls() {
+    for case in [
+        Case::ClientIgnoredThrottle,
+        Case::ThrottleIgnoredBilling,
+        Case::UnknownIgnoredThrottle,
+        Case::SelectedBilling,
+        Case::SelectedBillingCode,
+        Case::Output,
+    ] {
+        matrix(case).await;
+    }
+    eprintln!("C123 IGNORED BILLING OUTPUT SUMMARY selected=72 failed=0");
+}

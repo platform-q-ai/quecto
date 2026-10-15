@@ -735,3 +735,62 @@ async fn s1_e1_e2_valid_first_terminal_controls() {
         }
     }
 }
+
+#[tokio::test]
+async fn s1_c123_openai_actual_error_boundaries() {
+    let mut rows = 0;
+    for surface in [Surface::Assembled, Surface::Incremental] {
+        for admitted in [false, true] {
+            for bytes in [4096, 4097, 900_000] {
+                for billing in [false, true] {
+                    let body = format!(
+                        "{}data: {{\"choices\":[{{\"delta\":{{\"content\":\"CANARY_TAIL\"}}}}]}}\n\ndata: [DONE]\n\n",
+                        envelope(Leaf::OpenAi, bytes, billing)
+                    );
+                    boundary_body(Leaf::OpenAi, surface, admitted, billing, bytes, body).await;
+                    rows += 1;
+                }
+            }
+            for (token, bytes) in [
+                ("x".repeat(899_900), 900_000),
+                ("\\u0061".repeat(140_000), 840_100),
+            ] {
+                for key in [false, true] {
+                    let raw = if key {
+                        format!(r#"{{"error":{{"{token}":null}}}}"#)
+                    } else {
+                        format!(r#"{{"error":{{"message":"{token}"}}}}"#)
+                    };
+                    let body = format!(
+                        "data: {raw}\n\ndata: {{\"choices\":[{{\"delta\":{{\"content\":\"CANARY_TAIL\"}}}}]}}\n\ndata: [DONE]\n\n"
+                    );
+                    let (output, trace, state) =
+                        observe(Leaf::OpenAi, surface, admitted, body).await;
+                    let error = outward(&output);
+                    assert_eq!(error.status, Some(502));
+                    assert_eq!(error.class, ProviderErrorClass::Server);
+                    assert!(
+                        !format!("{output:?}{:?}", trace.attempt_diagnostics()).contains("CANARY")
+                    );
+                    assert!(state.receipts.is_empty());
+                    assert!(!state.blocked);
+                    assert_eq!(state.grants, usize::from(admitted));
+                    assert_eq!(state.abandoned, 0);
+                    assert_eq!(
+                        state.finishes,
+                        if admitted {
+                            vec![Feedback::Failure]
+                        } else {
+                            vec![]
+                        }
+                    );
+                    assert_eq!(trace.attempt_diagnostics().len(), 1);
+                    rows += 1;
+                    eprintln!("C123 ACTUAL oversized token row={rows} nominal={bytes} key={key}");
+                }
+            }
+        }
+    }
+    eprintln!("C123 ACTUAL ERROR SUMMARY selected={rows} failed=0");
+    assert_eq!(rows, 40);
+}

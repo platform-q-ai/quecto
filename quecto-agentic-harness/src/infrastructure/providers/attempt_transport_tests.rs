@@ -428,7 +428,8 @@ async fn a_cancel_stops_a_queued_or_running_attempt_in_no_time() {
 
 /// #2155 review: an OpenAI-compatible error chunk with a numeric 429 or 529
 /// (OpenRouter's shape) throttles admission like a typed one; a billing
-/// error, a server status or another vendor's numeric code does not.
+/// error or a non-throttle server status does not. The selected Codex error
+/// envelope follows the same finite 429/529 policy as its outward consumer.
 #[test]
 fn numeric_throttle_chunks_throttle_admission() {
     use super::super::attempt_profile::{Surface, Vendor};
@@ -468,7 +469,7 @@ fn numeric_throttle_chunks_throttle_admission() {
         (
             Vendor::Codex,
             r#"{"type":"error","error":{"code":429}}"#,
-            false,
+            true,
         ),
     ] {
         let receipt = diagnostic_receipt();
