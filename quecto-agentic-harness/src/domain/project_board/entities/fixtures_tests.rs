@@ -35,8 +35,7 @@ pub fn team() -> Team {
                 turns: None,
             },
         }],
-        budget: None,
-        deadline: None,
+        deadline_seconds: None,
         image: None,
     }
 }

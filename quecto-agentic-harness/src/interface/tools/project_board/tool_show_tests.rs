@@ -81,8 +81,7 @@ fn plan(version: u32, state: PlanState, approach: String, items: Vec<PlanItem>) 
                     turns: None,
                 },
             }],
-            budget: None,
-            deadline: None,
+            deadline_seconds: None,
             image: None,
         }),
         proposed_by: ada(),
@@ -173,6 +172,7 @@ fn answered(shown: ShownTask) -> Value {
             shown,
             crate::application::project_board::operations::PlanView::default(),
         ),
+        None,
         None,
     )
 }
@@ -418,6 +418,7 @@ fn pages_read_on_through_the_whole_plan() {
                 },
             ),
             None,
+            None,
         );
         let cut = capped(answer);
         assert!(bytes(&cut) <= MAX_SHOW_BYTES, "{}", bytes(&cut));
@@ -553,6 +554,7 @@ fn an_end_runs_answer_says_whether_its_swarm_was_looked_for() {
                 run: run(1, 1, 0),
                 liveness,
             }),
+            None,
             None,
         )
     };

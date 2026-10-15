@@ -16,7 +16,6 @@ mod board_recovery;
 mod board_tasks;
 #[cfg(test)]
 pub(crate) mod board_test_support;
-mod board_usage;
 mod board_wakes;
 pub mod dto;
 pub mod ports;

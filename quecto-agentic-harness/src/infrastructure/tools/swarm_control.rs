@@ -30,7 +30,7 @@ pub async fn control_with_workflow(
 ) -> Result<Value, DomainError> {
     let settles = matches!(
         op,
-        "create" | "reconcile" | "pause" | "resume" | "cancel_run" | "usage_budget"
+        "create" | "reconcile" | "pause" | "resume" | "cancel_run"
     );
     let ctx = context.clone();
     let resuming = op == "resume";
@@ -60,21 +60,6 @@ pub async fn control_with_workflow(
             ctx.summary()
         }
         "usage" => ctx.usage_report(),
-        "usage_budget" => {
-            let strict = match input.get("strict_unknown") {
-                None => true,
-                Some(value) => value
-                    .as_bool()
-                    .ok_or_else(|| DomainError::Tool("strict_unknown must be boolean".into()))?,
-            };
-            if input.get("token_limit").is_some() {
-                ctx.usage_budget(optional_cursor(&input, "token_limit")?, strict)
-            } else {
-                Err(DomainError::Tool(
-                    "token_limit is required (null disables the budget)".into(),
-                ))
-            }
-        }
         "summary" => ctx.summary_since(optional_cursor(&input, "since")?),
         "reconcile" => super::swarm_lifecycle::reconcile(&ctx),
         "pause" => ctx.pause(

@@ -18,7 +18,7 @@ and refactoring. Compiler/fixture failures are not counted as behavioral RED tes
 | Reporting | Compact summaries/cursor deltas, explicit paginated events, cursor-neutral latest report, nullable unpersisted ordinals, stable recovery IDs, explicit retained-record exports. Worker join uses the same generation-bearing snapshot contract. |
 | Controls | Correlated queued/started/completed/failed/cancelled/rejected receipts; full-queue rejection; direct prompt cancellation/rejection; priority supervisor pause and descendant routing. Completion describes a turn, not semantic compliance. |
 | Provider failures | Ordinary/OAuth retry admission checks, terminal quota classification including nested usage-limit codes, bounded reset-aware delay, automatic-turn circuit and failure-notice deduplication. |
-| Accounting | Observed usage/cache/cost fields remain distinct from estimates. Cancellation-safe idempotent outbox, bounded per-request/member diagnostics, optional budget warning/pause and strict unknown handling. |
+| Accounting | Observed usage/cache/cost fields remain distinct from estimates. Cancellation-safe idempotent outbox, bounded per-request/member diagnostics. (The optional budget warning/pause and strict unknown handling verified here were removed on 2026-10-14: no token budget limits a swarm.) |
 | Provenance | Process identity and optional build metadata; background hash reads the running executable inode even during atomic replacement. Runtime digest enrichment does not recount a request. |
 
 Specific adversarial RED cases included a stale pause cancelling a newer turn,
@@ -73,7 +73,7 @@ coverage lane now executes the shared swarm contracts and adapter failure tests:
 
 A further BDD scenario drives a real UDS child with a synthetic, private swarm
 launch contract and scripted provider. It verifies in-flight pause, queued approval
-retention, resume and completed receipt, observed-budget pause, raw evidence export,
+retention, resume and completed receipt, observed-budget pause (removed on 2026-10-14), raw evidence export,
 and terminal coordinator reporting. It passes locally; it makes no claim of actual
 PID-namespace isolation. The complete prior BDD run passed its scenarios but exposed
 a separate 72% function-coverage gap, which this production-path scenario addresses.

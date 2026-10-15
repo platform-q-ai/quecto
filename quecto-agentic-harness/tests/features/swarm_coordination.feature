@@ -146,7 +146,7 @@ Feature: Container swarm coordination
   Scenario: Supervisor pauses active work and receives approval handling and retained evidence
     When the supervisor pauses active work then delivers approval and exports evidence
     Then the swarm approval has a completed receipt and a retained terminal report
-    And the observed usage budget pauses the run and request accounting is available
+    And heavy usage never pauses the run and request accounting is available
 
   @done @swarm-supervision
   Scenario: A container's creator keeps the board out of reach of the agents' git commands

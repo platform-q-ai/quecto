@@ -8,9 +8,11 @@
 //! - **criteria:** the two [`RUN_CRITERIA`]; a plan's own criteria are its
 //!   task items' acceptance, which the run's 16 KiB of criteria cannot hold.
 //! - **member_limit:** the coordinator plus every worker role's members.
-//! - **deadline_in_seconds:** the team's deadline less now, at least ten
-//!   minutes and at most seven days (clamped, and said to be); a day when
-//!   it names none.
+//! - **deadline_in_seconds:** the team's `deadline_seconds` as given (its
+//!   schema bounds it to ten minutes to seven days); a day when it names
+//!   none.
+//! - **no usage budget:** a team sets none, so a run started from a plan
+//!   has no token limit (owner decision, 2026-10-14).
 //! - **items:** in dependency order, each titled `<slug>: <title>`, its
 //!   acceptance its criteria (or its title alone), its dependencies by slug.
 //! - **constraints:** the approach, trimmed, and cut to fit with a marker
@@ -26,10 +28,9 @@ use std::fmt;
 
 use crate::domain::project_board::entities::plan::{MAX_PLAN_VERSION, PlanItem};
 use crate::domain::project_board::entities::task::MAX_TITLE_CHARS;
-use crate::domain::project_board::entities::team::{Budget, Role, RoleLimits, Team};
+use crate::domain::project_board::entities::team::{self, Role, RoleLimits, Team};
 use crate::domain::project_board::services::starts::Started;
 use crate::domain::project_board::value_objects::slug::{MAX_SLUG_BYTES, Slug};
-use crate::domain::project_board::value_objects::timestamp::Timestamp;
 use crate::domain::project_board::value_objects::vocabulary::Effort;
 use crate::domain::swarm::json_text;
 use crate::domain::swarm::records::CriterionKind;
@@ -47,10 +48,12 @@ pub const TEMPLATE_BYTES: usize = 4096;
 pub const TEMPLATE_ITEM_BYTES: usize = 64;
 /// The most members a swarm admits, its coordinator one of them.
 pub const MAX_SWARM_MEMBERS: u32 = MEMBER_LIMIT_MAX as u32;
-/// The furthest deadline a swarm takes: seven days.
-pub const MAX_DEADLINE_SECONDS: u64 = DEADLINE_HORIZON_SECONDS as u64;
-/// The nearest deadline a run is started with: ten minutes.
-pub const MIN_DEADLINE_SECONDS: u64 = 10 * 60;
+/// The furthest deadline a swarm takes: seven days, as a plan's team
+/// bounds it.
+pub const MAX_DEADLINE_SECONDS: u64 = team::MAX_DEADLINE_SECONDS as u64;
+/// The nearest deadline a run is started with: ten minutes, as a plan's
+/// team bounds it.
+pub const MIN_DEADLINE_SECONDS: u64 = team::MIN_DEADLINE_SECONDS as u64;
 /// A run's deadline when the team names none: a day.
 pub const DEFAULT_DEADLINE_SECONDS: u64 = 24 * 60 * 60;
 /// The role whose model and effort are the coordinator's.
@@ -62,6 +65,8 @@ pub const CUT_MARKER: &str = "… (cut here; the rest is in the plan on the boar
 const _: () = assert!(MEMBER_LIMIT_MAX == 25 && DEADLINE_HORIZON_SECONDS == 604_800.0);
 const _: () = assert!(MIN_DEADLINE_SECONDS < DEFAULT_DEADLINE_SECONDS);
 const _: () = assert!(DEFAULT_DEADLINE_SECONDS < MAX_DEADLINE_SECONDS);
+// A team's furthest deadline is the furthest a swarm takes.
+const _: () = assert!(MAX_DEADLINE_SECONDS == DEADLINE_HORIZON_SECONDS as u64);
 
 /// A run criterion, as the swarm's `create` takes it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -123,10 +128,8 @@ pub struct SwarmBrief {
     pub criteria: Vec<RunCriterion>,
     /// `None`: the plan names no team, and the coordinator sizes its pool.
     pub member_limit: Option<u32>,
+    /// The team's deadline, in seconds from Start, or the default.
     pub deadline_in_seconds: u64,
-    /// Whether the team's deadline lay past the swarm's furthest.
-    pub deadline_clamped: bool,
-    pub usage_budget: Option<u64>,
     /// In dependency order: each after every item it depends on.
     pub items: Vec<BriefItem>,
     /// `None`: no coordinator role, and the launcher's model is used.
@@ -184,9 +187,6 @@ pub enum BriefRefusal {
     TeamUnsupported {
         field: TeamField,
     },
-    DeadlinePassed,
-    /// Less than [`MIN_DEADLINE_SECONDS`] off.
-    DeadlineTooSoon,
     NoTaskItems,
     /// A task item past one of the swarm's bounds, by `bytes`.
     ItemTooLarge {
@@ -208,8 +208,6 @@ impl BriefRefusal {
         match self {
             Self::TeamTooLarge { .. } => "team_too_large",
             Self::TeamUnsupported { .. } => "team_unsupported",
-            Self::DeadlinePassed => "deadline_passed",
-            Self::DeadlineTooSoon => "deadline_too_soon",
             Self::NoTaskItems => "no_task_items",
             Self::ItemTooLarge { .. } => "item_too_large",
             Self::BriefTooLarge { .. } => "brief_too_large",
@@ -238,13 +236,6 @@ impl fmt::Display for BriefRefusal {
                     "a team needs at least one worker role besides the coordinator"
                 }
             }),
-            Self::DeadlinePassed => {
-                f.write_str("the team's deadline has passed: propose a plan with a later one")
-            }
-            Self::DeadlineTooSoon => f.write_str(
-                "the team's deadline is too soon: \
-                     propose a plan with a deadline at least 10 minutes off",
-            ),
             Self::NoTaskItems => {
                 f.write_str("the plan has no task items: add at least one before starting")
             }
@@ -342,8 +333,7 @@ impl SwarmBrief {
             + self
                 .member_limit
                 .map_or(0, |limit| number(u64::from(limit)))
-            + number(self.deadline_in_seconds)
-            + self.usage_budget.map_or(0, number);
+            + number(self.deadline_in_seconds);
         TEMPLATE_BYTES
             + line(self.task.as_str())
             + line(&self.goal)
@@ -360,14 +350,14 @@ impl SwarmBrief {
     }
 }
 
-/// The brief for `started`'s accepted plan, at `now`.
+/// The brief for `started`'s accepted plan.
 ///
 /// # Errors
 /// A team spawn cannot carry (an image, a turn limit, a coordinator role of
-/// more than one member, no worker role) or larger than a swarm; a deadline
-/// passed or too soon; no task items, or one past the swarm's bounds; a
-/// brief past [`MAX_BRIEF_BYTES`].
-pub fn brief_of(started: &Started, now: &Timestamp) -> Result<SwarmBrief, BriefRefusal> {
+/// more than one member, no worker role) or larger than a swarm; no task
+/// items, or one past the swarm's bounds; a brief past
+/// [`MAX_BRIEF_BYTES`].
+pub fn brief_of(started: &Started) -> Result<SwarmBrief, BriefRefusal> {
     let (task, planned) = (started.task().fields(), started.plan().fields());
     debug_assert!(
         planned.task == task.id && task.accepted_plan == Some(planned.version),
@@ -377,15 +367,14 @@ pub fn brief_of(started: &Started, now: &Timestamp) -> Result<SwarmBrief, BriefR
         Some(team) => terms_of(team)?,
         None => Terms::default(),
     };
-    let (deadline_in_seconds, deadline_clamped) = match terms.deadline {
-        Some(deadline) => match u64::try_from(deadline.seconds_since(now)) {
-            Ok(left) if left > MAX_DEADLINE_SECONDS => (MAX_DEADLINE_SECONDS, true),
-            Ok(left) if left >= MIN_DEADLINE_SECONDS => (left, false),
-            Ok(1..) => return Err(BriefRefusal::DeadlineTooSoon),
-            Ok(0) | Err(_) => return Err(BriefRefusal::DeadlinePassed),
-        },
-        None => (DEFAULT_DEADLINE_SECONDS, false),
-    };
+    // A duration from Start, as given: the plan's schema bounds it.
+    let deadline_in_seconds = terms
+        .deadline_seconds
+        .map_or(DEFAULT_DEADLINE_SECONDS, u64::from);
+    assert!(
+        (MIN_DEADLINE_SECONDS..=MAX_DEADLINE_SECONDS).contains(&deadline_in_seconds),
+        "a plan's deadline is within a swarm's bounds"
+    );
     if planned.items.is_empty() {
         return Err(BriefRefusal::NoTaskItems);
     }
@@ -423,8 +412,6 @@ pub fn brief_of(started: &Started, now: &Timestamp) -> Result<SwarmBrief, BriefR
         criteria: RUN_CRITERIA.to_vec(),
         member_limit: terms.member_limit,
         deadline_in_seconds,
-        deadline_clamped,
-        usage_budget: terms.usage_budget,
         items,
         coordinator: terms.coordinator,
         not_applied: terms.not_applied,
@@ -435,25 +422,50 @@ pub fn brief_of(started: &Started, now: &Timestamp) -> Result<SwarmBrief, BriefR
     }
 }
 
+/// Whether `model` names its provider as spawn takes it,
+/// `provider/model`, neither empty: no provider is guessed (S4c).
+pub fn names_provider(model: &str) -> bool {
+    matches!(model.split_once('/'), Some((provider, id)) if !provider.is_empty() && !id.is_empty())
+}
+
+/// `team`'s coordinator role, when it names one, names its model's
+/// provider: the one rule a plan is judged by when it is proposed, edited
+/// and started, so the planner learns it before the user taps Start. No
+/// team, or one with no coordinator role, lets the coordinator be chosen;
+/// a worker role's model is not applied, so not judged.
+///
+/// # Errors
+/// [`BriefRefusal::CoordinatorModel`]: a coordinator role whose model
+/// names no provider.
+pub fn coordinator_model_named(team: Option<&Team>) -> Result<(), BriefRefusal> {
+    let named = team
+        .into_iter()
+        .flat_map(|team| &team.roles)
+        .filter(|role| role.name.as_str() == COORDINATOR_ROLE)
+        .all(|role| names_provider(&role.model));
+    match named {
+        true => Ok(()),
+        false => Err(BriefRefusal::CoordinatorModel),
+    }
+}
+
 /// What a team makes of the run: its member limit, the coordinator's
-/// choice, the worker roles not applied, its budget and its deadline.
+/// choice, the worker roles not applied and its deadline.
 #[derive(Default)]
-struct Terms<'a> {
+struct Terms {
     member_limit: Option<u32>,
     coordinator: Option<RoleChoice>,
     not_applied: Vec<NotApplied>,
-    usage_budget: Option<u64>,
-    deadline: Option<&'a Timestamp>,
+    deadline_seconds: Option<u32>,
 }
 
 /// `team`'s terms, read field by field, when spawn can carry every field
 /// and a swarm holds the team.
-fn terms_of(team: &Team) -> Result<Terms<'_>, BriefRefusal> {
+fn terms_of(team: &Team) -> Result<Terms, BriefRefusal> {
     let unsupported = |field| Err(BriefRefusal::TeamUnsupported { field });
     let Team {
         roles,
-        budget,
-        deadline,
+        deadline_seconds,
         image,
     } = team;
     match image {
@@ -479,10 +491,10 @@ fn terms_of(team: &Team) -> Result<Terms<'_>, BriefRefusal> {
         }
         match (name.as_str() == COORDINATOR_ROLE, *size) {
             (true, 1) => {
-                // Spawn takes `provider/model`; no provider is guessed.
-                match model.split_once('/') {
-                    Some((provider, id)) if !provider.is_empty() && !id.is_empty() => {}
-                    Some(_) | None => return Err(BriefRefusal::CoordinatorModel),
+                // The rule a proposal and an edit judged: kept as a backstop.
+                match names_provider(model) {
+                    true => {}
+                    false => return Err(BriefRefusal::CoordinatorModel),
                 }
                 coordinator = Some(RoleChoice {
                     model: model.clone(),
@@ -510,8 +522,7 @@ fn terms_of(team: &Team) -> Result<Terms<'_>, BriefRefusal> {
         member_limit: Some(members),
         coordinator,
         not_applied,
-        usage_budget: budget.as_ref().map(|Budget { tokens }| *tokens),
-        deadline: deadline.as_ref(),
+        deadline_seconds: *deadline_seconds,
     })
 }
 

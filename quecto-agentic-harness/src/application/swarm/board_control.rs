@@ -5,29 +5,23 @@
 //!
 //! A control record only a file edited outside the board can hold (a pause
 //! record without a numeric `started`, a boolean included; a budget
-//! payload that is not an object or a token limit that is not a count) is
-//! refused naming the record, where Python raises a `TypeError` or a
-//! `KeyError`, or computes with the value as it is: the
-//! `outside_edited_control_records` divergence. Usage totals that are not
-//! counts (a REAL or a negative sum) are refused so only where the budget
-//! decides under a token limit that is not null (a paused run's resume
-//! check, and a running run's recorded request and admission read, where
-//! Python compares them with the limit); everywhere else (the receipt's
-//! budget, the usage report) they pass through as Python passes them.
+//! payload that is not an object) is refused naming the record, where
+//! Python raises a `TypeError` or a `KeyError`, or computes with the value
+//! as it is: the `outside_edited_control_records` divergence. Usage totals
+//! that are not counts (a REAL or a negative sum) pass through as Python
+//! passes them: no token budget decides on them (owner decision,
+//! 2026-10-14), so a stored budget, `warned` included, is only reported.
 //!
-//! The receipt and the budget decision read the usage standing (#2340),
-//! the budget and the two totals, where Python reads the whole usage
-//! report: a ledger row only an edit makes unreadable (a payload that is
-//! not JSON among the ten latest, an actor that is not UTF-8) refuses
-//! Python's receipt and not this one, part of the same divergence.
-use serde_json::Value;
+//! The receipt reads the usage standing (#2340), the budget and the two
+//! totals, where Python reads the whole usage report: a ledger row only an
+//! edit makes unreadable (a payload that is not JSON among the ten latest,
+//! an actor that is not UTF-8) refuses Python's receipt and not this one,
+//! part of the same divergence.
+use serde_json::{Map, Value};
 
 use super::dto::{ControlReceipt, UsageStanding};
 use super::ports::{BoardEvents, BoardMembers, BoardRuns, BoardUsage, Clock};
-use crate::domain::swarm::{
-    BoardError, RefusalKind, RunRecord, UsageBudget, UsageDecision, UsageTotals, python_truthy,
-    resume_blockers, usage_budget_decision,
-};
+use crate::domain::swarm::{BoardError, RefusalKind, RunRecord, resume_blockers};
 
 /// The refusal of a control record the board never writes.
 pub(crate) fn edited(record: &str) -> BoardError {
@@ -54,7 +48,7 @@ fn paused(run: &RunRecord) -> bool {
 /// `Coordination._receipt(tx)`: the control generation, the usage report
 /// and the run as `control_receipt` reads them, then the resume blockers.
 /// Of the report it reads only the budget and the two totals the receipt
-/// carries (#2340), once, and the blockers decide on the same.
+/// carries (#2340), once.
 ///
 /// # Errors
 /// An edited budget or pause record, or the store's refusal.
@@ -68,9 +62,8 @@ pub(crate) fn receipt(
 }
 
 /// [`receipt`] on a `standing` the caller read in this transaction and
-/// has not changed since but for the budget it read again (#2340): a
-/// recorded request's budget decision has just read the totals, which
-/// nothing it writes changes.
+/// has not changed since (#2340): a recorded request reads the totals
+/// once, after its write.
 ///
 /// # Errors
 /// As [`receipt`].
@@ -83,6 +76,15 @@ pub(crate) fn receipt_from(
     assembled(transaction, clock, generation, standing)
 }
 
+/// The settings of no budget, as a board without a budget row reads them.
+fn no_budget() -> Map<String, Value> {
+    Map::from_iter([
+        ("token_limit".to_owned(), Value::Null),
+        ("strict_unknown".to_owned(), Value::Bool(false)),
+        ("warned".to_owned(), Value::Bool(false)),
+    ])
+}
+
 /// The receipt of `generation` and `standing`, in Python's order: the run,
 /// the budget merged with the totals, then the resume blockers.
 fn assembled(
@@ -92,10 +94,14 @@ fn assembled(
     standing: UsageStanding,
 ) -> Result<ControlReceipt, BoardError> {
     let run = current(transaction)?;
-    let Value::Object(stored) = &standing.budget else {
-        return Err(edited("usage budget"));
+    // A budget is reported, never applied (owner decision, 2026-10-14): one
+    // no board writes reads as no budget (review round 1, #2569).
+    let mut budget = match &standing.budget {
+        Value::Object(stored) => stored.clone(),
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Array(_) => {
+            no_budget()
+        }
     };
-    let mut budget = stored.clone();
     budget.insert(
         "observed_tokens".to_owned(),
         standing.observed_tokens.clone(),
@@ -104,7 +110,7 @@ fn assembled(
         "unknown_usage_requests".to_owned(),
         standing.unknown_usage_requests.clone(),
     );
-    let resume_blockers = blockers_from(transaction, clock, &run, &standing)?;
+    let resume_blockers = blockers_from(transaction, clock, &run)?;
     Ok(ControlReceipt {
         status: run.status.as_ref().map(|status| status.as_str().to_owned()),
         outcome: run.outcome,
@@ -122,23 +128,19 @@ fn assembled(
 /// # Errors
 /// A paused run without a pause record, an edited record, or the store's.
 pub(crate) fn blockers(
-    transaction: &(impl BoardRuns + BoardMembers + BoardUsage + ?Sized),
+    transaction: &(impl BoardRuns + BoardMembers + ?Sized),
     clock: &dyn Clock,
 ) -> Result<Vec<String>, BoardError> {
     let run = current(transaction)?;
-    if !paused(&run) {
-        return Ok(Vec::new());
-    }
-    let standing = transaction.usage_standing()?;
-    blockers_from(transaction, clock, &run, &standing)
+    blockers_from(transaction, clock, &run)
 }
 
-/// [`blockers`] of `run` on a `standing` read in this transaction.
+/// [`blockers`] of `run`, read in this transaction: its deadline and its
+/// coordinator, never its usage (no token budget blocks a resume).
 fn blockers_from(
     transaction: &(impl BoardRuns + BoardMembers + ?Sized),
     clock: &dyn Clock,
     run: &RunRecord,
-    standing: &UsageStanding,
 ) -> Result<Vec<String>, BoardError> {
     if !paused(run) {
         return Ok(Vec::new());
@@ -146,14 +148,8 @@ fn blockers_from(
     let now = clock.now_seconds();
     let (elapsed, _) = paused_for(now, pause_started(transaction)?);
     let deadline = run.deadline + elapsed;
-    let decision = budget_decision(standing)?;
     let lost = lost_coordinator(transaction, run)?;
-    Ok(resume_blockers(
-        deadline,
-        now,
-        decision.as_str(),
-        lost.as_deref(),
-    ))
+    Ok(resume_blockers(deadline, now, lost.as_deref()))
 }
 
 /// `Transaction.pause_started()`: when the latest pause began.
@@ -200,34 +196,6 @@ fn lost_coordinator(
         .iter()
         .any(|member| member == coordinator)
         .then(|| coordinator.to_owned()))
-}
-
-/// `usage_budget_decision(report['budget'], report['totals'])`: no limit
-/// allows before anything else is read, as Python's does.
-pub(crate) fn budget_decision(standing: &UsageStanding) -> Result<UsageDecision, BoardError> {
-    let Value::Object(budget) = &standing.budget else {
-        return Err(edited("usage budget"));
-    };
-    let token_limit = match budget.get("token_limit") {
-        Some(Value::Null) => return Ok(UsageDecision::Allow),
-        Some(limit) => limit.as_u64().ok_or_else(|| edited("usage budget"))?,
-        None => return Err(edited("usage budget")),
-    };
-    let strict_unknown = budget
-        .get("strict_unknown")
-        .ok_or_else(|| edited("usage budget"))?;
-    let count = |total: &Value| total.as_u64().ok_or_else(|| edited("usage totals record"));
-    Ok(usage_budget_decision(
-        &UsageBudget {
-            token_limit: Some(token_limit),
-            strict_unknown: python_truthy(strict_unknown),
-            warned: false,
-        },
-        &UsageTotals {
-            observed_tokens: count(&standing.observed_tokens)?,
-            unknown_usage_requests: count(&standing.unknown_usage_requests)?,
-        },
-    ))
 }
 
 #[cfg(test)]

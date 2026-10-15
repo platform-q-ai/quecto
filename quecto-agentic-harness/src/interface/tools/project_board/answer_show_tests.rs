@@ -6,7 +6,7 @@ use crate::application::project_board::dto::ShownTask;
 use crate::domain::project_board::entities::plan::{Plan, PlanFields, PlanItem};
 use crate::domain::project_board::entities::run::{Run, RunFields, RunItem};
 use crate::domain::project_board::entities::task::TaskFields;
-use crate::domain::project_board::entities::team::{Budget, Role, RoleLimits, Team};
+use crate::domain::project_board::entities::team::{Role, RoleLimits, Team};
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
 use crate::domain::project_board::value_objects::vocabulary::{
     Effort, ItemState, PlanState, RunOutcome, TaskKind, TaskStatus,
@@ -63,8 +63,7 @@ fn plan(version: u32, state: PlanState) -> Plan {
                 turns: None,
             },
         }],
-        budget: Some(Budget { tokens: 1_000 }),
-        deadline: None,
+        deadline_seconds: Some(3_600),
         image: None,
     });
     Plan::new(PlanFields {
@@ -127,6 +126,7 @@ fn answered(shown: ShownTask) -> Value {
             crate::application::project_board::operations::PlanView::default(),
         ),
         None,
+        None,
     )
 }
 
@@ -171,8 +171,7 @@ fn show_answers_the_accepted_plan_each_version_and_the_runs() {
                     "members": 2,
                     "turns": null,
                 }],
-                "budget_tokens": 1_000,
-                "deadline": null,
+                "deadline_seconds": 3_600,
                 "image": null,
             },
             "proposed_by": identity,
@@ -387,6 +386,7 @@ fn a_page_answers_only_the_parts_it_names_from_where_it_names() {
                     page,
                 },
             ),
+            None,
             None,
         )
     };

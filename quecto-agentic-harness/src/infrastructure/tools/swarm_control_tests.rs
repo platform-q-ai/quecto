@@ -2,34 +2,30 @@ use super::*;
 use crate::application::swarm::ports::CoordinationPort;
 use serde_json::json;
 #[tokio::test]
-async fn native_supervisor_validates_budget_and_event_requests_without_mutation() {
+async fn native_supervisor_validates_event_requests_without_mutation() {
     let (_directory, context) = crate::swarm_control_fixture::context();
+    // Owner decision, 2026-10-14: no token budget limits a swarm, so
+    // `usage_budget` is an unknown op, whatever its fields.
     for (op, input) in [
-        ("usage_budget", json!({})),
-        (
-            "usage_budget",
-            json!({"token_limit":4,"strict_unknown":"yes"}),
-        ),
-        ("usage_budget", json!({"token_limit":-1})),
+        ("usage_budget", json!({"token_limit":100})),
+        ("usage_budget", json!({"token_limit":null})),
         ("events", json!({"limit":0})),
         ("events", json!({"after":"bad"})),
         ("unknown", json!({})),
     ] {
-        assert!(control(context.clone(), op, input).await.is_err());
+        assert!(control(context.clone(), op, input).await.is_err(), "{op}");
     }
-    let configured = control(context.clone(), "usage_budget", json!({"token_limit":100}))
+    let refused = control(context.clone(), "usage_budget", json!({"token_limit":100}))
         .await
-        .unwrap();
-    assert_eq!(configured["budget"]["token_limit"], 100);
+        .unwrap_err();
     assert_eq!(
-        control(context.clone(), "usage", json!({})).await.unwrap()["budget"]["strict_unknown"],
-        true
+        refused.to_string(),
+        "tool error: unknown swarm operation usage_budget"
     );
-    assert!(
-        control(context.clone(), "usage_budget", json!({"token_limit":null}))
-            .await
-            .unwrap()["budget"]["token_limit"]
-            .is_null()
+    assert_eq!(
+        control(context.clone(), "usage", json!({})).await.unwrap()["budget"]["token_limit"],
+        serde_json::Value::Null,
+        "no budget was written"
     );
     let paused = control(context.clone(), "pause", json!({"reason":"approval"}))
         .await
@@ -68,23 +64,27 @@ async fn public_swarm_tool_reports_usage_after_completion() {
     assert!(report.get("budget").is_some(), "{report}");
 }
 
+/// The public `swarm` tool takes no `usage_budget` op: it is refused, and
+/// the schema it advertises names neither the op nor its fields.
 #[tokio::test]
-async fn public_swarm_tool_configures_and_disables_usage_budget() {
+async fn public_swarm_tool_takes_no_usage_budget_op() {
     use crate::application::tools::ports::Tool;
     let (_directory, context) = crate::swarm_control_fixture::context();
     let tool = public_tool(context.clone());
-    for limit in [json!(100), serde_json::Value::Null] {
-        let result = tool
-            .execute(&json!({"op":"usage_budget","token_limit":limit}).to_string())
-            .await
-            .unwrap();
-        assert!(!result.is_error, "{}", result.content);
-        assert_eq!(
-            crate::infrastructure::tools::call_work::off_the_runtime(|| context.usage_report())
-                .unwrap()["budget"]["token_limit"],
-            limit
-        );
+    let result = tool
+        .execute(&json!({"op":"usage_budget","token_limit":100}).to_string())
+        .await
+        .unwrap();
+    assert!(result.is_error, "{}", result.content);
+    let schema = tool.definition().parameters_schema;
+    for gone in ["usage_budget", "token_limit", "strict_unknown"] {
+        assert!(!schema.contains(gone), "{gone}");
     }
+    assert!(
+        crate::infrastructure::tools::call_work::off_the_runtime(|| context.usage_report())
+            .unwrap()["budget"]["token_limit"]
+            .is_null()
+    );
 }
 
 /// #1715: creating a run makes the creator a coordinator, which a workflow

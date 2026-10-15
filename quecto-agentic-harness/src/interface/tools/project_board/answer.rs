@@ -10,9 +10,11 @@
 //!   the `task` naming it, the `plan` and the version it `superseded`
 //!   (`null` when none was accepted), or `head` alone; and
 //!   `clock` when a request that reads the clock was not bounded against
-//!   an outside time.
+//!   an outside time. On the agent tool, a started task's answer also
+//!   carries `steps` ([`start_steps`]).
 //! - Refusal: `{"ok": false, "op": …, "error": {"code", "message", …}}`.
 //!   Each [`ErrorCode`] has one shape: the same fields every time, but
+//!   a refused start's `steps` on the agent tool ([`start_steps`]), and
 //!   `artifact_set_aside` and `duplicate_artifact`, which name an
 //!   artifact by its kind: a discussion by `discussion` where a plan, run,
 //!   change or review gives `task` and `number` (and a task, for
@@ -216,7 +218,14 @@ const NO_SWARM_REPORT: &str = "items recorded as todo: no swarm report";
 const NOT_CHECKED: &str =
     "this end was not checked against running swarms: if the run's coordinator still runs, stop it";
 
-pub fn outcome(op: &str, outcome: &BoardOutcome, clock: Option<String>) -> Value {
+/// `steps`, when given, are the steps the caller takes next (a start's
+/// on the agent tool, [`start_steps`]).
+pub fn outcome(
+    op: &str,
+    outcome: &BoardOutcome,
+    clock: Option<String>,
+    steps: Option<String>,
+) -> Value {
     let mut fields = Map::new();
     match outcome {
         BoardOutcome::Bootstrapped { head, created } => {
@@ -285,6 +294,9 @@ pub fn outcome(op: &str, outcome: &BoardOutcome, clock: Option<String>) -> Value
             json!({"referenced": false, "reason": shown(&why)}),
         );
     }
+    if let Some(steps) = steps {
+        fields.insert("steps".into(), Value::String(steps));
+    }
     let mut answer = Map::new();
     answer.insert("ok".into(), Value::Bool(true));
     answer.insert("op".into(), Value::String(op.into()));
@@ -295,8 +307,10 @@ pub fn outcome(op: &str, outcome: &BoardOutcome, clock: Option<String>) -> Value
 /// What `start` answers (S4c): the `task` as written, its `run`, the
 /// `coordinator` launched for it (its `agent` and the container it runs
 /// in, `environment_ref`), the worker roles whose models were not applied
-/// (`not_applied`: `role`, `model`, `effort`), and whether the start took
-/// the claim (`claim`: `fresh`) or found it held by the starter (`held`).
+/// (`not_applied`: `role`, `model`, `effort`), whether the start took
+/// the claim (`claim`: `fresh`) or found it held by the starter (`held`);
+/// on the agent tool, [`outcome`] adds the `steps` for running it
+/// ([`start_steps::running`]).
 fn started_fields(started: &StartedTask) -> Map<String, Value> {
     let not_applied: Vec<Value> = started
         .not_applied
@@ -453,17 +467,28 @@ pub fn task_json(task: &Task) -> Value {
 }
 
 /// A refused answer to `op` (`None` when the request named no op it
-/// knows), with `code`'s own fields.
-fn refused(op: Option<&str>, code: ErrorCode, message: &str, fields: Map<String, Value>) -> Value {
+/// knows), with `code`'s own fields and the `steps` its caller takes next,
+/// when it has any.
+fn refused(
+    op: Option<&str>,
+    code: ErrorCode,
+    message: &str,
+    fields: Map<String, Value>,
+    steps: Option<&str>,
+) -> Value {
     let mut error = Map::new();
     error.insert("code".into(), Value::String(code.as_str().into()));
     error.insert("message".into(), shown_json(message));
     error.extend(fields);
+    if let Some(steps) = steps {
+        error.insert("steps".into(), json!(steps));
+    }
     json!({"ok": false, "op": op, "error": Value::Object(error)})
 }
 
-/// A request refused before the board was read.
-pub fn request_refused(op: Option<&str>, error: &RequestError) -> Value {
+/// A request refused before the board was read, with `steps` as
+/// [`refused`] takes them.
+pub fn request_refused(op: Option<&str>, error: &RequestError, steps: Option<&str>) -> Value {
     refused(
         op,
         ErrorCode::InvalidRequest,
@@ -472,6 +497,7 @@ pub fn request_refused(op: Option<&str>, error: &RequestError) -> Value {
             ("field", shown_json(&error.field)),
             ("problem", shown_json(&error.problem)),
         ]),
+        steps,
     )
 }
 
@@ -494,15 +520,26 @@ impl FrontEndRefusal {
     }
 }
 
-/// A front end's own refusal with a `reason`.
-pub fn reason_refused(op: Option<&str>, refusal: FrontEndRefusal, reason: &str) -> Value {
+/// A front end's own refusal with a `reason`, with `steps` as [`refused`]
+/// takes them.
+pub fn reason_refused(
+    op: Option<&str>,
+    refusal: FrontEndRefusal,
+    reason: &str,
+    steps: Option<&str>,
+) -> Value {
     let fields = fields([("reason", shown_json(reason))]);
-    refused(op, refusal.code(), reason, fields)
+    refused(op, refusal.code(), reason, fields, steps)
 }
 
-/// An operation the board refused.
-pub fn board_refused(op: &str, error: &ProjectBoardError) -> Value {
-    json!({"ok": false, "op": op, "error": error_json(error)})
+/// An operation the board refused, its error carrying the `steps` its
+/// caller takes next, when it has any (a start's, [`start_steps`]).
+pub fn board_refused_with(op: &str, error: &ProjectBoardError, steps: Option<String>) -> Value {
+    let mut error = error_json(error);
+    if let Some(steps) = steps {
+        error["steps"] = Value::String(steps);
+    }
+    json!({"ok": false, "op": op, "error": error})
 }
 
 /// The code an answer refusing `error` carries.
@@ -671,6 +708,9 @@ fn error_fields(error: &ProjectBoardError) -> (ErrorCode, Map<String, Value>) {
         ),
     }
 }
+
+#[path = "answer_start.rs"]
+pub mod start_steps;
 
 #[path = "answer_rules.rs"]
 mod rules;

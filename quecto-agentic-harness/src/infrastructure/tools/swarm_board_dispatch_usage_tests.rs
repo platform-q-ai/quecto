@@ -23,23 +23,23 @@ fn request_admission_answers_pythons_shape() {
     );
 }
 
-/// `usage_budget` answers the report with the budget in Python's
-/// insertion order; `_record_request` answers the control receipt.
+/// `_record_request` answers the control receipt in Python's key order,
+/// the run still running, its budget the default no board writes over any
+/// more: an unmeasured request pauses nothing (owner decision,
+/// 2026-10-14). `usage_budget` is no method.
 #[test]
-fn usage_budget_and_record_request_answer_pythons_shapes() {
+fn record_request_answers_pythons_shape_and_usage_budget_is_gone() {
     let (_dir, handles) = board(1_000.0);
     running(&handles);
-    let report = call(&handles, "parent", "usage_budget", json!([100])).unwrap();
-    assert_eq!(
-        serde_json::to_string(&report["budget"]).unwrap(),
-        r#"{"token_limit":100,"strict_unknown":true,"warned":false}"#
-    );
-    assert_eq!(report["totals"]["requests"], json!(0));
     let receipt = call(&handles, "parent", "_record_request", json!([failed("r1")])).unwrap();
     assert_eq!(
         serde_json::to_string(&receipt).unwrap(),
-        r#"{"status":"paused","outcome":"budget-exhausted","reason":"observed usage budget or unavailable measurement","generation":5,"budget":{"token_limit":100,"strict_unknown":true,"warned":true,"observed_tokens":0,"unknown_usage_requests":1},"resume_blockers":["raise or disable the token budget (swarm_control usage_budget) before resuming"]}"#
+        r#"{"status":"running","outcome":null,"reason":null,"generation":0,"budget":{"token_limit":null,"strict_unknown":false,"warned":false,"observed_tokens":0,"unknown_usage_requests":1},"resume_blockers":[]}"#
     );
+    for args in [json!([100]), json!([null, false])] {
+        let refused = call(&handles, "parent", "usage_budget", args).unwrap_err();
+        assert_eq!(refused.kind(), RefusalKind::Calling, "{refused}");
+    }
 }
 
 /// Each argument binds Python's signature: `strict_unknown` defaults to
@@ -49,16 +49,6 @@ fn usage_methods_bind_pythons_signatures() {
     let (_dir, handles) = board(1_000.0);
     running(&handles);
     for (method, args, message) in [
-        (
-            "usage_budget",
-            json!([]),
-            "usage_budget: missing required argument token_limit",
-        ),
-        (
-            "usage_budget",
-            json!([1, true, 3]),
-            "usage_budget: takes 2 arguments, 3 given",
-        ),
         (
             "_record_request",
             json!({}),
@@ -80,36 +70,24 @@ fn usage_methods_bind_pythons_signatures() {
             BoardError::new(RefusalKind::Calling, message)
         );
     }
-    let report = call(
-        &handles,
-        "parent",
-        "usage_budget",
-        json!({"token_limit": null, "strict_unknown": false}),
-    )
-    .unwrap();
-    assert_eq!(report["budget"]["strict_unknown"], json!(false));
 }
 
-/// Each usage call leaves one record: INFO for `usage_budget` and
-/// `_record_request`, DEBUG for the admission read, each with the decision
-/// it took (the budget's effect first); a secret-shaped request id or
-/// record field never reaches the log.
+/// Each usage call leaves one record: INFO for `_record_request`, DEBUG
+/// for the admission read, each with the decision it took; a
+/// secret-shaped request id or record field never reaches the log.
 #[test]
 fn usage_calls_record_their_decisions_without_argument_text() {
     let secret = "sk-ant-api03-DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD";
-    let log = captured(9, |handles| {
+    let log = captured(6, |handles| {
         running(handles);
         let mut record = failed(secret);
         record["error_class"] = json!(format!("see {secret}"));
         record["context_input_tokens"] = json!(40);
         record["output_tokens"] = json!(0);
         for (method, args) in [
-            ("usage_budget", json!([100, false])),
-            ("usage_budget", json!([100, false])),
             ("_request_admission", json!([])),
             ("_record_request", json!([record.clone()])),
             ("_record_request", json!([record])),
-            ("usage_budget", json!([40, false])),
             ("_request_admission", json!([])),
         ] {
             call(handles, "parent", method, args).unwrap();
@@ -122,12 +100,9 @@ fn usage_calls_record_their_decisions_without_argument_text() {
         .skip(1)
         .collect();
     let expected = [
-        (" INFO ", "usage_budget", "ok", "configured"),
-        (" INFO ", "usage_budget", "ok", "unchanged"),
         ("DEBUG ", "_request_admission", "ok", "model_gate"),
         (" INFO ", "_record_request", "ok", "recorded"),
         (" INFO ", "_record_request", "ok", "redelivered"),
-        (" INFO ", "usage_budget", "ok", "paused"),
         ("DEBUG ", "_request_admission", "ok", "model_gate"),
         (" INFO ", "_record_request", "refused", "none"),
     ];
@@ -150,24 +125,26 @@ fn usage_calls_record_their_decisions_without_argument_text() {
     assert!(!log.contains("see "), "argument text never logged: {log}");
 }
 
-/// The admission read records at DEBUG, but one whose budget warns or
-/// pauses the run (a budget another writer set, here written straight into
-/// the file) records at INFO, so every budget pause is visible at the
-/// default level; a redelivery that rewrites the record is `replaced`.
+/// The admission read records at DEBUG with its gate, whatever budget
+/// another writer stored (here written straight into the file, below and
+/// then far below the usage): no budget warns or pauses the run (owner
+/// decision, 2026-10-14). A redelivery that rewrites the record is
+/// `replaced`.
 #[test]
-fn an_admission_read_that_warns_or_pauses_records_at_info() {
+fn an_admission_read_under_a_spent_budget_records_its_gate_at_debug() {
     let known = json!({"request_id": "k", "instrumented_attempts": 1, "outcome": "succeeded",
         "context_input_tokens": 45, "output_tokens": 5,
         "runtime": {"process_instance_id": "p", "executable_sha256": "abc"}});
-    let log = captured_on(6, |handles, database| {
+    let log = captured_on(5, |handles, database| {
         running(handles);
         call(handles, "parent", "_record_request", json!([known.clone()])).unwrap();
         call(handles, "parent", "_record_request", json!([known.clone()])).unwrap();
+        // A budget row an older board stored: nothing writes one now.
         let budget = |limit: u64| {
             let written = rusqlite::Connection::open(database)
                 .unwrap()
                 .execute(
-                    "UPDATE usage_budget SET payload=? WHERE id=1",
+                    "INSERT OR REPLACE INTO usage_budget VALUES(1, ?)",
                     [format!(
                         r#"{{"token_limit": {limit}, "strict_unknown": false, "warned": false}}"#
                     )],
@@ -175,11 +152,12 @@ fn an_admission_read_that_warns_or_pauses_records_at_info() {
                 .unwrap();
             assert_eq!(written, 1, "the budget row");
         };
-        call(handles, "parent", "usage_budget", json!([1_000, false])).unwrap();
         budget(60);
-        call(handles, "parent", "_request_admission", json!([])).unwrap();
+        let admitted = call(handles, "parent", "_request_admission", json!([])).unwrap();
+        assert_eq!(admitted["status"], json!("running"));
         budget(40);
-        call(handles, "parent", "_request_admission", json!([])).unwrap();
+        let admitted = call(handles, "parent", "_request_admission", json!([])).unwrap();
+        assert_eq!(admitted["status"], json!("running"));
     });
     let records: Vec<&str> = log
         .lines()
@@ -189,9 +167,8 @@ fn an_admission_read_that_warns_or_pauses_records_at_info() {
     let expected = [
         (" INFO ", "_record_request", "recorded"),
         (" INFO ", "_record_request", "replaced"),
-        (" INFO ", "usage_budget", "configured"),
-        (" INFO ", "_request_admission", "warned"),
-        (" INFO ", "_request_admission", "paused"),
+        ("DEBUG ", "_request_admission", "model_gate"),
+        ("DEBUG ", "_request_admission", "model_gate"),
     ];
     assert_eq!(records.len(), expected.len(), "{log}");
     for (record, (level, op, decision)) in records.iter().zip(expected) {
@@ -205,18 +182,15 @@ fn an_admission_read_that_warns_or_pauses_records_at_info() {
     }
 }
 
-/// Only the usage methods raise their level for the budget's `paused` or
-/// `warned`: another method's decision of the same name keeps its own
-/// level, and a usage method's other decisions keep the method's.
+/// No method raises its level for a decision named `paused` or `warned`
+/// as a budget's: the usage methods never decide either (owner decision,
+/// 2026-10-14), and `pause`'s own `paused` keeps its level.
 #[test]
-fn only_a_usage_method_is_raised_by_the_budgets_decision() {
+fn no_usage_method_is_raised_by_a_budget_decision() {
     use super::super::Level;
     use super::super::method::Method;
     for decision in ["paused", "warned"] {
-        assert_eq!(
-            Method::RequestAdmission.served_level(decision),
-            Level::Mutation
-        );
+        assert_eq!(Method::RequestAdmission.served_level(decision), Level::Read);
         for method in [Method::Status, Method::Snapshot, Method::UsageReport] {
             assert_eq!(method.served_level(decision), Level::Read, "{method:?}");
         }
@@ -289,23 +263,23 @@ fn the_admission_read_records_the_gate_that_read_it() {
     assert!(!log.contains("sk-ant"), "{log}");
 }
 
-/// #2339 review N4: a retry or tool gate's read in which the budget warns
-/// or pauses the run records the budget's `warned` or `paused` at INFO in
-/// place of the gate, as the model gate's does.
+/// #2339 review N4: a retry or tool gate's read records its gate, at
+/// DEBUG, under a stored budget the usage has passed: no budget warns or
+/// pauses the run (owner decision, 2026-10-14).
 #[test]
-fn a_retry_or_tool_gate_read_that_warns_or_pauses_records_the_budget() {
+fn a_retry_or_tool_gate_read_under_a_spent_budget_records_its_gate() {
     let known = json!({"request_id": "k", "instrumented_attempts": 1, "outcome": "succeeded",
         "context_input_tokens": 45, "output_tokens": 5,
         "runtime": {"process_instance_id": "p", "executable_sha256": "abc"}});
-    let log = captured_on(5, |handles, database| {
+    let log = captured_on(4, |handles, database| {
         running(handles);
         call(handles, "parent", "_record_request", json!([known.clone()])).unwrap();
-        call(handles, "parent", "usage_budget", json!([1_000, false])).unwrap();
+        // A budget row an older board stored: nothing writes one now.
         let budget = |limit: u64| {
             let written = rusqlite::Connection::open(database)
                 .unwrap()
                 .execute(
-                    "UPDATE usage_budget SET payload=? WHERE id=1",
+                    "INSERT OR REPLACE INTO usage_budget VALUES(1, ?)",
                     [format!(
                         r#"{{"token_limit": {limit}, "strict_unknown": false, "warned": false}}"#
                     )],
@@ -322,7 +296,7 @@ fn a_retry_or_tool_gate_read_that_warns_or_pauses_records_the_budget() {
         .lines()
         .filter(|line| line.contains(TELEMETRY_TARGET) && line.contains("_request_admission"))
         .collect();
-    let expected = [(" INFO ", "warned"), (" INFO ", "paused")];
+    let expected = [("DEBUG ", "retry_gate"), ("DEBUG ", "tool_gate")];
     assert_eq!(records.len(), expected.len(), "{log}");
     for (record, (level, decision)) in records.iter().zip(expected) {
         for field in [level.to_owned(), format!("decision=\"{decision}\"")] {

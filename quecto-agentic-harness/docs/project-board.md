@@ -160,6 +160,19 @@ A plan says how a task will be done: its approach (markdown), its task items
 gives them (#2481 M4b). Each version is its own file, `plans/<task>.<n>.md`, and
 a change to a plan writes that file alone: the task's file is left as it is.
 
+A team is `{"roles": [{"name", "model", "effort", "members", "turns"}],
+"deadline_seconds", "image"}`. `deadline_seconds` is how long the run has, in
+seconds from Start, 600 to 604800 (ten minutes to seven days), and a day when
+it is null or left out; it is a duration, so a plan accepted long before it
+starts never starts past its deadline. A team sets no token budget: a run
+started from a plan has none (owner decision, 2026-10-14), and `budget_tokens`,
+like the old absolute `deadline`, is refused as an unknown key. A plan file
+written before then may still hold a `Budget tokens` or `Deadline` row: it is
+read past, so the plan reads with no budget and the default deadline, and no
+write holds either again. A running board run's deadline is extended as any
+swarm's is: `agent_cmd` `swarm_control` `extend` with `deadline_seconds` on its
+coordinator.
+
 - `propose_plan(task, approach, items, team)` adds a draft, numbered after the
   task's last version, proposed by the committer. `approach` and `items` are
   required (`""` and `[]` are allowed); `team` is optional, and `null` or
@@ -189,7 +202,15 @@ can never be a version's, so no write lands on it, where `show(task, version)`
 refuses a version it cannot find while such a file is set aside
 (`set_aside_file`), since that file may hold it. An edit is refused for a version
 the task does not have (`unknown_plan_version`), one that is not a draft
-(`plan_not_draft`), and one that changes nothing (`no_edit`). Text is normalised
+(`plan_not_draft`), and one that changes nothing (`no_edit`). A proposal or an
+edit whose plan, as written, has a `coordinator` role whose model does not name
+its provider as `provider/model` is refused with the code `start` gives such a
+model (`brief`, code `coordinator_model`), so the planner learns it before the
+task is started; an edit is judged on the team it writes, given or kept. Propose
+and edit judge the model of every `coordinator` role, whatever its members;
+`start` judges the team in its own order, so a coordinator role of more than one
+member is refused there first (`team_unsupported`). A plan with no team, or
+no `coordinator` role, lets the coordinator be chosen. Text is normalised
 as it enters, as a task's is: the approach as markdown, and each task item's title
 and criteria as one line. A number out of its range is refused naming the field as
 the request spells it (a role's `members` outside 1 to 32 is
@@ -256,9 +277,11 @@ and the answer lists them as `not_applied`.
   refused (`no_accepted_plan`), and so is one with a run going (`run_open`).
 - A plan a swarm cannot take is refused before anything is written (`brief`,
   with the brief's own code: `team_too_large`, `team_unsupported`,
-  `deadline_passed`, `deadline_too_soon`, `no_task_items`, `item_too_large`,
+  `no_task_items`, `item_too_large`,
   `brief_too_large`, and `coordinator_model` for a coordinator role whose model
-  does not name its provider as `provider/model`: none is guessed).
+  does not name its provider as `provider/model`: none is guessed; the same
+  rule refuses such a plan when it is proposed or edited, and is kept here as a
+  backstop).
 - A session that may not spawn starts nothing (`no_launcher`): `start`
   launches only what the session's own `spawn` would, and asks again as it
   launches.
@@ -297,8 +320,20 @@ agent's own commits stay its clone's. A value not so shaped is refused
 (`no_committer`), never ignored for the clone's own.
 
 The answer gives the `task`, the `run`, the `coordinator` (`agent`,
-`environment_ref`), `not_applied` (`role`, `model`, `effort`) and `claim`:
-`fresh` when the start took it, `held` when the starter held it already.
+`environment_ref`), `not_applied` (`role`, `model`, `effort`), `claim`:
+`fresh` when the start took it, `held` when the starter held it already, and,
+on the agent tool, `steps`: the steps for running the run to its end, as text for the agent that
+started it, the task's id and the run's number filled in.
+
+On the agent tool, every refused start's `error` carries `steps` too, what its
+caller does next: for `launch_failed`, the undo by its fields, the task's id
+filled in; for `contended`, to call again up to three times; for any other
+refusal (the board's, an invalid request, a request the strict read refused
+whose op reads as `start`, or a front end's own), to say why and stop. No other
+op's answer carries `steps`, and these answers carry none: the CLI's (which
+takes no `start`), a refusal of a request whose op cannot be read, and a call
+that did not finish (cancelled, or ended without an answer). The words are the
+Pocket start prompt's, moved there unchanged, so that prompt can be one line.
 
 ## Ending a run
 

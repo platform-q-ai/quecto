@@ -5,7 +5,8 @@ use crate::application::project_board::dto::{PlanEdit, ProjectBoardError};
 use crate::application::project_board::ports::ProjectBoardStore;
 use crate::application::project_board::telemetry::OpFacts;
 use crate::application::project_board::use_cases::fixtures_tests::{
-    SetClock, at, holding_plans, person, plan_item, plan_of, slug,
+    SetClock, at, coordinated_team, holding_plans, person, plan_item, plan_of, slug,
+    unqualified_coordinator,
 };
 use crate::domain::project_board::entities::plan::{Plan, PlanFields};
 use crate::domain::project_board::value_objects::rule_error::BoardRuleError;
@@ -260,5 +261,76 @@ fn a_task_set_aside_holds_edits() {
     assert_eq!(
         edit_as(&store, "Ada").execute(&edit),
         Err(crate::application::project_board::use_cases::fixtures_tests::set_aside_task("a"))
+    );
+}
+
+/// An edit is judged on the draft it writes: a team given, or the draft's
+/// kept, whose coordinator role's model names no provider is refused, as
+/// a start would refuse it; with its provider, or no team, it is written.
+#[test]
+fn a_coordinator_model_without_its_provider_is_refused_at_edit() {
+    let store = holding_plans(
+        "a",
+        TaskStatus::Ready,
+        vec![plan_of("a", 1, PlanState::Draft)],
+    );
+    let writes = store.writes();
+    let bare = PlanEdit {
+        team: Some(Some(coordinated_team("claude-opus"))),
+        ..of(1)
+    };
+    assert_eq!(
+        edit_as(&store, "Ada").execute(&bare),
+        Err(unqualified_coordinator())
+    );
+    assert_eq!(store.writes(), writes, "nothing written");
+    let named = coordinated_team("anthropic/claude-opus");
+    let qualified = PlanEdit {
+        team: Some(Some(named.clone())),
+        ..of(1)
+    };
+    let edited = edit_as(&store, "Ada").execute(&qualified).unwrap();
+    assert_eq!(edited.fields().team, Some(named));
+    let none = PlanEdit {
+        team: Some(None),
+        ..of(1)
+    };
+    let edited = edit_as(&store, "Ada").execute(&none).unwrap();
+    assert_eq!(edited.fields().team, None);
+    let held = Plan::new(PlanFields {
+        team: Some(coordinated_team("claude-opus")),
+        ..plan_of("a", 1, PlanState::Draft).into_fields()
+    })
+    .unwrap();
+    let store = holding_plans("a", TaskStatus::Ready, vec![held]);
+    let approach = PlanEdit {
+        approach: Some("New.".into()),
+        ..of(1)
+    };
+    assert_eq!(
+        edit_as(&store, "Ada").execute(&approach),
+        Err(unqualified_coordinator()),
+        "the kept team is judged too"
+    );
+}
+
+/// Review round 2 (#2566): an edit judges the model of every coordinator
+/// role, whatever its members.
+#[test]
+fn a_bare_coordinator_model_is_refused_at_edit_whatever_its_members() {
+    let store = holding_plans(
+        "a",
+        TaskStatus::Ready,
+        vec![plan_of("a", 1, PlanState::Draft)],
+    );
+    let mut team = coordinated_team("claude-opus");
+    team.roles[0].limits.members = 2;
+    let pair = PlanEdit {
+        team: Some(Some(team)),
+        ..of(1)
+    };
+    assert_eq!(
+        edit_as(&store, "Ada").execute(&pair),
+        Err(unqualified_coordinator())
     );
 }
