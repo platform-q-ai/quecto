@@ -111,7 +111,6 @@ pub(super) fn decided(method: Method) -> (Option<&'static str>, BoardOpDetail) {
         | Method::RevalidateTask
         | Method::Amend
         | Method::Evidence
-        | Method::UsageBudget
         | Method::RecordRequest
         | Method::RequestAdmission
         | Method::Reserve

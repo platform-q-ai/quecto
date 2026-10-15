@@ -254,7 +254,6 @@ pub const HARNESS_OPS: &[&str] = &[
     "resume",
     "events",
     "usage",
-    "usage_budget",
 ];
 
 /// The swarm's tasks are task items (#2478): `(task-item name, old name)`
@@ -384,8 +383,6 @@ const HARNESS_PROPERTIES: &[(&str, &str)] = &[
     ("deadline_in_seconds", r#"{"type":"number"}"#),
     ("after", r#"{"type":"integer","minimum":0}"#),
     ("since", r#"{"type":"integer","minimum":0}"#),
-    ("token_limit", r#"{"type":["integer","null"],"minimum":1}"#),
-    ("strict_unknown", BOOLEAN),
 ];
 
 /// The op named `name` in [`BOARD_OPS`].

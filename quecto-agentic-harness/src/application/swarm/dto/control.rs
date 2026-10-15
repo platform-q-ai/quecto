@@ -92,8 +92,7 @@ pub struct RecentRequest {
     pub observation: Value,
 }
 
-/// What the token budget decides on and the control receipt reports
-/// (#2340): the stored budget and the two totals `usage_report` computes
+/// What the control receipt reports (#2340): the stored budget and the two totals `usage_report` computes
 /// for them, by the same SQL expressions, without the per-member
 /// aggregates or the latest observations the rest of the report reads.
 #[derive(Clone, Debug, PartialEq, Eq)]

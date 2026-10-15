@@ -63,7 +63,6 @@ fn the_schema_advertises_only_the_task_item_names() {
             "resume",
             "events",
             "usage",
-            "usage_budget",
             "task_item",
             "task_items",
             "file_owners",

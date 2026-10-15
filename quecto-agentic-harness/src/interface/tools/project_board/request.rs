@@ -138,8 +138,8 @@ pub enum Kind {
     /// as `show` gives them.
     PlanItems,
     /// A plan's team, as `show` gives it: `{"roles": [{"name", "model",
-    /// "effort", "members", "turns"}], "budget_tokens", "deadline",
-    /// "image"}`, or `null` for none.
+    /// "effort", "members", "turns"}], "deadline_seconds", "image"}`, or
+    /// `null` for none.
     Team,
     /// A board file's path, as a listing's `quarantined` shows it.
     Path,

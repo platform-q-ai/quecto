@@ -176,12 +176,12 @@ impl SwarmContext {
         wake_allowed: bool,
     ) -> Result<crate::domain::swarm::RunControlReceipt, DomainError> {
         Ok(crate::domain::swarm::RunControlReceipt {
+            // Reported only, never applied (owner decision, 2026-10-14): a
+            // budget it cannot read is none, never a failed control.
             budget: value
                 .get("budget")
                 .cloned()
-                .map(serde_json::from_value)
-                .transpose()
-                .map_err(invalid)?,
+                .and_then(|budget| serde_json::from_value(budget).ok()),
             wake_allowed,
             status: decode_status(
                 value["status"]

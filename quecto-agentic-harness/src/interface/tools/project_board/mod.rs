@@ -55,7 +55,11 @@ pub fn run(operations: &RunBoardOperation, text: &str) -> Value {
 pub fn run_recorded(operations: &RunBoardOperation, text: &str, call: &mut BoardCall) -> Value {
     let value = match read(text) {
         Ok(value) => value,
-        Err(error) => return call.refuse_request(None, &error),
+        Err(error) => {
+            let op = answer::start_steps::start_in_unread(text);
+            call.named(op);
+            return call.refuse_request(op, &error);
+        }
     };
     let op = request::op_of(&value);
     call.named(op.as_deref());
@@ -67,7 +71,10 @@ pub fn run_recorded(operations: &RunBoardOperation, text: &str, call: &mut Board
     let op = op.expect("a parsed request names an op");
     match call.executed(operations, &request) {
         Ok(outcome) => call.answer(&op, &outcome, operations.clock_note(&request)),
-        Err(error) => call.refuse_as_board(&op, &error),
+        Err(error) => {
+            let steps = answer::start_steps::refused(&request, &error);
+            call.refuse_as_board(&op, &error, steps)
+        }
     }
 }
 

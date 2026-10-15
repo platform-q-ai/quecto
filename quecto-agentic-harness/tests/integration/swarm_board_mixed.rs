@@ -87,11 +87,6 @@ impl Mixed {
         self.stored_text("SELECT payload FROM request_usage WHERE request_id='shared'")
     }
 
-    /// The stored budget payload.
-    fn budget_payload(&self) -> String {
-        self.stored_text("SELECT payload FROM usage_budget WHERE id=1")
-    }
-
     /// How many events named `action` the file holds.
     fn events(&self, action: &str) -> String {
         self.stored_text(&format!(
@@ -224,70 +219,6 @@ fn a_request_recorded_here_is_redelivered_by_another_writer() {
     assert_eq!(board.report(9.0)["totals"]["observed_tokens"], json!(37));
 }
 
-/// A request of `tokens` observed tokens (context input and output), as
-/// the worker's `id`.
-fn measured(id: &str, tokens: u64) -> Value {
-    json!({"request_id": id, "instrumented_attempts": 1, "outcome": "succeeded",
-        "context_input_tokens": tokens - 5, "output_tokens": 5})
-}
-
-/// `json.dumps` of the budget Python's `configure_usage_budget` writes.
-fn budget_text(limit: u64, strict_unknown: bool, warned: bool) -> String {
-    format!(r#"{{"token_limit": {limit}, "strict_unknown": {strict_unknown}, "warned": {warned}}}"#)
-}
-
-/// A budget one writer configured is the other writer's budget, byte for
-/// byte (Python's `json.dumps` text): configuring the same budget again on
-/// the other writes nothing (no second `usage-budget` event, the payload's
-/// bytes unchanged), and the warning either marks re-dumps the payload the
-/// other wrote.
-#[test]
-fn a_budget_either_side_configured_is_the_same_budget() {
-    let board = Mixed::running();
-    let other = board
-        .other
-        .call("parent", "usage_budget", &json!([100, false]), NOW + 3.0);
-    assert_eq!(board.events("usage-budget"), "1");
-    assert_eq!(board.budget_payload(), budget_text(100, false, false));
-    let rust = board
-        .rust
-        .call("parent", "usage_budget", &json!([100, false]), NOW + 4.0);
-    assert_eq!(other, rust, "the same budget, unchanged by the second");
-    assert_eq!(board.events("usage-budget"), "1", "Rust wrote nothing");
-    assert_eq!(board.budget_payload(), budget_text(100, false, false));
-    // Rust marks the warning on the budget the other wrote: 85 of 100.
-    assert!(matches!(
-        board.rust_records(&measured("r1", 85), 5.0),
-        Outcome::Ok(_)
-    ));
-    assert_eq!(board.events("usage-warning"), "1");
-    assert_eq!(board.budget_payload(), budget_text(100, false, true));
-
-    let rust = board
-        .rust
-        .call("parent", "usage_budget", &json!([200, true]), NOW + 6.0);
-    assert_eq!(board.events("usage-budget"), "2");
-    assert_eq!(board.budget_payload(), budget_text(200, true, false));
-    let other = board
-        .other
-        .call("parent", "usage_budget", &json!([200, true]), NOW + 7.0);
-    assert_eq!(other, rust);
-    assert_eq!(
-        board.events("usage-budget"),
-        "2",
-        "the other writer wrote nothing"
-    );
-    assert_eq!(board.budget_payload(), budget_text(200, true, false));
-    // The other marks the warning on the budget Rust wrote: 165 of 200.
-    assert!(matches!(
-        board.other_records(&measured("r2", 80), 8.0),
-        Outcome::Ok(_)
-    ));
-    assert_eq!(board.events("usage-warning"), "2");
-    assert_eq!(board.budget_payload(), budget_text(200, true, true));
-    assert_eq!(board.report(9.0)["budget"]["warned"], json!(true));
-}
-
 // ─── S13 (#2278): the harness's board beside other writers ───────────────
 
 use crate::swarm_board_diff_runs::swarm_board_diff::dump::{Dump, first_difference, logical_dump};
@@ -391,7 +322,6 @@ fn alternating() -> Vec<Mix> {
             json!([1, "{token}", [{"artifact": "report", "revision": "R1"}]]),
         ),
         mix(Rust, "parent", "verify_task", json!([1, "{token}", "R1"])),
-        mix(Drawing, "parent", "usage_budget", json!([1000, false])),
         mix(
             Rust,
             "worker",
@@ -474,9 +404,12 @@ fn single_writer_steps(mixes: &[Mix]) -> Vec<Step> {
     steps
 }
 
+/// The interleaved writers serve each call as the single writer does, and
+/// leave its file. (Python's golden of the single writer's sequence held a
+/// `usage_budget` call, retired with budgets, owner decision 2026-10-14;
+/// the sequence is compared Rust to Rust.)
 #[test]
 fn interleaved_writers_on_one_file_match_a_single_writer() {
-    run_golden(&single_writer_steps(&alternating()));
     let dir = tempfile::tempdir().expect("a directory for the boards");
     let (_, single_file, single) = created(dir.path(), "single");
     let (mixed_checkout, mixed_file, drawing) = created(dir.path(), "mixed");

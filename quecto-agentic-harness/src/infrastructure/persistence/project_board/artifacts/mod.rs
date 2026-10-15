@@ -90,6 +90,16 @@ pub trait ArtifactCodec {
     /// # Errors
     /// What in `document` is not a value of the kind.
     fn from_document(document: &Document) -> Result<Self::Value, CodecError>;
+
+    /// Whether the value keeps field `name` of the shape, so a canonical
+    /// file holds it only as the value writes it. Every field, unless a
+    /// codec keeps fewer: one a file written before a change may still
+    /// hold is read past and dropped, so such a file still reads, and is
+    /// never written again.
+    fn keeps(name: &str) -> bool {
+        let _ = name;
+        true
+    }
 }
 
 /// The file `value` is.
@@ -141,10 +151,17 @@ pub fn decode<C: ArtifactCodec>(bytes: &[u8]) -> Result<C::Value, CodecError> {
         "the marker read is the one parsed"
     );
     let value = C::from_document(&document)?;
-    match C::to_document(&value)? == document {
+    match C::to_document(&value)? == kept::<C>(document) {
         true => Ok(value),
         false => Err(CodecError::NotCanonical),
     }
+}
+
+/// `document` with only the fields its codec's value keeps
+/// ([`ArtifactCodec::keeps`]): what its value writes, when canonical.
+fn kept<C: ArtifactCodec>(mut document: Document) -> Document {
+    document.fields.retain(|(name, _)| C::keeps(name));
+    document
 }
 
 /// The file a write makes of `artifact`, by its kind's codec, or why none

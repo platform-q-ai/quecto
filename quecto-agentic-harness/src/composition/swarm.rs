@@ -21,14 +21,14 @@ use crate::application::swarm::ports::{
 use crate::application::swarm::use_cases::{
     AcceptWake, AcknowledgeMessage, ActivateMember, AdmitMember, AmendRunContract, BlockTask,
     BootstrapMember, BootstrapRun, ClaimNotifications, ClaimTask, CloseRun, CompleteRun,
-    ConfigureUsageBudget, ConfirmMemberDead, CreateRun, CreateTask, ExtendRunDeadline, JoinMember,
-    JoinRun, ListFileOwners, ListTasks, LoseCoordinator, PauseRun, QuarantineMember,
-    ReadBoardProjection, ReadControlStatus, ReadEventCursor, ReadInbox, ReadRequestAdmission,
-    ReadRunEvents, ReadRunSnapshot, ReadRunStatus, ReadRunSummary, ReadRunTotals, ReadTask,
-    ReadUsageReport, RecordEvidence, RecordMemberLaunch, RecordRequestUsage, RecoverTask,
-    RegisterMemberSocket, ReleaseFiles, ReleaseTask, ReleaseUnlaunchedMember, ReserveFiles,
-    ResumeRun, ResumeRunExternally, RevalidateTask, RevokeTask, SendMessage, SetTaskDependencies,
-    StopRun, SubmitTask, UnblockTask, VerifyTask, WithdrawMessage,
+    ConfirmMemberDead, CreateRun, CreateTask, ExtendRunDeadline, JoinMember, JoinRun,
+    ListFileOwners, ListTasks, LoseCoordinator, PauseRun, QuarantineMember, ReadBoardProjection,
+    ReadControlStatus, ReadEventCursor, ReadInbox, ReadRequestAdmission, ReadRunEvents,
+    ReadRunSnapshot, ReadRunStatus, ReadRunSummary, ReadRunTotals, ReadTask, ReadUsageReport,
+    RecordEvidence, RecordMemberLaunch, RecordRequestUsage, RecoverTask, RegisterMemberSocket,
+    ReleaseFiles, ReleaseTask, ReleaseUnlaunchedMember, ReserveFiles, ResumeRun,
+    ResumeRunExternally, RevalidateTask, RevokeTask, SendMessage, SetTaskDependencies, StopRun,
+    SubmitTask, UnblockTask, VerifyTask, WithdrawMessage,
 };
 use crate::infrastructure::persistence::audit_log::AuditLog;
 use crate::infrastructure::persistence::board_op_log::EventLogBoardOps;
@@ -219,10 +219,6 @@ pub fn build_swarm_board_handles_with(
             repository.clone(),
             clock.clone(),
             ids.clone(),
-        )),
-        configure_usage_budget: Arc::new(ConfigureUsageBudget::new(
-            repository.clone(),
-            clock.clone(),
         )),
         record_request_usage: Arc::new(RecordRequestUsage::new(
             repository.clone(),

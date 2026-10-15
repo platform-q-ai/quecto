@@ -25,7 +25,6 @@ enum Action {
     /// #2390: another member's harness changed the run's control state;
     /// only this process's run watch is nudged.
     Watch,
-    UsageBudget,
 }
 
 #[derive(Deserialize)]
@@ -37,8 +36,6 @@ enum Command {
         reason: Option<String>,
         generation: Option<u64>,
         agent_id: Option<String>,
-        token_limit: Option<u64>,
-        strict_unknown: Option<bool>,
         deadline_seconds: Option<u64>,
     },
 }
@@ -50,8 +47,6 @@ pub(super) async fn intercept(ctx: &ReaderDispatchCtx<'_>) -> bool {
         reason,
         generation,
         agent_id,
-        token_limit,
-        strict_unknown,
         deadline_seconds,
     }) = serde_json::from_str(&ctx.line)
     else {
@@ -158,30 +153,6 @@ pub(super) async fn intercept(ctx: &ReaderDispatchCtx<'_>) -> bool {
         return true;
     }
     let action = match action {
-        Action::UsageBudget => {
-            let value: serde_json::Value =
-                serde_json::from_str(&ctx.line).expect("validated command");
-            if value.get("token_limit").is_none() {
-                let event = super::protocol::AgentEvent::err(
-                    id.as_deref(),
-                    "swarm_control",
-                    "token_limit is required; null explicitly disables the budget",
-                );
-                super::uds_busy_subagents::write_event(
-                    ctx.registry,
-                    ctx.client_id,
-                    id.as_deref(),
-                    "swarm_control",
-                    &event,
-                )
-                .await;
-                return true;
-            }
-            RunControlAction::UsageBudget {
-                token_limit,
-                strict_unknown: strict_unknown.unwrap_or(true),
-            }
-        }
         Action::Pause => RunControlAction::Pause {
             reason: reason.unwrap_or_else(|| "supervisor requested pause".into()),
         },

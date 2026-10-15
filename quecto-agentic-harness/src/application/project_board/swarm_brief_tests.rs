@@ -2,9 +2,10 @@ use super::*;
 use crate::domain::project_board::entities::claim::Identity;
 use crate::domain::project_board::entities::plan::{Plan, PlanFields, PlanItem};
 use crate::domain::project_board::entities::task::{Task, TaskFields};
-use crate::domain::project_board::entities::team::{Budget, Role, RoleLimits, Team};
+use crate::domain::project_board::entities::team::{Role, RoleLimits, Team};
 use crate::domain::project_board::services::starts::start;
 use crate::domain::project_board::value_objects::telemetry::StaticKind;
+use crate::domain::project_board::value_objects::timestamp::Timestamp;
 use crate::domain::project_board::value_objects::vocabulary::{PlanState, TaskKind, TaskStatus};
 
 fn at(time: &str) -> Timestamp {
@@ -88,14 +89,13 @@ fn plan_with(items: Vec<PlanItem>, team: Option<Team>, approach: &str) -> Plan {
 fn brief(plan: &Plan) -> Result<SwarmBrief, BriefRefusal> {
     let now = at("10:00:00");
     let started = start(&task(), &[], Some(plan), &person("Bob"), &now).unwrap();
-    brief_of(&started, &now)
+    brief_of(&started)
 }
 
 fn team(roles: Vec<Role>) -> Team {
     Team {
         roles,
-        budget: Some(Budget { tokens: 2_000_000 }),
-        deadline: Some(at("16:00:00")),
+        deadline_seconds: Some(6 * 3600),
         image: None,
     }
 }
@@ -148,8 +148,6 @@ fn a_plan_maps_onto_the_swarms_inputs() {
         criteria: RUN_CRITERIA.to_vec(),
         member_limit: Some(4),
         deadline_in_seconds: 6 * 3600,
-        deadline_clamped: false,
-        usage_budget: Some(2_000_000),
         items: vec![
             BriefItem {
                 id: slug("schema"),
@@ -196,9 +194,9 @@ fn a_plan_maps_onto_the_swarms_inputs() {
     // 19 + 106; the criteria 11 + 7 + 76 and 16 + 7 + 100; the items 3 x 64
     // for the template, then schema 25 + 17, api 19 + 18 + 31 + 7 (its
     // dependency), docs 21 + 18 + 4 + 7; the coordinator 12 + 22 + 5; the
-    // workers 8 + 8 + 5 and 9 + 6 + 5; the numbers v1 2, limit 4 2,
-    // deadline 21600 6 and budget 2000000 8.
-    assert_eq!(got.bytes(), 4952);
+    // workers 8 + 8 + 5 and 9 + 6 + 5; the numbers v1 2, limit 4 2 and
+    // deadline 21600 6.
+    assert_eq!(got.bytes(), 4944);
 }
 
 /// No team: the coordinator picks its pool, its model is the launcher's,
@@ -208,8 +206,6 @@ fn a_plan_without_a_team_leaves_the_pool_to_the_coordinator() {
     let got = brief(&plan_with(items(), None, "")).unwrap();
     assert_eq!(got.member_limit, None);
     assert_eq!(got.deadline_in_seconds, 24 * 3600);
-    assert!(!got.deadline_clamped);
-    assert_eq!(got.usage_budget, None);
     assert_eq!(got.coordinator, None);
     assert!(got.not_applied.is_empty());
     // A blank approach is no constraint; the pointer to the plan stays.
@@ -242,29 +238,21 @@ fn the_member_limit_is_the_coordinator_and_every_worker() {
     );
 }
 
-/// A deadline is the plan's less now: at least ten minutes off, and at
-/// most seven days, a later one clamped and said to be.
+/// A deadline is the plan's seconds from Start, as given, however long
+/// ago the plan was accepted: ten minutes to seven days, which its schema
+/// holds it to; a day when it names none.
 #[test]
-fn the_deadline_is_ten_minutes_to_a_week_off() {
-    let deadline = |deadline: &str| {
+fn the_deadline_is_the_plans_seconds_from_start() {
+    let deadline = |seconds: Option<u32>| {
         let mut with = full_team();
-        with.deadline = Some(Timestamp::parse(deadline).unwrap());
-        with_team(with).map(|brief| (brief.deadline_in_seconds, brief.deadline_clamped))
+        with.deadline_seconds = seconds;
+        with_team(with).map(|brief| brief.deadline_in_seconds)
     };
-    assert_eq!(deadline("2026-10-10T10:10:00Z"), Ok((600, false)));
-    assert_eq!(deadline("2026-10-17T10:00:00Z"), Ok((7 * 24 * 3600, false)));
-    assert_eq!(deadline("2026-10-17T10:00:01Z"), Ok((7 * 24 * 3600, true)));
-    assert_eq!(deadline("2027-01-01T00:00:00Z"), Ok((7 * 24 * 3600, true)));
-    for soon in ["2026-10-10T10:09:59Z", "2026-10-10T10:00:01Z"] {
-        assert_eq!(deadline(soon), Err(BriefRefusal::DeadlineTooSoon), "{soon}");
-    }
-    for passed in ["2026-10-10T10:00:00Z", "2026-10-09T10:00:00Z"] {
-        assert_eq!(
-            deadline(passed),
-            Err(BriefRefusal::DeadlinePassed),
-            "{passed}"
-        );
-    }
+    assert_eq!(deadline(Some(600)), Ok(600));
+    assert_eq!(deadline(Some(7 * 24 * 3600)), Ok(7 * 24 * 3600));
+    assert_eq!(deadline(Some(90 * 60)), Ok(90 * 60));
+    assert_eq!(deadline(None), Ok(DEFAULT_DEADLINE_SECONDS));
+    assert_eq!((MIN_DEADLINE_SECONDS, MAX_DEADLINE_SECONDS), (600, 604_800));
 }
 
 /// What spawn cannot carry yet is refused, never dropped.
@@ -389,9 +377,9 @@ fn the_size_counts_roles_models_and_numbers() {
     let mut coordinated = full_team();
     coordinated.roles[0].model = "anthropic/claude-opus-x".into();
     assert_eq!(size(coordinated), base + 2);
-    let mut funded = full_team();
-    funded.budget = Some(Budget { tokens: 20_000_000 });
-    assert_eq!(size(funded), base + 1);
+    let mut longer_run = full_team();
+    longer_run.deadline_seconds = Some(100_000);
+    assert_eq!(size(longer_run), base + 1);
     let none = brief(&plan_with(vec![item("a", &[], &[])], None, "")).unwrap();
     assert!(none.bytes() > TEMPLATE_BYTES + TEMPLATE_ITEM_BYTES);
 }
@@ -434,17 +422,6 @@ fn every_refusal_has_a_known_code_and_plain_words() {
             unsupported(TeamField::Workers),
             "team_unsupported",
             "a team needs at least one worker role besides the coordinator",
-        ),
-        (
-            BriefRefusal::DeadlinePassed,
-            "deadline_passed",
-            "the team's deadline has passed: propose a plan with a later one",
-        ),
-        (
-            BriefRefusal::DeadlineTooSoon,
-            "deadline_too_soon",
-            "the team's deadline is too soon: propose a plan with a deadline at least 10 \
-             minutes off",
         ),
         (
             BriefRefusal::NoTaskItems,
@@ -597,4 +574,44 @@ fn the_coordinators_model_must_name_its_provider() {
         Some("anthropic/claude-opus".to_string())
     );
     assert_eq!(BriefRefusal::CoordinatorModel.code(), "coordinator_model");
+    // Owner-approved words (2026-10-15).
+    assert_eq!(
+        BriefRefusal::CoordinatorModel.to_string(),
+        "the coordinator role's model must name its provider, as provider/model: give it one"
+    );
+}
+
+/// One rule judges the coordinator's model wherever a plan is written or
+/// started: a provider and a model, neither empty. No team, or a team
+/// with no coordinator role, lets the coordinator be chosen; a worker
+/// role's model is not judged.
+#[test]
+fn one_rule_judges_the_coordinators_model() {
+    for (model, named) in [
+        ("anthropic/claude-opus", true),
+        ("openai-oauth/gpt-5.5/high", true),
+        ("claude-opus", false),
+        ("/claude-opus", false),
+        ("anthropic/", false),
+        ("/", false),
+        ("", false),
+    ] {
+        assert_eq!(names_provider(model), named, "{model:?}");
+        let coordinated = team(vec![
+            role("coordinator", model, 1),
+            role("builder", "gpt-5.5", 2),
+        ]);
+        let want = match named {
+            true => Ok(()),
+            false => Err(BriefRefusal::CoordinatorModel),
+        };
+        assert_eq!(
+            coordinator_model_named(Some(&coordinated)),
+            want,
+            "{model:?}"
+        );
+    }
+    let workers_only = team(vec![role("builder", "gpt-5.5", 2)]);
+    assert_eq!(coordinator_model_named(Some(&workers_only)), Ok(()));
+    assert_eq!(coordinator_model_named(None), Ok(()));
 }

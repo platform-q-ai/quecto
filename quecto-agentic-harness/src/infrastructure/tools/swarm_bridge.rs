@@ -151,13 +151,6 @@ impl SwarmContext {
     pub fn usage_report(&self) -> Result<Value, DomainError> {
         self.rpc("usage_report", json!([]))
     }
-    pub fn usage_budget(
-        &self,
-        limit: Option<u64>,
-        strict_unknown: bool,
-    ) -> Result<Value, DomainError> {
-        self.rpc("usage_budget", json!([limit, strict_unknown]))
-    }
 
     pub fn events(&self, after: u64, limit: u32) -> Result<Value, DomainError> {
         self.rpc("events", json!([after, limit]))

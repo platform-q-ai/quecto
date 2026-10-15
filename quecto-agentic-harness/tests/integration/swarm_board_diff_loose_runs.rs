@@ -124,13 +124,12 @@ fn outside_edited_text_reads_as_python_reads_it() {
 
 /// `outside_edited_control_records` (#2273), records only a file edited
 /// outside the board holds: a pause record whose `started` is not a
-/// number (a boolean included, which Python counts as 0 or 1), or a
-/// budget payload that is not an object (or whose token limit is not a
-/// count), is refused naming the record; usage totals that are not counts
-/// (a REAL or a negative sum) are refused so only where the budget decides
-/// under a non-null token limit: a paused run's resume check, and a
-/// running run's `_record_request` and `_request_admission` (a receipt and
-/// the report carry them, as `uncounted_usage_totals_pass_through_elsewhere`
+/// number (a boolean included, which Python counts as 0 or 1), is refused
+/// naming the record; a budget payload that is not an object (read as no
+/// budget), a token limit that is not a count, and usage totals that are not counts
+/// (a REAL or a negative sum), are reported as they are, since no budget
+/// decides on them any more (owner decision, 2026-10-14; a receipt and the
+/// report carry them, as `uncounted_usage_totals_pass_through_elsewhere`
 /// pins). Python raises a `TypeError` (or, for a list payload, answers a
 /// budget of the totals alone; for a boolean start or uncounted totals,
 /// answers as it computes). An integer
@@ -169,34 +168,35 @@ fn outside_edited_control_records() {
         paused(r#"UPDATE events SET detail='{"started": "soon"}' WHERE action='paused'"#),
         refused("pause record")
     );
+    // A budget that is no object reads as no budget (review round 1,
+    // #2569): it is reported, never refused.
+    match paused("INSERT INTO usage_budget VALUES(1, '[]')") {
+        Outcome::Ok(receipt) => assert_eq!(receipt["budget"]["token_limit"], json!(null)),
+        other => panic!("{other:?}"),
+    }
+    // No budget decides any more (owner decision, 2026-10-14): a stored
+    // budget's fields and the usage totals are reported as they are.
+    let reported = |edit: &str| match paused(edit) {
+        Outcome::Ok(receipt) => receipt["budget"].clone(),
+        other => panic!("{edit}: {other:?}"),
+    };
     assert_eq!(
-        paused("INSERT INTO usage_budget VALUES(1, '[]')"),
-        refused("usage budget")
-    );
-    assert_eq!(
-        paused(
+        reported(
             r#"INSERT INTO usage_budget VALUES(1, '{"token_limit": "10", "strict_unknown": false}')"#
         ),
-        refused("usage budget")
+        json!({"token_limit": "10", "strict_unknown": false, "observed_tokens": 0,
+               "unknown_usage_requests": 0})
     );
     assert_eq!(
         paused(r#"UPDATE events SET detail='{"started": true}' WHERE action='paused'"#),
         refused("pause record")
     );
-    assert_eq!(
-        paused(concat!(
-            r#"INSERT INTO usage_budget VALUES(1, '{"token_limit": 100, "strict_unknown": false}');"#,
-            "INSERT INTO request_usage(request_id, actor, payload, tokens) VALUES('r', 'parent', '{}', 1.5);",
-        )),
-        refused("usage totals record")
-    );
-    assert_eq!(
-        paused(concat!(
-            r#"INSERT INTO usage_budget VALUES(1, '{"token_limit": 100, "strict_unknown": false}');"#,
-            "INSERT INTO request_usage(request_id, actor, payload, tokens) VALUES('r', 'parent', '{}', -3);",
-        )),
-        refused("usage totals record")
-    );
+    for total in ["1.5", "-3"] {
+        let budget = reported(&format!(
+            r#"INSERT INTO usage_budget VALUES(1, '{{"token_limit": 100, "strict_unknown": false}}');INSERT INTO request_usage(request_id, actor, payload, tokens) VALUES('r', 'parent', '{{}}', {total});"#
+        ));
+        assert_eq!(budget["observed_tokens"].to_string(), total, "{budget}");
+    }
     let extended = run_rust(&[
         create(5),
         at(1.0, "parent", "pause", json!(["hold"])),
@@ -278,8 +278,7 @@ fn outside_edited_control_records() {
         );
     }
     // #2274: a stored request that is not an object meets its redelivery,
-    // and a budget without `warned` meets the warning, where Python raises
-    // a `TypeError` or a `KeyError`.
+    // where Python raises a `TypeError`.
     let record = json!([{"request_id": "r", "instrumented_attempts": 1, "outcome": "failed"}]);
     let redelivered = |edit: &str| {
         run_rust(&[
@@ -323,23 +322,28 @@ fn outside_edited_control_records() {
             "{edit}"
         );
     }
-    assert_eq!(
-        run_rust(&[
-            create(5),
-            at(0.5, "parent", "usage_report", json!([])),
-            sql(
-                r#"INSERT INTO usage_budget VALUES(1, '{"token_limit": 1, "strict_unknown": false}')"#
-            ),
-            at(
-                1.0,
-                "parent",
-                "_record_request",
-                json!([{"request_id": "r", "instrumented_attempts": 1, "outcome": "succeeded", "context_input_tokens": 1, "output_tokens": 1}])
-            ),
-        ]),
-        refused("usage budget")
-    );
-    unread_ledger_rows_and_totals(&refused);
+    // A budget without `warned`, spent, meets no warning: no budget warns
+    // any more (owner decision, 2026-10-14), so the request is recorded and
+    // the run keeps running.
+    let recorded = run_rust(&[
+        create(5),
+        at(0.5, "parent", "usage_report", json!([])),
+        sql(r#"INSERT INTO usage_budget VALUES(1, '{"token_limit": 1, "strict_unknown": false}')"#),
+        at(
+            1.0,
+            "parent",
+            "_record_request",
+            json!([{"request_id": "r", "instrumented_attempts": 1, "outcome": "succeeded", "context_input_tokens": 1, "output_tokens": 1}]),
+        ),
+    ]);
+    match recorded {
+        Outcome::Ok(receipt) => assert_eq!(
+            (&receipt["status"], &receipt["budget"]["observed_tokens"]),
+            (&json!("running"), &json!(2))
+        ),
+        other => panic!("{other:?}"),
+    }
+    unread_ledger_rows_and_totals();
     // #2340: the process keeps the ledger's sums between transactions, so
     // an edit to a row already summed (its counts, or an earlier row
     // deleted) is not seen by the board that summed it, where Python sums
@@ -384,41 +388,32 @@ fn outside_edited_control_records() {
             );
         }
     }
-    // A budget without `token_limit`, or without `strict_unknown` where the
-    // limit is the one asked for, meets `usage_budget`'s idempotence check,
-    // where Python raises a `KeyError`.
-    for (edit, limit) in [
-        (
-            r#"INSERT INTO usage_budget VALUES(1, '{"strict_unknown": true, "warned": false}')"#,
-            json!(5),
-        ),
-        (
-            r#"INSERT INTO usage_budget VALUES(1, '{"token_limit": 5, "warned": false}')"#,
-            json!(5),
-        ),
-        (
-            r#"INSERT INTO usage_budget VALUES(1, '{"token_limit": null, "warned": false}')"#,
-            json!(null),
-        ),
+    // A budget without `token_limit` or `strict_unknown` met
+    // `usage_budget`'s idempotence check, where Python raised a `KeyError`;
+    // with that op gone (owner decision, 2026-10-14), such a stored budget
+    // is only reported, as stored.
+    for edit in [
+        r#"INSERT INTO usage_budget VALUES(1, '{"strict_unknown": true, "warned": false}')"#,
+        r#"INSERT INTO usage_budget VALUES(1, '{"token_limit": 5, "warned": false}')"#,
+        r#"INSERT INTO usage_budget VALUES(1, '{"token_limit": null, "warned": false}')"#,
     ] {
-        assert_eq!(
-            run_rust(&[
-                create(5),
-                at(0.5, "parent", "usage_report", json!([])),
-                sql(edit),
-                at(1.0, "parent", "usage_budget", json!([limit, true])),
-            ]),
-            refused("usage budget"),
-            "{edit}"
-        );
+        let report = run_rust(&[
+            create(5),
+            at(0.5, "parent", "usage_report", json!([])),
+            sql(edit),
+            at(1.0, "parent", "usage_report", json!([])),
+        ]);
+        let Outcome::Ok(report) = report else {
+            panic!("{edit}: {report:?}");
+        };
+        assert_eq!(report["budget"]["warned"], json!(false), "{edit}");
     }
 }
 
-/// Usage totals that are not counts (a REAL or a negative sum) are refused
-/// only where a paused run's budget with a non-null token limit is checked
-/// for a resume (#2318 final review): a running run's receipt and usage
-/// report, and a paused run's under a null limit, carry them as Python
-/// does.
+/// Usage totals that are not counts (a REAL or a negative sum) are carried
+/// as Python carries them (#2318 final review): a running run's receipt
+/// and usage report, and a paused run's under a null limit. No budget
+/// refuses them anywhere any more (owner decision, 2026-10-14).
 #[test]
 fn uncounted_usage_totals_pass_through_elsewhere() {
     for tokens in ["1.5", "-3"] {
@@ -466,7 +461,7 @@ const UNREADABLE_LEDGER_ROWS: [(&str, PythonAnswer); 2] = [
 /// receipt, `_record_request` and `_request_admission` read of the usage
 /// report is the budget and its two totals (the board's standing), where
 /// Python's read the whole report. Each case asserts both boards' answers.
-fn unread_ledger_rows_and_totals(refused: &dyn Fn(&str) -> Outcome) {
+fn unread_ledger_rows_and_totals() {
     let record = json!([{"request_id": "r", "instrumented_attempts": 1, "outcome": "failed"}]);
     let calls = [
         ("_control_status", json!([])),
@@ -496,49 +491,37 @@ fn unread_ledger_rows_and_totals(refused: &dyn Fn(&str) -> Outcome) {
         }
     }
     // Another of the report's sums overflowing (two rows of i64::MAX
-    // attempts), with or without a limit: Python raises SQLite's `integer
-    // overflow` as the store's refusal; the standing sums no attempts, so
-    // the Rust board answers, and `_record_request` records its row.
+    // attempts): Python raised SQLite's `integer overflow` as the store's
+    // refusal; the standing sums no attempts, so the Rust board answers,
+    // and `_record_request` records its row. A REAL token total is carried
+    // as it is. Python's goldens of these set a budget first, retired with
+    // budgets (owner decision, 2026-10-14), so the Rust board's answers are
+    // asserted.
     let overflowing = "INSERT INTO request_usage VALUES('e1','parent','{}',0,0,9223372036854775807,NULL,NULL,NULL,NULL); INSERT INTO request_usage VALUES('e2','parent','{}',0,0,9223372036854775807,NULL,NULL,NULL,NULL)";
-    for budget in [json!([null]), json!([1_000, false])] {
-        for (method, args) in calls.iter().cloned() {
-            let steps = [
-                create(5),
-                at(0.5, "parent", "usage_budget", budget.clone()),
-                sql(overflowing),
-                at(1.0, "parent", method, args),
-            ];
-            assert_eq!(
-                golden_answer(&steps),
-                Outcome::Refused(
-                    "coordination store unavailable or contended: integer overflow".to_owned()
-                ),
-                "{budget}: {method}"
-            );
-            let unknown = u64::from(method == "_record_request");
-            assert_answered(method, &run_rust(&steps), (0, Some(unknown)), "overflow");
-        }
+    for (method, args) in calls.iter().cloned() {
+        let steps = [
+            create(5),
+            at(0.5, "parent", "usage_report", json!([])),
+            sql(overflowing),
+            at(1.0, "parent", method, args),
+        ];
+        let unknown = u64::from(method == "_record_request");
+        assert_answered(method, &run_rust(&steps), (0, Some(unknown)), "overflow");
     }
-    // A REAL token total on a running run under a limit: the budget's
-    // decision refuses it naming the record (`_record_request`,
-    // `_request_admission`), where Python compares 10.5 with the limit and
-    // answers; the receipt alone carries it on both boards.
     let real = "INSERT INTO request_usage(request_id, actor, payload, tokens) VALUES('e','parent','{}',10.5)";
     for (method, args) in calls {
         let steps = [
             create(5),
-            at(0.5, "parent", "usage_budget", json!([1_000, false])),
+            at(0.5, "parent", "usage_report", json!([])),
             sql(real),
             at(1.0, "parent", method, args),
         ];
-        let (rust, golden) = (run_rust(&steps), golden_answer(&steps));
-        assert!(matches!(golden, Outcome::Ok(_)), "{method}: {golden:?}");
+        let Outcome::Ok(answer) = run_rust(&steps) else {
+            panic!("{method}: refused");
+        };
         match method {
-            "_control_status" => assert_eq!(rust, golden, "{method}"),
-            _ => assert_eq!(rust, refused("usage totals record"), "{method}"),
-        }
-        if let (Outcome::Ok(answer), "_record_request") = (&golden, method) {
-            assert_eq!(answer["budget"]["observed_tokens"], json!(10.5));
+            "_request_admission" => assert_eq!(answer["status"], json!("running")),
+            _ => assert_eq!(answer["budget"]["observed_tokens"], json!(10.5), "{method}"),
         }
     }
 }
@@ -565,6 +548,43 @@ fn assert_answered(method: &str, rust: &Outcome, totals: (u64, Option<u64>), cas
                     "{case}: {method}"
                 );
             }
+        }
+    }
+}
+
+/// Review round 1 (#2569): a damaged budget an older board stored (a NULL
+/// or non-JSON payload, a list, a text token limit) never blocks a run:
+/// no budget is applied, so the admission read, the control receipt and
+/// the board projection all answer, the damaged budget read as no budget.
+#[test]
+fn a_damaged_stored_budget_blocks_nothing() {
+    for edit in [
+        "INSERT INTO usage_budget VALUES(1, NULL)",
+        "INSERT INTO usage_budget VALUES(1, 'x')",
+        "INSERT INTO usage_budget VALUES(1, '[]')",
+        r#"INSERT INTO usage_budget VALUES(1, '{"token_limit": "10", "strict_unknown": false, "warned": true}')"#,
+        // Review round 2: a payload that is not UTF-8.
+        "INSERT INTO usage_budget VALUES(1, CAST(x'ff' AS TEXT))",
+    ] {
+        let record = json!([{"request_id": "r", "instrumented_attempts": 1, "outcome": "succeeded",
+            "context_input_tokens": 4, "output_tokens": 1}]);
+        for (method, args) in [
+            ("_request_admission", json!([])),
+            ("_control_status", json!([])),
+            ("_board", json!([])),
+            ("_record_request", record),
+            ("_extend_deadline", json!([600])),
+        ] {
+            let answered = run_rust(&[
+                create(5),
+                at(0.5, "parent", "usage_report", json!([])),
+                sql(edit),
+                at(1.0, "parent", method, args),
+            ]);
+            assert!(
+                matches!(answered, Outcome::Ok(_)),
+                "{edit}: {method}: {answered:?}"
+            );
         }
     }
 }

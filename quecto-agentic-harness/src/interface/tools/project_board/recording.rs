@@ -53,6 +53,9 @@ pub fn named_client(named: Option<&std::ffi::OsStr>, unset: Client) -> Client {
 /// One front end call on the board, and its record while it is recorded.
 pub struct BoardCall {
     open: Option<Open>,
+    /// The front end the call came from, recorded or not: whose answers
+    /// carry steps ([`answer::start_steps::carried_by`]).
+    front_end: FrontEnd,
 }
 
 /// A recorded call: where its record goes, when it started, and what is
@@ -123,14 +126,22 @@ impl BoardCall {
                 duration_us: 0,
             },
         });
-        Self { open }
+        Self { open, front_end }
     }
 
-    /// A call recorded nowhere: the tests' (every front end starts its
-    /// calls with the recording composition gave it).
+    /// A call recorded nowhere, from the agent tool: the tests' (every
+    /// front end starts its calls with the recording composition gave it).
     #[cfg(test)]
     pub fn unrecorded() -> Self {
-        Self { open: None }
+        Self {
+            open: None,
+            front_end: FrontEnd::Tool,
+        }
+    }
+
+    /// `steps`, when this call's front end carries them.
+    fn carried<T>(&self, steps: Option<T>) -> Option<T> {
+        steps.filter(|_| answer::start_steps::carried_by(self.front_end))
     }
 
     fn note(&mut self, note: impl FnOnce(&mut BoardOpRecord)) {
@@ -194,7 +205,8 @@ impl BoardCall {
             record.outcome = refused(answer::ErrorCode::InvalidRequest.as_str(), None);
             record.fault = Some(error.fault.clone());
         });
-        answer::request_refused(op, error)
+        let steps = self.carried(answer::start_steps::refused_before_board(op));
+        answer::request_refused(op, error, steps)
     }
 
     /// The answer of a front end's own refusal of `op`, with `reason`.
@@ -205,17 +217,24 @@ impl BoardCall {
         reason: &str,
     ) -> Value {
         self.note(|record| record.outcome = refused(refusal.code().as_str(), None));
-        answer::reason_refused(op, refusal, reason)
+        let steps = self.carried(answer::start_steps::refused_before_board(op));
+        answer::reason_refused(op, refusal, reason, steps)
     }
 
-    /// The answer of the board's refusal of `op`.
-    pub fn refuse_as_board(&mut self, op: &str, error: &ProjectBoardError) -> Value {
+    /// The answer of the board's refusal of `op`, carrying the `steps`
+    /// its caller takes next, when it has any.
+    pub fn refuse_as_board(
+        &mut self,
+        op: &str,
+        error: &ProjectBoardError,
+        steps: Option<String>,
+    ) -> Value {
         self.note(|record| {
             let (rule, schema) = refusal_parts(error);
             record.outcome = refused(answer::error_code(error).as_str(), rule);
             record.fault = schema.map(|schema| schema_fault(error, schema));
         });
-        answer::board_refused(op, error)
+        answer::board_refused_with(op, error, self.carried(steps))
     }
 
     /// The answer to `op`, which came to `outcome`; `clock` as
@@ -251,7 +270,8 @@ impl BoardCall {
                 completion.completion_rule = refusal_parts(error).0.map(StaticKind::new);
             }
         });
-        answer::outcome(op, outcome, clock)
+        let steps = self.carried(answer::start_steps::started(outcome));
+        answer::outcome(op, outcome, clock, steps)
     }
 
     /// Writes the call's record, once its front end sent `answer`:

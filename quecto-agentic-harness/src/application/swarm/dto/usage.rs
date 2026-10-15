@@ -1,7 +1,6 @@
-//! Usage accounting, the token budget and inference admission (#2274): the
-//! requests and answers of `ConfigureUsageBudget`, `RecordRequestUsage` and
-//! `ReadRequestAdmission`, and the `request_usage` rows `BoardUsage` reads
-//! and writes.
+//! Usage accounting and inference admission (#2274): the
+//! requests and answers of `RecordRequestUsage` and `ReadRequestAdmission`,
+//! and the `request_usage` rows `BoardUsage` reads and writes.
 //!
 //! As in [`super::control`], `actor` is the member the call acts as and
 //! every other argument stays the JSON value the caller passed: Python
@@ -9,48 +8,13 @@
 //! run time.
 use serde_json::Value;
 
-use super::{ControlReceipt, RunSnapshotView, UsageReport};
-
-/// `Workbench.usage_budget(token_limit, strict_unknown=True)` as `actor`.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ConfigureUsageBudgetRequest {
-    pub actor: String,
-    pub token_limit: Value,
-    pub strict_unknown: Value,
-}
+use super::{ControlReceipt, RunSnapshotView};
 
 /// `Workbench._record_request(record)` as `actor`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RecordRequestUsageRequest {
     pub actor: String,
     pub record: Value,
-}
-
-/// What `Coordination._apply_usage_budget` did to the run.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum BudgetEffect {
-    /// Nothing: the budget allows, or it already warned and the run is not
-    /// running.
-    Unchanged,
-    /// The budget warned (once): the `usage-warning` event and `warned`.
-    Warned,
-    /// The run paused holding `budget-exhausted`.
-    Paused,
-}
-
-/// Whether `usage_budget` wrote a new budget or found it as asked.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum BudgetChange {
-    Configured,
-    Unchanged,
-}
-
-/// `usage_budget`'s answer: the report after the budget applied.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ConfiguredBudget {
-    pub change: BudgetChange,
-    pub effect: BudgetEffect,
-    pub report: UsageReport,
 }
 
 /// How `_record_request` took a record.
@@ -66,20 +30,18 @@ pub enum RequestDelivery {
     Replaced,
 }
 
-/// `_record_request`'s answer: the control receipt after the budget
-/// applied.
+/// `_record_request`'s answer: the control receipt. Usage is measured and
+/// reported, never limited: no request pauses a run.
 #[derive(Clone, Debug, PartialEq)]
 pub struct RecordedRequest {
     pub delivery: RequestDelivery,
-    pub effect: BudgetEffect,
     pub receipt: ControlReceipt,
 }
 
-/// `_request_admission`'s answer: the run and its members after the budget
-/// applied, as the inference admission reads them.
+/// `_request_admission`'s answer: the run and its members, as the
+/// inference admission reads them.
 #[derive(Clone, Debug, PartialEq)]
 pub struct RequestAdmission {
-    pub effect: BudgetEffect,
     pub view: RunSnapshotView,
 }
 

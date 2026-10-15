@@ -54,14 +54,7 @@ impl BoardUsage for MemoryTransaction<'_> {
             .unwrap_or_default())
     }
 
-    fn usage_budget(&self) -> Result<Value, BoardError> {
-        Ok(self.stored_usage().budget)
-    }
-
-    fn configure_usage_budget(&self, budget: &Value) -> Result<(), BoardError> {
-        self.note(format!("configure_usage_budget {budget}"));
-        let mut state = self.state.borrow_mut();
-        state.usage.get_or_insert_with(default_usage).budget = budget.clone();
+    fn usage_tables(&self) -> Result<(), BoardError> {
         Ok(())
     }
 

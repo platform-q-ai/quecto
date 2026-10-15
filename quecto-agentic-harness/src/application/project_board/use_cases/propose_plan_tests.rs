@@ -5,7 +5,8 @@ use crate::application::project_board::dto::{PlanProposal, ProjectBoardError};
 use crate::application::project_board::ports::{ArtifactKey, ProjectBoardStore};
 use crate::application::project_board::telemetry::OpFacts;
 use crate::application::project_board::use_cases::fixtures_tests::{
-    SetClock, at, holding_plans, person, plan_item, plan_of, plan_team, slug,
+    SetClock, at, coordinated_team, holding_plans, person, plan_item, plan_of, plan_team, slug,
+    unqualified_coordinator,
 };
 use crate::domain::project_board::value_objects::rule_error::BoardRuleError;
 use crate::domain::project_board::value_objects::telemetry::{Normalised, TextChange};
@@ -186,5 +187,60 @@ fn a_task_set_aside_holds_proposals() {
     assert_eq!(
         propose(&store).execute(&proposal("a")),
         Err(crate::application::project_board::use_cases::fixtures_tests::set_aside_task("a"))
+    );
+}
+
+/// A coordinator role's model names its provider, as a start needs it, so
+/// the planner learns it when proposing, not when the user starts the
+/// task; a team with no coordinator role, or none at all, lets the
+/// coordinator be chosen.
+#[test]
+fn a_coordinator_model_without_its_provider_is_refused_at_proposal() {
+    for bare in ["claude-opus", "gpt-5.5"] {
+        let store = holding_plans("a", TaskStatus::Ready, vec![]);
+        let writes = store.writes();
+        let mut facts = OpFacts::default();
+        let unqualified = PlanProposal {
+            team: Some(coordinated_team(bare)),
+            ..proposal("a")
+        };
+        assert_eq!(
+            propose(&store).execute_noted(&unqualified, Some(&mut facts)),
+            Err(unqualified_coordinator()),
+            "{bare}"
+        );
+        assert_eq!(store.writes(), writes, "nothing written for {bare}");
+        assert_eq!((facts.plan_version, facts.roles), (None, None));
+    }
+    for team in [
+        Some(coordinated_team("anthropic/claude-opus")),
+        Some(plan_team()),
+        None,
+    ] {
+        let store = holding_plans("a", TaskStatus::Ready, vec![]);
+        let named = PlanProposal {
+            team: team.clone(),
+            ..proposal("a")
+        };
+        let written = propose(&store).execute(&named).unwrap();
+        assert_eq!(written.fields().team, team);
+    }
+}
+
+/// Review round 2 (#2566): the model of every coordinator role is judged,
+/// whatever its members, so a bare model on a coordinator role of two is
+/// refused here, where a start would refuse the members first.
+#[test]
+fn a_bare_coordinator_model_is_refused_whatever_its_members() {
+    let store = holding_plans("a", TaskStatus::Ready, vec![]);
+    let mut team = coordinated_team("claude-opus");
+    team.roles[0].limits.members = 2;
+    let pair = PlanProposal {
+        team: Some(team),
+        ..proposal("a")
+    };
+    assert_eq!(
+        propose(&store).execute(&pair),
+        Err(unqualified_coordinator())
     );
 }

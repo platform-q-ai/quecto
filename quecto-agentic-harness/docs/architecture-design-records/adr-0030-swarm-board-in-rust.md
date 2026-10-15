@@ -50,7 +50,8 @@ Owner decisions (overridable by the owner only):
 Planning decisions (recorded for the owner to overrule):
 
 - **P1.** Where a board method and an existing harness op share a name
-  (`summary`, `pause`, `resume`, `events`, `usage_budget`), the existing
+  (`summary`, `pause`, `resume`, `events`, `usage_budget`; `usage_budget`
+  was removed on 2026-10-14, as no token budget limits a swarm), the existing
   op is kept. `create` stays the harness op (`board.create`, `_activate`
   and supervision, with `deadline_in_seconds`); the raw `board.create` is
   never exposed.

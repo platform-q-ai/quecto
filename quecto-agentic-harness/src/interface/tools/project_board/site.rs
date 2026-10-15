@@ -101,7 +101,11 @@ pub fn answer(
 ) -> Value {
     let value = match read(text) {
         Ok(value) => value,
-        Err(error) => return call.refuse_request(None, &error),
+        Err(error) => {
+            let op = super::answer::start_steps::start_in_unread(text);
+            call.named(op);
+            return call.refuse_request(op, &error);
+        }
     };
     // Read first: a request refused here builds nothing.
     let op = op_of(&value);

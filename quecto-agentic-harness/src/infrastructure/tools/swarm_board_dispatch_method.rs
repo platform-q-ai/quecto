@@ -11,8 +11,8 @@
 //! `resume`, `stop`, `_resume_external`, `_close`, `_extend_deadline`,
 //! `_control_status` and `usage_report` (#2273) by [`control`]; `complete`,
 //! `revalidate_task`, `amend` and the criterion `evidence` success needs
-//! (#2273) by [`completion`]; the usage methods `usage_budget`,
-//! `_record_request` and `_request_admission` (#2274, its gate #2339) by
+//! (#2273) by [`completion`]; the usage methods `_record_request` and
+//! `_request_admission` (#2274, its gate #2339) by
 //! [`usage`]; and the file reservations `reserve`, `release_files` and
 //! `file_owners`, with the coordinator's `recover` and `revoke` (#2275), by
 //! [`reservations`]; and the durable messages `send`, `withdraw`, `inbox`
@@ -72,7 +72,6 @@ pub(super) enum Method {
     RevalidateTask,
     Amend,
     Evidence,
-    UsageBudget,
     RecordRequest,
     RequestAdmission,
     Reserve,
@@ -155,7 +154,6 @@ impl Method {
             "revalidate_task" => Some(Self::RevalidateTask),
             "amend" => Some(Self::Amend),
             "evidence" => Some(Self::Evidence),
-            "usage_budget" => Some(Self::UsageBudget),
             "_record_request" => Some(Self::RecordRequest),
             "_request_admission" => Some(Self::RequestAdmission),
             "reserve" => Some(Self::Reserve),
@@ -225,7 +223,6 @@ impl Method {
             Self::RevalidateTask => "revalidate_task",
             Self::Amend => "amend",
             Self::Evidence => "evidence",
-            Self::UsageBudget => "usage_budget",
             Self::RecordRequest => "_record_request",
             Self::RequestAdmission => "_request_admission",
             Self::Reserve => "reserve",
@@ -263,10 +260,9 @@ impl Method {
     /// [`Level::Read`] only for the methods listed as read-only.
     pub(super) fn level(self) -> Level {
         match self {
-            // The admission read may pause the run by its budget; it runs
-            // before every model request, so it records at DEBUG as the
-            // read Python's `read_only` operation makes it, unless the
-            // budget warned or paused (`served_level`).
+            // The admission read runs before every model request, so it
+            // records at DEBUG as the read Python's `read_only` operation
+            // makes it.
             Self::Status
             | Self::Board
             | Self::BoardRevision
@@ -306,7 +302,6 @@ impl Method {
             | Self::RevalidateTask
             | Self::Amend
             | Self::Evidence
-            | Self::UsageBudget
             | Self::RecordRequest
             | Self::Reserve
             | Self::ReleaseFiles
@@ -380,7 +375,6 @@ impl Method {
             | Self::RevalidateTask
             | Self::Amend
             | Self::Evidence
-            | Self::UsageBudget
             | Self::Reserve
             | Self::ReleaseFiles
             | Self::FileOwners
@@ -415,7 +409,6 @@ impl Method {
             | Self::ExtendDeadline
             | Self::Stop
             | Self::Complete
-            | Self::UsageBudget
             | Self::RecordRequest
             | Self::RequestAdmission
             | Self::Quarantine
@@ -482,7 +475,6 @@ impl Method {
             | Self::ResumeExternal
             | Self::ExtendDeadline
             | Self::Complete
-            | Self::UsageBudget
             | Self::RecordRequest
             | Self::RequestAdmission
             | Self::Quarantine
@@ -572,7 +564,6 @@ impl Method {
             | Self::RevalidateTask
             | Self::Amend
             | Self::Evidence
-            | Self::UsageBudget
             | Self::RecordRequest
             | Self::RequestAdmission
             | Self::Reserve
@@ -607,20 +598,12 @@ impl Method {
         }
     }
 
-    /// The level a served call records at: [`Method::level`], raised to
-    /// [`Level::Mutation`] for a method the token budget applies in when
-    /// the decision is the budget's own (`paused` ends the run as
-    /// `budget-exhausted`, `warned` writes the warning), so a read that
-    /// changes the run is visible at INFO. Only the usage methods decide
-    /// `paused` or `warned` as the budget's; another method's decision of
-    /// the same name (`pause`'s `paused`) keeps its own level. It is
-    /// lowered to [`Level::Read`] for a quarantine still inside its grace.
+    /// The level a served call records at: [`Method::level`], lowered to
+    /// [`Level::Read`] for a quarantine still inside its grace. No usage
+    /// method decides `paused` or `warned` any more: no token budget
+    /// changes a run (owner decision, 2026-10-14).
     pub(super) fn served_level(self, decision: &str) -> Level {
         match (self, decision) {
-            (
-                Self::UsageBudget | Self::RecordRequest | Self::RequestAdmission,
-                "paused" | "warned",
-            ) => Level::Mutation,
             // #2277 review N6: a reconcile retries a quarantine until its
             // grace ends, so one still inside the grace (which writes at
             // most the observer's first observation) is DEBUG; every other
@@ -665,7 +648,6 @@ impl Method {
             Self::RevalidateTask => &completion::REVALIDATE_TASK,
             Self::Amend => &completion::AMEND,
             Self::Evidence => &completion::EVIDENCE,
-            Self::UsageBudget => &usage::USAGE_BUDGET,
             Self::RecordRequest => &usage::RECORD_REQUEST,
             Self::RequestAdmission => &usage::REQUEST_ADMISSION,
             Self::Reserve => &reservations::RESERVE,

@@ -49,8 +49,7 @@ Use the **bash** tool for Git, builds, tests, scripts and any other command or
 computation, subject to its configured policy. Read the resulting artifacts
 with normal file tools and record their references on the board with the
 board ops below. Only the integrator may change branches, commit or
-integrate. Do not raise limits or route around policy from agent code. An
-optional observed-token budget is described below.
+integrate. Do not raise limits or route around policy from agent code.
 
 ## Create once
 
@@ -303,15 +302,14 @@ preserves claims, artifacts and agents, suspends current execution,
 suppresses automatic wakes and freezes the wall-clock deadline until resume.
 Every end of a run is the same kind of pause holding an outcome: the
 coordinator's `stop("blocked"|"failed"|"budget-exhausted", ...)`, its
-`complete(...)` (`succeeded`), a spent token budget and a passed deadline.
+`complete(...)` (`succeeded`) and a passed deadline.
 `status` reports `outcome` and `reason`. Only the master resumes (`resume`
 continues the same run with everything intact) or closes (`close` makes the
-held outcome terminal and settles the members). A run holding
-`budget-exhausted` resumes only after `extend` or a raised `usage_budget`.
+held outcome terminal and settles the members).
 The coordinator may `swarm {"op":"pause","reason":"..."}`; `swarm
 {"op":"resume"}` is refused for every member, and `cancel_run` is the only
 immediate terminal transition. `status` also reports `resume_blockers`: what a
-resume would refuse on right now (a passed deadline, a spent budget, or a lost
+resume would refuse on right now (a passed deadline, or a lost
 coordinator).
 
 A swarm container lives as long as its swarm. The swarm ends when the
@@ -345,20 +343,12 @@ response contains paths, not the raw transcript. Paths belong to the target
 agent's filesystem. Exports cannot reconstruct data already cleared or evicted.
 Unpersisted messages have a null ordinal; do not invent cursors from list indices.
 
-## Observed usage budget
+## Observed usage
 
 The coordinator uses `swarm {"op":"usage"}` for per-member totals and recent
-request diagnostics. Configure `swarm {"op":"usage_budget","token_limit":1000000,
-"strict_unknown":true}` or master `agent_cmd` `swarm_control` with
-`action:"usage_budget"` and the same fields. Explicit `token_limit:null` disables
-it; budgets are disabled by default. An 80% warning is recorded once per budget
-configuration. Reaching the limit durably pauses the run. Strict mode also pauses
-when attempted requests have no usage receipt. Raise/disable the budget before
-resuming, or admission will pause again.
+request diagnostics.
 
-The limit counts reported context-input plus output tokens. It is an observed
-usage guard, not a provider quota or billing limit: in-flight requests can finish
-and exceed it, and unavailable usage is not zero. Retry counters measure
+Retry counters measure
 instrumented call attempts, cache-prefix hashes compare logical system/tool
 prefixes, and reported costs are estimates. `get_session_stats` includes request
 diagnostics and runtime identity; unknown build revision/digest stays unknown.

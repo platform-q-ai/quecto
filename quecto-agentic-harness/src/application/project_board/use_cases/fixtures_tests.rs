@@ -176,9 +176,38 @@ pub fn plan_team() -> crate::domain::project_board::entities::team::Team {
                 turns: None,
             },
         }],
-        budget: None,
-        deadline: None,
+        deadline_seconds: None,
         image: None,
+    }
+}
+
+/// [`plan_team`] led by a coordinator role of one member on `model`.
+pub fn coordinated_team(model: &str) -> crate::domain::project_board::entities::team::Team {
+    use crate::domain::project_board::entities::team::{Role, RoleLimits, Team};
+    let coordinator = Role {
+        name: slug("coordinator"),
+        model: model.into(),
+        effort: crate::domain::project_board::value_objects::vocabulary::Effort::High,
+        limits: RoleLimits {
+            members: 1,
+            turns: None,
+        },
+    };
+    let workers = plan_team();
+    Team {
+        roles: std::iter::once(coordinator).chain(workers.roles).collect(),
+        ..workers
+    }
+}
+
+/// The refusal of a plan whose coordinator role's model names no
+/// provider, as a start refuses it (S4c), in its words.
+pub fn unqualified_coordinator() -> crate::application::project_board::dto::ProjectBoardError {
+    crate::application::project_board::dto::ProjectBoardError::Brief {
+        code: "coordinator_model",
+        reason: "the coordinator role's model must name its provider, as provider/model: \
+                 give it one"
+            .into(),
     }
 }
 

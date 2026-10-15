@@ -10,15 +10,16 @@
 //! field `text`).
 use serde_json::{Map, Value};
 
-use super::{Read, misfit, text, timestamp};
+use super::{Read, misfit, text};
 use crate::application::project_board::dto::{
     PlanAcceptance, PlanDiscard, PlanEdit, PlanProposal, RunEnd, RunEndOutcome, TaskStart,
 };
 use crate::application::project_board::operations::BoardRequest;
 use crate::domain::project_board::entities::plan::{MAX_PLAN_VERSION, PlanItem};
 use crate::domain::project_board::entities::run::MAX_RUN_NUMBER;
-use crate::domain::project_board::entities::task_parts::MAX_BUDGET_TOKENS;
-use crate::domain::project_board::entities::team::{Budget, MAX_MEMBERS, Role, RoleLimits, Team};
+use crate::domain::project_board::entities::team::{
+    MAX_DEADLINE_SECONDS, MAX_MEMBERS, MIN_DEADLINE_SECONDS, Role, RoleLimits, Team,
+};
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::telemetry::FaultKind;
 use crate::domain::project_board::value_objects::vocabulary::Effort;
@@ -254,7 +255,7 @@ fn team(value: &Value) -> Result<Option<Team>, RequestError> {
     if value.is_null() {
         return Ok(None);
     }
-    let keys = ["roles", "budget_tokens", "deadline", "image"];
+    let keys = ["roles", "deadline_seconds", "image"];
     let team = object("team", value, &keys, "a team")?;
     let role_keys = ["name", "model", "effort", "members", "turns"];
     let roles = required("team", team, "roles")?;
@@ -283,24 +284,22 @@ fn team(value: &Value) -> Result<Option<Team>, RequestError> {
             limits: RoleLimits { members, turns },
         })
     })?;
-    let budget = given(team, "budget_tokens")
-        .map(|tokens| {
-            let problem = format!("must be a number of tokens from 1 to {MAX_BUDGET_TOKENS}");
+    let deadline_seconds = given(team, "deadline_seconds")
+        .map(|seconds| {
+            let problem = format!(
+                "must be a number of seconds from {MIN_DEADLINE_SECONDS} to {MAX_DEADLINE_SECONDS}"
+            );
             number(
-                "team/budget_tokens",
-                tokens,
-                1..=MAX_BUDGET_TOKENS,
+                "team/deadline_seconds",
+                seconds,
+                MIN_DEADLINE_SECONDS..=MAX_DEADLINE_SECONDS,
                 &problem,
             )
         })
-        .transpose()?
-        .map(|tokens| Budget { tokens });
+        .transpose()?;
     Ok(Some(Team {
         roles,
-        budget,
-        deadline: given(team, "deadline")
-            .map(|deadline| timestamp("team/deadline", deadline))
-            .transpose()?,
+        deadline_seconds,
         image: given(team, "image")
             .map(|image| text("team/image", image))
             .transpose()?,

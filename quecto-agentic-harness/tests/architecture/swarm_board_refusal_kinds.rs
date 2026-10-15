@@ -120,11 +120,6 @@ pub(super) const REFUSALS: &[(&str, &str, &str)] = &[
         "WrongState",
     ),
     (
-        "src/application/swarm/use_cases/configure_usage_budget.rs:ConfigureUsageBudget::execute",
-        "expr: BUDGET_ARGUMENTS",
-        "Invalid",
-    ),
-    (
         "src/application/swarm/use_cases/create_run.rs:CreateRun::deadline",
         "deadline must be in the next seven days",
         "Invalid",
@@ -570,11 +565,6 @@ pub(super) const REFUSALS: &[(&str, &str, &str)] = &[
         "Store",
     ),
     (
-        "src/infrastructure/persistence/swarm_board/repository_projection.rs:SqliteBoard::usage",
-        "the board's usage budget is not as the board writes it",
-        "Store",
-    ),
-    (
         "src/infrastructure/persistence/swarm_board/repository_projection.rs:edited_run",
         "the board's run is not as the board writes it",
         "Store",
@@ -613,11 +603,6 @@ pub(super) const REFUSALS: &[(&str, &str, &str)] = &[
         "src/infrastructure/persistence/swarm_board/repository_tasks.rs:SqliteBoard::retry",
         "expr: stored . to_string ()",
         "Store",
-    ),
-    (
-        "src/infrastructure/persistence/swarm_board/repository_usage.rs:SqliteBoard::configure_usage_budget",
-        "expr: error . to_string ()",
-        "Invalid",
     ),
     (
         "src/infrastructure/persistence/swarm_board/repository_usage.rs:SqliteBoard::insert_request_usage",

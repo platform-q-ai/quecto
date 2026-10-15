@@ -1411,8 +1411,63 @@
             "turns": 40
           }
         ],
-        "budget_tokens": 2000000,
-        "deadline": null,
+        "deadline_seconds": null,
+        "image": null
+      }
+    },
+    "answer": {
+      "ok": false,
+      "op": "propose_plan",
+      "error": {
+        "code": "brief",
+        "message": "the plan cannot brief a swarm: the coordinator role's model must name its provider, as provider/model: give it one",
+        "brief": {
+          "code": "coordinator_model"
+        }
+      }
+    }
+  },
+  {
+    "request": {
+      "op": "propose_plan",
+      "task": "epic",
+      "approach": "Spike the store.\r\nThen build. \r\n",
+      "items": [
+        {
+          "id": "schema",
+          "title": " Schema",
+          "criteria": [
+            "Migrates\tcleanly"
+          ]
+        },
+        {
+          "id": "api",
+          "title": "API",
+          "criteria": [
+            "Serves the CLI"
+          ],
+          "depends_on": [
+            "schema"
+          ]
+        }
+      ],
+      "team": {
+        "roles": [
+          {
+            "name": "coordinator",
+            "model": "openai/gpt-5.5",
+            "effort": "high",
+            "members": 1
+          },
+          {
+            "name": "worker",
+            "model": "gpt-5.5-mini",
+            "effort": "medium",
+            "members": 2,
+            "turns": 40
+          }
+        ],
+        "deadline_seconds": null,
         "image": null
       }
     },
@@ -2001,7 +2056,8 @@
       "op": "start",
       "error": {
         "code": "no_launcher",
-        "message": "this session may not spawn, so it cannot launch a coordinator: start the task from a session that may"
+        "message": "this session may not spawn, so it cannot launch a coordinator: start the task from a session that may",
+        "steps": "If start is refused for any other reason, say why in a sentence and stop; do not start the task any other way."
       }
     }
   }
