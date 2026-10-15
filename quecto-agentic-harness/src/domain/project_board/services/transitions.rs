@@ -52,6 +52,10 @@ const TRANSITIONS: &[(TaskStatus, TaskStatus, Actor, ClaimEffect)] = &[
     (Review,     InProgress, Actor::Holder,          ClaimEffect::Keep),
     (Blocked,    InProgress, Actor::Holder,          ClaimEffect::Keep),
     (Done,       Archived,   Actor::Anyone,          ClaimEffect::Keep),
+    // Archive a reviewed task, whoever holds it and however its claim
+    // stands: a run going holds it back (`may_move_with`), so it never
+    // races a live run, and the claim goes with it.
+    (Review,     Archived,   Actor::Anyone,          ClaimEffect::Clear),
     // Release: the task goes back to the board.
     (Claimed,    Ready,      Actor::Releaser,        ClaimEffect::Clear),
     (InProgress, Ready,      Actor::Releaser,        ClaimEffect::Clear),
@@ -118,6 +122,10 @@ pub fn move_task(
         ClaimEffect::Take => Some(new_claim(actor, &at)?),
         ClaimEffect::Clear => None,
     };
+    assert!(
+        next.claim.is_none() || to.may_hold_claim(),
+        "{from:?} -> {to:?}: a task leaves its claim behind for a status that holds none"
+    );
     settle(next, &at)
 }
 
