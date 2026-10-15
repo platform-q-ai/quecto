@@ -255,14 +255,15 @@ impl SqliteBoard<'_> {
 
     /// The budget row's payload as `json.loads` reads it, or the default
     /// budget without a row (none is written). No budget is applied (owner
-    /// decision, 2026-10-14), so a payload no board writes (NULL, not JSON)
-    /// reads as `null`, reported and never refused (review round 1, #2569).
+    /// decision, 2026-10-14), so a payload no board writes (NULL, not JSON
+    /// or not UTF-8) reads as `null`, reported and never refused (review
+    /// rounds 1-2, #2569).
     fn stored_budget(&self) -> Result<Value, BoardError> {
         let stored = self
             .connection
             .query_row("SELECT payload FROM usage_budget WHERE id=1", [], |row| {
-                fetched(row)?;
-                Ok(loaded(row, 0).ok())
+                // Not UTF-8 or not JSON alike: read as null, never refused.
+                Ok(fetched(row).ok().and_then(|()| loaded(row, 0).ok()))
             })
             .optional()
             .map_err(failed)?;
