@@ -322,3 +322,7 @@ pub struct Completed {
 #[cfg(test)]
 #[path = "transitions_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "transitions_archive_tests.rs"]
+mod archive_tests;
