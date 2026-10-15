@@ -187,7 +187,7 @@ fn an_older_boards_budget_row_still_reads_as_stored() {
     repository
         .atomic(false, &mut |transaction| {
             assert_eq!(
-                transaction.usage_budget()?.to_string(),
+                transaction.usage_standing()?.budget.to_string(),
                 r#"{"token_limit":null,"strict_unknown":false,"warned":false}"#
             );
             Ok(())
@@ -201,7 +201,7 @@ fn an_older_boards_budget_row_still_reads_as_stored() {
         .unwrap();
     repository
         .atomic(false, &mut |transaction| {
-            let budget = transaction.usage_budget()?;
+            let budget = transaction.usage_standing()?.budget;
             assert_eq!(
                 serde_json::to_string(&budget).unwrap(),
                 r#"{"warned":true,"token_limit":9223372036854775807,"strict_unknown":false,"é":"é"}"#,

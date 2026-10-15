@@ -54,10 +54,6 @@ impl BoardUsage for MemoryTransaction<'_> {
             .unwrap_or_default())
     }
 
-    fn usage_budget(&self) -> Result<Value, BoardError> {
-        Ok(self.stored_usage().budget)
-    }
-
     fn usage_tables(&self) -> Result<(), BoardError> {
         Ok(())
     }
