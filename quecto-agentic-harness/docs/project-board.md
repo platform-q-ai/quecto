@@ -191,9 +191,12 @@ refuses a version it cannot find while such a file is set aside
 the task does not have (`unknown_plan_version`), one that is not a draft
 (`plan_not_draft`), and one that changes nothing (`no_edit`). A proposal or an
 edit whose plan, as written, has a `coordinator` role whose model does not name
-its provider as `provider/model` is refused as `start` would refuse it (`brief`,
-code `coordinator_model`), so the planner learns it before the task is started;
-an edit is judged on the team it writes, given or kept. A plan with no team, or
+its provider as `provider/model` is refused with the code `start` gives such a
+model (`brief`, code `coordinator_model`), so the planner learns it before the
+task is started; an edit is judged on the team it writes, given or kept. Propose
+and edit judge the model of every `coordinator` role, whatever its members;
+`start` judges the team in its own order, so a coordinator role of more than one
+member is refused there first (`team_unsupported`). A plan with no team, or
 no `coordinator` role, lets the coordinator be chosen. Text is normalised
 as it enters, as a task's is: the approach as markdown, and each task item's title
 and criteria as one line. A number out of its range is refused naming the field as

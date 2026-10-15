@@ -435,8 +435,6 @@ pub fn brief_of(started: &Started, now: &Timestamp) -> Result<SwarmBrief, BriefR
     }
 }
 
-/// What a team makes of the run: its member limit, the coordinator's
-/// choice, the worker roles not applied, its budget and its deadline.
 /// Whether `model` names its provider as spawn takes it,
 /// `provider/model`, neither empty: no provider is guessed (S4c).
 pub fn names_provider(model: &str) -> bool {
@@ -464,6 +462,8 @@ pub fn coordinator_model_named(team: Option<&Team>) -> Result<(), BriefRefusal> 
     }
 }
 
+/// What a team makes of the run: its member limit, the coordinator's
+/// choice, the worker roles not applied, its budget and its deadline.
 #[derive(Default)]
 struct Terms<'a> {
     member_limit: Option<u32>,
