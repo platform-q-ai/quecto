@@ -504,7 +504,8 @@ fn a_done_task_is_resolved_as_completed() {
     );
     let archived = move_task(&done, Archived, &person("Bob"), &[], &[], &now).unwrap();
     assert_eq!(archived.fields().resolution, Some(Resolution::Completed));
-    let dropped = move_task(&task(Ready), Archived, &person("Bob"), &[], &[], &now).unwrap();
+    let ready = without_prs(task(Ready));
+    let dropped = move_task(&ready, Archived, &person("Bob"), &[], &[], &now).unwrap();
     assert_eq!(dropped.fields().resolution, None);
 }
 

@@ -49,7 +49,7 @@ fn a_reviewed_task_is_archived_by_its_live_holder_or_by_anyone_once_nobody_holds
             (Archived, &None, None),
             "{actor:?} at {now:?}"
         );
-        assert!(fields.prs.is_empty(), "an archived task pins no PR");
+        assert!(fields.prs.is_empty(), "it pins no PR");
     }
     let bob = person("Bob");
     assert_eq!(
@@ -100,7 +100,7 @@ fn a_run_going_holds_a_reviewed_task_back_from_archive() {
 }
 
 /// A reviewed task that links pull requests is not archived, so an
-/// archived task never pins them: refused as review to done is, before
+/// archived task pins none that has not merged: refused as review to done is, before
 /// its runs or changes are read.
 #[test]
 fn a_reviewed_task_linking_pull_requests_is_not_archived() {
@@ -159,4 +159,51 @@ fn a_reviewed_task_a_change_links_is_not_archived() {
     )
     .unwrap();
     assert_eq!(archived.fields().status, Archived);
+}
+
+/// Releasing a reviewed task first (review to ready, and on to draft)
+/// never gets its links archived: a ready or draft task is archived on
+/// review's terms, whoever made the steps (Ada while her claim is live,
+/// Bob once it has lapsed). Unlinked, it is archived.
+#[test]
+fn a_released_task_is_not_archived_while_it_links_pull_requests_or_changes() {
+    let changes = [change(1, Some(7))];
+    for (actor, now) in [(person("Ada"), live()), (person("Bob"), lapsed())] {
+        let ready = move_task(&task(Review), Ready, &actor, &[], &[], &now).unwrap();
+        assert_eq!(
+            (ready.fields().status, &ready.fields().prs),
+            (Ready, &vec![2482, 2483]),
+            "{actor:?}: the release keeps the links"
+        );
+        let draft = move_task(&ready, Draft, &actor, &[], &[], &now).unwrap();
+        for released in [&ready, &draft] {
+            let from = released.fields().status;
+            assert_eq!(
+                move_reads(released, Archived, &actor, &now),
+                Err(BoardRuleError::PrsLinked(vec![2482, 2483])),
+                "{actor:?} {from:?}: refused before anything is read"
+            );
+            assert_eq!(
+                move_task(released, Archived, &actor, &[], &[], &now),
+                Err(BoardRuleError::PrsLinked(vec![2482, 2483])),
+                "{actor:?} {from:?}"
+            );
+        }
+        let unlinked =
+            move_task(&without_prs(task(Review)), Ready, &actor, &[], &[], &now).unwrap();
+        assert_eq!(
+            move_reads(&unlinked, Archived, &actor, &now),
+            Ok(MoveReads {
+                runs: true,
+                changes: true
+            })
+        );
+        assert_eq!(
+            move_task(&unlinked, Archived, &actor, &[], &changes, &now),
+            Err(BoardRuleError::ChangesLinked(vec![1])),
+            "{actor:?}: a change linked holds it too"
+        );
+        let archived = move_task(&unlinked, Archived, &actor, &[], &[], &now).unwrap();
+        assert_eq!(archived.fields().status, Archived, "{actor:?}");
+    }
 }
