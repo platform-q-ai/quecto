@@ -15,6 +15,7 @@ use crate::application::tools::ports::Tool;
 use crate::domain::project_board::value_objects::vocabulary::{TaskKind, TaskStatus};
 use crate::infrastructure::test_support::memory_board_store::MemoryBoardStore;
 use crate::infrastructure::time::board_clock::SystemBoardClock;
+use crate::interface::tools::project_board::answer::start_steps as steps;
 use crate::interface::tools::project_board::recording::tests::Records;
 
 /// S4c: the board a test's launcher starts tasks on: task `a` ready with
@@ -186,6 +187,8 @@ async fn the_tool_starts_a_task_with_its_sessions_launcher() {
         answer["not_applied"],
         json!([{"role": "builder", "model": "gpt-5.5", "effort": "high"}])
     );
+    // The steps for running it, the start prompt's words for its run.
+    assert_eq!(answer["steps"], json!(steps::running(&slug_of("a"), 1)));
     let ops = records.taken();
     assert_eq!(ops.len(), 1);
     assert_eq!(
@@ -232,6 +235,62 @@ async fn the_tool_starts_a_task_with_its_sessions_launcher() {
         .unwrap();
     let answer: Value = serde_json::from_str(&unlaunched.content).unwrap();
     assert_eq!(answer["error"]["code"], json!("no_launcher"), "{answer}");
+    assert_eq!(answer["error"]["steps"], json!(steps::REFUSED), "{answer}");
+}
+
+fn slug_of(text: &str) -> crate::domain::project_board::value_objects::slug::Slug {
+    crate::domain::project_board::value_objects::slug::Slug::parse(text).unwrap()
+}
+
+/// A start refused before the board answers carries the stop too; no
+/// other op's refusal carries steps.
+#[tokio::test(flavor = "multi_thread")]
+async fn every_refused_start_says_to_stop_and_no_other_op_does() {
+    let launching = BoardSite {
+        launcher: Some(Arc::new(Launching)),
+        ..site(Some(launching_board))
+    };
+    let board = tool(launching);
+    let unread = json!({"op": "start", "task": "a"});
+    let refused = board.execute(&unread.to_string()).await.unwrap();
+    let answer: Value = serde_json::from_str(&refused.content).unwrap();
+    assert_eq!(
+        (&answer["error"]["code"], &answer["error"]["steps"]),
+        (&json!("invalid_request"), &json!(steps::REFUSED)),
+        "{answer}"
+    );
+    let unknown = json!({"op": "start", "task": "missing", "plan_version": 1});
+    let refused = board.execute(&unknown.to_string()).await.unwrap();
+    let answer: Value = serde_json::from_str(&refused.content).unwrap();
+    assert_eq!(
+        (&answer["error"]["code"], &answer["error"]["steps"]),
+        (&json!("not_found"), &json!(steps::REFUSED)),
+        "{answer}"
+    );
+    let uncomposed = tool(site(None));
+    let refused = uncomposed.execute(&unknown.to_string()).await.unwrap();
+    let answer: Value = serde_json::from_str(&refused.content).unwrap();
+    assert_eq!(
+        (&answer["error"]["code"], &answer["error"]["steps"]),
+        (&json!("store_unavailable"), &json!(steps::REFUSED)),
+        "{answer}"
+    );
+    for other in [
+        json!({"op": "end_run", "task": "a", "run": 9, "outcome": "failed"}),
+        json!({"op": "end_run", "task": "a"}),
+        json!({"op": "show", "task": "missing"}),
+    ] {
+        let refused = board.execute(&other.to_string()).await.unwrap();
+        let answer: Value = serde_json::from_str(&refused.content).unwrap();
+        assert_eq!(answer["ok"], json!(false), "{answer}");
+        assert!(answer["error"].get("steps").is_none(), "{answer}");
+    }
+    let listed = board
+        .execute(&json!({"op": "list"}).to_string())
+        .await
+        .unwrap();
+    let answer: Value = serde_json::from_str(&listed.content).unwrap();
+    assert!(answer.get("steps").is_none(), "{answer}");
 }
 
 fn tool_without_launcher() -> super::BoardTool {
@@ -295,6 +354,11 @@ async fn a_failed_launch_records_its_undo() {
         ),
         (&json!("launch_failed"), &json!("folded"), &json!(true)),
         "{answer}"
+    );
+    assert_eq!(
+        answer["error"]["steps"],
+        json!(steps::undo(&slug_of("a"))),
+        "the undo steps: {answer}"
     );
     let starts = records.starts();
     assert_eq!(

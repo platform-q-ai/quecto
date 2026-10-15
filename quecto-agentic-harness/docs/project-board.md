@@ -307,8 +307,17 @@ agent's own commits stay its clone's. A value not so shaped is refused
 (`no_committer`), never ignored for the clone's own.
 
 The answer gives the `task`, the `run`, the `coordinator` (`agent`,
-`environment_ref`), `not_applied` (`role`, `model`, `effort`) and `claim`:
-`fresh` when the start took it, `held` when the starter held it already.
+`environment_ref`), `not_applied` (`role`, `model`, `effort`), `claim`:
+`fresh` when the start took it, `held` when the starter held it already, and
+`steps`: the steps for running the run to its end, as text for the agent that
+started it, the task's id and the run's number filled in.
+
+Every refused start's `error` carries `steps` too, what its caller does next:
+for `launch_failed`, the undo by its fields, the task's id filled in; for
+`contended`, to call again up to three times; for any other refusal (the
+board's, an invalid request, or a front end's own), to say why and stop. No
+other op's answer carries `steps`. The words are the Pocket start prompt's,
+moved there unchanged, so that prompt can be one line.
 
 ## Ending a run
 
