@@ -7,7 +7,9 @@
 //! since is refused (`plan_changed`), never edited over. Drafts are
 //! anyone's, edited as the store's committer; a done or archived task's
 //! plans are settled. Given text is normalised as it enters
-//! ([`plan_text`](super::plan_text)); only the plan is written. Blocking:
+//! ([`plan_text`](super::plan_text)); only the plan is written. A draft
+//! whose team, given or kept, has a coordinator role whose model names
+//! no provider is refused, as a start would refuse it. Blocking:
 //! a lost write pauses the calling thread before it is tried again.
 use std::sync::Arc;
 
@@ -15,6 +17,7 @@ use super::board_change::{checked_writer, commit, task_on, written_plan};
 use super::{board_view, plan_text};
 use crate::application::project_board::dto::{PlanEdit, ProjectBoardError};
 use crate::application::project_board::ports::{BoardArtifact, BoardClock, ProjectBoardStore};
+use crate::application::project_board::swarm_brief::coordinator_model_named;
 use crate::application::project_board::telemetry::OpFacts;
 use crate::domain::project_board::entities::claim::Identity;
 use crate::domain::project_board::entities::plan::{Plan, PlanFields, PlanItem};
@@ -52,7 +55,8 @@ impl EditPlan {
     /// No such task, or its file or one of its plans' set aside; no plan
     /// of that version; a done or archived task, a plan that is not a
     /// draft, changed since it was read or stamped ahead, an edit that
-    /// changes nothing, or the plan's schema; the clock's; a board that
+    /// changes nothing, or the plan's schema; a coordinator model that
+    /// names no provider; the clock's; a board that
     /// kept moving; the store's.
     pub fn execute(&self, edit: &PlanEdit) -> Result<Plan, ProjectBoardError> {
         self.execute_noted(edit, None)
@@ -100,6 +104,8 @@ impl EditPlan {
                 let content = given.applied_to(plan.fields());
                 let edited = edit_draft(task, plan, content, expected, actor, &Moment::from(when))?;
                 given.kept_in(plan.fields(), edited.fields());
+                // Judged on the draft written, its team given or kept.
+                coordinator_model_named(edited.fields().team.as_ref())?;
                 Ok(vec![BoardArtifact::Plan(edited)])
             },
         )

@@ -189,7 +189,15 @@ can never be a version's, so no write lands on it, where `show(task, version)`
 refuses a version it cannot find while such a file is set aside
 (`set_aside_file`), since that file may hold it. An edit is refused for a version
 the task does not have (`unknown_plan_version`), one that is not a draft
-(`plan_not_draft`), and one that changes nothing (`no_edit`). Text is normalised
+(`plan_not_draft`), and one that changes nothing (`no_edit`). A proposal or an
+edit whose plan, as written, has a `coordinator` role whose model does not name
+its provider as `provider/model` is refused with the code `start` gives such a
+model (`brief`, code `coordinator_model`), so the planner learns it before the
+task is started; an edit is judged on the team it writes, given or kept. Propose
+and edit judge the model of every `coordinator` role, whatever its members;
+`start` judges the team in its own order, so a coordinator role of more than one
+member is refused there first (`team_unsupported`). A plan with no team, or
+no `coordinator` role, lets the coordinator be chosen. Text is normalised
 as it enters, as a task's is: the approach as markdown, and each task item's title
 and criteria as one line. A number out of its range is refused naming the field as
 the request spells it (a role's `members` outside 1 to 32 is
@@ -258,7 +266,9 @@ and the answer lists them as `not_applied`.
   with the brief's own code: `team_too_large`, `team_unsupported`,
   `deadline_passed`, `deadline_too_soon`, `no_task_items`, `item_too_large`,
   `brief_too_large`, and `coordinator_model` for a coordinator role whose model
-  does not name its provider as `provider/model`: none is guessed).
+  does not name its provider as `provider/model`: none is guessed; the same
+  rule refuses such a plan when it is proposed or edited, and is kept here as a
+  backstop).
 - A session that may not spawn starts nothing (`no_launcher`): `start`
   launches only what the session's own `spawn` would, and asks again as it
   launches.

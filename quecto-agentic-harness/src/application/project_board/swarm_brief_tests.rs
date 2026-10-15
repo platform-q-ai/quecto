@@ -598,3 +598,38 @@ fn the_coordinators_model_must_name_its_provider() {
     );
     assert_eq!(BriefRefusal::CoordinatorModel.code(), "coordinator_model");
 }
+
+/// One rule judges the coordinator's model wherever a plan is written or
+/// started: a provider and a model, neither empty. No team, or a team
+/// with no coordinator role, lets the coordinator be chosen; a worker
+/// role's model is not judged.
+#[test]
+fn one_rule_judges_the_coordinators_model() {
+    for (model, named) in [
+        ("anthropic/claude-opus", true),
+        ("openai-oauth/gpt-5.5/high", true),
+        ("claude-opus", false),
+        ("/claude-opus", false),
+        ("anthropic/", false),
+        ("/", false),
+        ("", false),
+    ] {
+        assert_eq!(names_provider(model), named, "{model:?}");
+        let coordinated = team(vec![
+            role("coordinator", model, 1),
+            role("builder", "gpt-5.5", 2),
+        ]);
+        let want = match named {
+            true => Ok(()),
+            false => Err(BriefRefusal::CoordinatorModel),
+        };
+        assert_eq!(
+            coordinator_model_named(Some(&coordinated)),
+            want,
+            "{model:?}"
+        );
+    }
+    let workers_only = team(vec![role("builder", "gpt-5.5", 2)]);
+    assert_eq!(coordinator_model_named(Some(&workers_only)), Ok(()));
+    assert_eq!(coordinator_model_named(None), Ok(()));
+}
