@@ -387,14 +387,18 @@ end-run` takes the same fields.
 
 `move(task, to archived)` archives a task (Pocket's Delete task): the board
 never deletes one, and never moves one out of `archived`. Anyone archives a
-`draft`, `ready`, `review` or `done` task; a `claimed`, `in_progress` or
-`blocked` one is refused (`not_allowed`). A task in review is archived whoever
-holds it, whether its claim is live, lapsed or gone, and its claim is cleared,
-as it is when the task is done. It is refused while a run of it is going
-(`run_open`), or while a file named as one of its runs is set aside (it may be
-the open one): end the run first (Ending a run, above), so an archive never
-races a live run. An archived task keeps its done one's resolution
-(`completed`), is `superseded` when others took it over, and otherwise has none.
+`draft`, `ready` or `done` task; a `claimed`, `in_progress` or `blocked` one is
+refused (`not_allowed`). A task in review is archived by its holder while the
+claim is live, and by anyone once nobody holds it (its claim lapsed or gone),
+as it goes back to ready (`not_holder` for anyone else while the claim is
+live); its claim is cleared, as it is when the task is done. It is archived on
+review to done's terms otherwise: it is refused while it links a pull request
+(`prs_linked`) or a change does (`changes_linked`), so an archived task never
+pins one, while a run of it is going (`run_open`), or while a file named as one
+of its runs or changes is set aside (it may be the open one): end the run first
+(Ending a run, above), so an archive never races a live run. An archived task
+keeps its done one's resolution (`completed`), is `superseded` when others took
+it over, and otherwise has none.
 
 ## Telemetry
 

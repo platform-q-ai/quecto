@@ -21,7 +21,8 @@ enum Actor {
     /// Only the holder, live or expired: handing the task back.
     Releaser,
     /// The holder while the claim is live; anyone once it is absent or
-    /// expired, so a stalled review or block can be put back.
+    /// expired, so a stalled review or block can be put back, or a
+    /// stalled review archived.
     HolderWhileLive,
 }
 
@@ -52,10 +53,12 @@ const TRANSITIONS: &[(TaskStatus, TaskStatus, Actor, ClaimEffect)] = &[
     (Review,     InProgress, Actor::Holder,          ClaimEffect::Keep),
     (Blocked,    InProgress, Actor::Holder,          ClaimEffect::Keep),
     (Done,       Archived,   Actor::Anyone,          ClaimEffect::Keep),
-    // Archive a reviewed task, whoever holds it and however its claim
-    // stands: a run going holds it back (`may_move_with`), so it never
-    // races a live run, and the claim goes with it.
-    (Review,     Archived,   Actor::Anyone,          ClaimEffect::Clear),
+    // Archive a reviewed task: its holder's while the claim is live,
+    // anyone's once nobody holds it. A run going holds it back
+    // (`may_move_with`), so it never races a live run; a pull request or
+    // change linked holds it as it holds review to done
+    // ([`held_by_links`]); the claim goes with it.
+    (Review,     Archived,   Actor::HolderWhileLive, ClaimEffect::Clear),
     // Release: the task goes back to the board.
     (Claimed,    Ready,      Actor::Releaser,        ClaimEffect::Clear),
     (InProgress, Ready,      Actor::Releaser,        ClaimEffect::Clear),
@@ -70,11 +73,21 @@ pub struct MoveReads {
     pub changes: bool,
 }
 
+/// Whether the task's pull requests and changes linked hold the move
+/// `from` -> `to` (allowlist): review to done (they finish it when they
+/// merge) and review to archived (an archived task never pins them).
+fn held_by_links(from: TaskStatus, to: TaskStatus) -> bool {
+    match (from, to) {
+        (Review, Done | Archived) => true,
+        (Draft | Ready | Claimed | InProgress | Review | Blocked | Done | Archived, _) => false,
+    }
+}
+
 /// What moving `task` to `to` by `actor` at `now` reads of the task's
 /// work, once the table, the actor and the task's own fields allow it: a
-/// move a run going holds back ([`holds_moves_to`]) reads the runs,
-/// review to done reads the changes (a change linked holds it),
-/// any other reads nothing. A use case reads only these, so a move the
+/// move a run going holds back ([`holds_moves_to`]) reads the runs, a
+/// move links hold ([`held_by_links`]) reads the changes (a change linked
+/// holds it), any other reads nothing. A use case reads only these, so a move the
 /// rule refuses anyway is refused as such, and reads nothing.
 ///
 /// # Errors
@@ -89,7 +102,7 @@ pub fn move_reads(
     let from = task.fields().status;
     Ok(MoveReads {
         runs: holds_moves_to(to),
-        changes: (from, to) == (Review, Done),
+        changes: held_by_links(from, to),
     })
 }
 
@@ -108,8 +121,8 @@ pub fn move_task(
     let effect = allowed(task, to, actor, now)?;
     let from = task.fields().status;
     let linked = numbers(task, changes, Change::is_linked)?;
-    // Only review to done is held by a change linked.
-    if (from, to) == (Review, Done) && !linked.is_empty() {
+    // Only review to done or archived is held by a change linked.
+    if held_by_links(from, to) && !linked.is_empty() {
         return Err(BoardRuleError::ChangesLinked(linked));
     }
     may_move_with(task, runs, to)?;
@@ -170,11 +183,12 @@ fn allowed(
     // The holder finishes a task only when it links no pull request and
     // no change: one that links them is done when they merge
     // (`complete_merged`, `changes::complete`). The holder may unlink one
-    // deliberately (`remove_pr`, `changes::unlink`), and then finish. The
-    // changes are `move_task`'s to judge.
-    match ((from, to), &task.fields().prs[..]) {
-        ((Review, Done), [_, ..]) => Err(BoardRuleError::PrsLinked(task.fields().prs.clone())),
-        _ => Ok(*effect),
+    // deliberately (`remove_pr`, `changes::unlink`), and then finish. A
+    // reviewed task is archived on the same terms, so an archived task
+    // never pins a pull request. The changes are `move_task`'s to judge.
+    match (held_by_links(from, to), &task.fields().prs[..]) {
+        (true, [_, ..]) => Err(BoardRuleError::PrsLinked(task.fields().prs.clone())),
+        (true, []) | (false, _) => Ok(*effect),
     }
 }
 
