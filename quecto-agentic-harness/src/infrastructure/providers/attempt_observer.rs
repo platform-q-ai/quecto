@@ -342,7 +342,7 @@ impl ProtocolObserver {
                     // A numeric 429/529 chunk throttles too (#2155 review).
                     Vendor::OpenAi => receipt.typed_as(
                         &value,
-                        is_typed_throttle(&value)
+                        super::super::provider_diagnostics::stream_throttle(&value)
                             || super::super::attempt_profile::is_throttle_chunk(&value),
                     ),
                     Vendor::Codex if semantic_admitted => receipt.typed(&value),

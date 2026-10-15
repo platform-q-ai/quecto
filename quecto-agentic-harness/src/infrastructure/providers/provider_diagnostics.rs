@@ -173,6 +173,25 @@ fn is_context_limit(error: &serde_json::Value) -> bool {
     [error["type"].as_str(), error["code"].as_str()].contains(&Some("context_length_exceeded"))
 }
 
+/// Exact consumer-selected SSE envelope, not an aggregate of declarations.
+/// Responses failure/incomplete events own response.error; other supported
+/// errors use the direct object or root. An empty selection still shadows
+/// ignored envelopes, which cannot grant or suppress typed authority.
+pub(super) fn stream_error_envelope(value: &serde_json::Value) -> &serde_json::Value {
+    match value["type"].as_str() {
+        Some("response.failed" | "response.incomplete") => &value["response"]["error"],
+        _ => value
+            .get("error")
+            .filter(|v| v.is_object())
+            .unwrap_or(value),
+    }
+}
+
+pub(super) fn stream_throttle(value: &serde_json::Value) -> bool {
+    let selected = serde_json::json!({"error": stream_error_envelope(value)});
+    super::admission_feedback::is_typed_throttle(&selected)
+}
+
 pub(super) fn stream(vendor: &str, value: &serde_json::Value) -> String {
     assert!(["OpenAI", "Codex", "Anthropic"].contains(&vendor));
     let (status, marker) = match serde_json::to_writer(&mut Budget(0), value).is_ok() {
@@ -182,13 +201,7 @@ pub(super) fn stream(vendor: &str, value: &serde_json::Value) -> String {
             {
                 return format!("{vendor} stream incomplete");
             }
-            let error = match value["type"].as_str() {
-                Some("response.failed" | "response.incomplete") => &value["response"]["error"],
-                _ => value
-                    .get("error")
-                    .filter(|v| v.is_object())
-                    .unwrap_or(value),
-            };
+            let error = stream_error_envelope(value);
             // Reuse the typed protocol allowlist, never arbitrary message text.
             let normalized = serde_json::json!({"error": error});
             (

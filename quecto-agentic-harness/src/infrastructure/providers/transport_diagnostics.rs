@@ -46,9 +46,10 @@ pub(super) fn headers<'a>(values: impl IntoIterator<Item = (&'a str, &'a str)>) 
         .collect()
 }
 pub(super) fn typed(d: &mut AttemptDiagnostics, value: &serde_json::Value) {
-    for error in [&value["error"], &value["response"]["error"]] {
-        typed_error(d, error);
-    }
+    typed_error(
+        d,
+        super::super::provider_diagnostics::stream_error_envelope(value),
+    );
     d.incomplete_reason = match value["response"]["incomplete_details"]["reason"].as_str() {
         Some("max_output_tokens") => Some(IncompleteReason::MaxOutputTokens),
         Some("content_filter") => Some(IncompleteReason::ContentFilter),

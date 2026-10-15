@@ -132,13 +132,19 @@ impl Receipt {
         }
     }
     fn typed(&self, value: &serde_json::Value) {
-        self.typed_as(value, is_typed_throttle(value));
+        self.typed_as(value, super::provider_diagnostics::stream_throttle(value));
     }
     /// A typed error payload that is (`throttled`) or is not a throttle.
     fn typed_as(&self, value: &serde_json::Value, throttled: bool) {
         debug_assert!(
-            !is_typed_throttle(value) || throttled,
-            "a typed throttle is always a throttle"
+            matches!(
+                (
+                    super::provider_diagnostics::stream_throttle(value),
+                    throttled
+                ),
+                (false, _) | (true, true)
+            ),
+            "a selected typed throttle is always a throttle"
         );
         let mut state = self.0.lock().unwrap();
         diagnostics::typed(&mut state.diagnostics, value);
