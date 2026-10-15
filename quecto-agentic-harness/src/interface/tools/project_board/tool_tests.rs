@@ -226,6 +226,14 @@ fn the_schema_is_the_parsers() {
     assert_eq!(item["additionalProperties"], json!(false));
     let team = &schema["properties"]["team"];
     assert_eq!(team["type"], json!(["object", "null"]));
+    // A team sets no token budget, and its deadline is seconds from Start
+    // (#2568 review round 2).
+    assert_eq!(
+        team["properties"]["deadline_seconds"],
+        json!({"type": ["integer", "null"], "minimum": 600, "maximum": 604_800})
+    );
+    let keys: Vec<&String> = team["properties"].as_object().unwrap().keys().collect();
+    assert_eq!(keys, ["roles", "deadline_seconds", "image"]);
     let role = &team["properties"]["roles"]["items"];
     assert_eq!(
         role["required"],
