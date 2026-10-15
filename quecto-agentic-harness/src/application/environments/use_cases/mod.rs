@@ -32,6 +32,8 @@ pub use restore_registry::{
 };
 
 #[cfg(test)]
+mod finalize_environment_member_kept_board_tests;
+#[cfg(test)]
 mod finalize_environment_member_owner_end_tests;
 #[cfg(test)]
 mod finalize_environment_member_retention_tests;
