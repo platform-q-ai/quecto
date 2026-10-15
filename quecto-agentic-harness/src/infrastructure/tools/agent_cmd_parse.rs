@@ -106,7 +106,7 @@ pub(super) fn build_command(args: &serde_json::Value) -> Result<(String, String,
                 .filter(|action| {
                     matches!(*action, "pause" | "resume" | "close" | "extend" | "status")
                 })
-                .ok_or("swarm_control action must be pause, resume, close, extend, status")?;
+                .ok_or("swarm_control action must be pause, resume, close, extend or status")?;
             let mut command = serde_json::json!({"type":"swarm_control","action":action});
             if action == "extend" {
                 let seconds = args

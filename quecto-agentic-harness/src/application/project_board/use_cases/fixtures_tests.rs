@@ -206,7 +206,7 @@ pub fn unqualified_coordinator() -> crate::application::project_board::dto::Proj
     crate::application::project_board::dto::ProjectBoardError::Brief {
         code: "coordinator_model",
         reason: "the coordinator role's model must name its provider, as provider/model: \
-                 propose a plan that does"
+                 give it one"
             .into(),
     }
 }

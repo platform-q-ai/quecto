@@ -45,7 +45,7 @@ fn swarm_control_takes_no_usage_budget_action() {
     .unwrap_err();
     assert_eq!(
         refused.to_string(),
-        "swarm_control action must be pause, resume, close, extend, status"
+        "swarm_control action must be pause, resume, close, extend or status"
     );
     let definition = AgentCmdTool::new(new_registry()).definition();
     for gone in ["usage_budget", "token_limit", "strict_unknown"] {
