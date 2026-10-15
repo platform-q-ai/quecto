@@ -633,3 +633,44 @@ fn a_pull_request_another_tasks_change_links_is_not_linked_again() {
 /// Epic #2481 T4: what a noted change saw.
 #[path = "change_board_task_noted_tests.rs"]
 mod noted;
+
+/// The real case (Pocket's Delete on a reviewed task): a task in review
+/// whose run succeeded, and whose holder's claim lapsed hours ago, is
+/// archived by someone else; the claim goes with it. While its run is
+/// still going, nobody archives it, and nothing is written.
+#[test]
+fn anyone_archives_a_reviewed_task_whose_run_ended_and_claim_lapsed() {
+    use crate::domain::project_board::entities::run::Run;
+    use crate::domain::project_board::value_objects::vocabulary::RunOutcome;
+    let running = board();
+    seed(&running, held_by_ada(TaskStatus::Review));
+    seed_artifacts(
+        &running,
+        vec![BoardArtifact::Run(board_artifacts::run("a", 1))],
+    );
+    let writes = running.writes();
+    assert_eq!(
+        change(&running, "Bob", "14:00:00")
+            .execute(&slug("a"), &BoardOp::Move(TaskStatus::Archived)),
+        Err(ProjectBoardError::Rule(BoardRuleError::RunOpen(1)))
+    );
+    assert_eq!(running.writes(), writes, "a refused archive writes nothing");
+
+    let store = board();
+    seed(&store, held_by_ada(TaskStatus::Review));
+    let mut succeeded = board_artifacts::run("a", 1).into_fields();
+    succeeded.ended = Some(at("09:30:00"));
+    succeeded.outcome = Some(RunOutcome::Succeeded);
+    seed_artifacts(
+        &store,
+        vec![BoardArtifact::Run(Run::new(succeeded).unwrap())],
+    );
+    change(&store, "Bob", "14:00:00")
+        .execute(&slug("a"), &BoardOp::Move(TaskStatus::Archived))
+        .unwrap();
+    let archived = current(&store);
+    assert_eq!(
+        (archived.status, archived.claim, archived.updated),
+        (TaskStatus::Archived, None, at("14:00:00"))
+    );
+}
