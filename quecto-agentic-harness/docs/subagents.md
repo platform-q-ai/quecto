@@ -929,5 +929,5 @@ top-level agent; on a child, use spawn `disable_tools` / `read_only` (above).
 
 The setup/configuration REPL does not operate agents or subagents. Use `quecto agent`, UDS, or `quecto-tui` for subagent capabilities.
 
-For swarm control receipts, pause/resume behavior, observed budgets and retained
+For swarm control receipts, pause/resume behavior, observed usage and retained
 export scope, see [swarm operational diagnostics](swarm.md#operational-diagnostics-and-budgets).

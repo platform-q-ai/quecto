@@ -563,13 +563,23 @@ fn a_damaged_stored_budget_blocks_nothing() {
         "INSERT INTO usage_budget VALUES(1, 'x')",
         "INSERT INTO usage_budget VALUES(1, '[]')",
         r#"INSERT INTO usage_budget VALUES(1, '{"token_limit": "10", "strict_unknown": false, "warned": true}')"#,
+        // Review round 2: a payload that is not UTF-8.
+        "INSERT INTO usage_budget VALUES(1, CAST(x'ff' AS TEXT))",
     ] {
-        for method in ["_request_admission", "_control_status", "_board"] {
+        let record = json!([{"request_id": "r", "instrumented_attempts": 1, "outcome": "succeeded",
+            "context_input_tokens": 4, "output_tokens": 1}]);
+        for (method, args) in [
+            ("_request_admission", json!([])),
+            ("_control_status", json!([])),
+            ("_board", json!([])),
+            ("_record_request", record),
+            ("_extend_deadline", json!([600])),
+        ] {
             let answered = run_rust(&[
                 create(5),
                 at(0.5, "parent", "usage_report", json!([])),
                 sql(edit),
-                at(1.0, "parent", method, json!([])),
+                at(1.0, "parent", method, args),
             ]);
             assert!(
                 matches!(answered, Outcome::Ok(_)),

@@ -341,7 +341,7 @@ impl SqliteBoard<'_> {
 
     /// The budget's payload and the ledger's two totals: none and zero
     /// when the tables were never made. A payload longer than the board
-    /// writes (three settings) is refused unread.
+    /// writes (three settings) is left unread, as none.
     fn usage(&self) -> Result<(Option<Value>, Value, Value), BoardError> {
         // No budget is applied (owner decision, 2026-10-14): a payload no
         // board writes (past the bound, NULL or not JSON) reads as none,

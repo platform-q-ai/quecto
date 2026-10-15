@@ -1159,7 +1159,7 @@ settle by one host read (`_run_totals`, recorded as a `swarm_op` with role
 |---|---|
 | `run.tasks` | The run's tasks: `total`, and by state `ready`, `claimed`, `blocked` (a `ready` task waiting on a dependency counts here, as `summary` counts it), `submitted` and `completed` |
 | `run.messages` | Every message `sent`, and those `acked` (consumed by their recipient) or `withdrawn` |
-| `run.usage` | Per member (`actor_ref`, redacted), the board's request ledger: `requests`, `tokens` (the tokens the budget counted), `unknown_usage_requests`, `attempts`, and the reported `input_tokens`, `output_tokens`, `cache_read_tokens` and `cache_write_tokens`; at most 64 members |
+| `run.usage` | Per member (`actor_ref`, redacted), the board's request ledger: `requests`, `tokens` (the observed context-input plus output tokens), `unknown_usage_requests`, `attempts`, and the reported `input_tokens`, `output_tokens`, `cache_read_tokens` and `cache_write_tokens`; at most 64 members |
 | `run.unlisted_usage` | Members past the 64, in no `usage` entry; left out when none |
 | `run.wall_time_us` | The run's wall time: from its `created` event to the read at settle, on the board's clock; `null` when the board holds no creation time |
 
