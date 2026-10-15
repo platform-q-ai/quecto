@@ -62,15 +62,21 @@ fn ender(store: &MemoryBoardStore, who: &str, when: &str) -> EndRun {
 }
 
 /// The board run 1 of `board-store`'s swarm left as its coordinator
-/// stopped, as a front end kept it: none for any other run.
-struct Kept(Option<SwarmRunView>);
+/// stopped, as a front end kept it (none for any other run), until it is
+/// recorded.
+struct Kept(std::sync::Mutex<Option<SwarmRunView>>);
 
 impl SwarmRunReports for Kept {
     fn ended_run(&self, task: &Slug, run: u32) -> Option<SwarmRunView> {
         match (task.as_str(), run) {
-            ("board-store", 1) => self.0.clone(),
+            ("board-store", 1) => self.0.lock().unwrap().clone(),
             _ => None,
         }
+    }
+
+    fn recorded(&self, task: &Slug, run: u32) {
+        assert_eq!((task.as_str(), run), ("board-store", 1), "the run kept");
+        assert!(self.0.lock().unwrap().take().is_some(), "recorded once");
     }
 }
 
@@ -82,7 +88,7 @@ fn ender_keeping(store: &MemoryBoardStore, kept: Option<SwarmRunView>) -> EndRun
         SetClock::at("10:30:00"),
         Arc::new(MarkdownTextCells),
         None,
-        Some(Arc::new(Kept(kept))),
+        Some(Arc::new(Kept(std::sync::Mutex::new(kept)))),
     )
     .unwrap()
 }

@@ -459,3 +459,7 @@ mod tests;
 #[cfg(test)]
 #[path = "tool_start_tests.rs"]
 mod start_tests;
+
+#[cfg(test)]
+#[path = "tool_end_run_tests.rs"]
+mod end_run_tests;

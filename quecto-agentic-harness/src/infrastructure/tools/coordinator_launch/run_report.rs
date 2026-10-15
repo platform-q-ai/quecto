@@ -4,22 +4,32 @@
 //! ended, its items with their states, owners and evidence, and the tokens
 //! it was observed to spend.
 //!
-//! Only an ended run is a view: one whose status is none of the five that
-//! end a swarm (it was still running, or paused, as its coordinator
-//! stopped) is none, nor is a board with no run or no readable spend. An
+//! Only a whole ended run is a view: one whose status is none of the five
+//! that end a swarm (it was still running, or paused, as its coordinator
+//! stopped) is none, nor is a board with no run or no readable spend, nor
+//! one whose projection left rows out (`truncated`, or not saying), whose
+//! items cannot all be told: that one is logged. An
 //! item is read only when its title is text and its state one the swarm
 //! writes (an allowlist): any other is left out, so the plan item it
 //! might stand for stays as todo. An evidence entry is read only when its
 //! artifact and revision are both text.
 use serde_json::Value;
 
-use crate::application::project_board::fold_back::{
+use crate::application::project_board::dto::{
     SwarmEnd, SwarmEvidence, SwarmItemState, SwarmItemView, SwarmRunView,
 };
 use crate::domain::swarm::{RunState, TaskState};
 
 /// The view of `board`, a kept board's projection, when its run ended.
 pub fn swarm_run_view(board: &Value) -> Option<SwarmRunView> {
+    // Only a projection that says it holds every row (an allowlist).
+    match board.get("truncated").and_then(Value::as_bool) {
+        Some(false) => {}
+        Some(true) | None => {
+            tracing::warn!("a swarm board left rows out, so it is no whole view of its run");
+            return None;
+        }
+    }
     let run = board.get("run")?.as_object()?;
     let end = SwarmEnd::of(&RunState::new(run.get("status")?.as_str()?))?;
     let observed_tokens = run.get("budget")?.get("observed_tokens")?.as_u64()?;

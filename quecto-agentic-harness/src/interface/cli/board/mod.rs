@@ -388,6 +388,7 @@ fn answer(ctx: &CliContext, args: &[String], call: &mut BoardCall) -> Value {
         remote: line.remote.clone(),
         build: ctx.project_board,
         launcher: None,
+        swarm_session: None,
     };
     site::answer(&site, &value.to_string(), None, call)
 }

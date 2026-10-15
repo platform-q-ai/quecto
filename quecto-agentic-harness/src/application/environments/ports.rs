@@ -107,14 +107,17 @@ pub trait HostedSwarmBoard: Send + Sync {
 }
 
 /// Where the board of a swarm environment is kept as its member leaves
-/// (#2481 S4c follow-up): read before anything tears the box down, and
-/// kept under the leaving member's agent id, so the session that launched
-/// that member can still read how its run ended (its items, owners,
-/// evidence and spend) once the box and its board are gone.
+/// (#2481 S4c follow-up): read before anything tears the box down, once
+/// its run has ended, and kept under the session and the leaving member's
+/// label (the name it was spawned with, `board-<task>-run-<n>` for a board
+/// run's coordinator), so the session that launched that member can still
+/// read how its run ended (its items, owners, evidence and spend) once
+/// the box and its board are gone, with no memory of the launch.
 pub trait EndedSwarmBoards: Send + Sync {
-    /// Keeps `board`, the board `member`'s environment held as it left,
-    /// in place of any kept for it before. Never fails the teardown.
-    fn keep(&self, member: &str, board: SwarmBoardSnapshot);
+    /// Keeps `board`, the board the environment of `session`'s member
+    /// `label` held as it left, in place of any kept for it before. Never
+    /// fails the teardown: a board it cannot keep whole is not kept.
+    fn keep(&self, session: &str, label: &str, board: SwarmBoardSnapshot);
 }
 
 /// The swarm run a checkout hosts, read synchronously and without a

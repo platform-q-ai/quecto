@@ -546,13 +546,14 @@ fn a_cut_keeps_clusters_whole_where_it_can_and_always_moves_on() {
 /// leaves its caller; a holder's end says its items were recorded as todo.
 #[test]
 fn an_end_runs_answer_says_whether_its_swarm_was_looked_for() {
-    use crate::application::project_board::dto::{EndedRun, LivenessCheck};
+    use crate::application::project_board::dto::{EndedRun, LivenessCheck, RunReport};
     let answered = |liveness| {
         crate::interface::tools::project_board::answer::outcome(
             "end_run",
             &BoardOutcome::RunEnded(EndedRun {
                 run: run(1, 1, 0),
                 liveness,
+                report: RunReport::Unreported,
             }),
             None,
             None,
@@ -574,4 +575,31 @@ fn an_end_runs_answer_says_whether_its_swarm_was_looked_for() {
     let checked = answered(LivenessCheck::Checked);
     assert_eq!(checked["liveness"], json!("checked"));
     assert_eq!(checked.get("liveness_note"), None);
+}
+
+/// Review round 1 (M1, #2575): an end recorded from its swarm's kept
+/// board says nothing of todo items: its run shows where each stood. Only
+/// an end no swarm reported says its items were recorded as todo.
+#[test]
+fn an_end_from_its_swarms_board_says_no_items_were_recorded_as_todo() {
+    use crate::application::project_board::dto::{EndedRun, LivenessCheck, RunReport};
+    let answered = |report| {
+        crate::interface::tools::project_board::answer::outcome(
+            "end_run",
+            &BoardOutcome::RunEnded(EndedRun {
+                run: run(1, 1, 0),
+                liveness: LivenessCheck::Checked,
+                report,
+            }),
+            None,
+            None,
+        )
+    };
+    let kept = answered(RunReport::Kept);
+    assert_eq!(kept.get("items_recorded"), None, "{kept}");
+    assert!(kept["run"].is_object(), "{kept}");
+    assert_eq!(
+        answered(RunReport::Unreported)["items_recorded"],
+        json!("items recorded as todo: no swarm report")
+    );
 }

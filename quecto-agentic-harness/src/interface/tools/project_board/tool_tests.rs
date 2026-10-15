@@ -75,6 +75,7 @@ pub(super) fn site(
         remote: "origin".into(),
         build,
         launcher: None,
+        swarm_session: None,
     }
 }
 
@@ -148,6 +149,7 @@ fn environment() -> ProjectBoardEnvironment {
         vars: vec![],
         cancelled: None,
         launcher: None,
+        swarm_session: None,
     }
 }
 

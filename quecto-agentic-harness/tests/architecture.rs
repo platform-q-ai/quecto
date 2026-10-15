@@ -644,19 +644,6 @@ const CONTRACTS_OUTSIDE_PORTS: &[(&str, &[&str])] = &[
         ],
     ),
     ("subagent_launch", &["LaunchFuture", "SubagentLaunchPorts"]),
-    // An ended swarm's board as the project board folds its run back
-    // (#2481 S4c follow-up): the value types `SwarmRunReports` carries,
-    // which the board launcher reads a kept board into.
-    (
-        "project_board::fold_back",
-        &[
-            "SwarmEnd",
-            "SwarmEvidence",
-            "SwarmItemState",
-            "SwarmItemView",
-            "SwarmRunView",
-        ],
-    ),
 ];
 
 fn port_target_allowed(path: &str) -> bool {
@@ -1487,13 +1474,13 @@ fn application_path_allowed(path: &str) -> bool {
         // the port.
         ["crate", "application", "project_board", "dto", "BoardListing"] => true,
         // The run reports port (#2481 S4c follow-up) answers an ended
-        // swarm's board as the capability's fold-back reads it; the board
-        // launcher reads a kept board into it to implement the port.
+        // swarm's board as the capability's own DTO; the kept boards read a
+        // board's projection into it, for the board launcher's port.
         [
             "crate",
             "application",
             "project_board",
-            "fold_back",
+            "dto",
             "SwarmEnd" | "SwarmEvidence" | "SwarmItemState" | "SwarmItemView" | "SwarmRunView",
         ] => true,
         // The sessions list port takes the capability's own query

@@ -149,7 +149,7 @@ fn completion_calls_record_their_decisions_without_argument_text() {
 #[test]
 fn a_closed_runs_board_reads_as_the_view_its_board_run_is_folded_from() {
     use super::super::{CallOrigin, call_as};
-    use crate::application::project_board::fold_back::{SwarmEnd, SwarmEvidence, SwarmItemState};
+    use crate::application::project_board::dto::{SwarmEnd, SwarmEvidence, SwarmItemState};
     use crate::infrastructure::tools::coordinator_launch::swarm_run_view;
     let (_dir, handles) = board(1_000.0);
     running(&handles);

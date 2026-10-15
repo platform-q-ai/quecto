@@ -688,7 +688,9 @@ impl std::error::Error for ProjectBoardError {}
 
 #[path = "dto_fold_back.rs"]
 mod fold_back;
-pub use fold_back::{FoldBackFacts, FoldedBack};
+pub use fold_back::{
+    FoldBackFacts, FoldedBack, SwarmEnd, SwarmEvidence, SwarmItemState, SwarmItemView, SwarmRunView,
+};
 
 #[path = "dto_plans.rs"]
 mod plans;
@@ -696,7 +698,7 @@ mod plans;
 #[path = "dto_start.rs"]
 mod start;
 pub use plans::{PlanAcceptance, PlanDiscard, PlanEdit, PlanProposal};
-pub use start::{EndedRun, LivenessCheck, RunEnd, RunEndOutcome, TaskStart};
+pub use start::{EndedRun, LivenessCheck, RunEnd, RunEndOutcome, RunReport, TaskStart};
 
 #[cfg(test)]
 #[path = "dto_tests.rs"]

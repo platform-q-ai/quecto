@@ -78,8 +78,7 @@ use crate::domain::project_board::entities::task_parts::{
 };
 use crate::domain::project_board::value_objects::schema_error::line;
 use crate::domain::project_board::value_objects::telemetry::ItemCounts;
-use crate::domain::project_board::value_objects::vocabulary::{ItemState, RunOutcome};
-use crate::domain::swarm::{RunState, TaskState};
+use crate::domain::project_board::value_objects::vocabulary::ItemState;
 #[cfg(test)]
 use scrub::{MAX_FRAGMENT_CHARS, address, balanced, linked_word};
 use scrub::{linked, scrubbed};
@@ -95,123 +94,7 @@ pub enum Evidence {
     Left,
 }
 
-/// How a swarm ended: one of the statuses that end it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SwarmEnd {
-    Succeeded,
-    Failed,
-    BudgetExhausted,
-    Blocked,
-    Cancelled,
-}
-
-impl SwarmEnd {
-    pub const ALL: [Self; 5] = [
-        Self::Succeeded,
-        Self::Failed,
-        Self::BudgetExhausted,
-        Self::Blocked,
-        Self::Cancelled,
-    ];
-
-    /// The end `status` is, when it ends the swarm (an allowlist: a
-    /// swarm setting up, running or paused has not ended, nor has one
-    /// whose status is any other text).
-    pub fn of(status: &RunState) -> Option<Self> {
-        match status.as_str() {
-            "succeeded" => Some(Self::Succeeded),
-            "failed" => Some(Self::Failed),
-            "budget-exhausted" => Some(Self::BudgetExhausted),
-            "blocked" => Some(Self::Blocked),
-            "cancelled" => Some(Self::Cancelled),
-            _ => None,
-        }
-    }
-
-    /// The board's outcome of a run that ended so.
-    pub fn outcome(self) -> RunOutcome {
-        match self {
-            Self::Succeeded => RunOutcome::Succeeded,
-            Self::Failed | Self::BudgetExhausted => RunOutcome::Failed,
-            Self::Blocked | Self::Cancelled => RunOutcome::Stopped,
-        }
-    }
-}
-
-/// Where a swarm item stood: one of the five statuses the swarm writes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SwarmItemState {
-    Ready,
-    Claimed,
-    Submitted,
-    Completed,
-    Blocked,
-}
-
-impl SwarmItemState {
-    /// The state `state` is, when the swarm writes it (an allowlist).
-    pub fn of(state: &TaskState) -> Option<Self> {
-        match state.as_str() {
-            "ready" => Some(Self::Ready),
-            "claimed" => Some(Self::Claimed),
-            "submitted" => Some(Self::Submitted),
-            "completed" => Some(Self::Completed),
-            "blocked" => Some(Self::Blocked),
-            _ => None,
-        }
-    }
-
-    /// How far an item standing so got: completed, submitted, claimed,
-    /// ready, then blocked (an item blocked and created again is taken by
-    /// its new copy).
-    pub fn progress(self) -> u8 {
-        match self {
-            Self::Blocked => 0,
-            Self::Ready => 1,
-            Self::Claimed => 2,
-            Self::Submitted => 3,
-            Self::Completed => 4,
-        }
-    }
-
-    /// The board's state of a task item standing so.
-    pub fn item_state(self) -> ItemState {
-        match self {
-            Self::Ready => ItemState::Todo,
-            Self::Claimed => ItemState::Doing,
-            Self::Submitted => ItemState::Review,
-            Self::Completed => ItemState::Done,
-            Self::Blocked => ItemState::Blocked,
-        }
-    }
-}
-
-/// One evidence entry a swarm item was submitted with.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SwarmEvidence {
-    pub artifact: String,
-    pub revision: String,
-}
-
-/// One item of an ended swarm's board.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SwarmItemView {
-    pub title: String,
-    pub state: SwarmItemState,
-    /// The member holding it, by id.
-    pub owner: Option<String>,
-    pub evidence: Vec<SwarmEvidence>,
-}
-
-/// An ended swarm's board, as its live view (`get_swarm_board`) reads
-/// it: how it ended, its items in the view's order, and the tokens it
-/// was observed to spend.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SwarmRunView {
-    pub end: SwarmEnd,
-    pub items: Vec<SwarmItemView>,
-    pub observed_tokens: u64,
-}
+pub use super::dto::{SwarmEnd, SwarmEvidence, SwarmItemState, SwarmItemView, SwarmRunView};
 
 /// What a fold-back keeps of a swarm's items: every plan item, in the
 /// plan's order, and what was left out.

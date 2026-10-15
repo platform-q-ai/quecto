@@ -36,7 +36,9 @@
 use serde_json::{Map, Value, json};
 
 use super::request::RequestError;
-use crate::application::project_board::dto::{BoardListing, LivenessCheck, ProjectBoardError};
+use crate::application::project_board::dto::{
+    BoardListing, LivenessCheck, ProjectBoardError, RunReport,
+};
 use crate::application::project_board::operations::{BoardOutcome, Completion};
 use crate::application::project_board::ports::{
     ArtifactKey, BoardClockError, BoardHead, BoardStoreError, PullRequestStatesError,
@@ -209,8 +211,8 @@ fn shown_json(text: &str) -> Value {
 
 /// The answer to `op`, which came to `outcome`; `clock` says why its
 /// changes were not bounded against an outside time.
-/// What an `end_run` by its holder recorded of the run's task items: no
-/// swarm reported them (S4c).
+/// What an `end_run` by its holder recorded of the run's task items when
+/// no swarm reported them (S4c): said only then.
 const NO_SWARM_REPORT: &str = "items recorded as todo: no swarm report";
 
 /// What an `end_run` from a front end that cannot see running swarms (the
@@ -268,12 +270,14 @@ pub fn outcome(
                     fields.insert("liveness_note".into(), json!(NOT_CHECKED));
                 }
             }
-            // A hand end reports no swarm: what it recorded of the items.
-            let report = match run.fields().outcome {
-                Some(RunOutcome::Succeeded | RunOutcome::Stopped | RunOutcome::Failed) => {
-                    Some(NO_SWARM_REPORT)
-                }
-                Some(RunOutcome::Lost) | None => None,
+            // An end no swarm reported: what it recorded of the items. One
+            // from its swarm's kept board shows them in the run itself.
+            let report = match (run.fields().outcome, ended.report) {
+                (
+                    Some(RunOutcome::Succeeded | RunOutcome::Stopped | RunOutcome::Failed),
+                    RunReport::Unreported,
+                ) => Some(NO_SWARM_REPORT),
+                (Some(RunOutcome::Lost) | None, _) | (_, RunReport::Kept) => None,
             };
             if let Some(report) = report {
                 fields.insert("items_recorded".into(), json!(report));

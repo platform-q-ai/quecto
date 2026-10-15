@@ -58,6 +58,7 @@ fn environment(repo: &Path, access: Access) -> ProjectBoardEnvironment {
         vars,
         cancelled: None,
         launcher: None,
+        swarm_session: None,
     }
 }
 
@@ -600,18 +601,6 @@ impl crate::application::project_board::ports::RunLiveness for FailedButRunning 
         run: u32,
     ) -> Option<String> {
         (run == 1).then(|| "7f3a".into())
-    }
-}
-
-/// It keeps no swarm's board: every end is as a swarm that reported
-/// nothing.
-impl crate::application::project_board::ports::SwarmRunReports for FailedButRunning {
-    fn ended_run(
-        &self,
-        _: &crate::domain::project_board::value_objects::slug::Slug,
-        _: u32,
-    ) -> Option<crate::application::project_board::fold_back::SwarmRunView> {
-        None
     }
 }
 

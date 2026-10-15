@@ -7,10 +7,12 @@
 //!
 //! The claim's holder ends it as `succeeded`, `stopped` or `failed`, folded
 //! back from its swarm's board as this front end kept it when the run's
-//! coordinator stopped ([`SwarmRunReports`]): where each task item stood,
+//! coordinator left its container ([`SwarmRunReports`], dropped once
+//! recorded): where each task item stood,
 //! with owners and evidence, and what it cost, mapped as a fold-back maps
 //! them ([`run_items`], [`cost_of`]). With no board kept (the CLI, a run
-//! another session launched, a board that could not be read), it is folded
+//! another session launched, a board that could not be read whole, a
+//! process restarted between the teardown and this end), it is folded
 //! back as a swarm that ended so with nothing reported is: every task item
 //! as todo, its cost unknown. A run ends as `succeeded` only when every
 //! task item is done there (`items_not_done` otherwise, from the domain),
@@ -32,11 +34,10 @@ use std::sync::Arc;
 use super::board_change::{checked_writer, commit_run, task_on};
 use super::board_view;
 use crate::application::project_board::dto::{
-    EndedRun, LivenessCheck, ProjectBoardError, RunEnd, RunEndOutcome,
+    EndedRun, LivenessCheck, ProjectBoardError, RunEnd, RunEndOutcome, RunReport,
 };
-use crate::application::project_board::fold_back::{
-    Evidence, SwarmEnd, SwarmRunView, cost_of, run_items,
-};
+use crate::application::project_board::dto::{SwarmEnd, SwarmRunView};
+use crate::application::project_board::fold_back::{Evidence, cost_of, run_items};
 use crate::application::project_board::ports::{
     BoardArtifact, BoardClock, BoardStoreError, BoardTextCells, ProjectBoardStore, RunLiveness,
     SwarmRunReports,
@@ -171,9 +172,24 @@ impl EndRun {
                     Some(_) => LivenessCheck::Checked,
                     None => LivenessCheck::NotChecked,
                 };
+                // A board recorded need not be kept: the run has ended.
+                let report = match (&report, &self.reports, request.outcome) {
+                    (
+                        Some(_),
+                        Some(reports),
+                        RunEndOutcome::Succeeded | RunEndOutcome::Stopped | RunEndOutcome::Failed,
+                    ) => {
+                        reports.recorded(id, number);
+                        RunReport::Kept
+                    }
+                    (_, _, RunEndOutcome::Lost) | (None, _, _) | (_, None, _) => {
+                        RunReport::Unreported
+                    }
+                };
                 Ok(EndedRun {
                     run: run.clone(),
                     liveness,
+                    report,
                 })
             }
             other => panic!("an end_run writes its run alone, not {other:?}"),

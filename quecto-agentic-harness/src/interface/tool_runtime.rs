@@ -407,6 +407,8 @@ pub(crate) fn build_tool_runtime(
                 remote: "origin".into(),
                 build: Some(build),
                 launcher: Some(std::sync::Arc::new(launcher)),
+                // A run's end reads the boards its session's teardown kept.
+                swarm_session: Some(agent_control.environment_registry.session().to_owned()),
             },
         );
         register_bundled_native_tools_with_scope(

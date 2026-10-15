@@ -1,49 +1,77 @@
-//! The boards of swarm environments as their member left (#2481 S4c
-//! follow-up), kept in this process under the leaving member's agent id:
-//! the final-member teardown keeps one before it tears the box down (its
-//! checkout, and the board in it, go with the box), and the board's
-//! coordinator launcher reads its own coordinator's back, so `end_run`
+//! The boards of ended swarm runs as their member left its environment
+//! (#2481 S4c follow-up), kept under the session and the member's spawn
+//! label (`board-<task>-run-<n>` for a board run's coordinator): the
+//! final-member teardown keeps one before it tears the box down (its
+//! checkout, and the board in it, go with the box), and a session's
+//! [`KeptRunReports`] reads its run's back by that label, so `end_run`
 //! records how the run's swarm ended rather than a swarm that reported
-//! nothing.
+//! nothing. Keyed by label, not by the agent a launch answered, so a
+//! launcher built after a restart finds a board the teardown kept.
 //!
-//! Bounded: only the newest [`MAX_KEPT`] are kept, so a long-lived process
-//! never grows without end; one past it costs the oldest. Kept in memory
-//! only: a process that restarts between a coordinator's stop and its
-//! run's end keeps none, and that end records nothing reported.
+//! Only what a fold-back reads is kept ([`SwarmRunView`]: the run's end,
+//! its items with their states, owners and evidence, and its spend), read
+//! from the board's projection as it is kept; a projection that is not a
+//! whole ended run is not kept. A board is dropped once its run is
+//! recorded, and only the newest [`MAX_KEPT`] are kept, so a long-lived
+//! process never grows without end. Kept in memory: a process that
+//! restarts between the coordinator's teardown and the run's end has lost
+//! it, and a teardown that no longer knows the coordinator's label (a
+//! restarted harness that does not hold it as its subagent) keeps none;
+//! such an end records nothing reported.
 use std::collections::VecDeque;
-use std::sync::{Arc, Mutex, OnceLock};
-
-use serde_json::Value;
+use std::sync::{Arc, Mutex};
 
 use crate::application::environments::dto::SwarmBoardSnapshot;
 use crate::application::environments::ports::EndedSwarmBoards;
+use crate::application::project_board::dto::SwarmRunView;
+use crate::application::project_board::ports::SwarmRunReports;
+use crate::domain::project_board::value_objects::slug::Slug;
 
-/// The most boards one process keeps.
+/// The most boards one store keeps.
 pub const MAX_KEPT: usize = 16;
 
-/// Boards kept by member, oldest first.
+/// A kept board's key: the session, and the member's label.
+type Key = (String, String);
+
+/// Ended runs' boards by session and label, oldest first. Composition
+/// builds one per harness and hands it to the teardown and the launcher.
 #[derive(Debug, Default)]
 pub struct KeptSwarmBoards {
-    boards: Mutex<VecDeque<(String, Value)>>,
+    boards: Mutex<VecDeque<(Key, SwarmRunView)>>,
 }
 
 impl KeptSwarmBoards {
-    /// The board kept for `member`, if one is.
-    pub fn board(&self, member: &str) -> Option<Value> {
+    /// The board kept for `session`'s member `label`, if one is.
+    pub fn view(&self, session: &str, label: &str) -> Option<SwarmRunView> {
         let boards = self.boards.lock().unwrap_or_else(|e| e.into_inner());
         boards
             .iter()
-            .find(|(kept, _)| kept == member)
-            .map(|(_, board)| board.clone())
+            .find(|((kept_session, kept_label), _)| kept_session == session && kept_label == label)
+            .map(|(_, view)| view.clone())
+    }
+
+    /// Drops the board kept for `session`'s member `label`, if one is.
+    pub fn forget(&self, session: &str, label: &str) {
+        let mut boards = self.boards.lock().unwrap_or_else(|e| e.into_inner());
+        boards.retain(|((kept_session, kept_label), _)| {
+            !(kept_session == session && kept_label == label)
+        });
     }
 }
 
 impl EndedSwarmBoards for KeptSwarmBoards {
-    fn keep(&self, member: &str, board: SwarmBoardSnapshot) {
+    fn keep(&self, session: &str, label: &str, board: SwarmBoardSnapshot) {
+        assert!(!label.is_empty(), "a kept board's member has a label");
+        let Some(view) = super::run_report::swarm_run_view(&board.into_value()) else {
+            tracing::warn!(
+                member = %label,
+                "an ended swarm's board was not kept: not a whole ended run"
+            );
+            return;
+        };
+        self.forget(session, label);
         let mut boards = self.boards.lock().unwrap_or_else(|e| e.into_inner());
-        // The newest board of a member is the one kept.
-        boards.retain(|(kept, _)| kept != member);
-        boards.push_back((member.to_owned(), board.into_value()));
+        boards.push_back(((session.to_owned(), label.to_owned()), view));
         while boards.len() > MAX_KEPT {
             boards.pop_front();
         }
@@ -54,11 +82,35 @@ impl EndedSwarmBoards for KeptSwarmBoards {
     }
 }
 
-/// The boards this process keeps: the one store the teardown keeps into
-/// and every launcher reads from.
-pub fn process_kept_boards() -> Arc<KeptSwarmBoards> {
-    static KEPT: OnceLock<Arc<KeptSwarmBoards>> = OnceLock::new();
-    Arc::clone(KEPT.get_or_init(Arc::default))
+/// A session's runs' swarms as the teardown kept their boards: the run
+/// reports port (#2481 S4c follow-up), reading each run's board by the
+/// label its coordinator is spawned with, so it needs no memory of the
+/// launch.
+pub struct KeptRunReports {
+    kept: Arc<KeptSwarmBoards>,
+    session: String,
+}
+
+impl KeptRunReports {
+    /// The reports `kept` holds for `session`.
+    pub fn new(kept: Arc<KeptSwarmBoards>, session: &str) -> Self {
+        Self {
+            kept,
+            session: session.to_owned(),
+        }
+    }
+}
+
+impl SwarmRunReports for KeptRunReports {
+    fn ended_run(&self, task: &Slug, run: u32) -> Option<SwarmRunView> {
+        self.kept
+            .view(&self.session, &super::label(task.as_str(), run))
+    }
+
+    fn recorded(&self, task: &Slug, run: u32) {
+        self.kept
+            .forget(&self.session, &super::label(task.as_str(), run));
+    }
 }
 
 #[cfg(test)]

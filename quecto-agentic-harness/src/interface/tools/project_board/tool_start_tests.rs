@@ -127,18 +127,6 @@ impl crate::application::project_board::ports::RunLiveness for Launching {
     }
 }
 
-/// It keeps no swarm's board: every end is as a swarm that reported
-/// nothing.
-impl crate::application::project_board::ports::SwarmRunReports for Launching {
-    fn ended_run(
-        &self,
-        _: &crate::domain::project_board::value_objects::slug::Slug,
-        _: u32,
-    ) -> Option<crate::application::project_board::fold_back::SwarmRunView> {
-        None
-    }
-}
-
 impl crate::application::project_board::ports::CoordinatorLaunch for Launching {
     fn may_launch(&self) -> bool {
         true
@@ -321,18 +309,6 @@ impl crate::application::project_board::ports::RunLiveness for Failing {
     }
 }
 
-/// It keeps no swarm's board: every end is as a swarm that reported
-/// nothing.
-impl crate::application::project_board::ports::SwarmRunReports for Failing {
-    fn ended_run(
-        &self,
-        _: &crate::domain::project_board::value_objects::slug::Slug,
-        _: u32,
-    ) -> Option<crate::application::project_board::fold_back::SwarmRunView> {
-        None
-    }
-}
-
 impl crate::application::project_board::ports::CoordinatorLaunch for Failing {
     fn may_launch(&self) -> bool {
         true
@@ -420,18 +396,6 @@ impl crate::application::project_board::ports::RunLiveness for StillRunning {
         run: u32,
     ) -> Option<String> {
         ((task.as_str(), run) == ("a", 1)).then(|| "7f3a".into())
-    }
-}
-
-/// It keeps no swarm's board: every end is as a swarm that reported
-/// nothing.
-impl crate::application::project_board::ports::SwarmRunReports for StillRunning {
-    fn ended_run(
-        &self,
-        _: &crate::domain::project_board::value_objects::slug::Slug,
-        _: u32,
-    ) -> Option<crate::application::project_board::fold_back::SwarmRunView> {
-        None
     }
 }
 

@@ -12,7 +12,7 @@ use super::answer::FrontEndRefusal;
 use super::recording::BoardCall;
 use super::request::{op_of, parse};
 use super::{read, run_recorded};
-use crate::application::project_board::ports::{CoordinatorLaunch, RunLiveness, SwarmRunReports};
+use crate::application::project_board::ports::{CoordinatorLaunch, RunLiveness};
 use crate::application::project_board::use_cases::RunBoardOperation;
 
 /// What a request does with the board.
@@ -41,14 +41,17 @@ pub struct ProjectBoardEnvironment {
     /// no swarm (the CLI), so a start is refused and an end_run sees none
     /// running.
     pub launcher: Option<Launcher>,
+    /// The session whose ended swarms' boards a run's end is recorded from
+    /// (#2481 S4c follow-up): the agent tool's; `None` for a front end that
+    /// keeps none (the CLI), whose ends record nothing reported.
+    pub swarm_session: Option<String>,
 }
 
 /// A session's swarms as a front end reaches them (S4c): it launches a
-/// started task's coordinator, sees whether a run's still runs, and keeps
-/// how a run's swarm ended.
-pub trait SessionSwarms: CoordinatorLaunch + RunLiveness + SwarmRunReports {}
+/// started task's coordinator, and sees whether a run's still runs.
+pub trait SessionSwarms: CoordinatorLaunch + RunLiveness {}
 
-impl<T: CoordinatorLaunch + RunLiveness + SwarmRunReports> SessionSwarms for T {}
+impl<T: CoordinatorLaunch + RunLiveness> SessionSwarms for T {}
 
 /// A front end's coordinator launcher (S4c).
 pub type Launcher = std::sync::Arc<dyn SessionSwarms>;
@@ -78,6 +81,9 @@ pub struct BoardSite {
     pub remote: String,
     pub build: Option<ProjectBoardHandlesBuilder>,
     pub launcher: Option<Launcher>,
+    /// The session whose ended swarms' boards a run's end reads (`None`:
+    /// none, as from the CLI).
+    pub swarm_session: Option<String>,
 }
 
 impl std::fmt::Debug for BoardSite {
@@ -87,6 +93,7 @@ impl std::fmt::Debug for BoardSite {
             .field("remote", &self.remote)
             .field("build", &self.build.is_some())
             .field("launcher", &self.launcher.is_some())
+            .field("swarm_session", &self.swarm_session)
             .finish()
     }
 }
@@ -133,6 +140,7 @@ pub fn answer(
         vars: std::env::vars_os().collect(),
         cancelled,
         launcher: site.launcher.clone(),
+        swarm_session: site.swarm_session.clone(),
     };
     match call.built(|| build(&environment)) {
         // The one entry point every front end's request goes through.

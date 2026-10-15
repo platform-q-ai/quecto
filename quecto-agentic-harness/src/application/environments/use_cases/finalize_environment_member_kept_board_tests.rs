@@ -21,12 +21,12 @@ use crate::domain::swarm::RunStatus;
 
 /// The board a fake reads at each environment (`None`: none hosted;
 /// `Err`: unreadable), noting how many retained kills `port` had run as
-/// it was read; and the boards kept, by member.
+/// it was read; and the boards kept, by session and label.
 struct BoardPort {
     board: Result<Option<serde_json::Value>, String>,
     port: Arc<HostedRunPort>,
     kills_at_read: Mutex<Vec<usize>>,
-    kept: Mutex<Vec<(String, serde_json::Value)>>,
+    kept: Mutex<Vec<(String, String, serde_json::Value)>>,
 }
 
 impl BoardPort {
@@ -66,33 +66,39 @@ impl HostedSwarmBoard for BoardPort {
 }
 
 impl EndedSwarmBoards for BoardPort {
-    fn keep(&self, member: &str, board: SwarmBoardSnapshot) {
+    fn keep(&self, session: &str, label: &str, board: SwarmBoardSnapshot) {
         self.kept
             .lock()
             .unwrap()
-            .push((member.to_owned(), board.into_value()));
+            .push((session.to_owned(), label.to_owned(), board.into_value()));
     }
 }
 
-/// [`finalize`], keeping boards through `boards`.
+/// The label the coordinator of run 1 of task `a` is spawned with.
+const LABEL: &str = "board-a-run-1";
+
+/// [`super::finalize_environment_member_retention_tests`]' `finalize`,
+/// for a member spawned as `label`, keeping boards through `boards`.
 fn finalize_keeping(
     port: Arc<HostedRunPort>,
     boards: &Arc<BoardPort>,
+    label: Option<&str>,
     mode: MemberFinalizeMode,
 ) -> (EnvironmentRegistry, String) {
     let registry = EnvironmentRegistry::new();
     let env_ref = committed_env(&registry, vec!["coordinator-uuid"]);
     let use_case = use_case(&registry, port).keeping_ended_boards(boards.clone(), boards.clone());
-    block_on(use_case.finalize_member(&env_ref, "coordinator-uuid", None, mode));
+    block_on(use_case.finalize_labelled_member(&env_ref, "coordinator-uuid", label, None, mode));
     (registry, env_ref)
 }
 
 /// #2481 S4c follow-up: a closed run's box goes with its board when its
-/// coordinator is killed, so the board is read and kept under the
-/// coordinator first, before the retained kill: the project board's run
-/// is folded back from it afterwards.
+/// coordinator is killed, so the board of a run that has ended is read and
+/// kept under the session and the coordinator's label first, before the
+/// retained kill: the project board's run is folded back from it
+/// afterwards, by that label, whoever launched it.
 #[test]
-fn a_created_runs_board_is_kept_under_its_member_before_any_teardown() {
+fn an_ended_runs_board_is_kept_under_its_members_label_before_any_teardown() {
     let board = serde_json::json!({"revision": 9, "run": {"status": "succeeded"}});
     for (hosted, mode, torn_down) in [
         (
@@ -101,18 +107,31 @@ fn a_created_runs_board_is_kept_under_its_member_before_any_teardown() {
             true,
         ),
         (
+            with_status(RunStatus::Failed, None),
+            MemberFinalizeMode::OwnerEnd,
+            true,
+        ),
+        (
             with_status(RunStatus::Cancelled, None),
             MemberFinalizeMode::OwnerEnd,
             false,
         ),
-        (running_swarm(), MemberFinalizeMode::Exit, false),
+        (
+            with_status(RunStatus::Blocked, None),
+            MemberFinalizeMode::Exit,
+            true,
+        ),
     ] {
         let port = Arc::new(HostedRunPort::hosting(Some(hosted.clone())));
         let boards = BoardPort::reading(Ok(Some(board.clone())), &port);
-        finalize_keeping(port.clone(), &boards, mode);
+        let (registry, _) = finalize_keeping(port.clone(), &boards, Some(LABEL), mode);
         assert_eq!(
             boards.kept.lock().unwrap().as_slice(),
-            &[("coordinator-uuid".to_owned(), board.clone())],
+            &[(
+                registry.session().to_owned(),
+                LABEL.to_owned(),
+                board.clone()
+            )],
             "{hosted:?}"
         );
         assert_eq!(
@@ -128,37 +147,59 @@ fn a_created_runs_board_is_kept_under_its_member_before_any_teardown() {
     }
 }
 
-/// No board is read where no swarm run was created (a plain container, a
-/// placeholder), nor on an owner's teardown of everything (nothing is
-/// observed); and a board that cannot be read, or holds none, keeps
-/// nothing while the teardown goes on.
+/// No board is read for a run that has not ended (running, or paused,
+/// with or without an outcome to propose: it may yet change), where no
+/// swarm run was created (a plain container, a placeholder), on an owner's
+/// teardown of everything (nothing is observed), or for a member with no
+/// label; and a board that cannot be read, or holds none, keeps nothing
+/// while the teardown goes on.
 #[test]
-fn no_board_is_kept_where_no_created_run_is_seen_or_none_can_be_read() {
+fn no_board_is_kept_unless_an_ended_run_is_seen_and_read() {
     let placeholder = HostedSwarmRun {
         deadline: 0.0,
         ..with_status(RunStatus::Succeeded, None)
     };
-    for (observed, mode) in [
-        (SwarmRunObservation::NoStore, MemberFinalizeMode::OwnerEnd),
+    let run = |hosted| SwarmRunObservation::Run(hosted);
+    for (observed, mode, label) in [
+        (run(running_swarm()), MemberFinalizeMode::Exit, Some(LABEL)),
         (
-            SwarmRunObservation::Run(placeholder),
+            run(with_status(RunStatus::Paused, Some(RunStatus::Succeeded))),
             MemberFinalizeMode::OwnerEnd,
+            Some(LABEL),
+        ),
+        (
+            run(with_status(RunStatus::Paused, None)),
+            MemberFinalizeMode::Exit,
+            Some(LABEL),
+        ),
+        (run(placeholder), MemberFinalizeMode::OwnerEnd, Some(LABEL)),
+        (
+            SwarmRunObservation::NoStore,
+            MemberFinalizeMode::OwnerEnd,
+            Some(LABEL),
         ),
         (
             SwarmRunObservation::Unreadable("locked".into()),
             MemberFinalizeMode::OwnerEnd,
+            Some(LABEL),
         ),
         (
-            SwarmRunObservation::Run(with_status(RunStatus::Succeeded, None)),
+            run(with_status(RunStatus::Succeeded, None)),
             MemberFinalizeMode::OwnerTeardown,
+            Some(LABEL),
+        ),
+        (
+            run(with_status(RunStatus::Succeeded, None)),
+            MemberFinalizeMode::OwnerEnd,
+            None,
         ),
     ] {
         let port = Arc::new(HostedRunPort::observing(observed.clone()));
         let boards = BoardPort::reading(Ok(Some(serde_json::json!({}))), &port);
-        finalize_keeping(port, &boards, mode);
+        finalize_keeping(port, &boards, label, mode);
         assert!(
             boards.kills_at_read.lock().unwrap().is_empty(),
-            "never read: {observed:?}, {mode:?}"
+            "never read: {observed:?}, {mode:?}, {label:?}"
         );
         assert!(boards.kept.lock().unwrap().is_empty());
     }
@@ -168,7 +209,12 @@ fn no_board_is_kept_where_no_created_run_is_seen_or_none_can_be_read() {
             None,
         ))));
         let boards = BoardPort::reading(board.clone(), &port);
-        finalize_keeping(port.clone(), &boards, MemberFinalizeMode::OwnerEnd);
+        finalize_keeping(
+            port.clone(),
+            &boards,
+            Some(LABEL),
+            MemberFinalizeMode::OwnerEnd,
+        );
         assert!(boards.kept.lock().unwrap().is_empty(), "{board:?}");
         assert_eq!(port.kills.lock().unwrap().len(), 1, "torn down: {board:?}");
     }

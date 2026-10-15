@@ -44,6 +44,7 @@ use crate::infrastructure::persistence::project_board::op_log::{
 use crate::infrastructure::persistence::project_board::store::GitBoardStore;
 use crate::infrastructure::persistence::project_board::text_cells::MarkdownTextCells;
 use crate::infrastructure::time::remote_time::ReferencedBoardClock;
+use crate::infrastructure::tools::coordinator_launch::KeptRunReports;
 use crate::interface::cli::board::{
     Access, BuildError, ProjectBoardEnvironment, ProjectBoardHandles,
 };
@@ -139,10 +140,13 @@ fn build_with_warnings(
                 .launcher
                 .clone()
                 .map(|swarms| swarms as Arc<dyn RunLiveness>),
-            environment
-                .launcher
-                .clone()
-                .map(|swarms| swarms as Arc<dyn SwarmRunReports>),
+            // A run's end reads the boards its session's teardown kept.
+            environment.swarm_session.as_deref().map(|session| {
+                Arc::new(KeptRunReports::new(
+                    super::super::environments::kept_swarm_boards(),
+                    session,
+                )) as Arc<dyn SwarmRunReports>
+            }),
         )
         .map_err(built)?,
         start: StartBoardTask::new(

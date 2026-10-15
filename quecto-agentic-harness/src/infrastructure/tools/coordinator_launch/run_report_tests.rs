@@ -89,9 +89,16 @@ fn only_an_ended_run_is_a_view() {
     }
 }
 
-/// A board with no run, no readable spend or no items is no view.
+/// A board with no run, no readable spend or no items is no view; nor is
+/// one that left rows out, or does not say whether it did.
 #[test]
-fn a_board_missing_its_run_spend_or_items_is_no_view() {
+fn a_board_missing_its_run_spend_or_items_or_left_short_is_no_view() {
+    let mut truncated = board("succeeded", 1, json!([]));
+    truncated["truncated"] = json!(true);
+    let mut unsaid = board("succeeded", 1, json!([]));
+    unsaid.as_object_mut().unwrap().remove("truncated");
+    assert_eq!(swarm_run_view(&truncated), None, "rows left out");
+    assert_eq!(swarm_run_view(&unsaid), None, "not saying");
     let mut no_run = board("succeeded", 1, json!([]));
     no_run["run"] = Value::Null;
     let mut no_spend = board("succeeded", 1, json!([]));

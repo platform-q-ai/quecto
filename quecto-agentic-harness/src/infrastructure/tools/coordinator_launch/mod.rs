@@ -15,9 +15,9 @@
 //! (#2173).
 //!
 //! It also tells whether this session still runs the coordinator of a
-//! given run, by its label among the session's subagents; and how the
-//! swarm of a run it launched ended, by the board the final-member
-//! teardown kept as that coordinator left ([`KeptSwarmBoards`]).
+//! given run, by its label among the session's subagents. The boards the
+//! final-member teardown keeps of ended runs are read back by that same
+//! label ([`KeptRunReports`]).
 //!
 //! Blocking: a launch waits on the session's runtime for the spawn to
 //! answer, at most [`LAUNCH_TIMEOUT`], on the board call's blocking thread.
@@ -31,10 +31,8 @@ use sha2::{Digest, Sha256};
 use super::spawn_launch_ports::SpawnedChild;
 use super::subagent_registry::SubagentRegistry;
 use super::subagent_status::SubagentStatus;
-use crate::application::project_board::fold_back::SwarmRunView;
 use crate::application::project_board::ports::{
     CoordinatorLaunch, CoordinatorRequest, LaunchRefused, LaunchedCoordinator, RunLiveness,
-    SwarmRunReports,
 };
 use crate::application::tools::ports::Tool;
 use crate::domain::agents::services::subagent::{MAX_AGENT_ID_CHARS, validate_agent_id_format};
@@ -42,7 +40,7 @@ use crate::domain::error::DomainError;
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::sessions::entities::session::SubagentLiveness;
 use crate::domain::tool::ToolResult;
-pub use kept_boards::{KeptSwarmBoards, process_kept_boards};
+pub use kept_boards::{KeptRunReports, KeptSwarmBoards, MAX_KEPT};
 #[cfg(test)]
 pub(crate) use run_report::swarm_run_view;
 pub use spawn_permit::SpawnPermit;
@@ -59,8 +57,7 @@ const CANCEL_POLL: Duration = Duration::from_millis(250);
 
 /// Launches coordinators through `spawn` while `permit` allows it,
 /// stopping one that came up wrong with `agent_cmd`; finds the ones this
-/// session still runs among its `subagents`, and the board each one's
-/// swarm left among the `kept` boards.
+/// session still runs among its `subagents`.
 pub struct SpawnCoordinatorLauncher {
     spawn: Arc<dyn Tool>,
     agent_cmd: Arc<dyn Tool>,
@@ -68,10 +65,6 @@ pub struct SpawnCoordinatorLauncher {
     subagents: SubagentRegistry,
     timeout: Duration,
     kill_timeout: Duration,
-    kept: Arc<KeptSwarmBoards>,
-    /// The agent id of each coordinator this launcher launched, by its
-    /// run's label: what its kept board is found by once it is gone.
-    launched: std::sync::Mutex<std::collections::BTreeMap<String, String>>,
 }
 
 impl SpawnCoordinatorLauncher {
@@ -88,16 +81,7 @@ impl SpawnCoordinatorLauncher {
             subagents,
             timeout: LAUNCH_TIMEOUT,
             kill_timeout: KILL_TIMEOUT,
-            kept: process_kept_boards(),
-            launched: std::sync::Mutex::default(),
         }
-    }
-
-    /// This launcher, reading the boards its coordinators' swarms left in
-    /// `kept` rather than the process's.
-    #[must_use]
-    pub fn keeping(self, kept: Arc<KeptSwarmBoards>) -> Self {
-        Self { kept, ..self }
     }
 
     /// This launcher, waiting at most `timeout` for spawn and
@@ -248,13 +232,7 @@ impl CoordinatorLaunch for SpawnCoordinatorLauncher {
         });
         match waited {
             Waited::Answered(Ok(result)) => match result.is_error {
-                false => {
-                    let running = self.running(&runtime, result, cancelled);
-                    if let Ok(coordinator) = &running {
-                        self.launched_as(request, &coordinator.agent);
-                    }
-                    running
-                }
+                false => self.running(&runtime, result, cancelled),
                 true => Err(LaunchRefused::because(result.content)),
             },
             Waited::Answered(Err(error)) => Err(LaunchRefused::because(error.to_string())),
@@ -264,30 +242,6 @@ impl CoordinatorLaunch for SpawnCoordinatorLauncher {
                 self.timeout
             ))),
         }
-    }
-}
-
-impl SpawnCoordinatorLauncher {
-    /// Notes that `request`'s coordinator runs as agent `agent`.
-    fn launched_as(&self, request: &CoordinatorRequest, agent: &str) {
-        assert!(!agent.is_empty(), "a launched coordinator has an agent id");
-        let label = label(request.task.as_str(), request.run);
-        let mut launched = self.launched.lock().unwrap_or_else(|e| e.into_inner());
-        launched.insert(label, agent.to_owned());
-    }
-}
-
-impl SwarmRunReports for SpawnCoordinatorLauncher {
-    /// The board the swarm of run `run` of `task` left as its coordinator
-    /// stopped, when this launcher launched that coordinator and the
-    /// teardown kept its board, read as a view of an ended run.
-    fn ended_run(&self, task: &Slug, run: u32) -> Option<SwarmRunView> {
-        let label = label(task.as_str(), run);
-        let agent = {
-            let launched = self.launched.lock().unwrap_or_else(|e| e.into_inner());
-            launched.get(&label).cloned()?
-        };
-        run_report::swarm_run_view(&self.kept.board(&agent)?)
     }
 }
 
