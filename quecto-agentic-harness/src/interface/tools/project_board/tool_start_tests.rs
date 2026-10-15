@@ -464,3 +464,39 @@ async fn the_tool_refuses_to_end_a_run_its_session_still_runs() {
         "the board's: {answer}"
     );
 }
+
+/// Review round 2 (#2567): a start the strict read refuses (a key named
+/// twice, a request past its bytes) is still a start: its refusal names
+/// the op and carries the stop. When the op itself cannot be known (named
+/// twice), the refusal names none and carries no steps.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_start_the_strict_read_refuses_still_says_to_stop() {
+    let board = tool(site(Some(launching_board)));
+    let pad = "x".repeat(super::super::MAX_REQUEST_BYTES);
+    for text in [
+        r#"{"op": "start", "task": "a", "task": "b", "plan_version": 1}"#.to_owned(),
+        format!(r#"{{"op": "start", "task": "a", "plan_version": 1, "pad": "{pad}"}}"#),
+    ] {
+        let refused = board.execute(&text).await.unwrap();
+        let answer: Value = serde_json::from_str(&refused.content).unwrap();
+        assert_eq!(
+            (
+                &answer["op"],
+                &answer["error"]["code"],
+                &answer["error"]["steps"]
+            ),
+            (
+                &json!("start"),
+                &json!("invalid_request"),
+                &json!(steps::REFUSED)
+            ),
+            "{}",
+            &text[..60]
+        );
+    }
+    let unknown = r#"{"op": "start", "op": "start", "task": "a", "plan_version": 1}"#;
+    let refused = board.execute(unknown).await.unwrap();
+    let answer: Value = serde_json::from_str(&refused.content).unwrap();
+    assert_eq!(answer["op"], json!(null), "{answer}");
+    assert!(answer["error"].get("steps").is_none(), "{answer}");
+}

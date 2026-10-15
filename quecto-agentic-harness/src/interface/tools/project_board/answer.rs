@@ -10,9 +10,11 @@
 //!   the `task` naming it, the `plan` and the version it `superseded`
 //!   (`null` when none was accepted), or `head` alone; and
 //!   `clock` when a request that reads the clock was not bounded against
-//!   an outside time.
+//!   an outside time. On the agent tool, a started task's answer also
+//!   carries `steps` ([`start_steps`]).
 //! - Refusal: `{"ok": false, "op": …, "error": {"code", "message", …}}`.
 //!   Each [`ErrorCode`] has one shape: the same fields every time, but
+//!   a refused start's `steps` on the agent tool ([`start_steps`]), and
 //!   `artifact_set_aside` and `duplicate_artifact`, which name an
 //!   artifact by its kind: a discussion by `discussion` where a plan, run,
 //!   change or review gives `task` and `number` (and a task, for

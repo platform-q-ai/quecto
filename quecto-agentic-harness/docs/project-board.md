@@ -298,16 +298,19 @@ agent's own commits stay its clone's. A value not so shaped is refused
 
 The answer gives the `task`, the `run`, the `coordinator` (`agent`,
 `environment_ref`), `not_applied` (`role`, `model`, `effort`), `claim`:
-`fresh` when the start took it, `held` when the starter held it already, and
-`steps`: the steps for running the run to its end, as text for the agent that
+`fresh` when the start took it, `held` when the starter held it already, and,
+on the agent tool, `steps`: the steps for running the run to its end, as text for the agent that
 started it, the task's id and the run's number filled in.
 
-Every refused start's `error` carries `steps` too, what its caller does next:
-for `launch_failed`, the undo by its fields, the task's id filled in; for
-`contended`, to call again up to three times; for any other refusal (the
-board's, an invalid request, or a front end's own), to say why and stop. No
-other op's answer carries `steps`. The words are the Pocket start prompt's,
-moved there unchanged, so that prompt can be one line.
+On the agent tool, every refused start's `error` carries `steps` too, what its
+caller does next: for `launch_failed`, the undo by its fields, the task's id
+filled in; for `contended`, to call again up to three times; for any other
+refusal (the board's, an invalid request, a request the strict read refused
+whose op reads as `start`, or a front end's own), to say why and stop. No other
+op's answer carries `steps`, and these answers carry none: the CLI's (which
+takes no `start`), a refusal of a request whose op cannot be read, and a call
+that did not finish (cancelled, or ended without an answer). The words are the
+Pocket start prompt's, moved there unchanged, so that prompt can be one line.
 
 ## Ending a run
 
