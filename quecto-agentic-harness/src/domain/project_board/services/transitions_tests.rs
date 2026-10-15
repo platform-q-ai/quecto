@@ -34,15 +34,16 @@ const ALLOWED: [(TaskStatus, TaskStatus); 18] = [
     (Done, Archived),
 ];
 /// The moves anyone makes, whoever holds a live claim.
-const ANYONES: [(TaskStatus, TaskStatus); 7] = [
+const ANYONES: [(TaskStatus, TaskStatus); 6] = [
     (Draft, Ready),
     (Draft, Archived),
     (Ready, Draft),
     (Ready, Claimed),
     (Ready, Archived),
-    (Review, Archived),
     (Done, Archived),
 ];
+/// The holder's while the claim is live, anyone's once it is not.
+const WHILE_LIVE: [(TaskStatus, TaskStatus); 1] = [(Review, Archived)];
 /// The moves that hand a task back to the board.
 const RELEASES: [(TaskStatus, TaskStatus); 4] = [
     (Claimed, Ready),
@@ -90,7 +91,16 @@ fn only_the_table_allows_a_move_even_for_the_holder() {
 fn anyone_plans_readies_claims_and_archives_but_only_the_holder_moves_a_live_claim() {
     let bob = person("Bob");
     for (from, to) in ALLOWED {
-        let moved = move_task(&task(from), to, &bob, &[], &[], &at("10:00:00"));
+        // No pull request linked: a reviewed task linking one is not
+        // archived (`transitions_archive_tests`).
+        let moved = move_task(
+            &without_prs(task(from)),
+            to,
+            &bob,
+            &[],
+            &[],
+            &at("10:00:00"),
+        );
         let anyones = ANYONES.contains(&(from, to));
         assert_eq!(
             moved.is_ok(),
@@ -176,8 +186,8 @@ fn a_holder_move_on_an_expired_claim_asks_for_a_renewal_except_a_release() {
     let expired = at("11:00:00");
     for (from, to) in ALLOWED {
         let anyones = ANYONES.contains(&(from, to));
-        let release = RELEASES.contains(&(from, to));
-        let moved = move_task(&task(from), to, &ada, &[], &[], &expired);
+        let release = RELEASES.contains(&(from, to)) || WHILE_LIVE.contains(&(from, to));
+        let moved = move_task(&without_prs(task(from)), to, &ada, &[], &[], &expired);
         match (anyones, release) {
             (false, false) => assert_eq!(
                 moved,
@@ -644,12 +654,12 @@ fn a_superseded_task_is_never_done() {
 fn a_superseded_task_is_archived_as_superseded() {
     let now = at("10:00:00");
     for status in [Ready, Draft, Review] {
-        let mut fields = task(status).into_fields();
+        let mut fields = without_prs(task(status)).into_fields();
         fields.superseded_by = vec![Slug::parse("next").unwrap()];
         let archived = move_task(
             &Task::new(fields).unwrap(),
             Archived,
-            &person("Bob"),
+            &person("Ada"),
             &[],
             &[],
             &now,
@@ -660,7 +670,15 @@ fn a_superseded_task_is_archived_as_superseded() {
             Some(Resolution::Superseded),
             "{status:?}"
         );
-        let plain = move_task(&task(status), Archived, &person("Bob"), &[], &[], &now).unwrap();
+        let plain = move_task(
+            &without_prs(task(status)),
+            Archived,
+            &person("Ada"),
+            &[],
+            &[],
+            &now,
+        )
+        .unwrap();
         assert_eq!(plain.fields().resolution, None, "{status:?}");
     }
 }
@@ -679,7 +697,7 @@ fn a_move_reads_only_what_can_hold_it() {
     assert_eq!(reads(InProgress, Review), read(false, false));
     assert_eq!(reads(InProgress, Ready), read(true, false));
     assert_eq!(reads(Review, Done), read(true, true));
-    assert_eq!(reads(Review, Archived), read(true, false));
+    assert_eq!(reads(Review, Archived), read(true, true));
     assert_eq!(
         reads(Ready, Review),
         Err(BoardRuleError::NotAllowed {

@@ -507,6 +507,29 @@ fn a_task_whose_run_is_going_is_not_released() {
     assert_eq!(store.writes(), writes);
 }
 
+/// An archive of a reviewed task reads its changes as review to done
+/// does: one a change still links is not archived, and nothing is
+/// written.
+#[test]
+fn a_reviewed_task_a_change_links_is_not_archived() {
+    let store = board();
+    seed(&store, held_by_ada(TaskStatus::Review));
+    seed_artifacts(
+        &store,
+        vec![BoardArtifact::Change(board_artifacts::change("a", 1))],
+    );
+    let writes = store.writes();
+    let archived =
+        change(&store, "Bob", "14:00:00").execute(&slug("a"), &BoardOp::Move(TaskStatus::Archived));
+    assert_eq!(
+        archived,
+        Err(ProjectBoardError::Rule(BoardRuleError::ChangesLinked(
+            vec![1]
+        )))
+    );
+    assert_eq!(store.writes(), writes);
+}
+
 /// A move reads the task's changes as the board holds them: a task a
 /// change still links is done when it merges, not by its holder.
 #[test]
@@ -636,8 +659,9 @@ mod noted;
 
 /// The real case (Pocket's Delete on a reviewed task): a task in review
 /// whose run succeeded, and whose holder's claim lapsed hours ago, is
-/// archived by someone else; the claim goes with it. While its run is
-/// still going, nobody archives it, and nothing is written.
+/// archived by someone else; the claim goes with it. While the claim is
+/// live, or its run is still going, he does not archive it, and nothing
+/// is written.
 #[test]
 fn anyone_archives_a_reviewed_task_whose_run_ended_and_claim_lapsed() {
     use crate::domain::project_board::entities::run::Run;
@@ -665,6 +689,13 @@ fn anyone_archives_a_reviewed_task_whose_run_ended_and_claim_lapsed() {
         &store,
         vec![BoardArtifact::Run(Run::new(succeeded).unwrap())],
     );
+    let writes = store.writes();
+    assert_eq!(
+        change(&store, "Bob", "10:00:00").execute(&slug("a"), &BoardOp::Move(TaskStatus::Archived)),
+        Err(ProjectBoardError::Rule(BoardRuleError::NotHolder)),
+        "not while Ada's claim is live"
+    );
+    assert_eq!(store.writes(), writes, "a refused archive writes nothing");
     change(&store, "Bob", "14:00:00")
         .execute(&slug("a"), &BoardOp::Move(TaskStatus::Archived))
         .unwrap();
