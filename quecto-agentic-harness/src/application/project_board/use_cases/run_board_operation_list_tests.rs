@@ -15,10 +15,11 @@ use crate::application::project_board::ports::{
     BoardArtifact, BoardBootstrap, BoardHead, BoardListings, BoardSnapshot, BoardWrite,
     ProjectBoardStore, SetAsideClear,
 };
-use crate::application::project_board::task_summary::RowSummaries;
+use crate::application::project_board::task_summary::{RowSummaries, SkipReason};
 use crate::application::project_board::use_cases::QueryBoard;
 use crate::application::project_board::use_cases::fixtures_tests::{SetClock, new_task};
 use crate::domain::project_board::entities::claim::Identity;
+use crate::domain::project_board::entities::task::{Task, TaskFields};
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
 use crate::infrastructure::test_support::memory_board_store::MemoryBoardStore;
 
@@ -68,12 +69,15 @@ impl ProjectBoardStore for Counted {
 
 /// Listings over `QueryBoard` whose first `stale` answers name a head the
 /// board is not at, as an index read before the board moved does; past
-/// `fail_after` calls, a listing fails.
+/// `fail_after` calls, a listing fails; once `forged`, a listing at the
+/// board's head lists its tasks other than the board holds them, as a
+/// broken or forged index does.
 struct Moving {
     query: QueryBoard,
     stale: usize,
     fail_after: usize,
     calls: AtomicUsize,
+    forged: AtomicBool,
 }
 
 impl Moving {
@@ -86,13 +90,28 @@ impl Moving {
             ProjectBoardError::Store(error) => error,
             other => BoardStoreError::Unavailable(other.to_string()),
         })?;
-        Ok(match call < self.stale {
+        let mut listing = match call < self.stale {
             true => BoardListing {
                 head: BoardHead("an older head".into()),
                 ..listing
             },
             false => listing,
-        })
+        };
+        if self.forged.load(Ordering::SeqCst) {
+            listing.tasks = listing
+                .tasks
+                .into_iter()
+                .map(|task| {
+                    let fields = task.into_fields();
+                    Task::new(TaskFields {
+                        title: "Not the board's".into(),
+                        ..fields
+                    })
+                    .unwrap()
+                })
+                .collect();
+        }
+        Ok(listing)
     }
 }
 
@@ -139,6 +158,7 @@ fn moving(stale: usize, fail_after: usize) -> Board {
         stale,
         fail_after,
         calls: AtomicUsize::new(0),
+        forged: AtomicBool::new(false),
     });
     let store = Arc::new(Counted {
         inner: inner.client(),
@@ -244,16 +264,34 @@ fn a_board_that_keeps_moving_skips_the_summaries_as_contended() {
         let listed = board.listed(&request, ListSummaries::Wanted);
         assert_eq!(
             listed.summaries(),
-            &RowSummaries::Skipped(Box::new(ProjectBoardError::Contended {
-                attempts: MAX_LIST_ATTEMPTS
-            })),
+            &RowSummaries::Skipped(SkipReason::Contended),
             "{request:?}"
         );
         assert_eq!(listed.listing().tasks.len(), 1, "the listing is answered");
         assert!(listed.entries().all(|(_, summary)| summary.is_none()));
         assert_eq!(board.listings(), MAX_LIST_ATTEMPTS, "{request:?}");
+        assert_eq!(board.reads(), MAX_LIST_ATTEMPTS, "{request:?}");
     }
     assert_eq!(MAX_LIST_ATTEMPTS, 3);
+}
+
+/// A listing at the board's head whose rows are not the board's (the
+/// index disagrees with it) is answered at once without summaries:
+/// reading it again would list the same.
+#[test]
+fn an_index_that_disagrees_skips_the_summaries_at_once() {
+    for request in every_listing() {
+        let board = moving(0, usize::MAX);
+        board.listings.forged.store(true, Ordering::SeqCst);
+        let listed = board.listed(&request, ListSummaries::Wanted);
+        assert_eq!(listed.listing().tasks.len(), 1, "the listing is answered");
+        assert_eq!(
+            listed.summaries(),
+            &RowSummaries::Skipped(SkipReason::IndexDisagrees),
+            "{request:?}"
+        );
+        assert_eq!((board.listings(), board.reads()), (1, 1), "{request:?}");
+    }
 }
 
 /// A whole-board read that fails skips the summaries, saying why; the
@@ -266,9 +304,9 @@ fn a_failed_board_read_skips_the_summaries() {
         let listed = board.listed(&request, ListSummaries::Wanted);
         assert_eq!(
             listed.summaries(),
-            &RowSummaries::Skipped(Box::new(ProjectBoardError::Store(
+            &RowSummaries::Skipped(SkipReason::Failed(Box::new(ProjectBoardError::Store(
                 BoardStoreError::Unavailable("the remote is gone".into())
-            ))),
+            )))),
             "{request:?}"
         );
         assert_eq!(listed.listing().tasks.len(), 1, "the listing is answered");
@@ -276,17 +314,15 @@ fn a_failed_board_read_skips_the_summaries() {
     }
 }
 
-/// A listing read again that fails leaves the one read before, its
-/// summaries skipped with the listing's own refusal.
+/// A listing read again after the board moved that fails leaves the one
+/// read before, its summaries skipped as contended: the board moved.
 #[test]
 fn a_listing_that_fails_when_read_again_answers_the_one_before() {
     let board = moving(usize::MAX, 1);
     let listed = board.listed(&BoardRequest::List(ListFilter::All), ListSummaries::Wanted);
     assert_eq!(
         listed.summaries(),
-        &RowSummaries::Skipped(Box::new(ProjectBoardError::Store(
-            BoardStoreError::Unavailable("the index is gone".into())
-        )))
+        &RowSummaries::Skipped(SkipReason::Contended)
     );
     assert_eq!(listed.head(), &BoardHead("an older head".into()));
     assert_eq!(board.listings(), 2);

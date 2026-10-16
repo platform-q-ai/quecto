@@ -5,13 +5,15 @@
 use serde_json::{Map, Value, json};
 
 use super::{
-    error_code, fields, head_json, identity_json, key_fields, quarantined_list, shown, shown_json,
-    slug_json, slugs_json, task_json,
+    ErrorCode, error_code, fields, head_json, identity_json, key_fields, quarantined_list, shown,
+    shown_json, slug_json, slugs_json, task_json,
 };
 use crate::application::project_board::dto::ShownTask;
 use crate::application::project_board::operations::PlanPage;
 use crate::application::project_board::ports::{ArtifactKey, QuarantinedFile};
-use crate::application::project_board::task_summary::{Listed, RowSummaries, TaskSummary};
+use crate::application::project_board::task_summary::{
+    Listed, RowSummaries, RowSummary, SkipReason, TaskSummary,
+};
 use crate::domain::project_board::entities::plan::{Plan, PlanItem};
 use crate::domain::project_board::entities::run::Run;
 use crate::domain::project_board::entities::team::Team;
@@ -60,14 +62,21 @@ pub(super) fn shown_fields(shown: &ShownTask, version: Option<u32>) -> Map<Strin
 }
 
 /// A listing's `head`, its `tasks` and the files set aside as
-/// `quarantined`; asked for summaries, each task with its `summary`
-/// ([`summary_json`]), or, when they could not be read, none and
-/// `summary_skipped`: the code of why.
+/// `quarantined`. Asked for summaries, each task carries its `summary`
+/// ([`summary_json`]); a task whose summary could not be read carries
+/// `summary: null` and its own `summary_skipped` (the code of why); and a
+/// listing whose summaries were skipped whole carries none on any task and
+/// a top-level `summary_skipped`.
 pub(super) fn listing_fields(listing: &Listed) -> Map<String, Value> {
-    let tasks = listing.entries().map(|(task, summary)| {
+    let tasks = listing.entries().map(|(task, row)| {
         let mut entry = task_json(task);
-        if let Some(summary) = summary {
-            entry["summary"] = summary_json(summary);
+        match row {
+            None => {}
+            Some(RowSummary::Summary(summary)) => entry["summary"] = summary_json(summary),
+            Some(RowSummary::Skipped(why)) => {
+                entry["summary"] = Value::Null;
+                entry["summary_skipped"] = json!(error_code(why).as_str());
+            }
         }
         entry
     });
@@ -82,11 +91,21 @@ pub(super) fn listing_fields(listing: &Listed) -> Map<String, Value> {
     match listing.summaries() {
         RowSummaries::Omitted | RowSummaries::Given(_) => {}
         RowSummaries::Skipped(why) => {
-            let code = error_code(why).as_str();
-            fields.insert("summary_skipped".into(), json!(code));
+            fields.insert("summary_skipped".into(), json!(skip_code(why)));
         }
     }
     fields
+}
+
+/// The code a listing's `summary_skipped` gives for `why`: `contended`
+/// (the code a write that kept losing the race gives), `index_disagrees`,
+/// or the code the failed read would have been refused with.
+fn skip_code(why: &SkipReason) -> &'static str {
+    match why {
+        SkipReason::Contended => ErrorCode::Contended.as_str(),
+        SkipReason::IndexDisagrees => "index_disagrees",
+        SkipReason::Failed(error) => error_code(error).as_str(),
+    }
 }
 
 /// A plan in the board's own field names, as its file holds them, every

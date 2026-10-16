@@ -14,18 +14,19 @@
 //!   started and ended, its deadline, and how many of its task items stand
 //!   in each [`ItemState`]. A run records its task items when it ends, so
 //!   a running run counts none.
-//! - **deadline:** `started` plus the deadline of the run's plan's team,
-//!   by the rule a start briefs a swarm with
-//!   ([`deadline_seconds`]); `None` while the plan the run ran is not
-//!   readable on the board, or past the year 9999.
+//! - **deadline:** nominal: `started` plus the deadline of the run's
+//!   plan's team, by the rule a start briefs a swarm with
+//!   ([`run_deadline_seconds`]); the swarm's own deadline starts a little
+//!   later, when its coordinator creates it. `None` while the plan the run
+//!   ran is not readable on the board, or past the year 9999.
 //! - **may_be_incomplete:** as `show` judges it
 //!   ([`ShownTask::may_be_incomplete`]).
 use super::dto::{BoardListing, ProjectBoardError, ShownTask};
 use super::ports::{BoardHead, QuarantinedFile};
-use super::swarm_brief::deadline_seconds;
 use crate::domain::project_board::entities::plan::Plan;
 use crate::domain::project_board::entities::run::{Run, RunItem};
 use crate::domain::project_board::entities::task::Task;
+use crate::domain::project_board::entities::team::run_deadline_seconds;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
 use crate::domain::project_board::value_objects::vocabulary::{ItemState, PlanState, RunOutcome};
 
@@ -54,7 +55,9 @@ pub struct RunSummary {
     pub outcome: Option<RunOutcome>,
     pub started: Timestamp,
     pub ended: Option<Timestamp>,
-    /// `None` while the plan it ran is not readable, or past the year 9999.
+    /// Nominal: `started` plus its team's deadline (the swarm's own starts a
+    /// little later). `None` while the plan it ran is not readable, or past
+    /// the year 9999.
     pub deadline: Option<Timestamp>,
     pub items: ItemCounts,
 }
@@ -130,7 +133,7 @@ fn run_summary(run: &Run, plans: &[Plan]) -> RunSummary {
     // superseded) version of the task's plan holding each of its items.
     let ran = plans.iter().find(|plan| run.ran(plan).is_ok());
     let deadline = ran.and_then(|plan| {
-        let seconds = deadline_seconds(plan.fields().team.as_ref());
+        let seconds = u64::from(run_deadline_seconds(plan.fields().team.as_ref()));
         fields.started.plus_seconds(seconds).ok()
     });
     RunSummary {
@@ -159,10 +162,44 @@ pub enum RowSummaries {
     Omitted,
     /// One per listed task, in order, all read from the board the listing
     /// was read at.
-    Given(Vec<TaskSummary>),
-    /// Asked for, but not read: why (the board kept moving, or its read
-    /// failed). The listing is answered all the same.
+    Given(Vec<RowSummary>),
+    /// Asked for, but not read for any task: why. The listing is answered
+    /// all the same.
+    Skipped(SkipReason),
+}
+
+/// What one listed task's summary came to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RowSummary {
+    Summary(TaskSummary),
+    /// Its plans or runs could not be read, and why (the board holds one
+    /// of them twice): this task alone goes without its summary.
     Skipped(Box<ProjectBoardError>),
+}
+
+/// Why a listing's summaries were skipped whole.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SkipReason {
+    /// The board kept moving: no read of it was the board the listing was
+    /// read at, or the listing could not be read again.
+    Contended,
+    /// The board stands where the listing was read, yet holds other rows
+    /// than it lists: the index disagrees with the board.
+    IndexDisagrees,
+    /// The whole read of the board failed.
+    Failed(Box<ProjectBoardError>),
+}
+
+/// What one whole read of the board made of a listing's summaries.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Summarized {
+    /// Each listed task's, in order.
+    Rows(Vec<RowSummary>),
+    /// The board is not where the listing was read: it moved since.
+    Moved,
+    /// The board is where the listing was read, but some listed row is not
+    /// the board's.
+    Disagrees,
 }
 
 impl Listed {
@@ -178,7 +215,7 @@ impl Listed {
     ///
     /// # Panics
     /// A summary count other than the listing's task count.
-    pub fn summarized(listing: BoardListing, summaries: Vec<TaskSummary>) -> Self {
+    pub fn summarized(listing: BoardListing, summaries: Vec<RowSummary>) -> Self {
         assert_eq!(
             listing.tasks.len(),
             summaries.len(),
@@ -190,11 +227,11 @@ impl Listed {
         }
     }
 
-    /// `listing`, its summaries skipped for `why`.
-    pub fn skipped(listing: BoardListing, why: ProjectBoardError) -> Self {
+    /// `listing`, its summaries skipped whole for `why`.
+    pub fn skipped(listing: BoardListing, why: SkipReason) -> Self {
         Self {
             listing,
-            summaries: RowSummaries::Skipped(Box::new(why)),
+            summaries: RowSummaries::Skipped(why),
         }
     }
 
@@ -205,7 +242,7 @@ impl Listed {
 
     /// Each listed task, by id, beside its summary while summaries were
     /// given.
-    pub fn entries(&self) -> impl Iterator<Item = (&Task, Option<&TaskSummary>)> {
+    pub fn entries(&self) -> impl Iterator<Item = (&Task, Option<&RowSummary>)> {
         let summaries = match &self.summaries {
             RowSummaries::Given(summaries) => Some(summaries),
             RowSummaries::Omitted | RowSummaries::Skipped(_) => None,

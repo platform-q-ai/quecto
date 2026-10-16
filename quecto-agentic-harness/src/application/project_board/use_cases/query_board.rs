@@ -11,7 +11,7 @@ use crate::application::project_board::dto::{
     ArtifactListing, ArtifactScope, BoardListing, ProjectBoardError, ShownTask,
 };
 use crate::application::project_board::ports::{ArtifactKey, BoardSnapshot, ProjectBoardStore};
-use crate::application::project_board::task_summary::{TaskSummary, summary_of};
+use crate::application::project_board::task_summary::{RowSummary, Summarized, summary_of};
 use crate::domain::project_board::entities::change::Change;
 use crate::domain::project_board::entities::discussion::Discussion;
 use crate::domain::project_board::entities::plan::Plan;
@@ -173,17 +173,12 @@ impl QueryBoard {
         shown_on(&self.store.read()?, id)
     }
 
-    /// The summary of each task `listing` lists, in order, from one read
-    /// of the board ([`summarized_on`]): `None` when that read is not the
-    /// board the listing was read at (it moved between the two reads).
+    /// What one read of the whole board makes of the summaries of the
+    /// tasks `listing` lists ([`summarized_on`]).
     ///
     /// # Errors
-    /// The store's, or [`ProjectBoardError::Duplicate`] for a plan or run
-    /// of a listed task the board holds twice.
-    pub fn summarized(
-        &self,
-        listing: &BoardListing,
-    ) -> Result<Option<Vec<TaskSummary>>, ProjectBoardError> {
+    /// The store's.
+    pub fn summarized(&self, listing: &BoardListing) -> Result<Summarized, ProjectBoardError> {
         summarized_on(&self.store.read()?, listing)
     }
 
@@ -207,38 +202,46 @@ impl QueryBoard {
     }
 }
 
-/// The summary of each task `listing` lists, in order ([`summary_of`]),
-/// from `board`, exactly as `show` reads it: `None` unless the listing
-/// was read at `board`'s head and each task it lists is the one `board`
-/// holds, so a summary always matches its task's row.
+/// The summaries of the tasks `listing` lists, in order ([`summary_of`]),
+/// from `board`, each task read exactly as `show` reads it: none while
+/// `board` is not where the listing was read ([`Summarized::Moved`]) or
+/// holds another row than it lists ([`Summarized::Disagrees`]), so a
+/// summary always matches its task's row. A task whose plans or runs the
+/// board holds twice goes without its own summary
+/// ([`RowSummary::Skipped`]); the others are summarised.
 ///
 /// # Errors
-/// [`ProjectBoardError::Duplicate`] for a plan or run of a listed task
-/// the board holds twice.
+/// What reading a listed task refuses beyond a duplicate or a row the
+/// board does not hold as listed: none `show`'s read gives today.
 pub(crate) fn summarized_on(
     board: &BoardSnapshot,
     listing: &BoardListing,
-) -> Result<Option<Vec<TaskSummary>>, ProjectBoardError> {
+) -> Result<Summarized, ProjectBoardError> {
     if listing.head != board.head {
-        return Ok(None);
+        return Ok(Summarized::Moved);
     }
-    let mut summaries = Vec::with_capacity(listing.tasks.len());
+    let mut rows = Vec::with_capacity(listing.tasks.len());
     for task in &listing.tasks {
-        let shown = match shown_on(board, &task.fields().id) {
-            Ok(shown) if shown.task == *task => shown,
-            // The board holds another task by its id, or none it can read:
-            // the listing is not of this board.
-            Ok(_) | Err(ProjectBoardError::NotFound(_)) => return Ok(None),
+        let row = match shown_on(board, &task.fields().id) {
+            Ok(shown) if shown.task == *task => RowSummary::Summary(summary_of(&shown)),
+            // The board, where the listing was read, holds another task by
+            // its id, or none it can read: the index disagrees with it.
+            Ok(_) | Err(ProjectBoardError::NotFound(_)) => return Ok(Summarized::Disagrees),
             Err(ProjectBoardError::Quarantined {
                 key: ArtifactKey::Task(_),
                 ..
-            }) => return Ok(None),
+            }) => return Ok(Summarized::Disagrees),
+            // An artifact of this task held twice: this row alone goes
+            // without its summary.
+            Err(error @ ProjectBoardError::Duplicate { .. }) => {
+                RowSummary::Skipped(Box::new(error))
+            }
             Err(error) => return Err(error),
         };
-        summaries.push(summary_of(&shown));
+        rows.push(row);
     }
-    assert_eq!(summaries.len(), listing.tasks.len(), "one per listed task");
-    Ok(Some(summaries))
+    assert_eq!(rows.len(), listing.tasks.len(), "one per listed task");
+    Ok(Summarized::Rows(rows))
 }
 
 /// [`QueryBoard::show`] over the snapshot `board`.

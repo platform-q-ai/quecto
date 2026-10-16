@@ -54,8 +54,9 @@ pub const MAX_DEADLINE_SECONDS: u64 = team::MAX_DEADLINE_SECONDS as u64;
 /// The nearest deadline a run is started with: ten minutes, as a plan's
 /// team bounds it.
 pub const MIN_DEADLINE_SECONDS: u64 = team::MIN_DEADLINE_SECONDS as u64;
-/// A run's deadline when the team names none: a day.
-pub const DEFAULT_DEADLINE_SECONDS: u64 = 24 * 60 * 60;
+/// A run's deadline when the team names none: a day, as a plan's team
+/// rules it.
+pub const DEFAULT_DEADLINE_SECONDS: u64 = team::DEFAULT_DEADLINE_SECONDS as u64;
 /// The role whose model and effort are the coordinator's.
 pub const COORDINATOR_ROLE: &str = "coordinator";
 /// What ends an approach cut to fit.
@@ -368,7 +369,7 @@ pub fn brief_of(started: &Started) -> Result<SwarmBrief, BriefRefusal> {
         None => Terms::default(),
     };
     // A duration from Start, as given: the plan's schema bounds it.
-    let deadline_in_seconds = deadline_seconds(planned.team.as_ref());
+    let deadline_in_seconds = u64::from(team::run_deadline_seconds(planned.team.as_ref()));
     assert!(
         (MIN_DEADLINE_SECONDS..=MAX_DEADLINE_SECONDS).contains(&deadline_in_seconds),
         "a plan's deadline is within a swarm's bounds"
@@ -420,15 +421,6 @@ pub fn brief_of(started: &Started) -> Result<SwarmBrief, BriefRefusal> {
     }
 }
 
-/// A run's deadline, in seconds from Start, for a plan naming `team`:
-/// the team's `deadline_seconds` as given, or [`DEFAULT_DEADLINE_SECONDS`]
-/// when it names none or the plan names no team. The one rule a start
-/// briefs a swarm by and a listing summarises a run by.
-pub fn deadline_seconds(team: Option<&Team>) -> u64 {
-    team.and_then(|team| team.deadline_seconds)
-        .map_or(DEFAULT_DEADLINE_SECONDS, u64::from)
-}
-
 /// Whether `model` names its provider as spawn takes it,
 /// `provider/model`, neither empty: no provider is guessed (S4c).
 pub fn names_provider(model: &str) -> bool {
@@ -458,7 +450,7 @@ pub fn coordinator_model_named(team: Option<&Team>) -> Result<(), BriefRefusal> 
 
 /// What a team makes of the run: its member limit, the coordinator's
 /// choice and the worker roles not applied (its deadline is
-/// [`deadline_seconds`]'s).
+/// [`team::run_deadline_seconds`]'s).
 #[derive(Default)]
 struct Terms {
     member_limit: Option<u32>,
@@ -472,7 +464,7 @@ fn terms_of(team: &Team) -> Result<Terms, BriefRefusal> {
     let unsupported = |field| Err(BriefRefusal::TeamUnsupported { field });
     let Team {
         roles,
-        // Any deadline the schema admits, a swarm takes: [`deadline_seconds`].
+        // Any deadline the schema admits, a swarm takes: [`team::run_deadline_seconds`].
         deadline_seconds: _,
         image,
     } = team;

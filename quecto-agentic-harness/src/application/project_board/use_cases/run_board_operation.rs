@@ -21,7 +21,7 @@ use crate::application::project_board::operations::{
     BoardOperationParts, BoardOutcome, BoardRequest, Completion, ListFilter, ListSummaries,
 };
 use crate::application::project_board::ports::{BoardBootstrap, BoardStoreError, ReferenceStatus};
-use crate::application::project_board::task_summary::Listed;
+use crate::application::project_board::task_summary::{Listed, SkipReason, Summarized};
 use crate::application::project_board::telemetry::{OpFacts, completion_facts_of};
 use crate::domain::project_board::entities::task::Task;
 use crate::domain::project_board::value_objects::rule_error::BoardRuleError;
@@ -29,11 +29,9 @@ use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::telemetry::CompletionFacts;
 use crate::domain::project_board::value_objects::vocabulary::TaskStatus;
 
-/// The most times a listing is read before its summaries agree with it:
-/// as many as a change's write takes ([`MAX_WRITE_ATTEMPTS`]).
-///
-/// [`MAX_WRITE_ATTEMPTS`]: super::board_change::MAX_WRITE_ATTEMPTS
-pub const MAX_LIST_ATTEMPTS: usize = super::board_change::MAX_WRITE_ATTEMPTS;
+/// The most times a listing is read, and the board read whole after it,
+/// before its summaries are skipped as contended.
+pub const MAX_LIST_ATTEMPTS: usize = 3;
 
 pub struct RunBoardOperation {
     parts: BoardOperationParts,
@@ -211,8 +209,11 @@ impl RunBoardOperation {
     /// the listing is read. Asked for summaries, each task's is read from
     /// the same board ([`QueryBoard::summarized`]): listed again while the
     /// board moved between the listing and that read, at most
-    /// [`MAX_LIST_ATTEMPTS`] times; past that, or when a read fails, the
-    /// listing read last is answered without them, saying why. Only the
+    /// [`MAX_LIST_ATTEMPTS`] times. Past that, or when the listing cannot
+    /// be read again, the summaries are skipped as contended; when the
+    /// board stands where the listing was read but holds other rows, at
+    /// once as the index disagreeing; when the whole read fails, with its
+    /// refusal. The listing read last is answered all the same: only the
     /// first listing's own failure is a refusal, as ever.
     ///
     /// [`QueryBoard::summarized`]: super::QueryBoard::summarized
@@ -229,18 +230,22 @@ impl RunBoardOperation {
         let mut attempts = 1;
         let skipped = loop {
             match self.parts.query.summarized(&listing) {
-                Ok(Some(summaries)) => {
-                    return Ok(BoardOutcome::Listing(Listed::summarized(
-                        listing, summaries,
-                    )));
+                Ok(Summarized::Rows(rows)) => {
+                    return Ok(BoardOutcome::Listing(Listed::summarized(listing, rows)));
                 }
-                Ok(None) if attempts < MAX_LIST_ATTEMPTS => {}
-                Ok(None) => break ProjectBoardError::Contended { attempts },
-                Err(error) => break error,
+                Ok(Summarized::Disagrees) => break SkipReason::IndexDisagrees,
+                Ok(Summarized::Moved) if attempts < MAX_LIST_ATTEMPTS => {}
+                Ok(Summarized::Moved) => break SkipReason::Contended,
+                Err(error) => break SkipReason::Failed(Box::new(error)),
             }
+            // The board moved since the listing: list it again and read the
+            // board whole again. Two whole reads (and more listings) for a
+            // board that moved is the cost of an opt-in summary, accepted.
             match list() {
                 Ok(again) => listing = again,
-                Err(error) => break error.into(),
+                // The board moved, and its listing could not be read again:
+                // the listing read before is answered, its board contended.
+                Err(_) => break SkipReason::Contended,
             }
             attempts += 1;
         };

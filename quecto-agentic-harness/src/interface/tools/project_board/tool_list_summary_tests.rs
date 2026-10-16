@@ -361,73 +361,114 @@ fn a_summary_of_another_op_is_refused() {
     );
 }
 
-/// A listing whose summaries could not be read is answered all the same,
-/// no task carrying one, with `summary_skipped` the code of why.
-#[test]
-fn a_skipped_summary_answers_the_listing_with_why() {
-    use crate::application::project_board::dto::{BoardListing, ProjectBoardError};
-    use crate::application::project_board::operations::BoardOutcome;
-    use crate::application::project_board::ports::{BoardHead, BoardStoreError};
-    use crate::application::project_board::task_summary::Listed;
-    let listed = plain(json!({"op": "list"}));
-    assert_eq!(listed["tasks"][0]["id"], json!("a"), "{listed}");
-    let handles = QueryBoard::new(Arc::new(seeded_store()));
-    let task = handles.all().unwrap().tasks.remove(0);
-    let listing = BoardListing {
+/// The tasks `a` and `b`, as a listing at head `h` holds them.
+fn listing_of_two() -> crate::application::project_board::dto::BoardListing {
+    use crate::application::project_board::ports::BoardHead;
+    let tasks = QueryBoard::new(Arc::new(seeded_store()))
+        .all()
+        .unwrap()
+        .tasks;
+    assert_eq!(tasks.len(), 2);
+    crate::application::project_board::dto::BoardListing {
         head: BoardHead("h".into()),
-        tasks: vec![task],
+        tasks,
         quarantined: vec![],
-    };
-    for (why, code) in [
-        (ProjectBoardError::Contended { attempts: 3 }, "contended"),
-        (
-            ProjectBoardError::Store(BoardStoreError::Unavailable("gone".into())),
-            "store_unavailable",
-        ),
-        (
-            ProjectBoardError::Duplicate {
-                key: ArtifactKey::Plan(slug("a"), 1),
-            },
-            "duplicate_artifact",
-        ),
-    ] {
-        let listed = BoardOutcome::Listing(Listed::skipped(listing.clone(), why));
-        let answer =
-            crate::interface::tools::project_board::answer::outcome("list", &listed, None, None);
-        assert_eq!(answer["ok"], json!(true), "{answer}");
-        assert_eq!(answer["summary_skipped"], json!(code), "{answer}");
-        assert_eq!(answer["tasks"][0]["id"], json!("a"), "{answer}");
-        assert_eq!(answer["tasks"][0].get("summary"), None, "{answer}");
     }
 }
 
-/// A board of one ready task, `a`.
+fn answered(listed: crate::application::project_board::task_summary::Listed) -> Value {
+    let outcome = crate::application::project_board::operations::BoardOutcome::Listing(listed);
+    crate::interface::tools::project_board::answer::outcome("list", &outcome, None, None)
+}
+
+/// A listing whose summaries could not be read is answered all the same,
+/// no task carrying one, with a top-level `summary_skipped`: the code of
+/// why.
+#[test]
+fn a_skipped_summary_answers_the_listing_with_why() {
+    use crate::application::project_board::dto::ProjectBoardError;
+    use crate::application::project_board::ports::BoardStoreError;
+    use crate::application::project_board::task_summary::{Listed, SkipReason};
+    for (why, code) in [
+        (SkipReason::Contended, "contended"),
+        (SkipReason::IndexDisagrees, "index_disagrees"),
+        (
+            SkipReason::Failed(Box::new(ProjectBoardError::Store(
+                BoardStoreError::Unavailable("gone".into()),
+            ))),
+            "store_unavailable",
+        ),
+    ] {
+        let answer = answered(Listed::skipped(listing_of_two(), why));
+        assert_eq!(answer["ok"], json!(true), "{answer}");
+        assert_eq!(answer["summary_skipped"], json!(code), "{answer}");
+        for task in answer["tasks"].as_array().unwrap() {
+            assert_eq!(task.get("summary"), None, "{answer}");
+            assert_eq!(task.get("summary_skipped"), None, "{answer}");
+        }
+    }
+}
+
+/// A task whose plans or runs the board holds twice goes without its own
+/// summary (`summary: null` and its `summary_skipped`); the others keep
+/// theirs, and the listing says nothing of a skip at its top.
+#[test]
+fn a_duplicate_artifact_skips_its_own_rows_summary() {
+    use crate::application::project_board::dto::ProjectBoardError;
+    use crate::application::project_board::task_summary::{Listed, RowSummary, TaskSummary};
+    let rows = vec![
+        RowSummary::Skipped(Box::new(ProjectBoardError::Duplicate {
+            key: ArtifactKey::Plan(slug("a"), 1),
+        })),
+        RowSummary::Summary(TaskSummary {
+            plan: None,
+            run: None,
+            may_be_incomplete: false,
+        }),
+    ];
+    let answer = answered(Listed::summarized(listing_of_two(), rows));
+    assert_eq!(answer.get("summary_skipped"), None, "{answer}");
+    let tasks = answer["tasks"].as_array().unwrap();
+    assert_eq!(tasks[0]["id"], json!("a"));
+    assert_eq!(tasks[0]["summary"], Value::Null, "{answer}");
+    assert_eq!(tasks[0]["summary_skipped"], json!("duplicate_artifact"));
+    assert_eq!(tasks[1]["id"], json!("b"));
+    assert_eq!(
+        tasks[1]["summary"],
+        json!({"plan": null, "run": null, "may_be_incomplete": false})
+    );
+    assert_eq!(tasks[1].get("summary_skipped"), None, "{answer}");
+}
+
+/// A board of two ready tasks, `a` and `b`.
 fn seeded_store() -> MemoryBoardStore {
     let store = MemoryBoardStore::default();
     store.bootstrap().unwrap();
     use crate::domain::project_board::entities::task::{Task, TaskFields};
     use crate::domain::project_board::value_objects::vocabulary::{TaskKind, TaskStatus};
-    let task = Task::new(TaskFields {
-        id: slug("a"),
-        title: "A".into(),
-        kind: TaskKind::Task,
-        description: String::new(),
-        status: TaskStatus::Ready,
-        parent: None,
-        depends_on: vec![],
-        accepted_plan: None,
-        claim: None,
-        prs: vec![],
-        github_issue: None,
-        resolution: None,
-        superseded_by: vec![],
-        references: vec![],
-        created: at("09:00:00"),
-        updated: at("09:00:00"),
-    })
-    .unwrap();
+    let task = |id: &str| {
+        let task = Task::new(TaskFields {
+            id: slug(id),
+            title: id.to_uppercase(),
+            kind: TaskKind::Task,
+            description: String::new(),
+            status: TaskStatus::Ready,
+            parent: None,
+            depends_on: vec![],
+            accepted_plan: None,
+            claim: None,
+            prs: vec![],
+            github_issue: None,
+            resolution: None,
+            superseded_by: vec![],
+            references: vec![],
+            created: at("09:00:00"),
+            updated: at("09:00:00"),
+        });
+        BoardArtifact::Task(task.unwrap())
+    };
     let head = store.read().unwrap().head;
-    let written = store.write(&head, &[BoardArtifact::Task(task)], "board: seed");
+    let written = store.write(&head, &[task("a"), task("b")], "board: seed");
     assert!(matches!(written, Ok(BoardWrite::Written(_))), "{written:?}");
     store
 }

@@ -6,7 +6,9 @@ use crate::application::project_board::dto::{BoardListing, ProjectBoardError};
 use crate::application::project_board::ports::{
     ArtifactKey, BoardArtifact, BoardHead, BoardSnapshot, BoardWrite, ProjectBoardStore,
 };
-use crate::application::project_board::task_summary::{PlanSummary, TaskSummary};
+use crate::application::project_board::task_summary::{
+    PlanSummary, RowSummary, Summarized, TaskSummary,
+};
 use crate::application::project_board::use_cases::fixtures_tests::{board, fields, slug};
 use crate::domain::project_board::entities::plan::{Plan, PlanFields};
 use crate::domain::project_board::entities::run::Run;
@@ -53,18 +55,29 @@ fn listing(store: &MemoryBoardStore) -> BoardListing {
     QueryBoard::new(Arc::new(store.client())).all().unwrap()
 }
 
+fn read(store: &MemoryBoardStore, listing: &BoardListing) -> Summarized {
+    QueryBoard::new(Arc::new(store.client()))
+        .summarized(listing)
+        .unwrap()
+}
+
+/// Each listed task's summary, by id, when every one was read.
 fn summarized(
     store: &MemoryBoardStore,
     listing: BoardListing,
 ) -> Option<Vec<(String, TaskSummary)>> {
-    let query = QueryBoard::new(Arc::new(store.client()));
-    query.summarized(&listing).unwrap().map(|summaries| {
-        let ids = listing
-            .tasks
-            .iter()
-            .map(|task| task.fields().id.as_str().to_string());
-        ids.zip(summaries).collect()
-    })
+    let Summarized::Rows(rows) = read(store, &listing) else {
+        return None;
+    };
+    let ids = listing
+        .tasks
+        .iter()
+        .map(|task| task.fields().id.as_str().to_string());
+    let summaries = rows.into_iter().map(|row| match row {
+        RowSummary::Summary(summary) => summary,
+        RowSummary::Skipped(why) => panic!("a row skipped: {why}"),
+    });
+    Some(ids.zip(summaries).collect())
 }
 
 #[test]
@@ -88,15 +101,12 @@ fn each_listed_task_is_summarised_in_its_order() {
             .iter()
             .all(|(_, summary)| !summary.may_be_incomplete)
     );
-    let query = QueryBoard::new(Arc::new(store.client()));
-    let again = query.summarized(&listing(&store)).unwrap().unwrap();
-    assert_eq!(
-        again,
-        entries
-            .into_iter()
-            .map(|(_, summary)| summary)
-            .collect::<Vec<_>>()
-    );
+    let again = read(&store, &listing(&store));
+    let rows = entries
+        .into_iter()
+        .map(|(_, summary)| RowSummary::Summary(summary))
+        .collect();
+    assert_eq!(again, Summarized::Rows(rows));
 }
 
 /// The listing's summaries are `show`'s judgement: a run file set aside
@@ -126,14 +136,15 @@ fn a_listing_of_another_head_is_not_summarised() {
     let head = store.read().unwrap().head;
     let written = store.write(&head, &[BoardArtifact::Task(task("d"))], "board: d");
     assert!(matches!(written, Ok(BoardWrite::Written(_))), "{written:?}");
-    assert_eq!(summarized(&store, stale), None);
+    assert_eq!(read(&store, &stale), Summarized::Moved);
     assert!(summarized(&store, listing(&store)).is_some());
 }
 
-/// A listing naming a task the board does not hold as it lists it (a
-/// forged or stale index) is not summarised either.
+/// A listing at the board's head naming a task the board does not hold
+/// as it lists it (a forged or broken index) disagrees with the board:
+/// not summarised, and told apart from a board that moved.
 #[test]
-fn a_listing_whose_rows_are_not_the_boards_is_not_summarised() {
+fn a_listing_whose_rows_are_not_the_boards_disagrees() {
     let store = seeded();
     let mut other = listing(&store);
     other.tasks[0] = Task::new(TaskFields {
@@ -141,22 +152,24 @@ fn a_listing_whose_rows_are_not_the_boards_is_not_summarised() {
         ..fields("a")
     })
     .unwrap();
-    assert_eq!(summarized(&store, other), None);
+    assert_eq!(read(&store, &other), Summarized::Disagrees);
     let mut missing = listing(&store);
     missing.tasks.push(task("z"));
-    assert_eq!(summarized(&store, missing), None);
+    assert_eq!(read(&store, &missing), Summarized::Disagrees);
     store.quarantine("c", "malformed");
     let mut set_aside = listing(&store);
     set_aside.tasks.push(task("c"));
-    assert_eq!(summarized(&store, set_aside), None);
+    assert_eq!(read(&store, &set_aside), Summarized::Disagrees);
 }
 
-/// A plan the board holds twice is refused, as `show` refuses it.
+/// A plan the board holds twice leaves its own task without a summary,
+/// naming the duplicate as `show` refuses it; every other task is still
+/// summarised.
 #[test]
-fn a_duplicate_plan_of_a_listed_task_is_refused() {
+fn a_duplicate_plan_skips_its_own_tasks_summary_only() {
     let board = BoardSnapshot {
         head: BoardHead("h".into()),
-        tasks: vec![task("a")],
+        tasks: vec![task("a"), task("b")],
         plans: vec![plan("a", 1), plan("a", 1)],
         runs: Vec::<Run>::new(),
         changes: vec![],
@@ -166,13 +179,21 @@ fn a_duplicate_plan_of_a_listed_task_is_refused() {
     };
     let listing = BoardListing {
         head: BoardHead("h".into()),
-        tasks: vec![task("a")],
+        tasks: vec![task("a"), task("b")],
         quarantined: vec![],
     };
+    let Ok(Summarized::Rows(rows)) = summarized_on(&board, &listing) else {
+        panic!("rows are read")
+    };
     assert_eq!(
-        summarized_on(&board, &listing),
-        Err(ProjectBoardError::Duplicate {
+        rows[0],
+        RowSummary::Skipped(Box::new(ProjectBoardError::Duplicate {
             key: ArtifactKey::Plan(slug("a"), 1)
-        })
+        }))
     );
+    assert!(
+        matches!(&rows[1], RowSummary::Summary(summary) if summary.plan.is_none()),
+        "{rows:?}"
+    );
+    assert_eq!(rows.len(), 2);
 }
