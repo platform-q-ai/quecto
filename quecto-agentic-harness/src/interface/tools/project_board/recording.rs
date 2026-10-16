@@ -246,7 +246,7 @@ impl BoardCall {
                     Some(head)
                 }
                 BoardOutcome::Shown(shown, _) => Some(&shown.head),
-                BoardOutcome::Listing(listing) => Some(&listing.head),
+                BoardOutcome::Listing(listing) => Some(listing.head()),
                 BoardOutcome::Changed { .. }
                 | BoardOutcome::Planned(_)
                 | BoardOutcome::Accepted(_)

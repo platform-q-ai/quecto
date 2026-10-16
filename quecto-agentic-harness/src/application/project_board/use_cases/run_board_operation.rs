@@ -4,6 +4,10 @@
 //!   that links pull requests is completed if they have all merged
 //!   (`CompleteMergedTask`), and the outcome says what came of that: done,
 //!   pending on the ones not merged yet, or failed.
+//! - A listing's tasks are each summarised from one read of the board
+//!   made after the listing; while the board moved in between, the
+//!   listing is read again, a bounded number of times
+//!   ([`MAX_LIST_ATTEMPTS`]), then refused as contended.
 //! - [`RunBoardOperation::clock_note`] says why a request that reads the
 //!   clock was not bounded against an outside time, when it has none.
 //!
@@ -13,13 +17,19 @@ use crate::application::project_board::dto::{BoardListing, BoardOp, ProjectBoard
 use crate::application::project_board::operations::{
     BoardOperationParts, BoardOutcome, BoardRequest, Completion, ListFilter,
 };
-use crate::application::project_board::ports::{BoardBootstrap, ReferenceStatus};
+use crate::application::project_board::ports::{BoardBootstrap, BoardStoreError, ReferenceStatus};
 use crate::application::project_board::telemetry::{OpFacts, completion_facts_of};
 use crate::domain::project_board::entities::task::Task;
 use crate::domain::project_board::value_objects::rule_error::BoardRuleError;
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::telemetry::CompletionFacts;
 use crate::domain::project_board::value_objects::vocabulary::TaskStatus;
+
+/// The most times a listing is read before its summaries agree with it:
+/// as many as a change's write takes ([`MAX_WRITE_ATTEMPTS`]).
+///
+/// [`MAX_WRITE_ATTEMPTS`]: super::board_change::MAX_WRITE_ATTEMPTS
+pub const MAX_LIST_ATTEMPTS: usize = super::board_change::MAX_WRITE_ATTEMPTS;
 
 pub struct RunBoardOperation {
     parts: BoardOperationParts,
@@ -52,11 +62,7 @@ impl RunBoardOperation {
         request: &BoardRequest,
         mut facts: Option<&mut OpFacts>,
     ) -> Result<BoardOutcome, ProjectBoardError> {
-        let listing = |listing: Result<BoardListing, _>| {
-            listing
-                .map(BoardOutcome::Listing)
-                .map_err(ProjectBoardError::from)
-        };
+        let listings = &self.parts.listings;
         match request {
             BoardRequest::Bootstrap => Ok(match self.parts.bootstrap.execute()? {
                 BoardBootstrap::Created(head) => BoardOutcome::Bootstrapped {
@@ -68,16 +74,16 @@ impl RunBoardOperation {
                     created: false,
                 },
             }),
-            BoardRequest::List(filter) => listing(match filter {
-                ListFilter::All => self.parts.listings.all(),
-                ListFilter::Status(status) => self.parts.listings.by_status(*status),
-                ListFilter::Children(parent) => self.parts.listings.children(parent),
-                ListFilter::Dependents(task) => self.parts.listings.dependents(task),
+            BoardRequest::List(filter) => self.summarized(|| match filter {
+                ListFilter::All => listings.all(),
+                ListFilter::Status(status) => listings.by_status(*status),
+                ListFilter::Children(parent) => listings.children(parent),
+                ListFilter::Dependents(task) => listings.dependents(task),
             }),
-            BoardRequest::ListReady => listing(self.parts.listings.ready()),
+            BoardRequest::ListReady => self.summarized(|| listings.ready()),
             BoardRequest::ListTakeable => {
                 let now = self.parts.clock.now()?;
-                listing(self.parts.listings.takeable(&now))
+                self.summarized(|| listings.takeable(&now))
             }
             BoardRequest::Show(id, view) => {
                 let shown = self.parts.query.show(id)?;
@@ -163,6 +169,26 @@ impl RunBoardOperation {
         }
     }
 
+    /// The tasks `list` lists, each with its summary read from the same
+    /// board ([`QueryBoard::summarized`]): listed again while the board
+    /// moved between the listing and the read, at most
+    /// [`MAX_LIST_ATTEMPTS`] times.
+    ///
+    /// [`QueryBoard::summarized`]: super::QueryBoard::summarized
+    fn summarized(
+        &self,
+        list: impl Fn() -> Result<BoardListing, BoardStoreError>,
+    ) -> Result<BoardOutcome, ProjectBoardError> {
+        for _ in 0..MAX_LIST_ATTEMPTS {
+            if let Some(listing) = self.parts.query.summarized(list()?)? {
+                return Ok(BoardOutcome::Listing(listing));
+            }
+        }
+        Err(ProjectBoardError::Contended {
+            attempts: MAX_LIST_ATTEMPTS,
+        })
+    }
+
     /// Task `id` completed, noted in `facts` when given; with no pull
     /// request host, a task not on the board is answered as such first.
     fn complete(&self, id: &Slug, facts: Option<&mut OpFacts>) -> Result<Task, ProjectBoardError> {
@@ -199,3 +225,7 @@ fn completes(op: &BoardOp) -> bool {
 #[cfg(test)]
 #[path = "run_board_operation_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "run_board_operation_list_tests.rs"]
+mod list_tests;

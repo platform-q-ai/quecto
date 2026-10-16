@@ -792,7 +792,12 @@
             7
           ],
           "created": "2026-10-10T10:00:00Z",
-          "updated": "2026-10-10T12:30:02Z"
+          "updated": "2026-10-10T12:30:02Z",
+          "summary": {
+            "plan": null,
+            "run": null,
+            "may_be_incomplete": false
+          }
         }
       ],
       "quarantined": []
@@ -2059,6 +2064,63 @@
         "message": "this session may not spawn, so it cannot launch a coordinator: start the task from a session that may",
         "steps": "If start is refused for any other reason, say why in a sentence and stop; do not start the task any other way."
       }
+    }
+  },
+  {
+    "request": {
+      "op": "list",
+      "status": "draft"
+    },
+    "answer": {
+      "ok": true,
+      "op": "list",
+      "head": "r43",
+      "tasks": [
+        {
+          "id": "d1",
+          "title": "Depends on epic",
+          "kind": "task",
+          "description": "",
+          "status": "draft",
+          "parent": null,
+          "depends_on": [
+            "epic"
+          ],
+          "accepted_plan": null,
+          "claim": null,
+          "prs": [],
+          "created": "2026-10-10T10:00:00Z",
+          "updated": "2026-10-10T10:00:00Z",
+          "summary": {
+            "plan": null,
+            "run": null,
+            "may_be_incomplete": false
+          }
+        },
+        {
+          "id": "epic",
+          "title": "Project boards",
+          "kind": "epic",
+          "description": "",
+          "status": "draft",
+          "parent": null,
+          "depends_on": [],
+          "accepted_plan": 2,
+          "claim": null,
+          "prs": [],
+          "created": "2026-10-10T10:00:00Z",
+          "updated": "2026-10-10T10:00:03Z",
+          "summary": {
+            "plan": {
+              "version": 4,
+              "state": "draft"
+            },
+            "run": null,
+            "may_be_incomplete": false
+          }
+        }
+      ],
+      "quarantined": []
     }
   }
 ]

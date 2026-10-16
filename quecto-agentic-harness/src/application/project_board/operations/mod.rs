@@ -10,10 +10,11 @@ use std::sync::Arc;
 
 pub use super::dto::NoPullRequestHost;
 use super::dto::{
-    BoardListing, BoardOp, DraftUpdate, EndedRun, NewBoardTask, PlanAcceptance, PlanDiscard,
-    PlanEdit, PlanProposal, ProjectBoardError, RunEnd, ShownTask, TaskStart,
+    BoardOp, DraftUpdate, EndedRun, NewBoardTask, PlanAcceptance, PlanDiscard, PlanEdit,
+    PlanProposal, ProjectBoardError, RunEnd, ShownTask, TaskStart,
 };
 use super::ports::{BoardClock, BoardHead, BoardListings, KeepCopy};
+use super::task_summary::SummarizedListing;
 use super::use_cases::{
     AcceptPlan, BootstrapProjectBoard, ChangeBoardTask, ClearSetAside, CompleteMergedTask,
     CreateBoardTask, DiscardPlan, EditPlan, EndRun, ProposePlan, QueryBoard, StartBoardTask,
@@ -181,7 +182,8 @@ pub enum BoardOutcome {
         head: BoardHead,
         created: bool,
     },
-    Listing(BoardListing),
+    /// Tasks listed, each with its summary, from one read of the board.
+    Listing(SummarizedListing),
     /// A task with its plans and runs, as one read of the board found it,
     /// and which plan the request asked for, and how much of it.
     Shown(ShownTask, PlanView),

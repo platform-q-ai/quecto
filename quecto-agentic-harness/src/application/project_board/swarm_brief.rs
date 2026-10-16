@@ -368,9 +368,7 @@ pub fn brief_of(started: &Started) -> Result<SwarmBrief, BriefRefusal> {
         None => Terms::default(),
     };
     // A duration from Start, as given: the plan's schema bounds it.
-    let deadline_in_seconds = terms
-        .deadline_seconds
-        .map_or(DEFAULT_DEADLINE_SECONDS, u64::from);
+    let deadline_in_seconds = deadline_seconds(planned.team.as_ref());
     assert!(
         (MIN_DEADLINE_SECONDS..=MAX_DEADLINE_SECONDS).contains(&deadline_in_seconds),
         "a plan's deadline is within a swarm's bounds"
@@ -422,6 +420,15 @@ pub fn brief_of(started: &Started) -> Result<SwarmBrief, BriefRefusal> {
     }
 }
 
+/// A run's deadline, in seconds from Start, for a plan naming `team`:
+/// the team's `deadline_seconds` as given, or [`DEFAULT_DEADLINE_SECONDS`]
+/// when it names none or the plan names no team. The one rule a start
+/// briefs a swarm by and a listing summarises a run by.
+pub fn deadline_seconds(team: Option<&Team>) -> u64 {
+    team.and_then(|team| team.deadline_seconds)
+        .map_or(DEFAULT_DEADLINE_SECONDS, u64::from)
+}
+
 /// Whether `model` names its provider as spawn takes it,
 /// `provider/model`, neither empty: no provider is guessed (S4c).
 pub fn names_provider(model: &str) -> bool {
@@ -450,13 +457,13 @@ pub fn coordinator_model_named(team: Option<&Team>) -> Result<(), BriefRefusal> 
 }
 
 /// What a team makes of the run: its member limit, the coordinator's
-/// choice, the worker roles not applied and its deadline.
+/// choice and the worker roles not applied (its deadline is
+/// [`deadline_seconds`]'s).
 #[derive(Default)]
 struct Terms {
     member_limit: Option<u32>,
     coordinator: Option<RoleChoice>,
     not_applied: Vec<NotApplied>,
-    deadline_seconds: Option<u32>,
 }
 
 /// `team`'s terms, read field by field, when spawn can carry every field
@@ -465,7 +472,8 @@ fn terms_of(team: &Team) -> Result<Terms, BriefRefusal> {
     let unsupported = |field| Err(BriefRefusal::TeamUnsupported { field });
     let Team {
         roles,
-        deadline_seconds,
+        // Any deadline the schema admits, a swarm takes: [`deadline_seconds`].
+        deadline_seconds: _,
         image,
     } = team;
     match image {
@@ -522,7 +530,6 @@ fn terms_of(team: &Team) -> Result<Terms, BriefRefusal> {
         member_limit: Some(members),
         coordinator,
         not_applied,
-        deadline_seconds: *deadline_seconds,
     })
 }
 

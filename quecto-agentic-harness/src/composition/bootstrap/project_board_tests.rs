@@ -89,6 +89,13 @@ fn the_board_runs_end_to_end_over_git_and_the_index() {
     );
     let listed = ops(json!({"op": "list"}));
     assert_eq!(listed["tasks"][0]["status"], json!("claimed"), "{listed}");
+    // Over the git store and its index, each task carries its summary,
+    // read from the board the index listed.
+    assert_eq!(
+        listed["tasks"][0]["summary"],
+        json!({"plan": null, "run": null, "may_be_incomplete": false}),
+        "{listed}"
+    );
     let complete = ops(json!({"op": "complete", "task": "a"}));
     assert_eq!(
         complete["error"]["code"],

@@ -10,7 +10,8 @@ use super::board_view;
 use crate::application::project_board::dto::{
     ArtifactListing, ArtifactScope, BoardListing, ProjectBoardError, ShownTask,
 };
-use crate::application::project_board::ports::{BoardSnapshot, ProjectBoardStore};
+use crate::application::project_board::ports::{ArtifactKey, BoardSnapshot, ProjectBoardStore};
+use crate::application::project_board::task_summary::{SummarizedListing, summary_of};
 use crate::domain::project_board::entities::change::Change;
 use crate::domain::project_board::entities::discussion::Discussion;
 use crate::domain::project_board::entities::plan::Plan;
@@ -172,6 +173,20 @@ impl QueryBoard {
         shown_on(&self.store.read()?, id)
     }
 
+    /// `listing`, each of its tasks with its summary, from one read of
+    /// the board ([`summarized_on`]): `None` when that read is not the
+    /// board the listing was read at (it moved between the two reads).
+    ///
+    /// # Errors
+    /// The store's, or [`ProjectBoardError::Duplicate`] for a plan or run
+    /// of a listed task the board holds twice.
+    pub fn summarized(
+        &self,
+        listing: BoardListing,
+    ) -> Result<Option<SummarizedListing>, ProjectBoardError> {
+        summarized_on(&self.store.read()?, listing)
+    }
+
     fn matching(
         &self,
         wanted: impl Fn(&Task, &[Task]) -> bool,
@@ -190,6 +205,39 @@ impl QueryBoard {
             quarantined: board.quarantined,
         })
     }
+}
+
+/// `listing`, each of its tasks summarised ([`summary_of`]) from `board`,
+/// exactly as `show` reads it: `None` unless the listing was read at
+/// `board`'s head and each task it lists is the one `board` holds, so a
+/// summary always matches its task's row.
+///
+/// # Errors
+/// [`ProjectBoardError::Duplicate`] for a plan or run of a listed task
+/// the board holds twice.
+pub(crate) fn summarized_on(
+    board: &BoardSnapshot,
+    listing: BoardListing,
+) -> Result<Option<SummarizedListing>, ProjectBoardError> {
+    if listing.head != board.head {
+        return Ok(None);
+    }
+    let mut summaries = Vec::with_capacity(listing.tasks.len());
+    for task in &listing.tasks {
+        let shown = match shown_on(board, &task.fields().id) {
+            Ok(shown) if shown.task == *task => shown,
+            // The board holds another task by its id, or none it can read:
+            // the listing is not of this board.
+            Ok(_) | Err(ProjectBoardError::NotFound(_)) => return Ok(None),
+            Err(ProjectBoardError::Quarantined {
+                key: ArtifactKey::Task(_),
+                ..
+            }) => return Ok(None),
+            Err(error) => return Err(error),
+        };
+        summaries.push(summary_of(&shown));
+    }
+    Ok(Some(SummarizedListing::new(listing, summaries)))
 }
 
 /// [`QueryBoard::show`] over the snapshot `board`.
@@ -236,3 +284,7 @@ mod artifacts_tests;
 #[cfg(test)]
 #[path = "query_board_show_tests.rs"]
 mod show_tests;
+
+#[cfg(test)]
+#[path = "query_board_summary_tests.rs"]
+mod summary_tests;

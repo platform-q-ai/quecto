@@ -1,6 +1,7 @@
 //! How an answer names a board's artifacts (#2481 M4a): a file set aside
-//! by its kind's key, and `show`'s task with its plans and runs, in the
-//! board's own field names as their files hold them, and nothing more.
+//! by its kind's key, `show`'s task with its plans and runs, in the
+//! board's own field names as their files hold them, and nothing more;
+//! and a listed task's summary of them.
 use serde_json::{Map, Value, json};
 
 use super::{
@@ -10,12 +11,15 @@ use super::{
 use crate::application::project_board::dto::ShownTask;
 use crate::application::project_board::operations::PlanPage;
 use crate::application::project_board::ports::{ArtifactKey, QuarantinedFile};
+use crate::application::project_board::task_summary::TaskSummary;
 use crate::domain::project_board::entities::plan::{Plan, PlanItem};
 use crate::domain::project_board::entities::run::Run;
 use crate::domain::project_board::entities::team::Team;
 use crate::domain::project_board::value_objects::shown_text::{
     shown_artifact_path, shown_board_path, shown_path,
 };
+use crate::domain::project_board::value_objects::timestamp::Timestamp;
+use crate::domain::project_board::value_objects::vocabulary::{PlanState, RunOutcome};
 
 /// What `show` answers (#2481 M4a), all as one read of the board found
 /// it: its `head`; the whole `task`; `plan`, the version `version` names
@@ -212,12 +216,10 @@ fn run_brief_json(run: &Run) -> Value {
 
 fn run_brief(run: &Run) -> Map<String, Value> {
     let run = run.fields();
-    // `running` exactly while it has no outcome, as its file spells it.
-    let state = run.outcome.map_or("running", |outcome| outcome.as_str());
     fields([
         ("number", json!(run.number)),
         ("plan_version", json!(run.plan_version)),
-        ("state", json!(state)),
+        ("state", json!(run_state(run.outcome))),
         ("started", json!(run.started.as_str())),
         (
             "ended",
@@ -225,6 +227,53 @@ fn run_brief(run: &Run) -> Map<String, Value> {
         ),
         ("cost_tokens", json!(run.cost)),
     ])
+}
+
+/// A run's `state`: `running` exactly while it has no outcome, its
+/// outcome as its file spells it otherwise; `show` and a listing's
+/// summary say it alike.
+fn run_state(outcome: Option<RunOutcome>) -> &'static str {
+    outcome.map_or("running", RunOutcome::as_str)
+}
+
+/// A listed task's `summary` (`TaskSummary`): its current `plan`'s
+/// `version` and `state` (`draft` or `accepted`), its latest readable
+/// `run` (`number`, `plan_version`, `state`, `started` and `ended` as
+/// `show` gives them, its `deadline`, and its task `items` counted by
+/// state), each `null` when it has none, and `may_be_incomplete`, as
+/// `show` says it.
+pub(super) fn summary_json(summary: &TaskSummary) -> Value {
+    let plan = summary.plan.as_ref().map(|plan| {
+        assert!(
+            matches!(plan.state, PlanState::Draft | PlanState::Accepted),
+            "a summary names a draft or accepted plan: {plan:?}"
+        );
+        json!({"version": plan.version, "state": plan.state.as_str()})
+    });
+    let run = summary.run.as_ref().map(|run| {
+        let items = &run.items;
+        json!({
+            "number": run.number,
+            "plan_version": run.plan_version,
+            "state": run_state(run.outcome),
+            "started": run.started.as_str(),
+            "ended": run.ended.as_ref().map(Timestamp::as_str),
+            "deadline": run.deadline.as_ref().map(Timestamp::as_str),
+            "items": {
+                "total": items.total,
+                "todo": items.todo,
+                "doing": items.doing,
+                "review": items.review,
+                "done": items.done,
+                "blocked": items.blocked,
+            },
+        })
+    });
+    json!({
+        "plan": plan,
+        "run": run,
+        "may_be_incomplete": summary.may_be_incomplete,
+    })
 }
 
 /// A file set aside, as a listing names it: by its raw `path`, its task's

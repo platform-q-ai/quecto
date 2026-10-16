@@ -88,6 +88,42 @@ makes a board a read refuses, except that it leaves at most 2,048 entries in
 were markdown (a JSON file and a summary per task). A file larger than its kind's
 cap is set aside, not read.
 
+## List
+
+`list`, `list_ready` and `list_takeable` answer the board's `head`, the
+`tasks` they list, by id, and every file set aside as `quarantined`. Each task
+carries a `summary` of where its plan and latest run stand:
+
+```json
+"summary": {
+  "plan": null | { "version": 2, "state": "draft" | "accepted" },
+  "run": null | {
+    "number": 2,
+    "plan_version": 1,
+    "state": "running" | "succeeded" | "failed" | "stopped" | "lost",
+    "started": "2026-10-10T09:00:00Z",
+    "ended": "2026-10-10T09:30:00Z" | null,
+    "deadline": "2026-10-11T09:00:00Z" | null,
+    "items": { "total": 5, "todo": 1, "doing": 2, "review": 0, "done": 2, "blocked": 0 }
+  },
+  "may_be_incomplete": false
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `plan` | The newest version of the task's plan that is a draft or accepted (superseded and discarded versions are skipped), so a draft newer than the accepted plan is the one named. `null` when there is none |
+| `run` | The task's latest readable run: `number`, `plan_version`, `state`, `started` and `ended` as `show` gives them; `deadline`; and `items`, how many of its task items stand in each state (`todo`, `doing`, `review`, `done`, `blocked`) and in all. A run records its task items when it ends, so a running run counts none. `null` when it has none |
+| `deadline` | `started` plus the `deadline_seconds` of the team of the plan the run ran, or a day when the team names none (or the plan names no team): the deadline a start briefs the swarm with. `null` while that plan is not readable on the board |
+| `may_be_incomplete` | As `show` gives it: a file that may hold one of the task's plans or runs is set aside |
+
+The summaries are read from one read of the board made after the listing, and
+only from the board the listing was read at, so a summary always matches its
+task's row. When the board moved in between, the listing is read again, up to
+three times, and then refused as `contended`. The agent tool's listing keeps
+each task's `summary` whole beside the task's own fields it shows (`id`,
+`title`, `kind`, `status`, `parent`, `claim`, `updated`).
+
 ## Show
 
 `show(task)` reads the task, its plans and its runs from one read of the board

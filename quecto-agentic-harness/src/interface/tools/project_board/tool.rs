@@ -257,7 +257,8 @@ fn parameters_schema() -> String {
 }
 
 /// What a listing shows of a task: who and what it is, where it stands
-/// and who holds it until when; `show` gives the whole task.
+/// and who holds it until when, and its `summary` (where its plan and
+/// latest run stand); `show` gives the whole task.
 fn summary(task: &Value) -> Value {
     let claim = task["claim"]
         .as_object()
@@ -270,6 +271,7 @@ fn summary(task: &Value) -> Value {
         "parent": task["parent"],
         "claim": claim,
         "updated": task["updated"],
+        "summary": task["summary"],
     })
 }
 
@@ -465,3 +467,7 @@ mod start_tests;
 #[cfg(test)]
 #[path = "tool_end_run_tests.rs"]
 mod end_run_tests;
+
+#[cfg(test)]
+#[path = "tool_list_summary_tests.rs"]
+mod list_summary_tests;
