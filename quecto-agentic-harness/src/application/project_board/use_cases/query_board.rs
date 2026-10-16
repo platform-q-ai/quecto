@@ -205,10 +205,11 @@ impl QueryBoard {
 /// The summaries of the tasks `listing` lists, in order ([`summary_of`]),
 /// from `board`, each task read exactly as `show` reads it: none while
 /// `board` is not where the listing was read ([`Summarized::Moved`]) or
-/// holds another row than it lists ([`Summarized::Disagrees`]), so a
-/// summary always matches its task's row. A task whose plans or runs the
-/// board holds twice goes without its own summary
-/// ([`RowSummary::Skipped`]); the others are summarised.
+/// holds another row than it lists, the task twice included
+/// ([`Summarized::Disagrees`]), so a summary always matches its task's
+/// row. A task one of whose plans or runs the board holds twice goes
+/// without its own summary ([`RowSummary::Skipped`]); the others are
+/// summarised.
 ///
 /// # Errors
 /// What reading a listed task refuses beyond a duplicate or a row the
@@ -225,17 +226,25 @@ pub(crate) fn summarized_on(
         let row = match shown_on(board, &task.fields().id) {
             Ok(shown) if shown.task == *task => RowSummary::Summary(summary_of(&shown)),
             // The board, where the listing was read, holds another task by
-            // its id, or none it can read: the index disagrees with it.
+            // its id, none it can read, or the task twice: the index
+            // disagrees with it.
             Ok(_) | Err(ProjectBoardError::NotFound(_)) => return Ok(Summarized::Disagrees),
-            Err(ProjectBoardError::Quarantined {
-                key: ArtifactKey::Task(_),
-                ..
-            }) => return Ok(Summarized::Disagrees),
-            // An artifact of this task held twice: this row alone goes
+            Err(
+                ProjectBoardError::Quarantined {
+                    key: ArtifactKey::Task(_),
+                    ..
+                }
+                | ProjectBoardError::Duplicate {
+                    key: ArtifactKey::Task(_),
+                },
+            ) => return Ok(Summarized::Disagrees),
+            // A plan or run of this task held twice: this row alone goes
             // without its summary.
-            Err(error @ ProjectBoardError::Duplicate { .. }) => {
-                RowSummary::Skipped(Box::new(error))
-            }
+            Err(
+                error @ ProjectBoardError::Duplicate {
+                    key: ArtifactKey::Plan(..) | ArtifactKey::Run(..),
+                },
+            ) => RowSummary::Skipped(Box::new(error)),
             Err(error) => return Err(error),
         };
         rows.push(row);

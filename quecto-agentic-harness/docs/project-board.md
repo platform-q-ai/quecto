@@ -133,7 +133,8 @@ anything is built.
 Summaries cost a whole read of the board (a fetch), made after the listing,
 and are taken only from the board the listing was read at, so a summary always
 matches its task's row. When the board moved in between, the listing is read
-again and the board read whole again: up to 3 whole reads in all.
+again: up to 3 reads for the summaries; each listing read again also rebuilds
+the index (itself a whole read) when the board moved.
 
 A listing is never refused for its summaries. When they cannot be read, the
 listing is answered without them: no task carries a `summary`, and the answer

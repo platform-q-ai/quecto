@@ -19,9 +19,10 @@
 //! answers exactly what it did before. A listing is never refused for its
 //! summaries: when they cannot be read (the board kept moving, the index
 //! disagrees with it, or its read failed), it is answered without them,
-//! with `summary_skipped` naming why; a task whose plans or runs the board
-//! holds twice goes without its own, naming why on its row. The flag is the command line's own: the agent tool's
-//! request names no such field.
+//! with `summary_skipped` naming why; a task one of whose plans or runs
+//! the board holds twice goes without its own, naming why on its row. The
+//! flag is the command line's own: the agent tool's request names no such
+//! field.
 //!
 //! **Trust.** The board is cooperative: a change is attributed to the
 //! local git identity, which anyone can set, and anyone who can push the

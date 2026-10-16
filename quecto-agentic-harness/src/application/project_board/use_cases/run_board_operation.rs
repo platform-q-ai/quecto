@@ -29,8 +29,9 @@ use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::telemetry::CompletionFacts;
 use crate::domain::project_board::value_objects::vocabulary::TaskStatus;
 
-/// The most times a listing is read, and the board read whole after it,
-/// before its summaries are skipped as contended.
+/// Up to 3 reads for the summaries; each listing read again also rebuilds
+/// the index (itself a whole read) when the board moved. Past that, the
+/// summaries are skipped as contended.
 pub const MAX_LIST_ATTEMPTS: usize = 3;
 
 pub struct RunBoardOperation {

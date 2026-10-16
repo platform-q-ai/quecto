@@ -197,3 +197,25 @@ fn a_duplicate_plan_skips_its_own_tasks_summary_only() {
     );
     assert_eq!(rows.len(), 2);
 }
+
+/// A task row the board holds twice is the index disagreeing with the
+/// board, not one task's plans or runs: the listing is not summarised.
+#[test]
+fn a_duplicate_task_row_disagrees() {
+    let board = BoardSnapshot {
+        head: BoardHead("h".into()),
+        tasks: vec![task("a"), task("a"), task("b")],
+        plans: vec![],
+        runs: Vec::<Run>::new(),
+        changes: vec![],
+        reviews: vec![],
+        discussions: vec![],
+        quarantined: vec![],
+    };
+    let listing = BoardListing {
+        head: BoardHead("h".into()),
+        tasks: vec![task("a"), task("b")],
+        quarantined: vec![],
+    };
+    assert_eq!(summarized_on(&board, &listing), Ok(Summarized::Disagrees));
+}
