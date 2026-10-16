@@ -18,6 +18,7 @@ pub mod tool;
 
 use serde_json::Value;
 
+use crate::application::project_board::operations::{BoardRequest, ListSummaries};
 use crate::application::project_board::use_cases::RunBoardOperation;
 use crate::domain::project_board::value_objects::telemetry::FaultKind;
 use recording::BoardCall;
@@ -53,6 +54,19 @@ pub fn run(operations: &RunBoardOperation, text: &str) -> Value {
 
 /// The answer to the request `text`, noted on `call` (epic #2481 T3).
 pub fn run_recorded(operations: &RunBoardOperation, text: &str, call: &mut BoardCall) -> Value {
+    run_recorded_with(operations, text, ListSummaries::Omitted, call)
+}
+
+/// [`run_recorded`], a listing summarising its tasks as `summaries` asks
+/// (the CLI's `--summary`; the request's JSON names no such field, so the
+/// agent tool never asks). Summaries asked of a request that lists
+/// nothing are refused as the request's.
+pub fn run_recorded_with(
+    operations: &RunBoardOperation,
+    text: &str,
+    summaries: ListSummaries,
+    call: &mut BoardCall,
+) -> Value {
     let value = match read(text) {
         Ok(value) => value,
         Err(error) => {
@@ -68,8 +82,11 @@ pub fn run_recorded(operations: &RunBoardOperation, text: &str, call: &mut Board
         Err(error) => return call.refuse_request(op.as_deref(), &error),
     };
     call.parsed(&request);
+    if let Some(refusal) = summaries_refusal(&request, summaries) {
+        return call.refuse_request(op.as_deref(), &refusal);
+    }
     let op = op.expect("a parsed request names an op");
-    match call.executed(operations, &request) {
+    match call.executed(operations, &request, summaries) {
         Ok(outcome) => call.answer(&op, &outcome, operations.clock_note(&request)),
         Err(error) => {
             let steps = answer::start_steps::refused(&request, &error);
@@ -77,6 +94,22 @@ pub fn run_recorded(operations: &RunBoardOperation, text: &str, call: &mut Board
         }
     }
 }
+
+/// Why `summaries` cannot be asked of `request`: only a listing
+/// ([`BoardRequest::is_listing`]) is summarised.
+pub fn summaries_refusal(request: &BoardRequest, summaries: ListSummaries) -> Option<RequestError> {
+    match (summaries, request.is_listing()) {
+        (ListSummaries::Omitted, _) | (ListSummaries::Wanted, true) => None,
+        (ListSummaries::Wanted, false) => Some(RequestError::of(
+            "summary",
+            SUMMARY_LISTINGS_ONLY,
+            FaultKind::InvalidValue,
+        )),
+    }
+}
+
+/// Why a summary is refused of a request that lists nothing.
+pub const SUMMARY_LISTINGS_ONLY: &str = "is taken only by list, list_ready and list_takeable";
 
 #[cfg(test)]
 #[path = "mod_tests.rs"]

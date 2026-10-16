@@ -58,20 +58,19 @@ fn summarized(
     listing: BoardListing,
 ) -> Option<Vec<(String, TaskSummary)>> {
     let query = QueryBoard::new(Arc::new(store.client()));
-    query.summarized(listing).unwrap().map(|summarized| {
-        summarized
-            .entries()
-            .map(|(task, summary)| (task.fields().id.as_str().to_string(), summary.clone()))
-            .collect()
+    query.summarized(&listing).unwrap().map(|summaries| {
+        let ids = listing
+            .tasks
+            .iter()
+            .map(|task| task.fields().id.as_str().to_string());
+        ids.zip(summaries).collect()
     })
 }
 
 #[test]
 fn each_listed_task_is_summarised_in_its_order() {
     let store = seeded();
-    let listed = listing(&store);
-    let head = listed.head.clone();
-    let entries = summarized(&store, listed).expect("read at the board's head");
+    let entries = summarized(&store, listing(&store)).expect("read at the board's head");
     let ids: Vec<&str> = entries.iter().map(|(id, _)| id.as_str()).collect();
     assert_eq!(ids, ["a", "b", "c"]);
     let plan = |entry: &(String, TaskSummary)| entry.1.plan;
@@ -90,9 +89,14 @@ fn each_listed_task_is_summarised_in_its_order() {
             .all(|(_, summary)| !summary.may_be_incomplete)
     );
     let query = QueryBoard::new(Arc::new(store.client()));
-    let again = query.summarized(listing(&store)).unwrap().unwrap();
-    assert_eq!(again.head(), &head, "the listing's own head");
-    assert_eq!(again.listing().tasks.len(), 3);
+    let again = query.summarized(&listing(&store)).unwrap().unwrap();
+    assert_eq!(
+        again,
+        entries
+            .into_iter()
+            .map(|(_, summary)| summary)
+            .collect::<Vec<_>>()
+    );
 }
 
 /// The listing's summaries are `show`'s judgement: a run file set aside
@@ -166,7 +170,7 @@ fn a_duplicate_plan_of_a_listed_task_is_refused() {
         quarantined: vec![],
     };
     assert_eq!(
-        summarized_on(&board, listing),
+        summarized_on(&board, &listing),
         Err(ProjectBoardError::Duplicate {
             key: ArtifactKey::Plan(slug("a"), 1)
         })

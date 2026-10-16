@@ -12,6 +12,16 @@
 //! is accepted and changes nothing: the answer is always JSON. A read
 //! needs no committer; a write needs the repository's configured one.
 //!
+//! `--summary` (no value; `list`, `list_ready` and `list_takeable` only,
+//! with flags or `--input` alike) gives each listed task its `summary`:
+//! where its plan and latest run stand, read from one whole read of the
+//! board (the pocket relay asks for it). Without it a listing reads and
+//! answers exactly what it did before. A listing is never refused for its
+//! summaries: when they cannot be read (the board kept moving, or its
+//! read failed), it is answered without them, with `summary_skipped`
+//! naming why. The flag is the command line's own: the agent tool's
+//! request names no such field.
+//!
 //! **Trust.** The board is cooperative: a change is attributed to the
 //! local git identity, which anyone can set, and anyone who can push the
 //! board branch could push raw commits. Branch protection or a server hook
@@ -57,6 +67,7 @@ use std::sync::Arc;
 use serde_json::Value;
 
 use super::CliContext;
+use crate::application::project_board::operations::ListSummaries;
 use crate::application::project_board::telemetry::BoardRecording;
 use crate::domain::project_board::value_objects::telemetry::{Client, FaultKind, FrontEnd};
 use crate::interface::tools::project_board::recording::{BoardCall, CLIENT_VARIABLE, named_client};
@@ -133,7 +144,7 @@ fn client(named: Option<&OsStr>) -> Client {
 }
 
 const USAGE: &str = "usage: quecto board <op> [--<field> <value>]... [--input <json>|-] \
-                     [--repo <path>] [--remote <name>] [--json]\n";
+                     [--repo <path>] [--remote <name>] [--json] [--summary]\n";
 
 /// The command line, read.
 struct Line {
@@ -142,6 +153,8 @@ struct Line {
     input: Option<String>,
     repo: Option<PathBuf>,
     remote: String,
+    /// `--summary`: a listing's tasks each with its summary.
+    summary: bool,
 }
 
 /// A command line refused as it was read, and the op it named before the
@@ -159,6 +172,7 @@ fn read_line(args: &[String]) -> Result<Line, LineRefused> {
         input: None,
         repo: None,
         remote: "origin".into(),
+        summary: false,
     };
     match read_into(&mut line, args) {
         Ok(()) => Ok(line),
@@ -189,6 +203,17 @@ fn read_into(line: &mut Line, args: &[String]) -> Result<(), RequestError> {
     while let Some(arg) = rest.next() {
         match arg.as_str() {
             "--json" => {}
+            // The one flag of the command line's own that takes no value.
+            "--summary" => match line.summary {
+                true => {
+                    return Err(invalid(
+                        "--summary",
+                        "is given twice",
+                        FaultKind::DuplicateKey,
+                    ));
+                }
+                false => line.summary = true,
+            },
             "--input" => line.input = Some(own("--input", rest.next())?),
             "--repo" => line.repo = Some(PathBuf::from(own("--repo", rest.next())?)),
             "--remote" => line.remote = own("--remote", rest.next())?,
@@ -390,7 +415,11 @@ fn answer(ctx: &CliContext, args: &[String], call: &mut BoardCall) -> Value {
         launcher: None,
         swarm_session: None,
     };
-    site::answer(&site, &value.to_string(), None, call)
+    let summaries = match line.summary {
+        true => ListSummaries::Wanted,
+        false => ListSummaries::Omitted,
+    };
+    site::answer_with(&site, &value.to_string(), None, summaries, call)
 }
 
 #[cfg(test)]

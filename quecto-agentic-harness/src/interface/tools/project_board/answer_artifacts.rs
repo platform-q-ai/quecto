@@ -5,13 +5,13 @@
 use serde_json::{Map, Value, json};
 
 use super::{
-    fields, head_json, identity_json, key_fields, quarantined_list, shown, shown_json, slug_json,
-    slugs_json, task_json,
+    error_code, fields, head_json, identity_json, key_fields, quarantined_list, shown, shown_json,
+    slug_json, slugs_json, task_json,
 };
 use crate::application::project_board::dto::ShownTask;
 use crate::application::project_board::operations::PlanPage;
 use crate::application::project_board::ports::{ArtifactKey, QuarantinedFile};
-use crate::application::project_board::task_summary::TaskSummary;
+use crate::application::project_board::task_summary::{Listed, RowSummaries, TaskSummary};
 use crate::domain::project_board::entities::plan::{Plan, PlanItem};
 use crate::domain::project_board::entities::run::Run;
 use crate::domain::project_board::entities::team::Team;
@@ -57,6 +57,36 @@ pub(super) fn shown_fields(shown: &ShownTask, version: Option<u32>) -> Map<Strin
             quarantined_list(&shown.set_aside),
         ),
     ])
+}
+
+/// A listing's `head`, its `tasks` and the files set aside as
+/// `quarantined`; asked for summaries, each task with its `summary`
+/// ([`summary_json`]), or, when they could not be read, none and
+/// `summary_skipped`: the code of why.
+pub(super) fn listing_fields(listing: &Listed) -> Map<String, Value> {
+    let tasks = listing.entries().map(|(task, summary)| {
+        let mut entry = task_json(task);
+        if let Some(summary) = summary {
+            entry["summary"] = summary_json(summary);
+        }
+        entry
+    });
+    let mut fields = Map::from_iter([
+        ("head".to_string(), head_json(listing.head())),
+        ("tasks".to_string(), Value::Array(tasks.collect())),
+        (
+            "quarantined".to_string(),
+            quarantined_list(listing.quarantined()),
+        ),
+    ]);
+    match listing.summaries() {
+        RowSummaries::Omitted | RowSummaries::Given(_) => {}
+        RowSummaries::Skipped(why) => {
+            let code = error_code(why).as_str();
+            fields.insert("summary_skipped".into(), json!(code));
+        }
+    }
+    fields
 }
 
 /// A plan in the board's own field names, as its file holds them, every
@@ -242,7 +272,7 @@ fn run_state(outcome: Option<RunOutcome>) -> &'static str {
 /// `show` gives them, its `deadline`, and its task `items` counted by
 /// state), each `null` when it has none, and `may_be_incomplete`, as
 /// `show` says it.
-pub(super) fn summary_json(summary: &TaskSummary) -> Value {
+fn summary_json(summary: &TaskSummary) -> Value {
     let plan = summary.plan.as_ref().map(|plan| {
         assert!(
             matches!(plan.state, PlanState::Draft | PlanState::Accepted),

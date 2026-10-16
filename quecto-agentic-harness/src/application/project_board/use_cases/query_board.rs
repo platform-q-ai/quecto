@@ -11,7 +11,7 @@ use crate::application::project_board::dto::{
     ArtifactListing, ArtifactScope, BoardListing, ProjectBoardError, ShownTask,
 };
 use crate::application::project_board::ports::{ArtifactKey, BoardSnapshot, ProjectBoardStore};
-use crate::application::project_board::task_summary::{SummarizedListing, summary_of};
+use crate::application::project_board::task_summary::{TaskSummary, summary_of};
 use crate::domain::project_board::entities::change::Change;
 use crate::domain::project_board::entities::discussion::Discussion;
 use crate::domain::project_board::entities::plan::Plan;
@@ -173,8 +173,8 @@ impl QueryBoard {
         shown_on(&self.store.read()?, id)
     }
 
-    /// `listing`, each of its tasks with its summary, from one read of
-    /// the board ([`summarized_on`]): `None` when that read is not the
+    /// The summary of each task `listing` lists, in order, from one read
+    /// of the board ([`summarized_on`]): `None` when that read is not the
     /// board the listing was read at (it moved between the two reads).
     ///
     /// # Errors
@@ -182,8 +182,8 @@ impl QueryBoard {
     /// of a listed task the board holds twice.
     pub fn summarized(
         &self,
-        listing: BoardListing,
-    ) -> Result<Option<SummarizedListing>, ProjectBoardError> {
+        listing: &BoardListing,
+    ) -> Result<Option<Vec<TaskSummary>>, ProjectBoardError> {
         summarized_on(&self.store.read()?, listing)
     }
 
@@ -207,18 +207,18 @@ impl QueryBoard {
     }
 }
 
-/// `listing`, each of its tasks summarised ([`summary_of`]) from `board`,
-/// exactly as `show` reads it: `None` unless the listing was read at
-/// `board`'s head and each task it lists is the one `board` holds, so a
-/// summary always matches its task's row.
+/// The summary of each task `listing` lists, in order ([`summary_of`]),
+/// from `board`, exactly as `show` reads it: `None` unless the listing
+/// was read at `board`'s head and each task it lists is the one `board`
+/// holds, so a summary always matches its task's row.
 ///
 /// # Errors
 /// [`ProjectBoardError::Duplicate`] for a plan or run of a listed task
 /// the board holds twice.
 pub(crate) fn summarized_on(
     board: &BoardSnapshot,
-    listing: BoardListing,
-) -> Result<Option<SummarizedListing>, ProjectBoardError> {
+    listing: &BoardListing,
+) -> Result<Option<Vec<TaskSummary>>, ProjectBoardError> {
     if listing.head != board.head {
         return Ok(None);
     }
@@ -237,7 +237,8 @@ pub(crate) fn summarized_on(
         };
         summaries.push(summary_of(&shown));
     }
-    Ok(Some(SummarizedListing::new(listing, summaries)))
+    assert_eq!(summaries.len(), listing.tasks.len(), "one per listed task");
+    Ok(Some(summaries))
 }
 
 /// [`QueryBoard::show`] over the snapshot `board`.

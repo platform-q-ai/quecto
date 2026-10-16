@@ -14,7 +14,7 @@ use super::dto::{
     PlanProposal, ProjectBoardError, RunEnd, ShownTask, TaskStart,
 };
 use super::ports::{BoardClock, BoardHead, BoardListings, KeepCopy};
-use super::task_summary::SummarizedListing;
+use super::task_summary::Listed;
 use super::use_cases::{
     AcceptPlan, BootstrapProjectBoard, ChangeBoardTask, ClearSetAside, CompleteMergedTask,
     CreateBoardTask, DiscardPlan, EditPlan, EndRun, ProposePlan, QueryBoard, StartBoardTask,
@@ -121,6 +121,38 @@ impl BoardRequest {
             | Self::Show(..) => false,
         }
     }
+
+    /// The request lists tasks: the requests a [`ListSummaries::Wanted`]
+    /// may be asked of (an allowlist).
+    pub fn is_listing(&self) -> bool {
+        match self {
+            Self::List(_) | Self::ListReady | Self::ListTakeable => true,
+            Self::Bootstrap
+            | Self::Show(..)
+            | Self::Create(_)
+            | Self::UpdateDraft(_)
+            | Self::Change(..)
+            | Self::Complete(_)
+            | Self::ProposePlan(_)
+            | Self::EditPlan(_)
+            | Self::AcceptPlan(_)
+            | Self::DiscardPlan(_)
+            | Self::EndRun(_)
+            | Self::Start(_)
+            | Self::Clear { .. } => false,
+        }
+    }
+}
+
+/// Whether a listing reads the whole board to summarise each task it
+/// lists ([`crate::application::project_board::task_summary`]). Omitted
+/// by default: a listing then reads only what it lists, as ever; a front
+/// end asks for summaries only of a listing ([`BoardRequest::is_listing`]).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ListSummaries {
+    #[default]
+    Omitted,
+    Wanted,
 }
 
 /// Which plan a `show` gives and how much of it (#2481 M4b): the version
@@ -182,8 +214,9 @@ pub enum BoardOutcome {
         head: BoardHead,
         created: bool,
     },
-    /// Tasks listed, each with its summary, from one read of the board.
-    Listing(SummarizedListing),
+    /// Tasks listed, each with its summary when one was asked for and
+    /// read, or why none was.
+    Listing(Listed),
     /// A task with its plans and runs, as one read of the board found it,
     /// and which plan the request asked for, and how much of it.
     Shown(ShownTask, PlanView),

@@ -1,7 +1,10 @@
-//! What a listing says of each task it lists: the `summary` beside each
-//! task of a `list`, `list_ready` and `list_takeable` answer. It is read
-//! from the same read of the board as the task's row ([`ShownTask`], as
-//! `show` reads it), so the two always agree.
+//! What a listing says of each task it lists, when asked
+//! ([`ListSummaries::Wanted`]): the `summary` beside each task of a
+//! `list`, `list_ready` and `list_takeable` answer. It is read from one
+//! read of the board, the one the task's row was listed at ([`ShownTask`],
+//! as `show` reads it), so the two always agree.
+//!
+//! [`ListSummaries::Wanted`]: super::operations::ListSummaries::Wanted
 //!
 //! - **plan:** the newest version of the task's plan that is a draft or
 //!   accepted (superseded and discarded versions are skipped), so a draft
@@ -17,7 +20,7 @@
 //!   readable on the board, or past the year 9999.
 //! - **may_be_incomplete:** as `show` judges it
 //!   ([`ShownTask::may_be_incomplete`]).
-use super::dto::{BoardListing, ShownTask};
+use super::dto::{BoardListing, ProjectBoardError, ShownTask};
 use super::ports::{BoardHead, QuarantinedFile};
 use super::swarm_brief::deadline_seconds;
 use crate::domain::project_board::entities::plan::Plan;
@@ -141,35 +144,82 @@ fn run_summary(run: &Run, plans: &[Plan]) -> RunSummary {
     }
 }
 
-/// A listing with each task's summary, all from one read of the board.
+/// A listing as a listing op answers it: its tasks, and their summaries
+/// as asked for.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SummarizedListing {
+pub struct Listed {
     listing: BoardListing,
-    summaries: Vec<TaskSummary>,
+    summaries: RowSummaries,
 }
 
-impl SummarizedListing {
+/// What a listing says of its tasks beyond their rows.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RowSummaries {
+    /// None was asked for.
+    Omitted,
+    /// One per listed task, in order, all read from the board the listing
+    /// was read at.
+    Given(Vec<TaskSummary>),
+    /// Asked for, but not read: why (the board kept moving, or its read
+    /// failed). The listing is answered all the same.
+    Skipped(Box<ProjectBoardError>),
+}
+
+impl Listed {
+    /// `listing` alone: no summary asked for.
+    pub fn plain(listing: BoardListing) -> Self {
+        Self {
+            listing,
+            summaries: RowSummaries::Omitted,
+        }
+    }
+
     /// `listing`, each of its tasks summarised by `summaries`, in order.
     ///
     /// # Panics
     /// A summary count other than the listing's task count.
-    pub fn new(listing: BoardListing, summaries: Vec<TaskSummary>) -> Self {
+    pub fn summarized(listing: BoardListing, summaries: Vec<TaskSummary>) -> Self {
         assert_eq!(
             listing.tasks.len(),
             summaries.len(),
             "one summary per listed task"
         );
-        Self { listing, summaries }
+        Self {
+            listing,
+            summaries: RowSummaries::Given(summaries),
+        }
     }
 
-    /// The head the listing and its summaries were read at.
+    /// `listing`, its summaries skipped for `why`.
+    pub fn skipped(listing: BoardListing, why: ProjectBoardError) -> Self {
+        Self {
+            listing,
+            summaries: RowSummaries::Skipped(Box::new(why)),
+        }
+    }
+
+    /// The head the listing was read at.
     pub fn head(&self) -> &BoardHead {
         &self.listing.head
     }
 
-    /// Each listed task, by id, beside its summary.
-    pub fn entries(&self) -> impl Iterator<Item = (&Task, &TaskSummary)> {
-        self.listing.tasks.iter().zip(&self.summaries)
+    /// Each listed task, by id, beside its summary while summaries were
+    /// given.
+    pub fn entries(&self) -> impl Iterator<Item = (&Task, Option<&TaskSummary>)> {
+        let summaries = match &self.summaries {
+            RowSummaries::Given(summaries) => Some(summaries),
+            RowSummaries::Omitted | RowSummaries::Skipped(_) => None,
+        };
+        self.listing
+            .tasks
+            .iter()
+            .enumerate()
+            .map(move |(index, task)| (task, summaries.map(|summaries| &summaries[index])))
+    }
+
+    /// What it says of its tasks beyond their rows.
+    pub fn summaries(&self) -> &RowSummaries {
+        &self.summaries
     }
 
     /// Every file the board set aside.

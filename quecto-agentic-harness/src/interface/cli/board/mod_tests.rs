@@ -580,3 +580,73 @@ fn start_is_refused_on_the_command_line() {
     // carries none (review round 1, #2567).
     assert!(answer["error"].get("steps").is_none(), "{answer}");
 }
+
+/// `--summary` gives each listed task its summary, on every listing op,
+/// with flags or `--input` alike; without it a listing is as before.
+#[test]
+fn summary_is_the_command_lines_opt_in_for_listings() {
+    let none = json!({"plan": null, "run": null, "may_be_incomplete": false});
+    for line in [
+        &["list", "--summary"][..],
+        &["list-ready", "--summary"][..],
+        &["--summary", "list", "--status", "ready"][..],
+        &["list", "--input", r#"{"status": "ready"}"#, "--summary"][..],
+    ] {
+        let (code, answer, _) = cli(Some(memory_board), line);
+        assert_eq!(code, 0, "{line:?}: {answer}");
+        assert_eq!(answer["tasks"][0]["id"], json!("a"), "{line:?}: {answer}");
+        assert_eq!(answer["tasks"][0]["summary"], none, "{line:?}: {answer}");
+        assert_eq!(answer.get("summary_skipped"), None, "{line:?}: {answer}");
+    }
+    let (code, answer, _) = cli(Some(memory_board), &["list-takeable", "--summary"]);
+    assert_eq!((code, &answer["tasks"]), (0, &json!([])), "{answer}");
+    for line in [&["list"][..], &["list-ready"][..], &["list-takeable"][..]] {
+        let (code, answer, _) = cli(Some(memory_board), line);
+        assert_eq!(code, 0, "{line:?}: {answer}");
+        // A takeable listing's clock note is its own, as ever.
+        let mut keys: Vec<&str> = answer
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .filter(|key| *key != "clock")
+            .collect();
+        keys.sort_unstable();
+        assert_eq!(
+            keys,
+            ["head", "ok", "op", "quarantined", "tasks"],
+            "{line:?}"
+        );
+        let tasks = answer["tasks"].as_array().unwrap();
+        assert!(
+            tasks.iter().all(|task| task.get("summary").is_none()),
+            "{answer}"
+        );
+    }
+}
+
+/// `--summary` takes no value, is given once, and only of a listing: of
+/// another op it is refused before anything is built.
+#[test]
+fn summary_is_refused_beside_another_op_or_twice() {
+    for line in [
+        &["show", "--task", "a", "--summary"][..],
+        &["renew", "--summary", "--task", "a"][..],
+        &["show", "--input", r#"{"task": "a"}"#, "--summary"][..],
+    ] {
+        let (code, answer, _) = cli(Some(never_built), line);
+        assert_eq!(code, 1, "{line:?}: {answer}");
+        assert_eq!(
+            answer["error"]["code"],
+            json!("invalid_request"),
+            "{answer}"
+        );
+        assert_eq!(answer["error"]["field"], json!("summary"), "{answer}");
+    }
+    let (code, answer, _) = cli(Some(never_built), &["list", "--summary", "--summary"]);
+    assert_eq!(code, 1, "{answer}");
+    assert_eq!(
+        (&answer["error"]["field"], &answer["error"]["problem"]),
+        (&json!("summary"), &json!("is given twice"))
+    );
+}

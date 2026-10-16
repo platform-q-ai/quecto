@@ -5,8 +5,9 @@
 //!   after a change that may complete it, `completion`: `{"done": true,
 //!   "task"}`, `{"done": false, "pending": [prs]}` while some have not
 //!   merged, or `{"done": false, "error"}`), a listing's `head`, `tasks`
-//!   (each task with its `summary`, [`summary_json`]) and `quarantined`,
-//!   `show`'s ([`shown_fields`]), a plan proposed,
+//!   and `quarantined` (asked for summaries, each task with its `summary`,
+//!   [`listing_fields`], or `summary_skipped` and none), `show`'s
+//!   ([`shown_fields`]), a plan proposed,
 //!   edited or discarded as `plan` ([`planned_json`]), a plan accepted as
 //!   the `task` naming it, the `plan` and the version it `superseded`
 //!   (`null` when none was accepted), or `head` alone; and
@@ -44,7 +45,6 @@ use crate::application::project_board::ports::{
     QuarantinedFile,
 };
 use crate::application::project_board::start::StartedTask;
-use crate::application::project_board::task_summary::SummarizedListing;
 use crate::domain::project_board::entities::claim::Identity;
 use crate::domain::project_board::entities::task::Task;
 use crate::domain::project_board::value_objects::shown_text::{
@@ -57,8 +57,8 @@ use crate::domain::redaction::{redact_secrets, redact_url_userinfo};
 #[path = "answer_artifacts.rs"]
 mod artifacts;
 use artifacts::{
-    artifact_folder, page_fields, planned_json, quarantined_json, run_json, shown_fields,
-    summary_json,
+    artifact_folder, listing_fields, page_fields, planned_json, quarantined_json, run_json,
+    shown_fields,
 };
 
 /// The most characters of an error's message an answer carries.
@@ -341,24 +341,6 @@ fn started_fields(started: &StartedTask) -> Map<String, Value> {
         ),
         ("not_applied", Value::Array(not_applied)),
         ("claim", json!(started.claim.as_str())),
-    ])
-}
-
-/// A listing's `head`, its `tasks`, each with its `summary`
-/// ([`summary_json`]), and the files set aside as `quarantined`.
-fn listing_fields(listing: &SummarizedListing) -> Map<String, Value> {
-    let tasks = listing.entries().map(|(task, summary)| {
-        let mut entry = task_json(task);
-        entry["summary"] = summary_json(summary);
-        entry
-    });
-    Map::from_iter([
-        ("head".to_string(), head_json(listing.head())),
-        ("tasks".to_string(), Value::Array(tasks.collect())),
-        (
-            "quarantined".to_string(),
-            quarantined_list(listing.quarantined()),
-        ),
     ])
 }
 

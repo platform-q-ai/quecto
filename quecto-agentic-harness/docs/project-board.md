@@ -91,8 +91,18 @@ cap is set aside, not read.
 ## List
 
 `list`, `list_ready` and `list_takeable` answer the board's `head`, the
-`tasks` they list, by id, and every file set aside as `quarantined`. Each task
-carries a `summary` of where its plan and latest run stand:
+`tasks` they list, by id, and every file set aside as `quarantined`. A
+listing reads only the board's index of tasks.
+
+### Summaries (`quecto board ... --summary`)
+
+On the command line, `--summary` (no value; `list`, `list_ready` and
+`list_takeable` only, with field flags or `--input` alike) gives each listed task
+a `summary` of where its plan and latest run stand. It is the pocket relay's;
+the agent tool takes no such field, so its listings, and their pages, are as they
+were. Without `--summary` a listing reads and answers exactly what it did before.
+Given to any other op it is refused (`invalid_request`, field `summary`) before
+anything is built.
 
 ```json
 "summary": {
@@ -113,16 +123,22 @@ carries a `summary` of where its plan and latest run stand:
 | Field | Meaning |
 |---|---|
 | `plan` | The newest version of the task's plan that is a draft or accepted (superseded and discarded versions are skipped), so a draft newer than the accepted plan is the one named. `null` when there is none |
-| `run` | The task's latest readable run: `number`, `plan_version`, `state`, `started` and `ended` as `show` gives them; `deadline`; and `items`, how many of its task items stand in each state (`todo`, `doing`, `review`, `done`, `blocked`) and in all. A run records its task items when it ends, so a running run counts none. `null` when it has none |
-| `deadline` | `started` plus the `deadline_seconds` of the team of the plan the run ran, or a day when the team names none (or the plan names no team): the deadline a start briefs the swarm with. `null` while that plan is not readable on the board |
+| `run` | The task's latest readable run: `number`, `plan_version`, `state`, `started` and `ended` as `show` gives them; `deadline`; and `items`, how many of its task items stand in each state (`todo`, `doing`, `review`, `done`, `blocked`) and in all. `null` when it has none |
+| `items` of a running run | All `0`: a run records its task items on the board when it ends (folded back from its swarm, or ended by hand), so while it runs the board holds none. Its swarm's own board has them live |
+| `deadline` | `started` plus the `deadline_seconds` of the team of the plan the run ran, or a day when the team names none (or the plan names no team): the deadline a start briefs the swarm with. `null` when it is unknown: the plan the run ran is not readable on the board |
 | `may_be_incomplete` | As `show` gives it: a file that may hold one of the task's plans or runs is set aside |
 
-The summaries are read from one read of the board made after the listing, and
-only from the board the listing was read at, so a summary always matches its
-task's row. When the board moved in between, the listing is read again, up to
-three times, and then refused as `contended`. The agent tool's listing keeps
-each task's `summary` whole beside the task's own fields it shows (`id`,
-`title`, `kind`, `status`, `parent`, `claim`, `updated`).
+Summaries cost one whole read of the board (a fetch), made after the listing,
+and are taken only from the board the listing was read at, so a summary always
+matches its task's row. When the board moved in between, the listing is read
+again, up to three times in all.
+
+A listing is never refused for its summaries. When they cannot be read, because
+the board kept moving past the third try (as it does while a swarm runs) or
+the whole read failed, the listing is answered without them: no task carries a
+`summary`, and the answer says why in `summary_skipped`, the code the read would
+have been refused with (`contended`, `store_unavailable`, `duplicate_artifact`,
+and so on). Only a listing's own failure refuses it, as before.
 
 ## Show
 

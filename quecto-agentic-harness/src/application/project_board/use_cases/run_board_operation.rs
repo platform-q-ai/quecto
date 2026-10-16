@@ -4,10 +4,13 @@
 //!   that links pull requests is completed if they have all merged
 //!   (`CompleteMergedTask`), and the outcome says what came of that: done,
 //!   pending on the ones not merged yet, or failed.
-//! - A listing's tasks are each summarised from one read of the board
-//!   made after the listing; while the board moved in between, the
-//!   listing is read again, a bounded number of times
-//!   ([`MAX_LIST_ATTEMPTS`]), then refused as contended.
+//! - A listing asked for summaries ([`ListSummaries::Wanted`]) has its
+//!   tasks each summarised from one read of the board made after the
+//!   listing; while the board moved in between, the listing is read
+//!   again, a bounded number of times ([`MAX_LIST_ATTEMPTS`]). A listing
+//!   is never refused for its summaries: when they cannot be read, it is
+//!   answered without them, saying why. Asked for none, it reads only
+//!   what it lists, as ever.
 //! - [`RunBoardOperation::clock_note`] says why a request that reads the
 //!   clock was not bounded against an outside time, when it has none.
 //!
@@ -15,9 +18,10 @@
 //! callers run operations off the async workers.
 use crate::application::project_board::dto::{BoardListing, BoardOp, ProjectBoardError};
 use crate::application::project_board::operations::{
-    BoardOperationParts, BoardOutcome, BoardRequest, Completion, ListFilter,
+    BoardOperationParts, BoardOutcome, BoardRequest, Completion, ListFilter, ListSummaries,
 };
 use crate::application::project_board::ports::{BoardBootstrap, BoardStoreError, ReferenceStatus};
+use crate::application::project_board::task_summary::Listed;
 use crate::application::project_board::telemetry::{OpFacts, completion_facts_of};
 use crate::domain::project_board::entities::task::Task;
 use crate::domain::project_board::value_objects::rule_error::BoardRuleError;
@@ -49,6 +53,28 @@ impl RunBoardOperation {
         self.execute_noted(request, None)
     }
 
+    /// [`Self::execute_noted`], a listing summarising its tasks as
+    /// `summaries` asks.
+    ///
+    /// # Errors
+    /// As [`Self::execute`]: never for a listing's summaries.
+    ///
+    /// # Panics
+    /// Summaries asked of a request that is no listing
+    /// ([`BoardRequest::is_listing`]): a front end refuses that first.
+    pub fn execute_noted_with(
+        &self,
+        request: &BoardRequest,
+        facts: Option<&mut OpFacts>,
+        summaries: ListSummaries,
+    ) -> Result<BoardOutcome, ProjectBoardError> {
+        assert!(
+            summaries == ListSummaries::Omitted || request.is_listing(),
+            "summaries are asked only of a listing: {request:?}"
+        );
+        self.run(request, facts, summaries)
+    }
+
     /// [`Self::execute`], noting in `facts` (epic #2481 T4), when given,
     /// what its use case saw and, after a change that may complete its
     /// task, what came of completing it, with the completion's own write
@@ -60,7 +86,16 @@ impl RunBoardOperation {
     pub fn execute_noted(
         &self,
         request: &BoardRequest,
+        facts: Option<&mut OpFacts>,
+    ) -> Result<BoardOutcome, ProjectBoardError> {
+        self.run(request, facts, ListSummaries::Omitted)
+    }
+
+    fn run(
+        &self,
+        request: &BoardRequest,
         mut facts: Option<&mut OpFacts>,
+        summaries: ListSummaries,
     ) -> Result<BoardOutcome, ProjectBoardError> {
         let listings = &self.parts.listings;
         match request {
@@ -74,16 +109,19 @@ impl RunBoardOperation {
                     created: false,
                 },
             }),
-            BoardRequest::List(filter) => self.summarized(|| match filter {
-                ListFilter::All => listings.all(),
-                ListFilter::Status(status) => listings.by_status(*status),
-                ListFilter::Children(parent) => listings.children(parent),
-                ListFilter::Dependents(task) => listings.dependents(task),
-            }),
-            BoardRequest::ListReady => self.summarized(|| listings.ready()),
+            BoardRequest::List(filter) => self.listed(
+                || match filter {
+                    ListFilter::All => listings.all(),
+                    ListFilter::Status(status) => listings.by_status(*status),
+                    ListFilter::Children(parent) => listings.children(parent),
+                    ListFilter::Dependents(task) => listings.dependents(task),
+                },
+                summaries,
+            ),
+            BoardRequest::ListReady => self.listed(|| listings.ready(), summaries),
             BoardRequest::ListTakeable => {
                 let now = self.parts.clock.now()?;
-                self.summarized(|| listings.takeable(&now))
+                self.listed(|| listings.takeable(&now), summaries)
             }
             BoardRequest::Show(id, view) => {
                 let shown = self.parts.query.show(id)?;
@@ -169,24 +207,45 @@ impl RunBoardOperation {
         }
     }
 
-    /// The tasks `list` lists, each with its summary read from the same
-    /// board ([`QueryBoard::summarized`]): listed again while the board
-    /// moved between the listing and the read, at most
-    /// [`MAX_LIST_ATTEMPTS`] times.
+    /// The tasks `list` lists, as `summaries` asks. Asked for none, only
+    /// the listing is read. Asked for summaries, each task's is read from
+    /// the same board ([`QueryBoard::summarized`]): listed again while the
+    /// board moved between the listing and that read, at most
+    /// [`MAX_LIST_ATTEMPTS`] times; past that, or when a read fails, the
+    /// listing read last is answered without them, saying why. Only the
+    /// first listing's own failure is a refusal, as ever.
     ///
     /// [`QueryBoard::summarized`]: super::QueryBoard::summarized
-    fn summarized(
+    fn listed(
         &self,
         list: impl Fn() -> Result<BoardListing, BoardStoreError>,
+        summaries: ListSummaries,
     ) -> Result<BoardOutcome, ProjectBoardError> {
-        for _ in 0..MAX_LIST_ATTEMPTS {
-            if let Some(listing) = self.parts.query.summarized(list()?)? {
-                return Ok(BoardOutcome::Listing(listing));
-            }
+        let mut listing = list()?;
+        match summaries {
+            ListSummaries::Omitted => return Ok(BoardOutcome::Listing(Listed::plain(listing))),
+            ListSummaries::Wanted => {}
         }
-        Err(ProjectBoardError::Contended {
-            attempts: MAX_LIST_ATTEMPTS,
-        })
+        let mut attempts = 1;
+        let skipped = loop {
+            match self.parts.query.summarized(&listing) {
+                Ok(Some(summaries)) => {
+                    return Ok(BoardOutcome::Listing(Listed::summarized(
+                        listing, summaries,
+                    )));
+                }
+                Ok(None) if attempts < MAX_LIST_ATTEMPTS => {}
+                Ok(None) => break ProjectBoardError::Contended { attempts },
+                Err(error) => break error,
+            }
+            match list() {
+                Ok(again) => listing = again,
+                Err(error) => break error.into(),
+            }
+            attempts += 1;
+        };
+        assert!(attempts <= MAX_LIST_ATTEMPTS, "a bounded number of reads");
+        Ok(BoardOutcome::Listing(Listed::skipped(listing, skipped)))
     }
 
     /// Task `id` completed, noted in `facts` when given; with no pull

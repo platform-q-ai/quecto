@@ -178,7 +178,7 @@ async fn a_listing_shows_summaries_within_the_cap() {
         assert_eq!(
             keys,
             [
-                "claim", "id", "kind", "parent", "status", "summary", "title", "updated"
+                "claim", "id", "kind", "parent", "status", "title", "updated"
             ]
         );
         assert_eq!(answer["truncated"]["shown"], json!(tasks.len()));

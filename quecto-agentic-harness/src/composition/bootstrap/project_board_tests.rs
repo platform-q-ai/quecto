@@ -89,13 +89,22 @@ fn the_board_runs_end_to_end_over_git_and_the_index() {
     );
     let listed = ops(json!({"op": "list"}));
     assert_eq!(listed["tasks"][0]["status"], json!("claimed"), "{listed}");
-    // Over the git store and its index, each task carries its summary,
-    // read from the board the index listed.
-    assert_eq!(
-        listed["tasks"][0]["summary"],
-        json!({"plan": null, "run": null, "may_be_incomplete": false}),
-        "{listed}"
+    // A listing asks for no summary unless told to; asked, over the git
+    // store and its index, each task carries one, read from the board the
+    // index listed.
+    assert_eq!(listed["tasks"][0].get("summary"), None, "{listed}");
+    let summarised = crate::interface::tools::project_board::run_recorded_with(
+        &handles.operations,
+        r#"{"op": "list"}"#,
+        crate::application::project_board::operations::ListSummaries::Wanted,
+        &mut crate::interface::tools::project_board::recording::BoardCall::unrecorded(),
     );
+    assert_eq!(
+        summarised["tasks"][0]["summary"],
+        json!({"plan": null, "run": null, "may_be_incomplete": false}),
+        "{summarised}"
+    );
+    assert_eq!(summarised.get("summary_skipped"), None, "{summarised}");
     let complete = ops(json!({"op": "complete", "task": "a"}));
     assert_eq!(
         complete["error"]["code"],
