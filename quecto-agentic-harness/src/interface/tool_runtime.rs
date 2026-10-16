@@ -401,13 +401,12 @@ pub(crate) fn build_tool_runtime(
             &agent_control.subagent_registry,
         );
         let board = crate::interface::tools::project_board::tool::BoardTool::new(
-            crate::interface::tools::project_board::site::BoardSite {
-                repo: board_repo,
-                remote: "origin".into(),
-                build: Some(build),
-                launcher: Some(std::sync::Arc::new(launcher)),
-                swarm_session: Some(agent_control.environment_registry.session().to_owned()),
-            },
+            crate::interface::tools::project_board::site::BoardSite::agent(
+                board_repo,
+                build,
+                std::sync::Arc::new(launcher),
+                &agent_control.environment_registry,
+            ),
         );
         register_bundled_native_tools_with_scope(
             &mut registry,

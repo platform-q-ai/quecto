@@ -10,6 +10,7 @@ fn snapshot(status: &str, tokens: u64) -> SwarmBoardSnapshot {
     SwarmBoardSnapshot::object(json!({
         "run": {"status": status, "budget": {"observed_tokens": tokens}},
         "items": [],
+        "totals": {"items": 0},
         "truncated": false,
     }))
     .unwrap()
@@ -57,36 +58,81 @@ fn only_the_newest_boards_are_kept() {
     for member in 0..=MAX_KEPT {
         kept.keep(
             "s1",
-            &format!("m{member}"),
+            &format!("board-m{member}-run-1"),
             snapshot("succeeded", member as u64),
         );
     }
-    assert_eq!(kept.view("s1", "m0"), None, "the oldest went");
-    assert_eq!(tokens(kept.view("s1", "m1")), Some(1));
+    assert_eq!(kept.view("s1", "board-m0-run-1"), None, "the oldest went");
+    assert_eq!(tokens(kept.view("s1", "board-m1-run-1")), Some(1));
     assert_eq!(
-        tokens(kept.view("s1", &format!("m{MAX_KEPT}"))),
+        tokens(kept.view("s1", &format!("board-m{MAX_KEPT}-run-1"))),
         Some(MAX_KEPT as u64)
     );
 }
 
 /// Only a whole ended run is kept: not one still running or paused, nor
-/// a projection that left rows out; an earlier board stays as it was.
+/// a projection that left items out; an earlier board stays as it was.
+/// One that left only other rows out (members) is kept.
 #[test]
 fn only_a_whole_ended_run_is_kept() {
     let kept = KeptSwarmBoards::default();
     kept.keep("s1", "board-a-run-1", snapshot("succeeded", 1));
-    let mut truncated = snapshot("succeeded", 9).into_value();
-    truncated["truncated"] = Value::Bool(true);
+    let mut short = snapshot("succeeded", 9).into_value();
+    short["totals"]["items"] = json!(1);
     for board in [
         snapshot("running", 9),
         snapshot("paused", 9),
-        SwarmBoardSnapshot::object(truncated).unwrap(),
+        SwarmBoardSnapshot::object(short).unwrap(),
     ] {
         kept.keep("s1", "board-a-run-1", board);
         kept.keep("s1", "board-b-run-1", snapshot("paused", 9));
     }
     assert_eq!(tokens(kept.view("s1", "board-a-run-1")), Some(1));
     assert_eq!(kept.view("s1", "board-b-run-1"), None);
+    let mut members_cut = snapshot("succeeded", 5).into_value();
+    members_cut["truncated"] = Value::Bool(true);
+    kept.keep(
+        "s1",
+        "board-c-run-1",
+        SwarmBoardSnapshot::object(members_cut).unwrap(),
+    );
+    assert_eq!(
+        tokens(kept.view("s1", "board-c-run-1")),
+        Some(5),
+        "items whole"
+    );
+}
+
+/// Review round 2 (#2575): only a board run's coordinator's board is
+/// kept, by its label's shape (as `label` makes it, a long task's cut and
+/// hashed one included); an ad-hoc swarm's is not.
+#[test]
+fn only_a_board_runs_coordinator_is_kept() {
+    let kept = KeptSwarmBoards::default();
+    let long = super::super::label(&"a".repeat(64), 3);
+    for label in [
+        "board-a-run-1",
+        "board-light-well-tanking-run-12",
+        long.as_str(),
+    ] {
+        kept.keep("s1", label, snapshot("succeeded", 1));
+        assert_eq!(tokens(kept.view("s1", label)), Some(1), "{label}");
+    }
+    for label in [
+        "coordinator",
+        "my-swarm",
+        "board-a",
+        "board--run-1",
+        "board-a-run-0",
+        "board-a-run-01",
+        "board-a-run-x",
+        "board-A-run-1",
+        "Board-a-run-1",
+        "board-a-run-1-extra",
+    ] {
+        kept.keep("s1", label, snapshot("succeeded", 1));
+        assert_eq!(kept.view("s1", label), None, "{label}");
+    }
 }
 
 /// #2481 S4c follow-up: a run's swarm is reported from the board kept

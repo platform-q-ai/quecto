@@ -30,6 +30,7 @@ fn board(status: &str) -> SwarmBoardSnapshot {
         "run": {"status": status, "budget": {"observed_tokens": 52_000}},
         "items": [{"title": "assess-failure: Assess", "state": "completed", "owner": "w1",
                    "evidence": [{"artifact": "docs/a.md", "revision": "abc"}]}],
+        "totals": {"items": 1},
         "truncated": false,
     }))
     .unwrap()

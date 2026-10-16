@@ -31,7 +31,7 @@ fn sh(dir: &Path, args: &[&str]) {
 }
 
 /// A clone of a bare remote whose committer is configured in the clone.
-fn repository() -> (tempfile::TempDir, std::path::PathBuf) {
+pub(super) fn repository() -> (tempfile::TempDir, std::path::PathBuf) {
     let dir = tempfile::tempdir().unwrap();
     sh(
         dir.path(),
@@ -44,7 +44,7 @@ fn repository() -> (tempfile::TempDir, std::path::PathBuf) {
     (dir, work)
 }
 
-fn environment(repo: &Path, access: Access) -> ProjectBoardEnvironment {
+pub(super) fn environment(repo: &Path, access: Access) -> ProjectBoardEnvironment {
     let vars: Vec<(OsString, OsString)> = vec![
         ("PATH".into(), std::env::var_os("PATH").unwrap()),
         ("HOME".into(), repo.into()),

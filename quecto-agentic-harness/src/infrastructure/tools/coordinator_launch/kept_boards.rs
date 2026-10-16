@@ -5,8 +5,9 @@
 //! checkout, and the board in it, go with the box), and a session's
 //! [`KeptRunReports`] reads its run's back by that label, so `end_run`
 //! records how the run's swarm ended rather than a swarm that reported
-//! nothing. Keyed by label, not by the agent a launch answered, so a
-//! launcher built after a restart finds a board the teardown kept.
+//! nothing. Keyed by label, not by the agent a launch answered, so no
+//! memory of the launch is needed; only a label shaped as a board run's
+//! coordinator's is kept, so no ad-hoc swarm fills the store.
 //!
 //! Only what a fold-back reads is kept ([`SwarmRunView`]: the run's end,
 //! its items with their states, owners and evidence, and its spend), read
@@ -61,7 +62,15 @@ impl KeptSwarmBoards {
 
 impl EndedSwarmBoards for KeptSwarmBoards {
     fn keep(&self, session: &str, label: &str, board: SwarmBoardSnapshot) {
-        assert!(!label.is_empty(), "a kept board's member has a label");
+        // Only a board run's coordinator is kept (an allowlist of its
+        // label's shape): no other swarm's board is ever read back.
+        match super::is_board_label(label) {
+            true => {}
+            false => {
+                tracing::debug!(member = %label, "not a board run's coordinator: its board is not kept");
+                return;
+            }
+        }
         let Some(view) = super::run_report::swarm_run_view(&board.into_value()) else {
             tracing::warn!(
                 member = %label,
@@ -69,9 +78,11 @@ impl EndedSwarmBoards for KeptSwarmBoards {
             );
             return;
         };
-        self.forget(session, label);
+        let key = (session.to_owned(), label.to_owned());
+        // One guard: the old board goes and the new one comes at once.
         let mut boards = self.boards.lock().unwrap_or_else(|e| e.into_inner());
-        boards.push_back(((session.to_owned(), label.to_owned()), view));
+        boards.retain(|(kept, _)| *kept != key);
+        boards.push_back((key, view));
         while boards.len() > MAX_KEPT {
             boards.pop_front();
         }

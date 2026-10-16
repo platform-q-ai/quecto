@@ -335,3 +335,7 @@ fn cli_log_key(now: SystemTime) -> Option<String> {
 #[cfg(test)]
 #[path = "project_board_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "project_board_wiring_tests.rs"]
+mod wiring_tests;

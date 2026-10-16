@@ -14,7 +14,7 @@ use super::super::entities::claim::Identity;
 use super::super::entities::plan::Plan;
 use super::super::entities::run::{MAX_RUN_NUMBER, Run, RunFields, RunItem};
 use super::super::entities::task::Task;
-use super::super::value_objects::rule_error::BoardRuleError;
+use super::super::value_objects::rule_error::{BoardRuleError, SwarmReport};
 use super::super::value_objects::schema_error::SchemaError;
 use super::super::value_objects::slug::Slug;
 use super::super::value_objects::timestamp::Timestamp;
@@ -172,11 +172,14 @@ impl HeldEnd {
 }
 
 /// What a run ended by hand reports: where each of its plan's task items
-/// stood, and what it cost, as a fold-back reports them.
+/// stood, and what it cost, as a fold-back reports them, and whether a
+/// board of its swarm was kept to report them (`NoneKept`: every item
+/// todo).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Reported {
     pub items: Vec<RunItem>,
     pub cost: Option<u64>,
+    pub report: SwarmReport,
 }
 
 /// The open run of `task` ended by `actor`, the holder of a live claim
@@ -205,7 +208,11 @@ pub fn end_held(
     let (run, plan) = ran;
     held_live_by(task, actor, now)?;
     of_task(task, std::slice::from_ref(run))?;
-    let Reported { items, cost } = reported;
+    let Reported {
+        items,
+        cost,
+        report,
+    } = reported;
     // Folded first, so a run that has ended, or items the plan does not
     // have, answer as such before the items are judged.
     let folded = fold_back(run, plan, end.outcome(), cost, items, &stamp(task, now)?)?;
@@ -218,6 +225,7 @@ pub fn end_held(
                     return Err(BoardRuleError::ItemsNotDone {
                         run: folded.fields().number,
                         items: undone,
+                        report,
                     });
                 }
             }

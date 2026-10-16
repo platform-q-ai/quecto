@@ -1,8 +1,8 @@
 //! The ended swarm boards port's contract (#2481 S4c follow-up), run
 //! against its in-process adapter: the board of an ended run, as its
-//! member left, is kept under the session and the member's label, its
-//! newest replacing any earlier one; one that is no whole ended run is not
-//! kept; and only the newest boards are kept, so a long-lived process
+//! member left, is kept under the session and the member's label (a
+//! board run's coordinator's only), its newest replacing any earlier one;
+//! one that is no whole ended run is not kept; and only the newest boards are kept, so a long-lived process
 //! never grows without end.
 use quecto::application::environments::dto::SwarmBoardSnapshot;
 use quecto::application::environments::ports::EndedSwarmBoards;
@@ -15,6 +15,7 @@ fn board(status: &str, tokens: u64) -> SwarmBoardSnapshot {
     SwarmBoardSnapshot::object(json!({
         "run": {"status": status, "budget": {"observed_tokens": tokens}},
         "items": [{"title": "a: A", "state": "completed", "owner": "w1", "evidence": []}],
+        "totals": {"items": 1},
         "truncated": false,
     }))
     .unwrap()
@@ -47,7 +48,7 @@ fn a_board_is_kept_under_its_session_and_label_the_newest_replacing_any_earlier(
 fn only_a_whole_ended_run_is_kept() {
     let kept = KeptSwarmBoards::default();
     let mut truncated = board("succeeded", 1).into_value();
-    truncated["truncated"] = json!(true);
+    truncated["totals"]["items"] = json!(2);
     for snapshot in [
         board("running", 1),
         board("paused", 1),
@@ -59,19 +60,26 @@ fn only_a_whole_ended_run_is_kept() {
 }
 
 #[test]
+fn only_a_board_runs_coordinator_is_kept() {
+    let kept = KeptSwarmBoards::default();
+    kept.keep("s1", "my-ad-hoc-swarm", board("succeeded", 1));
+    assert_eq!(kept.view("s1", "my-ad-hoc-swarm"), None);
+}
+
+#[test]
 fn only_the_newest_boards_are_kept() {
     let kept = KeptSwarmBoards::default();
     let many = MAX_KEPT * 4;
     for member in 0..many {
         kept.keep(
             "s1",
-            &format!("m{member}"),
+            &format!("board-m{member}-run-1"),
             board("succeeded", member as u64),
         );
     }
-    assert_eq!(kept.view("s1", "m0"), None, "the oldest go");
+    assert_eq!(kept.view("s1", "board-m0-run-1"), None, "the oldest go");
     assert_eq!(
-        spent(&kept, "s1", &format!("m{}", many - 1)),
+        spent(&kept, "s1", &format!("board-m{}-run-1", many - 1)),
         Some(many as u64 - 1),
         "the newest stays"
     );

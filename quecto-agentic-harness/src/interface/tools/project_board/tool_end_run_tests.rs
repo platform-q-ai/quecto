@@ -10,7 +10,7 @@ use serde_json::{Value, json};
 
 use super::super::site::{BuildError, ProjectBoardEnvironment, ProjectBoardHandles};
 use super::BoardSite;
-use super::tests::{site, tool};
+use super::tests::tool;
 use crate::application::environments::dto::{
     EnvironmentLiveness, HostedBoardRevision, SwarmBoardSnapshot,
 };
@@ -288,20 +288,22 @@ impl Tool for Unused {
     }
 }
 
-/// The agent tool over the started board for `session`, its launcher
-/// built afresh (as after a restart: it never launched run 1).
-fn agent_tool(session: &str) -> super::BoardTool {
+/// The agent tool over the started board, as the tool runtime builds it
+/// for a session spawning into `environments`: its launcher built afresh
+/// (as after a restart: it never launched run 1).
+fn agent_tool(environments: &EnvironmentRegistry) -> super::BoardTool {
     let launcher = SpawnCoordinatorLauncher::new(
         Arc::new(Unused),
         Arc::new(Unused),
         SpawnPermit::default(),
         crate::infrastructure::tools::subagent_registry::new_registry(),
     );
-    tool(BoardSite {
-        launcher: Some(Arc::new(launcher)),
-        swarm_session: Some(session.to_owned()),
-        ..site(Some(started_board))
-    })
+    tool(BoardSite::agent(
+        ".".into(),
+        started_board,
+        Arc::new(launcher),
+        environments,
+    ))
 }
 
 /// `end_run(a, 1, succeeded)` through `tool`: its answer, and whether it
@@ -331,21 +333,25 @@ async fn a_swarm_that_did_its_items_is_recorded_on_the_board_through_the_real_te
     assert_eq!(items.len(), 2, "one swarm item per plan item");
     let board = json!({
         "run": {"status": "succeeded", "budget": {"observed_tokens": 52_000}},
+        "totals": {"items": items.len()},
         "items": items,
         "truncated": false,
     });
     let registry = EnvironmentRegistry::new();
     let session = registry.session().to_owned();
     let kept = kept();
-    let tool = agent_tool(&session);
+    let tool = agent_tool(&registry);
 
     // Before the teardown, nothing of the swarm reached the board: a
     // success is refused, and nothing is written.
     let (refused, is_error) = succeeded(&tool).await;
     assert!(is_error, "{refused}");
     assert_eq!(
-        refused["error"]["rule"]["code"],
-        json!("items_not_done"),
+        (
+            &refused["error"]["rule"]["code"],
+            &refused["error"]["rule"]["report"]
+        ),
+        (&json!("items_not_done"), &json!("none_kept")),
         "{refused}"
     );
 

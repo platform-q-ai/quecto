@@ -519,10 +519,11 @@ mod kept_under_label {
             _: &'a EnvironmentRecord,
         ) -> PortFuture<'a, Result<Option<SwarmBoardSnapshot>, String>> {
             let board: Value = json!({
-                "run": {"status": "succeeded", "budget": {"observed_tokens": 7}},
-                "items": [],
-                "truncated": false,
-            });
+                    "run": {"status": "succeeded", "budget": {"observed_tokens": 7}},
+                    "items": [],
+                    "totals": {"items": 0},
+            "truncated": false,
+                });
             Box::pin(async move { Ok(SwarmBoardSnapshot::object(board)) })
         }
 

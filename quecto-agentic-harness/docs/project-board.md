@@ -369,12 +369,12 @@ goes with it once a closed run's coordinator is killed, so the final-member
 teardown reads it first, when the run has ended (succeeded, failed,
 budget-exhausted, blocked or cancelled; never one still running or paused), and
 keeps what a fold-back reads of it in the harness's memory, under the session
-and the coordinator's spawn label (`board-<task>-run-<n>`). The agent tool's
-launcher finds it by that label, so it needs no memory of the launch: a launcher
-built after a restart finds a board the teardown kept as well as the one that
-launched it. A board is kept only when its projection holds every row (one that
-left rows out is logged and not kept), only the newest 16 are kept, and one is
-dropped once its run is recorded. Where no board was kept, the run is recorded
+and the coordinator's spawn label (`board-<task>-run-<n>`; no other label's
+board is kept, so an ad-hoc swarm's never is). The agent tool's `end_run` finds
+it by that label, with no memory of the launch. A board is kept only when its
+projection holds every item (one that left items out is logged and not kept;
+members or evidence left out do not matter), only the newest 16 are kept, and
+one is dropped once its run is recorded. Where no board was kept, the run is recorded
 as a swarm that ended so and reported nothing would be: each task item as todo,
 its cost unknown. That is so from the CLI, for a run another session launched,
 for a board that could not be read whole, and for the gaps a restart leaves:
@@ -385,9 +385,11 @@ down keeps none.
 
 A run ends as `succeeded` only when every task item of its plan is done there:
 otherwise the end is refused (`items_not_done`, a rule refusal naming the
-`run` and the `items` not done) and nothing is written, so the board never
-shows a succeeded run over work it shows undone. Such a run is ended as
-`stopped` instead. A run past the board's bytes with its evidence is ended
+`run`, the `items` not done and the `report`) and nothing is written, so the
+board never shows a succeeded run over work it shows undone. With `report`
+`"kept"`, the kept board showed those items undone: the run is ended as
+`stopped` instead. With `"none_kept"`, no board was kept to show them: the
+refusal asks the user whether the work was done before the run is ended. A run past the board's bytes with its evidence is ended
 once more without it, as a fold-back is.
 
 As `lost`, the run is ended by the holder of a live claim, or by anyone when the

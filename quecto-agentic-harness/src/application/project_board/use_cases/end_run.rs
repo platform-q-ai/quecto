@@ -48,6 +48,7 @@ use crate::domain::project_board::services::claims::claim_facts;
 use crate::domain::project_board::services::runs::{
     HeldEnd, Reported, end_held, end_lost, run_and_plan,
 };
+use crate::domain::project_board::value_objects::rule_error::SwarmReport;
 
 pub struct EndRun {
     store: Arc<dyn ProjectBoardStore>,
@@ -244,6 +245,7 @@ impl EndRun {
                         Some(view) => Reported {
                             items: run_items(plan, view, &*self.cells, evidence).items,
                             cost: Some(cost_of(view)),
+                            report: SwarmReport::Kept,
                         },
                         // Nothing reported: every item as a fold-back maps
                         // a swarm that reported nothing (a start's undo's
@@ -258,6 +260,7 @@ impl EndRun {
                                 items: run_items(plan, &nothing, &*self.cells, Evidence::Left)
                                     .items,
                                 cost: None,
+                                report: SwarmReport::NoneKept,
                             }
                         }
                     };

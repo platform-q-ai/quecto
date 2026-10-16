@@ -86,6 +86,28 @@ pub struct BoardSite {
     pub swarm_session: Option<String>,
 }
 
+impl BoardSite {
+    /// The agent tool's board (S4c): on `repo`'s `origin`, built by
+    /// `build`, starting tasks through `launcher`, its run ends read from
+    /// the boards the teardown keeps under the session of `spawned_in`,
+    /// the environment registry its coordinators are spawned into (#2481
+    /// S4c follow-up).
+    pub fn agent(
+        repo: PathBuf,
+        build: ProjectBoardHandlesBuilder,
+        launcher: Launcher,
+        spawned_in: &crate::domain::environments::entities::environment_registry::EnvironmentRegistry,
+    ) -> Self {
+        Self {
+            repo,
+            remote: "origin".into(),
+            build: Some(build),
+            launcher: Some(launcher),
+            swarm_session: Some(spawned_in.session().to_owned()),
+        }
+    }
+}
+
 impl std::fmt::Debug for BoardSite {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("BoardSite")

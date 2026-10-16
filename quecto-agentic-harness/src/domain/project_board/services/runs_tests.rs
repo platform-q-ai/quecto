@@ -1,6 +1,7 @@
 use super::*;
 use crate::domain::project_board::services::claims::take_over;
 use crate::domain::project_board::services::fixtures_tests::{at, open_run, person, plan, task};
+use crate::domain::project_board::value_objects::rule_error::SwarmReport;
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::vocabulary::{ItemState, TaskStatus::*};
 
@@ -394,6 +395,7 @@ fn the_holder_ends_an_open_run_as_stopped_or_failed() {
             Reported {
                 items: vec![item("schema"), item("api")],
                 cost: Some(0),
+                report: SwarmReport::Kept,
             },
             &person("Ada"),
             &at("10:00:00"),
@@ -412,6 +414,7 @@ fn the_holder_ends_an_open_run_as_stopped_or_failed() {
             Reported {
                 items: vec![],
                 cost: None,
+                report: SwarmReport::NoneKept,
             },
             &person(who),
             &at(when),
@@ -451,6 +454,7 @@ fn a_held_end_is_stamped_after_the_tasks_last_change() {
     let reported = || Reported {
         items: vec![],
         cost: None,
+        report: SwarmReport::NoneKept,
     };
     let run = open_run(1, 1);
     let accepted = plan(1, PlanState::Accepted);
@@ -491,7 +495,11 @@ fn a_run_ends_as_succeeded_only_when_every_task_item_is_done() {
             &held,
             (&open_run(1, 1), &accepted),
             end,
-            Reported { items, cost: None },
+            Reported {
+                items,
+                cost: None,
+                report: SwarmReport::Kept,
+            },
             &person("Ada"),
             &at("10:00:00"),
         )
@@ -500,6 +508,7 @@ fn a_run_ends_as_succeeded_only_when_every_task_item_is_done() {
         Err(BoardRuleError::ItemsNotDone {
             run: 1,
             items: items.iter().map(|id| Slug::parse(id).unwrap()).collect(),
+            report: SwarmReport::Kept,
         })
     };
     assert_eq!(
@@ -545,11 +554,47 @@ fn a_run_ends_as_succeeded_only_when_every_task_item_is_done() {
         BoardRuleError::ItemsNotDone {
             run: 1,
             items: vec![Slug::parse("schema").unwrap(), Slug::parse("api").unwrap()],
+            report: SwarmReport::Kept,
         }
         .to_string(),
         "run 1 cannot end as succeeded: its task items schema, api are not done on its \
          swarm's board as its coordinator stopped (or that board was not read); end it as \
          \"stopped\" and tell the user"
+    );
+}
+
+/// Review round 2 (#2575): a success with no board of its swarm kept is
+/// refused as such (not as a board showing items undone), and asks the
+/// user rather than telling the caller to stop the run.
+#[test]
+fn a_success_with_no_board_kept_is_refused_as_none_kept() {
+    let ended = end_held(
+        &task(InProgress),
+        (&open_run(1, 1), &plan(1, PlanState::Accepted)),
+        HeldEnd::Succeeded,
+        Reported {
+            items: vec![],
+            cost: None,
+            report: SwarmReport::NoneKept,
+        },
+        &person("Ada"),
+        &at("10:00:00"),
+    );
+    let refused = BoardRuleError::ItemsNotDone {
+        run: 1,
+        items: vec![Slug::parse("schema").unwrap(), Slug::parse("api").unwrap()],
+        report: SwarmReport::NoneKept,
+    };
+    assert_eq!(ended, Err(refused.clone()));
+    assert_eq!(
+        refused.to_string(),
+        "run 1 cannot end as succeeded: no board of its swarm was kept to show its task items \
+         done (the coordinator was not torn down here, or this session restarted); ask the \
+         user whether the work was done before ending it"
+    );
+    assert_eq!(
+        (SwarmReport::Kept.as_str(), SwarmReport::NoneKept.as_str()),
+        ("kept", "none_kept")
     );
 }
 
@@ -566,6 +611,7 @@ fn a_run_ended_already_is_refused_before_its_items_are_judged() {
             Reported {
                 items: vec![],
                 cost: None,
+                report: SwarmReport::NoneKept,
             },
             &person("Ada"),
             &at("10:00:00"),

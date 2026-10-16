@@ -125,9 +125,9 @@ fn rule_fields(rule: &BoardRuleError) -> Map<String, Value> {
         }
         R::NoSuchChange(change) => object!({"change": change}),
         R::NoSuchRun(run) => object!({"run": run}),
-        R::ItemsNotDone { run, items } => {
+        R::ItemsNotDone { run, items, report } => {
             let items: Vec<&str> = items.iter().map(Slug::as_str).collect();
-            object!({"run": run, "items": items})
+            object!({"run": run, "items": items, "report": report.as_str()})
         }
         R::ChangeAhead { change, updated } => object!({
             "change": change,

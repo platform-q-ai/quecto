@@ -304,6 +304,24 @@ fn spawn_arguments(request: &CoordinatorRequest) -> Value {
     Value::Object(arguments)
 }
 
+/// Whether `text` is shaped as [`label`] names a board run's coordinator:
+/// `board-<task>-run-<run>`, its task a slug (a long one cut and hashed as
+/// `label` cuts it is still one) and its run a number from 1, within
+/// spawn's [`MAX_AGENT_ID_CHARS`]. An allowlist of the one shape the
+/// board's reports read: an ad-hoc swarm's coordinator is never kept.
+fn is_board_label(text: &str) -> bool {
+    let shaped = text
+        .strip_prefix("board-")
+        .and_then(|rest| rest.rsplit_once("-run-"))
+        .and_then(|(task, run)| Some((Slug::parse(task).ok()?, run.parse::<u32>().ok()?, run)));
+    match shaped {
+        Some((_, run, written)) if run >= 1 && run.to_string() == written => {
+            text.chars().count() <= MAX_AGENT_ID_CHARS
+        }
+        Some(_) | None => false,
+    }
+}
+
 /// The coordinator's spawn label, `board-<task>-run-<run>`, within spawn's
 /// [`MAX_AGENT_ID_CHARS`]: a task id too long for it keeps its first part
 /// and gains a hash of the whole, so two long ids never share a label.

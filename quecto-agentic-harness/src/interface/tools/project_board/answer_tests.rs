@@ -414,7 +414,7 @@ board_rules! {
     R::ChangeAlreadyLinked { .. } => R::ChangeAlreadyLinked { task: Slug::parse("board-store").unwrap(), change: Some(1) }, "change_already_linked", ["task", "change"];
     R::NoSuchChange(_) => R::NoSuchChange(4), "no_such_change", ["change"];
     R::NoSuchRun(_) => R::NoSuchRun(4), "no_such_run", ["run"];
-    R::ItemsNotDone { .. } => R::ItemsNotDone { run: 1, items: vec![Slug::parse("api").unwrap()] }, "items_not_done", ["run", "items"];
+    R::ItemsNotDone { .. } => R::ItemsNotDone { run: 1, items: vec![Slug::parse("api").unwrap()], report: crate::domain::project_board::value_objects::rule_error::SwarmReport::NoneKept }, "items_not_done", ["run", "items", "report"];
     R::ChangeAhead { .. } => R::ChangeAhead { change: 1, updated: at("10:00:00") }, "change_ahead", ["change", "updated"];
     R::DiscussionClosed(_) => R::DiscussionClosed(Slug::parse("chat").unwrap()), "discussion_closed", ["discussion"];
     R::DiscussionLinked { .. } => R::DiscussionLinked { discussion: Slug::parse("chat").unwrap(), task: Slug::parse("board-store").unwrap() }, "discussion_linked", ["discussion", "task"];

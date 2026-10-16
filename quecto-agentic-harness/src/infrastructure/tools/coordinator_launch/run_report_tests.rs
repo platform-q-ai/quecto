@@ -5,6 +5,7 @@ use super::*;
 /// A board's projection as the dispatch host answers `_board`: run
 /// `status`, `observed` tokens spent, and `items`.
 pub fn board(status: &str, observed: u64, items: Value) -> Value {
+    let total = items.as_array().map_or(0, Vec::len);
     json!({
         "revision": 41,
         "run": {
@@ -16,6 +17,7 @@ pub fn board(status: &str, observed: u64, items: Value) -> Value {
         "items": items,
         "members": [],
         "evidence": [],
+        "totals": {"items": total},
         "truncated": false,
     })
 }
@@ -90,15 +92,24 @@ fn only_an_ended_run_is_a_view() {
 }
 
 /// A board with no run, no readable spend or no items is no view; nor is
-/// one that left rows out, or does not say whether it did.
+/// one that left items out, or does not count them. One that left only
+/// other rows out (members, evidence) is read whole.
 #[test]
 fn a_board_missing_its_run_spend_or_items_or_left_short_is_no_view() {
-    let mut truncated = board("succeeded", 1, json!([]));
-    truncated["truncated"] = json!(true);
-    let mut unsaid = board("succeeded", 1, json!([]));
-    unsaid.as_object_mut().unwrap().remove("truncated");
-    assert_eq!(swarm_run_view(&truncated), None, "rows left out");
-    assert_eq!(swarm_run_view(&unsaid), None, "not saying");
+    let item = json!({"title": "a: A", "state": "completed"});
+    let mut short = board("succeeded", 1, json!([item.clone()]));
+    short["totals"]["items"] = json!(2);
+    let mut uncounted = board("succeeded", 1, json!([]));
+    uncounted.as_object_mut().unwrap().remove("totals");
+    assert_eq!(swarm_run_view(&short), None, "an item left out");
+    assert_eq!(swarm_run_view(&uncounted), None, "not counted");
+    let mut members_cut = board("succeeded", 1, json!([item]));
+    members_cut["truncated"] = json!(true);
+    assert_eq!(
+        swarm_run_view(&members_cut).map(|view| view.items.len()),
+        Some(1),
+        "its items whole, other rows cut"
+    );
     let mut no_run = board("succeeded", 1, json!([]));
     no_run["run"] = Value::Null;
     let mut no_spend = board("succeeded", 1, json!([]));

@@ -15,7 +15,7 @@ use crate::application::project_board::use_cases::fixtures_tests::{
 use crate::domain::project_board::entities::run::Run;
 use crate::domain::project_board::entities::task::Task;
 use crate::domain::project_board::services::starts::start;
-use crate::domain::project_board::value_objects::rule_error::BoardRuleError;
+use crate::domain::project_board::value_objects::rule_error::{BoardRuleError, SwarmReport};
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::vocabulary::{ItemState, RunOutcome, TaskStatus};
 use crate::infrastructure::persistence::project_board::text_cells::MarkdownTextCells;
@@ -184,6 +184,7 @@ fn a_success_with_nothing_reported_is_refused_not_recorded_over_todo_items() {
     let undone = ProjectBoardError::Rule(BoardRuleError::ItemsNotDone {
         run: 1,
         items: vec![slug("api"), slug("store"), slug("docs")],
+        report: SwarmReport::NoneKept,
     });
     assert_eq!(
         ender(&store, "Ada", "10:30:00").execute(&ending(RunEndOutcome::Succeeded)),
@@ -244,6 +245,7 @@ fn a_success_is_refused_while_the_board_its_swarm_left_shows_an_item_undone() {
         Err(ProjectBoardError::Rule(BoardRuleError::ItemsNotDone {
             run: 1,
             items: vec![slug("store")],
+            report: SwarmReport::Kept,
         }))
     );
     let mut unseeded = kept.clone();
@@ -257,6 +259,7 @@ fn a_success_is_refused_while_the_board_its_swarm_left_shows_an_item_undone() {
         Err(ProjectBoardError::Rule(BoardRuleError::ItemsNotDone {
             run: 1,
             items: vec![slug("store")],
+            report: SwarmReport::Kept,
         })),
         "an item the swarm never seeded is not done"
     );

@@ -5,6 +5,24 @@ use super::timestamp::Timestamp;
 use super::vocabulary::{DiscussionLimit, PlanState, TaskStatus};
 use std::fmt;
 
+/// Whether a run ended by hand had a board of its swarm to report its
+/// task items (#2481 S4c follow-up): one kept as its coordinator left, or
+/// none.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SwarmReport {
+    Kept,
+    NoneKept,
+}
+
+impl SwarmReport {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Kept => "kept",
+            Self::NoneKept => "none_kept",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BoardRuleError {
     /// No row of the transition table moves a task between these statuses.
@@ -63,8 +81,13 @@ pub enum BoardRuleError {
     NoSuchRun(u32),
     /// The run would end as succeeded while these task items of the plan
     /// it ran are not done: a success is recorded only over work the
-    /// board shows done.
-    ItemsNotDone { run: u32, items: Vec<Slug> },
+    /// board shows done. `report` says whether a board of its swarm was
+    /// kept to show them.
+    ItemsNotDone {
+        run: u32,
+        items: Vec<Slug>,
+        report: SwarmReport,
+    },
     /// The change was stamped by a clock running ahead of the outside
     /// time: building on it would drag the board ahead too.
     ChangeAhead { change: u32, updated: Timestamp },
@@ -233,7 +256,11 @@ impl fmt::Display for BoardRuleError {
             }
             Self::NoSuchChange(number) => write!(f, "the task has no change {number}"),
             Self::NoSuchRun(number) => write!(f, "the task has no run {number}"),
-            Self::ItemsNotDone { run, items } => {
+            Self::ItemsNotDone {
+                run,
+                items,
+                report: SwarmReport::Kept,
+            } => {
                 let items: Vec<&str> = items.iter().map(Slug::as_str).collect();
                 write!(
                     f,
@@ -243,6 +270,16 @@ impl fmt::Display for BoardRuleError {
                     items.join(", ")
                 )
             }
+            Self::ItemsNotDone {
+                run,
+                items: _,
+                report: SwarmReport::NoneKept,
+            } => write!(
+                f,
+                "run {run} cannot end as succeeded: no board of its swarm was kept to show its \
+                 task items done (the coordinator was not torn down here, or this session \
+                 restarted); ask the user whether the work was done before ending it"
+            ),
             Self::ChangeAhead { change, updated } => write!(
                 f,
                 "change {change} was stamped {} by a clock that ran ahead",
