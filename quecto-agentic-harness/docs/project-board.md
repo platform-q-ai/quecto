@@ -360,10 +360,39 @@ launched.
 `outcome` is one of `succeeded`, `stopped`, `failed` or `lost`; any other word
 is refused. The holder of a live claim on the task ends the run as `succeeded`,
 `stopped` or `failed` (`not_holder` for anyone else, `claim_expired` for a
-holder whose claim lapsed: renew first): it is recorded as a swarm that ended
-so and reported nothing would be, each of its plan's task items as todo, its
-cost unknown. So a success is recorded, and the task can go on to done. As
-`lost`, the run is ended by the holder of a live claim, or by anyone when the
+holder whose claim lapsed: renew first). The run is recorded from its swarm's
+board as it stood when the coordinator left its container: each of its plan's
+task items in the state its swarm item reached (matched by its brief title, as
+a fold-back matches it), with its owner and evidence, and the swarm's observed
+tokens as its cost. The swarm's board lives in the coordinator's container and
+goes with it once a closed run's coordinator is killed, so the final-member
+teardown reads it first, when the run has ended (succeeded, failed,
+budget-exhausted, blocked or cancelled; never one still running or paused), and
+keeps what a fold-back reads of it in the harness's memory, under the session
+and the coordinator's spawn label (`board-<task>-run-<n>`; no other label's
+board is kept, so an ad-hoc swarm's never is). The agent tool's `end_run` finds
+it by that label, with no memory of the launch. A board is kept only when its
+projection holds every item (one that left items out is logged and not kept;
+members or evidence left out do not matter), only the newest 16 are kept, and
+one is dropped once its run is recorded. Where no board was kept, the run is recorded
+as a swarm that ended so and reported nothing would be: each task item as todo,
+its cost unknown. That is so from the CLI, for a run another session launched,
+for a board that could not be read whole, and for the gaps a restart leaves:
+the kept boards live in memory, so a harness restarted between the
+coordinator's teardown and `end_run` has lost its board, and one that no longer
+holds the coordinator as its subagent (with its label) when the box is torn
+down keeps none.
+
+A run ends as `succeeded` only when every task item of its plan is done there:
+otherwise the end is refused (`items_not_done`, a rule refusal naming the
+`run`, the `items` not done and the `report`) and nothing is written, so the
+board never shows a succeeded run over work it shows undone. With `report`
+`"kept"`, the kept board showed those items undone: the run is ended as
+`stopped` instead. With `"none_kept"`, no board was kept to show them: the
+refusal asks the user whether the work was done before the run is ended. A run past the board's bytes with its evidence is ended
+once more without it, as a fold-back is.
+
+As `lost`, the run is ended by the holder of a live claim, or by anyone when the
 task has no claim; whoever finds the claim expired takes the task over with
 `take_over` first, and then ends the run as its holder. `expected_updated` is
 optional: when given, the task must still be as it was read (`stale`).
@@ -379,9 +408,10 @@ checked against running swarms: if the run's coordinator still runs, stop it".
 Only the run is written; the task stays as it is, for its holder to move on
 (back to `ready`, say). A run that has ended is refused (`run_ended`), as is
 one the task does not have (`no_such_run`). The answer gives the `run`, as
-`show` gives a run in full, `liveness`, and, for a run its holder ended,
-`items_recorded`: "items recorded as todo: no swarm report". `quecto board
-end-run` takes the same fields.
+`show` gives a run in full, `liveness`, and, for a run its holder ended with no
+swarm board kept, `items_recorded`: "items recorded as todo: no swarm report".
+A run recorded from its swarm's board carries no `items_recorded`: its items
+show where each stood. `quecto board end-run` takes the same fields.
 
 ## Archiving a task
 

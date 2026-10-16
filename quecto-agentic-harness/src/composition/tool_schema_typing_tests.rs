@@ -219,6 +219,7 @@ fn built_in_definitions(workspace: &std::path::Path) -> Vec<ToolDefinition> {
                     remote: "origin".into(),
                     build: None,
                     launcher: None,
+                    swarm_session: None,
                 },
             ),
         ),

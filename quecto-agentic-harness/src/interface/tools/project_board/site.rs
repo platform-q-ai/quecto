@@ -41,6 +41,10 @@ pub struct ProjectBoardEnvironment {
     /// no swarm (the CLI), so a start is refused and an end_run sees none
     /// running.
     pub launcher: Option<Launcher>,
+    /// The session whose ended swarms' boards a run's end is recorded from
+    /// (#2481 S4c follow-up): the agent tool's; `None` for a front end that
+    /// keeps none (the CLI), whose ends record nothing reported.
+    pub swarm_session: Option<String>,
 }
 
 /// A session's swarms as a front end reaches them (S4c): it launches a
@@ -77,6 +81,31 @@ pub struct BoardSite {
     pub remote: String,
     pub build: Option<ProjectBoardHandlesBuilder>,
     pub launcher: Option<Launcher>,
+    /// The session whose ended swarms' boards a run's end reads (`None`:
+    /// none, as from the CLI).
+    pub swarm_session: Option<String>,
+}
+
+impl BoardSite {
+    /// The agent tool's board (S4c): on `repo`'s `origin`, built by
+    /// `build`, starting tasks through `launcher`, its run ends read from
+    /// the boards the teardown keeps under the session of `spawned_in`,
+    /// the environment registry its coordinators are spawned into (#2481
+    /// S4c follow-up).
+    pub fn agent(
+        repo: PathBuf,
+        build: ProjectBoardHandlesBuilder,
+        launcher: Launcher,
+        spawned_in: &crate::domain::environments::entities::environment_registry::EnvironmentRegistry,
+    ) -> Self {
+        Self {
+            repo,
+            remote: "origin".into(),
+            build: Some(build),
+            launcher: Some(launcher),
+            swarm_session: Some(spawned_in.session().to_owned()),
+        }
+    }
 }
 
 impl std::fmt::Debug for BoardSite {
@@ -86,6 +115,7 @@ impl std::fmt::Debug for BoardSite {
             .field("remote", &self.remote)
             .field("build", &self.build.is_some())
             .field("launcher", &self.launcher.is_some())
+            .field("swarm_session", &self.swarm_session)
             .finish()
     }
 }
@@ -132,6 +162,7 @@ pub fn answer(
         vars: std::env::vars_os().collect(),
         cancelled,
         launcher: site.launcher.clone(),
+        swarm_session: site.swarm_session.clone(),
     };
     match call.built(|| build(&environment)) {
         // The one entry point every front end's request goes through.

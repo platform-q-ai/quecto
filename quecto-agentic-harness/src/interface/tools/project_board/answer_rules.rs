@@ -42,6 +42,7 @@ pub fn rule_code(rule: &BoardRuleError) -> &'static str {
         R::ChangeAlreadyLinked { .. } => "change_already_linked",
         R::NoSuchChange(..) => "no_such_change",
         R::NoSuchRun(..) => "no_such_run",
+        R::ItemsNotDone { .. } => "items_not_done",
         R::ChangeAhead { .. } => "change_ahead",
         R::DiscussionClosed(..) => "discussion_closed",
         R::DiscussionLinked { .. } => "discussion_linked",
@@ -124,6 +125,10 @@ fn rule_fields(rule: &BoardRuleError) -> Map<String, Value> {
         }
         R::NoSuchChange(change) => object!({"change": change}),
         R::NoSuchRun(run) => object!({"run": run}),
+        R::ItemsNotDone { run, items, report } => {
+            let items: Vec<&str> = items.iter().map(Slug::as_str).collect();
+            object!({"run": run, "items": items, "report": report.as_str()})
+        }
         R::ChangeAhead { change, updated } => object!({
             "change": change,
             "updated": updated.as_str(),

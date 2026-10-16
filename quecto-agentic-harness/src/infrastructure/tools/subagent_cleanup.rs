@@ -24,7 +24,9 @@ pub type MemberFinalizer = fn(EnvironmentRegistry) -> FinalizeEnvironmentMember;
 /// One claimed teardown unit: an optional environment membership to remove
 /// (with its finalize mode) and an optional per-entry cleanup plan.
 struct CleanupJob {
-    membership: Option<(EnvironmentRegistry, String, String)>,
+    /// The environment registry, the environment's ref, the member's
+    /// agent id and the label it was spawned with.
+    membership: Option<(EnvironmentRegistry, String, String, String)>,
     plan: Option<(String, Vec<String>)>,
     mode: MemberFinalizeMode,
 }
@@ -43,14 +45,20 @@ pub(super) async fn cleanup_registered_once(
                     .cleanup_environment_id
                     .take()
                     .map(|env| (env, std::mem::take(&mut entry.cleanup_argv))),
-                take_environment_membership(entry),
+                take_environment_membership(entry).map(|membership| {
+                    (
+                        membership,
+                        entry.effective_display_name(agent_id).to_owned(),
+                    )
+                }),
             ),
             None => (None, None),
         }
     };
     run_cleanup_jobs(
         vec![CleanupJob {
-            membership: membership.map(|(envs, env_ref)| (envs, env_ref, agent_id.to_string())),
+            membership: membership
+                .map(|((envs, env_ref), label)| (envs, env_ref, agent_id.to_string(), label)),
             plan,
             mode,
         }],
@@ -79,8 +87,10 @@ fn drain_cleanup_jobs(
                 .cleanup_environment_id
                 .take()
                 .map(|env| (env, std::mem::take(&mut entry.cleanup_argv))),
-            membership: take_environment_membership(entry)
-                .map(|(envs, env_ref)| (envs, env_ref, id.clone())),
+            membership: take_environment_membership(entry).map(|(envs, env_ref)| {
+                let label = entry.effective_display_name(id).to_owned();
+                (envs, env_ref, id.clone(), label)
+            }),
             mode,
         })
         .collect()
@@ -89,10 +99,11 @@ fn drain_cleanup_jobs(
 fn run_cleanup_jobs_sync(jobs: Vec<CleanupJob>, finalizer: MemberFinalizer) {
     for job in jobs {
         match job.membership {
-            Some((environments, env_ref, agent_uuid)) => {
-                futures::executor::block_on(finalizer(environments).finalize_member(
+            Some((environments, env_ref, agent_uuid, label)) => {
+                futures::executor::block_on(finalizer(environments).finalize_labelled_member(
                     &env_ref,
                     &agent_uuid,
+                    Some(&label),
                     job.plan,
                     job.mode,
                 ));

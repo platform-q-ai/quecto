@@ -66,12 +66,22 @@ impl RunEndOutcome {
     }
 }
 
-/// A run ended by hand, as written, and whether its front end could see
-/// that its swarm had stopped.
+/// A run ended by hand, as written, whether its front end could see
+/// that its swarm had stopped, and where its task items came from.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EndedRun {
     pub run: crate::domain::project_board::entities::run::Run,
     pub liveness: LivenessCheck,
+    pub report: RunReport,
+}
+
+/// Where an end_run took the run's task items from (#2481 S4c follow-up):
+/// the board its swarm left, as this front end kept it; or no report at
+/// all, every item as todo (a run ended as lost records none either).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RunReport {
+    Kept,
+    Unreported,
 }
 
 /// Whether an end_run's front end looked for the run's swarm still running

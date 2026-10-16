@@ -184,6 +184,7 @@ const KNOWN_KINDS : & [
 "succeeded" ,
 "stopped" ,
 "lost" ,
+"items_not_done" ,
 "task" ,
 "title" ,
 "kind" ,

@@ -570,3 +570,64 @@ fn a_current_placeholder_board_never_hides_a_displaced_one() {
     let run = hosted.hosted_run().unwrap().expect("the created run");
     assert_eq!(serde_json::Value::from(run.id).to_string(), id);
 }
+
+/// Review round 2 (#2575): the production teardown keeps a board run's
+/// ended board. An owner's kill of the coordinator, spawned as
+/// `board-wiring-run-1` into a box over a real board whose run its owner
+/// closed, runs through `cleanup_registered_once` with composition's own
+/// `build_member_finalizer`; the board's reports then read the board kept
+/// under the spawning registry's session and the coordinator's label.
+#[test]
+fn the_composed_teardown_keeps_a_board_runs_ended_board() {
+    use crate::application::project_board::dto::SwarmEnd;
+    use crate::application::project_board::ports::SwarmRunReports;
+    use crate::domain::environments::entities::environment_registry::EnvironmentRegistry;
+    use crate::domain::environments::services::environment_retention::MemberFinalizeMode;
+    use crate::domain::ids::AgentUuid;
+    use crate::domain::project_board::value_objects::slug::Slug;
+    use crate::infrastructure::tools::coordinator_launch::KeptRunReports;
+    use crate::infrastructure::tools::subagent_registry::{SubagentEntry, new_registry};
+    let state = tempfile::tempdir().unwrap();
+    let workspace = state.path().join("workspace");
+    std::fs::create_dir_all(&workspace).unwrap();
+    let (coordinator, _) = created_run(&workspace);
+    let off = |method: &str, args: serde_json::Value| {
+        crate::infrastructure::tools::call_work::off_the_runtime(|| coordinator.call(method, args))
+            .unwrap()
+    };
+    off(
+        "stop",
+        serde_json::json!(["blocked", "waiting on the user"]),
+    );
+    off("_close", serde_json::json!([]));
+    let environments = EnvironmentRegistry::new();
+    let uuid = AgentUuid::mint();
+    let key = uuid.as_str().to_owned();
+    let mut record = sandbox_record(&workspace);
+    record.members = vec![key.clone()];
+    record.retained_kill_argv = vec!["true".into()];
+    environments.commit(record);
+    let subagents = new_registry();
+    let mut entry =
+        SubagentEntry::with_identity(uuid, "board-wiring-run-1".into(), "/tmp/c.sock".into(), 0);
+    entry.environment_registry = Some(environments.clone());
+    entry.environment_ref = Some("C1".into());
+    subagents.lock().unwrap().insert(key.clone(), entry);
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(super::super::subagent_cleanup::cleanup_registered_once(
+        &subagents,
+        &key,
+        MemberFinalizeMode::OwnerEnd,
+        crate::composition::environments::build_member_finalizer,
+    ));
+    let reports = KeptRunReports::new(
+        crate::composition::environments::kept_swarm_boards(),
+        environments.session(),
+    );
+    let view = reports.ended_run(&Slug::parse("wiring").unwrap(), 1);
+    assert_eq!(view.map(|view| view.end), Some(SwarmEnd::Blocked));
+}

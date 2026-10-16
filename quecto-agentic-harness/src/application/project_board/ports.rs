@@ -2,7 +2,7 @@
 //! (the S1d git store implements [`ProjectBoardStore`] over the
 //! repository's `quecto/board` branch), its listings from a local view of
 //! it (the S1e index implements [`BoardListings`]) and what time it is.
-use super::dto::{BoardListing, FoldBackFacts, FoldedBack, ProjectBoardError};
+use super::dto::{BoardListing, FoldBackFacts, FoldedBack, ProjectBoardError, SwarmRunView};
 use crate::domain::project_board::entities::change::Change;
 use crate::domain::project_board::entities::claim::Identity;
 use crate::domain::project_board::entities::discussion::Discussion;
@@ -591,6 +591,25 @@ pub trait RunLiveness: Send + Sync {
     /// The agent id of the coordinator of run `run` of `task` still
     /// running here, if one is: what `agent_cmd kill` stops.
     fn running_coordinator(&self, task: &Slug, run: u32) -> Option<String>;
+}
+
+/// Port: how a run's swarm ended, as this front end kept its board (S4c
+/// follow-up): read as the run's coordinator left its container, before
+/// anything tore the box down, and kept under the coordinator's spawn
+/// label, so `end_run` records the run's task items, owners, evidence and
+/// cost from it rather than as a swarm that reported nothing. `None` when
+/// this front end kept none: one that launches no swarm (the CLI), a run
+/// another session launched, a swarm that had not ended when its
+/// coordinator left, a board that could not be read whole, a process that
+/// restarted between the coordinator's teardown and the run's end, or a
+/// teardown that did not know the coordinator's label.
+pub trait SwarmRunReports: Send + Sync {
+    /// The board of run `run` of `task`'s swarm as it ended, if kept here.
+    fn ended_run(&self, task: &Slug, run: u32) -> Option<SwarmRunView>;
+
+    /// The board of run `run` of `task`'s swarm has been recorded on the
+    /// project board: it need not be kept any longer.
+    fn recorded(&self, task: &Slug, run: u32);
 }
 
 /// Port: launches a started task's swarm coordinator in a new container

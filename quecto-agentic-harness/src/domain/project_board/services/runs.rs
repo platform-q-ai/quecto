@@ -14,10 +14,11 @@ use super::super::entities::claim::Identity;
 use super::super::entities::plan::Plan;
 use super::super::entities::run::{MAX_RUN_NUMBER, Run, RunFields, RunItem};
 use super::super::entities::task::Task;
-use super::super::value_objects::rule_error::BoardRuleError;
+use super::super::value_objects::rule_error::{BoardRuleError, SwarmReport};
 use super::super::value_objects::schema_error::SchemaError;
+use super::super::value_objects::slug::Slug;
 use super::super::value_objects::timestamp::Timestamp;
-use super::super::value_objects::vocabulary::{PlanState, RunOutcome, TaskStatus};
+use super::super::value_objects::vocabulary::{ItemState, PlanState, RunOutcome, TaskStatus};
 use super::claims::{held_live_by, stamp};
 
 /// A new run of `task`'s accepted `plan`, begun by `actor`, the holder of
@@ -171,11 +172,14 @@ impl HeldEnd {
 }
 
 /// What a run ended by hand reports: where each of its plan's task items
-/// stood, and what it cost, as a fold-back reports them.
+/// stood, and what it cost, as a fold-back reports them, and whether a
+/// board of its swarm was kept to report them (`NoneKept`: every item
+/// todo).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Reported {
     pub items: Vec<RunItem>,
     pub cost: Option<u64>,
+    pub report: SwarmReport,
 }
 
 /// The open run of `task` ended by `actor`, the holder of a live claim
@@ -185,9 +189,14 @@ pub struct Reported {
 /// change), as [`end_lost`] ends one. One the holder cannot account for is
 /// ended as lost instead.
 ///
+/// A run ends as succeeded only when every task item of its plan is
+/// reported done ([`undone_items`]): a success over items the board shows
+/// undone (a swarm whose report never reached the board leaves every one
+/// todo) is refused, never recorded.
+///
 /// # Errors
 /// A claim `actor` does not hold live; a run of another task, or one that
-/// has ended; as [`fold_back`].
+/// has ended; as [`fold_back`]; a success with a task item not done.
 pub fn end_held(
     task: &Task,
     ran: (&Run, &Plan),
@@ -199,8 +208,49 @@ pub fn end_held(
     let (run, plan) = ran;
     held_live_by(task, actor, now)?;
     of_task(task, std::slice::from_ref(run))?;
-    let Reported { items, cost } = reported;
-    fold_back(run, plan, end.outcome(), cost, items, &stamp(task, now)?)
+    let Reported {
+        items,
+        cost,
+        report,
+    } = reported;
+    // Folded first, so a run that has ended, or items the plan does not
+    // have, answer as such before the items are judged.
+    let folded = fold_back(run, plan, end.outcome(), cost, items, &stamp(task, now)?)?;
+    match end {
+        HeldEnd::Succeeded => {
+            let undone = undone_items(plan, &folded.fields().items);
+            match undone.as_slice() {
+                [] => {}
+                [_, ..] => {
+                    return Err(BoardRuleError::ItemsNotDone {
+                        run: folded.fields().number,
+                        items: undone,
+                        report,
+                    });
+                }
+            }
+        }
+        HeldEnd::Stopped | HeldEnd::Failed => {}
+    }
+    debug_assert_eq!(folded.fields().outcome, Some(end.outcome()));
+    Ok(folded)
+}
+
+/// The task items of `plan`, in its order, that `items` does not report
+/// done: one reported in any other state, or not reported at all.
+pub fn undone_items(plan: &Plan, items: &[RunItem]) -> Vec<Slug> {
+    let done = |id: &Slug| {
+        items
+            .iter()
+            .any(|item| item.id == *id && item.state == ItemState::Done)
+    };
+    plan.fields()
+        .items
+        .iter()
+        .map(|planned| &planned.id)
+        .filter(|id| !done(id))
+        .cloned()
+        .collect()
 }
 
 /// A task may leave its holder (for ready, done or archived) only once

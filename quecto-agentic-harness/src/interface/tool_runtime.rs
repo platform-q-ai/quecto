@@ -390,11 +390,10 @@ pub(crate) fn build_tool_runtime(
     register_bundled_native_tools_with_scope(&mut registry, agent_control.extensions, None);
     let notify_rx = agent_control.notification_rx;
     let _ = agent_control.notification_tx;
-    // The project board (#2477): a parent's tool, on the repository of the
-    // workspace it works in.
+    // The project board (#2477): a parent's tool, on its workspace's repo.
     if let (ToolRuntimeProfileContext::Parent, Some(build)) = (profile_context, project_board) {
-        // A start launches its coordinator through this session's own spawn
-        // while the policy allows it (S4c).
+        // A start launches through this session's own spawn while its policy
+        // allows it (S4c); an end reads the boards its teardown kept.
         let launcher = crate::infrastructure::tools::coordinator_launch::session_launcher(
             &mut registry,
             &agent_control.spawn_tool,
@@ -402,12 +401,12 @@ pub(crate) fn build_tool_runtime(
             &agent_control.subagent_registry,
         );
         let board = crate::interface::tools::project_board::tool::BoardTool::new(
-            crate::interface::tools::project_board::site::BoardSite {
-                repo: board_repo,
-                remote: "origin".into(),
-                build: Some(build),
-                launcher: Some(std::sync::Arc::new(launcher)),
-            },
+            crate::interface::tools::project_board::site::BoardSite::agent(
+                board_repo,
+                build,
+                std::sync::Arc::new(launcher),
+                &agent_control.environment_registry,
+            ),
         );
         register_bundled_native_tools_with_scope(
             &mut registry,

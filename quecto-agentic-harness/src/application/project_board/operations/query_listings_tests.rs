@@ -77,6 +77,41 @@ pub fn assembled_launching(
     launcher: Option<Arc<dyn CoordinatorLaunch>>,
     liveness: Option<Arc<dyn crate::application::project_board::ports::RunLiveness>>,
 ) -> Result<RunBoardOperation, ProjectBoardError> {
+    assembled_reporting(
+        store,
+        clock,
+        listings,
+        prs,
+        Swarms {
+            launcher,
+            liveness,
+            reports: None,
+        },
+    )
+}
+
+/// What a front end reaches a session's swarms through: the launcher, the
+/// liveness of runs' swarms and how they ended (#2481 S4c follow-up).
+pub struct Swarms {
+    pub launcher: Option<Arc<dyn CoordinatorLaunch>>,
+    pub liveness: Option<Arc<dyn crate::application::project_board::ports::RunLiveness>>,
+    pub reports: Option<Arc<dyn crate::application::project_board::ports::SwarmRunReports>>,
+}
+
+/// [`assembled_launching`], reading how runs' swarms ended through
+/// `swarms.reports` too.
+pub fn assembled_reporting(
+    store: Arc<dyn ProjectBoardStore>,
+    clock: Arc<dyn BoardClock>,
+    listings: Arc<dyn BoardListings>,
+    prs: Result<Arc<dyn PullRequestStates>, NoPullRequestHost>,
+    swarms: Swarms,
+) -> Result<RunBoardOperation, ProjectBoardError> {
+    let Swarms {
+        launcher,
+        liveness,
+        reports,
+    } = swarms;
     let complete = match prs {
         Ok(prs) => Ok(CompleteMergedTask::new(
             Arc::clone(&store),
@@ -99,6 +134,7 @@ pub fn assembled_launching(
             Arc::clone(&clock),
             Arc::new(MarkdownTextCells),
             liveness,
+            reports,
         )?,
         start: StartBoardTask::new(
             Arc::clone(&store),

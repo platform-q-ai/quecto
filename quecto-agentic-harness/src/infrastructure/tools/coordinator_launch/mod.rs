@@ -15,7 +15,9 @@
 //! (#2173).
 //!
 //! It also tells whether this session still runs the coordinator of a
-//! given run, by its label among the session's subagents.
+//! given run, by its label among the session's subagents. The boards the
+//! final-member teardown keeps of ended runs are read back by that same
+//! label ([`KeptRunReports`]).
 //!
 //! Blocking: a launch waits on the session's runtime for the spawn to
 //! answer, at most [`LAUNCH_TIMEOUT`], on the board call's blocking thread.
@@ -38,6 +40,9 @@ use crate::domain::error::DomainError;
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::sessions::entities::session::SubagentLiveness;
 use crate::domain::tool::ToolResult;
+pub use kept_boards::{KeptRunReports, KeptSwarmBoards, MAX_KEPT};
+#[cfg(test)]
+pub(crate) use run_report::swarm_run_view;
 pub use spawn_permit::SpawnPermit;
 
 /// The longest a launch waits for spawn to answer: a container's image may
@@ -299,6 +304,24 @@ fn spawn_arguments(request: &CoordinatorRequest) -> Value {
     Value::Object(arguments)
 }
 
+/// Whether `text` is shaped as [`label`] names a board run's coordinator:
+/// `board-<task>-run-<run>`, its task a slug (a long one cut and hashed as
+/// `label` cuts it is still one) and its run a number from 1, within
+/// spawn's [`MAX_AGENT_ID_CHARS`]. An allowlist of the one shape the
+/// board's reports read: an ad-hoc swarm's coordinator is never kept.
+fn is_board_label(text: &str) -> bool {
+    let shaped = text
+        .strip_prefix("board-")
+        .and_then(|rest| rest.rsplit_once("-run-"))
+        .and_then(|(task, run)| Some((Slug::parse(task).ok()?, run.parse::<u32>().ok()?, run)));
+    match shaped {
+        Some((_, run, written)) if run >= 1 && run.to_string() == written => {
+            text.chars().count() <= MAX_AGENT_ID_CHARS
+        }
+        Some(_) | None => false,
+    }
+}
+
 /// The coordinator's spawn label, `board-<task>-run-<run>`, within spawn's
 /// [`MAX_AGENT_ID_CHARS`]: a task id too long for it keeps its first part
 /// and gains a hash of the whole, so two long ids never share a label.
@@ -323,6 +346,8 @@ fn label(task: &str, run: u32) -> String {
     label
 }
 
+mod kept_boards;
+mod run_report;
 mod spawn_permit;
 
 #[cfg(test)]

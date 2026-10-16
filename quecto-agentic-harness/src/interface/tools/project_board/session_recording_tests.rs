@@ -14,6 +14,7 @@ fn tool(recordings: &Arc<SessionRecording>) -> BoardTool {
         remote: "origin".into(),
         build: None,
         launcher: None,
+        swarm_session: None,
     };
     BoardTool::recorded_in(site, Arc::clone(recordings))
 }

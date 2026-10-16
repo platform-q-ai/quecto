@@ -133,6 +133,8 @@ mod effort_default_persistence;
 mod effort_runtime;
 #[path = "contracts/effort_vocabulary_source.rs"]
 mod effort_vocabulary_source;
+#[path = "contracts/ended_swarm_boards.rs"]
+mod ended_swarm_boards;
 #[path = "contracts/environment_member_shutdown.rs"]
 mod environment_member_shutdown;
 #[path = "contracts/environment_process.rs"]
@@ -230,6 +232,8 @@ mod session_store;
 mod session_switch_runtime;
 #[path = "contracts/subagent_launch_ports.rs"]
 mod subagent_launch_ports;
+#[path = "contracts/swarm_run_reports.rs"]
+mod swarm_run_reports;
 #[path = "common/switch_runtime_fixture.rs"]
 mod switch_runtime_fixture;
 #[path = "contracts/tool.rs"]

@@ -31,6 +31,7 @@ use crate::infrastructure::processes::containers::environment_process::ScriptEnv
 use crate::infrastructure::processes::containers::preflight::ScriptPreflight;
 use crate::infrastructure::processes::containers::script_inventory::ScriptInventory;
 pub use crate::infrastructure::tools::agent_cmd_containers::EnvironmentControl;
+use crate::infrastructure::tools::coordinator_launch::KeptSwarmBoards;
 use crate::infrastructure::tools::environment_commands::{
     HostedStoreObservation, ScriptEnvironmentCommands,
 };
@@ -77,12 +78,29 @@ fn supervisor_board() -> SwarmBoard {
 /// The final-member use case over the production script adapters, for one
 /// entry's environment registry. The cleanup jobs already run on a blocking
 /// worker, so the scripts run inline.
+///
+/// It keeps the board of an ended swarm run as its member leaves, before
+/// any teardown, in [`kept_swarm_boards`], where the board's coordinator
+/// launcher reads it back to fold the run onto the project board (#2481
+/// S4c follow-up).
 pub fn build_member_finalizer(environments: EnvironmentRegistry) -> FinalizeEnvironmentMember {
     FinalizeEnvironmentMember::new(
         environments,
         Arc::new(ScriptEnvironmentCommands::inline()),
         Arc::new(hosted_store_observation()),
     )
+    .keeping_ended_boards(Arc::new(hosted_store_observation()), kept_swarm_boards())
+}
+
+/// The one store of ended runs' boards composition hands both the
+/// final-member teardown, which keeps them, and every session's board
+/// launcher, which reads them back (#2481 S4c follow-up). One per process:
+/// the teardown's builder is a plain `fn` handed to every termination
+/// graph, so it can capture no instance of its own; boards are keyed by
+/// session, so sessions sharing the process never read each other's.
+pub fn kept_swarm_boards() -> Arc<KeptSwarmBoards> {
+    static KEPT: OnceLock<Arc<KeptSwarmBoards>> = OnceLock::new();
+    Arc::clone(KEPT.get_or_init(Arc::default))
 }
 
 /// The environment control `agent_cmd` invokes: the side-effect-free
