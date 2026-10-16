@@ -5,7 +5,9 @@
 //!   after a change that may complete it, `completion`: `{"done": true,
 //!   "task"}`, `{"done": false, "pending": [prs]}` while some have not
 //!   merged, or `{"done": false, "error"}`), a listing's `head`, `tasks`
-//!   and `quarantined`, `show`'s ([`shown_fields`]), a plan proposed,
+//!   and `quarantined` (asked for summaries, each task with its `summary`,
+//!   [`listing_fields`], or `summary_skipped` and none), `show`'s
+//!   ([`shown_fields`]), a plan proposed,
 //!   edited or discarded as `plan` ([`planned_json`]), a plan accepted as
 //!   the `task` naming it, the `plan` and the version it `superseded`
 //!   (`null` when none was accepted), or `head` alone; and
@@ -36,9 +38,7 @@
 use serde_json::{Map, Value, json};
 
 use super::request::RequestError;
-use crate::application::project_board::dto::{
-    BoardListing, LivenessCheck, ProjectBoardError, RunReport,
-};
+use crate::application::project_board::dto::{LivenessCheck, ProjectBoardError, RunReport};
 use crate::application::project_board::operations::{BoardOutcome, Completion};
 use crate::application::project_board::ports::{
     ArtifactKey, BoardClockError, BoardHead, BoardStoreError, PullRequestStatesError,
@@ -57,7 +57,8 @@ use crate::domain::redaction::{redact_secrets, redact_url_userinfo};
 #[path = "answer_artifacts.rs"]
 mod artifacts;
 use artifacts::{
-    artifact_folder, page_fields, planned_json, quarantined_json, run_json, shown_fields,
+    artifact_folder, listing_fields, page_fields, planned_json, quarantined_json, run_json,
+    shown_fields,
 };
 
 /// The most characters of an error's message an answer carries.
@@ -340,20 +341,6 @@ fn started_fields(started: &StartedTask) -> Map<String, Value> {
         ),
         ("not_applied", Value::Array(not_applied)),
         ("claim", json!(started.claim.as_str())),
-    ])
-}
-
-fn listing_fields(listing: &BoardListing) -> Map<String, Value> {
-    Map::from_iter([
-        ("head".to_string(), head_json(&listing.head)),
-        (
-            "tasks".to_string(),
-            Value::Array(listing.tasks.iter().map(task_json).collect()),
-        ),
-        (
-            "quarantined".to_string(),
-            quarantined_list(&listing.quarantined),
-        ),
     ])
 }
 

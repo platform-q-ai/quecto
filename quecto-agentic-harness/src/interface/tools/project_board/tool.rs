@@ -465,3 +465,7 @@ mod start_tests;
 #[cfg(test)]
 #[path = "tool_end_run_tests.rs"]
 mod end_run_tests;
+
+#[cfg(test)]
+#[path = "tool_list_summary_tests.rs"]
+mod list_summary_tests;

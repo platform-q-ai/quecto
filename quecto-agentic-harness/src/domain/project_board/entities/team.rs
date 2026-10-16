@@ -19,6 +19,22 @@ pub const MIN_DEADLINE_SECONDS: u32 = 10 * 60;
 /// swarm takes.
 pub const MAX_DEADLINE_SECONDS: u32 = 7 * 24 * 60 * 60;
 
+/// A run's deadline when its plan's team names none (or the plan names
+/// no team): a day.
+pub const DEFAULT_DEADLINE_SECONDS: u32 = 24 * 60 * 60;
+const _: () = assert!(
+    MIN_DEADLINE_SECONDS < DEFAULT_DEADLINE_SECONDS
+        && DEFAULT_DEADLINE_SECONDS < MAX_DEADLINE_SECONDS
+);
+
+/// A run's deadline, in seconds from Start, for a plan naming `team`:
+/// the team's own ([`Team::deadline_seconds_or_default`]), or
+/// [`DEFAULT_DEADLINE_SECONDS`] when the plan names no team. The one rule
+/// a start briefs a swarm by and a listing's summary reports a run by.
+pub fn run_deadline_seconds(team: Option<&Team>) -> u32 {
+    team.map_or(DEFAULT_DEADLINE_SECONDS, Team::deadline_seconds_or_default)
+}
+
 /// The team a plan names for its swarm.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Team {
@@ -68,6 +84,12 @@ static IMAGE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(&pattern).expect("image")
 });
 impl Team {
+    /// Its deadline, in seconds from Start: `deadline_seconds` as given,
+    /// or [`DEFAULT_DEADLINE_SECONDS`] when it names none.
+    pub fn deadline_seconds_or_default(&self) -> u32 {
+        self.deadline_seconds.unwrap_or(DEFAULT_DEADLINE_SECONDS)
+    }
+
     pub fn validate(&self, field: &str) -> Result<(), SchemaError> {
         let names: Vec<&Slug> = self.roles.iter().map(|role| &role.name).collect();
         distinct(&format!("{field}/roles"), &names, MAX_ROLES)?;
@@ -120,3 +142,7 @@ impl Role {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "team_tests.rs"]
+mod tests;

@@ -88,6 +88,69 @@ makes a board a read refuses, except that it leaves at most 2,048 entries in
 were markdown (a JSON file and a summary per task). A file larger than its kind's
 cap is set aside, not read.
 
+## List
+
+`list`, `list_ready` and `list_takeable` answer the board's `head`, the
+`tasks` they list, by id, and every file set aside as `quarantined`. A
+listing reads the board's local index of tasks. Refreshing the index asks the
+remote for the board's head (an `ls-remote`), and reads the board whole only
+when the board moved since the index was built.
+
+### Summaries (`quecto board ... --summary`)
+
+On the command line, `--summary` (no value; `list`, `list_ready` and
+`list_takeable` only, with field flags or `--input` alike) gives each listed task
+a `summary` of where its plan and latest run stand. It is the pocket relay's;
+the agent tool takes no such field, so its listings, and their pages, are as they
+were. Without `--summary` a listing reads and answers exactly what it did before.
+Given to any other op it is refused (`invalid_request`, field `summary`) before
+anything is built.
+
+```json
+"summary": {
+  "plan": null | { "version": 2, "state": "draft" | "accepted" },
+  "run": null | {
+    "number": 2,
+    "plan_version": 1,
+    "state": "running" | "succeeded" | "failed" | "stopped" | "lost",
+    "started": "2026-10-10T09:00:00Z",
+    "ended": "2026-10-10T09:30:00Z" | null,
+    "deadline": "2026-10-11T09:00:00Z" | null,
+    "items": { "total": 5, "todo": 1, "doing": 2, "review": 0, "done": 2, "blocked": 0 }
+  },
+  "may_be_incomplete": false
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `plan` | The newest version of the task's plan that is a draft or accepted (superseded and discarded versions are skipped), so a draft newer than the accepted plan is the one named. `null` when there is none |
+| `run` | The task's latest readable run: `number`, `plan_version`, `state`, `started` and `ended` as `show` gives them; `deadline`; and `items`, how many of its task items stand in each state (`todo`, `doing`, `review`, `done`, `blocked`) and in all. `null` when it has none |
+| `items` of a running run | All `0`: a run records its task items on the board when it ends (folded back from its swarm, or ended by hand), so while it runs the board holds none. Its swarm's own board has them live |
+| `deadline` | Nominal: the run's `started` plus the `deadline_seconds` of the team of the plan the run ran, or a day when the team names none (or the plan names no team), the deadline a start briefs the swarm with. The swarm's own deadline starts a little later, when its coordinator creates it. `null` when it is unknown: the plan the run ran is not readable on the board |
+| `may_be_incomplete` | As `show` gives it: a file that may hold one of the task's plans or runs is set aside |
+
+Summaries cost a whole read of the board (a fetch), made after the listing,
+and are taken only from the board the listing was read at, so a summary always
+matches its task's row. When the board moved in between, the listing is read
+again: up to 3 reads for the summaries; each listing read again also rebuilds
+the index (itself a whole read) when the board moved.
+
+A listing is never refused for its summaries. When they cannot be read, the
+listing is answered without them: no task carries a `summary`, and the answer
+says why in a top-level `summary_skipped`:
+
+| `summary_skipped` | When |
+|---|---|
+| `contended` | The board kept moving past the third read (as it does while a swarm runs), or it moved and the listing could not be read again |
+| `index_disagrees` | The board stands where the listing was read, yet holds a listed task otherwise than the index lists it (a broken or edited index). Answered at once, not read again |
+| the read's code | The whole read failed, with the code it would have been refused with, such as `store_unavailable` |
+
+A task whose plans or runs the board holds twice goes without its own summary
+alone: it carries `"summary": null` and its own `"summary_skipped":
+"duplicate_artifact"`, and every other task is summarised. Only a listing's own
+failure refuses it, as before.
+
 ## Show
 
 `show(task)` reads the task, its plans and its runs from one read of the board

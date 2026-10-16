@@ -10,7 +10,8 @@ use super::board_view;
 use crate::application::project_board::dto::{
     ArtifactListing, ArtifactScope, BoardListing, ProjectBoardError, ShownTask,
 };
-use crate::application::project_board::ports::{BoardSnapshot, ProjectBoardStore};
+use crate::application::project_board::ports::{ArtifactKey, BoardSnapshot, ProjectBoardStore};
+use crate::application::project_board::task_summary::{RowSummary, Summarized, summary_of};
 use crate::domain::project_board::entities::change::Change;
 use crate::domain::project_board::entities::discussion::Discussion;
 use crate::domain::project_board::entities::plan::Plan;
@@ -172,6 +173,15 @@ impl QueryBoard {
         shown_on(&self.store.read()?, id)
     }
 
+    /// What one read of the whole board makes of the summaries of the
+    /// tasks `listing` lists ([`summarized_on`]).
+    ///
+    /// # Errors
+    /// The store's.
+    pub fn summarized(&self, listing: &BoardListing) -> Result<Summarized, ProjectBoardError> {
+        summarized_on(&self.store.read()?, listing)
+    }
+
     fn matching(
         &self,
         wanted: impl Fn(&Task, &[Task]) -> bool,
@@ -190,6 +200,57 @@ impl QueryBoard {
             quarantined: board.quarantined,
         })
     }
+}
+
+/// The summaries of the tasks `listing` lists, in order ([`summary_of`]),
+/// from `board`, each task read exactly as `show` reads it: none while
+/// `board` is not where the listing was read ([`Summarized::Moved`]) or
+/// holds another row than it lists, the task twice included
+/// ([`Summarized::Disagrees`]), so a summary always matches its task's
+/// row. A task one of whose plans or runs the board holds twice goes
+/// without its own summary ([`RowSummary::Skipped`]); the others are
+/// summarised.
+///
+/// # Errors
+/// What reading a listed task refuses beyond a duplicate or a row the
+/// board does not hold as listed: none `show`'s read gives today.
+pub(crate) fn summarized_on(
+    board: &BoardSnapshot,
+    listing: &BoardListing,
+) -> Result<Summarized, ProjectBoardError> {
+    if listing.head != board.head {
+        return Ok(Summarized::Moved);
+    }
+    let mut rows = Vec::with_capacity(listing.tasks.len());
+    for task in &listing.tasks {
+        let row = match shown_on(board, &task.fields().id) {
+            Ok(shown) if shown.task == *task => RowSummary::Summary(summary_of(&shown)),
+            // The board, where the listing was read, holds another task by
+            // its id, none it can read, or the task twice: the index
+            // disagrees with it.
+            Ok(_) | Err(ProjectBoardError::NotFound(_)) => return Ok(Summarized::Disagrees),
+            Err(
+                ProjectBoardError::Quarantined {
+                    key: ArtifactKey::Task(_),
+                    ..
+                }
+                | ProjectBoardError::Duplicate {
+                    key: ArtifactKey::Task(_),
+                },
+            ) => return Ok(Summarized::Disagrees),
+            // A plan or run of this task held twice: this row alone goes
+            // without its summary.
+            Err(
+                error @ ProjectBoardError::Duplicate {
+                    key: ArtifactKey::Plan(..) | ArtifactKey::Run(..),
+                },
+            ) => RowSummary::Skipped(Box::new(error)),
+            Err(error) => return Err(error),
+        };
+        rows.push(row);
+    }
+    assert_eq!(rows.len(), listing.tasks.len(), "one per listed task");
+    Ok(Summarized::Rows(rows))
 }
 
 /// [`QueryBoard::show`] over the snapshot `board`.
@@ -236,3 +297,7 @@ mod artifacts_tests;
 #[cfg(test)]
 #[path = "query_board_show_tests.rs"]
 mod show_tests;
+
+#[cfg(test)]
+#[path = "query_board_summary_tests.rs"]
+mod summary_tests;

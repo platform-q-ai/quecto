@@ -1,21 +1,27 @@
 //! How an answer names a board's artifacts (#2481 M4a): a file set aside
-//! by its kind's key, and `show`'s task with its plans and runs, in the
-//! board's own field names as their files hold them, and nothing more.
+//! by its kind's key, `show`'s task with its plans and runs, in the
+//! board's own field names as their files hold them, and nothing more;
+//! and a listed task's summary of them.
 use serde_json::{Map, Value, json};
 
 use super::{
-    fields, head_json, identity_json, key_fields, quarantined_list, shown, shown_json, slug_json,
-    slugs_json, task_json,
+    ErrorCode, error_code, fields, head_json, identity_json, key_fields, quarantined_list, shown,
+    shown_json, slug_json, slugs_json, task_json,
 };
 use crate::application::project_board::dto::ShownTask;
 use crate::application::project_board::operations::PlanPage;
 use crate::application::project_board::ports::{ArtifactKey, QuarantinedFile};
+use crate::application::project_board::task_summary::{
+    Listed, RowSummaries, RowSummary, SkipReason, TaskSummary,
+};
 use crate::domain::project_board::entities::plan::{Plan, PlanItem};
 use crate::domain::project_board::entities::run::Run;
 use crate::domain::project_board::entities::team::Team;
 use crate::domain::project_board::value_objects::shown_text::{
     shown_artifact_path, shown_board_path, shown_path,
 };
+use crate::domain::project_board::value_objects::timestamp::Timestamp;
+use crate::domain::project_board::value_objects::vocabulary::{PlanState, RunOutcome};
 
 /// What `show` answers (#2481 M4a), all as one read of the board found
 /// it: its `head`; the whole `task`; `plan`, the version `version` names
@@ -53,6 +59,53 @@ pub(super) fn shown_fields(shown: &ShownTask, version: Option<u32>) -> Map<Strin
             quarantined_list(&shown.set_aside),
         ),
     ])
+}
+
+/// A listing's `head`, its `tasks` and the files set aside as
+/// `quarantined`. Asked for summaries, each task carries its `summary`
+/// ([`summary_json`]); a task whose summary could not be read carries
+/// `summary: null` and its own `summary_skipped` (the code of why); and a
+/// listing whose summaries were skipped whole carries none on any task and
+/// a top-level `summary_skipped`.
+pub(super) fn listing_fields(listing: &Listed) -> Map<String, Value> {
+    let tasks = listing.entries().map(|(task, row)| {
+        let mut entry = task_json(task);
+        match row {
+            None => {}
+            Some(RowSummary::Summary(summary)) => entry["summary"] = summary_json(summary),
+            Some(RowSummary::Skipped(why)) => {
+                entry["summary"] = Value::Null;
+                entry["summary_skipped"] = json!(error_code(why).as_str());
+            }
+        }
+        entry
+    });
+    let mut fields = Map::from_iter([
+        ("head".to_string(), head_json(listing.head())),
+        ("tasks".to_string(), Value::Array(tasks.collect())),
+        (
+            "quarantined".to_string(),
+            quarantined_list(listing.quarantined()),
+        ),
+    ]);
+    match listing.summaries() {
+        RowSummaries::Omitted | RowSummaries::Given(_) => {}
+        RowSummaries::Skipped(why) => {
+            fields.insert("summary_skipped".into(), json!(skip_code(why)));
+        }
+    }
+    fields
+}
+
+/// The code a listing's `summary_skipped` gives for `why`: `contended`
+/// (the code a write that kept losing the race gives), `index_disagrees`,
+/// or the code the failed read would have been refused with.
+fn skip_code(why: &SkipReason) -> &'static str {
+    match why {
+        SkipReason::Contended => ErrorCode::Contended.as_str(),
+        SkipReason::IndexDisagrees => "index_disagrees",
+        SkipReason::Failed(error) => error_code(error).as_str(),
+    }
 }
 
 /// A plan in the board's own field names, as its file holds them, every
@@ -212,12 +265,10 @@ fn run_brief_json(run: &Run) -> Value {
 
 fn run_brief(run: &Run) -> Map<String, Value> {
     let run = run.fields();
-    // `running` exactly while it has no outcome, as its file spells it.
-    let state = run.outcome.map_or("running", |outcome| outcome.as_str());
     fields([
         ("number", json!(run.number)),
         ("plan_version", json!(run.plan_version)),
-        ("state", json!(state)),
+        ("state", json!(run_state(run.outcome))),
         ("started", json!(run.started.as_str())),
         (
             "ended",
@@ -225,6 +276,53 @@ fn run_brief(run: &Run) -> Map<String, Value> {
         ),
         ("cost_tokens", json!(run.cost)),
     ])
+}
+
+/// A run's `state`: `running` exactly while it has no outcome, its
+/// outcome as its file spells it otherwise; `show` and a listing's
+/// summary say it alike.
+fn run_state(outcome: Option<RunOutcome>) -> &'static str {
+    outcome.map_or("running", RunOutcome::as_str)
+}
+
+/// A listed task's `summary` (`TaskSummary`): its current `plan`'s
+/// `version` and `state` (`draft` or `accepted`), its latest readable
+/// `run` (`number`, `plan_version`, `state`, `started` and `ended` as
+/// `show` gives them, its `deadline`, and its task `items` counted by
+/// state), each `null` when it has none, and `may_be_incomplete`, as
+/// `show` says it.
+fn summary_json(summary: &TaskSummary) -> Value {
+    let plan = summary.plan.as_ref().map(|plan| {
+        assert!(
+            matches!(plan.state, PlanState::Draft | PlanState::Accepted),
+            "a summary names a draft or accepted plan: {plan:?}"
+        );
+        json!({"version": plan.version, "state": plan.state.as_str()})
+    });
+    let run = summary.run.as_ref().map(|run| {
+        let items = &run.items;
+        json!({
+            "number": run.number,
+            "plan_version": run.plan_version,
+            "state": run_state(run.outcome),
+            "started": run.started.as_str(),
+            "ended": run.ended.as_ref().map(Timestamp::as_str),
+            "deadline": run.deadline.as_ref().map(Timestamp::as_str),
+            "items": {
+                "total": items.total,
+                "todo": items.todo,
+                "doing": items.doing,
+                "review": items.review,
+                "done": items.done,
+                "blocked": items.blocked,
+            },
+        })
+    });
+    json!({
+        "plan": plan,
+        "run": run,
+        "may_be_incomplete": summary.may_be_incomplete,
+    })
 }
 
 /// A file set aside, as a listing names it: by its raw `path`, its task's

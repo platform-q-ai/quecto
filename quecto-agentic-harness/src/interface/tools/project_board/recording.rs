@@ -19,7 +19,9 @@ use serde_json::Value;
 use super::answer::{self, FrontEndRefusal, rule_code};
 use super::request::{RequestError, schema_field};
 use crate::application::project_board::dto::ProjectBoardError;
-use crate::application::project_board::operations::{BoardOutcome, BoardRequest, Completion};
+use crate::application::project_board::operations::{
+    BoardOutcome, BoardRequest, Completion, ListSummaries,
+};
 use crate::application::project_board::ports::{FoldBackOutcome, FoldBackRecorder};
 use crate::application::project_board::start::StartFacts;
 use crate::application::project_board::telemetry::{
@@ -178,12 +180,13 @@ impl BoardCall {
         &mut self,
         operations: &RunBoardOperation,
         request: &BoardRequest,
+        summaries: ListSummaries,
     ) -> Result<BoardOutcome, ProjectBoardError> {
         let Some(open) = &mut self.open else {
-            return operations.execute(request);
+            return operations.execute_noted_with(request, None, summaries);
         };
         let mut facts = OpFacts::default();
-        let result = operations.execute_noted(request, Some(&mut facts));
+        let result = operations.execute_noted_with(request, Some(&mut facts), summaries);
         facts.fill(&mut open.record);
         open.start = facts.start.take();
         result
@@ -246,7 +249,7 @@ impl BoardCall {
                     Some(head)
                 }
                 BoardOutcome::Shown(shown, _) => Some(&shown.head),
-                BoardOutcome::Listing(listing) => Some(&listing.head),
+                BoardOutcome::Listing(listing) => Some(listing.head()),
                 BoardOutcome::Changed { .. }
                 | BoardOutcome::Planned(_)
                 | BoardOutcome::Accepted(_)

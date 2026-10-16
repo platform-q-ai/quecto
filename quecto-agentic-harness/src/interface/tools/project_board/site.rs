@@ -11,7 +11,8 @@ use serde_json::Value;
 use super::answer::FrontEndRefusal;
 use super::recording::BoardCall;
 use super::request::{op_of, parse};
-use super::{read, run_recorded};
+use super::{read, run_recorded_with, summaries_refusal};
+use crate::application::project_board::operations::ListSummaries;
 use crate::application::project_board::ports::{CoordinatorLaunch, RunLiveness};
 use crate::application::project_board::use_cases::RunBoardOperation;
 
@@ -129,6 +130,19 @@ pub fn answer(
     cancelled: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     call: &mut BoardCall,
 ) -> Value {
+    answer_with(site, text, cancelled, ListSummaries::Omitted, call)
+}
+
+/// [`answer`], a listing summarising its tasks as `summaries` asks (the
+/// CLI's `--summary`); summaries asked of a request that lists nothing
+/// are refused before anything is built.
+pub fn answer_with(
+    site: &BoardSite,
+    text: &str,
+    cancelled: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    summaries: ListSummaries,
+    call: &mut BoardCall,
+) -> Value {
     let value = match read(text) {
         Ok(value) => value,
         Err(error) => {
@@ -145,6 +159,9 @@ pub fn answer(
         Err(error) => return call.refuse_request(op.as_deref(), &error),
     };
     call.parsed(&parsed);
+    if let Some(refusal) = summaries_refusal(&parsed, summaries) {
+        return call.refuse_request(op.as_deref(), &refusal);
+    }
     let Some(build) = site.build else {
         return call.refuse_as_front_end(
             op.as_deref(),
@@ -166,7 +183,7 @@ pub fn answer(
     };
     match call.built(|| build(&environment)) {
         // The one entry point every front end's request goes through.
-        Ok(handles) => run_recorded(&handles.operations, text, call),
+        Ok(handles) => run_recorded_with(&handles.operations, text, summaries, call),
         Err(BuildError::NoCommitter(why)) => {
             call.refuse_as_front_end(op.as_deref(), FrontEndRefusal::NoCommitter, &why)
         }
