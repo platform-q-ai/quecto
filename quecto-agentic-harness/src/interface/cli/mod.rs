@@ -1,7 +1,7 @@
 mod admission_broker;
 pub mod admission_handles;
 mod agent;
-mod auth;
+pub mod auth;
 pub mod board;
 pub mod catalogue_handles;
 pub mod claude_member;
@@ -105,8 +105,6 @@ mod uds_workflow_nudge;
 use crate::application::configuration::dto::{ConfigSelection, ConfigSelectionRequest};
 use config_flag::{extract_config_flag, strip_global_config_flag};
 use std::path::PathBuf;
-
-// Re-export public types for external consumers.
 
 /// Re-export for test access to OpenAI import params struct.
 pub use auth::auth_import::OpenAiImportParams;
@@ -309,6 +307,8 @@ pub struct CliContext {
     /// refuses to run without it, since the interface never opens the admin
     /// socket or runs `systemctl` itself.
     pub admission: Option<AdmissionHandlesBuilder>,
+    /// Composition's auth handles builder (#1839); `auth login` needs it.
+    pub auth: Option<auth::AuthHandlesBuilder>,
     /// Composition's catalogue handles builder (#1845). Supplied by the
     /// binary's `main` through [`run`]'s [`CliComposition`]; an agent run
     /// refuses to start without it.
@@ -445,6 +445,7 @@ pub struct CliComposition {
     pub fresh_session_identity: FreshSessionIdentityBuilder,
     pub configuration: ConfigurationHandlesBuilder,
     pub admission: AdmissionHandlesBuilder,
+    pub auth: auth::AuthHandlesBuilder,
     pub catalogue: CatalogueHandlesBuilder,
     pub provider_runtime: ProviderRuntimeBuilder,
     pub tool_policy_persistence: ToolPolicyPersistenceBuilder,
@@ -533,6 +534,7 @@ fn composed_context(
         fresh_session_identity: Some(composition.fresh_session_identity),
         configuration: Some(composition.configuration),
         admission: Some(composition.admission),
+        auth: Some(composition.auth),
         catalogue: Some(composition.catalogue),
         provider_runtime: Some(composition.provider_runtime),
         tool_policy_persistence: Some(composition.tool_policy_persistence),

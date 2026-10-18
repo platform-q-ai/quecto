@@ -43,9 +43,3 @@ fn test_expires_at_with_margin_zero_expiry() {
         result
     );
 }
-
-// --- OAUTH_EXPIRY_MARGIN_SECS constant ---
-#[test]
-fn test_oauth_expiry_margin_is_five_minutes() {
-    assert_eq!(OAUTH_EXPIRY_MARGIN_SECS, 300);
-}

@@ -10,7 +10,10 @@ fn args(s: &str) -> Vec<String> {
 }
 
 fn default_ctx() -> CliContext {
-    CliContext::default()
+    CliContext {
+        auth: Some(crate::composition::bootstrap::auth::build_auth_handles),
+        ..Default::default()
+    }
 }
 
 #[test]
@@ -27,6 +30,7 @@ fn test_auth_login_stores_token_openai() {
     let tmp = tempfile::TempDir::new().unwrap();
     let ctx = CliContext {
         base_dir: Some(tmp.path().to_path_buf()),
+        auth: Some(crate::composition::bootstrap::auth::build_auth_handles),
         ..Default::default()
     };
     let out = run_with_output(
@@ -47,6 +51,7 @@ fn test_auth_login_stores_token_anthropic() {
     let tmp = tempfile::TempDir::new().unwrap();
     let ctx = CliContext {
         base_dir: Some(tmp.path().to_path_buf()),
+        auth: Some(crate::composition::bootstrap::auth::build_auth_handles),
         ..Default::default()
     };
     let out = run_with_output(
@@ -62,6 +67,7 @@ fn test_auth_login_missing_provider() {
     let tmp = tempfile::TempDir::new().unwrap();
     let ctx = CliContext {
         base_dir: Some(tmp.path().to_path_buf()),
+        auth: Some(crate::composition::bootstrap::auth::build_auth_handles),
         ..Default::default()
     };
     let out = run_with_output(args("auth login --token sk-test"), &ctx);
@@ -74,6 +80,7 @@ fn test_auth_login_missing_token_flag_value() {
     let tmp = tempfile::TempDir::new().unwrap();
     let ctx = CliContext {
         base_dir: Some(tmp.path().to_path_buf()),
+        auth: Some(crate::composition::bootstrap::auth::build_auth_handles),
         ..Default::default()
     };
     let out = run_with_output(args("auth login --token"), &ctx);
@@ -86,6 +93,7 @@ fn test_auth_logout_removes_credential() {
     let tmp = tempfile::TempDir::new().unwrap();
     let ctx = CliContext {
         base_dir: Some(tmp.path().to_path_buf()),
+        auth: Some(crate::composition::bootstrap::auth::build_auth_handles),
         ..Default::default()
     };
     // First store a credential
@@ -112,6 +120,7 @@ fn test_auth_logout_nonexistent_is_noop() {
     let tmp = tempfile::TempDir::new().unwrap();
     let ctx = CliContext {
         base_dir: Some(tmp.path().to_path_buf()),
+        auth: Some(crate::composition::bootstrap::auth::build_auth_handles),
         ..Default::default()
     };
     let out = run_with_output(args("auth logout --provider openai"), &ctx);
@@ -136,6 +145,7 @@ fn test_auth_status_shows_credentials() {
 
     let ctx = CliContext {
         base_dir: Some(tmp.path().to_path_buf()),
+        auth: Some(crate::composition::bootstrap::auth::build_auth_handles),
         ..Default::default()
     };
     let out = run_with_output(args("auth status"), &ctx);
@@ -149,6 +159,7 @@ fn test_auth_status_empty() {
     let tmp = tempfile::TempDir::new().unwrap();
     let ctx = CliContext {
         base_dir: Some(tmp.path().to_path_buf()),
+        auth: Some(crate::composition::bootstrap::auth::build_auth_handles),
         ..Default::default()
     };
     let out = run_with_output(args("auth status"), &ctx);
@@ -173,6 +184,7 @@ fn test_auth_status_expired() {
 
     let ctx = CliContext {
         base_dir: Some(tmp.path().to_path_buf()),
+        auth: Some(crate::composition::bootstrap::auth::build_auth_handles),
         ..Default::default()
     };
     let out = run_with_output(args("auth status"), &ctx);
@@ -186,6 +198,7 @@ fn test_auth_no_subcommand() {
     let tmp = tempfile::TempDir::new().unwrap();
     let ctx = CliContext {
         base_dir: Some(tmp.path().to_path_buf()),
+        auth: Some(crate::composition::bootstrap::auth::build_auth_handles),
         ..Default::default()
     };
     let out = run_with_output(args("auth"), &ctx);
@@ -198,6 +211,7 @@ fn test_auth_unknown_subcommand() {
     let tmp = tempfile::TempDir::new().unwrap();
     let ctx = CliContext {
         base_dir: Some(tmp.path().to_path_buf()),
+        auth: Some(crate::composition::bootstrap::auth::build_auth_handles),
         ..Default::default()
     };
     let out = run_with_output(args("auth foobar"), &ctx);
@@ -210,6 +224,7 @@ fn test_auth_login_unknown_provider_rejected() {
     let tmp = tempfile::TempDir::new().unwrap();
     let ctx = CliContext {
         base_dir: Some(tmp.path().to_path_buf()),
+        auth: Some(crate::composition::bootstrap::auth::build_auth_handles),
         ..Default::default()
     };
     let out = run_with_output(args("auth login --provider groq --token sk-test"), &ctx);
@@ -223,6 +238,7 @@ fn test_auth_login_empty_token_rejected() {
     let tmp = tempfile::TempDir::new().unwrap();
     let ctx = CliContext {
         base_dir: Some(tmp.path().to_path_buf()),
+        auth: Some(crate::composition::bootstrap::auth::build_auth_handles),
         ..Default::default()
     };
     // We pass a token that's all whitespace
@@ -245,6 +261,7 @@ fn test_auth_login_unknown_flag_rejected() {
     let tmp = tempfile::TempDir::new().unwrap();
     let ctx = CliContext {
         base_dir: Some(tmp.path().to_path_buf()),
+        auth: Some(crate::composition::bootstrap::auth::build_auth_handles),
         ..Default::default()
     };
     let out = run_with_output(args("auth login --provider openai --tokn sk-test"), &ctx);
@@ -258,6 +275,7 @@ fn test_auth_logout_unknown_flag_rejected() {
     let tmp = tempfile::TempDir::new().unwrap();
     let ctx = CliContext {
         base_dir: Some(tmp.path().to_path_buf()),
+        auth: Some(crate::composition::bootstrap::auth::build_auth_handles),
         ..Default::default()
     };
     let out = run_with_output(args("auth logout --provder openai"), &ctx);
@@ -275,6 +293,7 @@ fn test_auth_login_bare_prompts_provider_choice() {
     let ctx = CliContext {
         base_dir: Some(tmp.path().to_path_buf()),
         stdin_data: Some("4\n".to_string()), // invalid choice
+        auth: Some(crate::composition::bootstrap::auth::build_auth_handles),
         ..Default::default()
     };
     let out = run_with_output(args("auth login"), &ctx);
@@ -294,6 +313,7 @@ fn test_auth_login_bare_choose_anthropic() {
     let ctx = CliContext {
         base_dir: Some(tmp.path().to_path_buf()),
         stdin_data: Some("1\n".to_string()),
+        auth: Some(crate::composition::bootstrap::auth::build_auth_handles),
         ..Default::default()
     };
     let out = run_with_output(args("auth login"), &ctx);
@@ -312,6 +332,7 @@ fn test_auth_login_bare_choose_openai() {
     let ctx = CliContext {
         base_dir: Some(tmp.path().to_path_buf()),
         stdin_data: Some("2\nbogus-code\n".to_string()), // Choose OpenAI, provide bogus code
+        auth: Some(crate::composition::bootstrap::auth::build_auth_handles),
         ..Default::default()
     };
     let out = run_with_output(args("auth login"), &ctx);
@@ -329,6 +350,7 @@ fn test_auth_login_token_still_works() {
     let tmp = tempfile::TempDir::new().unwrap();
     let ctx = CliContext {
         base_dir: Some(tmp.path().to_path_buf()),
+        auth: Some(crate::composition::bootstrap::auth::build_auth_handles),
         ..Default::default()
     };
     let out = run_with_output(
@@ -353,6 +375,7 @@ fn test_auth_login_oauth_openai() {
     let ctx = CliContext {
         base_dir: Some(tmp.path().to_path_buf()),
         stdin_data: Some("bogus-code\n".to_string()), // Skip browser, paste code
+        auth: Some(crate::composition::bootstrap::auth::build_auth_handles),
         ..Default::default()
     };
     let out = run_with_output(args("auth login --provider openai --oauth"), &ctx);
@@ -371,6 +394,7 @@ fn test_auth_login_oauth_anthropic_prompts_for_code() {
     let ctx = CliContext {
         base_dir: Some(tmp.path().to_path_buf()),
         stdin_data: Some("\n".to_string()), // empty code triggers error
+        auth: Some(crate::composition::bootstrap::auth::build_auth_handles),
         ..Default::default()
     };
     let out = run_with_output(args("auth login --provider anthropic --oauth"), &ctx);
@@ -390,6 +414,7 @@ fn test_auth_login_oauth_with_test_base_url() {
         base_dir: Some(tmp.path().to_path_buf()),
         oauth_base_url: Some("http://localhost:9999".to_string()),
         stdin_data: Some("bogus-code\n".to_string()), // Skip browser, paste code
+        auth: Some(crate::composition::bootstrap::auth::build_auth_handles),
         ..Default::default()
     };
     let out = run_with_output(args("auth login --provider openai --oauth"), &ctx);
@@ -412,6 +437,7 @@ fn test_auth_login_device_code_unsupported_provider() {
     let tmp = tempfile::TempDir::new().unwrap();
     let ctx = CliContext {
         base_dir: Some(tmp.path().to_path_buf()),
+        auth: Some(crate::composition::bootstrap::auth::build_auth_handles),
         ..Default::default()
     };
     let out = run_with_output(args("auth login --provider anthropic --device-code"), &ctx);
@@ -432,6 +458,7 @@ fn test_auth_login_provider_missing_value() {
     let tmp = tempfile::TempDir::new().unwrap();
     let ctx = CliContext {
         base_dir: Some(tmp.path().to_path_buf()),
+        auth: Some(crate::composition::bootstrap::auth::build_auth_handles),
         ..Default::default()
     };
     let out = run_with_output(args("auth login --provider"), &ctx);
@@ -444,6 +471,7 @@ fn test_auth_login_token_missing_value() {
     let tmp = tempfile::TempDir::new().unwrap();
     let ctx = CliContext {
         base_dir: Some(tmp.path().to_path_buf()),
+        auth: Some(crate::composition::bootstrap::auth::build_auth_handles),
         ..Default::default()
     };
     let out = run_with_output(args("auth login --token"), &ctx);
@@ -456,6 +484,7 @@ fn test_auth_logout_provider_missing_value() {
     let tmp = tempfile::TempDir::new().unwrap();
     let ctx = CliContext {
         base_dir: Some(tmp.path().to_path_buf()),
+        auth: Some(crate::composition::bootstrap::auth::build_auth_handles),
         ..Default::default()
     };
     let out = run_with_output(args("auth logout --provider"), &ctx);
@@ -468,6 +497,7 @@ fn test_auth_logout_missing_provider() {
     let tmp = tempfile::TempDir::new().unwrap();
     let ctx = CliContext {
         base_dir: Some(tmp.path().to_path_buf()),
+        auth: Some(crate::composition::bootstrap::auth::build_auth_handles),
         ..Default::default()
     };
     let out = run_with_output(args("auth logout"), &ctx);
@@ -480,10 +510,37 @@ fn test_auth_logout_missing_provider() {
 // ===================================================================
 
 #[test]
-fn test_known_providers_constant() {
-    assert!(KNOWN_PROVIDERS.contains(&"openai"));
-    assert!(KNOWN_PROVIDERS.contains(&"anthropic"));
-    assert!(!KNOWN_PROVIDERS.contains(&"groq"));
+fn a_refusal_lists_the_login_providers_in_order() {
+    assert_eq!(known_providers(), "openai, anthropic, xai");
+}
+
+#[test]
+fn auth_login_refuses_without_composed_auth_handles() {
+    let out = run_with_output(
+        args("auth login --provider openai --token sk-1"),
+        &CliContext::default(),
+    );
+    assert_eq!(out.exit_code, 1);
+    assert_eq!(out.stderr, "auth login: auth capability not composed\n");
+    let device = run_with_output(
+        args("auth login --provider openai --device-code"),
+        &CliContext::default(),
+    );
+    assert_eq!(device.exit_code, 1);
+    assert_eq!(device.stderr, "auth login: auth capability not composed\n");
+}
+
+#[test]
+fn the_unknown_provider_refusal_keeps_its_wording() {
+    let out = run_with_output(
+        args("auth login --provider bogus --token sk-1"),
+        &default_ctx(),
+    );
+    assert_eq!(out.exit_code, 1);
+    assert_eq!(
+        out.stderr,
+        "auth login: unknown provider 'bogus'. Known: openai, anthropic, xai\n"
+    );
 }
 
 // ===================================================================
@@ -494,6 +551,7 @@ fn test_known_providers_constant() {
 fn test_read_stdin_line_with_data() {
     let ctx = CliContext {
         stdin_data: Some("hello world\nsecond line\n".to_string()),
+        auth: Some(crate::composition::bootstrap::auth::build_auth_handles),
         ..Default::default()
     };
     let result = read_stdin_line(&ctx).unwrap();
@@ -504,6 +562,7 @@ fn test_read_stdin_line_with_data() {
 fn test_read_stdin_line_empty_data() {
     let ctx = CliContext {
         stdin_data: Some("".to_string()),
+        auth: Some(crate::composition::bootstrap::auth::build_auth_handles),
         ..Default::default()
     };
     let result = read_stdin_line(&ctx).unwrap();
@@ -514,6 +573,7 @@ fn test_read_stdin_line_empty_data() {
 fn test_read_stdin_line_single_line_no_newline() {
     let ctx = CliContext {
         stdin_data: Some("just-a-token".to_string()),
+        auth: Some(crate::composition::bootstrap::auth::build_auth_handles),
         ..Default::default()
     };
     let result = read_stdin_line(&ctx).unwrap();

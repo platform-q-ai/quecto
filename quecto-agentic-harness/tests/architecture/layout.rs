@@ -102,14 +102,15 @@ const MIGRATED: &[Capability<'_>] = &[
     Capability("domain/project_board", &["entities", "value_objects", "services"]),
     Capability("infrastructure/tools", &["agents", "native", "registry", "swarm"]),
     Capability("infrastructure/persistence", &["file", "sqlite", "project_board"]),
+    Capability("application/auth", &["use_cases", "ports", "dto"]),
 ];
 // Wiki target-source-tree anchors define allowed future names; Transitional rows must exist.
 // https://github.com/platform-q-ai/quecto/wiki/Agentic-Harness-Target-Architecture#target-source-tree
 type Placement<'a> = (&'a str, &'a [&'a str]);
 #[rustfmt::skip]
 const PLACEMENTS: &[Placement<'_>] = &[
-    ("domain", &["conversation", "admission", "environments", "catalogue", "tool_policy", "sessions", "agents", "audit", "inference", "commander", "identity", "shared", "external_agent", "swarm", "workflow", "project_board", "search"]),
-    ("application", &["admission", "agent_turn", "audit", "catalogue", "configuration", "environments", "extensions", "external_agent", "provider_runtime", "providers", "search", "sessions", "subagents", "swarm", "tools", "workflow", "agent_commander", "shared", "agent_loop", "project_board"]),
+    ("domain", &["auth", "conversation", "admission", "environments", "catalogue", "tool_policy", "sessions", "agents", "audit", "inference", "commander", "identity", "shared", "external_agent", "swarm", "workflow", "project_board", "search"]),
+    ("application", &["admission", "agent_turn", "audit", "auth", "catalogue", "configuration", "environments", "extensions", "external_agent", "provider_runtime", "providers", "search", "sessions", "subagents", "swarm", "tools", "workflow", "agent_commander", "shared", "agent_loop", "project_board"]),
     ("interface", &["cli", "repl", "tools", "uds"]),
     ("infrastructure", &["admission", "auth", "config", "extensions", "external_agents", "http", "persistence", "processes", "providers", "search", "security", "tools", "workspace", "judgment", "observability", "time", "test_support"]),
     ("composition", &["bootstrap", "runtime", "logging", "shutdown"]),

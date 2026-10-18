@@ -51,6 +51,7 @@ fn oauth_ctx(base: &std::path::Path, uri: String, stdin: &str) -> CliContext {
         base_dir: Some(base.to_path_buf()),
         oauth_base_url: Some(uri),
         stdin_data: Some(stdin.to_string()),
+        auth: Some(crate::composition::bootstrap::auth::build_auth_handles),
         ..Default::default()
     }
 }
@@ -293,6 +294,7 @@ fn test_xai_device_code_rejected() {
     let tmp = tempfile::TempDir::new().unwrap();
     let ctx = CliContext {
         base_dir: Some(tmp.path().to_path_buf()),
+        auth: Some(crate::composition::bootstrap::auth::build_auth_handles),
         ..Default::default()
     };
     let out = run_with_output(args("auth login --provider xai --device-code"), &ctx);
@@ -317,6 +319,7 @@ fn test_device_code_login_success() {
     let ctx = CliContext {
         base_dir: Some(tmp.path().to_path_buf()),
         oauth_base_url: Some(uri),
+        auth: Some(crate::composition::bootstrap::auth::build_auth_handles),
         ..Default::default()
     };
     let out = run_with_output(args("auth login --provider openai --device-code"), &ctx);
@@ -332,6 +335,7 @@ fn test_device_code_login_request_failure() {
     let ctx = CliContext {
         base_dir: Some(tmp.path().to_path_buf()),
         oauth_base_url: Some(uri),
+        auth: Some(crate::composition::bootstrap::auth::build_auth_handles),
         ..Default::default()
     };
     let out = run_with_output(args("auth login --provider openai --device-code"), &ctx);
@@ -346,6 +350,7 @@ fn test_store_oauth_credential_success() {
     let tmp = tempfile::TempDir::new().unwrap();
     let ctx = CliContext {
         base_dir: Some(tmp.path().to_path_buf()),
+        auth: Some(crate::composition::bootstrap::auth::build_auth_handles),
         ..Default::default()
     };
     let token_resp = OAuthTokenResponse {
@@ -383,6 +388,7 @@ fn test_login_positional_arg_is_ignored() {
     let tmp = tempfile::TempDir::new().unwrap();
     let ctx = CliContext {
         base_dir: Some(tmp.path().to_path_buf()),
+        auth: Some(crate::composition::bootstrap::auth::build_auth_handles),
         ..Default::default()
     };
     let out = run_with_output(
@@ -395,7 +401,10 @@ fn test_login_positional_arg_is_ignored() {
 
 #[test]
 fn test_login_device_code_without_provider() {
-    let ctx = CliContext::default();
+    let ctx = CliContext {
+        auth: Some(crate::composition::bootstrap::auth::build_auth_handles),
+        ..Default::default()
+    };
     let out = run_with_output(args("auth login --device-code"), &ctx);
     assert_eq!(out.exit_code, 1);
     assert!(
@@ -411,6 +420,7 @@ fn test_login_oauth_unknown_provider_rejected() {
     let tmp = tempfile::TempDir::new().unwrap();
     let ctx = CliContext {
         base_dir: Some(tmp.path().to_path_buf()),
+        auth: Some(crate::composition::bootstrap::auth::build_auth_handles),
         ..Default::default()
     };
     let out = run_with_output(args("auth login --provider bogus --oauth"), &ctx);
@@ -425,6 +435,7 @@ fn corrupt_store_ctx(tmp: &tempfile::TempDir) -> CliContext {
     std::fs::write(tmp.path().join("credentials.json"), "{ not json ").unwrap();
     CliContext {
         base_dir: Some(tmp.path().to_path_buf()),
+        auth: Some(crate::composition::bootstrap::auth::build_auth_handles),
         ..Default::default()
     }
 }
@@ -478,6 +489,7 @@ fn test_logout_positional_arg_ignored() {
     let tmp = tempfile::TempDir::new().unwrap();
     let ctx = CliContext {
         base_dir: Some(tmp.path().to_path_buf()),
+        auth: Some(crate::composition::bootstrap::auth::build_auth_handles),
         ..Default::default()
     };
     let out = run_with_output(args("auth logout extra --provider openai"), &ctx);
@@ -504,6 +516,7 @@ fn test_login_oauth_unsupported_provider_direct() {
     let tmp = tempfile::TempDir::new().unwrap();
     let ctx = CliContext {
         base_dir: Some(tmp.path().to_path_buf()),
+        auth: Some(crate::composition::bootstrap::auth::build_auth_handles),
         ..Default::default()
     };
     let mut stdout = String::new();
@@ -525,6 +538,7 @@ fn test_login_oauth_generic_provider_branch() {
     let ctx = CliContext {
         base_dir: Some(tmp.path().to_path_buf()),
         oauth_base_url: Some("http://127.0.0.1:1".to_string()),
+        auth: Some(crate::composition::bootstrap::auth::build_auth_handles),
         ..Default::default()
     };
     let mut stdout = String::new();
@@ -546,6 +560,7 @@ fn test_device_code_unsupported_provider_resolve_none() {
     let tmp = tempfile::TempDir::new().unwrap();
     let ctx = CliContext {
         base_dir: Some(tmp.path().to_path_buf()),
+        auth: Some(crate::composition::bootstrap::auth::build_auth_handles),
         ..Default::default()
     };
     let out = run_with_output(args("auth login --provider weird --device-code"), &ctx);
@@ -573,7 +588,10 @@ fn test_openai_oauth_fallback_empty_code() {
 
 #[test]
 fn test_flush_stdout_clears_buffer() {
-    let ctx = CliContext::default(); // stdin_data: None → real flush path
+    let ctx = CliContext {
+        auth: Some(crate::composition::bootstrap::auth::build_auth_handles),
+        ..Default::default()
+    }; // stdin_data: None → real flush path
     let mut stdout = String::from("prompt text");
     let mut stderr = String::new();
     let mut out = Output {

@@ -1,6 +1,6 @@
 //! Shared utility functions used by CLI and REPL modules.
 
-use crate::infrastructure::auth::credential_store::Credential;
+use crate::domain::auth::credential::Credential;
 use crate::infrastructure::auth::token_refresh::persist_refreshed_token;
 use std::collections::HashMap;
 
@@ -186,7 +186,7 @@ pub fn resolve_api_key(
     provider: &str,
 ) -> String {
     if let Some(cred) = creds.get(provider) {
-        if !cred.is_expired() {
+        if !cred.is_expired_at(crate::infrastructure::time::unix_timestamp_secs()) {
             return cred.token.clone();
         }
     }
@@ -259,12 +259,12 @@ pub async fn resolve_api_key_with_refresh_async_with_oauth_config(
     let creds = store.load_snapshot().unwrap_or_default();
 
     if let Some(cred) = creds.get(provider) {
-        if !cred.is_expired() {
+        if !cred.is_expired_at(crate::infrastructure::time::unix_timestamp_secs()) {
             return cred.token.clone();
         }
 
         // Token is expired — try to refresh if we have a refresh token
-        if cred.method == crate::infrastructure::auth::credential_store::AuthMethod::OAuth {
+        if cred.method == crate::domain::auth::credential::AuthMethod::OAuth {
             if let Some(ref refresh_token) = cred.refresh_token {
                 tracing::info!("refreshing expired OAuth token for {} (async)", provider);
 
@@ -337,7 +337,7 @@ pub fn resolve_agent_workspace(config_workspace: &str) -> std::path::PathBuf {
 pub fn check_provider_readiness(creds: &HashMap<String, Credential>) -> Vec<String> {
     creds
         .values()
-        .filter(|c| c.is_expired())
+        .filter(|c| c.is_expired_at(crate::infrastructure::time::unix_timestamp_secs()))
         .map(|c| c.provider.clone())
         .collect()
 }

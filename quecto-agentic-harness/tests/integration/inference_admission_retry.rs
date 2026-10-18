@@ -55,7 +55,8 @@ async fn retry_exhaustion_charges_each_send_and_sleeps_after_finish() {
 
 #[tokio::test]
 async fn auth_refresh_rebuild_reacquires_same_bound_gate() {
-    use quecto::infrastructure::auth::credential_store::{AuthMethod, Credential, CredentialStore};
+    use quecto::domain::auth::credential::{AuthMethod, Credential};
+    use quecto::infrastructure::auth::credential_store::CredentialStore;
     use quecto::infrastructure::providers::openai::OpenAiProvider;
     use quecto::infrastructure::providers::refreshable::{RefreshableConfig, RefreshableProvider};
     use wiremock::matchers::header;

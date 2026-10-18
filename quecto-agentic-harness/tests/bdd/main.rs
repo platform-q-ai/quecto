@@ -8,13 +8,12 @@ use quecto::application::sessions::ports::{ContextSpillStore, SessionStore};
 use quecto::application::subagent::{SubagentConfig, SubagentContext, validate_agent_id};
 use quecto::application::tools::ports::Tool;
 use quecto::domain::agents::value_objects::agent::{AgentInfo, AgentResult};
+use quecto::domain::auth::credential::{AuthMethod, Credential};
 use quecto::domain::conversation::value_objects::message::{LlmResponse, Message, Role, ToolCall};
 use quecto::domain::sessions::entities::session::Session;
 use quecto::domain::shared::error::DomainError;
 use quecto::domain::tool_policy::value_objects::tool::{ToolDefinition, ToolResult};
-use quecto::infrastructure::auth::credential_store::{
-    AuthMethod, Credential, CredentialStatus, CredentialStore,
-};
+use quecto::infrastructure::auth::credential_store::{CredentialStatus, CredentialStore};
 use quecto::infrastructure::config::Config;
 
 use quecto::domain::inference::services::provider_error::{
@@ -1775,10 +1774,10 @@ impl QuectoWorld {
     /// capability (#1970), its retained-context graph (#1978), the catalogue
     /// handles (#1845), the provider-runtime builder, the tool-policy
     /// persistence builder (#1849), the container-config selection builder
-    /// (#2024 S4a) and the admission builder (#2024 S3): every
-    /// `quecto agent …` run through `run_with_output` needs them or exits
-    /// with "… capability not composed", exactly as the binary's `main`
-    /// supplies them.
+    /// (#2024 S4a), the admission builder (#2024 S3) and the auth builder
+    /// (#1839): every `quecto agent …` or `quecto auth login` run through
+    /// `run_with_output` needs them or exits with "… capability not
+    /// composed", exactly as the binary's `main` supplies them.
     fn new() -> Self {
         let mut world = Self::default();
         world.cli_context.sessions = Some(quecto::composition::sessions::build_session_handles);
@@ -1786,6 +1785,7 @@ impl QuectoWorld {
         world.cli_context.configuration =
             Some(quecto::composition::configuration::build_configuration_handles);
         world.cli_context.admission = Some(quecto::composition::admission::build_admission_handles);
+        world.cli_context.auth = Some(quecto::composition::bootstrap::auth::build_auth_handles);
         world.cli_context.catalogue = Some(quecto::composition::catalogue::build_catalogue_handles);
         world.cli_context.provider_runtime =
             Some(quecto::composition::runtime::build_agent_provider);

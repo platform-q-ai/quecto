@@ -6,7 +6,8 @@
 
 use super::*;
 
-use crate::infrastructure::auth::credential_store::{AuthMethod, Credential, CredentialStore};
+use crate::domain::auth::credential::{AuthMethod, Credential};
+use crate::infrastructure::auth::credential_store::CredentialStore;
 
 // --- resolve_api_key_with_refresh_async: provider without an OAuth config ---
 

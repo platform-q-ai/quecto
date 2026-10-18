@@ -15,7 +15,8 @@
 use super::*;
 
 use quecto::composition::runtime::build_agent_provider;
-use quecto::infrastructure::auth::credential_store::{AuthMethod, Credential, CredentialStore};
+use quecto::domain::auth::credential::{AuthMethod, Credential};
+use quecto::infrastructure::auth::credential_store::CredentialStore;
 use wiremock::matchers::{method, path_regex};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 

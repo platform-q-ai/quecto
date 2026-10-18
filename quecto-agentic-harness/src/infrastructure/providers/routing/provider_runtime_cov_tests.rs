@@ -1,5 +1,5 @@
 use super::*;
-use crate::infrastructure::auth::credential_store::{AuthMethod, Credential};
+use crate::domain::auth::credential::{AuthMethod, Credential};
 use crate::infrastructure::providers::catalogue::model_registry::{
     AuthMode, ModelCost, ModelRecord, ProviderApi,
 };

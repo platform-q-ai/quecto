@@ -101,19 +101,18 @@ fn when_stray_temp_file_left_beside_store(world: &mut QuectoWorld, provider: Str
         .expect("credential store not set");
     world.credential_file_before_update = Some(std::fs::read(store.path()).unwrap());
 
-    let mut pending = store.load_snapshot().unwrap();
-    pending.insert(
-        provider.clone(),
-        Credential {
-            provider,
-            token: "new-token".to_string(),
-            method: AuthMethod::Token,
-            expires_at: None,
-            refresh_token: None,
-            account_id: None,
-        },
-    );
-    let pending_json = serde_json::to_vec_pretty(&pending).unwrap();
+    // The stray file holds a would-be update in the store's own shape.
+    let pending_json = serde_json::to_vec_pretty(&serde_json::json!({
+        "credentials": {
+            provider.as_str(): {
+                "provider": provider,
+                "token": "new-token",
+                "method": "token",
+                "expires_at": null,
+            }
+        }
+    }))
+    .unwrap();
     let pending_path = store
         .path()
         .parent()

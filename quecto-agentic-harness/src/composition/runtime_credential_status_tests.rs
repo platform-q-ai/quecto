@@ -7,9 +7,10 @@
 use super::*;
 use crate::application::catalogue::dto::{ModelLimits, ModelSelectionVerdict};
 use crate::application::catalogue::ports::{EffortRuntime, ModelRuntime};
+use crate::domain::auth::credential::{AuthMethod, Credential};
 use crate::domain::catalogue::value_objects::availability::UnavailableReason;
 use crate::domain::inference::value_objects::provider::EffortLevel;
-use crate::infrastructure::auth::credential_store::{AuthMethod, Credential, CredentialStore};
+use crate::infrastructure::auth::credential_store::CredentialStore;
 
 const BUILTIN_SLOTS: [&str; 5] = [
     "anthropic-api",

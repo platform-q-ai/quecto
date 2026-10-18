@@ -19,8 +19,8 @@
 
 use std::collections::BTreeSet;
 
-use super::credential_store::{AuthMethod, Credential};
 use crate::application::catalogue::ports::RuntimeSnapshotSource;
+use crate::domain::auth::credential::{AuthMethod, Credential};
 use crate::domain::catalogue::value_objects::identity::AuthIdentity;
 
 /// The built-in slots the runtime builds straight from a vendor credential
@@ -41,7 +41,10 @@ pub(crate) fn api_slot_key(configured: &str, stored: Option<Credential>) -> Opti
         return Some(configured.to_string());
     }
     stored
-        .filter(|credential| credential.method == AuthMethod::Token && !credential.is_expired())
+        .filter(|credential| {
+            credential.method == AuthMethod::Token
+                && !credential.is_expired_at(crate::infrastructure::time::unix_timestamp_secs())
+        })
         .map(|credential| credential.token)
         .filter(|token| !token.is_empty())
 }

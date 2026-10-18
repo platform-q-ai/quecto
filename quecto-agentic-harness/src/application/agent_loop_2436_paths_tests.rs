@@ -239,7 +239,8 @@ impl LlmProvider for Unauthorized {
 /// its own: the refused attempt ends as an error, the resend as ok.
 #[tokio::test]
 async fn an_oauth_resend_is_its_own_request() {
-    use crate::infrastructure::auth::credential_store::{AuthMethod, Credential, CredentialStore};
+    use crate::domain::auth::credential::{AuthMethod, Credential};
+    use crate::infrastructure::auth::credential_store::CredentialStore;
     use crate::infrastructure::providers::refreshable::{RefreshableConfig, RefreshableProvider};
     let home = tempfile::TempDir::new().unwrap();
     let store = Arc::new(CredentialStore::new(home.path()));

@@ -43,6 +43,7 @@ fn test_composition() -> CliComposition {
         fresh_session_identity: crate::composition::sessions::build_fresh_session_identity,
         configuration: crate::composition::configuration::build_configuration_handles,
         admission: crate::composition::admission::build_admission_handles,
+        auth: crate::composition::bootstrap::auth::build_auth_handles,
         catalogue: crate::composition::catalogue::build_catalogue_handles,
         provider_runtime: crate::composition::runtime::build_agent_provider,
         tool_policy_persistence: crate::composition::tool_policy::build_tool_policy_persistence,
@@ -98,6 +99,7 @@ fn a_real_runs_context_carries_every_composed_builder() {
         ),
         ("configuration", ctx.configuration.is_some()),
         ("admission", ctx.admission.is_some()),
+        ("auth", ctx.auth.is_some()),
         ("catalogue", ctx.catalogue.is_some()),
         ("provider_runtime", ctx.provider_runtime.is_some()),
         (

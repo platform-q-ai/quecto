@@ -1,5 +1,6 @@
 // OAuth: OAuth 2.0 and device-code login flows for OpenAI, Anthropic and xAI.
 
+use crate::domain::auth::provider::LoginProvider;
 use crate::domain::shared::error::DomainError;
 use serde::Deserialize;
 
@@ -83,6 +84,28 @@ impl OAuthConfig {
             client_id: "quecto-cli".into(),
             redirect_uri: format!("{}/callback", base_url),
             scopes: "test:scope".into(),
+        }
+    }
+}
+
+/// Where a run's OAuth flows point (#1839): each login provider's own
+/// endpoints, or one test server standing in for every provider.
+#[derive(Debug, Clone, Default)]
+pub struct OAuthEndpoints {
+    base_url: Option<String>,
+}
+
+impl OAuthEndpoints {
+    /// The providers' own endpoints, or `base_url`'s for every provider.
+    pub fn new(base_url: Option<String>) -> Self {
+        Self { base_url }
+    }
+
+    /// `provider`'s OAuth configuration.
+    pub fn config_for(&self, provider: LoginProvider) -> Option<OAuthConfig> {
+        match &self.base_url {
+            Some(base_url) => Some(OAuthConfig::with_base_url(base_url)),
+            None => OAuthConfig::for_provider(provider.id()),
         }
     }
 }
