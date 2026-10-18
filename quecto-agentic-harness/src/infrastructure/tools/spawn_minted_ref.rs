@@ -1,7 +1,9 @@
 //! A ref minted for a container create (#2173): its number goes back to
 //! the journal unless the create committed a record under it — also when
 //! the create is dropped before it ran or while it runs.
-use crate::domain::environment_registry::{EnvironmentRecord, EnvironmentRegistry};
+use crate::domain::environments::entities::environment_registry::{
+    EnvironmentRecord, EnvironmentRegistry,
+};
 
 pub(super) struct MintedRef {
     environment_ref: String,

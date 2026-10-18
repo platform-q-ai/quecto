@@ -1,0 +1,705 @@
+use std::collections::BTreeSet;
+
+use super::*;
+
+/// The board's refusal of `op`, carrying no steps.
+fn board_refused(op: &str, error: &ProjectBoardError) -> Value {
+    board_refused_with(op, error, None)
+}
+use crate::domain::project_board::value_objects::rule_error::BoardRuleError;
+use crate::domain::project_board::value_objects::schema_error::SchemaError;
+use crate::domain::project_board::value_objects::slug::Slug;
+use crate::domain::project_board::value_objects::timestamp::Timestamp;
+use crate::domain::project_board::value_objects::vocabulary::{
+    DiscussionLimit, PlanState, TaskStatus,
+};
+
+fn slug(text: &str) -> Slug {
+    Slug::parse(text).unwrap()
+}
+
+fn at(time: &str) -> Timestamp {
+    Timestamp::parse(&format!("2026-10-10T{time}Z")).unwrap()
+}
+
+/// The keys each code's error object carries, every time.
+fn keys(code: ErrorCode) -> &'static [&'static str] {
+    use ErrorCode as C;
+    match code {
+        C::InvalidRequest | C::InvalidTask | C::InvalidWriter => &["field", "problem"],
+        C::NoCommitter
+        | C::Clash
+        | C::InvalidWrite
+        | C::StoreUnavailable
+        | C::BoardTooLarge
+        | C::FolderSetAside
+        | C::PullRequestsUnavailable
+        | C::Refused => &["reason"],
+        C::NoBoard => &[],
+        C::Rule => &["rule"],
+        C::NotFound | C::Exists | C::SetAside | C::UnknownReference => &["task"],
+        C::ClockUnreadable => &["read"],
+        C::ClosesCycle | C::IdInUse => &["task", "by"],
+        C::PrStateUnknown => &["pr"],
+        C::TaskAhead => &["task", "updated"],
+        C::ClockOutOfRange => &["reference"],
+        C::ClockAhead => &["now", "reference"],
+        C::Contended => &["attempts"],
+        C::Stale => &["task", "expected", "updated"],
+        C::NotSetAside => &["path", "object"],
+        C::SetAsideFile => &["path", "object"],
+        // A discussion's shape is its own: `kind`, `discussion`, `path`
+        // (a_set_aside_artifact_is_named_by_its_kind_task_and_number).
+        C::ArtifactSetAside => &["kind", "task", "number", "path"],
+        C::NoPullRequestHost => &["reason"],
+        // A discussion's and a task's shapes are their own
+        // (a_duplicate_artifact_is_named_by_its_kind_task_and_number).
+        C::DuplicateArtifact => &["kind", "task", "number"],
+        C::NoLauncher => &[],
+        C::RunLive => &["task", "run", "agent"],
+        C::Brief => &["brief"],
+        C::LaunchFailed => &[
+            "reason",
+            "run",
+            "run_state",
+            "released",
+            "restored",
+            "still_running",
+        ],
+    }
+}
+
+/// Every [`ProjectBoardError`] variant, once: the pattern that matches it
+/// and an error of it. [`variant`], [`every_error`] and [`VARIANTS`] are
+/// all made from this one table, and `variant`'s match is exhaustive, so a
+/// new variant fails to compile until it has its row here, and then it is
+/// built and counted with the rest.
+macro_rules! board_errors {
+    ($($pattern:pat => $error:expr,)*) => {
+        const VARIANTS: usize = [$(stringify!($pattern)),*].len();
+
+        /// Which row of the table `error` is.
+        fn variant(error: &ProjectBoardError) -> usize {
+            use ProjectBoardError as E;
+            let mut row = 0;
+            $(
+                if matches!(error, $pattern) {
+                    return row;
+                }
+                row += 1;
+            )*
+            // Exhaustive: every variant has a row, so none falls through.
+            match error {
+                $($pattern => unreachable!("matched above at row {row}"),)*
+            }
+        }
+
+        fn every_error() -> Vec<ProjectBoardError> {
+            use ProjectBoardError as E;
+            vec![$($error),*]
+        }
+    };
+}
+
+board_errors! {
+    E::Store(BoardStoreError::NoBoard) => E::Store(BoardStoreError::NoBoard),
+    E::Store(BoardStoreError::Clash(_)) => E::Store(BoardStoreError::Clash("a file".into())),
+    E::Store(BoardStoreError::InvalidWrite(_)) => {
+        E::Store(BoardStoreError::InvalidWrite("too big".into()))
+    },
+    E::Store(BoardStoreError::WriteTooLarge(_)) => {
+        E::Store(BoardStoreError::WriteTooLarge("runs/ past its bytes".into()))
+    },
+    E::Store(BoardStoreError::Unavailable(_)) => {
+        E::Store(BoardStoreError::Unavailable("offline".into()))
+    },
+    E::Store(BoardStoreError::TooLarge(_)) => {
+        E::Store(BoardStoreError::TooLarge("16385 entries".into()))
+    },
+    E::Store(BoardStoreError::FolderSetAside(_)) => {
+        E::Store(BoardStoreError::FolderSetAside("plans/a.1.md is set aside".into()))
+    },
+    E::Rule(_) => E::Rule(BoardRuleError::NotHolder),
+    E::Invalid(_) => E::Invalid(SchemaError::new("title", "is empty")),
+    E::NotFound(_) => E::NotFound(slug("a")),
+    E::Exists(_) => E::Exists(slug("a")),
+    E::IdInUse { .. } => E::IdInUse {
+        id: slug("a"),
+        by: crate::application::project_board::dto::IdUser::Run(1),
+    },
+    E::Clock(BoardClockError::OutOfRange(_)) => {
+        E::Clock(BoardClockError::OutOfRange("1969".into()))
+    },
+    E::Quarantined { .. } => E::Quarantined {
+        key: ArtifactKey::Task(slug("a")),
+        path: "tasks/a.md".into(),
+    },
+    E::Duplicate { .. } => E::Duplicate {
+        key: ArtifactKey::Plan(slug("a"), 2),
+    },
+    E::SetAsideFile { .. } => E::SetAsideFile {
+        path: "tasks/?.md".into(),
+        object: "a".repeat(40),
+    },
+    E::UnknownReference(_) => E::UnknownReference(slug("a")),
+    E::ClosesCycle { .. } => E::ClosesCycle {
+        id: slug("a"),
+        by: slug("b"),
+    },
+    E::InvalidWriter(_) => E::InvalidWriter(SchemaError::new("title", "is empty")),
+    E::PrStateUnknown(_) => E::PrStateUnknown(7),
+    E::PullRequests(PullRequestStatesError::Unavailable(_)) => {
+        E::PullRequests(PullRequestStatesError::Unavailable("no gh".into()))
+    },
+    E::TaskAhead { .. } => E::TaskAhead {
+        id: slug("a"),
+        updated: at("10:00:00"),
+    },
+    E::ClockOutOfRange(_) => E::ClockOutOfRange(at("10:00:00")),
+    E::ClockAhead { .. } => E::ClockAhead {
+        now: at("10:00:00"),
+        reference: at("09:00:00"),
+    },
+    E::Contended { .. } => E::Contended { attempts: 5 },
+    E::Refused(_) => E::Refused("protected".into()),
+    E::NotSetAside { .. } => E::NotSetAside {
+        path: "tasks/x.md".into(),
+        object: "a".repeat(40),
+    },
+    E::NoPullRequestHost(_) => E::NoPullRequestHost(
+        crate::application::project_board::dto::NoPullRequestHost::NotAPullRequestHost,
+    ),
+    E::Stale { .. } => E::Stale {
+        id: slug("a"),
+        expected: at("09:00:00"),
+        updated: at("10:00:00"),
+    },
+    E::NoLauncher => E::NoLauncher,
+    E::RunLive { .. } => E::RunLive {
+        task: slug("a"),
+        run: 1,
+        agent: "7f3a".into(),
+    },
+    E::Brief { .. } => E::from(crate::application::project_board::swarm_brief::BriefRefusal::NoTaskItems),
+    E::LaunchFailed { .. } => E::LaunchFailed {
+        reason: "no container runtime".into(),
+        run: 1,
+        run_state: crate::application::project_board::dto::RunAfterUndo::Folded,
+        released: Some(true),
+        restored: None,
+        still_running: None,
+    },
+}
+
+#[test]
+fn every_board_error_answers_its_codes_one_shape() {
+    let errors = every_error();
+    let covered: BTreeSet<usize> = errors.iter().map(variant).collect();
+    assert_eq!(
+        covered,
+        (0..VARIANTS).collect(),
+        "every_error builds every variant, each once"
+    );
+    assert_eq!(errors.len(), VARIANTS);
+    // A plan's file set aside answers the other code `Quarantined` has.
+    let plan_set_aside = ProjectBoardError::Quarantined {
+        key: ArtifactKey::Plan(slug("a"), 1),
+        path: "plans/a.1.md".into(),
+    };
+    for error in errors.iter().chain([&plan_set_aside]) {
+        let answer = board_refused("show", error);
+        assert_eq!(answer["ok"], json!(false));
+        let object = answer["error"].as_object().unwrap();
+        let code = object["code"].as_str().unwrap();
+        let (expected, _) = error_fields(error);
+        assert_eq!(code, expected.as_str(), "{error:?}");
+        let mut want: BTreeSet<&str> = keys(expected).iter().copied().collect();
+        want.extend(["code", "message"]);
+        let got: BTreeSet<&str> = object.keys().map(String::as_str).collect();
+        assert_eq!(got, want, "{error:?}");
+    }
+}
+
+#[test]
+fn a_front_ends_own_refusals_have_their_codes_shapes() {
+    for (refusal, code) in [
+        (FrontEndRefusal::NoCommitter, ErrorCode::NoCommitter),
+        (
+            FrontEndRefusal::StoreUnavailable,
+            ErrorCode::StoreUnavailable,
+        ),
+    ] {
+        let answer = reason_refused(Some("list"), refusal, "why", None);
+        assert_eq!(answer["error"]["code"], json!(code.as_str()));
+        let got: BTreeSet<&str> = answer["error"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        let mut want: BTreeSet<&str> = keys(code).iter().copied().collect();
+        want.extend(["code", "message"]);
+        assert_eq!(got, want);
+    }
+}
+
+/// Every text an answer carries from outside the harness is redacted:
+/// URL credentials and secret-shaped spans alike. A set-aside file's path
+/// is the one exception: the store allowlists or quotes it, and a clear
+/// must name it exactly as shown.
+#[test]
+fn text_from_outside_is_redacted_wherever_it_is_shown() {
+    let secret = "ghp_abcdefghijklmnopqrstuvwxyz0123";
+    let leaky = SchemaError::new(format!("plan {secret}"), format!("token: {secret}"));
+    for answer in [
+        board_refused("create", &ProjectBoardError::Invalid(leaky.clone())),
+        board_refused("create", &ProjectBoardError::InvalidWriter(leaky.clone())),
+        board_refused(
+            "create",
+            &ProjectBoardError::Rule(BoardRuleError::Invalid(leaky.clone())),
+        ),
+        board_refused(
+            "complete",
+            &ProjectBoardError::Refused(format!("https://u:{secret}@github.com/x")),
+        ),
+        reason_refused(
+            None,
+            FrontEndRefusal::StoreUnavailable,
+            &format!("password={secret}"),
+            None,
+        ),
+        json!({"quarantined": quarantined_json(&QuarantinedFile {
+            path: "tasks/x.md".into(),
+            key: None,
+            reason: format!("api_key: {secret}"),
+            object: "a".repeat(40),
+            carried: true,
+        })}),
+    ] {
+        let text = answer.to_string();
+        assert!(!text.contains(secret), "{text}");
+    }
+    let path = format!("tasks/{secret}.json");
+    let shown = quarantined_json(&QuarantinedFile {
+        path: path.clone(),
+        key: None,
+        reason: "a stray".into(),
+        object: "a".repeat(40),
+        carried: false,
+    });
+    assert_eq!(shown["path"], json!(path), "a path is shown as it is");
+}
+
+/// A listing names what a clear needs: each file's object, and for a name
+/// shown more than once every copy's object.
+#[test]
+fn a_listing_shows_each_files_object_and_its_names_copies() {
+    let file = |path: &str, object: char| QuarantinedFile {
+        path: path.into(),
+        key: None,
+        reason: "named more than once".into(),
+        object: object.to_string().repeat(40),
+        carried: false,
+    };
+    let listed = quarantined_list(&[
+        file("tasks/a.md", 'a'),
+        file("tasks/a.md", 'b'),
+        file("tasks/c.md", 'c'),
+        // Two entries of one object (names no one can tell apart).
+        file("tasks/c.md", 'c'),
+    ]);
+    let (a, b) = ("a".repeat(40), "b".repeat(40));
+    assert_eq!(listed[0]["object"], json!(a));
+    assert_eq!(listed[0]["copies"], json!([a, b]));
+    assert_eq!(listed[1]["copies"], json!([a, b]));
+    assert_eq!(listed[2]["copies"], json!(["c".repeat(40)]));
+    assert_eq!(listed[3]["copies"], json!(["c".repeat(40)]), "each once");
+}
+
+/// A store never shows a path with a control or format character; an
+/// answer that would show one stops rather than pass it on.
+#[test]
+#[should_panic(expected = "shows every path it sets aside sanitised")]
+fn an_unsanitised_path_is_never_shown() {
+    let _ = quarantined_json(&QuarantinedFile {
+        path: "tasks/a\u{202e}nosj.exe".into(),
+        key: None,
+        reason: "a stray".into(),
+        object: "a".repeat(40),
+        carried: false,
+    });
+}
+
+/// A stray (a file set aside with no key) in any folder the store reads
+/// is listed as one in `tasks/` is: by its raw path, with no id.
+#[test]
+fn a_stray_in_any_folder_read_is_listed_by_its_path() {
+    for path in ["tasks/x.txt", "plans/notes.txt", "discussions/a..b.txt"] {
+        let shown = quarantined_json(&QuarantinedFile {
+            path: path.into(),
+            key: None,
+            reason: "a stray".into(),
+            object: "a".repeat(40),
+            carried: false,
+        });
+        assert_eq!(shown["path"], json!(path));
+        assert_eq!(shown["id"], json!(null));
+    }
+}
+
+/// A stray outside every folder the store reads stops the answer.
+#[test]
+#[should_panic(expected = "shows every path it sets aside sanitised")]
+fn a_stray_outside_the_folders_read_is_never_shown() {
+    let _ = quarantined_json(&QuarantinedFile {
+        path: "archive/x.txt".into(),
+        key: None,
+        reason: "a stray".into(),
+        object: "a".repeat(40),
+        carried: false,
+    });
+}
+
+/// Every board rule, once: the pattern that matches it, a rule of it, its
+/// code and the keys its answer carries. The test's match is exhaustive,
+/// so a new rule fails to compile until it has its row here.
+macro_rules! board_rules {
+    ($($pattern:pat => $rule:expr, $code:literal, [$($key:literal),*];)*) => {
+        fn every_rule() -> Vec<(BoardRuleError, &'static str, Vec<&'static str>)> {
+            use BoardRuleError as R;
+            vec![$(($rule, $code, vec!["code" $(, $key)*])),*]
+        }
+
+        fn rule_row(rule: &BoardRuleError) -> &'static str {
+            use BoardRuleError as R;
+            match rule {
+                $($pattern => $code,)*
+            }
+        }
+    };
+}
+
+board_rules! {
+    R::NotAllowed { .. } => R::NotAllowed { from: TaskStatus::Draft, to: TaskStatus::Done }, "not_allowed", ["from", "to"];
+    R::NotHolder => R::NotHolder, "not_holder", [];
+    R::NoClaim => R::NoClaim, "no_claim", [];
+    R::ClaimLive => R::ClaimLive, "claim_live", [];
+    R::ClaimExpired => R::ClaimExpired, "claim_expired", [];
+    R::RunOpen(_) => R::RunOpen(1), "run_open", ["run"];
+    R::RunEnded(_) => R::RunEnded(1), "run_ended", ["run"];
+    R::PlanNotDraft(_) => R::PlanNotDraft(PlanState::Accepted), "plan_not_draft", ["state"];
+    R::NotThisTasks => R::NotThisTasks, "not_this_tasks", [];
+    R::NotThisChange => R::NotThisChange, "not_this_change", [];
+    R::TaskFinished(_) => R::TaskFinished(TaskStatus::Done), "task_finished", ["status"];
+    R::UnknownPlanVersion(_) => R::UnknownPlanVersion(3), "unknown_plan_version", ["version"];
+    R::PlanChanged { .. } => R::PlanChanged { version: 2, updated: at("10:00:00") }, "plan_changed", ["version", "updated"];
+    R::AcceptedPlanChanged { .. } => R::AcceptedPlanChanged { accepted: Some(3) }, "accepted_plan_changed", ["accepted"];
+    R::PlansInconsistent(_) => R::PlansInconsistent("two accepted".into()), "plans_inconsistent", ["reason"];
+    R::RunsInconsistent(_) => R::RunsInconsistent("two going".into()), "runs_inconsistent", ["reason"];
+    R::PlanNotAccepted(_) => R::PlanNotAccepted(2), "plan_not_accepted", ["version"];
+    R::NoAcceptedPlan => R::NoAcceptedPlan, "no_accepted_plan", [];
+    R::NotTakeable(_) => R::NotTakeable(TaskStatus::Ready), "not_takeable", ["status"];
+    R::AlreadyHolder => R::AlreadyHolder, "already_holder", [];
+    R::NoPrs => R::NoPrs, "no_prs", [];
+    R::PrsUnmerged(_) => R::PrsUnmerged(vec![7]), "prs_unmerged", ["prs"];
+    R::PrsLinked(_) => R::PrsLinked(vec![7]), "prs_linked", ["prs"];
+    R::PrNotLinked(_) => R::PrNotLinked(7), "pr_not_linked", ["pr"];
+    R::PrAlreadyLinked(_) => R::PrAlreadyLinked(7), "pr_already_linked", ["pr"];
+    R::NotDraft(_) => R::NotDraft(TaskStatus::Ready), "not_draft", ["status"];
+    R::NoEdit => R::NoEdit, "no_edit", [];
+    R::Superseded { .. } => R::Superseded { by: vec![Slug::parse("next").unwrap()] }, "superseded", ["by"];
+    R::IssueShared { .. } => R::IssueShared { issue: 7, tasks: [Slug::parse("a").unwrap(), Slug::parse("b").unwrap()] }, "issue_shared", ["issue", "tasks"];
+    R::IssueIsPr { .. } => R::IssueIsPr { issue: 7, task: Slug::parse("a").unwrap(), pr_holder: Slug::parse("b").unwrap() }, "issue_is_pr", ["issue", "task", "pr_holder"];
+    R::OwnPrReferenced { .. } => R::OwnPrReferenced { task: Slug::parse("a").unwrap(), pr: 7, change: 1 }, "own_pr_referenced", ["task", "pr", "change"];
+    R::ChangeAlreadyLinked { .. } => R::ChangeAlreadyLinked { task: Slug::parse("board-store").unwrap(), change: Some(1) }, "change_already_linked", ["task", "change"];
+    R::NoSuchChange(_) => R::NoSuchChange(4), "no_such_change", ["change"];
+    R::NoSuchRun(_) => R::NoSuchRun(4), "no_such_run", ["run"];
+    R::ItemsNotDone { .. } => R::ItemsNotDone { run: 1, items: vec![Slug::parse("api").unwrap()], report: crate::domain::project_board::value_objects::rule_error::SwarmReport::NoneKept }, "items_not_done", ["run", "items", "report"];
+    R::ChangeAhead { .. } => R::ChangeAhead { change: 1, updated: at("10:00:00") }, "change_ahead", ["change", "updated"];
+    R::DiscussionClosed(_) => R::DiscussionClosed(Slug::parse("chat").unwrap()), "discussion_closed", ["discussion"];
+    R::DiscussionLinked { .. } => R::DiscussionLinked { discussion: Slug::parse("chat").unwrap(), task: Slug::parse("board-store").unwrap() }, "discussion_linked", ["discussion", "task"];
+    R::DiscussionAhead { .. } => R::DiscussionAhead { discussion: Slug::parse("chat").unwrap(), updated: at("10:00:00") }, "discussion_ahead", ["discussion", "updated"];
+    R::MessageAhead { .. } => R::MessageAhead { discussion: Slug::parse("chat").unwrap(), at: at("10:00:00") }, "message_ahead", ["discussion", "at"];
+    R::DiscussionFull { .. } => R::DiscussionFull { discussion: Slug::parse("chat").unwrap(), limit: DiscussionLimit::Lines }, "discussion_full", ["discussion", "limit"];
+    R::ReviewAhead { .. } => R::ReviewAhead { change: 1, updated: at("10:00:00") }, "review_ahead", ["change", "updated"];
+    R::ChangesLinked(_) => R::ChangesLinked(vec![1]), "changes_linked", ["changes"];
+    R::PrUnread(_) => R::PrUnread(7), "pr_unread", ["pr"];
+    R::PrNotOpen(_) => R::PrNotOpen(7), "pr_not_open", ["pr"];
+    R::PrHeadMismatch(_) => R::PrHeadMismatch(7), "pr_head_mismatch", ["pr"];
+    R::ChangeUnlinked(_) => R::ChangeUnlinked(1), "change_unlinked", ["change"];
+    R::ChangeMerged(_) => R::ChangeMerged(1), "change_merged", ["change"];
+    R::NoChanges => R::NoChanges, "no_changes", [];
+    R::ChangesUnmerged(_) => R::ChangesUnmerged(vec![1]), "changes_unmerged", ["changes"];
+    R::ChangesInconsistent(_) => R::ChangesInconsistent("number 1 twice".into()), "changes_inconsistent", ["reason"];
+    R::PlanAhead { .. } => R::PlanAhead { version: 2, updated: at("10:00:00") }, "plan_ahead", ["version", "updated"];
+    R::Invalid(_) => R::Invalid(SchemaError::new("title", "is empty")), "invalid", ["field", "problem"];
+    R::InvalidPlan(_) => R::InvalidPlan(SchemaError::new("items/0/title", "is empty")), "invalid_plan", ["field", "problem"];
+}
+
+#[test]
+fn every_rule_answers_its_code_and_its_own_keys() {
+    let rules = every_rule();
+    let codes: BTreeSet<&str> = rules.iter().map(|(rule, ..)| rule_row(rule)).collect();
+    assert_eq!(codes.len(), rules.len(), "every rule, each once");
+    for (rule, code, keys) in rules {
+        let shown = rule_json(&rule);
+        assert_eq!(shown["code"], json!(code), "{rule:?}");
+        let got: BTreeSet<&str> = shown
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        let want: BTreeSet<&str> = keys.into_iter().collect();
+        assert_eq!(got, want, "{rule:?}");
+    }
+    // A run is named by its number.
+    assert_eq!(rule_json(&BoardRuleError::RunOpen(3))["run"], json!(3));
+    // A pull request linked the old way names no change.
+    let old_way = BoardRuleError::ChangeAlreadyLinked {
+        task: Slug::parse("board-store").unwrap(),
+        change: None,
+    };
+    assert_eq!(rule_json(&old_way)["change"], json!(null));
+    assert_eq!(
+        old_way.to_string(),
+        "task board-store already links that pull request"
+    );
+}
+
+/// A set-aside file of no known task is named by its path as the listing
+/// shows it, raw, with its object, so a clear can name it exactly: a name
+/// that looks like a secret is no secret in a path.
+#[test]
+fn a_set_aside_file_is_named_by_its_raw_path_and_object() {
+    let shown = error_json(&ProjectBoardError::SetAsideFile {
+        path: "tasks/token=x.md".into(),
+        object: "a".repeat(40),
+    });
+    assert_eq!(shown["path"], json!("tasks/token=x.md"));
+    assert_eq!(shown["object"], json!("a".repeat(40)));
+    // The wording an agent reads (approved overnight, #2521).
+    let object = "a".repeat(40);
+    let named = ProjectBoardError::SetAsideFile {
+        path: "tasks/Not A Slug.json".into(),
+        object: object.clone(),
+    };
+    assert_eq!(
+        named.to_string(),
+        format!(
+            "the file \"tasks/Not A Slug.json\" (object {object}) is set aside as unreadable and \
+             its task is unknown; mend or clear it"
+        )
+    );
+    assert_eq!(error_json(&named)["message"], json!(named.to_string()));
+}
+
+/// The board's two read-time refusals answer their own codes, each with
+/// its reason.
+#[test]
+fn a_board_too_large_or_held_answers_its_own_code() {
+    let (big, held) = ("16385 entries", "plans/a.1.md is set aside");
+    for (error, code, reason) in [
+        (
+            BoardStoreError::TooLarge(big.into()),
+            "board_too_large",
+            big,
+        ),
+        (
+            BoardStoreError::FolderSetAside(held.into()),
+            "folder_set_aside",
+            held,
+        ),
+    ] {
+        let shown = error_json(&ProjectBoardError::Store(error.clone()));
+        assert_eq!(shown["code"], json!(code), "{error:?}");
+        assert_eq!(shown["reason"], json!(reason), "{error:?}");
+    }
+}
+
+/// A carried file of no known task in another kind's folder is named by
+/// its raw path and object as one under `tasks/` is.
+#[test]
+fn a_set_aside_file_in_any_folder_read_is_named_by_its_raw_path() {
+    let shown = error_json(&ProjectBoardError::SetAsideFile {
+        path: "plans/a.01.md".into(),
+        object: "a".repeat(40),
+    });
+    assert_eq!(shown["path"], json!("plans/a.01.md"));
+}
+
+/// A task set aside answers `set_aside` by its id, as ever; a plan, run,
+/// change or review answers `artifact_set_aside` by kind, task, number and
+/// raw path, and a discussion by kind, id and path; the message names the
+/// file to mend or clear.
+#[test]
+fn a_set_aside_artifact_is_named_by_its_kind_task_and_number() {
+    let refused = |key: ArtifactKey, path: &str| {
+        let error = ProjectBoardError::Quarantined {
+            key,
+            path: path.into(),
+        };
+        board_refused("show", &error)["error"].clone()
+    };
+    assert_eq!(
+        refused(ArtifactKey::Task(slug("t")), "tasks/t.md"),
+        json!({
+            "code": "set_aside",
+            "task": "t",
+            "message": "task t is set aside as unreadable; mend its file",
+        })
+    );
+    let numbered = [
+        (ArtifactKey::Plan(slug("t"), 2), "plan", 2, "plans/t.2.md"),
+        (ArtifactKey::Run(slug("t"), 3), "run", 3, "runs/t.3.md"),
+        (
+            ArtifactKey::Change(slug("t"), 4),
+            "change",
+            4,
+            "changes/t.4.md",
+        ),
+        (
+            ArtifactKey::Review(slug("t"), 5),
+            "review",
+            5,
+            "reviews/t.5.md",
+        ),
+    ];
+    for (key, kind, number, path) in numbered {
+        assert_eq!(
+            refused(key, path),
+            json!({
+                "code": "artifact_set_aside",
+                "kind": kind,
+                "task": "t",
+                "number": number,
+                "path": path,
+                "message": format!(
+                    "{kind} {number} of task t is set aside as unreadable; mend or clear {path}"
+                ),
+            }),
+            "{kind}"
+        );
+    }
+    assert_eq!(
+        refused(ArtifactKey::Discussion(slug("d")), "discussions/d.md"),
+        json!({
+            "code": "artifact_set_aside",
+            "kind": "discussion",
+            "discussion": "d",
+            "path": "discussions/d.md",
+            "message": "discussion d is set aside as unreadable; mend or clear discussions/d.md",
+        })
+    );
+}
+
+/// A path in another kind's folder stops the answer, as a store never
+/// shows a run's file under `plans/`.
+#[test]
+#[should_panic(expected = "shows every path it sets aside sanitised")]
+fn an_artifact_path_in_another_kinds_folder_is_never_shown() {
+    let _ = board_refused(
+        "show",
+        &ProjectBoardError::Quarantined {
+            key: ArtifactKey::Run(slug("t"), 1),
+            path: "plans/t.1.md".into(),
+        },
+    );
+}
+
+/// An artifact's path a store would never show stops the answer.
+#[test]
+#[should_panic(expected = "shows every path it sets aside sanitised")]
+fn an_unsanitised_artifact_path_is_never_shown() {
+    let _ = board_refused(
+        "show",
+        &ProjectBoardError::Quarantined {
+            key: ArtifactKey::Run(slug("t"), 1),
+            path: "runs/t\u{202e}.md".into(),
+        },
+    );
+}
+
+/// An artifact the board holds twice answers `duplicate_artifact`, named
+/// by its key as `artifact_set_aside` names one (no path: a store holds
+/// both under one name), and says its store must be mended.
+#[test]
+fn a_duplicate_artifact_is_named_by_its_kind_task_and_number() {
+    let refused = |key: ArtifactKey| {
+        board_refused("show", &ProjectBoardError::Duplicate { key })["error"].clone()
+    };
+    let mended = "is on the board more than once; its store must be mended";
+    assert_eq!(
+        refused(ArtifactKey::Review(slug("t"), 5)),
+        json!({
+            "code": "duplicate_artifact",
+            "kind": "review",
+            "task": "t",
+            "number": 5,
+            "message": format!("review 5 of task t {mended}"),
+        })
+    );
+    assert_eq!(
+        refused(ArtifactKey::Plan(slug("t"), 2))["message"],
+        json!(format!("plan 2 of task t {mended}"))
+    );
+    assert_eq!(
+        refused(ArtifactKey::Discussion(slug("d"))),
+        json!({
+            "code": "duplicate_artifact",
+            "kind": "discussion",
+            "discussion": "d",
+            "message": format!("discussion d {mended}"),
+        })
+    );
+    assert_eq!(
+        refused(ArtifactKey::Task(slug("t"))),
+        json!({
+            "code": "duplicate_artifact",
+            "kind": "task",
+            "task": "t",
+            "message": format!("task t {mended}"),
+        })
+    );
+}
+
+/// Epic #2481 T1 (#2532 round-4 review): every code the board answers, by
+/// the exhaustive `every_error` and `every_rule` tables and the front
+/// ends' own refusals, is a known telemetry kind, so a record names it
+/// rather than `other`.
+#[test]
+fn every_code_the_board_answers_is_a_known_kind() {
+    use crate::domain::project_board::value_objects::telemetry::StaticKind;
+    let code = |answer: &Value| answer["error"]["code"].as_str().unwrap().to_owned();
+    let mut codes: Vec<String> = every_error()
+        .iter()
+        .map(|error| code(&board_refused("show", error)))
+        .collect();
+    let plan_set_aside = ProjectBoardError::Quarantined {
+        key: ArtifactKey::Plan(slug("a"), 1),
+        path: "plans/a.1.md".into(),
+    };
+    codes.push(code(&board_refused("show", &plan_set_aside)));
+    for refusal in [
+        FrontEndRefusal::NoCommitter,
+        FrontEndRefusal::StoreUnavailable,
+    ] {
+        codes.push(code(&reason_refused(Some("list"), refusal, "why", None)));
+    }
+    let request = RequestError::of(
+        "op",
+        "must name an op",
+        crate::domain::project_board::value_objects::telemetry::FaultKind::Missing,
+    );
+    codes.push(code(&request_refused(None, &request, None)));
+    let rules = every_rule().into_iter().map(|(rule, ..)| rule_json(&rule));
+    codes.extend(rules.map(|rule| rule["code"].as_str().unwrap().to_owned()));
+    let unknown: Vec<&String> = codes
+        .iter()
+        .filter(|code| StaticKind::new(code).as_str() != code.as_str())
+        .collect();
+    assert!(
+        unknown.is_empty(),
+        "codes missing from KNOWN_KINDS: {unknown:?}"
+    );
+}

@@ -457,6 +457,7 @@ fn shared_tool_runtime_builder_cli_and_uds_use_same_pipeline() {
                 effort_control: None,
                 container_configs: None,
                 kill_tool: None,
+                project_board: None,
                 disabled_tools: &[],
                 inherited_tool_policy: None,
                 workflow: crate::interface::shared::ToolRuntimeWorkflowPolicy::disabled(

@@ -19,7 +19,7 @@ use crate::domain::redaction::Redacted;
 use crate::domain::swarm::telemetry::{decision_kind, run_role};
 use crate::domain::swarm::validation::MEMBER_ID_MAX_BYTES;
 use crate::domain::swarm::{
-    BoardError, BoardOpDetail, BoardOpObservation, BoardOpOutcome, BoardRole, RefusalKind,
+    BoardError, BoardOpDetail, BoardOpObservation, BoardOpOutcome, BoardRole, NameForm, RefusalKind,
 };
 
 /// The `tracing` target of every board call record.
@@ -59,6 +59,11 @@ pub(super) struct Finished<'a> {
     /// What a refusal raised while binding the arguments found wrong
     /// (#2341), by schema name; none for any other outcome.
     pub arguments: BindingFaults,
+    /// Which names a structured op's call used where the swarm's tasks
+    /// were renamed task items (#2478), as the call was made
+    /// (`call_deciding`'s, or a refusal's before the board); `None` where
+    /// none applies.
+    pub name_form: Option<NameForm>,
 }
 
 /// What a served call decided, and what it acted on, for its records.
@@ -272,6 +277,7 @@ pub(super) fn observation(
     let measure = measure.as_ref();
     BoardOpObservation {
         op: call.op.to_owned(),
+        name_form: call.name_form,
         actor_ref: actor,
         role: call.role.or_else(|| {
             let roles = measure.and_then(|measure| measure.run_roles.as_ref())?;

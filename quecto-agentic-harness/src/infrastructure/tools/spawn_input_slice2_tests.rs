@@ -9,7 +9,10 @@ fn existing_mode_with_ref_parses_to_a_ref_target() {
     assert_eq!(
         parsed,
         Ok(ContainerSelection::Existing {
-            target: crate::domain::environment_registry::EnvironmentTarget::Ref("C1".into())
+            target:
+                crate::domain::environments::entities::environment_registry::EnvironmentTarget::Ref(
+                    "C1".into()
+                )
         }),
         "existing mode with a ref must carry the ref target"
     );
@@ -22,9 +25,10 @@ fn existing_mode_with_name_parses_to_a_name_target() {
     assert_eq!(
         parsed,
         Ok(ContainerSelection::Existing {
-            target: crate::domain::environment_registry::EnvironmentTarget::Name(
-                "review-env".into()
-            )
+            target:
+                crate::domain::environments::entities::environment_registry::EnvironmentTarget::Name(
+                    "review-env".into()
+                )
         }),
         "existing mode with a name must carry the name target"
     );
@@ -83,7 +87,7 @@ fn new_mode_accepts_optional_environment_name() {
         parsed,
         Ok(ContainerSelection::New {
             container_config: None,
-            name: Some("review-env".into()),
+            name: Some("review-env".to_string().try_into().unwrap()),
         }),
         "mode new must carry the optional environment name"
     );

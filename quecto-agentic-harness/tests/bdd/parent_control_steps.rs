@@ -441,6 +441,7 @@ fn launch_harness(world: &mut QuectoWorld, bind_deadline: BindDeadline) {
             parent_control: Some(ParentControlLaunch {
                 binding,
                 bind_deadline,
+                coordinator: false,
             }),
             teardown_graph: Some(build_teardown_graph),
             environment_control: None,

@@ -10,7 +10,7 @@ use std::sync::Arc;
 use quecto::application::environments::dto::EnvironmentLiveness;
 use quecto::application::environments::ports::EnvironmentProcess;
 use quecto::composition::environments::build_environment_process;
-use quecto::domain::environment_registry::{
+use quecto::domain::environments::entities::environment_registry::{
     EnvironmentOrigin, EnvironmentRecord, EnvironmentStatus,
 };
 

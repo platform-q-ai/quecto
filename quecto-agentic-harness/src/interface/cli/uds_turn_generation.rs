@@ -14,6 +14,9 @@ impl Default for TurnControl {
             pending_steers: std::sync::atomic::AtomicUsize::new(0),
             control_generation: std::sync::atomic::AtomicU64::new(u64::MAX),
             shutting_down: std::sync::atomic::AtomicBool::new(false),
+            coordinator_reported: std::sync::atomic::AtomicBool::new(false),
+            client_prompts: std::sync::atomic::AtomicU32::new(0),
+            launched_coordinator: false,
         }
     }
 }
@@ -63,6 +66,47 @@ impl TurnControl {
         Self {
             swarm_control: control,
             ..Self::default()
+        }
+    }
+
+    /// A client's instruction was taken: its launcher is owed the reply.
+    pub fn client_instruction_taken(&self) {
+        self.client_prompts
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// A taken instruction was refused after all (not kept, or a prompt to
+    /// a busy agent without `streamingBehavior`): it owes nothing.
+    pub fn client_instruction_refused(&self) {
+        let prompts = &self.client_prompts;
+        let mut current = prompts.load(std::sync::atomic::Ordering::SeqCst);
+        while let Some(less) = current.checked_sub(1) {
+            match prompts.compare_exchange(
+                current,
+                less,
+                std::sync::atomic::Ordering::SeqCst,
+                std::sync::atomic::Ordering::SeqCst,
+            ) {
+                Ok(_) => return,
+                Err(seen) => current = seen,
+            }
+        }
+    }
+
+    /// Whether an instruction was taken since the last idle boundary; the
+    /// count starts again.
+    pub fn take_client_instructions(&self) -> bool {
+        self.client_prompts
+            .swap(0, std::sync::atomic::Ordering::SeqCst)
+            > 0
+    }
+
+    /// This turn control, for a process launched as its swarm's
+    /// coordinator or not (#2467).
+    pub fn launched_as_coordinator(self, coordinator: bool) -> Self {
+        Self {
+            launched_coordinator: coordinator,
+            ..self
         }
     }
 }

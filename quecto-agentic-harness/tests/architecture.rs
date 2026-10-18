@@ -37,6 +37,12 @@ mod hook_scripts_worktree;
 mod no_python;
 #[path = "architecture/panic_strategy.rs"]
 mod panic_strategy;
+/// A `board_op` record holds no text by type, and every board op has its
+/// kind (epic #2481 T1).
+#[path = "architecture/project_board_telemetry.rs"]
+mod project_board_telemetry;
+#[path = "architecture/provider_serialization.rs"]
+mod provider_serialization;
 /// Sessions capability (#1968, D1 #1970): plural capability, one
 /// construction site, one layout owner, retirement of the singular path.
 #[path = "architecture/sessions_capability.rs"]
@@ -85,6 +91,8 @@ mod swarm_board_use_cases;
 mod teardown_authority;
 #[path = "architecture/teardown_layers.rs"]
 mod teardown_layers;
+#[path = "architecture/tool_work_spawns.rs"]
+mod tool_work_spawns;
 #[path = "architecture/use_case_construction.rs"]
 mod use_case_construction;
 #[path = "architecture/web_fetch_boundary.rs"]
@@ -1008,7 +1016,7 @@ fn ports_guard_is_an_allowlist() {
         assert!(!port_exposures(file, source).1.is_empty(), "{source}");
     }
     for source in [
-        "pub use crate::domain::environment_registry::EnvironmentRegistry;",
+        "pub use crate::domain::environments::entities::environment_registry::EnvironmentRegistry;",
         "pub use super::dto::EnvironmentLiveness;",
         "pub use crate::application::sessions::ports::SessionStore;",
         "pub use crate::application::subagent_launch::{LaunchFuture, SubagentLaunchPorts};",
@@ -1165,8 +1173,8 @@ fn query_dependencies_allowed(content: &str) -> bool {
         paths.iter().all(|path| {
             matches!(
                 path.as_str(),
-                "crate::domain::environment_registry::EnvironmentRecord"
-                    | "crate::domain::environment_registry::EnvironmentRegistry"
+                "crate::domain::environments::entities::environment_registry::EnvironmentRecord"
+                    | "crate::domain::environments::entities::environment_registry::EnvironmentRegistry"
                     | "EnvironmentRecord"
                     | "EnvironmentRegistry"
                     | "EnvironmentRegistry::entries"
@@ -1184,9 +1192,9 @@ fn query_dependencies_allowed(content: &str) -> bool {
                     // The bounded listing (#2220): the domain's pure
                     // selection over the same snapshot, for the
                     // registry's session, with the diagnostics above.
-                    | "crate::domain::environment_listing::EnvironmentListing"
-                    | "crate::domain::environment_listing::ListingScope"
-                    | "crate::domain::environment_listing::select_listing"
+                    | "crate::domain::environments::services::environment_listing::EnvironmentListing"
+                    | "crate::domain::environments::services::environment_listing::ListingScope"
+                    | "crate::domain::environments::services::environment_listing::select_listing"
                     | "EnvironmentListing"
                     | "ListingScope"
                     | "select_listing"
@@ -1235,6 +1243,7 @@ const SWARM_BOARD_USE_CASES: &[&str] = &[
     "JoinRun",
     "OverRepository",
     "ReadRunSnapshot",
+    "ReadBoardProjection",
     "ReadRunStatus",
     "RecordMemberLaunch",
     "RegisterMemberSocket",
@@ -1265,7 +1274,6 @@ const SWARM_BOARD_USE_CASES: &[&str] = &[
     "RecordEvidence",
     "RevalidateTask",
     // Usage accounting and the inference admission (#2274).
-    "ConfigureUsageBudget",
     "ReadRequestAdmission",
     "RecordRequestUsage",
     // Reservations, recovery and revocation (#2275).
@@ -1325,6 +1333,17 @@ const SWARM_BOARD_DTOS: &[&str] = &[
     "RunSnapshotView",
     "RunStatusView",
     "RunStatusRow",
+    // The supervising session's projection of the board (#2478).
+    "BoardProjection",
+    "BoardRevision",
+    "ProjectionLimits",
+    "ProjectionRows",
+    "StoredEvidenceColumns",
+    "StoredItemColumns",
+    "StoredMemberColumns",
+    "StoredRevision",
+    "StoredRunColumns",
+    "StoredStateColumns",
     // The run's totals at settle (#2313).
     "RunTotalsView",
     "MessageTally",
@@ -1375,9 +1394,6 @@ const SWARM_BOARD_DTOS: &[&str] = &[
     "RevalidateTaskRequest",
     "StoredContract",
     // Usage accounting and the inference admission (#2274).
-    "BudgetChange",
-    "BudgetEffect",
-    "ConfigureUsageBudgetRequest",
     "NewRequestUsage",
     "RecordRequestUsageRequest",
     "RequestDelivery",
@@ -1440,12 +1456,33 @@ fn application_path_allowed(path: &str) -> bool {
     match parts.as_slice() {
         ["crate", "application", "ports", ..] => true,
         // A tool call's own work carries its panic scope (#2192, ADR-0029):
-        // only `call_work`, which joins what it spawns (`carried_work_is_joined`).
-        ["crate", "application", "tool_panic_scope", "carry" | "carry_future"] => true,
+        // only `call_work`, which joins what it spawns (`carried_work_is_joined`),
+        // and catches a panic of work whose call answers it itself (#2517;
+        // `carried_work_is_joined` pins the catch to `call_work` too).
+        [
+            "crate",
+            "application",
+            "tool_panic_scope",
+            "carry" | "carry_future" | "catch_in_call_site" | "HandledPanic",
+        ] => true,
         // Ports are capability-local (#1934, #1960): every
         // `application/<capability>/ports.rs` is a contract this
         // layer implements. Subagent teardown (#1935) was the first.
         ["crate", "application", _, "ports", ..] => true,
+        // The project board's listings port (#2476 S1e) answers the
+        // capability's own listing DTO; the index builds it to implement
+        // the port.
+        ["crate", "application", "project_board", "dto", "BoardListing"] => true,
+        // The run reports port (#2481 S4c follow-up) answers an ended
+        // swarm's board as the capability's own DTO; the kept boards read a
+        // board's projection into it, for the board launcher's port.
+        [
+            "crate",
+            "application",
+            "project_board",
+            "dto",
+            "SwarmEnd" | "SwarmEvidence" | "SwarmItemState" | "SwarmItemView" | "SwarmRunView",
+        ] => true,
         // The sessions list port takes the capability's own query
         // DTO (#1970); the file store names it to implement `list`.
         // The export port (#1974) takes the records and manifest the
@@ -1549,6 +1586,10 @@ fn application_path_allowed(path: &str) -> bool {
             // The liveness and inventory adapters (#2024 S4d)
             // answer in the capability's own records.
             | "EnvironmentLiveness"
+            // The hosted board's adapter (#2478) answers the board view's
+            // snapshot and revision.
+            | "HostedBoardRevision"
+            | "SwarmBoardSnapshot"
             // … whether a state directory is still on disk (#2134).
             | "StateOnDisk"
             | "EnvironmentStateDir"
@@ -1624,7 +1665,10 @@ fn application_path_allowed(path: &str) -> bool {
             // The spawn and agent_cmd tools (#2024 S4c) hold the
             // composed container-config listing: the description's
             // roster line and `get_container_configs` invoke it.
-            | "ListContainerConfigs",
+            | "ListContainerConfigs"
+            // The parent socket's swarm boards (#2478), held beside the
+            // listing in the environment control.
+            | "ReadSwarmBoard",
             ..,
         ] => true,
         // The launch port (#1940) is reached through
@@ -1878,7 +1922,7 @@ fn dependency_paths_in(module: Option<Vec<String>>, content: &str) -> Option<Vec
 
 #[test]
 fn query_dependency_guard_rejects_filesystem_imports() {
-    let source = "use crate::domain::environment_registry::EnvironmentRegistry; use std::fs; fn effect() { let _ = fs::read(\"x\"); }";
+    let source = "use crate::domain::environments::entities::environment_registry::EnvironmentRegistry; use std::fs; fn effect() { let _ = fs::read(\"x\"); }";
     assert!(!query_dependencies_allowed(source));
 }
 
@@ -1904,7 +1948,29 @@ fn public_ports_have_contract_tests() {
     }
 
     let contract_modules = active_contract_modules();
+    // Ports declared ahead of their adapters (epic #2481): each entry goes
+    // when its contract suite lands on the production adapter, and fails
+    // here once any contract module names it, whatever the module is
+    // called. Empty since S4c gave `CoordinatorLaunch` its suite.
     let allowlisted: BTreeSet<&str> = BTreeSet::new();
+    for port in &allowlisted {
+        assert!(
+            ports.contains(*port),
+            "{port} is allowlisted but is no port"
+        );
+        let naming: Vec<&String> = contract_modules
+            .iter()
+            .filter(|module| {
+                let suite = fs::read_to_string(format!("tests/contracts/{module}.rs"))
+                    .expect("an active contract module");
+                dependency_scan::forbidden_hit(&suite, &[port]).is_err()
+            })
+            .collect();
+        assert!(
+            naming.is_empty(),
+            "{port} has a contract suite ({naming:?}): take it off the allowlist"
+        );
+    }
     let missing: Vec<_> = ports
         .into_iter()
         .filter(|port| !allowlisted.contains(port.as_str()))
@@ -3163,22 +3229,34 @@ fn normal_build_excludes_removed_tool_installer_archive_dependencies() {
     );
 }
 
+/// `unicode-normalization` serves three users only: macOS path matching
+/// (filenames there are NFD), the board's canonical markdown, which
+/// refuses text that is not NFC on every platform (#2481), and the
+/// fold-back's credential-word check, which reads text folded by NFKC
+/// (#2481 S4). Nothing else may take it up.
 #[test]
-fn macos_only_text_normalization_dependency_is_not_unconditional() {
+fn text_normalization_serves_only_macos_paths_and_the_board_markdown() {
     let manifest = fs::read_to_string("Cargo.toml").expect("read Cargo.toml");
     let normal_dependencies = cargo_toml_section(&manifest, "dependencies");
     assert!(
-        !cargo_toml_section_contains_dependency(normal_dependencies, "unicode-normalization"),
-        "unicode-normalization should not be pulled into non-macOS normal builds"
+        cargo_toml_section_contains_dependency(normal_dependencies, "unicode-normalization"),
+        "the board markdown's NFC check needs unicode-normalization on every platform"
     );
-
-    let macos_dependencies = cargo_toml_section(
-        &manifest,
-        "target.'cfg(target_os = \"macos\")'.dependencies",
-    );
-    assert!(
-        cargo_toml_section_contains_dependency(macos_dependencies, "unicode-normalization"),
-        "macOS path normalization should retain its unicode-normalization dependency"
+    let users: Vec<String> = teardown_authority::production_files()
+        .into_iter()
+        .filter(|path| {
+            fs::read_to_string(path).is_ok_and(|source| source.contains("unicode_normalization"))
+        })
+        .collect();
+    assert_eq!(
+        users,
+        [
+            "src/application/project_board/fold_back_scrub.rs",
+            "src/infrastructure/persistence/project_board/markdown/chars.rs",
+            "src/infrastructure/tools/path_utils.rs",
+        ],
+        "unicode-normalization serves macOS paths, the board markdown and the fold-back's \
+         credential-word fold alone"
     );
 }
 
@@ -3729,8 +3807,8 @@ fn tui_shell_owns_app_composition_root() {
 #[test]
 fn dependency_allowlists_use_paths_not_substrings() {
     for source in [
-        "use crate::domain::environment_registry::{EnvironmentRecord, EnvironmentRegistry};",
-        "use crate::domain::environment_registry::EnvironmentRegistry as Registry;",
+        "use crate::domain::environments::entities::environment_registry::{EnvironmentRecord, EnvironmentRegistry};",
+        "use crate::domain::environments::entities::environment_registry::EnvironmentRegistry as Registry;",
     ] {
         assert!(query_dependencies_allowed(source), "{source}");
     }
@@ -3738,8 +3816,8 @@ fn dependency_allowlists_use_paths_not_substrings() {
         "#[derive(serde::Serialize)] struct ListEnvironmentsQuery;",
         "use std::{fs, path::Path};",
         "fn effect() { std::fs::read(\"x\"); }",
-        "use crate::domain::environment_registry::*;",
-        "use crate::domain::environment_registry::Unexpected;",
+        "use crate::domain::environments::entities::environment_registry::*;",
+        "use crate::domain::environments::entities::environment_registry::Unexpected;",
     ] {
         assert!(!query_dependencies_allowed(source), "{source}");
     }
@@ -5544,6 +5622,7 @@ fn agent_cmd_kill_is_parsed_and_presented_in_the_interface_and_composed_outside_
         "build_official_tool_extensions",
         "build_official_tool_registry",
         "build_official_tool_registry_with_context",
+        "build_project_board_tool_extension",
         "build_session_tool_extensions",
         "build_workflow_tool_extension",
         "build_native_extensions",
@@ -5920,6 +5999,8 @@ fn catalogue_defaults_mapping_is_pure_and_implements_both_ports() {
 const ENVIRONMENT_PORTS: &[&str] = &[
     "EnvironmentProcessCommands",
     "HostedSwarmRunObservation",
+    // The hosted board the parent socket's board view reads (#2478).
+    "HostedSwarmBoard",
     // The same store read synchronously for the restore and the collector
     // (round 4 M1, #2033): a box hosting an unfinished run is never
     // relabelled stopped or collected.
@@ -5948,6 +6029,10 @@ const ENVIRONMENT_PORTS: &[&str] = &[
     "ContainerAssetStore",
     "WorkspaceOrigin",
     "ContainerConfigPersistence",
+    // The board a swarm environment held as its member left, kept before
+    // the teardown (#2481 S4c follow-up), for the board's run to be
+    // folded back from once the box is gone.
+    "EndedSwarmBoards",
 ];
 
 /// Application environment code may name the domain, its own capability,
@@ -5994,7 +6079,7 @@ fn environments_application_depends_only_inward() {
         );
     }
     for dep in [
-        "crate::domain::environment_registry::EnvironmentRegistry",
+        "crate::domain::environments::entities::environment_registry::EnvironmentRegistry",
         "crate::application::environments::ports::EnvironmentMemberShutdown",
         "serde_json::Value",
         "std::sync::Arc",
@@ -6333,9 +6418,9 @@ fn domain_holds_no_environment_use_case_or_effect_port() {
         "domain/environment_finalization.rs was retired; orchestration lives in application/environments"
     );
     for path in [
-        "src/domain/environment_registry.rs",
-        "src/domain/environment_registry_inspect.rs",
-        "src/domain/environment_retention.rs",
+        "src/domain/environments/entities/environment_registry.rs",
+        "src/domain/environments/entities/environment_registry_inspect.rs",
+        "src/domain/environments/services/environment_retention.rs",
     ] {
         let source = production_source(path);
         for forbidden in [
@@ -6733,8 +6818,25 @@ fn kill_container_asks_members_before_the_retained_kill_and_never_twice() {
         "environment_control.rs was folded into application/environments"
     );
     let kill = production_source("src/application/environments/use_cases/kill_environment.rs");
+    // The claim is conditional (`--created-by`): the condition is judged
+    // in the same step that grants it, through the one claim call.
+    assert_eq!(
+        kill.matches(".begin_kill(").count(),
+        0,
+        "the unconditional claim would skip the creator check"
+    );
+    assert_eq!(
+        kill.matches(".begin_kill_if(").count(),
+        1,
+        "exactly one kill-claim call site"
+    );
+    assert_eq!(
+        kill.matches(".begin_removal(").count(),
+        0,
+        "the unconditional removal claim would skip the creator check"
+    );
     let claim = kill
-        .find(".begin_kill(")
+        .find(".begin_kill_if(")
         .expect("the exclusive claim is taken");
     let members = kill
         .find(".shutdown_members(")

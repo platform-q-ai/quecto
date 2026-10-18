@@ -243,21 +243,56 @@ pub fn forward_child_admission_line(
     if !line.contains("\"type\":\"admission_state_changed\"") {
         return None;
     }
-    let descendant = |id: &str| {
-        registry.lock().is_ok_and(|entries| {
-            let mut current = id.to_string();
-            for _ in 0..entries.len() {
-                match entries
-                    .get(&current)
-                    .and_then(|entry| entry.parent_id.clone())
-                {
-                    Some(parent) if parent == child_id => return true,
-                    Some(parent) => current = parent,
-                    None => return false,
-                }
-            }
-            false
-        })
-    };
+    let descendant = |id: &str| is_descendant(registry, id, child_id);
     forward_child_admission_event(line, child_id, parent_id, &descendant)
+}
+
+/// Whether `id` is a known descendant of `ancestor` in `registry`, by its
+/// recorded parents.
+fn is_descendant(
+    registry: &super::subagent_registry::SubagentRegistry,
+    id: &str,
+    ancestor: &str,
+) -> bool {
+    registry.lock().is_ok_and(|entries| {
+        let mut current = id.to_string();
+        for _ in 0..entries.len() {
+            match entries
+                .get(&current)
+                .and_then(|entry| entry.parent_id.clone())
+            {
+                Some(parent) if parent == ancestor => return true,
+                Some(parent) => current = parent,
+                None => return false,
+            }
+        }
+        false
+    })
+}
+
+/// A child's `swarm_board_changed` (#2488 review M4), forwarded onto the
+/// parent's stream stamped with `agent_id`, the agent hosting the board:
+/// the one the hint already names when it is a known descendant of the
+/// child (a deeper hint the child forwarded), else the child itself. Not a
+/// status change.
+pub fn forward_child_board_hint(
+    line: &str,
+    child_id: &str,
+    registry: &super::subagent_registry::SubagentRegistry,
+) -> Option<String> {
+    if !line.contains("\"swarm_board_changed\"") {
+        return None;
+    }
+    let mut hint: serde_json::Value = serde_json::from_str(line.trim()).ok()?;
+    match hint.get("type").and_then(serde_json::Value::as_str) {
+        Some("swarm_board_changed") => {}
+        Some(_) | None => return None,
+    }
+    let host = match hint.get("agent_id").and_then(serde_json::Value::as_str) {
+        Some(named) if is_descendant(registry, named, child_id) => named.to_owned(),
+        Some(_) | None => child_id.to_owned(),
+    };
+    hint.as_object_mut()?
+        .insert("agent_id".into(), serde_json::Value::from(host));
+    bounded_forward(Some(hint.to_string()), child_id, "board hint")
 }

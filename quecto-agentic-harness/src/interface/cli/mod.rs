@@ -2,6 +2,7 @@ mod admission_broker;
 pub mod admission_handles;
 mod agent;
 mod auth;
+pub mod board;
 pub mod catalogue_handles;
 pub mod claude_member;
 mod commands;
@@ -87,6 +88,7 @@ mod uds_socket;
 mod uds_state_projection;
 #[cfg(test)]
 mod uds_state_projection_tests;
+mod uds_swarm_board;
 mod uds_swarm_control;
 mod uds_sync;
 #[cfg(test)]
@@ -159,7 +161,8 @@ pub struct KillToolWiring {
     pub harness_lifecycle: crate::infrastructure::tools::harness_lifecycle::SharedHarnessLifecycle,
     /// The session-scoped environment registry the spawn tool commits
     /// members to; the environment control is composed over it.
-    pub environment_registry: crate::domain::environment_registry::EnvironmentRegistry,
+    pub environment_registry:
+        crate::domain::environments::entities::environment_registry::EnvironmentRegistry,
     /// Where the built agent-control tools read their composed use cases.
     pub slots: crate::infrastructure::tools::environment_member_shutdown::TerminationSlots,
     /// The base directory this harness's children share (#2192): where an
@@ -356,6 +359,17 @@ pub struct CliContext {
     /// Composition's `board_op_log` (#2303): the session's event log the
     /// board records its `swarm_op`s in, while the event log is on.
     pub swarm_board_log: Option<swarm_board_handles::SwarmBoardOpLogBuilder>,
+    /// Composition's project board builder (#2477); `quecto board`
+    /// refuses to run without it.
+    pub project_board: Option<board::ProjectBoardHandlesBuilder>,
+    /// Composition's builder of the agent `board` tool's recording (epic
+    /// #2481 T3), bound to the session's event log; without it the tool
+    /// records nothing.
+    pub project_board_recording: Option<board::BoardToolRecordingBuilder>,
+    /// Composition's builder of `quecto board`'s recording (epic #2481
+    /// T3), into the day's `board-cli` log; without it the CLI records
+    /// nothing.
+    pub board_cli_recording: Option<board::CliRecordingBuilder>,
     /// Output reaches the real terminal (`run`, not `run_with_output`): a
     /// one-shot run writes its answer out before it settles its children.
     pub live_output: bool,
@@ -448,6 +462,12 @@ pub struct CliComposition {
     /// Composition's `board_op_log` (#2303, #2278).
     pub swarm_board_log: swarm_board_handles::SwarmBoardOpLogBuilder,
     pub claude_member: claude_member::ClaudeMemberHandlesBuilder,
+    /// Composition's project board builder (#2477).
+    pub project_board: board::ProjectBoardHandlesBuilder,
+    /// Composition's `session_board_recording_decided` (epic #2481 T3).
+    pub project_board_recording: board::BoardToolRecordingBuilder,
+    /// Composition's `cli_board_recording` (epic #2481 T3).
+    pub board_cli_recording: board::CliRecordingBuilder,
 }
 
 /// Run the CLI with the given args and the required outer-owned builders,
@@ -523,6 +543,9 @@ fn composed_context(
         container_status: Some(composition.container_status),
         run_end_fleet: Some(composition.run_end_fleet),
         claude_member: Some(composition.claude_member),
+        project_board: Some(composition.project_board),
+        project_board_recording: Some(composition.project_board_recording),
+        board_cli_recording: Some(composition.board_cli_recording),
         swarm_board: Some(composition.swarm_board),
         swarm_board_wire: Some(composition.swarm_board_wire),
         swarm_board_log: Some(composition.swarm_board_log),
@@ -577,6 +600,7 @@ pub fn run_with_output(args: Vec<String>, ctx: &CliContext) -> CliOutput {
                 admission_broker::cmd_admission_broker(ctx, &args[2..], &mut stdout, &mut stderr)
             }
             "container" => container::cmd_container(ctx, &args[2..], &mut stdout, &mut stderr),
+            "board" => board::cmd_board(ctx, &args[2..], &mut stdout, &mut stderr),
             "help" | "--help" | "-h" => {
                 help::help_text(&mut stdout);
                 0

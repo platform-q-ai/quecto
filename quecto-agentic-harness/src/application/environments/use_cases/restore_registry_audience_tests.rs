@@ -12,8 +12,12 @@ use super::restore_registry_tests::{
 };
 use super::{RestoreRegistry, unfinished_run_reason};
 use crate::application::environments::dto::StateOnDisk;
-use crate::domain::environment_registry::{EnvironmentStatus, GONE_AT_RESTORE};
-use crate::domain::environment_retention::{HostedSwarmRun, SwarmRunObservation};
+use crate::domain::environments::entities::environment_registry::{
+    EnvironmentStatus, GONE_AT_RESTORE,
+};
+use crate::domain::environments::services::environment_retention::{
+    HostedSwarmRun, SwarmRunObservation,
+};
 use crate::domain::swarm::RunStatus;
 
 /// Every record here was created by this session.

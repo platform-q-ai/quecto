@@ -4,10 +4,12 @@
 use std::sync::Arc;
 
 use super::ListEnvironmentsQuery;
-use crate::domain::environment_listing::ListingScope;
-use crate::domain::environment_listing::tests::{CALLER, qa_record, qa_registry};
-use crate::domain::environment_registry::{
+use crate::domain::environments::entities::environment_registry::{
     EnvironmentJournal, EnvironmentRegistry, EnvironmentStatus, JournalWrite,
+};
+use crate::domain::environments::services::environment_listing::ListingScope;
+use crate::domain::environments::services::environment_listing::tests::{
+    CALLER, qa_record, qa_registry,
 };
 
 #[test]

@@ -8,7 +8,7 @@
 //! kill` ends it. The rig is `container_persistence_steps`'.
 use super::*;
 
-use quecto::domain::environment_registry::EnvironmentStatus;
+use quecto::domain::environments::entities::environment_registry::EnvironmentStatus;
 use quecto::infrastructure::tools::swarm_bridge::{HostedStore, SwarmContext};
 use std::sync::Arc;
 

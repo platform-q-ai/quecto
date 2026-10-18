@@ -224,6 +224,7 @@ const PROCESS_EFFECT_PATTERNS: &[&str] = &[
     "process_group(",
     "setpgid",
     "prctl",
+    "libc::setsid",
     "libc::SIGKILL",
     "libc::SIGTERM",
     "/proc/",
@@ -249,9 +250,11 @@ const PROCESS_EFFECT_ALLOWLIST: &[(&str, &[&str], &str)] = &[
     ),
     (
         "src/infrastructure/processes/parent_death_signal.rs",
-        &["prctl", "libc::SIGTERM"],
-        "arms PR_SET_PDEATHSIG on a process this harness spawns (the child is \
-         signalled by the kernel when its launcher dies; nothing is sent from here)",
+        &["prctl", "libc::setsid", "libc::SIGTERM"],
+        "arms PR_SET_PDEATHSIG (SIGTERM only, a typed choice) on a process \
+         this harness spawns, and gives the board's git and gh children their \
+         own session that dies with quecto (the child is signalled by the \
+         kernel when its launcher dies; nothing is sent from here)",
     ),
     (
         "src/infrastructure/tools/bash/mod.rs",
@@ -276,6 +279,17 @@ const PROCESS_EFFECT_ALLOWLIST: &[(&str, &[&str], &str)] = &[
          (#1924 retained `inspect` argv, #2024 S4b create preflight), and the \
          SIGTERM to the process group of a create whose spawn was cancelled \
          (#2173)",
+    ),
+    (
+        "src/infrastructure/persistence/project_board/own_group.rs",
+        &["kill(", "libc::kill", "libc::SIGTERM", "libc::SIGKILL"],
+        "the project board's git and gh runners ending the process group of \
+         their own unreaped child (its own session, which dies with quecto, \
+         armed by parent_death_signal), observed by waitid without reaping, \
+         once it exits or at its deadline: SIGTERM, then SIGKILL right after \
+         it when the leader has exited (the normal path), or after a short \
+         grace while the leader still runs; nothing more once the leader is \
+         no longer theirs to watch (#2476, #2477, #2501)",
     ),
     (
         "src/infrastructure/tools/grep_run.rs",
@@ -374,10 +388,10 @@ const NO_PID_FILES: &[&str] = &[
     "src/domain/agents/services/subagent_teardown.rs",
     "src/domain/agents/entities/parent_control.rs",
     "src/domain/agents/value_objects/harness_lifetime.rs",
-    "src/domain/environment_retention.rs",
-    "src/domain/environment_registry.rs",
-    "src/domain/environment_registry/record_lookup.rs",
-    "src/domain/environment_registry_inspect.rs",
+    "src/domain/environments/services/environment_retention.rs",
+    "src/domain/environments/entities/environment_registry.rs",
+    "src/domain/environments/entities/environment_registry/record_lookup.rs",
+    "src/domain/environments/entities/environment_registry_inspect.rs",
     "src/application/subagents/mod.rs",
     "src/application/subagents/dto.rs",
     "src/application/subagents/dto/container_config.rs",
@@ -386,6 +400,7 @@ const NO_PID_FILES: &[&str] = &[
     "src/application/environments/mod.rs",
     "src/application/environments/use_cases/mod.rs",
     "src/application/environments/use_cases/list_environments.rs",
+    "src/application/environments/use_cases/read_swarm_board.rs",
     "src/interface/uds/subagent_teardown/mod.rs",
     "src/interface/uds/subagent_teardown/mapping.rs",
     "src/interface/uds/subagent_teardown/wire.rs",
@@ -405,6 +420,7 @@ const NO_PID_FILES: &[&str] = &[
     "src/application/environments/dto/assets.rs",
     "src/application/environments/dto/gc.rs",
     "src/application/environments/dto/standard_image.rs",
+    "src/application/environments/dto/swarm_board.rs",
     "src/application/environments/use_cases/diagnose_container_runtime.rs",
     "src/application/environments/use_cases/list_container_configs.rs",
     "src/application/environments/use_cases/initialise_standard_container.rs",

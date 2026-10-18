@@ -187,22 +187,9 @@ impl BoardStore {
                 connection.is_autocommit(),
                 "a board transaction is committed or rolled back before its connection closes"
             );
-            // A metered connection's busy handler points at the call's
-            // tally: it is unregistered first, so SQLite never holds that
-            // pointer past this transaction (#2303 round-3 review L6). The
-            // connection closes either way. Clearing a handler on a live
-            // handle cannot fail, and its outcome is never the op's: a
-            // committed op is not refused over it (round-4 review N1).
-            if tally.is_some() {
-                let unwaited = meter::unwait_metered(&connection);
-                debug_assert!(
-                    unwaited.is_ok(),
-                    "clearing a busy handler cannot fail: {unwaited:?}"
-                );
-            }
             let closed = connection
                 .close()
-                .map_err(|(_, error)| (contended(&error), Some(failure(&error))));
+                .map_err(|error| (contended(&error), Some(failure(&error))));
             let value = outcome.map_err(|error| {
                 let failure = match &error {
                     TransactionError::Board(_) => None,
@@ -325,7 +312,11 @@ const OPEN_FLAGS: OpenFlags = OpenFlags::SQLITE_OPEN_URI.union(OpenFlags::SQLITE
 const CREATE_FLAGS: OpenFlags = OPEN_FLAGS.union(OpenFlags::SQLITE_OPEN_CREATE);
 
 /// `sqlite3.connect(path.as_uri() + '?mode=rw[c]', uri=True, timeout=0.5)`.
-fn open(path: &Path, create: bool, tally: Option<&Tally>) -> Result<Connection, StoreRefusal> {
+fn open<'a>(
+    path: &Path,
+    create: bool,
+    tally: Option<&'a Tally>,
+) -> Result<meter::MeteredConnection<'a>, StoreRefusal> {
     let (mode, flags) = if create {
         ("rwc", CREATE_FLAGS)
     } else {
@@ -342,14 +333,7 @@ fn open(path: &Path, create: bool, tally: Option<&Tally>) -> Result<Connection, 
         .pragma_query_value(None, "secure_delete", |row| row.get::<_, i64>(0))
         .map_err(|error| contended(&error))?;
     secure_delete_checked(secure_delete)?;
-    // A metered call (#2303) waits on the same schedule and notes on its
-    // own tally that it waited; otherwise SQLite's own handler waits.
-    let waiting = match tally {
-        Some(tally) => meter::wait_metered(&connection, tally),
-        None => connection.busy_timeout(BUSY_TIMEOUT),
-    };
-    waiting.map_err(|error| contended(&error))?;
-    Ok(connection)
+    meter::MeteredConnection::new(connection, tally).map_err(|error| contended(&error))
 }
 
 /// `sqlite3_errmsg` for a failed open. rusqlite appends `: {uri}` to a
@@ -374,7 +358,7 @@ fn opening_message(error: &rusqlite::Error, uri: &str) -> String {
 /// read ([`Mode::Read`], #2338) begins `DEFERRED` on a `query_only`
 /// connection and runs no schema statement.
 fn run<T>(
-    connection: &mut Connection,
+    connection: &mut meter::MeteredConnection<'_>,
     mode: Mode,
     tally: Option<&Tally>,
     body: impl FnOnce(&Transaction<'_>) -> Result<T, TransactionError>,
@@ -388,10 +372,17 @@ fn run<T>(
         }
     };
     // The lock wait is measured only for a metered call (#2303).
+    connection.phase(meter::Phase::Begin);
     let asked = tally.map(|tally| (tally, Instant::now()));
+    let phase = connection.phase_control();
     let begun = connection.transaction_with_behavior(behavior);
     if let Some((tally, asked)) = asked {
         tally.lock_waited(asked.elapsed());
+    }
+    // The transaction borrows the underlying connection; phase state belongs
+    // to the handler, not to any application transaction object.
+    if let Some(phase) = &phase {
+        phase.store(2, std::sync::atomic::Ordering::Release);
     }
     let transaction = begun?;
     let prepared = match mode {
@@ -415,6 +406,9 @@ fn run<T>(
     };
     // A failed COMMIT drops the transaction, which rolls it back. Its time
     // is measured only for a metered call (#2340).
+    if let Some(phase) = &phase {
+        phase.store(3, std::sync::atomic::Ordering::Release);
+    }
     let committing = tally.map(|tally| (tally, Instant::now()));
     let committed = transaction.commit();
     if let Some((tally, committing)) = committing {

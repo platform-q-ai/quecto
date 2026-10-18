@@ -5,6 +5,9 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
+pub mod board_clock;
+pub mod remote_time;
+
 /// Return the current UTC time as seconds since the Unix epoch.
 pub fn unix_timestamp_secs() -> i64 {
     SystemTime::now()

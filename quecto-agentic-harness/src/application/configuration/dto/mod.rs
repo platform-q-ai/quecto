@@ -11,7 +11,7 @@ pub use config_patch::{
     ConfigLayer, ConfigPatch, ConfigPatchError, ConfigPatchReceipt, ConfigUnset,
 };
 pub use config_read::{ConfigReadError, ConfigReadRequest, ConfigReadScope, ConfigReadout};
-pub use config_selection::{ConfigLayers, ConfigSelection, ConfigSelectionRequest};
+pub use config_selection::{ConfigLayers, ConfigSelection, ConfigSelectionRequest, OverlayOrigin};
 pub use effective_config::{
     ConfigSources, EffectiveConfig, EffectiveConfigError, OverlayReport, OverlayState,
 };

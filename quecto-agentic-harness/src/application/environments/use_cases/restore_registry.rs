@@ -42,15 +42,18 @@
 //! the document is seen without a restart.
 use std::sync::Arc;
 
-use crate::domain::environment_registry::{
+use crate::domain::environments::entities::environment_registry::{
     EnvironmentJournal, EnvironmentRecord, EnvironmentRegistry, EnvironmentStatus, GONE_AT_RESTORE,
     JournalWrite,
 };
 
-use crate::domain::environment_retention::{HostedSwarmRun, SwarmRunObservation};
+use crate::domain::environments::services::environment_retention::{
+    HostedSwarmRun, SwarmRunObservation,
+};
 
 use super::super::dto::{
-    CorrectionOutcome, EnvironmentLiveness, OvertakenAudience, RestoreMode, RestoredRegistry,
+    CorrectionOutcome, EnvironmentLiveness, ForgottenEnvironment, OvertakenAudience, RestoreMode,
+    RestoredRegistry,
 };
 use super::super::ports::{EnvironmentProcess, EnvironmentRegistryStore, HostedSwarmRunInspection};
 use super::box_residue::{Residue, ResidueProbe};
@@ -395,7 +398,10 @@ impl RestoreRegistry {
             return;
         }
         match self.store.forget(&record) {
-            Ok(()) => report.forgotten.push(record.environment_ref),
+            Ok(()) => report.forgotten.push(ForgottenEnvironment {
+                environment_ref: record.environment_ref,
+                created_by: record.created_by,
+            }),
             Err(error) => {
                 tell(
                     report,
@@ -590,7 +596,9 @@ fn speaks_for(record: &EnvironmentRecord, (session, audience): (&str, OvertakenA
     match audience {
         OvertakenAudience::Fleet => true,
         OvertakenAudience::OwnEnvironments => {
-            crate::domain::environment_listing::created_by_session(record, session)
+            crate::domain::environments::services::environment_listing::created_by_session(
+                record, session,
+            )
         }
     }
 }

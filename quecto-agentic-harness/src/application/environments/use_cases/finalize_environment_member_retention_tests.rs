@@ -11,17 +11,17 @@ use crate::application::environments::ports::{
     EnvironmentProcessCommands, HostedSwarmRunObservation, PortFuture,
 };
 use crate::application::environments::use_cases::FinalizeEnvironmentMember;
-use crate::domain::environment_registry::{
+use crate::domain::environments::entities::environment_registry::{
     EnvironmentRecord, EnvironmentRegistry, EnvironmentStatus,
 };
-use crate::domain::environment_retention::{
+use crate::domain::environments::services::environment_retention::{
     CoordinatorLoss, HostedSwarmRun, MemberFinalizeMode, SwarmRunObservation,
 };
 use crate::domain::swarm::RunStatus;
 
 /// One fake standing in for both ports: the hosted run it observes and the
 /// scripts it records.
-fn use_case<P: HostedSwarmRunObservation + EnvironmentProcessCommands + 'static>(
+pub(super) fn use_case<P: HostedSwarmRunObservation + EnvironmentProcessCommands + 'static>(
     registry: &EnvironmentRegistry,
     port: Arc<P>,
 ) -> FinalizeEnvironmentMember {
@@ -32,21 +32,21 @@ fn use_case<P: HostedSwarmRunObservation + EnvironmentProcessCommands + 'static>
 /// records every lost-coordinator record it is asked to make, answering
 /// like the store: an ended run is left alone, any other run is paused
 /// holding `failed`.
-struct HostedRunPort {
+pub(super) struct HostedRunPort {
     observed: SwarmRunObservation,
     loss_error: Option<String>,
     observations: Mutex<usize>,
     losses: Mutex<Vec<String>>,
-    kills: Mutex<Vec<ScriptCall>>,
+    pub(super) kills: Mutex<Vec<ScriptCall>>,
     cleanups: Mutex<Vec<ScriptCall>>,
 }
 
 impl HostedRunPort {
-    fn hosting(hosted: Option<HostedSwarmRun>) -> Self {
+    pub(super) fn hosting(hosted: Option<HostedSwarmRun>) -> Self {
         Self::observing(hosted.map_or(SwarmRunObservation::NoStore, SwarmRunObservation::Run))
     }
 
-    fn observing(observed: SwarmRunObservation) -> Self {
+    pub(super) fn observing(observed: SwarmRunObservation) -> Self {
         Self {
             observed,
             loss_error: None,
@@ -120,7 +120,7 @@ impl EnvironmentProcessCommands for HostedRunPort {
 
     fn observe_liveness<'a>(
         &'a self,
-        _record: &'a crate::domain::environment_registry::EnvironmentRecord,
+        _record: &'a crate::domain::environments::entities::environment_registry::EnvironmentRecord,
     ) -> PortFuture<'a, crate::application::environments::dto::EnvironmentLiveness> {
         Box::pin(async { panic!("a final-member teardown never asks liveness") })
     }
@@ -140,7 +140,7 @@ impl EnvironmentProcessCommands for HostedRunPort {
     }
 }
 
-fn running_swarm() -> HostedSwarmRun {
+pub(super) fn running_swarm() -> HostedSwarmRun {
     HostedSwarmRun {
         id: "run-42".to_string(),
         status: RunStatus::Running,
@@ -150,7 +150,7 @@ fn running_swarm() -> HostedSwarmRun {
     }
 }
 
-fn with_status(status: RunStatus, outcome: Option<RunStatus>) -> HostedSwarmRun {
+pub(super) fn with_status(status: RunStatus, outcome: Option<RunStatus>) -> HostedSwarmRun {
     HostedSwarmRun {
         status,
         outcome,
@@ -399,7 +399,7 @@ fn a_run_that_ends_between_observation_and_the_loss_record_follows_how_it_ended(
         }
         fn observe_liveness<'a>(
             &'a self,
-            _record: &'a crate::domain::environment_registry::EnvironmentRecord,
+            _record: &'a crate::domain::environments::entities::environment_registry::EnvironmentRecord,
         ) -> PortFuture<'a, crate::application::environments::dto::EnvironmentLiveness> {
             Box::pin(async { panic!("a final-member teardown never asks liveness") })
         }

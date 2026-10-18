@@ -209,7 +209,8 @@ async fn killing_nested_b_ends_its_subtree_while_a_and_c_survive_then_killing_a_
         notify_tx: None,
         harness_lifecycle:
             quecto::infrastructure::tools::harness_lifecycle::new_shared_harness_lifecycle(),
-        environment_registry: quecto::domain::environment_registry::EnvironmentRegistry::new(),
+        environment_registry:
+            quecto::domain::environments::entities::environment_registry::EnvironmentRegistry::new(),
         slots: Default::default(),
         base_dir: std::env::temp_dir(),
     });
@@ -362,7 +363,8 @@ async fn killing_a_busy_child_is_graceful_and_prompt() {
         notify_tx: None,
         harness_lifecycle:
             quecto::infrastructure::tools::harness_lifecycle::new_shared_harness_lifecycle(),
-        environment_registry: quecto::domain::environment_registry::EnvironmentRegistry::new(),
+        environment_registry:
+            quecto::domain::environments::entities::environment_registry::EnvironmentRegistry::new(),
         slots: Default::default(),
         base_dir: std::env::temp_dir(),
     });
@@ -511,7 +513,8 @@ async fn a_nested_child_that_acknowledges_but_never_exits_is_ended_by_its_owners
         notify_tx: None,
         harness_lifecycle:
             quecto::infrastructure::tools::harness_lifecycle::new_shared_harness_lifecycle(),
-        environment_registry: quecto::domain::environment_registry::EnvironmentRegistry::new(),
+        environment_registry:
+            quecto::domain::environments::entities::environment_registry::EnvironmentRegistry::new(),
         slots: Default::default(),
         base_dir: std::env::temp_dir(),
     });

@@ -630,3 +630,52 @@ fn forwarded_child_admission_carries_its_authority_health() {
     assert!(fwd["admission"].get("authorityStatus").is_none());
     assert!(fwd["admission"].get("connected").is_none());
 }
+
+/// M4 (#2488 review): a child's `swarm_board_changed` (a board it, or a
+/// descendant of it, hosts) reaches the parent's stream stamped with the
+/// agent that hosts the board, which `get_swarm_board`'s `agent_id`
+/// routes to. A hint already naming a known descendant keeps it; any
+/// other name is the child's.
+#[test]
+fn handle_monitor_line_forwards_a_board_hint_with_its_host() {
+    let registry = super::super::subagent_registry::new_registry();
+    {
+        let mut entries = registry.lock().unwrap();
+        entries.insert("child".to_string(), test_entry());
+        let mut grandchild = test_entry();
+        grandchild.parent_id = Some("child".to_string());
+        entries.insert("grandchild".to_string(), grandchild);
+    }
+    let (tx, mut rx) = tokio::sync::broadcast::channel::<String>(8);
+    let forwarded = |rx: &mut tokio::sync::broadcast::Receiver<String>| -> serde_json::Value {
+        serde_json::from_str(rx.try_recv().expect("forwarded").trim_end()).unwrap()
+    };
+    let own =
+        r#"{"type":"swarm_board_changed","swarm":"C1","run":"r1","revision":3,"removed":false}"#;
+    handle_monitor_line(own, "child", &registry, None, Some(&tx), Some("root"));
+    let hint = forwarded(&mut rx);
+    assert_eq!(
+        (
+            hint["type"].clone(),
+            hint["swarm"].clone(),
+            hint["revision"].clone(),
+            hint["agent_id"].clone()
+        ),
+        (
+            serde_json::json!("swarm_board_changed"),
+            serde_json::json!("C1"),
+            serde_json::json!(3),
+            serde_json::json!("child")
+        )
+    );
+    let deeper = r#"{"type":"swarm_board_changed","swarm":"C2","run":null,"revision":null,"removed":true,"agent_id":"grandchild"}"#;
+    handle_monitor_line(deeper, "child", &registry, None, Some(&tx), Some("root"));
+    assert_eq!(forwarded(&mut rx)["agent_id"], "grandchild");
+    let stranger = r#"{"type":"swarm_board_changed","swarm":"C3","run":"r3","revision":1,"removed":false,"agent_id":"stranger"}"#;
+    handle_monitor_line(stranger, "child", &registry, None, Some(&tx), Some("root"));
+    assert_eq!(forwarded(&mut rx)["agent_id"], "child");
+    assert!(
+        registry.lock().unwrap()["child"].workflow.is_none(),
+        "a hint changes no registry entry"
+    );
+}

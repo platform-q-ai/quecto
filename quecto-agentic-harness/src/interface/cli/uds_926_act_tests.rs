@@ -134,7 +134,7 @@ async fn test_926_single_completion_drives_a_parent_turn() {
             "researcher".to_string(),
             1,
             "[subagent] Agent 'researcher' completed. Last output: all tests pass".to_string(),
-            true,
+            crate::interface::cli::uds_session::NoteClass::Completion,
         )
         .is_retained();
     assert!(

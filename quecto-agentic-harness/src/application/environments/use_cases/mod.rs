@@ -9,6 +9,7 @@ mod initialise_standard_container;
 mod kill_environment;
 mod list_container_configs;
 mod list_environments;
+mod read_swarm_board;
 mod restore_registry;
 
 pub use box_residue::{
@@ -24,11 +25,14 @@ pub use initialise_standard_container::{InitialiseStandardContainer, STATE_DIR_N
 pub use kill_environment::{KillEnvironment, KillEnvironmentError, KilledEnvironment};
 pub use list_container_configs::ListContainerConfigs;
 pub use list_environments::ListEnvironmentsQuery;
+pub use read_swarm_board::ReadSwarmBoard;
 pub use restore_registry::{
     KILL_IN_FLIGHT, RELABELLED_BY_OLDER_BUILD, RETAINED_EXITED, RestoreRegistry,
     unfinished_run_reason,
 };
 
+#[cfg(test)]
+mod finalize_environment_member_kept_board_tests;
 #[cfg(test)]
 mod finalize_environment_member_owner_end_tests;
 #[cfg(test)]
@@ -43,6 +47,8 @@ mod gc_orphaned_environments_hosted_tests;
 mod gc_orphaned_environments_scope_tests;
 #[cfg(test)]
 mod gc_orphaned_environments_tests;
+#[cfg(test)]
+mod kill_environment_created_by_tests;
 #[cfg(test)]
 mod kill_environment_stopped_tests;
 #[cfg(test)]

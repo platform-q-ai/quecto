@@ -5,7 +5,8 @@
 //! contract parsing stay in `spawn_container`).
 
 use crate::domain::agents::services::subagent::ContainerSelection;
-use crate::domain::environment_registry::EnvironmentTarget;
+use crate::domain::environments::entities::environment_name::EnvironmentName;
+use crate::domain::environments::entities::environment_registry::EnvironmentTarget;
 use serde_json::{Map, Value};
 
 pub(super) fn parse_container_selection(
@@ -122,9 +123,15 @@ fn parse_new_mode(
     map: &serde_json::Map<String, serde_json::Value>,
 ) -> Result<ContainerSelection, String> {
     reject_unknown_container_fields(map, &["mode", "container_config", "name"])?;
+    // A name is shown in `quecto container ls`, in logs and in `kill
+    // <ref|name>`: only the domain's allowlist is admitted.
+    let name = optional_string(map, "name")?
+        .map(EnvironmentName::try_from)
+        .transpose()
+        .map_err(|refusal| format!("container.name {refusal}"))?;
     Ok(ContainerSelection::New {
         container_config: optional_string(map, "container_config")?,
-        name: optional_string(map, "name")?,
+        name,
     })
 }
 

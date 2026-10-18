@@ -167,6 +167,16 @@ pub fn build_official_tool_extensions(deps: OfficialToolDeps) -> Vec<Arc<dyn Ext
     ))]
 }
 
+/// The project board's bundled extension (#2477): the `board` tool the
+/// interface builds over composition's board.
+pub fn build_project_board_tool_extension(board: Arc<dyn Tool>) -> Vec<Arc<dyn Extension>> {
+    vec![Arc::new(NativeExtension::new(
+        "quecto:project-board",
+        "The project board",
+        board,
+    ))]
+}
+
 pub struct SessionToolDeps {
     /// The recall use case the `recall` tool adapts (D9 #1978).
     pub recall: Arc<crate::application::sessions::use_cases::RecallContext>,
@@ -215,7 +225,8 @@ pub struct AgentControlToolDeps {
     /// Composition's durable environment registry (#2024 S4d), restored
     /// from the base directory; `None` in unit rigs, which then run over
     /// a fresh in-memory registry.
-    pub environment_registry: Option<crate::domain::environment_registry::EnvironmentRegistry>,
+    pub environment_registry:
+        Option<crate::domain::environments::entities::environment_registry::EnvironmentRegistry>,
     /// Composition's container-config listing (#2024 S4c) over the same
     /// layers: the spawn description's roster line and `agent_cmd
     /// get_container_configs` read it; `None` lists nothing.
@@ -239,7 +250,15 @@ pub struct AgentControlToolBuild {
         crate::infrastructure::tools::environment_member_shutdown::TerminationSlots,
     /// The session-scoped environment registry the spawn tool commits
     /// members to; composition builds the environment control over it.
-    pub environment_registry: crate::domain::environment_registry::EnvironmentRegistry,
+    pub environment_registry:
+        crate::domain::environments::entities::environment_registry::EnvironmentRegistry,
+    /// The `spawn` tool the extension holds, the very instance the
+    /// registry serves (S4c): what the board's coordinator launcher spawns
+    /// through.
+    pub spawn_tool: Arc<dyn crate::application::tools::ports::Tool>,
+    /// The `agent_cmd` tool beside it: what the launcher stops a
+    /// coordinator that came up wrong with.
+    pub agent_cmd_tool: Arc<dyn crate::application::tools::ports::Tool>,
 }
 
 pub fn build_agent_control_tool_extensions(deps: AgentControlToolDeps) -> AgentControlToolBuild {
@@ -286,12 +305,16 @@ pub fn build_agent_control_tool_extensions(deps: AgentControlToolDeps) -> AgentC
         .with_ended_child_slot(termination_slots.ended.clone())
         .with_container_config_roster(deps.container_config_roster);
 
+    let spawn_tool: Arc<dyn crate::application::tools::ports::Tool> = Arc::new(spawn);
+    let agent_cmd_tool: Arc<dyn crate::application::tools::ports::Tool> = Arc::new(agent_cmd);
     AgentControlToolBuild {
         extensions: vec![Arc::new(NativeExtension::with_tools(
             "quecto:agent-control",
             "Bundled Quecto subagent control tools",
-            vec![Arc::new(spawn), Arc::new(agent_cmd)],
+            vec![Arc::clone(&spawn_tool), Arc::clone(&agent_cmd_tool)],
         ))],
+        spawn_tool,
+        agent_cmd_tool,
         subagent_registry: registry,
         harness_lifecycle,
         notification_tx,

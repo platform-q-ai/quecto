@@ -85,5 +85,58 @@ fn without_a_configuration_the_event_log_is_off_before_admission() {
     assert!(!decided_before_admission(&ctx, &flags));
 }
 
+/// Epic #2481 T3 review round 1: through `followed`, what
+/// `follow_session` does once the crash target gave the arriving
+/// session's log (the target itself is armed once per process, so it is
+/// not armed here): the board tool's records move to the arriving log,
+/// with the switch its session decided, whatever the config files say
+/// now; once stopped, a switch starts nothing.
+#[tokio::test]
+async fn the_board_tools_records_follow_the_session() {
+    use crate::application::tools::ports::Tool;
+    use crate::infrastructure::persistence::audit_log::AuditLog;
+    use crate::interface::tools::project_board::site::BoardSite;
+    use crate::interface::tools::project_board::tool::BoardTool;
+    let base = tempfile::tempdir().unwrap();
+    let logs = ["departing", "arriving", "later"]
+        .map(|key| AuditLog::open_sync(base.path(), key).unwrap());
+    let [departing, arriving, later] = logs;
+    let recordings = Arc::new(SessionRecording::default());
+    let board_tool = BoardToolSession::new(Arc::clone(&recordings));
+    let build = BoardToolRecordingBuilder(
+        crate::composition::bootstrap::project_board::session_board_recording_decided,
+    );
+    // No config file switches the log on: the session decided it was.
+    board_tool.bind(Some(build), true, &departing);
+    let site = BoardSite {
+        repo: ".".into(),
+        remote: "origin".into(),
+        build: None,
+        launcher: None,
+        swarm_session: None,
+    };
+    let tool = BoardTool::recorded_in(site, recordings);
+    tool.execute(r#"{"op": "list"}"#).await.unwrap();
+    followed(arriving, None, &board_tool);
+    tool.execute(r#"{"op": "show", "task": "a"}"#)
+        .await
+        .unwrap();
+    board_tool.stop();
+    followed(later, None, &board_tool);
+    tool.execute(r#"{"op": "list"}"#).await.unwrap();
+    let ops = |key: &str| -> Vec<serde_json::Value> {
+        let text =
+            std::fs::read_to_string(AuditLog::file_path(base.path(), key)).unwrap_or_default();
+        text.lines()
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+            .filter(|line| line["event"] == "board_op")
+            .map(|line| line["op"].clone())
+            .collect()
+    };
+    assert_eq!(ops("departing"), ["list"]);
+    assert_eq!(ops("arriving"), ["show"]);
+    assert_eq!(ops("later"), Vec::<serde_json::Value>::new());
+}
+
 #[path = "event_log_admission_tests.rs"]
 mod admission;

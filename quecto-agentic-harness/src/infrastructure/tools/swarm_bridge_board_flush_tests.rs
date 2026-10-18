@@ -19,6 +19,7 @@ use crate::infrastructure::persistence::board_op_log::EventLogBoardOps;
 fn named(op: &str) -> BoardOpObservation {
     BoardOpObservation {
         op: op.into(),
+        name_form: None,
         actor_ref: Redacted::from("parent"),
         role: Some(BoardRole::Host),
         run_id: None,

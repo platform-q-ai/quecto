@@ -44,7 +44,23 @@ pub(super) fn build(flags: &AgentFlags, config: &Config) -> (ToolRegistryBuild, 
 pub(super) fn cli_flags() -> AgentFlags {
     let mut flags = super::cov_tests::flags();
     flags.no_session = true;
+    // The project board is composed, as `main` composes it, so the board
+    // tool is built.
+    flags.project_board = Some(unbuilt_board);
     flags
+}
+
+fn unbuilt_board(
+    _: &crate::interface::tools::project_board::site::ProjectBoardEnvironment,
+) -> Result<
+    crate::interface::tools::project_board::site::ProjectBoardHandles,
+    crate::interface::tools::project_board::site::BuildError,
+> {
+    Err(
+        crate::interface::tools::project_board::site::BuildError::Unavailable(
+            "not built in this test".into(),
+        ),
+    )
 }
 
 fn uds_workflow_flags() -> AgentFlags {

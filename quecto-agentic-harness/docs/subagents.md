@@ -136,7 +136,11 @@ Completion is **multi-turn**. The `agent_cmd await` command has been removed; us
 2. **End this parent turn** (or do other *non-duplicative* work that does not need
    the child’s answer). Stay available to the user.
 3. **Next turn:** a passive one-line completion note arrives automatically when
-   the child finishes/errors/exits.
+   the child finishes/errors/exits. A child spawned with `coordinator: true`
+   sends its first turn-end note as usual; after that its notes come only when
+   its run's state calls for it (the run ended, nothing in flight, no turn for
+   30 min, its board unreadable, or the reply to your prompt), not on every
+   idle turn (#2467). Silence while its workers are busy is expected.
 4. **Then** plain `agent_cmd get_messages` (omit/null `count` and `before`) for the default unread report.
 5. Verify, synthesize, and answer the user. Relay conclusions — not raw child dumps
    unless asked.
@@ -401,10 +405,8 @@ A finished child's report is complete. The child saves its session after every t
       "description": "Message for prompt/steer/follow_up commands"
     },
     "export_raw": {"type": "boolean", "description": "With get_report, export retained wire records and spills"},
-    "action": {"type": "string", "enum": ["pause", "resume", "status", "usage_budget"]},
+    "action": {"type": "string", "enum": ["pause", "resume", "close", "extend", "status"]},
     "reason": {"type": "string"},
-    "token_limit": {"type": ["integer", "null"], "minimum": 1},
-    "strict_unknown": {"type": "boolean"},
     "count": {
       "type": "integer",
       "description": "Explicit history page size for get_messages; omit/null for the default unread report; does not move the report cursor"
@@ -455,7 +457,7 @@ A finished child's report is complete. The child saves its session after every t
 
 | Command | Description | Requires `message` |
 |---------|-------------|--------------------|
-| `swarm_control` | Durable pause/resume/status/usage_budget control, independent of the model queue; supports descendant routing | No |
+| `swarm_control` | Durable pause/resume/close/extend/status control, independent of the model queue; supports descendant routing | No |
 | `get_report` | Latest substantive assistant report without advancing unread cursors; optional export_raw writes retained records and a checksum manifest | No |
 | `prompt` | Send a task/message to the subagent | Yes |
 | `steer` | Interrupt and redirect the agent (takes precedence over the workflow auto-continue nudge) | Yes |
@@ -515,6 +517,25 @@ available or required. The note is:
 - **Coalesced + deduplicated** — multiple completions from the same child
   collapse to one note (latest wins), so a noisy child costs at most one extra
   turn.
+- **Swarm coordinators** (#2467) — a child spawned with `coordinator: true`
+  wakes its parent on its run's state instead of each idle turn:
+  `Swarm coordinator 'c' reports its run succeeded; its final report is ready`,
+  `… reports its run running with nothing in flight and no result; it may need
+  a decision`, `… reports its run paused with no result`, `… stopped on a
+  failed turn; it may need a resume`, or `… has taken no turn for 30 min since
+  its board last showed work in flight`. These are never folded into a coalesced summary, and a
+  repeat of the same state is delivered again (the parent may have acted on
+  the last one). See `swarm_state` in `uds-protocol.md`.
+- **A coordinator's swarm workers** (#2471): their plain turn ends don't wake
+  the coordinator that created their run, which hears about their work through
+  its board. It still gets:
+  - the reply to its own `prompt`/`steer`/`follow_up`, signalled by the
+    worker's `reply_ready`;
+  - a worker's error and exit notes, and its first good turn after a failure;
+  - a "Swarm work is stranded …" note when the board shows a claim held by a
+    worker that isn't working, or ready work with none working.
+
+  See `docs/swarm.md`.
 
 The note is a **summary only**; to read the child's default unread report call
 plain `get_messages` (omit/null `count` and `before`). Explicit `count`/`before`
@@ -689,7 +710,7 @@ exactly once, no post-mortem), and only then runs the retained `kill`
 exactly once. An unsettled member withholds the kill and leaves a retryable
 `cleanup-failed` state. Final-member finalization (`FinalizeEnvironmentMember`,
 the #1924 retention and loss recording) lives beside it; the domain keeps
-only the pure retention policy (`domain/environment_retention.rs`).
+only the pure retention policy (`domain/environments/services/environment_retention.rs`).
 
 #### Lifetime and session restore (#1937)
 
@@ -867,10 +888,11 @@ any other `libc::kill`, `kill(`, `start_kill`, process-group signal or
 | Effect | Owner |
 | --- | --- |
 | TERM/KILL of a directly launched, unreaped child, and the own process group a `ProcessGroup::Own` spawn leads | `infrastructure/processes/owned_child_supervisor.rs` |
-| `PR_SET_PDEATHSIG` armed on a spawned process | `infrastructure/processes/parent_death_signal.rs` |
+| `PR_SET_PDEATHSIG` armed on a spawned process, and the `setsid` that gives the board's git and `gh` children a session of their own | `infrastructure/processes/parent_death_signal.rs` |
 | Bash tool invocation containment (its own process group) | `infrastructure/tools/bash/mod.rs` |
 | Signal-0 liveness observation | `infrastructure/persistence/session_ownership.rs` |
 | Container-script runner: its own script child on timeout, and the process group of a create whose spawn was cancelled | `infrastructure/processes/containers/script_stderr.rs` |
+| Project board git and `gh` runners: the process group of their own unreaped child (its own session), once it exits or at its deadline: SIGTERM, then SIGKILL right after it when the leader has exited (the normal path), or after a short grace while the leader still runs; nothing more once the leader is no longer theirs to watch | `infrastructure/persistence/project_board/own_group.rs` |
 | Tool-child containment (`rg`, `fd`) | `infrastructure/tools/grep_run.rs`, `infrastructure/tools/find_fd.rs` |
 | `/proc` observation (member start time, own executable, socket table) | `infrastructure/tools/swarm_bridge.rs`, `infrastructure/runtime_identity.rs`, `interface/cli/uds_socket.rs` |
 
@@ -907,5 +929,5 @@ top-level agent; on a child, use spawn `disable_tools` / `read_only` (above).
 
 The setup/configuration REPL does not operate agents or subagents. Use `quecto agent`, UDS, or `quecto-tui` for subagent capabilities.
 
-For swarm control receipts, pause/resume behavior, observed budgets and retained
+For swarm control receipts, pause/resume behavior, observed usage and retained
 export scope, see [swarm operational diagnostics](swarm.md#operational-diagnostics-and-budgets).

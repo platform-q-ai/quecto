@@ -6,6 +6,9 @@ use std::sync::Arc;
 
 use crate::application::agent_loop::AgentLoopImpl;
 use crate::application::audit::ports::AuditSink;
+use crate::infrastructure::persistence::audit_log::AuditLog;
+use crate::interface::cli::board::BoardToolRecordingBuilder;
+use crate::interface::tools::project_board::session_recording::SessionRecording;
 
 /// The key an agent's audit log is filed under, or `None` when it keeps
 /// none: its session's key, else a key of its own (process and start time,
@@ -84,16 +87,92 @@ pub(super) fn decided_with(
 /// The session switched to `session_key` (#2192): the crash target
 /// follows it, and the event log with it, when the log was the departing
 /// session's own; the process's swarm board then records in the arriving
-/// session's log too (#2313). Answers the log the agent writes to from
-/// now on.
+/// session's log too (#2313), and so does the project board tool (epic
+/// #2481 T3). Answers the log the agent writes to from now on.
 pub(in crate::interface::cli) fn follow_session(
     session_key: Option<&str>,
 ) -> Option<Arc<dyn AuditSink>> {
     let log = crate::infrastructure::persistence::crash_record::follow(session_key)?;
-    if let Some(board) = crate::infrastructure::tools::swarm_bridge::process_board() {
+    let board = crate::infrastructure::tools::swarm_bridge::process_board();
+    Some(followed(log, board, BoardToolSession::process()))
+}
+
+/// [`follow_session`] once the crash target gave the arriving session's
+/// `log`: `board` (the swarm's) and `board_tool` record there from now on.
+pub(super) fn followed(
+    log: AuditLog,
+    board: Option<&crate::infrastructure::tools::swarm_bridge::SwarmBoard>,
+    board_tool: &BoardToolSession,
+) -> Arc<dyn AuditSink> {
+    if let Some(board) = board {
         board.follow_session(&log);
     }
-    Some(Arc::new(log))
+    board_tool.follow(&log);
+    Arc::new(log)
+}
+
+/// The project board tool's recording (epic #2481 T3) and how it is built
+/// again into another session's log: composition's builder, with the
+/// switch the session decided when it started.
+pub(in crate::interface::cli) struct BoardToolSession {
+    recordings: Arc<SessionRecording>,
+    source: std::sync::Mutex<Option<BoardToolSource>>,
+}
+
+/// How a bound recording is built: by `build`, with the session's switch.
+#[derive(Clone, Copy)]
+struct BoardToolSource {
+    build: BoardToolRecordingBuilder,
+    event_log: bool,
+}
+
+impl BoardToolSession {
+    /// The board tool's recording `recordings`, bound to no session yet.
+    pub(super) fn new(recordings: Arc<SessionRecording>) -> Self {
+        Self {
+            recordings,
+            source: std::sync::Mutex::default(),
+        }
+    }
+
+    /// The process's: its board tool's ([`SessionRecording::process`]).
+    fn process() -> &'static Self {
+        static PROCESS: std::sync::OnceLock<BoardToolSession> = std::sync::OnceLock::new();
+        PROCESS.get_or_init(|| Self::new(SessionRecording::process()))
+    }
+
+    fn source(&self) -> std::sync::MutexGuard<'_, Option<BoardToolSource>> {
+        self.source
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// Records the tool's calls in `log`, the session's event log, as
+    /// `build` builds the recording with the session's switch `event_log`;
+    /// nothing without a builder, or while the switch is off.
+    fn bind(&self, build: Option<BoardToolRecordingBuilder>, event_log: bool, log: &AuditLog) {
+        let mut source = self.source();
+        *source = build.map(|build| BoardToolSource { build, event_log });
+        let recording = source.and_then(|source| (source.build.0)(source.event_log, log));
+        self.recordings.bind(recording);
+    }
+
+    /// Records nothing from now on.
+    fn stop(&self) {
+        let mut source = self.source();
+        *source = None;
+        self.recordings.stop();
+    }
+
+    /// The session switched to the one whose log is `log`: a recording
+    /// bound is built again there, with the switch its session decided.
+    fn follow(&self, log: &AuditLog) {
+        let source = *self.source();
+        if let Some(source) = source {
+            self.recordings
+                .follow(|| (source.build.0)(source.event_log, log));
+        }
+    }
 }
 
 /// A key for a session without one: unique to this process and start.
@@ -109,23 +188,23 @@ fn unkeyed() -> String {
 /// record a fatal panic leaves (#2192): beside the log, for every session
 /// that may leave something behind, with the log's crash line when it keeps
 /// one. The record is armed only once the session is claimed. A failure to
-/// open either is a warning, never a failed start.
+/// open either is a warning, never a failed start. The process's project
+/// board tool records in the log too (epic #2481 T3).
 pub(super) fn attach(
     agent: &mut AgentLoopImpl,
-    base_dir: &Path,
     flags: &super::AgentFlags,
-    session_key: &str,
-    event_log: bool,
+    target: &SessionLogTarget<'_>,
     stderr: &mut String,
 ) {
     use crate::infrastructure::persistence::crash_record::{CrashTarget, prepare};
     let board = crate::infrastructure::tools::swarm_bridge::process_board();
-    let target = SessionLogTarget {
+    let board_tool = BoardToolSession::process();
+    let crash_line = attach_to(board, board_tool, agent, target, flags, stderr);
+    let SessionLogTarget {
         base_dir,
         session_key,
-        event_log,
-    };
-    let crash_line = attach_to(board, agent, &target, flags, stderr);
+        ..
+    } = *target;
     let keeps_record = match (ephemeral(flags), session_key.is_empty()) {
         (false, false) => Some(session_key.to_string()),
         (true, _) | (false, true) => None,
@@ -138,30 +217,34 @@ pub(super) fn attach(
 }
 
 /// Where a session's audit log is kept: under `base_dir`, for the session
-/// `session_key`, with the event log on or off.
+/// `session_key`, with the event log on or off; and how the project board
+/// tool's recording is built (`None`: the tool records nothing).
 pub(super) struct SessionLogTarget<'a> {
     pub(super) base_dir: &'a Path,
     pub(super) session_key: &'a str,
     pub(super) event_log: bool,
+    pub(super) project_board: Option<BoardToolRecordingBuilder>,
 }
 
 /// [`attach`]'s log, without the crash record: gives `agent` its audit log
 /// when it keeps one, and records `board`'s calls there while the event log
-/// is on (what it held since admission first); answers the log's crash
-/// line.
+/// is on (what it held since admission first), and binds `board_tool`'s
+/// recording to it; answers the log's crash line.
 pub(super) fn attach_to(
     board: Option<&crate::infrastructure::tools::swarm_bridge::SwarmBoard>,
+    board_tool: &BoardToolSession,
     agent: &mut AgentLoopImpl,
     target: &SessionLogTarget<'_>,
     flags: &super::AgentFlags,
     stderr: &mut String,
 ) -> Option<crate::infrastructure::persistence::audit_log::AuditCrashLine> {
-    use crate::infrastructure::persistence::audit_log::AuditLog;
     let SessionLogTarget {
         base_dir,
         session_key,
         event_log,
+        project_board,
     } = *target;
+    let stop_board_tool = || board_tool.stop();
     match log_key(flags.workflow, ephemeral(flags), session_key, event_log) {
         Some(key) => match AuditLog::open_sync(base_dir, &key) {
             Ok(log) => {
@@ -172,6 +255,9 @@ pub(super) fn attach_to(
                 if let Some(board) = board {
                     board.record_in_session(event_log, &log);
                 }
+                // So are the board tool's, with the session's switch
+                // (#2150), decided now.
+                board_tool.bind(project_board, event_log, &log);
                 agent.set_audit_log(Some(Arc::new(log) as Arc<dyn AuditSink>));
                 crash_line
             }
@@ -180,6 +266,7 @@ pub(super) fn attach_to(
                 if let Some(board) = board {
                     board.stop_recording();
                 }
+                stop_board_tool();
                 None
             }
         },
@@ -189,6 +276,7 @@ pub(super) fn attach_to(
             if let Some(board) = board {
                 board.stop_recording();
             }
+            stop_board_tool();
             None
         }
     }

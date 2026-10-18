@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 use super::integration_tests::{make_test_agent, test_flags};
 use super::{AgentFlags, AgentOutput, run_agent_session};
 use crate::application::agent_loop::AgentLoopImpl;
-use crate::domain::environment_registry::{
+use crate::domain::environments::entities::environment_registry::{
     EnvironmentOrigin, EnvironmentRecord, EnvironmentRegistry, EnvironmentStatus,
     mint_environment_uuid,
 };

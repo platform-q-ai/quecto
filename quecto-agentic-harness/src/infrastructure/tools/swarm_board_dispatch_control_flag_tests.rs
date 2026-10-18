@@ -11,7 +11,8 @@ use super::{CallOrigin, SwarmBoardHandles, call, call_deciding, may_control_run}
 /// Whether `member`'s call of `op` changed the run's control state; the
 /// call must be answered (or refused after its writes committed).
 fn controls(handles: &SwarmBoardHandles, member: &str, op: &str, args: Value) -> bool {
-    let (answer, controls_run) = call_deciding(handles, member, op, args, CallOrigin::Member);
+    let (answer, controls_run) =
+        call_deciding(handles, member, op, args, (CallOrigin::Member, None));
     if let Err(refusal) = &answer {
         assert!(!controls_run, "{op} refused: {}", refusal.message());
     }
@@ -95,8 +96,11 @@ fn supervisor_and_coordinator_control_ops_change_it_only_when_applied() {
     );
 }
 
+/// No usage method changes the run's control state: a strict budget and
+/// unmeasured usage, in either order, pause nothing (owner decision,
+/// 2026-10-14).
 #[test]
-fn a_budget_pause_changes_it_and_a_budget_that_holds_does_not() {
+fn no_usage_method_changes_it() {
     let (_dir, handles) = board(1_000.0);
     created(&handles);
     let failed = json!({"request_id": "r1", "instrumented_attempts": 1, "outcome": "failed"});
@@ -112,18 +116,23 @@ fn a_budget_pause_changes_it_and_a_budget_that_holds_does_not() {
         "_request_admission",
         json!([])
     ));
-    assert!(
-        controls(&handles, "parent", "usage_budget", json!([100])),
-        "paused"
-    );
+    assert!(!controls(&handles, "parent", "usage_budget", json!([100])));
     let (_dir, handles) = board(1_000.0);
     created(&handles);
     assert!(!controls(&handles, "parent", "usage_budget", json!([100])));
     let failed = json!({"request_id": "r2", "instrumented_attempts": 1, "outcome": "failed"});
-    assert!(
-        controls(&handles, "parent", "_record_request", json!([failed])),
-        "paused"
-    );
+    assert!(!controls(
+        &handles,
+        "parent",
+        "_record_request",
+        json!([failed])
+    ));
+    assert!(!controls(
+        &handles,
+        "parent",
+        "_request_admission",
+        json!([])
+    ));
 }
 
 #[test]

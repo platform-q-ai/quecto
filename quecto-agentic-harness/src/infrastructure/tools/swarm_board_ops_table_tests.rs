@@ -214,14 +214,18 @@ fn the_checked_in_schema_is_the_rendering_of_board_ops() {
         .iter()
         .map(|op| op.as_str().unwrap())
         .collect();
+    // Each op and argument by the name the schema advertises (#2478).
+    use crate::infrastructure::tools::swarm_board_ops::{advertised_arg, advertised_op};
     for spec in BOARD_OPS {
-        assert!(ops.contains(&spec.name), "{}", spec.name);
+        assert!(ops.contains(&advertised_op(spec.name)), "{}", spec.name);
         for arg in spec.args {
             let rendered: Value = serde_json::from_str(arg.json_type).unwrap();
             assert_eq!(
-                checked_in["properties"][arg.name], rendered,
+                checked_in["properties"][advertised_arg(arg.name)],
+                rendered,
                 "{}.{}",
-                spec.name, arg.name
+                spec.name,
+                arg.name
             );
         }
     }
@@ -246,7 +250,8 @@ fn the_schema_types_the_new_fields() {
     ] {
         assert_eq!(property(name), json!({"type": "string"}), "{name}");
     }
-    for name in ["task_id", "message_id"] {
+    // `task_id` is advertised as `task_item_id` (#2478 slice B).
+    for name in ["task_item_id", "message_id"] {
         assert_eq!(property(name), json!({"type": "integer"}), "{name}");
     }
     // #2279 review N8: a field some op defaults to `null` admits `null`
@@ -283,9 +288,15 @@ fn the_schema_types_the_new_fields() {
 #[test]
 fn the_description_teaches_the_structured_ops_not_python() {
     let description = include_str!("swarm_assets/tool_description.txt");
+    // Each op and argument by the name the schema advertises (#2478).
+    use crate::infrastructure::tools::swarm_board_ops::{advertised_arg, advertised_op};
     for spec in BOARD_OPS {
-        let args: Vec<&str> = spec.args.iter().map(|arg| arg.name).collect();
-        let call = format!("{}({})", spec.name, args.join(","));
+        let args: Vec<&str> = spec
+            .args
+            .iter()
+            .map(|arg| advertised_arg(arg.name))
+            .collect();
+        let call = format!("{}({})", advertised_op(spec.name), args.join(","));
         assert!(description.contains(&call), "{call} is not taught");
     }
     for workbench in ["from swarm import board", "board.", "RLIMIT", "op=run"] {
@@ -295,7 +306,7 @@ fn the_description_teaches_the_structured_ops_not_python() {
         );
     }
     assert!(
-        description.contains(r#"{"op":"claim","task_id":"#),
+        description.contains(r#"{"op":"claim","task_item_id":"#),
         "an example of a structured op"
     );
 }
@@ -318,8 +329,8 @@ fn the_description_promises_no_null_answers() {
         "the swarm docs page still says an op answers null"
     );
     for answer in [
-        "answers the task, `submitted`",
-        "answers `{task_id, reservation, released}`",
+        "answers the task item, `submitted`",
+        "answers `{task_item_id, reservation, released}`",
         "answers `{message_id, changed}`",
         "Answers the recorded `{criterion, artifact, revision, kind, actor, accepted}`",
     ] {

@@ -30,7 +30,11 @@ pub type ContainerDoctorBuilder =
 /// directory's records for a top-level session, journalling only for a
 /// spawned child.
 pub type EnvironmentRegistryBuilder =
-    fn(&std::path::Path, &str, bool) -> crate::domain::environment_registry::EnvironmentRegistry;
+    fn(
+        &std::path::Path,
+        &str,
+        bool,
+    ) -> crate::domain::environments::entities::environment_registry::EnvironmentRegistry;
 
 /// Composition's builder of the `container ls|kill|gc` handles (#2024
 /// S4d) over a registry restored from the base directory.
@@ -44,7 +48,7 @@ pub type ContainerInventoryBuilder = fn(
 ) -> super::container_handles::ContainerInventoryHandles;
 
 const USAGE: &str = "usage: quecto container doctor [--name <config>]\n(with --config <file> the file's container_configs are diagnosed instead of the working directory's effective ones)\n";
-pub(super) const TOP_USAGE: &str = "usage: quecto container init [--project <abs dir>] [--repo <url>] [--image <tag>] [--refresh] [--dry-run]\nusage: quecto container status [--project <abs dir>]\nusage: quecto container doctor [--name <config>]\nusage: quecto container ls [--all]\nusage: quecto container kill <ref|name>\nusage: quecto container gc [--dry-run] [--name <config>] [--abandoned | --abandoned-after <duration>]\n(with --config <file> the file's container_configs are diagnosed instead of the working directory's effective ones)\n";
+pub(super) const TOP_USAGE: &str = "usage: quecto container init [--project <abs dir>] [--repo <url>] [--image <tag>] [--refresh] [--dry-run]\nusage: quecto container status [--project <abs dir>]\nusage: quecto container doctor [--name <config>]\nusage: quecto container ls [--all] [--json]\nusage: quecto container kill <ref|name>\nusage: quecto container kill <ref> --created-by <key>\nusage: quecto container gc [--dry-run] [--name <config>] [--abandoned | --abandoned-after <duration>]\n(with --config <file> the file's container_configs are diagnosed instead of the working directory's effective ones)\n";
 
 /// Composition's builder of `quecto container init` (#2024 S4e): the
 /// standard bundle materialised below the project and the overlay entry

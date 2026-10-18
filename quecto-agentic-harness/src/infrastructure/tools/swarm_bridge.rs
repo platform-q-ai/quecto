@@ -75,6 +75,18 @@ impl SwarmContext {
         self.rpc(method, args)
     }
 
+    /// [`Self::call`] for a structured op (#2478): its record carries
+    /// `name_form`, which names the member's call used. Blocking.
+    pub(crate) fn call_named(
+        &self,
+        method: &str,
+        args: Value,
+        name_form: Option<crate::domain::swarm::NameForm>,
+    ) -> Result<Value, DomainError> {
+        self.board
+            .call_named(self.location(), &self.member, method, args, name_form)
+    }
+
     /// How structured ops read a member's text and write their answers on
     /// this context's board (#2279): no board call, no file resolved, so
     /// it is read on the async worker (#2279 review L5).
@@ -83,19 +95,21 @@ impl SwarmContext {
     }
 
     /// Records `method` as refused with `kind` before it reached the board
-    /// (#2279), `elapsed` after the op began.
+    /// (#2279), `elapsed` after the op began, with which names the call
+    /// used (#2478; `None` where none applies).
     pub(crate) fn refused(
         &self,
         method: &str,
         kind: crate::domain::swarm::RefusalKind,
         arguments: super::swarm_board_dispatch::BindingFaults,
+        name_form: Option<crate::domain::swarm::NameForm>,
         elapsed: std::time::Duration,
     ) {
         self.board.refused(
             self.location(),
             &self.member,
             method,
-            (kind, arguments),
+            (kind, arguments, name_form),
             elapsed,
         );
     }
@@ -136,13 +150,6 @@ impl SwarmContext {
 
     pub fn usage_report(&self) -> Result<Value, DomainError> {
         self.rpc("usage_report", json!([]))
-    }
-    pub fn usage_budget(
-        &self,
-        limit: Option<u64>,
-        strict_unknown: bool,
-    ) -> Result<Value, DomainError> {
-        self.rpc("usage_budget", json!([limit, strict_unknown]))
     }
 
     pub fn events(&self, after: u64, limit: u32) -> Result<Value, DomainError> {
@@ -227,7 +234,10 @@ impl HostedStore {
     /// environment rather than guessing.
     pub fn hosted_run(
         &self,
-    ) -> Result<Option<crate::domain::environment_retention::HostedSwarmRun>, DomainError> {
+    ) -> Result<
+        Option<crate::domain::environments::services::environment_retention::HostedSwarmRun>,
+        DomainError,
+    > {
         let displaced = match self.contained()? {
             Found::Store { displaced } => displaced,
             Found::Nothing => return Ok(None),
@@ -249,6 +259,91 @@ impl HostedStore {
         }
     }
 
+    /// The board's projection (#2478), as `_board` answers it, or `None`
+    /// when no store exists there. One read transaction of allowlisted
+    /// columns: it takes no write lock and migrates nothing. A board with
+    /// another beside it, where the layout no longer places a board, is
+    /// refused as [`Self::hosted_run`] refuses it: while it holds no
+    /// created run (#2487 round 2, L2).
+    pub fn board_projection(&self) -> Result<Option<serde_json::Value>, DomainError> {
+        self.supervised("_board")
+    }
+
+    /// The board's revision, which every write the projection shows moves
+    /// (its latest event and usage ledger row), and the id of the run it
+    /// counts; or `None` as for [`Self::board_projection`].
+    pub fn board_revision(
+        &self,
+    ) -> Result<Option<crate::application::swarm::dto::BoardRevision>, DomainError> {
+        let Some(answer) = self.supervised("_board_revision")? else {
+            return Ok(None);
+        };
+        let malformed =
+            || DomainError::Tool("swarm board revision is not {run, revision, created}".to_owned());
+        let revision = answer["revision"].as_i64().ok_or_else(malformed)?;
+        let run = match &answer["run"] {
+            Value::Null => None,
+            Value::String(run) => Some(run.clone()),
+            _ => return Err(malformed()),
+        };
+        let created = answer["created"].as_bool().ok_or_else(malformed)?;
+        Ok(Some(crate::application::swarm::dto::BoardRevision {
+            run,
+            revision,
+            created,
+        }))
+    }
+
+    /// `method` (`_board` or `_board_revision`) on the board, as the
+    /// supervising session. A board with a displaced one beside it is
+    /// answered only when it holds a created run, the rule
+    /// [`Self::hosted_run`] keeps: that board is the one its members run
+    /// on. Each answer says so itself (the run's deadline, or `created`),
+    /// so one read decides (round 3 L3).
+    pub(super) fn supervised(
+        &self,
+        method: &str,
+    ) -> Result<Option<serde_json::Value>, DomainError> {
+        // An allowlist, checked before anything is looked for or called.
+        let read = match method {
+            "_board" => SupervisedRead::Board,
+            "_board_revision" => SupervisedRead::Revision,
+            other => {
+                return Err(DomainError::Tool(format!(
+                    "the supervising session reads only _board and _board_revision, not {other}"
+                )));
+            }
+        };
+        let displaced = match self.contained()? {
+            Found::Store { displaced } => displaced,
+            Found::Nothing => return Ok(None),
+        };
+        let answer = self.board.call_as(
+            self.location(),
+            "supervisor",
+            method,
+            json!([]),
+            super::swarm_board_dispatch::CallOrigin::Supervisor,
+        )?;
+        let Some(displaced) = displaced else {
+            return Ok(Some(answer));
+        };
+        let created = match read {
+            SupervisedRead::Board => answer["run"]["deadline"]
+                .as_f64()
+                .is_some_and(crate::domain::swarm::participates),
+            SupervisedRead::Revision => answer["created"].as_bool() == Some(true),
+        };
+        match created {
+            true => Ok(Some(answer)),
+            false => Err(DomainError::Tool(format!(
+                "swarm board {} holds no created run, but another board exists at {} where a member may still be running",
+                self.database().display(),
+                displaced.display()
+            ))),
+        }
+    }
+
     /// Record the coordinator's loss in one store operation: a run that has
     /// already ended (or that the store's expiry check ends first) is left
     /// alone; otherwise the coordinator is quarantined exactly as an in-swarm
@@ -257,7 +352,10 @@ impl HostedStore {
     pub fn record_lost_coordinator(
         &self,
         coordinator: &str,
-    ) -> Result<crate::domain::environment_retention::CoordinatorLoss, DomainError> {
+    ) -> Result<
+        crate::domain::environments::services::environment_retention::CoordinatorLoss,
+        DomainError,
+    > {
         match self.contained()? {
             Found::Store { .. } => {}
             Found::Nothing => {
@@ -270,13 +368,22 @@ impl HostedStore {
         let value =
             self.board
                 .call(self.location(), coordinator, "_lose_coordinator", json!([]))?;
-        Ok(crate::domain::environment_retention::CoordinatorLoss {
-            run: decode_hosted_run(&value)?,
-            lost: value["lost"]
-                .as_bool()
-                .ok_or_else(|| DomainError::Tool("swarm loss receipt carries no verdict".into()))?,
-        })
+        Ok(
+            crate::domain::environments::services::environment_retention::CoordinatorLoss {
+                run: decode_hosted_run(&value)?,
+                lost: value["lost"].as_bool().ok_or_else(|| {
+                    DomainError::Tool("swarm loss receipt carries no verdict".into())
+                })?,
+            },
+        )
     }
+}
+
+/// The supervising session's two reads of a board.
+#[derive(Clone, Copy)]
+enum SupervisedRead {
+    Board,
+    Revision,
 }
 
 /// What the host finds where a container's store should be.
@@ -366,7 +473,8 @@ impl HostedStore {
 
 fn decode_hosted_run(
     status: &Value,
-) -> Result<crate::domain::environment_retention::HostedSwarmRun, DomainError> {
+) -> Result<crate::domain::environments::services::environment_retention::HostedSwarmRun, DomainError>
+{
     let deadline = status["deadline"]
         .as_f64()
         .ok_or_else(|| DomainError::Tool("swarm status carries no deadline".into()))?;
@@ -384,13 +492,15 @@ fn decode_hosted_run(
         .as_str()
         .filter(|id| !id.is_empty())
         .ok_or_else(|| DomainError::Tool("swarm status carries no run id".into()))?;
-    Ok(crate::domain::environment_retention::HostedSwarmRun {
-        id: id.to_owned(),
-        status: coordination::decode_status(run_status)?,
-        outcome,
-        coordinator: coordinator.to_owned(),
-        deadline,
-    })
+    Ok(
+        crate::domain::environments::services::environment_retention::HostedSwarmRun {
+            id: id.to_owned(),
+            status: coordination::decode_status(run_status)?,
+            outcome,
+            coordinator: coordinator.to_owned(),
+            deadline,
+        },
+    )
 }
 
 /// Kernel process start time disambiguates recycled PIDs. Missing procfs is
@@ -472,6 +582,8 @@ type ParticipationHook = Box<dyn Fn() + Send + Sync>;
 #[derive(Default)]
 pub struct SharedParticipation {
     flag: std::sync::atomic::AtomicBool,
+    /// This process created its container (#2471), recorded at its join.
+    creator: std::sync::atomic::AtomicBool,
     hooks: std::sync::Mutex<Vec<ParticipationHook>>,
 }
 
@@ -495,6 +607,28 @@ impl Participation {
         match self {
             Self::Shared(shared) => shared.flag.load(std::sync::atomic::Ordering::SeqCst),
             Self::Fixed(value) => *value,
+        }
+    }
+
+    /// Whether this process takes part as its container's creator, the one
+    /// process that creates the run and so coordinates it (#2471).
+    pub fn created_run(&self) -> bool {
+        match self {
+            Self::Shared(shared) => {
+                shared.flag.load(std::sync::atomic::Ordering::SeqCst)
+                    && shared.creator.load(std::sync::atomic::Ordering::SeqCst)
+            }
+            Self::Fixed(_) => false,
+        }
+    }
+
+    /// Record that this process created its container; a fixed answer
+    /// never changes.
+    pub fn record_creator(&self, creator: bool) {
+        if let Self::Shared(shared) = self {
+            shared
+                .creator
+                .store(creator, std::sync::atomic::Ordering::SeqCst);
         }
     }
 

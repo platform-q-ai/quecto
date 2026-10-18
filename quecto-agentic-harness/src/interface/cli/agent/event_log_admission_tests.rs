@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use super::super::{SessionLogTarget, attach_to, decided_with};
+use super::super::{BoardToolSession, SessionLogTarget, SessionRecording, attach_to, decided_with};
 use crate::application::configuration::ports::OverlayTrustStore;
 use crate::infrastructure::config::persistence::PersistentOverlayTrustStore;
 use crate::infrastructure::persistence::audit_log::AuditLog;
@@ -181,8 +181,17 @@ fn the_admissions_calls_are_in_the_file_once_the_log_is_attached() {
         base_dir: base.path(),
         session_key: "cli:admitted",
         event_log: build.event_log,
+        project_board: None,
     };
-    attach_to(Some(&board), &mut agent, &target, &flags, &mut stderr);
+    let board_tool = BoardToolSession::new(std::sync::Arc::default());
+    attach_to(
+        Some(&board),
+        &board_tool,
+        &mut agent,
+        &target,
+        &flags,
+        &mut stderr,
+    );
     let text = std::fs::read_to_string(AuditLog::file_path(base.path(), "cli:admitted")).unwrap();
     let ops: Vec<serde_json::Value> = text
         .lines()
@@ -226,4 +235,130 @@ fn an_agent_whose_environment_sets_the_removed_mode_is_refused() {
         stderr.contains("QUECTO_CONTEXT_MODE") && stderr.contains("removed"),
         "{stderr}"
     );
+}
+
+/// Epic #2481 T3 review round 1: a session attached with the event log on
+/// and composition's builder binds the board tool's recording to its log,
+/// so a tool call lands there; with no builder, nothing does.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_attached_session_records_the_board_tools_calls() {
+    use crate::application::tools::ports::Tool;
+    use crate::interface::cli::board::BoardToolRecordingBuilder;
+    use crate::interface::tools::project_board::site::BoardSite;
+    use crate::interface::tools::project_board::tool::BoardTool;
+    let base = base(true);
+    let cwd = tempfile::tempdir().unwrap();
+    let (ctx, flags) = started(base.path(), cwd.path());
+    let selection = ctx.config_selection().unwrap();
+    for (session, builder, recorded) in [
+        (
+            "cli:board-on",
+            Some(BoardToolRecordingBuilder(
+                crate::composition::bootstrap::project_board::session_board_recording_decided,
+            )),
+            1,
+        ),
+        ("cli:board-unbuilt", None, 0),
+    ] {
+        let mut stderr = String::new();
+        let build = build_agent_from_config_in(
+            &ctx.base_dir(),
+            &selection,
+            &flags,
+            &mut stderr,
+            None,
+            &HashMap::new(),
+        )
+        .unwrap_or_else(|| panic!("{stderr}"));
+        assert!(build.event_log);
+        let mut agent = build.agent;
+        let recordings = std::sync::Arc::new(SessionRecording::default());
+        let board_tool = BoardToolSession::new(std::sync::Arc::clone(&recordings));
+        let target = SessionLogTarget {
+            base_dir: base.path(),
+            session_key: session,
+            event_log: true,
+            project_board: builder,
+        };
+        attach_to(None, &board_tool, &mut agent, &target, &flags, &mut stderr);
+        let site = BoardSite {
+            repo: cwd.path().into(),
+            remote: "origin".into(),
+            build: None,
+            launcher: None,
+            swarm_session: None,
+        };
+        BoardTool::recorded_in(site, recordings)
+            .execute(r#"{"op": "list"}"#)
+            .await
+            .unwrap();
+        let text =
+            std::fs::read_to_string(AuditLog::file_path(base.path(), session)).unwrap_or_default();
+        let ops = text
+            .lines()
+            .filter(|line| line.contains(r#""event":"board_op""#))
+            .count();
+        assert_eq!(ops, recorded, "{session}");
+    }
+}
+
+/// Review round 2: off means off where it is wired in. A session whose
+/// event log is off keeps its workflow audit log; given composition's
+/// builder, its board tool records nothing there, nor after a switch.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_session_with_the_event_log_off_records_no_board_tool_call() {
+    use crate::application::tools::ports::Tool;
+    use crate::interface::cli::board::BoardToolRecordingBuilder;
+    use crate::interface::tools::project_board::site::BoardSite;
+    use crate::interface::tools::project_board::tool::BoardTool;
+    let base = base(false);
+    let cwd = tempfile::tempdir().unwrap();
+    let (ctx, mut flags) = started(base.path(), cwd.path());
+    let selection = ctx.config_selection().unwrap();
+    let mut stderr = String::new();
+    let build = build_agent_from_config_in(
+        &ctx.base_dir(),
+        &selection,
+        &flags,
+        &mut stderr,
+        None,
+        &HashMap::new(),
+    )
+    .unwrap_or_else(|| panic!("{stderr}"));
+    assert!(!build.event_log);
+    let mut agent = build.agent;
+    // A workflow session keeps its audit log with the event log off.
+    flags.workflow = true;
+    let recordings = std::sync::Arc::new(SessionRecording::default());
+    let board_tool = BoardToolSession::new(std::sync::Arc::clone(&recordings));
+    let target = SessionLogTarget {
+        base_dir: base.path(),
+        session_key: "cli:workflow-off",
+        event_log: false,
+        project_board: Some(BoardToolRecordingBuilder(
+            crate::composition::bootstrap::project_board::session_board_recording_decided,
+        )),
+    };
+    attach_to(None, &board_tool, &mut agent, &target, &flags, &mut stderr);
+    assert!(
+        AuditLog::file_path(base.path(), "cli:workflow-off").exists(),
+        "the workflow log is open"
+    );
+    let site = BoardSite {
+        repo: cwd.path().into(),
+        remote: "origin".into(),
+        build: None,
+        launcher: None,
+        swarm_session: None,
+    };
+    let tool = BoardTool::recorded_in(site, recordings);
+    tool.execute(r#"{"op": "list"}"#).await.unwrap();
+    let arriving = AuditLog::open_sync(base.path(), "cli:workflow-next").unwrap();
+    super::super::followed(arriving, None, &board_tool);
+    tool.execute(r#"{"op": "list"}"#).await.unwrap();
+    for session in ["cli:workflow-off", "cli:workflow-next"] {
+        let text =
+            std::fs::read_to_string(AuditLog::file_path(base.path(), session)).unwrap_or_default();
+        assert!(!text.contains(r#""event":"board_op""#), "{session}: {text}");
+    }
 }

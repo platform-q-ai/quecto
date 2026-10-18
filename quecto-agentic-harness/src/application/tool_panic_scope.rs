@@ -277,6 +277,20 @@ impl ToolScope {
             .unwrap_or(false)
     }
 
+    /// The panic the calling thread recorded here, if any.
+    fn own_panic(&self) -> Option<PanicSite> {
+        let thread = thread_token();
+        self.with_site(|records| {
+            records
+                .kept
+                .iter()
+                .chain(&records.later)
+                .find(|recorded| recorded.thread == thread)
+                .map(|recorded| recorded.site.clone())
+        })
+        .flatten()
+    }
+
     /// Forget the panics the calling thread raised: that thread caught them
     /// itself, so they are not the call's; another thread's stay. Answers
     /// the forgotten kept record's provisional session: `Some(None)` when
@@ -488,22 +502,109 @@ pub fn in_flight_tools() -> Vec<String> {
 /// ends the process before the unwind reaches this catch, exactly as it
 /// would for an uncaught second panic.
 pub fn catch_in_call<T>(f: impl FnOnce() -> T + std::panic::UnwindSafe) -> std::thread::Result<T> {
+    catch_forgetting(f).0
+}
+
+/// [`catch_in_call`], answering also the site the hook recorded for the
+/// panic it caught and forgot (none outside a scope, or when the thread had
+/// recorded one before `f` ran, which is kept).
+fn catch_forgetting<T>(
+    f: impl FnOnce() -> T + std::panic::UnwindSafe,
+) -> (std::thread::Result<T>, Option<PanicSite>) {
     let scope = current();
     let recorded_before = scope.as_deref().is_some_and(ToolScope::has_own_panic);
     let caught = std::panic::catch_unwind(f);
-    match (&caught, &scope, recorded_before) {
+    let forgotten = match (&caught, &scope, recorded_before) {
         (Err(_), Some(scope), false) => {
             settle_contained_unwind();
+            let site = scope.own_panic();
             // Its provisional crash record goes with it: the call is not
             // crashing.
             if let Some(provisional) = scope.forget_own_panic() {
                 withdraw_provisional(scope, provisional.as_deref());
             }
+            site
         }
-        (Err(_), _, _) => settle_contained_unwind(),
-        (Ok(_), _, _) => {}
+        (Err(_), _, _) => {
+            settle_contained_unwind();
+            None
+        }
+        (Ok(_), _, _) => None,
+    };
+    (caught, forgotten)
+}
+
+/// A panic a call's code caught and answers itself
+/// ([`catch_in_call_site`]): the call's tool and turn (none and 0 outside
+/// a call), and where and why it panicked, its message as it may leave the
+/// process ([`shown_panic_message`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HandledPanic {
+    pub tool: Option<String>,
+    pub turn: u32,
+    pub site: PanicSite,
+}
+
+/// [`catch_in_call`] for code that answers the panic itself (#2517): the
+/// panic comes back as a [`HandledPanic`], its message shown (secret shapes
+/// redacted, bounded), and leaves the `error` event a contained panic
+/// leaves, only when the process's panic hook is installed (it registers
+/// the writer, [`on_handled`]; without it no event is written). The hook
+/// recorded its location; without a hook the payload gives the message
+/// alone.
+pub fn catch_in_call_site<T>(
+    f: impl FnOnce() -> T + std::panic::UnwindSafe,
+) -> Result<T, HandledPanic> {
+    let (caught, forgotten) = catch_forgetting(f);
+    caught.map_err(|payload| {
+        let scope = current();
+        let site = forgotten.unwrap_or_else(|| PanicSite {
+            message: payload_message(payload.as_ref()),
+            location: None,
+        });
+        let handled = HandledPanic {
+            tool: scope.as_deref().map(|scope| scope.tool().to_string()),
+            turn: scope.as_deref().map_or(0, ToolScope::turn),
+            site: PanicSite {
+                message: shown_panic_message(&site.message),
+                location: site.location,
+            },
+        };
+        if let Some(record) = ON_HANDLED.get() {
+            record(&handled);
+        }
+        handled
+    })
+}
+
+/// How a handled panic's `error` event is written: registered by the
+/// process's panic hook (it owns the event log's crash line).
+static ON_HANDLED: std::sync::OnceLock<fn(&HandledPanic)> = std::sync::OnceLock::new();
+
+/// Register how a handled panic is recorded; the first registration holds.
+pub fn on_handled(f: fn(&HandledPanic)) {
+    let _ = ON_HANDLED.set(f);
+}
+
+/// The most of a panic's message a result or event carries, in bytes.
+pub const MAX_PANIC_MESSAGE_BYTES: usize = 1024;
+
+/// A panic's message as it may leave the process, the one helper every
+/// sink uses (the stderr line, the call's result, the crash record and a
+/// fatal report's struck panic): known secret shapes and URL userinfo
+/// redacted first (so a cut never hides one from the redaction), then cut
+/// on a character boundary to [`MAX_PANIC_MESSAGE_BYTES`], marked "…".
+pub fn shown_panic_message(message: &str) -> String {
+    use crate::domain::redaction::{redact_secrets, redact_url_userinfo};
+    let redacted = redact_secrets(&redact_url_userinfo(message));
+    let mut end = redacted.len().min(MAX_PANIC_MESSAGE_BYTES);
+    while !redacted.is_char_boundary(end) {
+        end -= 1;
     }
-    caught
+    match end < redacted.len() {
+        true => format!("{}…", &redacted[..end]),
+        false => redacted,
+    }
 }
 
 /// A future whose every poll runs inside a scope.

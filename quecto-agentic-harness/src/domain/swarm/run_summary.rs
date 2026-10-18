@@ -22,7 +22,7 @@ use serde::{Deserialize, Serialize};
 
 use super::Snapshot;
 use super::run_totals::RunTotals;
-use super::telemetry::{BoardOpObservation, BoardOpOutcome, RefusalKind, board_run_id};
+use super::telemetry::{BoardOpObservation, BoardOpOutcome, NameForm, RefusalKind, board_run_id};
 use crate::domain::redaction::Redacted;
 
 /// The most samples of each measure an op keeps for its percentiles: a
@@ -68,6 +68,11 @@ pub struct OpSummary {
     pub commit_us: Percentiles,
     /// Records whose store's busy handler fired.
     pub busy: u64,
+    /// The calls by the names they used where the swarm's tasks were
+    /// renamed task items (#2478): `legacy` and `current`, as their
+    /// records' `name_form`; left out for an op whose records carry none.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub name_forms: BTreeMap<NameForm, u64>,
     /// Records not held in the op's sample of [`SAMPLES_PER_OP`] (a
     /// uniform sample over all its records, from which the p50 and p95 are
     /// taken; the max is exact), counted; left out when there were none.
@@ -168,6 +173,7 @@ fn is_zero(count: &u64) -> bool {
 struct OpFold {
     ok: u64,
     refused: BTreeMap<RefusalKind, u64>,
+    name_forms: BTreeMap<NameForm, u64>,
     busy: u64,
     durations: Samples,
     lock_waits: Samples,
@@ -446,6 +452,10 @@ fn fold_op(fold: &mut OpFold, observation: &BoardOpObservation, calls: u64, draw
             *refused = refused.saturating_add(1);
         }
     }
+    if let Some(form) = observation.name_form {
+        let named = fold.name_forms.entry(form).or_default();
+        *named = named.saturating_add(calls);
+    }
     if observation.busy == Some(true) {
         fold.busy = fold.busy.saturating_add(1);
     }
@@ -459,6 +469,7 @@ fn summarized(fold: &OpFold) -> OpSummary {
     OpSummary {
         ok: fold.ok,
         refused: fold.refused.clone(),
+        name_forms: fold.name_forms.clone(),
         duration_us: fold.durations.percentiles(),
         lock_wait_us: fold.lock_waits.percentiles(),
         busy_wait_us: fold.busy_waits.percentiles(),

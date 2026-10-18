@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 
 use super::subagent_cleanup::{cleanup_registered_once, cleanup_removed_entries_once};
 use super::subagent_registry::{SubagentEntry, SubagentRegistry};
-use crate::domain::environment_retention::MemberFinalizeMode as FinalizeMode;
+use crate::domain::environments::services::environment_retention::MemberFinalizeMode as FinalizeMode;
 
 fn cleanup_script(log: &std::path::Path) -> std::path::PathBuf {
     let script = log.parent().unwrap().join("cleanup.sh");
@@ -136,7 +136,7 @@ async fn fleet_teardown_finalizes_a_script_managed_member_and_clears_its_row() {
 
 #[tokio::test]
 async fn cleanup_registered_once_stops_the_committed_environment_entry() {
-    use crate::domain::environment_registry::{
+    use crate::domain::environments::entities::environment_registry::{
         EnvironmentRecord, EnvironmentRegistry, EnvironmentStatus, mint_environment_uuid,
     };
 
@@ -162,7 +162,8 @@ async fn cleanup_registered_once_stops_the_committed_environment_entry() {
         status: EnvironmentStatus::Running,
         metadata: serde_json::json!({}),
         last_error: None,
-        origin: crate::domain::environment_registry::EnvironmentOrigin::Created,
+        origin:
+            crate::domain::environments::entities::environment_registry::EnvironmentOrigin::Created,
         created_by: String::new(),
         created_at: None,
     });
@@ -209,8 +210,10 @@ fn committed_env_record(
     kill_argv: Vec<String>,
     cleanup_argv: Vec<String>,
     members: Vec<String>,
-) -> crate::domain::environment_registry::EnvironmentRecord {
-    use crate::domain::environment_registry::{EnvironmentRecord, mint_environment_uuid};
+) -> crate::domain::environments::entities::environment_registry::EnvironmentRecord {
+    use crate::domain::environments::entities::environment_registry::{
+        EnvironmentRecord, mint_environment_uuid,
+    };
     EnvironmentRecord {
         environment_ref: env_ref.to_string(),
         environment_id: format!("runtime-{env_ref}"),
@@ -224,10 +227,12 @@ fn committed_env_record(
         retained_cleanup_argv: cleanup_argv,
         retained_inspect_argv: vec![],
         members,
-        status: crate::domain::environment_registry::EnvironmentStatus::Running,
+        status:
+            crate::domain::environments::entities::environment_registry::EnvironmentStatus::Running,
         metadata: serde_json::json!({}),
         last_error: None,
-        origin: crate::domain::environment_registry::EnvironmentOrigin::Created,
+        origin:
+            crate::domain::environments::entities::environment_registry::EnvironmentOrigin::Created,
         created_by: String::new(),
         created_at: None,
     }
@@ -242,7 +247,8 @@ async fn final_joiner_exit_falls_back_to_the_record_retained_cleanup() {
     let log = temp.path().join("cleanup.log");
     let script = cleanup_script(&log);
 
-    let environments = crate::domain::environment_registry::EnvironmentRegistry::new();
+    let environments =
+        crate::domain::environments::entities::environment_registry::EnvironmentRegistry::new();
     let env_ref = environments.mint_ref().unwrap();
     environments.commit(committed_env_record(
         &env_ref,
@@ -290,7 +296,7 @@ async fn final_joiner_exit_falls_back_to_the_record_retained_cleanup() {
     let record = environments.get(&env_ref).unwrap();
     assert_eq!(
         record.status,
-        crate::domain::environment_registry::EnvironmentStatus::Stopped
+        crate::domain::environments::entities::environment_registry::EnvironmentStatus::Stopped
     );
     assert_eq!(
         std::fs::read_to_string(&log).unwrap().trim(),
@@ -319,7 +325,8 @@ async fn launch_rollback_runs_retained_cleanup_instead_of_kill() {
         script
     };
 
-    let environments = crate::domain::environment_registry::EnvironmentRegistry::new();
+    let environments =
+        crate::domain::environments::entities::environment_registry::EnvironmentRegistry::new();
     let env_ref = environments.mint_ref().unwrap();
     environments.commit(committed_env_record(
         &env_ref,
@@ -343,7 +350,7 @@ async fn launch_rollback_runs_retained_cleanup_instead_of_kill() {
     assert!(!kill_log.exists(), "rollback must not run retained kill");
     assert_eq!(
         environments.get(&env_ref).unwrap().status,
-        crate::domain::environment_registry::EnvironmentStatus::Stopped
+        crate::domain::environments::entities::environment_registry::EnvironmentStatus::Stopped
     );
 }
 
@@ -353,7 +360,8 @@ async fn owned_launch_rollback_discards_the_environment_record_entirely() {
     let cleanup_log = temp.path().join("cleanup.log");
     let cleanup = cleanup_script(&cleanup_log);
 
-    let environments = crate::domain::environment_registry::EnvironmentRegistry::new();
+    let environments =
+        crate::domain::environments::entities::environment_registry::EnvironmentRegistry::new();
     let env_ref = environments.mint_ref().unwrap();
     environments.commit(committed_env_record(
         &env_ref,
@@ -398,7 +406,9 @@ fn logging_fail_script(log: &std::path::Path, dir: &std::path::Path) -> String {
 /// a permanent error onto a cleanly killed environment.
 #[tokio::test]
 async fn parent_kill_members_are_not_inspected_and_no_error_sticks() {
-    use crate::domain::environment_registry::{EnvironmentRegistry, EnvironmentStatus};
+    use crate::domain::environments::entities::environment_registry::{
+        EnvironmentRegistry, EnvironmentStatus,
+    };
 
     let temp = tempfile::tempdir().unwrap();
     let inspect_log = temp.path().join("inspect.log");
@@ -438,4 +448,183 @@ async fn parent_kill_members_are_not_inspected_and_no_error_sticks() {
     assert_eq!(record.status, EnvironmentStatus::Stopped);
     assert!(record.members.is_empty());
     assert!(record.last_error.is_none());
+}
+
+/// Review round 1 (M2, #2575): the teardown of a member hands the
+/// finalizer the label the member was spawned with, so an ended run's
+/// board is kept under it (`board-<task>-run-<n>` for a board run's
+/// coordinator), where the board's reports find it with no memory of the
+/// launch.
+mod kept_under_label {
+    use std::sync::{Arc, OnceLock};
+
+    use serde_json::{Value, json};
+
+    use super::super::subagent_cleanup::cleanup_registered_once;
+    use super::super::subagent_registry::{SubagentEntry, SubagentRegistry, new_registry};
+    use crate::application::environments::dto::{
+        EnvironmentLiveness, HostedBoardRevision, SwarmBoardSnapshot,
+    };
+    use crate::application::environments::ports::{
+        EnvironmentProcessCommands, HostedSwarmBoard, HostedSwarmRunObservation, PortFuture,
+    };
+    use crate::application::environments::use_cases::FinalizeEnvironmentMember;
+    use crate::domain::environments::entities::environment_registry::{
+        EnvironmentOrigin, EnvironmentRecord, EnvironmentRegistry, EnvironmentStatus,
+    };
+    use crate::domain::environments::services::environment_retention::{
+        CoordinatorLoss, HostedSwarmRun, MemberFinalizeMode, SwarmRunObservation,
+    };
+    use crate::domain::ids::AgentUuid;
+    use crate::domain::swarm::RunStatus;
+    use crate::infrastructure::tools::coordinator_launch::KeptSwarmBoards;
+
+    /// The boards this module's teardowns keep.
+    fn kept() -> Arc<KeptSwarmBoards> {
+        static KEPT: OnceLock<Arc<KeptSwarmBoards>> = OnceLock::new();
+        Arc::clone(KEPT.get_or_init(Arc::default))
+    }
+
+    /// A box hosting a run closed as succeeded.
+    struct ClosedBox;
+
+    impl HostedSwarmRunObservation for ClosedBox {
+        fn observe_hosted_swarm_run<'a>(
+            &'a self,
+            _: &'a EnvironmentRecord,
+        ) -> PortFuture<'a, SwarmRunObservation> {
+            Box::pin(async {
+                SwarmRunObservation::Run(HostedSwarmRun {
+                    id: "run-1".into(),
+                    status: RunStatus::Succeeded,
+                    outcome: None,
+                    coordinator: "member-1".into(),
+                    deadline: 4_102_444_800.0,
+                })
+            })
+        }
+
+        fn record_lost_coordinator<'a>(
+            &'a self,
+            _: &'a EnvironmentRecord,
+            _: &'a HostedSwarmRun,
+        ) -> PortFuture<'a, Result<CoordinatorLoss, String>> {
+            Box::pin(async { panic!("an owner's kill records no loss") })
+        }
+    }
+
+    impl HostedSwarmBoard for ClosedBox {
+        fn board<'a>(
+            &'a self,
+            _: &'a EnvironmentRecord,
+        ) -> PortFuture<'a, Result<Option<SwarmBoardSnapshot>, String>> {
+            let board: Value = json!({
+                    "run": {"status": "succeeded", "budget": {"observed_tokens": 7}},
+                    "items": [],
+                    "totals": {"items": 0},
+            "truncated": false,
+                });
+            Box::pin(async move { Ok(SwarmBoardSnapshot::object(board)) })
+        }
+
+        fn revision<'a>(
+            &'a self,
+            _: &'a EnvironmentRecord,
+        ) -> PortFuture<'a, Result<Option<HostedBoardRevision>, String>> {
+            Box::pin(async { panic!("a teardown never polls a revision") })
+        }
+    }
+
+    impl EnvironmentProcessCommands for ClosedBox {
+        fn run_retained_inspect<'a>(
+            &'a self,
+            _: &'a str,
+            _: &'a [String],
+        ) -> PortFuture<'a, Result<Value, String>> {
+            Box::pin(async { Ok(json!({})) })
+        }
+
+        fn run_retained_kill<'a>(
+            &'a self,
+            _: &'a str,
+            _: &'a [String],
+        ) -> PortFuture<'a, Result<(), String>> {
+            Box::pin(async { Ok(()) })
+        }
+
+        fn run_retained_cleanup<'a>(
+            &'a self,
+            _: &'a str,
+            _: &'a [String],
+        ) -> PortFuture<'a, Result<(), String>> {
+            Box::pin(async { Ok(()) })
+        }
+
+        fn observe_liveness<'a>(
+            &'a self,
+            _: &'a EnvironmentRecord,
+        ) -> PortFuture<'a, EnvironmentLiveness> {
+            Box::pin(async { panic!("a teardown never asks liveness") })
+        }
+    }
+
+    /// The teardown composition builds, over the closed box, keeping in
+    /// [`kept`].
+    fn finalizer(environments: EnvironmentRegistry) -> FinalizeEnvironmentMember {
+        let closed = Arc::new(ClosedBox);
+        FinalizeEnvironmentMember::new(environments, closed.clone(), closed.clone())
+            .keeping_ended_boards(closed, kept())
+    }
+
+    /// `subagents` holding a coordinator spawned as `label`, the only
+    /// member of `environments`' box; its key.
+    fn coordinator(
+        subagents: &SubagentRegistry,
+        environments: &EnvironmentRegistry,
+        label: &str,
+    ) -> String {
+        let uuid = AgentUuid::mint();
+        let key = uuid.as_str().to_owned();
+        let env_ref = environments.mint_ref().unwrap();
+        environments.commit(EnvironmentRecord {
+            environment_ref: env_ref.clone(),
+            environment_id: format!("env-{label}"),
+            environment_uuid: format!("uuid-{label}"),
+            name: None,
+            workspace_path: format!("/ws/{label}").into(),
+            repository: String::new(),
+            script_name: "standard".into(),
+            retained_exec_argv: vec!["exec.sh".into()],
+            retained_kill_argv: vec!["kill.sh".into()],
+            retained_cleanup_argv: vec!["cleanup.sh".into()],
+            retained_inspect_argv: vec![],
+            members: vec![key.clone()],
+            status: EnvironmentStatus::Running,
+            metadata: json!({}),
+            last_error: None,
+            origin: EnvironmentOrigin::Created,
+            created_by: String::new(),
+            created_at: None,
+        });
+        let mut entry = SubagentEntry::with_identity(uuid, label.into(), "/tmp/c.sock".into(), 0);
+        entry.environment_registry = Some(environments.clone());
+        entry.environment_ref = Some(env_ref);
+        subagents.lock().unwrap().insert(key.clone(), entry);
+        key
+    }
+
+    #[tokio::test]
+    async fn an_owners_kill_keeps_the_ended_board_under_the_members_label() {
+        let subagents = new_registry();
+        let environments = EnvironmentRegistry::new();
+        let key = coordinator(&subagents, &environments, "board-cleanup-label-run-1");
+        cleanup_registered_once(&subagents, &key, MemberFinalizeMode::OwnerEnd, finalizer).await;
+        let view = kept().view(environments.session(), "board-cleanup-label-run-1");
+        assert_eq!(view.map(|view| view.observed_tokens), Some(7));
+        assert_eq!(
+            kept().view(environments.session(), &key),
+            None,
+            "not by its id"
+        );
+    }
 }

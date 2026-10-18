@@ -61,6 +61,7 @@ fn runtime(
         effort_control: None,
         container_configs: None,
         kill_tool: None,
+        project_board: None,
         disabled_tools: &disabled,
         inherited_tool_policy: inherited,
         workflow: ToolRuntimeWorkflowPolicy::disabled(root, Some(root)),

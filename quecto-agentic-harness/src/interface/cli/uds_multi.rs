@@ -249,14 +249,10 @@ pub(super) async fn multi_client_loop(
     // the teardown graph's exit-readiness adapter fires it once the fleet
     // has settled and the session is ready to persist.
     let exit_notify = std::sync::Arc::new(tokio::sync::Notify::new());
-    let swarm_control = crate::interface::tool_runtime::swarm_context().map(|context| {
-        std::sync::Arc::new(context)
-            as std::sync::Arc<dyn crate::application::swarm::ports::SwarmRunControl>
-    });
-    let turn_control: super::uds_cancel::TurnControlHandle = std::sync::Arc::new(
-        super::uds_cancel::TurnControl::with_swarm_control(swarm_control),
-    );
-    super::uds_swarm_control::seed_control_generation(&turn_control);
+    let coordinator = parent_control
+        .as_ref()
+        .is_some_and(|launch| launch.coordinator);
+    let turn_control = super::uds_swarm_control::process_turn_control(coordinator);
     let live_clients = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
 
     let client_tool_registry = super::uds_ext_protocol::new_client_tool_registry();
@@ -271,6 +267,11 @@ pub(super) async fn multi_client_loop(
         .as_ref()
         .map(|launch| launch.bind_deadline.clone());
     clients::end_with_the_fleet(&extensions, harness_lifecycle.clone());
+    // The board view's own handle (#2478): the boards the environment
+    // control carries, once composition has installed it.
+    let swarm_boards = environment_control.clone().map(|slot| {
+        super::uds_swarm_board::SwarmBoards::new(move || slot.get().map(|control| control.boards))
+    });
     let teardown = teardown_graph.map(|build| {
         build(super::uds_teardown_handles::TeardownLoopInputs {
             owner: crate::domain::ids::AgentUuid::new(if session_key.is_empty() {
@@ -328,6 +329,7 @@ pub(super) async fn multi_client_loop(
         workspace_path: workspace.to_path_buf(),
         teardown: connections,
         extensions: extensions.clone(),
+        swarm_boards,
     });
 
     // Drop our clone so cmd_rx closes when all client senders (accept loop)
@@ -464,12 +466,7 @@ async fn run_dispatch_loop(
                     // internally and returns whether this completion is new — so we
                     // don't also call `record_subagent_notification` (that would
                     // double-dedupe).
-                    let outcome = ctx.session.enqueue_subagent_notification(
-                        agent_id.clone(),
-                        sequence,
-                        notif.to_message(),
-                        notif.is_completion(),
-                    );
+                    let outcome = ctx.session.enqueue_note(&notif);
                     // #1082 review round 2: only a retained note is announced;
                     // Duplicate means already delivered, Dropped means both
                     // buffers are full — the sequence stays retryable and the

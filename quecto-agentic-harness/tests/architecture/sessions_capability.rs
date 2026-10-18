@@ -773,7 +773,7 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     // #2414: the old rules' dials left the constructor (→ 682);
     // #2421: the request builder moved to `agent_loop_turn_flow.rs` (→ 657);
     // #2434: the final reply's builder moved beside its caller there (→ 630).
-    ("src/application/agent_loop.rs", 630),
+    ("src/application/agent_loop.rs", 451),
     ("src/application/agent_loop_gauge.rs", 61),
     // D3 #1973, D4 #1974, D5 #1972, D6 #1975, D7 #1976 and D8 #1977 each
     // add use cases to this graph; the ceiling follows their merge (was 113
@@ -1223,7 +1223,7 @@ fn sessions_graph_nodes_are_constructed_only_in_composition() {
     }
 }
 
-/// The one persistence adapter that is not the sessions capability's.
+/// The persistence adapters that are not the sessions capability's.
 const ENVIRONMENT_REGISTRY_STORE: &str =
     "src/infrastructure/persistence/environment_registry_store.rs";
 

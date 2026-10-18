@@ -49,8 +49,7 @@ Use the **bash** tool for Git, builds, tests, scripts and any other command or
 computation, subject to its configured policy. Read the resulting artifacts
 with normal file tools and record their references on the board with the
 board ops below. Only the integrator may change branches, commit or
-integrate. Do not raise limits or route around policy from agent code. An
-optional observed-token budget is described below.
+integrate. Do not raise limits or route around policy from agent code.
 
 ## Create once
 
@@ -75,25 +74,29 @@ Until a run is created it is in `setup`, and every board op is refused.
 The board is a SQLite store the harness serves in-process. Every board call
 is one `swarm` call: `{"op":"<name>", ...fields}`, with the op's arguments as
 named JSON fields. The answer is the op's JSON result, never a bare `null`:
-an op that changes a task answers the task's row as it now stands (status,
+an op that changes a task item answers the task item's row as it now stands (status,
 owner, and the claim `token` while you hold the claim), and every other op
 answers what it changed. Durable state lives on the board, not in your
 context.
 
-- **Send the schema's types.** Task and message ids, `offset`, `limit` and
+The board's units of work are task items. Older names (task, tasks,
+task_create, verify_task, revalidate_task, task_id) are still accepted and mean
+the same.
+
+- **Send the schema's types.** Task item and message ids, `offset`, `limit` and
   `supersedes` are JSON integers: send `3`, not `true` or `3.0` (these bind
-  loosely as they always did: `true` reads task 1, `3.0` reads task 3).
+  loosely as they always did: `true` reads task item 1, `3.0` reads task item 3).
   `passed`, `release_files` and `include_consumed` are booleans. For `passed`
   and `release_files` only `true` counts as true; `include_consumed` binds
   loosely, so any nonzero number (such as `1`) also returns consumed history.
   `acceptance`, `constraints` and `paths` are lists of strings, and
   `acceptance` refuses an empty list and a blank string; `dependencies` is a
-  list of task ids. `revision`, `supersedes` and `dependencies` also admit
+  list of task item ids. `revision`, `supersedes` and `dependencies` also admit
   `null`, even where the field is required. `evidence` is a
   nonempty list of `{"artifact":"tests.log","revision":"<commit>"}` objects.
   Member ids and tokens are the strings the ops return.
 - **Fields bind by name.** A missing required field is refused
-  (`claim: missing required argument task_id`), and so is a field the op
+  (`claim: missing required argument task_item_id`), and so is a field the op
   does not take (`claim: unexpected argument id`). A field with a default
   may be left out.
 - **Values the board cannot hold exactly are refused up front.** An
@@ -126,28 +129,28 @@ Any member:
 
 | Example | Behavior |
 |---|---|
-| `{"op":"task","task_id":3}` | Read one task. A claimed, blocked or submitted row (also from `tasks` and the summary) adds `owner_last_activity` (seconds since the owner's last board event) and `owner_state`: `active` or `idle` (live member; idle = no board event for 300 s, a prompt to look, not proof of a stall), `reserved` (never launched), `lost` (harness loss recorded; resume, then revoke), `dead` (exit confirmed by its launcher's harness) or `unknown` (anything else, including an owner id that is not text). An active or idle owner is named in `contact` (send it an `op=send` with that id as `recipient`); otherwise `contact` is null and `recovery` names the coordinator's move. A provider suspension is not visible on the board: use `agent_cmd get_state` (its `automaticTurnsSuspended`) |
-| `{"op":"tasks","offset":0,"limit":50}` | Page the tasks; `offset` integer ≥0 (default 0), `limit` integer 1–100 (default 50) |
+| `{"op":"task_item","task_item_id":3}` | Read one task item. A claimed, blocked or submitted row (also from `task_items` and the summary) adds `owner_last_activity` (seconds since the owner's last board event) and `owner_state`: `active` or `idle` (live member; idle = no board event for 300 s, a prompt to look, not proof of a stall), `reserved` (never launched), `lost` (harness loss recorded; resume, then revoke), `dead` (exit confirmed by its launcher's harness) or `unknown` (anything else, including an owner id that is not text). An active or idle owner is named in `contact` (send it an `op=send` with that id as `recipient`); otherwise `contact` is null and `recovery` names the coordinator's move. A provider suspension is not visible on the board: use `agent_cmd get_state` (its `automaticTurnsSuspended`) |
+| `{"op":"task_items","offset":0,"limit":50}` | Page the task items; `offset` integer ≥0 (default 0), `limit` integer 1–100 (default 50) |
 | `{"op":"file_owners","offset":0,"limit":50}` | Page the file reservations; same paging |
-| `{"op":"task_create","request":"implement-v1","title":"Implement behavior","acceptance":["Acceptance tests pass"],"dependencies":[]}` | Stable request string, title string, **nonempty list of strings** as `acceptance`, optional list of task ids as `dependencies` (default `null`, none); answers the task. A retry needs the same request **and** payload |
-| `{"op":"dependencies","task_id":3,"dependencies":[1,2]}` | Replace a task's dependencies before it is claimed; missing, self and cyclic dependencies are refused; answers the task |
-| `{"op":"claim","task_id":3}` | Answers the task you now own, with a new claim `token`; unmet dependencies refuse |
-| `{"op":"block","task_id":3,"token":"<token>","reason":"needs the schema decision"}` | Nonempty string reason; answers the task, `blocked` |
-| `{"op":"unblock","task_id":3,"token":"<token>","reason":"schema decided"}` | Resume your blocked claim, keeping token and reservations; submitted work cannot be reopened; answers the task, `claimed` |
-| `{"op":"release","task_id":3,"token":"<token>"}` | Release your claim and its files; a later claim gets a new token; answers the task, `ready` with no owner or token |
-| `{"op":"submit","task_id":3,"token":"<token>","evidence":[{"artifact":"tests.log","revision":"<commit>"}]}` | Submit evidence for coordinator verification; submission is not completion; answers the task, `submitted` with that evidence |
-| `{"op":"reserve","task_id":3,"token":"<token>","paths":["src/example.rs"]}` | 1–100 checkout-contained paths, all or nothing; answers `{token, paths}` with the reservation token |
-| `{"op":"release_files","task_id":3,"token":"<token>","reservation":"<reservation token>"}` | Release that reservation of this claim; answers `{task_id, reservation, released}`, where `released` is how many files it freed (`0`: that reservation held none) |
-| `{"op":"send","request":"schema-question-v1","recipient":"<member id>","body":"Which schema version?","revision":null,"supersedes":null}` | Any member may message any other member directly; a question about a task you depend on belongs with that task's owner (`contact` on its row). Stable request string, member id, **string** body ≤8192 UTF-8 bytes; optional `revision` the message is about; optional `supersedes`, the id of your own earlier unread message to the same recipient, which becomes `superseded` in the same transaction. Answers `{id, status}`; a retry needs the same request and payload |
+| `{"op":"task_item_create","request":"implement-v1","title":"Implement behavior","acceptance":["Acceptance tests pass"],"dependencies":[]}` | Stable request string, title string, **nonempty list of strings** as `acceptance`, optional list of task item ids as `dependencies` (default `null`, none); answers the task item. A retry needs the same request **and** payload |
+| `{"op":"dependencies","task_item_id":3,"dependencies":[1,2]}` | Replace a task item's dependencies before it is claimed; missing, self and cyclic dependencies are refused; answers the task item |
+| `{"op":"claim","task_item_id":3}` | Answers the task item you now own, with a new claim `token`; unmet dependencies refuse |
+| `{"op":"block","task_item_id":3,"token":"<token>","reason":"needs the schema decision"}` | Nonempty string reason; answers the task item, `blocked` |
+| `{"op":"unblock","task_item_id":3,"token":"<token>","reason":"schema decided"}` | Resume your blocked claim, keeping token and reservations; submitted work cannot be reopened; answers the task item, `claimed` |
+| `{"op":"release","task_item_id":3,"token":"<token>"}` | Release your claim and its files; a later claim gets a new token; answers the task item, `ready` with no owner or token |
+| `{"op":"submit","task_item_id":3,"token":"<token>","evidence":[{"artifact":"tests.log","revision":"<commit>"}]}` | Submit evidence for coordinator verification; submission is not completion; answers the task item, `submitted` with that evidence |
+| `{"op":"reserve","task_item_id":3,"token":"<token>","paths":["src/example.rs"]}` | 1–100 checkout-contained paths, all or nothing; answers `{token, paths}` with the reservation token |
+| `{"op":"release_files","task_item_id":3,"token":"<token>","reservation":"<reservation token>"}` | Release that reservation of this claim; answers `{task_item_id, reservation, released}`, where `released` is how many files it freed (`0`: that reservation held none) |
+| `{"op":"send","request":"schema-question-v1","recipient":"<member id>","body":"Which schema version?","revision":null,"supersedes":null}` | Any member may message any other member directly; a question about a task item you depend on belongs with that task item's owner (`contact` on its row). Stable request string, member id, **string** body ≤8192 UTF-8 bytes; optional `revision` the message is about; optional `supersedes`, the id of your own earlier unread message to the same recipient, which becomes `superseded` in the same transaction. Answers `{id, status}`; a retry needs the same request and payload |
 | `{"op":"withdraw","message_id":7}` | Withdraw your own unread message; it leaves the recipient's inbox and wake path and stays in the audit as `withdrawn`; answers `{message_id, changed}` (`changed: false`: already withdrawn) |
 | `{"op":"inbox","include_consumed":false}` | At most 100 of your unread messages (`revision`, `supersedes`, `superseded_by` included); `true` adds consumed, superseded and withdrawn history |
 | `{"op":"ack","message_id":7}` | Acknowledge a message after reading it; answers `{message_id, changed}` (`changed: false`: it was already settled) |
 | `{"op":"evidence","criterion":"tests","artifact":"tests.log","revision":"<commit>","kind":"command","passed":true}` | `kind` is `command` or `review`. A worker's call records a proposal with **accepted=0**; only the coordinator's `passed: true` accepts evidence. Answers the recorded `{criterion, artifact, revision, kind, actor, accepted}` |
 | `{"op":"usage_report"}` | Per-member usage totals and recent request diagnostics (the same report as `op=usage`, which works whatever the run's state; `usage_report` needs a running run) |
 
-The harness's own ops: `{"op":"summary"}` (goal, members, counts of task
+The harness's own ops: `{"op":"summary"}` (goal, members, counts of task item
 statuses plus `members_without_claim` and `members_dead`, the first 50
-tasks/files and evidence; add `"since":<event_cursor>` for a compact
+task items/files and evidence; add `"since":<event_cursor>` for a compact
 `unchanged` answer, which an owner turning idle by the clock alone since that
 cursor turns into a full summary again, and `next_liveness_check_at` says
 when the next one would), `{"op":"events","after":0,"limit":25}` (explicit
@@ -158,14 +161,14 @@ A working sequence (each line is one call; later calls reuse the ids and
 tokens earlier answers returned):
 
 ```json
-{"op":"task_create","request":"implement-v1","title":"Implement behavior","acceptance":["Acceptance tests pass"],"dependencies":[]}
-{"op":"claim","task_id":1}
-{"op":"reserve","task_id":1,"token":"<claim token>","paths":["src/example.rs"]}
-{"op":"submit","task_id":1,"token":"<claim token>","evidence":[{"artifact":"tests.log","revision":"<commit>"}]}
+{"op":"task_item_create","request":"implement-v1","title":"Implement behavior","acceptance":["Acceptance tests pass"],"dependencies":[]}
+{"op":"claim","task_item_id":1}
+{"op":"reserve","task_item_id":1,"token":"<claim token>","paths":["src/example.rs"]}
+{"op":"submit","task_item_id":1,"token":"<claim token>","evidence":[{"artifact":"tests.log","revision":"<commit>"}]}
 ```
 
 Edit and test with the normal edit and bash tools between the `reserve` and
-the `submit`. In a later turn, read the task again for its claim token. A
+the `submit`. In a later turn, read the task item again for its claim token. A
 string `acceptance` such as `"tests pass"` is invalid; use `["tests pass"]`.
 An object `body` is invalid; serialize the message to a string. Do not
 reserve `/tmp` or paths outside the checkout. Ownership is cooperative, not a
@@ -178,28 +181,28 @@ its `ack`; neither marks any work done. Never edit the store.
 
 | Example | Behavior |
 |---|---|
-| `{"op":"verify_task","task_id":3,"token":"<claim token>","revision":"<commit>"}` | Accepts the submitted task's evidence at that revision; answers the task, `completed` |
-| `{"op":"revalidate_task","task_id":3,"revision":"<final commit>","evidence":[{"artifact":"tests-final.log","revision":"<final commit>"}]}` | Needs a completed task and fresh nonempty evidence matching the final revision, after later dependent work changed it; answers the task with its new evidence |
+| `{"op":"verify_task_item","task_item_id":3,"token":"<claim token>","revision":"<commit>"}` | Accepts the submitted task item's evidence at that revision; answers the task item, `completed` |
+| `{"op":"revalidate_task_item","task_item_id":3,"revision":"<final commit>","evidence":[{"artifact":"tests-final.log","revision":"<final commit>"}]}` | Needs a completed task item and fresh nonempty evidence matching the final revision, after later dependent work changed it; answers the task item with its new evidence |
 | `{"op":"amend","goal":"...","constraints":["read-only"],"criteria":[{"id":"tests","kind":"command","description":"Acceptance tests pass"}],"reason":"scope narrowed"}` | Updates the contract with a string reason and invalidates prior overall evidence; answers `{goal, constraints, criteria}` |
-| `{"op":"complete","revision":"<commit>"}` | Needs every criterion accepted and every task verified at that revision, with no outstanding work or file reservations; answers the ended run's `{status, outcome, reason}` |
+| `{"op":"complete","revision":"<commit>"}` | Needs every criterion accepted and every task item verified at that revision, with no outstanding work or file reservations; answers the ended run's `{status, outcome, reason}` |
 | `{"op":"stop","status":"blocked","reason":"..."}` | `status` is `blocked`, `failed`, `cancelled` or `budget-exhausted`; use `op=cancel_run` for parent cancellation |
-| `{"op":"revoke","task_id":3,"reason":"member silent"}` | Takes a claim back (see below); answers the task |
-| `{"op":"recover","task_id":3,"release_files":false}` | Reopens work whose owner's death was confirmed (see below); answers the task |
+| `{"op":"revoke","task_item_id":3,"reason":"member silent"}` | Takes a claim back (see below); answers the task item |
+| `{"op":"recover","task_item_id":3,"release_files":false}` | Reopens work whose owner's death was confirmed (see below); answers the task item |
 
 - `revoke` takes a claim back from a member that will not finish
-  (suspended, hung, silent), alive or not: the task returns to `ready` with no
+  (suspended, hung, silent), alive or not: the task item returns to `ready` with no
   owner, token, blocker or evidence, its file reservations go, the audit records
   the reason and previous owner, and the previous owner is messaged. Its stale
-  token then fails with `stale or unowned claim`. A repeat on an unowned task is
+  token then fails with `stale or unowned claim`. A repeat on an unowned task item is
   a no-op.
 - `recover` reopens work whose owner's death the
   harness confirmed: a member you launched that exited (on its own or by your
-  `agent_cmd kill`) is marked dead by your harness, its tasks block with
+  `agent_cmd kill`) is marked dead by your harness, its task items block with
   `worker death confirmed; coordinator recovery required`, and the run keeps
   running. An orderly end (exit code, protocol shutdown, delegated kill)
   releases its reservations; an abrupt one (a signal nobody here sent, an
   unobservable exit) retains them because Bash tool children in their own
-  process groups may still be writing those paths — the tasks say
+  process groups may still be writing those paths — the task items say
   `reservations retained`, and only `revoke` or `recover` with
   `"release_files":true` frees them; both need a running run
   (resume first). A vanished harness seen by `op=reconcile` is not a confirmed
@@ -211,8 +214,8 @@ its `ack`; neither marks any work done. Never edit the store.
 
 Worker evidence is submitted for your review and is immutable under that
 claim token: an identical `submit` retry is safe. To change submitted evidence
-the worker releases and reclaims the task for a new token; do not block a
-submitted task. An amendment keeps the full contract before and after it.
+the worker releases and reclaims the task item for a new token; do not block a
+submitted task item. An amendment keeps the full contract before and after it.
 Persist final evidence before `complete` or `stop`, and report from the
 harness afterward.
 
@@ -226,14 +229,14 @@ Workers may call `evidence`; their proposals never authorize completion.
 ## Wakeups, terminal inspection and artifacts
 
 Wake hints are coalesced from actionable changes, not read/ack traffic. They are
-best-effort; durable inbox/task state is authoritative. New ready work wakes only
-members free to take it: while you hold a claimed, blocked or submitted task you
+best-effort; durable inbox/task item state is authoritative. New ready work wakes only
+members free to take it: while you hold a claimed, blocked or submitted task item you
 are woken by messages to you and contract amendments, not by others' work
 (if you only wait for review and no worker is free, you are woken). After you submit, check `op=summary` and claim
 ready work if there is any: you are not woken for work that became ready while
 you held your claim. Otherwise yield. On a file
-reservation conflict, release the task and yield instead of holding it. **First use op=summary**
-when receiving a hint. If running, inspect inbox/ready tasks and acknowledge read
+reservation conflict, release the task item and yield instead of holding it. **First use op=summary**
+when receiving a hint. If running, inspect inbox/ready task items and acknowledge read
 messages. If the run is no longer running, board ops (`inbox` and `ack`
 included) are refused: do not retry them. Report the final summary and remain available for supervisor requests,
 with export handled through the supervisor channel. A queued hint can arrive after completion.
@@ -267,11 +270,11 @@ local launches reject workflows, but an engine they already engaged (guards or
 a bound spec) is not torn down, so create the run before spawning members. A
 host-local master may still use a workflow to supervise the swarm.
 
-For a clarification or approval, keep the run **running**, mark the affected task
-with `{"op":"block","task_id":3,"token":"<claim token>","reason":"<the question>"}`,
+For a clarification or approval, keep the run **running**, mark the affected task item
+with `{"op":"block","task_item_id":3,"token":"<claim token>","reason":"<the question>"}`,
 report the exact question to the master and yield the turn. Do not sleep/poll
-or use `{"op":"stop","status":"blocked","reason":"..."}` to wait for one task: a blocked **run** is a pause holding `blocked` that only
-the master can resume or close. A blocked **task** retains its claim and can be
+or use `{"op":"stop","status":"blocked","reason":"..."}` to wait for one task item: a blocked **run** is a pause holding `blocked` that only
+the master can resume or close. A blocked **task item** retains its claim and can be
 unblocked (`op=unblock`) and submitted after the answer arrives and work is
 completed. The original deadline
 continues to apply.
@@ -279,7 +282,7 @@ continues to apply.
 The master sends the answer with `agent_cmd` `prompt` when idle, or `steer` when
 it must interrupt a busy coordinator. A queued `follow_up` waits for the current
 turn to finish. The coordinator should explicitly acknowledge the answer and
-apply it to the task before optional inbox work. Transport acceptance means the
+apply it to the task item before optional inbox work. Transport acceptance means the
 command was queued, not that the model read or acted on it; retrieve the report
 with `get_messages` to verify handling. A full/closed dispatch queue returns an
 explicit failure instead of falsely accepting the clarification. A run the
@@ -288,7 +291,7 @@ master resumes it with `swarm_control resume` to continue the same run, or
 closes it with `swarm_control close`; only a closed or cancelled run is
 terminal and cannot be revived.
 
-Ordinary Bash build/test commands strip swarm launch-context variables, so their test runtimes do not enroll in this live pool. Launch participating agents with managed `spawn`. Wake delivery checks current unread messages and claimable tasks, but queued hints can become stale; inspect the board before acting. Steering takes priority over buffered idle work. Forwarded controls return `data.status: "accepted"` on queue admission and retain that response ID through dispatch; inspect the report for actual acknowledgment and results.
+Ordinary Bash build/test commands strip swarm launch-context variables, so their test runtimes do not enroll in this live pool. Launch participating agents with managed `spawn`. Wake delivery checks current unread messages and claimable task items, but queued hints can become stale; inspect the board before acting. Steering takes priority over buffered idle work. Forwarded controls return `data.status: "accepted"` on queue admission and retain that response ID through dispatch; inspect the report for actual acknowledgment and results.
 
 ## Durable supervisor controls and reports
 
@@ -299,15 +302,14 @@ preserves claims, artifacts and agents, suspends current execution,
 suppresses automatic wakes and freezes the wall-clock deadline until resume.
 Every end of a run is the same kind of pause holding an outcome: the
 coordinator's `stop("blocked"|"failed"|"budget-exhausted", ...)`, its
-`complete(...)` (`succeeded`), a spent token budget and a passed deadline.
+`complete(...)` (`succeeded`) and a passed deadline.
 `status` reports `outcome` and `reason`. Only the master resumes (`resume`
 continues the same run with everything intact) or closes (`close` makes the
-held outcome terminal and settles the members). A run holding
-`budget-exhausted` resumes only after `extend` or a raised `usage_budget`.
+held outcome terminal and settles the members).
 The coordinator may `swarm {"op":"pause","reason":"..."}`; `swarm
 {"op":"resume"}` is refused for every member, and `cancel_run` is the only
 immediate terminal transition. `status` also reports `resume_blockers`: what a
-resume would refuse on right now (a passed deadline, a spent budget, or a lost
+resume would refuse on right now (a passed deadline, or a lost
 coordinator).
 
 A swarm container lives as long as its swarm. The swarm ends when the
@@ -341,20 +343,12 @@ response contains paths, not the raw transcript. Paths belong to the target
 agent's filesystem. Exports cannot reconstruct data already cleared or evicted.
 Unpersisted messages have a null ordinal; do not invent cursors from list indices.
 
-## Observed usage budget
+## Observed usage
 
 The coordinator uses `swarm {"op":"usage"}` for per-member totals and recent
-request diagnostics. Configure `swarm {"op":"usage_budget","token_limit":1000000,
-"strict_unknown":true}` or master `agent_cmd` `swarm_control` with
-`action:"usage_budget"` and the same fields. Explicit `token_limit:null` disables
-it; budgets are disabled by default. An 80% warning is recorded once per budget
-configuration. Reaching the limit durably pauses the run. Strict mode also pauses
-when attempted requests have no usage receipt. Raise/disable the budget before
-resuming, or admission will pause again.
+request diagnostics.
 
-The limit counts reported context-input plus output tokens. It is an observed
-usage guard, not a provider quota or billing limit: in-flight requests can finish
-and exceed it, and unavailable usage is not zero. Retry counters measure
+Retry counters measure
 instrumented call attempts, cache-prefix hashes compare logical system/tool
 prefixes, and reported costs are estimates. `get_session_stats` includes request
 diagnostics and runtime identity; unknown build revision/digest stays unknown.

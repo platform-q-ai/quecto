@@ -4,9 +4,15 @@ use std::sync::Arc;
 
 use super::*;
 use crate::application::environments::use_cases::ListEnvironmentsQuery;
-use crate::domain::environment_listing::tests::{CALLER, qa_record, qa_registry, quiet_journal};
-use crate::domain::environment_listing::{EnvironmentListing, ListedEnvironment};
-use crate::domain::environment_registry::{EnvironmentRegistry, EnvironmentStatus};
+use crate::domain::environments::entities::environment_registry::{
+    EnvironmentRegistry, EnvironmentStatus,
+};
+use crate::domain::environments::services::environment_listing::tests::{
+    CALLER, qa_record, qa_registry, quiet_journal,
+};
+use crate::domain::environments::services::environment_listing::{
+    EnvironmentListing, ListedEnvironment,
+};
 use crate::domain::tool::ToolResult;
 
 fn get_containers(registry: EnvironmentRegistry, args: serde_json::Value) -> ToolResult {
@@ -375,7 +381,7 @@ fn listing_of(rows: Vec<ListedEnvironment>, diagnostics: Vec<String>) -> Environ
 }
 
 fn row_of(
-    record: crate::domain::environment_registry::EnvironmentRecord,
+    record: crate::domain::environments::entities::environment_registry::EnvironmentRecord,
     keep_rank: usize,
 ) -> ListedEnvironment {
     ListedEnvironment {
@@ -390,7 +396,8 @@ fn one_worst_case_row_fits_the_real_budget_whole() {
     let ctl = "\u{1}".repeat(5_000);
     let mut record = qa_record(1, &ctl, EnvironmentStatus::CleanupFailed);
     record.environment_ref = "\u{1}".repeat(MAX_LABEL_CHARS);
-    record.origin = crate::domain::environment_registry::EnvironmentOrigin::Restored;
+    record.origin =
+        crate::domain::environments::entities::environment_registry::EnvironmentOrigin::Restored;
     record.name = Some(ctl.clone());
     record.script_name = ctl.clone();
     record.repository = ctl.clone();

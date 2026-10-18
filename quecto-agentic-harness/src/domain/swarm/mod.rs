@@ -12,6 +12,7 @@ pub mod admission_gate;
 pub mod dependencies;
 pub mod notification;
 pub mod owner;
+pub mod parent_wake;
 pub mod policy;
 pub mod python_value;
 pub mod records;
@@ -22,6 +23,7 @@ pub mod usage;
 pub mod validation;
 pub mod watch;
 pub mod watch_polls;
+pub mod worker_wake;
 
 pub use admission_gate::AdmissionGate;
 pub use dependencies::{DEPENDENCIES_MAX, dependency_list, validate_dependencies};
@@ -46,12 +48,11 @@ pub use records::{
 pub use run_summary::{RunSummaryFold, SummaryScope, SwarmRunSummary};
 pub use run_totals::{MemberUsage, MessageTotals, RunTotals, TaskStates};
 pub use telemetry::{
-    ArgumentFaults, BoardOpDetail, BoardOpObservation, BoardOpOutcome, BoardRole, RefusalKind,
-    RunStatusKind, UnexpectedArgs, WrongTypeArg,
+    ArgumentFaults, BoardOpDetail, BoardOpObservation, BoardOpOutcome, BoardRole, NameForm,
+    RefusalKind, RunStatusKind, UnexpectedArgs, WrongTypeArg,
 };
 pub use usage::{
-    MAX_REQUEST_PAYLOAD_BYTES, MAX_REQUEST_ROWS, Redelivery, UsageBudget, UsageDecision,
-    UsageTotals, redelivery, request_measurement, usage_budget_decision,
+    MAX_REQUEST_PAYLOAD_BYTES, MAX_REQUEST_ROWS, Redelivery, redelivery, request_measurement,
 };
 pub use validation::{
     bounded, bounded_text, completion_revision, criteria, edited_criteria, stored_criteria,
@@ -260,10 +261,6 @@ pub enum RunControlAction {
     Wake {
         generation: u64,
     },
-    UsageBudget {
-        token_limit: Option<u64>,
-        strict_unknown: bool,
-    },
     Pause {
         reason: String,
     },
@@ -289,8 +286,8 @@ pub struct RunControlReceipt {
     pub generation: u64,
     /// Members a resume could not wake (#1721); empty for other actions.
     pub wake_warnings: Vec<String>,
-    /// Why a resume would refuse right now (#1924): a passed deadline, an
-    /// exhausted budget or a lost coordinator. Empty for a live run.
+    /// Why a resume would refuse right now (#1924): a passed deadline or a
+    /// lost coordinator. Empty for a live run.
     pub resume_blockers: Vec<String>,
 }
 

@@ -79,7 +79,10 @@ fn coordinator_is_accepted_only_for_a_new_container() {
         assert_eq!(parse_coordinator(&args, &new_container(), false), Ok(true));
     }
     let existing = ContainerSelection::Existing {
-        target: crate::domain::environment_registry::EnvironmentTarget::Name("c".into()),
+        target:
+            crate::domain::environments::entities::environment_registry::EnvironmentTarget::Name(
+                "c".into(),
+            ),
     };
     for container in [ContainerSelection::Local, existing] {
         let err = parse_coordinator(&json!({"coordinator": true}), &container, false).unwrap_err();
@@ -114,5 +117,75 @@ fn a_swarm_member_cannot_launch_a_coordinator() {
     assert_eq!(
         parse_coordinator(&json!({}), &new_container(), true),
         Ok(false)
+    );
+}
+
+/// The refusal names the field and states the domain's rule (pending owner
+/// approval).
+const UNSAFE_NAME_REFUSAL: &str = "container.name must be 1-64 characters, each an ASCII letter, digit, '-', '_' or '.', starting with an ASCII letter or digit, and not shaped like a ref (C followed by digits)";
+
+/// A new environment's name must be safe to show in `quecto container ls`
+/// and to address with `kill <ref|name>`: letters, digits, `-`, `_`, `.`,
+/// starting with a letter or digit, 1-64 bytes.
+#[test]
+fn a_new_container_name_outside_the_allowlist_is_refused() {
+    for name in [
+        "",
+        "my env",
+        "tab\tenv",
+        "lf\nenv",
+        "-env",
+        "a/b",
+        "C7",
+        "C07",
+        "C99999999999999999999",
+        &"a".repeat(65),
+    ] {
+        let err = parse_container_selection(&json!({"container":{"mode":"new","name":name}}))
+            .unwrap_err();
+        assert_eq!(err, UNSAFE_NAME_REFUSAL, "{name:?}");
+    }
+    // The quoted-string form is checked the same way.
+    let quoted = json!({"container": "{\"mode\":\"new\",\"name\":\"a b\"}"});
+    assert_eq!(
+        parse_container_selection(&quoted).unwrap_err(),
+        UNSAFE_NAME_REFUSAL
+    );
+}
+
+#[test]
+fn a_new_container_name_inside_the_allowlist_is_accepted() {
+    for name in [
+        "env",
+        "review-env",
+        "tool_env",
+        "spike-1839",
+        "v1.2",
+        "c7",
+        "C7a",
+        &"a".repeat(64),
+    ] {
+        assert_eq!(
+            parse_container_selection(&json!({"container":{"mode":"new","name":name}})).unwrap(),
+            ContainerSelection::New {
+                container_config: None,
+                name: Some(name.to_string().try_into().unwrap()),
+            }
+        );
+    }
+}
+
+/// A join only looks a name up: an earlier record's name, whatever it
+/// holds, is addressed as it is (and by ref in any case).
+#[test]
+fn an_existing_container_name_is_looked_up_as_given() {
+    let parsed =
+        parse_container_selection(&json!({"container":{"mode":"existing","name":"old name"}}))
+            .unwrap();
+    assert_eq!(
+        parsed,
+        ContainerSelection::Existing {
+            target: EnvironmentTarget::Name("old name".into()),
+        }
     );
 }

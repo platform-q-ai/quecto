@@ -15,10 +15,20 @@
 //! ([`busy_delay`], `sqliteDefaultBusyCallback`'s), which also notes on
 //! the call's tally that it fired and how long it slept, whichever
 //! statement found the database busy. The tally reaches the handler as the
-//! handler's own argument, never through shared state, and the handler is
+//! handler's owned argument, never through shared observer state, and the handler is
 //! unregistered ([`unwait_metered`]) before the connection closes.
+#[cfg(any(test, feature = "test-support"))]
+#[path = "meter_observation.rs"]
+pub mod observation;
+#[cfg(not(any(test, feature = "test-support")))]
+#[path = "meter_observation.rs"]
+mod observation;
+
+pub(super) use observation::Phase;
+#[cfg(any(test, feature = "test-support"))]
+use observation::{AccountedSample, Observation, Scope};
 use std::ffi::{c_int, c_void};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
@@ -91,13 +101,35 @@ impl MeteredCall for SqliteMeteredCall {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
+fn next_identity(sequence: &std::sync::atomic::AtomicU64) -> u64 {
+    let mut prior = sequence.load(Ordering::Relaxed);
+    loop {
+        let next = prior
+            .checked_add(1)
+            .expect("meter identity space exhausted");
+        match sequence.compare_exchange_weak(prior, next, Ordering::Relaxed, Ordering::Relaxed) {
+            Ok(identity) => return identity,
+            Err(current) => prior = current,
+        }
+    }
+}
+
 /// What one metered call has measured so far.
-#[derive(Debug)]
 pub(super) struct Tally {
     measure: Mutex<CallMeasure>,
+    #[cfg(any(test, feature = "test-support"))]
+    observation: Option<CallObservation>,
     /// Whether the call's record names its caller's role, so the run's
     /// roles are read for it: not for a call whose role is fixed.
     roles_wanted: AtomicBool,
+}
+
+#[cfg(any(test, feature = "test-support"))]
+struct CallObservation {
+    call_id: u128,
+    connections: std::sync::atomic::AtomicU64,
+    observer: Arc<dyn Fn(Observation) + Send + Sync>,
 }
 
 impl Tally {
@@ -105,8 +137,19 @@ impl Tally {
     pub(super) fn new() -> Self {
         Self {
             measure: Mutex::new(CallMeasure::default()),
+            #[cfg(any(test, feature = "test-support"))]
+            observation: None,
             roles_wanted: AtomicBool::new(true),
         }
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    fn observe(&mut self, observer: Arc<dyn Fn(Observation) + Send + Sync>) {
+        self.observation = Some(CallObservation {
+            call_id: uuid::Uuid::new_v4().as_u128(),
+            connections: std::sync::atomic::AtomicU64::new(1),
+            observer,
+        });
     }
 
     /// The measure, also after a panic elsewhere left the lock poisoned:
@@ -161,45 +204,233 @@ impl Tally {
     pub(super) fn caller_authorized(&self) {
         self.held().authorized = true;
     }
+}
 
-    /// The busy handler's step `count`: notes that it fired, then waits as
-    /// SQLite's default handler does, giving up once the timeout is spent,
-    /// and adds what it slept to the busy wait.
-    fn busy(&self, count: c_int) -> bool {
-        self.held().busy = true;
-        match busy_delay(count) {
-            Some(delay) => {
-                let slept = Instant::now();
-                std::thread::sleep(delay);
-                let slept = slept.elapsed();
-                let mut measure = self.held();
-                measure.busy_wait = measure.busy_wait.saturating_add(slept);
-                true
-            }
-            None => false,
+impl std::fmt::Debug for Tally {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Tally")
+            .field("measure", &*self.held())
+            .finish_non_exhaustive()
+    }
+}
+
+impl SqliteBoardCallMeter {
+    /// A per-call adapter seam, intentionally absent from the application port.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn open_observed(
+        &self,
+        observer: Arc<dyn Fn(Observation) + Send + Sync>,
+    ) -> Arc<dyn MeteredCall> {
+        let mut tally = Tally::new();
+        tally.observe(observer);
+        Arc::new(SqliteMeteredCall {
+            store: self.store.clone(),
+            sums: self.sums.clone(),
+            tally,
+        })
+    }
+}
+
+/// Owns the connection and its boxed FFI argument. Unregisters on every path,
+/// including unwind, before either allocation can be destroyed.
+pub(super) struct MeteredConnection<'a> {
+    connection: Option<Connection>,
+    handler: Option<Box<Handler<'a>>>,
+}
+
+struct Handler<'a> {
+    tally: &'a Tally,
+    #[cfg(any(test, feature = "test-support"))]
+    observation: Option<HandlerObservation>,
+}
+
+#[cfg(any(test, feature = "test-support"))]
+struct HandlerObservation {
+    scope: Scope,
+    phase: Arc<AtomicU8>,
+    actual: Mutex<(Phase, Duration)>,
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl HandlerObservation {
+    fn scope(&self) -> Scope {
+        let phase = match self.phase.load(Ordering::Acquire) {
+            1 => Phase::Begin,
+            2 => Phase::Work,
+            3 => Phase::Commit,
+            _ => Phase::Setup,
+        };
+        Scope {
+            phase,
+            ..self.scope
         }
     }
 }
 
-/// Installs [`busy_callback`] on `connection`, reporting to `tally`.
-///
-/// `tally` must outlive every statement `connection` runs: the store opens
-/// and closes the connection inside one transaction, while the metered
-/// call that owns the tally is borrowed, and unregisters the handler
-/// ([`unwait_metered`]) before it closes the connection.
-pub(super) fn wait_metered(connection: &Connection, tally: &Tally) -> rusqlite::Result<()> {
-    let argument = std::ptr::from_ref(tally).cast_mut().cast::<c_void>();
-    // The handle is the open connection's own, used on this thread while
-    // `connection` is borrowed.
-    // SAFETY: a live handle, read and not kept.
-    let handle = unsafe { connection.handle() };
-    // `argument` points at a `Tally` that outlives the connection (see
-    // above), and `busy_callback` only reads through it.
-    // SAFETY: a live handle, and a pointer valid for the connection's life.
-    let code = unsafe { ffi::sqlite3_busy_handler(handle, Some(busy_callback), argument) };
-    match code {
-        ffi::SQLITE_OK => Ok(()),
-        code => Err(rusqlite::Error::SqliteFailure(ffi::Error::new(code), None)),
+impl Handler<'_> {
+    #[cfg(any(test, feature = "test-support"))]
+    fn notify(&self, event: Observation) {
+        if let Some(observation) = &self.tally.observation {
+            (observation.observer)(event);
+        }
+    }
+
+    fn account(&self, _count: c_int, slept: Duration) {
+        {
+            let mut measure = self.tally.held();
+            measure.busy_wait = measure.busy_wait.saturating_add(slept);
+        }
+        #[cfg(any(test, feature = "test-support"))]
+        if let Some(observation) = &self.observation {
+            let scope = observation.scope();
+            let actual = {
+                let mut actual = observation
+                    .actual
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner);
+                if actual.0 == scope.phase {
+                    actual.1 = actual.1.saturating_add(slept);
+                } else {
+                    *actual = (scope.phase, slept);
+                }
+                actual.1
+            };
+            // Both mutexes released; immutable actual sleep is already accounted.
+            self.notify(Observation::Accounted(AccountedSample {
+                scope,
+                callback: _count,
+                actual,
+            }));
+        }
+    }
+
+    fn busy(&self, count: c_int) -> bool {
+        self.tally.held().busy = true;
+        if let Some(delay) = busy_delay(count) {
+            let started = Instant::now();
+            std::thread::sleep(delay);
+            self.account(count, started.elapsed());
+            true
+        } else {
+            false
+        }
+    }
+}
+
+impl<'a> MeteredConnection<'a> {
+    pub(super) fn new(connection: Connection, tally: Option<&'a Tally>) -> rusqlite::Result<Self> {
+        let mut owned = Self {
+            connection: Some(connection),
+            handler: None,
+        };
+        if let Some(tally) = tally {
+            // SAFETY: this connection is live and owned until unregister.
+            let handle = unsafe {
+                owned
+                    .connection
+                    .as_ref()
+                    .expect("owned connection")
+                    .handle()
+            };
+            let mut handler = Box::new(Handler {
+                tally,
+                #[cfg(any(test, feature = "test-support"))]
+                observation: tally.observation.as_ref().map(|observation| {
+                    let identity = next_identity(&observation.connections);
+                    HandlerObservation {
+                        scope: Scope {
+                            call: observation.call_id,
+                            connection: identity,
+                            transaction: identity,
+                            phase: Phase::Setup,
+                        },
+                        phase: Arc::new(AtomicU8::new(0)),
+                        actual: Mutex::new((Phase::Setup, Duration::ZERO)),
+                    }
+                }),
+            });
+            let argument = std::ptr::from_mut(&mut *handler).cast::<c_void>();
+            // SQLite uses the argument synchronously on this connection's thread.
+            // SAFETY: the live handle and stable boxed argument are owned until unregister.
+            let code = unsafe { ffi::sqlite3_busy_handler(handle, Some(busy_callback), argument) };
+            if code == ffi::SQLITE_OK {
+                owned.handler = Some(handler);
+            } else {
+                return Err(rusqlite::Error::SqliteFailure(ffi::Error::new(code), None));
+            }
+        } else {
+            owned
+                .connection
+                .as_ref()
+                .expect("owned connection")
+                .busy_timeout(BUSY_TIMEOUT)?;
+        }
+        Ok(owned)
+    }
+
+    pub(super) fn phase(&self, _phase: Phase) {
+        #[cfg(any(test, feature = "test-support"))]
+        if let Some(handler) = &self.handler {
+            if let Some(observation) = &handler.observation {
+                let value = match _phase {
+                    Phase::Setup => 0,
+                    Phase::Begin => 1,
+                    Phase::Work => 2,
+                    Phase::Commit => 3,
+                };
+                observation.phase.store(value, Ordering::Release);
+                if _phase == Phase::Begin {
+                    handler.notify(Observation::Begin(observation.scope()));
+                }
+            }
+        }
+    }
+
+    pub(super) fn phase_control(&self) -> Option<Arc<AtomicU8>> {
+        #[cfg(any(test, feature = "test-support"))]
+        if let Some(handler) = &self.handler {
+            if let Some(observation) = &handler.observation {
+                return Some(observation.phase.clone());
+            }
+        }
+        None
+    }
+
+    fn unregister(&mut self) {
+        if self.handler.is_some() {
+            let result = unwait_metered(self.connection.as_ref().expect("handler owns connection"));
+            assert!(
+                result.is_ok(),
+                "clearing a live busy handler cannot fail: {result:?}"
+            );
+            self.handler = None;
+        }
+    }
+
+    pub(super) fn close(mut self) -> rusqlite::Result<()> {
+        self.unregister();
+        self.connection
+            .take()
+            .expect("owned connection")
+            .close()
+            .map_err(|(_, error)| error)
+    }
+}
+
+impl std::ops::Deref for MeteredConnection<'_> {
+    type Target = Connection;
+    fn deref(&self) -> &Connection {
+        self.connection.as_ref().expect("owned connection")
+    }
+}
+impl std::ops::DerefMut for MeteredConnection<'_> {
+    fn deref_mut(&mut self) -> &mut Connection {
+        self.connection.as_mut().expect("owned connection")
+    }
+}
+impl Drop for MeteredConnection<'_> {
+    fn drop(&mut self) {
+        self.unregister();
     }
 }
 
@@ -223,15 +454,26 @@ pub(super) fn unwait_metered(connection: &Connection) -> rusqlite::Result<()> {
     }
 }
 
-/// SQLite's busy handler while metered: [`Tally::busy`] on the tally it
+/// SQLite's busy handler while metered: accounting on the handler it
 /// was installed with. A panic never crosses into SQLite: it gives up.
 unsafe extern "C" fn busy_callback(argument: *mut c_void, count: c_int) -> c_int {
-    // `wait_metered` installed this handler with a pointer to a live
-    // `Tally`, which outlives the connection that calls it.
+    // The owning MeteredConnection installed a stable boxed Handler, and
+    // unregisters before either the argument or connection is dropped.
     // SAFETY: the pointer is valid and only read through.
-    let tally = unsafe { &*argument.cast_const().cast::<Tally>() };
-    let retry = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| tally.busy(count)));
-    c_int::from(retry.unwrap_or(false))
+    if let Some(handler) = unsafe { argument.cast::<Handler<'_>>().as_ref() } {
+        let retry = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| handler.busy(count)));
+        match retry {
+            Ok(retry) => c_int::from(retry),
+            Err(payload) => {
+                // Arbitrary payload Drop can panic too. Deliberately leak only this
+                // exceptional payload rather than run user code outside containment.
+                std::mem::forget(payload);
+                0
+            }
+        }
+    } else {
+        0
+    }
 }
 
 /// `sqliteDefaultBusyCallback`'s delays and their running totals, in ms.
@@ -257,3 +499,7 @@ fn busy_delay(count: c_int) -> Option<Duration> {
 #[cfg(test)]
 #[path = "meter_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "meter_boundary_tests.rs"]
+mod boundary_tests;

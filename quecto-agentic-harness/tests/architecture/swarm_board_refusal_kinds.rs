@@ -120,11 +120,6 @@ pub(super) const REFUSALS: &[(&str, &str, &str)] = &[
         "WrongState",
     ),
     (
-        "src/application/swarm/use_cases/configure_usage_budget.rs:ConfigureUsageBudget::execute",
-        "expr: BUDGET_ARGUMENTS",
-        "Invalid",
-    ),
-    (
         "src/application/swarm/use_cases/create_run.rs:CreateRun::deadline",
         "deadline must be in the next seven days",
         "Invalid",
@@ -401,7 +396,7 @@ pub(super) const REFUSALS: &[(&str, &str, &str)] = &[
     ),
     (
         "src/domain/swarm/policy.rs:require_unsubmitted",
-        "task status '{unknown}' is not a known status; no revision permitted",
+        "task item status '{unknown}' is not a known status; no revision permitted",
         "WrongState",
     ),
     (
@@ -560,6 +555,36 @@ pub(super) const REFUSALS: &[(&str, &str, &str)] = &[
         "Invalid",
     ),
     (
+        "src/infrastructure/persistence/swarm_board/repository_projection.rs:SqliteBoard::projection_revision",
+        "board revision out of range",
+        "Store",
+    ),
+    (
+        "src/infrastructure/persistence/swarm_board/repository_projection.rs:SqliteBoard::projected_states",
+        "tasks status, dependencies or owner holds more than this board writes",
+        "Store",
+    ),
+    (
+        "src/infrastructure/persistence/swarm_board/repository_projection.rs:edited_run",
+        "the board's run is not as the board writes it",
+        "Store",
+    ),
+    (
+        "src/application/swarm/use_cases/read_board_projection.rs:item_totals",
+        "an item state {other:?} passed the known states",
+        "Internal",
+    ),
+    (
+        "src/application/swarm/use_cases/read_board_projection.rs:member_role",
+        "a listed member was given no run role",
+        "Internal",
+    ),
+    (
+        "src/infrastructure/tools/swarm_board_dispatch_records.rs:origin_refusal",
+        "the supervising session reads only _board and _board_revision, not {method}",
+        "Calling",
+    ),
+    (
         "src/infrastructure/persistence/swarm_board/repository_reservations.rs:SqliteBoard::bound_count",
         "a count answered no row",
         "Internal",
@@ -578,11 +603,6 @@ pub(super) const REFUSALS: &[(&str, &str, &str)] = &[
         "src/infrastructure/persistence/swarm_board/repository_tasks.rs:SqliteBoard::retry",
         "expr: stored . to_string ()",
         "Store",
-    ),
-    (
-        "src/infrastructure/persistence/swarm_board/repository_usage.rs:SqliteBoard::configure_usage_budget",
-        "expr: error . to_string ()",
-        "Invalid",
     ),
     (
         "src/infrastructure/persistence/swarm_board/repository_usage.rs:SqliteBoard::insert_request_usage",
@@ -612,6 +632,11 @@ pub(super) const REFUSALS: &[(&str, &str, &str)] = &[
     (
         "src/infrastructure/tools/swarm_board_dispatch_binding.rs:refusal",
         "{name}: unexpected argument {key}",
+        "Calling",
+    ),
+    (
+        "src/infrastructure/tools/swarm_board_dispatch_binding.rs:refusal",
+        "{name}: {old} and {alias} name the same argument but hold different values; send only one",
         "Calling",
     ),
     (

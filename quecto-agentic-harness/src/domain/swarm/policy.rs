@@ -172,7 +172,6 @@ pub fn require_budget(run: &RunRecord, now: f64) -> Result<(), BoardError> {
 pub fn resume_blockers(
     resumed_deadline: f64,
     now: f64,
-    budget_decision: &str,
     lost_coordinator: Option<&str>,
 ) -> Vec<String> {
     let mut blockers = Vec::new();
@@ -183,12 +182,6 @@ pub fn resume_blockers(
     }
     if resumed_deadline <= now {
         blockers.push("extend the deadline (swarm_control extend) before resuming".to_owned());
-    }
-    if budget_decision == "pause" {
-        blockers.push(
-            "raise or disable the token budget (swarm_control usage_budget) before resuming"
-                .to_owned(),
-        );
     }
     blockers
 }
@@ -367,7 +360,7 @@ pub fn require_unsubmitted(status: &str) -> Result<(), BoardError> {
         )),
         unknown => Err(BoardError::new(
             RefusalKind::WrongState,
-            format!("task status '{unknown}' is not a known status; no revision permitted"),
+            format!("task item status '{unknown}' is not a known status; no revision permitted"),
         )),
     }
 }

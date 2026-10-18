@@ -1,22 +1,7 @@
-//! `usage_budget_decision` and `request_measurement`, messages asserted by string.
+//! `request_measurement` and `redelivery`, messages asserted by string.
 use serde_json::{Value, json};
 
 use super::*;
-
-fn budget(token_limit: Option<u64>, strict_unknown: bool) -> UsageBudget {
-    UsageBudget {
-        token_limit,
-        strict_unknown,
-        warned: false,
-    }
-}
-
-fn totals(observed_tokens: u64, unknown_usage_requests: u64) -> UsageTotals {
-    UsageTotals {
-        observed_tokens,
-        unknown_usage_requests,
-    }
-}
 
 fn refusal(record: Value) -> String {
     request_measurement(&record)
@@ -40,71 +25,6 @@ fn with(key: &str, value: Value) -> Value {
     let mut record = record();
     record[key] = value;
     record
-}
-
-#[test]
-fn usage_decision_table() {
-    use UsageDecision::{Allow, Pause, Warn};
-    assert_eq!(
-        usage_budget_decision(&budget(None, true), &totals(u64::MAX, 9)),
-        Allow
-    );
-    assert_eq!(
-        usage_budget_decision(&budget(Some(100), true), &totals(0, 1)),
-        Pause
-    );
-    assert_eq!(
-        usage_budget_decision(&budget(Some(100), false), &totals(0, 1)),
-        Allow
-    );
-    // A strict budget pauses only once a request went unmeasured.
-    assert_eq!(
-        usage_budget_decision(&budget(Some(100), true), &totals(0, 0)),
-        Allow
-    );
-    assert_eq!(
-        usage_budget_decision(&budget(Some(100), false), &totals(100, 0)),
-        Pause
-    );
-    assert_eq!(
-        usage_budget_decision(&budget(Some(100), false), &totals(99, 0)),
-        Warn
-    );
-    assert_eq!(
-        usage_budget_decision(&budget(Some(100), false), &totals(80, 0)),
-        Warn
-    );
-    assert_eq!(
-        usage_budget_decision(&budget(Some(100), false), &totals(79, 0)),
-        Allow
-    );
-    // Integer math: 4 * 5 >= 5 * 4 warns where a float 0.8 might not.
-    assert_eq!(
-        usage_budget_decision(&budget(Some(5), false), &totals(4, 0)),
-        Warn
-    );
-    assert_eq!(
-        usage_budget_decision(&budget(Some(6), false), &totals(4, 0)),
-        Allow
-    );
-    assert_eq!(
-        usage_budget_decision(&budget(Some(0), false), &totals(0, 0)),
-        Pause
-    );
-    // Python integers never overflow: neither does the warning threshold.
-    let huge = u64::MAX;
-    assert_eq!(
-        usage_budget_decision(&budget(Some(huge), false), &totals(huge - 1, 0)),
-        Warn
-    );
-    assert_eq!(
-        usage_budget_decision(&budget(Some(huge), false), &totals(huge / 2, 0)),
-        Allow
-    );
-    assert_eq!(
-        [Allow, Warn, Pause].map(UsageDecision::as_str),
-        ["allow", "warn", "pause"]
-    );
 }
 
 #[test]

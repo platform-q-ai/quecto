@@ -105,6 +105,8 @@ fn the_swarm_doc_explains_the_board_telemetry() {
         "`gate`",
         "`lifecycle`",
         "`warnings`",
+        "`name_form`",
+        "`name_forms`",
         "`swarm_ops_dropped`",
         "`swarm_run_summary_dropped`",
         "DEBUG",

@@ -168,6 +168,10 @@ pub(super) async fn queue_prompt(
         ctx.turn_control.consume_steer();
     }
     let retained = ctx.session.enqueue_control(id, type_name, message, steer);
+    match retained {
+        true => {}
+        false => ctx.turn_control.client_instruction_refused(),
+    }
     ctx.session.record_control(
         id,
         type_name,
@@ -193,3 +197,7 @@ pub(super) async fn queue_prompt(
 #[cfg(test)]
 #[path = "uds_pending_persist_tests.rs"]
 mod persist_tests;
+
+#[cfg(test)]
+#[path = "uds_swarm_state_tests.rs"]
+mod swarm_state_tests;

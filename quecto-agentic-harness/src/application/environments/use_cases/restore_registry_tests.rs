@@ -3,11 +3,11 @@ use std::sync::{Arc, Mutex};
 use super::super::dto::{CorrectionOutcome, EnvironmentLiveness, StateOnDisk};
 use super::super::ports::{EnvironmentProcess, EnvironmentRegistryStore, HostedSwarmRunInspection};
 use super::{KILL_IN_FLIGHT, RETAINED_EXITED, RestoreRegistry};
-use crate::domain::environment_registry::GONE_AT_RESTORE;
-use crate::domain::environment_registry::{
+use crate::domain::environments::entities::environment_registry::GONE_AT_RESTORE;
+use crate::domain::environments::entities::environment_registry::{
     EnvironmentOrigin, EnvironmentRecord, EnvironmentStatus,
 };
-use crate::domain::environment_retention::SwarmRunObservation;
+use crate::domain::environments::services::environment_retention::SwarmRunObservation;
 
 /// The hosted store as the restore reads it: one observation per ref
 /// (`NoStore` for any other), and which refs were asked.
@@ -67,7 +67,11 @@ impl EnvironmentRegistryStore for FakeStore {
             .lock()
             .unwrap()
             .iter()
-            .filter_map(|r| crate::domain::environment_registry::ref_number(&r.environment_ref))
+            .filter_map(|r| {
+                crate::domain::environments::entities::environment_registry::ref_number(
+                    &r.environment_ref,
+                )
+            })
             .max()
             .unwrap_or(0);
         let mut next = self.next.lock().unwrap();
@@ -310,7 +314,11 @@ fn an_unreadable_store_yields_an_empty_registry_that_still_allocates_through_the
     // a ref it could not have loaded answers with it, not `unknown`.
     assert_eq!(registry.read_error().as_deref(), Some(read_error));
     let lookup = registry
-        .resolve(&crate::domain::environment_registry::EnvironmentTarget::Ref("C7".into()))
+        .resolve(
+            &crate::domain::environments::entities::environment_registry::EnvironmentTarget::Ref(
+                "C7".into(),
+            ),
+        )
         .unwrap_err();
     assert_eq!(
         lookup.to_string(),
@@ -567,7 +575,11 @@ fn a_store_repaired_in_place_is_seen_on_the_next_lookup_without_a_restart() {
         "the late correction is written like a restore's"
     );
     let c1 = registry
-        .resolve(&crate::domain::environment_registry::EnvironmentTarget::Ref("C1".into()))
+        .resolve(
+            &crate::domain::environments::entities::environment_registry::EnvironmentTarget::Ref(
+                "C1".into(),
+            ),
+        )
         .unwrap();
     assert_eq!(c1.origin, EnvironmentOrigin::Restored);
 }

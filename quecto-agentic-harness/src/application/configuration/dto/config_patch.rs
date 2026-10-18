@@ -56,6 +56,12 @@ pub enum ConfigPatchError {
     /// The selection has no overlay location (unknown working directory or
     /// an explicit `--config`), so there is no overlay to patch.
     NoOverlayLocation,
+    /// The overlay is the main worktree's, shared with the linked worktree
+    /// this run is in: it is changed from the main worktree, never through
+    /// one of its linked worktrees.
+    SharedOverlay {
+        path: PathBuf,
+    },
     /// The store's overlay policy refuses the entry at the overlay
     /// location (a symbolic link on the way to it); nothing is written
     /// through it.
@@ -136,6 +142,11 @@ impl std::fmt::Display for ConfigPatchError {
             Self::NoOverlayLocation => write!(
                 f,
                 "no repo-local overlay applies to this run (an explicit --config replaces both layers, and an unknown working directory has none)"
+            ),
+            Self::SharedOverlay { path } => write!(
+                f,
+                "refusing to write {}: it is the main worktree's repo-local overlay, shared with this linked worktree; change it from the main worktree, or give this worktree its own .quecto/config.json — which replaces the main worktree's entirely (copy the main overlay to .quecto/config.json here, edit it, then run `quecto config trust` here)",
+                path.display()
             ),
             Self::Refused { path, reason } => {
                 write!(f, "refusing to write {}: {reason}", path.display())

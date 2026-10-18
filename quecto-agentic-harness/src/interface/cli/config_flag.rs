@@ -3,10 +3,25 @@
 
 use std::path::PathBuf;
 
+/// The arguments the global flags are read from: all of them, except that
+/// a `board` command's own arguments are its request's (a task's `--title
+/// --config`, say), so the scan stops at `board`.
+fn scanned(args: &[String]) -> &[String] {
+    let mut i = 1;
+    while args.get(i).map(String::as_str) == Some("--config") {
+        i += 2;
+    }
+    match args.get(i).map(String::as_str) {
+        Some("board") => &args[..=i],
+        Some(_) | None => args,
+    }
+}
+
 /// Extract `--config <path>` from args (consumed globally).
 /// Skips values of flags that take arguments (e.g. `-m`, `--system`) to avoid
 /// misinterpreting message text like `-m "--config"` as the flag.
 pub(super) fn extract_config_flag(args: &[String]) -> Result<Option<PathBuf>, String> {
+    let args = scanned(args);
     /// Flags that consume the next arg as a value (skip their value during scan).
     const VALUE_FLAGS: &[&str] = &[
         "-m",
@@ -40,6 +55,7 @@ pub(super) fn extract_config_flag(args: &[String]) -> Result<Option<PathBuf>, St
 }
 
 pub(super) fn strip_global_config_flag(args: &[String]) -> Vec<String> {
+    let (args, rest) = args.split_at(scanned(args).len());
     const VALUE_FLAGS: &[&str] = &[
         "-m",
         "--message",
@@ -67,5 +83,6 @@ pub(super) fn strip_global_config_flag(args: &[String]) -> Vec<String> {
             i += 1;
         }
     }
+    stripped.extend(rest.iter().cloned());
     stripped
 }

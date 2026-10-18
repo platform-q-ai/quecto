@@ -456,3 +456,25 @@ fn assert_in_order(name: &str, doc: &str, first: &str, second: &str) {
         .unwrap_or_else(|| panic!("{name} embed misses {second}"));
     assert!(a < b, "{name} embed orders {second} before {first}");
 }
+
+/// #2478 slice B: the served subagents page and the review prompt read task
+/// items, as the owner approved.
+#[test]
+fn the_served_pages_read_task_items() {
+    let subagents = lookup_doc("subagents").unwrap();
+    let flat = subagents.split_whitespace().collect::<Vec<_>>().join(" ");
+    for approved in [
+        "For approval/clarification, block the affected task item and yield,",
+        "Generic agent state is not the swarm board.",
+    ] {
+        assert!(flat.contains(approved), "subagents misses {approved:?}");
+    }
+    let review = lookup_doc("review-prompt").unwrap();
+    assert!(
+        review.contains(
+            "1. Finders. The coordinator creates one task item per review angle, and each member \
+             claims one angle."
+        ),
+        "{review}"
+    );
+}

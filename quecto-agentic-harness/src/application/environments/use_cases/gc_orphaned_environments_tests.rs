@@ -7,7 +7,7 @@ use super::super::dto::{
 };
 use super::super::ports::{ContainerConfigLookup, ContainerRuntimeInventory, EnvironmentProcess};
 use super::{CREATE_GRACE_SECS, GcOrphanedEnvironments, implied_state_root};
-use crate::domain::environment_registry::{
+use crate::domain::environments::entities::environment_registry::{
     EnvironmentOrigin, EnvironmentRecord, EnvironmentRegistry, EnvironmentStatus,
 };
 

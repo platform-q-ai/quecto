@@ -19,7 +19,7 @@ use crate::application::swarm::dto::CallMeasure;
 use crate::application::swarm::ports::BoardOpLog;
 use crate::domain::redaction::Redacted;
 use crate::domain::swarm::watch_polls::{PollTally, WATCH_POLL_OP};
-use crate::domain::swarm::{BoardOpObservation, BoardRole, RefusalKind};
+use crate::domain::swarm::{BoardError, BoardOpObservation, BoardRole, NameForm, RefusalKind};
 
 /// Whom a board call is made for (#2279 S15 final review): the calling
 /// member, whose role in the run a member-facing op records, or the
@@ -33,6 +33,29 @@ pub enum CallOrigin {
     /// The harness's run watch (#2338): its `_watch` ticks, recorded as
     /// `host`; `unchanged` ticks are aggregated ([`WatchPolls`]).
     Watch,
+    /// The supervising session's projection reads (#2478), polled while a
+    /// client watches the board: recorded as `host` by `tracing` alone,
+    /// never as an event-log `swarm_op`, so a poll writes no record.
+    Supervisor,
+}
+
+/// The refusal of a call `origin` may not make, `None` for one it may
+/// (#2487 round 2): the supervising session's origin writes no event-log
+/// record, so it reaches the two projection reads and nothing else; every
+/// other origin reaches any method (an allowlist of what each may call).
+pub(super) fn origin_refusal(
+    origin: CallOrigin,
+    known: Option<Method>,
+    method: &str,
+) -> Option<BoardError> {
+    match (origin, known) {
+        (CallOrigin::Supervisor, Some(Method::Board | Method::BoardRevision))
+        | (CallOrigin::Member | CallOrigin::Harness | CallOrigin::Watch, _) => None,
+        (CallOrigin::Supervisor, _) => Some(BoardError::new(
+            RefusalKind::Calling,
+            format!("the supervising session reads only _board and _board_revision, not {method}"),
+        )),
+    }
 }
 
 /// The run watch's `unchanged` ticks not yet written (#2338), held with the
@@ -159,13 +182,18 @@ fn write_polls(log: &dyn BoardOpLog, records: impl IntoIterator<Item = BoardOpOb
 /// harness's alone (docs/swarm.md), so an unknown name never maps to it.
 pub(super) fn recorded_role(origin: CallOrigin, known: Option<Method>) -> Option<BoardRole> {
     let role = match (origin, known) {
-        (CallOrigin::Harness | CallOrigin::Watch, _) => Some(BoardRole::Host),
+        (CallOrigin::Harness | CallOrigin::Watch | CallOrigin::Supervisor, _) => {
+            Some(BoardRole::Host)
+        }
         (CallOrigin::Member, Some(known)) => known.role(),
         (CallOrigin::Member, None) => None,
     };
     debug_assert!(
         known.is_some()
-            || matches!(origin, CallOrigin::Harness | CallOrigin::Watch)
+            || matches!(
+                origin,
+                CallOrigin::Harness | CallOrigin::Watch | CallOrigin::Supervisor
+            )
             || role.is_none(),
         "a member's call naming no board method records no role"
     );
@@ -210,6 +238,9 @@ pub(super) fn record(
             let observation = observation(finished, actor, caller, served, measure);
             telemetry.log.record(observation);
         }
+        (Some(_), Some(actor), CallOrigin::Supervisor) => {
+            trace(finished, measure.as_ref(), Some(&actor))
+        }
         (Some(_), None, _) | (None, _, _) => trace(finished, None, None),
     }
 }
@@ -245,13 +276,13 @@ fn trace_arguments(finished: &Finished<'_>, actor: &Redacted) {
 /// refused call leaves, with nothing measured (no transaction began) and
 /// the caller unproven. `arguments` is what the refusal found wrong in the
 /// member's text (#2341: a value the board cannot hold), kept only for an
-/// `invalid` or `calling` refusal.
+/// `invalid` or `calling` refusal; `name_form` which names a structured
+/// op's call used (#2478), `None` where none applies.
 pub fn refused(
     handles: &SwarmBoardHandles,
     member: &str,
     method: &str,
-    kind: RefusalKind,
-    arguments: BindingFaults,
+    (kind, arguments, name_form): (RefusalKind, BindingFaults, Option<NameForm>),
     elapsed: Duration,
 ) {
     let known = Method::parse(method);
@@ -264,6 +295,7 @@ pub fn refused(
         arguments: super::binding::recorded(&outcome, Some(arguments)),
         outcome,
         elapsed,
+        name_form,
     };
     record(
         handles,

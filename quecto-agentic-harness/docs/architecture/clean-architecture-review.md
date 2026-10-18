@@ -33,7 +33,7 @@ Area 8 will assess whether checks enforce actual dependency boundaries rather th
 
 ### Area 1 — Domain model and core ports
 
-Baseline: `cf861cad`. Static review of domain contracts and selected consumers/tests; no tests executed. Citations below are crate-relative. Priorities describe architectural improvement value, not demonstrated production failures.
+Baseline: `cf861cad`. Static review of domain contracts and selected consumers/tests; no tests executed. Citations below are historical, crate-relative paths at that baseline (including the subsequently moved environment modules). Priorities describe architectural improvement value, not demonstrated production failures.
 
 #### A1-01 — Move finalization orchestration out of domain (priority: high)
 

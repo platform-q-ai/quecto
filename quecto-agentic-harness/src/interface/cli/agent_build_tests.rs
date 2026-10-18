@@ -15,6 +15,7 @@ pub(crate) fn selection_for_test(path: &std::path::Path, must_exist: bool) -> Co
             global: path.to_path_buf(),
             overlay: None,
             legacy_local: None,
+            overlay_origin: Default::default(),
         })
     }
 }
@@ -29,6 +30,7 @@ use crate::interface::cli::run_with_output;
 fn test_build_agent_from_config_no_config_file() {
     let tmp = tempfile::TempDir::new().unwrap();
     let flags = AgentFlags {
+        project_board: None,
         session_name: None,
         no_session: false,
         message: Some("hi".into()),
@@ -88,6 +90,7 @@ fn test_build_agent_from_config_no_config_file() {
 fn test_build_agent_from_config_explicit_missing_errors() {
     let tmp = tempfile::TempDir::new().unwrap();
     let flags = AgentFlags {
+        project_board: None,
         session_name: None,
         no_session: false,
         message: Some("hi".into()),
@@ -150,6 +153,7 @@ fn test_build_agent_from_config_invalid_json() {
     let tmp = tempfile::TempDir::new().unwrap();
     std::fs::write(tmp.path().join("config.json"), "not json at all").unwrap();
     let flags = AgentFlags {
+        project_board: None,
         session_name: None,
         no_session: false,
         message: Some("hi".into()),
@@ -214,6 +218,7 @@ fn test_build_agent_from_config_no_providers() {
     )
     .unwrap();
     let flags = AgentFlags {
+        project_board: None,
         session_name: None,
         no_session: false,
         message: Some("hi".into()),
@@ -278,6 +283,7 @@ fn test_build_agent_from_config_with_model_override() {
     )
     .unwrap();
     let flags = AgentFlags {
+        project_board: None,
         session_name: None,
         no_session: false,
         message: Some("hi".into()),
@@ -371,6 +377,7 @@ mod container_selection_tests;
 
 fn admission_flags() -> AgentFlags {
     AgentFlags {
+        project_board: None,
         session_name: None,
         no_session: true,
         message: None,

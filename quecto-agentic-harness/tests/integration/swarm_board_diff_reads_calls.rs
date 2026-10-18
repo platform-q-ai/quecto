@@ -340,9 +340,16 @@ const TEST_ONLY: [&str; 4] = ["create_run", "bootstrap_run", "bootstrap_join", "
 
 /// Dispatcher methods Python's `Workbench` has no counterpart of: the
 /// structured ops' event cursor (#2279), read around a member's call, the
-/// run's totals the coordinator's harness reads at settle (#2313), and the
-/// run watch's tick (#2338).
-const RUST_ONLY: [&str; 3] = ["_event_cursor", "_run_totals", "_watch"];
+/// run's totals the coordinator's harness reads at settle (#2313), the
+/// run watch's tick (#2338), and the supervising session's board
+/// projection and its revision (#2478).
+const RUST_ONLY: [&str; 5] = [
+    "_board",
+    "_board_revision",
+    "_event_cursor",
+    "_run_totals",
+    "_watch",
+];
 
 /// The parameter names of Python's `Workbench.<method>` (`self` left out)
 /// for each method [`RUST_ONLY_ARGUMENTS`] names: frozen from the Python
@@ -402,16 +409,30 @@ fn only_the_listed_arguments_widen_a_workbench_signature() {
     }
 }
 
-/// Every method of Python's `Workbench` ([`WORKBENCH_METHODS`]) is a
-/// dispatcher method or a named internal helper, and the dispatcher serves
-/// nothing else.
+/// The `Workbench` methods the Rust board serves no more, by owner
+/// decision: `usage_budget`, as no token budget limits a swarm
+/// (2026-10-14).
+const RETIRED: [&str; 1] = ["usage_budget"];
+
+/// Every method of Python's `Workbench` ([`WORKBENCH_METHODS`]) but the
+/// [`RETIRED`] is a dispatcher method or a named internal helper, and the
+/// dispatcher serves nothing else.
 #[test]
 fn the_dispatcher_serves_every_workbench_method() {
+    for retired in RETIRED {
+        assert!(WORKBENCH_METHODS.contains(&retired), "{retired}");
+        assert!(!BOARD_OPS.contains(&retired), "{retired} is served");
+    }
     let golden: BTreeSet<String> = WORKBENCH_METHODS
         .iter()
+        .filter(|name| !RETIRED.contains(name))
         .map(|name| (*name).to_owned())
         .collect();
-    assert_eq!(golden.len(), WORKBENCH_METHODS.len(), "listed once each");
+    assert_eq!(
+        golden.len() + RETIRED.len(),
+        WORKBENCH_METHODS.len(),
+        "listed once each"
+    );
     let served: BTreeSet<String> = BOARD_OPS
         .iter()
         .filter(|op| !TEST_ONLY.contains(op) && !RUST_ONLY.contains(op))

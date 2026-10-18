@@ -165,7 +165,7 @@ mod real_adapters {
     use quecto::application::subagent_launch::SubagentLaunchUseCase;
     use quecto::domain::agents::services::subagent::ContainerSelection;
     use quecto::domain::agents::services::subagent::SubagentConfig;
-    use quecto::domain::environment_registry::EnvironmentRegistry;
+    use quecto::domain::environments::entities::environment_registry::EnvironmentRegistry;
     use quecto::domain::error::DomainError;
     use quecto::domain::tool::ToolResult;
     use quecto::infrastructure::tools::spawn::SpawnTool;

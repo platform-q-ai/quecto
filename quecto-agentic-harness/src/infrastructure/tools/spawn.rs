@@ -12,7 +12,7 @@ use crate::domain::agents::services::subagent::{
     DisplayNameResolutionEntry, DisplayNameResolveError, SubagentConfig,
     assert_display_name_available_for_spawn, validate_agent_id,
 };
-use crate::domain::environment_registry::EnvironmentRegistry;
+use crate::domain::environments::entities::environment_registry::EnvironmentRegistry;
 use crate::domain::error::DomainError;
 use crate::domain::ids::AgentUuid;
 use crate::domain::tool::{ToolDefinition, ToolResult};
@@ -25,6 +25,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use super::spawn_entry::{InitialRegistryEntrySpec, child_socket_path, initial_registry_entry};
+use super::spawn_launch_ports::SpawnedChild;
 pub use super::spawn_registry::register_and_broadcast;
 use super::subagent_registry::NotificationTx;
 #[cfg(test)]
@@ -693,11 +694,13 @@ impl Tool for SpawnTool {
                             "Subagent '{}' is running (uuid={}). Use agent_cmd to interact.",
                             session_name, agent_uuid,
                         );
+                        // As every running spawn (S4c): in no container.
+                        let launched = SpawnedChild::local(agent_uuid.to_string());
                         Ok(ToolResult {
                             content: msg,
                             is_error: false,
                             image_blocks: vec![],
-                            delivery_metadata: None,
+                            delivery_metadata: Some(launched.metadata()),
                         })
                     } else {
                         self.launch_uds_agent(&config).await

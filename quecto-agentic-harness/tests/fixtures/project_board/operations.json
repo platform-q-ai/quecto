@@ -1,0 +1,2064 @@
+[
+  {
+    "request": {
+      "op": "list"
+    },
+    "answer": {
+      "ok": false,
+      "op": "list",
+      "error": {
+        "code": "no_board",
+        "message": "the project has no board yet"
+      }
+    }
+  },
+  {
+    "request": {
+      "op": "bootstrap"
+    },
+    "answer": {
+      "ok": true,
+      "op": "bootstrap",
+      "head": "r1",
+      "created": true
+    }
+  },
+  {
+    "request": {
+      "op": "create",
+      "task": "epic",
+      "title": "Boards",
+      "kind": "epic"
+    },
+    "answer": {
+      "ok": true,
+      "op": "create",
+      "task": {
+        "id": "epic",
+        "title": "Boards",
+        "kind": "epic",
+        "description": "",
+        "status": "draft",
+        "parent": null,
+        "depends_on": [],
+        "accepted_plan": null,
+        "claim": null,
+        "prs": [],
+        "created": "2026-10-10T10:00:00Z",
+        "updated": "2026-10-10T10:00:00Z"
+      }
+    }
+  },
+  {
+    "request": {
+      "op": "create",
+      "task": "cli",
+      "title": "Board CLI",
+      "description": "Why.\r\nHow.\r\n",
+      "status": "ready",
+      "parent": "epic"
+    },
+    "answer": {
+      "ok": true,
+      "op": "create",
+      "task": {
+        "id": "cli",
+        "title": "Board CLI",
+        "kind": "task",
+        "description": "Why.\nHow.",
+        "status": "ready",
+        "parent": "epic",
+        "depends_on": [],
+        "accepted_plan": null,
+        "claim": null,
+        "prs": [],
+        "created": "2026-10-10T10:00:00Z",
+        "updated": "2026-10-10T10:00:00Z"
+      }
+    }
+  },
+  {
+    "request": {
+      "op": "update_draft",
+      "task": "epic",
+      "title": "Project boards",
+      "expected_updated": "2026-10-10T10:00:00Z"
+    },
+    "answer": {
+      "ok": true,
+      "op": "update_draft",
+      "task": {
+        "id": "epic",
+        "title": "Project boards",
+        "kind": "epic",
+        "description": "",
+        "status": "draft",
+        "parent": null,
+        "depends_on": [],
+        "accepted_plan": null,
+        "claim": null,
+        "prs": [],
+        "created": "2026-10-10T10:00:00Z",
+        "updated": "2026-10-10T10:00:01Z"
+      }
+    }
+  },
+  {
+    "request": {
+      "op": "update_draft",
+      "task": "epic",
+      "title": "Again",
+      "expected_updated": "2026-10-10T10:00:00Z"
+    },
+    "answer": {
+      "ok": false,
+      "op": "update_draft",
+      "error": {
+        "code": "stale",
+        "message": "task epic changed since it was read (updated 2026-10-10T10:00:01Z, not 2026-10-10T10:00:00Z); read it again",
+        "task": "epic",
+        "expected": "2026-10-10T10:00:00Z",
+        "updated": "2026-10-10T10:00:01Z"
+      }
+    }
+  },
+  {
+    "request": {
+      "op": "move",
+      "task": "cli",
+      "to": "claimed"
+    },
+    "answer": {
+      "ok": true,
+      "op": "move",
+      "task": {
+        "id": "cli",
+        "title": "Board CLI",
+        "kind": "task",
+        "description": "Why.\nHow.",
+        "status": "claimed",
+        "parent": "epic",
+        "depends_on": [],
+        "accepted_plan": null,
+        "claim": {
+          "holder": {
+            "name": "Ada",
+            "email": "ada@example.com"
+          },
+          "since": "2026-10-10T10:00:01Z",
+          "expires": "2026-10-10T12:00:01Z"
+        },
+        "prs": [],
+        "created": "2026-10-10T10:00:00Z",
+        "updated": "2026-10-10T10:00:01Z"
+      }
+    }
+  },
+  {
+    "as": "Bob",
+    "request": {
+      "op": "move",
+      "task": "cli",
+      "to": "in_progress"
+    },
+    "answer": {
+      "ok": false,
+      "op": "move",
+      "error": {
+        "code": "rule",
+        "message": "only the claim's holder may do this",
+        "rule": {
+          "code": "not_holder"
+        }
+      }
+    }
+  },
+  {
+    "request": {
+      "op": "move",
+      "task": "cli",
+      "to": "in_progress"
+    },
+    "answer": {
+      "ok": true,
+      "op": "move",
+      "task": {
+        "id": "cli",
+        "title": "Board CLI",
+        "kind": "task",
+        "description": "Why.\nHow.",
+        "status": "in_progress",
+        "parent": "epic",
+        "depends_on": [],
+        "accepted_plan": null,
+        "claim": {
+          "holder": {
+            "name": "Ada",
+            "email": "ada@example.com"
+          },
+          "since": "2026-10-10T10:00:01Z",
+          "expires": "2026-10-10T12:00:01Z"
+        },
+        "prs": [],
+        "created": "2026-10-10T10:00:00Z",
+        "updated": "2026-10-10T10:00:02Z"
+      }
+    }
+  },
+  {
+    "request": {
+      "op": "renew",
+      "task": "cli"
+    },
+    "answer": {
+      "ok": true,
+      "op": "renew",
+      "task": {
+        "id": "cli",
+        "title": "Board CLI",
+        "kind": "task",
+        "description": "Why.\nHow.",
+        "status": "in_progress",
+        "parent": "epic",
+        "depends_on": [],
+        "accepted_plan": null,
+        "claim": {
+          "holder": {
+            "name": "Ada",
+            "email": "ada@example.com"
+          },
+          "since": "2026-10-10T10:00:03Z",
+          "expires": "2026-10-10T12:00:03Z"
+        },
+        "prs": [],
+        "created": "2026-10-10T10:00:00Z",
+        "updated": "2026-10-10T10:00:03Z"
+      }
+    }
+  },
+  {
+    "as": "Bob",
+    "request": {
+      "op": "take_over",
+      "task": "cli"
+    },
+    "answer": {
+      "ok": false,
+      "op": "take_over",
+      "error": {
+        "code": "rule",
+        "message": "the claim has not expired",
+        "rule": {
+          "code": "claim_live"
+        }
+      }
+    }
+  },
+  {
+    "as": "Bob",
+    "at": "12:30:00",
+    "request": {
+      "op": "take_over",
+      "task": "cli"
+    },
+    "answer": {
+      "ok": true,
+      "op": "take_over",
+      "task": {
+        "id": "cli",
+        "title": "Board CLI",
+        "kind": "task",
+        "description": "Why.\nHow.",
+        "status": "in_progress",
+        "parent": "epic",
+        "depends_on": [],
+        "accepted_plan": null,
+        "claim": {
+          "holder": {
+            "name": "Bob",
+            "email": "bob@example.com"
+          },
+          "since": "2026-10-10T12:30:00Z",
+          "expires": "2026-10-10T14:30:00Z"
+        },
+        "prs": [],
+        "created": "2026-10-10T10:00:00Z",
+        "updated": "2026-10-10T12:30:00Z"
+      }
+    }
+  },
+  {
+    "as": "Bob",
+    "at": "12:30:00",
+    "request": {
+      "op": "link_pr",
+      "task": "cli",
+      "pr": 7
+    },
+    "answer": {
+      "ok": true,
+      "op": "link_pr",
+      "task": {
+        "id": "cli",
+        "title": "Board CLI",
+        "kind": "task",
+        "description": "Why.\nHow.",
+        "status": "in_progress",
+        "parent": "epic",
+        "depends_on": [],
+        "accepted_plan": null,
+        "claim": {
+          "holder": {
+            "name": "Bob",
+            "email": "bob@example.com"
+          },
+          "since": "2026-10-10T12:30:00Z",
+          "expires": "2026-10-10T14:30:00Z"
+        },
+        "prs": [
+          7
+        ],
+        "created": "2026-10-10T10:00:00Z",
+        "updated": "2026-10-10T12:30:01Z"
+      },
+      "completion": {
+        "done": true,
+        "task": {
+          "id": "cli",
+          "title": "Board CLI",
+          "kind": "task",
+          "description": "Why.\nHow.",
+          "status": "done",
+          "parent": "epic",
+          "depends_on": [],
+          "accepted_plan": null,
+          "claim": null,
+          "prs": [
+            7
+          ],
+          "created": "2026-10-10T10:00:00Z",
+          "updated": "2026-10-10T12:30:02Z"
+        }
+      }
+    }
+  },
+  {
+    "request": {
+      "op": "create",
+      "task": "t2",
+      "title": "Second",
+      "status": "ready"
+    },
+    "answer": {
+      "ok": true,
+      "op": "create",
+      "task": {
+        "id": "t2",
+        "title": "Second",
+        "kind": "task",
+        "description": "",
+        "status": "ready",
+        "parent": null,
+        "depends_on": [],
+        "accepted_plan": null,
+        "claim": null,
+        "prs": [],
+        "created": "2026-10-10T10:00:00Z",
+        "updated": "2026-10-10T10:00:00Z"
+      }
+    }
+  },
+  {
+    "request": {
+      "op": "move",
+      "task": "t2",
+      "to": "claimed"
+    },
+    "answer": {
+      "ok": true,
+      "op": "move",
+      "task": {
+        "id": "t2",
+        "title": "Second",
+        "kind": "task",
+        "description": "",
+        "status": "claimed",
+        "parent": null,
+        "depends_on": [],
+        "accepted_plan": null,
+        "claim": {
+          "holder": {
+            "name": "Ada",
+            "email": "ada@example.com"
+          },
+          "since": "2026-10-10T10:00:01Z",
+          "expires": "2026-10-10T12:00:01Z"
+        },
+        "prs": [],
+        "created": "2026-10-10T10:00:00Z",
+        "updated": "2026-10-10T10:00:01Z"
+      }
+    }
+  },
+  {
+    "request": {
+      "op": "move",
+      "task": "t2",
+      "to": "in_progress"
+    },
+    "answer": {
+      "ok": true,
+      "op": "move",
+      "task": {
+        "id": "t2",
+        "title": "Second",
+        "kind": "task",
+        "description": "",
+        "status": "in_progress",
+        "parent": null,
+        "depends_on": [],
+        "accepted_plan": null,
+        "claim": {
+          "holder": {
+            "name": "Ada",
+            "email": "ada@example.com"
+          },
+          "since": "2026-10-10T10:00:01Z",
+          "expires": "2026-10-10T12:00:01Z"
+        },
+        "prs": [],
+        "created": "2026-10-10T10:00:00Z",
+        "updated": "2026-10-10T10:00:02Z"
+      }
+    }
+  },
+  {
+    "request": {
+      "op": "link_pr",
+      "task": "t2",
+      "pr": 8
+    },
+    "answer": {
+      "ok": true,
+      "op": "link_pr",
+      "task": {
+        "id": "t2",
+        "title": "Second",
+        "kind": "task",
+        "description": "",
+        "status": "in_progress",
+        "parent": null,
+        "depends_on": [],
+        "accepted_plan": null,
+        "claim": {
+          "holder": {
+            "name": "Ada",
+            "email": "ada@example.com"
+          },
+          "since": "2026-10-10T10:00:01Z",
+          "expires": "2026-10-10T12:00:01Z"
+        },
+        "prs": [
+          8
+        ],
+        "created": "2026-10-10T10:00:00Z",
+        "updated": "2026-10-10T10:00:03Z"
+      },
+      "completion": {
+        "done": false,
+        "pending": [
+          8
+        ]
+      }
+    }
+  },
+  {
+    "request": {
+      "op": "unlink_pr",
+      "task": "t2",
+      "pr": 8
+    },
+    "answer": {
+      "ok": true,
+      "op": "unlink_pr",
+      "task": {
+        "id": "t2",
+        "title": "Second",
+        "kind": "task",
+        "description": "",
+        "status": "in_progress",
+        "parent": null,
+        "depends_on": [],
+        "accepted_plan": null,
+        "claim": {
+          "holder": {
+            "name": "Ada",
+            "email": "ada@example.com"
+          },
+          "since": "2026-10-10T10:00:01Z",
+          "expires": "2026-10-10T12:00:01Z"
+        },
+        "prs": [],
+        "created": "2026-10-10T10:00:00Z",
+        "updated": "2026-10-10T10:00:04Z"
+      }
+    }
+  },
+  {
+    "request": {
+      "op": "move",
+      "task": "t2",
+      "to": "blocked"
+    },
+    "answer": {
+      "ok": true,
+      "op": "move",
+      "task": {
+        "id": "t2",
+        "title": "Second",
+        "kind": "task",
+        "description": "",
+        "status": "blocked",
+        "parent": null,
+        "depends_on": [],
+        "accepted_plan": null,
+        "claim": {
+          "holder": {
+            "name": "Ada",
+            "email": "ada@example.com"
+          },
+          "since": "2026-10-10T10:00:01Z",
+          "expires": "2026-10-10T12:00:01Z"
+        },
+        "prs": [],
+        "created": "2026-10-10T10:00:00Z",
+        "updated": "2026-10-10T10:00:05Z"
+      }
+    }
+  },
+  {
+    "request": {
+      "op": "move",
+      "task": "t2",
+      "to": "ready"
+    },
+    "answer": {
+      "ok": true,
+      "op": "move",
+      "task": {
+        "id": "t2",
+        "title": "Second",
+        "kind": "task",
+        "description": "",
+        "status": "ready",
+        "parent": null,
+        "depends_on": [],
+        "accepted_plan": null,
+        "claim": null,
+        "prs": [],
+        "created": "2026-10-10T10:00:00Z",
+        "updated": "2026-10-10T10:00:06Z"
+      }
+    }
+  },
+  {
+    "request": {
+      "op": "move",
+      "task": "t2",
+      "to": "archived"
+    },
+    "answer": {
+      "ok": true,
+      "op": "move",
+      "task": {
+        "id": "t2",
+        "title": "Second",
+        "kind": "task",
+        "description": "",
+        "status": "archived",
+        "parent": null,
+        "depends_on": [],
+        "accepted_plan": null,
+        "claim": null,
+        "prs": [],
+        "created": "2026-10-10T10:00:00Z",
+        "updated": "2026-10-10T10:00:07Z"
+      }
+    }
+  },
+  {
+    "request": {
+      "op": "create",
+      "task": "t3",
+      "title": "Third",
+      "status": "ready"
+    },
+    "answer": {
+      "ok": true,
+      "op": "create",
+      "task": {
+        "id": "t3",
+        "title": "Third",
+        "kind": "task",
+        "description": "",
+        "status": "ready",
+        "parent": null,
+        "depends_on": [],
+        "accepted_plan": null,
+        "claim": null,
+        "prs": [],
+        "created": "2026-10-10T10:00:00Z",
+        "updated": "2026-10-10T10:00:00Z"
+      }
+    }
+  },
+  {
+    "request": {
+      "op": "move",
+      "task": "t3",
+      "to": "claimed"
+    },
+    "answer": {
+      "ok": true,
+      "op": "move",
+      "task": {
+        "id": "t3",
+        "title": "Third",
+        "kind": "task",
+        "description": "",
+        "status": "claimed",
+        "parent": null,
+        "depends_on": [],
+        "accepted_plan": null,
+        "claim": {
+          "holder": {
+            "name": "Ada",
+            "email": "ada@example.com"
+          },
+          "since": "2026-10-10T10:00:01Z",
+          "expires": "2026-10-10T12:00:01Z"
+        },
+        "prs": [],
+        "created": "2026-10-10T10:00:00Z",
+        "updated": "2026-10-10T10:00:01Z"
+      }
+    }
+  },
+  {
+    "request": {
+      "op": "move",
+      "task": "t3",
+      "to": "in_progress"
+    },
+    "answer": {
+      "ok": true,
+      "op": "move",
+      "task": {
+        "id": "t3",
+        "title": "Third",
+        "kind": "task",
+        "description": "",
+        "status": "in_progress",
+        "parent": null,
+        "depends_on": [],
+        "accepted_plan": null,
+        "claim": {
+          "holder": {
+            "name": "Ada",
+            "email": "ada@example.com"
+          },
+          "since": "2026-10-10T10:00:01Z",
+          "expires": "2026-10-10T12:00:01Z"
+        },
+        "prs": [],
+        "created": "2026-10-10T10:00:00Z",
+        "updated": "2026-10-10T10:00:02Z"
+      }
+    }
+  },
+  {
+    "request": {
+      "op": "link_pr",
+      "task": "t3",
+      "pr": 9
+    },
+    "answer": {
+      "ok": true,
+      "op": "link_pr",
+      "task": {
+        "id": "t3",
+        "title": "Third",
+        "kind": "task",
+        "description": "",
+        "status": "in_progress",
+        "parent": null,
+        "depends_on": [],
+        "accepted_plan": null,
+        "claim": {
+          "holder": {
+            "name": "Ada",
+            "email": "ada@example.com"
+          },
+          "since": "2026-10-10T10:00:01Z",
+          "expires": "2026-10-10T12:00:01Z"
+        },
+        "prs": [
+          9
+        ],
+        "created": "2026-10-10T10:00:00Z",
+        "updated": "2026-10-10T10:00:03Z"
+      },
+      "completion": {
+        "done": false,
+        "pending": [
+          9
+        ]
+      }
+    }
+  },
+  {
+    "merge": 9,
+    "request": {
+      "op": "complete",
+      "task": "t3"
+    },
+    "answer": {
+      "ok": true,
+      "op": "complete",
+      "task": {
+        "id": "t3",
+        "title": "Third",
+        "kind": "task",
+        "description": "",
+        "status": "done",
+        "parent": null,
+        "depends_on": [],
+        "accepted_plan": null,
+        "claim": null,
+        "prs": [
+          9
+        ],
+        "created": "2026-10-10T10:00:00Z",
+        "updated": "2026-10-10T10:00:04Z"
+      }
+    }
+  },
+  {
+    "at": "12:30:00",
+    "request": {
+      "op": "list_takeable"
+    },
+    "answer": {
+      "ok": true,
+      "op": "list_takeable",
+      "head": "r23",
+      "tasks": [],
+      "quarantined": []
+    }
+  },
+  {
+    "request": {
+      "op": "list_ready"
+    },
+    "answer": {
+      "ok": true,
+      "op": "list_ready",
+      "head": "r23",
+      "tasks": [],
+      "quarantined": []
+    }
+  },
+  {
+    "request": {
+      "op": "list",
+      "parent": "epic"
+    },
+    "answer": {
+      "ok": true,
+      "op": "list",
+      "head": "r23",
+      "tasks": [
+        {
+          "id": "cli",
+          "title": "Board CLI",
+          "kind": "task",
+          "description": "Why.\nHow.",
+          "status": "done",
+          "parent": "epic",
+          "depends_on": [],
+          "accepted_plan": null,
+          "claim": null,
+          "prs": [
+            7
+          ],
+          "created": "2026-10-10T10:00:00Z",
+          "updated": "2026-10-10T12:30:02Z"
+        }
+      ],
+      "quarantined": []
+    }
+  },
+  {
+    "request": {
+      "op": "show",
+      "task": "cli"
+    },
+    "answer": {
+      "ok": true,
+      "op": "show",
+      "head": "r23",
+      "task": {
+        "id": "cli",
+        "title": "Board CLI",
+        "kind": "task",
+        "description": "Why.\nHow.",
+        "status": "done",
+        "parent": "epic",
+        "depends_on": [],
+        "accepted_plan": null,
+        "claim": null,
+        "prs": [
+          7
+        ],
+        "created": "2026-10-10T10:00:00Z",
+        "updated": "2026-10-10T12:30:02Z"
+      },
+      "plan": null,
+      "plans": [],
+      "runs": [],
+      "may_be_incomplete": false,
+      "quarantined": []
+    }
+  },
+  {
+    "request": {
+      "op": "show",
+      "task": "nope"
+    },
+    "answer": {
+      "ok": false,
+      "op": "show",
+      "error": {
+        "code": "not_found",
+        "message": "no task nope",
+        "task": "nope"
+      }
+    }
+  },
+  {
+    "request": {
+      "op": "create",
+      "task": "ghost",
+      "title": "Ghost"
+    },
+    "answer": {
+      "ok": true,
+      "op": "create",
+      "task": {
+        "id": "ghost",
+        "title": "Ghost",
+        "kind": "task",
+        "description": "",
+        "status": "draft",
+        "parent": null,
+        "depends_on": [],
+        "accepted_plan": null,
+        "claim": null,
+        "prs": [],
+        "created": "2026-10-10T10:00:00Z",
+        "updated": "2026-10-10T10:00:00Z"
+      }
+    }
+  },
+  {
+    "quarantine": "ghost",
+    "request": {
+      "op": "list_ready"
+    },
+    "answer": {
+      "ok": true,
+      "op": "list_ready",
+      "head": "r25",
+      "tasks": [],
+      "quarantined": [
+        {
+          "path": "tasks/ghost.md",
+          "id": "ghost",
+          "reason": "malformed",
+          "object": "0000000000000000000000000000000000000019",
+          "copies": [
+            "0000000000000000000000000000000000000019"
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "request": {
+      "op": "clear_set_aside",
+      "path": "tasks/ghost.md",
+      "object": "0000000000000000000000000000000000000019"
+    },
+    "answer": {
+      "ok": true,
+      "op": "clear_set_aside",
+      "head": "r26"
+    }
+  },
+  {
+    "request": {
+      "op": "clear_set_aside",
+      "path": "tasks/cli.md",
+      "object": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "answer": {
+      "ok": false,
+      "op": "clear_set_aside",
+      "error": {
+        "code": "not_set_aside",
+        "message": "no file is set aside at \"tasks/cli.md\" as \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"",
+        "path": "tasks/cli.md",
+        "object": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    }
+  },
+  {
+    "no_reference": true,
+    "request": {
+      "op": "create",
+      "task": "late",
+      "title": "Late"
+    },
+    "answer": {
+      "ok": true,
+      "op": "create",
+      "task": {
+        "id": "late",
+        "title": "Late",
+        "kind": "task",
+        "description": "",
+        "status": "draft",
+        "parent": null,
+        "depends_on": [],
+        "accepted_plan": null,
+        "claim": null,
+        "prs": [],
+        "created": "2026-10-10T10:00:00Z",
+        "updated": "2026-10-10T10:00:00Z"
+      },
+      "clock": {
+        "referenced": false,
+        "reason": "no outside time in this test"
+      }
+    }
+  },
+  {
+    "request": {
+      "op": "renew",
+      "task": "cli",
+      "holder": "Ada"
+    },
+    "answer": {
+      "ok": false,
+      "op": "renew",
+      "error": {
+        "code": "invalid_request",
+        "message": "holder: renew takes no such field",
+        "field": "holder",
+        "problem": "renew takes no such field"
+      }
+    }
+  },
+  {
+    "request": {
+      "op": "ready"
+    },
+    "answer": {
+      "ok": false,
+      "op": null,
+      "error": {
+        "code": "invalid_request",
+        "message": "op: must be one of bootstrap, list, list_ready, list_takeable, show, create, update_draft, move, renew, take_over, link_pr, unlink_pr, complete, propose_plan, edit_plan, accept_plan, discard_plan, start, end_run, clear_set_aside",
+        "field": "op",
+        "problem": "must be one of bootstrap, list, list_ready, list_takeable, show, create, update_draft, move, renew, take_over, link_pr, unlink_pr, complete, propose_plan, edit_plan, accept_plan, discard_plan, start, end_run, clear_set_aside"
+      }
+    }
+  },
+  {
+    "request": "{\"op\": \"show\", \"task\": \"cli\", \"task\": \"epic\"}",
+    "answer": {
+      "ok": false,
+      "op": null,
+      "error": {
+        "code": "invalid_request",
+        "message": "request: must be JSON: the key \"task\" is given twice at line 1 column 45",
+        "field": "request",
+        "problem": "must be JSON: the key \"task\" is given twice at line 1 column 45"
+      }
+    }
+  },
+  {
+    "request": {
+      "op": "update_draft",
+      "task": "epic"
+    },
+    "answer": {
+      "ok": false,
+      "op": "update_draft",
+      "error": {
+        "code": "invalid_request",
+        "message": "op: update_draft sets nothing: name a field to change",
+        "field": "op",
+        "problem": "update_draft sets nothing: name a field to change"
+      }
+    }
+  },
+  {
+    "request": {
+      "op": "create",
+      "task": "epic",
+      "title": "Again"
+    },
+    "answer": {
+      "ok": false,
+      "op": "create",
+      "error": {
+        "code": "exists",
+        "message": "task epic already exists",
+        "task": "epic"
+      }
+    }
+  },
+  {
+    "request": {
+      "op": "create",
+      "task": "orphan",
+      "title": "Orphan",
+      "depends_on": [
+        "missing"
+      ]
+    },
+    "answer": {
+      "ok": false,
+      "op": "create",
+      "error": {
+        "code": "unknown_reference",
+        "message": "no task missing on the board to refer to",
+        "task": "missing"
+      }
+    }
+  },
+  {
+    "request": {
+      "op": "create",
+      "task": "blank",
+      "title": ""
+    },
+    "answer": {
+      "ok": false,
+      "op": "create",
+      "error": {
+        "code": "invalid_task",
+        "message": "invalid task: title: must be 1 to 256 visible characters on one line",
+        "field": "title",
+        "problem": "must be 1 to 256 visible characters on one line"
+      }
+    }
+  },
+  {
+    "request": {
+      "op": "update_draft",
+      "task": "cli",
+      "title": "Renamed"
+    },
+    "answer": {
+      "ok": false,
+      "op": "update_draft",
+      "error": {
+        "code": "rule",
+        "message": "a done task is not a draft: only drafts are edited",
+        "rule": {
+          "code": "not_draft",
+          "status": "done"
+        }
+      }
+    },
+    "at": "13:00:00"
+  },
+  {
+    "quarantine": "late",
+    "request": {
+      "op": "show",
+      "task": "late"
+    },
+    "answer": {
+      "ok": false,
+      "op": "show",
+      "error": {
+        "code": "set_aside",
+        "message": "task late is set aside as unreadable; mend its file",
+        "task": "late"
+      }
+    }
+  },
+  {
+    "request": {
+      "op": "create",
+      "task": "t4",
+      "title": "Fourth",
+      "status": "ready"
+    },
+    "answer": {
+      "ok": true,
+      "op": "create",
+      "task": {
+        "id": "t4",
+        "title": "Fourth",
+        "kind": "task",
+        "description": "",
+        "status": "ready",
+        "parent": null,
+        "depends_on": [],
+        "accepted_plan": null,
+        "claim": null,
+        "prs": [],
+        "created": "2026-10-10T10:00:00Z",
+        "updated": "2026-10-10T10:00:00Z"
+      }
+    }
+  },
+  {
+    "request": {
+      "op": "move",
+      "task": "t4",
+      "to": "claimed"
+    },
+    "answer": {
+      "ok": true,
+      "op": "move",
+      "task": {
+        "id": "t4",
+        "title": "Fourth",
+        "kind": "task",
+        "description": "",
+        "status": "claimed",
+        "parent": null,
+        "depends_on": [],
+        "accepted_plan": null,
+        "claim": {
+          "holder": {
+            "name": "Ada",
+            "email": "ada@example.com"
+          },
+          "since": "2026-10-10T10:00:01Z",
+          "expires": "2026-10-10T12:00:01Z"
+        },
+        "prs": [],
+        "created": "2026-10-10T10:00:00Z",
+        "updated": "2026-10-10T10:00:01Z"
+      }
+    }
+  },
+  {
+    "request": {
+      "op": "move",
+      "task": "t4",
+      "to": "in_progress"
+    },
+    "answer": {
+      "ok": true,
+      "op": "move",
+      "task": {
+        "id": "t4",
+        "title": "Fourth",
+        "kind": "task",
+        "description": "",
+        "status": "in_progress",
+        "parent": null,
+        "depends_on": [],
+        "accepted_plan": null,
+        "claim": {
+          "holder": {
+            "name": "Ada",
+            "email": "ada@example.com"
+          },
+          "since": "2026-10-10T10:00:01Z",
+          "expires": "2026-10-10T12:00:01Z"
+        },
+        "prs": [],
+        "created": "2026-10-10T10:00:00Z",
+        "updated": "2026-10-10T10:00:02Z"
+      }
+    }
+  },
+  {
+    "request": {
+      "op": "link_pr",
+      "task": "t4",
+      "pr": 8
+    },
+    "answer": {
+      "ok": false,
+      "op": "link_pr",
+      "error": {
+        "code": "set_aside",
+        "message": "task late is set aside as unreadable; mend its file",
+        "task": "late"
+      }
+    }
+  },
+  {
+    "request": {
+      "op": "clear_set_aside",
+      "path": "tasks/late.md",
+      "object": "000000000000000000000000000000000000001c"
+    },
+    "answer": {
+      "ok": true,
+      "op": "clear_set_aside",
+      "head": "r32"
+    }
+  },
+  {
+    "request": {
+      "op": "link_pr",
+      "task": "t4",
+      "pr": 8
+    },
+    "answer": {
+      "ok": true,
+      "op": "link_pr",
+      "task": {
+        "id": "t4",
+        "title": "Fourth",
+        "kind": "task",
+        "description": "",
+        "status": "in_progress",
+        "parent": null,
+        "depends_on": [],
+        "accepted_plan": null,
+        "claim": {
+          "holder": {
+            "name": "Ada",
+            "email": "ada@example.com"
+          },
+          "since": "2026-10-10T10:00:01Z",
+          "expires": "2026-10-10T12:00:01Z"
+        },
+        "prs": [
+          8
+        ],
+        "created": "2026-10-10T10:00:00Z",
+        "updated": "2026-10-10T10:00:03Z"
+      },
+      "completion": {
+        "done": false,
+        "pending": [
+          8
+        ]
+      }
+    }
+  },
+  {
+    "request": {
+      "op": "complete",
+      "task": "t4"
+    },
+    "answer": {
+      "ok": false,
+      "op": "complete",
+      "error": {
+        "code": "rule",
+        "message": "pull requests [8] are not merged",
+        "rule": {
+          "code": "prs_unmerged",
+          "prs": [
+            8
+          ]
+        }
+      }
+    }
+  },
+  {
+    "request": {
+      "op": "link_pr",
+      "task": "t4",
+      "pr": 10
+    },
+    "answer": {
+      "ok": true,
+      "op": "link_pr",
+      "task": {
+        "id": "t4",
+        "title": "Fourth",
+        "kind": "task",
+        "description": "",
+        "status": "in_progress",
+        "parent": null,
+        "depends_on": [],
+        "accepted_plan": null,
+        "claim": {
+          "holder": {
+            "name": "Ada",
+            "email": "ada@example.com"
+          },
+          "since": "2026-10-10T10:00:01Z",
+          "expires": "2026-10-10T12:00:01Z"
+        },
+        "prs": [
+          8,
+          10
+        ],
+        "created": "2026-10-10T10:00:00Z",
+        "updated": "2026-10-10T10:00:04Z"
+      },
+      "completion": {
+        "done": false,
+        "error": {
+          "code": "pr_state_unknown",
+          "message": "pull request 10 is not known to the host",
+          "pr": 10
+        }
+      }
+    }
+  },
+  {
+    "request": {
+      "op": "create",
+      "task": "d1",
+      "title": "Depends on epic",
+      "depends_on": [
+        "epic"
+      ]
+    },
+    "answer": {
+      "ok": true,
+      "op": "create",
+      "task": {
+        "id": "d1",
+        "title": "Depends on epic",
+        "kind": "task",
+        "description": "",
+        "status": "draft",
+        "parent": null,
+        "depends_on": [
+          "epic"
+        ],
+        "accepted_plan": null,
+        "claim": null,
+        "prs": [],
+        "created": "2026-10-10T10:00:00Z",
+        "updated": "2026-10-10T10:00:00Z"
+      }
+    }
+  },
+  {
+    "request": {
+      "op": "update_draft",
+      "task": "epic",
+      "depends_on": [
+        "d1"
+      ]
+    },
+    "answer": {
+      "ok": false,
+      "op": "update_draft",
+      "error": {
+        "code": "closes_cycle",
+        "message": "task epic would close a cycle: it leads to task d1, which already names epic as its parent or a dependency",
+        "task": "epic",
+        "by": "d1"
+      }
+    }
+  },
+  {
+    "request": {
+      "op": "propose_plan",
+      "task": "epic",
+      "approach": "Spike the store.\r\nThen build. \r\n",
+      "items": [
+        {
+          "id": "schema",
+          "title": " Schema",
+          "criteria": [
+            "Migrates\tcleanly"
+          ]
+        },
+        {
+          "id": "api",
+          "title": "API",
+          "criteria": [
+            "Serves the CLI"
+          ],
+          "depends_on": [
+            "schema"
+          ]
+        }
+      ],
+      "team": {
+        "roles": [
+          {
+            "name": "coordinator",
+            "model": "gpt-5.5",
+            "effort": "high",
+            "members": 1
+          },
+          {
+            "name": "worker",
+            "model": "gpt-5.5-mini",
+            "effort": "medium",
+            "members": 2,
+            "turns": 40
+          }
+        ],
+        "deadline_seconds": null,
+        "image": null
+      }
+    },
+    "answer": {
+      "ok": false,
+      "op": "propose_plan",
+      "error": {
+        "code": "brief",
+        "message": "the plan cannot brief a swarm: the coordinator role's model must name its provider, as provider/model: give it one",
+        "brief": {
+          "code": "coordinator_model"
+        }
+      }
+    }
+  },
+  {
+    "request": {
+      "op": "propose_plan",
+      "task": "epic",
+      "approach": "Spike the store.\r\nThen build. \r\n",
+      "items": [
+        {
+          "id": "schema",
+          "title": " Schema",
+          "criteria": [
+            "Migrates\tcleanly"
+          ]
+        },
+        {
+          "id": "api",
+          "title": "API",
+          "criteria": [
+            "Serves the CLI"
+          ],
+          "depends_on": [
+            "schema"
+          ]
+        }
+      ],
+      "team": {
+        "roles": [
+          {
+            "name": "coordinator",
+            "model": "openai/gpt-5.5",
+            "effort": "high",
+            "members": 1
+          },
+          {
+            "name": "worker",
+            "model": "gpt-5.5-mini",
+            "effort": "medium",
+            "members": 2,
+            "turns": 40
+          }
+        ],
+        "deadline_seconds": null,
+        "image": null
+      }
+    },
+    "answer": {
+      "ok": true,
+      "op": "propose_plan",
+      "plan": {
+        "task": "epic",
+        "version": 1,
+        "state": "draft",
+        "proposed_by": {
+          "name": "Ada",
+          "email": "ada@example.com"
+        },
+        "edited_by": null,
+        "created": "2026-10-10T10:00:00Z",
+        "updated": "2026-10-10T10:00:00Z"
+      }
+    }
+  },
+  {
+    "as": "Bob",
+    "request": {
+      "op": "edit_plan",
+      "task": "epic",
+      "version": 1,
+      "items": [
+        {
+          "id": "schema",
+          "title": "Schema",
+          "criteria": [
+            "Migrates cleanly"
+          ]
+        }
+      ],
+      "expected_updated": "2026-10-10T10:00:00Z"
+    },
+    "answer": {
+      "ok": true,
+      "op": "edit_plan",
+      "plan": {
+        "task": "epic",
+        "version": 1,
+        "state": "draft",
+        "proposed_by": {
+          "name": "Ada",
+          "email": "ada@example.com"
+        },
+        "edited_by": {
+          "name": "Bob",
+          "email": "bob@example.com"
+        },
+        "created": "2026-10-10T10:00:00Z",
+        "updated": "2026-10-10T10:00:01Z"
+      }
+    }
+  },
+  {
+    "request": {
+      "op": "edit_plan",
+      "task": "epic",
+      "version": 1,
+      "team": null,
+      "expected_updated": "2026-10-10T10:00:00Z"
+    },
+    "answer": {
+      "ok": false,
+      "op": "edit_plan",
+      "error": {
+        "code": "rule",
+        "message": "plan version 1 changed since it was read (updated 2026-10-10T10:00:01Z); read it again",
+        "rule": {
+          "code": "plan_changed",
+          "version": 1,
+          "updated": "2026-10-10T10:00:01Z"
+        }
+      }
+    }
+  },
+  {
+    "request": {
+      "op": "edit_plan",
+      "task": "epic",
+      "version": 1
+    },
+    "answer": {
+      "ok": false,
+      "op": "edit_plan",
+      "error": {
+        "code": "invalid_request",
+        "message": "op: edit_plan sets nothing: name a field to change",
+        "field": "op",
+        "problem": "edit_plan sets nothing: name a field to change"
+      }
+    }
+  },
+  {
+    "request": {
+      "op": "edit_plan",
+      "task": "epic",
+      "version": 2,
+      "approach": "Other."
+    },
+    "answer": {
+      "ok": false,
+      "op": "edit_plan",
+      "error": {
+        "code": "rule",
+        "message": "the task has no plan version 2",
+        "rule": {
+          "code": "unknown_plan_version",
+          "version": 2
+        }
+      }
+    }
+  },
+  {
+    "request": {
+      "op": "propose_plan",
+      "task": "t3",
+      "approach": "Late.",
+      "items": []
+    },
+    "answer": {
+      "ok": false,
+      "op": "propose_plan",
+      "error": {
+        "code": "rule",
+        "message": "a done task's plans are settled",
+        "rule": {
+          "code": "task_finished",
+          "status": "done"
+        }
+      }
+    }
+  },
+  {
+    "request": {
+      "op": "propose_plan",
+      "task": "epic",
+      "approach": "",
+      "items": [
+        {
+          "id": "x",
+          "title": "X",
+          "criteria": [
+            7
+          ]
+        }
+      ]
+    },
+    "answer": {
+      "ok": false,
+      "op": "propose_plan",
+      "error": {
+        "code": "invalid_request",
+        "message": "items/0/criteria/0: must be text",
+        "field": "items/0/criteria/0",
+        "problem": "must be text"
+      }
+    }
+  },
+  {
+    "request": {
+      "op": "show",
+      "task": "epic"
+    },
+    "answer": {
+      "ok": true,
+      "op": "show",
+      "head": "r37",
+      "task": {
+        "id": "epic",
+        "title": "Project boards",
+        "kind": "epic",
+        "description": "",
+        "status": "draft",
+        "parent": null,
+        "depends_on": [],
+        "accepted_plan": null,
+        "claim": null,
+        "prs": [],
+        "created": "2026-10-10T10:00:00Z",
+        "updated": "2026-10-10T10:00:01Z"
+      },
+      "plan": null,
+      "plans": [
+        {
+          "version": 1,
+          "state": "draft",
+          "proposed_by": {
+            "name": "Ada",
+            "email": "ada@example.com"
+          },
+          "updated": "2026-10-10T10:00:01Z"
+        }
+      ],
+      "runs": [],
+      "may_be_incomplete": false,
+      "quarantined": []
+    }
+  },
+  {
+    "request": {
+      "op": "accept_plan",
+      "task": "epic",
+      "version": 1,
+      "expected_updated": "2026-10-10T10:00:00Z",
+      "expected_accepted": null
+    },
+    "answer": {
+      "ok": false,
+      "op": "accept_plan",
+      "error": {
+        "code": "rule",
+        "message": "plan version 1 changed since it was read (updated 2026-10-10T10:00:01Z); read it again",
+        "rule": {
+          "code": "plan_changed",
+          "version": 1,
+          "updated": "2026-10-10T10:00:01Z"
+        }
+      }
+    }
+  },
+  {
+    "request": {
+      "op": "accept_plan",
+      "task": "epic",
+      "version": 1,
+      "expected_updated": "2026-10-10T10:00:01Z",
+      "expected_accepted": null
+    },
+    "answer": {
+      "ok": true,
+      "op": "accept_plan",
+      "task": {
+        "id": "epic",
+        "title": "Project boards",
+        "kind": "epic",
+        "description": "",
+        "status": "draft",
+        "parent": null,
+        "depends_on": [],
+        "accepted_plan": 1,
+        "claim": null,
+        "prs": [],
+        "created": "2026-10-10T10:00:00Z",
+        "updated": "2026-10-10T10:00:02Z"
+      },
+      "plan": {
+        "task": "epic",
+        "version": 1,
+        "state": "accepted",
+        "proposed_by": {
+          "name": "Ada",
+          "email": "ada@example.com"
+        },
+        "edited_by": {
+          "name": "Bob",
+          "email": "bob@example.com"
+        },
+        "created": "2026-10-10T10:00:00Z",
+        "updated": "2026-10-10T10:00:02Z"
+      },
+      "superseded": null
+    }
+  },
+  {
+    "request": {
+      "op": "propose_plan",
+      "task": "epic",
+      "approach": "Second.",
+      "items": []
+    },
+    "answer": {
+      "ok": true,
+      "op": "propose_plan",
+      "plan": {
+        "task": "epic",
+        "version": 2,
+        "state": "draft",
+        "proposed_by": {
+          "name": "Ada",
+          "email": "ada@example.com"
+        },
+        "edited_by": null,
+        "created": "2026-10-10T10:00:00Z",
+        "updated": "2026-10-10T10:00:00Z"
+      }
+    }
+  },
+  {
+    "as": "Bob",
+    "request": {
+      "op": "accept_plan",
+      "task": "epic",
+      "version": 2,
+      "expected_updated": "2026-10-10T10:00:00Z",
+      "expected_accepted": 1
+    },
+    "answer": {
+      "ok": true,
+      "op": "accept_plan",
+      "task": {
+        "id": "epic",
+        "title": "Project boards",
+        "kind": "epic",
+        "description": "",
+        "status": "draft",
+        "parent": null,
+        "depends_on": [],
+        "accepted_plan": 2,
+        "claim": null,
+        "prs": [],
+        "created": "2026-10-10T10:00:00Z",
+        "updated": "2026-10-10T10:00:03Z"
+      },
+      "plan": {
+        "task": "epic",
+        "version": 2,
+        "state": "accepted",
+        "proposed_by": {
+          "name": "Ada",
+          "email": "ada@example.com"
+        },
+        "edited_by": null,
+        "created": "2026-10-10T10:00:00Z",
+        "updated": "2026-10-10T10:00:03Z"
+      },
+      "superseded": 1
+    }
+  },
+  {
+    "request": {
+      "op": "discard_plan",
+      "task": "epic",
+      "version": 1
+    },
+    "answer": {
+      "ok": false,
+      "op": "discard_plan",
+      "error": {
+        "code": "rule",
+        "message": "a superseded plan is not a draft: only drafts are edited, accepted or discarded",
+        "rule": {
+          "code": "plan_not_draft",
+          "state": "superseded"
+        }
+      }
+    }
+  },
+  {
+    "request": {
+      "op": "propose_plan",
+      "task": "epic",
+      "approach": "Third.",
+      "items": []
+    },
+    "answer": {
+      "ok": true,
+      "op": "propose_plan",
+      "plan": {
+        "task": "epic",
+        "version": 3,
+        "state": "draft",
+        "proposed_by": {
+          "name": "Ada",
+          "email": "ada@example.com"
+        },
+        "edited_by": null,
+        "created": "2026-10-10T10:00:00Z",
+        "updated": "2026-10-10T10:00:00Z"
+      }
+    }
+  },
+  {
+    "request": {
+      "op": "discard_plan",
+      "task": "epic",
+      "version": 3,
+      "expected_updated": "2026-10-10T10:00:00Z"
+    },
+    "answer": {
+      "ok": true,
+      "op": "discard_plan",
+      "plan": {
+        "task": "epic",
+        "version": 3,
+        "state": "discarded",
+        "proposed_by": {
+          "name": "Ada",
+          "email": "ada@example.com"
+        },
+        "edited_by": null,
+        "created": "2026-10-10T10:00:00Z",
+        "updated": "2026-10-10T10:00:01Z"
+      }
+    }
+  },
+  {
+    "request": {
+      "op": "accept_plan",
+      "task": "epic",
+      "version": 3,
+      "expected_accepted": 2
+    },
+    "answer": {
+      "ok": false,
+      "op": "accept_plan",
+      "error": {
+        "code": "invalid_request",
+        "message": "expected_updated: is required",
+        "field": "expected_updated",
+        "problem": "is required"
+      }
+    }
+  },
+  {
+    "request": {
+      "op": "show",
+      "task": "epic"
+    },
+    "answer": {
+      "ok": true,
+      "op": "show",
+      "head": "r42",
+      "task": {
+        "id": "epic",
+        "title": "Project boards",
+        "kind": "epic",
+        "description": "",
+        "status": "draft",
+        "parent": null,
+        "depends_on": [],
+        "accepted_plan": 2,
+        "claim": null,
+        "prs": [],
+        "created": "2026-10-10T10:00:00Z",
+        "updated": "2026-10-10T10:00:03Z"
+      },
+      "plan": {
+        "task": "epic",
+        "version": 2,
+        "state": "accepted",
+        "approach": "Second.",
+        "items": [],
+        "team": null,
+        "proposed_by": {
+          "name": "Ada",
+          "email": "ada@example.com"
+        },
+        "edited_by": null,
+        "accepted_by": {
+          "name": "Bob",
+          "email": "bob@example.com"
+        },
+        "accepted_at": "2026-10-10T10:00:03Z",
+        "created": "2026-10-10T10:00:00Z",
+        "updated": "2026-10-10T10:00:03Z"
+      },
+      "plans": [
+        {
+          "version": 1,
+          "state": "superseded",
+          "proposed_by": {
+            "name": "Ada",
+            "email": "ada@example.com"
+          },
+          "updated": "2026-10-10T10:00:03Z"
+        },
+        {
+          "version": 2,
+          "state": "accepted",
+          "proposed_by": {
+            "name": "Ada",
+            "email": "ada@example.com"
+          },
+          "updated": "2026-10-10T10:00:03Z"
+        },
+        {
+          "version": 3,
+          "state": "discarded",
+          "proposed_by": {
+            "name": "Ada",
+            "email": "ada@example.com"
+          },
+          "updated": "2026-10-10T10:00:01Z"
+        }
+      ],
+      "runs": [],
+      "may_be_incomplete": false,
+      "quarantined": []
+    }
+  },
+  {
+    "request": {
+      "op": "propose_plan",
+      "task": "epic",
+      "approach": "Fourth.",
+      "items": []
+    },
+    "answer": {
+      "ok": true,
+      "op": "propose_plan",
+      "plan": {
+        "task": "epic",
+        "version": 4,
+        "state": "draft",
+        "proposed_by": {
+          "name": "Ada",
+          "email": "ada@example.com"
+        },
+        "edited_by": null,
+        "created": "2026-10-10T10:00:00Z",
+        "updated": "2026-10-10T10:00:00Z"
+      }
+    }
+  },
+  {
+    "request": {
+      "op": "accept_plan",
+      "task": "epic",
+      "version": 4,
+      "expected_updated": "2026-10-10T10:00:00Z",
+      "expected_accepted": 1
+    },
+    "answer": {
+      "ok": false,
+      "op": "accept_plan",
+      "error": {
+        "code": "rule",
+        "message": "the task's accepted plan changed since it was read (it is now version 2); read it again",
+        "rule": {
+          "code": "accepted_plan_changed",
+          "accepted": 2
+        }
+      }
+    }
+  },
+  {
+    "request": {
+      "op": "end_run",
+      "task": "epic",
+      "run": 1,
+      "outcome": "failed"
+    },
+    "answer": {
+      "ok": false,
+      "op": "end_run",
+      "error": {
+        "code": "rule",
+        "message": "the task has no run 1",
+        "rule": {
+          "code": "no_such_run",
+          "run": 1
+        }
+      }
+    }
+  },
+  {
+    "request": {
+      "op": "end_run",
+      "task": "epic",
+      "run": 1,
+      "outcome": "completed"
+    },
+    "answer": {
+      "ok": false,
+      "op": "end_run",
+      "error": {
+        "code": "invalid_request",
+        "message": "outcome: must be one of succeeded, stopped, failed, lost",
+        "field": "outcome",
+        "problem": "must be one of succeeded, stopped, failed, lost"
+      }
+    }
+  },
+  {
+    "request": {
+      "op": "start",
+      "task": "epic",
+      "plan_version": 2
+    },
+    "answer": {
+      "ok": false,
+      "op": "start",
+      "error": {
+        "code": "no_launcher",
+        "message": "this session may not spawn, so it cannot launch a coordinator: start the task from a session that may",
+        "steps": "If start is refused for any other reason, say why in a sentence and stop; do not start the task any other way."
+      }
+    }
+  }
+]

@@ -10,7 +10,9 @@ use super::restore_registry_tests::{
     failing_store_with, no_hosted, process_with_disk, record, store_with,
 };
 use super::{NO_ENVIRONMENT_DIR, RestoreRegistry, STATE_GONE_CONTAINER_RUNNING};
-use crate::domain::environment_registry::{EnvironmentRecord, EnvironmentStatus};
+use crate::domain::environments::entities::environment_registry::{
+    EnvironmentRecord, EnvironmentStatus,
+};
 
 /// `record` lays its workspace out as the standard scripts do:
 /// `/state/<environment_id>/workspace`.
@@ -61,7 +63,7 @@ fn stopped_records_with_nothing_on_disk_are_forgotten_and_refs_restart_at_c1() {
     let process = process_with_disk(gone, disk(&[], asked.clone()));
     let (registry, report) =
         RestoreRegistry::new(store.clone(), process, no_hosted()).execute("cli:two");
-    assert_eq!(report.forgotten, ["C4", "C9"]);
+    assert_eq!(report.forgotten_refs(), ["C4", "C9"]);
     assert!(report.diagnostics.is_empty(), "{:?}", report.diagnostics);
     assert!(registry.entries().is_empty());
     assert!(store.load().unwrap().is_empty());
@@ -200,7 +202,9 @@ fn a_record_that_cannot_be_forgotten_is_kept_and_said_so() {
 fn a_record_an_older_build_relabelled_is_restored_to_retained_not_forgotten() {
     let mut relabelled = laid_out("C4", EnvironmentStatus::Stopped);
     relabelled.metadata = serde_json::json!({"retained": "run r1 unfinished"});
-    relabelled.last_error = Some(crate::domain::environment_registry::GONE_AT_RESTORE.to_string());
+    relabelled.last_error = Some(
+        crate::domain::environments::entities::environment_registry::GONE_AT_RESTORE.to_string(),
+    );
     let store = store_with(vec![relabelled]);
     let process = process_with_disk(never_inspected, disk(&[], Arc::default()));
     let (registry, report) =
@@ -226,7 +230,7 @@ fn a_record_whose_inspect_cannot_answer_holds_back_no_other_across_restores() {
         RestoreRegistry::new(store.clone(), process, no_hosted()).execute("cli:two")
     };
     let (_, report) = restore();
-    assert_eq!(report.forgotten, ["C3", "C4", "C5"]);
+    assert_eq!(report.forgotten_refs(), ["C3", "C4", "C5"]);
     assert_eq!(
         report.kept_stopped,
         [("C2".to_string(), "no inspect argv".to_string())]
@@ -241,7 +245,7 @@ fn a_record_whose_inspect_cannot_answer_holds_back_no_other_across_restores() {
 /// later refused removal can never read it back as owed.
 #[test]
 fn a_restore_that_stops_an_owed_removal_drops_its_mark() {
-    use crate::domain::environment_registry::REMOVAL_PENDING;
+    use crate::domain::environments::entities::environment_registry::REMOVAL_PENDING;
     let mut owed = super::restore_registry_tests::record("C3", EnvironmentStatus::CleanupFailed);
     owed.metadata = serde_json::json!({ REMOVAL_PENDING: true });
     let store = super::restore_registry_tests::store_with(vec![owed]);

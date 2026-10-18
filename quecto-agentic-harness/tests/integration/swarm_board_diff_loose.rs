@@ -40,8 +40,7 @@ use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
 ///   text: a `_record_request` count above u64 (`invalid request usage
 ///   input_tokens`), `instrumented_attempts` above u64 (`invalid request
 ///   observation`), a count of `1e400` (`invalid request usage
-///   output_tokens`), a `usage_budget` token limit above u64 or of `1e400`
-///   (the budget's argument refusal), and an `_accept_wake` generation above
+///   output_tokens`), and an `_accept_wake` generation above
 ///   u64 (`wake generation is ahead of the board`). The structured `swarm`
 ///   ops (#2279) read a member's text with `swarm_board_ops::
 ///   member_arguments`, which the harness's Rust side calls, so this pin is
@@ -173,9 +172,7 @@ use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
 ///   that process's receipts, budget or ledger bound, where Python, which
 ///   sums on every read, sees it.
 ///   So is (#2274) a stored request record that is not an object, met
-///   by its redelivery, a budget without `warned`, met by the budget's
-///   warning, and a budget without `token_limit` or `strict_unknown`, met by
-///   `usage_budget`'s idempotence check. The redelivery check's reads of a
+///   by its redelivery. The redelivery check's reads of a
 ///   stored actor that is a BLOB, or a stored payload of `'x'` or NULL, fail
 ///   as the store's, where Python refuses the BLOB as another actor's
 ///   (`request observation ID reused with different data`) or raises a
@@ -345,7 +342,6 @@ fn arguments_beyond_a_serde_value() {
     }
     // #2274: Python refuses these before its gate with the board's text;
     // #2276: past it, a wake generation above u64 is ahead of the board.
-    let budget = "token limit must be positive or None, strict_unknown must be boolean";
     let (beyond, infinite) = (
         "integer 18446744073709551616 is outside i64 and u64",
         "Infinity has no JSON number form",
@@ -370,13 +366,6 @@ fn arguments_beyond_a_serde_value() {
             "invalid request usage output_tokens",
             infinite,
         ),
-        (
-            "usage_budget",
-            "[100000000000000000000]".to_owned(),
-            budget,
-            "integer 100000000000000000000 is outside i64 and u64",
-        ),
-        ("usage_budget", "[1e400]".to_owned(), budget, infinite),
         (
             "_accept_wake",
             "[40000000000000000000000]".to_owned(),

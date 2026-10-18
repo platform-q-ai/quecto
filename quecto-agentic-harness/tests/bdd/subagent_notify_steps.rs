@@ -4,7 +4,7 @@ use quecto::infrastructure::tools::subagent_registry::{
     SequencedSubagentNotification, SubagentEntry, SubagentNotification, new_notification_channel,
     new_registry,
 };
-use quecto::interface::cli::uds_session::AgentSession;
+use quecto::interface::cli::uds_session::{AgentSession, NoteClass};
 use tokio::io::AsyncWriteExt;
 
 // ===========================================================================
@@ -303,7 +303,7 @@ fn when_subagent_completes(world: &mut QuectoWorld, agent_id: String, note: Stri
         .expect("no parent session");
     world.notify_last_enqueued = Some(
         session
-            .enqueue_subagent_notification(agent_id, sequence, note, true)
+            .enqueue_subagent_notification(agent_id, sequence, note, NoteClass::Completion)
             .is_retained(),
     );
 }
@@ -325,7 +325,12 @@ fn when_subagent_same_completion(world: &mut QuectoWorld, agent_id: String) {
         .expect("no parent session");
     world.notify_last_enqueued = Some(
         session
-            .enqueue_subagent_notification(agent_id, sequence, "done".to_string(), true)
+            .enqueue_subagent_notification(
+                agent_id,
+                sequence,
+                "done".to_string(),
+                NoteClass::Completion,
+            )
             .is_retained(),
     );
 }
@@ -349,7 +354,7 @@ fn when_parent_drains_channel(world: &mut QuectoWorld) {
                 agent_id,
                 sequence,
                 notif.to_message(),
-                notif.is_completion(),
+                NoteClass::of(&notif),
             );
         }
     });

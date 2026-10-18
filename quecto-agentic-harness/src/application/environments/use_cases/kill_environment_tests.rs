@@ -10,7 +10,7 @@ use crate::application::environments::ports::{
     MemberShutdownResult, PortFuture, SettledMember, UnsettledMember,
 };
 use crate::application::environments::use_cases::{KillEnvironment, KillEnvironmentError};
-use crate::domain::environment_registry::{
+use crate::domain::environments::entities::environment_registry::{
     EnvironmentRecord, EnvironmentRegistry, EnvironmentStatus, EnvironmentTarget,
 };
 
@@ -77,7 +77,7 @@ impl EnvironmentProcessCommands for SpyCommands {
 
     fn observe_liveness<'a>(
         &'a self,
-        _record: &'a crate::domain::environment_registry::EnvironmentRecord,
+        _record: &'a crate::domain::environments::entities::environment_registry::EnvironmentRecord,
     ) -> PortFuture<'a, crate::application::environments::dto::EnvironmentLiveness> {
         Box::pin(async { panic!("a running environment's kill never asks liveness") })
     }
@@ -156,7 +156,8 @@ fn committed_env(reg: &EnvironmentRegistry, members: &[&str]) -> String {
         status: EnvironmentStatus::Running,
         metadata: serde_json::json!({}),
         last_error: None,
-        origin: crate::domain::environment_registry::EnvironmentOrigin::Created,
+        origin:
+            crate::domain::environments::entities::environment_registry::EnvironmentOrigin::Created,
         created_by: String::new(),
         created_at: None,
     });
@@ -321,14 +322,17 @@ fn kill_failure_persists_retryable_state_and_the_retry_runs_the_kill_again() {
 }
 
 #[test]
-fn unknown_ref_is_refused_without_asking_anyone() {
+fn unknown_ref_is_nothing_to_kill_and_asks_no_one() {
     let fx = Fixture::new(&["a"], &[], SpyCommands::new);
     let err = block_on(
         fx.use_case()
             .kill_container(&EnvironmentTarget::Ref("C9".to_string())),
     )
     .unwrap_err();
-    assert!(matches!(err, KillEnvironmentError::Refused(_)), "{err:?}");
+    assert!(
+        matches!(err, KillEnvironmentError::NothingToKill(_)),
+        "{err:?}"
+    );
     assert!(err.to_string().contains("C9"), "{err}");
     assert!(fx.journal().is_empty());
     assert_eq!(fx.status(), EnvironmentStatus::Running);

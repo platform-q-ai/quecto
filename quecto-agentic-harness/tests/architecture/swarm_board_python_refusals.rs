@@ -272,10 +272,6 @@ pub(super) const PYTHON_REFUSALS: &[(&str, &[&str])] = &[
         "task page requires nonnegative offset and limit 1 through 100",
         &["invalid"],
     ),
-    (
-        "token limit must be positive or None, strict_unknown must be boolean",
-        &["invalid"],
-    ),
     ("unknown message in own inbox", &["not_found"]),
     ("unknown or out-of-swarm recipient", &["not_found"]),
     ("unknown or stale launch reservation", &["stale_token"]),

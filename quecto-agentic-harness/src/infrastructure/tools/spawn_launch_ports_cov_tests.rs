@@ -109,10 +109,10 @@ async fn success_names_the_container_config_and_relays_the_selection_diagnostics
     let tool = tool();
     let env_ref = tool.environment_registry.mint_ref().unwrap();
     tool.environment_registry
-        .commit(crate::domain::environment_registry::EnvironmentRecord {
+        .commit(crate::domain::environments::entities::environment_registry::EnvironmentRecord {
             environment_ref: env_ref.clone(),
             environment_id: "env-named".into(),
-            environment_uuid: crate::domain::environment_registry::mint_environment_uuid(),
+            environment_uuid: crate::domain::environments::entities::environment_registry::mint_environment_uuid(),
             name: None,
             workspace_path: std::path::PathBuf::from("/workspace"),
             repository: String::new(),
@@ -122,10 +122,10 @@ async fn success_names_the_container_config_and_relays_the_selection_diagnostics
             retained_cleanup_argv: vec![],
             retained_inspect_argv: vec![],
             members: vec![],
-            status: crate::domain::environment_registry::EnvironmentStatus::Running,
+            status: crate::domain::environments::entities::environment_registry::EnvironmentStatus::Running,
             metadata: serde_json::json!({}),
             last_error: None,
-            origin: crate::domain::environment_registry::EnvironmentOrigin::Created,
+            origin: crate::domain::environments::entities::environment_registry::EnvironmentOrigin::Created,
             created_by: String::new(),
             created_at: None,
         });
@@ -164,6 +164,22 @@ async fn success_names_the_container_config_and_relays_the_selection_diagnostics
         identity.registry_key
     );
     assert_eq!(result.content, expected);
+    // S4c: what it launched, for its callers, never in its words.
+    let metadata: serde_json::Value =
+        serde_json::from_str(result.delivery_metadata.as_deref().unwrap()).unwrap();
+    assert_eq!(
+        metadata,
+        serde_json::json!({"spawned": {"uuid": identity.registry_key, "environment_ref": env_ref}})
+    );
+    let local = ports.success(&identity, None);
+    let named = SpawnedChild::local(identity.registry_key.clone());
+    assert_eq!(SpawnedChild::of(&local), Some(named));
+    assert!(
+        local
+            .delivery_metadata
+            .unwrap()
+            .contains(r#""environment_ref":null"#)
+    );
 }
 
 /// #1390 review finding: a join racing a kill must not register into a
@@ -175,10 +191,10 @@ async fn register_into_a_stopped_environment_fails_and_unregisters() {
     let tool = tool().with_event_forwarding(Some(btx), None);
     let env_ref = tool.environment_registry.mint_ref().unwrap();
     tool.environment_registry
-        .commit(crate::domain::environment_registry::EnvironmentRecord {
+        .commit(crate::domain::environments::entities::environment_registry::EnvironmentRecord {
             environment_ref: env_ref.clone(),
             environment_id: "env-raced".into(),
-            environment_uuid: crate::domain::environment_registry::mint_environment_uuid(),
+            environment_uuid: crate::domain::environments::entities::environment_registry::mint_environment_uuid(),
             name: None,
             workspace_path: std::path::PathBuf::from("/workspace"),
             repository: String::new(),
@@ -188,10 +204,10 @@ async fn register_into_a_stopped_environment_fails_and_unregisters() {
             retained_cleanup_argv: vec![],
             retained_inspect_argv: vec![],
             members: vec![],
-            status: crate::domain::environment_registry::EnvironmentStatus::Running,
+            status: crate::domain::environments::entities::environment_registry::EnvironmentStatus::Running,
             metadata: serde_json::json!({}),
             last_error: None,
-            origin: crate::domain::environment_registry::EnvironmentOrigin::Created,
+            origin: crate::domain::environments::entities::environment_registry::EnvironmentOrigin::Created,
             created_by: String::new(),
             created_at: None,
         });

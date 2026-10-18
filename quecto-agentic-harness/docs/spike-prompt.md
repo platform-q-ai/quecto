@@ -1,6 +1,8 @@
-Goal: Spike #<N>: attempt a working end-to-end implementation quickly, without new tests, BDD/TDD or polish, while respecting the architecture. Expose unknowns that reading the code cannot reveal, and challenge the issue’s assumptions and assertions before sizing and planning. The code is disposable; later delivery is built properly, test-first.
+Goal: Spike for task <TASK>: attempt a working end-to-end implementation quickly, without new tests, BDD/TDD or polish, while respecting the architecture. Expose unknowns that reading the code cannot reveal, and challenge the task’s assumptions and assertions before sizing and planning. The code is disposable; later delivery is built properly, test-first.
 
-Start from the truth: if #<N> has a Challenge report, its "What is actually left" paragraph and its traps are your brief — the issue body may be stale. If it has none, check the issue against the code for a few minutes first.
+Start from the truth: if task <TASK> has a Challenge report (the brief gives it), its "What is actually left" paragraph and its traps are your brief — the task's description may be stale. If it has none, check the task's description against the code for a few minutes first.
+
+If task <TASK> has an accepted plan on the project board, the brief gives it too: check its approach and task items against the code as you would the description.
 
 How to spike:
 - Build the whole thing end to end, the crude way. Follow the compiler and the running behaviour, not a plan. Fix whatever breaks only as far as you need to keep going.
@@ -11,10 +13,10 @@ How to spike:
 - After implementation stops, run the existing test suites ONCE, unchanged — including the project's architecture checks — and record what fails, by name. If time or environment prevents a run, say which checks were not run and why.
 - Implementation timebox: <TIMEBOX, e.g. 60 min>. Stop implementation when it ends, finished or not. The additional reporting window is only for running existing checks, pushing the branch, and reporting findings; do not continue building.
 
-Keep it disposable: work on a branch named spike/<N>-<slug> in its own worktree; push it as a spike branch so the planner can read the diff; never open a PR, never merge, never cherry-pick from it. It is deleted, locally and on the remote, once the plan is filed.
+Keep it disposable: work on a branch named spike/<TASK> in its own worktree; push it as a spike branch so the planner can read the diff; never open a PR, never merge, never cherry-pick from it. It is deleted, locally and on the remote, once the plan is filed.
 Project rules: <PROJECT_RULES, or "none">. Environment problems you cannot fix: report the exact error to the parent and yield.
 
-Post ONE Spike report comment on #<N>:
+Write ONE Spike report for task <TASK> to the handoff artifact the brief names, and give the parent its reference:
 1. Did it work? — one paragraph: what you built, how far it got, the branch name and `git diff --stat`.
 2. What came up — the surprises, in order of how much they change the work.
 3. The approach that worked, and the ones that did not — enough that an implementer starts from the right design, and why. Name each new or changed port, type and seam and the layer it lives in; say where the architecture resisted.
@@ -30,5 +32,5 @@ Criteria:
 - findings-not-polish (review): no new tests, docs or clean-up in the diff; shortcuts and dead ends are listed
 - map-from-the-diff (command): section 4's changed-file list matches `git diff --name-only` against the spike branch base; unmodified tests, docs and callers are listed separately
 - broke-by-name (review): failing tests from one real run are named and marked old-shape or real change; any checks not run are identified with reasons
-- disposable (command): no PR, no merge, no cherry-pick; branch is spike/<N>-…
+- disposable (command): no PR, no merge, no cherry-pick; branch is spike/<TASK>
 Members: choose a task-appropriate fixed pool (typically 1–3); coordinate only where parallel work speeds discovery. Deadline: the implementation timebox plus up to 60 min for checks, push and report.

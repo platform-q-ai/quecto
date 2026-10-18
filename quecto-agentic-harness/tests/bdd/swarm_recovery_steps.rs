@@ -642,7 +642,7 @@ fn previous_owner_told(world: &mut QuectoWorld) {
     assert_eq!(inbox.len(), 1, "{inbox:?}");
     assert_eq!(inbox[0]["sender"], "coordinator");
     let body = inbox[0]["body"].as_str().unwrap();
-    assert!(body.contains("task 1 revoked"), "{body}");
+    assert!(body.contains("task item 1 revoked"), "{body}");
     assert!(body.contains("member suspended by provider"), "{body}");
 }
 
@@ -705,8 +705,7 @@ fn owner_idle_on_task_row(world: &mut QuectoWorld, seconds: u64) {
     let summary = world_op(world, json!({"op":"summary"}));
     let task = world_op(world, json!({"op":"task","task_id":1}));
     let page = world_op(world, json!({"op":"tasks"}))[0].clone();
-    let views =
-        json!({"task":task,"page":page,"summary":summary["tasks"][0],"counts":summary["counts"]});
+    let views = json!({"task":task,"page":page,"summary":summary["task_items"][0],"counts":summary["counts"]});
     for view in ["task", "page", "summary"] {
         let row = &views[view];
         assert_eq!(row["owner"], "worker", "{row}");
@@ -731,7 +730,7 @@ fn description_names_owner_as_recipient(world: &mut QuectoWorld) {
     let description = super::tool(world).definition().description;
     for expected in [
         "Any member may message any other member directly",
-        "belongs with that task's owner",
+        "belongs with that task item's owner",
         r#"contact: {"op":"send","request":...,"recipient":"<owner id>","body":...}"#,
         "owner_last_activity",
         "owner_state",

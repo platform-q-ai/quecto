@@ -10,9 +10,9 @@ use std::sync::Arc;
 use super::agent_cmd_container_listing as listing;
 use crate::application::environments::dto::ContainerConfigInventory;
 use crate::application::environments::use_cases::{
-    KillEnvironment, KilledEnvironment, ListContainerConfigs, ListEnvironmentsQuery,
+    KillEnvironment, KilledEnvironment, ListContainerConfigs, ListEnvironmentsQuery, ReadSwarmBoard,
 };
-use crate::domain::environment_registry::EnvironmentTarget;
+use crate::domain::environments::entities::environment_registry::EnvironmentTarget;
 use crate::domain::tool::ToolResult;
 
 /// The environment control use cases `agent_cmd` invokes (#1369, #1939):
@@ -22,6 +22,9 @@ use crate::domain::tool::ToolResult;
 pub struct EnvironmentControl {
     pub list: Arc<ListEnvironmentsQuery>,
     pub kill: Arc<KillEnvironment>,
+    /// The boards the session's swarm environments host (#2478), which
+    /// the parent socket serves as `get_swarm_board`.
+    pub boards: Arc<ReadSwarmBoard>,
 }
 
 /// Where the composed environment control lives: built empty with the

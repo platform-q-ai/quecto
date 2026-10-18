@@ -333,8 +333,10 @@ fn the_spawn_and_swarm_descriptions_stay_within_the_budget() {
 /// "null for none"), then from 3,417 when the get_messages rule replaced
 /// revoke's gloss, then from 3,410 when the coordinator's evidence rule
 /// replaced "verify artifacts" (#2461), then from 3,404 when waiting for the
-/// master stopped asking for a block the board refuses: it only shrinks.
-const SWARM_DESCRIPTION_BUDGET_BYTES: usize = 3_385;
+/// master stopped asking for a block the board refuses: it only shrinks,
+/// but for #2478 slice B, whose owner-approved task-item names (2026-10-12)
+/// raised it from 3,385 to the new text's 3,510.
+const SWARM_DESCRIPTION_BUDGET_BYTES: usize = 3_510;
 
 #[test]
 fn the_swarm_descriptions_coordinator_prose_is_in_the_docs_page() {
@@ -344,7 +346,7 @@ fn the_swarm_descriptions_coordinator_prose_is_in_the_docs_page() {
         "keep the run **running**",
         "the master can resume or close",
         "is immutable under that",
-        "releases and reclaims the task for a new token",
+        "releases and reclaims the task item for a new token",
         "Do not pause a run because one member failed",
         "records the loss, after a ten-second grace",
         "Never edit the store",

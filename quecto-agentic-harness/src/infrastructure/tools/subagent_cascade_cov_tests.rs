@@ -115,8 +115,9 @@ fn cascade_tombstone_retained_in_registry_releases_cleanup_ownership() {
     entry.cleanup_environment_id = Some("env-owned".into());
     entry.cleanup_argv = vec!["cleanup".into()];
     entry.environment_ref = Some("C1".into());
-    entry.environment_registry =
-        Some(crate::domain::environment_registry::EnvironmentRegistry::new());
+    entry.environment_registry = Some(
+        crate::domain::environments::entities::environment_registry::EnvironmentRegistry::new(),
+    );
     registry.lock().unwrap().insert("dead".into(), entry);
 
     let removed = cascade_remove(&registry, "dead");

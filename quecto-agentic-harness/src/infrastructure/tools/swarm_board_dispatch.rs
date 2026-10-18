@@ -17,10 +17,9 @@
 //! (#2270) and the harness's membership methods `_admit`, `_activate`,
 //! `_record_launch`, `_release_unlaunched` and `_socket` (#2271); later
 //! slices add methods, and `SwarmContext` and `HostedStore` call it
-//! through `swarm_bridge::SwarmBoard` (#2278). Every
-//! membership argument (member, reservation, pid, start time, socket)
-//! reaches the use case as the JSON value passed (#2271 round-1 review
-//! M1): Python binds each untyped, so the store binds it as Python's
+//! through `swarm_bridge::SwarmBoard` (#2278). Every membership argument
+//! (member, reservation, pid, start time, socket) reaches the use case as
+//! the JSON value passed (#2271 round-1 review M1): Python binds each untyped, so the store binds it as Python's
 //! `sqlite3` does and the board compares it by Python's `==`; no type is
 //! refused here. `create_run`, `bootstrap_run` and `bootstrap_join` (the
 //! transactional halves of `create` and `_bootstrap`, and `_bootstrap`'s
@@ -30,22 +29,19 @@
 //! method is listed on [`method`].
 //!
 //! The summaries keep Python's order: `create` commits and then reads the
-//! creator's summary, which can still refuse (a created run answered with
-//! a refusal); `_join` and `_bootstrap` end every branch of the join with
-//! the coordinator's summary after its writes commit, the already-live
-//! branch (which writes nothing) included, so its gate can refuse a
-//! coordinator that is nobody.
+//! creator's summary, which can still refuse; `_join` and `_bootstrap` end
+//! every branch of the join with the coordinator's summary after its
+//! writes commit (the already-live branch too), so its gate can refuse a
+//! coordinator that is nobody. The supervising session's origin reaches
+//! the projection reads only (`records::origin_refusal`).
 //!
 //! `JoinRun` runs `AdmitMember`'s and `ActivateMember`'s work by a
 //! deliberate decision (#2271 round-1 review L3): Python's `join_process`
-//! calls those two `Workbench` methods, so the use case sequences them (as
-//! shared functions over its own repository, so a metered call measures
-//! all of it, #2303), and the dispatcher still calls one use case per
-//! method.
+//! calls both, so the use case sequences them (shared functions over its
+//! own repository, all metered, #2303); the dispatcher calls one use case.
 //!
 //! Each call leaves one `tracing` record on [`TELEMETRY_TARGET`] (DEBUG
-//! for a read-only method, unless the token budget warned or paused the
-//! run in it; INFO otherwise; WARN for a contended refusal or,
+//! for a read-only method; INFO otherwise; WARN for a contended refusal or,
 //! while the event log is on, a busy wait over 250 ms) and, when the event
 //! log is switched on ([`SwarmBoardHandles::telemetry`], #2303), one
 //! `swarm_op` record in it, with the lock wait, busy wait and busy flag
@@ -74,16 +70,16 @@ use crate::application::swarm::ports::{BoardCallMeter, BoardOpLog, BoardReposito
 use crate::application::swarm::use_cases::{
     AcceptWake, AcknowledgeMessage, ActivateMember, AdmitMember, AmendRunContract, BlockTask,
     BootstrapMember, BootstrapRun, ClaimNotifications, ClaimTask, CloseRun, CompleteRun,
-    ConfigureUsageBudget, ConfirmMemberDead, CreateRun, CreateTask, ExtendRunDeadline, JoinMember,
-    JoinRun, ListFileOwners, ListTasks, LoseCoordinator, OverRepository, PauseRun,
-    QuarantineMember, ReadControlStatus, ReadEventCursor, ReadInbox, ReadRequestAdmission,
-    ReadRunEvents, ReadRunSnapshot, ReadRunStatus, ReadRunSummary, ReadRunTotals, ReadTask,
-    ReadUsageReport, RecordEvidence, RecordMemberLaunch, RecordRequestUsage, RecoverTask,
-    RegisterMemberSocket, ReleaseFiles, ReleaseTask, ReleaseUnlaunchedMember, ReserveFiles,
-    ResumeRun, ResumeRunExternally, RevalidateTask, RevokeTask, SendMessage, SetTaskDependencies,
-    StopRun, SubmitTask, UnblockTask, VerifyTask, WithdrawMessage,
+    ConfirmMemberDead, CreateRun, CreateTask, ExtendRunDeadline, JoinMember, JoinRun,
+    ListFileOwners, ListTasks, LoseCoordinator, OverRepository, PauseRun, QuarantineMember,
+    ReadControlStatus, ReadEventCursor, ReadInbox, ReadRequestAdmission, ReadRunEvents,
+    ReadRunSnapshot, ReadRunStatus, ReadRunSummary, ReadRunTotals, ReadTask, ReadUsageReport,
+    RecordEvidence, RecordMemberLaunch, RecordRequestUsage, RecoverTask, RegisterMemberSocket,
+    ReleaseFiles, ReleaseTask, ReleaseUnlaunchedMember, ReserveFiles, ResumeRun,
+    ResumeRunExternally, RevalidateTask, RevokeTask, SendMessage, SetTaskDependencies, StopRun,
+    SubmitTask, UnblockTask, VerifyTask, WithdrawMessage,
 };
-use crate::domain::swarm::{BoardError, BoardOpDetail, RefusalKind};
+use crate::domain::swarm::{BoardError, BoardOpDetail, NameForm, RefusalKind};
 
 pub use self::binding::{BindingFaults, SchemaField, schema_field, unreadable_arguments};
 pub use self::method::may_end_run;
@@ -99,6 +95,7 @@ pub struct SwarmBoardHandles {
     pub create_run: Arc<CreateRun>,
     pub bootstrap_run: Arc<BootstrapRun>,
     pub read_run_status: Arc<ReadRunStatus>,
+    pub read_board_projection: Arc<crate::application::swarm::use_cases::ReadBoardProjection>,
     /// `_event_cursor` (#2279): Rust-only, the structured ops' before and
     /// after read.
     pub read_event_cursor: Arc<ReadEventCursor>,
@@ -137,7 +134,6 @@ pub struct SwarmBoardHandles {
     pub revalidate_task: Arc<RevalidateTask>,
     pub amend_run_contract: Arc<AmendRunContract>,
     pub record_evidence: Arc<RecordEvidence>,
-    pub configure_usage_budget: Arc<ConfigureUsageBudget>,
     pub record_request_usage: Arc<RecordRequestUsage>,
     pub read_request_admission: Arc<ReadRequestAdmission>,
     pub reserve_files: Arc<ReserveFiles>,
@@ -207,6 +203,8 @@ impl std::fmt::Debug for SwarmBoardHandles {
 /// Every board method this dispatcher serves, by name (#2303).
 pub const BOARD_OPS: &[&str] = &[
     "_status",
+    "_board",
+    "_board_revision",
     "_event_cursor",
     "_run_totals",
     "_snapshot",
@@ -236,7 +234,6 @@ pub const BOARD_OPS: &[&str] = &[
     "revalidate_task",
     "amend",
     "evidence",
-    "usage_budget",
     "_record_request",
     "_request_admission",
     "reserve",
@@ -306,7 +303,7 @@ pub fn call_as(
     args: Value,
     origin: CallOrigin,
 ) -> Result<Value, BoardError> {
-    call_deciding(handles, member, method, args, origin).0
+    call_deciding(handles, member, method, args, (origin, None)).0
 }
 
 /// [`call_as`], answering also whether the op changed the run's control
@@ -317,7 +314,7 @@ pub fn call_deciding(
     member: &str,
     method: &str,
     args: Value,
-    origin: CallOrigin,
+    (origin, name_form): (CallOrigin, Option<NameForm>),
 ) -> (Result<Value, BoardError>, bool) {
     let started = Instant::now();
     let known = Method::parse(method);
@@ -335,8 +332,10 @@ pub fn call_deciding(
     // What a binding refusal found wrong (#2341), read only for a call the
     // binding refuses, or, for a member-facing op the board may refuse as
     // invalid, its type mismatches before binding takes the arguments.
-    let (answer, faults) = match known {
-        Some(known) => match binding::refusal(known, known.parameters(), &args) {
+    // A call its origin may not make is refused, and recorded, as any.
+    let (answer, faults) = match (records::origin_refusal(origin, known, method), known) {
+        (Some(refusal), _) => (Err(refusal), None),
+        (None, Some(known)) => match binding::refusal(known, known.parameters(), &args) {
             Some(refusal) => (Err(refusal), Some(binding::faults(known, &args))),
             None => {
                 let faults = binding::mistyped(known, &args);
@@ -348,7 +347,7 @@ pub fn call_deciding(
                 (served, Some(faults))
             }
         },
-        None => (
+        (None, None) => (
             Err(BoardError::new(
                 RefusalKind::Calling,
                 format!("swarm board has no method {method}"),
@@ -381,6 +380,7 @@ pub fn call_deciding(
         arguments: binding::recorded(&outcome, faults),
         outcome,
         elapsed: started.elapsed(),
+        name_form,
     };
     // A member: answered by an op that checks membership, or authorised by
     // the operation gate before the op refused it (#2313 review M2).
@@ -454,6 +454,8 @@ fn serve(
     let over = over.as_ref();
     match method {
         Method::Status => host::run_status(&serving(&*handles.read_run_status, over)),
+        Method::Board => host::board(&serving(&*handles.read_board_projection, over)),
+        Method::BoardRevision => host::revision(&serving(&*handles.read_board_projection, over)),
         Method::EventCursor => host::event_cursor(&serving(&*handles.read_event_cursor, over)),
         Method::Snapshot => host::run_snapshot(&serving(&*handles.read_run_snapshot, over), member),
         Method::Watch => host::run_watch(
@@ -539,11 +541,6 @@ fn serve(
         Method::Evidence => {
             completion::evidence(&serving(&*handles.record_evidence, over), member, arguments)
         }
-        Method::UsageBudget => usage::usage_budget(
-            &serving(&*handles.configure_usage_budget, over),
-            member,
-            arguments,
-        ),
         Method::RecordRequest => usage::record_request(
             &serving(&*handles.record_request_usage, over),
             member,

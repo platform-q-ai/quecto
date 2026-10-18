@@ -7,6 +7,7 @@ mod agent_cmd_report;
 pub mod bash;
 pub mod call_work;
 pub mod command_match;
+pub mod coordinator_launch;
 pub mod delegated_roster;
 pub mod docs;
 pub mod environment_commands;

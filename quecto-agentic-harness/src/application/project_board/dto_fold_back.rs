@@ -1,0 +1,194 @@
+//! What a fold-back comes to (S4): its result, and what it saw, for its
+//! `board_fold_back` record; and the ended swarm's board it folds back
+//! from, as the run reports port answers it (#2481 S4c follow-up).
+use crate::domain::project_board::entities::run::Run;
+use crate::domain::project_board::value_objects::telemetry::{
+    FoldBackRecord, ItemCounts, RunOutcomeKind,
+};
+use crate::domain::project_board::value_objects::vocabulary::{ItemState, RunOutcome};
+use crate::domain::swarm::{RunState, TaskState};
+
+/// What came of a fold-back.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FoldedBack {
+    /// The run as the board now holds it.
+    Folded(Run),
+    /// The run (by its number) had ended already: nothing was written.
+    Ended(u32),
+}
+
+/// What a fold-back saw (S4), for its `board_fold_back` record: gathered
+/// only for a recorded fold-back (one given none notes nothing), and only
+/// ever kinds and counts. Each fact is `None` where the fold-back did not
+/// get that far, or (a run already ended) had nothing to fold.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct FoldBackFacts {
+    pub run_outcome: Option<RunOutcomeKind>,
+    pub items: Option<ItemCounts>,
+    pub unmatched: Option<u64>,
+    pub extra: Option<u64>,
+    pub evidence: Option<u64>,
+    pub evidence_dropped: Option<u64>,
+    pub cost_tokens: Option<u64>,
+    /// The write's attempts, and how many lost the race.
+    pub attempts: Option<u64>,
+    pub lost: Option<u64>,
+    /// The UTF-8 bytes of the folded run's text.
+    pub bytes: Option<u64>,
+}
+
+impl FoldBackFacts {
+    /// Writes each fact there is into `record`, leaving every field it has
+    /// none for as it was.
+    pub fn fill(&self, record: &mut FoldBackRecord) {
+        let FoldBackRecord {
+            task: _,
+            run: _,
+            outcome: _,
+            run_outcome,
+            items,
+            unmatched,
+            extra,
+            evidence,
+            evidence_dropped,
+            cost_tokens,
+            attempts,
+            lost,
+            bytes,
+            duration_us: _,
+        } = record;
+        let facts = [
+            (unmatched, self.unmatched),
+            (extra, self.extra),
+            (evidence, self.evidence),
+            (evidence_dropped, self.evidence_dropped),
+            (cost_tokens, self.cost_tokens),
+            (attempts, self.attempts),
+            (lost, self.lost),
+            (bytes, self.bytes),
+        ];
+        for (field, fact) in facts {
+            *field = fact.or(*field);
+        }
+        *run_outcome = self.run_outcome.or(*run_outcome);
+        *items = self.items.or(*items);
+    }
+}
+
+/// How a swarm ended: one of the statuses that end it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SwarmEnd {
+    Succeeded,
+    Failed,
+    BudgetExhausted,
+    Blocked,
+    Cancelled,
+}
+
+impl SwarmEnd {
+    pub const ALL: [Self; 5] = [
+        Self::Succeeded,
+        Self::Failed,
+        Self::BudgetExhausted,
+        Self::Blocked,
+        Self::Cancelled,
+    ];
+
+    /// The end `status` is, when it ends the swarm (an allowlist: a
+    /// swarm setting up, running or paused has not ended, nor has one
+    /// whose status is any other text).
+    pub fn of(status: &RunState) -> Option<Self> {
+        match status.as_str() {
+            "succeeded" => Some(Self::Succeeded),
+            "failed" => Some(Self::Failed),
+            "budget-exhausted" => Some(Self::BudgetExhausted),
+            "blocked" => Some(Self::Blocked),
+            "cancelled" => Some(Self::Cancelled),
+            _ => None,
+        }
+    }
+
+    /// The board's outcome of a run that ended so.
+    pub fn outcome(self) -> RunOutcome {
+        match self {
+            Self::Succeeded => RunOutcome::Succeeded,
+            Self::Failed | Self::BudgetExhausted => RunOutcome::Failed,
+            Self::Blocked | Self::Cancelled => RunOutcome::Stopped,
+        }
+    }
+}
+
+/// Where a swarm item stood: one of the five statuses the swarm writes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SwarmItemState {
+    Ready,
+    Claimed,
+    Submitted,
+    Completed,
+    Blocked,
+}
+
+impl SwarmItemState {
+    /// The state `state` is, when the swarm writes it (an allowlist).
+    pub fn of(state: &TaskState) -> Option<Self> {
+        match state.as_str() {
+            "ready" => Some(Self::Ready),
+            "claimed" => Some(Self::Claimed),
+            "submitted" => Some(Self::Submitted),
+            "completed" => Some(Self::Completed),
+            "blocked" => Some(Self::Blocked),
+            _ => None,
+        }
+    }
+
+    /// How far an item standing so got: completed, submitted, claimed,
+    /// ready, then blocked (an item blocked and created again is taken by
+    /// its new copy).
+    pub fn progress(self) -> u8 {
+        match self {
+            Self::Blocked => 0,
+            Self::Ready => 1,
+            Self::Claimed => 2,
+            Self::Submitted => 3,
+            Self::Completed => 4,
+        }
+    }
+
+    /// The board's state of a task item standing so.
+    pub fn item_state(self) -> ItemState {
+        match self {
+            Self::Ready => ItemState::Todo,
+            Self::Claimed => ItemState::Doing,
+            Self::Submitted => ItemState::Review,
+            Self::Completed => ItemState::Done,
+            Self::Blocked => ItemState::Blocked,
+        }
+    }
+}
+
+/// One evidence entry a swarm item was submitted with.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SwarmEvidence {
+    pub artifact: String,
+    pub revision: String,
+}
+
+/// One item of an ended swarm's board.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SwarmItemView {
+    pub title: String,
+    pub state: SwarmItemState,
+    /// The member holding it, by id.
+    pub owner: Option<String>,
+    pub evidence: Vec<SwarmEvidence>,
+}
+
+/// An ended swarm's board, as its live view (`get_swarm_board`) reads
+/// it: how it ended, its items in the view's order, and the tokens it
+/// was observed to spend.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SwarmRunView {
+    pub end: SwarmEnd,
+    pub items: Vec<SwarmItemView>,
+    pub observed_tokens: u64,
+}

@@ -139,7 +139,7 @@ fn errored_notes_are_not_coalesced_into_finished() {
         .iter()
         .find_map(|m| match m {
             PendingMessage::SubagentNotification {
-                is_completion: false,
+                class: super::NoteClass::Failure,
                 content,
                 ..
             } => Some(content.clone()),

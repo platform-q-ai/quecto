@@ -56,6 +56,7 @@ pub(super) fn build(
         effort_control: None,
         container_configs: None,
         kill_tool: None,
+        project_board: None,
         disabled_tools: launch.disabled_tools,
         inherited_tool_policy: launch.inherited,
         workflow: ToolRuntimeWorkflowPolicy {
@@ -354,6 +355,7 @@ fn guards_or_a_bound_spec_also_request_workflow_mode() {
         effort_control: None,
         container_configs: None,
         kill_tool: None,
+        project_board: None,
         disabled_tools: &[],
         inherited_tool_policy: Some(inherited),
         workflow: ToolRuntimeWorkflowPolicy {

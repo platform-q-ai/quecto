@@ -12,10 +12,12 @@ use crate::application::environments::ports::{
     EnvironmentProcessCommands, HostedSwarmRunInspection, PortFuture,
 };
 use crate::application::environments::use_cases::FinalizeEnvironmentMember;
-use crate::domain::environment_registry::{
+use crate::domain::environments::entities::environment_registry::{
     EnvironmentOrigin, EnvironmentRecord, EnvironmentRegistry, EnvironmentStatus,
 };
-use crate::domain::environment_retention::{MemberFinalizeMode, SwarmRunObservation};
+use crate::domain::environments::services::environment_retention::{
+    MemberFinalizeMode, SwarmRunObservation,
+};
 
 use super::HostedStoreObservation;
 

@@ -176,12 +176,12 @@ impl SwarmContext {
         wake_allowed: bool,
     ) -> Result<crate::domain::swarm::RunControlReceipt, DomainError> {
         Ok(crate::domain::swarm::RunControlReceipt {
+            // Reported only, never applied (owner decision, 2026-10-14): a
+            // budget it cannot read is none, never a failed control.
             budget: value
                 .get("budget")
                 .cloned()
-                .map(serde_json::from_value)
-                .transpose()
-                .map_err(invalid)?,
+                .and_then(|budget| serde_json::from_value(budget).ok()),
             wake_allowed,
             status: decode_status(
                 value["status"]
@@ -346,4 +346,146 @@ fn absolute_deadline(input: &Value) -> Result<Value, DomainError> {
         (_, Some(deadline)) => Ok(deadline.clone()),
         _ => Ok(Value::Null),
     }
+}
+
+impl SwarmContext {
+    /// The run as this member reads it if it is the run's coordinator
+    /// (#2467): `_status`, then, for the run's coordinator only,
+    /// `_run_totals`, both recorded as the harness's own reads. Blocking:
+    /// call it off the async workers.
+    pub(crate) fn coordinator_board_now(
+        &self,
+    ) -> Result<
+        Option<crate::domain::swarm::parent_wake::CoordinatorBoard>,
+        crate::domain::error::DomainError,
+    > {
+        let status = self.host_read("_status")?;
+        decode_coordinator_board(&self.member, &status, || self.host_read("_run_totals"))
+    }
+
+    /// The run as its coordinator reads it when a worker ends a turn
+    /// (#2471): [`Self::coordinator_board_now`], then the owner of each
+    /// claimed task from `tasks`. Blocking.
+    pub(crate) fn worker_board_now(
+        &self,
+    ) -> Result<
+        Option<crate::domain::swarm::worker_wake::WorkerBoard>,
+        crate::domain::error::DomainError,
+    > {
+        let Some(board) = self.coordinator_board_now()? else {
+            return Ok(None);
+        };
+        // `tasks` pages by at most 100.
+        const PAGE: usize = 100;
+        let mut claimed_by = Vec::new();
+        for offset in (0..).step_by(PAGE) {
+            let page = self.board.call_as(
+                self.location(),
+                &self.member,
+                "tasks",
+                json!([offset, PAGE]),
+                super::super::swarm_board_dispatch::CallOrigin::Harness,
+            )?;
+            claimed_by.extend(decode_claimed_owners(&page)?);
+            match page.as_array().map(Vec::len) {
+                Some(PAGE) => {}
+                Some(_) | None => break,
+            }
+        }
+        Ok(Some(crate::domain::swarm::worker_wake::WorkerBoard {
+            status: board.status,
+            ready: board.ready,
+            claimed_by,
+            coordinator: self.member.clone(),
+        }))
+    }
+
+    fn host_read(&self, method: &str) -> Result<Value, crate::domain::error::DomainError> {
+        self.board.call_as(
+            self.location(),
+            &self.member,
+            method,
+            json!([]),
+            super::super::swarm_board_dispatch::CallOrigin::Harness,
+        )
+    }
+}
+
+/// The run as its coordinator reads it (#2467), from the board's `_status`
+/// answer and, read only when `member` is the run's coordinator, its
+/// `_run_totals`: `None` for any other member.
+pub(crate) fn decode_coordinator_board(
+    member: &str,
+    status: &Value,
+    totals: impl FnOnce() -> Result<Value, crate::domain::error::DomainError>,
+) -> Result<
+    Option<crate::domain::swarm::parent_wake::CoordinatorBoard>,
+    crate::domain::error::DomainError,
+> {
+    let malformed = |what: &str| {
+        crate::domain::error::DomainError::Tool(format!("coordinator board: {what} missing"))
+    };
+    let coordinator = status
+        .get("coordinator")
+        .and_then(Value::as_str)
+        .ok_or_else(|| malformed("coordinator"))?;
+    match coordinator == member {
+        true => {}
+        false => return Ok(None),
+    }
+    let text = |key: &str| {
+        status
+            .get(key)
+            .and_then(Value::as_str)
+            .ok_or_else(|| malformed(key))
+    };
+    let count = |value: &Value, key: &str| {
+        value
+            .get(key)
+            .and_then(Value::as_i64)
+            .ok_or_else(|| malformed(key))
+    };
+    let outcome = match status.get("outcome") {
+        None | Some(Value::Null) => None,
+        Some(outcome) => Some(decode_status(
+            outcome.as_str().ok_or_else(|| malformed("outcome"))?,
+        )?),
+    };
+    let run_status = decode_status(text("status")?)?;
+    let idle_workers = count(status, "members_without_claim")?;
+    let totals = totals()?;
+    let tasks = totals.get("tasks").ok_or_else(|| malformed("tasks"))?;
+    Ok(Some(crate::domain::swarm::parent_wake::CoordinatorBoard {
+        status: run_status,
+        outcome,
+        ready: count(tasks, "ready")?,
+        claimed: count(tasks, "claimed")?,
+        submitted: count(tasks, "submitted")?,
+        idle_workers,
+    }))
+}
+
+/// The owner of each claimed task in a `tasks` answer (#2471).
+pub(crate) fn decode_claimed_owners(
+    tasks: &Value,
+) -> Result<Vec<String>, crate::domain::error::DomainError> {
+    let malformed =
+        |what: &str| crate::domain::error::DomainError::Tool(format!("worker board: {what}"));
+    let tasks = tasks
+        .as_array()
+        .ok_or_else(|| malformed("tasks is not a list"))?;
+    let mut owners = Vec::new();
+    for task in tasks {
+        match task.get("status").and_then(Value::as_str) {
+            Some("claimed") => owners.push(
+                task.get("owner")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| malformed("a claimed task has no owner"))?
+                    .to_owned(),
+            ),
+            Some("ready" | "blocked" | "submitted" | "completed") => {}
+            Some(_) | None => return Err(malformed("a task has no known status")),
+        }
+    }
+    Ok(owners)
 }

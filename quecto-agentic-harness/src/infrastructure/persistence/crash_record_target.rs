@@ -163,6 +163,13 @@ impl Armed {
         }
     }
 
+    /// Write `event` to the event log's crash line, filed under `turn`.
+    pub fn record_event(&self, turn: u32, event: AuditEvent) {
+        if let Some(log) = self.event_log() {
+            let _ = log.write(turn, event);
+        }
+    }
+
     /// Record the panic the call scoped `scope` is containing, for the case
     /// the process ends before the call does. Answers the session it was
     /// written under, to withdraw it from there: the process may follow
@@ -265,6 +272,14 @@ pub fn follow(session_key: Option<&str>) -> Option<AuditLog> {
 pub fn record_fatal(record: &CrashRecord, source: &str, turn: u32) {
     if let Some(armed) = ARMED.get() {
         armed.record_fatal(record, source, turn);
+    }
+}
+
+/// Write `event` to the armed target's event log, filed under `turn`: a
+/// tool's handled panic (#2517), as the agent loop writes a contained one.
+pub fn record_event(turn: u32, event: AuditEvent) {
+    if let Some(armed) = ARMED.get() {
+        armed.record_event(turn, event);
     }
 }
 

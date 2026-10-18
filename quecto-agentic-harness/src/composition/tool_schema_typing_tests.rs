@@ -52,6 +52,10 @@ const TOOL_TYPES: &[(&str, Option<&str>)] = &[
     ),
     ("RecallTool", Some("recall")),
     (
+        "BoardTool",
+        Some(crate::interface::tools::project_board::tool::BOARD_TOOL_NAME),
+    ),
+    (
         "PanicProbeTool",
         Some(crate::infrastructure::tools::panic_probe::PANIC_PROBE_TOOL),
     ),
@@ -189,7 +193,7 @@ fn built_in_definitions(workspace: &std::path::Path) -> Vec<ToolDefinition> {
             notify_tx: None,
             harness_lifecycle:
                 crate::infrastructure::tools::harness_lifecycle::new_shared_harness_lifecycle(),
-            environment_registry: crate::domain::environment_registry::EnvironmentRegistry::new(),
+            environment_registry: crate::domain::environments::entities::environment_registry::EnvironmentRegistry::new(),
             slots: Default::default(),
             base_dir: workspace.to_path_buf(),
         });
@@ -208,6 +212,17 @@ fn built_in_definitions(workspace: &std::path::Path) -> Vec<ToolDefinition> {
         Arc::new(RecallTool::new(recall, "session".to_string())),
         Arc::new(PanicProbeTool),
         super::web_fetch::build(Default::default(), 64),
+        Arc::new(
+            crate::interface::tools::project_board::tool::BoardTool::new(
+                crate::interface::tools::project_board::site::BoardSite {
+                    repo: workspace.to_path_buf(),
+                    remote: "origin".into(),
+                    build: None,
+                    launcher: None,
+                    swarm_session: None,
+                },
+            ),
+        ),
     ];
     definitions.extend(others.iter().map(|tool| tool.definition()));
     definitions

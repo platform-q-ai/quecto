@@ -66,7 +66,8 @@ pub(super) async fn create_environment(
     minted.commit(EnvironmentRecord {
         environment_ref: environment_ref.clone(),
         environment_id: result.environment_id.clone(),
-        environment_uuid: crate::domain::environment_registry::mint_environment_uuid(),
+        environment_uuid:
+            crate::domain::environments::entities::environment_registry::mint_environment_uuid(),
         name,
         workspace_path: result.workspace_path.clone(),
         // The config owns its source (#1410): the repository shown in
@@ -79,10 +80,12 @@ pub(super) async fn create_environment(
         retained_cleanup_argv: container.cleanup.clone(),
         retained_inspect_argv: container.inspect.clone(),
         members: Vec::new(),
-        status: crate::domain::environment_registry::EnvironmentStatus::Running,
+        status:
+            crate::domain::environments::entities::environment_registry::EnvironmentStatus::Running,
         metadata: result.metadata.clone(),
         last_error: None,
-        origin: crate::domain::environment_registry::EnvironmentOrigin::Created,
+        origin:
+            crate::domain::environments::entities::environment_registry::EnvironmentOrigin::Created,
         created_by: environments.session().to_string(),
         created_at: std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)

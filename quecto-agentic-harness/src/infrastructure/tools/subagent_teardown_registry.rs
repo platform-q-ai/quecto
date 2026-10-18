@@ -25,7 +25,7 @@ use super::subagent_registry::{
     StoppingClaim, SubagentEntry, SubagentNotification, SubagentRegistry, SubagentStatus,
     TeardownIntent, TeardownPhase,
 };
-use crate::domain::environment_retention::MemberFinalizeMode as FinalizeMode;
+use crate::domain::environments::services::environment_retention::MemberFinalizeMode as FinalizeMode;
 use crate::infrastructure::processes::direct_child_routing::PROTOCOL_ACK_TIMEOUT;
 use crate::infrastructure::processes::owned_child_supervisor::TerminationBudget;
 

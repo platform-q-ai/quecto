@@ -22,15 +22,16 @@ use crate::application::environments::ports::{
 };
 use crate::application::environments::use_cases::{
     DiagnoseContainerRuntime, FinalizeEnvironmentMember, GcOrphanedEnvironments, KillEnvironment,
-    ListEnvironmentsQuery, RestoreRegistry,
+    ListEnvironmentsQuery, ReadSwarmBoard, RestoreRegistry,
 };
-use crate::domain::environment_registry::EnvironmentRegistry;
+use crate::domain::environments::entities::environment_registry::EnvironmentRegistry;
 use crate::infrastructure::config::container_config_lookup::SelectedConfigLookup;
 use crate::infrastructure::persistence::environment_registry_store::FileEnvironmentRegistryStore;
 use crate::infrastructure::processes::containers::environment_process::ScriptEnvironmentProcess;
 use crate::infrastructure::processes::containers::preflight::ScriptPreflight;
 use crate::infrastructure::processes::containers::script_inventory::ScriptInventory;
 pub use crate::infrastructure::tools::agent_cmd_containers::EnvironmentControl;
+use crate::infrastructure::tools::coordinator_launch::KeptSwarmBoards;
 use crate::infrastructure::tools::environment_commands::{
     HostedStoreObservation, ScriptEnvironmentCommands,
 };
@@ -50,22 +51,56 @@ fn hosted_store_observation() -> HostedStoreObservation {
 /// The observation over `process`, the board admission bound, when there
 /// is one; else over the process's one host board.
 fn hosted_store_observation_over(process: Option<&SwarmBoard>) -> HostedStoreObservation {
-    static HOST_BOARD: OnceLock<SwarmBoard> = OnceLock::new();
     HostedStoreObservation::new(match process {
         Some(board) => board.clone(),
-        None => HOST_BOARD.get_or_init(super::swarm::swarm_board).clone(),
+        None => host_board(),
     })
+}
+
+/// The process's one host board, when admission bound none.
+fn host_board() -> SwarmBoard {
+    static HOST_BOARD: OnceLock<SwarmBoard> = OnceLock::new();
+    HOST_BOARD.get_or_init(super::swarm::swarm_board).clone()
+}
+
+/// The board the supervising session's board view reads through (#2488
+/// review L4): its own, whose handle cache only the view's polls fill, so
+/// polling many boards never evicts the handles of the board this harness
+/// runs on as a member. Its reads are the supervisor's, which write no
+/// event-log record, so it keeps no session log.
+fn supervisor_board() -> SwarmBoard {
+    static SUPERVISOR_BOARD: OnceLock<SwarmBoard> = OnceLock::new();
+    SUPERVISOR_BOARD
+        .get_or_init(super::swarm::swarm_board)
+        .clone()
 }
 
 /// The final-member use case over the production script adapters, for one
 /// entry's environment registry. The cleanup jobs already run on a blocking
 /// worker, so the scripts run inline.
+///
+/// It keeps the board of an ended swarm run as its member leaves, before
+/// any teardown, in [`kept_swarm_boards`], where the board's coordinator
+/// launcher reads it back to fold the run onto the project board (#2481
+/// S4c follow-up).
 pub fn build_member_finalizer(environments: EnvironmentRegistry) -> FinalizeEnvironmentMember {
     FinalizeEnvironmentMember::new(
         environments,
         Arc::new(ScriptEnvironmentCommands::inline()),
         Arc::new(hosted_store_observation()),
     )
+    .keeping_ended_boards(Arc::new(hosted_store_observation()), kept_swarm_boards())
+}
+
+/// The one store of ended runs' boards composition hands both the
+/// final-member teardown, which keeps them, and every session's board
+/// launcher, which reads them back (#2481 S4c follow-up). One per process:
+/// the teardown's builder is a plain `fn` handed to every termination
+/// graph, so it can capture no instance of its own; boards are keyed by
+/// session, so sessions sharing the process never read each other's.
+pub fn kept_swarm_boards() -> Arc<KeptSwarmBoards> {
+    static KEPT: OnceLock<Arc<KeptSwarmBoards>> = OnceLock::new();
+    Arc::clone(KEPT.get_or_init(Arc::default))
 }
 
 /// The environment control `agent_cmd` invokes: the side-effect-free
@@ -77,6 +112,10 @@ pub fn build_environment_control(
 ) -> EnvironmentControl {
     EnvironmentControl {
         list: Arc::new(ListEnvironmentsQuery::new(environments.clone())),
+        boards: Arc::new(ReadSwarmBoard::new(
+            environments.clone(),
+            Arc::new(HostedStoreObservation::new(supervisor_board())),
+        )),
         kill: Arc::new(KillEnvironment::new(
             environments,
             member_shutdown,
@@ -218,7 +257,7 @@ fn report_restore(report: &RestoredRegistry) {
     for (environment_ref, reason) in &report.retained {
         eprintln!("{environment_ref} retained at restore: {reason}");
     }
-    match report.forgotten.as_slice() {
+    match report.forgotten_refs().as_slice() {
         [] => {}
         refs => tracing::info!(
             ?refs,

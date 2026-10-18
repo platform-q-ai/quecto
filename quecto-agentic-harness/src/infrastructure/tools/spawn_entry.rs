@@ -71,7 +71,8 @@ pub(super) struct InitialRegistryEntrySpec<'a> {
     pub exit_signal_tx: Option<ExitSignalTx>,
     pub cleanup_environment_id: Option<String>,
     pub cleanup_argv: Vec<String>,
-    pub environment_registry: Option<crate::domain::environment_registry::EnvironmentRegistry>,
+    pub environment_registry:
+        Option<crate::domain::environments::entities::environment_registry::EnvironmentRegistry>,
     pub environment_ref: Option<String>,
     pub process_owner: super::process_tree::ProcessOwner,
 }
@@ -99,6 +100,9 @@ pub(super) fn initial_registry_entry(spec: InitialRegistryEntrySpec<'_>) -> Suba
     entry.parent_id = spec.parent_id;
     // Record whether this child is a read-only observer (#966 / #957).
     entry.read_only = spec.config.read_only;
+    // Only a child launched as a swarm coordinator settles its turn-end
+    // notes by its run's state (#2467).
+    entry.coordinator_wake.launched = spec.config.coordinator;
     if spec.config.task.is_none() {
         // #1049: task-less → Idle (cascade/TUI); with-task stays Starting.
         entry.status =

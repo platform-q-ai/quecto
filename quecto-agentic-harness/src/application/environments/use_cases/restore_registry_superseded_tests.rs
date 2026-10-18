@@ -8,7 +8,9 @@ use super::super::dto::{CorrectionOutcome, EnvironmentLiveness, OvertakenAudienc
 use super::super::ports::EnvironmentRegistryStore;
 use super::RestoreRegistry;
 use super::restore_registry_tests::{FakeStore, no_hosted, process, record, store_with};
-use crate::domain::environment_registry::{EnvironmentRecord, EnvironmentStatus};
+use crate::domain::environments::entities::environment_registry::{
+    EnvironmentRecord, EnvironmentStatus,
+};
 
 /// The real store's race: `load` returns what is on file, then another
 /// quecto process writes `written` before this restore corrects. The
@@ -206,7 +208,8 @@ fn an_agreeing_correction_with_a_different_account_is_logged_at_debug() {
 #[test]
 fn an_agreeing_correction_with_the_same_account_is_not_logged() {
     let mut written = record("C1", EnvironmentStatus::Stopped);
-    written.last_error = Some(crate::domain::environment_registry::GONE_AT_RESTORE.into());
+    written.last_error =
+        Some(crate::domain::environments::entities::environment_registry::GONE_AT_RESTORE.into());
     let log = captured_debug_log(|| {
         restore_racing(written, "cli:one", OvertakenAudience::OwnEnvironments);
     });

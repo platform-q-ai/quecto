@@ -86,6 +86,7 @@ impl Rig {
             global: self.base_dir.join("config.json"),
             overlay: Some(self.overlay()),
             legacy_local: None,
+            overlay_origin: Default::default(),
         })
     }
 

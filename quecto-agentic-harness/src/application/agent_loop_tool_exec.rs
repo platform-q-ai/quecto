@@ -448,7 +448,7 @@ impl AgentLoopImpl {
         };
         // The message goes to the provider and the event log: secret shapes
         // redacted, and cut to a bound (#2192 review).
-        let message = shown_panic_message(&site.message);
+        let message = tool_panic_scope::shown_panic_message(&site.message);
         tracing::error!(
             target: "tool_exec",
             tool_name = tc.name.as_str(),
@@ -468,24 +468,6 @@ impl AgentLoopImpl {
         )
         .await;
         Ok(crashed_tool_result(&tc.name, &message))
-    }
-}
-
-/// The most of a panic's message a result or event carries, in bytes.
-pub const MAX_PANIC_MESSAGE_BYTES: usize = 1024;
-
-/// A panic's message as it may leave the process: known secret shapes
-/// redacted first (so a cut never hides one from the redaction), then cut
-/// on a character boundary to [`MAX_PANIC_MESSAGE_BYTES`], marked "…".
-pub fn shown_panic_message(message: &str) -> String {
-    let redacted = crate::domain::redaction::redact_secrets(message);
-    let mut end = redacted.len().min(MAX_PANIC_MESSAGE_BYTES);
-    while !redacted.is_char_boundary(end) {
-        end -= 1;
-    }
-    match end < redacted.len() {
-        true => format!("{}…", &redacted[..end]),
-        false => redacted,
     }
 }
 

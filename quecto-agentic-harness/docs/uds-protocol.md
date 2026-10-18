@@ -921,6 +921,42 @@ Return the latest assistant report of the session and, on request, write a retai
 
 ---
 
+### `get_swarm_board`
+
+Answers the board of a swarm this session hosts, as one snapshot (#2475, #2478). `swarm` is the environment ref (`C` and digits, such as `C1`) of the container the swarm runs in, as `agent_cmd get_containers` lists it. Only this session's own environments are read, as `get_containers` lists them without `all`, and only while they are running or retained. The harness reads the board through its own adapter, membership-free and in one read transaction: no client opens the board file. The answer is made by a task of its own, so neither a running turn nor a slow board delays the connection's next line. A connection has at most two `get_swarm_board` requests in flight; a third is refused as busy.
+
+Add `agent_id` to ask a descendant for a board it hosts. It is routed as `swarm_control` is: to a child directly, and to a deeper descendant through its ancestors. A descendant's `swarm_board_changed` carries the `agent_id` to ask.
+
+```json
+{"type":"get_swarm_board","id":"b1","swarm":"C1"}
+```
+
+`data` carries `swarm` and the snapshot:
+
+| Field | Meaning |
+|---|---|
+| `revision` | Grows with every board write the snapshot shows (the latest board event plus the usage ledger's latest row). A board made again starts again, under another `run.id`; `swarm_board_changed` carries both |
+| `run` | `null` before a run is created; else `id`, `goal`, `status`, `outcome`, `outcome_reason`, `generation` (the latest pause or resume), `criteria`, `member_limit`, `deadline`, `coordinator`, `integrator` and `budget` (`token_limit`, `strict_unknown`, `warned`, `observed_tokens`, `unknown_usage_requests`: the usage totals, and a budget an older board stored, reported and never applied) |
+| `items` | The board's tasks, by id: `id`, `title`, `criteria`, `depends_on`, `state` (the swarm's own: `ready`, `claimed`, `blocked`, `submitted`, `completed`), `waiting` (ready, but a dependency is not completed), `owner`, `blocker`, `reserved_paths` and `evidence` |
+| `members` | `id`, `role` (`coordinator`, `integrator`, `worker`), `status` (`live`, `reserved`, `dead`), `claims` (every item it holds claimed, blocked or submitted, listed or not) and `last_activity` (the time of its latest board event, or `null`) |
+| `evidence` | The run's criterion evidence: `criterion`, `artifact`, `revision`, `kind`, `actor`, `accepted` |
+| `totals` | Over every item and member, whatever was left out: `items`, `ready`, `waiting`, `claimed`, `blocked`, `submitted`, `completed`, `members`, `members_without_claim`, `members_dead` |
+| `truncated` | `true` when rows were left out: past 2,000 reservations, 100 members or 500 evidence rows, or past 4 MiB of rows (counted both as stored and as encoded on this socket) |
+
+No claim or reservation token, and no member's process, socket or launcher, is ever in it.
+
+Errors:
+- `swarm is required (an environment ref such as C1)`;
+- `swarm must be an environment ref such as C1` (what was sent is not echoed);
+- `unknown swarm C9`;
+- `swarm C4 is another session's; this view reads this session's own`;
+- `swarm C5 is neither running nor retained; its board is not read`;
+- `swarm C1 hosts no board this session can read`;
+- `swarm board unreadable: …` (the registry or the board could not be read: contention, a checkout that could not be told, a value or size the board never writes);
+- `swarm boards are unavailable in this harness`;
+- `get_swarm_board takes string fields: id, swarm and agent_id` (also a line nested too deeply to read);
+- `get_swarm_board is busy: at most 2 requests in flight per connection`.
+
 ### `get_session_stats`
 
 Return token usage and cost statistics for the current session. `sessionKey` is the active session's identity; the usage counters restart at zero whenever `new_session` or `resume_session` moves the loop to a different key, and on `clear_history` / `rewind_to`.
@@ -1515,6 +1551,47 @@ Emitted after the post-turn drain finds no further workflow continuation runnabl
 {"type":"workflow_idle","reason":"exhausted"}
 ```
 
+### `swarm_state`
+
+Emitted only by a process launched as its swarm's coordinator (`--coordinator`, a spawn with `coordinator: true`), at the end of every idle boundary (after pending work and nudges settle), so its parent wakes on the run's state rather than on every idle turn (#2467). Its harness reads the run's board (`_status`, then `_run_totals`) as its own `host` reads.
+
+| `wake` | When | `status` | Parent's monitor |
+|---|---|---|---|
+| `hold` | `setup`/`running` with a task claimed or submitted, or ready work and a free worker | the run's status | no note; one quiet note if no new turn starts within 30 min |
+| `finished` | the run ended: a terminal status, or `paused` holding an outcome | the outcome (`succeeded`, `blocked`, `failed`, `cancelled`, `budget-exhausted`) | one note: the outcome, its final report is ready |
+| `idle` | `setup`/`running` with nothing in flight | the run's status | one note: nothing in flight and no result, may need a decision |
+| `paused` | `paused` with no outcome, whatever is claimed | `paused` | one note: paused with no result, may need a decision |
+| `unknown` | the board could not be read (sent only after an earlier report) | omitted | the ordinary turn-end note |
+
+`prompted` is `true` when a client's `prompt`, `steer` or `follow_up` arrived since the last boundary: the parent then gets the ordinary turn-end note for a `hold` (its reply is due) and the state note otherwise.
+
+Once a launched coordinator has sent one, its parent holds each `agent_end` note until the next `swarm_state` settles it, or sends it as it was if none arrives within 60 s of that turn end. A turn that failed (`agent_error`) keeps its error note and settles nothing over it; the next `swarm_state` reports it once: the state note for `finished`/`idle`/`paused`, otherwise a "stopped on a failed turn" note. A child that never sends one, or that was not launched as a coordinator, keeps the ordinary note on every turn end. The one exception is a coordinator's own swarm workers, whose turn ends reach it through its board (#2471, see `swarm.md`). Exit and error notes are unchanged; a run-state note never replaces a pending error note, is never coalesced or deduplicated, and makes the same error text news again after it. Notes a timer sends carry a fresh sequence. The quiet note measures coordinator turns, not board activity: a worker's long task with no coordinator turn for 30 min also raises it.
+
+```json
+{"type":"swarm_state","wake":"finished","status":"succeeded","prompted":false}
+```
+
+### `swarm_board_changed`
+
+Pushed to every client when a board this session hosts changed (#2478): when a swarm's board is first read, whenever its `revision` or `run` changes after (another `run` is a board made again), and when it is no longer read (`removed: true`, with `run` and `revision` null: the environment stopped, went, or holds no board). The harness polls this session's running and retained environments once a second, only while a client is connected, so a swarm is hinted at most once a second. A board that cannot be read in one poll is not hinted, and what was last seen of it stands.
+
+A client that connects later is sent one hint per board of this harness's own already seen, on connect, after `get_state`. While no client is connected, nothing seen is kept, so the first poll after a connection hints every board afresh. To read every board at once, call `agent_cmd get_containers` and then `get_swarm_board` for each swarm. Fetch the snapshot with `get_swarm_board`; the hint carries no rows.
+
+A hint from a descendant's harness carries `agent_id`, the agent hosting that board, to pass to `get_swarm_board`; this harness's own hints carry none. Refs such as `C1` are each harness's own and collide across harnesses, so key boards on `(agent_id, swarm)`. A descendant's hints are forwarded as its own poll makes them: they are not part of the hints sent on connect, and the removal of a descendant's board is hinted only while that descendant runs.
+
+```json
+{"type":"swarm_board_changed","swarm":"C1","run":"9f0c…","revision":42,"removed":false}
+{"type":"swarm_board_changed","swarm":"C1","run":null,"revision":null,"removed":true}
+```
+
+### `reply_ready`
+
+Emitted by a swarm member that is not its run's coordinator, once at the end of the idle boundary after a client's `prompt`, `steer` or `follow_up` was taken (#2471). An instruction refused after all (not kept, or a `prompt` to a busy agent without `streamingBehavior`) doesn't count. Its launching coordinator no longer wakes on each of its turn ends, so this is how it hears the reply. Other parents ignore it.
+
+```json
+{"type":"reply_ready"}
+```
+
 ### `token`
 
 Incremental text token from the LLM during streaming. Tokens arrive in real time as the model generates them.
@@ -1667,7 +1744,7 @@ Broadcast when the rich tool catalogue changes after `register_tools`, `unregist
 
 ### `subagent_notification`
 
-Passive child-agent notification for human/UI visibility (completion, error, exit).
+Passive child-agent notification for human/UI visibility (completion, error, exit, or a swarm coordinator's run state, #2467).
 
 ```json
 {"type":"subagent_notification","agentId":"reviewer","sequence":3,"message":"child exited"}
@@ -2007,9 +2084,9 @@ All flags for `quecto agent` that affect UDS mode:
 
 `{"type":"swarm_control","id":"pause-1","action":"pause","reason":"approval"}`
 applies a durable pause independently of the prompt queue. Actions are `pause`,
-`resume`, `close`, `extend`, `status`, and `usage_budget`; `usage_budget` requires
-`token_limit` (positive integer or explicit null) and optionally `strict_unknown`
-(default true); `extend` requires `deadline_seconds` (positive integer). Add
+`resume`, `close`, `extend` and `status` (`usage_budget` is gone: no token budget
+limits a swarm, owner decision 2026-10-14); `extend` requires `deadline_seconds`
+(positive integer). Add
 `agent_id` to route to a descendant. Successful responses include `applied`,
 `status`, `generation`, `budget`, and, for a run holding a proposed outcome
 (#1729), `outcome` and `reason`. Every end of a run is such a pause; only these

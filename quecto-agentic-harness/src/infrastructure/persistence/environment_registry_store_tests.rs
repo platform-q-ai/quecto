@@ -1,6 +1,6 @@
 use super::*;
 use crate::application::environments::ports::EnvironmentRegistryStore;
-use crate::domain::environment_registry::EnvironmentOrigin;
+use crate::domain::environments::entities::environment_registry::EnvironmentOrigin;
 
 fn record(reference: &str, status: EnvironmentStatus) -> EnvironmentRecord {
     EnvironmentRecord {

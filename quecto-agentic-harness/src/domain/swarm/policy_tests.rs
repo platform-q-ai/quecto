@@ -501,28 +501,25 @@ fn revalidation_requires_completed_task_and_matching_revision() {
     assert_eq!(revalidation(&completed, &r2, &good), Ok(&good));
 }
 
+/// A resume waits only on a lost coordinator and a passed deadline: no
+/// token budget blocks it (owner decision, 2026-10-14).
 #[test]
-fn resume_blockers_list_lost_coordinator_then_deadline_then_budget() {
+fn resume_blockers_list_lost_coordinator_then_deadline() {
     assert_eq!(
-        resume_blockers(100.0, 100.0, "pause", Some("parent")),
+        resume_blockers(100.0, 100.0, Some("parent")),
         vec![
             "relaunch the lost coordinator 'parent' into the retained environment before resuming"
                 .to_string(),
             "extend the deadline (swarm_control extend) before resuming".to_string(),
-            "raise or disable the token budget (swarm_control usage_budget) before resuming"
-                .to_string(),
         ]
     );
+    assert_eq!(resume_blockers(101.0, 100.0, None), Vec::<String>::new());
     assert_eq!(
-        resume_blockers(101.0, 100.0, "warn", None),
+        resume_blockers(101.0, 100.0, Some("")),
         Vec::<String>::new()
     );
     assert_eq!(
-        resume_blockers(101.0, 100.0, "allow", Some("")),
-        Vec::<String>::new()
-    );
-    assert_eq!(
-        resume_blockers(99.0, 100.0, "allow", None),
+        resume_blockers(99.0, 100.0, None),
         vec!["extend the deadline (swarm_control extend) before resuming".to_string()]
     );
 }
@@ -601,7 +598,7 @@ fn unknown_statuses_found_in_a_file_are_refused_affirmatively() {
     );
     assert_eq!(
         message(require_unsubmitted("odd")),
-        "task status 'odd' is not a known status; no revision permitted"
+        "task item status 'odd' is not a known status; no revision permitted"
     );
     assert_eq!(
         message(admission(

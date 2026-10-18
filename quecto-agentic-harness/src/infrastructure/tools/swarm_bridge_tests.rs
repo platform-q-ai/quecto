@@ -444,3 +444,23 @@ fn board_errors_keep_the_swarm_quoted_prefix() {
 
 #[path = "swarm_bridge_host_tests.rs"]
 mod host_tests;
+
+/// #2471: only a participant that created its container counts as its
+/// run's creator; neither alone does.
+#[test]
+fn a_run_creator_is_a_participating_container_creator() {
+    let shared = || crate::infrastructure::tools::swarm_bridge::Participation::shared();
+    let neither = shared();
+    assert!(!neither.created_run());
+    let creator_only = shared();
+    creator_only.record_creator(true);
+    assert!(!creator_only.created_run(), "not participating yet");
+    creator_only.set(true);
+    assert!(creator_only.created_run());
+    let participant_only = shared();
+    participant_only.set(true);
+    assert!(!participant_only.created_run());
+    let fixed = crate::infrastructure::tools::swarm_bridge::Participation::Fixed(true);
+    fixed.record_creator(true);
+    assert!(!fixed.created_run(), "a fixed answer never changes");
+}

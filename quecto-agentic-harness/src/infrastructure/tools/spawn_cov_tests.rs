@@ -725,7 +725,7 @@ async fn launch_uds_agent_uses_uuid_not_display_label_for_socket_and_session_pat
 
 #[test]
 fn spawn_tool_environment_registry_and_inherited_policy_builders_are_observed() {
-    use crate::domain::environment_registry::EnvironmentRegistry;
+    use crate::domain::environments::entities::environment_registry::EnvironmentRegistry;
     use crate::domain::tool_descriptor::ProfileAvailabilityScope;
     use std::collections::BTreeMap;
 

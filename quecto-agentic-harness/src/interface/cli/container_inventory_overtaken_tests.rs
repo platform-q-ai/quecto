@@ -4,7 +4,7 @@
 
 use super::tests::{run, script};
 use crate::application::environments::ports::EnvironmentRegistryStore;
-use crate::domain::environment_registry::{
+use crate::domain::environments::entities::environment_registry::{
     EnvironmentOrigin, EnvironmentRecord, EnvironmentStatus,
 };
 use crate::infrastructure::persistence::environment_registry_store::FileEnvironmentRegistryStore;

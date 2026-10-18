@@ -9,18 +9,25 @@
 //! capability's ports.
 use std::sync::Arc;
 
-use crate::domain::environment_registry::{EnvironmentRecord, EnvironmentRegistry, KillClaim};
-use crate::domain::environment_retention::{
+use crate::domain::environments::entities::environment_registry::{
+    EnvironmentRecord, EnvironmentRegistry, KillClaim,
+};
+use crate::domain::environments::services::environment_retention::{
     MemberFinalizeMode, SwarmRunObservation, ends_plain_environment, loss_reason,
     retains_environment, retention_reason, unrecorded_loss_reason,
 };
 
-use super::super::ports::{EnvironmentProcessCommands, HostedSwarmRunObservation};
+use super::super::ports::{
+    EndedSwarmBoards, EnvironmentProcessCommands, HostedSwarmBoard, HostedSwarmRunObservation,
+};
 
 pub struct FinalizeEnvironmentMember {
     registry: EnvironmentRegistry,
     commands: Arc<dyn EnvironmentProcessCommands>,
     hosted: Arc<dyn HostedSwarmRunObservation>,
+    /// Where a created swarm run's board is read and kept as its member
+    /// leaves, before any teardown; `None`: none is kept.
+    ended: Option<(Arc<dyn HostedSwarmBoard>, Arc<dyn EndedSwarmBoards>)>,
 }
 
 impl FinalizeEnvironmentMember {
@@ -33,6 +40,24 @@ impl FinalizeEnvironmentMember {
             registry,
             commands,
             hosted,
+            ended: None,
+        }
+    }
+
+    /// This use case, keeping in `kept` the board of a created swarm run
+    /// that has ended, read through `boards`, as the member whose exit
+    /// empties its environment leaves, under the session and that member's
+    /// label: before the retention decision and any teardown, so the board
+    /// outlives the box (#2481 S4c follow-up).
+    #[must_use]
+    pub fn keeping_ended_boards(
+        self,
+        boards: Arc<dyn HostedSwarmBoard>,
+        kept: Arc<dyn EndedSwarmBoards>,
+    ) -> Self {
+        Self {
+            ended: Some((boards, kept)),
+            ..self
         }
     }
 
@@ -45,6 +70,20 @@ impl FinalizeEnvironmentMember {
         &self,
         env_ref: &str,
         agent_uuid: &str,
+        entry_cleanup_plan: Option<(String, Vec<String>)>,
+        mode: MemberFinalizeMode,
+    ) {
+        self.finalize_labelled_member(env_ref, agent_uuid, None, entry_cleanup_plan, mode)
+            .await;
+    }
+
+    /// [`Self::finalize_member`] for the member spawned as `label`, when it
+    /// has one: the name an ended run's board is kept under.
+    pub async fn finalize_labelled_member(
+        &self,
+        env_ref: &str,
+        agent_uuid: &str,
+        label: Option<&str>,
         entry_cleanup_plan: Option<(String, Vec<String>)>,
         mode: MemberFinalizeMode,
     ) {
@@ -65,6 +104,22 @@ impl FinalizeEnvironmentMember {
         } else {
             SwarmRunObservation::NoStore
         };
+        // An ended run's board is kept before anything can tear it down:
+        // one still running or paused may yet change, and is not.
+        match (&observed, label) {
+            (SwarmRunObservation::Run(hosted), Some(label))
+                if hosted.created() && hosted.status.terminal() =>
+            {
+                self.keep_board(&record, label).await;
+            }
+            (
+                SwarmRunObservation::Run(_)
+                | SwarmRunObservation::NoStore
+                | SwarmRunObservation::NoStoreUnverified
+                | SwarmRunObservation::Unreadable(_),
+                _,
+            ) => {}
+        }
         if retains_environment(mode, &observed) {
             // `None`: the owner closed the run between the observation and
             // the loss record (#2070) — the swarm is over, the kill runs.
@@ -97,6 +152,24 @@ impl FinalizeEnvironmentMember {
         {
             Ok(()) => self.registry.complete_kill(claim),
             Err(e) => self.registry.fail_kill(claim, &e),
+        }
+    }
+
+    /// Keeps the board `record` hosts under this session and `label`, when
+    /// this use case keeps boards: best effort, as a board that cannot be
+    /// read is logged and the teardown goes on.
+    async fn keep_board(&self, record: &EnvironmentRecord, label: &str) {
+        let Some((boards, kept)) = &self.ended else {
+            return;
+        };
+        match boards.board(record).await {
+            Ok(Some(board)) => kept.keep(self.registry.session(), label, board),
+            Ok(None) => {}
+            Err(error) => tracing::warn!(
+                environment = %record.environment_ref,
+                %error,
+                "the ended swarm's board could not be kept"
+            ),
         }
     }
 

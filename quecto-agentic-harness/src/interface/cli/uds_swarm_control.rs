@@ -6,6 +6,13 @@ use serde::Deserialize;
 /// Type name of the harness's own wake nudges: never a human instruction.
 pub(super) const SWARM_WAKE: &str = "swarm_wake";
 
+/// The wake a member re-armed after a provider failure reads (#1721), in
+/// task-item words (#2478 slice B, owner-approved 2026-10-12).
+pub(super) const RESUMED_WAKE: &str = "The swarm was resumed after a provider failure interrupted your turn. Continue your interrupted work: inspect summary using your last event_cursor, read and acknowledge relevant durable inbox messages, work only on actionable task items and yield when none remain.";
+
+/// The wake a member reads when swarm work changed (#2478 slice B wording).
+pub(super) const CHANGED_WAKE: &str = "Swarm work changed. Inspect summary using your last event_cursor, then read and acknowledge relevant durable inbox messages. Work only on actionable task items; yield when none remain.";
+
 #[derive(Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum Action {
@@ -18,7 +25,6 @@ enum Action {
     /// #2390: another member's harness changed the run's control state;
     /// only this process's run watch is nudged.
     Watch,
-    UsageBudget,
 }
 
 #[derive(Deserialize)]
@@ -30,8 +36,6 @@ enum Command {
         reason: Option<String>,
         generation: Option<u64>,
         agent_id: Option<String>,
-        token_limit: Option<u64>,
-        strict_unknown: Option<bool>,
         deadline_seconds: Option<u64>,
     },
 }
@@ -43,8 +47,6 @@ pub(super) async fn intercept(ctx: &ReaderDispatchCtx<'_>) -> bool {
         reason,
         generation,
         agent_id,
-        token_limit,
-        strict_unknown,
         deadline_seconds,
     }) = serde_json::from_str(&ctx.line)
     else {
@@ -151,30 +153,6 @@ pub(super) async fn intercept(ctx: &ReaderDispatchCtx<'_>) -> bool {
         return true;
     }
     let action = match action {
-        Action::UsageBudget => {
-            let value: serde_json::Value =
-                serde_json::from_str(&ctx.line).expect("validated command");
-            if value.get("token_limit").is_none() {
-                let event = super::protocol::AgentEvent::err(
-                    id.as_deref(),
-                    "swarm_control",
-                    "token_limit is required; null explicitly disables the budget",
-                );
-                super::uds_busy_subagents::write_event(
-                    ctx.registry,
-                    ctx.client_id,
-                    id.as_deref(),
-                    "swarm_control",
-                    &event,
-                )
-                .await;
-                return true;
-            }
-            RunControlAction::UsageBudget {
-                token_limit,
-                strict_unknown: strict_unknown.unwrap_or(true),
-            }
-        }
         Action::Pause => RunControlAction::Pause {
             reason: reason.unwrap_or_else(|| "supervisor requested pause".into()),
         },
@@ -344,17 +322,27 @@ pub(super) async fn handle_wake(ctx: &mut super::uds::DispatchCtx<'_>, generatio
             let runnable = matches!(receipt.status, RunStatus::Setup | RunStatus::Running);
             let resume_turn = runnable && ctx.session.take_pending_resume_turn();
             if resume_turn {
-                super::uds::handle_prompt(ctx, super::uds::PromptCommand {
-                    id: None, type_name: SWARM_WAKE.into(),
-                    message: "The swarm was resumed after a provider failure interrupted your turn. Continue your interrupted work: inspect summary using your last event_cursor, read and acknowledge relevant durable inbox messages, work only on actionable tasks and yield when none remain.".into(),
-                    streaming_behavior: None,
-                }).await;
+                super::uds::handle_prompt(
+                    ctx,
+                    super::uds::PromptCommand {
+                        id: None,
+                        type_name: SWARM_WAKE.into(),
+                        message: RESUMED_WAKE.into(),
+                        streaming_behavior: None,
+                    },
+                )
+                .await;
             } else if receipt.wake_allowed {
-                super::uds::handle_prompt(ctx, super::uds::PromptCommand {
-                    id: None, type_name: SWARM_WAKE.into(),
-                    message: "Swarm work changed. Inspect summary using your last event_cursor, then read and acknowledge relevant durable inbox messages. Work only on actionable tasks; yield when none remain.".into(),
-                    streaming_behavior: None,
-                }).await;
+                super::uds::handle_prompt(
+                    ctx,
+                    super::uds::PromptCommand {
+                        id: None,
+                        type_name: SWARM_WAKE.into(),
+                        message: CHANGED_WAKE.into(),
+                        streaming_behavior: None,
+                    },
+                )
+                .await;
             }
         }
         Err(error) => match store_failure(&error) {
@@ -429,6 +417,86 @@ pub(super) async fn date_provider_suspension(ctx: &mut super::uds::DispatchCtx<'
     }
 }
 
+/// This process's turn control: its swarm's run control when it runs under
+/// a container contract, launched as its coordinator or not (#2467).
+pub(super) fn process_turn_control(coordinator: bool) -> super::uds_cancel::TurnControlHandle {
+    let swarm_control = crate::interface::tool_runtime::swarm_context().map(|context| {
+        std::sync::Arc::new(context)
+            as std::sync::Arc<dyn crate::application::swarm::ports::SwarmRunControl>
+    });
+    let turn_control = std::sync::Arc::new(
+        super::uds_cancel::TurnControl::with_swarm_control(swarm_control)
+            .launched_as_coordinator(coordinator),
+    );
+    seed_control_generation(&turn_control);
+    turn_control
+}
+
+/// The idle boundary every drain ends at (#2467): the provider-suspension
+/// dating it always ran, then, for the run's coordinator, the `swarm_state`
+/// its parent wakes on.
+pub(super) async fn at_idle_boundary(ctx: &mut super::uds::DispatchCtx<'_>) {
+    date_provider_suspension(ctx).await;
+    let event = match ctx.turn_control.launched_coordinator {
+        true => coordinator_swarm_state(&ctx.turn_control).await,
+        false => member_reply_ready(&ctx.turn_control),
+    };
+    if let Some(event) = event {
+        super::uds::emit_event_to_broadcast_or_writer(ctx, &event).await;
+    }
+}
+
+/// A swarm member's `reply_ready` (#2471): sent once at the idle boundary
+/// after a client's instruction ran, so its coordinator, which no longer
+/// wakes on every turn end, hears the reply.
+fn member_reply_ready(
+    turn_control: &super::uds_cancel::TurnControlHandle,
+) -> Option<super::protocol::AgentEvent> {
+    match (
+        turn_control.swarm_control.is_some(),
+        turn_control.take_client_instructions(),
+    ) {
+        (true, true) => Some(super::protocol::AgentEvent::ReplyReady),
+        (true, false) | (false, _) => None,
+    }
+}
+
+/// The run's `swarm_state` as this member reports it (#2467): only a
+/// process launched as its run's coordinator reads its board; an unreadable
+/// board is reported as unknown once it has reported before, so its parent
+/// is never left waiting for a state that will not come.
+async fn coordinator_swarm_state(
+    turn_control: &super::uds_cancel::TurnControlHandle,
+) -> Option<super::protocol::AgentEvent> {
+    use crate::domain::swarm::parent_wake::parent_wake;
+    use std::sync::atomic::Ordering;
+    let control = match turn_control.launched_coordinator {
+        true => turn_control.swarm_control.clone()?,
+        false => return None,
+    };
+    let reported = &turn_control.coordinator_reported;
+    let board = control.coordinator_board().await;
+    if let Err(error) = &board {
+        tracing::warn!("swarm_state: coordinator board unreadable: {error}");
+    }
+    let wake = match board {
+        Ok(Some(board)) => {
+            reported.store(true, Ordering::SeqCst);
+            parent_wake(Some(&board))
+        }
+        // After a report, every later boundary reports, so a held turn-end
+        // note always has a state to settle on.
+        Ok(None) | Err(_) if reported.load(Ordering::SeqCst) => parent_wake(None),
+        Ok(None) | Err(_) => return None,
+    };
+    let prompted = turn_control.take_client_instructions();
+    Some(super::protocol::AgentEvent::SwarmState {
+        wake: wake.kind(),
+        status: wake.status().map(|status| status_name(status).to_owned()),
+        prompted,
+    })
+}
+
 /// How a coordination-store failure is treated by automatic turns.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum StoreFailure {
@@ -445,3 +513,7 @@ pub(super) fn store_failure(error: &crate::domain::error::DomainError) -> StoreF
         StoreFailure::Durable
     }
 }
+
+#[cfg(test)]
+#[path = "uds_swarm_control_tests.rs"]
+mod tests;

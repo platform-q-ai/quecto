@@ -62,6 +62,39 @@ pub(super) fn help_text(out: &mut String) {
     out.push_str(
         "              trust [--path <file>]  Approve the repo-local overlay's current content\n",
     );
+    out.push_str("  board       The project board on the repository's quecto/board branch\n");
+    out.push_str(
+        "              <op> [--<field> <value>]... [--input <json>|-] [--repo <path>] [--remote <name>]\n",
+    );
+    out.push_str("                  [--json]\n");
+    out.push_str(
+        "                  ops: bootstrap list list-ready list-takeable show create update-draft\n",
+    );
+    out.push_str(
+        "                  move renew take-over link-pr unlink-pr complete clear-set-aside\n",
+    );
+    out.push_str(
+        "                  prints one JSON answer; a write needs git's user.name and user.email\n",
+    );
+    out.push_str(
+        "                  (GIT_AUTHOR_* and GIT_COMMITTER_* are not honoured). A user.name or\n",
+    );
+    out.push_str(
+        "                  user.email set in git's command scope (GIT_CONFIG_COUNT with\n",
+    );
+    out.push_str(
+        "                  GIT_CONFIG_KEY_<n> and GIT_CONFIG_VALUE_<n>) outranks the clone's, key\n",
+    );
+    out.push_str(
+        "                  by key; the scope's other keys are skipped. A write warns on stderr of\n",
+    );
+    out.push_str(
+        "                  a malformed set, which is dropped, or of one naming half an identity.\n",
+    );
+    out.push_str(
+        "                  The board is cooperative: branch protection or a server hook is the\n",
+    );
+    out.push_str("                  real control\n");
     out.push_str("  container   Container runtimes for subagents\n");
     out.push_str(
         "              init [--project <abs dir>] [--repo <url>] [--image <tag>] [--refresh] [--dry-run]\n",
@@ -85,6 +118,25 @@ pub(super) fn help_text(out: &mut String) {
         "                  preflight (runtime, jq, git, gh, image, --repo, state dir) without\n",
     );
     out.push_str("                  creating an environment; exit 1 when any check fails\n");
+    out.push_str(
+        "              ls [--all] [--json]  Recorded environments (--all: stopped too; --json:\n",
+    );
+    out.push_str(
+        "                  one line {\"environments\":[...],\"hidden_stopped\":N} for scripts)\n",
+    );
+    out.push_str(
+        "              kill <ref|name>  End one environment (exit 4 when there is nothing to kill)\n",
+    );
+    out.push_str(
+        "              kill <ref> --created-by <key>  End it only if its CREATED-BY is exactly <key>\n",
+    );
+    out.push_str(
+        "                  (exit 3, nothing killed, when another key created it; exit 4 when there is nothing to kill)\n",
+    );
+    out.push_str(
+        "              gc [--dry-run] [--name <config>] [--abandoned | --abandoned-after <duration>]\n",
+    );
+    out.push_str("                  Remove orphaned environments of a container config\n");
     out.push_str("  models      Manage runtime model registry (discover)\n");
     out.push_str("  status      Show status\n");
     out.push_str("  help        Show this help\n");

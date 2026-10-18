@@ -21,8 +21,8 @@ use crate::application::swarm::ports::{
 use crate::application::swarm::use_cases::{
     AcceptWake, AcknowledgeMessage, ActivateMember, AdmitMember, AmendRunContract, BlockTask,
     BootstrapMember, BootstrapRun, ClaimNotifications, ClaimTask, CloseRun, CompleteRun,
-    ConfigureUsageBudget, ConfirmMemberDead, CreateRun, CreateTask, ExtendRunDeadline, JoinMember,
-    JoinRun, ListFileOwners, ListTasks, LoseCoordinator, PauseRun, QuarantineMember,
+    ConfirmMemberDead, CreateRun, CreateTask, ExtendRunDeadline, JoinMember, JoinRun,
+    ListFileOwners, ListTasks, LoseCoordinator, PauseRun, QuarantineMember, ReadBoardProjection,
     ReadControlStatus, ReadEventCursor, ReadInbox, ReadRequestAdmission, ReadRunEvents,
     ReadRunSnapshot, ReadRunStatus, ReadRunSummary, ReadRunTotals, ReadTask, ReadUsageReport,
     RecordEvidence, RecordMemberLaunch, RecordRequestUsage, RecoverTask, RegisterMemberSocket,
@@ -116,6 +116,7 @@ pub fn build_swarm_board_handles_with(
             ids.clone(),
         )),
         read_run_status: Arc::new(ReadRunStatus::new(repository.clone())),
+        read_board_projection: Arc::new(ReadBoardProjection::new(repository.clone())),
         read_event_cursor: Arc::new(ReadEventCursor::new(repository.clone())),
         read_run_snapshot: Arc::new(ReadRunSnapshot::new(repository.clone(), clock.clone())),
         read_run_totals: Arc::new(ReadRunTotals::new(repository.clone(), clock.clone())),
@@ -218,10 +219,6 @@ pub fn build_swarm_board_handles_with(
             repository.clone(),
             clock.clone(),
             ids.clone(),
-        )),
-        configure_usage_budget: Arc::new(ConfigureUsageBudget::new(
-            repository.clone(),
-            clock.clone(),
         )),
         record_request_usage: Arc::new(RecordRequestUsage::new(
             repository.clone(),

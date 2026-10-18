@@ -218,7 +218,7 @@ fn a_stopped_ref_is_removed_only_on_the_runtimes_own_word() {
         EnvironmentMemberShutdown, MemberShutdownReport, PortFuture,
     };
     use crate::application::environments::use_cases::KillEnvironment;
-    use crate::domain::environment_registry::{
+    use crate::domain::environments::entities::environment_registry::{
         EnvironmentOrigin, EnvironmentRecord, EnvironmentRegistry, EnvironmentStatus,
         EnvironmentTarget,
     };

@@ -4,6 +4,75 @@
 
 use super::{AgentSession, PendingMessage};
 
+/// How a sub-agent note is queued (#894, #2467).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NoteClass {
+    /// A turn end: coalesced across agents, and it clears the agent's
+    /// remembered failure.
+    Completion,
+    /// A failure: kept verbatim, and a repeat of the agent's last failure
+    /// text is dropped.
+    Failure,
+    /// A swarm coordinator's run state: kept verbatim, never a repeat; the
+    /// same state can be news again after the parent acted on it.
+    State,
+}
+
+impl PendingMessage {
+    /// A completion (`true`) or failure (`false`) note.
+    pub fn subagent_notification(
+        agent_id: String,
+        sequence: u64,
+        content: String,
+        is_completion: bool,
+    ) -> Self {
+        let class = match is_completion {
+            true => NoteClass::Completion,
+            false => NoteClass::Failure,
+        };
+        Self::subagent_note(agent_id, sequence, content, class)
+    }
+    pub fn subagent_note(
+        agent_id: String,
+        sequence: u64,
+        content: String,
+        class: NoteClass,
+    ) -> Self {
+        Self::SubagentNotification {
+            agent_id,
+            sequence,
+            content,
+            class,
+        }
+    }
+}
+
+impl NoteClass {
+    pub fn of(
+        note: &crate::infrastructure::tools::subagent_registry::SequencedSubagentNotification,
+    ) -> Self {
+        use crate::infrastructure::tools::subagent_registry::SubagentNotification as Note;
+        match note.notification {
+            Note::Completed { .. } => Self::Completion,
+            Note::SwarmState { .. } => Self::State,
+            Note::Stalled { .. } | Note::Errored { .. } | Note::Exited { .. } => Self::Failure,
+        }
+    }
+
+    /// Whether a later note of this class may stand in for a still-pending
+    /// note of class `held` from the same agent: latest wins, except that a
+    /// plain turn end never replaces a coordinator's run state and a run
+    /// state never replaces a failure (#2467).
+    pub fn supersedes(self, held: NoteClass) -> bool {
+        match (self, held) {
+            (Self::Completion, Self::State) | (Self::State, Self::Failure) => false,
+            (Self::Completion, Self::Completion | Self::Failure)
+            | (Self::State, Self::Completion | Self::State)
+            | (Self::Failure, _) => true,
+        }
+    }
+}
+
 /// Outcome of [`AgentSession::enqueue_subagent_notification`] (#1082 review):
 /// callers must distinguish "this is a new note to announce" from "stale
 /// duplicate" from "dropped for capacity" — a single bool conflated the
@@ -48,6 +117,21 @@ impl AgentSession {
         true
     }
 
+    /// Queue a sub-agent note in its class (#2467): the one way the
+    /// dispatch loops queue the notes the monitor sends.
+    pub fn enqueue_note(
+        &mut self,
+        note: &crate::infrastructure::tools::subagent_registry::SequencedSubagentNotification,
+    ) -> NotificationEnqueueOutcome {
+        let (agent_id, sequence) = note.dedupe_key();
+        self.enqueue_subagent_notification(
+            agent_id,
+            sequence,
+            note.to_message(),
+            NoteClass::of(note),
+        )
+    }
+
     /// Enqueue a subagent completion note for delivery at the parent's NEXT
     /// idle boundary (#816). The note is buffered as a
     /// [`PendingMessage::SubagentNotification`] so it is drained as a single
@@ -74,7 +158,7 @@ impl AgentSession {
         agent_id: String,
         sequence: u64,
         content: String,
-        is_completion: bool,
+        class: NoteClass,
     ) -> NotificationEnqueueOutcome {
         // Dedupe against the monotonic per-agent sequence — the passive broadcast
         // path also records completions, so a repeated/stale sequence is dropped
@@ -87,30 +171,40 @@ impl AgentSession {
         {
             return NotificationEnqueueOutcome::Duplicate;
         }
-        if is_completion {
-            self.last_failure_notifications.remove(&agent_id);
-        } else if self.last_failure_notifications.get(&agent_id) == Some(&content) {
-            self.repeated_failure_notifications =
-                self.repeated_failure_notifications.saturating_add(1);
-            self.record_subagent_notification(agent_id, sequence);
-            self.bump_visible_generation();
-            return NotificationEnqueueOutcome::Duplicate;
+        let repeated = self.last_failure_notifications.get(&agent_id) == Some(&content);
+        match (class, repeated) {
+            // A turn end or a coordinator's run state is news after a
+            // failure: the same failure text is news again after it.
+            (NoteClass::Completion | NoteClass::State, _) => {
+                self.last_failure_notifications.remove(&agent_id);
+            }
+            (NoteClass::Failure, true) => {
+                self.repeated_failure_notifications =
+                    self.repeated_failure_notifications.saturating_add(1);
+                self.record_subagent_notification(agent_id, sequence);
+                self.bump_visible_generation();
+                return NotificationEnqueueOutcome::Duplicate;
+            }
+            (NoteClass::Failure, false) => {}
         }
-        let failure = (!is_completion).then(|| content.clone());
+        let failure = (class == NoteClass::Failure).then(|| content.clone());
         // Coalesce: if a still-pending note for this same agent has not yet been
         // drained, replace it in place (latest wins) instead of queuing a second
         // turn — a noisy child must not cost N extra LLM turns. The pending
         // note's own sequence guards staleness too (#1082 review round 2): if
         // the dedupe watermark for this agent was evicted at capacity, an older
-        // sequence must not overwrite a newer pending note.
+        // sequence must not overwrite a newer pending note. A coordinator's
+        // pending run state is never replaced by a plain turn end (#2467).
         if let Some(existing) = self
             .pending
             .iter_mut()
             .chain(self.overflow_notifications.iter_mut())
             .find_map(|m| match m {
-                PendingMessage::SubagentNotification { agent_id: id, .. } if *id == agent_id => {
-                    Some(m)
-                }
+                PendingMessage::SubagentNotification {
+                    agent_id: id,
+                    class: held,
+                    ..
+                } if *id == agent_id && class.supersedes(*held) => Some(m),
                 _ => None,
             })
         {
@@ -122,24 +216,14 @@ impl AgentSession {
             {
                 return NotificationEnqueueOutcome::Duplicate;
             }
-            *existing = PendingMessage::subagent_notification(
-                agent_id.clone(),
-                sequence,
-                content,
-                is_completion,
-            );
+            *existing = PendingMessage::subagent_note(agent_id.clone(), sequence, content, class);
             self.record_subagent_notification(agent_id.clone(), sequence);
             if let Some(failure) = failure {
                 self.last_failure_notifications.insert(agent_id, failure);
             }
             return NotificationEnqueueOutcome::Retained;
         }
-        let note = PendingMessage::subagent_notification(
-            agent_id.clone(),
-            sequence,
-            content,
-            is_completion,
-        );
+        let note = PendingMessage::subagent_note(agent_id.clone(), sequence, content, class);
         if self.pending.len() < Self::MAX_PENDING {
             self.pending.push_back(note);
         } else if self.overflow_notifications.len() < Self::MAX_DEDUPE_AGENTS {

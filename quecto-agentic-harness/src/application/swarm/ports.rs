@@ -14,9 +14,9 @@ use super::dto::{
     AmendedContract, CallMeasure, CompletionState, CountedTask, DictRow, DroppedRecords, FileRow,
     LatestActivity, LaunchIdentity, MemberClaimCounts, MemberRow, MemberStatusRow, MessageRow,
     MessageTally, NewEvidence, NewMember, NewMessage, NewRequestUsage, NewReservation, NewRun,
-    NewTask, NotificationCursor, PriorEvidence, RunContract, RunOwnerRow, RunStatusRow,
-    ScopeObservation, StoredContract, StoredRequestUsage, TaskRow, TaskUpdate, UsageReport,
-    UsageRow, UsageStanding,
+    NewTask, NotificationCursor, PriorEvidence, ProjectionLimits, ProjectionRows, RunContract,
+    RunOwnerRow, RunStatusRow, ScopeObservation, StoredContract, StoredRequestUsage,
+    StoredRevision, TaskRow, TaskUpdate, UsageReport, UsageRow, UsageStanding,
 };
 use crate::domain::error::DomainError;
 use crate::domain::swarm::{
@@ -134,7 +134,24 @@ pub trait SwarmRunControl: Send + Sync {
     /// rather than at its refresh (#2390). No board call, no model turn,
     /// no prompt, and the wake cursor is left as it is.
     fn nudge_watch(&self);
+    /// The run as its coordinator reads it at an idle boundary (#2467):
+    /// `None` unless this process was launched as its run's coordinator.
+    fn coordinator_board(&self) -> CoordinatorBoardFuture<'_>;
 }
+
+/// What a coordinator reads when one of its swarm workers ends a turn
+/// (#2471): `None` unless this member is its run's coordinator.
+pub trait WorkerBoardRead: Send + Sync {
+    fn worker_board(
+        &self,
+    ) -> PortFuture<'_, Result<Option<crate::domain::swarm::worker_wake::WorkerBoard>, DomainError>>;
+}
+
+/// [`SwarmRunControl::coordinator_board`]'s answer.
+pub type CoordinatorBoardFuture<'a> = PortFuture<
+    'a,
+    Result<Option<crate::domain::swarm::parent_wake::CoordinatorBoard>, DomainError>,
+>;
 
 // ─── The coordination board (epic #2265, #2270) ─────────────────────────────
 //
@@ -514,9 +531,9 @@ pub trait CheckoutPaths: Send + Sync {
     fn normalize(&self, path: &str) -> Result<String, BoardError>;
 }
 
-/// The request-usage ledger and the token budget (#2273, #2274). Each
-/// method creates `request_usage` and `usage_budget` when absent, as
-/// Python's `_usage_schema` does, before it reads or writes them.
+/// The request-usage ledger and the stored budget, never applied
+/// (#2273, #2274). Each method creates `request_usage` and `usage_budget`
+/// when absent, as Python's `_usage_schema` does, before it reads them.
 pub trait BoardUsage {
     /// `Transaction.usage_report`: `request_usage` and `usage_budget` are
     /// created when absent (Python's statements, in its order), then the
@@ -532,16 +549,10 @@ pub trait BoardUsage {
     /// The budget and the two totals of [`Self::usage_report`] (#2340),
     /// read as it reads them (the tables created when absent, the default
     /// budget without a row) but with one aggregate over the ledger and
-    /// nothing else: what the budget decision and the control receipt
-    /// need, on every recorded request.
+    /// nothing else: what the control receipt needs on every request.
     fn usage_standing(&self) -> Result<UsageStanding, BoardError>;
-    /// `usage_report()['budget']`: the stored budget payload as
-    /// `json.loads` reads it, or the default budget when there is no row.
-    fn usage_budget(&self) -> Result<Value, BoardError>;
-    /// `INSERT INTO usage_budget VALUES(1,?) ON CONFLICT(id) DO UPDATE`:
-    /// the budget row's payload becomes `budget` written by plain
-    /// `json.dumps` (insertion order, `", "` and `": "`).
-    fn configure_usage_budget(&self, budget: &Value) -> Result<(), BoardError>;
+    /// Makes the usage tables when absent, reading nothing.
+    fn usage_tables(&self) -> Result<(), BoardError>;
     /// The row of `request_id`, when the ledger holds one.
     fn request_usage(&self, request_id: &str) -> Result<Option<StoredRequestUsage>, BoardError>;
     /// `INSERT INTO request_usage VALUES(?,?,?,?,?,?,?,?,?,?)`, the
@@ -579,6 +590,27 @@ pub trait BoardEvidence {
     fn evidence_rows(&self) -> Result<Vec<DictRow>, BoardError>;
 }
 
+/// The supervising session's projection reads (#2478): allowlisted columns
+/// and bounded rows by plain SELECTs, in a read transaction, creating and
+/// altering nothing; an older writer's board reads as it is.
+pub trait BoardProjectionReads {
+    /// The board's revision (the latest event's id plus the usage ledger's
+    /// latest row id), which every write the projection shows moves, and
+    /// the id of the run it counts.
+    ///
+    /// # Errors
+    /// The store's refusal; a run id longer than the board writes.
+    fn projection_revision(&self) -> Result<StoredRevision, BoardError>;
+
+    /// The allowlisted columns, at most `limits` rows of each kind, copied
+    /// only while their stored text (measured first) fits `limits.bytes`.
+    ///
+    /// # Errors
+    /// The store's refusal; a value no column type can hold; a run or an
+    /// item's state larger than the board writes.
+    fn projection_rows(&self, limits: ProjectionLimits) -> Result<ProjectionRows, BoardError>;
+}
+
 /// Every role over one transaction.
 pub trait BoardTransaction:
     BoardRuns
@@ -591,6 +623,7 @@ pub trait BoardTransaction:
     + BoardWakes
     + BoardUsage
     + BoardEvidence
+    + BoardProjectionReads
 {
 }
 
@@ -605,6 +638,7 @@ impl<T> BoardTransaction for T where
         + BoardWakes
         + BoardUsage
         + BoardEvidence
+        + BoardProjectionReads
         + ?Sized
 {
 }

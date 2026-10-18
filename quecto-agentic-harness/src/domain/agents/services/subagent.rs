@@ -117,12 +117,13 @@ pub enum ContainerSelection {
         /// (#1410) — Quecto passes no source information.
         container_config: Option<String>,
         /// Optional environment name for later `{"mode":"existing","name"}`
-        /// joins and `kill_container` targeting (#1369 slice 2).
-        name: Option<String>,
+        /// joins and `kill_container` targeting (#1369 slice 2); only an
+        /// allowlisted name can be held.
+        name: Option<crate::domain::environments::entities::environment_name::EnvironmentName>,
     },
     /// Join an existing session environment by ref or name (#1369 slice 2).
     Existing {
-        target: crate::domain::environment_registry::EnvironmentTarget,
+        target: crate::domain::environments::entities::environment_registry::EnvironmentTarget,
     },
 }
 

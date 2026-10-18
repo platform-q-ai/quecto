@@ -158,6 +158,7 @@ fn every_domain_refusal_carries_its_kind() {
 fn observation(outcome: BoardOpOutcome) -> BoardOpObservation {
     BoardOpObservation {
         op: "_snapshot".into(),
+        name_form: None,
         actor_ref: "worker-1".into(),
         role: Some(BoardRole::Host),
         run_id: Some("0123456789abcdef0123456789abcdef".into()),
@@ -212,6 +213,25 @@ fn a_swarm_op_record_is_flat_and_round_trips() {
     assert_eq!(line["outcome"], "ok");
     assert_eq!(line.get("kind"), None);
     assert_eq!(serde_json::from_value::<AuditEvent>(line).unwrap(), ok);
+}
+
+/// #2478: a record says which names the call used where the swarm's
+/// tasks were renamed task items, `legacy` or `current`, and reads back as
+/// it was written; a record of a call that used neither (and one written
+/// before the field existed) leaves it out.
+#[test]
+fn a_swarm_op_record_says_which_names_the_call_used() {
+    for (form, text) in [(NameForm::Legacy, "legacy"), (NameForm::Current, "current")] {
+        let record = AuditEvent::SwarmOp(BoardOpObservation {
+            name_form: Some(form),
+            ..observation(BoardOpOutcome::Ok)
+        });
+        let line = serde_json::to_value(&record).unwrap();
+        assert_eq!(line["name_form"], text, "{line}");
+        assert_eq!(serde_json::from_value::<AuditEvent>(line).unwrap(), record);
+    }
+    let line = serde_json::to_value(AuditEvent::SwarmOp(observation(BoardOpOutcome::Ok))).unwrap();
+    assert_eq!(line.get("name_form"), None, "{line}");
 }
 
 /// Nothing measured is written as `null`, never as a zero that reads as

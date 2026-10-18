@@ -1,7 +1,7 @@
 # Swarm coordination
 
 `swarm` is a compiled native tool: members coordinate through structured board
-ops (`{"op":"claim","task_id":3}`), each served in-process by the Rust board
+ops (`{"op":"claim","task_item_id":3}`), each served in-process by the Rust board
 over the run's SQLite file (ADR-0030). Members use the `bash` tool for Git,
 builds, tests and any other computation.
 
@@ -39,15 +39,17 @@ without the documentation files being present in the container checkout.
 |---|---|
 | Agent/container status | Existing TUI agent views or `agent_cmd` inventory/state commands |
 | Goal, criteria, task progress, blockers and evidence | Ask the coordinator to call `swarm {"op":"summary"}` and report the result |
-| Detailed live task/file pages | Coordinator uses `swarm {"op":"tasks"}` / `swarm {"op":"file_owners"}` (`offset`, `limit`) while the run is running |
+| Detailed live task/file pages | Coordinator uses `swarm {"op":"task_items"}` / `swarm {"op":"file_owners"}` (`offset`, `limit`) while the run is running |
 | Coordinator report | Master reads `agent_cmd.get_messages` using the coordinator's returned agent UUID |
 | Final result | A run that ended is `paused` holding `summary.outcome` (`succeeded`, `blocked`, `failed`, `budget-exhausted`) and `summary.outcome_reason`; read the final revision and criterion evidence, then resume or close it with `swarm_control` |
 | Evidence files | Ask the coordinator to export them using ordinary file/Bash tools before environment teardown |
 
-There are no dedicated public swarm creation, update, inspection or result UDS
-endpoints, and no swarm dashboard/config panel in this change. Existing UDS agent
-supervision carries prompts and reports; it does not expose the durable board as
-a structured event feed. That public interface is follow-on work.
+A supervising client reads the board of a swarm its parent's session hosts
+on that parent's socket: `get_swarm_board {swarm}` answers the run, its items,
+members and totals, and `swarm_board_changed {swarm, run, revision, removed}`
+tells it when the board moved, was made again or went (see `uds-protocol.md`,
+#2478). There are no public swarm creation or update UDS endpoints, and no
+swarm dashboard/config panel.
 
 On a wake hint, inspect summary first. Once the run is no longer running,
 `op=summary`, `op=events` and `op=usage` remain readable but every board op is
@@ -162,9 +164,23 @@ named JSON fields, with the same defaults) and the same JSON result, except
 where Python answered `null`: an op that changes a task answers the task's row
 as it now stands, and every other op answers what it changed, so no op answers
 a bare `null` (#2394). Otherwise only the calling syntax changed,
-`{"op":"claim","task_id":3}`. `swarm_board_ops.rs`
+`{"op":"claim","task_item_id":3}`. `swarm_board_ops.rs`
 (`BOARD_OPS`) is the one table of them; the tool schema and the dispatcher's
 argument binding are rendered from and held to it.
+
+The swarm's tasks are task items (#2478). The tool advertises `task_item`,
+`task_items`, `task_item_create`, `verify_task_item` and `revalidate_task_item`
+for the ops below named by their old names (the `OP_ALIASES` table beside
+`BOARD_OPS`), and `task_item_id` for `task_id` on every op that takes it; the
+old names are still accepted and mean the same. A call giving both `task_id`
+and `task_item_id` with different values is refused (`calling`). Agents read
+task items (slice B): the tool presents the board's answers and refusals in
+those words (`summary`'s `task_item_count` and `task_items`, a file row's
+`task_item`, `release_files`' `task_item_id`, the events' `task_item_created`
+with `{"task_item": N}`, recovery hints as calls such as
+`revoke(task_item_id, reason)`, `unknown task item`), while the board file, its
+events, its refusals, the `swarm_op` records and the golden fixtures keep the
+old names. The table below names the board's own methods.
 
 | Op | Fields (JSON types; defaults) | Result | Who |
 |---|---|---|---|
@@ -196,8 +212,8 @@ argument binding are rendered from and held to it.
 
 Where a board method already had a harness op, the harness op is it:
 `summary` (`since`), `events` (`after`, `limit`), `pause` (`reason`),
-`resume` (refused for every member), `usage_budget` (`token_limit`,
-`strict_unknown`) and `usage`. `create` stays the harness op (it creates,
+`resume` (refused for every member) and `usage`. `usage_budget` is gone:
+no token budget limits a swarm (owner decision, 2026-10-14). `create` stays the harness op (it creates,
 activates and supervises the run, and takes `deadline_in_seconds`); the
 board's own `create` is not exposed. `reconcile` and `cancel_run` are
 harness ops too.
@@ -270,10 +286,10 @@ A worked sequence, one call per line:
 
 ```json
 {"op":"summary"}
-{"op":"task_create","request":"implement-v1","title":"Implement the behavior","acceptance":["Acceptance tests pass"],"dependencies":[]}
-{"op":"claim","task_id":1}
-{"op":"reserve","task_id":1,"token":"<claim token>","paths":["src/feature.rs","tests/feature.rs"]}
-{"op":"submit","task_id":1,"token":"<claim token>","evidence":[{"artifact":"evidence/acceptance.log","revision":"the-exact-commit-or-artifact-digest"}]}
+{"op":"task_item_create","request":"implement-v1","title":"Implement the behavior","acceptance":["Acceptance tests pass"],"dependencies":[]}
+{"op":"claim","task_item_id":1}
+{"op":"reserve","task_item_id":1,"token":"<claim token>","paths":["src/feature.rs","tests/feature.rs"]}
+{"op":"submit","task_item_id":1,"token":"<claim token>","evidence":[{"artifact":"evidence/acceptance.log","revision":"the-exact-commit-or-artifact-digest"}]}
 ```
 
 Between `reserve` and `submit`, implement and test with the existing tools,
@@ -314,7 +330,7 @@ member, `idle` meaning it has written no board event for 300 seconds; and
 `unknown` for anything else, including an owner id that is not text (only a board edited from outside holds one). An `active` or `idle` owner is named as a `send`
 recipient in `contact` (`{"op":"send","request":...,"recipient":"<owner id>","body":...}`); for every
 other owner `contact` is null and `recovery` says how the coordinator moves the
-work (`recover(task) or revoke(task, reason)` for a dead owner; resume the run,
+work (`recover(task_item_id) or revoke(task_item_id, reason)` for a dead owner, as the tool presents the board's `recover(task) or revoke(task, reason)`; resume the run,
 then `revoke`, for a lost one). Board activity is the only liveness the store
 sees: an idle owner may be mid-turn running a long command, so `idle` is a
 prompt to look (or `send`), not proof of a stall, and nothing follows from it
@@ -405,8 +421,8 @@ blockers and evidence. History is opt-in through `op=events` (`after`, `limit` 1
 entries beyond the first page. File reservations are bounded to 1000 per run. The full
 audit remains in SQLite. Every end of a run is a resumable pause that only the
 supervisor outside the swarm lifts (#1729): `stop` with `status`
-`blocked`, `failed` or `budget-exhausted`, `complete` (`succeeded`),
-an observed-token budget and the wall-clock deadline all move the run to
+`blocked`, `failed` or `budget-exhausted`, `complete` (`succeeded`)
+and the wall-clock deadline all move the run to
 `paused` holding that outcome and reason (`summary.outcome`,
 `summary.outcome_reason`, the control receipt's `outcome`). Nothing is killed:
 members stay live with their claims, reservations, inboxes and evidence; their
@@ -429,8 +445,8 @@ this harness launched itself; a member reachable neither way is reported as
 a settlement failure — no member is ever ended by its pid, and a member's
 recorded pid is only the store's liveness observation), and the
 coordinator harness stays for reporting. A run paused for `budget-exhausted` refuses to resume until
-the supervisor grants budget (`swarm_control extend` with `deadline_seconds`,
-or `usage_budget`); the refusal names what to grant. Members, including the
+the supervisor grants time (`swarm_control extend` with `deadline_seconds`);
+the refusal names what to grant. Members, including the
 coordinator's `swarm {"op":"resume"}`, cannot resume or close a run. Only
 `cancelled` (`op=cancel_run`, the parent cancellation operation) is terminal at
 once. Put final report data on the board before calling `complete` or `stop`:
@@ -506,7 +522,8 @@ the surviving store is not wired yet; a join into the retained environment is
 admitted for inspection but does not revive it.
 
 The required run budget is wall-clock time. A harness timer supervises the deadline
-even when agents are idle. There is no turn cap. An optional observed-token budget can durably pause admission; it does not cancel already billed usage or guarantee a provider-side spending cap.
+even when agents are idle. There is no turn cap, and no token budget: usage is
+measured and reported, never limited (owner decision, 2026-10-14).
 The board holds no SQLite transaction across model/tool execution or lifecycle
 notifications. SQLite uses short immediate transactions and a bounded contention
 timeout, on a suitable **local filesystem** only. Corrupt, missing or locked state
@@ -524,7 +541,7 @@ inward:
   stable `RefusalKind`, and the pure policy (`policy.rs`, `validation.rs`,
   `dependencies.rs`, `notification.rs`, `owner.rs`, `usage.rs`,
   `telemetry.rs`): authorization, deadline, admission, completion,
-  revalidation, wake-notification, owner-liveness and usage-budget decisions,
+  revalidation, wake-notification and owner-liveness decisions,
   without I/O. `mod.rs` also holds the membership, process identity and
   outcome vocabulary.
 - **Application** (`src/application/swarm/`): the capability's role-segregated
@@ -578,6 +595,42 @@ coordinator acceptance. Members use the Bash tool for Git, checks, computation
 and other external commands under its configured policy; they must not raise
 or bypass configured limits.
 
+A coordinator's workers report through the board, not through their turn ends
+(#2471). The coordinator is the spawn parent of the workers it launches, and
+each of their turn ends used to raise the ordinary sub-agent note, which woke it
+for an empty inbox.
+
+**Who this applies to:** a worker that holds a board member reservation and
+was launched by the process that created its container, and so its run. Every
+other child keeps the ordinary note on every turn end. That includes plain
+sub-agents, workflows, a resumed coordinator, and a worker's own helpers.
+
+**What reaches the coordinator** from one of its workers:
+- **The reply to its own instruction.** After a `prompt`, `steer` or
+  `follow_up` the coordinator sent through `agent_cmd` has run, the worker's
+  harness sends `reply_ready` at its next idle boundary, and the coordinator
+  gets the ordinary note. A prompt to a busy worker is queued and counts too;
+  an instruction the worker refuses does not. The spawn's own task is not a
+  reply: its end is the board's to report. After a failed turn the worker's
+  error note is the reply.
+- **The first good turn after a failure.** The worker's error note is sent as
+  before. The turn that recovers is sent too, so the coordinator's note queue
+  forgets the failure and a later identical failure is news again.
+- **Stranded work.** At any other turn end, the coordinator's harness reads
+  the board (`_status`, `_run_totals`, `tasks`). While the run is live, it
+  reports a task claimed by a worker that is not starting or in a turn, and
+  ready work while no worker is working: "Swarm work is stranded … N claimed
+  task item(s) held by workers not working, M ready task item(s) with no worker
+  working". The coordinator's own claims never count, and a board read older
+  than one already applied is dropped. It isn't reported again until it grows
+  (a new claim or more ready work), or a worker it names (any worker, for
+  ready work) takes another turn.
+
+If the board can't be read, or doesn't name this process coordinator, the
+ordinary note is sent, unless the worker has already begun another turn. Error and exit notes are unchanged. Submissions,
+blocks, messages and deaths reach the coordinator as board wake hints, as
+described below.
+
 Wake hints are selected from the invoking member's actionable events and coalesced
 using a durable per-actor cursor. Reading the board, acknowledging messages and
 reservation bookkeeping do not broadcast more work. Message hints target their
@@ -623,7 +676,7 @@ a bound spec) is not torn down, so create the run before spawning members. A
 host-local master may still use a workflow to supervise the swarm.
 
 For a clarification or approval, keep the run **running**, mark the affected task
-with `{"op":"block","task_id":<id>,"token":"<claim token>","reason":"<question>"}`,
+with `{"op":"block","task_item_id":<id>,"token":"<claim token>","reason":"<question>"}`,
 report the exact question to the master and yield the turn. Do not sleep/poll.
 `{"op":"stop","status":"blocked","reason":"..."}` ends
 the run: it becomes a pause holding `blocked` that only the master can resume or
@@ -662,8 +715,8 @@ scope); under Docker use `docker logs quecto-env-<id>`. An environment that vani
 it. See [Container runtimes](../../docs/container-runtimes.md#the-official-dockerpodman-adapter).
 
 The compiled [agent manual](docs-tool-embeds/swarm.md#durable-supervisor-controls-and-reports)
-contains supervisor command examples, receipt semantics, raw export and budget
-configuration. `swarm_control` pause/resume/close/extend/status/usage_budget
+contains supervisor command examples, receipt semantics and raw export.
+`swarm_control` pause/resume/close/extend/status
 bypass the model queue and route through ancestors to the addressed member. Swarm creation and a
 general dashboard event API remain separate follow-on work.
 
@@ -700,11 +753,11 @@ at capacity. Duplicate request IDs are counted once. An accounting outbox retain
 cancelled and unacknowledged observations for idempotent retry at turn boundaries;
 persistence failure stops automatic work.
 
-`op=usage` exposes per-member totals and the latest 10 observations. Budget limits
-count observed context-input plus output tokens, warn once at 80%, and pause at
-the limit. Strict unknown-usage handling pauses on an attempted request lacking
-usage. Budgets default off; explicit null disables them. Concurrent requests can
-overshoot before their usage arrives. This is not a provider billing guarantee.
+`op=usage` exposes per-member totals and the latest 10 observations. No token
+budget limits a run (owner decision, 2026-10-14): usage never warns or pauses
+it. A budget a board stored before then still loads and is reported as stored,
+`warned` included, and is never applied; a `usage-warning` event or a
+`budget-exhausted` outcome an old run recorded still reads.
 
 Runtime provenance reports process identity, package version, optional build-time
 revision/dirty status, and a background-computed executable SHA-256. A workload
@@ -750,14 +803,11 @@ handled below the model) and, only if a member is still stuck, steer it. When a
 member holds a claim it will not finish, the coordinator has three tools and
 no prescribed order: an explicit `agent_cmd` `steer` or `follow_up` re-arms a
 member suspended by a provider failure (#1712); `agent_cmd` `set_model` moves
-it off a failing provider; `{"op":"revoke","task_id":<id>,"reason":"..."}` reassigns its work
+it off a failing provider; `{"op":"revoke","task_item_id":<id>,"reason":"..."}` reassigns its work
 so another member can claim it. `recover` applies once the member's
 death is confirmed (its harness exited under the coordinator's own
-observation, for instance after `agent_cmd kill`). A run paused because a
-strict budget saw an answered request without usage re-pauses on the next
-admission until `strict_unknown` is disabled (or the budget removed); raising
-the limit alone does not clear it. Cancelled and rejected attempts never count
-as unknown usage. A coordinator issuing `swarm {"op":"pause"}` from inside its own
+observation, for instance after `agent_cmd kill`). Cancelled and rejected
+attempts never count as unknown usage. A coordinator issuing `swarm {"op":"pause"}` from inside its own
 turn suspends that turn: the pause receipt is durable on the board but the
 calling turn ends without a tool result. Send an explicit prompt to
 continue processing retained instructions. Paused queued instructions remain
@@ -795,7 +845,8 @@ body, evidence, reason, path or other board text:
 | Field | Meaning |
 |---|---|
 | `turn` | Always `null`: a board op is not filed under an agent turn (the board is called without one) |
-| `op` | The board method (`unknown` for a name that is none) |
+| `op` | The board method (`unknown` for a name that is none). An op called by its task-item name (#2478: `task_item`, `task_items`, `task_item_create`, `verify_task_item`, `revalidate_task_item`) is recorded by its old name (`task`, `tasks`, `task_create`, `verify_task`, `revalidate_task`) |
+| `name_form` | For a structured op (#2478), which names the call used where the swarm's tasks were renamed task items: `legacy` when it used any old name (one of those five ops by its old name, or `task_id`), `current` when it used task-item names only (`task_item_id` included). Left out for a call that used neither (an op not renamed, given no task id), for the harness's own calls, and in records written before #2478. Counting `legacy` shows whether the old names are still in use; the run summary counts both per op (`name_forms`) |
 | `actor_ref` | The caller's member id: the id the caller chose for itself on the board (`members.id`), redacted if it looks like a credential, and cut to its first 128 characters (a refused call can name any id) |
 | `role` | `host` for the harness's own ops, including the `summary` the harness reads for itself to judge a run after an op or when it settles one; for a member's own `summary` or `reconcile`, and for a member-facing op (`task_create`, `claim`, ...), when the board answered it as a member's, or refused it only after the operation gate authorised the caller as a member (a stale claim token, a task in the wrong state, a refusal after the op's writes committed), the caller's role in the run as the op read it: `coordinator`, `integrator`, or `worker` for any other member; `null` for a refusal before or by the gate itself (`not_member`, `not_coordinator`, `run_missing`, or a run that permits no new work), or when the op read no run (the board holds none). A stranger is never recorded as `worker`. A member whose death was confirmed still holds its role in the run: the gate admits it to read-only ops, so its reads (`summary`, `events`, ...) record `worker` (or its other role), and only its mutations, which the gate refuses as `not_member`, record `null` (#2313) |
 | `run_id` | The run the op found, when it found one and its id is one the board generates (32 lowercase hex digits); `null` otherwise, so an id edited into the board from outside is never recorded |
@@ -810,7 +861,7 @@ body, evidence, reason, path or other board text:
 | `commit_us` | The time the op's `COMMIT`s took, summed over its transactions, a failed one included. The whole `COMMIT` is timed, so when a reader holds off the commit the busy handler's sleep is in it too (and in `busy_wait_us`). For an op that wrote, the rollback journal's and the database's `fsync`s, which are most of a writing op's time on a disk-backed board (#2340: about 2.4 ms each on an idle btrfs disk, tens to hundreds of milliseconds while other processes write to the same disk); `0`, not `null`, for an op whose transactions all ended before a `COMMIT` (a refusal rolls back); `null` when nothing was measured (the op began no transaction). Absent from records written before #2340 |
 | `cursor_moved` | Whether the op moved the caller's cursor: its notification cursor for `_notifications`, its wake cursor for `_accept_wake`; for a `summary` given a cursor, whether the board's cursor is no longer it (`false` for the `unchanged` answer); `null` for an op that has no cursor to move, and for a refusal |
 | `result_bytes` | The size of the JSON the op answered, as its compact serialization (`serde_json`'s, which is not the size of Python's `json.dumps` text with its spaced separators); 0 for a refusal |
-| `decision` | What an answered op decided, as a snake_case kind the board names (`recorded`, `grace_pending`, `already_dead`, `coordinator_confirmed`, `lost`, ...); left out for a refusal, but for a `committed` one. `_request_admission`'s names the gate that read it (#2339): `model_gate` once per model request, before its first send (each request also records one `_record_request`, which may add `redelivered` records of its own), `retry_gate` before each reattempt of one (a retry, a stream re-initiation, a resend after an OAuth refresh), `tool_gate` before each tool call; a read at any gate in which the token budget warns or pauses the run records `warned` or `paused` in place of the gate. A member so reads its admission about `1 + t` times per request, `t` being the request's tool calls |
+| `decision` | What an answered op decided, as a snake_case kind the board names (`recorded`, `grace_pending`, `already_dead`, `coordinator_confirmed`, `lost`, ...); left out for a refusal, but for a `committed` one. `_request_admission`'s names the gate that read it (#2339): `model_gate` once per model request, before its first send (each request also records one `_record_request`, which may add `redelivered` records of its own), `retry_gate` before each reattempt of one (a retry, a stream re-initiation, a resend after an OAuth refresh), `tool_gate` before each tool call. A member so reads its admission about `1 + t` times per request, `t` being the request's tool calls |
 | `run_status` | For the loss and death ops (`_quarantine`, `_confirmed_dead`, `_lose_coordinator`), the run's status as the op found it, before it wrote anything: `setup`, `running`, `paused`, `succeeded`, `blocked`, `failed`, `cancelled`, `budget_exhausted`, or `unknown` for a NULL or edited status (whose text is never recorded); left out for other ops |
 | `exit` | For `_confirmed_dead`, the exit kind it was given: `orderly` or `abrupt` |
 | `reservations_retained` | For a confirmed death, the file reservations it left held: an abrupt exit's, or 0 once an orderly exit released them |
@@ -820,7 +871,7 @@ body, evidence, reason, path or other board text:
 | `fast_path_defeated` | For a `summary` given the board's own cursor, whether an owner turned idle by the clock alone since it, which defeats the `unchanged` answer |
 | `placeholder_created` | For `_bootstrap`, whether it wrote the container's placeholder run; its `decision` is the join's branch (`admitted`, `already_live`, `reactivated`), as `_join`'s is, or `placeholder` for a `committed` refusal met before the join took a branch; `create`'s is `fresh` or `over_setup` |
 | `missing_args` | For a `calling` or `invalid` refusal (#2341), the required arguments the call left out, by their schema names, every one (not only the first the refusal's text names); a parameter no `swarm` op's schema has (a harness-internal method's) is left out. Left out when there are none |
-| `unexpected_args` | For a `calling` or `invalid` refusal, `{"count": N, "known": [...]}`: how many keys (or positional values) the op's signature has no parameter for, and, in `known`, those that are a schema field of some other op (a field sent to the wrong op). Any other key is counted only, never named, so no text a member typed as a key reaches the log. `known` is left out when empty, the field when there are none |
+| `unexpected_args` | For a `calling` or `invalid` refusal, `{"count": N, "known": [...]}`: how many keys (or positional values) the op's signature has no parameter for, and, in `known`, those that are a schema field of some other op (a field sent to the wrong op), or, for #2478's conflict, `task_id` given twice under two names (`task_id` and `task_item_id` with different values, `1` and `1.0` or `null` and `1` included, refused by the binding after the running gate as Python refuses an argument given twice: `{"count": 1, "known": ["task_id"]}`). Any other key is counted only, never named, so no text a member typed as a key reaches the log. `known` is left out when empty, the field when there are none |
 | `wrong_type_args` | For a `calling` or `invalid` refusal of a member-facing op, `[{"arg": ..., "expected": ...}]`: each argument given a value of another JSON type than its schema's, and that type (`integer`, `string`, `boolean`, `null_or_string`, `null_or_integer`, `array_of_string`, `array_of_object`, `null_or_array_of_integer`; `null` first when it is allowed). An array whose items are of another type counts; an item's own properties are not checked (an `evidence` item need only be an object). It compares with the schema, not with the board's own checks, and is kept for any `invalid` refusal, the board's own validation included, so it can name a field that is not the refusal's cause: `task_create` with an empty `acceptance` list and a numeric `request` is refused for the list, and records `request` (which the board binds untyped, as Python does). Left out when there are none |
 | `unreadable_args` | For member input refused before the board as `invalid` (#2341): the schema field whose value the board's JSON value cannot hold (`1e400`, an integer beyond i64 and u64, a string holding a lone surrogate, or nesting more than 128 levels deep, counting the object itself as one level), or `arguments` for the text as a whole. `arguments` covers: text the tool cannot read as JSON (the `unknown` op's record: text that is no JSON, and JSON the serde reader refuses where no structured op was read, such as a harness op or a call with no op holding `1e400`); such a value under a key no schema field names; and, for the harness's own calls only, arguments that are no array or object (a member's JSON array or scalar names no op, so it is refused as op `unknown` with kind `calling` and no argument fields). Left out otherwise |
 | `polls` | For the run watch's `_watch` aggregate (#2338, decision `unchanged`), the unchanged ticks it accounts for; left out of every record of one call (see [The run watch](#the-run-watch-2338)) |
@@ -828,7 +879,10 @@ body, evidence, reason, path or other board text:
 
 Every name in `missing_args`, `unexpected_args.known`, `wrong_type_args` and
 `unreadable_args` is a field name of the `swarm` tool's schema (the board ops'
-table, `BOARD_OPS`), or `arguments`. This holds by type: the dispatcher records
+table, `BOARD_OPS`, or `task_item_id`, the schema's task-item name for
+`task_id`, #2478), or `arguments`. A `task_item_id` is recorded as `task_id`
+for an op that takes a task id, and by its own name for one that does not
+(sent to the wrong op). This holds by type: the dispatcher records
 only a `SchemaField`, the table's own `&'static str`, which nothing but the
 table lookup (`schema_field`) can construct, so no member text (nor any other
 string) can become a recorded name, in a release build too; debug builds also
@@ -871,8 +925,7 @@ repository built for it alone, never through state shared with another op.
 
 Every call also leaves a `tracing` record on target `quecto::swarm_board`
 (DEBUG for a read, including the wake claims `_notifications` and
-`_accept_wake`, which run as reads after every board change, unless the token
-budget warned or paused the run in it; INFO otherwise), at WARN for a
+`_accept_wake`, which run as reads after every board change; INFO otherwise), at WARN for a
 `contended` refusal or a busy wait over 250 ms; `RUST_LOG=quecto::swarm_board=debug` shows them live.
 Because the owner decided the event log is off by default and nothing is
 measured while it is off (decision T1), the tracing record's waits are
@@ -890,7 +943,7 @@ It is nudged:
 - by a board op in its own process that changed the run's control state,
   as the board's dispatcher says next to the op's decision (a run created,
   fresh or over the container's placeholder; a pause, resume, close,
-  cancellation, stop, completion, deadline extension or budget pause; a
+  cancellation, stop, completion or deadline extension; a
   loss that ended the run, recorded by `reconcile` or the launcher's
   reaper). Only the watch of that run's board file is nudged: a change this
   process makes to another run's board (a nested launcher's, the host's)
@@ -999,7 +1052,7 @@ already running keep the setting they started with.
 
 ### Structured ops
 
-A structured op a member sends (`{"op":"claim","task_id":3}`) is served
+A structured op a member sends (`{"op":"claim","task_item_id":3}`) is served
 through the same dispatcher, so it leaves the `swarm_op` records above: the
 op's own record (with its `task_id` or `message_id` and, for a refusal, its
 `kind`), plus one per harness-internal call it made, each with role `host`:
@@ -1016,7 +1069,7 @@ the board is still recorded as the op's own `swarm_op`, with no run read
 
 | Refused at | `kind` |
 |---|---|
-| Member input (a value the board's JSON value cannot hold: `1e400`, an integer beyond i64 and u64, a lone surrogate), its field in `unreadable_args` | `invalid` |
+| Member input (a value the board's JSON value cannot hold: `1e400`, an integer beyond i64 and u64, a lone surrogate), its field in `unreadable_args` (`task_id` for a `task_item_id` given to an op that takes a task id) | `invalid` |
 | The running gate, when the run is not `running` | `not_running` |
 | The running gate, when the running run's deadline has passed, is missing or is not a number | `budget_exhausted` |
 | The running gate, when the `_status` call failed, the status read is not text, or a mutating op's first `_event_cursor` call failed (gate `unreadable`) | `store` |
@@ -1035,6 +1088,7 @@ not the event log is on. It carries no argument text:
 | `cursor_moved` | For a mutating op that reached the board, whether the event cursor moved (`Some(true)` or `Some(false)`); `None` otherwise, including when the second cursor read failed |
 | `lifecycle` | What the post-call step did: `none` (not run), `unchanged`, `notified`, `settled` or `failed` |
 | `warnings` | How many wake hints could not be delivered |
+| `name_form` | `legacy` or `current`, as the op's `swarm_op` record has it (#2478); left out of the line when neither applies |
 | `result_bytes` | The size of the answer text the member received |
 | `duration_us` | The whole op, in microseconds |
 
@@ -1088,7 +1142,7 @@ records:
 | `scope` | Always `process`: the fields below, up to `run`, are this harness's own calls |
 | `records` | The run's `swarm_op` records this process folded |
 | `calls` | The board calls those records account for: one per record, but a run-watch aggregate (`polls`, #2338) accounts for each tick it holds. Each op's `ok` and `refused` counts are calls, so `_watch`'s `ok` is every tick the watch made, recorded alone or aggregated |
-| `ops` | Per op: `ok` (answered), `refused` (by `kind`, left out when none), the nearest-rank `p50` and `p95` and the exact `max` of `duration_us`, `lock_wait_us`, `busy_wait_us` and `commit_us` (#2340: the time the op's `COMMIT`s took; a record that did not measure a wait or a commit time is left out of its percentiles and counted in its `unmeasured`, and a `0` commit time, an op that ran no `COMMIT`, is a measure; a summary written before #2340 has no `commit_us`; a run-watch aggregate, #2338, adds one sample, its slowest tick's, for all the ticks it holds, so `_watch`'s p50 and p95 lean high), `busy` (records whose busy handler fired), and `unsampled` (the percentiles are taken from a uniform sample of at most 4096 of an op's records, drawn over the whole run; the records not held are counted here, and left out when none) |
+| `ops` | Per op: `ok` (answered), `refused` (by `kind`, left out when none), the nearest-rank `p50` and `p95` and the exact `max` of `duration_us`, `lock_wait_us`, `busy_wait_us` and `commit_us` (#2340: the time the op's `COMMIT`s took; a record that did not measure a wait or a commit time is left out of its percentiles and counted in its `unmeasured`, and a `0` commit time, an op that ran no `COMMIT`, is a measure; a summary written before #2340 has no `commit_us`; a run-watch aggregate, #2338, adds one sample, its slowest tick's, for all the ticks it holds, so `_watch`'s p50 and p95 lean high), `busy` (records whose busy handler fired), `name_forms` (#2478: the calls by their records' `name_form`, `{"legacy": N, "current": M}`, left out for an op whose records carry none), and `unsampled` (the percentiles are taken from a uniform sample of at most 4096 of an op's records, drawn over the whole run; the records not held are counted here, and left out when none) |
 | `busy` | Records whose busy handler fired, over every op |
 | `tasks` | Tasks `created`, `claimed`, `released`, `blocked`, `submitted` and `accepted` (verified) by this process's answered ops, by their decisions |
 | `messages` | Messages `sent`, `acked` (consumed) and `withdrawn` by this process's ops, likewise |
@@ -1105,7 +1159,7 @@ settle by one host read (`_run_totals`, recorded as a `swarm_op` with role
 |---|---|
 | `run.tasks` | The run's tasks: `total`, and by state `ready`, `claimed`, `blocked` (a `ready` task waiting on a dependency counts here, as `summary` counts it), `submitted` and `completed` |
 | `run.messages` | Every message `sent`, and those `acked` (consumed by their recipient) or `withdrawn` |
-| `run.usage` | Per member (`actor_ref`, redacted), the board's request ledger: `requests`, `tokens` (the tokens the budget counted), `unknown_usage_requests`, `attempts`, and the reported `input_tokens`, `output_tokens`, `cache_read_tokens` and `cache_write_tokens`; at most 64 members |
+| `run.usage` | Per member (`actor_ref`, redacted), the board's request ledger: `requests`, `tokens` (the observed context-input plus output tokens), `unknown_usage_requests`, `attempts`, and the reported `input_tokens`, `output_tokens`, `cache_read_tokens` and `cache_write_tokens`; at most 64 members |
 | `run.unlisted_usage` | Members past the 64, in no `usage` entry; left out when none |
 | `run.wall_time_us` | The run's wall time: from its `created` event to the read at settle, on the board's clock; `null` when the board holds no creation time |
 

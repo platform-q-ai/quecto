@@ -8,7 +8,7 @@
 use std::sync::Arc;
 
 use crate::application::subagents::ports::{PortFuture, RetainedEnvironmentTeardown};
-use crate::domain::environment_registry::{
+use crate::domain::environments::entities::environment_registry::{
     EnvironmentOrigin, EnvironmentRecord, EnvironmentStatus, EnvironmentTarget,
 };
 

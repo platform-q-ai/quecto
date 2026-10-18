@@ -342,17 +342,47 @@ async fn every_mapped_op_returns_exactly_what_the_board_method_returns() {
         request["op"] = json!(spec.name);
         let result = execute(&by_op, &request.to_string()).await;
         match direct(&by_method, spec.name, method_args) {
+            // As the member reads it (#2478 slice B), written out here, not
+            // through the tool's own presentation.
             Ok(expected) => {
                 assert!(!result.is_error, "{}: {}", spec.name, result.content);
                 let answer: Value = serde_json::from_str(&result.content).unwrap();
+                let expected = match (spec.name, expected) {
+                    ("file_owners", Value::Array(rows)) => Value::Array(
+                        rows.into_iter()
+                            .map(|row| renamed_key(row, "task", "task_item"))
+                            .collect(),
+                    ),
+                    ("release_files", answer) => renamed_key(answer, "task_id", "task_item_id"),
+                    (_, answer) => answer,
+                };
                 assert_eq!(masked(answer), masked(expected), "{}", spec.name);
             }
             Err(refusal) => {
                 assert!(result.is_error, "{}: {}", spec.name, result.content);
-                assert_eq!(result.content, refusal.to_string(), "{}", spec.name);
+                let expected = match spec.name {
+                    "recover" => refusal
+                        .to_string()
+                        .replace("revoke(id, reason)", "revoke(task_item_id, reason)"),
+                    _ => refusal.to_string(),
+                };
+                assert_eq!(result.content, expected, "{}", spec.name);
             }
         }
     }
+}
+
+/// `value` with its key `old` as `new`, in its place.
+fn renamed_key(value: Value, old: &str, new: &str) -> Value {
+    let Value::Object(fields) = value else {
+        panic!("{value} is no object");
+    };
+    Value::Object(
+        fields
+            .into_iter()
+            .map(|(key, value)| (if key == old { new.to_owned() } else { key }, value))
+            .collect(),
+    )
 }
 
 #[tokio::test]
@@ -384,7 +414,7 @@ async fn a_missing_argument_names_the_op_and_field() {
     let (_directory, context) = board();
     let text = refused(&context, r#"{"op":"claim"}"#).await;
     assert!(
-        text.contains("claim: missing required argument task_id"),
+        text.contains("claim: missing required argument task_item_id"),
         "{text}"
     );
     let text = refused(&context, r#"{"op":"release","task_id":1}"#).await;
@@ -599,7 +629,8 @@ async fn inbox_and_ack_are_refused_while_paused() {
     for (op, arguments) in [
         ("inbox", r#"{"op":"inbox"}"#),
         ("ack", r#"{"op":"ack","message_id":1}"#),
-        ("tasks", r#"{"op":"tasks"}"#),
+        // Named as the schema advertises it (#2478 slice B).
+        ("task_items", r#"{"op":"tasks"}"#),
     ] {
         let text = refused(&context, arguments).await;
         assert!(
@@ -645,3 +676,9 @@ mod notes;
 
 #[path = "swarm_board_ops_binding_tests.rs"]
 mod binding;
+
+#[path = "swarm_board_ops_alias_tests.rs"]
+mod aliases;
+
+#[path = "swarm_board_ops_wording_tests.rs"]
+mod wording;

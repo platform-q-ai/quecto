@@ -23,7 +23,7 @@ fn an_op_refused_when_paused_names_every_allowed_op_and_the_supervisor() {
     }
     // A worker told to cancel_run would only be refused: it is coordinator-only.
     assert!(
-        message.contains("the coordinator may also usage_budget and cancel_run"),
+        message.contains("the coordinator may also cancel_run"),
         "{message}"
     );
     assert!(message.contains("supervisor"), "{message}");
@@ -43,7 +43,7 @@ fn an_ended_or_unreadable_run_says_what_to_do() {
 #[test]
 fn an_unknown_op_lists_the_valid_ones_and_how_to_end_a_run() {
     let message = unknown_op("stop");
-    for op in VALID_OPS {
+    for op in valid_ops() {
         assert!(message.contains(op), "{op}: {message}");
     }
     assert!(
@@ -54,11 +54,13 @@ fn an_unknown_op_lists_the_valid_ones_and_how_to_end_a_run() {
     assert!(!message.contains("board."), "no Python call: {message}");
 }
 
-/// #2279: every structured board op is a valid op, beside the harness's
-/// own.
+/// #2279: every structured board op is a valid op, after the harness's
+/// own, each by the name it is advertised by (#2478 slice B: a task item's
+/// in place of a task's), in the order the refusals list them. Written out by hand, so it
+/// cannot drift with the table it is checked against.
 #[test]
 fn the_valid_ops_are_the_harness_ops_and_the_board_ops() {
-    let mut expected: Vec<&str> = [
+    let expected = [
         "create",
         "summary",
         "reconcile",
@@ -67,20 +69,33 @@ fn the_valid_ops_are_the_harness_ops_and_the_board_ops() {
         "resume",
         "events",
         "usage",
-        "usage_budget",
-    ]
-    .into_iter()
-    .chain(
-        crate::infrastructure::tools::swarm_board_ops::BOARD_OPS
-            .iter()
-            .map(|spec| spec.name),
-    )
-    .collect();
-    assert_eq!(expected.len(), 9 + 25, "the harness's ops and the table's");
-    let mut ops = VALID_OPS.to_vec();
-    expected.sort_unstable();
-    ops.sort_unstable();
-    assert_eq!(ops, expected);
+        "task_item",
+        "task_items",
+        "file_owners",
+        "task_item_create",
+        "dependencies",
+        "claim",
+        "release",
+        "block",
+        "unblock",
+        "submit",
+        "reserve",
+        "release_files",
+        "send",
+        "withdraw",
+        "inbox",
+        "ack",
+        "evidence",
+        "amend",
+        "verify_task_item",
+        "revalidate_task_item",
+        "recover",
+        "revoke",
+        "complete",
+        "stop",
+        "usage_report",
+    ];
+    assert_eq!(valid_ops(), expected);
 }
 
 /// #2279: a structured op refused by the running gate names itself, and
@@ -113,16 +128,14 @@ fn the_valid_ops_are_exactly_the_schema_enum() {
     // other would make the unknown-op guidance lie.
     let schema: serde_json::Value =
         serde_json::from_str(include_str!("swarm_assets/tool_schema.json")).unwrap();
-    let mut schema_ops: Vec<&str> = schema["properties"]["op"]["enum"]
+    let schema_ops: Vec<&str> = schema["properties"]["op"]["enum"]
         .as_array()
         .unwrap()
         .iter()
         .map(|op| op.as_str().unwrap())
         .collect();
-    let mut ops = VALID_OPS.to_vec();
-    schema_ops.sort_unstable();
-    ops.sort_unstable();
-    assert_eq!(ops, schema_ops);
+    // Both advertise the task-item names only (#2478 slice B).
+    assert_eq!(schema_ops, valid_ops());
 }
 
 #[test]
@@ -228,7 +241,7 @@ async fn removed_ops_are_unknown_and_name_the_structured_alternative() {
         assert!(!directory.path().join("ran").exists(), "{request} ran code");
     }
     for removed in ["run", "status", "output", "cancel"] {
-        assert!(!VALID_OPS.contains(&removed), "{removed} is still valid");
+        assert!(!valid_ops().contains(&removed), "{removed} is still valid");
     }
 }
 
@@ -307,7 +320,7 @@ fn an_op_not_a_string_lists_every_valid_op() {
         message.starts_with("op must be a string naming one of: "),
         "{message}"
     );
-    for op in VALID_OPS {
+    for op in valid_ops() {
         assert!(message.contains(op), "{op}: {message}");
     }
 }

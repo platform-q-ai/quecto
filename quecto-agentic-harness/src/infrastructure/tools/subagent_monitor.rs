@@ -3,7 +3,8 @@ use std::time::Instant;
 use super::subagent_lifecycle::{SubagentLifecycleEvent, apply_lifecycle_event};
 pub use super::subagent_monitor_canonical::{
     bounded_forward, canonical_messages_appended_forward, canonical_workflow_forward,
-    forward_child_admission_line, forward_child_messages_appended, forward_child_workflow_event,
+    forward_child_admission_line, forward_child_board_hint, forward_child_messages_appended,
+    forward_child_workflow_event,
 };
 pub use super::subagent_monitor_merge::{
     forward_child_state_changed, merge_and_forward_state_changed,
@@ -32,6 +33,8 @@ const STATE_CHANGING_EVENTS: &[&str] = &[
     "\"type\":\"tool_execution_end\"",
     "\"type\":\"workflow_state\"",
     "\"type\":\"workflow_idle\"",
+    "\"type\":\"swarm_state\"",
+    "\"type\":\"reply_ready\"",
     "\"command\":\"agent_error\"",
 ];
 
@@ -63,6 +66,8 @@ pub fn apply_event_parsed(entry: &mut SubagentEntry, value: &serde_json::Value) 
             // retained from the previous run — dropping it here prevents the
             // retry/backstop paths from attributing an old stall to this run.
             entry.pending_stall = None;
+            // A new turn is activity: a held coordinator is not quiet (#2467).
+            entry.coordinator_wake.turn_started();
             // Re-arm the passive-note dedupe: a new run means a future terminal
             // completion must notify again, even if a prior run's completion was
             // already consumed.
@@ -152,6 +157,8 @@ pub fn apply_event_parsed(entry: &mut SubagentEntry, value: &serde_json::Value) 
             );
             entry.last_error = Some(error.clone());
             entry.run_error = Some(error);
+            // A coordinator's failed turn settles nothing over its error (#2467).
+            entry.coordinator_wake.turn_failed();
             // #1082 review round 2: the run's verdict is now Errored; drop any
             // retained stall so retry/backstop cannot also deliver Stalled.
             entry.pending_stall = None;
@@ -396,6 +403,12 @@ fn handle_monitor_line(
                 return;
             }
         }
+        // #2488 review M4: a board the child (or a descendant) hosts is
+        // hinted to this harness's clients, stamped with its host.
+        if let Some(fwd) = forward_child_board_hint(line, agent_id, registry) {
+            let _ = tx.send(fwd);
+            return;
+        }
         // #1679 P4: a descendant waiting for admission is visible from the
         // parent's socket; not a status change, so it bypasses the registry.
         if let Some(fwd) = forward_child_admission_line(line, agent_id, parent_id, registry) {
@@ -505,6 +518,36 @@ fn apply_and_notify(
     // logic in `subagent_monitor_stall` (#1082 review).
     if value.get("type").and_then(|v| v.as_str()) == Some("workflow_idle") {
         classify_workflow_idle_stall(registry, notify_tx, agent_id, sequence, value);
+        return;
+    }
+    // A swarm coordinator's parent wakes on the run's state (#2467).
+    if value.get("type").and_then(|v| v.as_str()) == Some("swarm_state") {
+        let quiet_after = swarm_wake::QUIET_AFTER;
+        swarm_wake::classify_swarm_state(
+            registry,
+            notify_tx,
+            agent_id,
+            sequence,
+            value,
+            quiet_after,
+        );
+        return;
+    }
+    // A coordinator's workers report through its board (#2471).
+    match value.get("type").and_then(|v| v.as_str()) {
+        Some("reply_ready") => {
+            worker_wake::reply_ready(registry, notify_tx, agent_id, sequence);
+            return;
+        }
+        Some("agent_start") => worker_wake::worker_started(registry, agent_id),
+        Some("agent_end") if worker_wake::worker_turn_end(registry, notify_tx, agent_id) => {
+            return;
+        }
+        _ => {}
+    }
+    if value.get("type").and_then(|v| v.as_str()) == Some("agent_end")
+        && swarm_wake::defer_completion(registry, notify_tx, agent_id, sequence)
+    {
         return;
     }
     let note_label = notification_display_label(registry, agent_id);
@@ -629,9 +672,21 @@ mod exit_cascade_tests;
 #[cfg(test)]
 #[path = "subagent_monitor_lifecycle_tests.rs"]
 mod lifecycle_tests;
+#[path = "subagent_monitor/swarm_wake.rs"]
+mod swarm_wake;
+pub use swarm_wake::CoordinatorWake;
+#[path = "subagent_monitor/worker_wake.rs"]
+mod worker_wake;
+pub use worker_wake::{LauncherBoard, WorkerWake, launcher_board_for};
+#[cfg(test)]
+#[path = "tests/subagent_monitor_swarm_wake_tests.rs"]
+mod swarm_wake_tests;
 #[cfg(test)]
 #[path = "subagent_monitor_tests.rs"]
 mod tests;
+#[cfg(test)]
+#[path = "tests/subagent_monitor_worker_wake_tests.rs"]
+mod worker_wake_tests;
 
 #[cfg(test)]
 #[path = "subagent_monitor_forward_tests.rs"]

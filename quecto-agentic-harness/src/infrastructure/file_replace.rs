@@ -440,6 +440,17 @@ impl Temp {
     }
 }
 
+impl Drop for Temp {
+    /// An unwind through a write (a panic in it, #2519 review) removes the
+    /// temporary file while its name is still ours. A write that returns
+    /// has renamed or removed it itself, and names one it could not remove.
+    fn drop(&mut self) {
+        if std::thread::panicking() {
+            let _ = self.remove(|path| std::fs::remove_file(path));
+        }
+    }
+}
+
 impl InPlace {
     /// This cause, naming the temporary file left behind, if any.
     fn with_leftover(self, left: Option<PathBuf>) -> Self {

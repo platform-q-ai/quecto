@@ -8,10 +8,10 @@
 use std::sync::Arc;
 
 use quecto::application::environments::ports::HostedSwarmRunInspection;
-use quecto::domain::environment_registry::{
+use quecto::domain::environments::entities::environment_registry::{
     EnvironmentRecord, EnvironmentStatus, mint_environment_uuid,
 };
-use quecto::domain::environment_retention::SwarmRunObservation;
+use quecto::domain::environments::services::environment_retention::SwarmRunObservation;
 use quecto::domain::swarm::RunStatus;
 use quecto::infrastructure::tools::environment_commands::HostedStoreObservation;
 use quecto::infrastructure::tools::swarm_bridge::SwarmContext;
@@ -39,7 +39,8 @@ fn record(workspace: &std::path::Path) -> EnvironmentRecord {
         status: EnvironmentStatus::Running,
         metadata: serde_json::json!({}),
         last_error: None,
-        origin: quecto::domain::environment_registry::EnvironmentOrigin::Created,
+        origin:
+            quecto::domain::environments::entities::environment_registry::EnvironmentOrigin::Created,
         created_by: String::new(),
         created_at: None,
     }

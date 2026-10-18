@@ -74,7 +74,8 @@ fn submit(world: &mut QuectoWorld) {
 
 #[then(expr = "the swarm task status is {string}")]
 fn task_status(world: &mut QuectoWorld, status: String) {
-    assert_eq!(result_json(world)["tasks"][0]["status"], status);
+    // The tool's summary names task items (#2478 slice B).
+    assert_eq!(result_json(world)["task_items"][0]["status"], status);
 }
 
 #[when("the swarm coordinator attempts completion without evidence")]
@@ -95,7 +96,10 @@ fn run_status(world: &mut QuectoWorld, status: String) {
 
 #[then("the swarm summary retains one task")]
 fn partial_summary(world: &mut QuectoWorld) {
-    assert_eq!(result_json(world)["tasks"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        result_json(world)["task_items"].as_array().unwrap().len(),
+        1
+    );
 }
 
 #[when("swarm members contend for an overlapping file set")]
@@ -124,7 +128,7 @@ fn ownership(world: &mut QuectoWorld) {
     let files = summary["files"].as_array().unwrap();
     assert_eq!(files.len(), 1);
     assert_eq!(files[0]["path"], "a.rs");
-    assert_eq!(files[0]["task"], 1);
+    assert_eq!(files[0]["task_item"], 1);
 }
 
 #[when("the coordinator completes dependent tasks at different revisions")]

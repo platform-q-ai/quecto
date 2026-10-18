@@ -156,7 +156,7 @@ fn exec_result_contract_rejects_invalid_shapes_and_proxy() {
 fn environment_name_is_taken_from_new_mode_only() {
     let named = base_config(ContainerSelection::New {
         container_config: None,
-        name: Some("review-env".into()),
+        name: Some("review-env".to_string().try_into().unwrap()),
     });
     assert_eq!(environment_name(&named).as_deref(), Some("review-env"));
     assert!(environment_name(&base_config(ContainerSelection::Local)).is_none());
@@ -178,7 +178,9 @@ async fn join_fails_for_unknown_target_and_missing_retained_exec() {
     let err = join_script_managed_child(
         &child,
         &registry,
-        &crate::domain::environment_registry::EnvironmentTarget::Ref("C9".into()),
+        &crate::domain::environments::entities::environment_registry::EnvironmentTarget::Ref(
+            "C9".into(),
+        ),
     )
     .await
     .unwrap_err();
@@ -189,7 +191,9 @@ async fn join_fails_for_unknown_target_and_missing_retained_exec() {
     let err = join_script_managed_child(
         &child,
         &registry,
-        &crate::domain::environment_registry::EnvironmentTarget::Ref("C1".into()),
+        &crate::domain::environments::entities::environment_registry::EnvironmentTarget::Ref(
+            "C1".into(),
+        ),
     )
     .await
     .unwrap_err();
@@ -229,7 +233,9 @@ async fn join_refuses_an_altered_standard_exec_script_before_running_it() {
     let err = join_script_managed_child(
         &child,
         &registry,
-        &crate::domain::environment_registry::EnvironmentTarget::Ref("C1".into()),
+        &crate::domain::environments::entities::environment_registry::EnvironmentTarget::Ref(
+            "C1".into(),
+        ),
     )
     .await
     .unwrap_err()

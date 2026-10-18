@@ -15,6 +15,8 @@ use std::sync::Arc;
 fn every_method() -> Vec<Method> {
     let all = vec![
         Method::Status,
+        Method::Board,
+        Method::BoardRevision,
         Method::EventCursor,
         Method::Snapshot,
         Method::Watch,
@@ -44,7 +46,6 @@ fn every_method() -> Vec<Method> {
         Method::RevalidateTask,
         Method::Amend,
         Method::Evidence,
-        Method::UsageBudget,
         Method::RecordRequest,
         Method::RequestAdmission,
         Method::Reserve,
@@ -76,6 +77,8 @@ fn every_method() -> Vec<Method> {
     for method in &all {
         match method {
             Method::Status
+            | Method::Board
+            | Method::BoardRevision
             | Method::EventCursor
             | Method::Snapshot
             | Method::Watch
@@ -105,7 +108,6 @@ fn every_method() -> Vec<Method> {
             | Method::RevalidateTask
             | Method::Amend
             | Method::Evidence
-            | Method::UsageBudget
             | Method::RecordRequest
             | Method::RequestAdmission
             | Method::Reserve
@@ -200,6 +202,8 @@ fn acted_on(
     };
     match method {
         Method::Status
+        | Method::Board
+        | Method::BoardRevision
         | Method::EventCursor
         | Method::Snapshot
         | Method::Watch
@@ -298,7 +302,6 @@ fn acted_on(
                 None,
             )
         }
-        Method::UsageBudget => (json!([100]), None, None, None),
         Method::RecordRequest => (
             json!([{"request_id": "q", "instrumented_attempts": 0, "outcome": "rejected"}]),
             None,
@@ -546,18 +549,16 @@ fn completion_records_the_callers_run_role() {
     }
 }
 
-/// Usage (#2274): the coordinator's `usage_budget` records its role in
-/// the run; the harness's `_record_request` and `_request_admission`
-/// record `host`, whoever the member.
+/// Usage (#2274): the harness's `_record_request` and
+/// `_request_admission` record `host`, whoever the member.
 #[test]
-fn usage_records_the_coordinator_or_the_host() {
+fn usage_records_the_host() {
     let log = Arc::new(Recorded::default());
     let (_dir, handles) = logged(&log);
     call(&handles, "parent", "bootstrap_run", json!([1, "s", null])).unwrap();
     running(&handles);
     let record = json!([{"request_id": "q", "instrumented_attempts": 0, "outcome": "rejected"}]);
     for (method, args, role) in [
-        ("usage_budget", json!([100]), BoardRole::Coordinator),
         ("_record_request", record, BoardRole::Host),
         ("_request_admission", json!([]), BoardRole::Host),
     ] {

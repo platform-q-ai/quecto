@@ -39,6 +39,8 @@ mod authority_admin;
 mod authority_service_manager;
 #[path = "contracts/board_call_meter.rs"]
 mod board_call_meter;
+#[path = "contracts/board_clock.rs"]
+mod board_clock;
 #[path = "contracts/board_encoding.rs"]
 mod board_encoding;
 #[path = "contracts/board_events.rs"]
@@ -47,6 +49,8 @@ mod board_events;
 mod board_evidence;
 #[path = "contracts/board_files.rs"]
 mod board_files;
+#[path = "contracts/board_listings.rs"]
+mod board_listings;
 #[path = "contracts/board_loss.rs"]
 mod board_loss;
 #[path = "contracts/board_members.rs"]
@@ -55,6 +59,8 @@ mod board_members;
 mod board_messages;
 #[path = "contracts/board_op_log.rs"]
 mod board_op_log;
+#[path = "contracts/board_projection_reads.rs"]
+mod board_projection_reads;
 #[path = "contracts/board_reads.rs"]
 mod board_reads;
 #[path = "contracts/board_repository.rs"]
@@ -69,6 +75,8 @@ mod board_run_summary_ports;
 mod board_runs;
 #[path = "contracts/board_tasks.rs"]
 mod board_tasks;
+#[path = "contracts/board_text_cells.rs"]
+mod board_text_cells;
 #[path = "contracts/board_transaction.rs"]
 mod board_transaction;
 #[path = "contracts/board_usage.rs"]
@@ -125,6 +133,8 @@ mod effort_default_persistence;
 mod effort_runtime;
 #[path = "contracts/effort_vocabulary_source.rs"]
 mod effort_vocabulary_source;
+#[path = "contracts/ended_swarm_boards.rs"]
+mod ended_swarm_boards;
 #[path = "contracts/environment_member_shutdown.rs"]
 mod environment_member_shutdown;
 #[path = "contracts/environment_process.rs"]
@@ -145,10 +155,14 @@ mod external_agent_process;
 mod external_agent_telemetry;
 #[path = "contracts/fleet_settlement.rs"]
 mod fleet_settlement;
+#[path = "contracts/fold_back_recorder.rs"]
+mod fold_back_recorder;
 #[path = "contracts/fresh_session_identity_generator.rs"]
 mod fresh_session_identity_generator;
 #[path = "contracts/historical_roster_source.rs"]
 mod historical_roster_source;
+#[path = "contracts/hosted_swarm_board.rs"]
+mod hosted_swarm_board;
 #[path = "contracts/hosted_swarm_run_inspection.rs"]
 mod hosted_swarm_run_inspection;
 #[path = "contracts/hosted_swarm_run_observation.rs"]
@@ -161,14 +175,27 @@ mod llm_provider;
 mod loaded_catalogue_inputs;
 #[path = "contracts/loaded_refresh_inputs.rs"]
 mod loaded_refresh_inputs;
+#[path = "contracts/main_worktree_locator.rs"]
+mod main_worktree_locator;
 #[path = "contracts/metered_call.rs"]
 mod metered_call;
 #[path = "common/mock_claude.rs"]
 mod mock_claude;
 #[path = "contracts/overlay_trust_store.rs"]
 mod overlay_trust_store;
+#[path = "contracts/project_board_git_store.rs"]
+mod project_board_git_store;
+#[path = "contracts/project_board_kinds.rs"]
+mod project_board_kinds;
+#[path = "contracts/project_board_op_log.rs"]
+mod project_board_op_log;
+#[path = "contracts/project_board_store.rs"]
+mod project_board_store;
+
 #[path = "contracts/provider_runtime_factory.rs"]
 mod provider_runtime_factory;
+#[path = "contracts/pull_request_states.rs"]
+mod pull_request_states;
 #[path = "contracts/refresh_inputs_loader.rs"]
 mod refresh_inputs_loader;
 #[path = "contracts/refresh_redaction_port.rs"]
@@ -205,6 +232,8 @@ mod session_store;
 mod session_switch_runtime;
 #[path = "contracts/subagent_launch_ports.rs"]
 mod subagent_launch_ports;
+#[path = "contracts/swarm_run_reports.rs"]
+mod swarm_run_reports;
 #[path = "common/switch_runtime_fixture.rs"]
 mod switch_runtime_fixture;
 #[path = "contracts/tool.rs"]
@@ -243,6 +272,8 @@ mod swarm_control_fixture;
 mod swarm_run_control;
 #[path = "contracts/tool_execution_admission.rs"]
 mod tool_execution_admission;
+#[path = "contracts/worker_board_read.rs"]
+mod worker_board_read;
 
 #[path = "contracts/find_paths.rs"]
 mod find_paths;
@@ -250,6 +281,8 @@ mod find_paths;
 // Subagent teardown ports (#1934).
 #[path = "contracts/composition_exit_readiness.rs"]
 mod composition_exit_readiness;
+#[path = "contracts/coordinator_launch.rs"]
+mod coordinator_launch;
 #[path = "contracts/delegated_agent_registry.rs"]
 mod delegated_agent_registry;
 #[path = "contracts/direct_child_routing.rs"]
@@ -270,6 +303,8 @@ mod owned_child_termination;
 mod owner_exit_announcement;
 #[path = "contracts/retained_environment_teardown.rs"]
 mod retained_environment_teardown;
+#[path = "contracts/run_liveness.rs"]
+mod run_liveness;
 #[path = "contracts/shutdown_clock.rs"]
 mod shutdown_clock;
 #[path = "contracts/shutdown_run_spawner.rs"]
