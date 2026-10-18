@@ -257,10 +257,9 @@ or `agent_cmd` surface that exposes it.
 **Production files usually involved:**
 
 - `src/domain/agents/services/subagent.rs` for shared validation or vocabulary.
-- `src/infrastructure/tools/spawn*.rs`, `subagent_registry.rs`,
-  `subagent_monitor*.rs`, `subagent_lifecycle.rs`, and
-  `subagent_lifecycle.rs` and `subagent_registry.rs` for process/run state.
-- `src/infrastructure/tools/agent_cmd*.rs` for parent-to-child commands.
+- `src/infrastructure/tools/agents/spawn*.rs`, `subagent_registry.rs`,
+  `subagent_monitor*.rs` and `subagent_lifecycle.rs` for process/run state.
+- `src/infrastructure/tools/agents/agent_cmd*.rs` for parent-to-child commands.
 - `src/interface/cli/uds_dispatch_forwarding.rs`,
   `uds_dispatch_get_message_forward.rs`, and `uds_control_forward.rs` for UDS
   forwarding behaviour.

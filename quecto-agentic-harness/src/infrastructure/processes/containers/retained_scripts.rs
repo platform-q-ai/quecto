@@ -2,7 +2,7 @@
 //! its runtime id (#1369 slice 3, #2024 S4d): the bounded `inspect` whose
 //! result is parsed through the strict wire contract, and the best-effort
 //! `cleanup`. Shared by the session's async command adapter
-//! (`tools/environment_commands.rs`) and the synchronous liveness/cleanup
+//! (`tools/agents/environment_commands.rs`) and the synchronous liveness/cleanup
 //! adapter behind the restore and the collector (`environment_process.rs`).
 use std::time::Duration;
 
