@@ -103,7 +103,7 @@ async fn a_workflow_enabled_agent_cannot_create_a_swarm() {
         member: "coordinator".into(),
         lifecycle: std::sync::Arc::new(crate::application::swarm::LifecycleService),
     };
-    let identity = crate::domain::swarm::ProcessIdentity {
+    let identity = crate::domain::swarm::value_objects::lifecycle::ProcessIdentity {
         pid: std::process::id(),
         started: super::super::swarm_bridge::process_start(std::process::id()).unwrap(),
     };
@@ -144,7 +144,7 @@ async fn a_workflow_enabled_agent_cannot_create_a_swarm() {
         crate::infrastructure::tools::registry::call_work::off_the_runtime(|| context.snapshot())
             .unwrap()
             .status,
-        crate::domain::swarm::RunStatus::Setup,
+        crate::domain::swarm::value_objects::lifecycle::RunStatus::Setup,
         "nothing was created"
     );
     assert!(!participation.participating(), "nothing was created");
@@ -162,7 +162,7 @@ async fn a_workflow_enabled_agent_cannot_create_a_swarm() {
         crate::infrastructure::tools::registry::call_work::off_the_runtime(|| context.snapshot())
             .unwrap()
             .status,
-        crate::domain::swarm::RunStatus::Running
+        crate::domain::swarm::value_objects::lifecycle::RunStatus::Running
     );
     assert!(
         participation.participating(),

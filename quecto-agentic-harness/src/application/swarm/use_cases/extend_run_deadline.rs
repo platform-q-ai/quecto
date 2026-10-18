@@ -9,8 +9,13 @@ use crate::application::swarm::board_control::{pause_started, receipt};
 use crate::application::swarm::board_operation::{detail, operation, seconds};
 use crate::application::swarm::dto::{ControlAnswer, ExtendRunDeadlineRequest, RunTransition};
 use crate::application::swarm::ports::{BoardRepository, Clock};
-use crate::domain::swarm::policy::MAX_EXTENSION_SECONDS;
-use crate::domain::swarm::{Access, BoardError, RefusalKind, RunState, validate_extension};
+use crate::domain::swarm::services::policy::MAX_EXTENSION_SECONDS;
+use crate::domain::swarm::{
+    entities::records::RunState,
+    events::telemetry::RefusalKind,
+    services::policy::{Access, validate_extension},
+    value_objects::board_error::BoardError,
+};
 
 /// The seconds are validated before the operation gate, which admits only
 /// the coordinator. A running or paused run's deadline moves to its base

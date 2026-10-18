@@ -10,14 +10,17 @@ use crate::application::swarm::dto::{
     BootstrapRunRequest, Bootstrapped, NewMember, NewRun, RunContract,
 };
 use crate::application::swarm::ports::{BoardRepository, Clock, IdSource};
-use crate::domain::swarm::{BoardError, MemberState, RunState};
+use crate::domain::swarm::{
+    entities::records::{MemberState, RunState},
+    value_objects::board_error::BoardError,
+};
 
 /// The placeholder's member limit.
 const PLACEHOLDER_MEMBER_LIMIT: i64 = 10;
 
 /// Creates the board when it is missing and, when it holds no run, writes
 /// the placeholder: status `setup`, deadline 0 (so no swarm exists yet,
-/// `domain::swarm::participates`), the bootstrapping member as coordinator
+/// `domain::swarm::services::participation::participates`), the bootstrapping member as coordinator
 /// and integrator with a live row, and the event `container_setup`. A board
 /// that already holds a run is left as it is.
 pub struct BootstrapRun {

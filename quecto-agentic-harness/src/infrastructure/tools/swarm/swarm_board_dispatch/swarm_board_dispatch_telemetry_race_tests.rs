@@ -13,7 +13,10 @@ use super::{ActorRefs, BoardTelemetry, Recorded, SwarmBoardHandles, call, create
 use super::{location, only, plain};
 use crate::application::swarm::dto::CallMeasure;
 use crate::application::swarm::ports::{BoardCallMeter, BoardRepository, BoardWork, MeteredCall};
-use crate::domain::swarm::{BoardError, BoardOpDetail, BoardOpOutcome, RefusalKind};
+use crate::domain::swarm::{
+    events::telemetry::{BoardOpDetail, BoardOpOutcome, RefusalKind},
+    value_objects::board_error::BoardError,
+};
 use crate::infrastructure::persistence::swarm_board::repository::SqliteBoardRepository;
 
 /// A call's repository that runs `race` on the board file once, before
@@ -96,7 +99,7 @@ fn raced(
     method: &str,
     args: Value,
     (nth, race): (usize, &'static str),
-) -> crate::domain::swarm::BoardOpObservation {
+) -> crate::domain::swarm::events::telemetry::BoardOpObservation {
     let dir = tempfile::TempDir::new().unwrap();
     let repository: Arc<dyn BoardRepository> =
         Arc::new(SqliteBoardRepository::new(&location(&dir)));

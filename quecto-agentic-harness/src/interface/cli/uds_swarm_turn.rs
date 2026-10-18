@@ -8,7 +8,7 @@ pub(in crate::interface::cli) fn suspend_swarm_turn(
     generation: u64,
     still_current: &dyn Fn() -> bool,
 ) {
-    use crate::domain::swarm::RunStatus;
+    use crate::domain::swarm::value_objects::lifecycle::RunStatus;
     // Decide under the lock, verify with the lock released (the verification
     // may run a subprocess), then re-check the same armed generation before
     // acting so abort/steer are never blocked behind coordination I/O.
@@ -53,7 +53,7 @@ pub(in crate::interface::cli) async fn arm_swarm_cancel(
     }
     let scope = if let Some(port) = &control.swarm_control {
         match port
-            .apply(crate::domain::swarm::RunControlAction::Status)
+            .apply(crate::domain::swarm::value_objects::run_control::RunControlAction::Status)
             .await
         {
             Ok(receipt) => Some((receipt.status, receipt.generation)),

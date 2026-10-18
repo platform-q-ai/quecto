@@ -46,7 +46,7 @@ fn create_running_swarm(checkout: &std::path::Path) -> String {
     context
         .create_run(
             &serde_json::json!({"goal":"ship", "constraints":[], "criteria":[{"id":"tests","kind":"command","description":"pass"}], "member_limit":3, "deadline":deadline}),
-            &quecto::domain::swarm::ProcessIdentity {
+            &quecto::domain::swarm::value_objects::lifecycle::ProcessIdentity {
                 pid: std::process::id(),
                 started: quecto::infrastructure::tools::swarm::swarm_bridge::process_start(
                     std::process::id(),

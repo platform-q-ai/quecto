@@ -10,7 +10,10 @@ use crate::application::subagents::use_cases::{
 };
 use crate::domain::agents::services::subagent_teardown::LaunchGeneration;
 use crate::domain::ids::AgentUuid;
-use crate::domain::swarm::{Member, MemberStatus, ProcessIdentity};
+use crate::domain::swarm::{
+    entities::run::Member,
+    value_objects::lifecycle::{MemberStatus, ProcessIdentity},
+};
 use crate::infrastructure::processes::direct_child_routing::UdsDirectChildRouting;
 use crate::infrastructure::processes::owned_child_supervisor::{
     OwnedChildSupervisor, ProcessGroup, TerminationBudget,

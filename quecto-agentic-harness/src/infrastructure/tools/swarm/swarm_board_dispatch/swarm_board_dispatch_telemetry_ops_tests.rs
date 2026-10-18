@@ -4,8 +4,8 @@ use serde_json::{Value, json};
 
 use super::super::{BOARD_OPS, Method, SwarmBoardHandles, call};
 use super::{Recorded, create_args, logged, only};
-use crate::domain::swarm::BoardRole;
-use crate::domain::swarm::telemetry::decision_kind;
+use crate::domain::swarm::events::telemetry::BoardRole;
+use crate::domain::swarm::events::telemetry::decision_kind;
 use std::path::Path;
 use std::sync::Arc;
 

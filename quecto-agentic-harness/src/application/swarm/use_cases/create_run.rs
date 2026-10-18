@@ -13,11 +13,14 @@ use crate::application::swarm::dto::{
 use crate::application::swarm::ports::{
     BoardEncoding, BoardMembers, BoardRepository, BoardRuns, Clock, IdSource,
 };
-use crate::domain::swarm::validation::{
+use crate::domain::swarm::services::validation::{
     DEADLINE_HORIZON_SECONDS, MEMBER_LIMIT_MAX, TEXT_MAX_BYTES,
 };
 use crate::domain::swarm::{
-    BoardError, MemberState, RefusalKind, RunState, bounded, bounded_text, criteria,
+    entities::records::{MemberState, RunState},
+    events::telemetry::RefusalKind,
+    services::validation::{bounded, bounded_text, criteria},
+    value_objects::board_error::BoardError,
 };
 
 /// Validates the contract in Python's order, then in one creating

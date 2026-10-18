@@ -10,8 +10,10 @@ use serde_json::{Map, Value};
 
 use super::dto::{EvidenceEntry, TaskRow};
 use crate::domain::swarm::{
-    BoardError, CriterionKind, EvidenceRow, TaskRecord, TaskState, edited_criteria, python_equal,
-    python_truthy,
+    entities::records::{CriterionKind, EvidenceRow, TaskRecord, TaskState},
+    services::validation::edited_criteria,
+    value_objects::board_error::BoardError,
+    value_objects::python_value::{python_equal, python_truthy},
 };
 
 /// The evidence rows that can satisfy a criterion: those whose criterion,

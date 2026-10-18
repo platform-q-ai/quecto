@@ -8,7 +8,7 @@ use crate::application::swarm::board_operation::{detail, operation};
 use crate::application::swarm::board_tasks::{owned, stored_id};
 use crate::application::swarm::dto::{ReleaseFilesRequest, ReleasedFiles};
 use crate::application::swarm::ports::{BoardRepository, Clock};
-use crate::domain::swarm::{Access, BoardError};
+use crate::domain::swarm::{services::policy::Access, value_objects::board_error::BoardError};
 
 /// Through the operation gate (`operation(active=False)`: the run need not
 /// be running), only the claim's owner with its current token releases.

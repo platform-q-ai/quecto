@@ -3,7 +3,9 @@ use crate::application::swarm::board_test_support::{
     BoardState, MemoryBoard, SteppingClock, member_row, running_board,
 };
 use crate::application::swarm::use_cases::OverRepository;
-use crate::domain::swarm::{BoardError, RefusalKind};
+use crate::domain::swarm::{
+    events::telemetry::RefusalKind, value_objects::board_error::BoardError,
+};
 
 #[test]
 fn snapshot_reads_the_run_and_every_member_through_the_gate() {

@@ -11,7 +11,8 @@ use super::super::log::SessionLog;
 use crate::application::swarm::ports::BoardOpLog;
 use crate::domain::redaction::Redacted;
 use crate::domain::swarm::{
-    BoardOpDetail, BoardOpObservation, BoardOpOutcome, BoardRole, SwarmRunSummary,
+    events::run_summary::SwarmRunSummary,
+    events::telemetry::{BoardOpDetail, BoardOpObservation, BoardOpOutcome, BoardRole},
 };
 use crate::infrastructure::persistence::audit_log::AuditLog;
 use crate::infrastructure::persistence::board_op_log::EventLogBoardOps;
@@ -35,7 +36,7 @@ fn named(op: &str) -> BoardOpObservation {
         result_bytes: 0,
         decision: None,
         detail: BoardOpDetail::NONE,
-        arguments: Box::new(crate::domain::swarm::ArgumentFaults::NONE),
+        arguments: Box::new(crate::domain::swarm::events::telemetry::ArgumentFaults::NONE),
     }
 }
 

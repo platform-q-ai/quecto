@@ -6,7 +6,9 @@ use crate::application::swarm::board_test_support::{
 };
 use crate::application::swarm::dto::ReleaseUnlaunchedMemberRequest;
 use crate::application::swarm::use_cases::OverRepository;
-use crate::domain::swarm::{BoardError, RefusalKind};
+use crate::domain::swarm::{
+    events::telemetry::RefusalKind, value_objects::board_error::BoardError,
+};
 
 fn release(member: &str) -> ReleaseUnlaunchedMemberRequest {
     ReleaseUnlaunchedMemberRequest {

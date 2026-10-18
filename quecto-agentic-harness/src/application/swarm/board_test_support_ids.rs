@@ -7,7 +7,7 @@ use serde_json::Value;
 
 use super::Journal;
 use crate::application::swarm::ports::{BoardEncoding, IdSource};
-use crate::domain::swarm::BoardError;
+use crate::domain::swarm::value_objects::board_error::BoardError;
 
 /// `format(n, '032x')` for n = 1, 2, …, each draw journalled.
 pub struct CounterIds {

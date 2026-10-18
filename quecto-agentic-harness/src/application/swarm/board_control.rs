@@ -21,7 +21,10 @@ use serde_json::{Map, Value};
 
 use super::dto::{ControlReceipt, UsageStanding};
 use super::ports::{BoardEvents, BoardMembers, BoardRuns, BoardUsage, Clock};
-use crate::domain::swarm::{BoardError, RefusalKind, RunRecord, resume_blockers};
+use crate::domain::swarm::{
+    entities::records::RunRecord, events::telemetry::RefusalKind,
+    services::policy::resume_blockers, value_objects::board_error::BoardError,
+};
 
 /// The refusal of a control record the board never writes.
 pub(crate) fn edited(record: &str) -> BoardError {

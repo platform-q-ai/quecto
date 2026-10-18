@@ -8,7 +8,10 @@ use crate::application::swarm::board_operation::{detail, operation};
 use crate::application::swarm::board_tasks::read_task;
 use crate::application::swarm::dto::{ClaimTaskRequest, TaskRow};
 use crate::application::swarm::ports::{BoardRepository, Clock, IdSource};
-use crate::domain::swarm::{Access, BoardError, RefusalKind};
+use crate::domain::swarm::{
+    events::telemetry::RefusalKind, services::policy::Access,
+    value_objects::board_error::BoardError,
+};
 
 /// Through the operation gate (a running run), in one transaction: a task
 /// whose dependencies are not all `completed` is refused, then any task

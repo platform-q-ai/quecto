@@ -135,7 +135,7 @@ fn the_scan_finds_crate_paths_anywhere_in_the_code() {
     let found = crate_paths(
         r#"
         use crate::application::swarm::ports::BoardOpLog;
-        use crate::{domain::swarm::RefusalKind, infrastructure::persistence::A};
+        use crate::{domain::swarm::events::telemetry::RefusalKind, infrastructure::persistence::A};
         use super::swarm_board_telemetry::trace;
         fn f(meter: crate::infrastructure::persistence::swarm_board::meter::Meter) {
             let _ = crate::infrastructure::persistence::audit_log::AuditLog::open();
@@ -150,7 +150,7 @@ fn the_scan_finds_crate_paths_anywhere_in_the_code() {
     );
     for expected in [
         "crate::application::swarm::ports::BoardOpLog",
-        "crate::domain::swarm::RefusalKind",
+        "crate::domain::swarm::events::telemetry::RefusalKind",
         "crate::infrastructure::persistence::A",
         "crate::infrastructure::tools::swarm::swarm_board_telemetry::trace",
         "crate::infrastructure::persistence::swarm_board::meter::Meter",

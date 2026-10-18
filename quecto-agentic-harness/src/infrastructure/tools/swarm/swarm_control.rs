@@ -1,7 +1,7 @@
 //! Swarm run commands, kept separate from Python execution and output handling.
 use super::swarm_bridge::SwarmContext;
 use crate::domain::error::DomainError;
-use crate::domain::swarm::ProcessIdentity;
+use crate::domain::swarm::value_objects::lifecycle::ProcessIdentity;
 use serde_json::Value;
 
 /// Test convenience: no shared participation handle, no engaged workflow.
@@ -39,7 +39,7 @@ pub async fn control_with_workflow(
     let result =
         super::super::registry::call_work::spawn_blocking_in_call(move || match op.as_str() {
             "create" => {
-                crate::domain::swarm::validate_swarm_creation(
+                crate::domain::swarm::services::participation::validate_swarm_creation(
                     super::swarm_bridge::workflow_engaged(&workflow_engine),
                 )?;
                 let database = ctx.database();

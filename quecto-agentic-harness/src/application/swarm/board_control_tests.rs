@@ -6,7 +6,9 @@ use crate::application::swarm::board_test_support::{
     BoardState, MemoryBoard, SteppingClock, UsageReads, paused, recorded, running_board, usage,
 };
 use crate::application::swarm::dto::ControlReceipt;
-use crate::domain::swarm::{BoardError, RefusalKind};
+use crate::domain::swarm::{
+    events::telemetry::RefusalKind, value_objects::board_error::BoardError,
+};
 
 fn read(state: BoardState, now: f64) -> Result<ControlReceipt, BoardError> {
     let board = MemoryBoard::with(state);

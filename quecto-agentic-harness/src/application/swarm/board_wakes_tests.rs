@@ -5,7 +5,7 @@ use crate::application::swarm::board_test_support::{
     MemoryBoard, member_row, running_board, stored_member,
 };
 use crate::application::swarm::ports::BoardRepository;
-use crate::domain::swarm::NotificationEvent;
+use crate::domain::swarm::services::notification::NotificationEvent;
 
 /// An amendment wakes every live member but the actor, each answered as
 /// its whole row in id order; a row whose id is not text is no member the

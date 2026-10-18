@@ -8,7 +8,9 @@ use crate::application::swarm::board_read_models::{page_bounds, reading, with_ow
 use crate::application::swarm::board_tasks::read_task;
 use crate::application::swarm::dto::{ListTasksRequest, TaskPage};
 use crate::application::swarm::ports::{BoardRepository, Clock};
-use crate::domain::swarm::{BoardError, RefusalKind};
+use crate::domain::swarm::{
+    events::telemetry::RefusalKind, value_objects::board_error::BoardError,
+};
 
 /// The offset must be an integer of at least 0 and the limit an integer
 /// from 1 to 100, checked before the gate. Through the read-only gate,

@@ -9,7 +9,10 @@ use crate::application::swarm::board_messages::{ACCEPTED, CONSUMED, message_id};
 use crate::application::swarm::board_operation::{detail, operation};
 use crate::application::swarm::dto::{MessageIdRequest, Settled};
 use crate::application::swarm::ports::{BoardRepository, Clock};
-use crate::domain::swarm::{Access, BoardError, RefusalKind};
+use crate::domain::swarm::{
+    events::telemetry::RefusalKind, services::policy::Access,
+    value_objects::board_error::BoardError,
+};
 
 /// The id (an integer of at least 1) is checked before the operation gate,
 /// which any member passes while the run is not over (bookkeeping, so a

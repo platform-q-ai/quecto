@@ -26,11 +26,12 @@ use serde_json::Value;
 
 use crate::application::swarm::dto::DroppedRecords;
 use crate::application::swarm::ports::{BoardOpLog, SessionOpLog};
-use crate::domain::swarm::telemetry::board_run_id;
+use crate::domain::swarm::events::telemetry::board_run_id;
 
 use crate::domain::swarm::{
-    BoardOpObservation, MemberUsage, MessageTotals, RunSummaryFold, RunTotals, SwarmRunSummary,
-    TaskStates,
+    events::run_summary::{RunSummaryFold, SwarmRunSummary},
+    events::run_totals::{MemberUsage, MessageTotals, RunTotals, TaskStates},
+    events::telemetry::BoardOpObservation,
 };
 use crate::infrastructure::tools::swarm::swarm_board_dispatch::TELEMETRY_TARGET;
 use crate::infrastructure::tools::swarm::swarm_board_telemetry::actor_ref;

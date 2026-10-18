@@ -10,8 +10,11 @@ use crate::application::swarm::board_operation::{detail, end, operation};
 use crate::application::swarm::dto::CompleteRunRequest;
 use crate::application::swarm::ports::{BoardRepository, Clock};
 use crate::domain::swarm::{
-    Access, BoardError, RefusalKind, RunRecord, RunState, completion, completion_revision,
-    stored_criteria,
+    entities::records::{RunRecord, RunState},
+    events::telemetry::RefusalKind,
+    services::policy::{Access, completion},
+    services::validation::{completion_revision, stored_criteria},
+    value_objects::board_error::BoardError,
 };
 
 /// Through the operation gate for the coordinator (a running run): the

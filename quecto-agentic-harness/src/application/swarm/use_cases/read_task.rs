@@ -8,7 +8,7 @@ use crate::application::swarm::board_read_models::with_owner_liveness;
 use crate::application::swarm::board_tasks::read_task;
 use crate::application::swarm::dto::{ReadTaskRequest, TaskRow};
 use crate::application::swarm::ports::{BoardRepository, Clock};
-use crate::domain::swarm::{Access, BoardError};
+use crate::domain::swarm::{services::policy::Access, value_objects::board_error::BoardError};
 
 /// Through the operation gate as a read (`active=False, read_only=True`):
 /// any member with a row may read, a dead one included, whatever the run's

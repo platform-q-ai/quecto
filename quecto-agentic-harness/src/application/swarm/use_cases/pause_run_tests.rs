@@ -5,7 +5,10 @@ use crate::application::swarm::board_test_support::{
     MemoryBoard, SteppingClock, member_row, paused, running_board,
 };
 use crate::application::swarm::dto::{PauseRunRequest, RunTransition};
-use crate::domain::swarm::{BoardError, RefusalKind, RunState};
+use crate::domain::swarm::{
+    entities::records::RunState, events::telemetry::RefusalKind,
+    value_objects::board_error::BoardError,
+};
 
 fn pause(actor: &str, reason: Value) -> PauseRunRequest {
     PauseRunRequest {

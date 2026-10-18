@@ -81,7 +81,7 @@ async fn board_op(context: &SwarmContext, request: Value) {
 #[tokio::test]
 async fn member_board_ops_and_rust_harness_share_one_board() {
     use quecto::application::swarm::ports::CoordinationPort;
-    use quecto::domain::swarm::{MemberExit, ProcessIdentity};
+    use quecto::domain::swarm::value_objects::lifecycle::{MemberExit, ProcessIdentity};
     use quecto::infrastructure::tools::swarm::swarm_bridge::process_start;
     // The start's own time, with a fraction: the stored times' float text
     // is compared too, not masked (review L3).

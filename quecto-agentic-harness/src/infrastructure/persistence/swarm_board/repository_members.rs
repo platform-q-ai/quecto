@@ -18,7 +18,10 @@ use crate::application::swarm::dto::{
     LaunchIdentity, MemberClaimCounts, MemberRow, MemberStatusRow, NewMember,
 };
 use crate::application::swarm::ports::BoardMembers;
-use crate::domain::swarm::{BoardError, MemberRecord, MemberState};
+use crate::domain::swarm::{
+    entities::records::{MemberRecord, MemberState},
+    value_objects::board_error::BoardError,
+};
 
 impl BoardMembers for SqliteBoard<'_> {
     /// Noted on the metered call's tally; an unmetered call notes nothing.

@@ -14,8 +14,11 @@ use crate::application::swarm::dto::{BoardProjection, RunTotalsView};
 use crate::application::swarm::use_cases::{
     ReadBoardProjection, ReadEventCursor, ReadRunSnapshot, ReadRunStatus, ReadRunTotals,
 };
-use crate::domain::swarm::watch_polls::{SNAPSHOT, UNCHANGED};
-use crate::domain::swarm::{BoardError, BoardOpDetail, RefusalKind};
+use crate::domain::swarm::events::watch_polls::{SNAPSHOT, UNCHANGED};
+use crate::domain::swarm::{
+    events::telemetry::{BoardOpDetail, RefusalKind},
+    value_objects::board_error::BoardError,
+};
 
 /// A read's answer.
 fn read(value: Value) -> Served {

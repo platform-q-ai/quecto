@@ -13,8 +13,11 @@ use crate::application::swarm::dto::DroppedRecords;
 use crate::application::swarm::ports::CoordinationPort;
 use crate::application::swarm::ports::{BoardOpLog, SessionOpLog};
 use crate::composition::swarm::{board_wire, build_swarm_board_handles};
-use crate::domain::swarm::watch::WatchSchedule;
-use crate::domain::swarm::{BoardOpObservation, RunStatus, SwarmRunSummary};
+use crate::domain::swarm::services::watch::WatchSchedule;
+use crate::domain::swarm::{
+    events::run_summary::SwarmRunSummary, events::telemetry::BoardOpObservation,
+    value_objects::lifecycle::RunStatus,
+};
 use crate::infrastructure::tools::swarm::swarm_bridge::{Participation, SwarmBoard, SwarmContext};
 
 /// The event log, in memory: records and summaries.
@@ -101,7 +104,7 @@ fn snapshots(records: &[BoardOpObservation]) -> usize {
 fn watch(
     context: &SwarmContext,
     schedule: &mut WatchSchedule,
-    snapshot: &mut crate::domain::swarm::Snapshot,
+    snapshot: &mut crate::domain::swarm::entities::run::Snapshot,
     start: f64,
     ticks: u32,
 ) -> Vec<Tick> {
@@ -142,7 +145,8 @@ fn an_idle_minute_takes_ten_times_fewer_snapshots_and_counts_every_tick() {
     assert!(
         records
             .iter()
-            .all(|record| record.role == Some(crate::domain::swarm::BoardRole::Host)),
+            .all(|record| record.role
+                == Some(crate::domain::swarm::events::telemetry::BoardRole::Host)),
         "the watch's calls are the harness's own"
     );
 }
@@ -241,7 +245,7 @@ fn the_run_summary_counts_the_ticks_still_held() {
     let mut snapshot = context.snapshot().unwrap();
     let mut schedule = WatchSchedule::new();
     let _ticks = watch(&context, &mut schedule, &mut snapshot, now(), 20);
-    let settled = crate::domain::swarm::Snapshot {
+    let settled = crate::domain::swarm::entities::run::Snapshot {
         status: RunStatus::Cancelled,
         ..snapshot.clone()
     };

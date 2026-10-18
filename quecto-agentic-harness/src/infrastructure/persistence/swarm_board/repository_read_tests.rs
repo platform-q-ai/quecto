@@ -14,7 +14,7 @@ use super::SqliteBoardRepository;
 use crate::application::swarm::dto::BoardLocation;
 use crate::application::swarm::ports::{BoardCallMeter, BoardRepository};
 use crate::application::swarm::use_cases::ReadEventCursor;
-use crate::domain::swarm::RefusalKind;
+use crate::domain::swarm::events::telemetry::RefusalKind;
 use crate::infrastructure::persistence::swarm_board::meter::SqliteBoardCallMeter;
 use crate::infrastructure::persistence::swarm_board::store::BoardStore;
 

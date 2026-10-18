@@ -9,7 +9,7 @@ use crate::application::swarm::board_loss::{
 use crate::application::swarm::board_operation::{detail, operation, text};
 use crate::application::swarm::dto::{Quarantine, QuarantineMemberRequest, Quarantined};
 use crate::application::swarm::ports::{BoardRepository, Clock};
-use crate::domain::swarm::{Access, BoardError};
+use crate::domain::swarm::{services::policy::Access, value_objects::board_error::BoardError};
 
 /// Through the operation gate (`active=False`). A missing harness is not
 /// proof that its independent execution groups stopped, so ownership is

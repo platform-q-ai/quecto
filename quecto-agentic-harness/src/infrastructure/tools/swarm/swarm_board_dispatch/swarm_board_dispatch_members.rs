@@ -13,7 +13,9 @@ use crate::application::swarm::dto::{
 use crate::application::swarm::use_cases::{
     ActivateMember, AdmitMember, RecordMemberLaunch, RegisterMemberSocket, ReleaseUnlaunchedMember,
 };
-use crate::domain::swarm::{BoardError, BoardOpDetail};
+use crate::domain::swarm::{
+    events::telemetry::BoardOpDetail, value_objects::board_error::BoardError,
+};
 
 pub(super) const ADMIT: [Parameter; 2] = [required("member"), required("reservation")];
 pub(super) const ACTIVATE: [Parameter; 5] = [

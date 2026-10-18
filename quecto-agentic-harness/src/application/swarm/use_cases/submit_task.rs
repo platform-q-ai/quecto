@@ -8,9 +8,13 @@ use crate::application::swarm::board_operation::{detail, operation};
 use crate::application::swarm::board_tasks::{changed, owned, unsubmitted};
 use crate::application::swarm::dto::{SubmitTaskRequest, TaskChange, TaskTransition, TaskUpdate};
 use crate::application::swarm::ports::{BoardEncoding, BoardRepository, Clock};
-use crate::domain::swarm::validation::TEXT_MAX_BYTES;
+use crate::domain::swarm::services::validation::TEXT_MAX_BYTES;
 use crate::domain::swarm::{
-    Access, BoardError, RefusalKind, bounded_text, python_equal, python_truthy,
+    events::telemetry::RefusalKind,
+    services::policy::Access,
+    services::validation::bounded_text,
+    value_objects::board_error::BoardError,
+    value_objects::python_value::{python_equal, python_truthy},
 };
 
 /// The evidence (a nonempty list of dicts, each with a truthy `artifact`

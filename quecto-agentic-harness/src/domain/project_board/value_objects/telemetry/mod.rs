@@ -1,6 +1,6 @@
 //! Board op telemetry (epic #2481, T1): what one project board request
 //! did, as the event log's `board_op` record holds it. Pure values, built
-//! the way the swarm board's `swarm_op` is (`domain::swarm::telemetry`).
+//! the way the swarm board's `swarm_op` is (`domain::swarm::events::telemetry`).
 //! T1 holds the record's skeleton, T3 the front ends' fields and T4 the
 //! use cases'; later slices add theirs (T5 the store's, T6 the index's).
 //! S4 adds a start's, its claim renewals' and its fold-back's records,

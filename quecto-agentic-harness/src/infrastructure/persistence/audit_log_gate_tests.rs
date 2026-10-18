@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 use super::{AuditLog, CRASH_GATE_WAIT};
 use crate::domain::audit::AuditEvent;
 use crate::domain::redaction::Redacted;
-use crate::domain::swarm::{
+use crate::domain::swarm::events::telemetry::{
     ArgumentFaults, BoardOpDetail, BoardOpObservation, BoardOpOutcome, BoardRole,
 };
 

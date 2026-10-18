@@ -81,7 +81,7 @@ pub enum AgentEvent {
     /// coordinator sends it. `prompted`: a client's prompt ran since the
     /// last boundary, so its reply is due whatever the wake.
     SwarmState {
-        wake: crate::domain::swarm::parent_wake::WakeKind,
+        wake: crate::domain::swarm::services::parent_wake::WakeKind,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         status: Option<String>,
         #[serde(default)]

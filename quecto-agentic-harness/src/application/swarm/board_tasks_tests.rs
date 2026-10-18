@@ -3,7 +3,9 @@ use serde_json::{Value, json};
 use super::{owned, read_task, unsubmitted};
 use crate::application::swarm::board_operation::atomic;
 use crate::application::swarm::board_test_support::{MemoryBoard, running_board, stored_task};
-use crate::domain::swarm::{BoardError, RefusalKind};
+use crate::domain::swarm::{
+    events::telemetry::RefusalKind, value_objects::board_error::BoardError,
+};
 
 fn board(tasks: Vec<crate::application::swarm::dto::TaskRow>) -> std::sync::Arc<MemoryBoard> {
     let mut state = running_board(100.0);

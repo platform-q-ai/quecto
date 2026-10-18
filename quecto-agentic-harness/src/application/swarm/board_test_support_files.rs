@@ -11,7 +11,9 @@ use super::MemoryTransaction;
 use super::tasks::{StoredFile, affinity};
 use crate::application::swarm::dto::{FileRow, NewReservation};
 use crate::application::swarm::ports::{BoardFiles, CheckoutPaths};
-use crate::domain::swarm::{BoardError, RefusalKind};
+use crate::domain::swarm::{
+    events::telemetry::RefusalKind, value_objects::board_error::BoardError,
+};
 
 fn text_of(value: &Value) -> Option<String> {
     match value {

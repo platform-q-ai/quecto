@@ -3,8 +3,11 @@
 use super::super::super::uds_swarm_control::at_idle_boundary;
 use super::super::dispatch_test_env::DispatchTestEnv as Env;
 use crate::application::swarm::ports::SwarmRunControl;
-use crate::domain::swarm::parent_wake::CoordinatorBoard;
-use crate::domain::swarm::{RunControlAction, RunControlReceipt, RunStatus};
+use crate::domain::swarm::services::parent_wake::CoordinatorBoard;
+use crate::domain::swarm::{
+    value_objects::lifecycle::RunStatus,
+    value_objects::run_control::{RunControlAction, RunControlReceipt},
+};
 
 /// A board that answers `coordinator_board` with each of `answers` in turn.
 struct Board(std::sync::Mutex<Vec<Result<Option<CoordinatorBoard>, String>>>);
@@ -175,7 +178,7 @@ async fn without_a_swarm_nothing_is_reported() {
 #[test]
 fn swarm_state_is_sent_as_a_typed_event() {
     let event = super::super::super::protocol::AgentEvent::SwarmState {
-        wake: crate::domain::swarm::parent_wake::WakeKind::Finished,
+        wake: crate::domain::swarm::services::parent_wake::WakeKind::Finished,
         status: Some("succeeded".into()),
         prompted: false,
     };

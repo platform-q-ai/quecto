@@ -180,7 +180,7 @@ pub struct BootstrapMemberRequest {
 #[derive(Clone, Debug, PartialEq)]
 pub struct JoinedSummary {
     pub joined: super::Joined,
-    pub summary: Result<RunSummary, crate::domain::swarm::BoardError>,
+    pub summary: Result<RunSummary, crate::domain::swarm::value_objects::board_error::BoardError>,
 }
 
 /// What `_bootstrap` answered: whether it wrote the placeholder, the
@@ -191,7 +191,7 @@ pub struct JoinedSummary {
 pub struct BootstrappedSummary {
     pub created: bool,
     pub joined: Option<super::Joined>,
-    pub summary: Result<RunSummary, crate::domain::swarm::BoardError>,
+    pub summary: Result<RunSummary, crate::domain::swarm::value_objects::board_error::BoardError>,
 }
 
 /// What `_run_totals` read (#2313 review M1): the run's own totals, every

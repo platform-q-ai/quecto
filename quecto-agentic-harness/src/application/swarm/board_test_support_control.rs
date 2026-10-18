@@ -8,7 +8,7 @@ use crate::application::swarm::dto::{
     NewRequestUsage, StoredRequestUsage, UsageReport, UsageRow, UsageStanding,
 };
 use crate::application::swarm::ports::BoardUsage;
-use crate::domain::swarm::{BoardError, RunState};
+use crate::domain::swarm::{entities::records::RunState, value_objects::board_error::BoardError};
 
 /// One recorded `events` row.
 #[derive(Clone, Debug, PartialEq)]

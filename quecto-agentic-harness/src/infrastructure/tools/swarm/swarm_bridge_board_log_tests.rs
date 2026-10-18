@@ -10,7 +10,9 @@ use serde_json::{Value, json};
 
 use super::log::PENDING_RECORDS;
 use crate::application::swarm::ports::{BoardOpLog, CoordinationPort};
-use crate::domain::swarm::{BoardOpObservation, SwarmRunSummary};
+use crate::domain::swarm::{
+    events::run_summary::SwarmRunSummary, events::telemetry::BoardOpObservation,
+};
 use crate::infrastructure::persistence::audit_log::AuditLog;
 use crate::infrastructure::persistence::crash_record::Armed;
 use crate::infrastructure::tools::swarm::swarm_bridge::SwarmContext;

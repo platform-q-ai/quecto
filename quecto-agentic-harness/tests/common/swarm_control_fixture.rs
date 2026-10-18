@@ -17,7 +17,7 @@ pub fn context() -> (tempfile::TempDir, SwarmContext) {
     // Setup off any async worker: a board call blocks (#2278).
     quecto::infrastructure::tools::registry::call_work::off_the_runtime(|| {
         context.create_run(&serde_json::json!({"goal":"contract", "constraints":[], "criteria":[{"id":"tests","kind":"command","description":"pass"}], "member_limit":2, "deadline":deadline}),
-            &quecto::domain::swarm::ProcessIdentity { pid: std::process::id(), started: quecto::infrastructure::tools::swarm::swarm_bridge::process_start(std::process::id()).unwrap() }, None)
+            &quecto::domain::swarm::value_objects::lifecycle::ProcessIdentity { pid: std::process::id(), started: quecto::infrastructure::tools::swarm::swarm_bridge::process_start(std::process::id()).unwrap() }, None)
     })
     .unwrap();
     (directory, context)

@@ -19,7 +19,7 @@ use crate::application::swarm::dto::{
 use crate::application::swarm::use_cases::{
     AmendRunContract, CompleteRun, RecordEvidence, RevalidateTask,
 };
-use crate::domain::swarm::{BoardError, RunRecord};
+use crate::domain::swarm::{entities::records::RunRecord, value_objects::board_error::BoardError};
 
 /// `complete(revision)`.
 pub(super) const COMPLETE: [Parameter; 1] = [required("revision")];

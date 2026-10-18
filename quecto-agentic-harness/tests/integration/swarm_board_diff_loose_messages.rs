@@ -24,7 +24,7 @@
 //!   member `'5'`), Python's `sorted(targets)` raises a `TypeError` whose
 //!   operand order follows the set's iteration order, which the hash seed
 //!   decides; the Rust board refuses the op as a store failure with one
-//!   fixed text (`domain::swarm::notification`'s `sort_error`).
+//!   fixed text (`domain::swarm::services::notification`'s `sort_error`).
 //! - `outside_edited_wake_records`: an event detail the wake ops read that
 //!   is not JSON text, or a `wake_cursors` row whose event is not an
 //!   integer (only a hand edit writes either), is refused as a store
@@ -66,12 +66,12 @@ const SLICE_PINS: [(&str, &str, &str); 5] = [
     ),
     (
         "unknown_member_status_is_not_alive",
-        include_str!("../../src/domain/swarm/policy_tests.rs"),
+        include_str!("../../src/domain/swarm/services/policy_tests.rs"),
         "unknown_statuses_found_in_a_file_are_refused_affirmatively",
     ),
     (
         "unknown_member_status_is_not_alive",
-        include_str!("../../src/domain/swarm/policy_null_status_tests.rs"),
+        include_str!("../../src/domain/swarm/services/policy_null_status_tests.rs"),
         "a_null_member_status_is_not_alive",
     ),
     (

@@ -20,7 +20,7 @@ use crate::domain::environments::entities::environment_registry::{
 use crate::domain::environments::services::environment_retention::{
     HostedSwarmRun, SwarmRunObservation,
 };
-use crate::domain::swarm::RunStatus;
+use crate::domain::swarm::value_objects::lifecycle::RunStatus;
 
 /// The hosted store as the collector reads it: by environment id for a
 /// record, by state dir for an unrecorded directory; what was asked.

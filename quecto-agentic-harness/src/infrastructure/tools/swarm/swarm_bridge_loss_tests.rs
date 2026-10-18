@@ -1,6 +1,6 @@
 //! Member loss and confirmed death over the packaged store (#1961).
 use super::{context, create};
-use crate::domain::swarm::MemberExit;
+use crate::domain::swarm::value_objects::lifecycle::MemberExit;
 use crate::infrastructure::tools::swarm::swarm_bridge::{
     SwarmContext, process_confirmed_dead, process_start,
 };

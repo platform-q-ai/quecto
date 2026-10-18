@@ -12,7 +12,7 @@ use super::{
     CountingLifecycle, Recorded, answered, board, board_with, deadline, direct, execute,
     rejecting_worker,
 };
-use crate::domain::swarm::{BoardOpOutcome, BoardRole, RefusalKind};
+use crate::domain::swarm::events::telemetry::{BoardOpOutcome, BoardRole, RefusalKind};
 use crate::infrastructure::tools::swarm::swarm_bridge::SwarmContext;
 
 /// `dependencies` answers the task's row (#2394); setting them on a ready

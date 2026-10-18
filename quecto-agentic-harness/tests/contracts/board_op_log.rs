@@ -4,7 +4,7 @@
 //! without a panic, the first such record capping the log.
 use quecto::application::swarm::ports::BoardOpLog;
 use quecto::domain::redaction::Redacted;
-use quecto::domain::swarm::{
+use quecto::domain::swarm::events::telemetry::{
     ArgumentFaults, BoardOpDetail, BoardOpObservation, BoardOpOutcome, BoardRole, RefusalKind,
 };
 use quecto::infrastructure::persistence::audit_log::AuditLog;

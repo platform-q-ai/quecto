@@ -8,7 +8,7 @@ use std::sync::Arc;
 use super::OverRepository;
 use crate::application::swarm::board_operation::read;
 use crate::application::swarm::ports::BoardRepository;
-use crate::domain::swarm::BoardError;
+use crate::domain::swarm::value_objects::board_error::BoardError;
 
 /// Membership-free, in one read transaction (#2338: it takes no write
 /// lock, so the run watch reads it every tick without contending with any

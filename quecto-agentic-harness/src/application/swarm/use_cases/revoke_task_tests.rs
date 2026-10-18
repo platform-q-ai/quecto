@@ -8,7 +8,9 @@ use crate::application::swarm::board_test_support::{
     running_board, stored_task,
 };
 use crate::application::swarm::dto::{Revocation, RevokeTaskRequest};
-use crate::domain::swarm::{BoardError, RefusalKind};
+use crate::domain::swarm::{
+    events::telemetry::RefusalKind, value_objects::board_error::BoardError,
+};
 
 /// Task 1 submitted by the live worker with a reservation; task 2 ready;
 /// task 3 completed; task 4 ready but waiting on task 2 (it reads

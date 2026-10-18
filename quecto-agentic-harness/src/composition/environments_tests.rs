@@ -96,12 +96,12 @@ fn a_sessions_own_kill_in_flight_is_warned_about() {
 struct RecordedOps(Mutex<Vec<String>>);
 
 impl crate::application::swarm::ports::BoardOpLog for RecordedOps {
-    fn record(&self, observation: crate::domain::swarm::BoardOpObservation) {
+    fn record(&self, observation: crate::domain::swarm::events::telemetry::BoardOpObservation) {
         self.0.lock().unwrap().push(observation.op);
     }
 
     /// No summary this test checks is written.
-    fn summarize(&self, _summary: crate::domain::swarm::SwarmRunSummary) {}
+    fn summarize(&self, _summary: crate::domain::swarm::events::run_summary::SwarmRunSummary) {}
 }
 
 impl crate::application::swarm::ports::SessionOpLog for RecordedOps {
@@ -129,7 +129,7 @@ fn a_host_side_loss_is_recorded_in_the_process_boards_event_log() {
         lifecycle: Arc::new(crate::application::swarm::LifecycleService),
         board: super::super::swarm::swarm_board(),
     };
-    let identity = crate::domain::swarm::ProcessIdentity {
+    let identity = crate::domain::swarm::value_objects::lifecycle::ProcessIdentity {
         pid: std::process::id(),
         started: process_start(std::process::id()).unwrap(),
     };
@@ -159,7 +159,7 @@ fn a_host_side_loss_is_recorded_in_the_process_boards_event_log() {
     let observation = super::hosted_store_observation_over(Some(&process_board));
     let hosted = crate::domain::environments::services::environment_retention::HostedSwarmRun {
         id: String::new(),
-        status: crate::domain::swarm::RunStatus::Running,
+        status: crate::domain::swarm::value_objects::lifecycle::RunStatus::Running,
         outcome: None,
         coordinator: "coordinator".into(),
         deadline: deadline as f64,

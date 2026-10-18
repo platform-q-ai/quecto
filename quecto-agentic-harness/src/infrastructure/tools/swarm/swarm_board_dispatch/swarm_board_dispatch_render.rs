@@ -5,7 +5,9 @@
 use serde_json::{Map, Value};
 
 use crate::application::swarm::dto::{MemberRow, RunSnapshotView, RunStatusView};
-use crate::domain::swarm::{BoardError, RefusalKind};
+use crate::domain::swarm::{
+    events::telemetry::RefusalKind, value_objects::board_error::BoardError,
+};
 
 /// `_status`'s dict: the counts, then the run's fields as stored.
 pub(super) fn status(view: RunStatusView) -> Value {

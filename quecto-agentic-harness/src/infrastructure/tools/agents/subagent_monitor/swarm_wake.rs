@@ -12,7 +12,9 @@ use super::super::subagent_registry::{
     NotificationTx, SequencedSubagentNotification, SubagentNotification, SubagentRegistry,
     SubagentStatus, SwarmNoteState,
 };
-use crate::domain::swarm::parent_wake::{HeldNote, StretchEnd, WakeKind, settle_held_note};
+use crate::domain::swarm::services::parent_wake::{
+    HeldNote, StretchEnd, WakeKind, settle_held_note,
+};
 use serde::Deserialize as _;
 
 /// How long a held coordinator may go without a new turn before its parent

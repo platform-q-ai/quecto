@@ -1,5 +1,5 @@
 use super::swarm_lifecycle::{Alive, Effects, snapshot};
-use quecto::domain::swarm::RunStatus;
+use quecto::domain::swarm::value_objects::lifecycle::RunStatus;
 use std::sync::Mutex;
 #[tokio::test]
 async fn failed_turn_abort_cannot_skip_inference_suspension_or_termination() {

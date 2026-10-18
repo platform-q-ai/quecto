@@ -8,7 +8,10 @@ use crate::application::swarm::board_test_support::{
     running_board,
 };
 use crate::application::swarm::dto::{MessageIdRequest, Settled};
-use crate::domain::swarm::{BoardError, RefusalKind, RunState};
+use crate::domain::swarm::{
+    entities::records::RunState, events::telemetry::RefusalKind,
+    value_objects::board_error::BoardError,
+};
 
 /// A paused run (withdrawal is bookkeeping) with message 1 from `worker`
 /// to `parent`, unread.

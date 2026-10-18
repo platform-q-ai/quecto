@@ -6,7 +6,10 @@ use quecto::application::swarm::dto::{
     BoardLocation, LaunchIdentity, MemberClaimCounts, MemberRow, NewMember,
 };
 use quecto::application::swarm::ports::{BoardRepository, BoardTransaction};
-use quecto::domain::swarm::{BoardError, MemberState, RefusalKind};
+use quecto::domain::swarm::{
+    entities::records::MemberState, events::telemetry::RefusalKind,
+    value_objects::board_error::BoardError,
+};
 use quecto::infrastructure::persistence::swarm_board::repository::SqliteBoardRepository;
 use serde_json::{Value, json};
 

@@ -40,7 +40,7 @@
 //! writes up to [`ENCODE_MAX_DEPTH`] for lists and dicts alike, so all it
 //! writes it can read. Parser and writer use explicit stacks.
 //!
-//! **Relation to `domain::swarm::python_value`.** This codec models Python's
+//! **Relation to `domain::swarm::value_objects::python_value`.** This codec models Python's
 //! `json` *text*: how a value is read from and written to the board's
 //! columns, byte for byte. `python_value` models Python's *semantics* over
 //! values already read (`==` and truthiness), which the board's use cases

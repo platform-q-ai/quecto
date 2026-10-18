@@ -15,7 +15,8 @@ use crate::application::swarm::ports::{
 };
 use crate::composition::swarm::{board_op_log, build_swarm_board_handles_with, with_event_log};
 use crate::domain::swarm::{
-    BoardError, BoardOpObservation, BoardOpOutcome, BoardRole, RefusalKind,
+    events::telemetry::{BoardOpObservation, BoardOpOutcome, BoardRole, RefusalKind},
+    value_objects::board_error::BoardError,
 };
 use crate::infrastructure::persistence::audit_log::AuditLog;
 use crate::infrastructure::persistence::swarm_board::repository::SqliteBoardRepository;
@@ -48,7 +49,7 @@ impl BoardOpLog for Recorded {
     }
 
     /// No summary this test checks is written.
-    fn summarize(&self, _summary: crate::domain::swarm::SwarmRunSummary) {}
+    fn summarize(&self, _summary: crate::domain::swarm::events::run_summary::SwarmRunSummary) {}
 }
 
 impl Recorded {

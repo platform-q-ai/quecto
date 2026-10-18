@@ -60,7 +60,7 @@ pub(super) fn bind_suspension(
 pub(super) fn suspension_callback(
     cancel: &super::uds_cancel::CancelHandle,
     context: SwarmContext,
-) -> Arc<dyn Fn(crate::domain::swarm::RunStatus, u64) + Send + Sync> {
+) -> Arc<dyn Fn(crate::domain::swarm::value_objects::lifecycle::RunStatus, u64) + Send + Sync> {
     let cancel = cancel.clone();
     Arc::new(move |status, generation| {
         super::uds_cancel::suspend_swarm_turn(&cancel, generation, &|| {

@@ -9,7 +9,10 @@ use crate::application::swarm::board_test_support::{
 use crate::application::swarm::dto::{CreateBranch, CreateRunRequest};
 use crate::application::swarm::ports::BoardEncoding;
 use crate::application::swarm::use_cases::OverRepository;
-use crate::domain::swarm::{BoardError, RefusalKind, RunState};
+use crate::domain::swarm::{
+    entities::records::RunState, events::telemetry::RefusalKind,
+    value_objects::board_error::BoardError,
+};
 
 const NOW: f64 = 1_000.0;
 const WEEK: f64 = 604_800.0;

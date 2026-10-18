@@ -6,7 +6,7 @@ use crate::application::swarm::board_control::receipt;
 use crate::application::swarm::board_operation::operation;
 use crate::application::swarm::dto::ControlReceipt;
 use crate::application::swarm::ports::{BoardRepository, Clock};
-use crate::domain::swarm::{Access, BoardError};
+use crate::domain::swarm::{services::policy::Access, value_objects::board_error::BoardError};
 
 /// Through the operation gate for reading (a dead member may still read):
 /// the receipt. Reading the usage report creates its tables when absent.

@@ -13,7 +13,10 @@ use serde_json::{Map, Value};
 
 use super::ports::{BoardEvents, BoardRepository, BoardRuns, BoardTransaction, Clock};
 use crate::domain::swarm::{
-    Access, BoardError, RefusalKind, RunRecord, authorize, expired, require_budget,
+    entities::records::RunRecord,
+    events::telemetry::RefusalKind,
+    services::policy::{Access, authorize, expired, require_budget},
+    value_objects::board_error::BoardError,
 };
 
 /// Runs `work` once inside one board transaction and returns its value.

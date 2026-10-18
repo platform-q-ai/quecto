@@ -9,7 +9,10 @@ use crate::application::swarm::board_tasks::read_task;
 use crate::application::swarm::dto::{SetTaskDependenciesRequest, TaskRow};
 use crate::application::swarm::ports::{BoardRepository, Clock};
 use crate::domain::swarm::{
-    Access, BoardError, RefusalKind, dependency_list, validate_dependencies,
+    events::telemetry::RefusalKind,
+    services::dependencies::{dependency_list, validate_dependencies},
+    services::policy::Access,
+    value_objects::board_error::BoardError,
 };
 
 /// Through the operation gate (a running run): only a task without an

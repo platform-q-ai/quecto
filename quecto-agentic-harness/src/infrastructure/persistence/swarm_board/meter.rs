@@ -39,8 +39,8 @@ use super::store::{BUSY_TIMEOUT, BoardStore};
 use super::usage_sums::KeptSums;
 use crate::application::swarm::dto::{CallMeasure, RunRoles};
 use crate::application::swarm::ports::{BoardCallMeter, BoardRepository, BoardWork, MeteredCall};
-use crate::domain::swarm::BoardError;
-use crate::domain::swarm::telemetry::board_run_id;
+use crate::domain::swarm::events::telemetry::board_run_id;
+use crate::domain::swarm::value_objects::board_error::BoardError;
 
 /// The production [`BoardCallMeter`]: a metered call per call over the
 /// board file of `repository`.

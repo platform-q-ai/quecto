@@ -8,7 +8,9 @@ use std::collections::BTreeSet;
 
 use quecto::application::swarm::dto::{BoardLocation, NotificationCursor};
 use quecto::application::swarm::ports::BoardRepository;
-use quecto::domain::swarm::{BoardError, RefusalKind};
+use quecto::domain::swarm::{
+    events::telemetry::RefusalKind, value_objects::board_error::BoardError,
+};
 use quecto::infrastructure::persistence::swarm_board::repository::SqliteBoardRepository;
 use serde_json::json;
 

@@ -6,7 +6,11 @@ use quecto::application::swarm::dto::{BoardLocation, NewMember, NewRun, RunContr
 use quecto::application::swarm::ports::{
     BoardEvents, BoardMembers, BoardRepository, BoardRuns, BoardTransaction,
 };
-use quecto::domain::swarm::{BoardError, MemberState, RefusalKind, RunState};
+use quecto::domain::swarm::{
+    entities::records::{MemberState, RunState},
+    events::telemetry::RefusalKind,
+    value_objects::board_error::BoardError,
+};
 use quecto::infrastructure::persistence::swarm_board::repository::SqliteBoardRepository;
 use serde_json::json;
 

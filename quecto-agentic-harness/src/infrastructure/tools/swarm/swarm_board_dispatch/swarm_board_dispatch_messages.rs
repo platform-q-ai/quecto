@@ -16,7 +16,9 @@ use crate::application::swarm::dto::{MessageIdRequest, ReadInboxRequest, SendMes
 use crate::application::swarm::use_cases::{
     AcknowledgeMessage, ReadInbox, SendMessage, WithdrawMessage,
 };
-use crate::domain::swarm::{BoardError, BoardOpDetail};
+use crate::domain::swarm::{
+    events::telemetry::BoardOpDetail, value_objects::board_error::BoardError,
+};
 
 /// `send(request, recipient, body, revision=None, supersedes=None)`.
 pub(super) const SEND: [Parameter; 5] = [

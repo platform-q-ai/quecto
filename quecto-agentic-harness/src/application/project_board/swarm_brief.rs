@@ -32,12 +32,12 @@ use crate::domain::project_board::entities::team::{self, Role, RoleLimits, Team}
 use crate::domain::project_board::services::starts::Started;
 use crate::domain::project_board::value_objects::slug::{MAX_SLUG_BYTES, Slug};
 use crate::domain::project_board::value_objects::vocabulary::Effort;
-use crate::domain::swarm::json_text;
-use crate::domain::swarm::records::CriterionKind;
-use crate::domain::swarm::validation::{
+use crate::domain::swarm::entities::records::CriterionKind;
+use crate::domain::swarm::services::validation::{
     CRITERIA_MAX_BYTES, DEADLINE_HORIZON_SECONDS, MEMBER_LIMIT_MAX, TEXT_MAX_BYTES,
     TITLE_MAX_BYTES, has_content,
 };
+use crate::domain::swarm::value_objects::python_value::json_text;
 
 /// The most bytes a brief takes, measured as [`SwarmBrief::bytes`]: what a
 /// coordinator's task text carries inline.

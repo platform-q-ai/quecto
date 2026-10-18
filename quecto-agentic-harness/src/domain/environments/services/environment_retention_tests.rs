@@ -2,7 +2,7 @@
 //! final-member teardown and how the reason reads. No effect, no port.
 
 use crate::domain::environments::services::environment_retention::*;
-use crate::domain::swarm::RunStatus;
+use crate::domain::swarm::value_objects::lifecycle::RunStatus;
 
 fn running_swarm() -> HostedSwarmRun {
     HostedSwarmRun {

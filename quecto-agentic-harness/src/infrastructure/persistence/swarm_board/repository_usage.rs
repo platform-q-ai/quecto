@@ -26,7 +26,9 @@ use crate::application::swarm::dto::{
     NewRequestUsage, RecentRequest, StoredRequestUsage, UsageReport, UsageRow, UsageStanding,
 };
 use crate::application::swarm::ports::BoardUsage;
-use crate::domain::swarm::{BoardError, RefusalKind};
+use crate::domain::swarm::{
+    events::telemetry::RefusalKind, value_objects::board_error::BoardError,
+};
 
 /// `Transaction._usage_schema`, statement by statement.
 const USAGE_SCHEMA: [&str; 2] = [

@@ -5,7 +5,9 @@ use crate::application::swarm::board_operation::atomic;
 use crate::application::swarm::board_test_support::{
     BoardState, CompactEncoding, MemoryBoard, StoredMessage, running_board,
 };
-use crate::domain::swarm::{BoardError, RefusalKind};
+use crate::domain::swarm::{
+    events::telemetry::RefusalKind, value_objects::board_error::BoardError,
+};
 
 /// Python's `type(value) is int and value >= 1`.
 #[test]

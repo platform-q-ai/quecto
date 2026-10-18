@@ -5,7 +5,9 @@ use crate::application::swarm::board_test_support::{
     MemoryBoard, SteppingClock, StoredFile, member_row, running_board,
 };
 use crate::application::swarm::dto::ListFileOwnersRequest;
-use crate::domain::swarm::{BoardError, RefusalKind};
+use crate::domain::swarm::{
+    events::telemetry::RefusalKind, value_objects::board_error::BoardError,
+};
 
 fn page(actor: &str, offset: Value, limit: Value) -> ListFileOwnersRequest {
     ListFileOwnersRequest {

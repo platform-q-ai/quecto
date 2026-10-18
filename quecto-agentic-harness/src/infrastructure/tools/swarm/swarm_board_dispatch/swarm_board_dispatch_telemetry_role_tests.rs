@@ -8,7 +8,9 @@ use std::sync::Arc;
 use serde_json::{Value, json};
 
 use super::{Recorded, SwarmBoardHandles, call, create_args, logged, only};
-use crate::domain::swarm::{BoardOpObservation, BoardOpOutcome, BoardRole, RefusalKind};
+use crate::domain::swarm::events::telemetry::{
+    BoardOpObservation, BoardOpOutcome, BoardRole, RefusalKind,
+};
 
 /// A running run with the worker admitted and activated by the parent,
 /// holding task 1.

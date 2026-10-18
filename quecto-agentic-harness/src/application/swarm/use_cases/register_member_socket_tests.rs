@@ -4,7 +4,9 @@ use super::RegisterMemberSocket;
 use crate::application::swarm::board_test_support::{MemoryBoard, SteppingClock, running_board};
 use crate::application::swarm::dto::RegisterMemberSocketRequest;
 use crate::application::swarm::use_cases::OverRepository;
-use crate::domain::swarm::{BoardError, RefusalKind};
+use crate::domain::swarm::{
+    events::telemetry::RefusalKind, value_objects::board_error::BoardError,
+};
 
 fn register(actor: &str, socket: Option<&str>) -> RegisterMemberSocketRequest {
     RegisterMemberSocketRequest {

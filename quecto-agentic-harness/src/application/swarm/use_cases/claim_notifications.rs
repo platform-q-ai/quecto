@@ -7,11 +7,14 @@ use crate::application::swarm::board_operation::operation;
 use crate::application::swarm::board_wakes::{running, woken};
 use crate::application::swarm::dto::{ClaimNotificationsRequest, NotificationBatch};
 use crate::application::swarm::ports::{BoardRepository, Clock};
-use crate::domain::swarm::{Access, BoardError, python_truthy};
+use crate::domain::swarm::{
+    services::policy::Access, value_objects::board_error::BoardError,
+    value_objects::python_value::python_truthy,
+};
 
 /// A read-only operation (`operation(active=False, read_only=True)`): the
 /// events the caller recorded after its notification cursor are judged
-/// from its own view ([`crate::domain::swarm::notification_targets`]),
+/// from its own view ([`crate::domain::swarm::services::notification::notification_targets`]),
 /// and its cursor advances to the board's generation in the same
 /// transaction, before the hints are sent, so concurrent claims never
 /// duplicate a hint. Hints are best-effort, not durable delivery: a run

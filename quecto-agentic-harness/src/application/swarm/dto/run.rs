@@ -3,7 +3,7 @@
 //! the rows the board ports read and write for them.
 use serde_json::Value;
 
-use crate::domain::swarm::{MemberState, RunState};
+use crate::domain::swarm::entities::records::{MemberState, RunState};
 
 /// `Workbench.create(goal, constraints, criteria, member_limit, deadline)`
 /// as `member`. Every argument stays the JSON value the member passed:
@@ -33,7 +33,8 @@ pub enum CreateBranch {
 #[derive(Clone, Debug, PartialEq)]
 pub struct CreatedRun {
     pub branch: CreateBranch,
-    pub summary: Result<super::RunSummary, crate::domain::swarm::BoardError>,
+    pub summary:
+        Result<super::RunSummary, crate::domain::swarm::value_objects::board_error::BoardError>,
 }
 
 /// The first half of `Workbench._bootstrap(pid, started, socket)` as

@@ -2,7 +2,9 @@ use rusqlite::Connection;
 
 use super::{KeptSums, UsageSums, summed};
 use crate::application::swarm::dto::NewRequestUsage;
-use crate::domain::swarm::{BoardError, RefusalKind};
+use crate::domain::swarm::{
+    events::telemetry::RefusalKind, value_objects::board_error::BoardError,
+};
 use crate::infrastructure::persistence::swarm_board::repository::atomic_on;
 use crate::infrastructure::persistence::swarm_board::store::BoardStore;
 

@@ -8,7 +8,9 @@ use super::OverRepository;
 use crate::application::swarm::board_read_models::summary;
 use crate::application::swarm::dto::{ReadRunSummaryRequest, RunSummary};
 use crate::application::swarm::ports::{BoardRepository, Clock};
-use crate::domain::swarm::{BoardError, RefusalKind};
+use crate::domain::swarm::{
+    events::telemetry::RefusalKind, value_objects::board_error::BoardError,
+};
 
 /// The cursor must be `None` or an integer of at least 0 (Python's `type(x)
 /// is int`: no boolean, float or text), checked before the gate. Through

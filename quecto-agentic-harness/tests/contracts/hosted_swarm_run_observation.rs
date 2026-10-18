@@ -11,7 +11,7 @@ use quecto::domain::environments::entities::environment_registry::{
     EnvironmentRecord, EnvironmentStatus, mint_environment_uuid,
 };
 use quecto::domain::environments::services::environment_retention::SwarmRunObservation;
-use quecto::domain::swarm::RunStatus;
+use quecto::domain::swarm::value_objects::lifecycle::RunStatus;
 use quecto::infrastructure::tools::agents::environment_commands::HostedStoreObservation;
 use quecto::infrastructure::tools::swarm::swarm_bridge::SwarmContext;
 
@@ -69,7 +69,7 @@ fn create_run(context: &SwarmContext) {
     quecto::infrastructure::tools::registry::call_work::off_the_runtime(|| {
         context.create_run(
             &serde_json::json!({"goal":"ship", "constraints":[], "criteria":[{"id":"tests","kind":"command","description":"pass"}], "member_limit":3, "deadline":deadline}),
-            &quecto::domain::swarm::ProcessIdentity {
+            &quecto::domain::swarm::value_objects::lifecycle::ProcessIdentity {
                 pid: std::process::id(),
                 started: quecto::infrastructure::tools::swarm::swarm_bridge::process_start(
                     std::process::id(),

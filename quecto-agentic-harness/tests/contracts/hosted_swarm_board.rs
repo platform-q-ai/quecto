@@ -61,7 +61,7 @@ fn create_run(context: &SwarmContext) {
     quecto::infrastructure::tools::registry::call_work::off_the_runtime(|| {
         context.create_run(
             &json!({"goal":"ship", "constraints":[], "criteria":[{"id":"tests","kind":"command","description":"pass"}], "member_limit":3, "deadline":deadline}),
-            &quecto::domain::swarm::ProcessIdentity {
+            &quecto::domain::swarm::value_objects::lifecycle::ProcessIdentity {
                 pid: std::process::id(),
                 started: quecto::infrastructure::tools::swarm::swarm_bridge::process_start(std::process::id())
                     .unwrap(),

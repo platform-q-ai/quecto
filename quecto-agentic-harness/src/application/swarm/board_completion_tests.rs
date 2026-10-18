@@ -3,7 +3,10 @@ use serde_json::json;
 use super::{definition, evidence_rows, task_record};
 use crate::application::swarm::board_test_support::stored_task;
 use crate::application::swarm::dto::EvidenceEntry;
-use crate::domain::swarm::{CriterionKind, TaskState, edited_criteria, stored_criteria};
+use crate::domain::swarm::{
+    entities::records::{CriterionKind, TaskState},
+    services::validation::{edited_criteria, stored_criteria},
+};
 
 /// The board's criteria parse by id and kind; a missing description reads
 /// empty; anything else is refused naming the record.

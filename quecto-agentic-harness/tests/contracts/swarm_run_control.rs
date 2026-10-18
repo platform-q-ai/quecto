@@ -1,5 +1,7 @@
 use quecto::application::swarm::ports::SwarmRunControl;
-use quecto::domain::swarm::{RunControlAction, RunStatus};
+use quecto::domain::swarm::{
+    value_objects::lifecycle::RunStatus, value_objects::run_control::RunControlAction,
+};
 #[tokio::test]
 async fn real_control_is_idempotent_and_orders_durable_generations() {
     let (_directory, context) = super::swarm_control_fixture::context();

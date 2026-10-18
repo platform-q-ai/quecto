@@ -7,7 +7,7 @@ use super::super::dto::{AbandonedRuns, EnvironmentStateDir, GcRemoval, GcRequest
 use super::gc_orphaned_environments_hosted_tests::{kept_reason, removable, run};
 use super::gc_orphaned_environments_tests::{Rig, dir, record};
 use crate::domain::environments::entities::environment_registry::EnvironmentStatus;
-use crate::domain::swarm::RunStatus;
+use crate::domain::swarm::value_objects::lifecycle::RunStatus;
 
 fn request(abandoned: AbandonedRuns) -> GcRequest {
     GcRequest {

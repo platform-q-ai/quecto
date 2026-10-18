@@ -350,12 +350,12 @@ async fn spawn_local_child(child: &ChildCommand<'_>) -> Result<PreparedChild, Do
                     None
                 }
                 TerminationOutcome::AlreadyExited(_) => {
-                    Some(crate::domain::swarm::MemberExit::Abrupt)
+                    Some(crate::domain::swarm::value_objects::lifecycle::MemberExit::Abrupt)
                 }
                 TerminationOutcome::ExitedAfterProtocol(_)
                 | TerminationOutcome::ExitedAfterTerm { .. }
                 | TerminationOutcome::ExitedAfterKill { .. } => {
-                    Some(crate::domain::swarm::MemberExit::Orderly)
+                    Some(crate::domain::swarm::value_objects::lifecycle::MemberExit::Orderly)
                 }
             };
             if let Some(exit) = exit {

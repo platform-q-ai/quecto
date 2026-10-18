@@ -10,7 +10,11 @@ use crate::application::swarm::board_operation::{detail, operation, text};
 use crate::application::swarm::dto::{ConfirmMemberDeadRequest, DeathConfirmation, DeathConfirmed};
 use crate::application::swarm::ports::{BoardRepository, Clock};
 use crate::domain::swarm::{
-    Access, BoardError, MemberExit, RefusalKind, python_equal, status_is_alive,
+    events::telemetry::RefusalKind,
+    services::policy::{Access, status_is_alive},
+    value_objects::board_error::BoardError,
+    value_objects::lifecycle::MemberExit,
+    value_objects::python_value::python_equal,
 };
 
 /// The reason a confirmed death that retains reservations records.

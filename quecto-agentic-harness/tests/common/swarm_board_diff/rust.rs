@@ -15,7 +15,7 @@ use quecto::application::swarm::ports::{BoardOpLog, Clock, IdSource};
 use quecto::composition::swarm::{
     SwarmBoardHandles, board_wire, build_swarm_board_handles_with, with_event_log,
 };
-use quecto::domain::swarm::BoardOpObservation;
+use quecto::domain::swarm::events::telemetry::BoardOpObservation;
 use quecto::infrastructure::persistence::swarm_board::repository::SqliteBoardRepository;
 use quecto::infrastructure::tools::swarm::swarm_board_dispatch::call;
 use quecto::infrastructure::tools::swarm::swarm_board_ops::{member_arguments, wire_text};
@@ -56,7 +56,7 @@ impl BoardOpLog for RecordedOps {
     }
 
     /// No summary this test checks is written.
-    fn summarize(&self, _summary: quecto::domain::swarm::SwarmRunSummary) {}
+    fn summarize(&self, _summary: quecto::domain::swarm::events::run_summary::SwarmRunSummary) {}
 }
 
 impl RecordedOps {

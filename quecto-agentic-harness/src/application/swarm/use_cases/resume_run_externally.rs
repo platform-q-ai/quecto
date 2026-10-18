@@ -9,7 +9,10 @@ use crate::application::swarm::board_control::{blockers, pause_started, paused_f
 use crate::application::swarm::board_operation::{detail, operation};
 use crate::application::swarm::dto::{ControlAnswer, RunTransition};
 use crate::application::swarm::ports::{BoardRepository, Clock};
-use crate::domain::swarm::{Access, BoardError, RefusalKind, RunState};
+use crate::domain::swarm::{
+    entities::records::RunState, events::telemetry::RefusalKind, services::policy::Access,
+    value_objects::board_error::BoardError,
+};
 
 /// Through the operation gate as the coordinator (the supervisor acts as
 /// it). A running run answers its receipt as it stands; only a paused run

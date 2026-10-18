@@ -4,7 +4,7 @@
 //! an amendment deletes and `evidence` records.
 use quecto::application::swarm::dto::{BoardLocation, EvidenceEntry, NewEvidence, PriorEvidence};
 use quecto::application::swarm::ports::{BoardRepository, BoardTransaction};
-use quecto::domain::swarm::BoardError;
+use quecto::domain::swarm::value_objects::board_error::BoardError;
 use quecto::infrastructure::persistence::swarm_board::repository::SqliteBoardRepository;
 use serde_json::json;
 

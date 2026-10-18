@@ -4,8 +4,8 @@
 
 use super::*;
 use crate::application::swarm::ports::WorkerBoardRead;
-use crate::domain::swarm::RunStatus;
-use crate::domain::swarm::worker_wake::WorkerBoard;
+use crate::domain::swarm::services::worker_wake::WorkerBoard;
+use crate::domain::swarm::value_objects::lifecycle::RunStatus;
 use crate::infrastructure::tools::agents::subagent_registry::{
     NotificationRx, NotificationTx, SubagentEntry, SubagentNotification, SubagentRegistry,
     SwarmNoteState, new_notification_channel, new_registry,

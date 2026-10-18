@@ -7,7 +7,10 @@ use crate::application::swarm::board_test_support::{
     BoardState, CompactEncoding, MemoryBoard, SteppingClock, accepted, member_row, running_board,
 };
 use crate::application::swarm::dto::AmendRunContractRequest;
-use crate::domain::swarm::{BoardError, RefusalKind, RunState};
+use crate::domain::swarm::{
+    entities::records::RunState, events::telemetry::RefusalKind,
+    value_objects::board_error::BoardError,
+};
 
 fn board_state() -> BoardState {
     let mut state = running_board(100.0);

@@ -45,7 +45,10 @@ pub(super) async fn drain_and_run_pending(ctx: &mut DispatchCtx<'_>) {
                 return;
             }
             if let Some(control) = &ctx.turn_control.swarm_control {
-                use crate::domain::swarm::{RunControlAction, RunStatus};
+                use crate::domain::swarm::{
+                    value_objects::lifecycle::RunStatus,
+                    value_objects::run_control::RunControlAction,
+                };
                 use crate::interface::cli::uds_session::PendingMessage;
                 let status = control.apply(RunControlAction::Status).await;
                 if let Ok(receipt) = &status {

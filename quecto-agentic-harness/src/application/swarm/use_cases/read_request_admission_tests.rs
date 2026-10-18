@@ -4,7 +4,9 @@ use super::ReadRequestAdmission;
 use crate::application::swarm::board_test_support::{
     MemoryBoard, SteppingClock, member_row, paused, running_board, usage,
 };
-use crate::domain::swarm::{BoardError, RefusalKind};
+use crate::domain::swarm::{
+    events::telemetry::RefusalKind, value_objects::board_error::BoardError,
+};
 
 /// Any member, a dead one included, reads the run and its members, and
 /// the read changes nothing.

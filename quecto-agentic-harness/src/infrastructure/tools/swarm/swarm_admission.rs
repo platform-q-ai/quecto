@@ -3,7 +3,7 @@
 use super::swarm_bridge::SwarmContext;
 use crate::application::swarm::ports::CoordinationPort;
 use crate::domain::error::DomainError;
-use crate::domain::swarm::{MemberExit, ProcessIdentity};
+use crate::domain::swarm::value_objects::lifecycle::{MemberExit, ProcessIdentity};
 
 #[derive(Debug)]
 pub struct LaunchReservation {

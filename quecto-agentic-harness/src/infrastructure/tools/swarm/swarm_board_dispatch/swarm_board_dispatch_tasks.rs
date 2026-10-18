@@ -19,7 +19,9 @@ use crate::application::swarm::dto::{
 use crate::application::swarm::use_cases::{
     ClaimTask, CreateTask, ReadTask, ReleaseTask, SetTaskDependencies,
 };
-use crate::domain::swarm::{BoardError, BoardOpDetail};
+use crate::domain::swarm::{
+    events::telemetry::BoardOpDetail, value_objects::board_error::BoardError,
+};
 
 /// `task_create(request, title, acceptance, dependencies=None)`.
 pub(super) const TASK_CREATE: [Parameter; 4] = [

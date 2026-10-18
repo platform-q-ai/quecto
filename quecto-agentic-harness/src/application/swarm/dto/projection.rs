@@ -13,7 +13,7 @@
 //! the five the board writes.
 use serde_json::Value;
 
-use crate::domain::swarm::{MemberState, RunState, TaskState};
+use crate::domain::swarm::entities::records::{MemberState, RunState, TaskState};
 
 /// How many rows of each kind a projection reads at most, and how many
 /// bytes of stored text: a row whose text would pass `bytes` is never

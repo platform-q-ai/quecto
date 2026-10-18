@@ -220,7 +220,7 @@ fn inherited_child_policy_snapshot_includes_agent_control_by_default() {
 #[test]
 fn trial_isolated_runtime_build_does_not_enroll_in_full_ambient_swarm() {
     use crate::application::swarm::ports::CoordinationPort;
-    use crate::domain::swarm::ProcessIdentity;
+    use crate::domain::swarm::value_objects::lifecycle::ProcessIdentity;
     let tmp = tempfile::tempdir().unwrap();
     let context = crate::infrastructure::tools::swarm::swarm_bridge::SwarmContext {
         board: crate::composition::swarm::swarm_board(),
@@ -333,7 +333,7 @@ fn runtime_in_container(
 /// (bootstrap placeholder run) and omits it once the run has been created.
 #[test]
 fn container_runtime_workflow_follows_swarm_participation() {
-    use crate::domain::swarm::ProcessIdentity;
+    use crate::domain::swarm::value_objects::lifecycle::ProcessIdentity;
     let identity = ProcessIdentity {
         pid: std::process::id(),
         started: crate::infrastructure::tools::swarm::swarm_bridge::process_start(

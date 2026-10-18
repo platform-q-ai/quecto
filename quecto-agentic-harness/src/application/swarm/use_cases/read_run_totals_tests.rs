@@ -9,7 +9,9 @@ use crate::application::swarm::board_test_support::{
     stored_task, usage,
 };
 use crate::application::swarm::dto::UsageRow;
-use crate::domain::swarm::{BoardError, RefusalKind};
+use crate::domain::swarm::{
+    events::telemetry::RefusalKind, value_objects::board_error::BoardError,
+};
 
 fn message(id: i64, status: &str) -> StoredMessage {
     StoredMessage {

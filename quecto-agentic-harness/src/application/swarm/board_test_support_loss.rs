@@ -7,7 +7,7 @@ use serde_json::Value;
 
 use super::{RecordedEvent, text_affinity};
 use crate::application::swarm::dto::{MemberRow, ScopeObservation};
-use crate::domain::swarm::python_equal;
+use crate::domain::swarm::value_objects::python_value::python_equal;
 
 /// `SELECT launcher FROM members WHERE id=?`.
 pub(super) fn launcher(members: &[MemberRow], id: &Value) -> Option<Option<String>> {

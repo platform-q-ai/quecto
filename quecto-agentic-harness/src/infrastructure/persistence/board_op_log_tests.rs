@@ -6,7 +6,7 @@ use std::sync::atomic::Ordering;
 use super::EventLogBoardOps;
 use crate::application::swarm::ports::BoardOpLog;
 use crate::domain::redaction::Redacted;
-use crate::domain::swarm::{
+use crate::domain::swarm::events::telemetry::{
     ArgumentFaults, BoardOpDetail, BoardOpObservation, BoardOpOutcome, BoardRole,
 };
 use crate::infrastructure::persistence::audit_log::AuditLog;
@@ -136,7 +136,7 @@ fn drops_accumulate_into_one_note() {
 /// from a plain thread; past the cap it is dropped with the one warning.
 #[test]
 fn a_run_summary_is_one_line_under_no_turn() {
-    use crate::domain::swarm::RunSummaryFold;
+    use crate::domain::swarm::events::run_summary::RunSummaryFold;
     let run = "0123456789abcdef0123456789abcdef";
     let summary = || {
         let mut fold = RunSummaryFold::new(run, 0);
@@ -168,9 +168,9 @@ fn a_run_summary_is_one_line_under_no_turn() {
 }
 
 /// A run summary with `records` folded records of a run.
-fn a_summary() -> crate::domain::swarm::SwarmRunSummary {
+fn a_summary() -> crate::domain::swarm::events::run_summary::SwarmRunSummary {
     let run = "0123456789abcdef0123456789abcdef";
-    let mut fold = crate::domain::swarm::RunSummaryFold::new(run, 0);
+    let mut fold = crate::domain::swarm::events::run_summary::RunSummaryFold::new(run, 0);
     fold.observe(&BoardOpObservation {
         run_id: Some(run.into()),
         ..observation()

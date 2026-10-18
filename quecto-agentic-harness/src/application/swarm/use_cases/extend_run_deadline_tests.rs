@@ -5,7 +5,10 @@ use crate::application::swarm::board_test_support::{
     MemoryBoard, SteppingClock, paused, running_board,
 };
 use crate::application::swarm::dto::{ExtendRunDeadlineRequest, RunTransition};
-use crate::domain::swarm::{BoardError, RefusalKind, RunState};
+use crate::domain::swarm::{
+    entities::records::RunState, events::telemetry::RefusalKind,
+    value_objects::board_error::BoardError,
+};
 
 fn extend(seconds: Value) -> ExtendRunDeadlineRequest {
     ExtendRunDeadlineRequest {

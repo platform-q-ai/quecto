@@ -64,7 +64,7 @@ fn created_run(checkout: &Path) -> (SwarmContext, String) {
     context
         .create_run(
             &serde_json::json!({"goal":"g", "constraints":[], "criteria":[{"id":"t","kind":"command","description":"pass"}], "member_limit":2, "deadline":deadline}),
-            &crate::domain::swarm::ProcessIdentity {
+            &crate::domain::swarm::value_objects::lifecycle::ProcessIdentity {
                 pid,
                 started: super::super::swarm_bridge::process_start(pid).unwrap(),
             },

@@ -7,7 +7,7 @@ use super::OverRepository;
 use crate::application::swarm::board_operation::atomic;
 use crate::application::swarm::dto::RunStatusView;
 use crate::application::swarm::ports::BoardRepository;
-use crate::domain::swarm::BoardError;
+use crate::domain::swarm::value_objects::board_error::BoardError;
 
 /// Membership-free, so it runs in one plain transaction rather than the
 /// operation gate: the harness and the supervising session read it before

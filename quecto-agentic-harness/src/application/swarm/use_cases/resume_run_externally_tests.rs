@@ -5,7 +5,10 @@ use crate::application::swarm::board_test_support::{
     MemoryBoard, SteppingClock, member_row, paused, running_board, usage,
 };
 use crate::application::swarm::dto::RunTransition;
-use crate::domain::swarm::{BoardError, RefusalKind, RunState};
+use crate::domain::swarm::{
+    entities::records::RunState, events::telemetry::RefusalKind,
+    value_objects::board_error::BoardError,
+};
 
 /// `resume_refuses_members_and_lists_blockers_for_the_supervisor` (the
 /// supervisor half): a pause whose resume would end again at once (its

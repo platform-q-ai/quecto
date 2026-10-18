@@ -120,7 +120,7 @@ async fn approval_exchange(busy: bool) {
         .unwrap()
         .as_secs()
         + 120;
-    crate::infrastructure::tools::registry::call_work::off_the_runtime(|| board.create_run(&serde_json::json!({"goal":"wishlist","constraints":[],"criteria":[{"id":"tests","kind":"command","description":"pass"}],"member_limit":1,"deadline":deadline}), &crate::domain::swarm::ProcessIdentity { pid:std::process::id(), started:crate::infrastructure::tools::swarm::swarm_bridge::process_start(std::process::id()).unwrap() },None)).unwrap();
+    crate::infrastructure::tools::registry::call_work::off_the_runtime(|| board.create_run(&serde_json::json!({"goal":"wishlist","constraints":[],"criteria":[{"id":"tests","kind":"command","description":"pass"}],"member_limit":1,"deadline":deadline}), &crate::domain::swarm::value_objects::lifecycle::ProcessIdentity { pid:std::process::id(), started:crate::infrastructure::tools::swarm::swarm_bridge::process_start(std::process::id()).unwrap() },None)).unwrap();
     let tool = SwarmTool::new().with_context(Some(board.clone()));
     let op = |request: serde_json::Value| {
         let tool = &tool;

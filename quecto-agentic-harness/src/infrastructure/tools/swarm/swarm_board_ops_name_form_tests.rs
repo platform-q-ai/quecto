@@ -11,7 +11,7 @@ use serde_json::json;
 
 use super::super::{execute, refused};
 use super::logged;
-use crate::domain::swarm::{BoardOpObservation, NameForm};
+use crate::domain::swarm::events::telemetry::{BoardOpObservation, NameForm};
 
 /// The `name_form` of the record of `op` in `records`, the one record of
 /// it; every other record (the harness's own reads) carries none.

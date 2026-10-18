@@ -5,7 +5,7 @@ use crate::application::swarm::board_test_support::{
     BoardState, MemoryBoard, RecordedEvent, SteppingClock, StoredMessage, member_row, running_board,
 };
 use crate::application::swarm::dto::{AcceptWakeRequest, WakeAccepted};
-use crate::domain::swarm::{RefusalKind, RunState};
+use crate::domain::swarm::{entities::records::RunState, events::telemetry::RefusalKind};
 
 /// `worker`'s unread message 1 to `parent` (event 1), then `parent`'s own
 /// amendment (event 2).

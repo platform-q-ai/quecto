@@ -8,8 +8,11 @@ use crate::application::swarm::board_operation::{detail, operation};
 use crate::application::swarm::board_tasks::{changed, owned, unsubmitted};
 use crate::application::swarm::dto::{BlockTaskRequest, TaskChange, TaskTransition, TaskUpdate};
 use crate::application::swarm::ports::{BoardRepository, Clock};
-use crate::domain::swarm::validation::TEXT_MAX_BYTES;
-use crate::domain::swarm::{Access, BoardError, bounded, python_equal};
+use crate::domain::swarm::services::validation::TEXT_MAX_BYTES;
+use crate::domain::swarm::{
+    services::policy::Access, services::validation::bounded,
+    value_objects::board_error::BoardError, value_objects::python_value::python_equal,
+};
 
 /// The reason is bounded before the operation gate (a running run). Only
 /// the claim's owner, with its current token, blocks it, and never once

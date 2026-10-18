@@ -4,7 +4,7 @@
 //! within the board's member-id bound, and is always the redacted, bounded
 //! ref.
 use super::{ACTOR_REF_CACHE, ACTOR_REF_CHARS, ActorRefs, Caller, actor_ref};
-use crate::domain::swarm::validation::MEMBER_ID_MAX_BYTES;
+use crate::domain::swarm::services::validation::MEMBER_ID_MAX_BYTES;
 
 #[test]
 fn a_members_ref_is_the_redacted_bounded_ref_every_time() {

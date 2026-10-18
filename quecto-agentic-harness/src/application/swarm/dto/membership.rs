@@ -8,7 +8,7 @@
 //! argument stays the JSON value the caller passed (#2271 round-1 review
 //! M1): Python binds each to its SQL untyped, the column affinity decides
 //! what is stored, and the board compares stored values with the argument
-//! by Python's `==` (`domain::swarm::python_equal`).
+//! by Python's `==` (`domain::swarm::value_objects::python_value::python_equal`).
 use serde_json::Value;
 
 use super::MemberRow;

@@ -88,8 +88,8 @@ pub fn spawn_reaper_task(
 pub fn member_exit_kind(
     exit: Option<&ChildExit>,
     sent: &[crate::infrastructure::processes::owned_child_supervisor::SentSignal],
-) -> crate::domain::swarm::MemberExit {
-    use crate::domain::swarm::MemberExit;
+) -> crate::domain::swarm::value_objects::lifecycle::MemberExit {
+    use crate::domain::swarm::value_objects::lifecycle::MemberExit;
     match exit {
         Some(ChildExit::Code(_)) => MemberExit::Orderly,
         Some(ChildExit::Signal(_)) if !sent.is_empty() => MemberExit::Orderly,

@@ -8,7 +8,11 @@ use crate::application::swarm::board_test_support::{
 };
 use crate::application::swarm::dto::{DictRow, LatestActivity, ScopeObservation};
 use crate::application::swarm::ports::{BoardEvents, BoardRepository};
-use crate::domain::swarm::{BoardError, RefusalKind, RunRecord, RunState};
+use crate::domain::swarm::{
+    entities::records::{RunRecord, RunState},
+    events::telemetry::RefusalKind,
+    value_objects::board_error::BoardError,
+};
 
 /// Loss observations as scripted, and the events written.
 #[derive(Default)]

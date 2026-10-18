@@ -6,7 +6,10 @@ use crate::application::swarm::board_test_support::{
 };
 use crate::application::swarm::dto::{Quarantine, QuarantineMemberRequest, Quarantined};
 use crate::application::swarm::use_cases::OverRepository;
-use crate::domain::swarm::{BoardError, RefusalKind, RunState};
+use crate::domain::swarm::{
+    entities::records::RunState, events::telemetry::RefusalKind,
+    value_objects::board_error::BoardError,
+};
 
 /// A live member launched by `launcher`.
 fn launched(id: &str, launcher: &str) -> crate::application::swarm::dto::MemberRow {

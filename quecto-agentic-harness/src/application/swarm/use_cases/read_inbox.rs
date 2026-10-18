@@ -6,7 +6,7 @@ use super::OverRepository;
 use crate::application::swarm::board_operation::operation;
 use crate::application::swarm::dto::{MessageRow, ReadInboxRequest};
 use crate::application::swarm::ports::{BoardRepository, Clock};
-use crate::domain::swarm::{Access, BoardError};
+use crate::domain::swarm::{services::policy::Access, value_objects::board_error::BoardError};
 
 /// A read-only operation (a dead member may still read): the caller's
 /// unread messages, or with `include_consumed` every message to it (the

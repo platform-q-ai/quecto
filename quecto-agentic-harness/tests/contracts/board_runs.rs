@@ -5,7 +5,7 @@ use quecto::application::swarm::dto::{
     AmendedContract, BoardLocation, NewRun, RunContract, RunOwnerRow, RunStatusRow, StoredContract,
 };
 use quecto::application::swarm::ports::{BoardRepository, BoardTransaction};
-use quecto::domain::swarm::{BoardError, RunState};
+use quecto::domain::swarm::{entities::records::RunState, value_objects::board_error::BoardError};
 use quecto::infrastructure::persistence::swarm_board::repository::SqliteBoardRepository;
 use serde_json::json;
 

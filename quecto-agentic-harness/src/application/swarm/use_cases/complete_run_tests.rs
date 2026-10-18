@@ -7,7 +7,10 @@ use crate::application::swarm::board_test_support::{
 };
 use crate::application::swarm::dto::{CompleteRunRequest, RevalidateTaskRequest};
 use crate::application::swarm::use_cases::RevalidateTask;
-use crate::domain::swarm::{BoardError, RefusalKind, RunState};
+use crate::domain::swarm::{
+    entities::records::RunState, events::telemetry::RefusalKind,
+    value_objects::board_error::BoardError,
+};
 
 /// Python's `MemoryRepository`: one command criterion with accepted
 /// evidence at R2, and one completed task whose evidence is at R1.

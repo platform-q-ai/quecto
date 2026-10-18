@@ -9,7 +9,10 @@ use serde_json::json;
 use super::super::super::{Method, SwarmBoardHandles, call};
 use super::super::{Recorded, create_args, logged, only};
 use crate::domain::swarm::{
-    BoardOpDetail, BoardOpObservation, BoardOpOutcome, MemberExit, RefusalKind, RunStatusKind,
+    events::telemetry::{
+        BoardOpDetail, BoardOpObservation, BoardOpOutcome, RefusalKind, RunStatusKind,
+    },
+    value_objects::lifecycle::MemberExit,
 };
 
 /// The decision and detail a call of `method`, set up as

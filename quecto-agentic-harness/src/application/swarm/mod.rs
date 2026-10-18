@@ -3,7 +3,10 @@
 //! use cases (epic #2265) live in [`use_cases`], over the board ports and
 //! the operation gate (`board_operation`).
 use crate::domain::error::DomainError;
-use crate::domain::swarm::{Member, MemberExit, MemberStatus, Snapshot};
+use crate::domain::swarm::{
+    entities::run::{Member, Snapshot},
+    value_objects::lifecycle::{MemberExit, MemberStatus},
+};
 
 mod board_completion;
 mod board_control;
@@ -163,7 +166,7 @@ pub async fn settle(
             <= 1,
         "a run has one coordinator row"
     );
-    if snapshot.status == crate::domain::swarm::RunStatus::Paused {
+    if snapshot.status == crate::domain::swarm::value_objects::lifecycle::RunStatus::Paused {
         // An ended run (#1729) keeps its coordinator's turn alive so it can
         // report the outcome it proposed; every other member's inference
         // suspends, as it does on every other pause.
@@ -255,8 +258,8 @@ async fn end_members(
 pub fn observed_outcome(
     snapshot: &Snapshot,
     clock: &(impl Clock + ?Sized),
-) -> crate::domain::swarm::RunStatus {
-    use crate::domain::swarm::RunStatus;
+) -> crate::domain::swarm::value_objects::lifecycle::RunStatus {
+    use crate::domain::swarm::value_objects::lifecycle::RunStatus;
     // A passed deadline ends the run as a resumable pause holding
     // `budget-exhausted` (#1729); the store records it on its next operation.
     if snapshot.status == RunStatus::Running && clock.now_seconds() >= snapshot.deadline {
@@ -319,7 +322,7 @@ impl SwarmLifecycle for LifecycleService {
         &self,
         snapshot: &Snapshot,
         clock: &dyn Clock,
-    ) -> crate::domain::swarm::RunStatus {
+    ) -> crate::domain::swarm::value_objects::lifecycle::RunStatus {
         observed_outcome(snapshot, clock)
     }
 }

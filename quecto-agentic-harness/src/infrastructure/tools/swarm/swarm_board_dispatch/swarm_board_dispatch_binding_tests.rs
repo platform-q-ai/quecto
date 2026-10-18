@@ -9,7 +9,9 @@ use super::{
     BindingFaults, SchemaField, WHOLE, allowlisted, expected_type, faults, recorded, schema_field,
     unreadable_arguments,
 };
-use crate::domain::swarm::{ArgumentFaults, RefusalKind, UnexpectedArgs, WrongTypeArg};
+use crate::domain::swarm::events::telemetry::{
+    ArgumentFaults, RefusalKind, UnexpectedArgs, WrongTypeArg,
+};
 use crate::infrastructure::tools::swarm::swarm_board_ops::BOARD_OPS;
 
 const SECRET: &str = "sk-ant-api03-CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC";

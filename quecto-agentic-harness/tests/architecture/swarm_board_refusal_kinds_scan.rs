@@ -143,7 +143,7 @@ fn the_scan_reads_texts_templates_and_kinds() {
         r#"fn f() {
             let _ = BoardError::new(RefusalKind::Invalid, "plain");
             let _ = BoardError::new(RefusalKind::NotRunning, format!("run is {}; no", x));
-            let _ = crate::domain::swarm::BoardError::new(kind, error.to_string());
+            let _ = crate::domain::swarm::value_objects::board_error::BoardError::new(kind, error.to_string());
             let _ = StoreRefusal(m);
         }
         impl Store {
@@ -166,8 +166,8 @@ fn the_scan_reads_texts_templates_and_kinds() {
             site("inner", "plain", "Invalid"),
         ]
     );
-    assert!(production("src/domain/swarm/policy.rs"));
-    assert!(!production("src/domain/swarm/telemetry_tests.rs"));
+    assert!(production("src/domain/swarm/services/policy.rs"));
+    assert!(!production("src/domain/swarm/events/telemetry_tests.rs"));
     assert!(!production("src/application/swarm/board_test_support.rs"));
     // An allowlist (#2303 round-3 review L5): a file the production module
     // tree does not mount is not production, whatever its name.

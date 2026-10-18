@@ -9,7 +9,12 @@ use crate::application::swarm::board_control::receipt;
 use crate::application::swarm::board_operation::{detail, operation, text};
 use crate::application::swarm::dto::{ControlAnswer, RunTransition};
 use crate::application::swarm::ports::{BoardRepository, Clock};
-use crate::domain::swarm::{Access, BoardError, PROPOSED_OUTCOMES, RefusalKind, RunState};
+use crate::domain::swarm::{
+    entities::records::RunState,
+    events::telemetry::RefusalKind,
+    services::policy::{Access, PROPOSED_OUTCOMES},
+    value_objects::board_error::BoardError,
+};
 
 /// Through the operation gate as the coordinator: only a paused run
 /// holding a proposed outcome (`PROPOSED_OUTCOMES`) closes. Its status

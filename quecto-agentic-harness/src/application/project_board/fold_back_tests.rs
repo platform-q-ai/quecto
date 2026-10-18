@@ -8,7 +8,7 @@ use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
 use crate::domain::project_board::value_objects::vocabulary::PlanState;
 use crate::domain::project_board::value_objects::vocabulary::RunOutcome;
-use crate::domain::swarm::{RunState, TaskState};
+use crate::domain::swarm::entities::records::{RunState, TaskState};
 use crate::infrastructure::persistence::project_board::text_cells::MarkdownTextCells;
 
 fn slug(text: &str) -> Slug {

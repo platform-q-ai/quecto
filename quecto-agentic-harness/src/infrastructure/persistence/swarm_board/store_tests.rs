@@ -7,7 +7,9 @@ use super::{
     BoardStore, CREATE_FLAGS, OPEN_FLAGS, StoreRefusal, TransactionError, Undecodable, absolutised,
     file_uri, opening_message, secure_delete_checked, sqlite_message, variable_limit_checked,
 };
-use crate::domain::swarm::{BoardError, RefusalKind};
+use crate::domain::swarm::{
+    events::telemetry::RefusalKind, value_objects::board_error::BoardError,
+};
 use crate::infrastructure::persistence::swarm_board::binding::bound_statement;
 use crate::infrastructure::persistence::swarm_board::ledger::event;
 use crate::infrastructure::persistence::swarm_board::py_json::{self, PyJson};

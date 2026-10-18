@@ -476,7 +476,7 @@ mod kept_under_label {
         CoordinatorLoss, HostedSwarmRun, MemberFinalizeMode, SwarmRunObservation,
     };
     use crate::domain::ids::AgentUuid;
-    use crate::domain::swarm::RunStatus;
+    use crate::domain::swarm::value_objects::lifecycle::RunStatus;
     use crate::infrastructure::tools::agents::coordinator_launch::KeptSwarmBoards;
 
     /// The boards this module's teardowns keep.

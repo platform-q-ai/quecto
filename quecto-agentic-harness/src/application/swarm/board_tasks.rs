@@ -6,7 +6,10 @@ use serde_json::Value;
 
 use super::dto::{TaskChange, TaskRow, TaskTransition};
 use super::ports::BoardTasks;
-use crate::domain::swarm::{BoardError, RefusalKind, python_equal, require_unsubmitted};
+use crate::domain::swarm::{
+    events::telemetry::RefusalKind, services::policy::require_unsubmitted,
+    value_objects::board_error::BoardError, value_objects::python_value::python_equal,
+};
 
 /// The statuses of a held claim (`swarm_repository.ACTIVE_CLAIM`).
 pub(crate) const HELD_CLAIM: [&str; 3] = ["claimed", "blocked", "submitted"];

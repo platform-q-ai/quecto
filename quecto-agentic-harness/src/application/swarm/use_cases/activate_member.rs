@@ -8,7 +8,10 @@ use crate::application::swarm::board_membership::{
 use crate::application::swarm::board_operation::{detail, operation};
 use crate::application::swarm::dto::ActivateMemberRequest;
 use crate::application::swarm::ports::{BoardRepository, Clock};
-use crate::domain::swarm::{Access, BoardError, RefusalKind};
+use crate::domain::swarm::{
+    events::telemetry::RefusalKind, services::policy::Access,
+    value_objects::board_error::BoardError,
+};
 
 /// Through the operation gate (`active=False`), so an expired run is ended
 /// first (that transaction commits) and then refused: only a `setup` or

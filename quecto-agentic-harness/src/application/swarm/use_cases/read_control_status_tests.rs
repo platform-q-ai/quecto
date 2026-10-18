@@ -2,7 +2,9 @@ use super::ReadControlStatus;
 use crate::application::swarm::board_test_support::{
     MemoryBoard, SteppingClock, member_row, paused, running_board,
 };
-use crate::domain::swarm::{BoardError, RefusalKind};
+use crate::domain::swarm::{
+    events::telemetry::RefusalKind, value_objects::board_error::BoardError,
+};
 
 /// A dead member still reads the receipt; an unknown one is refused; the
 /// read writes nothing.

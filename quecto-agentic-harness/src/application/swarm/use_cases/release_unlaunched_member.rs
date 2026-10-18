@@ -7,7 +7,10 @@ use crate::application::swarm::board_membership::unlaunched;
 use crate::application::swarm::board_operation::{detail, operation};
 use crate::application::swarm::dto::ReleaseUnlaunchedMemberRequest;
 use crate::application::swarm::ports::{BoardRepository, Clock};
-use crate::domain::swarm::{Access, BoardError, RefusalKind};
+use crate::domain::swarm::{
+    events::telemetry::RefusalKind, services::policy::Access,
+    value_objects::board_error::BoardError,
+};
 
 /// Through the operation gate (`active=False`): only a `reserved` member
 /// with no process recorded is released. It is marked dead (so its place

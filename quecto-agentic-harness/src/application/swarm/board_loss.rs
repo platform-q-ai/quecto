@@ -13,7 +13,10 @@ use super::board_control::edited;
 use super::board_operation::{detail, end, text};
 use super::ports::{BoardEvents, BoardMembers, BoardRuns, Clock};
 use crate::domain::swarm::{
-    BoardError, RunRecord, RunState, python_equal, python_truthy, status_is_alive,
+    entities::records::{RunRecord, RunState},
+    services::policy::status_is_alive,
+    value_objects::board_error::BoardError,
+    value_objects::python_value::{python_equal, python_truthy},
 };
 
 /// `Workbench.LOSS_GRACE`: seconds from a member's first authorised loss

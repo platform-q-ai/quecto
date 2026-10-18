@@ -11,7 +11,7 @@ use crate::application::swarm::dto::{
     LaunchIdentity,
 };
 use crate::application::swarm::ports::{BoardRepository, Clock, IdSource};
-use crate::domain::swarm::BoardError;
+use crate::domain::swarm::value_objects::board_error::BoardError;
 
 /// The placeholder when the board holds no run (`BootstrapRun`'s
 /// transaction, which creates the board), then the join (`JoinRun`'s),

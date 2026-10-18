@@ -6,7 +6,7 @@ use super::OverRepository;
 use crate::application::swarm::board_operation::read_operation;
 use crate::application::swarm::dto::{RunSnapshotView, RunWatchView};
 use crate::application::swarm::ports::{BoardRepository, BoardTransaction, Clock};
-use crate::domain::swarm::{BoardError, RunRecord};
+use crate::domain::swarm::{entities::records::RunRecord, value_objects::board_error::BoardError};
 
 /// Through the operation gate as a read (`active=False, read_only=True`):
 /// any member, a dead one included, reads it, and a run whose deadline has

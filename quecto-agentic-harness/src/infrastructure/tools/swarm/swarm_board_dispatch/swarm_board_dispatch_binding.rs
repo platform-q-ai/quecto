@@ -20,7 +20,10 @@ use serde_json::Value;
 
 use super::super::swarm_board_ops::{BOARD_OPS, ID_ALIAS, op_spec};
 use super::method::{Method, Parameter};
-use crate::domain::swarm::{ArgumentFaults, BoardError, RefusalKind, UnexpectedArgs, WrongTypeArg};
+use crate::domain::swarm::{
+    events::telemetry::{ArgumentFaults, RefusalKind, UnexpectedArgs, WrongTypeArg},
+    value_objects::board_error::BoardError,
+};
 
 /// The name recorded for the arguments as a whole.
 pub(super) const WHOLE: &str = "arguments";

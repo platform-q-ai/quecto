@@ -1,6 +1,6 @@
 use quecto::application::swarm::ports::WorkerBoardRead;
 use quecto::application::tools::ports::Tool;
-use quecto::domain::swarm::RunStatus;
+use quecto::domain::swarm::value_objects::lifecycle::RunStatus;
 
 /// #2471: the run's coordinator reads its live run (every page of tasks and
 /// each claimed task's owner), and no other member reads anything.

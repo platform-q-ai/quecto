@@ -18,8 +18,11 @@ use super::{Level, SwarmBoardHandles};
 use crate::application::swarm::dto::CallMeasure;
 use crate::application::swarm::ports::BoardOpLog;
 use crate::domain::redaction::Redacted;
-use crate::domain::swarm::watch_polls::{PollTally, WATCH_POLL_OP};
-use crate::domain::swarm::{BoardError, BoardOpObservation, BoardRole, NameForm, RefusalKind};
+use crate::domain::swarm::events::watch_polls::{PollTally, WATCH_POLL_OP};
+use crate::domain::swarm::{
+    events::telemetry::{BoardOpObservation, BoardRole, NameForm, RefusalKind},
+    value_objects::board_error::BoardError,
+};
 
 /// Whom a board call is made for (#2279 S15 final review): the calling
 /// member, whose role in the run a member-facing op records, or the

@@ -25,7 +25,7 @@ fn fixture() -> (tempfile::TempDir, Arc<std::path::PathBuf>, SwarmTool) {
         .as_secs()
         + 300;
     quecto::infrastructure::tools::registry::call_work::off_the_runtime(|| context.create_run(&json!({"goal":"product contract","constraints":[],"criteria":[{"id":"tests","kind":"command","description":"pass"}],"member_limit":1,"deadline":deadline}),
-        &quecto::domain::swarm::ProcessIdentity { pid: std::process::id(), started: quecto::infrastructure::tools::swarm::swarm_bridge::process_start(std::process::id()).unwrap() }, None)).unwrap();
+        &quecto::domain::swarm::value_objects::lifecycle::ProcessIdentity { pid: std::process::id(), started: quecto::infrastructure::tools::swarm::swarm_bridge::process_start(std::process::id()).unwrap() }, None)).unwrap();
     let tool = SwarmTool::new().with_context(Some(context));
 
     (root, workspace, tool)

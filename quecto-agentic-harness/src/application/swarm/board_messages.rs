@@ -4,7 +4,10 @@
 use serde_json::Value;
 
 use super::ports::{BoardEncoding, BoardMessages};
-use crate::domain::swarm::{BoardError, RefusalKind, python_equal};
+use crate::domain::swarm::{
+    events::telemetry::RefusalKind, value_objects::board_error::BoardError,
+    value_objects::python_value::python_equal,
+};
 
 /// The most unread messages an inbox holds (`send` and `_notify_revoked`).
 pub(crate) const INBOX_CAPACITY: i64 = 100;

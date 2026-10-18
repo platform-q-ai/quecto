@@ -6,7 +6,9 @@
 //! `swarm_tasks.py`).
 use quecto::application::swarm::dto::{BoardLocation, CountedTask, DictRow, LatestActivity};
 use quecto::application::swarm::ports::{BoardRepository, BoardTransaction};
-use quecto::domain::swarm::{BoardError, RefusalKind};
+use quecto::domain::swarm::{
+    events::telemetry::RefusalKind, value_objects::board_error::BoardError,
+};
 use quecto::infrastructure::persistence::swarm_board::repository::SqliteBoardRepository;
 use serde_json::{Value, json};
 

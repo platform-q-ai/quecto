@@ -36,7 +36,9 @@ use std::time::Duration;
 use crate::application::swarm::dto::DroppedRecords;
 use crate::application::swarm::ports::{BoardOpLog, SessionOpLog};
 use crate::domain::audit::AuditEvent;
-use crate::domain::swarm::{BoardOpObservation, SwarmRunSummary};
+use crate::domain::swarm::{
+    events::run_summary::SwarmRunSummary, events::telemetry::BoardOpObservation,
+};
 use crate::infrastructure::persistence::audit_log::AuditCrashLine;
 
 /// The tracing target of the one warning a failed record raises.

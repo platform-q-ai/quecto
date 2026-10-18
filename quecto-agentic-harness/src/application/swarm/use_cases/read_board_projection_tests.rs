@@ -4,7 +4,10 @@ use crate::application::swarm::board_test_support::{
     stored_task, usage,
 };
 use crate::application::swarm::dto::{MemberRole, NewRequestUsage};
-use crate::domain::swarm::{BoardRole, MemberState, RefusalKind, RunState, TaskState};
+use crate::domain::swarm::{
+    entities::records::{MemberState, RunState, TaskState},
+    events::telemetry::{BoardRole, RefusalKind},
+};
 use serde_json::json;
 
 /// A running run: `parent` coordinates; `worker` holds item 1, which has a

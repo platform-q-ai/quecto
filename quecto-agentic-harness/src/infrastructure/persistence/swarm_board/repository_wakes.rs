@@ -23,7 +23,9 @@ use super::repository_tasks::loaded;
 use crate::application::swarm::dto::NotificationCursor;
 use crate::application::swarm::ports::BoardWakes;
 use crate::domain::swarm::{
-    BoardError, NotificationEvent, NotificationState, TaskState, TaskSummary,
+    entities::records::TaskState,
+    services::notification::{NotificationEvent, NotificationState, TaskSummary},
+    value_objects::board_error::BoardError,
 };
 
 /// `claim_wake_events`' statement, verbatim.

@@ -8,7 +8,7 @@ use crate::application::swarm::dto::{
     CompletionState, DictRow, EvidenceEntry, NewEvidence, PriorEvidence,
 };
 use crate::application::swarm::ports::BoardEvidence;
-use crate::domain::swarm::BoardError;
+use crate::domain::swarm::value_objects::board_error::BoardError;
 
 /// A criterion as the `evidence` table's TEXT column stores it (#2394
 /// final review N-2), as SQLite applies TEXT affinity to the bound value:

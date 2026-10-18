@@ -3,7 +3,9 @@ use std::path::{Path, PathBuf};
 
 use super::ResolvedCheckout;
 use crate::application::swarm::ports::CheckoutPaths;
-use crate::domain::swarm::{BoardError, RefusalKind};
+use crate::domain::swarm::{
+    events::telemetry::RefusalKind, value_objects::board_error::BoardError,
+};
 
 const ESCAPE: &str = "file must resolve inside the shared checkout";
 

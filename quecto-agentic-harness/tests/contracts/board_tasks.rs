@@ -4,7 +4,9 @@
 //! `sqlite3` binds it (epic P3).
 use quecto::application::swarm::dto::{BoardLocation, NewTask, TaskUpdate};
 use quecto::application::swarm::ports::{BoardRepository, BoardTransaction};
-use quecto::domain::swarm::{BoardError, RefusalKind};
+use quecto::domain::swarm::{
+    events::telemetry::RefusalKind, value_objects::board_error::BoardError,
+};
 use quecto::infrastructure::persistence::swarm_board::repository::SqliteBoardRepository;
 use serde_json::{Value, json};
 

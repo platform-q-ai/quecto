@@ -4,7 +4,10 @@ use crate::application::swarm::ports::CoordinationPort;
 use crate::application::swarm::ports::PortFuture;
 use crate::application::swarm::ports::{ProcessControl, ProcessObservation};
 use crate::domain::error::DomainError;
-use crate::domain::swarm::{Member, MemberStatus, ProcessIdentity, RunStatus};
+use crate::domain::swarm::{
+    entities::run::Member,
+    value_objects::lifecycle::{MemberStatus, ProcessIdentity, RunStatus},
+};
 use serde_json::{Value, json};
 
 /// Join the container's coordination store; returns whether this container
@@ -32,7 +35,8 @@ pub fn join_current_process(
         std::env::var("QUECTO_SWARM_RESERVATION").ok().as_deref(),
     )?;
     participation.record_creator(creator);
-    let participates = crate::domain::swarm::participates(snapshot.deadline);
+    let participates =
+        crate::domain::swarm::services::participation::participates(snapshot.deadline);
     participation.set(participates);
     if needs_supervision(snapshot.status) {
         supervise(context.clone(), snapshot, participation);
@@ -94,7 +98,7 @@ fn settled(context: &SwarmContext) -> Result<Value, DomainError> {
 pub fn member_exited(
     context: &SwarmContext,
     member: &str,
-    exit: crate::domain::swarm::MemberExit,
+    exit: crate::domain::swarm::value_objects::lifecycle::MemberExit,
 ) -> Result<Value, DomainError> {
     context
         .lifecycle
@@ -219,7 +223,7 @@ type LocalSuspend = std::sync::Arc<dyn Fn(RunStatus, u64) + Send + Sync>;
 /// needs the context since its execution jobs went (#2282).
 struct RuntimeProcesses(Option<LocalSuspend>);
 impl ProcessControl for RuntimeProcesses {
-    fn suspend_local_inference(&self, snapshot: &crate::domain::swarm::Snapshot) {
+    fn suspend_local_inference(&self, snapshot: &crate::domain::swarm::entities::run::Snapshot) {
         // The suspension verifies the run's control status on the board
         // before it acts, so it runs off the async workers (#2278 L6).
         if let Some(cancel) = &self.0 {
@@ -314,7 +318,7 @@ pub(super) fn run_off_the_workers(job: impl FnOnce()) {
 /// reaches it.
 pub fn supervise(
     context: SwarmContext,
-    snapshot: crate::domain::swarm::Snapshot,
+    snapshot: crate::domain::swarm::entities::run::Snapshot,
     participation: super::swarm_bridge::Participation,
 ) {
     static STARTED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
@@ -369,10 +373,10 @@ pub fn supervise(
 /// this process made (#2390).
 struct Supervisor<'a>(&'a SwarmContext);
 impl watch::WatchObserver for Supervisor<'_> {
-    fn paused(&mut self, snapshot: &crate::domain::swarm::Snapshot) -> bool {
+    fn paused(&mut self, snapshot: &crate::domain::swarm::entities::run::Snapshot) -> bool {
         settle_observed_snapshot(self.0, snapshot)
     }
-    fn announce(&mut self, snapshot: &crate::domain::swarm::Snapshot) {
+    fn announce(&mut self, snapshot: &crate::domain::swarm::entities::run::Snapshot) {
         // The watch's own thread, outside any runtime: a runtime of its
         // own for the pushes, as for its settlement.
         let warnings = match tokio::runtime::Builder::new_current_thread()
@@ -516,7 +520,9 @@ impl crate::application::providers::ports::RequestAdmission for SwarmContext {
     ) -> PortFuture<'_, Result<(), DomainError>> {
         let context = self.clone();
         let actor = self.member.clone();
-        let gate = crate::domain::swarm::AdmissionGate::for_attempt(attempt);
+        let gate = crate::domain::swarm::value_objects::admission_gate::AdmissionGate::for_attempt(
+            attempt,
+        );
         Box::pin(async move {
             let snapshot = super::super::registry::call_work::spawn_blocking_in_call(move || {
                 context.inference_snapshot(gate)
@@ -551,15 +557,21 @@ pub fn bind_local_suspension(cancel: LocalSuspend) {
 impl crate::application::swarm::ports::SwarmRunControl for SwarmContext {
     fn apply(
         &self,
-        action: crate::domain::swarm::RunControlAction,
-    ) -> PortFuture<'_, Result<crate::domain::swarm::RunControlReceipt, DomainError>> {
+        action: crate::domain::swarm::value_objects::run_control::RunControlAction,
+    ) -> PortFuture<
+        '_,
+        Result<crate::domain::swarm::value_objects::run_control::RunControlReceipt, DomainError>,
+    > {
         let context = self.clone();
         Box::pin(async move {
-            let resuming = matches!(action, crate::domain::swarm::RunControlAction::Resume);
+            let resuming = matches!(
+                action,
+                crate::domain::swarm::value_objects::run_control::RunControlAction::Resume
+            );
             let fan_out = context.clone();
             let mut receipt =
                 super::super::registry::call_work::spawn_blocking_in_call(move || {
-                    use crate::domain::swarm::RunControlAction;
+                    use crate::domain::swarm::value_objects::run_control::RunControlAction;
                     let mut wake_allowed = false;
                     let value = match action {
                         RunControlAction::Wake { generation } => {
@@ -587,7 +599,7 @@ impl crate::application::swarm::ports::SwarmRunControl for SwarmContext {
     fn nudge_watch(&self) {
         self.board
             .watch_nudges(&self.database())
-            .nudge(crate::domain::swarm::watch::Nudge::Remote);
+            .nudge(crate::domain::swarm::services::watch::Nudge::Remote);
     }
     /// Two harness reads, off the async workers: `_status` (whose
     /// coordinator, which status, free workers) and `_run_totals` (tasks).
@@ -607,8 +619,10 @@ impl crate::application::swarm::ports::WorkerBoardRead for SwarmContext {
     /// Three harness reads, off the async workers (#2471).
     fn worker_board(
         &self,
-    ) -> PortFuture<'_, Result<Option<crate::domain::swarm::worker_wake::WorkerBoard>, DomainError>>
-    {
+    ) -> PortFuture<
+        '_,
+        Result<Option<crate::domain::swarm::services::worker_wake::WorkerBoard>, DomainError>,
+    > {
         let context = self.clone();
         Box::pin(async move {
             super::super::registry::call_work::spawn_blocking_in_call(move || {
@@ -632,11 +646,13 @@ impl crate::application::tools::ports::ToolExecutionAdmission for SwarmContext {
         let context = self.clone();
         Box::pin(async move {
             let snapshot = super::super::registry::call_work::spawn_blocking_in_call(move || {
-                context.inference_snapshot(crate::domain::swarm::AdmissionGate::Tool)
+                context.inference_snapshot(
+                    crate::domain::swarm::value_objects::admission_gate::AdmissionGate::Tool,
+                )
             })
             .await
             .map_err(|error| DomainError::Tool(error.to_string()))??;
-            use crate::domain::swarm::RunStatus;
+            use crate::domain::swarm::value_objects::lifecycle::RunStatus;
             // A reporting coordinator (terminal run, or a run it ended and
             // that now waits for the supervisor, #1729) keeps native reads.
             let reporting_only = || {
@@ -668,7 +684,7 @@ impl crate::application::tools::ports::ToolExecutionAdmission for SwarmContext {
 
 fn settle_observed_snapshot(
     context: &SwarmContext,
-    snapshot: &crate::domain::swarm::Snapshot,
+    snapshot: &crate::domain::swarm::entities::run::Snapshot,
 ) -> bool {
     match tokio::runtime::Builder::new_current_thread()
         .enable_all()

@@ -5,7 +5,9 @@
 use serde_json::Value;
 
 use super::dto::{LaunchIdentity, MemberRow};
-use crate::domain::swarm::{python_equal, status_is_alive};
+use crate::domain::swarm::{
+    services::policy::status_is_alive, value_objects::python_value::python_equal,
+};
 
 /// `bounded(member, 'member', 128)`: the longest member id, in UTF-8 bytes.
 pub(crate) const MEMBER_MAX_BYTES: usize = 128;
