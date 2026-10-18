@@ -6984,11 +6984,11 @@ fn swarm_tool_has_no_pid_signalling() {
         .into_iter()
         .filter(|path| {
             path.starts_with("src/infrastructure/tools/swarm/")
-                || Path::new(path)
+                || (Path::new(path)
                     .file_name()
                     .and_then(|name| name.to_str())
                     .is_some_and(|name| name.starts_with("swarm") && name.ends_with(".rs"))
-                    && path.starts_with("src/infrastructure/tools/")
+                    && path.starts_with("src/infrastructure/tools/"))
         })
         .collect();
     swarm_files.sort();
@@ -6996,16 +6996,22 @@ fn swarm_tool_has_no_pid_signalling() {
         swarm_files.len() > 20,
         "the swarm tool's production files must be scanned: {swarm_files:?}"
     );
-    for gone in [
-        "src/infrastructure/tools/swarm/swarm_process.rs",
-        "src/infrastructure/tools/swarm/swarm_scope.rs",
-        "src/infrastructure/tools/swarm/swarm_registry.rs",
-        "src/infrastructure/tools/swarm/swarm_support.rs",
-        "src/infrastructure/tools/swarm/swarm_result.rs",
-        "src/infrastructure/tools/swarm/swarm_job_output.rs",
-        "src/infrastructure/tools/swarm/swarm_config.rs",
+    for name in [
+        "swarm_process.rs",
+        "swarm_scope.rs",
+        "swarm_registry.rs",
+        "swarm_support.rs",
+        "swarm_result.rs",
+        "swarm_job_output.rs",
+        "swarm_config.rs",
     ] {
-        assert!(!Path::new(gone).exists(), "{gone} survives");
+        for folder in [
+            "src/infrastructure/tools/",
+            "src/infrastructure/tools/swarm/",
+        ] {
+            let gone = format!("{folder}{name}");
+            assert!(!Path::new(&gone).exists(), "{gone} survives");
+        }
     }
     for path in &swarm_files {
         let source = production_source(path);
