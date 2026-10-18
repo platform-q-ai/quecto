@@ -3,21 +3,38 @@
 //! through the kernel's OAuth endpoints, persists it, and pushes the
 //! refreshed store to the runtime manager. Handed to the runtime
 //! composition; the provider it serves is rebuilt by
-//! `infrastructure::providers::provider_factory`.
-//!
-//! [`RefreshFn`]: crate::infrastructure::providers::refreshable::RefreshFn
+//! `infrastructure::providers::provider_factory`. Dependencies run one
+//! way: the providers' refresh decorator names this module, never the
+//! reverse.
 
+use std::future::Future;
+use std::pin::Pin;
+use std::sync::Arc;
+
+use crate::domain::error::DomainError;
+use crate::infrastructure::auth::credential_store::CredentialStore;
 use crate::infrastructure::auth::token_refresh::persist_refreshed_token;
 
-/// Build a [`RefreshFn`] for use with [`RefreshableProvider`].
+/// Async function that refreshes an OAuth token.
 ///
-/// [`RefreshableProvider`]: crate::infrastructure::providers::refreshable::RefreshableProvider
+/// Takes the credential store and provider name, returns the new access token.
+/// Responsible for persisting the refreshed credential in the store.
+pub type RefreshFn = Arc<
+    dyn Fn(
+            Arc<CredentialStore>,
+            &str,
+        ) -> Pin<Box<dyn Future<Output = Result<String, DomainError>> + Send>>
+        + Send
+        + Sync,
+>;
+
+/// Build a [`RefreshFn`] for the providers' refresh decorator
+/// (`RefreshableProvider`).
 ///
 /// The returned function reads the stored refresh token, calls the appropriate
 /// OAuth refresh endpoint, persists the new credential, and returns the new
 /// access token.
-pub fn make_oauth_refresh_fn() -> crate::infrastructure::providers::refreshable::RefreshFn {
-    use std::sync::Arc;
+pub fn make_oauth_refresh_fn() -> RefreshFn {
     Arc::new(|store, provider_name| {
         let provider_name = provider_name.to_string();
         let store = store.clone();
