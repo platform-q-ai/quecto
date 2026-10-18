@@ -211,9 +211,9 @@ async fn a_turn_dropped_while_queued_announces_nothing_non_streaming() {
 async fn a_refused_attempt_takes_no_attempt_number() {
     let gate = Gate::new(vec![Answer::Refuse]);
     let retrying = Arc::new(
-        crate::infrastructure::providers::retry::RetryingProvider::new(
+        crate::infrastructure::providers::routing::retry::RetryingProvider::new(
             Arc::new(Gated(gate.clone())),
-            crate::infrastructure::providers::retry::RetryConfig::no_delay(3),
+            crate::infrastructure::providers::routing::retry::RetryConfig::no_delay(3),
         ),
     );
     let (mut agent, events) = agent_on(retrying, false);

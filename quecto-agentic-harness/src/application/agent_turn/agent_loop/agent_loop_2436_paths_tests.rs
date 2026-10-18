@@ -241,7 +241,9 @@ impl LlmProvider for Unauthorized {
 async fn an_oauth_resend_is_its_own_request() {
     use crate::domain::auth::credential::{AuthMethod, Credential};
     use crate::infrastructure::auth::credential_store::CredentialStore;
-    use crate::infrastructure::providers::refreshable::{RefreshableConfig, RefreshableProvider};
+    use crate::infrastructure::providers::routing::refreshable::{
+        RefreshableConfig, RefreshableProvider,
+    };
     let home = tempfile::TempDir::new().unwrap();
     let store = Arc::new(CredentialStore::new(home.path()));
     store
@@ -344,9 +346,9 @@ async fn a_refused_reattempt_announces_only_the_attempt_before_it() {
         Ok(text_response("never")),
     ]));
     let retrying = Arc::new(
-        crate::infrastructure::providers::retry::RetryingProvider::new(
+        crate::infrastructure::providers::routing::retry::RetryingProvider::new(
             inner.clone(),
-            crate::infrastructure::providers::retry::RetryConfig::no_delay(3),
+            crate::infrastructure::providers::routing::retry::RetryConfig::no_delay(3),
         ),
     );
     let (agent, events) = agent_on(retrying, false);

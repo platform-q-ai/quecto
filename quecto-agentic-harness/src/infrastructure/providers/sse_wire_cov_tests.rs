@@ -1,6 +1,6 @@
 use super::anthropic::anthropic_sse::AnthropicSseHandler;
 use super::openai::openai_sse;
-use super::sse_common::pump_sse;
+use super::transport::sse_common::pump_sse;
 use crate::domain::inference::value_objects::provider::StreamEvent;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};

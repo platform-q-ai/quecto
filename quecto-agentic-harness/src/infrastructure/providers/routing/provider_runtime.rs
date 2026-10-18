@@ -14,7 +14,7 @@ use crate::application::ports::{
     AdmissionBindingDiagnostic, ProviderRuntimeFactory, ProviderRuntimeOutcome,
 };
 use crate::infrastructure::auth::refresh_wiring::RefreshFn;
-use crate::infrastructure::providers::refreshable::ProviderFactory;
+use crate::infrastructure::providers::routing::refreshable::ProviderFactory;
 
 use crate::application::providers::ports::LlmProvider;
 use crate::infrastructure::auth::credential_store::CredentialStore;
@@ -23,13 +23,15 @@ use crate::infrastructure::auth::provider_slots::{
 };
 use crate::infrastructure::config::Config;
 use crate::infrastructure::providers;
-use crate::infrastructure::providers::model_refusal::RefusalRecordingProvider;
-use crate::infrastructure::providers::refreshable::{RefreshableConfig, RefreshableProvider};
-use crate::infrastructure::providers::retry::{RetryConfig, RetryingProvider};
-use crate::infrastructure::providers::router::ProviderRouter;
+use crate::infrastructure::providers::routing::model_refusal::RefusalRecordingProvider;
+use crate::infrastructure::providers::routing::refreshable::{
+    RefreshableConfig, RefreshableProvider,
+};
+use crate::infrastructure::providers::routing::retry::{RetryConfig, RetryingProvider};
+use crate::infrastructure::providers::routing::router::ProviderRouter;
 
 use super::provider_runtime_admission::AdmissionRuntimeContext;
-use crate::infrastructure::providers::stream_idle::StreamIdle;
+use crate::infrastructure::providers::transport::stream_idle::StreamIdle;
 use crate::infrastructure::providers::{AttemptTransportBinding, ProviderBinding};
 
 const MAX_OPENAI_COMPATIBLE_ENDPOINTS: usize = 32;
@@ -373,7 +375,7 @@ fn registry_provider_factory(
     base: Option<String>,
     allow_remote_http: bool,
     client: reqwest::Client,
-) -> crate::infrastructure::providers::refreshable::ProviderFactory {
+) -> crate::infrastructure::providers::routing::refreshable::ProviderFactory {
     registry_provider_factory_with_admission(
         provider_api,
         provider_prefix,
@@ -391,7 +393,7 @@ fn registry_provider_factory_with_admission(
     allow_remote_http: bool,
     client: reqwest::Client,
     binding: ProviderBinding,
-) -> crate::infrastructure::providers::refreshable::ProviderFactory {
+) -> crate::infrastructure::providers::routing::refreshable::ProviderFactory {
     use crate::infrastructure::providers::catalogue::model_registry::ProviderApi;
     Arc::new(move |new_token: &str| -> Arc<dyn LlmProvider> {
         match provider_api {

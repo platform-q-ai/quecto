@@ -3,7 +3,7 @@
 //! around a fresh token after an OAuth refresh. Handed to the runtime
 //! composition; never constructed by the interface.
 //!
-//! [`ProviderFactory`]: crate::infrastructure::providers::refreshable::ProviderFactory
+//! [`ProviderFactory`]: crate::infrastructure::providers::routing::refreshable::ProviderFactory
 
 /// Build a [`ProviderFactory`] that re-creates a provider with a new API key.
 ///
@@ -13,7 +13,7 @@ pub fn make_provider_factory(
     provider_name: &str,
     api_base: Option<String>,
     http_client: reqwest::Client,
-) -> crate::infrastructure::providers::refreshable::ProviderFactory {
+) -> crate::infrastructure::providers::routing::refreshable::ProviderFactory {
     make_bounded_provider_factory(provider_name, api_base, Default::default(), http_client)
 }
 
@@ -22,9 +22,9 @@ pub fn make_provider_factory(
 pub fn make_bounded_provider_factory(
     provider_name: &str,
     api_base: Option<String>,
-    stream_idle: crate::infrastructure::providers::stream_idle::StreamIdle,
+    stream_idle: crate::infrastructure::providers::transport::stream_idle::StreamIdle,
     http_client: reqwest::Client,
-) -> crate::infrastructure::providers::refreshable::ProviderFactory {
+) -> crate::infrastructure::providers::routing::refreshable::ProviderFactory {
     use crate::infrastructure::providers;
     use std::sync::Arc;
 

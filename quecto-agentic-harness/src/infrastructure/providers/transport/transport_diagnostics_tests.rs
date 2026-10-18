@@ -76,7 +76,7 @@ mod transport_tests {
         })));
         let mut observer = LineObserver::new(Profile::new(
             Vendor::Codex,
-            crate::infrastructure::providers::attempt_profile::Surface::Assembled,
+            crate::infrastructure::providers::transport::attempt_profile::Surface::Assembled,
             Default::default(),
         ));
         observer.push(
@@ -85,7 +85,10 @@ mod transport_tests {
         );
         observer.push(b"data: {\"type\":\"response.incomplete\",\"response\":{\"incomplete_details\":{\"reason\":\"max_output_tokens\"}}}\n", &receipt);
         observer.push(
-            &vec![b'x'; crate::infrastructure::providers::sse_common::MAX_SSE_LINE_BYTES + 1],
+            &vec![
+                b'x';
+                crate::infrastructure::providers::transport::sse_common::MAX_SSE_LINE_BYTES + 1
+            ],
             &receipt,
         );
         observer.finish(&receipt);
@@ -114,7 +117,8 @@ mod transport_tests {
             .mount(&server)
             .await;
         let gate: Arc<dyn AttemptAdmission> = Arc::new(Gate);
-        let surface = crate::infrastructure::providers::attempt_profile::Surface::Assembled;
+        let surface =
+            crate::infrastructure::providers::transport::attempt_profile::Surface::Assembled;
         let profile = Profile::new(Vendor::OpenAi, surface, Default::default());
         let refuse =
             |_: &str| -> Result<(), DomainError> { Err(DomainError::Provider("bad".into())) };
@@ -162,7 +166,9 @@ mod transport_tests {
             started: std::time::Instant::now(),
         })));
         let line = "x".repeat(600 * 1024);
-        let long = "x".repeat(crate::infrastructure::providers::sse_common::MAX_SSE_LINE_BYTES + 1);
+        let long = "x".repeat(
+            crate::infrastructure::providers::transport::sse_common::MAX_SSE_LINE_BYTES + 1,
+        );
         for (body, refused) in [
             (format!("{line}\n{line}\n{line}\n"), false),
             (format!("ok\n{long}\n"), true),
@@ -335,7 +341,7 @@ mod transport_tests {
                 reqwest::Client::new().get(server.uri()),
                 Profile::new(
                     Vendor::Codex,
-                    crate::infrastructure::providers::attempt_profile::Surface::Incremental,
+                    crate::infrastructure::providers::transport::attempt_profile::Surface::Incremental,
                     Default::default(),
                 ),
                 tx,
@@ -383,7 +389,7 @@ mod transport_tests {
                 reqwest::Client::new().get(server.uri()),
                 Profile::new(
                     Vendor::OpenAi,
-                    crate::infrastructure::providers::attempt_profile::Surface::Incremental,
+                    crate::infrastructure::providers::transport::attempt_profile::Surface::Incremental,
                     Default::default(),
                 ),
                 tx,
@@ -442,7 +448,7 @@ mod transport_tests {
                 reqwest::Client::new().get(server.uri()),
                 Profile::new(
                     Vendor::Codex,
-                    crate::infrastructure::providers::attempt_profile::Surface::Assembled,
+                    crate::infrastructure::providers::transport::attempt_profile::Surface::Assembled,
                     Default::default(),
                 ),
                 |_| Ok(()),

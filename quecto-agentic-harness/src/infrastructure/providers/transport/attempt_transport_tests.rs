@@ -522,7 +522,7 @@ async fn an_error_chunk_of_either_shape_ends_an_admitted_stream_as_an_error() {
         let receipt = diagnostic_receipt();
         let profile = Profile::new(Vendor::OpenAi, Surface::Incremental, Default::default());
         let mut handler = ObservedHandler {
-            inner: super::super::openai::openai_sse::OpenAiSseHandler::with_model("m"),
+            inner: super::super::super::openai::openai_sse::OpenAiSseHandler::with_model("m"),
             receipt: receipt.clone(),
             protocol: ProtocolObserver::new(profile),
         };

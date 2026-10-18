@@ -356,8 +356,10 @@ async fn a_stream_that_fails_mid_body_ends_as_a_read_error() {
     );
 
     let (_server, provider) =
-        served(&"x".repeat(crate::infrastructure::providers::sse_common::MAX_SSE_LINE_BYTES + 1))
-            .await;
+        served(&"x".repeat(
+            crate::infrastructure::providers::transport::sse_common::MAX_SSE_LINE_BYTES + 1,
+        ))
+        .await;
     let (events, attempts) = incremental(&provider).await;
     assert_eq!(
         attempts[0].termination,
@@ -482,7 +484,7 @@ async fn a_long_error_body_is_typed_from_the_whole_body() {
     use crate::domain::inference::value_objects::attempt_diagnostics::ErrorCode;
     let body = serde_json::json!({
         "error": {
-            "message": "m".repeat(2 * crate::infrastructure::providers::sse_common::MAX_ERROR_BODY_BYTES),
+            "message": "m".repeat(2 * crate::infrastructure::providers::transport::sse_common::MAX_ERROR_BODY_BYTES),
             "type": "insufficient_quota",
         }
     })

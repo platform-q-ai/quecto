@@ -1,7 +1,7 @@
 use super::*;
 
 use quecto::composition::runtime::build_agent_provider;
-use quecto::infrastructure::providers::retry::RetryingProvider;
+use quecto::infrastructure::providers::routing::retry::RetryingProvider;
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 

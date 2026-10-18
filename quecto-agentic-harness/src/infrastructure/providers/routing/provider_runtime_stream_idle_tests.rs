@@ -147,7 +147,7 @@ fn a_configured_limit_binds_its_providers() {
         .unwrap();
     assert!(shows(&*built, 300), "{built:?}");
 
-    let limits = crate::infrastructure::providers::stream_idle::StreamLimits {
+    let limits = crate::infrastructure::providers::transport::stream_idle::StreamLimits {
         idle_seconds: Some(1200),
         progress_seconds: None,
     };
@@ -168,7 +168,7 @@ fn a_configured_limit_binds_its_providers() {
 
 #[test]
 fn the_allowed_ranges_are_half_a_minute_to_half_an_hour_and_a_minute_to_an_hour() {
-    use crate::infrastructure::providers::stream_idle::StreamLimits;
+    use crate::infrastructure::providers::transport::stream_idle::StreamLimits;
     let idle = |seconds| StreamLimits {
         idle_seconds: Some(seconds),
         progress_seconds: None,

@@ -274,16 +274,16 @@ impl SseAccumulator {
             // kept, so a reply cut short still accounts it.
             Some("response.created" | "response.in_progress") => {
                 if let Some(usage) = event["response"]["usage"].as_object() {
-                    self.usage = Some(crate::infrastructure::providers::usage::parse_codex_usage(
-                        usage,
-                    ));
+                    self.usage = Some(
+                        crate::infrastructure::providers::openai::usage::parse_codex_usage(usage),
+                    );
                 }
             }
             Some("response.completed") => {
                 if let Some(resp) = event.get("response") {
                     self.usage = resp["usage"]
                         .as_object()
-                        .map(crate::infrastructure::providers::usage::parse_codex_usage);
+                        .map(crate::infrastructure::providers::openai::usage::parse_codex_usage);
                     // The status only fills a stop reason the stream has not
                     // already given (a refusal stays a refusal, #2179).
                     if let (Some(status), None) = (resp["status"].as_str(), &self.stop_reason) {

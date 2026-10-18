@@ -72,7 +72,7 @@ fn truncate_line_bounds_and_multibyte() {
 
 #[test]
 fn consolidated_openai_usage_parser() {
-    use crate::infrastructure::providers::usage;
+    use crate::infrastructure::providers::openai::usage;
     let v = serde_json::json!({
         "prompt_tokens": 12,
         "completion_tokens": 7,
@@ -88,7 +88,7 @@ fn consolidated_openai_usage_parser() {
 
 #[test]
 fn consolidated_codex_usage_parser() {
-    use crate::infrastructure::providers::usage;
+    use crate::infrastructure::providers::openai::usage;
     let v = serde_json::json!({
         "input_tokens": 100,
         "output_tokens": 40,

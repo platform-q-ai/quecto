@@ -4,7 +4,7 @@
 // `inference_admission_attempts`.
 use crate::inference_admission_attempts::fixture;
 use fixture::{Gate, Leaf, Surface, bounded, invoke};
-use quecto::infrastructure::providers::retry::{RetryConfig, RetryingProvider};
+use quecto::infrastructure::providers::routing::retry::{RetryConfig, RetryingProvider};
 use std::sync::{
     Arc,
     atomic::{AtomicUsize, Ordering},
@@ -58,7 +58,9 @@ async fn auth_refresh_rebuild_reacquires_same_bound_gate() {
     use quecto::domain::auth::credential::{AuthMethod, Credential};
     use quecto::infrastructure::auth::credential_store::CredentialStore;
     use quecto::infrastructure::providers::openai::OpenAiProvider;
-    use quecto::infrastructure::providers::refreshable::{RefreshableConfig, RefreshableProvider};
+    use quecto::infrastructure::providers::routing::refreshable::{
+        RefreshableConfig, RefreshableProvider,
+    };
     use wiremock::matchers::header;
     let server = MockServer::start().await;
     Mock::given(header("authorization", "Bearer old"))
@@ -98,7 +100,7 @@ async fn auth_refresh_rebuild_reacquires_same_bound_gate() {
             )
             .with_attempt_admission(
                 gate.clone(),
-                quecto::infrastructure::providers::SingleAttemptClient::build(
+                quecto::infrastructure::providers::transport::SingleAttemptClient::build(
                     reqwest::Client::builder().no_proxy(),
                 )
                 .unwrap(),
@@ -127,7 +129,7 @@ async fn auth_refresh_rebuild_reacquires_same_bound_gate() {
                 )
                 .with_attempt_admission(
                     bound_gate.clone(),
-                    quecto::infrastructure::providers::SingleAttemptClient::build(
+                    quecto::infrastructure::providers::transport::SingleAttemptClient::build(
                         reqwest::Client::builder().no_proxy(),
                     )
                     .unwrap(),

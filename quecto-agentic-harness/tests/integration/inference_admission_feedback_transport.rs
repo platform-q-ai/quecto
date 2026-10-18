@@ -8,7 +8,7 @@ pub(crate) mod fixture;
 
 use fixture::*;
 use quecto::domain::admission::value_objects::inference_admission::{Feedback, ThrottleFeedback};
-use quecto::infrastructure::providers::retry::{RetryConfig, RetryingProvider};
+use quecto::infrastructure::providers::routing::retry::{RetryConfig, RetryingProvider};
 use std::sync::Arc;
 
 async fn header_receipt(leaf: Leaf, status: u16) {

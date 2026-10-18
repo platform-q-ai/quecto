@@ -5,9 +5,9 @@
 //! Real sockets, so short bounds in real time.
 use std::time::Duration;
 
-use super::stream_idle::StreamIdle;
-use super::stream_idle::tests::{LIVE, servers};
 use super::stream_idle_provider_tests::{Vendor, assembled, codex_chat, incremental};
+use super::transport::stream_idle::StreamIdle;
+use super::transport::stream_idle::tests::{LIVE, servers};
 use crate::domain::inference::services::provider_error::{
     ProviderErrorClass, classify_provider_error,
 };
@@ -37,7 +37,7 @@ fn bounds() -> StreamIdle {
 }
 
 fn stalled_message() -> String {
-    super::stream_idle::Idle::no_output(PROGRESS).to_string()
+    super::transport::stream_idle::Idle::no_output(PROGRESS).to_string()
 }
 
 #[tokio::test]

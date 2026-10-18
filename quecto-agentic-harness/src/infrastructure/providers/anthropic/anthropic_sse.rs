@@ -11,7 +11,7 @@ use crate::domain::conversation::value_objects::message::{
 };
 use crate::domain::inference::value_objects::provider::StreamEvent;
 use crate::domain::tool_policy::value_objects::tool::ToolDefinition;
-use crate::infrastructure::providers::sse_limits::append_with_limit;
+use crate::infrastructure::providers::transport::sse_limits::append_with_limit;
 
 /// Accumulates Anthropic SSE events into a final [`LlmResponse`].
 #[derive(Default)]
@@ -334,7 +334,7 @@ impl AnthropicProvider {
     /// idle limit (#2433 review), or the defaults.
     pub fn with_stream_idle(
         mut self,
-        stream_idle: crate::infrastructure::providers::stream_idle::StreamIdle,
+        stream_idle: crate::infrastructure::providers::transport::stream_idle::StreamIdle,
     ) -> Self {
         self.stream_idle = stream_idle;
         self
@@ -352,10 +352,11 @@ impl AnthropicProvider {
         // Observed beside the request, never altering it (#2151, #2210).
         let profile = Profile::new(Vendor::Anthropic, Surface::Assembled, idle);
         let trace = params.trace.clone();
-        let attempt = crate::infrastructure::providers::attempt_transport::PassiveAttempt::begin(
-            params.trace,
-            profile,
-        );
+        let attempt =
+            crate::infrastructure::providers::transport::attempt_transport::PassiveAttempt::begin(
+                params.trace,
+                profile,
+            );
         let response = match idle.within(request_builder.send()).await {
             Ok(sent) => sent
                 .inspect_err(|_| attempt.iter().for_each(|a| a.send_failed()))
@@ -371,9 +372,10 @@ impl AnthropicProvider {
 
         let status = response.status().as_u16();
         if status != 200 {
-            let retry_after = crate::infrastructure::providers::sse_common::retry_after_suffix(
-                response.headers(),
-            );
+            let retry_after =
+                crate::infrastructure::providers::transport::sse_common::retry_after_suffix(
+                    response.headers(),
+                );
             let read = idle.text(response).await;
             attempt.iter().for_each(|a| a.error_read(status, &read));
             return Err(DomainError::Provider(format!(
@@ -412,9 +414,10 @@ impl AnthropicProvider {
                 .await
                 .map_err(|e| DomainError::Provider(format!("HTTP error: {}", e)))?;
             let status = response.status().as_u16();
-            let retry_after = crate::infrastructure::providers::sse_common::retry_after_suffix(
-                response.headers(),
-            );
+            let retry_after =
+                crate::infrastructure::providers::transport::sse_common::retry_after_suffix(
+                    response.headers(),
+                );
             let text = response
                 .text()
                 .await
@@ -461,7 +464,9 @@ impl AnthropicProvider {
                 current_event = event.to_string();
                 continue;
             }
-            let Some(data) = crate::infrastructure::providers::sse_common::event_data(line) else {
+            let Some(data) =
+                crate::infrastructure::providers::transport::sse_common::event_data(line)
+            else {
                 continue;
             };
             saw_event = true;
@@ -511,10 +516,11 @@ impl AnthropicProvider {
         let idle = self.stream_idle;
         // Observed beside the request, never altering it (#2151, #2210).
         let trace = params.base.trace.clone();
-        let attempt = crate::infrastructure::providers::attempt_transport::PassiveAttempt::begin(
-            params.base.trace,
-            Profile::new(Vendor::Anthropic, Surface::Incremental, idle),
-        );
+        let attempt =
+            crate::infrastructure::providers::transport::attempt_transport::PassiveAttempt::begin(
+                params.base.trace,
+                Profile::new(Vendor::Anthropic, Surface::Incremental, idle),
+            );
         let mut response = match idle.within(request_builder.send()).await {
             Ok(Ok(r)) => r,
             Ok(Err(e)) => {
@@ -536,13 +542,15 @@ impl AnthropicProvider {
 
         let status = response.status().as_u16();
         if status != 200 {
-            let retry_after = crate::infrastructure::providers::sse_common::retry_after_suffix(
-                response.headers(),
-            );
+            let retry_after =
+                crate::infrastructure::providers::transport::sse_common::retry_after_suffix(
+                    response.headers(),
+                );
             let read = idle.text(response).await;
             attempt.iter().for_each(|a| a.error_read(status, &read));
-            let text =
-                crate::infrastructure::providers::sse_common::truncate_error_body(error_text(read));
+            let text = crate::infrastructure::providers::transport::sse_common::truncate_error_body(
+                error_text(read),
+            );
             let _ = tx
                 .send(StreamEvent::Error(format!(
                     "HTTP {} from Anthropic: {}{}",
@@ -554,7 +562,7 @@ impl AnthropicProvider {
 
         let handler = AnthropicSseHandler::with_model(params.base.tool_defs, params.base.model)
             .with_trace(trace);
-        crate::infrastructure::providers::attempt_transport::pump_observed(
+        crate::infrastructure::providers::transport::attempt_transport::pump_observed(
             &mut response,
             &tx,
             handler,
@@ -565,9 +573,9 @@ impl AnthropicProvider {
     }
 }
 
-use crate::infrastructure::providers::attempt_profile::{Profile, Surface, Vendor};
-use crate::infrastructure::providers::sse_end::{self, UnfinishedReply};
-use crate::infrastructure::providers::stream_idle::{BodyError, error_text};
+use crate::infrastructure::providers::transport::attempt_profile::{Profile, Surface, Vendor};
+use crate::infrastructure::providers::transport::sse_end::{self, UnfinishedReply};
+use crate::infrastructure::providers::transport::stream_idle::{BodyError, error_text};
 
 #[path = "anthropic_sse_handler.rs"]
 mod handler;

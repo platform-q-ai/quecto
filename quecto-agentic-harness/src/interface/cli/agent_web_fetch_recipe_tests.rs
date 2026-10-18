@@ -98,7 +98,7 @@ fn every_agent_entry_point_builds_web_fetch_from_the_production_recipe() {
         );
         assert_eq!(
             timeout,
-            Some(crate::infrastructure::providers::CONNECT_TIMEOUT),
+            Some(crate::infrastructure::providers::transport::CONNECT_TIMEOUT),
             "{entry}"
         );
         // The agent's own registry offers web_fetch ...

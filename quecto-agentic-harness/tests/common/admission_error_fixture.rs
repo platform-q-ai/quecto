@@ -100,7 +100,7 @@ pub enum Surface {
 impl Leaf {
     pub fn provider(self, url: &str, gate: Option<Arc<Gate>>) -> Box<dyn LlmProvider> {
         let client = reqwest::Client::builder().no_proxy().build().unwrap();
-        let safe_client = quecto::infrastructure::providers::SingleAttemptClient::build(
+        let safe_client = quecto::infrastructure::providers::transport::SingleAttemptClient::build(
             reqwest::Client::builder().no_proxy(),
         )
         .unwrap();

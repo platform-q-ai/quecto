@@ -622,7 +622,7 @@ fn the_retry_decorator_forwards_the_route_check_to_the_router() {
     // Production wraps the router in RetryingProvider; a default "routable"
     // there would hide every unconfigured provider.
     use crate::application::providers::ports::RouteCheck;
-    use crate::infrastructure::providers::retry::{RetryConfig, RetryingProvider};
+    use crate::infrastructure::providers::routing::retry::{RetryConfig, RetryingProvider};
     let router: Arc<dyn LlmProvider> = Arc::new(ProviderRouter::new(vec![
         TestProvider::succeeding("fireworks", "x") as Arc<dyn LlmProvider>,
     ]));
@@ -637,7 +637,7 @@ fn the_retry_decorator_forwards_the_route_check_to_the_router() {
 /// names, in order, which the catalogue routes a model id over.
 #[test]
 fn the_retry_decorator_forwards_the_route_order_to_the_router() {
-    use crate::infrastructure::providers::retry::{RetryConfig, RetryingProvider};
+    use crate::infrastructure::providers::routing::retry::{RetryConfig, RetryingProvider};
     let router = ProviderRouter::new(vec![
         TestProvider::succeeding("fireworks", "x") as Arc<dyn LlmProvider>,
         TestProvider::succeeding("openai-oauth", "x"),

@@ -12,7 +12,8 @@ impl CodexProvider {
     pub fn with_stream_idle_limit(mut self, limit: std::time::Duration) -> Self {
         let total = self.stream_idle.total();
         self.stream_idle =
-            crate::infrastructure::providers::stream_idle::StreamIdle::new(limit).with_total(total);
+            crate::infrastructure::providers::transport::stream_idle::StreamIdle::new(limit)
+                .with_total(total);
         self
     }
 

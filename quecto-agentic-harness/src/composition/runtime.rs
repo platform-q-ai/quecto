@@ -28,7 +28,7 @@ use crate::infrastructure::providers::routing::provider_runtime::{
 use crate::infrastructure::providers::routing::provider_runtime_admission::{
     AdmissionProviderRuntimeFactory, AdmissionRuntimeCandidate, AdmissionRuntimeProposal,
 };
-use crate::infrastructure::providers::stream_idle::StreamIdle;
+use crate::infrastructure::providers::transport::stream_idle::StreamIdle;
 
 /// Compose the concrete provider runtime for `base_dir` via the shared use
 /// case and publish runtime + catalogue as one coherent generation into the

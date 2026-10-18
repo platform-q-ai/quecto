@@ -47,7 +47,7 @@ fn then_preview_utf8(world: &mut QuectoWorld) {
 
 #[when("an OpenAI response reports 12 prompt, 7 completion and 19 total tokens")]
 fn when_parse_openai_usage(world: &mut QuectoWorld) {
-    use quecto::infrastructure::providers::usage;
+    use quecto::infrastructure::providers::openai::usage;
     let v = serde_json::json!({
         "prompt_tokens": 12, "completion_tokens": 7, "total_tokens": 19
     });
@@ -64,7 +64,7 @@ fn then_openai_usage(world: &mut QuectoWorld) {
 
 #[when("a Codex response reports 100 input, 40 output and 30 cached tokens")]
 fn when_parse_codex_usage(world: &mut QuectoWorld) {
-    use quecto::infrastructure::providers::usage;
+    use quecto::infrastructure::providers::openai::usage;
     let v = serde_json::json!({
         "input_tokens": 100, "output_tokens": 40,
         "input_tokens_details": { "cached_tokens": 30 }

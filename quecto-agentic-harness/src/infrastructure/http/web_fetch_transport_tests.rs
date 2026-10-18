@@ -187,10 +187,10 @@ fn the_production_recipe_is_the_shared_connect_timeout_and_built_in_roots() {
     let recipe = crate::interface::shared::web_fetch_client_recipe();
     assert_eq!(
         recipe.connect_timeout,
-        Some(crate::infrastructure::providers::CONNECT_TIMEOUT)
+        Some(crate::infrastructure::providers::transport::CONNECT_TIMEOUT)
     );
     assert_eq!(
-        crate::infrastructure::providers::CONNECT_TIMEOUT,
+        crate::infrastructure::providers::transport::CONNECT_TIMEOUT,
         Duration::from_secs(10)
     );
     assert!(recipe.root_certificates.is_empty());

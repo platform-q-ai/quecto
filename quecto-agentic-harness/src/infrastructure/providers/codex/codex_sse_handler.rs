@@ -3,8 +3,8 @@ use super::codex_sse_state;
 use super::{CodexProvider, SseAccumulator};
 use crate::domain::conversation::value_objects::message::LlmResponse;
 use crate::domain::inference::value_objects::provider::StreamEvent;
-use crate::infrastructure::providers::sse_common::{SseHandler, SseLineOutcome};
-use crate::infrastructure::providers::sse_end;
+use crate::infrastructure::providers::transport::sse_common::{SseHandler, SseLineOutcome};
+use crate::infrastructure::providers::transport::sse_end;
 
 /// The error a Responses body ends with when it ends before a terminal
 /// event (`response.completed` or `[DONE]`), output or not (#2249 review):
@@ -72,7 +72,8 @@ impl SseHandler for CodexSseHandler {
         line: &str,
         tx: &tokio::sync::mpsc::Sender<StreamEvent>,
     ) -> SseLineOutcome {
-        let Some(data) = crate::infrastructure::providers::sse_common::event_data(line) else {
+        let Some(data) = crate::infrastructure::providers::transport::sse_common::event_data(line)
+        else {
             return SseLineOutcome::Continue;
         };
         self.saw_event = true;

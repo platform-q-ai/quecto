@@ -4,19 +4,19 @@ use super::stream_idle::{BodyError, Idle, StreamIdle};
 use crate::domain::shared::error::DomainError;
 
 #[derive(Clone, Copy)]
-pub(super) enum Vendor {
+pub(in crate::infrastructure::providers) enum Vendor {
     OpenAi,
     Codex,
     Anthropic,
 }
 #[derive(Clone, Copy)]
-pub(super) enum Surface {
+pub(in crate::infrastructure::providers) enum Surface {
     Chat,
     Assembled,
     Incremental,
 }
 #[derive(Clone, Copy)]
-pub(super) struct Profile {
+pub(in crate::infrastructure::providers) struct Profile {
     pub vendor: Vendor,
     pub surface: Surface,
     /// The provider's bound on a silent stream (#2210).
@@ -167,7 +167,9 @@ pub(super) fn is_throttle_chunk(value: &serde_json::Value) -> bool {
 /// nothing failed and is not one. Both the stream handler and the attempt
 /// observer ask this one question, so a reply cut short is an error on
 /// every path, with admission or without.
-pub(super) fn is_stream_error_chunk(value: &serde_json::Value) -> bool {
+pub(in crate::infrastructure::providers) fn is_stream_error_chunk(
+    value: &serde_json::Value,
+) -> bool {
     match value.get("error") {
         Some(serde_json::Value::Object(_)) => true,
         Some(serde_json::Value::String(text)) => !text.is_empty(),
@@ -179,7 +181,9 @@ pub(super) fn is_stream_error_chunk(value: &serde_json::Value) -> bool {
 /// (#2249 review): it has no string `type` (none, or `null`) and is an
 /// error chunk by [`is_stream_error_chunk`] — a gateway's or a compatible
 /// server's shape. A typed event keeps the meaning its type gives it.
-pub(super) fn is_untyped_error_chunk(value: &serde_json::Value) -> bool {
+pub(in crate::infrastructure::providers) fn is_untyped_error_chunk(
+    value: &serde_json::Value,
+) -> bool {
     value["type"].as_str().is_none() && is_stream_error_chunk(value)
 }
 
@@ -207,7 +211,9 @@ pub(super) fn is_untyped_error_chunk(value: &serde_json::Value) -> bool {
 /// was shown once, and the retry owner never replays a reply after output),
 /// and no completed reply follows the error, so a reply cut short by a
 /// provider failure is never taken as a whole answer.
-pub(super) fn openai_stream_error(value: &serde_json::Value) -> String {
+pub(in crate::infrastructure::providers) fn openai_stream_error(
+    value: &serde_json::Value,
+) -> String {
     assert!(
         is_stream_error_chunk(value),
         "only an error chunk renders as a stream error"

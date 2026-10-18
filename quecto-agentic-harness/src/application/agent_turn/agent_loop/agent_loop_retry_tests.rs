@@ -14,9 +14,9 @@ async fn retries_retryable_provider_failures_before_returning_success() {
         Ok(text_response("recovered")),
     ]));
     let retrying = Arc::new(
-        crate::infrastructure::providers::retry::RetryingProvider::new(
+        crate::infrastructure::providers::routing::retry::RetryingProvider::new(
             provider.clone(),
-            crate::infrastructure::providers::retry::RetryConfig::no_delay(4),
+            crate::infrastructure::providers::routing::retry::RetryConfig::no_delay(4),
         ),
     );
     let mut agent = AgentLoopImpl::new(AgentLoopConfig {
@@ -137,9 +137,9 @@ async fn does_not_retry_non_streaming_openai_insufficient_quota_429() {
         r#"HTTP 429 from OpenAI: {"error":{"message":"You exceeded your current quota, please check your plan and billing details.","type":"insufficient_quota","param":null,"code":"insufficient_quota"}}"#.to_string(),
     ))]));
     let retrying = Arc::new(
-        crate::infrastructure::providers::retry::RetryingProvider::new(
+        crate::infrastructure::providers::routing::retry::RetryingProvider::new(
             provider.clone(),
-            crate::infrastructure::providers::retry::RetryConfig::no_delay(4),
+            crate::infrastructure::providers::routing::retry::RetryConfig::no_delay(4),
         ),
     );
     let mut agent = AgentLoopImpl::new(AgentLoopConfig {

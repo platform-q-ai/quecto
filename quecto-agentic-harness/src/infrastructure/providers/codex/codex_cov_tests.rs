@@ -709,7 +709,7 @@ fn oauth_and_api_key_bodies_differ_only_by_max_output_tokens_1236() {
 #[tokio::test]
 async fn codex_stream_rejects_over_limit_reasoning_with_error() {
     use crate::domain::inference::value_objects::provider::StreamEvent;
-    use crate::infrastructure::providers::sse_common::SseHandler;
+    use crate::infrastructure::providers::transport::sse_common::SseHandler;
     use MAX_VISIBLE_THINKING_BYTES;
 
     let mut handler = CodexSseHandler::new();

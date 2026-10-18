@@ -63,8 +63,8 @@ impl RegistryProvider {
     /// Its `streamIdleSeconds` and `streamProgressSeconds` (#2433).
     pub(super) fn stream_limits(
         &self,
-    ) -> crate::infrastructure::providers::stream_idle::StreamLimits {
-        crate::infrastructure::providers::stream_idle::StreamLimits {
+    ) -> crate::infrastructure::providers::transport::stream_idle::StreamLimits {
+        crate::infrastructure::providers::transport::stream_idle::StreamLimits {
             idle_seconds: self.stream_idle_seconds,
             progress_seconds: self.stream_progress_seconds,
         }
@@ -75,7 +75,7 @@ impl RegistryProvider {
 /// range: the block is skipped, as an unknown auth mode is.
 pub(super) fn stream_limit_out_of_range(
     provider_key: &str,
-    error: crate::infrastructure::providers::stream_idle::StreamLimitError,
+    error: crate::infrastructure::providers::transport::stream_idle::StreamLimitError,
 ) -> super::SkippedProviderBlock {
     super::SkippedProviderBlock {
         provider: provider_key.to_owned(),

@@ -7,7 +7,7 @@ use crate::domain::conversation::value_objects::message::{
     LlmResponse, ThinkingBlock, ToolCall, UsageInfo,
 };
 use crate::domain::inference::value_objects::provider::StreamEvent;
-use crate::infrastructure::providers::sse_common::{SseHandler, SseLineOutcome};
+use crate::infrastructure::providers::transport::sse_common::{SseHandler, SseLineOutcome};
 
 use super::OpenAiProvider;
 use super::openai_sse_parser::{MAX_OPENAI_SSE_CONTENT_BYTES, append_with_limit};
@@ -113,11 +113,12 @@ impl SseHandler for OpenAiSseHandler {
         line: &str,
         tx: &tokio::sync::mpsc::Sender<StreamEvent>,
     ) -> SseLineOutcome {
-        let Some(data) = crate::infrastructure::providers::sse_common::event_data(line) else {
+        let Some(data) = crate::infrastructure::providers::transport::sse_common::event_data(line)
+        else {
             return SseLineOutcome::Continue;
         };
         self.saw_event = true;
-        if crate::infrastructure::providers::sse_end::is_done_marker(data) {
+        if crate::infrastructure::providers::transport::sse_end::is_done_marker(data) {
             self.saw_done = true;
             let _ = tx.send(StreamEvent::Done(self.take_response())).await;
             return SseLineOutcome::Done;
@@ -126,18 +127,20 @@ impl SseHandler for OpenAiSseHandler {
             // A mid-stream error chunk ends the stream as an error (#2236),
             // on this path too, which runs without admission: never skipped,
             // or end of file would send the partial reply as a whole one.
-            if crate::infrastructure::providers::attempt_profile::is_stream_error_chunk(&chunk) {
+            if crate::infrastructure::providers::transport::attempt_profile::is_stream_error_chunk(
+                &chunk,
+            ) {
                 let message =
-                    crate::infrastructure::providers::attempt_profile::openai_stream_error(&chunk);
+                    crate::infrastructure::providers::transport::attempt_profile::openai_stream_error(&chunk);
                 let _ = tx.send(StreamEvent::Error(message)).await;
                 return SseLineOutcome::Done;
             }
             // Final usage chunk (requested via stream_options.include_usage).
             // Emitted with an empty `choices` array and a populated `usage`.
             if let Some(usage) = chunk.get("usage").and_then(|u| u.as_object()) {
-                self.usage = Some(crate::infrastructure::providers::usage::parse_openai_usage(
-                    usage,
-                ));
+                self.usage = Some(
+                    crate::infrastructure::providers::openai::usage::parse_openai_usage(usage),
+                );
             }
             if let Some(choices) = chunk.get("choices").and_then(|v| v.as_array()) {
                 // Content is accumulated directly into `self.content` above, so
@@ -206,12 +209,12 @@ impl SseHandler for OpenAiSseHandler {
             let _ = tx.send(StreamEvent::Done(self.take_response())).await;
         } else {
             // Tokens a usage chunk already reported were spent all the same.
-            crate::infrastructure::providers::sse_end::record_unfinished_usage(
+            crate::infrastructure::providers::transport::sse_end::record_unfinished_usage(
                 self.trace.as_deref(),
                 self.usage.take(),
                 self.model.as_deref().unwrap_or_default(),
             );
-            let error = crate::infrastructure::providers::sse_end::ended_early(
+            let error = crate::infrastructure::providers::transport::sse_end::ended_early(
                 self.saw_event,
                 OPENAI_CUT_SHORT,
             );
@@ -227,7 +230,7 @@ pub(crate) async fn pump_sse_bytes(
     tx: &tokio::sync::mpsc::Sender<StreamEvent>,
 ) {
     let mut handler = OpenAiSseHandler::new();
-    crate::infrastructure::providers::sse_common::pump_sse(
+    crate::infrastructure::providers::transport::sse_common::pump_sse(
         response,
         tx,
         &mut handler,
@@ -240,10 +243,11 @@ pub(crate) async fn pump_sse_bytes_for_model(
     response: &mut reqwest::Response,
     tx: &tokio::sync::mpsc::Sender<StreamEvent>,
     handler: OpenAiSseHandler,
-    attempt: Option<super::super::attempt_transport::PassiveAttempt>,
-    idle: super::super::stream_idle::StreamIdle,
+    attempt: Option<super::super::transport::attempt_transport::PassiveAttempt>,
+    idle: super::super::transport::stream_idle::StreamIdle,
 ) {
-    super::super::attempt_transport::pump_observed(response, tx, handler, attempt, idle).await;
+    super::super::transport::attempt_transport::pump_observed(response, tx, handler, attempt, idle)
+        .await;
 }
 
 /// Consume an owned OpenAI SSE byte stream, emitting `StreamEvent`s per delta.
@@ -256,8 +260,8 @@ pub(crate) async fn pump_sse_response_for_model(
     mut response: reqwest::Response,
     tx: tokio::sync::mpsc::Sender<StreamEvent>,
     handler: OpenAiSseHandler,
-    attempt: Option<super::super::attempt_transport::PassiveAttempt>,
-    idle: super::super::stream_idle::StreamIdle,
+    attempt: Option<super::super::transport::attempt_transport::PassiveAttempt>,
+    idle: super::super::transport::stream_idle::StreamIdle,
 ) {
     pump_sse_bytes_for_model(&mut response, &tx, handler, attempt, idle).await;
 }

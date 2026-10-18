@@ -352,7 +352,7 @@ fn given_retry_max_attempts(world: &mut QuectoWorld, attempts: u32) {
 
 #[when("I send a chat request through the retrying provider")]
 fn when_send_through_retrying_provider(world: &mut QuectoWorld) {
-    use quecto::infrastructure::providers::retry::{RetryConfig, RetryingProvider};
+    use quecto::infrastructure::providers::routing::retry::{RetryConfig, RetryingProvider};
     let inner = world.retry_inner.clone().expect("no retry inner provider");
     let attempts = world.retry_max_attempts.unwrap_or(4);
     let provider = RetryingProvider::new(inner, RetryConfig::no_delay(attempts));

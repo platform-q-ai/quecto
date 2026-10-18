@@ -21,7 +21,7 @@ use quecto::domain::inference::services::provider_error::{
 };
 use quecto::infrastructure::persistence::file::sessions::session_store::FileSessionStore;
 use quecto::infrastructure::providers;
-use quecto::infrastructure::providers::router::ProviderRouter;
+use quecto::infrastructure::providers::routing::router::ProviderRouter;
 
 use quecto::infrastructure::security::sandbox::Sandbox;
 use quecto::infrastructure::tools::agents::spawn::SpawnTool;

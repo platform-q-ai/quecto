@@ -1,5 +1,5 @@
 //! Typed SSE/HTTP error precedence boundaries; no error-message matching.
-use quecto::infrastructure::providers::admission_feedback::is_typed_throttle;
+use quecto::infrastructure::providers::transport::admission_feedback::is_typed_throttle;
 use serde_json::json;
 
 #[test]

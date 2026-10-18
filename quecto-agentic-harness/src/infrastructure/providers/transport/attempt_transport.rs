@@ -326,7 +326,7 @@ async fn run<T, F: Future<Output = Result<T, DomainError>>>(
     }
 }
 
-pub(super) async fn text<T>(
+pub(in crate::infrastructure::providers) async fn text<T>(
     gate: &Arc<dyn AttemptAdmission>,
     trace: Option<Arc<RequestTrace>>,
     cancel: Option<&CancelFlag>,
@@ -358,7 +358,7 @@ pub(super) async fn text<T>(
 
 /// Preserve assembled adapters' full-body parse/read semantics while observing
 /// complete structured SSE lines at receipt, not after the HTTP body ends.
-pub(super) async fn assembled<T>(
+pub(in crate::infrastructure::providers) async fn assembled<T>(
     gate: &Arc<dyn AttemptAdmission>,
     trace: Option<Arc<RequestTrace>>,
     cancel: Option<&CancelFlag>,
@@ -495,7 +495,7 @@ async fn end_at_eof<H: SseHandler>(inner: &mut H, tx: &Sender, receipt: &Receipt
     tokio::join!(finish, relay);
 }
 
-pub(super) async fn stream<H: SseHandler>(
+pub(in crate::infrastructure::providers) async fn stream<H: SseHandler>(
     gate: &Arc<dyn AttemptAdmission>,
     observation: (Option<Arc<RequestTrace>>, Option<&CancelFlag>),
     builder: reqwest::RequestBuilder,
@@ -552,7 +552,7 @@ pub(super) async fn stream<H: SseHandler>(
     }
 }
 
-pub(super) async fn collect(
+pub(in crate::infrastructure::providers) async fn collect(
     mut rx: tokio::sync::mpsc::Receiver<StreamEvent>,
 ) -> Result<LlmResponse, DomainError> {
     let mut result = None;
@@ -579,4 +579,4 @@ mod tests;
 
 #[path = "attempt_transport_passive.rs"]
 mod passive;
-pub(super) use passive::{PassiveAttempt, pump_observed};
+pub(in crate::infrastructure::providers) use passive::{PassiveAttempt, pump_observed};

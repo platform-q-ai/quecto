@@ -61,9 +61,9 @@ async fn each_attempt_of_a_retried_request_is_its_own_event() {
         Ok(reply(120, Some(80), 9)),
     ]));
     let retrying = Arc::new(
-        crate::infrastructure::providers::retry::RetryingProvider::new(
+        crate::infrastructure::providers::routing::retry::RetryingProvider::new(
             inner.clone(),
-            crate::infrastructure::providers::retry::RetryConfig::no_delay(3),
+            crate::infrastructure::providers::routing::retry::RetryConfig::no_delay(3),
         ),
     );
     let (mut agent, events) = agent_on(retrying, false);

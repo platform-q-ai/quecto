@@ -5,7 +5,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use super::super::{AttemptTransportBinding, SingleAttemptClient};
+use super::super::{AttemptTransportBinding, transport::SingleAttemptClient};
 use super::provider_runtime::{AgentRuntimeInputs, compose_agent_provider_inner_outcome};
 use crate::application::ports::AttemptAdmission;
 use crate::application::ports::ProviderRuntimeFactory;

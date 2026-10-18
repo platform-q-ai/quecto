@@ -262,8 +262,8 @@ async fn a_stopped_run_audits_each_interrupted_request_once() {
 /// with what it had read, gated or not.
 #[tokio::test]
 async fn a_stopped_non_streaming_request_records_its_attempt_as_interrupted() {
-    use crate::infrastructure::providers::stream_idle::tests::{LIVE, servers};
     use crate::infrastructure::providers::stream_idle_provider_tests::Vendor;
+    use crate::infrastructure::providers::transport::stream_idle::tests::{LIVE, servers};
     let codex = "data: {\"type\":\"response.created\",\"response\":{}}\n\n\
                  data: {\"type\":\"response.output_text.delta\",\"delta\":\"hello\"}\n\n";
     let openai = "{\"choices\":";

@@ -15,7 +15,7 @@ use crate::domain::admission::value_objects::inference_admission::WorkloadClass;
 use crate::infrastructure::providers::routing::provider_runtime_admission::{
     AdmissionRuntimeContext, AdmissionRuntimeProposal,
 };
-use crate::infrastructure::providers::{SingleAttemptClient, default_client_builder};
+use crate::infrastructure::providers::transport::{SingleAttemptClient, default_client_builder};
 
 const CONTEXT_FORMAT: u32 = 1;
 

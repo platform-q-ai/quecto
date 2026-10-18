@@ -9,7 +9,7 @@
 use super::*;
 use crate::domain::conversation::value_objects::message::{StopReason, ThinkingBlock};
 use crate::domain::inference::value_objects::provider::StreamEvent;
-use crate::infrastructure::providers::sse_common::{SseHandler, SseLineOutcome};
+use crate::infrastructure::providers::transport::sse_common::{SseHandler, SseLineOutcome};
 
 fn channel() -> (
     tokio::sync::mpsc::Sender<StreamEvent>,
