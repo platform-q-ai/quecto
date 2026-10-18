@@ -47,8 +47,7 @@ mod spill;
 #[path = "context_plan.rs"]
 mod plan;
 pub(crate) use plan::{ContextPlan, ToolMessageBuild};
-// #2403: the watermark context's pass, beside the agent loop: the only
-// context mode (#2414).
+// #2403: the watermark context's pass: the only context mode (#2414).
 #[path = "context_watermark.rs"]
 mod watermark;
 

@@ -297,7 +297,8 @@ or `agent_cmd` surface that exposes it.
 - `src/application/agent_turn/context/context_pruning.rs` and
   `src/application/agent_turn/context/context_pruning_messages.rs`.
 - `src/application/agent_loop_pruning.rs`, `agent_loop_spill.rs`, and
-  the context gauge (`ContextGaugeCalibration` in `context.rs`).
+  the context gauge (`ContextGaugeCalibration` in
+  `src/application/agent_turn/context/context_gauge.rs`).
 - `src/domain/sessions/entities/session.rs` for spill index, dirty-prefix, or message metadata.
 - `src/infrastructure/persistence/*` when spill/session storage changes.
 
