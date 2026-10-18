@@ -10,7 +10,7 @@
 
 use quecto::application::providers::ports::{ChatRequest, LlmProvider};
 use quecto::domain::conversation::value_objects::message::{LlmResponse, StopReason};
-use quecto::domain::error::DomainError;
+use quecto::domain::shared::error::DomainError;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;

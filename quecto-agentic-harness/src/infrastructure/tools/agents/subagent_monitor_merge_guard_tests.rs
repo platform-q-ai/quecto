@@ -13,7 +13,7 @@ use crate::infrastructure::tools::agents::subagent_registry::{SubagentEntry, new
 fn with_launched_child() -> SubagentRegistry {
     let registry = new_registry();
     let mut child = SubagentEntry::with_identity(
-        crate::domain::ids::AgentUuid::new("c-uuid"),
+        crate::domain::identity::ids::AgentUuid::new("c-uuid"),
         "worker".into(),
         "/tmp/c.sock".into(),
         4242,
@@ -89,7 +89,7 @@ fn a_walk_over_a_cycle_already_in_the_registry_ends() {
     let registry = new_registry();
     for (key, parent) in [("a", "b"), ("b", "a"), ("c", "b")] {
         let mut row = SubagentEntry::with_identity(
-            crate::domain::ids::AgentUuid::new(key),
+            crate::domain::identity::ids::AgentUuid::new(key),
             key.into(),
             "/tmp/x.sock".into(),
             0,

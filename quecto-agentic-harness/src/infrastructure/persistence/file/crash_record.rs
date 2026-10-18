@@ -48,7 +48,7 @@ use std::os::unix::io::{AsRawFd, FromRawFd};
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use crate::domain::crash_record::CrashRecord;
+use crate::domain::agents::value_objects::crash_record::CrashRecord;
 
 use crate::infrastructure::observability::audit_log::AuditLog;
 

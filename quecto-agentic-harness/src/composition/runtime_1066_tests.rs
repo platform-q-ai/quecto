@@ -51,7 +51,7 @@ async fn send_turn_with_tools(
     model: &str,
 ) -> Result<
     crate::domain::conversation::value_objects::message::LlmResponse,
-    crate::domain::error::DomainError,
+    crate::domain::shared::error::DomainError,
 > {
     let messages = vec![
         Message::system("You are a coding agent."),
@@ -160,7 +160,7 @@ async fn send_toolless_turn_with_effort(
     model: &str,
 ) -> Result<
     crate::domain::conversation::value_objects::message::LlmResponse,
-    crate::domain::error::DomainError,
+    crate::domain::shared::error::DomainError,
 > {
     let messages = vec![
         Message::system("You are a coding agent."),

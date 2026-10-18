@@ -293,8 +293,9 @@ impl crate::application::providers::ports::LlmProvider for AdvanceThenAbortProvi
         _request: crate::application::providers::ports::ChatRequest<'_>,
     ) -> std::pin::Pin<
         Box<
-            dyn std::future::Future<Output = Result<LlmResponse, crate::domain::error::DomainError>>
-                + Send
+            dyn std::future::Future<
+                    Output = Result<LlmResponse, crate::domain::shared::error::DomainError>,
+                > + Send
                 + '_,
         >,
     > {
@@ -447,8 +448,9 @@ impl LlmProvider for SteerDuringPendingTurn {
         _request: crate::application::providers::ports::ChatRequest<'_>,
     ) -> std::pin::Pin<
         Box<
-            dyn std::future::Future<Output = Result<LlmResponse, crate::domain::error::DomainError>>
-                + Send
+            dyn std::future::Future<
+                    Output = Result<LlmResponse, crate::domain::shared::error::DomainError>,
+                > + Send
                 + '_,
         >,
     > {
@@ -574,14 +576,15 @@ impl LlmProvider for QuotaExhausted {
         _: crate::application::providers::ports::ChatRequest<'_>,
     ) -> std::pin::Pin<
         Box<
-            dyn std::future::Future<Output = Result<LlmResponse, crate::domain::error::DomainError>>
-                + Send
+            dyn std::future::Future<
+                    Output = Result<LlmResponse, crate::domain::shared::error::DomainError>,
+                > + Send
                 + '_,
         >,
     > {
         self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         Box::pin(async {
-            Err(crate::domain::error::DomainError::Provider(
+            Err(crate::domain::shared::error::DomainError::Provider(
                 r#"HTTP 429: {"error":{"type":"usage_limit_reached","resets_in_seconds":601828}}"#
                     .into(),
             ))

@@ -1,6 +1,6 @@
 use super::{RegistryRosterSource, WorkflowEngineRunSource};
 use crate::application::sessions::ports::{HistoricalRosterSource, WorkflowRunSource};
-use crate::domain::ids::AgentUuid;
+use crate::domain::identity::ids::AgentUuid;
 use crate::domain::sessions::entities::session::{SubagentLiveness, SubagentRestoreReason};
 use crate::domain::workflow::{
     WorkflowConfig, WorkflowEngine, WorkflowTemplate, WorkflowTemplateStep,
@@ -130,7 +130,7 @@ fn a_uuid_that_names_no_session_is_persisted_without_one() {
     registry.lock().unwrap().insert(
         "odd".to_string(),
         SubagentEntry::with_identity(
-            crate::domain::ids::AgentUuid::new("has space"),
+            crate::domain::identity::ids::AgentUuid::new("has space"),
             "odd".into(),
             "/tmp/odd.sock".into(),
             0,

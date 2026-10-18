@@ -17,9 +17,9 @@ fn id(key: impl Into<String>) -> SessionIdentity {
 }
 use crate::application::tools::ports::Tool;
 use crate::domain::conversation::value_objects::message::{LlmResponse, Message, Role, ToolCall};
-use crate::domain::error::DomainError;
-use crate::domain::ids::AgentUuid;
+use crate::domain::identity::ids::AgentUuid;
 use crate::domain::sessions::entities::session::{Session, SubagentLiveness};
+use crate::domain::shared::error::DomainError;
 use crate::domain::tool_policy::value_objects::tool::{ToolDefinition, ToolResult};
 use crate::infrastructure::tools::agents::subagent_registry::{SubagentEntry, new_registry};
 use crate::interface::cli::protocol::AgentCommand;

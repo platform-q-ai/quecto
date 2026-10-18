@@ -39,7 +39,9 @@ impl Tool for Echo {
         arguments: &str,
     ) -> Pin<
         Box<
-            dyn Future<Output = Result<ToolResult, quecto::domain::error::DomainError>> + Send + '_,
+            dyn Future<Output = Result<ToolResult, quecto::domain::shared::error::DomainError>>
+                + Send
+                + '_,
         >,
     > {
         let content = arguments.to_string();

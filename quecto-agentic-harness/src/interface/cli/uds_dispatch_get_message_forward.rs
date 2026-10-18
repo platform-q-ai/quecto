@@ -1,5 +1,5 @@
 use super::{AgentEvent, DispatchCtx};
-use crate::domain::ids::{AgentId, MessageId, ToolCallId};
+use crate::domain::identity::ids::{AgentId, MessageId, ToolCallId};
 
 pub(super) struct ForwardGetMessage {
     pub(super) agent_id: AgentId,

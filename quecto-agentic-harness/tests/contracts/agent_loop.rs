@@ -22,7 +22,7 @@ use quecto::domain::audit::AuditEvent;
 use quecto::domain::conversation::value_objects::message::{
     LlmResponse, Message, Role, StopReason,
 };
-use quecto::domain::error::DomainError;
+use quecto::domain::shared::error::DomainError;
 use quecto::domain::tool_policy::value_objects::tool::{ToolDefinition, ToolResult};
 use std::future::Future;
 use std::pin::Pin;

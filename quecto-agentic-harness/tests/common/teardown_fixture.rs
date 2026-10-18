@@ -25,7 +25,7 @@ use quecto::domain::agents::services::subagent_teardown::{
     DelegatedAgentIdentity, HarnessLifecycleState, LaunchGeneration, LineageRecord,
     LineageSnapshot, RoutingDepth, ShutdownReason,
 };
-use quecto::domain::ids::AgentUuid;
+use quecto::domain::identity::ids::AgentUuid;
 
 pub fn identity(uuid: &str, generation: u64) -> DelegatedAgentIdentity {
     DelegatedAgentIdentity::new(uuid, LaunchGeneration::new(generation))

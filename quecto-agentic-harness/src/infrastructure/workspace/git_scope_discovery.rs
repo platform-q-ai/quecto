@@ -2,8 +2,8 @@ use super::filesystem_scope::FilesystemScope;
 use crate::{
     application::sessions::ports::session_home::WorkspaceDiscovery,
     domain::{
-        error::DomainError,
         sessions::entities::session_home::{AssociationProvenance, SessionHome, WorkspaceGroup},
+        shared::error::DomainError,
     },
 };
 use std::{

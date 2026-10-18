@@ -6,10 +6,10 @@
 
 use crate::domain::audit::AuditEvent;
 use crate::domain::conversation::value_objects::message::{Message, Role};
-use crate::domain::error::DomainError;
 use crate::domain::inference::services::provider_error::{
     ProviderErrorClass, classify_provider_error, model_refusal, provider_http_status,
 };
+use crate::domain::shared::error::DomainError;
 
 /// The guidance a model refused for the account or auth mode ends with
 /// (#2435). The loop does not know the hold, so the guidance says what a

@@ -6,7 +6,7 @@
 //! pipe still open once rg has exited (or stdout is done) gets a short
 //! grace and is then abandoned.
 
-use crate::domain::error::DomainError;
+use crate::domain::shared::error::DomainError;
 
 use super::MAX_OUTPUT_BYTES;
 

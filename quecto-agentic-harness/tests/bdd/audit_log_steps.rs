@@ -297,14 +297,14 @@ impl quecto::application::providers::ports::LlmProvider for LoopFailingProvider 
             dyn std::future::Future<
                     Output = Result<
                         quecto::domain::conversation::value_objects::message::LlmResponse,
-                        quecto::domain::error::DomainError,
+                        quecto::domain::shared::error::DomainError,
                     >,
                 > + Send
                 + 'a,
         >,
     > {
         let body = self.body.clone();
-        Box::pin(async move { Err(quecto::domain::error::DomainError::Provider(body)) })
+        Box::pin(async move { Err(quecto::domain::shared::error::DomainError::Provider(body)) })
     }
 }
 
@@ -320,7 +320,7 @@ impl quecto::application::audit::ports::AuditSink for LoopRecordingSink {
         event: AuditEvent,
     ) -> std::pin::Pin<
         Box<
-            dyn std::future::Future<Output = Result<(), quecto::domain::error::DomainError>>
+            dyn std::future::Future<Output = Result<(), quecto::domain::shared::error::DomainError>>
                 + Send
                 + '_,
         >,
@@ -347,7 +347,7 @@ impl quecto::application::tools::ports::ToolExecutor for LoopEmptyRegistry {
             dyn std::future::Future<
                     Output = Result<
                         quecto::domain::tool_policy::value_objects::tool::ToolResult,
-                        quecto::domain::error::DomainError,
+                        quecto::domain::shared::error::DomainError,
                     >,
                 > + Send
                 + '_,
@@ -355,7 +355,7 @@ impl quecto::application::tools::ports::ToolExecutor for LoopEmptyRegistry {
     > {
         let n = name.to_string();
         Box::pin(async move {
-            Err(quecto::domain::error::DomainError::Tool(format!(
+            Err(quecto::domain::shared::error::DomainError::Tool(format!(
                 "no tool: {n}"
             )))
         })

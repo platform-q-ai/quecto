@@ -6,7 +6,7 @@ use crate::domain::agents::services::subagent_teardown::{
     DelegatedAgentIdentity, HarnessLifecycleState, LaunchGeneration, LineageRecord,
     LineageSnapshot, RoutingDepth, ShutdownReason,
 };
-use crate::domain::ids::AgentUuid;
+use crate::domain::identity::ids::AgentUuid;
 
 use crate::application::subagents::dto::TerminationResult;
 use crate::application::subagents::ports::{

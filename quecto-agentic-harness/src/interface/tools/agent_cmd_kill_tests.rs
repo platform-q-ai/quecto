@@ -4,7 +4,7 @@ use crate::application::subagents::ports::ResolutionError;
 use crate::domain::agents::services::subagent_teardown::{
     DelegatedAgentIdentity, LaunchGeneration, TerminationRouteError,
 };
-use crate::domain::ids::AgentUuid;
+use crate::domain::identity::ids::AgentUuid;
 
 fn outcome(result: TerminationResult, removed: usize) -> KillDelegatedAgentOutcome {
     KillDelegatedAgentOutcome {

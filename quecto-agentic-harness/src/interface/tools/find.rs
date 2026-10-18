@@ -3,7 +3,7 @@ use crate::application::agent_turn::use_cases::find::{
     FindEntryKind, FindError, FindRequest, FindResult, FindUseCase,
 };
 use crate::application::tools::ports::Tool;
-use crate::domain::error::DomainError;
+use crate::domain::shared::error::DomainError;
 use crate::domain::tool_policy::value_objects::tool::{ToolDefinition, ToolResult};
 use std::future::Future;
 use std::pin::Pin;
@@ -164,7 +164,7 @@ fn result(content: String, is_error: bool) -> ToolResult {
     }
 }
 fn render(found: FindResult) -> String {
-    const CAP: usize = crate::domain::constants::DEFAULT_OUTPUT_CAP_BYTES;
+    const CAP: usize = crate::domain::shared::constants::DEFAULT_OUTPUT_CAP_BYTES;
     let mut content = String::new();
     let mut byte_limited = false;
     for entry in found

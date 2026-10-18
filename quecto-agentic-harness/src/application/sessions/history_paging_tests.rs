@@ -1,7 +1,7 @@
 use super::{newest_window, page_of};
 use crate::application::sessions::dto::{HistoryError, HistoryQuery};
 use crate::domain::conversation::value_objects::message::Message;
-use crate::domain::ids::MessageId;
+use crate::domain::identity::ids::MessageId;
 
 fn messages(n: usize) -> Vec<Message> {
     (0..n).map(|i| Message::user(format!("m{i}"))).collect()

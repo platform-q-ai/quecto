@@ -116,7 +116,7 @@ impl crate::application::swarm::ports::SwarmRunControl for TestSwarmControl {
         '_,
         Result<
             crate::domain::swarm::value_objects::run_control::RunControlReceipt,
-            crate::domain::error::DomainError,
+            crate::domain::shared::error::DomainError,
         >,
     > {
         Box::pin(async {
@@ -304,7 +304,7 @@ impl crate::application::swarm::ports::SwarmRunControl for BlockedSwarmControl {
         '_,
         Result<
             crate::domain::swarm::value_objects::run_control::RunControlReceipt,
-            crate::domain::error::DomainError,
+            crate::domain::shared::error::DomainError,
         >,
     > {
         Box::pin(async {
@@ -410,7 +410,7 @@ impl crate::application::swarm::ports::SwarmRunControl for WatchedControl {
         '_,
         Result<
             crate::domain::swarm::value_objects::run_control::RunControlReceipt,
-            crate::domain::error::DomainError,
+            crate::domain::shared::error::DomainError,
         >,
     > {
         self.applied

@@ -16,7 +16,7 @@ impl SwarmRunControl for Control {
         _: RunControlAction,
     ) -> crate::application::subagent_launch::LaunchFuture<
         '_,
-        Result<RunControlReceipt, crate::domain::error::DomainError>,
+        Result<RunControlReceipt, crate::domain::shared::error::DomainError>,
     > {
         Box::pin(async {
             Ok(RunControlReceipt {
@@ -183,7 +183,7 @@ impl SwarmRunControl for RunningAt {
         _: RunControlAction,
     ) -> crate::application::subagent_launch::LaunchFuture<
         '_,
-        Result<RunControlReceipt, crate::domain::error::DomainError>,
+        Result<RunControlReceipt, crate::domain::shared::error::DomainError>,
     > {
         Box::pin(async {
             Ok(RunControlReceipt {
@@ -280,7 +280,7 @@ impl SwarmRunControl for Answer {
         _: RunControlAction,
     ) -> crate::application::subagent_launch::LaunchFuture<
         '_,
-        Result<RunControlReceipt, crate::domain::error::DomainError>,
+        Result<RunControlReceipt, crate::domain::shared::error::DomainError>,
     > {
         Box::pin(async {
             match self.0 {
@@ -294,7 +294,9 @@ impl SwarmRunControl for Answer {
                     status,
                     generation,
                 }),
-                Err(message) => Err(crate::domain::error::DomainError::Tool(message.into())),
+                Err(message) => Err(crate::domain::shared::error::DomainError::Tool(
+                    message.into(),
+                )),
             }
         })
     }
@@ -436,14 +438,14 @@ impl crate::application::providers::ports::LlmProvider for FailingProvider {
             dyn Future<
                     Output = Result<
                         crate::domain::conversation::value_objects::message::LlmResponse,
-                        crate::domain::error::DomainError,
+                        crate::domain::shared::error::DomainError,
                     >,
                 > + Send
                 + '_,
         >,
     > {
         Box::pin(async {
-            Err(crate::domain::error::DomainError::Provider(
+            Err(crate::domain::shared::error::DomainError::Provider(
                 "provider error (500): boom".into(),
             ))
         })
@@ -670,7 +672,7 @@ impl crate::application::providers::ports::LlmProvider for CountingProvider {
             dyn Future<
                     Output = Result<
                         crate::domain::conversation::value_objects::message::LlmResponse,
-                        crate::domain::error::DomainError,
+                        crate::domain::shared::error::DomainError,
                     >,
                 > + Send
                 + '_,

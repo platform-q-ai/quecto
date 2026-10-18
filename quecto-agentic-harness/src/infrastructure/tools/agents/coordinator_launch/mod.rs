@@ -36,9 +36,9 @@ use crate::application::project_board::ports::{
 };
 use crate::application::tools::ports::Tool;
 use crate::domain::agents::services::subagent::{MAX_AGENT_ID_CHARS, validate_agent_id_format};
-use crate::domain::error::DomainError;
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::sessions::entities::session::SubagentLiveness;
+use crate::domain::shared::error::DomainError;
 use crate::domain::tool_policy::value_objects::tool::ToolResult;
 pub use kept_boards::{KeptRunReports, KeptSwarmBoards, MAX_KEPT};
 #[cfg(test)]

@@ -1,6 +1,6 @@
 //! Swarm run commands, kept separate from Python execution and output handling.
 use super::swarm_bridge::SwarmContext;
-use crate::domain::error::DomainError;
+use crate::domain::shared::error::DomainError;
 use crate::domain::swarm::value_objects::lifecycle::ProcessIdentity;
 use serde_json::Value;
 

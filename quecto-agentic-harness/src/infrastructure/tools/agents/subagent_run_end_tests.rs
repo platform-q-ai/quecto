@@ -75,7 +75,7 @@ fn rig() -> Rig {
     });
     let registry: SubagentRegistry = Arc::new(Mutex::new(HashMap::new()));
     let mut entry = SubagentEntry::with_identity(
-        crate::domain::ids::AgentUuid::new("child"),
+        crate::domain::identity::ids::AgentUuid::new("child"),
         "child".into(),
         temp.path().join("never.sock"),
         0,
@@ -105,7 +105,7 @@ impl Rig {
     async fn fleet(&self, authority: FleetTeardownAuthority) {
         let fleet = crate::composition::subagent_teardown::build_fleet_teardown(
             crate::composition::subagent_teardown::FleetTeardownWiring {
-                owner: crate::domain::ids::AgentUuid::new("root"),
+                owner: crate::domain::identity::ids::AgentUuid::new("root"),
                 registry: self.registry.clone(),
                 broadcast_tx: None,
                 notify_tx: None,
@@ -158,7 +158,7 @@ async fn a_selected_kill_of_a_plain_child_is_the_owners_word() {
         crate::composition::environments::build_member_finalizer,
     );
     let child = DelegatedAgentIdentity::new(
-        crate::domain::ids::AgentUuid::new("child"),
+        crate::domain::identity::ids::AgentUuid::new("child"),
         LaunchGeneration::new(1),
     );
     agents
@@ -184,7 +184,7 @@ async fn an_exit_observed_for_a_run_end_claim_is_the_run_ends() {
         crate::composition::environments::build_member_finalizer,
     );
     let child = DelegatedAgentIdentity::new(
-        crate::domain::ids::AgentUuid::new("child"),
+        crate::domain::identity::ids::AgentUuid::new("child"),
         LaunchGeneration::new(1),
     );
     agents

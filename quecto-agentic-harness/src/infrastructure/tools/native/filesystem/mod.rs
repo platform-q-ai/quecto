@@ -21,7 +21,7 @@ pub use write::WriteTool;
 
 use std::path::{Path, PathBuf};
 
-use crate::domain::error::DomainError;
+use crate::domain::shared::error::DomainError;
 use crate::infrastructure::security::sandbox::Sandbox;
 use crate::infrastructure::tools::native::path_utils::resolve_to_cwd;
 

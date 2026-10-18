@@ -10,7 +10,7 @@ use crate::application::sessions::dto::{
 };
 use crate::application::sessions::dto::{ResumeOutcome, ResumeRequest, SavedSessionResumed};
 use crate::domain::conversation::value_objects::message::Message;
-use crate::domain::ids::AgentUuid;
+use crate::domain::identity::ids::AgentUuid;
 use crate::domain::sessions::entities::session::{
     PersistedSubagentRosterEntry, Session, SubagentLiveness, SubagentRestoreReason,
 };

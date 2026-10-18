@@ -14,11 +14,11 @@ use crate::application::sessions::ports::{
     HistoricalRosterSource, SessionStore, WorkflowRunSource,
 };
 use crate::domain::conversation::value_objects::message::Message;
-use crate::domain::error::DomainError;
 use crate::domain::sessions::entities::session::{
     PersistedSubagentRosterEntry, Session, SessionSummary, SubagentLiveness, SubagentRestoreReason,
 };
 use crate::domain::sessions::entities::session_identity::SessionIdentity;
+use crate::domain::shared::error::DomainError;
 use crate::domain::workflow::WorkflowRunPersisted;
 
 /// What the store was asked to write, in order.

@@ -231,7 +231,7 @@ async fn register_and_broadcast_sends_state_changed_event() {
         .parse_args(r#"{"agent_id":"child","read_only":true}"#)
         .unwrap();
     let entry = initial_registry_entry(InitialRegistryEntrySpec {
-        agent_uuid: crate::domain::ids::AgentUuid::new("00000000-0000-4000-8000-000000000104"),
+        agent_uuid: AgentUuid::new("00000000-0000-4000-8000-000000000104"),
         display_name: "child".to_string(),
         socket_path: PathBuf::from("/tmp/child.sock"),
         pid: 123,
@@ -287,7 +287,7 @@ fn a_frozen_harness_refuses_registration_under_the_registry_lock() {
     .expect_err("a frozen harness admits no child");
     // A tool error, so the model sees the one spawn-refusal prefix (#2221).
     assert!(
-        matches!(&refused, crate::domain::error::DomainError::Tool(reason)
+        matches!(&refused, DomainError::Tool(reason)
             if reason.starts_with("spawn refused")),
         "{refused:?}"
     );
@@ -454,7 +454,7 @@ async fn register_and_broadcast_closed_receiver_still_inserts_entry() {
         .parse_args(r#"{"agent_id":"closed"}"#)
         .unwrap();
     let entry = initial_registry_entry(InitialRegistryEntrySpec {
-        agent_uuid: crate::domain::ids::AgentUuid::new("00000000-0000-4000-8000-000000000105"),
+        agent_uuid: AgentUuid::new("00000000-0000-4000-8000-000000000105"),
         display_name: "closed".to_string(),
         socket_path: PathBuf::from("/tmp/closed.sock"),
         pid: 0,
@@ -499,7 +499,7 @@ async fn spawn_registry_poison_recovery_paths_do_not_drop_entries() {
         None,
         "poison",
         initial_registry_entry(InitialRegistryEntrySpec {
-            agent_uuid: crate::domain::ids::AgentUuid::new("00000000-0000-4000-8000-000000000106"),
+            agent_uuid: AgentUuid::new("00000000-0000-4000-8000-000000000106"),
             display_name: "poison".to_string(),
             socket_path: PathBuf::from("/tmp/poison.sock"),
             pid: 0,

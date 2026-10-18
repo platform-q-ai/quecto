@@ -25,7 +25,7 @@ use crate::domain::inference::value_objects::provider::{EffortLevel, StreamEvent
 use crate::domain::sessions::entities::session_identity::SessionIdentity;
 use crate::domain::tool_policy::value_objects::tool;
 use crate::domain::tool_policy::value_objects::tool_descriptor::ToolDescriptor;
-use crate::domain::{audit::AuditEvent, error::DomainError};
+use crate::domain::{audit::AuditEvent, shared::error::DomainError};
 use agent_loop_stream::{
     StreamProviderError, TurnEnd, empty_stream_error_message, is_cut_off_without_answer,
     is_empty_streamed_response,

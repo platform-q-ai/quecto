@@ -103,10 +103,10 @@ pub(super) const CONTENDED_READ_PAUSE: Duration = Duration::from_secs(1);
 /// The store's refusal of a transaction that stayed busy past its 500 ms
 /// timeout (#2278): its text exactly, as the tool boundary carries it.
 /// Nothing else is contention.
-pub(super) fn contended_read(error: &quecto::domain::error::DomainError) -> bool {
+pub(super) fn contended_read(error: &quecto::domain::shared::error::DomainError) -> bool {
     matches!(
         error,
-        quecto::domain::error::DomainError::Tool(text)
+        quecto::domain::shared::error::DomainError::Tool(text)
             if text == r#"swarm: "coordination store unavailable or contended: database is locked""#
     )
 }

@@ -275,7 +275,7 @@ pub(super) async fn multi_client_loop(
     });
     let teardown = teardown_graph.map(|build| {
         build(super::uds_teardown_handles::TeardownLoopInputs {
-            owner: crate::domain::ids::AgentUuid::new(if session_key.is_empty() {
+            owner: crate::domain::identity::ids::AgentUuid::new(if session_key.is_empty() {
                 "harness".to_string()
             } else {
                 session_key.clone()

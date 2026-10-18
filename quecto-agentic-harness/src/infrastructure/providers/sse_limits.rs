@@ -1,4 +1,4 @@
-use crate::domain::error::DomainError;
+use crate::domain::shared::error::DomainError;
 
 /// Shared bounded append for provider SSE accumulators.
 pub(crate) fn append_with_limit(

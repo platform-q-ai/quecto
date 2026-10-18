@@ -5,8 +5,8 @@ use std::sync::{Arc, Mutex};
 
 use crate::application::providers::ports::{ChatRequest, LlmProvider};
 use crate::domain::conversation::value_objects::message::LlmResponse;
-use crate::domain::error::DomainError;
 use crate::domain::inference::value_objects::provider::StreamEvent;
+use crate::domain::shared::error::DomainError;
 use crate::infrastructure::providers::openai_endpoint_router::OpenAiEndpointRouter;
 
 #[derive(Debug)]

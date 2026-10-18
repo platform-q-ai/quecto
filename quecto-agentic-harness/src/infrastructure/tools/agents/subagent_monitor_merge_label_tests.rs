@@ -82,7 +82,7 @@ fn a_child_cannot_merge_over_a_row_this_harness_launched() {
     let sibling = "65268567-be4a-471f-a805-1238dcf08b68";
     let registry = new_registry();
     let mut launched = SubagentEntry::with_identity(
-        crate::domain::ids::AgentUuid::new(sibling),
+        crate::domain::identity::ids::AgentUuid::new(sibling),
         "sibling".into(),
         "/tmp/sibling.sock".into(),
         4242,
@@ -109,7 +109,7 @@ fn a_reported_row_is_marked_reported_even_over_a_restored_one() {
     use crate::infrastructure::tools::agents::subagent_registry::SubagentEntry;
     let registry = new_registry();
     let restored = SubagentEntry::with_identity(
-        crate::domain::ids::AgentUuid::new("r-uuid"),
+        crate::domain::identity::ids::AgentUuid::new("r-uuid"),
         "restored".into(),
         "/tmp/r.sock".into(),
         0,

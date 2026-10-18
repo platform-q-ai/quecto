@@ -8,7 +8,7 @@ use crate::application::sessions::dto::{
     SearchSessionMetadataRequest, SearchSessionMetadataResult,
 };
 use crate::application::sessions::use_cases::SearchSessionMetadata;
-use crate::domain::error::DomainError;
+use crate::domain::shared::error::DomainError;
 
 pub struct SearchSessionMetadataController {
     search: Arc<SearchSessionMetadata>,

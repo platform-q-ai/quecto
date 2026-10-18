@@ -10,7 +10,7 @@ use quecto::application::sessions::dto::FleetSettlementOutcome;
 use quecto::application::sessions::ports::FleetSettlement;
 use quecto::composition::subagent_teardown::{FleetTeardownWiring, build_fleet_teardown};
 use quecto::domain::agents::services::subagent_teardown::LaunchGeneration;
-use quecto::domain::ids::AgentUuid;
+use quecto::domain::identity::ids::AgentUuid;
 use quecto::infrastructure::tools::agents::harness_lifecycle::new_shared_harness_lifecycle;
 use quecto::infrastructure::tools::agents::subagent_registry::{SubagentEntry, SubagentRegistry};
 

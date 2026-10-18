@@ -148,7 +148,8 @@ fn a_refusal_keeps_the_lifecycle_notes() {
         json!(["wake hint failed for worker; durable board is authoritative"]),
     );
     notes.insert("coordination_error".to_owned(), json!("tool error: gone"));
-    let refusal = crate::domain::error::DomainError::Tool(r#"swarm: "unknown task""#.to_owned());
+    let refusal =
+        crate::domain::shared::error::DomainError::Tool(r#"swarm: "unknown task""#.to_owned());
     let result = crate::infrastructure::tools::swarm::swarm_output::answered(
         &crate::composition::swarm::board_wire(),
         "task",
@@ -171,7 +172,8 @@ fn a_refusal_keeps_the_lifecycle_notes() {
 /// (#2478 slice B).
 #[test]
 fn a_refusal_without_notes_is_the_boards() {
-    let refusal = crate::domain::error::DomainError::Tool(r#"swarm: "unknown task""#.to_owned());
+    let refusal =
+        crate::domain::shared::error::DomainError::Tool(r#"swarm: "unknown task""#.to_owned());
     let result = crate::infrastructure::tools::swarm::swarm_output::answered(
         &crate::composition::swarm::board_wire(),
         "task",

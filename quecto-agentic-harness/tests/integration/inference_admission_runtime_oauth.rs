@@ -11,7 +11,7 @@ use base64::Engine;
 use quecto::application::ports::{AttemptAdmission, AttemptPermit, ProviderRuntimeFactory};
 use quecto::application::providers::ports::{ChatRequest, LlmProvider};
 use quecto::domain::admission::value_objects::inference_admission::*;
-use quecto::domain::error::DomainError;
+use quecto::domain::shared::error::DomainError;
 use quecto::infrastructure::auth::credential_store::{AuthMethod, Credential, CredentialStore};
 use quecto::infrastructure::config::Config;
 use quecto::infrastructure::model_registry::ModelRegistry;

@@ -13,8 +13,8 @@ use crate::domain::agents::services::subagent::{
     assert_display_name_available_for_spawn, validate_agent_id,
 };
 use crate::domain::environments::entities::environment_registry::EnvironmentRegistry;
-use crate::domain::error::DomainError;
-use crate::domain::ids::AgentUuid;
+use crate::domain::identity::ids::AgentUuid;
+use crate::domain::shared::error::DomainError;
 use crate::domain::tool_policy::value_objects::tool::{ToolDefinition, ToolResult};
 use crate::domain::tool_policy::value_objects::tool_descriptor::ProfileAvailabilityScope;
 use std::collections::{BTreeMap, HashMap};

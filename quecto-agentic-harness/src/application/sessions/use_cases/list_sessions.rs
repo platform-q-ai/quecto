@@ -11,7 +11,7 @@ use std::sync::Arc;
 use crate::application::sessions::dto::{ListSessionsRequest, ListSessionsResult};
 use crate::application::sessions::ports::SessionStore;
 use crate::application::sessions::session_home::SessionHomeContext;
-use crate::domain::error::DomainError;
+use crate::domain::shared::error::DomainError;
 
 /// The saved-session listing query over the session store port.
 pub struct ListSessions {

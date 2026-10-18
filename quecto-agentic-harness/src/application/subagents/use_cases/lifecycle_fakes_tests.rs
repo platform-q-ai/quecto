@@ -11,7 +11,7 @@ use crate::application::subagents::ports::{
     TeardownCompensation, TerminalClaim, TerminationCause, TerminationConclusion,
 };
 use crate::domain::agents::services::subagent_teardown::DelegatedAgentIdentity;
-use crate::domain::ids::AgentUuid;
+use crate::domain::identity::ids::AgentUuid;
 
 use super::teardown_fakes::identity;
 

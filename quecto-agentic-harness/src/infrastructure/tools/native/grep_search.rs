@@ -7,7 +7,7 @@ use std::sync::Arc;
 use crate::application::search::ports::{
     MAX_RECORDED_ARGUMENTS, RankingRecord, SearchLog, SearchRecord,
 };
-use crate::domain::error::DomainError;
+use crate::domain::shared::error::DomainError;
 use crate::domain::tool_policy::value_objects::tool::ToolResult;
 use crate::infrastructure::security::sandbox::Sandbox;
 use crate::infrastructure::tools::native::path_utils::resolve_to_cwd;

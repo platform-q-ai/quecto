@@ -24,13 +24,13 @@ pub fn make_oauth_refresh_fn() -> crate::infrastructure::providers::refreshable:
         Box::pin(async move {
             let creds = store.load_snapshot().unwrap_or_default();
             let cred = creds.get(&provider_name).ok_or_else(|| {
-                crate::domain::error::DomainError::Provider(format!(
+                crate::domain::shared::error::DomainError::Provider(format!(
                     "no credential found for {}",
                     provider_name
                 ))
             })?;
             let refresh_token = cred.refresh_token.as_ref().ok_or_else(|| {
-                crate::domain::error::DomainError::Provider(format!(
+                crate::domain::shared::error::DomainError::Provider(format!(
                     "no refresh token for {}",
                     provider_name
                 ))
@@ -38,7 +38,7 @@ pub fn make_oauth_refresh_fn() -> crate::infrastructure::providers::refreshable:
             let oauth_config =
                 crate::infrastructure::auth::oauth::OAuthConfig::for_provider(&provider_name)
                     .ok_or_else(|| {
-                        crate::domain::error::DomainError::Provider(format!(
+                        crate::domain::shared::error::DomainError::Provider(format!(
                             "no OAuth config for {}",
                             provider_name
                         ))
@@ -71,7 +71,7 @@ pub fn make_oauth_refresh_fn() -> crate::infrastructure::providers::refreshable:
             let token =
                 persist_refreshed_token(&store, &provider_name, refresh_token, refresh_result)
                     .ok_or_else(|| {
-                        crate::domain::error::DomainError::Provider(format!(
+                        crate::domain::shared::error::DomainError::Provider(format!(
                             "failed to refresh token for {}",
                             provider_name
                         ))

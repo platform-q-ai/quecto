@@ -1,4 +1,5 @@
 use super::*;
+use crate::domain::inference::value_objects::cancel_flag::CancelFlag;
 
 // --- CancelFlag ---
 

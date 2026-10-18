@@ -8,7 +8,7 @@ use serde_json::{Map, Value};
 
 use super::swarm_board_dispatch::BoardWire;
 use super::swarm_board_ops::advertised_op;
-use crate::domain::error::DomainError;
+use crate::domain::shared::error::DomainError;
 use crate::domain::tool_policy::value_objects::tool::ToolResult;
 
 pub(super) fn tool_err(content: String) -> Result<ToolResult, DomainError> {

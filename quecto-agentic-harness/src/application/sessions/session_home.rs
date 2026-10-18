@@ -3,9 +3,9 @@ use crate::application::sessions::dto::resume_saved_session::ResumeDisposition;
 use crate::application::sessions::ports::session_home::{SessionHomeCatalogue, WorkspaceDiscovery};
 use crate::domain::sessions::services::resume_decision::ResumeDecisionKind;
 use crate::domain::{
-    error::DomainError,
     sessions::entities::session_home::{HomeAdmission, SessionHome, SessionHomeScope},
     sessions::entities::session_identity::SessionIdentity,
+    shared::error::DomainError,
 };
 use std::{path::PathBuf, sync::Arc};
 

@@ -20,9 +20,9 @@ pub use session_transition::{
 
 use super::dto::SessionListQuery;
 use crate::domain::conversation::value_objects::message::Message;
-use crate::domain::error::DomainError;
 use crate::domain::sessions::entities::session;
 use crate::domain::sessions::entities::session_identity::{SessionIdentity, SpillId};
+use crate::domain::shared::error::DomainError;
 use crate::domain::workflow::WorkflowRunPersisted;
 use session::{Session, SessionSummary, SpillEntries, SpillEntry};
 

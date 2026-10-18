@@ -1,5 +1,5 @@
 use super::*;
-use crate::domain::constants::DEFAULT_OUTPUT_CAP_BYTES;
+use crate::domain::shared::constants::DEFAULT_OUTPUT_CAP_BYTES;
 
 #[tokio::test]
 async fn test_progress_callback_tool_started_fired_for_each_tool_call() {

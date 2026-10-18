@@ -26,7 +26,7 @@ use quecto::composition::subagent_teardown::LifecycleAdapter as RegistryLifecycl
 use quecto::domain::agents::services::subagent_teardown::{
     DelegatedAgentIdentity, LaunchGeneration, RoutingDepth, TerminationRouteError,
 };
-use quecto::domain::ids::AgentUuid;
+use quecto::domain::identity::ids::AgentUuid;
 use quecto::infrastructure::processes::direct_child_routing::UdsDirectChildRouting;
 use quecto::infrastructure::processes::owned_child_termination::SupervisedChildTermination;
 use quecto::infrastructure::tools::agents::subagent_registry::{

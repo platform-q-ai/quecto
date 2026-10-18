@@ -3,7 +3,7 @@ use crate::application::sessions::dto::{
     FleetSettlementOutcome, SessionTransitionRefused, StartFreshConversationError,
 };
 use crate::domain::conversation::value_objects::message::Message;
-use crate::domain::ids::AgentUuid;
+use crate::domain::identity::ids::AgentUuid;
 
 fn conversation(prompt: &str) -> Vec<Message> {
     let mut messages = vec![Message::user("q1"), Message::assistant("a1", vec![])];

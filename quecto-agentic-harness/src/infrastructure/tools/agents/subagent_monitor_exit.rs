@@ -64,10 +64,10 @@ pub fn notification_display_label(registry: &SubagentRegistry, agent_id: &str) -
 pub fn notification_agent_uuid(
     registry: &SubagentRegistry,
     agent_id: &str,
-) -> crate::domain::ids::AgentUuid {
+) -> crate::domain::identity::ids::AgentUuid {
     let entries = registry.lock().unwrap_or_else(|e| e.into_inner());
     entries
         .get(agent_id)
         .map(|entry| entry.agent_uuid.clone())
-        .unwrap_or_else(|| crate::domain::ids::AgentUuid::new(agent_id))
+        .unwrap_or_else(|| crate::domain::identity::ids::AgentUuid::new(agent_id))
 }

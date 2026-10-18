@@ -33,13 +33,13 @@ impl LlmProvider for Provider {
     ) -> std::pin::Pin<
         Box<
             dyn std::future::Future<
-                    Output = Result<LlmResponse, quecto::domain::error::DomainError>,
+                    Output = Result<LlmResponse, quecto::domain::shared::error::DomainError>,
                 > + Send
                 + 'a,
         >,
     > {
         Box::pin(async {
-            Err(quecto::domain::error::DomainError::Provider(
+            Err(quecto::domain::shared::error::DomainError::Provider(
                 "contract".into(),
             ))
         })

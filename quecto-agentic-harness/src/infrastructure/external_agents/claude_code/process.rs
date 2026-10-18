@@ -72,7 +72,7 @@ use crate::application::external_agent::ports::{
     ExternalAgentLauncher, ExternalAgentProcess, PortFuture, QueuedUserTurn,
 };
 use crate::domain::external_agent::stream::{ExternalAgentEvent, SkippedLine, SkippedLineReason};
-use crate::domain::redaction::redact_secrets;
+use crate::domain::shared::redaction::redact_secrets;
 use crate::infrastructure::processes::child_line_pipes::{
     LineLimits, LineWriteError, StdinLines, StdoutLine, StdoutLines,
 };

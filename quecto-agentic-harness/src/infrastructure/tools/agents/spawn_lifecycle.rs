@@ -5,7 +5,7 @@
 use super::spawn::SpawnTool;
 use super::subagent_registry::NotificationTx;
 use super::subagent_teardown_wiring::{SubagentLifecycleSlot, SubagentLifecycleUseCases};
-use crate::domain::error::DomainError;
+use crate::domain::shared::error::DomainError;
 
 /// What a launch reports when no lifecycle was composed for its tool.
 pub const NO_LIFECYCLE_COMPOSED: &str = "no subagent lifecycle is composed in this session";

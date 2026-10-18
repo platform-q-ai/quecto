@@ -11,9 +11,9 @@ use super::tests::{MockProvider, MockRegistry, MockTool, text_response, tool_cal
 use super::{AgentLoopConfig, AgentLoopImpl};
 use crate::application::sessions::ports::ContextSpillStore;
 use crate::domain::conversation::value_objects::message::{Message, Role};
-use crate::domain::error::DomainError;
 use crate::domain::sessions::entities::session::SpillEntry;
 use crate::domain::sessions::entities::session_identity::{SessionIdentity, SpillId};
+use crate::domain::shared::error::DomainError;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};

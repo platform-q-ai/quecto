@@ -6,7 +6,7 @@
 use serde::Serialize;
 
 use crate::domain::project_board::value_objects::slug::{MAX_SLUG_BYTES, Slug};
-use crate::domain::redaction::Redacted;
+use crate::domain::shared::redaction::Redacted;
 
 /// The most characters a [`TaskRef`] records (owner decision, 2026-10-12).
 const MAX_TASK_REF_CHARS: usize = 64;

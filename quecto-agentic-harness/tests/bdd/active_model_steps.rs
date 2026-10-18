@@ -147,14 +147,14 @@ impl quecto::application::providers::ports::LlmProvider for AmProvider {
             dyn std::future::Future<
                     Output = Result<
                         quecto::domain::conversation::value_objects::message::LlmResponse,
-                        quecto::domain::error::DomainError,
+                        quecto::domain::shared::error::DomainError,
                     >,
                 > + Send
                 + 'a,
         >,
     > {
         Box::pin(async {
-            Err(quecto::domain::error::DomainError::Provider(
+            Err(quecto::domain::shared::error::DomainError::Provider(
                 "silent".into(),
             ))
         })

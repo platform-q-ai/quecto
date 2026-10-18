@@ -475,8 +475,9 @@ impl ContextSpillStore for StuckArchive {
         &self,
         session_key: &SessionIdentity,
         entry: &SpillEntry,
-    ) -> Pin<Box<dyn Future<Output = Result<(), crate::domain::error::DomainError>> + Send + '_>>
-    {
+    ) -> Pin<
+        Box<dyn Future<Output = Result<(), crate::domain::shared::error::DomainError>> + Send + '_>,
+    > {
         match entry.id.starts_with("archive") {
             true => Box::pin(std::future::pending()),
             false => self.0.append(session_key, entry),
@@ -489,8 +490,9 @@ impl ContextSpillStore for StuckArchive {
         id: &SpillId,
     ) -> Pin<
         Box<
-            dyn Future<Output = Result<Option<SpillEntry>, crate::domain::error::DomainError>>
-                + Send
+            dyn Future<
+                    Output = Result<Option<SpillEntry>, crate::domain::shared::error::DomainError>,
+                > + Send
                 + '_,
         >,
     > {
@@ -507,8 +509,9 @@ impl ContextSpillStore for StuckArchive {
     fn clear(
         &self,
         session_key: &SessionIdentity,
-    ) -> Pin<Box<dyn Future<Output = Result<(), crate::domain::error::DomainError>> + Send + '_>>
-    {
+    ) -> Pin<
+        Box<dyn Future<Output = Result<(), crate::domain::shared::error::DomainError>> + Send + '_>,
+    > {
         self.0.clear(session_key)
     }
 }

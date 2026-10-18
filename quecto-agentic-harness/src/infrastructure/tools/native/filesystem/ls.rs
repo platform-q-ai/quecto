@@ -7,7 +7,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use crate::application::tools::ports::Tool;
-use crate::domain::error::DomainError;
+use crate::domain::shared::error::DomainError;
 use crate::domain::tool_policy::value_objects::tool::{ToolDefinition, ToolResult};
 use crate::infrastructure::security::sandbox::Sandbox;
 
@@ -22,7 +22,7 @@ const LS_MAX_LIMIT: usize = 5000;
 /// so this bounds memory on a huge directory (#2188).
 const LS_MAX_OFFSET: usize = 100_000;
 /// Maximum output bytes before truncating.
-const LS_MAX_BYTES: usize = crate::domain::constants::DEFAULT_OUTPUT_CAP_BYTES;
+const LS_MAX_BYTES: usize = crate::domain::shared::constants::DEFAULT_OUTPUT_CAP_BYTES;
 
 pub struct LsTool {
     workspace: Arc<PathBuf>,

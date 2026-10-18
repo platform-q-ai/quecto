@@ -11,7 +11,7 @@ use crate::application::subagents::dto::{
 };
 use crate::application::subagents::use_cases::KillDelegatedAgent;
 use crate::application::tools::ports::Tool;
-use crate::domain::error::DomainError;
+use crate::domain::shared::error::DomainError;
 use crate::domain::tool_policy::value_objects::tool::{ToolDefinition, ToolResult};
 
 /// Name under which `AgentCmdTool` delegates its `kill` command.

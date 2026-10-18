@@ -337,7 +337,7 @@ fn cmd_auth_login_openai_oauth(
 
     // Test input and non-interactive REPL commands use the manual fallback.
     let code = if skip_browser_callback(ctx) {
-        let err = crate::domain::error::DomainError::Provider(
+        let err = crate::domain::shared::error::DomainError::Provider(
             "browser callback skipped for supplied input or non-interactive REPL".into(),
         );
         match extract_fallback_code_with_reader(ctx, err, Some(&state), out, reader) {
@@ -387,7 +387,7 @@ fn cmd_auth_login_openai_oauth(
 /// and are accepted as-is, because some providers display a bare code.
 pub(super) fn extract_fallback_code_with_reader(
     ctx: &CliContext,
-    err: crate::domain::error::DomainError,
+    err: crate::domain::shared::error::DomainError,
     expected_state: Option<&str>,
     out: &mut Output<'_>,
     reader: &mut dyn std::io::BufRead,

@@ -390,7 +390,7 @@ fn url_carries_credential(url: &str) -> bool {
 /// (`user:pw@host:path`, no `://`) as well as the scheme forms.
 fn redacted_repository(url: &str) -> String {
     if url.contains("://") {
-        return crate::domain::redaction::redact_url_userinfo(url);
+        return crate::domain::shared::redaction::redact_url_userinfo(url);
     }
     match url.split_once('@') {
         Some((_, rest)) => format!("***@{rest}"),

@@ -373,7 +373,7 @@ fn provider_error_null_status_round_trip() {
 #[test]
 fn provider_error_keeps_full_untruncated_body() {
     use crate::domain::inference::services::provider_error::ProviderErrorClass;
-    use crate::domain::redaction::redact_secrets;
+    use crate::domain::shared::redaction::redact_secrets;
     // A body far longer than any TUI/preview cap (200 chars) must survive
     // intact in the persisted audit record (#937 AC1/AC5). A planted secret
     // is woven into the long body so this test would also break if the

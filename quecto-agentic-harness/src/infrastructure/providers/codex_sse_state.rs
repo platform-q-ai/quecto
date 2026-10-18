@@ -86,7 +86,7 @@ pub(super) fn append_reasoning_delta(
     text: &str,
     position: Option<(Option<u64>, u64)>,
     previous_position: &mut Option<(Option<u64>, u64)>,
-) -> Result<String, crate::domain::error::DomainError> {
+) -> Result<String, crate::domain::shared::error::DomainError> {
     let mut emitted = String::new();
     if let (Some(previous), Some(current)) = (*previous_position, position)
         && current.0 == previous.0
@@ -109,14 +109,14 @@ pub(super) fn append_reasoning_delta(
 pub(super) fn append_reasoning_summary(
     item: &Value,
     reasoning: &mut String,
-) -> Result<(), crate::domain::error::DomainError> {
+) -> Result<(), crate::domain::shared::error::DomainError> {
     append_reasoning_with_limit(reasoning, &collect_reasoning_summary(item))
 }
 
 pub(super) fn append_reasoning_with_limit(
     reasoning: &mut String,
     text: &str,
-) -> Result<(), crate::domain::error::DomainError> {
+) -> Result<(), crate::domain::shared::error::DomainError> {
     append_visible_thinking(reasoning, text, "Codex SSE reasoning")
 }
 
@@ -196,7 +196,7 @@ impl SseAccumulator {
     pub(super) fn handle_event(
         &mut self,
         event: &serde_json::Value,
-    ) -> Result<(), crate::domain::error::DomainError> {
+    ) -> Result<(), crate::domain::shared::error::DomainError> {
         match event["type"].as_str() {
             Some("response.output_text.delta") => {
                 if let Some(delta) = event["delta"].as_str() {

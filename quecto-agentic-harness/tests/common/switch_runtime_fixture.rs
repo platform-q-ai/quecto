@@ -10,7 +10,7 @@ use quecto::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use quecto::application::providers::ports::{ChatRequest, LlmProvider};
 use quecto::application::tools::ports::Tool;
 use quecto::domain::conversation::value_objects::message::LlmResponse;
-use quecto::domain::error::DomainError;
+use quecto::domain::shared::error::DomainError;
 use quecto::domain::tool_policy::value_objects::tool::{ToolDefinition, ToolResult};
 use quecto::domain::workflow::{
     WorkflowConfig, WorkflowEngine, WorkflowTemplate, WorkflowTemplateStep,

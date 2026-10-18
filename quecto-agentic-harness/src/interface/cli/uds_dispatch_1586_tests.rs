@@ -3,7 +3,7 @@ use super::fixture_tests::{
     Fixture, killing_exit, persist_current_session, persist_current_session_with_restore_reason,
 };
 use crate::domain::conversation::value_objects::message::Message;
-use crate::domain::ids::AgentUuid;
+use crate::domain::identity::ids::AgentUuid;
 use crate::infrastructure::tools::agents::subagent_registry::{SubagentEntry, new_registry};
 use crate::interface::cli::protocol::AgentCommand;
 

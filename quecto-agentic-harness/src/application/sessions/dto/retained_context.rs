@@ -4,9 +4,9 @@
 //! the domain's (`SpillEntry`, `SpillIndex`, `SpillId`); no wire value, no
 //! tool schema, no path.
 
-use crate::domain::error::DomainError;
 use crate::domain::sessions::entities::session::{SpillEntries, SpillEntry};
 use crate::domain::sessions::entities::session_identity::SpillId;
+use crate::domain::shared::error::DomainError;
 
 /// The reserved id that selects the retained-context index instead of one
 /// entry: `recall("list")`. Part of the recall syntax the model sees.

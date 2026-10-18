@@ -13,7 +13,7 @@ use crate::domain::environments::entities::environment_registry::{
 use crate::domain::environments::services::environment_listing::{
     EnvironmentListing, ListedEnvironment, ListingScope,
 };
-use crate::domain::redaction::{redact_secrets, redact_url_userinfo};
+use crate::domain::shared::redaction::{redact_secrets, redact_url_userinfo};
 
 /// Rows one `get_containers` result carries at most.
 pub(super) const MAX_LISTED_ENVIRONMENTS: usize = 20;

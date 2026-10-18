@@ -44,7 +44,7 @@ pub(crate) fn cmd_auth_login_xai_oauth(
 
     // Test input and non-interactive REPL commands use the manual fallback.
     let code = if super::skip_browser_callback(ctx) {
-        let err = crate::domain::error::DomainError::Provider(
+        let err = crate::domain::shared::error::DomainError::Provider(
             "browser callback skipped for supplied input or non-interactive REPL".into(),
         );
         match extract_fallback_code_with_reader(ctx, err, Some(&state), out, reader) {

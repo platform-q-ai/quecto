@@ -583,7 +583,7 @@ fn the_composed_teardown_keeps_a_board_runs_ended_board() {
     use crate::application::project_board::ports::SwarmRunReports;
     use crate::domain::environments::entities::environment_registry::EnvironmentRegistry;
     use crate::domain::environments::services::environment_retention::MemberFinalizeMode;
-    use crate::domain::ids::AgentUuid;
+    use crate::domain::identity::ids::AgentUuid;
     use crate::domain::project_board::value_objects::slug::Slug;
     use crate::infrastructure::tools::agents::coordinator_launch::KeptRunReports;
     use crate::infrastructure::tools::agents::subagent_registry::{SubagentEntry, new_registry};

@@ -15,7 +15,7 @@ use serde_json::Value;
 
 use super::swarm_board_dispatch::BindingFaults;
 use crate::application::swarm::dto::CallMeasure;
-use crate::domain::redaction::Redacted;
+use crate::domain::shared::redaction::Redacted;
 use crate::domain::swarm::events::telemetry::{decision_kind, run_role};
 use crate::domain::swarm::services::validation::MEMBER_ID_MAX_BYTES;
 use crate::domain::swarm::{

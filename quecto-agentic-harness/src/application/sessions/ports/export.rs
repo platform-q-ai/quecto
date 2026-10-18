@@ -7,7 +7,7 @@ use std::future::Future;
 use std::pin::Pin;
 
 use crate::application::sessions::dto::{ExportManifest, ExportRecord, RawExportReceipt};
-use crate::domain::error::DomainError;
+use crate::domain::shared::error::DomainError;
 
 pub type ExportOutcome<'a> =
     Pin<Box<dyn Future<Output = Result<RawExportReceipt, DomainError>> + Send + 'a>>;

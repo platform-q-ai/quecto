@@ -376,7 +376,7 @@ async fn command_reader_finalizes_older_unchanged_get_state_snapshot_to_caller_c
 fn lookup_subagent_socket_recovers_from_a_poisoned_registry_lock() {
     let registry = new_registry();
     let mut live = SubagentEntry::with_identity(
-        crate::domain::ids::AgentUuid::new("live-uuid"),
+        crate::domain::identity::ids::AgentUuid::new("live-uuid"),
         "live".into(),
         "/tmp/live.sock".into(),
         0,

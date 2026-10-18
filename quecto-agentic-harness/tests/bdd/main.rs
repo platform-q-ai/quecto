@@ -9,8 +9,8 @@ use quecto::application::subagent::{SubagentConfig, SubagentContext, validate_ag
 use quecto::application::tools::ports::Tool;
 use quecto::domain::agents::value_objects::agent::{AgentInfo, AgentResult};
 use quecto::domain::conversation::value_objects::message::{LlmResponse, Message, Role, ToolCall};
-use quecto::domain::error::DomainError;
 use quecto::domain::sessions::entities::session::Session;
+use quecto::domain::shared::error::DomainError;
 use quecto::domain::tool_policy::value_objects::tool::{ToolDefinition, ToolResult};
 use quecto::infrastructure::auth::credential_store::{
     AuthMethod, Credential, CredentialStatus, CredentialStore,
@@ -497,8 +497,8 @@ pub struct QuectoWorld {
     /// Result of agent_id validation
     pub agent_id_validation: Option<Result<(), String>>,
     /// #1378 BDD: old and new hidden subagent identities for label-reuse checks.
-    pub subagent_old_uuid: Option<quecto::domain::ids::AgentUuid>,
-    pub subagent_new_uuid: Option<quecto::domain::ids::AgentUuid>,
+    pub subagent_old_uuid: Option<quecto::domain::identity::ids::AgentUuid>,
+    pub subagent_new_uuid: Option<quecto::domain::identity::ids::AgentUuid>,
     pub subagent_old_session_key: Option<String>,
     pub subagent_new_session_key: Option<String>,
     pub subagent_display_label: Option<String>,
@@ -808,7 +808,7 @@ pub struct QuectoWorld {
     pub routing_response: Option<LlmResponse>,
     // --- Issue #182: cancellation support ---
     /// Cancel flag for cancellation BDD scenarios
-    pub cancel_flag: Option<quecto::domain::inference::value_objects::provider::CancelFlag>,
+    pub cancel_flag: Option<quecto::domain::inference::value_objects::cancel_flag::CancelFlag>,
     /// Result of a chat() call (Ok(response) or Err(message)) for cancellation tests
     pub chat_result: Option<Result<LlmResponse, String>>,
     /// Result of a chat_stream() call for cancellation tests
@@ -831,7 +831,7 @@ pub struct QuectoWorld {
     pub gateway_token_exchange_result: Option<
         Result<
             quecto::infrastructure::auth::oauth::OAuthTokenResponse,
-            quecto::domain::error::DomainError,
+            quecto::domain::shared::error::DomainError,
         >,
     >,
     /// OAuth expires_in value for margin tests (issue #256)
@@ -861,7 +861,7 @@ pub struct QuectoWorld {
     pub retry_succeeded: Option<bool>,
     // --- Workflow V2 (UDS-only, #568–#577) ---
     // V1 BDD workflow fields removed. V2 workflow is covered by unit tests in:
-    //   src/domain/workflow_tests.rs
+    //   src/domain/workflow/mod_tests.rs
     //   src/infrastructure/tools/native/workflow_tool_comprehensive_tests.rs
     //   src/interface/shared_tests.rs
     //   src/interface/cli/agent_tests.rs

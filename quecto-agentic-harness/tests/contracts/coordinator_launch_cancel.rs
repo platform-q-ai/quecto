@@ -20,7 +20,6 @@ use quecto::application::project_board::use_cases::{
     AcceptPlan, CreateBoardTask, ProposePlan, StartBoardTask,
 };
 use quecto::application::tools::ports::Tool;
-use quecto::domain::error::DomainError;
 use quecto::domain::project_board::entities::claim::Identity;
 use quecto::domain::project_board::entities::plan::PlanItem;
 use quecto::domain::project_board::entities::team::{Role, RoleLimits, Team};
@@ -28,6 +27,7 @@ use quecto::domain::project_board::value_objects::slug::Slug;
 use quecto::domain::project_board::value_objects::vocabulary::{
     Effort, RunOutcome, TaskKind, TaskStatus,
 };
+use quecto::domain::shared::error::DomainError;
 use quecto::domain::tool_policy::value_objects::tool::{ToolDefinition, ToolResult};
 use quecto::infrastructure::persistence::project_board::text_cells::MarkdownTextCells;
 use quecto::infrastructure::test_support::memory_board_store::MemoryBoardStore;

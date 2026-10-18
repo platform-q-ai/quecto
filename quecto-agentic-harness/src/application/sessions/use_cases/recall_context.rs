@@ -16,9 +16,9 @@ use crate::application::sessions::dto::retained_context::{
     RecallError, RecallOutcome, RecallQuery,
 };
 use crate::application::sessions::ports::ContextSpillStore;
-use crate::domain::error::DomainError;
 use crate::domain::sessions::entities::session::SpillEntries;
 use crate::domain::sessions::entities::session_identity::SessionIdentity;
+use crate::domain::shared::error::DomainError;
 
 pub struct RecallContext {
     store: Arc<dyn ContextSpillStore>,

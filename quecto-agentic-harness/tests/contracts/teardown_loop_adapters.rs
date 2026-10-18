@@ -14,7 +14,7 @@ use quecto::domain::agents::entities::parent_control::{
 use quecto::domain::agents::services::subagent_teardown::{
     HarnessLifecycleState, LaunchGeneration, ShutdownReason,
 };
-use quecto::domain::ids::AgentUuid;
+use quecto::domain::identity::ids::AgentUuid;
 use quecto::infrastructure::tools::agents::subagent_registry::{SubagentEntry, SubagentRegistry};
 use quecto::interface::cli::uds_cancel::{CancelSlot, TurnControl};
 use quecto::interface::cli::uds_teardown_handles::TeardownLoopInputs;

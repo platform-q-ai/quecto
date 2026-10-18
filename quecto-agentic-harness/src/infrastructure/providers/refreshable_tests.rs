@@ -1,8 +1,8 @@
 use super::*;
 use crate::application::providers::ports::{ChatRequest, LlmProvider};
 use crate::domain::conversation::value_objects::message::LlmResponse;
-use crate::domain::error::DomainError;
 use crate::domain::inference::value_objects::provider::StreamEvent;
+use crate::domain::shared::error::DomainError;
 use crate::infrastructure::auth::credential_store::{AuthMethod, Credential, CredentialStore};
 use std::future::Future;
 use std::pin::Pin;

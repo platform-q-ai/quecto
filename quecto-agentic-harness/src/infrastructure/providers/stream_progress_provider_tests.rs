@@ -8,12 +8,12 @@ use std::time::Duration;
 use super::stream_idle::StreamIdle;
 use super::stream_idle::tests::{LIVE, servers};
 use super::stream_idle_provider_tests::{Vendor, assembled, codex_chat, incremental};
-use crate::domain::error::DomainError;
 use crate::domain::inference::services::provider_error::{
     ProviderErrorClass, classify_provider_error,
 };
 use crate::domain::inference::value_objects::attempt_diagnostics::Termination;
 use crate::domain::inference::value_objects::provider::StreamEvent;
+use crate::domain::shared::error::DomainError;
 
 /// The progress bound: well under the idle bound, well over the gaps.
 const PROGRESS: Duration = Duration::from_millis(500);

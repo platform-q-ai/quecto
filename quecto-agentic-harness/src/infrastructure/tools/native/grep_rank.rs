@@ -12,7 +12,7 @@ use std::time::Instant;
 use crate::application::search::ports::{
     RankingRecord, Relevance, RelevanceCandidate, RelevanceJudge, ScoredLocation,
 };
-use crate::domain::search_ranking::relevance_order;
+use crate::domain::search::ranking::relevance_order;
 use crate::infrastructure::security::sandbox::Sandbox;
 
 use super::{RgMatch, read_capped_lines};

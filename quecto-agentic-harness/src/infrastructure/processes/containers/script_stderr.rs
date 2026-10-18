@@ -301,7 +301,7 @@ pub fn sanitise(tail: &str) -> String {
             c => out.push(c),
         }
     }
-    crate::domain::redaction::redact_url_userinfo(out.trim())
+    crate::domain::shared::redaction::redact_url_userinfo(out.trim())
 }
 
 /// Skip the body of an escape sequence: a CSI (`ESC [ … final`) whole, an

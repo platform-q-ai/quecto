@@ -150,7 +150,7 @@ impl RegistryDelegatedAgents {
     /// scan is the fallback, never the first answer.
     fn key_for(
         entries: &std::collections::HashMap<String, SubagentEntry>,
-        uuid: &crate::domain::ids::AgentUuid,
+        uuid: &crate::domain::identity::ids::AgentUuid,
     ) -> Option<String> {
         if entries.contains_key(uuid.as_str()) {
             return Some(uuid.as_str().to_owned());
@@ -618,7 +618,7 @@ impl TeardownCompensation for RegistryDelegatedAgents {
     /// rows are untouched, so a teardown still settling a child can never
     /// lose it here. The survivor set does not change (dead rows are not
     /// listed), so nothing is broadcast.
-    fn prune_terminal_rows(&self) -> PortFuture<'_, Vec<crate::domain::ids::AgentUuid>> {
+    fn prune_terminal_rows(&self) -> PortFuture<'_, Vec<crate::domain::identity::ids::AgentUuid>> {
         Box::pin(async move {
             let mut entries = self.lock();
             let mut terminal: Vec<String> = entries

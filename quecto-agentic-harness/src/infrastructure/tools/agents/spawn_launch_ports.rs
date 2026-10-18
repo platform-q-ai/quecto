@@ -14,8 +14,8 @@ use crate::domain::agents::services::subagent::{
 use crate::domain::agents::value_objects::subagent_launch::{
     LaunchIdentity, ParentEndpoint, PreparedRuntime, RegisteredLaunch,
 };
-use crate::domain::error::DomainError;
-use crate::domain::ids::AgentUuid;
+use crate::domain::identity::ids::AgentUuid;
+use crate::domain::shared::error::DomainError;
 use crate::domain::tool_policy::value_objects::tool::ToolResult;
 use std::path::{Path, PathBuf};
 

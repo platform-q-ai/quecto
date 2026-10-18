@@ -7,8 +7,8 @@
 //! is (same device, inode, length, modification and status-change time) is
 //! told so and nothing is read again.
 use crate::domain::conversation::value_objects::message::Message;
-use crate::domain::error::DomainError;
 use crate::domain::sessions::entities::session_identity::SessionIdentity;
+use crate::domain::shared::error::DomainError;
 
 use super::super::FileSessionStore;
 

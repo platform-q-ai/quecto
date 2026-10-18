@@ -152,7 +152,7 @@ pub type WebFetchToolFactory = fn(
 /// tools exist; composition builds the graph and fills the slots.
 #[derive(Clone)]
 pub struct KillToolWiring {
-    pub owner: crate::domain::ids::AgentUuid,
+    pub owner: crate::domain::identity::ids::AgentUuid,
     pub registry: crate::infrastructure::tools::agents::subagent_registry::SubagentRegistry,
     pub broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
     pub notify_tx: Option<crate::infrastructure::tools::agents::subagent_registry::NotificationTx>,

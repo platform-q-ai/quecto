@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use crate::domain::error::DomainError;
+use crate::domain::shared::error::DomainError;
 
 /// How the credential was obtained.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

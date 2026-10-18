@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use crate::application::extensions::ports::PendingToolInvocation;
 use crate::application::tools::ports::Tool;
-use crate::domain::error::DomainError;
+use crate::domain::shared::error::DomainError;
 use crate::domain::tool_policy::value_objects::extension_tool::ToolInvocation;
 use crate::domain::tool_policy::value_objects::tool::{ToolDefinition, ToolResult};
 

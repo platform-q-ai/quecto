@@ -534,7 +534,7 @@ async fn run_with_token_drain(
     Option<
         Result<
             crate::domain::agents::value_objects::agent::AgentResult,
-            crate::domain::error::DomainError,
+            crate::domain::shared::error::DomainError,
         >,
     >,
     Vec<SequencedSubagentNotification>,

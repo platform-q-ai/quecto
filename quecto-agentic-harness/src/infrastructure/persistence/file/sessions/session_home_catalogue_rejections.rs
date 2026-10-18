@@ -9,10 +9,10 @@
 //! index nor seeded from it, so the index can never hide a session and mixed
 //! harness versions cannot hand each other a verdict. The cost is one read of
 //! each corrupt record per process.
-use super::super::session_layout::FlatSessionLayout;
-use super::super::session_store::session_store_home::error;
+use super::super::{session_layout::FlatSessionLayout, session_store::session_store_home::error};
 use super::stamp;
-use crate::domain::{error::DomainError, sessions::entities::session_identity::SessionIdentity};
+use crate::domain::sessions::entities::session_identity::SessionIdentity;
+use crate::domain::shared::error::DomainError;
 use serde::{Deserializer, de::IgnoredAny};
 use std::{collections::BTreeMap, path::Path, path::PathBuf};
 

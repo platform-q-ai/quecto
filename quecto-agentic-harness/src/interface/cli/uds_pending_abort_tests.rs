@@ -57,7 +57,7 @@ impl SwarmRunControl for Rising {
         _: RunControlAction,
     ) -> crate::application::subagent_launch::LaunchFuture<
         '_,
-        Result<RunControlReceipt, crate::domain::error::DomainError>,
+        Result<RunControlReceipt, crate::domain::shared::error::DomainError>,
     > {
         Box::pin(async {
             Ok(RunControlReceipt {

@@ -10,7 +10,7 @@ use std::sync::Arc;
 use crate::application::sessions::dto::{HistoryError, HistoryPage, HistoryQuery};
 use crate::application::sessions::use_cases::ReadHistory;
 use crate::domain::conversation::value_objects::message::Message;
-use crate::domain::ids::MessageId;
+use crate::domain::identity::ids::MessageId;
 
 pub struct ReadHistoryController {
     read_history: Arc<ReadHistory>,

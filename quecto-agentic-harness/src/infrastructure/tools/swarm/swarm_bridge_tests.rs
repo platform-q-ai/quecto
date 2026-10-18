@@ -445,7 +445,7 @@ fn board_errors_keep_the_swarm_quoted_prefix() {
     create(&context, 1);
     let refused = context.call("claim", json!([999])).unwrap_err();
     assert!(
-        matches!(&refused, crate::domain::error::DomainError::Tool(text) if text == "swarm: \"unknown task\""),
+        matches!(&refused, crate::domain::shared::error::DomainError::Tool(text) if text == "swarm: \"unknown task\""),
         "{refused:?}"
     );
 }

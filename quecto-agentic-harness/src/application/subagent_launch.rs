@@ -1,5 +1,5 @@
 use crate::domain::agents::services::subagent::SubagentConfig;
-use crate::domain::error::DomainError;
+use crate::domain::shared::error::DomainError;
 use crate::domain::tool_policy::value_objects::tool::ToolResult;
 
 pub use crate::domain::agents::value_objects::subagent_launch::{

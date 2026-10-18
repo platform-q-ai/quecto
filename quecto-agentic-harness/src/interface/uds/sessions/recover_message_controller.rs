@@ -11,7 +11,7 @@ use crate::application::sessions::dto::{
 };
 use crate::application::sessions::use_cases::RecoverMessage;
 use crate::domain::conversation::value_objects::message::Message;
-use crate::domain::ids::{MessageId, ToolCallId};
+use crate::domain::identity::ids::{MessageId, ToolCallId};
 
 /// The `get_message` wire fields, already parsed by the transport.
 #[derive(Debug, Clone, PartialEq, Eq)]

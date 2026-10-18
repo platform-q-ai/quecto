@@ -19,13 +19,17 @@ impl SwarmRunControl for Board {
         _: RunControlAction,
     ) -> crate::application::subagent_launch::LaunchFuture<
         '_,
-        Result<RunControlReceipt, crate::domain::error::DomainError>,
+        Result<RunControlReceipt, crate::domain::shared::error::DomainError>,
     > {
-        Box::pin(async { Err(crate::domain::error::DomainError::Tool("no status".into())) })
+        Box::pin(async {
+            Err(crate::domain::shared::error::DomainError::Tool(
+                "no status".into(),
+            ))
+        })
     }
     fn coordinator_board(&self) -> crate::application::swarm::ports::CoordinatorBoardFuture<'_> {
         let next = self.0.lock().unwrap().remove(0);
-        Box::pin(async move { next.map_err(crate::domain::error::DomainError::Tool) })
+        Box::pin(async move { next.map_err(crate::domain::shared::error::DomainError::Tool) })
     }
 }
 

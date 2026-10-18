@@ -6,7 +6,7 @@ use quecto::application::subagent_launch::{
     SubagentLaunchUseCase,
 };
 use quecto::domain::agents::services::subagent::{ContainerSelection, SubagentConfig};
-use quecto::domain::error::DomainError;
+use quecto::domain::shared::error::DomainError;
 use quecto::domain::tool_policy::value_objects::tool::ToolResult;
 
 #[derive(Default)]
@@ -166,7 +166,7 @@ mod real_adapters {
     use quecto::domain::agents::services::subagent::ContainerSelection;
     use quecto::domain::agents::services::subagent::SubagentConfig;
     use quecto::domain::environments::entities::environment_registry::EnvironmentRegistry;
-    use quecto::domain::error::DomainError;
+    use quecto::domain::shared::error::DomainError;
     use quecto::domain::tool_policy::value_objects::tool::ToolResult;
     use quecto::infrastructure::tools::agents::spawn::SpawnTool;
 

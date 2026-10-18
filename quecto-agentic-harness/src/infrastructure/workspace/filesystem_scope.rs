@@ -1,4 +1,4 @@
-use crate::domain::error::DomainError;
+use crate::domain::shared::error::DomainError;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Default)]

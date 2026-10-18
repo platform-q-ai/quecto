@@ -2,7 +2,7 @@
 //! decisions over the effect ports in [`ports`]. The coordination board's
 //! use cases (epic #2265) live in [`use_cases`], over the board ports and
 //! the operation gate (`board_operation`).
-use crate::domain::error::DomainError;
+use crate::domain::shared::error::DomainError;
 use crate::domain::swarm::{
     entities::run::{Member, Snapshot},
     value_objects::lifecycle::{MemberExit, MemberStatus},

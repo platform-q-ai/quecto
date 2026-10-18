@@ -12,7 +12,7 @@ use quecto::application::subagents::use_cases::TerminateDelegatedAgent;
 use quecto::domain::agents::services::subagent_teardown::{
     LaunchGeneration, LineageSnapshot, RoutingDepth, ShutdownReason, TerminationRouteError,
 };
-use quecto::domain::ids::AgentUuid;
+use quecto::domain::identity::ids::AgentUuid;
 
 use super::teardown_fixture::{Call, Harness, Lifecycle, Routing, identity, record, root_tree};
 

@@ -45,7 +45,7 @@ async fn big_integers_non_finite_numbers_and_lone_surrogates_are_refused_before_
     ] {
         let content = refused(&context, text).await;
         // Shaped as every board refusal reaches the member.
-        let expected = crate::domain::error::DomainError::Tool(format!(
+        let expected = crate::domain::shared::error::DomainError::Tool(format!(
             "swarm: {}",
             Value::String(format!("{UNREPRESENTABLE}{reason}"))
         ))

@@ -12,8 +12,8 @@ use quecto::application::project_board::ports::{
     CoordinatorLaunch, CoordinatorRequest, LaunchRefused, LaunchedCoordinator,
 };
 use quecto::application::tools::ports::Tool;
-use quecto::domain::error::DomainError;
 use quecto::domain::project_board::value_objects::slug::Slug;
+use quecto::domain::shared::error::DomainError;
 use quecto::domain::tool_policy::value_objects::tool::{ToolDefinition, ToolResult};
 use quecto::infrastructure::tools::agents::coordinator_launch::SpawnCoordinatorLauncher;
 use quecto::infrastructure::tools::agents::coordinator_launch::SpawnPermit;

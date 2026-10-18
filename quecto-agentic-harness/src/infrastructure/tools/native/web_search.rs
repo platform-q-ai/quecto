@@ -5,8 +5,8 @@ use std::future::Future;
 use std::pin::Pin;
 
 use crate::application::tools::ports::Tool;
-use crate::domain::error::DomainError;
-use crate::domain::html_text::inline_text;
+use crate::domain::shared::error::DomainError;
+use crate::domain::shared::text::html_text::inline_text;
 use crate::domain::tool_policy::value_objects::tool::{ToolDefinition, ToolResult};
 
 const MAX_WEB_SEARCH_OUTPUT_BYTES: usize = 16 * 1024;
@@ -269,7 +269,7 @@ impl Tool for WebSearchTool {
 /// use `+` encoding. This differs from the `urlencoding` crate in `Cargo.toml`
 /// which uses `%20`.
 fn truncate_result_text(content: &str) -> Cow<'_, str> {
-    crate::domain::text::truncate_chars(
+    crate::domain::shared::text::truncate_chars(
         content,
         MAX_WEB_SEARCH_RESULT_TEXT_CHARS,
         MAX_WEB_SEARCH_RESULT_TEXT_CHARS.saturating_sub(1),

@@ -7,7 +7,7 @@ use super::super::dispatch_test_env::{
 use crate::application::providers::ports::{ChatRequest, LlmProvider};
 use crate::domain::conversation::services::turn_origin::TurnOrigin;
 use crate::domain::conversation::value_objects::message::{LlmResponse, Message, Role};
-use crate::domain::error::DomainError;
+use crate::domain::shared::error::DomainError;
 use crate::infrastructure::tools::native::workflow_tool::WORKFLOW_TOOL_NAME;
 use crate::interface::cli::uds_session::{HISTORY_PAGE_SIZE, messages_page_json};
 use crate::interface::shared::WorkflowStateHandle;

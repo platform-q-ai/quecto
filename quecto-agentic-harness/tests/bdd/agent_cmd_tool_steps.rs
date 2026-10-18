@@ -28,7 +28,7 @@ pub(crate) fn termination_owners(
 ) -> quecto::composition::subagent_termination::TerminationOwners {
     quecto::composition::subagent_termination::build_termination_owners(
         quecto::interface::cli::KillToolWiring {
-            owner: quecto::domain::ids::AgentUuid::new("root"),
+            owner: quecto::domain::identity::ids::AgentUuid::new("root"),
             registry: registry.clone(),
             broadcast_tx,
             notify_tx: None,

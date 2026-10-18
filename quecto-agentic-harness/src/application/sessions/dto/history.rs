@@ -5,8 +5,8 @@
 //! client continues from and whether older history remains; the transport
 //! encodes and budgets its domain messages.
 use crate::domain::conversation::value_objects::message::Message;
-use crate::domain::error::DomainError;
-use crate::domain::ids::MessageId;
+use crate::domain::identity::ids::MessageId;
+use crate::domain::shared::error::DomainError;
 
 /// One history window: at most `count` messages ending just before the
 /// message `before` names (the newest page when `None`).

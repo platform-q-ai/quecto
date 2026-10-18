@@ -1,5 +1,5 @@
 //! Strict schema validation for catalogue publication, unlike crash-tolerant load.
-use crate::domain::error::DomainError;
+use crate::domain::shared::error::DomainError;
 
 use super::session_store_records::{SessionFile, SessionRecord};
 

@@ -189,7 +189,7 @@ pub enum AuditEvent {
     /// Captures the *full*, untruncated error body so it survives past the
     /// TUI line-truncation that otherwise loses it (#937). Persisted once per
     /// terminal failure (not per retry). The `body` is a
-    /// [`crate::domain::redaction::Redacted`] newtype whose only text
+    /// [`crate::domain::shared::redaction::Redacted`] newtype whose only text
     /// constructors scrub secrets, so redaction-before-persistence is enforced
     /// by the type system: building this variant directly cannot bypass it
     /// (#939 review). `class` is the typed [`ProviderErrorClass`] so readers
@@ -198,7 +198,7 @@ pub enum AuditEvent {
         provider: String,
         class: crate::domain::inference::services::provider_error::ProviderErrorClass,
         http_status: Option<u16>,
-        body: crate::domain::redaction::Redacted,
+        body: crate::domain::shared::redaction::Redacted,
     },
 }
 
@@ -305,7 +305,7 @@ impl AuditEvent {
     /// The `body` is the complete error string built by the provider client
     /// (e.g. the embedded HTTP `.text()`), not a TUI preview — this is the
     /// whole point: the audit record must retain what the TUI throws away.
-    /// It is routed through [`crate::domain::redaction::redact_secrets`] so
+    /// It is routed through [`crate::domain::shared::redaction::redact_secrets`] so
     /// any API key echoed back in the error never lands on disk.
     pub fn provider_error(
         provider: impl Into<String>,
@@ -317,7 +317,7 @@ impl AuditEvent {
             provider: provider.into(),
             class: class.clone(),
             http_status,
-            body: crate::domain::redaction::Redacted::new(body),
+            body: crate::domain::shared::redaction::Redacted::new(body),
         }
     }
 }
@@ -330,7 +330,7 @@ impl AuditEvent {
     /// Subagent command lines can carry credentials or PII as arguments
     /// (`sk-...` tokens, `Bearer <tok>`, `--api-key=...`, `*_API_KEY=...`).
     /// Persisting them verbatim would be a leak risk (#790), so the command is
-    /// passed through the shared [`crate::domain::redaction::redact_secrets`],
+    /// passed through the shared [`crate::domain::shared::redaction::redact_secrets`],
     /// which replaces only the secret-bearing spans with `[REDACTED]`, leaving
     /// the rest of the command intact and useful.
     ///
@@ -338,12 +338,12 @@ impl AuditEvent {
     /// test-support-only (no production code emits it yet); this constructor is
     /// the redacting entry point any future production emitter must route
     /// through. The redaction helper lives in
-    /// [`crate::domain::redaction`] and compiles into release builds, so wiring
+    /// [`crate::domain::shared::redaction`] and compiles into release builds, so wiring
     /// up an emitter cannot accidentally bypass it.
     pub fn subagent_cmd(agent_id: String, command: &str) -> Self {
         AuditEvent::SubagentCmd {
             agent_id,
-            command: crate::domain::redaction::redact_secrets(command),
+            command: crate::domain::shared::redaction::redact_secrets(command),
         }
     }
 }
@@ -351,10 +351,15 @@ impl AuditEvent {
 /// Generate a content preview capped at `max_chars` characters.
 ///
 /// Truncates at a character boundary and appends "..." when truncated (the
-/// ellipsis counts toward the budget). Bounded-scan core in [`crate::domain::text`].
+/// ellipsis counts toward the budget). Bounded-scan core in [`crate::domain::shared::text`].
 pub fn content_preview(content: &str, max_chars: usize) -> String {
-    crate::domain::text::truncate_chars(content, max_chars, max_chars.saturating_sub(3), "...")
-        .into_owned()
+    crate::domain::shared::text::truncate_chars(
+        content,
+        max_chars,
+        max_chars.saturating_sub(3),
+        "...",
+    )
+    .into_owned()
 }
 
 /// A failed tool's preview: its first `head_chars` and last `tail_chars`
@@ -384,5 +389,5 @@ pub fn error_preview(content: &str, head_chars: usize, tail_chars: usize) -> Str
 }
 
 #[cfg(test)]
-#[path = "audit_tests.rs"]
+#[path = "mod_tests.rs"]
 mod tests;

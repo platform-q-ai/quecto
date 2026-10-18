@@ -8,9 +8,9 @@ use std::sync::atomic::AtomicBool;
 use super::super::spawn_launch_ports::SpawnedChild;
 use super::*;
 use crate::application::tools::ports::ToolGuard;
-use crate::domain::error::DomainError;
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::vocabulary::Effort;
+use crate::domain::shared::error::DomainError;
 use crate::domain::tool_policy::value_objects::tool::ToolDefinition;
 use crate::infrastructure::tools::registry::ToolRegistryImpl;
 
@@ -399,7 +399,7 @@ fn a_deadline_has_come_at_it() {
 /// each status of one that runs; a dead or exited one does not.
 #[test]
 fn a_coordinator_runs_while_it_is_live_and_running() {
-    use crate::domain::ids::AgentUuid;
+    use crate::domain::identity::ids::AgentUuid;
     use crate::domain::sessions::entities::session::SubagentLiveness;
     use crate::infrastructure::tools::agents::subagent_registry::{SubagentEntry, SubagentStatus};
     let entry = |liveness, status| {

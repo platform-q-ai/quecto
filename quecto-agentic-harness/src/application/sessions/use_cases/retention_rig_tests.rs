@@ -6,9 +6,9 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
 use crate::application::sessions::ports::{ContextSpillStore, SpillIndexList, SpillPresence};
-use crate::domain::error::DomainError;
 use crate::domain::sessions::entities::session::{SpillEntry, SpillIndex};
 use crate::domain::sessions::entities::session_identity::{SessionIdentity, SpillId};
+use crate::domain::shared::error::DomainError;
 
 type Recall<'a> =
     Pin<Box<dyn Future<Output = Result<Option<SpillEntry>, DomainError>> + Send + 'a>>;

@@ -2,11 +2,11 @@
 //! slow one that keeps sending is not. Tests with sockets use a short bound
 //! in real time (a paused clock races loopback I/O); the rest pause it.
 use super::*;
-use crate::domain::error::DomainError;
 use crate::domain::inference::services::provider_error::{
     ProviderErrorClass, classify_provider_error,
 };
 use crate::domain::inference::value_objects::provider::StreamEvent;
+use crate::domain::shared::error::DomainError;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 /// The bound for a stream that goes silent: short, as only its expiry is

@@ -14,7 +14,7 @@ use crate::application::sessions::dto::{
 };
 use crate::domain::conversation::services::conversation_view::position_by_id;
 use crate::domain::conversation::value_objects::message::Message;
-use crate::domain::ids::MessageId;
+use crate::domain::identity::ids::MessageId;
 
 pub struct RecoverMessage {
     state: ActiveSessionHandle,

@@ -3,7 +3,7 @@ use std::sync::Arc;
 use super::*;
 use crate::application::subagents::dto::CompensateFailedLaunchRequest;
 use crate::application::subagents::ports::TerminationConclusion;
-use crate::domain::ids::AgentUuid;
+use crate::domain::identity::ids::AgentUuid;
 
 use super::super::lifecycle_fakes::*;
 use super::super::teardown_fakes::{FakeRouting, RoutingCall, identity};

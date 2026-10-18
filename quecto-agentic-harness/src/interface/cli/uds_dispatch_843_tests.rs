@@ -414,11 +414,11 @@ async fn forward_get_messages_propagates_child_failure() {
 
     let event = forward_subagent_get_messages(
         &ctx,
-        Some(crate::domain::ids::CommandId::from("page-2")),
+        Some(crate::domain::identity::ids::CommandId::from("page-2")),
         "get_messages",
-        crate::domain::ids::AgentId::from("worker"),
+        crate::domain::identity::ids::AgentId::from("worker"),
         None,
-        Some(crate::domain::ids::MessageId::from("stale")),
+        Some(crate::domain::identity::ids::MessageId::from("stale")),
     )
     .await;
     handle.await.unwrap();
@@ -439,9 +439,9 @@ async fn forward_get_messages_rejects_malformed_child_response() {
 
     let event = forward_subagent_get_messages(
         &ctx,
-        Some(crate::domain::ids::CommandId::from("page-2")),
+        Some(crate::domain::identity::ids::CommandId::from("page-2")),
         "get_messages",
-        crate::domain::ids::AgentId::from("worker"),
+        crate::domain::identity::ids::AgentId::from("worker"),
         None,
         None,
     )
@@ -464,9 +464,9 @@ async fn forward_uncounted_no_registry_is_error_event() {
     let ctx = fx.ctx(); // subagent_registry: None
     let ev = forward_subagent_get_messages(
         &ctx,
-        Some(crate::domain::ids::CommandId::from("id1")),
+        Some(crate::domain::identity::ids::CommandId::from("id1")),
         "get_messages",
-        crate::domain::ids::AgentId::from("worker"),
+        crate::domain::identity::ids::AgentId::from("worker"),
         None,
         None,
     )
@@ -485,9 +485,9 @@ async fn forward_tail_unknown_agent_is_error_event() {
     ctx.subagent_registry = Some(new_registry());
     let ev = forward_subagent_get_messages(
         &ctx,
-        Some(crate::domain::ids::CommandId::from("id1")),
+        Some(crate::domain::identity::ids::CommandId::from("id1")),
         "get_messages_tail",
-        crate::domain::ids::AgentId::from("ghost"),
+        crate::domain::identity::ids::AgentId::from("ghost"),
         Some(3),
         None,
     )
@@ -536,9 +536,9 @@ async fn forward_get_message_preserves_id_and_range_on_child_wire() {
         Some("parent-page"),
         "get_message",
         ForwardGetMessage {
-            agent_id: crate::domain::ids::AgentId::from("worker"),
-            message_id: crate::domain::ids::MessageId::from("m1"),
-            tool_call_id: Some(crate::domain::ids::ToolCallId::from("call-large")),
+            agent_id: crate::domain::identity::ids::AgentId::from("worker"),
+            message_id: crate::domain::identity::ids::MessageId::from("m1"),
+            tool_call_id: Some(crate::domain::identity::ids::ToolCallId::from("call-large")),
             offset: Some(4096),
             thinking_offset: None,
             limit: Some(8192),
@@ -570,8 +570,8 @@ async fn forward_get_message_no_registry_is_error_event() {
         Some("id1"),
         "get_message",
         ForwardGetMessage {
-            agent_id: crate::domain::ids::AgentId::from("worker"),
-            message_id: crate::domain::ids::MessageId::from("m1"),
+            agent_id: crate::domain::identity::ids::AgentId::from("worker"),
+            message_id: crate::domain::identity::ids::MessageId::from("m1"),
             tool_call_id: None,
             offset: None,
             thinking_offset: None,
@@ -596,8 +596,8 @@ async fn forward_get_message_unknown_agent_is_error_event() {
         Some("id1"),
         "get_message",
         ForwardGetMessage {
-            agent_id: crate::domain::ids::AgentId::from("ghost"),
-            message_id: crate::domain::ids::MessageId::from("m1"),
+            agent_id: crate::domain::identity::ids::AgentId::from("ghost"),
+            message_id: crate::domain::identity::ids::MessageId::from("m1"),
             tool_call_id: None,
             offset: None,
             thinking_offset: None,
@@ -620,7 +620,7 @@ async fn forward_get_messages_rejects_duplicate_historical_display_names() {
     let registry = new_registry();
     for uuid in ["dead-a", "dead-b"] {
         let mut entry = SubagentEntry::with_identity(
-            crate::domain::ids::AgentUuid::from(uuid.to_string()),
+            crate::domain::identity::ids::AgentUuid::from(uuid.to_string()),
             "same-name".to_string(),
             format!("/tmp/{uuid}.sock").into(),
             0,
@@ -634,9 +634,9 @@ async fn forward_get_messages_rejects_duplicate_historical_display_names() {
 
     let ev = forward_subagent_get_messages(
         &ctx,
-        Some(crate::domain::ids::CommandId::from("dup")),
+        Some(crate::domain::identity::ids::CommandId::from("dup")),
         "get_messages",
-        crate::domain::ids::AgentId::from("same-name"),
+        crate::domain::identity::ids::AgentId::from("same-name"),
         None,
         None,
     )

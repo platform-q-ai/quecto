@@ -52,7 +52,7 @@ use crate::domain::project_board::value_objects::shown_text::{
 };
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::vocabulary::RunOutcome;
-use crate::domain::redaction::{redact_secrets, redact_url_userinfo};
+use crate::domain::shared::redaction::{redact_secrets, redact_url_userinfo};
 
 #[path = "answer_artifacts.rs"]
 mod artifacts;

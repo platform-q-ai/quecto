@@ -125,9 +125,9 @@ async fn forward_sync_propagates_child_failure() {
 
     let event = forward_subagent_sync(
         &ctx,
-        Some(crate::domain::ids::CommandId::from("sync-2")),
+        Some(crate::domain::identity::ids::CommandId::from("sync-2")),
         "sync",
-        crate::domain::ids::AgentId::from("worker"),
+        crate::domain::identity::ids::AgentId::from("worker"),
         7,
         3,
     )
@@ -161,8 +161,8 @@ async fn forward_get_message_propagates_child_failure() {
         Some("parent-page"),
         "get_message",
         ForwardGetMessage {
-            agent_id: crate::domain::ids::AgentId::from("worker"),
-            message_id: crate::domain::ids::MessageId::from("child-missing"),
+            agent_id: crate::domain::identity::ids::AgentId::from("worker"),
+            message_id: crate::domain::identity::ids::MessageId::from("child-missing"),
             tool_call_id: None,
             offset: None,
             thinking_offset: None,
@@ -193,8 +193,8 @@ async fn forward_get_message_rejects_wrong_command_child_response() {
         Some("parent-page"),
         "get_message",
         ForwardGetMessage {
-            agent_id: crate::domain::ids::AgentId::from("worker"),
-            message_id: crate::domain::ids::MessageId::from("m1"),
+            agent_id: crate::domain::identity::ids::AgentId::from("worker"),
+            message_id: crate::domain::identity::ids::MessageId::from("m1"),
             tool_call_id: None,
             offset: None,
             thinking_offset: None,
@@ -225,8 +225,8 @@ async fn forward_get_message_rejects_missing_data_child_response() {
         Some("parent-page"),
         "get_message",
         ForwardGetMessage {
-            agent_id: crate::domain::ids::AgentId::from("worker"),
-            message_id: crate::domain::ids::MessageId::from("m1"),
+            agent_id: crate::domain::identity::ids::AgentId::from("worker"),
+            message_id: crate::domain::identity::ids::MessageId::from("m1"),
             tool_call_id: None,
             offset: None,
             thinking_offset: None,
@@ -254,8 +254,8 @@ async fn forward_get_message_rejects_malformed_child_response() {
         Some("parent-page"),
         "get_message",
         ForwardGetMessage {
-            agent_id: crate::domain::ids::AgentId::from("worker"),
-            message_id: crate::domain::ids::MessageId::from("m1"),
+            agent_id: crate::domain::identity::ids::AgentId::from("worker"),
+            message_id: crate::domain::identity::ids::MessageId::from("m1"),
             tool_call_id: None,
             offset: None,
             thinking_offset: None,

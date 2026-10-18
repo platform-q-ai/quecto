@@ -1,6 +1,6 @@
 use super::super::protocol::AgentEvent;
 use super::DispatchCtx;
-use crate::domain::ids::{AgentId, CommandId};
+use crate::domain::identity::ids::{AgentId, CommandId};
 
 pub(super) async fn forward_subagent_sync(
     ctx: &DispatchCtx<'_>,

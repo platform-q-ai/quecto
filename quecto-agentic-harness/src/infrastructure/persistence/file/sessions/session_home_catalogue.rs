@@ -19,9 +19,9 @@ use crate::{
         Answer, HomeCatalogueSnapshot, SessionHomeCatalogue, SessionMetadataSnapshot,
     },
     domain::{
-        error::DomainError,
         sessions::entities::session_home::{SessionHome, SessionHomeScope},
         sessions::entities::session_identity::SessionIdentity,
+        shared::error::DomainError,
     },
 };
 use std::{collections::BTreeMap, path::PathBuf};

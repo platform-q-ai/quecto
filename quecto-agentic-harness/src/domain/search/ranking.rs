@@ -23,5 +23,5 @@ pub fn relevance_order(scores: &[Option<f64>]) -> Vec<usize> {
 }
 
 #[cfg(test)]
-#[path = "search_ranking_tests.rs"]
+#[path = "ranking_tests.rs"]
 mod tests;

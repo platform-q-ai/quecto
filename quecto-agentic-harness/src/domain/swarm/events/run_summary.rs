@@ -20,7 +20,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::domain::redaction::Redacted;
+use crate::domain::shared::redaction::Redacted;
 use crate::domain::swarm::entities::run::Snapshot;
 use crate::domain::swarm::events::run_totals::RunTotals;
 use crate::domain::swarm::events::telemetry::{

@@ -5,10 +5,10 @@ use crate::application::sessions::dto::{
 };
 use crate::application::sessions::ports::ContextSpillStore;
 use crate::domain::conversation::value_objects::message::{Message, ToolCall};
-use crate::domain::error::DomainError;
-use crate::domain::ids::MessageId;
+use crate::domain::identity::ids::MessageId;
 use crate::domain::sessions::entities::session::{SpillEntries, SpillEntry, SpillIndex};
 use crate::domain::sessions::entities::session_identity::{SessionIdentity, SpillId};
+use crate::domain::shared::error::DomainError;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};

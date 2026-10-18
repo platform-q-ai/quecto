@@ -8,7 +8,7 @@ use super::{reset_ledger_to, rewind_to_message_index};
 use crate::application::sessions::dto::{RewindConversationError, RewindRequest};
 use crate::domain::conversation::services::conversation_edit::RewindTarget;
 use crate::domain::conversation::value_objects::message::Message;
-use crate::domain::ids::MessageId;
+use crate::domain::identity::ids::MessageId;
 
 const PAGE: usize = 64;
 

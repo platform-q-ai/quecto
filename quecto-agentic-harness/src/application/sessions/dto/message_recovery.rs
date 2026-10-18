@@ -8,7 +8,7 @@
 //! narrows a range further only to fit its frame, through
 //! [`Utf8Range::halve`].
 use crate::domain::conversation::value_objects::message::{Message, ToolCall};
-use crate::domain::ids::{MessageId, ToolCallId};
+use crate::domain::identity::ids::{MessageId, ToolCallId};
 
 /// One recovery request: a message, and which part of it.
 #[derive(Debug, Clone, PartialEq, Eq)]

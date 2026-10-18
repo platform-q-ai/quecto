@@ -1,7 +1,7 @@
 use super::{HistoryError, HistoryPage, HistoryQuery};
 use crate::domain::conversation::value_objects::message::Message;
-use crate::domain::error::DomainError;
-use crate::domain::ids::MessageId;
+use crate::domain::identity::ids::MessageId;
+use crate::domain::shared::error::DomainError;
 
 fn page(n: usize, has_more_before: bool) -> HistoryPage {
     let messages: Vec<Message> = (0..n).map(|i| Message::user(format!("m{i}"))).collect();

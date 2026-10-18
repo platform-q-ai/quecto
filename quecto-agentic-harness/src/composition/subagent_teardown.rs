@@ -14,7 +14,7 @@ use crate::application::subagents::use_cases::{
     OwnerConclusionPorts, PrepareHarnessShutdown, TerminateAllDelegatedAgents,
     TerminateAllDelegatedAgentsPorts, TerminateDelegatedAgent,
 };
-use crate::domain::ids::AgentUuid;
+use crate::domain::identity::ids::AgentUuid;
 use crate::infrastructure::processes::direct_child_routing::UdsDirectChildRouting;
 use crate::infrastructure::processes::owned_child_termination::SupervisedChildTermination;
 use crate::infrastructure::tools::agents::harness_lifecycle::{

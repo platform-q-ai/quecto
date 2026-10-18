@@ -5,7 +5,7 @@ use crate::inference_admission_feedback_transport::fixture;
 use fixture::*;
 use quecto::domain::{
     admission::value_objects::inference_admission::{Feedback, ThrottleFeedback},
-    error::DomainError,
+    shared::error::DomainError,
 };
 use std::sync::Arc;
 

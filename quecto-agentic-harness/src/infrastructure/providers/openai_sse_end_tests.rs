@@ -7,10 +7,10 @@
 //! without alike.
 use super::*;
 use crate::domain::conversation::value_objects::message::Message;
-use crate::domain::error::DomainError;
 use crate::domain::inference::services::provider_error::{
     ProviderErrorClass, classify_provider_error,
 };
+use crate::domain::shared::error::DomainError;
 use crate::infrastructure::providers::stream_idle::tests::{LIVE, bounded, servers};
 use crate::infrastructure::providers::stream_idle_provider_tests::{Vendor, request, traced};
 

@@ -1,7 +1,7 @@
 //! Existing wire/error behavior is a property of a provider and call surface,
 //! not admission policy. Keep these compatibility decisions out of ownership.
 use super::stream_idle::{BodyError, Idle, StreamIdle};
-use crate::domain::error::DomainError;
+use crate::domain::shared::error::DomainError;
 
 #[derive(Clone, Copy)]
 pub(super) enum Vendor {

@@ -35,7 +35,7 @@ const SUBAGENT_RESPONSE_MAX_BYTES: usize = quecto_line_io::PROTOCOL_LINE_CAP_BYT
 pub async fn send_subagent_uds_command(
     socket_path: &std::path::Path,
     command: &str,
-) -> Result<String, crate::domain::error::DomainError> {
+) -> Result<String, crate::domain::shared::error::DomainError> {
     send_subagent_uds_command_inner(socket_path, command, SUBAGENT_RESPONSE_TIMEOUT).await
 }
 
@@ -47,7 +47,7 @@ pub async fn send_subagent_uds_command_with_timeout(
     socket_path: &std::path::Path,
     command: &str,
     response_timeout: std::time::Duration,
-) -> Result<String, crate::domain::error::DomainError> {
+) -> Result<String, crate::domain::shared::error::DomainError> {
     with_operation_deadline(
         response_timeout,
         send_subagent_uds_command_inner(socket_path, command, response_timeout),
@@ -57,12 +57,12 @@ pub async fn send_subagent_uds_command_with_timeout(
 
 pub(super) async fn with_operation_deadline<T>(
     timeout: std::time::Duration,
-    operation: impl std::future::Future<Output = Result<T, crate::domain::error::DomainError>>,
-) -> Result<T, crate::domain::error::DomainError> {
+    operation: impl std::future::Future<Output = Result<T, crate::domain::shared::error::DomainError>>,
+) -> Result<T, crate::domain::shared::error::DomainError> {
     tokio::time::timeout(timeout, operation)
         .await
         .map_err(|_| {
-            crate::domain::error::DomainError::Tool(format!(
+            crate::domain::shared::error::DomainError::Tool(format!(
                 "subagent operation timed out after {}ms (connect/write/read deadline)",
                 timeout.as_millis()
             ))
@@ -73,7 +73,7 @@ async fn send_subagent_uds_command_inner(
     socket_path: &std::path::Path,
     command: &str,
     response_timeout: std::time::Duration,
-) -> Result<String, crate::domain::error::DomainError> {
+) -> Result<String, crate::domain::shared::error::DomainError> {
     send_subagent_uds_command_connected(
         socket_path,
         command,
@@ -88,8 +88,8 @@ pub(super) async fn send_subagent_uds_command_connected(
     command: &str,
     response_timeout: std::time::Duration,
     connect: impl std::future::Future<Output = std::io::Result<tokio::net::UnixStream>>,
-) -> Result<String, crate::domain::error::DomainError> {
-    use crate::domain::error::DomainError;
+) -> Result<String, crate::domain::shared::error::DomainError> {
+    use crate::domain::shared::error::DomainError;
     use tokio::io::BufReader;
 
     let stream = connect.await.map_err(|e| {
@@ -218,11 +218,11 @@ pub(super) fn stamp_request_id(command: &str) -> (String, Option<String>) {
 pub(super) async fn read_response_capped<R>(
     reader: &mut R,
     max_bytes: usize,
-) -> Result<Option<String>, crate::domain::error::DomainError>
+) -> Result<Option<String>, crate::domain::shared::error::DomainError>
 where
     R: tokio::io::AsyncBufRead + Unpin,
 {
-    use crate::domain::error::DomainError;
+    use crate::domain::shared::error::DomainError;
     use quecto_line_io::{FrameError, Incoming};
 
     // Deprecation-window reader (#1059): each reply is sniffed as a

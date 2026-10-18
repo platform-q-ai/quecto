@@ -1,7 +1,7 @@
 //! Unit tests for provider error classification.
 
 use super::*;
-use crate::domain::error::DomainError;
+use crate::domain::shared::error::DomainError;
 
 fn provider(msg: &str) -> DomainError {
     DomainError::Provider(msg.to_string())

@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use serde_json::{Value, json};
 
 use crate::application::swarm::dto::BoardLocation;
-use crate::domain::error::DomainError;
+use crate::domain::shared::error::DomainError;
 
 pub use self::board::ControlOp;
 pub use self::board::{SwarmBoard, SwarmBoardHandlesBuilder, SwarmBoardOpLogBuilder, WatchNudges};

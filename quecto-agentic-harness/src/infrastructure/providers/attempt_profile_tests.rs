@@ -1,5 +1,5 @@
 use super::{Profile, Surface, Vendor, openai_stream_error};
-use crate::domain::error::DomainError;
+use crate::domain::shared::error::DomainError;
 
 /// A real `reqwest::Error` of the send kind: a connection to a closed
 /// loopback port is refused deterministically.
@@ -193,10 +193,10 @@ fn a_numeric_error_code_is_the_status_only_when_it_is_an_error_status() {
 /// client error.
 #[test]
 fn server_side_and_unknown_error_types_are_retryable_server_statuses() {
-    use crate::domain::error::DomainError;
     use crate::domain::inference::services::provider_error::{
         ProviderErrorClass, classify_provider_error,
     };
+    use crate::domain::shared::error::DomainError;
     let cases = [
         (serde_json::json!({"type": "server_error"}), 500),
         (serde_json::json!({"code": "server_error"}), 500),
@@ -226,10 +226,10 @@ fn server_side_and_unknown_error_types_are_retryable_server_statuses() {
 /// which are never retried; a billing error stays billing.
 #[test]
 fn known_client_error_types_are_client_statuses_that_are_never_retried() {
-    use crate::domain::error::DomainError;
     use crate::domain::inference::services::provider_error::{
         ProviderErrorClass, classify_provider_error,
     };
+    use crate::domain::shared::error::DomainError;
     let cases = [
         (
             serde_json::json!({"type": "invalid_request_error"}),
@@ -359,10 +359,10 @@ fn a_throttle_chunk_is_a_429_or_529_that_is_not_billing() {
 /// 4xx lets the typed server rules speak, then stands as itself: terminal.
 #[test]
 fn unknown_numeric_codes_map_to_what_the_classifier_retries() {
-    use crate::domain::error::DomainError;
     use crate::domain::inference::services::provider_error::{
         ProviderErrorClass, classify_provider_error,
     };
+    use crate::domain::shared::error::DomainError;
     let class = |value: &serde_json::Value| {
         classify_provider_error(&DomainError::Provider(openai_stream_error(value)))
     };
@@ -388,10 +388,10 @@ fn unknown_numeric_codes_map_to_what_the_classifier_retries() {
 /// malformed request as a throttle.
 #[test]
 fn typed_fields_win_over_a_numeric_code() {
-    use crate::domain::error::DomainError;
     use crate::domain::inference::services::provider_error::{
         ProviderErrorClass, classify_provider_error,
     };
+    use crate::domain::shared::error::DomainError;
     for (error, status, class) in [
         (
             serde_json::json!({"code": 400, "type": "overloaded_error"}),
@@ -428,10 +428,10 @@ fn typed_fields_win_over_a_numeric_code() {
 /// billing chunk (402), never a throttle, and classified Billing.
 #[test]
 fn every_billing_name_is_billing_everywhere() {
-    use crate::domain::error::DomainError;
     use crate::domain::inference::services::provider_error::{
         BILLING_ERROR_NAMES, ProviderErrorClass, classify_provider_error,
     };
+    use crate::domain::shared::error::DomainError;
     for name in BILLING_ERROR_NAMES {
         for field in ["type", "code"] {
             let mut error = serde_json::json!({"type": "rate_limit_error", "code": 429});
@@ -456,10 +456,10 @@ fn every_billing_name_is_billing_everywhere() {
 /// the chunk is retried; a client type still wins over a numeric 5xx (#935).
 #[test]
 fn a_typed_server_error_wins_over_a_numeric_client_code() {
-    use crate::domain::error::DomainError;
     use crate::domain::inference::services::provider_error::{
         ProviderErrorClass, classify_provider_error,
     };
+    use crate::domain::shared::error::DomainError;
     for (error, status, class) in [
         (
             serde_json::json!({"type": "server_error", "code": 400}),
@@ -499,10 +499,10 @@ fn a_typed_server_error_wins_over_a_numeric_client_code() {
 /// credits") is a billing failure: never retried.
 #[test]
 fn a_bare_numeric_402_chunk_is_billing() {
-    use crate::domain::error::DomainError;
     use crate::domain::inference::services::provider_error::{
         ProviderErrorClass, classify_provider_error,
     };
+    use crate::domain::shared::error::DomainError;
     let value = serde_json::json!({"error": {"code": 402, "message": "Insufficient credits"}});
     assert_eq!(chunk_status(value.clone()), 402);
     assert!(!super::is_throttle_chunk(&value));
@@ -519,8 +519,8 @@ fn a_bare_numeric_402_chunk_is_billing() {
 #[test]
 fn a_bare_string_error_chunk_is_classified_as_the_unknown_object_form() {
     use super::is_stream_error_chunk;
-    use crate::domain::error::DomainError;
     use crate::domain::inference::services::provider_error::classify_provider_error;
+    use crate::domain::shared::error::DomainError;
     let string = serde_json::json!({"error": "model crashed"});
     let object = serde_json::json!({"error": {"message": "model crashed"}});
     assert_eq!(chunk_status(string.clone()), 502);

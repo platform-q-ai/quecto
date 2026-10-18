@@ -12,7 +12,7 @@ fn advisory_is_read_from_published_runtime_and_deduplicated() {
     use crate::domain::catalogue::entities::entry::CatalogueEntry;
     use crate::domain::catalogue::value_objects::precedence::SourceLayer;
     use crate::domain::conversation::value_objects::message::LlmResponse;
-    use crate::domain::error::DomainError;
+    use crate::domain::shared::error::DomainError;
     use std::sync::Arc;
     #[derive(Debug)]
     struct Stub;

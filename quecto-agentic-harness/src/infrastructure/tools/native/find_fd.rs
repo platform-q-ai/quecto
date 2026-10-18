@@ -25,7 +25,7 @@ use entries::skipped_vcs_dir;
 use entries::{Listing, SearchRoot, Stop};
 
 /// Bytes of kept entries a listing holds at most.
-const STDOUT_CAP: usize = crate::domain::constants::DEFAULT_OUTPUT_CAP_BYTES * 2;
+const STDOUT_CAP: usize = crate::domain::shared::constants::DEFAULT_OUTPUT_CAP_BYTES * 2;
 const STDERR_CAP: usize = 4096;
 /// Hidden entries are listed, except the metadata of these version control
 /// systems: rg and fd skip them too, and a broad search otherwise spends

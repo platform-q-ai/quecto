@@ -2,10 +2,10 @@ use super::is_context_or_output_limit_error;
 use crate::application::agent_loop_stream::ends_turn_empty;
 use crate::domain::conversation::services::reply_requirement::ReplyRequirement;
 use crate::domain::conversation::value_objects::message::LlmResponse;
-use crate::domain::error::DomainError;
 use crate::domain::inference::services::provider_error::{
     ProviderErrorClass, classify_provider_error, model_refusal, provider_http_status,
 };
+use crate::domain::shared::error::DomainError;
 
 /// Internal vocabulary for the agent turn lifecycle.
 ///

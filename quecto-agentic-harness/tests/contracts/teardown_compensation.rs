@@ -16,7 +16,7 @@ use quecto::application::subagents::use_cases::ObserveOwnedChildExit;
 use quecto::domain::agents::services::subagent_teardown::{
     DelegatedAgentIdentity, LaunchGeneration,
 };
-use quecto::domain::ids::AgentUuid;
+use quecto::domain::identity::ids::AgentUuid;
 use quecto::infrastructure::tools::agents::subagent_registry::{
     ExitSignalKind, SubagentEntry, SubagentNotification, SubagentRegistry, SubagentStatus,
     TeardownPhase, new_exit_signal_channel, new_notification_channel,

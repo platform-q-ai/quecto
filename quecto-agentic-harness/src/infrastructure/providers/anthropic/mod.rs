@@ -18,9 +18,9 @@ use crate::domain::conversation::services::visible_thinking::append_visible_thin
 use crate::domain::conversation::value_objects::message::{
     LlmResponse, Message, Role, StopReason, ThinkingBlock, ToolCall,
 };
-use crate::domain::error::DomainError;
 use crate::domain::inference::services::usage_accounting;
 use crate::domain::inference::value_objects::provider::{EffortLevel, StreamEvent, ToolChoice};
+use crate::domain::shared::error::DomainError;
 use claude_code::{CLAUDE_CODE_VERSION, sanitize_surrogates, to_claude_code_name};
 
 pub(super) mod anthropic_sse;

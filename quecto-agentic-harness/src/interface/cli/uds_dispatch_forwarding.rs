@@ -1,7 +1,7 @@
 use super::DispatchCtx;
 use super::uds_dispatch_get_message_forward::{ForwardGetMessage, forward_subagent_get_message};
 use super::{AgentCommand, AgentEvent};
-use crate::domain::ids::{AgentId, CommandId, MessageId, ToolCallId};
+use crate::domain::identity::ids::{AgentId, CommandId, MessageId, ToolCallId};
 use crate::infrastructure::tools::agents::subagent_routing::{
     InspectionRoute, RoutableInspectionCommand, UDS_INSPECTION_ALLOWLIST, resolve_inspection_route,
 };
@@ -200,7 +200,7 @@ pub(super) async fn forward_subagent_snapshot(
 fn historical_launched_child(
     registry: &crate::infrastructure::tools::agents::subagent_registry::SubagentRegistry,
     reference: &str,
-) -> Result<Option<crate::domain::ids::AgentUuid>, String> {
+) -> Result<Option<crate::domain::identity::ids::AgentUuid>, String> {
     use crate::domain::agents::value_objects::child_end::ChildOrigin;
     type Entry = crate::infrastructure::tools::agents::subagent_registry::SubagentEntry;
     let entries = registry

@@ -21,8 +21,9 @@ impl crate::application::providers::ports::LlmProvider for ApprovalProvider {
         request: crate::application::providers::ports::ChatRequest<'_>,
     ) -> std::pin::Pin<
         Box<
-            dyn std::future::Future<Output = Result<LlmResponse, crate::domain::error::DomainError>>
-                + Send
+            dyn std::future::Future<
+                    Output = Result<LlmResponse, crate::domain::shared::error::DomainError>,
+                > + Send
                 + '_,
         >,
     > {

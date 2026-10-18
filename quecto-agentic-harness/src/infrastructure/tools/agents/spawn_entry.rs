@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::domain::agents::services::subagent::SubagentConfig;
-use crate::domain::ids::AgentUuid;
+use crate::domain::identity::ids::AgentUuid;
 
 pub(super) fn inherited_runtime_config_path() -> Option<PathBuf> {
     std::env::var("QUECTO_RUNTIME_CONFIG_PATH")

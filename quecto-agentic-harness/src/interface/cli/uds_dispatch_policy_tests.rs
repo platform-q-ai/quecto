@@ -24,8 +24,9 @@ impl Tool for NamedTool {
         _arguments: &str,
     ) -> std::pin::Pin<
         Box<
-            dyn std::future::Future<Output = Result<ToolResult, crate::domain::error::DomainError>>
-                + Send,
+            dyn std::future::Future<
+                    Output = Result<ToolResult, crate::domain::shared::error::DomainError>,
+                > + Send,
         >,
     > {
         Box::pin(async {

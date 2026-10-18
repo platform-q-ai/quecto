@@ -38,7 +38,7 @@ use reqwest::Url;
 
 use crate::application::project_board::ports::{BoardClock, BoardClockError, ReferenceStatus};
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
-use crate::domain::redaction::redact_url_userinfo;
+use crate::domain::shared::redaction::redact_url_userinfo;
 
 use super::board_clock::{SystemBoardClock, timestamp_at};
 

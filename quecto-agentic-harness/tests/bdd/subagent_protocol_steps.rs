@@ -118,7 +118,7 @@ fn insert_registry_subagent_with_key(
     let reg = world.subagent_protocol_registry.as_ref().unwrap();
     let mut guard = reg.lock().unwrap();
     let mut entry = SubagentEntry::with_identity(
-        quecto::domain::ids::AgentUuid::new(key.clone()),
+        quecto::domain::identity::ids::AgentUuid::new(key.clone()),
         display_name.clone(),
         "/tmp/test.sock".into(),
         pid as u32,

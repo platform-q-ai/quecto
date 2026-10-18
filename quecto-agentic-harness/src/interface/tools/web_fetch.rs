@@ -4,7 +4,7 @@ use crate::{
     },
     application::tools::ports::Tool,
     domain::{
-        error::DomainError,
+        shared::error::DomainError,
         tool_policy::value_objects::tool::{ToolDefinition, ToolResult},
     },
 };

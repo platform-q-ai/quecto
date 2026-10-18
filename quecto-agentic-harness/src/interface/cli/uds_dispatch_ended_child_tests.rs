@@ -17,7 +17,7 @@ use super::tests_843::Fx;
 fn ended_child() -> SubagentRegistry {
     let registry = new_registry();
     let mut entry = SubagentEntry::with_identity(
-        crate::domain::ids::AgentUuid::from("dead-child"),
+        crate::domain::identity::ids::AgentUuid::from("dead-child"),
         "dead-label".into(),
         "/tmp/dead.sock".into(),
         0,
@@ -56,11 +56,11 @@ async fn get_messages(
     ctx.subagent_registry = Some(ended_child());
     let event = forward_subagent_get_messages(
         &ctx,
-        Some(crate::domain::ids::CommandId::from("hist")),
+        Some(crate::domain::identity::ids::CommandId::from("hist")),
         "get_messages",
-        crate::domain::ids::AgentId::from(agent),
+        crate::domain::identity::ids::AgentId::from(agent),
         count,
-        before.map(crate::domain::ids::MessageId::from),
+        before.map(crate::domain::identity::ids::MessageId::from),
     )
     .await;
     serde_json::to_value(event).unwrap()
@@ -141,7 +141,7 @@ async fn a_uuid_that_names_no_session_is_refused_for_what_it_is() {
     let mut fx = Fx::new();
     let registry = new_registry();
     let mut entry = SubagentEntry::with_identity(
-        crate::domain::ids::AgentUuid::from("has space"),
+        crate::domain::identity::ids::AgentUuid::from("has space"),
         "odd".into(),
         "/tmp/odd.sock".into(),
         0,
@@ -155,7 +155,7 @@ async fn a_uuid_that_names_no_session_is_refused_for_what_it_is() {
         &ctx,
         None,
         "get_messages",
-        crate::domain::ids::AgentId::from("odd"),
+        crate::domain::identity::ids::AgentId::from("odd"),
         None,
         None,
     )
@@ -180,7 +180,7 @@ async fn a_reported_row_does_not_open_another_sessions_transcript() {
     persist(&fx, secret, vec![Message::user("THE SECRET PLAN")]).await;
     let registry = ended_child();
     let mut reported = SubagentEntry::with_identity(
-        crate::domain::ids::AgentUuid::from("secret-plan"),
+        crate::domain::identity::ids::AgentUuid::from("secret-plan"),
         "secret-plan".into(),
         "/tmp/s.sock".into(),
         0,
@@ -196,9 +196,9 @@ async fn a_reported_row_does_not_open_another_sessions_transcript() {
     ctx.subagent_registry = Some(registry);
     let event = forward_subagent_get_messages(
         &ctx,
-        Some(crate::domain::ids::CommandId::from("hist")),
+        Some(crate::domain::identity::ids::CommandId::from("hist")),
         "get_messages",
-        crate::domain::ids::AgentId::from("secret-plan"),
+        crate::domain::identity::ids::AgentId::from("secret-plan"),
         Some(10),
         None,
     )

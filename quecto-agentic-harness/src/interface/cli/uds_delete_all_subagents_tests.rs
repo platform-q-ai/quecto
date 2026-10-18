@@ -42,7 +42,7 @@ async fn presents_every_settled_child_and_the_removed_count() {
 async fn an_empty_fleet_reports_nothing_removed() {
     let (fleet, _) = fleet_with(
         crate::domain::agents::services::subagent_teardown::LineageSnapshot {
-            owner: crate::domain::ids::AgentUuid::new("root"),
+            owner: crate::domain::identity::ids::AgentUuid::new("root"),
             records: Vec::new(),
         },
     );

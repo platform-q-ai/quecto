@@ -15,7 +15,7 @@ use crate::application::subagents::use_cases::{SettleDelegatedChild, SettleDeleg
 use crate::domain::agents::services::subagent_teardown::{
     DelegatedAgentIdentity, LaunchGeneration, RoutingDepth, ShutdownReason,
 };
-use crate::domain::ids::AgentUuid;
+use crate::domain::identity::ids::AgentUuid;
 
 /// Rows keyed by uuid with a scripted resolution, protocol answer and
 /// conclusion; records the causes each claim and compensation carried.

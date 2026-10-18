@@ -8,7 +8,7 @@ use crate::application::subagents::dto::{
 };
 use crate::application::subagents::ports::ExitReadiness;
 use crate::domain::agents::services::subagent_teardown::{HarnessLifecycleState, ShutdownReason};
-use crate::domain::ids::AgentUuid;
+use crate::domain::identity::ids::AgentUuid;
 
 use super::super::teardown_fakes::*;
 

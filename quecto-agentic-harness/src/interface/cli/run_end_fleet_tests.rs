@@ -60,7 +60,7 @@ fn launched_container_child(
     });
     let registry: SubagentRegistry = Arc::new(Mutex::new(HashMap::new()));
     let mut entry = SubagentEntry::with_identity(
-        crate::domain::ids::AgentUuid::new("child"),
+        crate::domain::identity::ids::AgentUuid::new("child"),
         "child".into(),
         dir.join("never.sock"),
         0,

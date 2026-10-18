@@ -242,7 +242,7 @@ fn a_name_is_fetchable_unless_a_whole_local_name_ignoring_case_and_trailing_dots
 /// judges its addresses by the IPv4 address they reach.
 #[test]
 fn a_discovered_nat64_prefix_judges_by_the_embedded_ipv4_address() {
-    use crate::domain::nat64_prefix::Nat64Prefix;
+    use crate::domain::tool_policy::value_objects::nat64_prefix::Nat64Prefix;
     let slash96 = Nat64Prefix::new("2001:4860:1234:5678:9abc:de00::".parse().unwrap(), 96).unwrap();
     let slash64 = Nat64Prefix::new("2001:4860:64:64::".parse().unwrap(), 64).unwrap();
     let prefixes = [slash96, slash64];

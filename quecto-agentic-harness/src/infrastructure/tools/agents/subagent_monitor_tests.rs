@@ -387,7 +387,7 @@ fn test_notify_from_parsed_unknown_event_is_noop() {
         1,
         &value,
         None,
-        crate::domain::ids::AgentUuid::new("worker"),
+        crate::domain::identity::ids::AgentUuid::new("worker"),
     );
     assert!(rx.try_recv().is_err());
 }
@@ -402,7 +402,7 @@ fn test_notify_from_parsed_no_type_is_noop() {
         1,
         &value,
         None,
-        crate::domain::ids::AgentUuid::new("worker"),
+        crate::domain::identity::ids::AgentUuid::new("worker"),
     );
     assert!(rx.try_recv().is_err());
 }

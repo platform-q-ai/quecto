@@ -5,7 +5,7 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
 use crate::application::tools::ports::{Tool, ToolGuard};
-use crate::domain::error::DomainError;
+use crate::domain::shared::error::DomainError;
 use crate::domain::tool_policy::value_objects::tool::{ToolDefinition, ToolResult};
 use crate::domain::workflow::{
     WorkflowEngine, WorkflowGuardRule, WorkflowSnapshot, WorkflowTemplateSummary,

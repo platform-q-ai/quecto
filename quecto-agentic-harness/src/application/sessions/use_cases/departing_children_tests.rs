@@ -2,7 +2,7 @@ use super::super::start_fresh_rig::{FreshOptions, build_fresh_rig};
 use crate::application::sessions::dto::{
     FleetSettled, FleetSettlementOutcome, SessionTransition, SessionTransitionRefused,
 };
-use crate::domain::ids::AgentUuid;
+use crate::domain::identity::ids::AgentUuid;
 use std::sync::atomic::Ordering;
 
 #[tokio::test]

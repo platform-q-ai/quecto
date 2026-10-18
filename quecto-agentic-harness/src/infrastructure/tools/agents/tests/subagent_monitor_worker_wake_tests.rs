@@ -29,10 +29,10 @@ impl WorkerBoardRead for Board {
         &self,
     ) -> crate::application::swarm::ports::PortFuture<
         '_,
-        Result<Option<WorkerBoard>, crate::domain::error::DomainError>,
+        Result<Option<WorkerBoard>, crate::domain::shared::error::DomainError>,
     > {
         let answer = self.0.lock().unwrap().clone();
-        Box::pin(async move { answer.map_err(crate::domain::error::DomainError::Tool) })
+        Box::pin(async move { answer.map_err(crate::domain::shared::error::DomainError::Tool) })
     }
 }
 

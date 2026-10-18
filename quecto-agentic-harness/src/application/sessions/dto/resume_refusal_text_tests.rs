@@ -2,9 +2,9 @@ use crate::application::sessions::dto::{
     ResumeDecision, ResumeSavedSessionError, ResumeTarget, SaveSessionError,
     SessionTransitionRefused, StartupRefusal, resume_saved_session::ResumeDisposition,
 };
-use crate::domain::error::DomainError;
 use crate::domain::sessions::entities::session_home::SessionHomeScope;
 use crate::domain::sessions::services::resume_decision::{HomeVersion, ResumeDecisionKind};
+use crate::domain::shared::error::DomainError;
 
 fn every_refusal() -> Vec<ResumeSavedSessionError> {
     let decision = ResumeDecision {

@@ -27,8 +27,9 @@ impl ContextSpillStore for MockSpillStore {
         &self,
         _session_key: &SessionIdentity,
         entry: &SpillEntry,
-    ) -> Pin<Box<dyn Future<Output = Result<(), crate::domain::error::DomainError>> + Send + '_>>
-    {
+    ) -> Pin<
+        Box<dyn Future<Output = Result<(), crate::domain::shared::error::DomainError>> + Send + '_>,
+    > {
         self.entries.lock().unwrap().push(entry.clone());
         Box::pin(async { Ok(()) })
     }
@@ -39,8 +40,9 @@ impl ContextSpillStore for MockSpillStore {
         id: &SpillId,
     ) -> Pin<
         Box<
-            dyn Future<Output = Result<Option<SpillEntry>, crate::domain::error::DomainError>>
-                + Send
+            dyn Future<
+                    Output = Result<Option<SpillEntry>, crate::domain::shared::error::DomainError>,
+                > + Send
                 + '_,
         >,
     > {
@@ -62,7 +64,7 @@ impl ContextSpillStore for MockSpillStore {
             dyn Future<
                     Output = Result<
                         Arc<Vec<crate::domain::sessions::entities::session::SpillIndex>>,
-                        crate::domain::error::DomainError,
+                        crate::domain::shared::error::DomainError,
                     >,
                 > + Send
                 + '_,
@@ -86,8 +88,9 @@ impl ContextSpillStore for MockSpillStore {
     fn clear(
         &self,
         _session_key: &SessionIdentity,
-    ) -> Pin<Box<dyn Future<Output = Result<(), crate::domain::error::DomainError>> + Send + '_>>
-    {
+    ) -> Pin<
+        Box<dyn Future<Output = Result<(), crate::domain::shared::error::DomainError>> + Send + '_>,
+    > {
         Box::pin(async { Ok(()) })
     }
 }
@@ -289,10 +292,11 @@ impl ContextSpillStore for FailingSpillStore {
         &self,
         _session_key: &SessionIdentity,
         _entry: &SpillEntry,
-    ) -> Pin<Box<dyn Future<Output = Result<(), crate::domain::error::DomainError>> + Send + '_>>
-    {
+    ) -> Pin<
+        Box<dyn Future<Output = Result<(), crate::domain::shared::error::DomainError>> + Send + '_>,
+    > {
         Box::pin(async {
-            Err(crate::domain::error::DomainError::Session(
+            Err(crate::domain::shared::error::DomainError::Session(
                 "disk full".into(),
             ))
         })
@@ -304,8 +308,9 @@ impl ContextSpillStore for FailingSpillStore {
         _id: &SpillId,
     ) -> Pin<
         Box<
-            dyn Future<Output = Result<Option<SpillEntry>, crate::domain::error::DomainError>>
-                + Send
+            dyn Future<
+                    Output = Result<Option<SpillEntry>, crate::domain::shared::error::DomainError>,
+                > + Send
                 + '_,
         >,
     > {
@@ -320,7 +325,7 @@ impl ContextSpillStore for FailingSpillStore {
             dyn Future<
                     Output = Result<
                         Arc<Vec<crate::domain::sessions::entities::session::SpillIndex>>,
-                        crate::domain::error::DomainError,
+                        crate::domain::shared::error::DomainError,
                     >,
                 > + Send
                 + '_,
@@ -332,8 +337,9 @@ impl ContextSpillStore for FailingSpillStore {
     fn clear(
         &self,
         _session_key: &SessionIdentity,
-    ) -> Pin<Box<dyn Future<Output = Result<(), crate::domain::error::DomainError>> + Send + '_>>
-    {
+    ) -> Pin<
+        Box<dyn Future<Output = Result<(), crate::domain::shared::error::DomainError>> + Send + '_>,
+    > {
         Box::pin(async { Ok(()) })
     }
 }
