@@ -292,7 +292,7 @@ fn rewinding_keeps_collapsed_conversation_messages_as_non_empty_turns() {
     // user/assistant message survives as a NON-EMPTY provider turn (its
     // stub minus the dangling recall clause) — some providers reject empty
     // text blocks.
-    use crate::application::context_pruning::messages::message_collapse_stub;
+    use crate::application::agent_turn::context::context_pruning::messages::message_collapse_stub;
     let mut collapsed_user =
         Message::user("[user: \"old question\" (120 tokens) — recall(\"turn1:msg:user\")]");
     collapsed_user.is_collapsed = true;

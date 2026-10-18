@@ -19,7 +19,7 @@ fn id(k: &str) -> SessionIdentity {
 
 /// The narrow handles the policy consumes, composed over the test store
 /// exactly as the runtime composes them (D9 #1978).
-fn retention(store: &Arc<MemStore>) -> crate::application::context::ContextRetention {
+fn retention(store: &Arc<MemStore>) -> crate::application::agent_turn::context::ContextRetention {
     crate::composition::retention::context_retention_over(store.clone())
 }
 

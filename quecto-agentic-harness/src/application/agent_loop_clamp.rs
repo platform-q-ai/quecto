@@ -234,7 +234,9 @@ impl AgentLoopImpl {
     /// ceiling after construction (#2342): a swarm member's, once its
     /// process joins a swarm. The effective budget is the lowest of the
     /// configured budget, the model's window and this cap.
-    pub fn context_ceiling_cap(&self) -> crate::application::context::ContextCeilingCap {
+    pub fn context_ceiling_cap(
+        &self,
+    ) -> crate::application::agent_turn::context::ContextCeilingCap {
         self.context_manager.ceiling_cap()
     }
 }

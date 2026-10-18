@@ -294,8 +294,8 @@ or `agent_cmd` surface that exposes it.
 
 **Production files usually involved:**
 
-- `src/application/context_pruning.rs` and
-  `src/application/context_pruning_messages.rs`.
+- `src/application/agent_turn/context/context_pruning.rs` and
+  `src/application/agent_turn/context/context_pruning_messages.rs`.
 - `src/application/agent_loop_pruning.rs`, `agent_loop_spill.rs`, and
   the context gauge (`ContextGaugeCalibration` in `context.rs`).
 - `src/domain/sessions/entities/session.rs` for spill index, dirty-prefix, or message metadata.

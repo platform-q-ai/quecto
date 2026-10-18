@@ -10,7 +10,7 @@
 use super::*;
 use quecto::application::agent_loop::AgentLoopConfig;
 use quecto::application::agent_loop::UsageTotals;
-use quecto::application::context_pruning::estimate_total_tokens;
+use quecto::application::agent_turn::context::context_pruning::estimate_total_tokens;
 use quecto::domain::conversation::value_objects::message::UsageInfo;
 use quecto::interface::cli::protocol::SessionStats as WireSessionStats;
 use quecto::interface::cli::uds_session::{AgentSession, compute_session_stats_with_usage};

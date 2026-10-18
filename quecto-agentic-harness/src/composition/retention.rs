@@ -7,7 +7,7 @@
 //! fixtures compose the same graph over an in-memory store.
 use std::sync::Arc;
 
-use crate::application::context::ContextRetention;
+use crate::application::agent_turn::context::ContextRetention;
 use crate::application::sessions::ports::ContextSpillStore;
 use crate::application::sessions::use_cases::{ListRetainedContext, RecallContext, RetainContext};
 use crate::interface::cli::retention_handles::RetentionHandles;

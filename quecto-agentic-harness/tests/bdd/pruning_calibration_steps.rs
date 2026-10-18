@@ -108,8 +108,9 @@ fn then_ascii_quarter_fits(world: &mut QuectoWorld) {
         .iter()
         .map(|m| m.content.len().div_ceil(4))
         .sum();
-    let dense =
-        quecto::application::context_pruning::estimate_total_tokens(&world.watermark_pre_run);
+    let dense = quecto::application::agent_turn::context::context_pruning::estimate_total_tokens(
+        &world.watermark_pre_run,
+    );
     // Room left for the prompt and the tool definitions.
     assert!(
         flat * 10 <= world.watermark_budget * 9,

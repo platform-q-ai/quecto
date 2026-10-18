@@ -9,7 +9,7 @@
 //! constructs the store, a use case or the recall tool's graph.
 use std::sync::Arc;
 
-use crate::application::context::ContextRetention;
+use crate::application::agent_turn::context::ContextRetention;
 use crate::application::sessions::ports::ContextSpillStore;
 use crate::application::sessions::use_cases::RecallContext;
 

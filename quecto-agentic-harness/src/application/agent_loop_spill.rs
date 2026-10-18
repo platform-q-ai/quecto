@@ -3,7 +3,7 @@
 //! (#951/#1046). Split from `agent_loop.rs` to respect the 750-line cap.
 
 use super::*;
-use crate::application::context::ToolMessageBuild;
+use crate::application::agent_turn::context::ToolMessageBuild;
 
 /// Args for building a tool result message (avoids clippy 5-arg limit).
 pub(super) struct ToolMessageArgs<'a> {

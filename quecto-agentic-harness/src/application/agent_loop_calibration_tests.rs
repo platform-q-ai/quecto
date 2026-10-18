@@ -76,7 +76,7 @@ async fn without_reported_usage_the_run_prunes_on_the_heuristic() {
 fn first_request_messages_estimate() -> usize {
     let mut messages = history();
     messages.push(Message::user("go"));
-    crate::application::context_pruning::estimate_total_tokens(&messages)
+    crate::application::agent_turn::context::context_pruning::estimate_total_tokens(&messages)
 }
 
 /// The QA shape: the provider counts the transcript at several times the
@@ -235,7 +235,8 @@ async fn the_iteration_limit_estimate_counts_the_tool_definitions() {
     assert!(tools > 0);
     assert_eq!(
         result.context_tokens,
-        crate::application::context_pruning::estimate_total_tokens(&messages) + tools
+        crate::application::agent_turn::context::context_pruning::estimate_total_tokens(&messages)
+            + tools
     );
 }
 
@@ -344,7 +345,9 @@ async fn tools_and_messages_fit_the_window_at_the_calibrated_size() {
 
     agent.apply_context_pruning(&mut messages, 1, false).await;
 
-    let total = crate::application::context_pruning::estimate_total_tokens(&messages) + tools;
+    let total =
+        crate::application::agent_turn::context::context_pruning::estimate_total_tokens(&messages)
+            + tools;
     let scale = agent.context_manager.estimate_scale();
     assert!(
         scale.calibrated(total) <= window,

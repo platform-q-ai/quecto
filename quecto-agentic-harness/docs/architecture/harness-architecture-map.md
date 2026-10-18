@@ -31,7 +31,7 @@ Important invariants before Phase 2:
 
 ## Context management
 
-**Primary code:** `src/application/context_pruning.rs`,
+**Primary code:** `src/application/agent_turn/context/context_pruning.rs`,
 `context_pruning_messages.rs`, `agent_loop_pruning.rs`, `agent_loop_spill.rs`,
 the context gauge in `context.rs`, and related context/spill tests.
 

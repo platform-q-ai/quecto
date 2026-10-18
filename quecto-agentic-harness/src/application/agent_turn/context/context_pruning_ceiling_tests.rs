@@ -3,8 +3,8 @@
 //! the prompt prefix; below the ceiling nothing changes.
 
 use super::*;
-use crate::application::context_pruning::estimate_message_tokens;
-use crate::application::context_pruning::estimate_total_tokens;
+use crate::application::agent_turn::context::context_pruning::estimate_message_tokens;
+use crate::application::agent_turn::context::context_pruning::estimate_total_tokens;
 use crate::domain::conversation::value_objects::message::Message;
 
 /// A spilled assistant message of about 100 tokens in `turn`.

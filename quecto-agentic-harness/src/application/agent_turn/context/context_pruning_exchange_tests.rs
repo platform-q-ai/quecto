@@ -153,7 +153,9 @@ fn mixed_conversation() -> Vec<Message> {
 /// Both rungs, every budget and pin: calls and results always pair.
 #[test]
 fn every_rung_keeps_calls_and_results_paired_at_any_budget() {
-    let total = crate::application::context_pruning::estimate_total_tokens(&mixed_conversation());
+    let total = crate::application::agent_turn::context::context_pruning::estimate_total_tokens(
+        &mixed_conversation(),
+    );
     for pin in 0..=3u32 {
         for budget in (0..=total + 100).step_by(97) {
             let context = format!("pin {pin}, budget {budget}");
