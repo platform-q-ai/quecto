@@ -3,7 +3,7 @@ use super::{ChatRequest, CodexProvider, ResponsesAuth};
 impl CodexProvider {
     /// Build the Responses API tool definitions.
     pub(super) fn build_tools(
-        tools: &[crate::domain::tool::ToolDefinition],
+        tools: &[crate::domain::tool_policy::value_objects::tool::ToolDefinition],
     ) -> Vec<serde_json::Value> {
         tools
             .iter()

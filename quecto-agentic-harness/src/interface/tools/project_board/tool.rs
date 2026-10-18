@@ -44,7 +44,7 @@ use crate::domain::project_board::entities::team::{
 };
 use crate::domain::project_board::value_objects::telemetry::{Client, FaultKind, FrontEnd};
 use crate::domain::project_board::value_objects::vocabulary::{Effort, TaskKind, TaskStatus};
-use crate::domain::tool::{ToolDefinition, ToolResult};
+use crate::domain::tool_policy::value_objects::tool::{ToolDefinition, ToolResult};
 use crate::infrastructure::tools::call_work::off_the_workers;
 
 /// The tool's name.

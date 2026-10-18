@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
-use crate::domain::tool_descriptor::ProfileAvailabilityScope;
-use crate::domain::tool_policy::inherited_child_policy_from_catalogue;
+use crate::domain::tool_policy::services::tool_policy::inherited_child_policy_from_catalogue;
+use crate::domain::tool_policy::value_objects::tool_descriptor::ProfileAvailabilityScope;
 use crate::infrastructure::tools::inherited_tool_policy::{
     entrypoint_only_tools, is_entrypoint_only, recorded_scope,
 };
@@ -33,8 +33,9 @@ impl ToolRegistryImpl {
                     scope,
                     ProfileAvailabilityScope::Parent | ProfileAvailabilityScope::None
                 );
-                match crate::domain::tool_policy::registers_after_startup(policy_id)
-                    || kept_from_children
+                match crate::domain::tool_policy::services::tool_policy::registers_after_startup(
+                    policy_id,
+                ) || kept_from_children
                 {
                     true => {}
                     false => warnings.push(policy_id.clone()),

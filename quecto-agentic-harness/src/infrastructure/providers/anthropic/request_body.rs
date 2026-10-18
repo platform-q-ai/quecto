@@ -163,7 +163,7 @@ impl AnthropicProvider {
     }
 
     pub(super) fn build_tool_defs(
-        tools: &[crate::domain::tool::ToolDefinition],
+        tools: &[crate::domain::tool_policy::value_objects::tool::ToolDefinition],
         is_oauth: bool,
     ) -> Vec<serde_json::Value> {
         tools

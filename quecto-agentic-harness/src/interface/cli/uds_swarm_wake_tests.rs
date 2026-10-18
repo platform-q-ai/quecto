@@ -17,7 +17,7 @@ async fn an_allowed_wake_sends_the_change_wake() {
     let prompts: Vec<_> = ctx
         .messages
         .iter()
-        .filter(|m| m.role == crate::domain::message::Role::User)
+        .filter(|m| m.role == crate::domain::conversation::value_objects::message::Role::User)
         .map(|m| m.content.clone())
         .collect();
     assert_eq!(

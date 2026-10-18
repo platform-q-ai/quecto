@@ -5,7 +5,7 @@ use std::sync::Arc;
 use super::SpawnPermit;
 use crate::application::tools::ports::Tool;
 use crate::domain::error::DomainError;
-use crate::domain::tool::{ToolDefinition, ToolResult};
+use crate::domain::tool_policy::value_objects::tool::{ToolDefinition, ToolResult};
 use crate::infrastructure::tools::registry::ToolRegistryImpl;
 
 /// A tool by `name` that does nothing.
@@ -56,7 +56,7 @@ fn the_permit_follows_the_registrys_policy_over_spawn() {
 /// children closes the permit, and lifting it opens it again.
 #[test]
 fn the_permit_follows_a_persisted_policy() {
-    use crate::domain::tool_descriptor::ProfileAvailabilityScope;
+    use crate::domain::tool_policy::value_objects::tool_descriptor::ProfileAvailabilityScope;
     use crate::infrastructure::config::{ToolPolicyConfig, ToolPolicyEntryConfig};
     use crate::infrastructure::tools::registration::ToolRegistration;
     let permit = SpawnPermit::default();
@@ -87,7 +87,7 @@ fn the_permit_follows_a_persisted_policy() {
 fn the_permit_follows_an_inherited_policy() {
     use std::collections::BTreeMap;
 
-    use crate::domain::tool_descriptor::ProfileAvailabilityScope;
+    use crate::domain::tool_policy::value_objects::tool_descriptor::ProfileAvailabilityScope;
     use crate::infrastructure::tools::inherited_tool_policy::InheritedToolPolicySnapshot;
     let inherited = |scope| {
         let permit = SpawnPermit::default();
@@ -139,11 +139,13 @@ fn the_permit_judges_a_spawn_by_the_registrys_guards() {
 #[test]
 fn the_permit_follows_a_recorded_policy_result() {
     use crate::application::tools::ports::ToolPolicyMutator;
-    use crate::domain::tool::{
+    use crate::domain::tool_policy::value_objects::tool::{
         ToolPolicyApplyMode, ToolPolicyMutationResult, ToolPolicyMutationStatus,
         ToolPolicyReconciliation,
     };
-    use crate::domain::tool_descriptor::{ProfileAvailabilityScope, ToolAvailability};
+    use crate::domain::tool_policy::value_objects::tool_descriptor::{
+        ProfileAvailabilityScope, ToolAvailability,
+    };
     let permit = SpawnPermit::default();
     let mut registry = ToolRegistryImpl::new();
     registry.register(Arc::new(Named("spawn")));

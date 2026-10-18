@@ -14,7 +14,7 @@ use quecto::application::project_board::ports::{
 use quecto::application::tools::ports::Tool;
 use quecto::domain::error::DomainError;
 use quecto::domain::project_board::value_objects::slug::Slug;
-use quecto::domain::tool::{ToolDefinition, ToolResult};
+use quecto::domain::tool_policy::value_objects::tool::{ToolDefinition, ToolResult};
 use quecto::infrastructure::tools::coordinator_launch::SpawnCoordinatorLauncher;
 use quecto::infrastructure::tools::coordinator_launch::SpawnPermit;
 use quecto::infrastructure::tools::registry::ToolRegistryImpl;
