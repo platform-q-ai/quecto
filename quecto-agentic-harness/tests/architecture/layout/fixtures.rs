@@ -262,8 +262,12 @@ fn placement_future_targets_unknowns_and_stale_transitional_rows() {
             vec![Violation::UnlistedPlacement(unknown.into())]
         );
     }
+    // A transitional row whose directory is gone is stale (fixture rows: the
+    // checked-in policy retired its last transitional row with #2366).
     let root = fixture(LAYERS, &[]);
-    let failures = placements(root.path(), PLACEMENTS);
+    let rows: &[Placement<'_>] = &[("application", &["agent_loop"])];
+    let transitional = &[("application", "agent_loop")];
+    let failures = validate_with(root.path(), &[], &[], Some(rows), transitional, &scan);
     assert_eq!(failures.len(), 1);
     fragments(
         &failures,

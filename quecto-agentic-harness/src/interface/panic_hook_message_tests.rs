@@ -14,7 +14,9 @@ fn every_sink_shows_a_panic_message_through_the_one_helper() {
         ),
         location: None,
     };
-    let shown = crate::application::tool_panic_scope::shown_panic_message(&leaky.message);
+    let shown = crate::application::agent_turn::agent_loop::tool_panic_scope::shown_panic_message(
+        &leaky.message,
+    );
     assert!(
         !shown.contains("ghp_0123456789") && !shown.contains("user:pw"),
         "{shown}"

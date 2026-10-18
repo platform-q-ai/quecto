@@ -5,8 +5,8 @@
 //! not "unchanged".
 
 use super::ctx_mgmt_tests::{CapturingAuditSink, MemSpillStore};
-use crate::application::agent_loop::tests::{MockProvider, MockRegistry, test_config};
-use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
+use crate::application::agent_turn::agent_loop::tests::{MockProvider, MockRegistry, test_config};
+use crate::application::agent_turn::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::application::audit::ports::AuditSink;
 use crate::application::tools::ports::Tool;
 use crate::domain::audit::AuditEvent;
@@ -105,7 +105,7 @@ async fn a_cut_that_archives_a_read_tells_its_tool_once() {
         read_call("r2", "a.rs"),
         read_call("r3", "b.rs"),
         read_call("r4", "c.rs"),
-        crate::application::agent_loop::tests::text_response("done"),
+        crate::application::agent_turn::agent_loop::tests::text_response("done"),
     ]));
     let sink = Arc::new(CapturingAuditSink::default());
     let mut agent = AgentLoopImpl::new(AgentLoopConfig {
@@ -142,7 +142,7 @@ async fn a_read_the_ladder_drops_with_its_call_tells_its_tool_once() {
     let mut registry = MockRegistry::new();
     registry.register(read.clone());
     let provider = Arc::new(MockProvider::new(vec![
-        crate::application::agent_loop::tests::text_response("done"),
+        crate::application::agent_turn::agent_loop::tests::text_response("done"),
     ]));
     let sink = Arc::new(CapturingAuditSink::default());
     let mut agent = AgentLoopImpl::new(AgentLoopConfig {

@@ -536,7 +536,7 @@ fn test_build_http_client_does_not_panic() {
 // these tests build the loop the way production sites do: config values at
 // construction, exercised through the real process() path.
 mod context_settings {
-    use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
+    use crate::application::agent_turn::agent_loop::{AgentLoopConfig, AgentLoopImpl};
     use crate::application::agent_turn::ports::AgentLoop;
     use crate::domain::conversation::value_objects::message::Message;
     use crate::infrastructure::config::AgentDefaults;

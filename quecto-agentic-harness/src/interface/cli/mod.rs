@@ -226,11 +226,11 @@ pub type ProviderRuntimeBuilder =
 /// durable `set_tool_policy … persist` writer over the run's config file.
 /// Injected through the CLI context; the agent build installs it on the
 /// loop, the interface never constructs the writer.
-pub type ToolPolicyPersistenceBuilder = fn(
-    &std::path::Path,
-    &crate::application::configuration::dto::ConfigSources,
-)
-    -> crate::application::agent_loop::ToolPolicyPersistence;
+pub type ToolPolicyPersistenceBuilder =
+    fn(
+        &std::path::Path,
+        &crate::application::configuration::dto::ConfigSources,
+    ) -> crate::application::agent_turn::agent_loop::ToolPolicyPersistence;
 
 /// Composition's builder of the container-config handles (#2024 S4a,
 /// S4c): launch policy over the run's own configuration selection, so

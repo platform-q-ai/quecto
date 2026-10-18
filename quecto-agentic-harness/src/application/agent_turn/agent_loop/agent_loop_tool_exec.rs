@@ -3,7 +3,7 @@
 //! in the per-run ledger (#1072).
 
 use super::*;
-use crate::application::tool_panic_scope;
+use crate::application::agent_turn::agent_loop::tool_panic_scope;
 
 /// An overlapping batch in flight: its calls and each call's result so far.
 /// Dropped at the batch's end or by a cancellation, it gives the response

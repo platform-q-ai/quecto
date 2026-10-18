@@ -129,9 +129,11 @@ fn assert_workflow_denied(tools: &BTreeMap<String, ProfileAvailabilityScope>, wh
     );
 }
 
-fn agent_loop(built: ToolRuntimeBuild) -> crate::application::agent_loop::AgentLoopImpl {
-    crate::application::agent_loop::AgentLoopImpl::new(
-        crate::application::agent_loop::AgentLoopConfig {
+fn agent_loop(
+    built: ToolRuntimeBuild,
+) -> crate::application::agent_turn::agent_loop::AgentLoopImpl {
+    crate::application::agent_turn::agent_loop::AgentLoopImpl::new(
+        crate::application::agent_turn::agent_loop::AgentLoopConfig {
             provider: std::sync::Arc::new(crate::interface::test_support::StubProvider),
             tool_registry: Box::new(built.registry),
             model: "m".into(),

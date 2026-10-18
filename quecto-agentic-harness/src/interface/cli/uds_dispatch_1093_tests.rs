@@ -1,4 +1,4 @@
-use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
+use crate::application::agent_turn::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::application::sessions::ports::{ContextSpillStore, SessionStore};
 use crate::domain::conversation::value_objects::message::{Message, ToolCall};
 use crate::domain::sessions::entities::session::{Session, SpillEntry, SpillIndex};

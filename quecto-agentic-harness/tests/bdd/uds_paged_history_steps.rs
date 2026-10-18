@@ -7,7 +7,7 @@
 //! spill recall are all exercised end-to-end.
 
 use super::*;
-use quecto::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
+use quecto::application::agent_turn::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use quecto::application::agent_turn::ports::AgentLoop;
 use quecto::application::providers::ports::{ChatRequest, LlmProvider};
 use quecto::application::sessions::ports::{ContextSpillStore, SessionStore};

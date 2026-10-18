@@ -6,7 +6,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
-use quecto::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
+use quecto::application::agent_turn::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use quecto::application::providers::ports::{ChatRequest, LlmProvider};
 use quecto::application::tools::ports::Tool;
 use quecto::domain::conversation::value_objects::message::LlmResponse;

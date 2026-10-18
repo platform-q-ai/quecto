@@ -1,7 +1,7 @@
 //! Deadline-bounded agent run (`--max-time`), split from `agent.rs`
 //! (750-line cap).
 
-use crate::application::agent_loop::AgentLoopImpl;
+use crate::application::agent_turn::agent_loop::AgentLoopImpl;
 use crate::application::agent_turn::ports::AgentLoop;
 use crate::domain::conversation::value_objects::message::Message;
 

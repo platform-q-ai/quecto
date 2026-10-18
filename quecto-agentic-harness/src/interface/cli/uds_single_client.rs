@@ -7,7 +7,7 @@ use super::uds_cancel::{CancelSlot, TurnControl};
 use super::uds_session::AgentSession;
 use super::uds_session_handles::SessionHandles;
 use super::{uds_extensions::ExtRegistry, uds_lifecycle::inject_system_prompt};
-use crate::application::agent_loop::AgentLoopImpl;
+use crate::application::agent_turn::agent_loop::AgentLoopImpl;
 use crate::application::sessions::dto::SaveTrigger;
 use crate::domain::conversation::value_objects::message::Message;
 

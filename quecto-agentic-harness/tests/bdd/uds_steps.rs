@@ -11,7 +11,7 @@ use super::*;
 //   3. Writes accumulated command lines to `client_half`, then shuts down the write side.
 //   4. Reads all response lines from `client_half` until the server closes.
 
-use quecto::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
+use quecto::application::agent_turn::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use quecto::composition::runtime::build_agent_provider;
 use quecto::domain::conversation::value_objects::message::Role;
 use quecto::domain::sessions::entities::session::{

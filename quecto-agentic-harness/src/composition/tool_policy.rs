@@ -7,7 +7,7 @@
 
 use std::path::Path;
 
-use crate::application::agent_loop::ToolPolicyPersistence;
+use crate::application::agent_turn::agent_loop::ToolPolicyPersistence;
 use crate::application::configuration::dto::ConfigSources;
 use crate::infrastructure::config::writer::tool_policy::tool_policy_persistence_for;
 

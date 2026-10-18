@@ -4,7 +4,7 @@
 //! one that waited reports the wait as `queued_ms` and its duration from
 //! its admission.
 use super::*;
-use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
+use crate::application::agent_turn::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::application::agent_turn::ports::AgentLoop;
 use crate::application::ports::AttemptAcquisition;
 use crate::application::providers::ports::{ChatRequest, LlmProvider};

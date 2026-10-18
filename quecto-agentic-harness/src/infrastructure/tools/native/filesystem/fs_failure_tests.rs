@@ -469,7 +469,9 @@ async fn a_panicking_write_task_is_an_internal_fault() {
 /// in #2254's words.
 #[tokio::test]
 async fn a_write_runs_in_its_calls_panic_scope() {
-    use crate::application::tool_panic_scope::{ToolScope, current, scoped};
+    use crate::application::agent_turn::agent_loop::tool_panic_scope::{
+        ToolScope, current, scoped,
+    };
     let failure = scoped(ToolScope::new("write"), async {
         run_write(|| {
             let tool = current().map(|scope| scope.tool().to_string());
@@ -492,7 +494,7 @@ async fn a_write_runs_in_its_calls_panic_scope() {
 /// contained panic's does: secret shapes redacted, cut to 1 KiB.
 #[tokio::test]
 async fn a_written_panic_message_is_redacted_and_bounded() {
-    use crate::application::tool_panic_scope::{ToolScope, scoped};
+    use crate::application::agent_turn::agent_loop::tool_panic_scope::{ToolScope, scoped};
     let failure = scoped(ToolScope::new("write"), async {
         run_write(|| panic!("key sk-livedeadbeef0001 then {}", "x".repeat(5_000)))
             .await
@@ -559,7 +561,7 @@ fn write_panic_child() {
     if std::env::var(WRITE_PANIC_CHILD).is_err() {
         return;
     }
-    use crate::application::tool_panic_scope::{ToolScope, scoped};
+    use crate::application::agent_turn::agent_loop::tool_panic_scope::{ToolScope, scoped};
     use crate::infrastructure::observability::audit_log::AuditLog;
     use crate::infrastructure::persistence::file::crash_record;
     crate::interface::panic_hook::install();

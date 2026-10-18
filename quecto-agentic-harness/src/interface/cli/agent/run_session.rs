@@ -4,7 +4,7 @@
 //! never constructs one.
 use super::run_session_save::TranscriptSave;
 use super::{AgentFlags, AgentOutput, DeadlineResult, run_with_deadline, settle_stopped_run};
-use crate::application::{agent_loop::AgentLoopImpl, agent_turn::ports::AgentLoop};
+use crate::application::{agent_turn::agent_loop::AgentLoopImpl, agent_turn::ports::AgentLoop};
 use crate::domain::conversation::value_objects::message::Message;
 use crate::domain::sessions::entities::session_identity::SessionIdentity;
 use crate::infrastructure::persistence::file::crash_record;

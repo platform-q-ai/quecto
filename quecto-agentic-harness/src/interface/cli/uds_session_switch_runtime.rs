@@ -7,7 +7,7 @@ use super::agent::event_log;
 use super::uds_execution_state::ExecutionStateHandle;
 use super::uds_session::AgentSession;
 use super::uds_turn_accounting::LoopTurnAccounting;
-use crate::application::agent_loop::AgentLoopImpl;
+use crate::application::agent_turn::agent_loop::AgentLoopImpl;
 use crate::application::sessions::ports::session_runtime::TurnAccountingReset;
 use crate::application::sessions::ports::{SessionKeyPropagation, SessionSwitchRuntime};
 use crate::domain::sessions::entities::session_identity::SessionIdentity;

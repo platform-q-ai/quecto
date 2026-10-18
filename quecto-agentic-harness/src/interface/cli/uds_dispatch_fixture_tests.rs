@@ -3,7 +3,7 @@
 //! read handles, `list_sessions` and save transaction share one
 //! active-session state, and offers the save shims the dispatch tests call.
 use super::cov_tests::make_agent;
-use crate::application::agent_loop::AgentLoopImpl;
+use crate::application::agent_turn::agent_loop::AgentLoopImpl;
 use crate::domain::conversation::value_objects::message::Message;
 use crate::infrastructure::persistence::file::sessions::session_store::FileSessionStore;
 use crate::interface::cli::uds::DispatchCtx;
@@ -28,7 +28,9 @@ pub(super) struct Fixture {
     pub(super) sessions: crate::interface::cli::uds_session_handles::SessionHandles,
     /// The dirty latch shared between the agent and the save transaction;
     /// a swapped agent adopts it (`set_agent`).
-    latch: std::sync::Arc<crate::application::durable_prefix::DurablePrefixLatch>,
+    latch: std::sync::Arc<
+        crate::application::agent_turn::agent_loop::durable_prefix::DurablePrefixLatch,
+    >,
     pub(super) _tmp: tempfile::TempDir,
     writer: tokio::io::Sink,
     pub(super) cancel: CancelHandle,

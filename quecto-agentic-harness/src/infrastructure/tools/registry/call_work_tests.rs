@@ -1,5 +1,5 @@
 use super::*;
-use crate::application::tool_panic_scope::{ToolScope, current, scoped};
+use crate::application::agent_turn::agent_loop::tool_panic_scope::{ToolScope, current, scoped};
 use futures::FutureExt;
 
 fn tool_now() -> Option<String> {
@@ -36,7 +36,9 @@ async fn a_panic_in_carried_work_resumes_in_the_joining_call() {
         .catch_unwind()
         .await;
         let payload = joined.expect_err("the panic reached the joiner");
-        let message = crate::application::tool_panic_scope::payload_message(payload.as_ref());
+        let message = crate::application::agent_turn::agent_loop::tool_panic_scope::payload_message(
+            payload.as_ref(),
+        );
         assert!(message.ends_with("boom"), "{message}");
     }
 }
@@ -68,11 +70,13 @@ async fn a_thread_started_in_a_call_runs_in_it_and_its_panic_is_the_calls() {
             .join()
             .unwrap();
         let panicked = std_thread_in_call(std::thread::Builder::new(), || {
-            crate::application::tool_panic_scope::current().map(|scope| {
-                scope.record_panic(crate::application::tool_panic_scope::PanicSite {
-                    message: "in the owner thread".into(),
-                    location: None,
-                })
+            crate::application::agent_turn::agent_loop::tool_panic_scope::current().map(|scope| {
+                scope.record_panic(
+                    crate::application::agent_turn::agent_loop::tool_panic_scope::PanicSite {
+                        message: "in the owner thread".into(),
+                        location: None,
+                    },
+                )
             })
         })
         .unwrap()

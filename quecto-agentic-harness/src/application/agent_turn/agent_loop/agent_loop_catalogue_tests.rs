@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use super::tests::{MockProvider, MockTool, test_config};
-use crate::application::agent_loop::AgentLoopImpl;
+use crate::application::agent_turn::agent_loop::AgentLoopImpl;
 use crate::infrastructure::tools::registry::{ToolRegistration, ToolRegistryImpl};
 
 #[test]

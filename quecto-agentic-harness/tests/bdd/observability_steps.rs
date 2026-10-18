@@ -50,25 +50,27 @@ fn when_agent_processes_tool_call(world: &mut QuectoWorld) {
     let mock_llm = world.mock_llm.take().expect("mock LLM not set");
     let registry = world.tool_registry.take().expect("registry not set");
 
-    let mut agent = AgentLoopImpl::new(quecto::application::agent_loop::AgentLoopConfig {
-        provider: mock_llm,
-        tool_registry: Box::new(registry),
-        model: "test-model".to_string(),
-        max_tokens: 1024,
-        temperature: 0.7,
-        retention: None,
-        session_key: String::new(),
-        max_context_tokens: 190_000,
-        progress_callback: None,
-        streaming: false,
-        effort: None,
-        audit_log: None,
-        pin_recent_turns: 2,
-        context_marks: Default::default(),
-        model_context_window: None,
-        tool_profile_context:
-            quecto::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent,
-    });
+    let mut agent = AgentLoopImpl::new(
+        quecto::application::agent_turn::agent_loop::AgentLoopConfig {
+            provider: mock_llm,
+            tool_registry: Box::new(registry),
+            model: "test-model".to_string(),
+            max_tokens: 1024,
+            temperature: 0.7,
+            retention: None,
+            session_key: String::new(),
+            max_context_tokens: 190_000,
+            progress_callback: None,
+            streaming: false,
+            effort: None,
+            audit_log: None,
+            pin_recent_turns: 2,
+            context_marks: Default::default(),
+            model_context_window: None,
+            tool_profile_context:
+                quecto::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent,
+        },
+    );
 
     // Capture tracing output
     let buffer = world

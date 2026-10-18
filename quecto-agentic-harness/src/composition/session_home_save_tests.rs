@@ -2,7 +2,7 @@
 //! "Permission/partial-write failures preserve transcripts"), and a record
 //! the strict catalogue rejects stays globally visible, never eligible.
 use super::*;
-use crate::application::durable_prefix::DurablePrefixLatch;
+use crate::application::agent_turn::agent_loop::durable_prefix::DurablePrefixLatch;
 use crate::application::sessions::dto::{
     ListSessionsRequest, SaveTrigger, SessionListQuery, SessionListScope,
 };

@@ -98,15 +98,15 @@ async fn cov_provider_trait_methods_are_invoked() {
     );
 }
 
-pub(super) fn cov_agent() -> crate::application::agent_loop::AgentLoopImpl {
+pub(super) fn cov_agent() -> crate::application::agent_turn::agent_loop::AgentLoopImpl {
     cov_agent_with_registry(crate::infrastructure::tools::registry::ToolRegistryImpl::new())
 }
 
 pub(super) fn cov_agent_with_registry(
     registry: crate::infrastructure::tools::registry::ToolRegistryImpl,
-) -> crate::application::agent_loop::AgentLoopImpl {
-    crate::application::agent_loop::AgentLoopImpl::new(
-        crate::application::agent_loop::AgentLoopConfig {
+) -> crate::application::agent_turn::agent_loop::AgentLoopImpl {
+    crate::application::agent_turn::agent_loop::AgentLoopImpl::new(
+        crate::application::agent_turn::agent_loop::AgentLoopConfig {
             provider: std::sync::Arc::new(CovProvider),
             tool_registry: Box::new(registry),
             model: "stub".into(),

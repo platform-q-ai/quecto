@@ -1,16 +1,8 @@
 pub mod admission;
-pub mod agent_loop;
-mod agent_loop_lifecycle_compat;
-mod agent_loop_policy;
-mod agent_loop_stream;
-#[cfg(any(test, feature = "test-support"))]
-pub mod agent_loop_test_support;
-mod agent_usage;
 pub mod audit;
 pub mod auth;
 pub mod catalogue;
 pub mod configuration;
-pub mod durable_prefix;
 pub mod environments;
 pub mod extensions;
 pub mod external_agent;
@@ -34,7 +26,6 @@ pub mod inference_observation;
 
 pub mod inference_attempt;
 pub mod swarm;
-pub mod tool_panic_scope;
 pub mod tools;
 
 pub mod agent_turn;

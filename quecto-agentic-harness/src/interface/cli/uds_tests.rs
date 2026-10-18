@@ -6,7 +6,7 @@ use super::*;
 /// Session-layer types (`AgentSession`, `compute_session_stats`, etc.) are
 /// re-exported from `uds` via `uds_session`.  Protocol types are imported from
 /// `cli::protocol`.
-use crate::application::agent_loop::UsageTotals;
+use crate::application::agent_turn::agent_loop::UsageTotals;
 use crate::interface::cli::protocol::*;
 
 // ─── AgentSession unit tests ───────────────────────────────────────────────────

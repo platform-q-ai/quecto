@@ -2,8 +2,8 @@
 //! calibrates the next pruning pass of the same run, and a model switch
 //! forgets the calibration.
 
-use crate::application::agent_loop::AgentLoopImpl;
-use crate::application::agent_loop::tests::{
+use crate::application::agent_turn::agent_loop::AgentLoopImpl;
+use crate::application::agent_turn::agent_loop::tests::{
     MockProvider, MockRegistry, MockTool, test_config, text_response, tool_call_response,
 };
 use crate::domain::conversation::value_objects::message::{LlmResponse, Message, UsageInfo};
@@ -43,10 +43,12 @@ async fn run_with_first_report(reported: Option<u32>) -> (AgentLoopImpl, Vec<Mes
     ]));
     let mut registry = MockRegistry::new();
     registry.register(Arc::new(MockTool::new("lookup", "ok")));
-    let mut agent = AgentLoopImpl::new(crate::application::agent_loop::AgentLoopConfig {
-        max_context_tokens: 4_000,
-        ..test_config(provider, Box::new(registry))
-    });
+    let mut agent = AgentLoopImpl::new(
+        crate::application::agent_turn::agent_loop::AgentLoopConfig {
+            max_context_tokens: 4_000,
+            ..test_config(provider, Box::new(registry))
+        },
+    );
     let mut messages = history();
     messages.push(Message::user("go"));
     agent.run_loop(&mut messages).await.unwrap();
@@ -133,11 +135,13 @@ async fn the_end_of_a_run_never_pairs_an_earlier_report_with_a_later_estimate() 
 #[test]
 fn the_raised_output_limit_fits_beside_the_calibrated_prompt() {
     let provider = Arc::new(MockProvider::new(vec![]));
-    let agent = AgentLoopImpl::new(crate::application::agent_loop::AgentLoopConfig {
-        max_context_tokens: 200_000,
-        max_tokens: 32_000,
-        ..test_config(provider, Box::new(MockRegistry::new()))
-    })
+    let agent = AgentLoopImpl::new(
+        crate::application::agent_turn::agent_loop::AgentLoopConfig {
+            max_context_tokens: 200_000,
+            max_tokens: 32_000,
+            ..test_config(provider, Box::new(MockRegistry::new()))
+        },
+    )
     .with_model_max_tokens(Some(128_000))
     .with_model_context_window(Some(200_000));
     // The provider counted 150k for a 75k estimate: the prompt is 150k.
@@ -187,7 +191,8 @@ impl crate::application::providers::ports::LlmProvider for NamedProvider {
 /// and the provider figure, as a model switch does.
 #[tokio::test]
 async fn a_reload_to_another_provider_forgets_the_calibration() {
-    let (mut agent, _) = crate::application::agent_loop::tests::make_agent(vec![], vec![]);
+    let (mut agent, _) =
+        crate::application::agent_turn::agent_loop::tests::make_agent(vec![], vec![]);
     agent.observe_provider_context_gauge_for_test(2_000, 1_000);
 
     agent.swap_provider(Arc::new(NamedProvider("other-provider")));
@@ -205,7 +210,8 @@ async fn a_reload_to_another_provider_forgets_the_calibration() {
 
 #[tokio::test]
 async fn a_reload_under_the_same_provider_name_forgets_the_calibration() {
-    let (mut agent, _) = crate::application::agent_loop::tests::make_agent(vec![], vec![]);
+    let (mut agent, _) =
+        crate::application::agent_turn::agent_loop::tests::make_agent(vec![], vec![]);
     agent.observe_provider_context_gauge_for_test(2_000, 1_000);
 
     agent.swap_provider(Arc::new(NamedProvider("mock")));
@@ -242,7 +248,8 @@ async fn the_iteration_limit_estimate_counts_the_tool_definitions() {
 
 #[tokio::test]
 async fn a_model_switch_forgets_the_observed_scale() {
-    let (mut agent, _) = crate::application::agent_loop::tests::make_agent(vec![], vec![]);
+    let (mut agent, _) =
+        crate::application::agent_turn::agent_loop::tests::make_agent(vec![], vec![]);
     agent.observe_provider_context_gauge_for_test(2_000, 1_000);
     assert_eq!(agent.context_manager.estimate_scale().permille(), 2_000);
 
@@ -313,12 +320,14 @@ fn tool_heavy_agent(
         .sum();
     let window = tools * window_tenths_of_tools / 10;
     let audit = Arc::new(PrunedAudit::default());
-    let agent = AgentLoopImpl::new(crate::application::agent_loop::AgentLoopConfig {
-        audit_log: Some(audit.clone() as Arc<dyn crate::application::audit::ports::AuditSink>),
-        // A one-token reply reserve (#2405) leaves the prompt the window.
-        max_tokens: 1,
-        ..test_config(Arc::new(MockProvider::new(vec![])), Box::new(registry))
-    })
+    let agent = AgentLoopImpl::new(
+        crate::application::agent_turn::agent_loop::AgentLoopConfig {
+            audit_log: Some(audit.clone() as Arc<dyn crate::application::audit::ports::AuditSink>),
+            // A one-token reply reserve (#2405) leaves the prompt the window.
+            max_tokens: 1,
+            ..test_config(Arc::new(MockProvider::new(vec![])), Box::new(registry))
+        },
+    )
     .with_model_context_window(Some(window));
     agent.observe_provider_context_gauge_for_test(2_000, 1_000);
     (agent, tools, window, audit)
@@ -386,12 +395,14 @@ async fn the_quarter_floor_over_the_calibrated_budget_is_reported_unmet() {
         .map(crate::domain::tool_policy::value_objects::tool::ToolDefinition::estimated_tokens)
         .sum();
     let audit = Arc::new(PrunedAudit::default());
-    let agent = AgentLoopImpl::new(crate::application::agent_loop::AgentLoopConfig {
-        // 100k against 45k of tools, as the reviewer's example.
-        max_context_tokens: tools * 100 / 45,
-        audit_log: Some(audit.clone() as Arc<dyn crate::application::audit::ports::AuditSink>),
-        ..test_config(Arc::new(MockProvider::new(vec![])), Box::new(registry))
-    });
+    let agent = AgentLoopImpl::new(
+        crate::application::agent_turn::agent_loop::AgentLoopConfig {
+            // 100k against 45k of tools, as the reviewer's example.
+            max_context_tokens: tools * 100 / 45,
+            audit_log: Some(audit.clone() as Arc<dyn crate::application::audit::ports::AuditSink>),
+            ..test_config(Arc::new(MockProvider::new(vec![])), Box::new(registry))
+        },
+    );
     agent.observe_provider_context_gauge_for_test(2_000, 1_000);
     let effective = agent.context_manager.pruning_ceiling_in_estimate_units();
     assert!(effective - tools < effective / 4, "the floor applies");

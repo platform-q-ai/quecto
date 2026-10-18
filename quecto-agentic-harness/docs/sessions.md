@@ -249,7 +249,7 @@ Declared only under `src/application/sessions/ports.rs` and
 | `SessionStore` | `infrastructure/persistence/file/sessions/session_store.rs` (`FileSessionStore`) | claim/release/load/load_transcript/save/save_delta/save_clean_delta/exists/list, keyed by `SessionIdentity` |
 | `ContextSpillStore` | `infrastructure/persistence/file/context_spill.rs` (`FileContextSpillStore`) | append/recall/list_entries/has_entries/clear/scrub_sync of the retention namespace |
 | `SessionExportPort` | `infrastructure/persistence/file/session_export.rs` (`FileSessionExport`) | the raw export writer (records, manifest, checksum) |
-| `DurablePrefixObservation` | `application/durable_prefix.rs` (`DurablePrefixLatch`) | the agent loop's dirty-prefix latch the save drains |
+| `DurablePrefixObservation` | `application/agent_turn/agent_loop/durable_prefix.rs` (`DurablePrefixLatch`) | the agent loop's dirty-prefix latch the save drains |
 | `WorkflowRunSource` | `infrastructure/persistence/file/sessions/session_snapshot_sources.rs` | the workflow run the save records |
 | `HistoricalRosterSource` | `infrastructure/persistence/file/sessions/session_snapshot_sources.rs` | the sub-agent rows the save records as history |
 | `TurnAccountingReset` | `interface/cli/uds_turn_accounting.rs`, `uds_session_switch_runtime.rs` | usage/context/pending reset when history is replaced |

@@ -10,7 +10,7 @@ For the related decisions, see the [ADR index](../architecture-design-records/RE
 
 ## Turn execution
 
-**Primary code:** `src/application/agent_loop.rs` and sibling modules such as
+**Primary code:** `src/application/agent_turn/agent_loop/mod.rs` and sibling modules such as
 `agent_loop_pruning.rs`, `agent_loop_spill.rs`, `agent_loop_tools.rs`,
 `agent_loop_model_limits.rs`, and the context gauge (`ContextGaugeCalibration` in
 `agent_turn/context/context_gauge.rs`).
@@ -33,8 +33,8 @@ Important invariants before Phase 2:
 ## Context management
 
 **Primary code:** `src/application/agent_turn/context/context_pruning.rs`,
-`context_pruning_messages.rs`, `agent_loop_pruning.rs`, `agent_loop_spill.rs`,
-the context gauge in `agent_turn/context/context_gauge.rs`, and related
+`context_pruning_messages.rs`, `agent_turn/agent_loop/agent_loop_pruning.rs`,
+`agent_turn/agent_loop/agent_loop_spill.rs`, the context gauge in `agent_turn/context/context_gauge.rs`, and related
 context/spill tests.
 
 Context management already exists as a conceptual subsystem. It plans what can
@@ -496,4 +496,4 @@ Current largest production/library files are at the 750-line cap, including
 `src/interface/cli/uds_snapshots.rs`, `src/interface/cli/uds_dispatch.rs`,
 `src/interface/cli/uds.rs`, `src/interface/cli/protocol.rs`,
 `src/infrastructure/tools/agents/subagent_monitor.rs`, and
-`src/application/agent_loop.rs`.
+`src/application/agent_turn/agent_loop/mod.rs`.

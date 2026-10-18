@@ -2,7 +2,7 @@
 //! a member's swarm ceiling bounds its context.
 
 use super::*;
-use quecto::application::agent_loop::AgentLoopConfig;
+use quecto::application::agent_turn::agent_loop::AgentLoopConfig;
 use quecto::application::audit::ports::AuditSink;
 use quecto::application::sessions::ports::{ContextSpillStore, SpillIndexList};
 use quecto::domain::audit::AuditEvent;

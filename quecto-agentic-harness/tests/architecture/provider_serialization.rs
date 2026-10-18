@@ -11,13 +11,16 @@ const SOURCE_CAPS: &[(&str, usize)] = &[
         300,
     ),
     ("src/infrastructure/providers/codex_request.rs", 200),
-    ("src/application/agent_turn/request.rs", 450),
-    ("src/application/agent_turn/run_loop.rs", 350),
+    ("src/application/agent_turn/agent_loop/request.rs", 450),
+    ("src/application/agent_turn/agent_loop/run_loop.rs", 350),
     ("src/infrastructure/providers/openai.rs", 750),
     ("src/infrastructure/providers/anthropic/mod.rs", 750),
     ("src/infrastructure/providers/codex.rs", 750),
-    ("src/application/agent_loop_turn_flow.rs", 750),
-    ("src/application/agent_loop.rs", 750),
+    (
+        "src/application/agent_turn/agent_loop/agent_loop_turn_flow.rs",
+        750,
+    ),
+    ("src/application/agent_turn/agent_loop/mod.rs", 750),
 ];
 
 fn source_violation(root: &Path, relative: &str, cap: usize) -> Option<String> {

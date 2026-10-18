@@ -40,7 +40,7 @@ fn liveness_read_handles(
             ephemeral: true,
             system_prompt: String::new(),
             spill_store: None,
-            durable_prefix: quecto::application::durable_prefix::DurablePrefixLatch::shared(),
+            durable_prefix: quecto::application::agent_turn::agent_loop::durable_prefix::DurablePrefixLatch::shared(),
             workflow_state: None,
             subagent_registry: None,
         },

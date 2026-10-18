@@ -5,7 +5,7 @@
 //! and then recalls through the real `recall` tool; every assertion reads the
 //! loop's own wire events and the on-disk `spill.jsonl`.
 use super::*;
-use quecto::application::agent_loop::AgentLoopConfig;
+use quecto::application::agent_turn::agent_loop::AgentLoopConfig;
 use quecto::interface::cli::uds::{UdsLoopArgs, run_uds_loop};
 use std::io::{Read, Write};
 use std::pin::Pin;

@@ -1,5 +1,5 @@
 use super::protocol::{SessionState, SessionStats, TokenStats};
-use crate::application::agent_loop::UsageTotals;
+use crate::application::agent_turn::agent_loop::UsageTotals;
 use crate::domain::conversation::services::visible_thinking::has_visible_thinking;
 /// UDS session state — in-memory tracker and statistics for an active UDS connection.
 use crate::domain::conversation::value_objects::message::{Message, Role};

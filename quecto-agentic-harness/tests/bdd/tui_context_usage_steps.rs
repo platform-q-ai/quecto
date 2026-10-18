@@ -8,8 +8,8 @@
 //!    active pruned-conversation estimate kept separate for pruning).
 
 use super::*;
-use quecto::application::agent_loop::AgentLoopConfig;
-use quecto::application::agent_loop::UsageTotals;
+use quecto::application::agent_turn::agent_loop::AgentLoopConfig;
+use quecto::application::agent_turn::agent_loop::UsageTotals;
 use quecto::application::agent_turn::context::context_pruning::estimate_total_tokens;
 use quecto::domain::conversation::value_objects::message::UsageInfo;
 use quecto::interface::cli::protocol::SessionStats as WireSessionStats;

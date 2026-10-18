@@ -162,7 +162,7 @@ serialization for UDS-visible events.
 **Production files usually involved:**
 
 - `src/domain/agents/value_objects/agent.rs` for `AgentProgressEvent` changes.
-- `src/application/agent_loop*.rs` where progress is emitted.
+- `src/application/agent_turn/agent_loop/agent_loop*.rs` where progress is emitted.
 - `src/interface/cli/uds_cancel.rs`, `uds_snapshots.rs`, or `protocol.rs` for
   UDS event conversion.
 - `src/infrastructure/observability/logging.rs` or audit-specific modules for persistent audit
@@ -296,7 +296,7 @@ or `agent_cmd` surface that exposes it.
 
 - `src/application/agent_turn/context/context_pruning.rs` and
   `src/application/agent_turn/context/context_pruning_messages.rs`.
-- `src/application/agent_loop_pruning.rs`, `agent_loop_spill.rs`, and
+- `src/application/agent_turn/agent_loop/agent_loop_pruning.rs`, `agent_loop_spill.rs`, and
   the context gauge (`ContextGaugeCalibration` in
   `src/application/agent_turn/context/context_gauge.rs`).
 - `src/domain/sessions/entities/session.rs` for spill index, dirty-prefix, or message metadata.

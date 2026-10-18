@@ -162,25 +162,25 @@ mod calibration_tests;
 
 // #2403: the watermark context's pass on the agent loop.
 #[cfg(test)]
-#[path = "agent_loop/watermark_tests.rs"]
+#[path = "watermark_tests.rs"]
 mod watermark_tests;
 
 // #2404: the watermark context's event-log records.
 #[cfg(test)]
-#[path = "agent_loop/watermark_telemetry_tests.rs"]
+#[path = "watermark_telemetry_tests.rs"]
 mod watermark_telemetry_tests;
 
 // #2414 review M2: a cut or the ladder tells the read tool what left.
 #[cfg(test)]
-#[path = "agent_loop/watermark_read_cache_tests.rs"]
+#[path = "watermark_read_cache_tests.rs"]
 mod watermark_read_cache_tests;
 
 // #2403: every request extends the previous one, through the Codex serializer.
 #[cfg(test)]
-#[path = "agent_loop/watermark_sim_tests.rs"]
+#[path = "watermark_sim_tests.rs"]
 mod watermark_sim_tests;
 
 // #2420: screenshots priced by their pixel size trigger no cut.
 #[cfg(test)]
-#[path = "agent_loop/watermark_image_sim_tests.rs"]
+#[path = "watermark_image_sim_tests.rs"]
 mod watermark_image_sim_tests;

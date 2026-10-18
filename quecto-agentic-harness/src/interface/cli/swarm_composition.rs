@@ -1,5 +1,5 @@
 //! Swarm-specific execution ports and cancellation wiring at the CLI boundary.
-use crate::application::agent_loop::AgentLoopImpl;
+use crate::application::agent_turn::agent_loop::AgentLoopImpl;
 use crate::infrastructure::tools::swarm::swarm_bridge::{Participation, SwarmContext};
 use std::sync::Arc;
 

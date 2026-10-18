@@ -1,7 +1,7 @@
 //! #2168: `--max-time` stops the run at the deadline: its model request is
 //! abandoned and its running command stopped.
 use super::*;
-use crate::application::agent_loop::AgentLoopConfig;
+use crate::application::agent_turn::agent_loop::AgentLoopConfig;
 use crate::composition::runtime::build_agent_provider;
 use crate::infrastructure::config::Config;
 use crate::infrastructure::security::sandbox::Sandbox;

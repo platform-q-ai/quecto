@@ -11,7 +11,7 @@
 //! `LlmProvider` and `ToolRegistry` so the test doesn't depend on network
 //! or filesystem state.
 
-use quecto::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
+use quecto::application::agent_turn::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use quecto::application::agent_turn::ports::AgentLoop;
 use quecto::application::audit::ports::AuditSink;
 use quecto::application::providers::ports::{ChatRequest, LlmProvider};

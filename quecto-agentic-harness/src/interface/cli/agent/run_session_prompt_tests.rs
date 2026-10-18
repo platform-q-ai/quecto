@@ -4,7 +4,7 @@
 use super::super::AgentOutput;
 use super::super::integration_tests::test_flags;
 use super::super::run_session::run_agent_session;
-use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
+use crate::application::agent_turn::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::application::providers::ports::{ChatRequest, LlmProvider};
 use crate::domain::conversation::value_objects::message::LlmResponse;
 use crate::domain::shared::error::DomainError;

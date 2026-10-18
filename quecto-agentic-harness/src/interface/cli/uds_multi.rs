@@ -6,7 +6,7 @@
 //! shared `mpsc` channel → single dispatch loop (no concurrent session
 //! mutation).  Agent shuts down when all clients disconnect.
 
-use crate::application::agent_loop::AgentLoopImpl;
+use crate::application::agent_turn::agent_loop::AgentLoopImpl;
 use crate::application::sessions::dto::SaveTrigger;
 use crate::domain::conversation::value_objects::message::Message;
 use crate::infrastructure::tools::agents::agent_cmd_containers::EnvironmentControlSlot;

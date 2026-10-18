@@ -10,7 +10,7 @@ use crate::domain::tool_policy::value_objects::extension_tool::ToolInvocation;
 // ─── Dispatch helpers (called from uds.rs dispatch_command) ───────────────
 
 fn catalogue_values(
-    agent: &crate::application::agent_loop::AgentLoopImpl,
+    agent: &crate::application::agent_turn::agent_loop::AgentLoopImpl,
 ) -> Vec<serde_json::Value> {
     agent
         .tool_catalogue_entries()

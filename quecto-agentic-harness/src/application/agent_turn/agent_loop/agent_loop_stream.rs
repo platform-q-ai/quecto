@@ -1,4 +1,4 @@
-use crate::application::agent_usage::UsageTotals;
+use crate::application::agent_turn::agent_loop::agent_usage::UsageTotals;
 use crate::domain::conversation::services::reply_requirement::ReplyRequirement;
 use crate::domain::conversation::value_objects::message::{LlmResponse, StopReason};
 use crate::domain::shared::error::DomainError;

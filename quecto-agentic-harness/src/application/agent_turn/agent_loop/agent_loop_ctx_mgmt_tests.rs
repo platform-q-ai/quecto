@@ -5,8 +5,10 @@
 //! Included as a test module from `agent_loop_pruning.rs`; uses the shared
 //! mocks from `agent_loop::tests`.
 
-use crate::application::agent_loop::tests::{MockProvider, MockRegistry, text_response};
-use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
+use crate::application::agent_turn::agent_loop::tests::{
+    MockProvider, MockRegistry, text_response,
+};
+use crate::application::agent_turn::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::application::audit::ports::AuditSink;
 use crate::application::sessions::ports::ContextSpillStore;
 use crate::domain::audit::AuditEvent;
@@ -92,8 +94,8 @@ impl ContextSpillStore for MemSpillStore {
 
 /// Audit sink capturing every emitted event for assertions.
 #[derive(Debug, Default)]
-pub(in crate::application::agent_loop) struct CapturingAuditSink {
-    pub(in crate::application::agent_loop) events: Mutex<Vec<AuditEvent>>,
+pub(in crate::application::agent_turn::agent_loop) struct CapturingAuditSink {
+    pub(in crate::application::agent_turn::agent_loop) events: Mutex<Vec<AuditEvent>>,
 }
 
 impl AuditSink for CapturingAuditSink {
@@ -571,8 +573,8 @@ async fn mem_spill_store_trait_surface_recalls_and_clears() {
 /// carries.
 #[tokio::test]
 async fn the_context_estimate_includes_the_tool_definitions() {
-    let (bare, _) = crate::application::agent_loop::tests::make_agent(vec![], vec![]);
-    let (tooled, _) = crate::application::agent_loop::tests::make_agent(
+    let (bare, _) = crate::application::agent_turn::agent_loop::tests::make_agent(vec![], vec![]);
+    let (tooled, _) = crate::application::agent_turn::agent_loop::tests::make_agent(
         vec![],
         vec![("lookup", "ok"), ("fetch", "ok")],
     );
@@ -597,7 +599,7 @@ async fn the_context_estimate_includes_the_tool_definitions() {
 /// with them.
 #[tokio::test]
 async fn the_tool_definitions_count_against_the_budget() {
-    use crate::application::agent_loop::tests::{
+    use crate::application::agent_turn::agent_loop::tests::{
         MockProvider, MockRegistry, MockTool, test_config,
     };
     let conversation = || {
@@ -648,7 +650,7 @@ async fn the_tool_definitions_count_against_the_budget() {
 /// a quarter of it, never nothing.
 #[tokio::test]
 async fn oversized_tool_definitions_leave_the_messages_a_quarter() {
-    use crate::application::agent_loop::tests::{
+    use crate::application::agent_turn::agent_loop::tests::{
         MockProvider, MockRegistry, MockTool, test_config,
     };
     let mut registry = MockRegistry::new();

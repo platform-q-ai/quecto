@@ -19,7 +19,7 @@ use crate::interface::cli::uds::dispatch_session_roster_tests::list_handle;
 /// context inline (each field borrow is a disjoint field of this struct).
 struct ActEnv {
     tmp: tempfile::TempDir,
-    agent: crate::application::agent_loop::AgentLoopImpl,
+    agent: crate::application::agent_turn::agent_loop::AgentLoopImpl,
     messages: Vec<crate::domain::conversation::value_objects::message::Message>,
     session: AgentSession,
     session_key: String,
@@ -31,8 +31,8 @@ impl ActEnv {
         let tmp = tempfile::TempDir::new().unwrap();
         Self {
             tmp,
-            agent: crate::application::agent_loop::AgentLoopImpl::new(
-                crate::application::agent_loop::AgentLoopConfig {
+            agent: crate::application::agent_turn::agent_loop::AgentLoopImpl::new(
+                crate::application::agent_turn::agent_loop::AgentLoopConfig {
                     provider: crate::interface::test_support::make_stub_provider(),
                     tool_registry: Box::new(
                         crate::infrastructure::tools::registry::ToolRegistryImpl::new(),

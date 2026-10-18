@@ -3,9 +3,9 @@
 //! the improvement loop can weigh a prune's token saving against the
 //! cache miss its prefix rewrite costs.
 
-use crate::application::agent_loop::agent_loop_pruning::ctx_mgmt_tests::CapturingAuditSink;
-use crate::application::agent_loop::tests::{MockProvider, MockRegistry, test_config};
-use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
+use crate::application::agent_turn::agent_loop::agent_loop_pruning::ctx_mgmt_tests::CapturingAuditSink;
+use crate::application::agent_turn::agent_loop::tests::{MockProvider, MockRegistry, test_config};
+use crate::application::agent_turn::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::application::audit::ports::AuditSink;
 use crate::domain::audit::AuditEvent;
 use crate::domain::conversation::value_objects::message::{LlmResponse, Message, UsageInfo};

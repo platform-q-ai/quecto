@@ -1,4 +1,4 @@
-use crate::application::agent_loop::AgentLoopImpl;
+use crate::application::agent_turn::agent_loop::AgentLoopImpl;
 
 impl AgentLoopImpl {
     pub fn can_register_uds_tool_for_owner_with_stable_id(

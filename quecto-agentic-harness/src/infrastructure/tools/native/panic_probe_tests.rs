@@ -8,7 +8,9 @@ async fn the_tool_place_panics_inside_the_call() {
         .catch_unwind()
         .await;
     let payload = outcome.expect_err("the probe panics");
-    let message = crate::application::tool_panic_scope::payload_message(payload.as_ref());
+    let message = crate::application::agent_turn::agent_loop::tool_panic_scope::payload_message(
+        payload.as_ref(),
+    );
     assert!(message.contains("is not a char boundary"), "{message}");
 }
 

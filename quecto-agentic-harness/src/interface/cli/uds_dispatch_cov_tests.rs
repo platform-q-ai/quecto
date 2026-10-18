@@ -4,7 +4,7 @@ use super::{
     dispatch_command, dispatch_ext_command, handle_abort, handle_clear_history, handle_new_session,
     handle_resume_session, handle_rewind_to, handle_steer,
 };
-use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
+use crate::application::agent_turn::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::application::sessions::ports::{ContextSpillStore, SessionStore};
 use crate::domain::sessions::entities::session_identity::{SessionIdentity, SpillId};
 use crate::infrastructure::persistence::file::sessions::session_layout::FlatSessionLayout;

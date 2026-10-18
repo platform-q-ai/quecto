@@ -1,6 +1,6 @@
 use super::build_tests::selection_for_test;
 use super::*;
-use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
+use crate::application::agent_turn::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::composition::runtime::build_agent_provider;
 use crate::composition::tool_policy::build_tool_policy_persistence;
 use crate::domain::conversation::value_objects::message::Message;

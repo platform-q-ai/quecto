@@ -9,7 +9,7 @@ use futures::FutureExt;
 
 use super::super::SaveSession;
 use super::super::rig_tests::{RecordingStore, RigOptions, Write, build_rig, dirty, ordinals, row};
-use crate::application::durable_prefix::DurablePrefixLatch;
+use crate::application::agent_turn::agent_loop::durable_prefix::DurablePrefixLatch;
 use crate::application::sessions::active_session::{ActiveSessionHandle, ActiveSessionState};
 use crate::application::sessions::dto::SaveTrigger;
 use crate::application::sessions::ports::{HistoricalRosterSource, SessionStore};

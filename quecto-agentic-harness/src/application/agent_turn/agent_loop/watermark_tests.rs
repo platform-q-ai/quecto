@@ -4,8 +4,8 @@
 //! the storm guard and its reset, and an interrupted pass.
 
 use super::ctx_mgmt_tests::MemSpillStore;
-use crate::application::agent_loop::tests::{MockProvider, MockRegistry};
-use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
+use crate::application::agent_turn::agent_loop::tests::{MockProvider, MockRegistry};
+use crate::application::agent_turn::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::application::sessions::dto::retained_context::{RecallOutcome, RecallQuery};
 use crate::application::sessions::ports::ContextSpillStore;
 use crate::application::sessions::use_cases::RecallContext;

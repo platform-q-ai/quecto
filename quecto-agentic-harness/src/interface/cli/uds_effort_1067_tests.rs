@@ -2,7 +2,7 @@
 //! `set_effort` command parsing and the `effort` field of `get_state`.
 
 use super::*;
-use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
+use crate::application::agent_turn::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::domain::inference::value_objects::provider::EffortLevel;
 use crate::interface::cli::protocol::AgentCommand;
 use crate::interface::cli::uds::dispatch_session_roster_tests::list_handle;

@@ -14,7 +14,7 @@
 //! This file is compiled as `mod bounded_read_tests` inside `uds.rs`, so
 //! `super` = `uds`.
 use super::*;
-use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
+use crate::application::agent_turn::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::interface::cli::uds::dispatch_session_roster_tests::list_handle;
 use crate::interface::cli::uds_cancel::CancelSlot;
 use crate::interface::cli::uds_ext_protocol::new_client_tool_registry;

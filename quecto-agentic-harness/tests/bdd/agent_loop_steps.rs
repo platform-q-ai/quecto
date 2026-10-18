@@ -1,5 +1,5 @@
 use super::*;
-use quecto::application::agent_loop_test_support;
+use quecto::application::agent_turn::agent_loop::agent_loop_test_support;
 use quecto::domain::shared::constants::DEFAULT_OUTPUT_CAP_BYTES;
 
 // Agent Loop Steps
@@ -44,25 +44,27 @@ fn build_agent_loop_with_callback(
         ToolRegistryImpl::new()
     };
 
-    let mut agent = AgentLoopImpl::new(quecto::application::agent_loop::AgentLoopConfig {
-        provider,
-        tool_registry: Box::new(registry),
-        model: "test-model".to_string(),
-        max_tokens: 1024,
-        temperature: 0.7,
-        retention: None,
-        session_key: String::new(),
-        max_context_tokens: 190_000,
-        progress_callback,
-        streaming: false,
-        effort: None,
-        audit_log: None,
-        pin_recent_turns: 2,
-        context_marks: Default::default(),
-        model_context_window: None,
-        tool_profile_context:
-            quecto::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent,
-    });
+    let mut agent = AgentLoopImpl::new(
+        quecto::application::agent_turn::agent_loop::AgentLoopConfig {
+            provider,
+            tool_registry: Box::new(registry),
+            model: "test-model".to_string(),
+            max_tokens: 1024,
+            temperature: 0.7,
+            retention: None,
+            session_key: String::new(),
+            max_context_tokens: 190_000,
+            progress_callback,
+            streaming: false,
+            effort: None,
+            audit_log: None,
+            pin_recent_turns: 2,
+            context_marks: Default::default(),
+            model_context_window: None,
+            tool_profile_context:
+                quecto::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent,
+        },
+    );
 
     if let Some(max) = max_iterations {
         agent = agent.with_max_tool_iterations(max);

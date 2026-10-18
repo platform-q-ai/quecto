@@ -1,7 +1,7 @@
 #![allow(private_interfaces)]
 
 use cucumber::{World, gherkin, given, then, when};
-use quecto::application::agent_loop::AgentLoopImpl;
+use quecto::application::agent_turn::agent_loop::AgentLoopImpl;
 use quecto::application::agent_turn::ports::AgentLoop;
 use quecto::application::providers::ports::{ChatRequest, LlmProvider};
 use quecto::application::sessions::ports::{ContextSpillStore, SessionStore};

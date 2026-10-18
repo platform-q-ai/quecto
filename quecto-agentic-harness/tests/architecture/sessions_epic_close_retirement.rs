@@ -53,7 +53,7 @@ const INTERFACE_FORBIDDEN_ADAPTERS: &[&str] = &[
 const RAW_KEY_CONVERSION_SITES: &[&str] = &[
     // #2009 catalogue maps persisted opaque keys at the adapter boundary.
     "src/infrastructure/persistence/file/sessions/session_home_catalogue.rs",
-    "src/application/agent_loop.rs",
+    "src/application/agent_turn/agent_loop/mod.rs",
     "src/application/sessions/use_cases/read_history.rs",
     "src/infrastructure/persistence/file/sessions/session_store.rs",
     // R2-L3: the per-record read (and its one conversion) moved out of the

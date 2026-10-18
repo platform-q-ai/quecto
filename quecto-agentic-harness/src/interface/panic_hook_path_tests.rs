@@ -46,7 +46,7 @@ const HOOK_PATH: &[(&str, &[&str])] = &[
         ],
     ),
     (
-        include_str!("../application/tool_panic_scope.rs"),
+        include_str!("../application/agent_turn/agent_loop/tool_panic_scope.rs"),
         &[
             "current",
             "begin_contained_unwind",

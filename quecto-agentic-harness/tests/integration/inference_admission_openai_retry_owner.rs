@@ -2,7 +2,7 @@
 use quecto::application::agent_turn::ports::AgentLoop;
 use quecto::{
     application::{
-        agent_loop::{AgentLoopConfig, AgentLoopImpl},
+        agent_turn::agent_loop::{AgentLoopConfig, AgentLoopImpl},
         inference_attempt::{AttemptAdmission, AttemptPermit},
     },
     domain::{

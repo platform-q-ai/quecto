@@ -14,7 +14,8 @@ async fn the_composed_loop_exports_under_the_artifacts_directory_of_its_base() {
         ephemeral: false,
         system_prompt: String::new(),
         spill_store: None,
-        durable_prefix: crate::application::durable_prefix::DurablePrefixLatch::shared(),
+        durable_prefix:
+            crate::application::agent_turn::agent_loop::durable_prefix::DurablePrefixLatch::shared(),
         workflow_state: None,
         subagent_registry: None,
     });

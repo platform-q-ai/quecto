@@ -166,7 +166,7 @@ pub(super) const PORT_IMPLEMENTORS: &[(&str, &[&str])] = &[
     ),
     (
         "DurablePrefixObservation",
-        &["src/application/durable_prefix.rs"],
+        &["src/application/agent_turn/agent_loop/durable_prefix.rs"],
     ),
     (
         "WorkflowRunSource",
@@ -567,7 +567,7 @@ fn domain_and_application_signatures_carry_no_wire_infrastructure_or_callback_ty
         .filter(|p| !p.ends_with("_tests.rs"))
         .collect();
     files.extend(DOMAIN_FILES.iter().map(|f| f.to_string()));
-    files.push("src/application/durable_prefix.rs".to_string());
+    files.push("src/application/agent_turn/agent_loop/durable_prefix.rs".to_string());
     let admitted: BTreeSet<(String, String)> = ADMITTED_PREDICATE_SITES
         .iter()
         .map(|(f, s)| (f.to_string(), s.to_string()))

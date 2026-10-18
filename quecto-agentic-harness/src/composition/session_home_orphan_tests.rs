@@ -4,7 +4,7 @@
 //! history; an orphan sidecar found at startup is discarded, never
 //! inherited by the first transcript written under the key.
 use super::super::*;
-use crate::application::durable_prefix::DurablePrefixLatch;
+use crate::application::agent_turn::agent_loop::durable_prefix::DurablePrefixLatch;
 use crate::application::sessions::dto::SaveTrigger;
 use crate::application::sessions::use_cases::{DepartingChildren, ResumeSavedSession, SaveSession};
 use crate::application::sessions::{active_session::ActiveSessionState, ports::SessionStore};
