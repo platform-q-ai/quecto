@@ -2,11 +2,11 @@
 //! built over and reports an unreadable one instead of overwriting it.
 
 use super::*;
-use crate::domain::tool::{
+use crate::domain::tool_policy::value_objects::tool::{
     ToolPolicyApplyMode, ToolPolicyMutationResult, ToolPolicyMutationStatus,
     ToolPolicyReconciliation,
 };
-use crate::domain::tool_descriptor::ProfileAvailabilityScope;
+use crate::domain::tool_policy::value_objects::tool_descriptor::ProfileAvailabilityScope;
 
 fn empty_reconciliation() -> ToolPolicyReconciliation {
     ToolPolicyReconciliation {
@@ -17,7 +17,7 @@ fn empty_reconciliation() -> ToolPolicyReconciliation {
 }
 
 fn applied(stable_id: &str, scope: ProfileAvailabilityScope) -> ToolPolicyReconciliation {
-    use crate::domain::tool_descriptor::{
+    use crate::domain::tool_policy::value_objects::tool_descriptor::{
         ToolAvailability, ToolCatalogueEntry, ToolHealth, ToolLifecycleKind, ToolSource,
     };
     let entry = ToolCatalogueEntry {

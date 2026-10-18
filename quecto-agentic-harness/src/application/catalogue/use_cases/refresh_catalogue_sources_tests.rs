@@ -46,10 +46,13 @@ pub(super) fn use_case(store: &CatalogueSnapshotStore) -> RefreshCatalogueSource
         store.clone(),
     )
 }
-use crate::domain::catalogue::{
-    AuthIdentity, Availability, CatalogueEntry, ModelCapabilities, ModelCost, ModelDescriptor,
-    ModelRef, ProviderDescriptor, SourceLayer, TransportKind,
+use crate::domain::catalogue::entities::entry::{
+    CatalogueEntry, ModelDescriptor, ProviderDescriptor,
 };
+use crate::domain::catalogue::value_objects::availability::Availability;
+use crate::domain::catalogue::value_objects::identity::{AuthIdentity, ModelRef, TransportKind};
+use crate::domain::catalogue::value_objects::model_facts::{ModelCapabilities, ModelCost};
+use crate::domain::catalogue::value_objects::precedence::SourceLayer;
 
 pub(super) fn entry(qualified: &str, display: &str) -> CatalogueEntry {
     let reference = ModelRef::parse_qualified(qualified).unwrap();

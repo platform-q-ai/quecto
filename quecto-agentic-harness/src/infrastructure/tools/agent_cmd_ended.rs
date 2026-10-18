@@ -11,10 +11,10 @@ use crate::application::subagents::use_cases::{
 use crate::domain::agents::value_objects::child_end::{
     ChildEnd, ChildOrigin, MAX_SHOWN_NAME_BYTES, MAX_SHOWN_PANIC_BYTES, shown,
 };
+use crate::domain::conversation::value_objects::message::Message;
 use crate::domain::ids::AgentUuid;
-use crate::domain::message::Message;
 use crate::domain::sessions::entities::session::SubagentLiveness;
-use crate::domain::tool::ToolResult;
+use crate::domain::tool_policy::value_objects::tool::ToolResult;
 
 use super::subagent_registry::{ExitSignalKind, SubagentRegistry};
 

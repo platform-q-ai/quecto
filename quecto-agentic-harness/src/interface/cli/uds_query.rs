@@ -1,7 +1,7 @@
 use super::protocol::AgentCommand;
 use super::uds::DispatchCtx;
 use super::uds_session::{HISTORY_PAGE_SIZE, compute_session_stats_with_usage, history_page_json};
-use crate::domain::conversation_view::user_visible_messages;
+use crate::domain::conversation::services::conversation_view::user_visible_messages;
 
 #[cfg(test)]
 pub(super) fn query_response_data(

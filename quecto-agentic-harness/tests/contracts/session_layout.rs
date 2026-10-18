@@ -11,7 +11,7 @@
 //! identity and this one projection, not the callers.
 
 use quecto::application::sessions::ports::{ContextSpillStore, SessionStore};
-use quecto::domain::message::Message;
+use quecto::domain::conversation::value_objects::message::Message;
 use quecto::domain::sessions::entities::session::{Session, SpillEntry};
 use quecto::domain::sessions::entities::session_identity::{SessionIdentity, SpillId};
 use quecto::infrastructure::persistence::context_spill::FileContextSpillStore;

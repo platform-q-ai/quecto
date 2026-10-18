@@ -2,11 +2,11 @@ use super::uds_multi::MultiClientArgs;
 use super::uds_session_handles::SessionLoopInputs;
 use super::uds_single_client::{SingleClientArgs, single_client_loop};
 use crate::application::agent_loop::AgentLoopImpl;
-pub(crate) use crate::domain::conversation_view::inject_system_prompt;
+pub(crate) use crate::domain::conversation::services::conversation_view::inject_system_prompt;
 #[cfg(test)]
-pub(crate) use crate::domain::conversation_view::remove_injected_system_prompt;
+pub(crate) use crate::domain::conversation::services::conversation_view::remove_injected_system_prompt;
 #[cfg(test)]
-use crate::domain::message::Role;
+use crate::domain::conversation::value_objects::message::Role;
 use crate::infrastructure::tools::agent_cmd_containers::EnvironmentControlSlot;
 #[cfg(test)]
 #[path = "uds_lifecycle_cov2_tests.rs"]

@@ -2,7 +2,7 @@
 
 use super::uds_steps::find_agent_response;
 use super::*;
-use quecto::domain::message::Message;
+use quecto::domain::conversation::value_objects::message::Message;
 
 // ─── chat-completions request builder ───────────────────────────────────────
 

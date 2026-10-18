@@ -9,7 +9,7 @@ use crate::application::sessions::ports::SessionStore;
 use crate::application::sessions::ports::session_home::{
     SessionHomeCatalogue, SessionMetadataSnapshot,
 };
-use crate::domain::message::Message;
+use crate::domain::conversation::value_objects::message::Message;
 use crate::domain::sessions::entities::session::Session;
 use crate::domain::sessions::entities::session_identity::SessionIdentity;
 use std::sync::Arc;

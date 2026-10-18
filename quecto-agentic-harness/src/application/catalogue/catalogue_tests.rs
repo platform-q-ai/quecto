@@ -5,10 +5,14 @@
 use std::sync::Mutex;
 
 use super::*;
-use crate::domain::catalogue::{
-    AuthIdentity, AvailabilityStatus, ModelCapabilities, ModelCost, ModelDescriptor, ModelId,
-    ModelRef, ProviderDescriptor, ProviderId, UnavailableReason,
+use crate::domain::catalogue::entities::entry::{ModelDescriptor, ProviderDescriptor};
+use crate::domain::catalogue::value_objects::availability::{
+    AvailabilityStatus, UnavailableReason,
 };
+use crate::domain::catalogue::value_objects::identity::{
+    AuthIdentity, ModelId, ModelRef, ProviderId,
+};
+use crate::domain::catalogue::value_objects::model_facts::{ModelCapabilities, ModelCost};
 
 const FAKE_SECRET: &str = "sk-secret-123";
 

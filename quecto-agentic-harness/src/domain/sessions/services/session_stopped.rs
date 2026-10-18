@@ -4,7 +4,7 @@
 
 use std::collections::HashSet;
 
-use crate::domain::message::{Message, Role};
+use crate::domain::conversation::value_objects::message::{Message, Role};
 
 /// Give every tool call of this run without a result an error result that
 /// says the run stopped first, placed after the results of its own
@@ -59,7 +59,7 @@ pub fn answer_unfinished_tool_calls(
 }
 
 fn stopped_result(
-    call: &crate::domain::message::ToolCall,
+    call: &crate::domain::conversation::value_objects::message::ToolCall,
     turn: Option<u32>,
     reason: &str,
 ) -> Message {

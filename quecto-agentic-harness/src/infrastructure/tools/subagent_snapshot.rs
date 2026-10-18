@@ -111,7 +111,9 @@ fn get_state_data_is_slim_snapshot(data: Option<&serde_json::Value>) -> bool {
     let Some(object) = data.as_object() else {
         return false;
     };
-    use crate::domain::state_snapshot::{StateSnapshot, UnchangedSnapshot};
+    use crate::domain::sessions::value_objects::state_snapshot::{
+        StateSnapshot, UnchangedSnapshot,
+    };
     if object.get("unchanged").and_then(|v| v.as_bool()) == Some(true) {
         return UnchangedSnapshot::read(data).is_some();
     }
@@ -125,7 +127,9 @@ fn get_state_data_is_slim_snapshot(data: Option<&serde_json::Value>) -> bool {
 /// is answered as the unchanged marker at the caller's cursor, carrying the
 /// live measurements `generation` does not track (a model turn in flight).
 fn finalize_get_state(line: String, mut json: serde_json::Value, since: Option<u64>) -> String {
-    use crate::domain::state_snapshot::{StateSnapshot, UnchangedSnapshot};
+    use crate::domain::sessions::value_objects::state_snapshot::{
+        StateSnapshot, UnchangedSnapshot,
+    };
     let Some(data) = json.get("data") else {
         return line;
     };

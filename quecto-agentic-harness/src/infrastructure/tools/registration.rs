@@ -1,9 +1,9 @@
 use std::borrow::Cow;
 
-use crate::domain::tool_descriptor::{
+use crate::domain::tool_policy::value_objects::tool_descriptor::{
     ProfileAvailabilityScope, ToolAvailability, ToolRestrictionReason, ToolSource,
 };
-use crate::domain::tool_id::ToolIdentity;
+use crate::domain::tool_policy::value_objects::tool_id::ToolIdentity;
 
 /// Ownership and lifecycle metadata supplied when a tool enters the common
 /// registry. Delivery adapters (bundled native, UDS, future sources) differ only

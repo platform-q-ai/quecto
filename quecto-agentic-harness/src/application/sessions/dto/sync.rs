@@ -6,7 +6,7 @@
 //! The values are domain messages and ledger positions; the transport
 //! encodes them and decides how many delta messages one frame carries.
 use super::history::HistoryPage;
-use crate::domain::message::Message;
+use crate::domain::conversation::value_objects::message::Message;
 
 /// Where a client stands: the epoch it synchronised in and the last
 /// revision it holds, plus how many newest messages a reset carries (the

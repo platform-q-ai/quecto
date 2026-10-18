@@ -590,7 +590,7 @@ fn test_definition_lists_new_commands() {
 
 #[test]
 fn agent_cmd_preserves_stateless_spawn_policy_defaults() {
-    use crate::domain::tool_descriptor::ProfileAvailabilityScope;
+    use crate::domain::tool_policy::value_objects::tool_descriptor::ProfileAvailabilityScope;
     use std::collections::BTreeMap;
 
     let tool = empty_tool();

@@ -8,7 +8,9 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use crate::domain::tool::{ToolPolicyMutationStatus, ToolPolicyReconciliation};
+use crate::domain::tool_policy::value_objects::tool::{
+    ToolPolicyMutationStatus, ToolPolicyReconciliation,
+};
 use crate::infrastructure::config::{Config, ToolPolicyEntryConfig};
 
 /// The loop's persistence hook shape (`application::agent_loop::ToolPolicyPersistence`).

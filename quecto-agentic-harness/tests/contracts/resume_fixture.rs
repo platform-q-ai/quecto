@@ -13,7 +13,7 @@ use quecto::application::sessions::ports::{
     SessionKeyPropagation, SessionStore, SessionSwitchRuntime,
 };
 use quecto::composition::session_home::session_home_in;
-use quecto::domain::message::Message;
+use quecto::domain::conversation::value_objects::message::Message;
 use quecto::domain::sessions::entities::session::Session;
 use quecto::domain::sessions::entities::session_identity::SessionIdentity;
 use quecto::domain::workflow::WorkflowRunPersisted;

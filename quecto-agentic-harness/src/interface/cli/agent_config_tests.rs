@@ -3,7 +3,7 @@
 use super::*;
 use crate::application::providers::ports::ChatRequest;
 use crate::composition::runtime::build_agent_provider;
-use crate::domain::message::Message;
+use crate::domain::conversation::value_objects::message::Message;
 use crate::infrastructure::auth::credential_store::{AuthMethod, Credential, CredentialStore};
 use crate::infrastructure::config::Config;
 use crate::interface::cli::run_with_output;

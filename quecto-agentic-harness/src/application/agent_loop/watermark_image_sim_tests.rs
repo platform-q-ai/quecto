@@ -11,13 +11,13 @@ use crate::application::agent_loop::tests::MockRegistry;
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::application::providers::ports::{ChatRequest, LlmProvider};
 use crate::application::tools::ports::Tool;
-use crate::domain::conversation::UserKind;
-use crate::domain::conversation::image_tokens::estimate_image_tokens;
-use crate::domain::conversation::watermark::{DEFAULT_HIGH_TOKENS, Watermark};
+use crate::domain::conversation::services::turn_origin::prompt;
+use crate::domain::conversation::services::watermark::{DEFAULT_HIGH_TOKENS, Watermark};
+use crate::domain::conversation::value_objects::image_tokens::estimate_image_tokens;
+use crate::domain::conversation::value_objects::message::{LlmResponse, Message, ToolCall};
+use crate::domain::conversation::value_objects::user_kind::UserKind;
 use crate::domain::error::DomainError;
-use crate::domain::message::{LlmResponse, Message, ToolCall};
-use crate::domain::tool::{ImageBlock, ToolDefinition, ToolResult};
-use crate::domain::turn_origin::prompt;
+use crate::domain::tool_policy::value_objects::tool::{ImageBlock, ToolDefinition, ToolResult};
 use quecto_image::samples::{encode, png_with_body};
 use std::future::Future;
 use std::pin::Pin;
@@ -161,7 +161,8 @@ fn screenshot_agent(provider: Arc<ScreenshotProvider>, screenshot: Arc<String>) 
         pin_recent_turns: 1,
         context_marks: Watermark::default(),
         model_context_window: None,
-        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
+        tool_profile_context:
+            crate::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent,
     })
 }
 

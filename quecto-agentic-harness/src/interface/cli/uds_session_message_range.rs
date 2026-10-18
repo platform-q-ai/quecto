@@ -9,8 +9,8 @@
 //! stay one rule — until the framed response fits (#1094), with range
 //! metadata so clients walk and reassemble content that exceeds the cap.
 use crate::application::sessions::dto::{RecoveredContent, Utf8Range};
-use crate::domain::message::{Message, ToolCall};
-use crate::domain::visible_thinking::{visible_thinking_len, visible_thinking_page};
+use crate::domain::conversation::services::visible_thinking as thinking;
+use crate::domain::conversation::value_objects::message::{Message, ToolCall};
 use crate::infrastructure::turn_origin_names::{origin_name, user_kind_name};
 use crate::interface::cli::protocol::AgentEvent;
 
@@ -71,7 +71,7 @@ fn add_bounded_thinking_page(
     start: usize,
     request_id: Option<&str>,
 ) {
-    let thinking_len = visible_thinking_len(&msg.thinking_blocks);
+    let thinking_len = thinking::visible_thinking_len(&msg.thinking_blocks);
     if thinking_len == 0 || start >= thinking_len {
         return;
     }
@@ -79,7 +79,7 @@ fn add_bounded_thinking_page(
     let start = start.min(thinking_len);
     let mut end = thinking_len;
     value["thinking"] = super::uds_visible_thinking_wire::visible_thinking_page_json(
-        visible_thinking_page(&msg.thinking_blocks, start, end),
+        thinking::visible_thinking_page(&msg.thinking_blocks, start, end),
     );
     if data_fits_frame(value, request_id) {
         value["thinkingOffset"] = serde_json::json!(start);
@@ -96,7 +96,7 @@ fn add_bounded_thinking_page(
             end = (start + 1).min(thinking_len);
         }
         value["thinking"] = super::uds_visible_thinking_wire::visible_thinking_page_json(
-            visible_thinking_page(&msg.thinking_blocks, start, end),
+            thinking::visible_thinking_page(&msg.thinking_blocks, start, end),
         );
         value["thinkingOffset"] = serde_json::json!(start);
         value["nextThinkingOffset"] = serde_json::json!(end);

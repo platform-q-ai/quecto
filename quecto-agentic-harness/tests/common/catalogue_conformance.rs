@@ -82,16 +82,19 @@ fn offenders(sources: &[(String, String)], needle: &str) -> Vec<String> {
 }
 
 /// The reasoning-effort vocabulary rule lives in the domain
-/// (`domain::catalogue::EffortVocabulary`) and is applied once, where the
+/// (`domain::catalogue::services::effort_vocabulary::EffortVocabulary`) and is applied once, where the
 /// registry adapter seeds canonical metadata; interface and infrastructure
 /// consumers project the seeded `effort_levels` (through the
 /// change-reasoning-effort use case) instead of re-deriving one (#1996).
 pub fn effort_name_inference_sites(layer_sources: &[(String, String)]) -> Vec<String> {
-    let mut sites: Vec<String> = ["catalogue::EffortVocabulary", "strings_for_model("]
-        .into_iter()
-        .flat_map(|needle| offenders(layer_sources, needle))
-        .filter(|path| !path.ends_with("infrastructure/catalogue_registry.rs"))
-        .collect();
+    let mut sites: Vec<String> = [
+        "catalogue::services::effort_vocabulary",
+        "strings_for_model(",
+    ]
+    .into_iter()
+    .flat_map(|needle| offenders(layer_sources, needle))
+    .filter(|path| !path.ends_with("infrastructure/catalogue_registry.rs"))
+    .collect();
     sites.sort();
     sites.dedup();
     sites
@@ -128,7 +131,7 @@ pub fn canonical_type_redefinitions(infrastructure_sources: &[(String, String)])
 /// port production resolution uses — the behavioral form of "canonical
 /// capabilities declare an effort vocabulary" (a comment mentioning the
 /// field cannot satisfy this).
-pub fn builtin_entries() -> Vec<quecto::domain::catalogue::CatalogueEntry> {
+pub fn builtin_entries() -> Vec<quecto::domain::catalogue::entities::entry::CatalogueEntry> {
     use quecto::application::catalogue::CatalogueSource as _;
     quecto::infrastructure::catalogue_registry::BuiltinCatalogueSource
         .load()

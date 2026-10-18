@@ -9,10 +9,15 @@ use crate::application::catalogue::ports::LoadedCatalogueInputs;
 use crate::application::catalogue::{
     CatalogueSource, CatalogueSourceError, CredentialStatusPort, SkippedRecord, SourceEntries,
 };
-use crate::domain::catalogue::{
-    AuthIdentity, Availability, CatalogueEntry, ModelCapabilities, ModelCost, ModelDescriptor,
-    ModelId, ModelRef, ProviderDescriptor, ProviderId, SourceLayer, TransportKind,
+use crate::domain::catalogue::entities::entry::{
+    CatalogueEntry, ModelDescriptor, ProviderDescriptor,
 };
+use crate::domain::catalogue::value_objects::availability::Availability;
+use crate::domain::catalogue::value_objects::identity::{
+    AuthIdentity, ModelId, ModelRef, ProviderId, TransportKind,
+};
+use crate::domain::catalogue::value_objects::model_facts::{ModelCapabilities, ModelCost};
+use crate::domain::catalogue::value_objects::precedence::SourceLayer;
 
 fn entry(provider_id: &str, model: &str, display: &str) -> CatalogueEntry {
     CatalogueEntry {
@@ -305,7 +310,7 @@ fn a_refused_model_is_listed_as_not_runnable_with_the_reason() {
     assert_eq!(
         mini.entry.model.availability.reasons(),
         &[
-            crate::domain::catalogue::UnavailableReason::RefusedForAccount(
+            crate::domain::catalogue::value_objects::availability::UnavailableReason::RefusedForAccount(
                 "not supported with a ChatGPT account".into()
             )
         ]

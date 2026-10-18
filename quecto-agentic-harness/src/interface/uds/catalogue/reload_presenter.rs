@@ -6,7 +6,7 @@
 //! wraps the verdict in its response envelope.
 
 use crate::application::catalogue::dto::ReloadOutcome;
-use crate::domain::tool_policy_catalogue::unknown_policy_entry_warning;
+use crate::domain::tool_policy::services::tool_policy_catalogue::unknown_policy_entry_warning;
 
 pub const NOT_CONFIGURED: &str = "provider reload is not configured";
 

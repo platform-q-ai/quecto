@@ -8,7 +8,7 @@ use crate::application::subagent_launch::{
 };
 use crate::domain::agents::services::subagent::{ContainerSelection, SubagentConfig};
 use crate::domain::error::DomainError;
-use crate::domain::tool::ToolResult;
+use crate::domain::tool_policy::value_objects::tool::ToolResult;
 
 #[derive(Debug, Default)]
 struct RecordingPorts {

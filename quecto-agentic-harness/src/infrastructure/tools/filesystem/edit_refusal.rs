@@ -6,7 +6,7 @@ use std::path::Path;
 
 use tokio::io::AsyncReadExt;
 
-use crate::domain::tool::ToolResult;
+use crate::domain::tool_policy::value_objects::tool::ToolResult;
 use crate::infrastructure::tools::truncate::format_size;
 
 use super::edit::{MAX_EDIT_FILE_BYTES, base_normalise};

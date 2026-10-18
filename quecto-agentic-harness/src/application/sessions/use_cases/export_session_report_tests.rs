@@ -1,8 +1,8 @@
 use super::*;
 use crate::application::sessions::active_session::ActiveSessionState;
 use crate::application::sessions::ports::SpillIndexList;
+use crate::domain::conversation::value_objects::message::ToolCall;
 use crate::domain::error::DomainError;
-use crate::domain::message::ToolCall;
 use crate::domain::sessions::entities::session::{SpillEntry, SpillIndex};
 use std::sync::Mutex;
 
@@ -208,7 +208,9 @@ async fn the_latest_substantive_assistant_message_is_reported_over_later_tool_st
 #[tokio::test]
 async fn a_workflow_nudge_reply_never_replaces_the_answer_as_the_report() {
     let answer = Message::assistant("the report", vec![]);
-    use crate::domain::turn_origin::{TurnOrigin, instruction, progress_nudge};
+    use crate::domain::conversation::services::turn_origin::{
+        TurnOrigin, instruction, progress_nudge,
+    };
     let mut answer = answer;
     answer.turn_origin = TurnOrigin::Instruction;
     let mut status = Message::assistant("status", vec![]);

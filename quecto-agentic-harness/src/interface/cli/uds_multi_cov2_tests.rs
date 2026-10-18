@@ -2,9 +2,9 @@ use super::*;
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::application::providers::ports::{ChatRequest, LlmProvider};
 use crate::application::tools::ports::Tool;
+use crate::domain::conversation::value_objects::message::Message;
 use crate::domain::error::DomainError;
-use crate::domain::message::Message;
-use crate::domain::tool::{ToolDefinition, ToolResult};
+use crate::domain::tool_policy::value_objects::tool::{ToolDefinition, ToolResult};
 use crate::infrastructure::tools::registry::ToolRegistryImpl;
 use crate::interface::cli::uds::dispatch_session_roster_tests::list_handle;
 use std::borrow::Cow;
@@ -29,19 +29,25 @@ impl LlmProvider for NeverUsedProvider {
         _request: ChatRequest<'_>,
     ) -> Pin<
         Box<
-            dyn Future<Output = Result<crate::domain::message::LlmResponse, DomainError>>
-                + Send
+            dyn Future<
+                    Output = Result<
+                        crate::domain::conversation::value_objects::message::LlmResponse,
+                        DomainError,
+                    >,
+                > + Send
                 + '_,
         >,
     > {
         Box::pin(async {
-            Ok(crate::domain::message::LlmResponse {
-                content: Some("never-used-ok".into()),
-                tool_calls: vec![],
-                usage: None,
-                stop_reason: None,
-                thinking_blocks: vec![],
-            })
+            Ok(
+                crate::domain::conversation::value_objects::message::LlmResponse {
+                    content: Some("never-used-ok".into()),
+                    tool_calls: vec![],
+                    usage: None,
+                    stop_reason: None,
+                    thinking_blocks: vec![],
+                },
+            )
         })
     }
 }
@@ -89,7 +95,8 @@ fn make_agent() -> AgentLoopImpl {
         pin_recent_turns: 2,
         context_marks: Default::default(),
         model_context_window: None,
-        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
+        tool_profile_context:
+            crate::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent,
     })
 }
 

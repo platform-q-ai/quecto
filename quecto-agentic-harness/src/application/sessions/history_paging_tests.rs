@@ -1,7 +1,7 @@
 use super::{newest_window, page_of};
 use crate::application::sessions::dto::{HistoryError, HistoryQuery};
+use crate::domain::conversation::value_objects::message::Message;
 use crate::domain::ids::MessageId;
-use crate::domain::message::Message;
 
 fn messages(n: usize) -> Vec<Message> {
     (0..n).map(|i| Message::user(format!("m{i}"))).collect()
@@ -54,7 +54,9 @@ fn an_unknown_cursor_is_refused_before_paging() {
 /// instruction, even when it lies on an older page or nudge replies follow.
 #[test]
 fn a_page_names_the_transcripts_report_wherever_it_lies() {
-    use crate::domain::turn_origin::{TurnOrigin, instruction, progress_nudge};
+    use crate::domain::conversation::services::turn_origin::{
+        TurnOrigin, instruction, progress_nudge,
+    };
     let stamped = |mut m: Message, origin| {
         m.turn_origin = origin;
         m

@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 
 use super::*;
 use crate::application::sessions::ports::ContextSpillStore;
-use crate::domain::message::{Message, Role};
+use crate::domain::conversation::value_objects::message::{Message, Role};
 use crate::domain::sessions::entities::session::{SpillEntry, SpillIndex};
 use crate::domain::sessions::entities::session_identity::{SessionIdentity, SpillId};
 

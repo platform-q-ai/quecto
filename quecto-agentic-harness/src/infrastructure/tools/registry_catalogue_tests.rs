@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use super::{ToolRegistration, ToolRegistryImpl};
-use crate::domain::tool_descriptor::{
+use crate::domain::tool_policy::value_objects::tool_descriptor::{
     ToolAvailability, ToolHealth, ToolLifecycleKind, ToolRestrictionReason, ToolSource,
 };
 use crate::infrastructure::tools::registry::tests::DummyTestTool;

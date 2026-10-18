@@ -356,13 +356,15 @@ mod oracle_counterexamples {
         );
     }
     fn done(text: &str) -> StreamEvent {
-        StreamEvent::Done(quecto::domain::message::LlmResponse {
-            content: Some(text.into()),
-            tool_calls: vec![],
-            usage: None,
-            stop_reason: None,
-            thinking_blocks: vec![],
-        })
+        StreamEvent::Done(
+            quecto::domain::conversation::value_objects::message::LlmResponse {
+                content: Some(text.into()),
+                tool_calls: vec![],
+                usage: None,
+                stop_reason: None,
+                thinking_blocks: vec![],
+            },
+        )
     }
     fn delta(text: &str) -> StreamEvent {
         StreamEvent::TextDelta(text.into())

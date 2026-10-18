@@ -5,7 +5,7 @@
 //! the SSE aggregator). They drifted apart over time. These two entry points
 //! collapse that duplication into a single place per wire shape.
 
-use crate::domain::message::UsageInfo;
+use crate::domain::conversation::value_objects::message::UsageInfo;
 use serde_json::{Map, Value};
 
 /// Read a `u32` token count from a usage object, defaulting to 0.

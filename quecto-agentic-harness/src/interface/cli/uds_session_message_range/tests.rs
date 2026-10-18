@@ -1,5 +1,5 @@
 use super::{LONG_REQUEST_ID_REGRESSION_LEN, message_to_json_range_for_response};
-use crate::domain::message::{Message, ToolCall};
+use crate::domain::conversation::value_objects::message::{Message, ToolCall};
 use crate::interface::cli::protocol::AgentEvent;
 
 /// #1103 review: range fitting must include the actual response id, not a fixed
@@ -72,7 +72,7 @@ fn tool_call_argument_range_reassembles_utf8_payload_with_bounded_frames() {
 
 #[test]
 fn ranged_get_message_preserves_visible_thinking_for_recovery() {
-    use crate::domain::message::ThinkingBlock;
+    use crate::domain::conversation::value_objects::message::ThinkingBlock;
 
     let mut msg = Message::assistant("answer", vec![]);
     msg.thinking_blocks.push(ThinkingBlock::Normal {
@@ -90,7 +90,7 @@ fn ranged_get_message_preserves_visible_thinking_for_recovery() {
 
 #[test]
 fn ranged_get_message_with_huge_thinking_returns_recoverable_thinking_page() {
-    use crate::domain::message::ThinkingBlock;
+    use crate::domain::conversation::value_objects::message::ThinkingBlock;
 
     let visible = "r".repeat(crate::infrastructure::line_cap::EVENT_LINE_JSON_BUDGET);
     let mut msg = Message::assistant("answer".repeat(1024), vec![]);
@@ -120,7 +120,7 @@ fn ranged_get_message_with_huge_thinking_returns_recoverable_thinking_page() {
 
 #[test]
 fn ranged_get_message_reassembles_oversized_visible_thinking() {
-    use crate::domain::message::ThinkingBlock;
+    use crate::domain::conversation::value_objects::message::ThinkingBlock;
 
     let visible = "λ".repeat(crate::infrastructure::line_cap::EVENT_LINE_JSON_BUDGET);
     let mut msg = Message::assistant("answer".repeat(1024), vec![]);
@@ -175,7 +175,7 @@ fn ranged_get_message_reassembles_oversized_visible_thinking() {
 
 #[test]
 fn ranged_get_message_pages_redacted_placeholder_boundaries() {
-    use crate::domain::message::ThinkingBlock;
+    use crate::domain::conversation::value_objects::message::ThinkingBlock;
 
     let mut msg = Message::assistant("answer", vec![]);
     msg.thinking_blocks.push(ThinkingBlock::Normal {
@@ -228,7 +228,7 @@ fn ranged_get_message_pages_redacted_placeholder_boundaries() {
 
 #[test]
 fn ranged_get_message_with_huge_thinking_fits_protocol_frame() {
-    use crate::domain::message::ThinkingBlock;
+    use crate::domain::conversation::value_objects::message::ThinkingBlock;
 
     let mut msg = Message::assistant("answer".repeat(1024), vec![]);
     msg.thinking_blocks.push(ThinkingBlock::Normal {
@@ -249,7 +249,7 @@ fn ranged_get_message_with_huge_thinking_fits_protocol_frame() {
 
 #[test]
 fn unranged_get_message_with_huge_thinking_falls_back_to_bounded_page() {
-    use crate::domain::message::ThinkingBlock;
+    use crate::domain::conversation::value_objects::message::ThinkingBlock;
 
     let mut msg = Message::assistant("answer".repeat(1024), vec![]);
     msg.thinking_blocks.push(ThinkingBlock::Normal {
@@ -266,7 +266,7 @@ fn unranged_get_message_with_huge_thinking_falls_back_to_bounded_page() {
 
 #[test]
 fn ranged_get_message_with_huge_thinking_still_makes_progress() {
-    use crate::domain::message::ThinkingBlock;
+    use crate::domain::conversation::value_objects::message::ThinkingBlock;
 
     let mut msg = Message::assistant("abcdef", vec![]);
     msg.thinking_blocks.push(ThinkingBlock::Normal {
@@ -285,10 +285,12 @@ fn ranged_get_message_with_huge_thinking_still_makes_progress() {
 #[test]
 fn ranged_get_message_keeps_the_image_summary() {
     let mut msg = Message::user("y".repeat(4096));
-    msg.user_image_blocks = vec![crate::domain::message::UserImageBlock::unchecked_for_tests(
-        quecto_image::ImageMime::Webp,
-        "UklGRiQAAABXRUJQVlA4IA==",
-    )];
+    msg.user_image_blocks = vec![
+        crate::domain::conversation::value_objects::message::UserImageBlock::unchecked_for_tests(
+            quecto_image::ImageMime::Webp,
+            "UklGRiQAAABXRUJQVlA4IA==",
+        ),
+    ];
     let data = message_to_json_range_for_response(&msg, Some(0), None, Some(16), None);
     assert_eq!(data["imageCount"], 1, "{data}");
     assert_eq!(data["imageMimeTypes"], serde_json::json!(["image/webp"]));

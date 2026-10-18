@@ -13,7 +13,7 @@ use super::uds_session::{
 };
 use super::uds_session_handles::SessionReadHandles;
 use crate::application::sessions::dto::TranscriptSync;
-use crate::domain::message::Message;
+use crate::domain::conversation::value_objects::message::Message;
 use crate::interface::uds::sessions::synchronize_transcript_controller::{
     SyncFields, SynchronizeTranscriptController,
 };

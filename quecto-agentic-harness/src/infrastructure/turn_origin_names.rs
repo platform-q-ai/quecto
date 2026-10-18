@@ -2,8 +2,8 @@
 //! message's turn origin (#2226): the adapters' mapping of the domain's
 //! [`TurnOrigin`], so the domain carries no wire or storage vocabulary;
 //! likewise a user message's [`UserKind`] (#2403).
-use crate::domain::conversation::UserKind;
-use crate::domain::turn_origin::TurnOrigin;
+use crate::domain::conversation::services::turn_origin::TurnOrigin;
+use crate::domain::conversation::value_objects::user_kind::UserKind;
 
 const INSTRUCTION: &str = "instruction";
 const PROGRESS_NUDGE: &str = "progressNudge";

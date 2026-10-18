@@ -3,7 +3,7 @@
 //! non-atomic save failure.
 use super::super::conversation_rewrite_rig::{RewriteOptions, build_rewrite_rig, contents};
 use crate::application::sessions::dto::ClearConversationError;
-use crate::domain::message::Message;
+use crate::domain::conversation::value_objects::message::Message;
 
 fn conversation(prompt: &str) -> Vec<Message> {
     let mut messages = Vec::new();

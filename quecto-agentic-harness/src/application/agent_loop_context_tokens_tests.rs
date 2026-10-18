@@ -1,7 +1,7 @@
 use super::*;
 use crate::domain::agents::value_objects::agent::AgentProgressEvent;
+use crate::domain::conversation::value_objects::message::{LlmResponse, Message, UsageInfo};
 use crate::domain::inference::value_objects::provider::StreamEvent;
-use crate::domain::message::{LlmResponse, Message, UsageInfo};
 use std::sync::Arc;
 
 fn response_with_provider_input_tokens(content: &str, provider_input_tokens: u32) -> LlmResponse {
@@ -83,7 +83,8 @@ async fn streaming_result_context_tokens_uses_provider_reported_occupancy() {
         pin_recent_turns: 2,
         context_marks: Default::default(),
         model_context_window: None,
-        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
+        tool_profile_context:
+            crate::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent,
     });
     let mut messages = vec![Message::user("Hi")];
 

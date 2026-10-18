@@ -15,7 +15,7 @@ use quecto::application::sessions::ports::SessionStore;
 use quecto::application::sessions::ports::session_home::SessionHomeCatalogue;
 use quecto::application::sessions::use_cases::SearchSessionMetadata;
 use quecto::composition::session_home::session_home_in;
-use quecto::domain::message::Message;
+use quecto::domain::conversation::value_objects::message::Message;
 use quecto::domain::sessions::entities::session::Session;
 use quecto::domain::sessions::entities::session_home::SessionHomeScope;
 use quecto::domain::sessions::services::resume_decision::HomeVersion;

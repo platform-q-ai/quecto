@@ -13,9 +13,9 @@ use crate::application::agent_turn::ports::AgentLoop;
 use crate::application::catalogue::dto::ModelLimits;
 use crate::application::catalogue::ports::ModelRuntime;
 use crate::application::providers::ports::{ChatRequest, LlmProvider};
-use crate::domain::conversation::image_input::ImageInput;
+use crate::domain::conversation::services::image_input::ImageInput;
+use crate::domain::conversation::value_objects::message::{LlmResponse, Message, ToolCall};
 use crate::domain::error::DomainError;
-use crate::domain::message::{LlmResponse, Message, ToolCall};
 
 /// Each request's tool-result images, as (MIME type, base64).
 type ToolImages = Vec<(String, String)>;
@@ -86,7 +86,8 @@ fn seeing_agent(
         pin_recent_turns: 2,
         context_marks: Default::default(),
         model_context_window: None,
-        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
+        tool_profile_context:
+            crate::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent,
     });
     agent.apply_model(
         "acme/seeing".into(),

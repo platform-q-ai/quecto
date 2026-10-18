@@ -2,8 +2,8 @@ use super::super::start_fresh_rig::{FRESH_KEY, FreshOptions, OLD_KEY, build_fres
 use crate::application::sessions::dto::{
     FleetSettlementOutcome, SessionTransitionRefused, StartFreshConversationError,
 };
+use crate::domain::conversation::value_objects::message::Message;
 use crate::domain::ids::AgentUuid;
-use crate::domain::message::Message;
 
 fn conversation(prompt: &str) -> Vec<Message> {
     let mut messages = vec![Message::user("q1"), Message::assistant("a1", vec![])];

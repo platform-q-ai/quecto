@@ -15,8 +15,8 @@ use std::sync::{Arc, Mutex};
 
 use crate::application::extensions::ports::PendingToolInvocation;
 use crate::application::extensions::tool_result::{SentImageBlocks, extension_tool_result};
-use crate::domain::extension_tool::ExtensionToolTimeout;
-use crate::domain::tool::{ToolDefinition, ToolResult};
+use crate::domain::tool_policy::value_objects::extension_tool::ExtensionToolTimeout;
+use crate::domain::tool_policy::value_objects::tool::{ToolDefinition, ToolResult};
 use crate::infrastructure::extensions::uds_tool::create_uds_tool;
 
 use super::protocol::{AgentEvent, ToolRegistration, WireImageBlocks};

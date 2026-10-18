@@ -3,10 +3,14 @@
 //! crosses it.
 
 use quecto::application::ports::CredentialStatusPort;
-use quecto::domain::catalogue::{
-    AuthIdentity, Availability, CatalogueEntry, ModelCapabilities, ModelCost, ModelDescriptor,
-    ModelRef, ProviderDescriptor, ProviderId, TransportKind,
+use quecto::domain::catalogue::entities::entry::{
+    CatalogueEntry, ModelDescriptor, ProviderDescriptor,
 };
+use quecto::domain::catalogue::value_objects::availability::Availability;
+use quecto::domain::catalogue::value_objects::identity::{
+    AuthIdentity, ModelRef, ProviderId, TransportKind,
+};
+use quecto::domain::catalogue::value_objects::model_facts::{ModelCapabilities, ModelCost};
 use quecto::infrastructure::auth::provider_slots::ProviderSlots;
 use quecto::infrastructure::catalogue_registry::RegistryCredentialStatus;
 use quecto::infrastructure::model_registry::{AuthMode, ModelRegistry, ProviderApi};

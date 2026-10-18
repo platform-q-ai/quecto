@@ -9,8 +9,8 @@ use crate::application::sessions::session_home::SessionHomeContext;
 use crate::application::sessions::use_cases::start_fresh_rig::{
     FreshOptions, FreshRig, OLD_KEY, build_fresh_rig,
 };
+use crate::domain::conversation::value_objects::message::Message;
 use crate::domain::error::DomainError;
-use crate::domain::message::Message;
 use crate::domain::sessions::entities::session::Session;
 use crate::domain::sessions::entities::session_home::{
     AssociationProvenance, SessionHome, SessionHomeScope, WorkspaceGroup,

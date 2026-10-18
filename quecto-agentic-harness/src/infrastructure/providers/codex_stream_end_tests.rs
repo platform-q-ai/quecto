@@ -228,7 +228,7 @@ async fn a_streamed_reply_with_nothing_in_it_ends_whole_at_end_turn() {
             assert!(response.tool_calls.is_empty());
             assert_eq!(
                 response.stop_reason,
-                Some(crate::domain::message::StopReason::EndTurn)
+                Some(crate::domain::conversation::value_objects::message::StopReason::EndTurn)
             );
         }
         other => panic!("expected a whole reply: {other:?}"),

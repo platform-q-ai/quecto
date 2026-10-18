@@ -16,10 +16,14 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
-use crate::domain::catalogue::{
-    Availability, AvailabilityStatus, CatalogueEntry, CatalogueSnapshot, ModelRef, RejectedEntry,
-    SourceLayer, TransportKind, UnavailableReason, resolve_catalogue,
+use crate::domain::catalogue::entities::entry::CatalogueEntry;
+use crate::domain::catalogue::entities::snapshot::{CatalogueSnapshot, RejectedEntry};
+use crate::domain::catalogue::services::resolution::resolve_catalogue;
+use crate::domain::catalogue::value_objects::availability::{
+    Availability, AvailabilityStatus, UnavailableReason,
 };
+use crate::domain::catalogue::value_objects::identity::{ModelRef, TransportKind};
+use crate::domain::catalogue::value_objects::precedence::SourceLayer;
 
 /// One named, ordered catalogue input. Infrastructure implements this port;
 /// the application owns precedence between layers.

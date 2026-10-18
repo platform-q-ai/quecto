@@ -8,7 +8,7 @@ pub fn reset_built_tool_result_preview_count_for_tests(content: &str) {
     super::agent_loop::agent_loop_preview::reset_built_preview_count_for_tests(content);
 }
 
-pub use crate::domain::message::{
+pub use crate::domain::conversation::value_objects::message::{
     reset_tool_call_clone_count_for_tests, tool_call_clone_count_for_tests,
 };
 
@@ -25,7 +25,7 @@ impl super::agent_loop::AgentLoopImpl {
         Box<
             dyn std::future::Future<
                     Output = Result<
-                        crate::domain::tool::ToolResult,
+                        crate::domain::tool_policy::value_objects::tool::ToolResult,
                         crate::domain::error::DomainError,
                     >,
                 > + Send

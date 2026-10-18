@@ -172,7 +172,7 @@ fn test_rewind_to_type_name() {
 }
 
 // The pure clear/rewind edits and the target resolution are the domain's
-// (`domain::conversation_edit`) and the transactions the application's
+// (`domain::conversation::services::conversation_edit`) and the transactions the application's
 // (`sessions::use_cases::{clear_conversation, rewind_conversation}`), each
 // characterized beside its owner (D6 #1975).
 

@@ -28,7 +28,7 @@ use quecto::domain::project_board::value_objects::slug::Slug;
 use quecto::domain::project_board::value_objects::vocabulary::{
     Effort, RunOutcome, TaskKind, TaskStatus,
 };
-use quecto::domain::tool::{ToolDefinition, ToolResult};
+use quecto::domain::tool_policy::value_objects::tool::{ToolDefinition, ToolResult};
 use quecto::infrastructure::persistence::project_board::text_cells::MarkdownTextCells;
 use quecto::infrastructure::test_support::memory_board_store::MemoryBoardStore;
 use quecto::infrastructure::time::board_clock::SystemBoardClock;

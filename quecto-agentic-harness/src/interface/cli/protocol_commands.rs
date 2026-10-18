@@ -1,4 +1,4 @@
-use crate::domain::tool_descriptor::ProfileAvailabilityScope;
+use crate::domain::tool_policy::value_objects::tool_descriptor::ProfileAvailabilityScope;
 use serde::{Deserialize, Deserializer, Serialize};
 
 /// One image on `prompt` / `steer` / `follow_up` as spelled on the wire

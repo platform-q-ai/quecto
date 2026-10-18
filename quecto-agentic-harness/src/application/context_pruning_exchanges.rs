@@ -5,7 +5,7 @@
 // the message list.
 
 use super::{estimate_message_tokens, estimate_total_tokens};
-use crate::domain::message::{Message, Role, ToolCall};
+use crate::domain::conversation::value_objects::message::{Message, Role, ToolCall};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Per message, the exchange it belongs to: the index of the assistant

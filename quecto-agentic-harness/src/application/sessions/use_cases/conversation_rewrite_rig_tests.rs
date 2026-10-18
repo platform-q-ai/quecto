@@ -14,8 +14,8 @@ use crate::application::sessions::active_session::{ActiveSessionHandle, ActiveSe
 use crate::application::sessions::dto::SessionListQuery;
 use crate::application::sessions::ports::session_runtime::TurnAccountingReset;
 use crate::application::sessions::ports::{ContextSpillStore, SessionStore, SpillIndexList};
+use crate::domain::conversation::value_objects::message::Message;
 use crate::domain::error::DomainError;
-use crate::domain::message::Message;
 use crate::domain::sessions::entities::session::{
     Session, SessionSummary, SpillEntries, SpillEntry,
 };

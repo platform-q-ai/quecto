@@ -1,9 +1,9 @@
 //! What a `prompt`, `steer` or `follow_up` puts in the conversation (#2403,
 //! #2422): its text and the images admitted at dispatch, and what history
 //! says about those images (how many, of which types, never their base64).
-use crate::domain::conversation::stored_images::user_image_types;
-use crate::domain::message::{Message, UserImageBlock};
-use crate::domain::turn_origin::{harness_note, instruction, prompt};
+use crate::domain::conversation::services::turn_origin::{harness_note, instruction, prompt};
+use crate::domain::conversation::value_objects::message::{Message, UserImageBlock};
+use crate::domain::conversation::value_objects::stored_images::user_image_types;
 
 /// Whether `command` is one a user or a parent sends (#2403): what it
 /// carries is a prompt. Anything else (a swarm wake) is the harness's.

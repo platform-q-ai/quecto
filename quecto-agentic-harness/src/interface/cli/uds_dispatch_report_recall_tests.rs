@@ -11,8 +11,8 @@ use super::delivery_tests::{READ, child_socket, read, serve};
 use crate::application::providers::ports::{ChatRequest, LlmProvider};
 use crate::application::sessions::ports::ContextSpillStore;
 use crate::application::tools::ports::Tool;
+use crate::domain::conversation::value_objects::message::{LlmResponse, Role};
 use crate::domain::error::DomainError;
-use crate::domain::message::{LlmResponse, Role};
 use crate::domain::sessions::entities::session::SpillEntry;
 use crate::domain::sessions::entities::session_identity::SessionIdentity;
 use crate::infrastructure::persistence::context_spill::FileContextSpillStore;
@@ -101,7 +101,8 @@ async fn fixture_with_recall(replies: &[Option<&'static str>]) -> Fixture {
             pin_recent_turns: 2,
             context_marks: Default::default(),
             model_context_window: None,
-            tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
+            tool_profile_context:
+                crate::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent,
         },
     );
     fx.set_agent(agent);

@@ -9,12 +9,12 @@ use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::application::sessions::dto::retained_context::{RecallOutcome, RecallQuery};
 use crate::application::sessions::ports::ContextSpillStore;
 use crate::application::sessions::use_cases::RecallContext;
-use crate::domain::conversation::UserKind;
-use crate::domain::conversation::watermark::Watermark;
-use crate::domain::message::{Message, ToolCall};
+use crate::domain::conversation::services::turn_origin::prompt;
+use crate::domain::conversation::services::watermark::Watermark;
+use crate::domain::conversation::value_objects::message::{Message, ToolCall};
+use crate::domain::conversation::value_objects::user_kind::UserKind;
 use crate::domain::sessions::entities::session::SpillEntry;
 use crate::domain::sessions::entities::session_identity::{SessionIdentity, SpillId};
-use crate::domain::turn_origin::prompt;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -68,7 +68,8 @@ pub(super) fn agent_under(
         pin_recent_turns: 1,
         context_marks: marks.unwrap_or_default(),
         model_context_window,
-        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
+        tool_profile_context:
+            crate::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent,
     })
 }
 
@@ -94,7 +95,8 @@ pub(super) fn default_agent(
         pin_recent_turns: 2,
         context_marks: Default::default(),
         model_context_window: None,
-        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
+        tool_profile_context:
+            crate::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent,
     })
 }
 
@@ -375,7 +377,9 @@ async fn the_storm_guard_holds_until_the_stub_leaves_the_conversation() {
                     )
                 );
             }
-            _ => crate::domain::conversation_edit::clear_conversation(&mut messages),
+            _ => crate::domain::conversation::services::conversation_edit::clear_conversation(
+                &mut messages,
+            ),
         }
         assert!(stubs(&messages).is_empty(), "{leave}: the stub left");
         messages.push(prompt(text("again", 100)));

@@ -1,6 +1,6 @@
 use super::*;
 use crate::application::sessions::ports::SessionStore;
-use crate::domain::message::Message;
+use crate::domain::conversation::value_objects::message::Message;
 use crate::domain::sessions::entities::session::Session;
 
 fn child() -> SessionIdentity {

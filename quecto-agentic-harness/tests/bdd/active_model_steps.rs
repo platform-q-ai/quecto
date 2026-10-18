@@ -15,10 +15,13 @@ use quecto::application::catalogue::{
     CatalogueSnapshotStore, CatalogueSource, CredentialStatusPort, SourceEntries,
 };
 use quecto::application::provider_runtime::CatalogueRuntimeSnapshot;
-use quecto::domain::catalogue::{
-    AuthIdentity, Availability, CatalogueEntry, ModelCapabilities, ModelCost, ModelDescriptor,
-    ModelRef, ProviderDescriptor, SourceLayer, TransportKind, UnavailableReason,
+use quecto::domain::catalogue::entities::entry::{
+    CatalogueEntry, ModelDescriptor, ProviderDescriptor,
 };
+use quecto::domain::catalogue::value_objects::availability::{Availability, UnavailableReason};
+use quecto::domain::catalogue::value_objects::identity::{AuthIdentity, ModelRef, TransportKind};
+use quecto::domain::catalogue::value_objects::model_facts::{ModelCapabilities, ModelCost};
+use quecto::domain::catalogue::value_objects::precedence::SourceLayer;
 use quecto::domain::inference::value_objects::provider::EffortLevel;
 
 #[derive(Debug, Default)]
@@ -143,7 +146,7 @@ impl quecto::application::providers::ports::LlmProvider for AmProvider {
         Box<
             dyn std::future::Future<
                     Output = Result<
-                        quecto::domain::message::LlmResponse,
+                        quecto::domain::conversation::value_objects::message::LlmResponse,
                         quecto::domain::error::DomainError,
                     >,
                 > + Send

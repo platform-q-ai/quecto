@@ -1,8 +1,8 @@
 //! Responses SSE event handler.
 use super::codex_sse_state;
 use super::{CodexProvider, SseAccumulator};
+use crate::domain::conversation::value_objects::message::LlmResponse;
 use crate::domain::inference::value_objects::provider::StreamEvent;
-use crate::domain::message::LlmResponse;
 use crate::infrastructure::providers::sse_common::{SseHandler, SseLineOutcome};
 use crate::infrastructure::providers::sse_end;
 

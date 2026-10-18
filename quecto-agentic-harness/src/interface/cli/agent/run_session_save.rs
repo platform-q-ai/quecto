@@ -2,7 +2,7 @@
 //! `--max-time` stopped it (#2173).
 use super::AgentOutput;
 use crate::application::sessions::dto::SaveTrigger;
-use crate::domain::message::Message;
+use crate::domain::conversation::value_objects::message::Message;
 use crate::interface::cli::uds_session_handles::SessionHandles;
 
 pub(super) struct TranscriptSave<'a> {
@@ -58,7 +58,7 @@ impl<'a> TranscriptSave<'a> {
         if self.ephemeral {
             return;
         }
-        crate::domain::turn_origin::stamp_turn(messages, self.run_start);
+        crate::domain::conversation::services::turn_origin::stamp_turn(messages, self.run_start);
         // Identity-based removal: immune to index shifts from mid-run
         // pruning (a no-op if pruning dropped it).
         if let Some(id) = self.system_prompt_id

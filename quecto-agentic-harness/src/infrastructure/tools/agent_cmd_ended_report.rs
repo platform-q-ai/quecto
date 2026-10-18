@@ -7,8 +7,8 @@
 //! replayed. The final report is carried whole up to the final-report
 //! budget, cut beyond it with the same notice.
 use crate::application::subagents::use_cases::{EndedTranscriptError, InspectEndedChild};
-use crate::domain::message::Message;
-use crate::domain::tool::ToolResult;
+use crate::domain::conversation::value_objects::message::Message;
+use crate::domain::tool_policy::value_objects::tool::ToolResult;
 
 use super::super::agent_cmd_report::{
     FINAL_REPORT_BUDGET_BYTES, bounded_report_messages, needs_default_report_backfill,

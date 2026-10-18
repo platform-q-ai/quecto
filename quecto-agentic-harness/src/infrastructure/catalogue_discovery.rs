@@ -14,10 +14,14 @@ use crate::application::ports::{
     CatalogueSource, RefreshChange, RefreshContext, RefreshError, RefreshRedactionPort,
     RefreshableCatalogueSource, SkippedRecord, SourceEntries,
 };
-use crate::domain::catalogue::{
-    AuthIdentity, Availability, CatalogueEntry, ModelDescriptor, ModelRef, ProviderDescriptor,
-    ProviderId, SourceLayer, TransportKind,
+use crate::domain::catalogue::entities::entry::{
+    CatalogueEntry, ModelDescriptor, ProviderDescriptor,
 };
+use crate::domain::catalogue::value_objects::availability::Availability;
+use crate::domain::catalogue::value_objects::identity::{
+    AuthIdentity, ModelRef, ProviderId, TransportKind,
+};
+use crate::domain::catalogue::value_objects::precedence::SourceLayer;
 use crate::infrastructure::atomic_write::atomic_write;
 use crate::infrastructure::model_registry::{AuthMode, ProviderApi, ProviderDefaults};
 use crate::infrastructure::providers::{
@@ -219,7 +223,7 @@ fn cached_entry(provider: &str, model: &CachedModel) -> Result<CatalogueEntry, S
             // carries no effort vocabulary until the user's record says so;
             // a listing says nothing of its input, so a built-in model keeps
             // the built-in table's (#2421 review L1).
-            capabilities: crate::domain::catalogue::ModelCapabilities {
+            capabilities: crate::domain::catalogue::value_objects::model_facts::ModelCapabilities {
                 input_modalities: crate::infrastructure::model_registry::builtin_input(
                     provider, &model.id,
                 ),

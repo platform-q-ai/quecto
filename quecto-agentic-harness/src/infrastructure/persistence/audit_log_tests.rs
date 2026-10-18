@@ -707,7 +707,7 @@ async fn context_cut_records_are_written_to_the_event_log() {
         messages_archived: 300,
         messages_kept: 20,
         archive_id: Some("archive".into()),
-        fill: crate::domain::conversation::watermark::Fill::WithinLow,
+        fill: crate::domain::conversation::services::watermark::Fill::WithinLow,
     });
     let skipped = AuditEvent::ContextCutSkipped(ContextCutSkippedRecord {
         tokens: 258_000,

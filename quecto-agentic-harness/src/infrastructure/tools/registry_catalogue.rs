@@ -1,4 +1,4 @@
-use crate::domain::tool_descriptor::{
+use crate::domain::tool_policy::value_objects::tool_descriptor::{
     ProfileAvailabilityScope, ToolCatalogueEntry, ToolHealth, ToolLifecycleKind,
 };
 use crate::infrastructure::tools::registration::ToolRegistration;

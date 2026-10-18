@@ -4,7 +4,7 @@
 //! failed save).
 use super::SaveSessionError;
 use crate::application::sessions::conversation_ledger::LedgerAdvance;
-use crate::domain::conversation_edit::{RewindTarget, RewindTargetError};
+use crate::domain::conversation::services::conversation_edit::{RewindTarget, RewindTargetError};
 
 /// Which user message to rewind to, and how long a conversation may be
 /// for a legacy index to still be unambiguous (the protocol's history page

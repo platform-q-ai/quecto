@@ -3,7 +3,7 @@
 //! entry with no text and no call.
 use super::OpenAiProvider;
 use crate::application::providers::ports::ChatRequest;
-use crate::domain::message::{Message, ThinkingBlock, ToolCall};
+use crate::domain::conversation::value_objects::message::{Message, ThinkingBlock, ToolCall};
 
 fn body(messages: &[Message]) -> serde_json::Value {
     let request = ChatRequest {

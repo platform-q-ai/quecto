@@ -104,8 +104,8 @@ async fn output_among_the_events_keeps_a_reply_going() {
         let url = servers::repeating(no_output(vendor), output, EVERY).await;
         let provider = vendor.bounded_provider(url, false, bounds());
         let messages = vec![
-            crate::domain::message::Message::system("sys"),
-            crate::domain::message::Message::user("hi"),
+            crate::domain::conversation::value_objects::message::Message::system("sys"),
+            crate::domain::conversation::value_objects::message::Message::user("hi"),
         ];
         let trace = super::stream_idle_provider_tests::traced();
         let request = super::stream_idle_provider_tests::request(&messages, &trace);
@@ -132,8 +132,8 @@ async fn pings_alone_are_not_cut_by_the_progress_bound() {
         let url = servers::repeating(ping, ping, Duration::from_millis(100)).await;
         let provider = Vendor::Anthropic.bounded_provider(url, gated, bounds());
         let messages = vec![
-            crate::domain::message::Message::system("sys"),
-            crate::domain::message::Message::user("hi"),
+            crate::domain::conversation::value_objects::message::Message::system("sys"),
+            crate::domain::conversation::value_objects::message::Message::user("hi"),
         ];
         let trace = super::stream_idle_provider_tests::traced();
         let request = super::stream_idle_provider_tests::request(&messages, &trace);

@@ -4,7 +4,7 @@
 //! pass is the only context mode, so the marks are plain settings.
 
 use super::{AgentDefaults, ConfigError};
-use crate::domain::conversation::watermark::Watermark;
+use crate::domain::conversation::services::watermark::Watermark;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 

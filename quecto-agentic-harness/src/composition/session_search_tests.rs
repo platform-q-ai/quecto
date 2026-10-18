@@ -2,7 +2,7 @@ use crate::application::sessions::dto::{
     SaveTrigger, SearchSessionMetadataRequest, SessionListScope,
 };
 use crate::composition::sessions::{SessionLoopInputs, build_session_handles};
-use crate::domain::message::Message;
+use crate::domain::conversation::value_objects::message::Message;
 use crate::domain::sessions::entities::session_home::SessionHomeScope;
 use crate::domain::sessions::entities::session_identity::SessionIdentity;
 use crate::domain::sessions::services::session_metadata_search::MatchedField;

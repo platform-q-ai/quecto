@@ -5,7 +5,7 @@
 //! - Calling `execute` with an unknown name returns `Err` or an error result.
 
 use quecto::application::tools::ports::{Tool, ToolExecutor};
-use quecto::domain::tool::{ToolDefinition, ToolResult};
+use quecto::domain::tool_policy::value_objects::tool::{ToolDefinition, ToolResult};
 use quecto::infrastructure::tools::registry::ToolRegistryImpl;
 use std::borrow::Cow;
 use std::future::Future;

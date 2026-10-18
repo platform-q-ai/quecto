@@ -25,7 +25,7 @@ fn persisted_feature_run(done: Vec<bool>) -> crate::domain::workflow::WorkflowRu
 #[tokio::test]
 async fn new_session_resets_workflow_run_state() {
     let mut env = DispatchTestEnv::with_selected_feature();
-    env.messages = vec![crate::domain::message::Message::user("old")];
+    env.messages = vec![crate::domain::conversation::value_objects::message::Message::user("old")];
     let workflow = env.workflow.clone();
     workflow.lock().unwrap().check(1).unwrap();
     assert!(workflow.lock().unwrap().persisted_run().is_some());
@@ -39,13 +39,14 @@ async fn new_session_resets_workflow_run_state() {
 #[tokio::test]
 async fn resume_session_restores_target_workflow_run_state() {
     let mut env = DispatchTestEnv::with_unselected_workflow();
-    env.messages = vec![crate::domain::message::Message::user("current")];
+    env.messages =
+        vec![crate::domain::conversation::value_objects::message::Message::user("current")];
     let key = Session::build_key("cli", "saved");
     seed_existing_home(env.tmp.path(), "saved");
     env.store
         .save(&Session {
             key: crate::domain::sessions::entities::session_identity::SessionIdentity::from_persisted_key(key.clone()),
-            messages: vec![crate::domain::message::Message::user("restored")],
+            messages: vec![crate::domain::conversation::value_objects::message::Message::user("restored")],
             workflow_run: Some(persisted_feature_run(vec![true, false, false])),
             subagent_roster: Vec::new(),
         })
@@ -71,13 +72,14 @@ async fn resume_session_restores_target_workflow_run_state() {
 async fn resume_session_clears_workflow_when_target_has_none() {
     let mut env = DispatchTestEnv::with_selected_feature();
     seed_existing_home(env.tmp.path(), "plain");
-    env.messages = vec![crate::domain::message::Message::user("current")];
+    env.messages =
+        vec![crate::domain::conversation::value_objects::message::Message::user("current")];
     env.store
         .save(&Session {
             key: crate::domain::sessions::entities::session_identity::SessionIdentity::from_persisted_key(
                 Session::build_key("cli", "plain"),
             ),
-            messages: vec![crate::domain::message::Message::user("plain")],
+            messages: vec![crate::domain::conversation::value_objects::message::Message::user("plain")],
             workflow_run: None,
             subagent_roster: Vec::new(),
         })
@@ -147,7 +149,7 @@ async fn workflow_nudge_message_waits_for_selected_template() {
 /// nudge turn; the completion nudge asks for the report, an ordinary turn.
 #[test]
 fn only_auto_continue_nudges_are_progress_nudges() {
-    use crate::domain::turn_origin::TurnOrigin;
+    use crate::domain::conversation::services::turn_origin::TurnOrigin;
     let auto = || crate::interface::cli::uds_workflow_nudge::WorkflowNudge::AutoContinue {
         standard: "standard".into(),
         corrective: "corrective".into(),
@@ -169,7 +171,7 @@ fn only_auto_continue_nudges_are_progress_nudges() {
 /// included: the harness sends them all.
 #[test]
 fn no_workflow_nudge_is_marked_a_prompt() {
-    use crate::domain::conversation::UserKind;
+    use crate::domain::conversation::value_objects::user_kind::UserKind;
     use crate::interface::cli::uds_workflow_nudge::WorkflowNudge;
     let auto = || WorkflowNudge::AutoContinue {
         standard: "standard".into(),

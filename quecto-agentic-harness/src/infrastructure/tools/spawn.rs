@@ -15,8 +15,8 @@ use crate::domain::agents::services::subagent::{
 use crate::domain::environments::entities::environment_registry::EnvironmentRegistry;
 use crate::domain::error::DomainError;
 use crate::domain::ids::AgentUuid;
-use crate::domain::tool::{ToolDefinition, ToolResult};
-use crate::domain::tool_descriptor::ProfileAvailabilityScope;
+use crate::domain::tool_policy::value_objects::tool::{ToolDefinition, ToolResult};
+use crate::domain::tool_policy::value_objects::tool_descriptor::ProfileAvailabilityScope;
 use std::collections::{BTreeMap, HashMap};
 use std::future::Future;
 use std::path::{Path, PathBuf};

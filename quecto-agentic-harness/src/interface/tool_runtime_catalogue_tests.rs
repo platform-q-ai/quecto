@@ -1,4 +1,4 @@
-use crate::domain::tool_descriptor::{
+use crate::domain::tool_policy::value_objects::tool_descriptor::{
     ProfileAvailabilityScope, ToolAvailability, ToolRestrictionReason,
 };
 use crate::interface::tool_runtime::{

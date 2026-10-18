@@ -10,8 +10,8 @@
 use super::tests::{MockProvider, MockRegistry, MockTool, text_response, tool_call_response};
 use super::{AgentLoopConfig, AgentLoopImpl};
 use crate::application::sessions::ports::ContextSpillStore;
+use crate::domain::conversation::value_objects::message::{Message, Role};
 use crate::domain::error::DomainError;
-use crate::domain::message::{Message, Role};
 use crate::domain::sessions::entities::session::SpillEntry;
 use crate::domain::sessions::entities::session_identity::{SessionIdentity, SpillId};
 use std::future::Future;
@@ -102,7 +102,8 @@ fn agent_with(
         pin_recent_turns: 2,
         context_marks: Default::default(),
         model_context_window: None,
-        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
+        tool_profile_context:
+            crate::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent,
     })
 }
 
@@ -130,7 +131,7 @@ fn big_content() -> String {
 /// cut keeps is alone over the ceiling, and a cut would save too little.)
 #[tokio::test]
 async fn in_place_stub_demotion_latches_durable_prefix_dirty() {
-    let mut brief = crate::domain::turn_origin::prompt(big_content());
+    let mut brief = crate::domain::conversation::services::turn_origin::prompt(big_content());
     brief.spill_id = Some("turn0:msg:user".to_string());
     let mut messages = vec![
         brief,

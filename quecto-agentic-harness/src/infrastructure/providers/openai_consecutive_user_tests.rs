@@ -10,7 +10,7 @@
 
 use super::OpenAiProvider;
 use crate::application::providers::ports::ChatRequest;
-use crate::domain::message::Message;
+use crate::domain::conversation::value_objects::message::Message;
 
 #[test]
 fn consecutive_user_messages_go_on_the_wire_as_they_are() {

@@ -7,8 +7,8 @@ use crate::domain::agents::services::unread_report::{
     ReportedMessage, UnreadSelection, acknowledged_report_index, later_than, needs_backfill,
     select_unread, select_unread_without_report, skipped_unread,
 };
+use crate::domain::conversation::services::turn_origin::{TurnOrigin, report_index};
 use crate::domain::sessions::entities::session::PendingMessageReport;
-use crate::domain::turn_origin::{TurnOrigin, report_index};
 
 pub(crate) fn mint_default_report_receipt() -> String {
     format!("agent-cmd-report-{}", uuid::Uuid::new_v4())

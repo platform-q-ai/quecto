@@ -664,7 +664,12 @@ fn then_image_blocks_empty(world: &mut QuectoWorld) {
 /// A spawn refusal is a tool error (#2221): the agent loop shows it to the
 /// model as `Error: tool error: …`, so the step records it the same way.
 fn spawn_outcome(
-    result: Result<quecto::domain::tool::ToolResult, quecto::domain::error::DomainError>,
-) -> quecto::domain::tool::ToolResult {
-    result.unwrap_or_else(|error| quecto::domain::tool::ToolResult::from_error(&error))
+    result: Result<
+        quecto::domain::tool_policy::value_objects::tool::ToolResult,
+        quecto::domain::error::DomainError,
+    >,
+) -> quecto::domain::tool_policy::value_objects::tool::ToolResult {
+    result.unwrap_or_else(|error| {
+        quecto::domain::tool_policy::value_objects::tool::ToolResult::from_error(&error)
+    })
 }

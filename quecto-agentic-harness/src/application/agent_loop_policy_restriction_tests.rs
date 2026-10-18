@@ -1,6 +1,8 @@
 use super::super::tests::*;
 use super::RestrictedMockRegistry;
-use crate::domain::tool::{ToolPolicyMutation, ToolPolicyMutationStatus};
+use crate::domain::tool_policy::value_objects::tool::{
+    ToolPolicyMutation, ToolPolicyMutationStatus,
+};
 
 #[test]
 fn queued_policy_enable_preserves_restricted_status() {

@@ -129,7 +129,7 @@ impl AgentLoopImpl {
     pub(super) fn tool_definition_tokens(&self) -> usize {
         self.current_tool_definitions()
             .iter()
-            .map(crate::domain::tool::ToolDefinition::estimated_tokens)
+            .map(crate::domain::tool_policy::value_objects::tool::ToolDefinition::estimated_tokens)
             .sum()
     }
 
@@ -142,7 +142,10 @@ impl AgentLoopImpl {
 fn live_result_ids(messages: &[Message]) -> std::collections::BTreeSet<String> {
     messages
         .iter()
-        .filter(|m| m.role == crate::domain::message::Role::Tool && !m.is_collapsed)
+        .filter(|m| {
+            m.role == crate::domain::conversation::value_objects::message::Role::Tool
+                && !m.is_collapsed
+        })
         .filter_map(|m| m.tool_call_id.clone())
         .collect()
 }

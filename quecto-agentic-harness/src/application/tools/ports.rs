@@ -3,7 +3,7 @@
 //! The agent turn executes tools through these contracts; infrastructure
 //! implements them (native tools, the registry, UDS-delivered tools) and
 //! composition wires concrete instances. The pure tool vocabulary
-//! (definitions, results, policy values) stays in `domain::tool`.
+//! (definitions, results, policy values) stays in `domain::tool_policy::value_objects::tool`.
 use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap};
 use std::future::Future;
@@ -11,12 +11,12 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use crate::domain::error::DomainError;
-use crate::domain::tool::{
+use crate::domain::tool_policy::value_objects::tool::{
     ToolDefinition, ToolPolicyApplyMode, ToolPolicyMutation, ToolPolicyMutationResult,
     ToolPolicyMutationStatus, ToolPolicyReconciliation, ToolPolicyRequest, ToolProfileContext,
     ToolResult,
 };
-use crate::domain::tool_descriptor::{
+use crate::domain::tool_policy::value_objects::tool_descriptor::{
     ProfileAvailabilityScope, ToolCatalogueEntry, ToolDescriptor, ToolSource,
 };
 

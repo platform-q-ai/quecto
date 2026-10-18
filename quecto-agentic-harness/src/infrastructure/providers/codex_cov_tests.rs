@@ -6,8 +6,10 @@
 //! mpsc channel.
 
 use super::*;
-use crate::domain::message::{StopReason, ToolCall};
-use crate::domain::tool::ToolDefinition;
+use crate::domain::conversation::services::visible_thinking::MAX_VISIBLE_THINKING_BYTES;
+use crate::domain::conversation::value_objects::message::ThinkingBlock;
+use crate::domain::conversation::value_objects::message::{StopReason, ToolCall};
+use crate::domain::tool_policy::value_objects::tool::ToolDefinition;
 
 fn req<'a>(
     messages: &'a [Message],
@@ -297,7 +299,7 @@ fn parse_response_persists_reasoning_summary_as_thinking() {
 
 #[test]
 fn parse_response_rejects_over_limit_reasoning_summary() {
-    let summary = "r".repeat(crate::domain::visible_thinking::MAX_VISIBLE_THINKING_BYTES + 1);
+    let summary = "r".repeat(MAX_VISIBLE_THINKING_BYTES + 1);
     let body = serde_json::json!({
         "output": [{ "type": "reasoning", "summary": summary }]
     });
@@ -375,7 +377,7 @@ data: {"type":"response.completed","response":{"status":"completed"}}
 "#;
     let resp = CodexProvider::parse_sse_response(sse).unwrap();
     match &resp.thinking_blocks[0] {
-        crate::domain::message::ThinkingBlock::Normal { thinking, .. } => {
+        ThinkingBlock::Normal { thinking, .. } => {
             assert_eq!(thinking, "same");
         }
         other => panic!("unexpected thinking block: {other:?}"),
@@ -390,7 +392,7 @@ data: {"type":"response.completed","response":{"status":"completed"}}
 "#;
     let resp = CodexProvider::parse_sse_response(sse).unwrap();
     match &resp.thinking_blocks[0] {
-        crate::domain::message::ThinkingBlock::Normal { thinking, .. } => {
+        ThinkingBlock::Normal { thinking, .. } => {
             assert_eq!(thinking, "same");
         }
         other => panic!("unexpected thinking block: {other:?}"),
@@ -399,7 +401,7 @@ data: {"type":"response.completed","response":{"status":"completed"}}
 
 #[test]
 fn parse_sse_rejects_over_limit_output_item_done_reasoning() {
-    let summary = "r".repeat(crate::domain::visible_thinking::MAX_VISIBLE_THINKING_BYTES + 1);
+    let summary = "r".repeat(MAX_VISIBLE_THINKING_BYTES + 1);
     let sse = format!(
         "data: {}\ndata: {{\"type\":\"response.completed\",\"response\":{{\"status\":\"completed\"}}}}\n",
         serde_json::json!({"type":"response.output_item.done","item":{"type":"reasoning","summary":summary}})
@@ -418,7 +420,7 @@ data: {"type":"response.completed","response":{"status":"completed"}}
 "#;
     let resp = CodexProvider::parse_sse_response(sse).unwrap();
     match &resp.thinking_blocks[0] {
-        crate::domain::message::ThinkingBlock::Normal { thinking, .. } => {
+        ThinkingBlock::Normal { thinking, .. } => {
             assert_eq!(thinking, "first second");
         }
         other => panic!("unexpected thinking block: {other:?}"),
@@ -707,8 +709,8 @@ fn oauth_and_api_key_bodies_differ_only_by_max_output_tokens_1236() {
 #[tokio::test]
 async fn codex_stream_rejects_over_limit_reasoning_with_error() {
     use crate::domain::inference::value_objects::provider::StreamEvent;
-    use crate::domain::visible_thinking::MAX_VISIBLE_THINKING_BYTES;
     use crate::infrastructure::providers::sse_common::SseHandler;
+    use MAX_VISIBLE_THINKING_BYTES;
 
     let mut handler = CodexSseHandler::new();
     let (tx, mut rx) = tokio::sync::mpsc::channel(8);

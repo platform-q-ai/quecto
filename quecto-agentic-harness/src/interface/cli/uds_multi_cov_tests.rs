@@ -353,7 +353,7 @@ async fn handle_client_closes_on_version_mismatch_and_drops_guard() {
 #[tokio::test]
 async fn final_roster_snapshot_does_not_preserve_historical_exit_barrier_with_killed_tombstones() {
     use crate::application::sessions::ports::SessionStore;
-    use crate::domain::message::Message;
+    use crate::domain::conversation::value_objects::message::Message;
     use crate::domain::sessions::entities::session::{
         PersistedSubagentRosterEntry, Session, SubagentLiveness, SubagentRestoreReason,
     };
@@ -426,7 +426,7 @@ async fn final_roster_snapshot_does_not_preserve_historical_exit_barrier_with_ki
 #[tokio::test]
 async fn final_roster_snapshot_does_not_preserve_historical_exit_barrier() {
     use crate::application::sessions::ports::SessionStore;
-    use crate::domain::message::Message;
+    use crate::domain::conversation::value_objects::message::Message;
     use crate::domain::sessions::entities::session::{
         PersistedSubagentRosterEntry, Session, SubagentLiveness, SubagentRestoreReason,
     };

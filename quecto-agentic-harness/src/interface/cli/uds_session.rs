@@ -1,8 +1,8 @@
 use super::protocol::{SessionState, SessionStats, TokenStats};
 use crate::application::agent_loop::UsageTotals;
+use crate::domain::conversation::services::visible_thinking::has_visible_thinking;
 /// UDS session state — in-memory tracker and statistics for an active UDS connection.
-use crate::domain::message::{Message, Role};
-use crate::domain::visible_thinking::has_visible_thinking;
+use crate::domain::conversation::value_objects::message::{Message, Role};
 // ─── Session state tracker ────────────────────────────────────────────────────
 /// In-memory state for an active UDS session.
 #[path = "uds_session_notify.rs"]
@@ -14,7 +14,8 @@ pub use uds_session_notify::{NoteClass, NotificationEnqueueOutcome};
 #[derive(Debug)]
 pub struct AgentSession {
     model: String,
-    admission_warnings: Vec<crate::domain::state_snapshot::AdmissionBindingWarning>,
+    admission_warnings:
+        Vec<crate::domain::sessions::value_objects::state_snapshot::AdmissionBindingWarning>,
     /// What the startup model drew (#2435, #2126), shown to every client,
     /// each with the model it is about: a switch keeps only those about the
     /// model now active.
@@ -60,13 +61,13 @@ pub use suspension::{SuspensionCause, TurnSuspension};
 pub enum PendingMessage {
     User {
         content: String,
-        images: Vec<crate::domain::message::UserImageBlock>,
+        images: Vec<crate::domain::conversation::value_objects::message::UserImageBlock>,
     },
     Control {
         id: String,
         command: String,
         content: String,
-        images: Vec<crate::domain::message::UserImageBlock>,
+        images: Vec<crate::domain::conversation::value_objects::message::UserImageBlock>,
     },
     /// A harness-generated prompt (a swarm wake nudge parked behind a steer):
     /// runs like a user prompt but never re-arms a suspended member (#1712).
@@ -108,7 +109,7 @@ impl PendingMessage {
     /// sub-agent note, a swarm wake) opens a turn of the phase it lands in,
     /// that of `conversation` (#2226).
     pub fn into_message(self, conversation: &[Message]) -> Message {
-        use crate::domain::turn_origin::{harness_note, prompt};
+        use crate::domain::conversation::services::turn_origin::{harness_note, prompt};
         match self {
             Self::User { content, images } => prompt(content).with_user_images(images),
             Self::Control {
@@ -516,7 +517,7 @@ struct ToolCallView<'a> {
     name: &'a str,
     arguments: &'a str,
 }
-struct ToolCallsView<'a>(&'a [crate::domain::message::ToolCall]);
+struct ToolCallsView<'a>(&'a [crate::domain::conversation::value_objects::message::ToolCall]);
 impl serde::Serialize for ToolCallsView<'_> {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         use serde::ser::SerializeSeq;
@@ -569,7 +570,7 @@ impl serde::Serialize for MessageView<'_> {
 /// reserves [`uds_session_history::REPORT_HINT_RESERVE_BYTES`] for it. A
 /// report never stamped carries no `turnOrigin`, like a message (#2246).
 pub(crate) fn report_hint_json(
-    report: &crate::domain::turn_origin::ReportRef,
+    report: &crate::domain::conversation::services::turn_origin::ReportRef,
 ) -> serde_json::Value {
     let mut hint = serde_json::json!({"id": report.id, "ordinal": report.ordinal,
         "contentLength": report.content_length});

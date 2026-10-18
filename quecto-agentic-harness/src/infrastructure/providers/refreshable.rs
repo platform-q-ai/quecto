@@ -17,11 +17,11 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use crate::application::providers::ports::{ChatRequest, LlmProvider};
+use crate::domain::conversation::value_objects::message::LlmResponse;
 use crate::domain::error::DomainError;
 use crate::domain::inference::services::provider_error::{
     ProviderErrorClass, classify_provider_error,
 };
-use crate::domain::message::LlmResponse;
 use crate::infrastructure::auth::credential_store::{AuthMethod, CredentialStore};
 
 /// Async function that refreshes an OAuth token.
@@ -225,8 +225,8 @@ impl LlmProvider for RefreshableProvider {
 struct OwnedRequest {
     trace: Option<Arc<crate::domain::inference::events::request_observation::RequestTrace>>,
     admission: Option<Arc<dyn crate::application::providers::ports::RequestAdmission>>,
-    messages: Vec<crate::domain::message::Message>,
-    tools: Vec<crate::domain::tool::ToolDefinition>,
+    messages: Vec<crate::domain::conversation::value_objects::message::Message>,
+    tools: Vec<crate::domain::tool_policy::value_objects::tool::ToolDefinition>,
     model: String,
     max_tokens: u32,
     temperature: f32,

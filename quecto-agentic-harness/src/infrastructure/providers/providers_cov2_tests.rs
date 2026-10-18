@@ -1,8 +1,8 @@
 use super::*;
 
 use crate::application::providers::ports::{ChatRequest, LlmProvider};
+use crate::domain::conversation::value_objects::message::LlmResponse;
 use crate::domain::error::DomainError;
-use crate::domain::message::LlmResponse;
 
 #[test]
 fn create_openai_provider_rejects_remote_http_base() {

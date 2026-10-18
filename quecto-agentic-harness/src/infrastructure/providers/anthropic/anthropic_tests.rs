@@ -1,7 +1,7 @@
 use super::*;
 use crate::application::providers::ports::ChatRequest;
-use crate::domain::message::Message;
-use crate::domain::tool::ToolDefinition;
+use crate::domain::conversation::value_objects::message::Message;
+use crate::domain::tool_policy::value_objects::tool::ToolDefinition;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -329,7 +329,7 @@ fn test_parse_response_extracts_stop_reason_end_turn() {
     let response = AnthropicProvider::parse_response(&body, false, &[]).unwrap();
     assert_eq!(
         response.stop_reason,
-        Some(crate::domain::message::StopReason::EndTurn)
+        Some(crate::domain::conversation::value_objects::message::StopReason::EndTurn)
     );
 }
 
@@ -343,7 +343,7 @@ fn test_parse_response_extracts_stop_reason_max_tokens() {
     let response = AnthropicProvider::parse_response(&body, false, &[]).unwrap();
     assert_eq!(
         response.stop_reason,
-        Some(crate::domain::message::StopReason::MaxTokens)
+        Some(crate::domain::conversation::value_objects::message::StopReason::MaxTokens)
     );
 }
 
@@ -357,7 +357,7 @@ fn test_parse_response_extracts_stop_reason_tool_use() {
     let response = AnthropicProvider::parse_response(&body, false, &[]).unwrap();
     assert_eq!(
         response.stop_reason,
-        Some(crate::domain::message::StopReason::ToolUse)
+        Some(crate::domain::conversation::value_objects::message::StopReason::ToolUse)
     );
 }
 
@@ -373,7 +373,7 @@ data: {}\n";
     let result = AnthropicProvider::parse_sse_response(sse, None).unwrap();
     assert_eq!(
         result.stop_reason,
-        Some(crate::domain::message::StopReason::EndTurn)
+        Some(crate::domain::conversation::value_objects::message::StopReason::EndTurn)
     );
 }
 

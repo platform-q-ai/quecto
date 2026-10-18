@@ -1,6 +1,6 @@
 use super::*;
 use crate::application::sessions::active_session::ActiveSessionState;
-use crate::domain::message::Message;
+use crate::domain::conversation::value_objects::message::Message;
 use crate::domain::sessions::entities::session_identity::SessionIdentity;
 
 fn controller(messages: &[Message]) -> ExportSessionReportController {

@@ -1,5 +1,5 @@
 use super::ToolRegistryImpl;
-use crate::domain::tool_descriptor::ProfileAvailabilityScope;
+use crate::domain::tool_policy::value_objects::tool_descriptor::ProfileAvailabilityScope;
 use crate::infrastructure::config::ToolPolicyConfig;
 use crate::infrastructure::tools::registration::ToolRegistration;
 

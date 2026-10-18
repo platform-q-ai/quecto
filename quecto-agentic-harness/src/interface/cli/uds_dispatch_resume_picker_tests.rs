@@ -2,7 +2,7 @@
 //! dispatch over the production composition (#2011 review R1-H1, R1-H8).
 use super::fixture_tests::Fixture;
 use crate::application::sessions::ports::SessionStore;
-use crate::domain::message::Message;
+use crate::domain::conversation::value_objects::message::Message;
 use crate::domain::sessions::entities::session::Session;
 use crate::domain::sessions::entities::session_identity::SessionIdentity;
 use crate::interface::cli::protocol::AgentCommand;

@@ -8,7 +8,7 @@ use std::collections::HashMap;
 
 use quecto::application::catalogue::ports::RuntimeConfigurationSource;
 use quecto::application::configuration::dto::ConfigSelection;
-use quecto::domain::tool_descriptor::ProfileAvailabilityScope;
+use quecto::domain::tool_policy::value_objects::tool_descriptor::ProfileAvailabilityScope;
 use quecto::infrastructure::runtime_configuration::FileRuntimeConfiguration;
 
 const OPENAI_ONLY: &str =

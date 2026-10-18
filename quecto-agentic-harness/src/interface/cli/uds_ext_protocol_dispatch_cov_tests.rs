@@ -1,6 +1,6 @@
 use super::cov_tests::{cov_agent_with_registry, tool_reg};
 use super::*;
-use crate::domain::tool_descriptor::ProfileAvailabilityScope;
+use crate::domain::tool_policy::value_objects::tool_descriptor::ProfileAvailabilityScope;
 use crate::interface::cli::uds::dispatch_session_roster_tests::list_handle;
 
 #[tokio::test]
@@ -239,17 +239,19 @@ async fn dispatch_register_tools_accepts_stable_id_for_policy_mutation() {
     let reconciliation = ctx
         .agent
         .request_tool_policy_mutation(
-            &[crate::domain::tool::ToolPolicyMutation::set_scope(
-                "com.example.weather.v1",
-                ProfileAvailabilityScope::Child,
-                "stable id mutation",
-            )],
-            crate::domain::tool::ToolPolicyApplyMode::ImmediateIfIdle,
+            &[
+                crate::domain::tool_policy::value_objects::tool::ToolPolicyMutation::set_scope(
+                    "com.example.weather.v1",
+                    ProfileAvailabilityScope::Child,
+                    "stable id mutation",
+                ),
+            ],
+            crate::domain::tool_policy::value_objects::tool::ToolPolicyApplyMode::ImmediateIfIdle,
         )
         .expect("policy applies immediately while idle");
     assert_eq!(
         reconciliation.results[0].status,
-        crate::domain::tool::ToolPolicyMutationStatus::Applied
+        crate::domain::tool_policy::value_objects::tool::ToolPolicyMutationStatus::Applied
     );
     let entry = ctx
         .agent

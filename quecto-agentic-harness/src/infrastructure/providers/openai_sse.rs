@@ -3,13 +3,15 @@
 //! Extracted from `openai.rs` to keep both files under the 750-line limit.
 //! Uses the shared SSE pump from [`sse_common`].
 
+use crate::domain::conversation::value_objects::message::{
+    LlmResponse, ThinkingBlock, ToolCall, UsageInfo,
+};
 use crate::domain::inference::value_objects::provider::StreamEvent;
-use crate::domain::message::{LlmResponse, ThinkingBlock, ToolCall, UsageInfo};
 use crate::infrastructure::providers::sse_common::{SseHandler, SseLineOutcome};
 
 use super::OpenAiProvider;
 use super::openai_sse_parser::{MAX_OPENAI_SSE_CONTENT_BYTES, append_with_limit};
-use crate::domain::visible_thinking::append_visible_thinking;
+use crate::domain::conversation::services::visible_thinking::append_visible_thinking;
 
 /// The error an OpenAI chat-completions body ends with when it ends before a
 /// terminal signal (`[DONE]` or a chunk naming a `finish_reason`), output or
@@ -29,7 +31,7 @@ pub(crate) struct OpenAiSseHandler {
     delta_scratch: String,
     model: Option<String>,
     /// The latest `finish_reason` seen on any chunk (#2116).
-    stop_reason: Option<crate::domain::message::StopReason>,
+    stop_reason: Option<crate::domain::conversation::value_objects::message::StopReason>,
     /// A choice named a non-empty `finish_reason` (#2236): the reply is
     /// whole even if the body then ends without `[DONE]`, as some
     /// OpenAI-compatible servers end it.

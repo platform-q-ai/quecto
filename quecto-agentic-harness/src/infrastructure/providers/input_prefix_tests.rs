@@ -1,7 +1,7 @@
 //! #2398: where each request's input first differs from its session's
 //! previous accepted request.
 use super::*;
-use crate::domain::conversation::image_tokens::{
+use crate::domain::conversation::value_objects::image_tokens::{
     MIN_IMAGE_TOKENS, UNREADABLE_IMAGE_TOKENS, estimate_image_tokens,
 };
 use crate::domain::inference::events::request_observation::{

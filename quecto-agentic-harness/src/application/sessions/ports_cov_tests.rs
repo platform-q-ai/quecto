@@ -1,6 +1,6 @@
 use super::*;
 use crate::application::sessions::dto::SessionListQuery;
-use crate::domain::message::Role;
+use crate::domain::conversation::value_objects::message::Role;
 use crate::domain::sessions::entities::session::SpillIndex;
 use crate::domain::sessions::entities::session_identity::{SessionIdentity, SpillId};
 use std::sync::Arc;

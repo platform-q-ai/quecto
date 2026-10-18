@@ -1,7 +1,7 @@
 use super::protocol::AgentEvent;
 use super::uds_sync::{SYNC_OVERSIZED_ERROR, bounded_response_line, intercept, sync_data};
 use crate::application::sessions::conversation_ledger::LedgerAdvance;
-use crate::domain::message::{Message, ToolCall};
+use crate::domain::conversation::value_objects::message::{Message, ToolCall};
 use crate::interface::cli::uds::dispatch_session_roster_tests::ephemeral_read_handles;
 use crate::interface::cli::uds_session::HISTORY_PAGE_JSON_BUDGET;
 use crate::interface::cli::uds_session_handles::SessionReadHandles;

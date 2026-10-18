@@ -1,5 +1,5 @@
 use super::super::sessions::{SessionLoopInputs, build_session_handles};
-use crate::domain::message::Message;
+use crate::domain::conversation::value_objects::message::Message;
 
 #[tokio::test]
 async fn the_handles_share_one_state_between_the_handle_and_the_read_use_cases() {

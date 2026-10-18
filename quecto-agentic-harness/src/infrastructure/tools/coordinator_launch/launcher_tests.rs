@@ -11,7 +11,7 @@ use crate::application::tools::ports::ToolGuard;
 use crate::domain::error::DomainError;
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::vocabulary::Effort;
-use crate::domain::tool::ToolDefinition;
+use crate::domain::tool_policy::value_objects::tool::ToolDefinition;
 use crate::infrastructure::tools::registry::ToolRegistryImpl;
 
 fn request(task: &str, run: u32) -> CoordinatorRequest {

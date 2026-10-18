@@ -3,26 +3,28 @@ use super::*;
 use crate::application::tools::ports::{
     RuntimeToolLifecycleRegistry, ToolPolicyMutator, ToolRegistry,
 };
-use crate::domain::tool::ToolProfileContext;
-use crate::domain::tool_descriptor::ProfileAvailabilityScope;
+use crate::domain::tool_policy::value_objects::tool::ToolProfileContext;
+use crate::domain::tool_policy::value_objects::tool_descriptor::ProfileAvailabilityScope;
 
 struct ReloadPolicyRegistry {
-    entries: Vec<crate::domain::tool_descriptor::ToolCatalogueEntry>,
+    entries: Vec<crate::domain::tool_policy::value_objects::tool_descriptor::ToolCatalogueEntry>,
 }
 
 impl ToolCatalog for ReloadPolicyRegistry {
-    fn definitions(&self) -> &[crate::domain::tool::ToolDefinition] {
+    fn definitions(&self) -> &[crate::domain::tool_policy::value_objects::tool::ToolDefinition] {
         &[]
     }
 
     fn definitions_for(
         &self,
         _profile: ToolProfileContext,
-    ) -> &[crate::domain::tool::ToolDefinition] {
+    ) -> &[crate::domain::tool_policy::value_objects::tool::ToolDefinition] {
         &[]
     }
 
-    fn catalogue_entries(&self) -> Vec<crate::domain::tool_descriptor::ToolCatalogueEntry> {
+    fn catalogue_entries(
+        &self,
+    ) -> Vec<crate::domain::tool_policy::value_objects::tool_descriptor::ToolCatalogueEntry> {
         self.entries.clone()
     }
 }
@@ -34,8 +36,12 @@ impl ToolExecutor for ReloadPolicyRegistry {
         _arguments: &str,
     ) -> std::pin::Pin<
         Box<
-            dyn std::future::Future<Output = Result<crate::domain::tool::ToolResult, DomainError>>
-                + Send
+            dyn std::future::Future<
+                    Output = Result<
+                        crate::domain::tool_policy::value_objects::tool::ToolResult,
+                        DomainError,
+                    >,
+                > + Send
                 + '_,
         >,
     > {

@@ -514,7 +514,7 @@ fn a_context_cut_record_pins_its_fields() {
         messages_archived: 412,
         messages_kept: 23,
         archive_id: Some("archive:2".into()),
-        fill: crate::domain::conversation::watermark::Fill::NewestExchangeOverLow,
+        fill: crate::domain::conversation::services::watermark::Fill::NewestExchangeOverLow,
     });
     let json = serde_json::to_value(&event).unwrap();
     assert_eq!(

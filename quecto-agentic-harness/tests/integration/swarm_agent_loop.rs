@@ -1,7 +1,7 @@
 //! Fake-provider end-to-end run through the real agent loop and swarm tool.
 use quecto::application::agent_loop::AgentLoopImpl;
 use quecto::application::agent_turn::ports::AgentLoop;
-use quecto::domain::message::{LlmResponse, Message, ToolCall};
+use quecto::domain::conversation::value_objects::message::{LlmResponse, Message, ToolCall};
 use quecto::infrastructure::security::sandbox::Sandbox;
 use quecto::infrastructure::tools::{
     filesystem::WriteTool, registry::ToolRegistryImpl, swarm::SwarmTool, swarm_bridge::SwarmContext,
@@ -219,7 +219,9 @@ async fn a_non_finite_argument_is_answered_by_the_loop_before_the_tool() {
     agent.process(&mut messages).await.unwrap();
     let answers: Vec<&str> = messages
         .iter()
-        .filter(|message| message.role == quecto::domain::message::Role::Tool)
+        .filter(|message| {
+            message.role == quecto::domain::conversation::value_objects::message::Role::Tool
+        })
         .map(|message| message.content.as_str())
         .collect();
     assert_eq!(answers.len(), texts.len() + reaching.len(), "{answers:?}");
@@ -551,7 +553,9 @@ impl quecto::application::providers::ports::LlmProvider for MockProvider {
         let results: Vec<&Message> = request
             .messages
             .iter()
-            .filter(|message| message.role == quecto::domain::message::Role::Tool)
+            .filter(|message| {
+                message.role == quecto::domain::conversation::value_objects::message::Role::Tool
+            })
             .collect();
         if let Some(last) = results.last().filter(|last| last.is_error) {
             self.refusals.lock().unwrap().push(last.content.clone());
@@ -608,6 +612,7 @@ fn test_config(
         pin_recent_turns: 2,
         context_marks: Default::default(),
         model_context_window: None,
-        tool_profile_context: quecto::domain::tool::ToolProfileContext::Parent,
+        tool_profile_context:
+            quecto::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent,
     }
 }

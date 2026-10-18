@@ -44,7 +44,8 @@ fn agent_at(api_base: &str, base_dir: &std::path::Path) -> AgentLoopImpl {
         pin_recent_turns: 2,
         context_marks: Default::default(),
         model_context_window: None,
-        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
+        tool_profile_context:
+            crate::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent,
     })
     .with_max_tool_iterations(3)
 }

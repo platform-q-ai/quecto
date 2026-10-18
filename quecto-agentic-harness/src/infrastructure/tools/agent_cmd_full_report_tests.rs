@@ -388,7 +388,9 @@ fn tool_for(
     (AgentCmdTool::new(registry.clone()), registry)
 }
 
-async fn read_report(tool: &AgentCmdTool) -> crate::domain::tool::ToolResult {
+async fn read_report(
+    tool: &AgentCmdTool,
+) -> crate::domain::tool_policy::value_objects::tool::ToolResult {
     tool.execute(r#"{"agent_id":"child-uuid","command":"get_messages"}"#)
         .await
         .unwrap()

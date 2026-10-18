@@ -36,7 +36,7 @@ Do not run live provider lanes unless the task explicitly requires them.
 
 **Production files usually involved:**
 
-- `src/application/tools/ports.rs` for port changes and `src/domain/tool.rs` for
+- `src/application/tools/ports.rs` for port changes and `src/domain/tool_policy/value_objects/tool.rs` for
   schema vocabulary changes, if needed.
 - `src/infrastructure/tools/<tool>.rs` or `src/infrastructure/tools/<tool>/` for
   the concrete tool.
@@ -195,7 +195,7 @@ paths.
 **Production files usually involved:**
 
 - `src/domain/sessions/entities/session.rs`, `src/domain/sessions/entities/session_identity.rs` and
-  `src/domain/message.rs` for persisted concepts; `src/application/sessions/
+  `src/domain/conversation/value_objects/message.rs` for persisted concepts; `src/application/sessions/
   ports.rs` (+ `ports/`) for the `SessionStore` / `ContextSpillStore` and the
   runtime ports.
 - `src/application/sessions/use_cases/*` — the one owner of each session

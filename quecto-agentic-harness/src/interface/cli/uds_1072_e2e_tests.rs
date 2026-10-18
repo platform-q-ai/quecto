@@ -16,10 +16,10 @@ use super::{EventSink, PromptOutcome, PromptRun, run_agent_message};
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::application::providers::ports::{ChatRequest, LlmProvider};
 use crate::application::tools::ports::Tool;
+use crate::domain::conversation::value_objects::message::{LlmResponse, Message, ToolCall};
 use crate::domain::error::DomainError;
 use crate::domain::inference::value_objects::provider::StreamEvent;
-use crate::domain::message::{LlmResponse, Message, ToolCall};
-use crate::domain::tool::{ToolDefinition, ToolResult};
+use crate::domain::tool_policy::value_objects::tool::{ToolDefinition, ToolResult};
 use crate::interface::cli::uds_session::AgentSession;
 
 /// Provider returning a scripted FIFO of responses.
@@ -214,7 +214,8 @@ async fn shrinking_turn_emits_exactly_the_run_appended_messages_and_dirty_flag()
         pin_recent_turns: 2,
         context_marks: Default::default(),
         model_context_window: None,
-        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
+        tool_profile_context:
+            crate::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent,
     });
 
     // 8 oversized prior turns: the 700-token budget forces rung 2 to drop
@@ -293,7 +294,7 @@ async fn shrinking_turn_emits_exactly_the_run_appended_messages_and_dirty_flag()
     // Cardinality alone does not prove identity/order. Resolve each ref against
     // the run's ledger and assert the exact assistant-tool-call -> tool-result
     // -> final-assistant sequence the refs are meant to denote (#1060 review).
-    use crate::domain::message::Role;
+    use crate::domain::conversation::value_objects::message::Role;
     let resolved: Vec<&Message> = refs
         .iter()
         .map(|id| {
@@ -352,7 +353,8 @@ async fn under_budget_turn_reports_prefix_clean_on_its_outcome() {
         pin_recent_turns: 2,
         context_marks: Default::default(),
         model_context_window: None,
-        tool_profile_context: crate::domain::tool::ToolProfileContext::Parent,
+        tool_profile_context:
+            crate::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent,
     });
     let mut messages = vec![
         Message::user("earlier"),

@@ -48,16 +48,21 @@ fn make_find_tool(world: &mut QuectoWorld) -> Arc<dyn Tool> {
     build_find_tool(ws_arc, sandbox)
 }
 
-fn run_find(tool: Arc<dyn Tool>, args: serde_json::Value) -> quecto::domain::tool::ToolResult {
+fn run_find(
+    tool: Arc<dyn Tool>,
+    args: serde_json::Value,
+) -> quecto::domain::tool_policy::value_objects::tool::ToolResult {
     tokio::runtime::Runtime::new()
         .unwrap()
         .block_on(async { tool.execute(&args.to_string()).await })
-        .unwrap_or_else(|e| quecto::domain::tool::ToolResult {
-            content: e.to_string(),
-            is_error: true,
-            image_blocks: vec![],
-            delivery_metadata: None,
-        })
+        .unwrap_or_else(
+            |e| quecto::domain::tool_policy::value_objects::tool::ToolResult {
+                content: e.to_string(),
+                is_error: true,
+                image_blocks: vec![],
+                delivery_metadata: None,
+            },
+        )
 }
 
 fn require_fd() {

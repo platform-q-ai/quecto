@@ -7,8 +7,8 @@
 //! client walking a message by `nextOffset` makes progress. The transport
 //! narrows a range further only to fit its frame, through
 //! [`Utf8Range::halve`].
+use crate::domain::conversation::value_objects::message::{Message, ToolCall};
 use crate::domain::ids::{MessageId, ToolCallId};
-use crate::domain::message::{Message, ToolCall};
 
 /// One recovery request: a message, and which part of it.
 #[derive(Debug, Clone, PartialEq, Eq)]

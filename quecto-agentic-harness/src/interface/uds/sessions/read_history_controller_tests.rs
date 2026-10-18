@@ -3,7 +3,7 @@ use crate::application::sessions::active_session::ActiveSessionState;
 use crate::application::sessions::dto::HistoryError;
 use crate::application::sessions::ports::SessionStore;
 use crate::application::sessions::use_cases::ReadHistory;
-use crate::domain::message::Message;
+use crate::domain::conversation::value_objects::message::Message;
 use crate::domain::sessions::entities::session::Session;
 use crate::domain::sessions::entities::session_identity::SessionIdentity;
 use crate::infrastructure::persistence::session_layout::FlatSessionLayout;

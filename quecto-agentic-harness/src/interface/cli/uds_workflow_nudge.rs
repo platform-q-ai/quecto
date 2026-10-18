@@ -2,8 +2,8 @@
 //! (split out of `uds.rs`): whether — and with what message — the bound engine
 //! nudges the agent to continue at an idle boundary.
 use super::uds::DispatchCtx;
-use crate::domain::message::Message;
-use crate::domain::turn_origin::{instruction, progress_nudge};
+use crate::domain::conversation::services::turn_origin::{instruction, progress_nudge};
+use crate::domain::conversation::value_objects::message::Message;
 
 /// A nudge to inject at an idle boundary, tagged with the automation path
 /// that produced it: the auto-continue path participates in the no-progress

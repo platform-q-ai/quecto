@@ -3,8 +3,8 @@
 //! what a startup open yields; and why a resume was refused or failed.
 use super::{SaveSessionError, SessionTransitionRefused};
 use crate::application::sessions::conversation_ledger::LedgerAdvance;
+use crate::domain::conversation::value_objects::message::Message;
 use crate::domain::error::DomainError;
-use crate::domain::message::Message;
 use crate::domain::sessions::entities::session_identity::SessionIdentity;
 use crate::domain::workflow::WorkflowRunPersisted;
 #[path = "resume_disposition.rs"]

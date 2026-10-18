@@ -3,10 +3,14 @@
 //
 // #437: Added `signature_delta` handling for thinking block signature capture.
 
+use crate::domain::conversation::services::visible_thinking::{
+    MAX_VISIBLE_THINKING_BYTES, append_visible_thinking,
+};
+use crate::domain::conversation::value_objects::message::{
+    LlmResponse, StopReason, ThinkingBlock, ToolCall, UsageInfo,
+};
 use crate::domain::inference::value_objects::provider::StreamEvent;
-use crate::domain::message::{LlmResponse, StopReason, ThinkingBlock, ToolCall, UsageInfo};
-use crate::domain::tool::ToolDefinition;
-use crate::domain::visible_thinking::{MAX_VISIBLE_THINKING_BYTES, append_visible_thinking};
+use crate::domain::tool_policy::value_objects::tool::ToolDefinition;
 use crate::infrastructure::providers::sse_limits::append_with_limit;
 
 /// Accumulates Anthropic SSE events into a final [`LlmResponse`].
@@ -259,7 +263,7 @@ impl SseAccumulator {
                 let thinking = delta["thinking"].as_str().filter(|s| !s.is_empty())?;
                 // Budget-check only. Persistence happens in `handle_block_delta`
                 // so live + persist share one append.
-                let remaining = crate::domain::visible_thinking::MAX_VISIBLE_THINKING_BYTES
+                let remaining = crate::domain::conversation::services::visible_thinking::MAX_VISIBLE_THINKING_BYTES
                     .saturating_sub(self.current_thinking.len());
                 if thinking.len() > remaining {
                     return None;

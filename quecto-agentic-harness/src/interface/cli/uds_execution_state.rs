@@ -29,7 +29,8 @@ pub struct ExecutionSnapshot {
     pub admission: Option<AdmissionSnapshot>,
     /// The model request in flight (#2210); absent when there is none.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub model_turn: Option<crate::domain::state_snapshot::ModelTurnSnapshot>,
+    pub model_turn:
+        Option<crate::domain::sessions::value_objects::state_snapshot::ModelTurnSnapshot>,
     /// This agent's own provider requests so far (#2436).
     #[serde(default)]
     pub agent_requests: AgentRequestCounters,
@@ -77,7 +78,9 @@ pub struct ExecutionState {
     request_tally: Option<Arc<RequestTally>>,
     /// Last admission revision folded into `visible_generation`.
     observed_admission_revision: u64,
-    observed_binding_warnings: Option<Vec<crate::domain::state_snapshot::AdmissionBindingWarning>>,
+    observed_binding_warnings: Option<
+        Vec<crate::domain::sessions::value_objects::state_snapshot::AdmissionBindingWarning>,
+    >,
     /// Single monotonic cursor exposed by the slim `get_state` projection.
     visible_generation: u64,
     /// Last component revisions folded into `visible_generation`.
@@ -236,7 +239,7 @@ impl ExecutionState {
     /// Advance the public cursor only when the runtime advisory changes.
     pub(crate) fn observe_binding_warnings(
         &mut self,
-        warnings: &[crate::domain::state_snapshot::AdmissionBindingWarning],
+        warnings: &[crate::domain::sessions::value_objects::state_snapshot::AdmissionBindingWarning],
     ) -> u64 {
         match self.observed_binding_warnings.as_deref() {
             Some(previous) if previous == warnings => {}

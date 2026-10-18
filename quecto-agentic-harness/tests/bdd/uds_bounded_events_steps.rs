@@ -750,7 +750,9 @@ fn when_subagent_completes_turn_on_parent(world: &mut QuectoWorld) {
             ._bounded_expected_body
             .clone()
             .unwrap_or_else(|| "child turn body".to_string());
-        let child_messages = vec![quecto::domain::message::Message::assistant(&body, vec![])];
+        let child_messages = vec![
+            quecto::domain::conversation::value_objects::message::Message::assistant(&body, vec![]),
+        ];
         let mut child_bytes = Vec::new();
         quecto::interface::cli::uds_cancel::forward_progress_event(
             quecto::domain::agents::value_objects::agent::AgentProgressEvent::TurnCompleted {
@@ -1587,7 +1589,8 @@ fn spawn_mc_agent_live(world: &mut QuectoWorld, base: &std::path::Path) {
         pin_recent_turns: 2,
         context_marks: Default::default(),
         model_context_window: None,
-        tool_profile_context: quecto::domain::tool::ToolProfileContext::Parent,
+        tool_profile_context:
+            quecto::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent,
     });
     if world._uds_streaming_enabled {
         agent.set_streaming(true);

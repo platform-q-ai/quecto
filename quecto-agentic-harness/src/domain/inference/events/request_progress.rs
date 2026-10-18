@@ -23,7 +23,9 @@ use crate::domain::inference::services::provider_error::OUTPUT_CAP_EXCEEDED;
 use crate::domain::inference::value_objects::attempt_diagnostics::{
     AttemptDiagnostics, Termination,
 };
-pub use crate::domain::state_snapshot::{AttemptProgressSnapshot, ModelTurnSnapshot};
+pub use crate::domain::sessions::value_objects::state_snapshot::{
+    AttemptProgressSnapshot, ModelTurnSnapshot,
+};
 
 /// Bytes of streamed output one attempt may send per token of its output
 /// limit. A token is about four bytes of English and rarely more than

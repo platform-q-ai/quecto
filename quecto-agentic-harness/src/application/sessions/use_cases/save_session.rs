@@ -23,12 +23,12 @@ use crate::application::sessions::dto::{SaveMode, SaveOutcome, SaveSessionError,
 use crate::application::sessions::ports::{
     DurablePrefixObservation, HistoricalRosterSource, SessionStore, WorkflowRunSource,
 };
-use crate::domain::conversation_view::{inject_system_prompt, remove_injected_system_prompt};
-use crate::domain::message::Message;
-use crate::domain::sessions::entities::session::{
-    PersistedSubagentRosterEntry, SubagentRestoreReason, assign_missing_ordinals,
-};
+use crate::domain::conversation::services::conversation_view;
+use crate::domain::conversation::value_objects::message::Message;
+use crate::domain::sessions::entities::session;
 use crate::domain::sessions::entities::session_identity::SessionIdentity;
+use conversation_view::{inject_system_prompt, remove_injected_system_prompt};
+use session::{PersistedSubagentRosterEntry, SubagentRestoreReason, assign_missing_ordinals};
 
 pub struct SaveSession {
     state: ActiveSessionHandle,

@@ -1,7 +1,7 @@
 //! #2162: the `session_id` header, and encrypted reasoning kept and
 //! replayed, each item before the call it led to, to its own origin.
 use super::*;
-use crate::domain::message::ToolCall;
+use crate::domain::conversation::value_objects::message::ToolCall;
 
 const ORIGIN: &str = "https://h/codex/responses|acct|gpt-6-sol";
 

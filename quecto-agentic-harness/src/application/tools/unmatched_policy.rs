@@ -4,7 +4,7 @@
 //! typo — a restriction that never applies — is worth a warning. The rest
 //! go to the debug log with why they are quiet.
 
-use crate::domain::tool_policy_catalogue::{
+use crate::domain::tool_policy::services::tool_policy_catalogue::{
     UnmatchedPolicyEntry, classify_unmatched_policy_entry, shown_entry_id,
 };
 

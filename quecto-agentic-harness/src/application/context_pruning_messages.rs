@@ -6,15 +6,15 @@
 // creation (single writer: [`spill_conversation_message`]), so a ladder
 // stub or drop stays recallable.
 //
-// Depends on: domain::message and its stored images, application::sessions::use_cases (the narrow
+// Depends on: domain::conversation::value_objects::message and its stored images, application::sessions::use_cases (the narrow
 // retention writer, D9 #1978). Never imports infrastructure, never reaches the retention store.
 
 use super::{estimate_tokens, truncate_utf8_safe};
 use crate::application::sessions::use_cases::RetainContext;
-use crate::domain::conversation::stored_images as images;
-use crate::domain::message::{Message, Role};
+use crate::domain::conversation::services::turn_origin::latest_opener;
+use crate::domain::conversation::value_objects::message::{Message, Role};
+use crate::domain::conversation::value_objects::stored_images as images;
 use crate::domain::sessions::entities::session::SpillEntry;
-use crate::domain::turn_origin::latest_opener;
 
 // #2213: the emergency ladder and its low-water mark.
 #[path = "context_pruning_ceiling.rs"]

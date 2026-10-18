@@ -39,7 +39,7 @@ use crate::domain::agents::services::subagent::{MAX_AGENT_ID_CHARS, validate_age
 use crate::domain::error::DomainError;
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::sessions::entities::session::SubagentLiveness;
-use crate::domain::tool::ToolResult;
+use crate::domain::tool_policy::value_objects::tool::ToolResult;
 pub use kept_boards::{KeptRunReports, KeptSwarmBoards, MAX_KEPT};
 #[cfg(test)]
 pub(crate) use run_report::swarm_run_view;
