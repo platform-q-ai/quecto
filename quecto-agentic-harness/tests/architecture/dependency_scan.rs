@@ -16,9 +16,9 @@ use std::sync::OnceLock;
 /// A crate source file's module path, from its crate's real module tree
 /// (walked from each of [`CRATE_ROOTS`] through every `mod` declaration,
 /// following `#[path]`): `src/infrastructure/tools/agents/spawn.rs` →
-/// `["infrastructure", "tools", "spawn"]`, and a `#[path]` child is named by
-/// the module that declares it, not by where its file sits. A file outside the
-/// tree is a caller bug.
+/// `["infrastructure", "tools", "agents", "spawn"]`, and a `#[path]` child is
+/// named by the module that declares it, not by where its file sits. A file
+/// outside the tree is a caller bug.
 pub(super) fn module_path(file: &str) -> Vec<String> {
     assert!(
         !test_only_file(file),
