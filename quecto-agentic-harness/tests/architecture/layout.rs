@@ -81,7 +81,7 @@ const BUDGETS: &[FlatBudget<'_>] = &[
     FlatBudget { path: "infrastructure", expected: 28 },
     FlatBudget { path: "composition", expected: 24 },
     FlatBudget { path: "interface/cli", expected: 106 },
-    FlatBudget { path: "infrastructure/tools", expected: 88 },
+    FlatBudget { path: "infrastructure/tools", expected: 32 },
     FlatBudget { path: "infrastructure/persistence", expected: 36 },
     FlatBudget { path: "application/swarm", expected: 22 },
     FlatBudget { path: "domain/swarm", expected: 15 },
