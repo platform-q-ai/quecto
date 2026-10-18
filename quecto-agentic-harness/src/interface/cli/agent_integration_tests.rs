@@ -5,8 +5,8 @@ use crate::composition::runtime::build_agent_provider;
 use crate::composition::tool_policy::build_tool_policy_persistence;
 use crate::domain::conversation::value_objects::message::Message;
 use crate::domain::tool_policy::value_objects::tool::ToolProfileContext;
-use crate::infrastructure::config::Config;
-use crate::infrastructure::security::sandbox::Sandbox;
+use crate::infrastructure::tools::swarm::swarm_bridge::Participation;
+use crate::infrastructure::{config::Config, security::sandbox::Sandbox};
 use crate::interface::cli::retention_handles::RetentionHandles;
 use crate::interface::cli::run_end_fleet::RunHandles;
 use crate::interface::cli::{CliContext, run_with_output};
@@ -98,7 +98,7 @@ pub(super) fn test_flags(
         workflow: false,
         workflow_guards: false,
         workflow_disabled: false,
-        swarm_participation: crate::infrastructure::tools::swarm_bridge::Participation::none(),
+        swarm_participation: Participation::none(),
         workflow_spec_path: None,
         inherited_tool_policy: None,
         parent_id: None,

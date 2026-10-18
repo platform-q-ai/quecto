@@ -7,6 +7,7 @@
 
 use super::build_tests::selection_for_test;
 use super::*;
+use crate::infrastructure::tools::swarm::swarm_bridge::Participation;
 
 fn flags_for_wiring_test() -> AgentFlags {
     AgentFlags {
@@ -26,7 +27,7 @@ fn flags_for_wiring_test() -> AgentFlags {
         workflow: false,
         workflow_guards: false,
         workflow_disabled: false,
-        swarm_participation: crate::infrastructure::tools::swarm_bridge::Participation::none(),
+        swarm_participation: Participation::none(),
         workflow_spec_path: None,
         inherited_tool_policy: None,
         parent_id: None,
@@ -148,22 +149,23 @@ fn joining_a_swarm_lowers_the_members_pruning_ceiling() {
     )
     .unwrap();
     let cfg = tmp.path().join("config.json");
-    let build = |participation: crate::infrastructure::tools::swarm_bridge::Participation| {
-        let mut flags = flags_for_wiring_test();
-        flags.model_override = None;
-        flags.swarm_participation = participation;
-        let mut stderr = String::new();
-        build_agent_from_config(
-            tmp.path(),
-            &selection_for_test(&cfg, false),
-            &flags,
-            &mut stderr,
-            None,
-        )
-        .expect("agent build should succeed")
-    };
+    let build =
+        |participation: crate::infrastructure::tools::swarm::swarm_bridge::Participation| {
+            let mut flags = flags_for_wiring_test();
+            flags.model_override = None;
+            flags.swarm_participation = participation;
+            let mut stderr = String::new();
+            build_agent_from_config(
+                tmp.path(),
+                &selection_for_test(&cfg, false),
+                &flags,
+                &mut stderr,
+                None,
+            )
+            .expect("agent build should succeed")
+        };
 
-    let participation = crate::infrastructure::tools::swarm_bridge::Participation::shared();
+    let participation = crate::infrastructure::tools::swarm::swarm_bridge::Participation::shared();
     let member = build(participation.clone());
     assert_eq!(member.agent.effective_max_context_tokens(), 150_000);
     let captured = CapturedLog::default();
@@ -189,7 +191,7 @@ fn joining_a_swarm_lowers_the_members_pruning_ceiling() {
         "a swarm member's ceiling applies from the moment it joins"
     );
 
-    let loner = build(crate::infrastructure::tools::swarm_bridge::Participation::none());
+    let loner = build(crate::infrastructure::tools::swarm::swarm_bridge::Participation::none());
     assert_eq!(loner.agent.effective_max_context_tokens(), 150_000);
 }
 
@@ -226,7 +228,7 @@ fn every_construction_runs_the_watermark_pass() {
     use crate::domain::conversation::services::turn_origin::prompt;
     use crate::domain::conversation::value_objects::message::Message;
     use crate::domain::conversation::value_objects::user_kind::UserKind;
-    use crate::infrastructure::tools::swarm_bridge::Participation;
+    use crate::infrastructure::tools::swarm::swarm_bridge::Participation;
     let tmp = tempfile::TempDir::new().unwrap();
     std::fs::write(
         tmp.path().join("config.json"),

@@ -4,7 +4,9 @@ use quecto::application::agent_turn::ports::AgentLoop;
 use quecto::domain::conversation::value_objects::message::{LlmResponse, Message, ToolCall};
 use quecto::infrastructure::security::sandbox::Sandbox;
 use quecto::infrastructure::tools::{
-    filesystem::WriteTool, registry::ToolRegistryImpl, swarm::SwarmTool, swarm_bridge::SwarmContext,
+    filesystem::WriteTool,
+    registry::ToolRegistryImpl,
+    swarm::{SwarmTool, swarm_bridge::SwarmContext},
 };
 use std::sync::Arc;
 
@@ -127,7 +129,7 @@ async fn fake_provider_decomposes_resolves_blocker_and_verifies_swarm() {
         .as_secs()
         + 60;
     quecto::infrastructure::tools::call_work::off_the_runtime(|| context.create_run(&serde_json::json!({"goal":"ship","constraints":[],"criteria":[{"id":"tests","kind":"command","description":"pass"}],"member_limit":1,"deadline":deadline}),
-        &quecto::domain::swarm::ProcessIdentity { pid: std::process::id(), started: quecto::infrastructure::tools::swarm_bridge::process_start(std::process::id()).unwrap() }, None)).unwrap();
+        &quecto::domain::swarm::ProcessIdentity { pid: std::process::id(), started: quecto::infrastructure::tools::swarm::swarm_bridge::process_start(std::process::id()).unwrap() }, None)).unwrap();
     let tool = SwarmTool::new().with_context(Some(context));
     let provider = Arc::new(MockProvider::new(STEPS));
     let mut registry = ToolRegistryImpl::new();
@@ -277,8 +279,10 @@ fn recorded_run(directory: &tempfile::TempDir) -> (SwarmContext, Arc<BoardCalls>
         + 60;
     let process = quecto::domain::swarm::ProcessIdentity {
         pid: std::process::id(),
-        started: quecto::infrastructure::tools::swarm_bridge::process_start(std::process::id())
-            .unwrap(),
+        started: quecto::infrastructure::tools::swarm::swarm_bridge::process_start(
+            std::process::id(),
+        )
+        .unwrap(),
     };
     quecto::infrastructure::tools::call_work::off_the_runtime(|| {
         context.create_run(

@@ -37,7 +37,7 @@ fn ensure_workspace(world: &mut QuectoWorld) -> PathBuf {
 pub(crate) fn tool(world: &mut QuectoWorld) -> Arc<SwarmTool> {
     let ws = ensure_workspace(world);
     if world.swarm_tool.is_none() {
-        let tool = quecto::infrastructure::tools::swarm_test_support::tool(
+        let tool = quecto::infrastructure::tools::swarm::swarm_test_support::tool(
             Arc::new(ws),
             quecto::composition::swarm::swarm_board(),
         );

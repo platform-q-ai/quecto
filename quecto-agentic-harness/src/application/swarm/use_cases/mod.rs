@@ -1,6 +1,6 @@
 //! The coordination board's use cases (epic #2265), one per file. Each is
 //! constructed only by `composition::swarm`; the dispatcher
-//! (`infrastructure::tools::swarm_board_dispatch`) holds injected handles.
+//! (`infrastructure::tools::swarm::swarm_board_dispatch`) holds injected handles.
 //!
 //! While the event log is on (#2303), a call is served over its own
 //! metered repository: the dispatcher asks the composed handle for the

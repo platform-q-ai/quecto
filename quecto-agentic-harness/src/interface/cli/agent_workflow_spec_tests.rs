@@ -4,6 +4,7 @@
 
 use super::build_tests::selection_for_test;
 use super::*;
+use crate::infrastructure::tools::swarm::swarm_bridge::Participation;
 
 pub(super) fn uds_workflow_flags(workflow: bool, workflow_disabled: bool) -> AgentFlags {
     AgentFlags {
@@ -23,7 +24,7 @@ pub(super) fn uds_workflow_flags(workflow: bool, workflow_disabled: bool) -> Age
         workflow,
         workflow_guards: false,
         workflow_disabled,
-        swarm_participation: crate::infrastructure::tools::swarm_bridge::Participation::none(),
+        swarm_participation: Participation::none(),
         workflow_spec_path: None,
         inherited_tool_policy: None,
         parent_id: None,

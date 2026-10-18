@@ -43,7 +43,8 @@ fn runtime(
     build_tool_runtime(ToolRuntimeBuildArgs {
         child_extensions: Vec::new(),
         swarm_context: None,
-        swarm_participation: crate::infrastructure::tools::swarm_bridge::Participation::shared(),
+        swarm_participation:
+            crate::infrastructure::tools::swarm::swarm_bridge::Participation::shared(),
         entrypoint,
         profile_context,
         base_dir: root,

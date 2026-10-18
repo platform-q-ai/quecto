@@ -96,12 +96,12 @@ pub struct OfficialToolDeps {
     /// The grep tool's ranking and search-log wiring (#2136); `None` for a
     /// plain grep tool.
     pub grep: Option<crate::infrastructure::search::GrepWiring>,
-    pub swarm_context: Option<crate::infrastructure::tools::swarm_bridge::SwarmContext>,
+    pub swarm_context: Option<crate::infrastructure::tools::swarm::swarm_bridge::SwarmContext>,
     /// Shared swarm participation of this composition (#1715).
-    pub swarm_participation: crate::infrastructure::tools::swarm_bridge::Participation,
+    pub swarm_participation: crate::infrastructure::tools::swarm::swarm_bridge::Participation,
     /// The composition's workflow engine slot (#1715); a run cannot be created
     /// while it is engaged.
-    pub workflow_engine: crate::infrastructure::tools::swarm_bridge::WorkflowEngineSlot,
+    pub workflow_engine: crate::infrastructure::tools::swarm::swarm_bridge::WorkflowEngineSlot,
     pub workspace: PathBuf,
     pub sandbox: crate::infrastructure::security::sandbox::Sandbox,
     pub exec_options: crate::infrastructure::tools::bash::ExecOptions,
@@ -195,9 +195,9 @@ pub fn build_session_tool_extensions(deps: SessionToolDeps) -> Vec<Arc<dyn Exten
 }
 
 pub struct AgentControlToolDeps {
-    pub swarm_context: Option<crate::infrastructure::tools::swarm_bridge::SwarmContext>,
+    pub swarm_context: Option<crate::infrastructure::tools::swarm::swarm_bridge::SwarmContext>,
     /// Shared swarm participation of this composition (#1715).
-    pub swarm_participation: crate::infrastructure::tools::swarm_bridge::Participation,
+    pub swarm_participation: crate::infrastructure::tools::swarm::swarm_bridge::Participation,
     pub base_dir: PathBuf,
     pub socket_dir: PathBuf,
     pub broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
@@ -328,7 +328,7 @@ pub struct WorkflowToolDeps {
     pub engine: crate::infrastructure::tools::workflow_tool::WorkflowEngineHandle,
     pub event_emitter: Option<crate::infrastructure::tools::workflow_tool::WorkflowEventEmitter>,
     /// Shared swarm participation (#1715); the tool refuses inside a swarm.
-    pub participation: crate::infrastructure::tools::swarm_bridge::Participation,
+    pub participation: crate::infrastructure::tools::swarm::swarm_bridge::Participation,
 }
 
 pub fn build_workflow_tool_extension(deps: WorkflowToolDeps) -> Arc<dyn Extension> {
@@ -390,7 +390,7 @@ pub fn build_official_tool_registry_with_context(
     workspace: PathBuf,
     sandbox: crate::infrastructure::security::sandbox::Sandbox,
     exec_options: crate::infrastructure::tools::bash::ExecOptions,
-    swarm_context: Option<crate::infrastructure::tools::swarm_bridge::SwarmContext>,
+    swarm_context: Option<crate::infrastructure::tools::swarm::swarm_bridge::SwarmContext>,
 ) -> crate::infrastructure::tools::registry::ToolRegistryImpl {
     let mut registry = crate::infrastructure::tools::registry::ToolRegistryImpl::new();
     register_bundled_native_tools(
@@ -398,7 +398,8 @@ pub fn build_official_tool_registry_with_context(
         build_official_tool_extensions(OfficialToolDeps {
             grep: None,
             find_tool,
-            swarm_participation: crate::infrastructure::tools::swarm_bridge::Participation::none(),
+            swarm_participation:
+                crate::infrastructure::tools::swarm::swarm_bridge::Participation::none(),
             workflow_engine: Default::default(),
             swarm_context,
             workspace,

@@ -18,7 +18,7 @@ async fn real_admission_tracks_pause_resume_and_terminal_actor() {
     context.check(RequestAttempt::First).await.unwrap();
     quecto::infrastructure::tools::call_work::off_the_runtime(|| context.cancel_run()).unwrap();
     context.check(RequestAttempt::First).await.unwrap();
-    let unknown = quecto::infrastructure::tools::swarm_bridge::SwarmContext {
+    let unknown = quecto::infrastructure::tools::swarm::swarm_bridge::SwarmContext {
         member: "unknown".into(),
         ..context
     };

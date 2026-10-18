@@ -38,7 +38,8 @@ pub(super) fn build(
     build_tool_runtime(ToolRuntimeBuildArgs {
         child_extensions: Vec::new(),
         swarm_context: None,
-        swarm_participation: crate::infrastructure::tools::swarm_bridge::Participation::shared(),
+        swarm_participation:
+            crate::infrastructure::tools::swarm::swarm_bridge::Participation::shared(),
         entrypoint: launch.entrypoint,
         profile_context: launch.profile,
         base_dir: root,
@@ -335,7 +336,8 @@ fn guards_or_a_bound_spec_also_request_workflow_mode() {
     let error = build_tool_runtime(ToolRuntimeBuildArgs {
         child_extensions: Vec::new(),
         swarm_context: None,
-        swarm_participation: crate::infrastructure::tools::swarm_bridge::Participation::shared(),
+        swarm_participation:
+            crate::infrastructure::tools::swarm::swarm_bridge::Participation::shared(),
         entrypoint: ToolEntrypoint::UdsAgent,
         profile_context: ToolRuntimeProfileContext::Child,
         base_dir: root.path(),

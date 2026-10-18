@@ -5,6 +5,7 @@ use super::*;
 use crate::domain::error::DomainError;
 use crate::domain::tool_policy::value_objects::tool::{ToolDefinition, ToolResult};
 use crate::infrastructure::extensions::native::OfficialToolDeps;
+use crate::infrastructure::tools::swarm::swarm_bridge::Participation;
 use std::future::Future;
 use std::pin::Pin;
 
@@ -305,7 +306,7 @@ fn build_official_tool_extensions_lists_core_workspace_tools() {
             Arc::new(tmp.path().to_path_buf()),
             Arc::new(sandbox.clone()),
         ),
-        swarm_participation: crate::infrastructure::tools::swarm_bridge::Participation::none(),
+        swarm_participation: Participation::none(),
         workflow_engine: Default::default(),
         swarm_context: None,
         workspace: tmp.path().to_path_buf(),
@@ -341,7 +342,7 @@ fn build_agent_control_tool_extensions_supplies_spawn_and_agent_cmd() {
     let tmp = tempfile::TempDir::new().unwrap();
     let built = build_agent_control_tool_extensions(AgentControlToolDeps {
         child_extensions: Vec::new(),
-        swarm_participation: crate::infrastructure::tools::swarm_bridge::Participation::none(),
+        swarm_participation: Participation::none(),
         swarm_context: None,
         parent_config_path: None,
         effort_control: None,
@@ -375,7 +376,7 @@ async fn built_spawn_tool_admits_against_the_returned_harness_lifecycle() {
     let tmp = tempfile::TempDir::new().unwrap();
     let built = build_agent_control_tool_extensions(AgentControlToolDeps {
         child_extensions: Vec::new(),
-        swarm_participation: crate::infrastructure::tools::swarm_bridge::Participation::none(),
+        swarm_participation: Participation::none(),
         swarm_context: None,
         parent_config_path: None,
         effort_control: None,
@@ -422,7 +423,7 @@ fn build_workflow_tool_extension_supplies_workflow() {
     let ext = build_workflow_tool_extension(WorkflowToolDeps {
         engine,
         event_emitter: None,
-        participation: crate::infrastructure::tools::swarm_bridge::Participation::none(),
+        participation: crate::infrastructure::tools::swarm::swarm_bridge::Participation::none(),
     });
     assert_eq!(ext.name(), "quecto:workflow");
     assert!(has_tool(&[ext], "workflow"));
@@ -446,7 +447,8 @@ fn register_bundled_native_tools_marks_official_not_extension_tracked() {
                 Arc::new(tmp.path().to_path_buf()),
                 Arc::new(sandbox.clone()),
             ),
-            swarm_participation: crate::infrastructure::tools::swarm_bridge::Participation::none(),
+            swarm_participation:
+                crate::infrastructure::tools::swarm::swarm_bridge::Participation::none(),
             workflow_engine: Default::default(),
             swarm_context: None,
             workspace: tmp.path().to_path_buf(),

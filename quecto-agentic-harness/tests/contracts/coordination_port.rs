@@ -1,6 +1,6 @@
 use quecto::application::swarm::ports::CoordinationPort;
 use quecto::domain::swarm::{MemberStatus, ProcessIdentity, RunStatus};
-use quecto::infrastructure::tools::swarm_bridge::SwarmContext;
+use quecto::infrastructure::tools::swarm::swarm_bridge::SwarmContext;
 
 #[test]
 fn packaged_adapter_enforces_reservations_and_retains_unconfirmed_execution_scopes() {

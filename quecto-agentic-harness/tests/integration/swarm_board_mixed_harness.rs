@@ -17,7 +17,7 @@ use quecto::application::swarm::ports::{BoardOpLog, Clock, IdSource};
 use quecto::composition::swarm::{SwarmBoardHandles, build_swarm_board_handles_with};
 use quecto::infrastructure::persistence::swarm_board::repository::SqliteBoardRepository;
 use quecto::infrastructure::tools::call_work::off_the_runtime;
-use quecto::infrastructure::tools::swarm_bridge::{SwarmBoard, SwarmContext};
+use quecto::infrastructure::tools::swarm::swarm_bridge::{SwarmBoard, SwarmContext};
 use quecto::infrastructure::workspace::checkout_paths::ResolvedCheckout;
 
 use crate::swarm_board_diff_runs::swarm_board_diff::Outcome;
@@ -82,7 +82,7 @@ async fn board_op(context: &SwarmContext, request: Value) {
 async fn member_board_ops_and_rust_harness_share_one_board() {
     use quecto::application::swarm::ports::CoordinationPort;
     use quecto::domain::swarm::{MemberExit, ProcessIdentity};
-    use quecto::infrastructure::tools::swarm_bridge::process_start;
+    use quecto::infrastructure::tools::swarm::swarm_bridge::process_start;
     // The start's own time, with a fraction: the stored times' float text
     // is compared too, not masked (review L3).
     let now = (std::time::SystemTime::now()

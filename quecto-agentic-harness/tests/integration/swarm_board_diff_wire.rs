@@ -66,7 +66,7 @@ fn an_op_with_two_unexpected_fields_names_the_first_as_python_does() {
 
     let checkout = dir.path().join("rust");
     std::fs::create_dir_all(checkout.join(".quecto")).unwrap();
-    let context = quecto::infrastructure::tools::swarm_bridge::SwarmContext {
+    let context = quecto::infrastructure::tools::swarm::swarm_bridge::SwarmContext {
         board: quecto::composition::swarm::swarm_board(),
         lifecycle: std::sync::Arc::new(quecto::application::swarm::LifecycleService),
         checkout: checkout.clone(),
@@ -85,7 +85,8 @@ fn an_op_with_two_unexpected_fields_names_the_first_as_python_does() {
                 "member_limit": 1, "deadline": deadline}),
             &quecto::domain::swarm::ProcessIdentity {
                 pid,
-                started: quecto::infrastructure::tools::swarm_bridge::process_start(pid).unwrap(),
+                started: quecto::infrastructure::tools::swarm::swarm_bridge::process_start(pid)
+                    .unwrap(),
             },
             None,
         )

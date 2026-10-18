@@ -13,6 +13,7 @@ use super::selection_for_test;
 use crate::composition::tool_policy::build_tool_policy_persistence;
 use crate::domain::tool_policy::value_objects::tool::ToolResult;
 use crate::infrastructure::test_support::executable::write_executable;
+use crate::infrastructure::tools::swarm::swarm_bridge::Participation;
 use crate::interface::cli::run_with_output;
 
 struct Rig {
@@ -122,7 +123,7 @@ fn flags() -> AgentFlags {
         workflow: false,
         workflow_guards: false,
         workflow_disabled: false,
-        swarm_participation: crate::infrastructure::tools::swarm_bridge::Participation::none(),
+        swarm_participation: Participation::none(),
         workflow_spec_path: None,
         inherited_tool_policy: None,
         parent_id: None,

@@ -2,8 +2,8 @@
 use super::AgentFlags;
 use crate::application::swarm::ports::CoordinationPort;
 use crate::domain::external_agent::backend::MemberBackend;
-use crate::infrastructure::tools::swarm_bridge::SwarmContext;
-use crate::infrastructure::tools::{swarm_bridge, swarm_lifecycle};
+use crate::infrastructure::tools::swarm::swarm_bridge::SwarmContext;
+use crate::infrastructure::tools::swarm::{swarm_bridge, swarm_lifecycle};
 use crate::interface::cli::CliContext;
 
 /// Admit this process: a swarm member's board is composition's (#2278),
@@ -201,20 +201,20 @@ mod tests;
 /// them: SIGKILL, the OOM killer, a panic the harness's hook aborts on, or
 /// the forced exit of a second signal past the shutdown's 45 s budget.
 pub(super) struct WatchTicksOnExit(
-    Option<&'static crate::infrastructure::tools::swarm_bridge::SwarmBoard>,
+    Option<&'static crate::infrastructure::tools::swarm::swarm_bridge::SwarmBoard>,
 );
 
 impl WatchTicksOnExit {
     /// Flushes `board`'s held ticks on drop, when there is one.
     pub(super) fn of(
-        board: Option<&'static crate::infrastructure::tools::swarm_bridge::SwarmBoard>,
+        board: Option<&'static crate::infrastructure::tools::swarm::swarm_bridge::SwarmBoard>,
     ) -> Self {
         Self(board)
     }
 
     /// Flushes this process's board (the one admission bound, if any).
     pub(super) fn of_process() -> Self {
-        Self::of(crate::infrastructure::tools::swarm_bridge::process_board())
+        Self::of(crate::infrastructure::tools::swarm::swarm_bridge::process_board())
     }
 }
 

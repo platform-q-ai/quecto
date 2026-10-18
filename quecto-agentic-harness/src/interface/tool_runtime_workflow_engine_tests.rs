@@ -14,7 +14,7 @@ struct Launch<'a> {
     spawned: bool,
     workflow_requested: bool,
     spec: Option<&'a std::path::Path>,
-    swarm_context: Option<crate::infrastructure::tools::swarm_bridge::SwarmContext>,
+    swarm_context: Option<crate::infrastructure::tools::swarm::swarm_bridge::SwarmContext>,
 }
 
 fn build(root: &std::path::Path, launch: Launch<'_>) -> Result<ToolRuntimeBuild, String> {
@@ -24,7 +24,8 @@ fn build(root: &std::path::Path, launch: Launch<'_>) -> Result<ToolRuntimeBuild,
     build_tool_runtime(ToolRuntimeBuildArgs {
         child_extensions: Vec::new(),
         swarm_context: launch.swarm_context,
-        swarm_participation: crate::infrastructure::tools::swarm_bridge::Participation::shared(),
+        swarm_participation:
+            crate::infrastructure::tools::swarm::swarm_bridge::Participation::shared(),
         entrypoint: ToolEntrypoint::UdsAgent,
         profile_context: ToolRuntimeProfileContext::from_spawned(launch.spawned),
         base_dir: root,

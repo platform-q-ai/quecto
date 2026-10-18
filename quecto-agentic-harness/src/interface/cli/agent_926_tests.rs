@@ -6,6 +6,7 @@
 //! receiver and the idle parent was never woken.
 use super::*;
 use crate::infrastructure::config::Config;
+use crate::infrastructure::tools::swarm::swarm_bridge::Participation;
 
 fn config_with_provider() -> Config {
     let tmp = tempfile::NamedTempFile::new().unwrap();
@@ -35,7 +36,7 @@ fn spawn_capable_flags() -> AgentFlags {
         workflow: false,
         workflow_guards: false,
         workflow_disabled: false,
-        swarm_participation: crate::infrastructure::tools::swarm_bridge::Participation::none(),
+        swarm_participation: Participation::none(),
         workflow_spec_path: None,
         inherited_tool_policy: None,
         parent_id: None,

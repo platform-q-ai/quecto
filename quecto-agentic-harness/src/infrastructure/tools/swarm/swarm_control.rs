@@ -1,0 +1,171 @@
+//! Swarm run commands, kept separate from Python execution and output handling.
+use super::swarm_bridge::SwarmContext;
+use crate::domain::error::DomainError;
+use crate::domain::swarm::ProcessIdentity;
+use serde_json::Value;
+
+/// Test convenience: no shared participation handle, no engaged workflow.
+#[cfg(any(test, feature = "test-support"))]
+pub async fn control(context: SwarmContext, op: &str, input: Value) -> Result<Value, DomainError> {
+    control_with_workflow(
+        context,
+        op,
+        input,
+        super::swarm_bridge::Participation::none(),
+        Default::default(),
+    )
+    .await
+}
+
+/// `workflow_engine` is this composition's engine slot (guards, bound spec or
+/// selected template make it engaged): creating a run makes the process a
+/// coordinator, which cannot be running a workflow (#1715). The slot is read
+/// inside the create step, not before, so nothing can be selected in between.
+pub async fn control_with_workflow(
+    context: SwarmContext,
+    op: &str,
+    input: Value,
+    participation: super::swarm_bridge::Participation,
+    workflow_engine: super::swarm_bridge::WorkflowEngineSlot,
+) -> Result<Value, DomainError> {
+    let settles = matches!(
+        op,
+        "create" | "reconcile" | "pause" | "resume" | "cancel_run"
+    );
+    let ctx = context.clone();
+    let resuming = op == "resume";
+    let op = op.to_owned();
+    let participation = participation.clone();
+    let result = super::super::call_work::spawn_blocking_in_call(move || match op.as_str() {
+        "create" => {
+            crate::domain::swarm::validate_swarm_creation(super::swarm_bridge::workflow_engaged(
+                &workflow_engine,
+            ))?;
+            let database = ctx.database();
+            std::fs::create_dir_all(database.parent().expect("the store has a directory"))
+                .map_err(|e| DomainError::Tool(e.to_string()))?;
+            let process = ProcessIdentity {
+                pid: std::process::id(),
+                started: super::swarm_bridge::process_start(std::process::id())
+                    .ok_or_else(|| DomainError::Tool("process identity unavailable".into()))?,
+            };
+            let snapshot = ctx.create_run(
+                &input,
+                &process,
+                super::swarm_bridge::process_socket().and_then(|s| s.to_str()),
+            )?;
+            // From here on this process and its local children are swarm agents.
+            participation.set(true);
+            super::swarm_lifecycle::supervise(ctx.clone(), snapshot, participation.clone());
+            ctx.summary()
+        }
+        "usage" => ctx.usage_report(),
+        "summary" => ctx.summary_since(optional_cursor(&input, "since")?),
+        "reconcile" => super::swarm_lifecycle::reconcile(&ctx),
+        "pause" => ctx.pause(
+            input["reason"]
+                .as_str()
+                .unwrap_or("operator requested pause"),
+        ),
+        "resume" => ctx.resume(),
+        "events" => {
+            let limit = optional_cursor(&input, "limit")?.unwrap_or(25);
+            if (1..=100).contains(&limit) {
+                ctx.events(optional_cursor(&input, "after")?.unwrap_or(0), limit as u32)
+            } else {
+                Err(DomainError::Tool("event limit must be 1..100".into()))
+            }
+        }
+        "cancel_run" => {
+            ctx.cancel_run()?;
+            ctx.summary()
+        }
+        _ => Err(DomainError::Tool(format!("unknown swarm operation {op}"))),
+    })
+    .await
+    .map_err(|e| DomainError::Tool(e.to_string()))??;
+    let result = if resuming {
+        with_resume_wakes(&context, result).await
+    } else {
+        result
+    };
+    if settles
+        && matches!(
+            result["status"].as_str(),
+            Some("paused" | "cancelled" | "failed" | "succeeded" | "blocked" | "budget-exhausted")
+        )
+    {
+        super::swarm_lifecycle::settle(context).await
+    } else {
+        Ok(result)
+    }
+}
+
+/// #1721: a resume wakes every live member so provider-failure suspensions
+/// re-arm; delivery problems ride the receipt as warnings.
+async fn with_resume_wakes(context: &SwarmContext, mut receipt: Value) -> Value {
+    let Some(generation) = receipt["generation"].as_u64() else {
+        return receipt;
+    };
+    let warnings = super::swarm_lifecycle::wake_after_resume(context, generation).await;
+    if !warnings.is_empty() {
+        receipt["wake_warnings"] = Value::from(warnings);
+    }
+    receipt
+}
+
+/// The summary the harness judges a run by after a structured op: the
+/// harness's own read, recorded as `host` (#2279 S15 final review).
+pub async fn execution_state(context: SwarmContext) -> Result<Value, DomainError> {
+    super::super::call_work::spawn_blocking_in_call(move || context.host_summary())
+        .await
+        .map_err(|e| DomainError::Tool(e.to_string()))?
+}
+
+/// What the post-execution lifecycle did (#2279: a structured op records
+/// it).
+#[derive(Debug, PartialEq, Eq)]
+pub enum AfterExecution {
+    /// The run is no longer running: it was settled.
+    Settled,
+    /// The board changed while the run runs: the wake hints were sent, with
+    /// the delivery warnings.
+    Notified(Vec<String>),
+    /// Nothing changed.
+    Unchanged,
+}
+
+/// The lifecycle after a structured op, saying what it did: settle when
+/// the run is no longer running, else notify when the event cursor moved
+/// past `before["event_cursor"]`. Read-only ops leave the cursor where it
+/// was and so send no wake hints, avoiding notification-driven idle loops.
+pub async fn lifecycle_after(
+    context: SwarmContext,
+    before: &Value,
+) -> Result<AfterExecution, DomainError> {
+    let after = execution_state(context.clone()).await?;
+    if after["status"] != "running" {
+        super::swarm_lifecycle::settle(context).await?;
+        return Ok(AfterExecution::Settled);
+    }
+    if after["event_cursor"] != before["event_cursor"] {
+        return Ok(AfterExecution::Notified(
+            super::swarm_lifecycle::notify(&context).await,
+        ));
+    }
+    Ok(AfterExecution::Unchanged)
+}
+
+fn optional_cursor(input: &Value, field: &str) -> Result<Option<u64>, DomainError> {
+    match input.get(field) {
+        None | Some(Value::Null) => Ok(None),
+        Some(value) => value
+            .as_u64()
+            .map(Some)
+            .ok_or_else(|| DomainError::Tool(format!("{field} must be a nonnegative integer"))),
+    }
+}
+
+#[cfg(test)]
+#[path = "swarm_control_tests.rs"]
+mod tests;

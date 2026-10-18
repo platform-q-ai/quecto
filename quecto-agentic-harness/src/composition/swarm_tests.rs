@@ -2,7 +2,7 @@ use serde_json::json;
 
 use super::{board_op_log, build_swarm_board_handles};
 use crate::application::swarm::dto::BoardLocation;
-use crate::infrastructure::tools::swarm_board_dispatch::call;
+use crate::infrastructure::tools::swarm::swarm_board_dispatch::call;
 
 /// The production graph: the SQLite file at the location, the wall clock
 /// and `uuid4().hex` ids.

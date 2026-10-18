@@ -1,5 +1,6 @@
 use crate::domain::tool_policy::value_objects::tool::ToolProfileContext;
 use crate::domain::tool_policy::value_objects::tool_descriptor::ProfileAvailabilityScope;
+use crate::infrastructure::tools::swarm::{swarm_bridge, swarm_lifecycle};
 
 /// Entrypoint policy selector for the shared tool runtime/catalogue builder.
 ///
@@ -122,10 +123,10 @@ impl ToolRuntimeProfileContext {
 /// Inputs for the shared tool runtime/catalogue builder.
 pub(crate) struct ToolRuntimeBuildArgs<'a> {
     /// Explicit launch context; reusable runtime construction never discovers ambient membership.
-    pub swarm_context: Option<crate::infrastructure::tools::swarm_bridge::SwarmContext>,
+    pub swarm_context: Option<swarm_bridge::SwarmContext>,
     /// The process's shared swarm participation (#1715), injected into the
     /// spawn, swarm and workflow tools.
-    pub swarm_participation: crate::infrastructure::tools::swarm_bridge::Participation,
+    pub swarm_participation: swarm_bridge::Participation,
     pub entrypoint: ToolEntrypoint,
     pub profile_context: ToolRuntimeProfileContext,
     pub base_dir: &'a std::path::Path,
@@ -265,17 +266,16 @@ pub(crate) fn build_tool_runtime(
     // Workflow eligibility follows swarm participation, not containerization
     // (#1715): the join answers whether this container's run was created.
     let swarm_agent = match &swarm_context {
-        Some(context) => crate::infrastructure::tools::swarm_lifecycle::join_current_process(
+        Some(context) => swarm_lifecycle::join_current_process(
             context,
-            crate::infrastructure::tools::swarm_bridge::process_socket(),
+            swarm_bridge::process_socket(),
             swarm_participation.clone(),
-            crate::infrastructure::tools::swarm_lifecycle::is_creator(),
+            swarm_lifecycle::is_creator(),
         )
         .map_err(|e| e.to_string())?,
         None => false,
     };
-    let workflow_engine: crate::infrastructure::tools::swarm_bridge::WorkflowEngineSlot =
-        Default::default();
+    let workflow_engine: swarm_bridge::WorkflowEngineSlot = Default::default();
     crate::domain::swarm::validate_workflow(
         swarm_agent,
         workflow.workflow_guards || workflow.workflow_spec_path.is_some(),
@@ -582,7 +582,7 @@ fn build_workflow_runtime(
     config: &crate::infrastructure::config::Config,
     workflow: ToolRuntimeWorkflowPolicy<'_>,
     stderr: &mut String,
-    swarm_participation: crate::infrastructure::tools::swarm_bridge::Participation,
+    swarm_participation: swarm_bridge::Participation,
 ) -> Result<WorkflowRuntime, String> {
     let swarm_agent = swarm_participation.participating();
     crate::domain::swarm::validate_workflow(
@@ -741,9 +741,9 @@ pub(crate) fn load_workflow_spec(
 /// This process's swarm context: its container contract, over the board
 /// admission bound for it (#2278). `None` outside a swarm container, and
 /// before (or without) a bound board.
-pub(crate) fn swarm_context() -> Option<crate::infrastructure::tools::swarm_bridge::SwarmContext> {
-    let board = crate::infrastructure::tools::swarm_bridge::process_board()?;
-    crate::infrastructure::tools::swarm_bridge::SwarmContext::discover(
+pub(crate) fn swarm_context() -> Option<swarm_bridge::SwarmContext> {
+    let board = swarm_bridge::process_board()?;
+    swarm_bridge::SwarmContext::discover(
         std::sync::Arc::new(crate::application::swarm::LifecycleService),
         board.clone(),
     )

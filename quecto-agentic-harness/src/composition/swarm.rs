@@ -37,12 +37,12 @@ use crate::infrastructure::persistence::swarm_board::ids::Uuid4Ids;
 use crate::infrastructure::persistence::swarm_board::meter::SqliteBoardCallMeter;
 use crate::infrastructure::persistence::swarm_board::py_json;
 use crate::infrastructure::persistence::swarm_board::repository::SqliteBoardRepository;
-pub use crate::infrastructure::tools::swarm_board_dispatch::SwarmBoardHandles;
-use crate::infrastructure::tools::swarm_board_dispatch::{
+pub use crate::infrastructure::tools::swarm::swarm_board_dispatch::SwarmBoardHandles;
+use crate::infrastructure::tools::swarm::swarm_board_dispatch::{
     ActorRefs, BoardTelemetry, BoardWire, WatchPolls,
 };
-pub use crate::infrastructure::tools::swarm_bridge::SwarmBoard;
-use crate::infrastructure::tools::swarm_lifecycle::SystemClock;
+pub use crate::infrastructure::tools::swarm::swarm_bridge::SwarmBoard;
+use crate::infrastructure::tools::swarm::swarm_lifecycle::SystemClock;
 use crate::infrastructure::workspace::checkout_paths::ResolvedCheckout;
 
 /// The board handles over the SQLite file at `location`, recording each

@@ -21,7 +21,7 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use quecto::application::swarm::dto::BoardLocation;
 use quecto::composition::swarm::{SwarmBoardHandles, build_swarm_board_handles};
-use quecto::infrastructure::tools::swarm_board_dispatch::call;
+use quecto::infrastructure::tools::swarm::swarm_board_dispatch::call;
 use serde_json::{Value, json};
 
 const WINDOW: usize = 100;

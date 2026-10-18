@@ -19,7 +19,7 @@ use crate::swarm_board_diff_runs::NOW;
 use crate::swarm_board_diff_runs::swarm_board_diff::scenario::{
     Hold, Step, corrupt, held, run_golden, sql, step,
 };
-use quecto::infrastructure::tools::swarm_board_dispatch::BOARD_OPS;
+use quecto::infrastructure::tools::swarm::swarm_board_dispatch::BOARD_OPS;
 
 const UNKNOWN: &str = "invoking member is unknown or death confirmed";
 

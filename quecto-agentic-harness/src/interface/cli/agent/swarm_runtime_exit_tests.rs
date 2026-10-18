@@ -9,7 +9,7 @@ use crate::application::swarm::dto::DroppedRecords;
 use crate::application::swarm::ports::{BoardOpLog, SessionOpLog};
 use crate::composition::swarm::{board_wire, build_swarm_board_handles};
 use crate::domain::swarm::{BoardOpObservation, SwarmRunSummary};
-use crate::infrastructure::tools::swarm_bridge::{SwarmBoard, SwarmContext};
+use crate::infrastructure::tools::swarm::swarm_bridge::{SwarmBoard, SwarmContext};
 
 #[derive(Default)]
 struct Recorded(Mutex<Vec<BoardOpObservation>>);

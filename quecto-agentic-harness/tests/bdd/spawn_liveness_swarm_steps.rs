@@ -24,7 +24,7 @@ fn host_swarm_run(world: &mut QuectoWorld, ended_holding: Option<String>) {
     std::fs::create_dir_all(&checkout).unwrap();
     let workspace = Arc::new(checkout.clone());
     // Building the test-support tool creates the running run in the store.
-    let tool = quecto::infrastructure::tools::swarm_test_support::tool(
+    let tool = quecto::infrastructure::tools::swarm::swarm_test_support::tool(
         workspace,
         quecto::composition::swarm::swarm_board(),
     );
@@ -64,8 +64,8 @@ fn host_swarm_run(world: &mut QuectoWorld, ended_holding: Option<String>) {
 
 fn hosted_swarm_context(
     world: &QuectoWorld,
-) -> quecto::infrastructure::tools::swarm_bridge::SwarmContext {
-    quecto::infrastructure::tools::swarm_bridge::SwarmContext {
+) -> quecto::infrastructure::tools::swarm::swarm_bridge::SwarmContext {
+    quecto::infrastructure::tools::swarm::swarm_bridge::SwarmContext {
         board: quecto::composition::swarm::swarm_board(),
         checkout: world
             .swarm_workspace

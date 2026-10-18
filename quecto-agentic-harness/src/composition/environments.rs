@@ -35,7 +35,7 @@ use crate::infrastructure::tools::coordinator_launch::KeptSwarmBoards;
 use crate::infrastructure::tools::environment_commands::{
     HostedStoreObservation, ScriptEnvironmentCommands,
 };
-use crate::infrastructure::tools::swarm_bridge::SwarmBoard;
+use crate::infrastructure::tools::swarm::swarm_bridge::SwarmBoard;
 pub use crate::interface::cli::container_handles::ContainerInventoryHandles;
 
 /// The host's reads of the boards its environments hold (#1924), through
@@ -45,7 +45,9 @@ pub use crate::interface::cli::container_handles::ContainerInventoryHandles;
 /// the whole process (a `quecto container` command, which keeps no event
 /// log: its calls leave `tracing` records only).
 fn hosted_store_observation() -> HostedStoreObservation {
-    hosted_store_observation_over(crate::infrastructure::tools::swarm_bridge::process_board())
+    hosted_store_observation_over(
+        crate::infrastructure::tools::swarm::swarm_bridge::process_board(),
+    )
 }
 
 /// The observation over `process`, the board admission bound, when there

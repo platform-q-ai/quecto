@@ -78,11 +78,11 @@ fn validate_config_path(s: &str) -> Result<PathBuf, String> {
 /// When executed, validates the request, launches the child as a
 #[derive(Debug)]
 pub struct SpawnTool {
-    pub(super) swarm_context: Option<super::swarm_bridge::SwarmContext>,
+    pub(super) swarm_context: Option<super::swarm::swarm_bridge::SwarmContext>,
     /// Whether this process takes part in a swarm (#1715); read at launch
     /// time because a run may be created after composition. Injected by the
     /// composition root; a tool built without one launches no swarm workers.
-    pub(super) swarm_participation: super::swarm_bridge::Participation,
+    pub(super) swarm_participation: super::swarm::swarm_bridge::Participation,
     /// Allowlist of agent IDs that can be spawned.
     pub(super) allowed_agents: Vec<String>,
     /// Base directory for the child agent process.
@@ -151,7 +151,7 @@ pub struct SpawnTool {
 impl SpawnTool {
     pub fn with_swarm_context(
         mut self,
-        context: Option<super::swarm_bridge::SwarmContext>,
+        context: Option<super::swarm::swarm_bridge::SwarmContext>,
     ) -> Self {
         self.swarm_context = context;
         self
@@ -159,7 +159,7 @@ impl SpawnTool {
 
     pub fn with_swarm_participation(
         mut self,
-        participation: super::swarm_bridge::Participation,
+        participation: super::swarm::swarm_bridge::Participation,
     ) -> Self {
         self.swarm_participation = participation;
         self
@@ -175,7 +175,7 @@ impl SpawnTool {
     pub fn new(allowed_agents: Vec<String>) -> Self {
         Self {
             swarm_context: None,
-            swarm_participation: super::swarm_bridge::Participation::none(),
+            swarm_participation: super::swarm::swarm_bridge::Participation::none(),
             allowed_agents,
             base_dir: PathBuf::new(),
             socket_dir: PathBuf::new(),
@@ -202,7 +202,7 @@ impl SpawnTool {
     pub fn with_base_dir(allowed_agents: Vec<String>, base_dir: PathBuf) -> Self {
         Self {
             swarm_context: None,
-            swarm_participation: super::swarm_bridge::Participation::none(),
+            swarm_participation: super::swarm::swarm_bridge::Participation::none(),
             allowed_agents,
             base_dir,
             socket_dir: PathBuf::new(),

@@ -17,8 +17,8 @@ use quecto::composition::swarm::{
 };
 use quecto::domain::swarm::BoardOpObservation;
 use quecto::infrastructure::persistence::swarm_board::repository::SqliteBoardRepository;
-use quecto::infrastructure::tools::swarm_board_dispatch::call;
-use quecto::infrastructure::tools::swarm_board_ops::{member_arguments, wire_text};
+use quecto::infrastructure::tools::swarm::swarm_board_dispatch::call;
+use quecto::infrastructure::tools::swarm::swarm_board_ops::{member_arguments, wire_text};
 use quecto::infrastructure::workspace::checkout_paths::ResolvedCheckout;
 use serde_json::Value;
 

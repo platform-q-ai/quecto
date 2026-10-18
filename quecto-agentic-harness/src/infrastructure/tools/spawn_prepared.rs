@@ -29,7 +29,7 @@ const ROLLBACK_PROTOCOL_TIMEOUT: std::time::Duration = std::time::Duration::from
 #[derive(Debug)]
 pub(in crate::infrastructure::tools) struct PreparedChild {
     pub(in crate::infrastructure::tools) swarm_reservation:
-        Option<super::super::swarm_admission::LaunchReservation>,
+        Option<super::super::swarm::swarm_admission::LaunchReservation>,
     /// Opaque handle of the locally spawned process, owned by the one
     /// supervisor from the moment it was spawned (#1935). `None` for
     /// script-managed launches: they hold no process.

@@ -9,7 +9,7 @@ use super::super::{BoardToolSession, SessionLogTarget, SessionRecording, attach_
 use crate::application::configuration::ports::OverlayTrustStore;
 use crate::infrastructure::config::persistence::PersistentOverlayTrustStore;
 use crate::infrastructure::persistence::audit_log::AuditLog;
-use crate::infrastructure::tools::swarm_bridge::SwarmContext;
+use crate::infrastructure::tools::swarm::swarm_bridge::SwarmContext;
 use crate::interface::cli::CliContext;
 use crate::interface::cli::agent::{AgentFlags, build_agent_from_config_in, swarm_runtime};
 

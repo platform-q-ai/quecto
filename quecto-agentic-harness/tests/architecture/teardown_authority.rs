@@ -303,7 +303,7 @@ const PROCESS_EFFECT_ALLOWLIST: &[(&str, &[&str], &str)] = &[
         "tool invocation containment: the find tool's own `fd` Child on a cap",
     ),
     (
-        "src/infrastructure/tools/swarm_bridge.rs",
+        "src/infrastructure/tools/swarm/swarm_bridge.rs",
         &["/proc/"],
         "signal-free liveness observation (`/proc/<pid>/stat` start time, \
          `/proc/self/ns/pid`) for the coordination store's member records",
@@ -452,7 +452,7 @@ const NO_PID_FILES: &[&str] = &[
     "src/infrastructure/tools/environment_member_shutdown.rs",
     "src/infrastructure/tools/owner_exit.rs",
     "src/infrastructure/tools/retained_environment_teardown.rs",
-    "src/infrastructure/tools/swarm_member_termination.rs",
+    "src/infrastructure/tools/swarm/swarm_member_termination.rs",
     "src/infrastructure/tools/subagent_cleanup.rs",
     "src/infrastructure/tools/subagent_monitor_exit.rs",
     "src/infrastructure/tools/spawn_reaper.rs",
@@ -703,7 +703,7 @@ const SINGLE_OWNERS: &[(&str, &str, &str)] = &[
     ),
     (
         "swarm member termination by delegation",
-        "src/infrastructure/tools/swarm_member_termination.rs",
+        "src/infrastructure/tools/swarm/swarm_member_termination.rs",
         "struct DelegatedSwarmMemberTermination",
     ),
     (

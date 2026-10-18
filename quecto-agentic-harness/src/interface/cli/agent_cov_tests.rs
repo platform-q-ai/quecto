@@ -2,6 +2,7 @@
 //!
 //! Pure flag-parsing logic only — no config load, runtime, or socket I/O.
 use super::*;
+use crate::infrastructure::tools::swarm::swarm_bridge::Participation;
 
 fn argv(parts: &[&str]) -> Vec<String> {
     parts.iter().map(|s| s.to_string()).collect()
@@ -469,7 +470,7 @@ fn cmd_agent_uds_rejects_overlong_socket_before_config_load() {
         workflow: false,
         workflow_guards: false,
         workflow_disabled: true,
-        swarm_participation: crate::infrastructure::tools::swarm_bridge::Participation::none(),
+        swarm_participation: Participation::none(),
         workflow_spec_path: None,
         inherited_tool_policy: None,
         parent_id: None,
@@ -523,7 +524,7 @@ fn cmd_agent_uds_rejects_overlong_socket_before_config_load() {
         workflow: false,
         workflow_guards: false,
         workflow_disabled: true,
-        swarm_participation: crate::infrastructure::tools::swarm_bridge::Participation::none(),
+        swarm_participation: Participation::none(),
         workflow_spec_path: None,
         inherited_tool_policy: None,
         parent_id: None,

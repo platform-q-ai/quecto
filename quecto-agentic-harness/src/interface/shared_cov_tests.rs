@@ -436,7 +436,7 @@ fn shared_tool_runtime_builder_cli_and_uds_use_same_pipeline() {
                 child_extensions: Vec::new(),
                 swarm_context: None,
                 swarm_participation:
-                    crate::infrastructure::tools::swarm_bridge::Participation::shared(),
+                    crate::infrastructure::tools::swarm::swarm_bridge::Participation::shared(),
                 profile_context: crate::interface::tool_runtime::ToolRuntimeProfileContext::Parent,
                 entrypoint,
                 base_dir: tmp.path(),

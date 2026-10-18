@@ -14,7 +14,7 @@ use quecto::domain::environments::entities::environment_registry::{
 use quecto::domain::environments::services::environment_retention::SwarmRunObservation;
 use quecto::domain::swarm::RunStatus;
 use quecto::infrastructure::tools::environment_commands::HostedStoreObservation;
-use quecto::infrastructure::tools::swarm_bridge::SwarmContext;
+use quecto::infrastructure::tools::swarm::swarm_bridge::SwarmContext;
 
 fn port() -> Arc<dyn HostedSwarmRunInspection> {
     Arc::new(HostedStoreObservation::new(
@@ -64,7 +64,7 @@ fn create_run(checkout: &std::path::Path) -> SwarmContext {
             &serde_json::json!({"goal":"ship", "constraints":[], "criteria":[{"id":"tests","kind":"command","description":"pass"}], "member_limit":3, "deadline":deadline}),
             &quecto::domain::swarm::ProcessIdentity {
                 pid: std::process::id(),
-                started: quecto::infrastructure::tools::swarm_bridge::process_start(
+                started: quecto::infrastructure::tools::swarm::swarm_bridge::process_start(
                     std::process::id(),
                 )
                 .unwrap(),
@@ -154,7 +154,7 @@ fn an_ended_run_is_read_as_ended_and_the_read_changes_nothing() {
         port.inspect_hosted_run_at(&state_dir),
         SwarmRunObservation::Run(run) if !run.ended()
     ));
-    let receipt = quecto::infrastructure::tools::swarm_bridge::HostedStore::at(
+    let receipt = quecto::infrastructure::tools::swarm::swarm_bridge::HostedStore::at(
         checkout.clone(),
         quecto::composition::swarm::swarm_board(),
     )

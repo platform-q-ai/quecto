@@ -7,7 +7,7 @@ use crate::application::providers::ports::{ChatRequest, LlmProvider};
 use crate::domain::conversation::value_objects::message::LlmResponse;
 use crate::domain::error::DomainError;
 use crate::infrastructure::config::AgentDefaults;
-use crate::infrastructure::tools::swarm_bridge::Participation;
+use crate::infrastructure::tools::swarm::swarm_bridge::Participation;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;

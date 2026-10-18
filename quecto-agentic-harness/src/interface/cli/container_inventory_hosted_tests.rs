@@ -8,7 +8,7 @@ use super::tests::{composed_with_exited_containers, run};
 use crate::application::environments::ports::EnvironmentRegistryStore;
 use crate::domain::environments::entities::environment_registry::EnvironmentStatus;
 use crate::infrastructure::persistence::environment_registry_store::FileEnvironmentRegistryStore;
-use crate::infrastructure::tools::swarm_bridge::SwarmContext;
+use crate::infrastructure::tools::swarm::swarm_bridge::SwarmContext;
 use std::sync::Arc;
 
 /// A running run created by "coordinator" in the store at `checkout`.
@@ -31,7 +31,7 @@ fn create_running_swarm(checkout: &std::path::Path) -> String {
             serde_json::json!(["ship", [], [{"id":"tests","kind":"command","description":"pass"}], 3, deadline]),
         )
         .unwrap();
-    crate::infrastructure::tools::swarm_bridge::HostedStore::at(
+    crate::infrastructure::tools::swarm::swarm_bridge::HostedStore::at(
         checkout.to_path_buf(),
         crate::composition::swarm::swarm_board(),
     )

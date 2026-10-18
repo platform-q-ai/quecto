@@ -31,8 +31,8 @@ use quecto::application::swarm::ports::{BoardOpLog, CoordinationPort, SessionOpL
 use quecto::composition::swarm::{SwarmBoard, board_wire, build_swarm_board_handles};
 use quecto::domain::swarm::watch::WatchSchedule;
 use quecto::domain::swarm::{BoardOpObservation, ProcessIdentity, SwarmRunSummary};
-use quecto::infrastructure::tools::swarm_board_dispatch::call;
-use quecto::infrastructure::tools::swarm_bridge::{RunWatch, SwarmContext, process_start};
+use quecto::infrastructure::tools::swarm::swarm_board_dispatch::call;
+use quecto::infrastructure::tools::swarm::swarm_bridge::{RunWatch, SwarmContext, process_start};
 use serde_json::json;
 
 /// The fixed tick every watch ran at before #2390, and the `legacy` poll

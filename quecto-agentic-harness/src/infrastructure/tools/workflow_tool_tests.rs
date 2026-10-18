@@ -557,8 +557,9 @@ async fn workflow_tool_refuses_inside_a_swarm() {
     let engine = std::sync::Arc::new(std::sync::Mutex::new(
         WorkflowEngine::new(WorkflowConfig::default(), false).unwrap(),
     ));
-    let tool = WorkflowTool::new(engine)
-        .with_participation(super::super::swarm_bridge::Participation::Fixed(true));
+    let tool = WorkflowTool::new(engine).with_participation(
+        super::super::swarm::swarm_bridge::Participation::Fixed(true),
+    );
     let result = tool.execute(r#"{"action":"status"}"#).await.unwrap();
     assert!(result.is_error);
     assert!(

@@ -21,7 +21,7 @@ use crate::infrastructure::processes::containers::script_stderr::{
     ScriptStdout, run_sync_capturing_stderr_tail,
 };
 use crate::infrastructure::processes::containers::standard::integrity::refuse_altered_script;
-use crate::infrastructure::tools::swarm_bridge::SwarmBoard;
+use crate::infrastructure::tools::swarm::swarm_bridge::SwarmBoard;
 
 /// The retained script argv run against the environment's runtime id.
 /// By default every invocation is offloaded to a blocking worker when a
@@ -289,9 +289,9 @@ pub(super) fn hosted_checkout(record: &EnvironmentRecord) -> HostedCheckout {
 /// file": `NoBoard` when `root` is on this host, `NotOnHost` when it is
 /// not.
 fn first_with_board(root: &std::path::Path, candidates: [std::path::PathBuf; 2]) -> HostedCheckout {
-    use super::swarm_store_location::BoardPresence;
+    use super::swarm::swarm_store_location::BoardPresence;
     for candidate in candidates {
-        match super::swarm_store_location::board_presence(&candidate) {
+        match super::swarm::swarm_store_location::board_presence(&candidate) {
             BoardPresence::Absent => {}
             BoardPresence::Current { .. } | BoardPresence::Displaced(_) => {
                 return match contained_below(root, &candidate) {
@@ -351,9 +351,9 @@ fn contained_below(
 fn hosted_store(
     record: &EnvironmentRecord,
     board: &SwarmBoard,
-) -> Option<super::swarm_bridge::HostedStore> {
+) -> Option<super::swarm::swarm_bridge::HostedStore> {
     match hosted_checkout(record) {
-        HostedCheckout::At(checkout) => Some(super::swarm_bridge::HostedStore::at(
+        HostedCheckout::At(checkout) => Some(super::swarm::swarm_bridge::HostedStore::at(
             checkout,
             board.clone(),
         )),
@@ -388,7 +388,7 @@ fn read_hosted_run(
 ) -> SwarmRunObservation {
     let store = match checkout {
         HostedCheckout::At(checkout) => {
-            super::swarm_bridge::HostedStore::at(checkout, board.clone())
+            super::swarm::swarm_bridge::HostedStore::at(checkout, board.clone())
         }
         HostedCheckout::NoBoard => return SwarmRunObservation::NoStore,
         HostedCheckout::NotOnHost => return SwarmRunObservation::NoStoreUnverified,
@@ -522,11 +522,11 @@ impl HostedSwarmBoard for HostedStoreObservation {
 fn supervised_store(
     record: &EnvironmentRecord,
     board: SwarmBoard,
-) -> Result<Option<super::swarm_bridge::HostedStore>, String> {
+) -> Result<Option<super::swarm::swarm_bridge::HostedStore>, String> {
     match hosted_checkout(record) {
-        HostedCheckout::At(checkout) => {
-            Ok(Some(super::swarm_bridge::HostedStore::at(checkout, board)))
-        }
+        HostedCheckout::At(checkout) => Ok(Some(super::swarm::swarm_bridge::HostedStore::at(
+            checkout, board,
+        ))),
         HostedCheckout::NoBoard | HostedCheckout::NotOnHost => Ok(None),
         HostedCheckout::Unknown(reason) => Err(format!(
             "the swarm board's checkout could not be told: {reason}"

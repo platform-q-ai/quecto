@@ -30,8 +30,8 @@ use quecto::domain::swarm::BoardOpObservation;
 use quecto::infrastructure::persistence::audit_log::AuditLog;
 use quecto::infrastructure::persistence::swarm_board::ids::Uuid4Ids;
 use quecto::infrastructure::persistence::swarm_board::repository::SqliteBoardRepository;
-use quecto::infrastructure::tools::swarm_board_dispatch::call;
-use quecto::infrastructure::tools::swarm_lifecycle::SystemClock;
+use quecto::infrastructure::tools::swarm::swarm_board_dispatch::call;
+use quecto::infrastructure::tools::swarm::swarm_lifecycle::SystemClock;
 use quecto::infrastructure::workspace::checkout_paths::ResolvedCheckout;
 use serde_json::json;
 

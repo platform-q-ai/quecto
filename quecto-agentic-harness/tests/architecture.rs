@@ -5532,8 +5532,8 @@ fn termination_paths_never_consult_a_lease_or_a_pid() {
         "src/infrastructure/tools/environment_commands.rs",
         "src/infrastructure/tools/retained_environment_teardown.rs",
         "src/infrastructure/tools/subagent_cleanup.rs",
-        "src/infrastructure/tools/swarm_member_termination.rs",
-        "src/infrastructure/tools/swarm_lifecycle.rs",
+        "src/infrastructure/tools/swarm/swarm_member_termination.rs",
+        "src/infrastructure/tools/swarm/swarm_lifecycle.rs",
         "src/application/swarm/mod.rs",
         "src/application/swarm/ports.rs",
     ] {
@@ -6756,7 +6756,7 @@ fn swarm_application_depends_only_inward() {
     for dep in [
         "rusqlite::Connection",
         "crate::infrastructure::persistence::swarm_board::store::BoardStore",
-        "crate::infrastructure::tools::swarm_lifecycle::SystemClock",
+        "crate::infrastructure::tools::swarm::swarm_lifecycle::SystemClock",
         "crate::interface::cli::CliContext",
         "crate::composition::swarm::build_swarm_board_handles",
         "crate::application::sessions::ports::SessionStore",
@@ -6902,7 +6902,7 @@ fn swarm_member_termination_uses_protocol_or_an_owned_handle_never_a_pid() {
     );
     // The lifecycle adapter keeps `harness_dead` (signal-0 observation of a
     // process identity, allowed); its termination path is checked alone.
-    let lifecycle = production_source("src/infrastructure/tools/swarm_lifecycle.rs");
+    let lifecycle = production_source("src/infrastructure/tools/swarm/swarm_lifecycle.rs");
     let terminate_start = lifecycle
         .find("fn terminate<'a>(&'a self, member: &'a Member)")
         .expect("the runtime adapter terminates a member");
@@ -6913,12 +6913,12 @@ fn swarm_member_termination_uses_protocol_or_an_owned_handle_never_a_pid() {
     let termination_path = &lifecycle[terminate_start..terminate_end];
     for (path, source) in [
         (
-            "src/infrastructure/tools/swarm_lifecycle.rs (terminate)",
+            "src/infrastructure/tools/swarm/swarm_lifecycle.rs (terminate)",
             termination_path.to_string(),
         ),
         (
-            "src/infrastructure/tools/swarm_member_termination.rs",
-            production_source("src/infrastructure/tools/swarm_member_termination.rs"),
+            "src/infrastructure/tools/swarm/swarm_member_termination.rs",
+            production_source("src/infrastructure/tools/swarm/swarm_member_termination.rs"),
         ),
     ] {
         for forbidden in [
@@ -6941,7 +6941,7 @@ fn swarm_member_termination_uses_protocol_or_an_owned_handle_never_a_pid() {
     }
     assert!(lifecycle.contains("shutdown_member_over_endpoint(member)"));
     assert!(lifecycle.contains("MEMBER_TERMINATION"));
-    let adapter = production_source("src/infrastructure/tools/swarm_member_termination.rs");
+    let adapter = production_source("src/infrastructure/tools/swarm/swarm_member_termination.rs");
     assert!(adapter.contains("KillDelegatedAgentRequest"));
     assert!(adapter.contains("shutdown_over_socket("));
     // Nothing named `terminate_member` survives (and the swarm tool has no
@@ -6983,11 +6983,12 @@ fn swarm_tool_has_no_pid_signalling() {
     let mut swarm_files: Vec<String> = teardown_authority::production_files()
         .into_iter()
         .filter(|path| {
-            Path::new(path)
-                .file_name()
-                .and_then(|name| name.to_str())
-                .is_some_and(|name| name.starts_with("swarm") && name.ends_with(".rs"))
-                && path.starts_with("src/infrastructure/tools/")
+            path.starts_with("src/infrastructure/tools/swarm/")
+                || (Path::new(path)
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.starts_with("swarm") && name.ends_with(".rs"))
+                    && path.starts_with("src/infrastructure/tools/"))
         })
         .collect();
     swarm_files.sort();
@@ -6995,16 +6996,22 @@ fn swarm_tool_has_no_pid_signalling() {
         swarm_files.len() > 20,
         "the swarm tool's production files must be scanned: {swarm_files:?}"
     );
-    for gone in [
-        "src/infrastructure/tools/swarm_process.rs",
-        "src/infrastructure/tools/swarm_scope.rs",
-        "src/infrastructure/tools/swarm_registry.rs",
-        "src/infrastructure/tools/swarm_support.rs",
-        "src/infrastructure/tools/swarm_result.rs",
-        "src/infrastructure/tools/swarm_job_output.rs",
-        "src/infrastructure/tools/swarm_config.rs",
+    for name in [
+        "swarm_process.rs",
+        "swarm_scope.rs",
+        "swarm_registry.rs",
+        "swarm_support.rs",
+        "swarm_result.rs",
+        "swarm_job_output.rs",
+        "swarm_config.rs",
     ] {
-        assert!(!Path::new(gone).exists(), "{gone} survives");
+        for folder in [
+            "src/infrastructure/tools/",
+            "src/infrastructure/tools/swarm/",
+        ] {
+            let gone = format!("{folder}{name}");
+            assert!(!Path::new(&gone).exists(), "{gone} survives");
+        }
     }
     for path in &swarm_files {
         let source = production_source(path);
