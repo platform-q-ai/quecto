@@ -6,7 +6,7 @@ use std::pin::Pin;
 
 use crate::application::tools::ports::Tool;
 use crate::domain::shared::error::DomainError;
-use crate::domain::shared::html_text::inline_text;
+use crate::domain::shared::text::html_text::inline_text;
 use crate::domain::tool_policy::value_objects::tool::{ToolDefinition, ToolResult};
 
 const MAX_WEB_SEARCH_OUTPUT_BYTES: usize = 16 * 1024;

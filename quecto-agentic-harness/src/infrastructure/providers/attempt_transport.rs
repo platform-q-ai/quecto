@@ -12,7 +12,8 @@ use super::sse_common::{SseHandler, SseLineOutcome};
 use crate::application::ports::{AttemptAdmission, AttemptPermit};
 use crate::domain::admission::value_objects::inference_admission::{Feedback, ThrottleFeedback};
 use crate::domain::conversation::value_objects::message::LlmResponse;
-use crate::domain::inference::value_objects::provider::{CancelFlag, StreamEvent};
+use crate::domain::inference::value_objects::cancel_flag::CancelFlag;
+use crate::domain::inference::value_objects::provider::StreamEvent;
 use crate::domain::shared::error::DomainError;
 
 #[path = "attempt_events.rs"]

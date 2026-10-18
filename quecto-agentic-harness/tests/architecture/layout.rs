@@ -93,6 +93,7 @@ const MIGRATED: &[Capability<'_>] = &[
     Capability("domain/tool_policy", &["value_objects", "services"]),
     Capability("domain/catalogue", &["entities", "value_objects", "services"]),
     Capability("domain/swarm", &["entities", "value_objects", "services", "events"]),
+    Capability("domain/audit", &[]),
     Capability("domain/sessions", &["entities", "value_objects", "services"]),
     Capability("domain/inference", &["value_objects", "services", "events"]),
     Capability("domain/admission", &["value_objects", "services"]),
@@ -107,7 +108,7 @@ const MIGRATED: &[Capability<'_>] = &[
 type Placement<'a> = (&'a str, &'a [&'a str]);
 #[rustfmt::skip]
 const PLACEMENTS: &[Placement<'_>] = &[
-    ("domain", &["conversation", "admission", "environments", "catalogue", "tool_policy", "sessions", "agents", "audit", "inference", "commander", "identity", "shared", "external_agent", "swarm", "workflow", "project_board"]),
+    ("domain", &["conversation", "admission", "environments", "catalogue", "tool_policy", "sessions", "agents", "audit", "inference", "commander", "identity", "shared", "external_agent", "swarm", "workflow", "project_board", "search"]),
     ("application", &["admission", "agent_turn", "audit", "catalogue", "configuration", "environments", "extensions", "external_agent", "provider_runtime", "providers", "search", "sessions", "subagents", "swarm", "tools", "workflow", "agent_commander", "shared", "agent_loop", "project_board"]),
     ("interface", &["cli", "repl", "tools", "uds"]),
     ("infrastructure", &["admission", "auth", "config", "extensions", "external_agents", "http", "persistence", "processes", "providers", "search", "security", "tools", "workspace", "judgment", "observability", "time", "test_support"]),

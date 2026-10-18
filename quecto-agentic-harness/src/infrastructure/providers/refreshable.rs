@@ -234,7 +234,7 @@ struct OwnedRequest {
     tool_choice: Option<crate::domain::inference::value_objects::provider::ToolChoice>,
     metadata: Option<crate::domain::inference::value_objects::provider::RequestMetadata>,
     thinking_level: Option<crate::domain::inference::value_objects::provider::ThinkingLevel>,
-    cancel_flag: Option<crate::domain::inference::value_objects::provider::CancelFlag>,
+    cancel_flag: Option<crate::domain::inference::value_objects::cancel_flag::CancelFlag>,
     effort: Option<crate::domain::inference::value_objects::provider::EffortLevel>,
 }
 

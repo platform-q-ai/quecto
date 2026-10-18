@@ -3139,7 +3139,7 @@ fn given_anthropic_mock_success_182(world: &mut QuectoWorld) {
 
 #[given("a cancel flag that is already set")]
 fn given_cancel_flag_set(world: &mut QuectoWorld) {
-    use quecto::domain::inference::value_objects::provider::CancelFlag;
+    use quecto::domain::inference::value_objects::cancel_flag::CancelFlag;
     let flag = CancelFlag::new();
     flag.cancel();
     world.cancel_flag = Some(flag);
@@ -3147,7 +3147,7 @@ fn given_cancel_flag_set(world: &mut QuectoWorld) {
 
 #[given("a cancel flag that is not set")]
 fn given_cancel_flag_not_set(world: &mut QuectoWorld) {
-    use quecto::domain::inference::value_objects::provider::CancelFlag;
+    use quecto::domain::inference::value_objects::cancel_flag::CancelFlag;
     world.cancel_flag = Some(CancelFlag::new());
 }
 

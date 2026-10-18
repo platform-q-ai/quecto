@@ -1,5 +1,5 @@
 //! Application-owned web fetch policy, orchestration, and content transformation.
-use crate::domain::shared::html_text::{markup_to_text, push_collapsed_line};
+use crate::domain::shared::text::html_text::{markup_to_text, push_collapsed_line};
 use crate::domain::tool_policy::services::network_destination::{
     authorize_destination, is_fetchable_name,
 };

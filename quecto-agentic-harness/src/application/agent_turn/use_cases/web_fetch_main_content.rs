@@ -11,7 +11,9 @@
 //! [`strip_html`] reads it. One pass finds the landmarks and at most three
 //! more read them: linear in the page.
 use super::{find_configured_close_tag, remove_tag_blocks, strip_html, text_of_markup};
-use crate::domain::shared::html_text::{TagEnd, decode_entities, push_collapsed_line, tag_end};
+use crate::domain::shared::text::html_text::{
+    TagEnd, decode_entities, push_collapsed_line, tag_end,
+};
 
 /// How the one line said when only the main content is kept starts.
 pub const MAIN_CONTENT_NOTE_LEAD: &str = "[Main content only; ";

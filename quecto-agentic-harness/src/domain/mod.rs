@@ -5,6 +5,7 @@ pub mod conversation;
 pub mod environments;
 pub mod external_agent;
 pub mod identity;
+pub mod search;
 pub mod sessions;
 pub mod shared;
 pub mod tool_policy;

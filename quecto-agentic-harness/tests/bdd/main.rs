@@ -808,7 +808,7 @@ pub struct QuectoWorld {
     pub routing_response: Option<LlmResponse>,
     // --- Issue #182: cancellation support ---
     /// Cancel flag for cancellation BDD scenarios
-    pub cancel_flag: Option<quecto::domain::inference::value_objects::provider::CancelFlag>,
+    pub cancel_flag: Option<quecto::domain::inference::value_objects::cancel_flag::CancelFlag>,
     /// Result of a chat() call (Ok(response) or Err(message)) for cancellation tests
     pub chat_result: Option<Result<LlmResponse, String>>,
     /// Result of a chat_stream() call for cancellation tests

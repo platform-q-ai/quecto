@@ -31,10 +31,6 @@ pub enum StreamEvent {
     Error(String),
 }
 
-#[path = "cancel_flag.rs"]
-mod cancel_flag;
-pub use cancel_flag::{CancelFlag, CancelWatch};
-
 /// Thinking mode for extended thinking support.
 ///
 /// - `Adaptive` — Opus 4.6 / Sonnet 4.6 recommended mode. Claude dynamically

@@ -122,8 +122,8 @@ Zero deps except `thiserror` and `serde` (derive). Defines system vocabulary.
 | `sessions/entities/session.rs` | `Session`, `SessionStore` trait, `SpillEntry`, `SpillIndex`, `ContextSpillStore` trait, `strip_tool_history()`, `filter_orphan_tool_pairs()` (with `OrphanDiag`) |
 | `extension.rs` | `Extension` trait (`name()`, `tools()`, `system_prompt_snippet()`) |
 | `subagent.rs` | `SubagentConfig`, `validate_agent_id()` |
-| `workflow.rs` | `WorkflowEngine`, `WorkflowConfig` (`auto_continue`, `completion_nudge`, `templates`), `WorkflowTemplate`, `WorkflowTemplateStep`, `WorkflowGuardRule`, `WorkflowRun`, `WorkflowRunPersisted`, `WorkflowMode` (SelectingTemplate/Active/Complete), `WorkflowSnapshot`, `WorkflowError`, `default_templates()` (single `feature` Quecto workflow). UDS-only; available by default in UDS as a dormant tool, prompt-driven via `--workflow`, disabled via `--no-workflow` |
-| `error.rs` | `DomainError` enum (Provider, Tool, Session, Security, Config, Other) |
+| `workflow/mod.rs` | `WorkflowEngine`, `WorkflowConfig` (`auto_continue`, `completion_nudge`, `templates`), `WorkflowTemplate`, `WorkflowTemplateStep`, `WorkflowGuardRule`, `WorkflowRun`, `WorkflowRunPersisted`, `WorkflowMode` (SelectingTemplate/Active/Complete), `WorkflowSnapshot`, `WorkflowError`, `default_templates()` (single `feature` Quecto workflow). UDS-only; available by default in UDS as a dormant tool, prompt-driven via `--workflow`, disabled via `--no-workflow` |
+| `shared/error.rs` | `DomainError` enum (Provider, Tool, Session, Security, Config, Other) |
 
 Traits use `Pin<Box<dyn Future + Send + '_>>` for `Arc<dyn Trait>` compatibility.
 

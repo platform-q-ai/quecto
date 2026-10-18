@@ -9,9 +9,8 @@
 use super::*;
 use crate::application::providers::ports::ChatRequest;
 use crate::domain::conversation::value_objects::message::{LlmResponse, Message, UsageInfo};
-use crate::domain::inference::value_objects::provider::{
-    CancelFlag, RequestMetadata, StreamEvent, ToolChoice,
-};
+use crate::domain::inference::value_objects::cancel_flag::CancelFlag;
+use crate::domain::inference::value_objects::provider::{RequestMetadata, StreamEvent, ToolChoice};
 use crate::domain::tool_policy::value_objects::tool::{ImageBlock, ToolDefinition};
 
 fn base_req<'a>(

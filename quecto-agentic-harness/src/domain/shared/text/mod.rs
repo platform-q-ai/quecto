@@ -8,6 +8,8 @@
 
 use std::borrow::Cow;
 
+pub mod html_text;
+
 /// Truncate `s` to at most `max_chars` characters, appending `suffix` when
 /// truncated. On truncation, the first `keep` characters are retained (callers
 /// choose whether the suffix counts toward the budget). Safe for multi-byte
