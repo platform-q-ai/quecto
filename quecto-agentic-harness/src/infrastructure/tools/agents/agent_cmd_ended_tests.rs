@@ -3,7 +3,7 @@ use crate::application::sessions::ports::SessionStore;
 use crate::domain::crash_record::CrashRecord;
 use crate::domain::crash_record::PanicReport;
 use crate::domain::sessions::entities::session::Session;
-use crate::infrastructure::persistence::crash_record::Armed;
+use crate::infrastructure::persistence::file::crash_record::Armed;
 use crate::infrastructure::tools::agents::subagent_registry::{
     ExitSignal, SubagentEntry, new_exit_signal_channel, new_registry,
 };
@@ -668,7 +668,7 @@ async fn a_forged_record_is_shown_as_data_and_not_believed_next_to_a_clean_exit(
 /// L3: a transcript over the read bound gives its newest part, marked.
 #[tokio::test]
 async fn a_transcript_over_the_bound_answers_its_newest_part_marked_as_such() {
-    use crate::infrastructure::persistence::ended_child_records::FileEndedChildRecords;
+    use crate::infrastructure::persistence::file::ended_child_records::FileEndedChildRecords;
     let base = Base::new();
     let all: Vec<String> = (0..20)
         .map(|i| format!("m{i:02}-{}", "z".repeat(80)))

@@ -3,7 +3,7 @@
 //! and the control generation, the latest `paused`/`resumed` event id.
 use quecto::application::swarm::dto::BoardLocation;
 use quecto::application::swarm::ports::BoardRepository;
-use quecto::infrastructure::persistence::swarm_board::repository::SqliteBoardRepository;
+use quecto::infrastructure::persistence::sqlite::swarm_board::repository::SqliteBoardRepository;
 use serde_json::json;
 
 #[test]

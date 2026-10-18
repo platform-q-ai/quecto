@@ -292,7 +292,9 @@ const CRASH_CHILD_BASE: &str = "QUECTO_2192_SWITCH_CRASH_BASE";
 /// crash target is process-wide, so it is armed in a process of its own.
 #[tokio::test]
 async fn crash_target_child() {
-    use crate::infrastructure::persistence::{audit_log::AuditLog, crash_record};
+    use crate::infrastructure::{
+        observability::audit_log::AuditLog, persistence::file::crash_record,
+    };
     let Some(base) = std::env::var_os(CRASH_CHILD_BASE).map(std::path::PathBuf::from) else {
         return;
     };
@@ -324,7 +326,7 @@ async fn crash_target_child() {
 /// and the event log its fatal `error` event goes to — to the new session.
 #[test]
 fn a_new_session_moves_the_crash_target_and_its_log() {
-    use crate::infrastructure::persistence::audit_log::AuditLog;
+    use crate::infrastructure::observability::audit_log::AuditLog;
     let base = tempfile::tempdir().unwrap();
     let output = std::process::Command::new(std::env::current_exe().unwrap())
         .args([

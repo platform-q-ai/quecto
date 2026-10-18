@@ -7,7 +7,7 @@ use crate::domain::tool_policy::value_objects::tool::{ToolDefinition, ToolResult
 use crate::domain::workflow::{
     WorkflowConfig, WorkflowEngine, WorkflowTemplate, WorkflowTemplateStep,
 };
-use crate::infrastructure::persistence::session_store::FileSessionStore;
+use crate::infrastructure::persistence::file::sessions::session_store::FileSessionStore;
 use crate::infrastructure::test_support::message_contents;
 use crate::infrastructure::tools::registry::registration::ToolRegistration;
 use crate::interface::cli::uds::dispatch_session_roster_tests::list_handle;
@@ -134,7 +134,7 @@ impl Fx {
             execution_state: std::sync::Arc::new(std::sync::Mutex::new(Default::default())),
             session_key: "cli:test".into(),
             store: Arc::new(FileSessionStore::new(
-                crate::infrastructure::persistence::session_layout::FlatSessionLayout::new(
+                crate::infrastructure::persistence::file::sessions::session_layout::FlatSessionLayout::new(
                     tmp.path(),
                 ),
             )),

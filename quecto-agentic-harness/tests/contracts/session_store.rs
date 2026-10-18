@@ -20,8 +20,8 @@ use quecto::application::sessions::ports::SessionStore;
 use quecto::domain::conversation::value_objects::message::Message;
 use quecto::domain::sessions::entities::session::Session;
 use quecto::domain::sessions::entities::session_identity::{SessionIdentity, SessionKeyPrefix};
-use quecto::infrastructure::persistence::session_layout::FlatSessionLayout;
-use quecto::infrastructure::persistence::session_store::FileSessionStore;
+use quecto::infrastructure::persistence::file::sessions::session_layout::FlatSessionLayout;
+use quecto::infrastructure::persistence::file::sessions::session_store::FileSessionStore;
 use std::sync::Arc;
 
 fn under_test(base_dir: &std::path::Path) -> Arc<dyn SessionStore> {

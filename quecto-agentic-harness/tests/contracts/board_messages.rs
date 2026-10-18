@@ -5,7 +5,7 @@
 //! Python's `sqlite3` does.
 use quecto::application::swarm::dto::{BoardLocation, MessageRow, NewMessage};
 use quecto::application::swarm::ports::BoardRepository;
-use quecto::infrastructure::persistence::swarm_board::repository::SqliteBoardRepository;
+use quecto::infrastructure::persistence::sqlite::swarm_board::repository::SqliteBoardRepository;
 use serde_json::json;
 
 #[test]

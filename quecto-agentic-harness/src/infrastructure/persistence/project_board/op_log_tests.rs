@@ -7,7 +7,7 @@ use super::*;
 use crate::domain::project_board::value_objects::telemetry::{
     Client, FrontEnd, OpKind, OpOutcome, StaticKind,
 };
-use crate::infrastructure::persistence::audit_log::AuditLog;
+use crate::infrastructure::observability::audit_log::AuditLog;
 
 fn record(access: Access) -> BoardOpRecord {
     BoardOpRecord {

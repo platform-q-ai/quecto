@@ -180,7 +180,9 @@ async fn an_image_a_resume_cannot_read_is_a_marker_in_the_request_and_never_in_t
         .await
         .unwrap();
     let layout =
-        crate::infrastructure::persistence::session_layout::FlatSessionLayout::new(fx._tmp.path());
+        crate::infrastructure::persistence::file::sessions::session_layout::FlatSessionLayout::new(
+            fx._tmp.path(),
+        );
     let png = png();
     let sha256 =
         crate::domain::conversation::value_objects::stored_images::sha256_hex(png.as_bytes());

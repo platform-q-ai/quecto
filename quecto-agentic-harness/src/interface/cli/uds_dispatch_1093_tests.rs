@@ -4,7 +4,7 @@ use crate::domain::conversation::value_objects::message::{Message, ToolCall};
 use crate::domain::sessions::entities::session::{Session, SpillEntry, SpillIndex};
 use crate::domain::sessions::entities::session_identity::{SessionIdentity, SpillId};
 use crate::domain::tool_policy::value_objects::tool::ToolProfileContext;
-use crate::infrastructure::persistence::session_layout::FlatSessionLayout;
+use crate::infrastructure::persistence::file::sessions::session_layout::FlatSessionLayout;
 use crate::interface::cli::protocol::AgentCommand;
 use crate::interface::cli::uds::dispatch_session_roster_tests::{
     catalogue_handles, handles_over, read_handles_for, resolve_message,
@@ -129,7 +129,7 @@ struct Fixture {
     /// The file store of `_tmp`, shared with `handles` (the fixture's one
     /// composed sessions graph), so the store the tests seed is the one the
     /// transactions run against; `ctx()` publishes the messages into it.
-    store: Arc<crate::infrastructure::persistence::session_store::FileSessionStore>,
+    store: Arc<crate::infrastructure::persistence::file::sessions::session_store::FileSessionStore>,
     handles: crate::interface::cli::uds_session_handles::SessionHandles,
     _tmp: tempfile::TempDir,
     cancel: CancelHandle,
@@ -139,7 +139,7 @@ impl Fixture {
     fn new(spill_store: Option<Arc<dyn ContextSpillStore>>) -> Self {
         let tmp = tempfile::TempDir::new().unwrap();
         let store = Arc::new(
-            crate::infrastructure::persistence::session_store::FileSessionStore::new(
+            crate::infrastructure::persistence::file::sessions::session_store::FileSessionStore::new(
                 FlatSessionLayout::new(tmp.path()),
             ),
         );

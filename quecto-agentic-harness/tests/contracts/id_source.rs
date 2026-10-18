@@ -1,6 +1,6 @@
 //! `IdSource` on `Uuid4Ids` (#2270): Python's `uuid.uuid4().hex`.
 use quecto::application::swarm::ports::IdSource;
-use quecto::infrastructure::persistence::swarm_board::ids::Uuid4Ids;
+use quecto::infrastructure::persistence::sqlite::swarm_board::ids::Uuid4Ids;
 
 #[test]
 fn ids_are_fresh_32_lowercase_hex_digits() {

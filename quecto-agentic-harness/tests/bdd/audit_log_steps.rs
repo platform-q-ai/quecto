@@ -1,6 +1,6 @@
 use super::*;
 use quecto::domain::audit::{AuditEvent, AuditIssue, content_preview};
-use quecto::infrastructure::persistence::audit_log::AuditLog;
+use quecto::infrastructure::observability::audit_log::AuditLog;
 use std::path::PathBuf;
 use tempfile::TempDir;
 

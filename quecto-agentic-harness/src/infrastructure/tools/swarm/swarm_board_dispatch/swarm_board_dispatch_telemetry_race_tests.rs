@@ -17,7 +17,7 @@ use crate::domain::swarm::{
     events::telemetry::{BoardOpDetail, BoardOpOutcome, RefusalKind},
     value_objects::board_error::BoardError,
 };
-use crate::infrastructure::persistence::swarm_board::repository::SqliteBoardRepository;
+use crate::infrastructure::persistence::sqlite::swarm_board::repository::SqliteBoardRepository;
 
 /// A call's repository that runs `race` on the board file once, before
 /// its `nth` transaction (from 1), as another connection's commit landing

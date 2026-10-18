@@ -18,8 +18,8 @@ use crate::domain::swarm::{
     events::telemetry::{BoardOpObservation, BoardOpOutcome, BoardRole, RefusalKind},
     value_objects::board_error::BoardError,
 };
-use crate::infrastructure::persistence::audit_log::AuditLog;
-use crate::infrastructure::persistence::swarm_board::repository::SqliteBoardRepository;
+use crate::infrastructure::observability::audit_log::AuditLog;
+use crate::infrastructure::persistence::sqlite::swarm_board::repository::SqliteBoardRepository;
 use crate::infrastructure::workspace::checkout_paths::ResolvedCheckout;
 
 struct Fixed(f64);
@@ -575,7 +575,7 @@ fn a_real_event_log_is_written_from_a_plain_thread() {
     let handles = real(
         &base,
         &dir,
-        crate::infrastructure::persistence::audit_log::DEFAULT_CAP_BYTES,
+        crate::infrastructure::observability::audit_log::DEFAULT_CAP_BYTES,
     );
     thread::spawn(move || {
         call(&handles, "parent", "bootstrap_run", json!([1, "s", null])).unwrap();
@@ -642,7 +642,7 @@ fn a_swarm_op_line_holds_no_board_text() {
     let handles = real(
         &base,
         &dir,
-        crate::infrastructure::persistence::audit_log::DEFAULT_CAP_BYTES,
+        crate::infrastructure::observability::audit_log::DEFAULT_CAP_BYTES,
     );
     call(&handles, actor, "bootstrap_run", json!([1, "s", null])).unwrap();
     let mut args = create_args();

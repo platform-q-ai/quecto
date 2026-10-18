@@ -50,7 +50,7 @@ fn production_handles_bootstrap_and_read_the_board_file() {
 /// measures and records every call there.
 #[test]
 fn the_board_records_in_the_event_log_only_when_it_is_on() {
-    use crate::infrastructure::persistence::audit_log::AuditLog;
+    use crate::infrastructure::observability::audit_log::AuditLog;
     let base = tempfile::TempDir::new().unwrap();
     let log = AuditLog::open_sync(base.path(), "cli:board").unwrap();
     assert!(

@@ -5,7 +5,7 @@
 //! budget and request-ledger writes (#2274) store Python's bytes.
 use quecto::application::swarm::dto::BoardLocation;
 use quecto::application::swarm::ports::BoardRepository;
-use quecto::infrastructure::persistence::swarm_board::repository::SqliteBoardRepository;
+use quecto::infrastructure::persistence::sqlite::swarm_board::repository::SqliteBoardRepository;
 use serde_json::{Value, json};
 
 fn usage_board() -> (tempfile::TempDir, std::path::PathBuf, SqliteBoardRepository) {

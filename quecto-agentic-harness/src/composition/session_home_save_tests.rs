@@ -13,7 +13,7 @@ use crate::domain::sessions::entities::session_identity::SessionIdentity;
 use crate::domain::{
     conversation::value_objects::message::Message, sessions::entities::session::Session,
 };
-use crate::infrastructure::persistence::session_layout::FlatSessionLayout;
+use crate::infrastructure::persistence::file::sessions::session_layout::FlatSessionLayout;
 use std::path::PathBuf;
 
 #[path = "session_home_orphan_tests.rs"]

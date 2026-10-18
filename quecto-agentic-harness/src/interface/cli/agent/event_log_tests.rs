@@ -94,7 +94,7 @@ fn without_a_configuration_the_event_log_is_off_before_admission() {
 #[tokio::test]
 async fn the_board_tools_records_follow_the_session() {
     use crate::application::tools::ports::Tool;
-    use crate::infrastructure::persistence::audit_log::AuditLog;
+    use crate::infrastructure::observability::audit_log::AuditLog;
     use crate::interface::tools::project_board::site::BoardSite;
     use crate::interface::tools::project_board::tool::BoardTool;
     let base = tempfile::tempdir().unwrap();

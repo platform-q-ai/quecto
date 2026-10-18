@@ -6,8 +6,8 @@ use quecto::application::context_pruning;
 use quecto::application::sessions::ports::{ContextSpillStore, SessionStore};
 use quecto::domain::sessions::entities::session::{Session, SpillEntry, SpillIndex};
 use quecto::domain::sessions::entities::session_identity::{SessionIdentity, SpillId};
-use quecto::infrastructure::persistence::session_layout::FlatSessionLayout;
-use quecto::infrastructure::persistence::session_store::FileSessionStore;
+use quecto::infrastructure::persistence::file::sessions::session_layout::FlatSessionLayout;
+use quecto::infrastructure::persistence::file::sessions::session_store::FileSessionStore;
 
 // ===========================================================================
 // In-memory ContextSpillStore for BDD tests
@@ -1243,9 +1243,10 @@ fn then_estimated_token_count(world: &mut QuectoWorld, expected: usize) {
 fn when_n_spill_entries_appended(world: &mut QuectoWorld, count: usize) {
     let rt = tokio::runtime::Runtime::new().unwrap();
     let tmp = tempfile::TempDir::new().unwrap();
-    let store = quecto::infrastructure::persistence::context_spill::FileContextSpillStore::new(
-        FlatSessionLayout::new(tmp.path()),
-    );
+    let store =
+        quecto::infrastructure::persistence::file::context_spill::FileContextSpillStore::new(
+            FlatSessionLayout::new(tmp.path()),
+        );
     let (cache_count, cache_result) = rt.block_on(async {
         // Append first entry, then seed cache via list_entries (mirrors agent loop)
         let first = SpillEntry {
@@ -1293,9 +1294,10 @@ fn when_n_spill_entries_appended(world: &mut QuectoWorld, count: usize) {
 fn when_recall_5th_in_10_entries(world: &mut QuectoWorld) {
     let rt = tokio::runtime::Runtime::new().unwrap();
     let tmp = tempfile::TempDir::new().unwrap();
-    let store = quecto::infrastructure::persistence::context_spill::FileContextSpillStore::new(
-        FlatSessionLayout::new(tmp.path()),
-    );
+    let store =
+        quecto::infrastructure::persistence::file::context_spill::FileContextSpillStore::new(
+            FlatSessionLayout::new(tmp.path()),
+        );
     let (result_id, result_content) = rt.block_on(async {
         for i in 0..10 {
             let entry = SpillEntry {

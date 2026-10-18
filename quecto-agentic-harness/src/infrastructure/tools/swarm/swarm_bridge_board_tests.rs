@@ -11,7 +11,7 @@ use crate::application::swarm::dto::BoardLocation;
 use crate::application::swarm::ports::BoardOpLog;
 use crate::composition::swarm::build_swarm_board_handles;
 use crate::domain::swarm::events::telemetry::BoardOpObservation;
-use crate::infrastructure::persistence::audit_log::AuditLog;
+use crate::infrastructure::observability::audit_log::AuditLog;
 use crate::infrastructure::tools::swarm::swarm_bridge::SwarmContext;
 
 /// The event log, in memory.

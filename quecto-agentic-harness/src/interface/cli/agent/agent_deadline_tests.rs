@@ -170,9 +170,11 @@ fn a_stopped_run_records_its_unfinished_request_and_why() {
     let accounting = std::sync::Arc::new(Recorded::default());
     let mut agent = agent_at(&format!("http://{address}"), tmp.path())
         .with_request_accounting(Some(accounting.clone()));
-    let audit =
-        crate::infrastructure::persistence::audit_log::AuditLog::open_sync(tmp.path(), "deadline")
-            .unwrap();
+    let audit = crate::infrastructure::observability::audit_log::AuditLog::open_sync(
+        tmp.path(),
+        "deadline",
+    )
+    .unwrap();
     agent.set_audit_log(Some(std::sync::Arc::new(audit)));
     let rt = crate::interface::cli::build_tokio_runtime().unwrap();
     let mut messages = vec![Message::user("hello")];

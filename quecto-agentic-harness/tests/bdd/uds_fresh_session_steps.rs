@@ -6,8 +6,8 @@ use super::*;
 use quecto::application::sessions::ports::SessionStore;
 use quecto::domain::sessions::entities::session::USER_CHAT_PREFIX;
 use quecto::domain::sessions::entities::session_identity::SessionIdentity;
-use quecto::infrastructure::persistence::session_layout::FlatSessionLayout;
-use quecto::infrastructure::persistence::session_store::FileSessionStore;
+use quecto::infrastructure::persistence::file::sessions::session_layout::FlatSessionLayout;
+use quecto::infrastructure::persistence::file::sessions::session_store::FileSessionStore;
 
 fn response_session_key(world: &QuectoWorld, id: &str) -> String {
     let resp = crate::uds_steps::find_agent_response_by_id(world, id)

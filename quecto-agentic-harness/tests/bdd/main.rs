@@ -20,7 +20,7 @@ use quecto::infrastructure::config::Config;
 use quecto::domain::inference::services::provider_error::{
     ProviderErrorClass, classify_provider_error,
 };
-use quecto::infrastructure::persistence::session_store::FileSessionStore;
+use quecto::infrastructure::persistence::file::sessions::session_store::FileSessionStore;
 use quecto::infrastructure::providers;
 use quecto::infrastructure::providers::router::ProviderRouter;
 
@@ -789,11 +789,13 @@ pub struct QuectoWorld {
     /// Response text from /reload handler
     pub reload_response: Option<String>,
     /// Session store used in /reload scenarios
-    pub reload_session_store:
-        Option<Arc<quecto::infrastructure::persistence::session_store::FileSessionStore>>,
+    pub reload_session_store: Option<
+        Arc<quecto::infrastructure::persistence::file::sessions::session_store::FileSessionStore>,
+    >,
     /// Spill store used in /reload scenarios
-    pub reload_spill_store:
-        Option<Arc<quecto::infrastructure::persistence::context_spill::FileContextSpillStore>>,
+    pub reload_spill_store: Option<
+        Arc<quecto::infrastructure::persistence::file::context_spill::FileContextSpillStore>,
+    >,
     /// Temp dir for /reload scenarios (kept alive)
     pub _reload_temp_dir: Option<TempDir>,
     /// Stored command for multi-step exec scenarios (e.g. large output tests)
@@ -864,7 +866,7 @@ pub struct QuectoWorld {
     //   src/interface/shared_tests.rs
     //   src/interface/cli/agent_tests.rs
     //   src/interface/cli/protocol_tests.rs
-    //   src/infrastructure/persistence/session_store.rs
+    //   src/infrastructure/persistence/file/sessions/session_store.rs
     // --- Extension system BDD fields ---
     /// Test extension for extension trait scenarios (Debug-opaque)
     pub test_extension: Option<DebugExtension>,
@@ -1074,7 +1076,8 @@ pub struct QuectoWorld {
     /// Serialized JSON for audit event
     pub audit_json: Option<String>,
     /// Active audit log handle
-    pub audit_log: Option<std::sync::Arc<quecto::infrastructure::persistence::audit_log::AuditLog>>,
+    pub audit_log:
+        Option<std::sync::Arc<quecto::infrastructure::observability::audit_log::AuditLog>>,
     /// Session key used with audit log
     pub audit_session_key: Option<String>,
     /// Long content for preview tests

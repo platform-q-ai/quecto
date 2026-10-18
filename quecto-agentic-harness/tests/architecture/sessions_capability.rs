@@ -71,10 +71,10 @@ const CANONICAL_FILES: &[&str] = &[
     "src/application/sessions/dto/list_sessions.rs",
     "src/application/sessions/ports/session_home.rs",
     "src/application/sessions/session_home.rs",
-    "src/infrastructure/persistence/session_home_catalogue.rs",
-    "src/infrastructure/persistence/session_home_catalogue_index.rs",
-    "src/infrastructure/persistence/session_store_home.rs",
-    "src/infrastructure/persistence/session_store_list_index.rs",
+    "src/infrastructure/persistence/file/sessions/session_home_catalogue.rs",
+    "src/infrastructure/persistence/file/sessions/session_home_catalogue_index.rs",
+    "src/infrastructure/persistence/file/sessions/session_store_home.rs",
+    "src/infrastructure/persistence/file/sessions/session_store_list_index.rs",
     "src/infrastructure/workspace/git_scope_discovery.rs",
     "src/infrastructure/workspace/filesystem_scope.rs",
     "src/application/sessions/mod.rs",
@@ -108,7 +108,7 @@ const CANONICAL_FILES: &[&str] = &[
     "src/domain/sessions/services/session_metadata_search.rs",
     "src/application/sessions/dto/search_session_metadata.rs",
     "src/application/sessions/use_cases/search_session_metadata.rs",
-    "src/infrastructure/persistence/session_home_catalogue_metadata.rs",
+    "src/infrastructure/persistence/file/sessions/session_home_catalogue_metadata.rs",
     "src/composition/session_search.rs",
     "src/interface/uds/sessions/search_session_metadata_controller.rs",
     "src/interface/cli/uds_discovery_handles.rs",
@@ -121,13 +121,13 @@ const CANONICAL_FILES: &[&str] = &[
     "src/domain/sessions/value_objects/session_home_text.rs",
     "src/application/sessions/dto/search_limits.rs",
     "src/interface/cli/uds_search_numbers.rs",
-    "src/infrastructure/persistence/session_home_catalogue_rejections.rs",
+    "src/infrastructure/persistence/file/sessions/session_home_catalogue_rejections.rs",
     // Round 3 (R3-H1): naming the walk's skips, linear in the bad records.
-    "src/infrastructure/persistence/session_home_catalogue_skipped.rs",
-    "src/infrastructure/persistence/session_home_catalogue_seed.rs",
-    "src/infrastructure/persistence/session_record_read.rs",
+    "src/infrastructure/persistence/file/sessions/session_home_catalogue_skipped.rs",
+    "src/infrastructure/persistence/file/sessions/session_home_catalogue_seed.rs",
+    "src/infrastructure/persistence/file/sessions/session_record_read.rs",
     // #2042: the one pass both halves of discovery share.
-    "src/infrastructure/persistence/session_home_catalogue_joined.rs",
+    "src/infrastructure/persistence/file/sessions/session_home_catalogue_joined.rs",
     "src/domain/sessions/value_objects/session_path_text.rs",
     // #2045: the shell command that opens quecto in a session's folder.
     "src/domain/sessions/value_objects/session_open_command.rs",
@@ -163,8 +163,8 @@ const CANONICAL_FILES: &[&str] = &[
     "src/application/sessions/conversation_ledger.rs",
     "src/application/sessions/history_paging.rs",
     "src/application/durable_prefix.rs",
-    "src/infrastructure/persistence/session_snapshot_sources.rs",
-    "src/infrastructure/persistence/fresh_session_identity.rs",
+    "src/infrastructure/persistence/file/sessions/session_snapshot_sources.rs",
+    "src/infrastructure/persistence/file/sessions/fresh_session_identity.rs",
     "src/infrastructure/tools/agents/delegated_roster.rs",
     "src/composition/sessions.rs",
     "src/composition/active_session.rs",
@@ -173,7 +173,7 @@ const CANONICAL_FILES: &[&str] = &[
     "src/composition/retention.rs",
     "src/interface/cli/uds_session_handles.rs",
     "src/interface/cli/retention_handles.rs",
-    "src/infrastructure/persistence/context_spill.rs",
+    "src/infrastructure/persistence/file/context_spill.rs",
     "src/infrastructure/tools/native/recall.rs",
     "src/interface/cli/uds_sync.rs",
     "src/interface/cli/uds_turn_accounting.rs",
@@ -187,13 +187,13 @@ const CANONICAL_FILES: &[&str] = &[
     "src/interface/uds/sessions/rewind_conversation_controller.rs",
     "src/domain/conversation/services/conversation_view.rs",
     "src/domain/conversation/services/conversation_edit.rs",
-    "src/infrastructure/persistence/session_layout.rs",
+    "src/infrastructure/persistence/file/sessions/session_layout.rs",
     "src/domain/sessions/entities/session_identity.rs",
     // #2424: a saved session's image sidecars: the store's image steps, the
     // seam inside persistence and its file adapter.
-    "src/infrastructure/persistence/session_images/sidecar_store.rs",
-    "src/infrastructure/persistence/session_images/mod.rs",
-    "src/infrastructure/persistence/session_images/file_sidecar_store.rs",
+    "src/infrastructure/persistence/file/sessions/session_images/sidecar_store.rs",
+    "src/infrastructure/persistence/file/sessions/session_images/mod.rs",
+    "src/infrastructure/persistence/file/sessions/session_images/file_sidecar_store.rs",
 ];
 
 /// The ports of the capability, each with its contract suite (R2 subset).
@@ -576,11 +576,15 @@ const LAYOUT_CREATION_SITES: &[&str] = &["src/composition/sessions.rs"];
 /// exact callers of the shared filename sanitizer (R7). `audit_log.rs`
 /// names its own audit files with the same sanitizer; it forms no session
 /// path.
-const LAYOUT_OWNER: &str = "src/infrastructure/persistence/session_layout.rs";
+const LAYOUT_OWNER: &str = "src/infrastructure/persistence/file/sessions/session_layout.rs";
 const SANITIZER_CALLERS: &[&str] = &[
-    "src/infrastructure/persistence/audit_log.rs",
-    "src/infrastructure/persistence/session_layout.rs",
+    "src/infrastructure/observability/audit_log.rs",
+    "src/infrastructure/persistence/file/sessions/session_layout.rs",
 ];
+
+/// Sanitizer callers outside `infrastructure/persistence/`: the event-log
+/// adapter, which names its per-session JSONL file (#2375).
+const OUTSIDE_SANITIZER_CALLERS: &[&str] = &["src/infrastructure/observability/audit_log.rs"];
 
 /// Decrease-only line ceilings of the list/owner files (file, ceiling).
 /// Lower a ceiling when a file shrinks; never raise or remove one to pass.
@@ -786,25 +790,31 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     ("src/composition/session_home.rs", 38),
     ("src/composition/fleet_settlement.rs", 39),
     (
-        "src/infrastructure/persistence/session_snapshot_sources.rs",
+        "src/infrastructure/persistence/file/sessions/session_snapshot_sources.rs",
         61,
     ),
     (
-        "src/infrastructure/persistence/fresh_session_identity.rs",
+        "src/infrastructure/persistence/file/sessions/fresh_session_identity.rs",
         41,
     ),
     ("src/infrastructure/tools/agents/delegated_roster.rs", 40),
     (
-        "src/infrastructure/persistence/session_store_ordinals.rs",
+        "src/infrastructure/persistence/file/sessions/session_store_ordinals.rs",
         23,
     ),
     // D8 #1977 adds the wire-admitted user-chat constructor (was 133
     // before D8).
     ("src/domain/sessions/entities/session_identity.rs", 148),
     // D9 #1978 moves the ephemeral scrub onto the port (was 376 before D9).
-    ("src/infrastructure/persistence/context_spill.rs", 377),
-    ("src/infrastructure/persistence/session_layout.rs", 94),
-    ("src/infrastructure/persistence/session_ownership.rs", 229),
+    ("src/infrastructure/persistence/file/context_spill.rs", 377),
+    (
+        "src/infrastructure/persistence/file/sessions/session_layout.rs",
+        94,
+    ),
+    (
+        "src/infrastructure/persistence/file/sessions/session_ownership.rs",
+        229,
+    ),
     // R2-H2: the empty-save delete moved beside the home sidecar it now
     // removes (`session_store_home.rs`); the store is back at 687.
     // #2218: the writes, their fsync and the append-or-compact decisions
@@ -812,23 +822,32 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     // #2424: the message record conversions and the list's header parse moved
     // beside the records they read (`session_store_records.rs`, 510 → 476);
     // the image steps are `session_images/` (the write: 389 → 387).
-    ("src/infrastructure/persistence/session_store.rs", 476),
-    ("src/infrastructure/persistence/session_store_write.rs", 387),
     (
-        "src/infrastructure/persistence/session_store_catalogue.rs",
+        "src/infrastructure/persistence/file/sessions/session_store.rs",
+        476,
+    ),
+    (
+        "src/infrastructure/persistence/file/sessions/session_store_write.rs",
+        387,
+    ),
+    (
+        "src/infrastructure/persistence/file/sessions/session_store_catalogue.rs",
         23,
     ),
     // PR #2018 perf: the summary cache moved to its own module, seeded once
     // per process from the persisted index (31 → 29; the walk 62 → 60).
-    ("src/infrastructure/persistence/session_store_list.rs", 28),
+    (
+        "src/infrastructure/persistence/file/sessions/session_store_list.rs",
+        28,
+    ),
     // R2-L3: the per-record read (cached summary, header parse, layout
     // check, every skip logged) is its own helper; the walk shrank 110 → 62.
     (
-        "src/infrastructure/persistence/session_store_list_scan.rs",
+        "src/infrastructure/persistence/file/sessions/session_store_list_scan.rs",
         59,
     ),
     (
-        "src/infrastructure/persistence/session_store_list_index.rs",
+        "src/infrastructure/persistence/file/sessions/session_store_list_index.rs",
         36,
     ),
     // PR #2018 perf: the derived index is stamp-based and persisted; its
@@ -841,33 +860,33 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     // #2042: the per-record pass moved to its own owner (446 → 417); the
     // walk's cache lost `summary_at`, the pass reads its entries (48 → 36).
     (
-        "src/infrastructure/persistence/session_home_catalogue.rs",
+        "src/infrastructure/persistence/file/sessions/session_home_catalogue.rs",
         417,
     ),
     (
-        "src/infrastructure/persistence/session_home_catalogue_joined.rs",
+        "src/infrastructure/persistence/file/sessions/session_home_catalogue_joined.rs",
         285,
     ),
     // Round 3: naming the walk's skips is its own owner (R3-H1), and the
     // legacy `rejected` key's presence rule lives here (R3-H6).
     (
-        "src/infrastructure/persistence/session_home_catalogue_rejections.rs",
+        "src/infrastructure/persistence/file/sessions/session_home_catalogue_rejections.rs",
         124,
     ),
     (
-        "src/infrastructure/persistence/session_home_catalogue_skipped.rs",
+        "src/infrastructure/persistence/file/sessions/session_home_catalogue_skipped.rs",
         34,
     ),
     (
-        "src/infrastructure/persistence/session_home_catalogue_seed.rs",
+        "src/infrastructure/persistence/file/sessions/session_home_catalogue_seed.rs",
         44,
     ),
     (
-        "src/infrastructure/persistence/session_home_catalogue_index.rs",
+        "src/infrastructure/persistence/file/sessions/session_home_catalogue_index.rs",
         142,
     ),
     (
-        "src/infrastructure/persistence/session_store_list_record.rs",
+        "src/infrastructure/persistence/file/sessions/session_store_list_record.rs",
         106,
     ),
     // #2042: the read seam's test hooks live in their own test-only owner;
@@ -875,7 +894,10 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     // the pass its too-large verdict for both halves (256 → 285), the walk
     // its cached too-large skip (95 → 110), and the rejections `retain_seen`
     // by scan generation in place of the `exists` sweep (110 → 124) — each a reviewed raise.
-    ("src/infrastructure/persistence/session_record_read.rs", 71),
+    (
+        "src/infrastructure/persistence/file/sessions/session_record_read.rs",
+        71,
+    ),
     ("src/infrastructure/session_export.rs", 110),
     // #2404: a message record names its user kind (`userKind`), a
     // reviewed raise (80 → 81).
@@ -918,7 +940,7 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     ),
     ("src/domain/sessions/value_objects/session_home_text.rs", 47),
     (
-        "src/infrastructure/persistence/session_home_catalogue_metadata.rs",
+        "src/infrastructure/persistence/file/sessions/session_home_catalogue_metadata.rs",
         45,
     ),
     // Review round 2: the refusal, the injective path spelling, the rescue of
@@ -1173,7 +1195,7 @@ fn ports_are_declared_only_in_the_capability_ports_file_and_contracted() {
         "tests/contracts/session_layout.rs",
         "tests/contracts/session_list_scale.rs",
         // #2424: the image sidecar seam's contract, beside it in persistence.
-        "src/infrastructure/persistence/session_images/sidecar_store_contract_tests.rs",
+        "src/infrastructure/persistence/file/sessions/session_images/sidecar_store_contract_tests.rs",
     ] {
         assert!(Path::new(extra).is_file(), "missing {extra}");
     }
@@ -1225,7 +1247,7 @@ fn sessions_graph_nodes_are_constructed_only_in_composition() {
 
 /// The persistence adapters that are not the sessions capability's.
 const ENVIRONMENT_REGISTRY_STORE: &str =
-    "src/infrastructure/persistence/environment_registry_store.rs";
+    "src/infrastructure/persistence/file/environment_registry_store.rs";
 
 #[test]
 fn one_layout_owns_the_sessions_join_sanitizer_and_file_names() {
@@ -1271,21 +1293,32 @@ fn one_layout_owns_the_sessions_join_sanitizer_and_file_names() {
     let expected: BTreeSet<String> = set(SANITIZER_CALLERS)
         .into_iter()
         .chain(std::iter::once(
-            "src/infrastructure/persistence/filename.rs".to_string(),
+            "src/infrastructure/persistence/file/filename.rs".to_string(),
         ))
         .collect();
     assert_eq!(sanitizer_callers, expected, "sanitizer callers are exact");
     // No caller outside persistence forms a session path: any path literal
     // of the layout's vocabulary (a `sessions` segment being joined, an
     // `.owner` stamp, the spill file, the sanitizer) is refused whatever
-    // the surrounding expression.
+    // the surrounding expression. The one exception is the event-log
+    // adapter, which lives in observability (wiki; #2375). It may call
+    // the shared sanitizer to name its per-session JSONL file, and it may
+    // use none of the rest of the layout's vocabulary.
     let outside: Vec<String> = production_files()
         .into_iter()
         .filter(|p| !p.starts_with("src/infrastructure/persistence/"))
         .flat_map(|path| {
+            let sanitizes = OUTSIDE_SANITIZER_CALLERS.contains(&path.as_str());
             production_code(&path)
                 .into_iter()
-                .filter(|(_, line)| forms_session_path(line))
+                .filter(move |(_, line)| {
+                    let scanned = if sanitizes {
+                        line.replace("sanitize_session_key(", "")
+                    } else {
+                        line.to_string()
+                    };
+                    forms_session_path(&scanned)
+                })
                 .map(move |(n, line)| format!("{path}:{n}: {}", line.trim()))
         })
         .collect();
@@ -1489,7 +1522,7 @@ fn fresh_session_is_requested_only_by_the_dispatch_handler() {
         ("impl SessionKeyPropagation for", adapter),
         (
             "impl FreshSessionIdentityGenerator for",
-            "src/infrastructure/persistence/fresh_session_identity.rs",
+            "src/infrastructure/persistence/file/sessions/fresh_session_identity.rs",
         ),
         (
             "impl DelegatedChildrenRoster for",
@@ -1501,7 +1534,7 @@ fn fresh_session_is_requested_only_by_the_dispatch_handler() {
         ),
         (
             "SessionIdentity::fresh_chat(",
-            "src/infrastructure/persistence/fresh_session_identity.rs",
+            "src/infrastructure/persistence/file/sessions/fresh_session_identity.rs",
         ),
     ] {
         assert_eq!(
@@ -1664,14 +1697,16 @@ fn sync_is_answered_through_the_composed_controller_on_both_transports() {
 /// stats what the scan already saw.
 #[test]
 fn the_catalogue_stamps_a_record_only_through_the_counted_pass() {
-    let catalogue =
-        std::fs::read_to_string("src/infrastructure/persistence/session_home_catalogue.rs")
-            .expect("read the catalogue");
-    let joined =
-        std::fs::read_to_string("src/infrastructure/persistence/session_home_catalogue_joined.rs")
-            .expect("read the pass");
+    let catalogue = std::fs::read_to_string(
+        "src/infrastructure/persistence/file/sessions/session_home_catalogue.rs",
+    )
+    .expect("read the catalogue");
+    let joined = std::fs::read_to_string(
+        "src/infrastructure/persistence/file/sessions/session_home_catalogue_joined.rs",
+    )
+    .expect("read the pass");
     let rejections = std::fs::read_to_string(
-        "src/infrastructure/persistence/session_home_catalogue_rejections.rs",
+        "src/infrastructure/persistence/file/sessions/session_home_catalogue_rejections.rs",
     )
     .expect("read the rejections");
     let record_stamps = catalogue
@@ -1739,7 +1774,7 @@ const RETENTION_PORT_HOLDERS: &[&str] = &[
     "src/application/sessions/use_cases/retain_context.rs",
     "src/composition/retention.rs",
     "src/composition/sessions.rs",
-    "src/infrastructure/persistence/context_spill.rs",
+    "src/infrastructure/persistence/file/context_spill.rs",
     "src/interface/cli/retention_handles.rs",
     "src/interface/cli/uds_session_handles.rs",
 ];
@@ -1883,7 +1918,7 @@ fn retained_context_has_exactly_one_owner_per_role() {
     // the empty-id refusal are the DTO's).
     assert_eq!(
         production_files_calling("impl ContextSpillStore for"),
-        set(&["src/infrastructure/persistence/context_spill.rs"])
+        set(&["src/infrastructure/persistence/file/context_spill.rs"])
     );
     let recall_tool = "src/infrastructure/tools/native/recall.rs";
     assert_eq!(

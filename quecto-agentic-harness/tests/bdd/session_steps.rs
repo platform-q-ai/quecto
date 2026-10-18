@@ -1,7 +1,7 @@
 use super::*;
 use quecto::application::sessions::dto::SessionListQuery;
 use quecto::domain::sessions::entities::session_identity::SessionIdentity;
-use quecto::infrastructure::persistence::session_layout::FlatSessionLayout;
+use quecto::infrastructure::persistence::file::sessions::session_layout::FlatSessionLayout;
 
 /// Session identity for a raw persisted key.
 fn sid(key: &str) -> SessionIdentity {

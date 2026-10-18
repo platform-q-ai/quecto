@@ -12,8 +12,8 @@ use cucumber::{given, then, when};
 use quecto::application::sessions::dto::SessionListQuery;
 use quecto::application::sessions::ports::SessionStore;
 use quecto::domain::sessions::entities::session_identity::SessionIdentity;
-use quecto::infrastructure::persistence::session_layout::FlatSessionLayout;
-use quecto::infrastructure::persistence::session_store::FileSessionStore;
+use quecto::infrastructure::persistence::file::sessions::session_layout::FlatSessionLayout;
+use quecto::infrastructure::persistence::file::sessions::session_store::FileSessionStore;
 use quecto::infrastructure::tools::agents::subagent_registry::SubagentEntry;
 
 use crate::QuectoWorld;

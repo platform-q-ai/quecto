@@ -376,8 +376,8 @@ fn wait_gone(pid: u32, what: &str) {
 fn assert_no_live_child_persisted(fixture: &Fixture, session: &str) {
     use quecto::application::sessions::ports::SessionStore;
     use quecto::domain::sessions::entities::session::{Session, SubagentLiveness};
-    let store = quecto::infrastructure::persistence::session_store::FileSessionStore::new(
-        quecto::infrastructure::persistence::session_layout::FlatSessionLayout::new(&fixture.base),
+    let store = quecto::infrastructure::persistence::file::sessions::session_store::FileSessionStore::new(
+        quecto::infrastructure::persistence::file::sessions::session_layout::FlatSessionLayout::new(&fixture.base),
     );
     let key =
         quecto::domain::sessions::entities::session_identity::SessionIdentity::from_persisted_key(

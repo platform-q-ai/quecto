@@ -52,14 +52,14 @@ const INTERFACE_FORBIDDEN_ADAPTERS: &[&str] = &[
 /// around but never sequence themselves.
 const RAW_KEY_CONVERSION_SITES: &[&str] = &[
     // #2009 catalogue maps persisted opaque keys at the adapter boundary.
-    "src/infrastructure/persistence/session_home_catalogue.rs",
+    "src/infrastructure/persistence/file/sessions/session_home_catalogue.rs",
     "src/application/agent_loop.rs",
     "src/application/sessions/use_cases/read_history.rs",
-    "src/infrastructure/persistence/session_store.rs",
+    "src/infrastructure/persistence/file/sessions/session_store.rs",
     // R2-L3: the per-record read (and its one conversion) moved out of the
     // directory walk into `session_store_list_record.rs`; the walk itself
     // no longer converts (the summary carries its identity).
-    "src/infrastructure/persistence/session_store_list_record.rs",
+    "src/infrastructure/persistence/file/sessions/session_store_list_record.rs",
     "src/infrastructure/tools/native/recall.rs",
 ];
 

@@ -241,7 +241,7 @@ fn child_entry() {
     // The turn scenarios keep an event log, as an agent with one does.
     let event_log = match scenario.starts_with("turn-") {
         true => {
-            crate::infrastructure::persistence::audit_log::AuditLog::open_sync(&base, "cli:child")
+            crate::infrastructure::observability::audit_log::AuditLog::open_sync(&base, "cli:child")
                 .unwrap()
                 .crash_line()
         }
@@ -717,7 +717,7 @@ fn a_panic_in_an_extern_c_function_is_fatal_at_its_boundary_and_names_the_first(
 /// The fatal `error` event a child left in its event log under `base`.
 fn fatal_event(base: &std::path::Path) -> serde_json::Value {
     let path =
-        crate::infrastructure::persistence::audit_log::AuditLog::file_path(base, "cli:child");
+        crate::infrastructure::observability::audit_log::AuditLog::file_path(base, "cli:child");
     let text = std::fs::read_to_string(&path).unwrap_or_default();
     text.lines()
         .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())

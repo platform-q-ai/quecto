@@ -7,8 +7,8 @@ use quecto::domain::redaction::Redacted;
 use quecto::domain::swarm::events::telemetry::{
     ArgumentFaults, BoardOpDetail, BoardOpObservation, BoardOpOutcome, BoardRole, RefusalKind,
 };
-use quecto::infrastructure::persistence::audit_log::AuditLog;
-use quecto::infrastructure::persistence::board_op_log::EventLogBoardOps;
+use quecto::infrastructure::observability::audit_log::AuditLog;
+use quecto::infrastructure::observability::board_op_log::EventLogBoardOps;
 
 fn observation() -> BoardOpObservation {
     BoardOpObservation {

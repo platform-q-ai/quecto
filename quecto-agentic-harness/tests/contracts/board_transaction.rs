@@ -11,7 +11,7 @@ use quecto::domain::swarm::{
     events::telemetry::RefusalKind,
     value_objects::board_error::BoardError,
 };
-use quecto::infrastructure::persistence::swarm_board::repository::SqliteBoardRepository;
+use quecto::infrastructure::persistence::sqlite::swarm_board::repository::SqliteBoardRepository;
 use serde_json::json;
 
 fn write_through_every_role(transaction: &dyn BoardTransaction) -> Result<(), BoardError> {

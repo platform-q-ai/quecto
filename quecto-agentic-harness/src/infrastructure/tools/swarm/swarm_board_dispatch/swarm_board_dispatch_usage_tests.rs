@@ -316,7 +316,7 @@ fn a_retry_or_tool_gate_read_under_a_spent_budget_records_its_gate() {
 #[test]
 fn recording_a_request_does_not_grow_with_the_ledger() {
     use super::super::tests::{board_and_repository, metered_board_and_repository};
-    use crate::infrastructure::persistence::swarm_board::LedgerWork;
+    use crate::infrastructure::persistence::sqlite::swarm_board::LedgerWork;
     const CALLS: usize = 1_000;
     // The plain repository, and (the event log on) a metered repository
     // per call, which shares the sums the plain one keeps.

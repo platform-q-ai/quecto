@@ -17,8 +17,8 @@
 use quecto::application::sessions::ports::ContextSpillStore;
 use quecto::domain::sessions::entities::session::SpillEntry;
 use quecto::domain::sessions::entities::session_identity::{SessionIdentity, SpillId};
-use quecto::infrastructure::persistence::context_spill::FileContextSpillStore;
-use quecto::infrastructure::persistence::session_layout::FlatSessionLayout;
+use quecto::infrastructure::persistence::file::context_spill::FileContextSpillStore;
+use quecto::infrastructure::persistence::file::sessions::session_layout::FlatSessionLayout;
 use std::io::Write;
 use std::sync::Arc;
 

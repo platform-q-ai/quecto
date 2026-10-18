@@ -1,7 +1,7 @@
 //! Audit event domain types.
 //!
 //! Pure domain types for the append-only audit log. No I/O — serialisation
-//! and file writing live in `infrastructure::persistence::audit_log`, and the
+//! and file writing live in `infrastructure::observability::audit_log`, and the
 //! sink port the agent loop emits through is
 //! `application::audit::ports::AuditSink` (#1960).
 

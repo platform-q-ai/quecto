@@ -14,9 +14,9 @@ use quecto::domain::crash_record::CrashRecord;
 use quecto::domain::crash_record::PanicReport;
 use quecto::domain::sessions::entities::session::Session;
 use quecto::domain::sessions::entities::session_identity::SessionIdentity;
-use quecto::infrastructure::persistence::audit_log::AuditLog;
-use quecto::infrastructure::persistence::crash_record::Armed;
-use quecto::infrastructure::persistence::ended_child_records::FileEndedChildRecords;
+use quecto::infrastructure::observability::audit_log::AuditLog;
+use quecto::infrastructure::persistence::file::crash_record::Armed;
+use quecto::infrastructure::persistence::file::ended_child_records::FileEndedChildRecords;
 
 fn record() -> CrashRecord {
     CrashRecord::new(PanicReport::new("boom", Some("a.rs:1:2")), 9, 10).running(vec!["edit".into()])

@@ -14,9 +14,9 @@ use quecto::application::sessions::ports::{ContextSpillStore, SessionStore};
 use quecto::domain::conversation::value_objects::message::Message;
 use quecto::domain::sessions::entities::session::{Session, SpillEntry};
 use quecto::domain::sessions::entities::session_identity::{SessionIdentity, SpillId};
-use quecto::infrastructure::persistence::context_spill::FileContextSpillStore;
-use quecto::infrastructure::persistence::session_layout::FlatSessionLayout;
-use quecto::infrastructure::persistence::session_store::FileSessionStore;
+use quecto::infrastructure::persistence::file::context_spill::FileContextSpillStore;
+use quecto::infrastructure::persistence::file::sessions::session_layout::FlatSessionLayout;
+use quecto::infrastructure::persistence::file::sessions::session_store::FileSessionStore;
 
 fn spill(id: &str) -> SpillEntry {
     SpillEntry {

@@ -137,8 +137,8 @@ fn the_scan_finds_crate_paths_anywhere_in_the_code() {
         use crate::application::swarm::ports::BoardOpLog;
         use crate::{domain::swarm::events::telemetry::RefusalKind, infrastructure::persistence::A};
         use super::swarm_board_telemetry::trace;
-        fn f(meter: crate::infrastructure::persistence::swarm_board::meter::Meter) {
-            let _ = crate::infrastructure::persistence::audit_log::AuditLog::open();
+        fn f(meter: crate::infrastructure::persistence::sqlite::swarm_board::meter::Meter) {
+            let _ = crate::infrastructure::observability::audit_log::AuditLog::open();
             let _: Vec<super::super::super::persistence::B> = Vec::new();
             tracing::warn!("{}", crate::infrastructure::c());
             match x { crate::infrastructure::D::E => {} _ => {} }
@@ -153,8 +153,8 @@ fn the_scan_finds_crate_paths_anywhere_in_the_code() {
         "crate::domain::swarm::events::telemetry::RefusalKind",
         "crate::infrastructure::persistence::A",
         "crate::infrastructure::tools::swarm::swarm_board_telemetry::trace",
-        "crate::infrastructure::persistence::swarm_board::meter::Meter",
-        "crate::infrastructure::persistence::audit_log::AuditLog::open",
+        "crate::infrastructure::persistence::sqlite::swarm_board::meter::Meter",
+        "crate::infrastructure::observability::audit_log::AuditLog::open",
         "crate::infrastructure::persistence::B",
         "crate::infrastructure::c",
         "crate::infrastructure::D::E",

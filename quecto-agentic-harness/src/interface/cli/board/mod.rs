@@ -89,7 +89,7 @@ pub use crate::interface::tools::project_board::site::{
 pub struct BoardToolRecordingBuilder(
     pub  fn(
         bool,
-        &crate::infrastructure::persistence::audit_log::AuditLog,
+        &crate::infrastructure::observability::audit_log::AuditLog,
     ) -> Option<crate::application::project_board::telemetry::BoardRecording>,
 );
 

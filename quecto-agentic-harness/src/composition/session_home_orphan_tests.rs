@@ -11,7 +11,7 @@ use crate::application::sessions::{active_session::ActiveSessionState, ports::Se
 use crate::domain::conversation::value_objects::message::Message;
 use crate::domain::sessions::entities::session_home::SessionHomeScope;
 use crate::domain::sessions::entities::session_identity::SessionIdentity;
-use crate::infrastructure::persistence::session_layout::FlatSessionLayout;
+use crate::infrastructure::persistence::file::sessions::session_layout::FlatSessionLayout;
 use std::path::{Path, PathBuf};
 
 /// One loop over `store`, composed on `identity`, executing in `dir`.

@@ -396,7 +396,7 @@ fn preserved_active_identity(world: &mut QuectoWorld) {
         home
     );
     use quecto::domain::sessions::entities::session_identity::SessionIdentity;
-    use quecto::infrastructure::persistence::{
+    use quecto::infrastructure::persistence::file::sessions::{
         session_layout::FlatSessionLayout, session_ownership::SessionOwnershipGuard,
     };
     let layout = FlatSessionLayout::new(base);
@@ -768,7 +768,7 @@ fn one_local(world: &mut QuectoWorld) {
 pub(super) fn record_fixture_home(base: &Path, key: &str) {
     use quecto::application::sessions::ports::session_home::WorkspaceDiscovery;
     use quecto::domain::sessions::entities::session_identity::SessionIdentity;
-    use quecto::infrastructure::persistence::{
+    use quecto::infrastructure::persistence::file::sessions::{
         session_layout::FlatSessionLayout, session_store::FileSessionStore,
     };
     use quecto::infrastructure::workspace::git_scope_discovery::GitScopeDiscovery;

@@ -14,8 +14,8 @@ use crate::domain::swarm::{
     events::run_summary::SwarmRunSummary,
     events::telemetry::{BoardOpDetail, BoardOpObservation, BoardOpOutcome, BoardRole},
 };
-use crate::infrastructure::persistence::audit_log::AuditLog;
-use crate::infrastructure::persistence::board_op_log::EventLogBoardOps;
+use crate::infrastructure::observability::audit_log::AuditLog;
+use crate::infrastructure::observability::board_op_log::EventLogBoardOps;
 
 fn named(op: &str) -> BoardOpObservation {
     BoardOpObservation {

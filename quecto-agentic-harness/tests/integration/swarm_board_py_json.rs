@@ -7,7 +7,7 @@
 //! column and char). Python's texts are frozen in
 //! `json_corpus.golden.json`: until #2283 a Python child wrote them on every run.
 
-use quecto::infrastructure::persistence::swarm_board::py_json::{self, PyJson, PyStr};
+use quecto::infrastructure::persistence::sqlite::swarm_board::py_json::{self, PyJson, PyStr};
 
 pub(crate) const CORPUS: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),

@@ -1,11 +1,11 @@
 use super::*;
 
 use quecto::domain::sessions::entities::session_identity::SessionIdentity;
-use quecto::infrastructure::persistence::session_layout::FlatSessionLayout;
-use quecto::infrastructure::persistence::session_ownership::{
+use quecto::infrastructure::persistence::file::sessions::session_layout::FlatSessionLayout;
+use quecto::infrastructure::persistence::file::sessions::session_ownership::{
     SessionOwnershipGuard, open_stamp_file,
 };
-use quecto::infrastructure::persistence::session_store::FileSessionStore;
+use quecto::infrastructure::persistence::file::sessions::session_store::FileSessionStore;
 use quecto::interface::cli::uds::reap_stale_sockets;
 use std::sync::atomic::{AtomicBool, Ordering};
 

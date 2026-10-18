@@ -27,9 +27,9 @@ use quecto::composition::swarm::{
     SwarmBoardHandles, board_op_log, build_swarm_board_handles, with_event_log,
 };
 use quecto::domain::swarm::events::telemetry::BoardOpObservation;
-use quecto::infrastructure::persistence::audit_log::AuditLog;
-use quecto::infrastructure::persistence::swarm_board::ids::Uuid4Ids;
-use quecto::infrastructure::persistence::swarm_board::repository::SqliteBoardRepository;
+use quecto::infrastructure::observability::audit_log::AuditLog;
+use quecto::infrastructure::persistence::sqlite::swarm_board::ids::Uuid4Ids;
+use quecto::infrastructure::persistence::sqlite::swarm_board::repository::SqliteBoardRepository;
 use quecto::infrastructure::tools::swarm::swarm_board_dispatch::call;
 use quecto::infrastructure::tools::swarm::swarm_lifecycle::SystemClock;
 use quecto::infrastructure::workspace::checkout_paths::ResolvedCheckout;

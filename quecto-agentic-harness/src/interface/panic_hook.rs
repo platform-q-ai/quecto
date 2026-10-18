@@ -31,7 +31,7 @@ use std::sync::Once;
 
 use crate::application::tool_panic_scope::{self, PanicSite, Recording, ToolScope};
 use crate::domain::crash_record::{CrashRecord, PanicReport};
-use crate::infrastructure::persistence::crash_record;
+use crate::infrastructure::persistence::file::crash_record;
 
 /// What the hook does with one panic.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

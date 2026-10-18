@@ -30,13 +30,13 @@ use crate::application::swarm::use_cases::{
     ResumeRunExternally, RevalidateTask, RevokeTask, SendMessage, SetTaskDependencies, StopRun,
     SubmitTask, UnblockTask, VerifyTask, WithdrawMessage,
 };
-use crate::infrastructure::persistence::audit_log::AuditLog;
-use crate::infrastructure::persistence::board_op_log::EventLogBoardOps;
-use crate::infrastructure::persistence::swarm_board::encoding::PyJsonEncoding;
-use crate::infrastructure::persistence::swarm_board::ids::Uuid4Ids;
-use crate::infrastructure::persistence::swarm_board::meter::SqliteBoardCallMeter;
-use crate::infrastructure::persistence::swarm_board::py_json;
-use crate::infrastructure::persistence::swarm_board::repository::SqliteBoardRepository;
+use crate::infrastructure::observability::audit_log::AuditLog;
+use crate::infrastructure::observability::board_op_log::EventLogBoardOps;
+use crate::infrastructure::persistence::sqlite::swarm_board::encoding::PyJsonEncoding;
+use crate::infrastructure::persistence::sqlite::swarm_board::ids::Uuid4Ids;
+use crate::infrastructure::persistence::sqlite::swarm_board::meter::SqliteBoardCallMeter;
+use crate::infrastructure::persistence::sqlite::swarm_board::py_json;
+use crate::infrastructure::persistence::sqlite::swarm_board::repository::SqliteBoardRepository;
 pub use crate::infrastructure::tools::swarm::swarm_board_dispatch::SwarmBoardHandles;
 use crate::infrastructure::tools::swarm::swarm_board_dispatch::{
     ActorRefs, BoardTelemetry, BoardWire, WatchPolls,

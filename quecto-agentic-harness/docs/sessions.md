@@ -244,16 +244,16 @@ Declared only under `src/application/sessions/ports.rs` and
 
 | Port | Adapter (production) | What it supplies |
 |------|----------------------|------------------|
-| `SessionHomeCatalogue` | `infrastructure/persistence/session_home_catalogue.rs` (`FileSessionHomeCatalogue`, its metadata query in `session_home_catalogue_metadata.rs`) | exact authoritative home reads, first-save home recording, derived catalogue validation and recovery, and the metadata query (#2010): every listed session once with its listing summary and home, validated by stamp; a record version already read — summarised, **or rejected** in this process (`session_home_catalogue_rejections.rs`: content verdicts only, in memory only) — is never read again |
+| `SessionHomeCatalogue` | `infrastructure/persistence/file/sessions/session_home_catalogue.rs` (`FileSessionHomeCatalogue`, its metadata query in `session_home_catalogue_metadata.rs`) | exact authoritative home reads, first-save home recording, derived catalogue validation and recovery, and the metadata query (#2010): every listed session once with its listing summary and home, validated by stamp; a record version already read — summarised, **or rejected** in this process (`session_home_catalogue_rejections.rs`: content verdicts only, in memory only) — is never read again |
 | `WorkspaceDiscovery` | `infrastructure/workspace/git_scope_discovery.rs` (`GitScopeDiscovery`), using `filesystem_scope.rs` | canonical execution directory and real Git common-dir/worktree grouping; observable discovery failure |
-| `SessionStore` | `infrastructure/persistence/session_store.rs` (`FileSessionStore`) | claim/release/load/load_transcript/save/save_delta/save_clean_delta/exists/list, keyed by `SessionIdentity` |
-| `ContextSpillStore` | `infrastructure/persistence/context_spill.rs` (`FileContextSpillStore`) | append/recall/list_entries/has_entries/clear/scrub_sync of the retention namespace |
+| `SessionStore` | `infrastructure/persistence/file/sessions/session_store.rs` (`FileSessionStore`) | claim/release/load/load_transcript/save/save_delta/save_clean_delta/exists/list, keyed by `SessionIdentity` |
+| `ContextSpillStore` | `infrastructure/persistence/file/context_spill.rs` (`FileContextSpillStore`) | append/recall/list_entries/has_entries/clear/scrub_sync of the retention namespace |
 | `SessionExportPort` | `infrastructure/session_export.rs` (`FileSessionExport`) | the raw export writer (records, manifest, checksum) |
 | `DurablePrefixObservation` | `application/durable_prefix.rs` (`DurablePrefixLatch`) | the agent loop's dirty-prefix latch the save drains |
-| `WorkflowRunSource` | `infrastructure/persistence/session_snapshot_sources.rs` | the workflow run the save records |
-| `HistoricalRosterSource` | `infrastructure/persistence/session_snapshot_sources.rs` | the sub-agent rows the save records as history |
+| `WorkflowRunSource` | `infrastructure/persistence/file/sessions/session_snapshot_sources.rs` | the workflow run the save records |
+| `HistoricalRosterSource` | `infrastructure/persistence/file/sessions/session_snapshot_sources.rs` | the sub-agent rows the save records as history |
 | `TurnAccountingReset` | `interface/cli/uds_turn_accounting.rs`, `uds_session_switch_runtime.rs` | usage/context/pending reset when history is replaced |
-| `FreshSessionIdentityGenerator` | `infrastructure/persistence/fresh_session_identity.rs` | wall clock + pid + counter → a fresh `chat-…` identity |
+| `FreshSessionIdentityGenerator` | `infrastructure/persistence/file/sessions/fresh_session_identity.rs` | wall clock + pid + counter → a fresh `chat-…` identity |
 | `FleetSettlement` | `composition/fleet_settlement.rs` (adapts `TerminateAllDelegatedAgents`) | settle delegated children before a switch (#1938) |
 | `DelegatedChildrenRoster` | `infrastructure/tools/agents/delegated_roster.rs` | live delegated rows and roster replacement |
 | `SessionKeyPropagation` | `interface/cli/uds_session_switch_runtime.rs` | the agent loop and its session-aware tools adopt the new identity |

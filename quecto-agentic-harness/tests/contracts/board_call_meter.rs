@@ -10,8 +10,8 @@ use std::time::Duration;
 
 use quecto::application::swarm::dto::BoardLocation;
 use quecto::application::swarm::ports::{BoardCallMeter, BoardRepository};
-use quecto::infrastructure::persistence::swarm_board::meter::SqliteBoardCallMeter;
-use quecto::infrastructure::persistence::swarm_board::repository::SqliteBoardRepository;
+use quecto::infrastructure::persistence::sqlite::swarm_board::meter::SqliteBoardCallMeter;
+use quecto::infrastructure::persistence::sqlite::swarm_board::repository::SqliteBoardRepository;
 
 pub(crate) fn board() -> (
     tempfile::TempDir,

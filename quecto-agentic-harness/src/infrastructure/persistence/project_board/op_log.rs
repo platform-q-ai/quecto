@@ -28,7 +28,7 @@ use crate::domain::audit::AuditEvent;
 use crate::domain::project_board::value_objects::telemetry::{
     Access, BoardOpRecord, BoardStartRecord, FoldBackRecord,
 };
-use crate::infrastructure::persistence::audit_log::AuditCrashLine;
+use crate::infrastructure::observability::audit_log::AuditCrashLine;
 
 /// The tracing target of the board's records.
 const TARGET: &str = "quecto::project_board";

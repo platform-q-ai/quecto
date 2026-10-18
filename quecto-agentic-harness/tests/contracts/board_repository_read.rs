@@ -10,8 +10,8 @@ use quecto::application::swarm::ports::{BoardCallMeter, BoardRepository, BoardTr
 use quecto::domain::swarm::{
     events::telemetry::RefusalKind, value_objects::board_error::BoardError,
 };
-use quecto::infrastructure::persistence::swarm_board::meter::SqliteBoardCallMeter;
-use quecto::infrastructure::persistence::swarm_board::repository::SqliteBoardRepository;
+use quecto::infrastructure::persistence::sqlite::swarm_board::meter::SqliteBoardCallMeter;
+use quecto::infrastructure::persistence::sqlite::swarm_board::repository::SqliteBoardRepository;
 use serde_json::json;
 
 fn location(dir: &tempfile::TempDir) -> BoardLocation {

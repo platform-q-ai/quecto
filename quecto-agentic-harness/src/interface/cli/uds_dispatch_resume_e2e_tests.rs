@@ -69,7 +69,7 @@ async fn write_legacy_session_file(
 ) {
     let path = fx._tmp.path().join("sessions").join(format!(
         "{}.json",
-        crate::infrastructure::persistence::filename::sanitize_session_key(key)
+        crate::infrastructure::persistence::file::filename::sanitize_session_key(key)
     ));
     tokio::fs::create_dir_all(path.parent().unwrap())
         .await

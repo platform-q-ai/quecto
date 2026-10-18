@@ -13,7 +13,7 @@ use quecto::composition::bootstrap::project_board::session_board_recording_decid
 use quecto::domain::project_board::value_objects::rule_error::BoardRuleError;
 use quecto::domain::project_board::value_objects::slug::Slug;
 use quecto::domain::project_board::value_objects::telemetry::RunOutcomeKind;
-use quecto::infrastructure::persistence::audit_log::AuditLog;
+use quecto::infrastructure::observability::audit_log::AuditLog;
 use quecto::interface::tools::project_board::fold_back_call::FoldBackCall;
 use serde_json::Value;
 

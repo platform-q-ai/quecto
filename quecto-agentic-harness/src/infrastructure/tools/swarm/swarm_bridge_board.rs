@@ -23,7 +23,7 @@ use crate::application::swarm::ports::{BoardOpLog, SessionOpLog};
 use crate::domain::error::DomainError;
 use crate::domain::swarm::events::telemetry::{NameForm, RefusalKind};
 use crate::domain::swarm::services::watch::Nudge;
-use crate::infrastructure::persistence::audit_log::AuditLog;
+use crate::infrastructure::observability::audit_log::AuditLog;
 use crate::infrastructure::tools::swarm::swarm_board_dispatch::{
     self, BindingFaults, BoardWire, CallOrigin, SwarmBoardHandles, TELEMETRY_TARGET,
 };

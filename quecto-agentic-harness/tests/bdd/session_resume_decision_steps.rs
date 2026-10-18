@@ -6,7 +6,7 @@ use super::session_scope_steps::{
 };
 use super::*;
 use quecto::domain::sessions::entities::session_identity::SessionIdentity;
-use quecto::infrastructure::persistence::{
+use quecto::infrastructure::persistence::file::sessions::{
     session_layout::FlatSessionLayout, session_ownership::SessionOwnershipGuard,
 };
 use quecto_tui::shell::app::tui_harness::TuiHarness;

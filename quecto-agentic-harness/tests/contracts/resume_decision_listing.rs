@@ -10,7 +10,7 @@ use quecto::application::sessions::dto::{
 use quecto::application::sessions::ports::session_home::SessionHomeCatalogue;
 use quecto::domain::sessions::entities::session_home::SessionHomeScope;
 use quecto::domain::sessions::services::resume_decision::{HomeVersion, ResumeDecisionKind};
-use quecto::infrastructure::persistence::session_home_catalogue::FileSessionHomeCatalogue;
+use quecto::infrastructure::persistence::file::sessions::session_home_catalogue::FileSessionHomeCatalogue;
 use std::os::unix::ffi::OsStrExt;
 
 async fn rows(world: &World) -> Vec<ListedSession> {

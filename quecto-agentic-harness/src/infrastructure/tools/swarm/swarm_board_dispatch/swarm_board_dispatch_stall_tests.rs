@@ -10,8 +10,8 @@ use super::call;
 use crate::application::swarm::dto::BoardLocation;
 use crate::application::swarm::ports::{Clock, IdSource};
 use crate::composition::swarm::{board_op_log, with_event_log};
-use crate::infrastructure::persistence::audit_log::AuditLog;
-use crate::infrastructure::persistence::swarm_board::repository::SqliteBoardRepository;
+use crate::infrastructure::observability::audit_log::AuditLog;
+use crate::infrastructure::persistence::sqlite::swarm_board::repository::SqliteBoardRepository;
 use crate::infrastructure::workspace::checkout_paths::ResolvedCheckout;
 
 struct Fixed;

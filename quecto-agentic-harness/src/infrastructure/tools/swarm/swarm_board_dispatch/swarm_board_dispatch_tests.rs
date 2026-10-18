@@ -10,7 +10,7 @@ use crate::composition::swarm::build_swarm_board_handles_with;
 use crate::domain::swarm::{
     events::telemetry::RefusalKind, value_objects::board_error::BoardError,
 };
-use crate::infrastructure::persistence::swarm_board::repository::SqliteBoardRepository;
+use crate::infrastructure::persistence::sqlite::swarm_board::repository::SqliteBoardRepository;
 use crate::infrastructure::workspace::checkout_paths::ResolvedCheckout;
 
 struct Fixed(f64);
@@ -660,7 +660,7 @@ fn membership_calls_record_their_decisions_without_argument_text() {
 #[test]
 fn serde_float_parsing_would_change_python_equal() {
     use crate::domain::swarm::value_objects::python_value::python_equal;
-    use crate::infrastructure::persistence::swarm_board::py_json;
+    use crate::infrastructure::persistence::sqlite::swarm_board::py_json;
 
     let literal = "9007199254740993.0";
     let python = py_json::decode(literal).unwrap().to_value().unwrap();

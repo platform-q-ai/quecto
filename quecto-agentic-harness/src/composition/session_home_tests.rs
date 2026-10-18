@@ -19,7 +19,7 @@ use crate::domain::sessions::services::resume_decision::ResumeDecisionKind;
 use crate::domain::{
     conversation::value_objects::message::Message, sessions::entities::session::Session,
 };
-use crate::infrastructure::persistence::session_layout::FlatSessionLayout;
+use crate::infrastructure::persistence::file::sessions::session_layout::FlatSessionLayout;
 use std::path::{Path, PathBuf};
 
 fn context(store: Arc<FileSessionStore>, execution_dir: PathBuf) -> SessionHomeContext {

@@ -31,7 +31,7 @@ use crate::application::project_board::use_cases::{
 use crate::domain::project_board::entities::claim::Identity;
 use crate::domain::redaction::{redact_secrets, redact_url_userinfo};
 use crate::infrastructure::config::telemetry::globally_enabled;
-use crate::infrastructure::persistence::audit_log::AuditLog;
+use crate::infrastructure::observability::audit_log::AuditLog;
 use crate::infrastructure::persistence::project_board::gh_pull_requests::{
     GhPullRequestStates, github_repository,
 };

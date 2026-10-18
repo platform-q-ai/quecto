@@ -184,7 +184,7 @@ provenance (`origin` Created/Restored, `created_by`, `created_at`), and a
 joiner leaving a `Restored` record never claims the final-member kill. The environments capability's
 `use_cases/restore_registry.rs` builds the durable registry for a session
 over two capability-local ports — `EnvironmentRegistryStore` (adapted in
-`src/infrastructure/persistence/environment_registry_store.rs`:
+`src/infrastructure/persistence/file/environment_registry_store.rs`:
 `<base_dir>/environments.json`, atomic, under the configuration writer's
 `flock`, members never stored) and `EnvironmentProcess` (adapted in
 `src/infrastructure/processes/containers/environment_process.rs` over the
@@ -239,7 +239,7 @@ Twelve ports are declared under the capability's `ports` files and contracted
 under `tests/contracts/`; DTOs are domain values. Every port operation is keyed
 by the typed `SessionIdentity` (the existing raw key only); the flat
 `<base>/sessions/` projection (`.json`, `.owner`, `spill.jsonl`) is owned by
-`FlatSessionLayout` in `src/infrastructure/persistence/session_layout.rs`
+`FlatSessionLayout` in `src/infrastructure/persistence/file/sessions/session_layout.rs`
 alone. Composition is the only constructor of a use case, a controller, a
 store or the one application-owned `ActiveSessionState` (typed identity plus
 the `ConversationLedger` read model — published transcript, bounded full-copy

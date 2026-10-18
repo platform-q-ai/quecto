@@ -2,7 +2,7 @@
 //! `json.dumps(v, sort_keys=True, separators=(',', ':'))`, the text the
 //! board bounds and stores, so an argument's size limit is Python's.
 use quecto::application::swarm::ports::BoardEncoding;
-use quecto::infrastructure::persistence::swarm_board::encoding::PyJsonEncoding;
+use quecto::infrastructure::persistence::sqlite::swarm_board::encoding::PyJsonEncoding;
 use serde_json::json;
 
 #[test]

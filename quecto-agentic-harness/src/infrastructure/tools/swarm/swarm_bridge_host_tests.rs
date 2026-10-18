@@ -310,7 +310,9 @@ fn the_projection_migrates_nothing_and_reads_beside_a_writer() {
     let directory = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(directory.path().join(".quecto")).unwrap();
     let mut legacy = String::new();
-    for statement in crate::infrastructure::persistence::swarm_board::schema::schema_statements() {
+    for statement in
+        crate::infrastructure::persistence::sqlite::swarm_board::schema::schema_statements()
+    {
         legacy.push_str(statement);
         legacy.push(';');
     }

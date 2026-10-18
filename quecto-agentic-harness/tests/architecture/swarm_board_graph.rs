@@ -15,7 +15,7 @@ const COMPOSITION: &str = "src/composition/swarm.rs";
 
 /// The board's own persistence module, which defines what composition
 /// binds.
-const PERSISTENCE: &str = "src/infrastructure/persistence/swarm_board/";
+const PERSISTENCE: &str = "src/infrastructure/persistence/sqlite/swarm_board/";
 
 /// The board's callers: the tool adapters and the interface.
 const CALLERS: &[&str] = &["src/infrastructure/tools", "src/interface"];
@@ -23,7 +23,7 @@ const CALLERS: &[&str] = &["src/infrastructure/tools", "src/interface"];
 /// What a caller never names: the board's graph, and the retired Python
 /// board interpreter the callers used before #2278.
 const GRAPH: &[&str] = &[
-    "persistence::swarm_board",
+    "persistence::sqlite::swarm_board",
     "Uuid4Ids",
     "SqliteBoardRepository",
     "build_swarm_board_handles_with",

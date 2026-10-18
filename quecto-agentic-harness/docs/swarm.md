@@ -152,7 +152,7 @@ Neither idle time nor a worker's completion message frees a slot.
 
 The board is Rust, in the harness process (ADR-0030): its policy is
 `src/domain/swarm/`, its use cases `src/application/swarm/use_cases/`, and its
-store the rusqlite adapter in `src/infrastructure/persistence/swarm_board/`,
+store the rusqlite adapter in `src/infrastructure/persistence/sqlite/swarm_board/`,
 over the same SQLite file, schema, pragmas, rollback journal and
 `BEGIN IMMEDIATE` transactions the Python board used, so boards it created
 keep working. No interpreter or worker process serves it: each call opens a
@@ -556,7 +556,7 @@ inward:
   request/response types (`dto/`), the shared `board_*.rs` helpers, and
   reconciliation and settlement sequencing (`mod.rs`).
 - **Infrastructure**: the rusqlite store and the SQL implementation of the
-  ports (`persistence/swarm_board/`: the verbatim schema, pragmas,
+  ports (`persistence/sqlite/swarm_board/`: the verbatim schema, pragmas,
   `BEGIN IMMEDIATE` transactions and the Python-compatible JSON codec), the
   checkout-path adapter (`workspace/checkout_paths.rs`), and the tool
   adapters in `tools/swarm/` (`swarm_board_dispatch/`, the method-name
