@@ -21,7 +21,7 @@ pub(crate) const BLOCKING_THREAD_KEEP_ALIVE: std::time::Duration =
 ///
 /// A thread is probed with `std` first so that a process starting inside an
 /// already exhausted cgroup gets an ordinary error, not an abort.
-pub fn build_tokio_runtime() -> Result<tokio::runtime::Runtime, std::io::Error> {
+pub(crate) fn build_tokio_runtime() -> Result<tokio::runtime::Runtime, std::io::Error> {
     std::thread::Builder::new()
         .name("quecto-thread-probe".into())
         .spawn(|| {})?

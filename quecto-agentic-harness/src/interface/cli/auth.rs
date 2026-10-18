@@ -177,6 +177,9 @@ fn login_refusal(error: &LoginError) -> String {
             provider.id()
         ),
         LoginError::Unavailable(why) => format!("auth login: failed to create runtime: {why}\n"),
+        LoginError::InsideAsyncRuntime => {
+            "auth login: cannot start a login from inside an async runtime\n".to_string()
+        }
         LoginError::DeviceCodeRequest(why) => {
             format!("auth login: device code request failed: {why}\n")
         }

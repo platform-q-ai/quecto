@@ -674,6 +674,10 @@ fn each_login_refusal_keeps_its_wording() {
             "auth login: failed to create runtime: EAGAIN\n",
         ),
         (
+            LoginError::InsideAsyncRuntime,
+            "auth login: cannot start a login from inside an async runtime\n",
+        ),
+        (
             LoginError::DeviceCodeRequest(
                 "provider error: device code request failed (500)".to_string(),
             ),

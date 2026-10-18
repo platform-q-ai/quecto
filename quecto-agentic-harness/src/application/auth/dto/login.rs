@@ -13,6 +13,9 @@ pub enum LoginError {
     /// The login could not run at all here (e.g. no thread could be
     /// started); in the mechanism's words.
     Unavailable(String),
+    /// The login was started from inside an async runtime, where its
+    /// blocking steps cannot run.
+    InsideAsyncRuntime,
     /// The provider refused or did not answer the device-code request.
     DeviceCodeRequest(String),
     /// The credential could not be stored.

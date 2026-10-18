@@ -34,6 +34,7 @@ impl StartDeviceCodeLogin {
             }),
             Err(DeviceCodeError::Unsupported) => Err(LoginError::DeviceCodeUnsupported(login)),
             Err(DeviceCodeError::Unavailable(reason)) => Err(LoginError::Unavailable(reason)),
+            Err(DeviceCodeError::InsideAsyncRuntime) => Err(LoginError::InsideAsyncRuntime),
             Err(DeviceCodeError::Request(reason)) => Err(LoginError::DeviceCodeRequest(reason)),
         }
     }

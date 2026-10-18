@@ -46,11 +46,7 @@ impl DeviceCodeFlow for OAuthDeviceCodeFlow {
         // be outside one.
         match tokio::runtime::Handle::try_current() {
             Err(_outside_a_runtime) => {}
-            Ok(_) => {
-                return Err(DeviceCodeError::Unavailable(
-                    "called from inside an async runtime".to_string(),
-                ));
-            }
+            Ok(_) => return Err(DeviceCodeError::InsideAsyncRuntime),
         }
         let runtime =
             (self.runtime)().map_err(|error| DeviceCodeError::Unavailable(error.to_string()))?;

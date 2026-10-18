@@ -95,3 +95,12 @@ fn a_refused_request_and_a_missing_runtime_keep_their_reasons() {
         Err(LoginError::Unavailable("EAGAIN".to_string()))
     );
 }
+
+#[test]
+fn a_request_from_inside_a_runtime_is_reported_as_such() {
+    let flow = FakeFlow::answering(Err(DeviceCodeError::InsideAsyncRuntime));
+    assert_eq!(
+        start(&flow).execute("openai"),
+        Err(LoginError::InsideAsyncRuntime)
+    );
+}

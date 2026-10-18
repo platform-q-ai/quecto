@@ -16,8 +16,11 @@ pub enum DeviceCodeError {
     /// The provider offers no device-code flow.
     Unsupported,
     /// The request could not be run at all here (e.g. no thread could be
-    /// started, or the caller is itself inside an async runtime).
+    /// started); in the mechanism's words.
     Unavailable(String),
+    /// The caller is itself inside an async runtime, where a blocking
+    /// request cannot run.
+    InsideAsyncRuntime,
     /// The provider refused or did not answer the request; no response
     /// body is ever quoted.
     Request(String),
@@ -25,6 +28,6 @@ pub enum DeviceCodeError {
 
 pub trait DeviceCodeFlow: Send + Sync {
     /// Ask `provider` for a device-code grant. Blocking: never call it from
-    /// inside an async runtime (it answers `Unavailable` there).
+    /// inside an async runtime (it answers `InsideAsyncRuntime` there).
     fn request(&self, provider: LoginProvider) -> Result<DeviceCodeGrant, DeviceCodeError>;
 }

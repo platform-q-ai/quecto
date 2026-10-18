@@ -35,8 +35,6 @@ async fn a_call_from_inside_a_runtime_is_unavailable_not_a_panic() {
     let flow = OAuthDeviceCodeFlow::new(endpoints());
     assert_eq!(
         flow.request(LoginProvider::OpenAi),
-        Err(DeviceCodeError::Unavailable(
-            "called from inside an async runtime".to_string()
-        ))
+        Err(DeviceCodeError::InsideAsyncRuntime)
     );
 }

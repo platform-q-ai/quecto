@@ -399,9 +399,7 @@ fn test_login_positional_arg_is_ignored() {
 
 #[test]
 fn test_login_device_code_without_provider() {
-    let ctx = CliContext {
-        ..Default::default()
-    };
+    let ctx = CliContext::default();
     let out = run_with_output(args("auth login --device-code"), &ctx);
     assert_eq!(out.exit_code, 1);
     assert!(
@@ -581,9 +579,7 @@ fn test_openai_oauth_fallback_empty_code() {
 
 #[test]
 fn test_flush_stdout_clears_buffer() {
-    let ctx = CliContext {
-        ..Default::default()
-    }; // stdin_data: None → real flush path
+    let ctx = CliContext::default(); // stdin_data: None → real flush path
     let mut stdout = String::from("prompt text");
     let mut stderr = String::new();
     let mut out = Output {
