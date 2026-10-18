@@ -8,9 +8,9 @@ fn inputs(base_dir: &std::path::Path) -> AgentRuntimeInputs {
     AgentRuntimeInputs {
         base_dir: base_dir.to_path_buf(),
         http_client: client.clone(),
-        refresh_fn: crate::infrastructure::providers::refresh_wiring::make_oauth_refresh_fn(),
+        refresh_fn: crate::infrastructure::auth::refresh_wiring::make_oauth_refresh_fn(),
         openai_oauth_factory:
-            crate::infrastructure::providers::refresh_wiring::make_provider_factory(
+            crate::infrastructure::providers::provider_factory::make_provider_factory(
                 "openai", None, client,
             ),
         model_registry: crate::infrastructure::providers::catalogue::model_registry::ModelRegistry::load_from_path(
@@ -136,7 +136,7 @@ fn a_configured_limit_binds_its_providers() {
     let mut record: ModelRecord = records.into_iter().next().unwrap();
     assert_eq!(record.api, ProviderApi::OpenAiCompletions);
     let store = Arc::new(CredentialStore::new(tmp.path()));
-    let refresh = crate::infrastructure::providers::refresh_wiring::make_oauth_refresh_fn();
+    let refresh = crate::infrastructure::auth::refresh_wiring::make_oauth_refresh_fn();
     let built = build_registry_provider(&record, tmp.path(), &store, &refresh, &client)
         .unwrap()
         .unwrap();
@@ -159,7 +159,7 @@ fn a_configured_limit_binds_its_providers() {
             .unwrap();
         assert!(shows(&*built, 1200), "{name}: {built:?}");
     }
-    let rebuild = crate::infrastructure::providers::refresh_wiring::make_bounded_provider_factory(
+    let rebuild = crate::infrastructure::providers::provider_factory::make_bounded_provider_factory(
         "openai", None, idle, client,
     );
     let rebuilt = rebuild("plain-non-jwt-token");

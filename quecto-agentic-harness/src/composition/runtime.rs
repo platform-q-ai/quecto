@@ -15,14 +15,13 @@ use crate::application::provider_runtime::{
 };
 use crate::application::providers::ports::LlmProvider;
 use crate::infrastructure::auth::provider_slots::ProviderSlots;
+use crate::infrastructure::auth::refresh_wiring::make_oauth_refresh_fn;
 use crate::infrastructure::config::Config;
 use crate::infrastructure::providers::catalogue::catalogue_inputs::CatalogueInputs;
 use crate::infrastructure::providers::catalogue::catalogue_registry::{
     runtime_store_for, snapshot_store_for,
 };
-use crate::infrastructure::providers::refresh_wiring::{
-    make_bounded_provider_factory, make_oauth_refresh_fn,
-};
+use crate::infrastructure::providers::provider_factory::make_bounded_provider_factory;
 use crate::infrastructure::providers::routing::provider_runtime::{
     AgentProviderRuntimeFactory, AgentRuntimeInputs,
 };
