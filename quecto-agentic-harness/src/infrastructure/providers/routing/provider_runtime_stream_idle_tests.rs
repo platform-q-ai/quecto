@@ -13,7 +13,7 @@ fn inputs(base_dir: &std::path::Path) -> AgentRuntimeInputs {
             crate::infrastructure::providers::refresh_wiring::make_provider_factory(
                 "openai", None, client,
             ),
-        model_registry: crate::infrastructure::model_registry::ModelRegistry::load_from_path(
+        model_registry: crate::infrastructure::providers::catalogue::model_registry::ModelRegistry::load_from_path(
             &base_dir.join("models.json"),
         )
         .map_err(|e| e.to_string()),
@@ -84,7 +84,7 @@ fn a_models_json_block_out_of_range_is_skipped() {
     let file = serde_json::json!({"providers": {"slow": block(10), "fine": block(900)}});
     std::fs::write(&path, file.to_string()).unwrap();
     let parsed =
-        crate::infrastructure::model_registry::ModelRegistry::load_registry_config(&path).unwrap();
+        crate::infrastructure::providers::catalogue::model_registry::ModelRegistry::load_registry_config(&path).unwrap();
     let skipped: Vec<_> = parsed.skipped.iter().map(|s| s.provider.as_str()).collect();
     assert_eq!(skipped, ["slow"]);
     assert!(
@@ -122,7 +122,7 @@ fn shows(provider: &dyn LlmProvider, seconds: u64) -> bool {
 /// token refresh; an unset one keeps the default.
 #[test]
 fn a_configured_limit_binds_its_providers() {
-    use crate::infrastructure::model_registry::{ModelRecord, ProviderApi};
+    use crate::infrastructure::providers::catalogue::model_registry::{ModelRecord, ProviderApi};
     let tmp = tempfile::TempDir::new().unwrap();
     let client = reqwest::Client::new();
     let file = serde_json::json!({"providers": {"local": {
@@ -132,7 +132,7 @@ fn a_configured_limit_binds_its_providers() {
     let path = tmp.path().join("models.json");
     std::fs::write(&path, file.to_string()).unwrap();
     let records =
-        crate::infrastructure::model_registry::ModelRegistry::load_file_records(&path).unwrap();
+        crate::infrastructure::providers::catalogue::model_registry::ModelRegistry::load_file_records(&path).unwrap();
     let mut record: ModelRecord = records.into_iter().next().unwrap();
     assert_eq!(record.api, ProviderApi::OpenAiCompletions);
     let store = Arc::new(CredentialStore::new(tmp.path()));
@@ -231,7 +231,7 @@ fn a_progress_limit_out_of_range_fails_or_skips() {
     let file = serde_json::json!({"providers": {"slow": block(30), "fine": block(900)}});
     std::fs::write(&path, file.to_string()).unwrap();
     let parsed =
-        crate::infrastructure::model_registry::ModelRegistry::load_registry_config(&path).unwrap();
+        crate::infrastructure::providers::catalogue::model_registry::ModelRegistry::load_registry_config(&path).unwrap();
     let skipped: Vec<_> = parsed.skipped.iter().map(|s| s.provider.as_str()).collect();
     assert_eq!(skipped, ["slow"]);
     assert!(parsed.skipped[0].error.contains("streamProgressSeconds"));

@@ -13,7 +13,7 @@ use quecto::infrastructure::admission::{
     AdminConnection, AuthorityConnection, AuthorityDirectory, AuthorityServer, ClientError,
     FileJournal, ServerError, SingletonLock,
 };
-use quecto::infrastructure::provider_runtime_admission::AdmissionRuntimeProposal;
+use quecto::infrastructure::providers::routing::provider_runtime_admission::AdmissionRuntimeProposal;
 use tokio::time::timeout;
 
 const LIMIT: Duration = Duration::from_secs(5);

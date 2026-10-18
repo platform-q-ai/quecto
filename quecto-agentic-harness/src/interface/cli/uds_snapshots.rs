@@ -114,7 +114,7 @@ pub(crate) fn build_get_messages_line(page: HistoryPage) -> String {
         obj.insert("snapshot".into(), serde_json::json!(true));
     }
     let mut line = AgentEvent::ok(None, "get_messages", Some(data)).to_json_line();
-    debug_assert!(line.len() <= crate::infrastructure::line_cap::EVENT_LINE_JSON_BUDGET);
+    debug_assert!(line.len() <= crate::infrastructure::processes::line_cap::EVENT_LINE_JSON_BUDGET);
     line.push('\n');
     line
 }

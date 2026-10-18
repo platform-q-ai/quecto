@@ -170,7 +170,7 @@ untracked_nouns = [
 support_modules = [
   "src/infrastructure/auth/credential_store.rs",
   "src/infrastructure/auth/oauth.rs",
-  "src/infrastructure/config.rs",
+  "src/infrastructure/config/mod.rs",
   "src/infrastructure/extensions/registry.rs",
   "src/infrastructure/persistence/memory_store.rs",
   "src/infrastructure/providers/anthropic/anthropic_sse.rs",

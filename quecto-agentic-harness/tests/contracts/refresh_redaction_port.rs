@@ -4,7 +4,7 @@
 
 use quecto::application::catalogue::ports::NoopRedaction;
 use quecto::application::ports::RefreshRedactionPort;
-use quecto::infrastructure::catalogue_discovery::SecretsRedaction;
+use quecto::infrastructure::providers::catalogue::catalogue_discovery::SecretsRedaction;
 
 fn assert_redaction_contract(port: &dyn RefreshRedactionPort, secrets: &[&str]) {
     let text = format!("401 unauthorized for bearer {}", secrets.join(" and "));

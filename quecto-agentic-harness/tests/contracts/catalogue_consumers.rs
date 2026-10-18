@@ -11,7 +11,7 @@
 //! use case.
 
 use quecto::composition::catalogue::list_models_wire_for;
-use quecto::infrastructure::catalogue_registry::snapshot_store_for;
+use quecto::infrastructure::providers::catalogue::catalogue_registry::snapshot_store_for;
 
 fn write_models_json(dir: &std::path::Path, body: &str) {
     std::fs::write(dir.join("models.json"), body).unwrap();
@@ -332,7 +332,10 @@ fn active_selection_and_agent_startup_observe_the_published_generation() {
         &reqwest::Client::new(),
     )
     .expect("agent startup composes a runtime");
-    let published = quecto::infrastructure::catalogue_registry::runtime_store_for(tmp.path())
+    let published =
+        quecto::infrastructure::providers::catalogue::catalogue_registry::runtime_store_for(
+            tmp.path(),
+        )
         .current()
         .expect("startup published a runtime generation");
     assert_eq!(

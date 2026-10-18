@@ -6,11 +6,11 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use super::config::{Config, ConfigError};
+use super::{Config, ConfigError};
 use crate::domain::admission::value_objects::inference_admission::{
     AdmissionConfig, GroupId, GroupPolicy,
 };
-use crate::infrastructure::provider_runtime_admission::AdmissionRuntimeProposal;
+use crate::infrastructure::providers::routing::provider_runtime_admission::AdmissionRuntimeProposal;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

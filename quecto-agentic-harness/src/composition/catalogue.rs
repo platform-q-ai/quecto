@@ -13,12 +13,12 @@ use crate::application::catalogue::use_cases::{
     ChangeActiveModel, ChangeReasoningEffort, ListModels, RefreshCatalogueSources,
     ReloadRuntimeConfiguration,
 };
-use crate::infrastructure::catalogue_inputs::FileCatalogueInputs;
-use crate::infrastructure::catalogue_refresh_inputs::FileRefreshInputs;
-use crate::infrastructure::catalogue_registry::{
+use crate::infrastructure::config::runtime_configuration::FileRuntimeConfiguration;
+use crate::infrastructure::providers::catalogue::catalogue_inputs::FileCatalogueInputs;
+use crate::infrastructure::providers::catalogue::catalogue_refresh_inputs::FileRefreshInputs;
+use crate::infrastructure::providers::catalogue::catalogue_registry::{
     PublishedEffortVocabulary, runtime_store_for, snapshot_store_for,
 };
-use crate::infrastructure::runtime_configuration::FileRuntimeConfiguration;
 use crate::interface::cli::configuration_handles::ConfigurationEnvironment;
 use crate::interface::uds::catalogue::list_models_controller::ListModelsController;
 

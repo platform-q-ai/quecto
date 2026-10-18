@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
+use super::model_registry::{AuthMode, ProviderApi, ProviderDefaults};
 use crate::application::ports::{
     CatalogueSource, RefreshChange, RefreshContext, RefreshError, RefreshRedactionPort,
     RefreshableCatalogueSource, SkippedRecord, SourceEntries,
@@ -22,8 +23,7 @@ use crate::domain::catalogue::value_objects::identity::{
     AuthIdentity, ModelRef, ProviderId, TransportKind,
 };
 use crate::domain::catalogue::value_objects::precedence::SourceLayer;
-use crate::infrastructure::atomic_write::atomic_write;
-use crate::infrastructure::model_registry::{AuthMode, ProviderApi, ProviderDefaults};
+use crate::infrastructure::persistence::file::atomic_write::atomic_write;
 use crate::infrastructure::providers::{
     ProviderFactoryError, validate_provider_api_base_with_options,
 };
@@ -224,10 +224,8 @@ fn cached_entry(provider: &str, model: &CachedModel) -> Result<CatalogueEntry, S
             // a listing says nothing of its input, so a built-in model keeps
             // the built-in table's (#2421 review L1).
             capabilities: crate::domain::catalogue::value_objects::model_facts::ModelCapabilities {
-                input_modalities: crate::infrastructure::model_registry::builtin_input(
-                    provider, &model.id,
-                ),
-                ..crate::infrastructure::catalogue_registry::default_capabilities()
+                input_modalities: super::model_registry::builtin_input(provider, &model.id),
+                ..super::catalogue_registry::default_capabilities()
             },
             availability: Availability::runnable(),
         },

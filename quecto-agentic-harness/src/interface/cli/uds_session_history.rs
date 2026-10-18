@@ -8,13 +8,14 @@
 //! a single message too large to carry whole.
 use crate::application::sessions::dto::HistoryPage;
 use crate::domain::conversation::value_objects::message::{Message, ThinkingBlock};
+use crate::infrastructure::persistence::file::turn_origin_names;
 
 use super::{message_to_json, role_wire_name};
 
 pub(crate) use super::super::protocol::HISTORY_PAGE_SIZE;
 
 pub(crate) const HISTORY_PAGE_JSON_BUDGET: usize =
-    crate::infrastructure::line_cap::EVENT_LINE_JSON_BUDGET / 2;
+    crate::infrastructure::processes::line_cap::EVENT_LINE_JSON_BUDGET / 2;
 pub(super) const HISTORY_MESSAGE_SUMMARY_PREVIEW_BYTES: usize = 2048;
 pub(super) const HISTORY_THINKING_SUMMARY_PREVIEW_BYTES: usize = 2048;
 /// Room a page keeps for the report it names (#2226).
@@ -31,15 +32,11 @@ pub(crate) fn history_page_json(page: HistoryPage) -> serde_json::Value {
     for message in page.messages.iter().rev() {
         let mut value = message_to_json_for_history_page(message);
         value["ordinal"] = serde_json::json!(message.ordinal);
-        if let Some(origin) =
-            crate::infrastructure::turn_origin_names::origin_name(message.turn_origin)
-        {
+        if let Some(origin) = turn_origin_names::origin_name(message.turn_origin) {
             value["turnOrigin"] = serde_json::json!(origin);
         }
         // #2404: a watermark cut's archive stub is told from a prompt.
-        if let Some(kind) =
-            crate::infrastructure::turn_origin_names::user_kind_name(message.user_kind)
-        {
+        if let Some(kind) = turn_origin_names::user_kind_name(message.user_kind) {
             value["userKind"] = serde_json::json!(kind);
         }
         let sz = serde_json::to_vec(&value)

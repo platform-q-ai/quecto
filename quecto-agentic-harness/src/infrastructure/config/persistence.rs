@@ -219,7 +219,7 @@ pub(crate) fn write_record(path: &Path, record: &TrustRecord) -> io::Result<()> 
     if let Some(parent) = record_parent_to_create(path) {
         std::fs::create_dir_all(parent)?;
     }
-    crate::infrastructure::atomic_write::atomic_write(
+    crate::infrastructure::persistence::file::atomic_write::atomic_write(
         path,
         &serde_json::to_vec_pretty(record)?,
         Some(0o600),

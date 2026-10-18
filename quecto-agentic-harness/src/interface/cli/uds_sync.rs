@@ -127,7 +127,7 @@ pub(super) async fn intercept(
         let response = bounded_response_line(
             &event,
             fields.request_id.as_deref(),
-            crate::infrastructure::line_cap::EVENT_LINE_JSON_BUDGET,
+            crate::infrastructure::processes::line_cap::EVENT_LINE_JSON_BUDGET,
         );
         let _ = tx.send(response).await;
     }

@@ -23,7 +23,7 @@ use crate::domain::conversation::value_objects::stored_images::{
 };
 use crate::domain::sessions::entities::session_identity::SessionIdentity;
 use crate::domain::shared::error::DomainError;
-use crate::infrastructure::atomic_write::atomic_write;
+use crate::infrastructure::persistence::file::atomic_write::atomic_write;
 use crate::infrastructure::persistence::file::sessions::session_layout::FlatSessionLayout;
 
 /// Sidecars are the session's: readable by its owner alone.

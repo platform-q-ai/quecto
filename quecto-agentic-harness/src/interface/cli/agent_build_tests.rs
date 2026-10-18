@@ -443,7 +443,7 @@ fn composed_admission_startup_child_root_and_disabled() {
                 AuthorityDirectory, AuthorityServer, Negotiation, negotiate,
                 write_admission_context,
             };
-            use crate::infrastructure::provider_runtime_admission::AdmissionRuntimeProposal;
+            use crate::infrastructure::providers::routing::provider_runtime_admission::AdmissionRuntimeProposal;
             let group = GroupId::new("g").unwrap();
             let proposal = AdmissionRuntimeProposal {
                 policy: AdmissionConfig {

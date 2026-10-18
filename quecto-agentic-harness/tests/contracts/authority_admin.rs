@@ -13,7 +13,7 @@ use quecto::domain::admission::value_objects::inference_admission::{
 use quecto::infrastructure::admission::{
     AuthorityDirectory, AuthorityServer, SocketAuthorityAdmin,
 };
-use quecto::infrastructure::provider_runtime_admission::AdmissionRuntimeProposal;
+use quecto::infrastructure::providers::routing::provider_runtime_admission::AdmissionRuntimeProposal;
 
 fn proposal() -> AdmissionRuntimeProposal {
     let group = GroupId::new("g").unwrap();

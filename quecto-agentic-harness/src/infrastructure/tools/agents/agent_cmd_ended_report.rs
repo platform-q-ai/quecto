@@ -33,8 +33,9 @@ pub fn is_default_read(command: &str, arguments: &serde_json::Value) -> bool {
 /// (the report budget cuts it, never this).
 fn wire_message(message: &Message) -> serde_json::Value {
     let mut value = super::project(message, usize::MAX, usize::MAX);
-    if let Some(origin) = crate::infrastructure::turn_origin_names::origin_name(message.turn_origin)
-    {
+    if let Some(origin) = crate::infrastructure::persistence::file::turn_origin_names::origin_name(
+        message.turn_origin,
+    ) {
         value["turnOrigin"] = serde_json::json!(origin);
     }
     value

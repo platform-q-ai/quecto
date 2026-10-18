@@ -7,7 +7,7 @@ use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
 use crate::domain::tool_policy::value_objects::tool::ToolResult;
-use crate::infrastructure::file_replace::{
+use crate::infrastructure::persistence::file::file_replace::{
     FileState, InPlace, WriteFailure, Written, replace_contents,
 };
 use crate::infrastructure::tools::native::truncate::format_size;

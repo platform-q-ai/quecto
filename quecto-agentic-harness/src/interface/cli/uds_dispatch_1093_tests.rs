@@ -436,7 +436,7 @@ async fn get_message_metadata_too_large_returns_error_and_keeps_connection_usabl
     let tool_calls = vec![ToolCall {
         id: "tc-too-large".into(),
         name: "metadata_hog".into(),
-        arguments: "x".repeat(crate::infrastructure::line_cap::EVENT_LINE_JSON_BUDGET),
+        arguments: "x".repeat(crate::infrastructure::processes::line_cap::EVENT_LINE_JSON_BUDGET),
     }];
     let msg = Message::assistant("body", tool_calls);
     let message_id = msg.id().to_string();

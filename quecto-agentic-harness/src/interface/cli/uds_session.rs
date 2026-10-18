@@ -574,7 +574,9 @@ pub(crate) fn report_hint_json(
 ) -> serde_json::Value {
     let mut hint = serde_json::json!({"id": report.id, "ordinal": report.ordinal,
         "contentLength": report.content_length});
-    if let Some(origin) = crate::infrastructure::turn_origin_names::origin_name(report.origin) {
+    if let Some(origin) =
+        crate::infrastructure::persistence::file::turn_origin_names::origin_name(report.origin)
+    {
         hint["turnOrigin"] = serde_json::json!(origin);
     }
     debug_assert!(hint.to_string().len() < uds_session_history::REPORT_HINT_RESERVE_BYTES);

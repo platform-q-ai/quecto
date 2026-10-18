@@ -17,7 +17,7 @@ use super::secret::RandomSecretSource;
 use super::server_actor::Actor;
 use super::session;
 use crate::application::ports::AdmissionAuthority;
-use crate::infrastructure::provider_runtime_admission::AdmissionRuntimeProposal;
+use crate::infrastructure::providers::routing::provider_runtime_admission::AdmissionRuntimeProposal;
 
 pub(super) use super::server_actor::Command;
 

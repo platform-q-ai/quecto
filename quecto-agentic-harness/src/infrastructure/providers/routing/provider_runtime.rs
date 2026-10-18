@@ -46,7 +46,8 @@ pub struct AgentRuntimeInputs {
     /// The effective model registry (or the models.json parse error) from the
     /// same on-disk read that fed the catalogue resolve, so router and
     /// catalogue in one composed generation describe one on-disk state.
-    pub model_registry: Result<crate::infrastructure::model_registry::ModelRegistry, String>,
+    pub model_registry:
+        Result<crate::infrastructure::providers::catalogue::model_registry::ModelRegistry, String>,
 }
 
 /// Infrastructure implementation of the application's runtime-factory port:
@@ -234,7 +235,7 @@ pub(crate) fn compose_agent_provider_inner_outcome(
         )
         .map_err(|e| format!("anthropic-oauth provider configuration error: {}", e))?;
         let factory = registry_provider_factory_with_admission(
-            crate::infrastructure::model_registry::ProviderApi::AnthropicMessages,
+            crate::infrastructure::providers::catalogue::model_registry::ProviderApi::AnthropicMessages,
             ANTHROPIC_OAUTH.to_string(),
             anthropic_base.clone(),
             false,
@@ -341,7 +342,11 @@ pub(crate) fn compose_agent_provider_inner_outcome(
     // catalogue stops offering it while the refusal is held.
     let router: Arc<dyn LlmProvider> = Arc::new(RefusalRecordingProvider::new(
         Arc::new(ProviderRouter::new(provider_list)),
-        Arc::new(crate::infrastructure::catalogue_registry::snapshot_store_for(base_dir)),
+        Arc::new(
+            crate::infrastructure::providers::catalogue::catalogue_registry::snapshot_store_for(
+                base_dir,
+            ),
+        ),
         config.providers.model_refusal_ttl(),
     ));
     Ok(ProviderRuntimeOutcome {
@@ -362,7 +367,7 @@ fn mock_llm_bare_anthropic_alias_enabled(api_base: &Option<String>) -> bool {
 
 #[cfg(test)]
 fn registry_provider_factory(
-    provider_api: crate::infrastructure::model_registry::ProviderApi,
+    provider_api: crate::infrastructure::providers::catalogue::model_registry::ProviderApi,
     provider_prefix: String,
     base: Option<String>,
     allow_remote_http: bool,
@@ -379,14 +384,14 @@ fn registry_provider_factory(
 }
 
 fn registry_provider_factory_with_admission(
-    provider_api: crate::infrastructure::model_registry::ProviderApi,
+    provider_api: crate::infrastructure::providers::catalogue::model_registry::ProviderApi,
     provider_prefix: String,
     base: Option<String>,
     allow_remote_http: bool,
     client: reqwest::Client,
     binding: ProviderBinding,
 ) -> crate::infrastructure::providers::refreshable::ProviderFactory {
-    use crate::infrastructure::model_registry::ProviderApi;
+    use crate::infrastructure::providers::catalogue::model_registry::ProviderApi;
     Arc::new(move |new_token: &str| -> Arc<dyn LlmProvider> {
         match provider_api {
             ProviderApi::OpenAiCompletions => {
@@ -420,10 +425,10 @@ fn registry_provider_factory_with_admission(
 }
 
 fn oauth_registry_base_url(
-    model: &crate::infrastructure::model_registry::ModelRecord,
+    model: &crate::infrastructure::providers::catalogue::model_registry::ModelRecord,
     oauth_provider: &str,
 ) -> Result<Option<String>, String> {
-    use crate::infrastructure::model_registry::ProviderApi;
+    use crate::infrastructure::providers::catalogue::model_registry::ProviderApi;
 
     let configured = model.base_url.as_ref().filter(|b| !b.trim().is_empty());
     match (model.api, oauth_provider) {
@@ -486,7 +491,7 @@ fn validate_oauth_base_url(
 
 #[cfg(test)]
 fn build_registry_provider(
-    model: &crate::infrastructure::model_registry::ModelRecord,
+    model: &crate::infrastructure::providers::catalogue::model_registry::ModelRecord,
     _base_dir: &std::path::Path,
     store: &Arc<CredentialStore>,
     refresh_fn: &crate::infrastructure::providers::refreshable::RefreshFn,
@@ -496,14 +501,14 @@ fn build_registry_provider(
 }
 
 fn build_registry_provider_with_admission(
-    model: &crate::infrastructure::model_registry::ModelRecord,
+    model: &crate::infrastructure::providers::catalogue::model_registry::ModelRecord,
     _base_dir: &std::path::Path,
     store: &Arc<CredentialStore>,
     refresh_fn: &crate::infrastructure::providers::refreshable::RefreshFn,
     http_client: &reqwest::Client,
     admission: Option<&AdmissionRuntimeContext>,
 ) -> Result<Option<Arc<dyn LlmProvider>>, String> {
-    use crate::infrastructure::model_registry::{AuthMode, ProviderApi};
+    use crate::infrastructure::providers::catalogue::model_registry::{AuthMode, ProviderApi};
 
     let mut api_base = model.base_url.clone();
     let auth_key = match model.auth {

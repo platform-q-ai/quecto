@@ -24,8 +24,8 @@ use crate::application::environments::ports::EnvironmentRegistryStore;
 use crate::domain::environments::entities::environment_registry::{
     EnvironmentOrigin, EnvironmentRecord, EnvironmentStatus, merge_metadata, ref_number,
 };
-use crate::infrastructure::atomic_write::atomic_write;
 use crate::infrastructure::config::writer::{exclusive_hold, lock_dir_for};
+use crate::infrastructure::persistence::file::atomic_write::atomic_write;
 
 /// The document's name under the base directory.
 pub const REGISTRY_FILE_NAME: &str = "environments.json";

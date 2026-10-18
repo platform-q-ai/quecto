@@ -67,7 +67,8 @@ pub struct RuntimeConfigurationInputs {
     pub inherited_child: bool,
     pub env_overrides: std::collections::HashMap<String, String>,
     pub http_client: reqwest::Client,
-    pub provider_runtime: crate::infrastructure::runtime_configuration::ProviderRuntimeBuilder,
+    pub provider_runtime:
+        crate::infrastructure::config::runtime_configuration::ProviderRuntimeBuilder,
     pub configuration: super::ConfigurationHandlesBuilder,
 }
 

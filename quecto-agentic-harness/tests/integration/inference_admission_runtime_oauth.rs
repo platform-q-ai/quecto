@@ -14,10 +14,12 @@ use quecto::domain::admission::value_objects::inference_admission::*;
 use quecto::domain::shared::error::DomainError;
 use quecto::infrastructure::auth::credential_store::{AuthMethod, Credential, CredentialStore};
 use quecto::infrastructure::config::Config;
-use quecto::infrastructure::model_registry::ModelRegistry;
-use quecto::infrastructure::provider_runtime::{AgentProviderRuntimeFactory, AgentRuntimeInputs};
-use quecto::infrastructure::provider_runtime_admission::*;
+use quecto::infrastructure::providers::catalogue::model_registry::ModelRegistry;
 use quecto::infrastructure::providers::codex::CodexProvider;
+use quecto::infrastructure::providers::routing::provider_runtime::{
+    AgentProviderRuntimeFactory, AgentRuntimeInputs,
+};
+use quecto::infrastructure::providers::routing::provider_runtime_admission::*;
 use tokio::sync::{Notify, Semaphore};
 use wiremock::matchers::{header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};

@@ -530,9 +530,11 @@ impl AgentEvent {
 
 // ─── Event line cap (#1047) ──────────────────────────────────────────────────
 //
-// The authoritative value lives in `crate::infrastructure::line_cap` so
+// The authoritative value lives in `crate::infrastructure::processes::line_cap` so
 // interface and infrastructure emitters share the reader-side framing bound.
-pub use crate::infrastructure::line_cap::{EVENT_LINE_CAP_BYTES, EVENT_LINE_JSON_BUDGET};
+pub use crate::infrastructure::processes::line_cap::{
+    EVENT_LINE_CAP_BYTES, EVENT_LINE_JSON_BUDGET,
+};
 
 // ─── Session state snapshot ──────────────────────────────────────────────────
 

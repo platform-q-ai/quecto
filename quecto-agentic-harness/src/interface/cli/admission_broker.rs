@@ -115,7 +115,7 @@ fn validate_explicit_directory(
         return Err(format!(
             "admission-broker: --directory {} is the base directory or one of its ancestors; use a subdirectory such as {}",
             directory.display(),
-            crate::infrastructure::config_admission::default_admission_directory(base_dir)
+            crate::infrastructure::config::config_admission::default_admission_directory(base_dir)
                 .display()
         ));
     }
@@ -133,10 +133,10 @@ fn configured_directory(
 ) -> Result<
     (
         PathBuf,
-        crate::infrastructure::provider_runtime_admission::AdmissionRuntimeProposal,
+        crate::infrastructure::providers::routing::provider_runtime_admission::AdmissionRuntimeProposal,
     ),
     String,
-> {
+>{
     let base_dir = ctx.base_dir();
     let config_path = global_config_path(ctx, opts);
     if !config_path.exists() {
@@ -173,10 +173,10 @@ fn run_plan(
 ) -> Result<
     (
         PathBuf,
-        crate::infrastructure::provider_runtime_admission::AdmissionRuntimeProposal,
+        crate::infrastructure::providers::routing::provider_runtime_admission::AdmissionRuntimeProposal,
     ),
     String,
-> {
+>{
     let (directory, proposal) = configured_directory(ctx, opts)?;
     if let Some(explicit) = &opts.directory {
         validate_explicit_directory(&ctx.base_dir(), explicit)?;
@@ -197,7 +197,7 @@ pub(crate) fn cmd_admission_broker(
     stdout: &mut String,
     stderr: &mut String,
 ) -> i32 {
-    crate::infrastructure::logging::install_redacting_subscriber();
+    crate::infrastructure::observability::logging::install_redacting_subscriber();
     let Some(action) = args.first().map(String::as_str) else {
         stderr.push_str(
             "admission-broker: expected one of run, status, reset, install-service, uninstall-service\n",
@@ -504,7 +504,7 @@ fn cmd_run(ctx: &CliContext, opts: &BrokerArgs, stdout: &mut String, stderr: &mu
 
 async fn run(
     dir: AuthorityDirectory,
-    proposal: crate::infrastructure::provider_runtime_admission::AdmissionRuntimeProposal,
+    proposal: crate::infrastructure::providers::routing::provider_runtime_admission::AdmissionRuntimeProposal,
     accept_missing_ledger: bool,
     stdout: &mut String,
     stderr: &mut String,
@@ -530,7 +530,7 @@ async fn run(
 /// lifecycle is testable in-process.
 pub(crate) async fn run_until(
     dir: AuthorityDirectory,
-    proposal: crate::infrastructure::provider_runtime_admission::AdmissionRuntimeProposal,
+    proposal: crate::infrastructure::providers::routing::provider_runtime_admission::AdmissionRuntimeProposal,
     accept_missing_ledger: bool,
     stop: impl std::future::Future<Output = ()>,
     stdout: &mut String,

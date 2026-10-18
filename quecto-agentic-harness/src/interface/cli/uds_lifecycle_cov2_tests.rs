@@ -409,10 +409,10 @@ fn publish_admission_slots(base: &std::path::Path, slots: &[&str]) {
             &CompositionPorts {
                 sources: &[&Source],
                 credentials: &Credentials,
-                catalogue_store: &crate::infrastructure::catalogue_registry::snapshot_store_for(
+                catalogue_store: &crate::infrastructure::providers::catalogue::catalogue_registry::snapshot_store_for(
                     base,
                 ),
-                runtime_store: &crate::infrastructure::catalogue_registry::runtime_store_for(base),
+                runtime_store: &crate::infrastructure::providers::catalogue::catalogue_registry::runtime_store_for(base),
             },
         )
         .expect("publish usable runtime");

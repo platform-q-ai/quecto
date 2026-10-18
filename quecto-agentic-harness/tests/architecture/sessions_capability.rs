@@ -182,7 +182,7 @@ const CANONICAL_FILES: &[&str] = &[
     "src/interface/uds/sessions/read_history_controller.rs",
     "src/interface/uds/sessions/recover_message_controller.rs",
     "src/interface/uds/sessions/export_report_controller.rs",
-    "src/infrastructure/session_export.rs",
+    "src/infrastructure/persistence/file/session_export.rs",
     "src/interface/uds/sessions/synchronize_transcript_controller.rs",
     "src/interface/uds/sessions/rewind_conversation_controller.rs",
     "src/domain/conversation/services/conversation_view.rs",
@@ -586,6 +586,14 @@ const SANITIZER_CALLERS: &[&str] = &[
 /// adapter, which names its per-session JSONL file (#2375).
 const OUTSIDE_SANITIZER_CALLERS: &[&str] = &["src/infrastructure/observability/audit_log.rs"];
 
+/// The observability adapters' folder, and its event-log adapters: none
+/// names a `.json` file (#2375 review).
+const OBSERVABILITY: &str = "src/infrastructure/observability/";
+const EVENT_LOG_ADAPTERS: &[&str] = &[
+    "src/infrastructure/observability/board_op_log.rs",
+    "src/infrastructure/observability/project_board_op_log.rs",
+];
+
 /// Decrease-only line ceilings of the list/owner files (file, ceiling).
 /// Lower a ceiling when a file shrinks; never raise or remove one to pass.
 // #2009: scoped discovery/admission extends existing owners. After the review
@@ -898,10 +906,13 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
         "src/infrastructure/persistence/file/sessions/session_record_read.rs",
         71,
     ),
-    ("src/infrastructure/session_export.rs", 110),
+    ("src/infrastructure/persistence/file/session_export.rs", 110),
     // #2404: a message record names its user kind (`userKind`), a
     // reviewed raise (80 → 81).
-    ("src/infrastructure/session_export_records.rs", 81),
+    (
+        "src/infrastructure/persistence/file/session_export_records.rs",
+        81,
+    ),
     ("src/interface/cli/agent/run_session.rs", 123),
     ("src/interface/cli/uds_dispatch.rs", 500),
     // D10 #1979 hands the presenters the active session's key (was 190).
@@ -1245,9 +1256,16 @@ fn sessions_graph_nodes_are_constructed_only_in_composition() {
     }
 }
 
-/// The persistence adapters that are not the sessions capability's.
-const ENVIRONMENT_REGISTRY_STORE: &str =
-    "src/infrastructure/persistence/file/environment_registry_store.rs";
+/// The persistence adapters that are not the sessions capability's
+/// layout: each names its own files and never a session path.
+/// - The environments capability's durable registry (#2024 S4d) is one
+///   `<base_dir>/environments.json` document, not a session projection.
+/// - The session export (#1859) writes `manifest.json` into a fresh
+///   directory under the export root (#2376 moved it into persistence).
+const OWN_FILE_STORES: &[&str] = &[
+    "src/infrastructure/persistence/file/environment_registry_store.rs",
+    "src/infrastructure/persistence/file/session_export.rs",
+];
 
 #[test]
 fn one_layout_owns_the_sessions_join_sanitizer_and_file_names() {
@@ -1263,11 +1281,7 @@ fn one_layout_owns_the_sessions_join_sanitizer_and_file_names() {
     ] {
         let owners: BTreeSet<String> = persistence
             .iter()
-            // The environments capability's durable registry (#2024 S4d)
-            // is one `<base_dir>/environments.json` document, not a
-            // session projection: it names its own file and never a
-            // session path.
-            .filter(|path| path.as_str() != ENVIRONMENT_REGISTRY_STORE)
+            .filter(|path| !OWN_FILE_STORES.contains(&path.as_str()))
             .filter(|path| {
                 production_code(path)
                     .iter()
@@ -1281,12 +1295,35 @@ fn one_layout_owns_the_sessions_join_sanitizer_and_file_names() {
             "{needle} is formed only by the layout"
         );
     }
-    for needle in ["join(\"sessions\")", "\"spill.jsonl\"", ".owner\""] {
+    for (store, needle) in OWN_FILE_STORES.iter().flat_map(|store| {
+        ["join(\"sessions\")", "\"spill.jsonl\"", ".owner\""].map(|needle| (store, needle))
+    }) {
         assert!(
-            !production_code(ENVIRONMENT_REGISTRY_STORE)
+            !production_code(store)
                 .iter()
                 .any(|(_, line)| line.contains(needle)),
-            "{ENVIRONMENT_REGISTRY_STORE} forms no session path ({needle})"
+            "{store} forms no session path ({needle})"
+        );
+    }
+    // The event-log adapters left persistence for observability (#2375,
+    // #2376): they name their `.jsonl` logs, never a `.json` session record.
+    let event_logs: Vec<String> = production_files()
+        .into_iter()
+        .filter(|p| p.starts_with(OBSERVABILITY))
+        .collect();
+    assert!(
+        OUTSIDE_SANITIZER_CALLERS
+            .iter()
+            .chain(EVENT_LOG_ADAPTERS)
+            .all(|file| event_logs.iter().any(|path| path == file)),
+        "the event-log adapters are scanned: {event_logs:?}"
+    );
+    for path in &event_logs {
+        assert!(
+            !production_code(path)
+                .iter()
+                .any(|(_, line)| line.contains(".json\"")),
+            "{path} names a `.json` file"
         );
     }
     let sanitizer_callers = production_files_calling("sanitize_session_key(");

@@ -89,10 +89,10 @@ pub(super) async fn service(
         // Same frame-cap discipline as the dispatch-loop path (#1062): an
         // over-budget line would be dropped unread by the client's bounded
         // reader, so replace it with a small correlated error instead.
-        if response.len() > crate::infrastructure::line_cap::EVENT_LINE_JSON_BUDGET {
+        if response.len() > crate::infrastructure::processes::line_cap::EVENT_LINE_JSON_BUDGET {
             tracing::warn!(
                 len = response.len(),
-                cap = crate::infrastructure::line_cap::EVENT_LINE_CAP_BYTES,
+                cap = crate::infrastructure::processes::line_cap::EVENT_LINE_CAP_BYTES,
                 "rejecting oversized busy get_message response"
             );
             response = serde_json::to_string(&AgentEvent::err(

@@ -12,8 +12,10 @@ use quecto::domain::catalogue::value_objects::identity::{
 };
 use quecto::domain::catalogue::value_objects::model_facts::{ModelCapabilities, ModelCost};
 use quecto::infrastructure::auth::provider_slots::ProviderSlots;
-use quecto::infrastructure::catalogue_registry::RegistryCredentialStatus;
-use quecto::infrastructure::model_registry::{AuthMode, ModelRegistry, ProviderApi};
+use quecto::infrastructure::providers::catalogue::catalogue_registry::RegistryCredentialStatus;
+use quecto::infrastructure::providers::catalogue::model_registry::{
+    AuthMode, ModelRegistry, ProviderApi,
+};
 
 fn catalogue_entry(provider: &str, model: &str) -> CatalogueEntry {
     let reference = ModelRef::parse(provider, model).unwrap();

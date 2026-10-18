@@ -264,8 +264,12 @@ impl CredentialStore {
         let mode = Some(0o600);
         #[cfg(not(unix))]
         let mode = None;
-        crate::infrastructure::atomic_write::atomic_write(&self.path, json.as_bytes(), mode)
-            .map_err(|e| DomainError::Config(format!("failed to write credentials: {}", e)))?;
+        crate::infrastructure::persistence::file::atomic_write::atomic_write(
+            &self.path,
+            json.as_bytes(),
+            mode,
+        )
+        .map_err(|e| DomainError::Config(format!("failed to write credentials: {}", e)))?;
 
         Ok(())
     }

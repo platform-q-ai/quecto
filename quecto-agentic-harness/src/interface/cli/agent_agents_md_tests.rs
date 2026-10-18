@@ -238,7 +238,7 @@ async fn custom_playbook_prompt_path_uses_initialization_directory() {
     assert!(result.content.contains("project spike brief"));
     assert!(!other.join("docs/spike.md").exists());
     assert_eq!(
-        crate::infrastructure::parent_playbook::load(&other).unwrap(),
+        crate::infrastructure::config::parent_playbook::load(&other).unwrap(),
         include_str!("../../../../PARENT_PLAYBOOK.md")
     );
 }

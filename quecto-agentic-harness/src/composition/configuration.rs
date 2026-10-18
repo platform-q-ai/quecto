@@ -22,9 +22,9 @@ use crate::infrastructure::config::mapping::{
 use crate::infrastructure::config::persistence::{
     PersistentOverlayTrustStore, TRUST_RECORD_FILE_NAME,
 };
+use crate::infrastructure::config::reload::ReloadSource;
+use crate::infrastructure::config::runtime_configuration::ConfigLoader;
 use crate::infrastructure::config::writer::JsonDocumentWriter;
-use crate::infrastructure::reload::ReloadSource;
-use crate::infrastructure::runtime_configuration::ConfigLoader;
 use crate::interface::cli::configuration_handles::{
     ConfigRealizer, ConfigurationEnvironment, ConfigurationHandles,
 };

@@ -248,7 +248,7 @@ Declared only under `src/application/sessions/ports.rs` and
 | `WorkspaceDiscovery` | `infrastructure/workspace/git_scope_discovery.rs` (`GitScopeDiscovery`), using `filesystem_scope.rs` | canonical execution directory and real Git common-dir/worktree grouping; observable discovery failure |
 | `SessionStore` | `infrastructure/persistence/file/sessions/session_store.rs` (`FileSessionStore`) | claim/release/load/load_transcript/save/save_delta/save_clean_delta/exists/list, keyed by `SessionIdentity` |
 | `ContextSpillStore` | `infrastructure/persistence/file/context_spill.rs` (`FileContextSpillStore`) | append/recall/list_entries/has_entries/clear/scrub_sync of the retention namespace |
-| `SessionExportPort` | `infrastructure/session_export.rs` (`FileSessionExport`) | the raw export writer (records, manifest, checksum) |
+| `SessionExportPort` | `infrastructure/persistence/file/session_export.rs` (`FileSessionExport`) | the raw export writer (records, manifest, checksum) |
 | `DurablePrefixObservation` | `application/durable_prefix.rs` (`DurablePrefixLatch`) | the agent loop's dirty-prefix latch the save drains |
 | `WorkflowRunSource` | `infrastructure/persistence/file/sessions/session_snapshot_sources.rs` | the workflow run the save records |
 | `HistoricalRosterSource` | `infrastructure/persistence/file/sessions/session_snapshot_sources.rs` | the sub-agent rows the save records as history |

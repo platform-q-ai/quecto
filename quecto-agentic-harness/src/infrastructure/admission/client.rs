@@ -20,7 +20,7 @@ use crate::application::ports::{AttemptAdmission, AuthorityStatus, Credential};
 use crate::domain::admission::value_objects::inference_admission::{
     Feedback, RequestState, ScopeId, WorkloadClass,
 };
-use crate::infrastructure::provider_runtime_admission::AdmissionRuntimeProposal;
+use crate::infrastructure::providers::routing::provider_runtime_admission::AdmissionRuntimeProposal;
 
 const COMPLETE_RETRIES: u32 = 40;
 const COMPLETE_RETRY_DELAY: Duration = Duration::from_millis(50);

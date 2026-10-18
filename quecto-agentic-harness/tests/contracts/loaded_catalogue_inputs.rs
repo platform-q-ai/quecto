@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use quecto::application::catalogue::ports::CatalogueInputsLoader;
 use quecto::domain::catalogue::value_objects::precedence::SourceLayer;
-use quecto::infrastructure::catalogue_inputs::FileCatalogueInputs;
+use quecto::infrastructure::providers::catalogue::catalogue_inputs::FileCatalogueInputs;
 
 fn under_test(dir: &std::path::Path) -> Arc<dyn CatalogueInputsLoader> {
     Arc::new(FileCatalogueInputs::new(

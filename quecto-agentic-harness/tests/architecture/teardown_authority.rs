@@ -312,7 +312,7 @@ const PROCESS_EFFECT_ALLOWLIST: &[(&str, &[&str], &str)] = &[
          `/proc/self/ns/pid`) for the coordination store's member records",
     ),
     (
-        "src/infrastructure/runtime_identity.rs",
+        "src/infrastructure/processes/runtime_identity.rs",
         &["/proc/"],
         "this process's own executable digest via `/proc/<self>/exe`",
     ),

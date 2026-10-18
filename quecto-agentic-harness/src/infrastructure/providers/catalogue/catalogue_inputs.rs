@@ -8,13 +8,13 @@
 
 use std::path::Path;
 
-use crate::application::catalogue::ports::RuntimeSnapshotSource;
-use crate::infrastructure::auth::provider_slots::ProviderSlots;
-use crate::infrastructure::catalogue_registry::{
+use super::catalogue_registry::{
     BuiltinCatalogueSource, ModelsFileCatalogueSource, RegistryCredentialStatus,
     UserOverrideCatalogueSource, apply_overrides, entries_from_records, user_file_entries,
 };
-use crate::infrastructure::model_registry::ModelRegistry;
+use super::model_registry::ModelRegistry;
+use crate::application::catalogue::ports::RuntimeSnapshotSource;
+use crate::infrastructure::auth::provider_slots::ProviderSlots;
 
 /// The real catalogue sources and credential status for one base directory,
 /// loaded once so a resolve (or runtime composition) reads one on-disk state.
@@ -27,28 +27,22 @@ pub(crate) struct CatalogueInputs {
     /// Persisted discovery caches (generated data), fed in as the discovered
     /// layer so explicit refreshes participate in normal precedence. Loading
     /// them touches no network.
-    discovered: Vec<crate::infrastructure::catalogue_discovery::DiscoverySourceCache>,
+    discovered: Vec<super::catalogue_discovery::DiscoverySourceCache>,
     pub(crate) credentials: RegistryCredentialStatus,
     /// The parsed user-file records (or the parse error), kept so runtime
     /// composition can build its effective registry from the same read.
-    file_records: Result<Vec<crate::infrastructure::model_registry::ModelRecord>, String>,
+    file_records: Result<Vec<super::model_registry::ModelRecord>, String>,
     /// Per-provider connection defaults from the same parse, so the refresh
     /// path can build discovery sources without re-reading `models.json`.
-    provider_defaults: Result<
-        Vec<(
-            String,
-            crate::infrastructure::model_registry::ProviderDefaults,
-        )>,
-        String,
-    >,
+    provider_defaults: Result<Vec<(String, super::model_registry::ProviderDefaults)>, String>,
     /// Records synthesized for discovered-cache models under configured
     /// providers (connection/auth from the provider's defaults), so a
     /// discovered model is credentialed and routable like a listed one.
-    discovered_records: Vec<crate::infrastructure::model_registry::ModelRecord>,
+    discovered_records: Vec<super::model_registry::ModelRecord>,
     /// Full records produced by applying the user's stable-ID overrides to
     /// their base records, so overridden connection/credential references are
     /// also routable and credential-checked.
-    override_records: Vec<crate::infrastructure::model_registry::ModelRecord>,
+    override_records: Vec<super::model_registry::ModelRecord>,
 }
 
 impl CatalogueInputs {
@@ -76,8 +70,7 @@ impl CatalogueInputs {
             .map(|c| (c.overrides.clone(), c.unsupported.clone()))
             .map_err(Clone::clone);
         let provider_defaults = config.map(|c| c.providers);
-        let discovered =
-            crate::infrastructure::catalogue_discovery::discovery_cache_sources(base_dir);
+        let discovered = super::catalogue_discovery::discovery_cache_sources(base_dir);
         let discovered_records = synthesize_discovered_records(
             &discovered,
             provider_defaults.as_deref().unwrap_or_default(),
@@ -132,14 +125,14 @@ impl CatalogueInputs {
     /// User-file records win over synthesized discovered ones (upsert order).
     pub(crate) fn effective_registry(
         &self,
-    ) -> Result<crate::infrastructure::model_registry::ModelRegistry, String> {
+    ) -> Result<super::model_registry::ModelRegistry, String> {
         self.file_records.clone().map(|mut records| {
             let mut merged = self.discovered_records.clone();
             merged.append(&mut records);
             // Overrides win over both (upsert order): an overridden
             // credential reference or limit is what the runtime routes with.
             merged.extend(self.override_records.iter().cloned());
-            crate::infrastructure::model_registry::ModelRegistry::from_file_records(merged)
+            super::model_registry::ModelRegistry::from_file_records(merged)
         })
     }
 
@@ -147,13 +140,7 @@ impl CatalogueInputs {
     /// parse error), for composing the refresh path from the same read.
     pub(crate) fn provider_defaults(
         &self,
-    ) -> &Result<
-        Vec<(
-            String,
-            crate::infrastructure::model_registry::ProviderDefaults,
-        )>,
-        String,
-    > {
+    ) -> &Result<Vec<(String, super::model_registry::ProviderDefaults)>, String> {
         &self.provider_defaults
     }
 
@@ -184,13 +171,10 @@ impl CatalogueInputs {
 /// user already lists are skipped (the file's record wins), as are caches for
 /// providers no longer configured.
 fn synthesize_discovered_records(
-    caches: &[crate::infrastructure::catalogue_discovery::DiscoverySourceCache],
-    provider_defaults: &[(
-        String,
-        crate::infrastructure::model_registry::ProviderDefaults,
-    )],
-    file_records: &[crate::infrastructure::model_registry::ModelRecord],
-) -> Vec<crate::infrastructure::model_registry::ModelRecord> {
+    caches: &[super::catalogue_discovery::DiscoverySourceCache],
+    provider_defaults: &[(String, super::model_registry::ProviderDefaults)],
+    file_records: &[super::model_registry::ModelRecord],
+) -> Vec<super::model_registry::ModelRecord> {
     use crate::application::ports::CatalogueSource as _;
     let mut records = Vec::new();
     for cache in caches {

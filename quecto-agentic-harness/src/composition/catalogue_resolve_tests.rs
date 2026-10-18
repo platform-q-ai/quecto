@@ -5,8 +5,8 @@
 use crate::composition::catalogue::{published_model_limits_for, resolve_catalogue_for};
 use crate::domain::conversation::services::image_input::ImageInput;
 use crate::infrastructure::auth::provider_slots::ProviderSlots;
-use crate::infrastructure::catalogue_inputs::CatalogueInputs;
-use crate::infrastructure::catalogue_registry::snapshot_store_for;
+use crate::infrastructure::providers::catalogue::catalogue_inputs::CatalogueInputs;
+use crate::infrastructure::providers::catalogue::catalogue_registry::snapshot_store_for;
 
 fn published_model_limits(dir: &std::path::Path, model: &str) -> (Option<u32>, Option<usize>) {
     let limits = published_model_limits_for(dir, model);
@@ -103,8 +103,10 @@ fn discovered_models_inherit_provider_credentials_and_join_the_effective_registr
         .to_string(),
     )
     .unwrap();
-    crate::infrastructure::catalogue_discovery::DiscoverySourceCache::new(
-        &crate::infrastructure::catalogue_discovery::discovery_cache_dir(tmp.path()),
+    crate::infrastructure::providers::catalogue::catalogue_discovery::DiscoverySourceCache::new(
+        &crate::infrastructure::providers::catalogue::catalogue_discovery::discovery_cache_dir(
+            tmp.path(),
+        ),
         "openrouter",
     )
     .store_models_response(r#"{"data":[{"id":"alpha","name":"Alpha"}]}"#)
@@ -157,8 +159,10 @@ fn user_listed_models_win_over_synthesized_discovered_records() {
         .to_string(),
     )
     .unwrap();
-    crate::infrastructure::catalogue_discovery::DiscoverySourceCache::new(
-        &crate::infrastructure::catalogue_discovery::discovery_cache_dir(tmp.path()),
+    crate::infrastructure::providers::catalogue::catalogue_discovery::DiscoverySourceCache::new(
+        &crate::infrastructure::providers::catalogue::catalogue_discovery::discovery_cache_dir(
+            tmp.path(),
+        ),
         "openrouter",
     )
     .store_models_response(r#"{"data":[{"id":"alpha","name":"Theirs"}]}"#)
@@ -484,8 +488,10 @@ fn an_override_patches_a_builtin_models_input() {
 #[test]
 fn a_discovered_builtin_model_keeps_its_builtin_input() {
     let tmp = tempfile::tempdir().unwrap();
-    crate::infrastructure::catalogue_discovery::DiscoverySourceCache::new(
-        &crate::infrastructure::catalogue_discovery::discovery_cache_dir(tmp.path()),
+    crate::infrastructure::providers::catalogue::catalogue_discovery::DiscoverySourceCache::new(
+        &crate::infrastructure::providers::catalogue::catalogue_discovery::discovery_cache_dir(
+            tmp.path(),
+        ),
         "openai-api",
     )
     .store_models_response(r#"{"data":[{"id":"gpt-6.1-sol"},{"id":"gpt-new"}]}"#)

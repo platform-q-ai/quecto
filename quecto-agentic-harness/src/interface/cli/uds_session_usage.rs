@@ -56,7 +56,7 @@ pub fn compute_session_stats_with_usage(
         }
     }
     SessionStats {
-        runtime: Some(crate::infrastructure::runtime_identity::current()),
+        runtime: Some(crate::infrastructure::processes::runtime_identity::current()),
         request_diagnostics: usage.request_diagnostics.clone(),
         session_key: session_key.to_owned(),
         user_messages,

@@ -9,7 +9,7 @@ use quecto::domain::admission::value_objects::inference_admission::{
 use quecto::infrastructure::admission::{
     AdminConnection, AuthorityConnection, AuthorityDirectory, AuthorityServer, ClientError,
 };
-use quecto::infrastructure::provider_runtime_admission::AdmissionRuntimeProposal;
+use quecto::infrastructure::providers::routing::provider_runtime_admission::AdmissionRuntimeProposal;
 use std::collections::BTreeMap;
 use std::time::Duration;
 

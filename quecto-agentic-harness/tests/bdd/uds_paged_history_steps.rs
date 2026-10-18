@@ -43,7 +43,7 @@ fn stub_full() -> String {
 }
 const STUB_SPILL_ID: &str = "turn1:msg:assistant";
 const HISTORY_RESPONSE_JSON_BUDGET: usize =
-    quecto::infrastructure::line_cap::EVENT_LINE_JSON_BUDGET / 2;
+    quecto::infrastructure::processes::line_cap::EVENT_LINE_JSON_BUDGET / 2;
 const OVERSIZED_HISTORY_BODY_LEN: usize =
     HISTORY_RESPONSE_JSON_BUDGET + (HISTORY_RESPONSE_JSON_BUDGET / 4);
 

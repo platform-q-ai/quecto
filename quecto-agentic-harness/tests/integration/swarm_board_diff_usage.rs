@@ -159,7 +159,8 @@ fn a_real_request_observation_round_trips_identically() {
     })
     .unwrap();
     let current =
-        serde_json::to_value(quecto::infrastructure::runtime_identity::current()).unwrap();
+        serde_json::to_value(quecto::infrastructure::processes::runtime_identity::current())
+            .unwrap();
     let keys = |value: &Value| {
         value
             .as_object()

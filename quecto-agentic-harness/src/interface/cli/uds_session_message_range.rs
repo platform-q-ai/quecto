@@ -11,7 +11,7 @@
 use crate::application::sessions::dto::{RecoveredContent, Utf8Range};
 use crate::domain::conversation::services::visible_thinking as thinking;
 use crate::domain::conversation::value_objects::message::{Message, ToolCall};
-use crate::infrastructure::turn_origin_names::{origin_name, user_kind_name};
+use crate::infrastructure::{persistence::file::turn_origin_names::*, processes::line_cap};
 use crate::interface::cli::protocol::AgentEvent;
 
 #[cfg(test)]
@@ -130,7 +130,7 @@ fn ranged_value(
 
 fn data_fits_frame(value: &serde_json::Value, request_id: Option<&str>) -> bool {
     let response = AgentEvent::ok(request_id, "get_message", Some(value.clone()));
-    response.to_json_line().len() <= crate::infrastructure::line_cap::EVENT_LINE_JSON_BUDGET
+    response.to_json_line().len() <= line_cap::EVENT_LINE_JSON_BUDGET
 }
 
 /// Narrow the requested content range until the framed response fits.
