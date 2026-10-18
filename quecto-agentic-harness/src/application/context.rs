@@ -25,7 +25,7 @@
 //!   stub demotion, and physical drops.
 use crate::application::context_pruning;
 use crate::application::sessions::use_cases::{ListRetainedContext, RetainContext};
-use crate::domain::catalogue::value_objects::catalogue::ModelWindow;
+use crate::domain::catalogue::value_objects::model_facts::ModelWindow;
 use crate::domain::conversation::services::watermark::Watermark;
 use crate::domain::conversation::value_objects::message::Message;
 use crate::domain::inference::services::context_calibration::EstimateScale;

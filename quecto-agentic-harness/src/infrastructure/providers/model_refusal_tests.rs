@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use super::*;
 use crate::application::catalogue::CatalogueSnapshotStore;
-use crate::domain::catalogue::value_objects::catalogue::ModelRef;
+use crate::domain::catalogue::value_objects::identity::ModelRef;
 use crate::domain::conversation::value_objects::message::Message;
 use crate::infrastructure::providers::router::ProviderRouter;
 

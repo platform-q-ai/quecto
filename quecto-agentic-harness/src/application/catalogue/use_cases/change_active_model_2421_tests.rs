@@ -51,7 +51,7 @@ fn a_provider_named_in_another_case_reads_the_same_entry() {
 }
 
 fn routed_over(entries: Vec<CatalogueEntry>, order: Vec<&'static str>) -> Arc<FakeRuntime> {
-    let catalogue = crate::domain::catalogue::value_objects::catalogue::resolve_catalogue(
+    let catalogue = crate::domain::catalogue::services::resolution::resolve_catalogue(
         1,
         vec![(SourceLayer::BuiltIn, entries)],
     )

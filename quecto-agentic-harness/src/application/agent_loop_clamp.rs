@@ -12,7 +12,7 @@
 use super::AgentLoopImpl;
 use crate::application::catalogue::dto::ModelLimits;
 use crate::application::catalogue::ports::ModelRuntime;
-use crate::domain::catalogue::value_objects::catalogue::ModelWindow;
+use crate::domain::catalogue::value_objects::model_facts::ModelWindow;
 use crate::domain::conversation::services::image_input::{
     GifVerdicts, ImageInput, SentConversation,
 };
@@ -244,7 +244,7 @@ impl AgentLoopImpl {
 /// the animated-GIF verdicts kept across requests (#2421).
 #[derive(Debug, Default)]
 pub(super) struct ModelTraits {
-    pub(super) prompt_limit: crate::domain::catalogue::value_objects::catalogue::PromptLimit,
+    pub(super) prompt_limit: crate::domain::catalogue::value_objects::model_facts::PromptLimit,
     pub(super) image_input: ImageInput,
     /// Which GIFs already seen are animated, kept across model switches.
     pub(super) gif_verdicts: GifVerdicts,

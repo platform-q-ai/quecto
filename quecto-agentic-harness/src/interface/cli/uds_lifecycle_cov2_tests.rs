@@ -333,7 +333,8 @@ fn publish_admission_slots(base: &std::path::Path, slots: &[&str]) {
         AdmissionBindingDiagnostic, ComposeProviderRuntimeUseCase, CompositionPorts,
         ProviderRuntimeFactory, ProviderRuntimeOutcome,
     };
-    use crate::domain::catalogue::value_objects::catalogue::{CatalogueEntry, SourceLayer};
+    use crate::domain::catalogue::entities::entry::CatalogueEntry;
+    use crate::domain::catalogue::value_objects::precedence::SourceLayer;
     struct Source;
     impl CatalogueSource for Source {
         fn id(&self) -> &str {

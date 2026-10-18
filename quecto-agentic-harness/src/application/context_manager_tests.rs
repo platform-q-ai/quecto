@@ -119,8 +119,8 @@ fn config_for(max_context_tokens: usize) -> ContextManagerConfig {
 }
 
 /// A known window with nothing reserved for the reply.
-fn window_only(window: usize) -> crate::domain::catalogue::value_objects::catalogue::ModelWindow {
-    crate::domain::catalogue::value_objects::catalogue::ModelWindow {
+fn window_only(window: usize) -> crate::domain::catalogue::value_objects::model_facts::ModelWindow {
+    crate::domain::catalogue::value_objects::model_facts::ModelWindow {
         window: Some(window),
         ..Default::default()
     }
@@ -556,7 +556,7 @@ fn the_window_budget_ignores_the_swarm_cap() {
 
 #[test]
 fn the_ceiling_keeps_the_reply_reserve_free_of_the_window() {
-    use crate::domain::catalogue::value_objects::catalogue::{ModelWindow, PromptLimit};
+    use crate::domain::catalogue::value_objects::model_facts::{ModelWindow, PromptLimit};
     let mut manager = manager(300_000);
     manager.set_model_window(ModelWindow::new(
         Some(400_000),

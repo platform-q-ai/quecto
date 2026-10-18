@@ -78,7 +78,7 @@ impl ThinkingLevel {
 /// The accepted vocabulary is the union of the providers' documented scales
 /// (#1066): OpenAI's `none, low, medium, high, xhigh` and Anthropic's
 /// `low, medium, high, max`. Which subset a given model accepts is the
-/// catalogue's per-model capability (`domain::catalogue::value_objects::catalogue::EffortVocabulary`,
+/// catalogue's per-model capability (`domain::catalogue::services::effort_vocabulary::EffortVocabulary`,
 /// #1996); parsing here is syntax only and rejects anything outside the union.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EffortLevel {

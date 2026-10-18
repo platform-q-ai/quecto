@@ -5,7 +5,7 @@
 use super::*;
 use crate::application::catalogue::dto::ModelLimits;
 use crate::application::catalogue::ports::ModelRuntime;
-use crate::domain::catalogue::value_objects::catalogue::PromptLimit::{
+use crate::domain::catalogue::value_objects::model_facts::PromptLimit::{
     self, SharedWithRequest, WindowLessOutputCap,
 };
 

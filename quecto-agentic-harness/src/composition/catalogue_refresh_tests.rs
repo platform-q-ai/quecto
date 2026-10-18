@@ -128,7 +128,7 @@ fn user_override_still_wins_over_refreshed_discovered_data_at_the_interface() {
         let entry = resolved
             .snapshot
             .find(
-                &crate::domain::catalogue::value_objects::catalogue::ModelRef::parse_qualified(
+                &crate::domain::catalogue::value_objects::identity::ModelRef::parse_qualified(
                     "openrouter/alpha",
                 )
                 .unwrap(),

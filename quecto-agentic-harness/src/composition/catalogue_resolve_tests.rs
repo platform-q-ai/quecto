@@ -114,7 +114,7 @@ fn discovered_models_inherit_provider_credentials_and_join_the_effective_registr
     let entry = resolved
         .snapshot
         .find(
-            &crate::domain::catalogue::value_objects::catalogue::ModelRef::parse_qualified(
+            &crate::domain::catalogue::value_objects::identity::ModelRef::parse_qualified(
                 "openrouter/alpha",
             )
             .unwrap(),
@@ -187,7 +187,7 @@ const SLICE5_MIXED_TRANSPORTS: &str = r#"{"providers":{
 /// neighbour in the same user file instead of the whole layer erroring away.
 #[test]
 fn valid_provider_survives_an_unsupported_transport_neighbour() {
-    use crate::domain::catalogue::value_objects::catalogue::ModelRef;
+    use crate::domain::catalogue::value_objects::identity::ModelRef;
     let tmp = tempfile::tempdir().unwrap();
     slice5_write(&tmp, SLICE5_MIXED_TRANSPORTS);
     let resolved = resolve_catalogue_for(tmp.path());
@@ -201,7 +201,7 @@ fn valid_provider_survives_an_unsupported_transport_neighbour() {
 /// AC3 (part): the unsupported-transport entry itself is listed as known.
 #[test]
 fn unsupported_transport_entry_is_listed_as_known() {
-    use crate::domain::catalogue::value_objects::catalogue::ModelRef;
+    use crate::domain::catalogue::value_objects::identity::ModelRef;
     let tmp = tempfile::tempdir().unwrap();
     slice5_write(&tmp, SLICE5_MIXED_TRANSPORTS);
     let resolved = resolve_catalogue_for(tmp.path());
@@ -216,7 +216,8 @@ fn unsupported_transport_entry_is_listed_as_known() {
 /// unsupported-transport reason.
 #[test]
 fn unsupported_transport_entry_is_not_runnable_with_structured_reason() {
-    use crate::domain::catalogue::value_objects::catalogue::{ModelRef, UnavailableReason};
+    use crate::domain::catalogue::value_objects::availability::UnavailableReason;
+    use crate::domain::catalogue::value_objects::identity::ModelRef;
     let tmp = tempfile::tempdir().unwrap();
     slice5_write(&tmp, SLICE5_MIXED_TRANSPORTS);
     let resolved = resolve_catalogue_for(tmp.path());
@@ -244,7 +245,7 @@ const SLICE5_OVERRIDE: &str =
 /// AC1 (part): a stable-ID override replaces the built-in display name.
 #[test]
 fn stable_id_override_replaces_builtin_display_name() {
-    use crate::domain::catalogue::value_objects::catalogue::ModelRef;
+    use crate::domain::catalogue::value_objects::identity::ModelRef;
     let tmp = tempfile::tempdir().unwrap();
     slice5_write(&tmp, SLICE5_OVERRIDE);
     let resolved = resolve_catalogue_for(tmp.path());
@@ -260,7 +261,7 @@ fn stable_id_override_replaces_builtin_display_name() {
 /// AC1 (part): a stable-ID override replaces the built-in context window.
 #[test]
 fn stable_id_override_replaces_builtin_context_window() {
-    use crate::domain::catalogue::value_objects::catalogue::ModelRef;
+    use crate::domain::catalogue::value_objects::identity::ModelRef;
     let tmp = tempfile::tempdir().unwrap();
     slice5_write(&tmp, SLICE5_OVERRIDE);
     let resolved = resolve_catalogue_for(tmp.path());
@@ -297,7 +298,7 @@ fn literal_secret_in_override_surface_is_rejected_with_structured_error() {
 /// declared display name.
 #[test]
 fn user_file_model_add_on_existing_provider_is_published() {
-    use crate::domain::catalogue::value_objects::catalogue::ModelRef;
+    use crate::domain::catalogue::value_objects::identity::ModelRef;
     let tmp = tempfile::tempdir().unwrap();
     slice5_write(
         &tmp,
@@ -313,7 +314,7 @@ fn user_file_model_add_on_existing_provider_is_published() {
 /// with a base url and a credential reference resolved from the environment.
 #[test]
 fn user_file_provider_add_with_credential_reference_is_runnable() {
-    use crate::domain::catalogue::value_objects::catalogue::ModelRef;
+    use crate::domain::catalogue::value_objects::identity::ModelRef;
     // SAFETY: test-only env mutation with a name no other test reads.
     unsafe { std::env::set_var("SLICE5_GATEWAY_KEY", "gw-secret") };
     let tmp = tempfile::tempdir().unwrap();
@@ -336,7 +337,7 @@ fn user_file_provider_add_with_credential_reference_is_runnable() {
 /// reference-only (documented in docs/runtime-models-providers.md).
 #[test]
 fn legacy_provider_level_literal_api_key_stays_accepted() {
-    use crate::domain::catalogue::value_objects::catalogue::ModelRef;
+    use crate::domain::catalogue::value_objects::identity::ModelRef;
     let tmp = tempfile::tempdir().unwrap();
     slice5_write(
         &tmp,
@@ -394,7 +395,7 @@ fn override_referencing_unset_env_var_is_rejected_and_keeps_base_credential() {
 /// patchable by stable ID like any other known entry).
 #[test]
 fn override_patches_an_unsupported_transport_entry() {
-    use crate::domain::catalogue::value_objects::catalogue::ModelRef;
+    use crate::domain::catalogue::value_objects::identity::ModelRef;
     let tmp = tempfile::tempdir().unwrap();
     slice5_write(
         &tmp,

@@ -35,7 +35,7 @@ impl crate::application::catalogue::CredentialStatusPort for GrantNone {
     }
     fn credential_available(
         &self,
-        _entry: &crate::domain::catalogue::value_objects::catalogue::CatalogueEntry,
+        _entry: &crate::domain::catalogue::entities::entry::CatalogueEntry,
     ) -> bool {
         false
     }

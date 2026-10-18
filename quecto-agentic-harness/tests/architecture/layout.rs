@@ -91,7 +91,7 @@ const BUDGETS: &[FlatBudget<'_>] = &[
 const MIGRATED: &[Capability<'_>] = &[
     Capability("domain/conversation", &["value_objects", "services"]),
     Capability("domain/tool_policy", &["value_objects", "services"]),
-    Capability("domain/catalogue", &["value_objects"]),
+    Capability("domain/catalogue", &["entities", "value_objects", "services"]),
     Capability("domain/sessions", &["entities", "value_objects", "services"]),
     Capability("domain/inference", &["value_objects", "services", "events"]),
     Capability("domain/admission", &["value_objects", "services"]),
@@ -397,6 +397,21 @@ fn external_agent_stays_a_sibling_domain_capability() {
     );
 }
 
+// Files split by role out of `catalogue.rs` (2026-10-18 audit on #2363): whole
+// items move, so git sees new files rather than renames.
+#[rustfmt::skip]
+const L5_CATALOGUE_SPLIT: &[&str] = &[
+    "catalogue/value_objects/identity.rs",
+    "catalogue/value_objects/model_facts.rs",
+    "catalogue/value_objects/availability.rs",
+    "catalogue/value_objects/precedence.rs",
+    "catalogue/value_objects/error.rs",
+    "catalogue/entities/entry.rs",
+    "catalogue/entities/snapshot.rs",
+    "catalogue/services/resolution.rs",
+    "catalogue/services/effort_vocabulary_tests.rs",
+];
+
 // Binding L5 whole-file moves; UserKind is the separately approved extraction.
 #[rustfmt::skip]
 const L5_MOVES: &[(&str, &str)] = &[
@@ -438,27 +453,37 @@ const L5_MOVES: &[(&str, &str)] = &[
     ("tool_policy_tests.rs", "tool_policy/services/tool_policy_tests.rs"),
     ("tool_policy_catalogue.rs", "tool_policy/services/tool_policy_catalogue.rs"),
     ("tool_policy_catalogue_tests.rs", "tool_policy/services/tool_policy_catalogue_tests.rs"),
-    ("catalogue.rs", "catalogue/value_objects/catalogue.rs"),
-    ("catalogue_tests.rs", "catalogue/value_objects/catalogue_tests.rs"),
-    ("catalogue_window_tests.rs", "catalogue/value_objects/catalogue_window_tests.rs"),
-    ("catalogue/effort_vocabulary.rs", "catalogue/value_objects/effort_vocabulary.rs"),
-    ("catalogue/retired.rs", "catalogue/value_objects/retired.rs"),
-    ("catalogue/retired_tests.rs", "catalogue/value_objects/retired_tests.rs"),
+    ("catalogue_tests.rs", "catalogue/services/resolution_tests.rs"),
+    ("catalogue_window_tests.rs", "catalogue/value_objects/model_facts_tests.rs"),
+    ("catalogue/effort_vocabulary.rs", "catalogue/services/effort_vocabulary.rs"),
+    ("catalogue/retired.rs", "catalogue/services/retired.rs"),
+    ("catalogue/retired_tests.rs", "catalogue/services/retired_tests.rs"),
     ("state_snapshot.rs", "sessions/value_objects/state_snapshot.rs"),
     ("state_snapshot_tests.rs", "sessions/value_objects/state_snapshot_tests.rs"),
     ("state_snapshot_reader.rs", "sessions/value_objects/state_snapshot_reader.rs"),
 ];
 
+/// Every L5 destination: whole-file moves, then the `catalogue.rs` split.
+fn l5_destinations() -> impl Iterator<Item = &'static str> {
+    L5_MOVES
+        .iter()
+        .map(|(_, new)| *new)
+        .chain(L5_CATALOGUE_SPLIT.iter().copied())
+}
+
 #[test]
-fn l5_all_47_moves_have_destinations_and_retire_sources() {
-    assert_eq!(L5_MOVES.len(), 47);
+fn l5_moves_and_catalogue_split_have_destinations_and_retire_sources() {
+    assert_eq!(L5_MOVES.len(), 46);
+    assert_eq!(L5_CATALOGUE_SPLIT.len(), 9);
     let root = domain();
     let mut failures = Vec::new();
-    for (old, new) in L5_MOVES {
+    for new in l5_destinations() {
         if root.join(new).is_file() {
         } else {
             failures.push(format!("missing destination {new}"));
         }
+    }
+    for old in L5_MOVES.iter().map(|(old, _)| *old).chain(["catalogue.rs"]) {
         match root.join(old).try_exists() {
             Ok(false) => {}
             Ok(true) => failures.push(format!("retained source {old}")),
@@ -472,17 +497,12 @@ fn l5_all_47_moves_have_destinations_and_retire_sources() {
 fn l5_moved_tests_remain_siblings_of_their_production_module() {
     let root = domain();
     let mut failures = Vec::new();
-    for (_, test) in L5_MOVES
-        .iter()
-        .filter(|(_, new)| new.ends_with("_tests.rs"))
-    {
+    for test in l5_destinations().filter(|new| new.ends_with("_tests.rs")) {
         let parent = Path::new(test).parent().expect("test has role parent");
-        let production = L5_MOVES
-            .iter()
-            .filter(|(old, new)| {
-                old.strip_suffix("_tests.rs").is_none() && Path::new(new).parent() == Some(parent)
-            })
-            .any(|(_, production)| {
+        let production = l5_destinations()
+            .filter(|new| new.strip_suffix("_tests.rs").is_none())
+            .filter(|new| Path::new(new).parent() == Some(parent))
+            .any(|production| {
                 let stem = Path::new(production).file_stem().unwrap().to_str().unwrap();
                 Path::new(test)
                     .file_name()
@@ -510,19 +530,13 @@ fn l5_new_roles_have_at_least_two_approved_production_modules() {
         "tool_policy/value_objects",
         "tool_policy/services",
         "catalogue/value_objects",
+        "catalogue/entities",
+        "catalogue/services",
     ] {
-        let approved: Vec<_> = L5_MOVES
-            .iter()
-            .filter(|(old, new)| {
-                old.strip_suffix("_tests.rs").is_none()
-                    && Path::new(new).parent() == Some(Path::new(role))
-            })
-            .map(|(_, new)| *new)
-            .chain(
-                ["conversation/value_objects/user_kind.rs"]
-                    .into_iter()
-                    .filter(|new| Path::new(new).parent() == Some(Path::new(role))),
-            )
+        let approved: Vec<_> = l5_destinations()
+            .chain(["conversation/value_objects/user_kind.rs"])
+            .filter(|new| new.strip_suffix("_tests.rs").is_none())
+            .filter(|new| Path::new(new).parent() == Some(Path::new(role)))
             .collect();
         assert!(approved.len() >= 2, "invalid role allowlist {role}");
         let actual = approved

@@ -15,10 +15,17 @@ use std::sync::{Mutex, OnceLock};
 use crate::application::ports::{
     CatalogueSnapshotStore, CatalogueSource, CredentialStatusPort, SkippedRecord, SourceEntries,
 };
-use crate::domain::catalogue::value_objects::catalogue::{
-    AuthIdentity, Availability, CatalogueEntry, ModelCapabilities, ModelCost as DomainModelCost,
-    ModelDescriptor, ModelRef, ProviderDescriptor, ProviderId, SourceLayer, TransportKind,
+use crate::domain::catalogue::entities::entry::{
+    CatalogueEntry, ModelDescriptor, ProviderDescriptor,
 };
+use crate::domain::catalogue::value_objects::availability::Availability;
+use crate::domain::catalogue::value_objects::identity::{
+    AuthIdentity, ModelRef, ProviderId, TransportKind,
+};
+use crate::domain::catalogue::value_objects::model_facts::{
+    ModelCapabilities, ModelCost as DomainModelCost,
+};
+use crate::domain::catalogue::value_objects::precedence::SourceLayer;
 use crate::infrastructure::auth::provider_slots::ProviderSlots;
 use crate::infrastructure::model_registry::{
     AuthMode, DEFAULT_CONTEXT_WINDOW, DEFAULT_MAX_OUTPUT_TOKENS, ModelOverride, ModelRecord,
@@ -50,7 +57,7 @@ fn entry_from_record(record: &ModelRecord) -> Result<CatalogueEntry, String> {
         },
     };
     let effort_levels =
-        crate::domain::catalogue::value_objects::catalogue::EffortVocabulary::strings_for_model(
+        crate::domain::catalogue::services::effort_vocabulary::EffortVocabulary::strings_for_model(
             &provider_id,
             &transport,
             &record.id,

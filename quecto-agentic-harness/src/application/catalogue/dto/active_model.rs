@@ -1,9 +1,9 @@
 //! Request and outcome of changing the session's active model (#1847).
 
 use crate::application::catalogue::dto::{DefaultScope, PersistedDefault};
-use crate::domain::catalogue::value_objects::catalogue::{
-    ModelRef, PromptLimit, UnavailableReason,
-};
+use crate::domain::catalogue::value_objects::availability::UnavailableReason;
+use crate::domain::catalogue::value_objects::identity::ModelRef;
+use crate::domain::catalogue::value_objects::model_facts::PromptLimit;
 use crate::domain::conversation::services::image_input::ImageInput;
 
 /// The per-model limits the loop clamps to, each `None` unless the

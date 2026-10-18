@@ -109,7 +109,7 @@ fn credential_material_from_models_json_never_reaches_the_snapshot() {
     assert!(
         snapshot
             .find(
-                &quecto::domain::catalogue::value_objects::catalogue::ModelRef::parse_qualified(
+                &quecto::domain::catalogue::value_objects::identity::ModelRef::parse_qualified(
                     "secretish/m"
                 )
                 .unwrap()

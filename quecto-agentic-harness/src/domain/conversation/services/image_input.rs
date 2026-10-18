@@ -19,7 +19,7 @@
 
 use quecto_image::ImageMime;
 
-use crate::domain::catalogue::value_objects::catalogue::TransportKind;
+use crate::domain::catalogue::value_objects::identity::TransportKind;
 use crate::domain::conversation::value_objects::message::{Message, UserImageBlock};
 use crate::domain::conversation::value_objects::stored_images::unavailable_marker;
 use crate::domain::tool_policy::value_objects::tool::ImageBlock;

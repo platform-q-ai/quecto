@@ -16,9 +16,10 @@ use crate::application::catalogue::{
     ResolvedCatalogue,
 };
 use crate::application::providers::ports::LlmProvider;
-use crate::domain::catalogue::value_objects::catalogue::{
-    CatalogueEntry, CatalogueSnapshot, ModelRef, UnavailableReason,
-};
+use crate::domain::catalogue::entities::entry::CatalogueEntry;
+use crate::domain::catalogue::entities::snapshot::CatalogueSnapshot;
+use crate::domain::catalogue::value_objects::availability::UnavailableReason;
+use crate::domain::catalogue::value_objects::identity::ModelRef;
 
 pub mod dto;
 

@@ -6,7 +6,7 @@
 
 use crate::application::catalogue::dto::PersistedDefault;
 use crate::application::catalogue::dto::{ModelSelectionVerdict, ModelSwitched};
-use crate::domain::catalogue::value_objects::catalogue::UnavailableReason;
+use crate::domain::catalogue::value_objects::availability::UnavailableReason;
 
 pub fn render_switch(switched: &ModelSwitched) -> Option<serde_json::Value> {
     let selection = render_verdict(&switched.plan.verdict);

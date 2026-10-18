@@ -7,7 +7,7 @@
 use super::*;
 use crate::application::catalogue::dto::{ModelLimits, ModelSelectionVerdict};
 use crate::application::catalogue::ports::{EffortRuntime, ModelRuntime};
-use crate::domain::catalogue::value_objects::catalogue::UnavailableReason;
+use crate::domain::catalogue::value_objects::availability::UnavailableReason;
 use crate::domain::inference::value_objects::provider::EffortLevel;
 use crate::infrastructure::auth::credential_store::{AuthMethod, Credential, CredentialStore};
 
@@ -424,7 +424,7 @@ fn a_refresh_credits_the_slots_the_published_runtime_routes() {
         runtime
             .catalogue
             .find(
-                &crate::domain::catalogue::value_objects::catalogue::ModelRef::parse_qualified(
+                &crate::domain::catalogue::value_objects::identity::ModelRef::parse_qualified(
                     qualified,
                 )
                 .unwrap(),

@@ -1,7 +1,7 @@
 //! The reasoning-effort vocabulary rule (#1996), split out of
 //! `catalogue.rs` to respect the per-file line cap.
 
-use super::{ProviderId, TransportKind};
+use crate::domain::catalogue::value_objects::identity::{ProviderId, TransportKind};
 use crate::domain::inference::value_objects::provider::EffortLevel;
 
 /// The reasoning-effort vocabulary a model accepts on the wire (#1996): the
@@ -97,3 +97,7 @@ impl EffortVocabulary {
             .collect()
     }
 }
+
+#[cfg(test)]
+#[path = "effort_vocabulary_tests.rs"]
+mod tests;

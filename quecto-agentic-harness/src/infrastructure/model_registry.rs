@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use crate::domain::catalogue::value_objects::catalogue::PromptLimit;
+use crate::domain::catalogue::value_objects::model_facts::PromptLimit;
 use crate::domain::conversation::value_objects::message::{ModelPricing, model_pricing};
 use crate::infrastructure::providers::stream_idle::{StreamIdle, StreamLimits};
 
