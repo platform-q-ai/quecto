@@ -303,7 +303,7 @@ async fn settle_suspending(
 /// review L6), and returns once it has finished (#2278 final review L1,
 /// L2): the caller cannot await it (a drop, or a synchronous port method
 /// on an async worker), yet what follows depends on it (a released slot,
-/// a suspended turn). See [`super::call_work::block_here`].
+/// a suspended turn). See [`super::super::registry::call_work::block_here`].
 pub(super) fn run_off_the_workers(job: impl FnOnce()) {
     super::super::registry::call_work::block_here(job);
 }
