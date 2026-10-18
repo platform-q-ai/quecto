@@ -129,7 +129,7 @@ async fn fake_provider_decomposes_resolves_blocker_and_verifies_swarm() {
         .as_secs()
         + 60;
     quecto::infrastructure::tools::registry::call_work::off_the_runtime(|| context.create_run(&serde_json::json!({"goal":"ship","constraints":[],"criteria":[{"id":"tests","kind":"command","description":"pass"}],"member_limit":1,"deadline":deadline}),
-        &quecto::domain::swarm::ProcessIdentity { pid: std::process::id(), started: quecto::infrastructure::tools::swarm::swarm_bridge::process_start(std::process::id()).unwrap() }, None)).unwrap();
+        &quecto::domain::swarm::value_objects::lifecycle::ProcessIdentity { pid: std::process::id(), started: quecto::infrastructure::tools::swarm::swarm_bridge::process_start(std::process::id()).unwrap() }, None)).unwrap();
     let tool = SwarmTool::new().with_context(Some(context));
     let provider = Arc::new(MockProvider::new(STEPS));
     let mut registry = ToolRegistryImpl::new();
@@ -244,15 +244,18 @@ async fn a_non_finite_argument_is_answered_by_the_loop_before_the_tool() {
             "{answer}"
         );
     }
-    let recorded: Vec<(String, quecto::domain::swarm::BoardOpOutcome)> = log
+    let recorded: Vec<(
+        String,
+        quecto::domain::swarm::events::telemetry::BoardOpOutcome,
+    )> = log
         .0
         .lock()
         .unwrap()
         .iter()
         .map(|record| (record.op.clone(), record.outcome))
         .collect();
-    let refused = quecto::domain::swarm::BoardOpOutcome::Refused {
-        kind: quecto::domain::swarm::RefusalKind::Invalid,
+    let refused = quecto::domain::swarm::events::telemetry::BoardOpOutcome::Refused {
+        kind: quecto::domain::swarm::events::telemetry::RefusalKind::Invalid,
         committed: false,
     };
     assert_eq!(
@@ -280,7 +283,7 @@ fn recorded_run(directory: &tempfile::TempDir) -> (SwarmContext, Arc<BoardCalls>
         .unwrap()
         .as_secs()
         + 60;
-    let process = quecto::domain::swarm::ProcessIdentity {
+    let process = quecto::domain::swarm::value_objects::lifecycle::ProcessIdentity {
         pid: std::process::id(),
         started: quecto::infrastructure::tools::swarm::swarm_bridge::process_start(
             std::process::id(),
@@ -462,15 +465,17 @@ async fn each_admission_gate_is_recorded_as_its_own_decision() {
 
 /// The board calls recorded, in memory.
 #[derive(Default)]
-struct BoardCalls(std::sync::Mutex<Vec<quecto::domain::swarm::BoardOpObservation>>);
+struct BoardCalls(
+    std::sync::Mutex<Vec<quecto::domain::swarm::events::telemetry::BoardOpObservation>>,
+);
 
 impl quecto::application::swarm::ports::BoardOpLog for BoardCalls {
-    fn record(&self, observation: quecto::domain::swarm::BoardOpObservation) {
+    fn record(&self, observation: quecto::domain::swarm::events::telemetry::BoardOpObservation) {
         self.0.lock().unwrap().push(observation);
     }
 
     /// No summary this test checks is written.
-    fn summarize(&self, _summary: quecto::domain::swarm::SwarmRunSummary) {}
+    fn summarize(&self, _summary: quecto::domain::swarm::events::run_summary::SwarmRunSummary) {}
 }
 
 impl quecto::application::swarm::ports::SessionOpLog for BoardCalls {

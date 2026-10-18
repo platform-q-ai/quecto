@@ -8,7 +8,9 @@ use crate::application::swarm::board_test_support::{
     running_board,
 };
 use crate::application::swarm::dto::SendMessageRequest;
-use crate::domain::swarm::{BoardError, RefusalKind};
+use crate::domain::swarm::{
+    events::telemetry::RefusalKind, value_objects::board_error::BoardError,
+};
 
 /// A running run with the live `worker`, the reserved `later` and the dead
 /// `gone`.
@@ -178,7 +180,7 @@ fn a_send_refuses_what_python_refuses() {
 fn a_send_needs_a_running_run() {
     let mut state = board();
     if let Some(run) = state.run.as_mut() {
-        run.record.status = Some(crate::domain::swarm::RunState::PAUSED);
+        run.record.status = Some(crate::domain::swarm::entities::records::RunState::PAUSED);
     }
     let board = MemoryBoard::with(state);
     assert_eq!(

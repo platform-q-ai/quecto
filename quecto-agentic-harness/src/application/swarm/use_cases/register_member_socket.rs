@@ -6,7 +6,7 @@ use super::OverRepository;
 use crate::application::swarm::board_operation::operation;
 use crate::application::swarm::dto::RegisterMemberSocketRequest;
 use crate::application::swarm::ports::{BoardRepository, Clock};
-use crate::domain::swarm::{Access, BoardError};
+use crate::domain::swarm::{services::policy::Access, value_objects::board_error::BoardError};
 
 /// Through the operation gate (`active=False`): the actor's own row takes
 /// the socket. No event.

@@ -8,7 +8,7 @@ use std::sync::Arc;
 use serde_json::{Value, json};
 
 use super::{Recorded, board, board_with, deadline, direct, execute, masked, prepared, refused};
-use crate::domain::swarm::{
+use crate::domain::swarm::events::telemetry::{
     ArgumentFaults, BoardOpObservation, BoardOpOutcome, RefusalKind, UnexpectedArgs, WrongTypeArg,
 };
 use crate::infrastructure::tools::swarm::swarm_board_ops::{
@@ -209,7 +209,7 @@ async fn a_conflict_on_a_paused_run_meets_the_running_gate_first() {
     assert_eq!(*claims[0].arguments, ArgumentFaults::NONE);
     assert_eq!(
         claims[0].name_form,
-        Some(crate::domain::swarm::NameForm::Legacy)
+        Some(crate::domain::swarm::events::telemetry::NameForm::Legacy)
     );
 }
 

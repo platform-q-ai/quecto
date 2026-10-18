@@ -5,7 +5,10 @@ use crate::application::swarm::board_test_support::{
     MemoryBoard, SteppingClock, member_row, running_board,
 };
 use crate::application::swarm::ports::BoardRepository;
-use crate::domain::swarm::{Access, BoardError, RefusalKind, RunState};
+use crate::domain::swarm::{
+    entities::records::RunState, events::telemetry::RefusalKind, services::policy::Access,
+    value_objects::board_error::BoardError,
+};
 
 const PAUSED_BY_DEADLINE: &str =
     "run is paused (budget-exhausted: deadline); no new work permitted";

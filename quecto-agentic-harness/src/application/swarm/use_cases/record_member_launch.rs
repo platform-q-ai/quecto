@@ -7,7 +7,10 @@ use crate::application::swarm::board_membership::{alive, launched_elsewhere};
 use crate::application::swarm::board_operation::operation;
 use crate::application::swarm::dto::RecordMemberLaunchRequest;
 use crate::application::swarm::ports::{BoardRepository, Clock};
-use crate::domain::swarm::{Access, BoardError, RefusalKind};
+use crate::domain::swarm::{
+    events::telemetry::RefusalKind, services::policy::Access,
+    value_objects::board_error::BoardError,
+};
 
 /// Through the operation gate (`active=False`): the member's row under the
 /// reservation must be alive (`unknown_member_status_is_not_alive`,

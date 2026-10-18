@@ -13,7 +13,11 @@ use crate::application::swarm::ports::{
 };
 use crate::application::tools::ports::Tool;
 use crate::domain::error::DomainError;
-use crate::domain::swarm::{BoardOpObservation, MemberExit, ProcessIdentity, Snapshot};
+use crate::domain::swarm::{
+    entities::run::Snapshot,
+    events::telemetry::BoardOpObservation,
+    value_objects::lifecycle::{MemberExit, ProcessIdentity},
+};
 use crate::domain::tool_policy::value_objects::tool::ToolResult;
 use crate::infrastructure::tools::swarm::SwarmTool;
 use crate::infrastructure::tools::swarm::swarm_bridge::SwarmContext;
@@ -87,7 +91,7 @@ impl SwarmLifecycle for CountingLifecycle {
         &self,
         snapshot: &Snapshot,
         clock: &dyn crate::application::swarm::ports::Clock,
-    ) -> crate::domain::swarm::RunStatus {
+    ) -> crate::domain::swarm::value_objects::lifecycle::RunStatus {
         crate::application::swarm::LifecycleService.observed_outcome(snapshot, clock)
     }
 }
@@ -102,7 +106,7 @@ impl crate::application::swarm::ports::BoardOpLog for Recorded {
     }
 
     /// No summary this test checks is written.
-    fn summarize(&self, _summary: crate::domain::swarm::SwarmRunSummary) {}
+    fn summarize(&self, _summary: crate::domain::swarm::events::run_summary::SwarmRunSummary) {}
 }
 
 impl crate::application::swarm::ports::SessionOpLog for Recorded {

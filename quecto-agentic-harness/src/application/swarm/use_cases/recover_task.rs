@@ -11,7 +11,10 @@ use crate::application::swarm::board_recovery::reopen;
 use crate::application::swarm::board_tasks::{HELD_CLAIM, read_task};
 use crate::application::swarm::dto::{RecoverTaskRequest, Recovered};
 use crate::application::swarm::ports::{BoardRepository, Clock};
-use crate::domain::swarm::{Access, BoardError, RefusalKind};
+use crate::domain::swarm::{
+    events::telemetry::RefusalKind, services::policy::Access,
+    value_objects::board_error::BoardError,
+};
 
 /// Through the operation gate for the coordinator (a running run): the
 /// task must hold a claim (`claimed`, `blocked` or `submitted`), and its

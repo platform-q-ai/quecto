@@ -24,7 +24,9 @@ use crate::application::swarm::ports::{
     BoardEvents, BoardMembers, BoardRepository, BoardRuns, BoardWork, Clock,
 };
 use crate::domain::swarm::{
-    BoardError, MemberRecord, MemberState, RefusalKind, RunRecord, RunState,
+    entities::records::{MemberRecord, MemberState, RunRecord, RunState},
+    events::telemetry::RefusalKind,
+    value_objects::board_error::BoardError,
 };
 
 #[derive(Clone, Debug)]

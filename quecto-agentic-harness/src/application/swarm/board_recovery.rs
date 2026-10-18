@@ -9,7 +9,10 @@ use super::dto::TaskUpdate;
 use super::ports::{
     BoardEncoding, BoardEvents, BoardFiles, BoardMembers, BoardMessages, BoardTasks, Clock,
 };
-use crate::domain::swarm::{BoardError, RefusalKind, status_is_alive};
+use crate::domain::swarm::{
+    events::telemetry::RefusalKind, services::policy::status_is_alive,
+    value_objects::board_error::BoardError,
+};
 
 /// The revocation a previous owner is told of.
 pub(crate) struct Notice<'a> {

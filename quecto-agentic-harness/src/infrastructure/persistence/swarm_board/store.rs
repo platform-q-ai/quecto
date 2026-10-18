@@ -42,7 +42,7 @@ use rusqlite::{Connection, ErrorCode, OpenFlags, Transaction, TransactionBehavio
 
 use super::meter::{self, Tally};
 use super::schema::{ADDED_COLUMNS, schema_statements};
-use crate::domain::swarm::BoardError;
+use crate::domain::swarm::value_objects::board_error::BoardError;
 
 /// Python's `sqlite3.connect(..., timeout=0.5)`.
 pub const BUSY_TIMEOUT: Duration = Duration::from_millis(500);
@@ -61,7 +61,7 @@ pub struct StoreRefusal(pub String);
 
 /// How a transaction's body fails: with a board refusal, returned
 /// unchanged, or with a SQLite error, returned as the contended message.
-/// A board refusal carries its [`RefusalKind`](crate::domain::swarm::RefusalKind)
+/// A board refusal carries its [`RefusalKind`](crate::domain::swarm::events::telemetry::RefusalKind)
 /// (#2303): the store returns only its text, and a repository that
 /// raised it (or the ledger, which raises its own) keeps the kind.
 #[derive(Debug, thiserror::Error)]

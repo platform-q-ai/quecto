@@ -16,7 +16,9 @@ use crate::application::swarm::use_cases::{
     CloseRun, ExtendRunDeadline, PauseRun, ReadControlStatus, ReadUsageReport, ResumeRun,
     ResumeRunExternally, StopRun,
 };
-use crate::domain::swarm::{BoardError, BoardOpDetail};
+use crate::domain::swarm::{
+    events::telemetry::BoardOpDetail, value_objects::board_error::BoardError,
+};
 
 /// `pause(reason)`.
 pub(super) const PAUSE: [Parameter; 1] = [required("reason")];

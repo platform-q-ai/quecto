@@ -1,5 +1,5 @@
 use super::swarm_lifecycle::{Time, snapshot};
-use quecto::domain::swarm::RunStatus;
+use quecto::domain::swarm::value_objects::lifecycle::RunStatus;
 #[test]
 fn injected_clock_enforces_exact_deadline_without_sleeping() {
     let state = snapshot();

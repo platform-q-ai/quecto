@@ -7,7 +7,9 @@ use crate::application::swarm::board_test_support::{
     BoardState, CompactEncoding, MemoryBoard, SteppingClock, member_row, running_board, stored_task,
 };
 use crate::application::swarm::dto::RevalidateTaskRequest;
-use crate::domain::swarm::{BoardError, RefusalKind};
+use crate::domain::swarm::{
+    events::telemetry::RefusalKind, value_objects::board_error::BoardError,
+};
 
 /// A running run with task 1 completed at R1 and task 2 submitted.
 fn board_state() -> BoardState {

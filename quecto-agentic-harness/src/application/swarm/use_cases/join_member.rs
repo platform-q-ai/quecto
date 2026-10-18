@@ -7,7 +7,7 @@ use super::join_run::{JoinRefused, join};
 use crate::application::swarm::board_read_models::summary;
 use crate::application::swarm::dto::{JoinRunRequest, JoinedSummary};
 use crate::application::swarm::ports::{BoardRepository, Clock, IdSource};
-use crate::domain::swarm::BoardError;
+use crate::domain::swarm::value_objects::board_error::BoardError;
 
 /// `join_process`, as `JoinRun` runs it, then `coordinator.summary()`:
 /// every branch ends with the summary read as the coordinator the join

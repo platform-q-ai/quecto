@@ -10,7 +10,7 @@ use super::{SwarmBoard, SwarmBoardHandlesBuilder};
 use crate::application::swarm::dto::BoardLocation;
 use crate::application::swarm::ports::BoardOpLog;
 use crate::composition::swarm::build_swarm_board_handles;
-use crate::domain::swarm::BoardOpObservation;
+use crate::domain::swarm::events::telemetry::BoardOpObservation;
 use crate::infrastructure::persistence::audit_log::AuditLog;
 use crate::infrastructure::tools::swarm::swarm_bridge::SwarmContext;
 
@@ -24,7 +24,7 @@ impl BoardOpLog for Recorded {
     }
 
     /// No summary this test checks is written.
-    fn summarize(&self, _summary: crate::domain::swarm::SwarmRunSummary) {}
+    fn summarize(&self, _summary: crate::domain::swarm::events::run_summary::SwarmRunSummary) {}
 }
 
 impl crate::application::swarm::ports::SessionOpLog for Recorded {

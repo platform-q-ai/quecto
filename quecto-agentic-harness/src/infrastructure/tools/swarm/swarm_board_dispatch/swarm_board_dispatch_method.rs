@@ -31,7 +31,7 @@ use super::{
     completion, control, host, loss, members, messages, reads, reservations, submissions, tasks,
     usage, wakes,
 };
-use crate::domain::swarm::BoardRole;
+use crate::domain::swarm::events::telemetry::BoardRole;
 
 /// The board methods this dispatcher serves.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -328,7 +328,7 @@ impl Method {
     /// Who calls it (#2303): [`BoardRole::Host`] for the harness's own
     /// ops; `None` for a member-facing op, whose role is the caller's in
     /// the run, as the call's own measure read it
-    /// ([`run_role`](crate::domain::swarm::telemetry::run_role)).
+    /// ([`run_role`](crate::domain::swarm::events::telemetry::run_role)).
     pub(super) fn role(self) -> Option<BoardRole> {
         match self {
             // The structured ops' event cursor (#2279), read by the tool

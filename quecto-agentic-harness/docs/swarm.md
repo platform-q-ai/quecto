@@ -537,13 +537,18 @@ storage; cross-container recovery is not provided.
 The board is one bounded context in Rust (ADR-0030), with dependencies pointing
 inward:
 
-- **Domain** (`src/domain/swarm/`): the value records, `BoardError` with its
-  stable `RefusalKind`, and the pure policy (`policy.rs`, `validation.rs`,
-  `dependencies.rs`, `notification.rs`, `owner.rs`, `usage.rs`,
-  `telemetry.rs`): authorization, deadline, admission, completion,
-  revalidation, wake-notification and owner-liveness decisions,
-  without I/O. `mod.rs` also holds the membership, process identity and
-  outcome vocabulary.
+- **Domain** (`src/domain/swarm/`): the value records
+  (`entities/records.rs`), `BoardError` (`value_objects/board_error.rs`)
+  with its stable `RefusalKind` (`events/telemetry.rs`), and the pure
+  policy in `services/` (`policy.rs`, `validation.rs`, `dependencies.rs`,
+  `notification.rs`, `owner.rs`, `usage.rs`): authorization, deadline,
+  admission, completion, revalidation, wake-notification and owner-liveness
+  decisions, without I/O. Membership and the run snapshot live in
+  `entities/run.rs`; `value_objects/lifecycle.rs` holds the run and member
+  statuses, process identity and outcome vocabulary;
+  `value_objects/run_control.rs` the run-control actions and receipt; and
+  `services/participation.rs` whether an agent takes part in a swarm and
+  what it may not run alongside it.
 - **Application** (`src/application/swarm/`): the capability's role-segregated
   ports (`ports.rs`: the board repository and its transaction's role ports,
   the id source, checkout paths, and the run-control, process control and

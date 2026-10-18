@@ -7,7 +7,10 @@ use super::OverRepository;
 use crate::application::swarm::board_operation::operation;
 use crate::application::swarm::dto::{FileRow, ListFileOwnersRequest};
 use crate::application::swarm::ports::{BoardRepository, Clock};
-use crate::domain::swarm::{Access, BoardError, RefusalKind};
+use crate::domain::swarm::{
+    events::telemetry::RefusalKind, services::policy::Access,
+    value_objects::board_error::BoardError,
+};
 
 /// The largest page.
 const PAGE_MAX: i64 = 100;

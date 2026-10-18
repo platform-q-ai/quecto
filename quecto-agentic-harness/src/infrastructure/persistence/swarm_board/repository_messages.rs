@@ -13,7 +13,7 @@ use super::binding;
 use super::repository::{SqliteBoard, cell_at, failed, fetched, loose};
 use crate::application::swarm::dto::{MessageRow, MessageTally, NewMessage};
 use crate::application::swarm::ports::BoardMessages;
-use crate::domain::swarm::BoardError;
+use crate::domain::swarm::value_objects::board_error::BoardError;
 
 impl BoardMessages for SqliteBoard<'_> {
     fn inbox_count(&self, recipient: &Value) -> Result<i64, BoardError> {

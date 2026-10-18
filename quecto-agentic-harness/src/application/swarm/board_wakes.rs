@@ -5,8 +5,9 @@
 use super::dto::MemberRow;
 use super::ports::{BoardMembers, BoardWakes};
 use crate::domain::swarm::{
-    BoardError, MemberRecord, MemberState, NotificationEvent, RunRecord, RunState,
-    notification_targets,
+    entities::records::{MemberRecord, MemberState, RunRecord, RunState},
+    services::notification::{NotificationEvent, notification_targets},
+    value_objects::board_error::BoardError,
 };
 
 /// Whether the run is running (Python's `run['status'] == 'running'`).

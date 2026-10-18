@@ -163,7 +163,7 @@ async fn reaper_reports_the_supervisors_exit_status() {
 /// here sent or an unobservable end is abrupt.
 #[test]
 fn member_exit_kind_separates_orderly_ends_from_abrupt_ones() {
-    use crate::domain::swarm::MemberExit;
+    use crate::domain::swarm::value_objects::lifecycle::MemberExit;
     use crate::infrastructure::processes::owned_child_supervisor::SentSignal;
     assert_eq!(
         member_exit_kind(Some(&ChildExit::Code(0)), &[]),

@@ -18,7 +18,7 @@ use crate::domain::environments::entities::environment_registry::{
 use crate::domain::environments::services::environment_retention::{
     CoordinatorLoss, HostedSwarmRun, SwarmRunObservation,
 };
-use crate::domain::swarm::RunStatus;
+use crate::domain::swarm::value_objects::lifecycle::RunStatus;
 
 /// Records every script, answers liveness as configured.
 struct Commands {

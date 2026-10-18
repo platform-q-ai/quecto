@@ -26,7 +26,7 @@ use quecto::application::swarm::ports::BoardOpLog;
 use quecto::composition::swarm::{
     SwarmBoardHandles, board_op_log, build_swarm_board_handles, with_event_log,
 };
-use quecto::domain::swarm::BoardOpObservation;
+use quecto::domain::swarm::events::telemetry::BoardOpObservation;
 use quecto::infrastructure::persistence::audit_log::AuditLog;
 use quecto::infrastructure::persistence::swarm_board::ids::Uuid4Ids;
 use quecto::infrastructure::persistence::swarm_board::repository::SqliteBoardRepository;
@@ -46,7 +46,7 @@ impl BoardOpLog for Discarded {
         std::hint::black_box(observation);
     }
 
-    fn summarize(&self, summary: quecto::domain::swarm::SwarmRunSummary) {
+    fn summarize(&self, summary: quecto::domain::swarm::events::run_summary::SwarmRunSummary) {
         std::hint::black_box(summary);
     }
 }

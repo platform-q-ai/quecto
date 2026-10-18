@@ -10,7 +10,11 @@ use super::control::receipt;
 use super::{Parameter, Served, float, member_row, object, required, take};
 use crate::application::swarm::dto::{RecordRequestUsageRequest, RequestDelivery};
 use crate::application::swarm::use_cases::{ReadRequestAdmission, RecordRequestUsage};
-use crate::domain::swarm::{AdmissionGate, BoardError, BoardOpDetail, RefusalKind};
+use crate::domain::swarm::{
+    events::telemetry::{BoardOpDetail, RefusalKind},
+    value_objects::admission_gate::AdmissionGate,
+    value_objects::board_error::BoardError,
+};
 
 /// `_record_request(record)`.
 pub(super) const RECORD_REQUEST: [Parameter; 1] = [required("record")];

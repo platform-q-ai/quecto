@@ -275,7 +275,7 @@ pub(crate) fn build_tool_runtime(
         None => false,
     };
     let workflow_engine: swarm_bridge::WorkflowEngineSlot = Default::default();
-    crate::domain::swarm::validate_workflow(
+    crate::domain::swarm::services::participation::validate_workflow(
         swarm_agent,
         workflow.workflow_guards || workflow.workflow_spec_path.is_some(),
     )
@@ -584,7 +584,7 @@ fn build_workflow_runtime(
     swarm_participation: swarm_bridge::Participation,
 ) -> Result<WorkflowRuntime, String> {
     let swarm_agent = swarm_participation.participating();
-    crate::domain::swarm::validate_workflow(
+    crate::domain::swarm::services::participation::validate_workflow(
         swarm_agent,
         workflow.workflow_guards || workflow.workflow_spec_path.is_some(),
     )

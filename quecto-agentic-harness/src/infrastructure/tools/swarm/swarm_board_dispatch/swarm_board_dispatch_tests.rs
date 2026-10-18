@@ -7,7 +7,9 @@ use super::{Method, Parameter, SwarmBoardHandles, TELEMETRY_TARGET, call, requir
 use crate::application::swarm::dto::BoardLocation;
 use crate::application::swarm::ports::{Clock, IdSource};
 use crate::composition::swarm::build_swarm_board_handles_with;
-use crate::domain::swarm::{BoardError, RefusalKind};
+use crate::domain::swarm::{
+    events::telemetry::RefusalKind, value_objects::board_error::BoardError,
+};
 use crate::infrastructure::persistence::swarm_board::repository::SqliteBoardRepository;
 use crate::infrastructure::workspace::checkout_paths::ResolvedCheckout;
 
@@ -60,8 +62,8 @@ pub(super) fn metered_board_and_repository(
 ) -> (tempfile::TempDir, SwarmBoardHandles, SqliteBoardRepository) {
     struct Discarded;
     impl crate::application::swarm::ports::BoardOpLog for Discarded {
-        fn record(&self, _: crate::domain::swarm::BoardOpObservation) {}
-        fn summarize(&self, _: crate::domain::swarm::SwarmRunSummary) {}
+        fn record(&self, _: crate::domain::swarm::events::telemetry::BoardOpObservation) {}
+        fn summarize(&self, _: crate::domain::swarm::events::run_summary::SwarmRunSummary) {}
     }
     let dir = tempfile::TempDir::new().unwrap();
     let location = BoardLocation {
@@ -657,7 +659,7 @@ fn membership_calls_record_their_decisions_without_argument_text() {
 /// Python compares it with.
 #[test]
 fn serde_float_parsing_would_change_python_equal() {
-    use crate::domain::swarm::python_equal;
+    use crate::domain::swarm::value_objects::python_value::python_equal;
     use crate::infrastructure::persistence::swarm_board::py_json;
 
     let literal = "9007199254740993.0";

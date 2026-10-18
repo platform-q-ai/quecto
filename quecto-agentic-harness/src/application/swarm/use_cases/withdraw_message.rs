@@ -7,7 +7,7 @@ use crate::application::swarm::board_messages::{Retirement, message_id, retire};
 use crate::application::swarm::board_operation::{detail, operation};
 use crate::application::swarm::dto::{MessageIdRequest, Settled};
 use crate::application::swarm::ports::{BoardEncoding, BoardRepository, Clock};
-use crate::domain::swarm::{Access, BoardError};
+use crate::domain::swarm::{services::policy::Access, value_objects::board_error::BoardError};
 
 /// The id (an integer of at least 1) is checked before the operation gate,
 /// which any member passes while the run is not over (bookkeeping, so a

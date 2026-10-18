@@ -5,8 +5,8 @@ use super::super::swarm_bridge::{Participation, RunWatch, SwarmContext};
 use crate::application::swarm::ports::Clock;
 use std::time::{Duration, Instant};
 
-use crate::domain::swarm::watch::{Announcement, Nudge, REMOTE_FLOOR, WatchSchedule};
-use crate::domain::swarm::{RunStatus, Snapshot};
+use crate::domain::swarm::services::watch::{Announcement, Nudge, REMOTE_FLOOR, WatchSchedule};
+use crate::domain::swarm::{entities::run::Snapshot, value_objects::lifecycle::RunStatus};
 
 /// What one tick of the watch read.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -46,7 +46,9 @@ pub(super) fn watch_tick(
             Tick::Unreadable
         }
     };
-    participation.set(crate::domain::swarm::participates(snapshot.deadline));
+    participation.set(crate::domain::swarm::services::participation::participates(
+        snapshot.deadline,
+    ));
     tick
 }
 

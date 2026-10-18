@@ -40,7 +40,7 @@ use crate::domain::project_board::services::starts::{Started, start};
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
 use crate::domain::project_board::value_objects::vocabulary::{PlanState, TaskKind, TaskStatus};
-use crate::domain::swarm::RunStatus;
+use crate::domain::swarm::value_objects::lifecycle::RunStatus;
 use crate::domain::tool_policy::value_objects::tool::{ToolDefinition, ToolResult};
 use crate::infrastructure::test_support::memory_board_store::MemoryBoardStore;
 use crate::infrastructure::time::board_clock::SystemBoardClock;

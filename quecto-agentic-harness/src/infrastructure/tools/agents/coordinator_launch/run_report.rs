@@ -19,7 +19,7 @@ use serde_json::Value;
 use crate::application::project_board::dto::{
     SwarmEnd, SwarmEvidence, SwarmItemState, SwarmItemView, SwarmRunView,
 };
-use crate::domain::swarm::{RunState, TaskState};
+use crate::domain::swarm::entities::records::{RunState, TaskState};
 
 /// The view of `board`, a kept board's projection, when its run ended.
 pub fn swarm_run_view(board: &Value) -> Option<SwarmRunView> {

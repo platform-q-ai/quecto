@@ -81,7 +81,7 @@ impl SwarmContext {
         &self,
         method: &str,
         args: Value,
-        name_form: Option<crate::domain::swarm::NameForm>,
+        name_form: Option<crate::domain::swarm::events::telemetry::NameForm>,
     ) -> Result<Value, DomainError> {
         self.board
             .call_named(self.location(), &self.member, method, args, name_form)
@@ -100,9 +100,9 @@ impl SwarmContext {
     pub(crate) fn refused(
         &self,
         method: &str,
-        kind: crate::domain::swarm::RefusalKind,
+        kind: crate::domain::swarm::events::telemetry::RefusalKind,
         arguments: super::swarm_board_dispatch::BindingFaults,
-        name_form: Option<crate::domain::swarm::NameForm>,
+        name_form: Option<crate::domain::swarm::events::telemetry::NameForm>,
         elapsed: std::time::Duration,
     ) {
         self.board.refused(
@@ -171,7 +171,9 @@ impl SwarmContext {
         let deadline = status["deadline"]
             .as_f64()
             .ok_or_else(|| DomainError::Tool("swarm status carries no deadline".into()))?;
-        Ok(crate::domain::swarm::participates(deadline))
+        Ok(crate::domain::swarm::services::participation::participates(
+            deadline,
+        ))
     }
 
     pub fn summary_since(&self, since: Option<u64>) -> Result<Value, DomainError> {
@@ -182,7 +184,10 @@ impl SwarmContext {
     /// harness is the one to: the coordinator's, once the run in
     /// `snapshot` settled; at most once per run, and only while the event
     /// log is on. Whether it wrote it.
-    pub(crate) fn summarize_settled(&self, snapshot: &crate::domain::swarm::Snapshot) -> bool {
+    pub(crate) fn summarize_settled(
+        &self,
+        snapshot: &crate::domain::swarm::entities::run::Snapshot,
+    ) -> bool {
         match snapshot.summarized_by(&self.member) {
             true => self.board.summarize_run(&self.location(), &self.member),
             false => false,
@@ -331,7 +336,7 @@ impl HostedStore {
         let created = match read {
             SupervisedRead::Board => answer["run"]["deadline"]
                 .as_f64()
-                .is_some_and(crate::domain::swarm::participates),
+                .is_some_and(crate::domain::swarm::services::participation::participates),
             SupervisedRead::Revision => answer["created"].as_bool() == Some(true),
         };
         match created {

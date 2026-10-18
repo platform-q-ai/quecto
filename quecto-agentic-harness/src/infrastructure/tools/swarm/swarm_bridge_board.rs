@@ -21,8 +21,8 @@ use serde_json::Value;
 use crate::application::swarm::dto::BoardLocation;
 use crate::application::swarm::ports::{BoardOpLog, SessionOpLog};
 use crate::domain::error::DomainError;
-use crate::domain::swarm::watch::Nudge;
-use crate::domain::swarm::{NameForm, RefusalKind};
+use crate::domain::swarm::events::telemetry::{NameForm, RefusalKind};
+use crate::domain::swarm::services::watch::Nudge;
 use crate::infrastructure::persistence::audit_log::AuditLog;
 use crate::infrastructure::tools::swarm::swarm_board_dispatch::{
     self, BindingFaults, BoardWire, CallOrigin, SwarmBoardHandles, TELEMETRY_TARGET,

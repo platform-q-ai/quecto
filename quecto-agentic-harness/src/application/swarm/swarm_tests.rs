@@ -1,6 +1,9 @@
 use super::ports::PortFuture;
 use super::*;
-use crate::domain::swarm::{Member, MemberExit, ProcessIdentity, RunStatus};
+use crate::domain::swarm::{
+    entities::run::Member,
+    value_objects::lifecycle::{MemberExit, ProcessIdentity, RunStatus},
+};
 use std::sync::Mutex;
 
 struct Processes {

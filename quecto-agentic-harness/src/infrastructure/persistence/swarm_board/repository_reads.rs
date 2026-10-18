@@ -14,7 +14,7 @@ use super::binding;
 use super::repository::{ACTIVE_CLAIM, SqliteBoard, cell_at, failed, fetched, loose, text};
 use super::repository_tasks::loaded;
 use crate::application::swarm::dto::{CountedTask, DictRow, LatestActivity};
-use crate::domain::swarm::BoardError;
+use crate::domain::swarm::value_objects::board_error::BoardError;
 
 /// The run's JSON columns `summary` loads.
 const RUN_JSON_COLUMNS: [&str; 2] = ["constraints", "criteria"];

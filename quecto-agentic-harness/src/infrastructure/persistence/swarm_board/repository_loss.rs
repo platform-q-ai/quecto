@@ -22,7 +22,7 @@ use super::repository::{ACTIVE_CLAIM, SqliteBoard, cell_at, failed, fetched, loo
 use super::repository_control::lost_among;
 use super::repository_tasks::loaded;
 use crate::application::swarm::dto::ScopeObservation;
-use crate::domain::swarm::BoardError;
+use crate::domain::swarm::value_objects::board_error::BoardError;
 
 impl SqliteBoard<'_> {
     /// `SELECT launcher FROM members WHERE id=?`.

@@ -6,7 +6,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde_json::Value;
 
-use crate::domain::swarm::RefusalKind;
+use crate::domain::swarm::events::telemetry::RefusalKind;
 
 /// Every op the swarm tool names in its guidance: the harness's own, then
 /// the structured board ops (#2279), each by the name the schema

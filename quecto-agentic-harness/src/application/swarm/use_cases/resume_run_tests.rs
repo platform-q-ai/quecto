@@ -1,5 +1,7 @@
 use super::ResumeRun;
-use crate::domain::swarm::{BoardError, RefusalKind};
+use crate::domain::swarm::{
+    events::telemetry::RefusalKind, value_objects::board_error::BoardError,
+};
 
 /// `resume_refuses_members_and_lists_blockers_for_the_supervisor` (the
 /// members half): every member, the coordinator included, is refused with

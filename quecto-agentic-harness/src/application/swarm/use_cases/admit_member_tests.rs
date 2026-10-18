@@ -7,7 +7,10 @@ use crate::application::swarm::board_test_support::{
 use crate::application::swarm::dto::{AdmissionDecision, AdmitMemberRequest};
 use crate::application::swarm::use_cases::OverRepository;
 use crate::domain::swarm::{
-    BoardError, MemberRecord, MemberState, RefusalKind, RunState, admission,
+    entities::records::{MemberRecord, MemberState, RunState},
+    events::telemetry::RefusalKind,
+    services::policy::admission,
+    value_objects::board_error::BoardError,
 };
 
 fn admit(actor: &str, member: Value, reservation: &str) -> AdmitMemberRequest {

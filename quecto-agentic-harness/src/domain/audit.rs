@@ -51,7 +51,7 @@ pub enum AuditEvent {
     /// The log reached its size cap: nothing more is written (#2150).
     LogCapped { cap_bytes: u64 },
     /// One swarm board op (#2303): ids, kinds, durations and sizes only.
-    SwarmOp(super::swarm::BoardOpObservation),
+    SwarmOp(crate::domain::swarm::events::telemetry::BoardOpObservation),
     /// `dropped` swarm board ops went unrecorded since the last `swarm_op`
     /// written: the log's write gate stayed busy past the bound a record
     /// waits for it (#2303). Written just before the next `swarm_op`, in
@@ -64,7 +64,7 @@ pub enum AuditEvent {
     SwarmRunSummaryDropped { dropped: u64 },
     /// A swarm run's `swarm_op` records, folded (#2313): written once by
     /// the coordinator's harness when the run settles.
-    SwarmRunSummary(super::swarm::SwarmRunSummary),
+    SwarmRunSummary(crate::domain::swarm::events::run_summary::SwarmRunSummary),
     /// One project board request (epic #2481): kinds, counts, durations,
     /// the redacted task slug, the pull request number and the board's
     /// head commit id only, never board text. Written only

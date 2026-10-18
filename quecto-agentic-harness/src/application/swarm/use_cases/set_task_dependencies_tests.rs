@@ -6,7 +6,9 @@ use crate::application::swarm::board_test_support::{
 };
 use crate::application::swarm::dto::SetTaskDependenciesRequest;
 use crate::application::swarm::use_cases::OverRepository;
-use crate::domain::swarm::{BoardError, RefusalKind};
+use crate::domain::swarm::{
+    events::telemetry::RefusalKind, value_objects::board_error::BoardError,
+};
 
 /// Tasks 1 (completed), 2 (ready, on 1), 3 (claimed by the worker).
 fn board() -> BoardState {

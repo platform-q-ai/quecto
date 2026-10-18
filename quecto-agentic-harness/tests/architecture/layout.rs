@@ -84,7 +84,7 @@ const BUDGETS: &[FlatBudget<'_>] = &[
     FlatBudget { path: "infrastructure/tools", expected: 1 },
     FlatBudget { path: "infrastructure/persistence", expected: 36 },
     FlatBudget { path: "application/swarm", expected: 22 },
-    FlatBudget { path: "domain/swarm", expected: 15 },
+    FlatBudget { path: "domain/swarm", expected: 1 },
 ];
 // Layout slices opt capabilities into strict shape as they migrate (#2357).
 #[rustfmt::skip] // One readable source-policy row per capability.
@@ -92,6 +92,7 @@ const MIGRATED: &[Capability<'_>] = &[
     Capability("domain/conversation", &["value_objects", "services"]),
     Capability("domain/tool_policy", &["value_objects", "services"]),
     Capability("domain/catalogue", &["entities", "value_objects", "services"]),
+    Capability("domain/swarm", &["entities", "value_objects", "services", "events"]),
     Capability("domain/sessions", &["entities", "value_objects", "services"]),
     Capability("domain/inference", &["value_objects", "services", "events"]),
     Capability("domain/admission", &["value_objects", "services"]),

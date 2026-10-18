@@ -255,11 +255,11 @@ impl PreparedChild {
                 // Already gone before it was asked: its tool groups may
                 // have outlived it.
                 TerminationConclusion::AlreadyExited => {
-                    Some(crate::domain::swarm::MemberExit::Abrupt)
+                    Some(crate::domain::swarm::value_objects::lifecycle::MemberExit::Abrupt)
                 }
                 TerminationConclusion::ExitedAfterProtocol
                 | TerminationConclusion::ExitedAfterFallback => {
-                    Some(crate::domain::swarm::MemberExit::Orderly)
+                    Some(crate::domain::swarm::value_objects::lifecycle::MemberExit::Orderly)
                 }
             };
             if let (Some(exit), Some(reservation)) = (exit, &mut self.swarm_reservation) {

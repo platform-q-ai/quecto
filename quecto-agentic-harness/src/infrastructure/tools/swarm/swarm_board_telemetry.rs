@@ -16,10 +16,13 @@ use serde_json::Value;
 use super::swarm_board_dispatch::BindingFaults;
 use crate::application::swarm::dto::CallMeasure;
 use crate::domain::redaction::Redacted;
-use crate::domain::swarm::telemetry::{decision_kind, run_role};
-use crate::domain::swarm::validation::MEMBER_ID_MAX_BYTES;
+use crate::domain::swarm::events::telemetry::{decision_kind, run_role};
+use crate::domain::swarm::services::validation::MEMBER_ID_MAX_BYTES;
 use crate::domain::swarm::{
-    BoardError, BoardOpDetail, BoardOpObservation, BoardOpOutcome, BoardRole, NameForm, RefusalKind,
+    events::telemetry::{
+        BoardOpDetail, BoardOpObservation, BoardOpOutcome, BoardRole, NameForm, RefusalKind,
+    },
+    value_objects::board_error::BoardError,
 };
 
 /// The `tracing` target of every board call record.

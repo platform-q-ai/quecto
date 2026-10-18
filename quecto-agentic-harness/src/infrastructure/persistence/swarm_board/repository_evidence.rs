@@ -22,7 +22,9 @@ use crate::application::swarm::dto::{
     AmendedContract, CompletionState, EvidenceEntry, NewEvidence, PriorEvidence, StoredContract,
 };
 use crate::application::swarm::ports::BoardEvidence;
-use crate::domain::swarm::{BoardError, RefusalKind};
+use crate::domain::swarm::{
+    events::telemetry::RefusalKind, value_objects::board_error::BoardError,
+};
 
 impl BoardEvidence for SqliteBoard<'_> {
     fn evidence_rows(&self) -> Result<Vec<crate::application::swarm::dto::DictRow>, BoardError> {

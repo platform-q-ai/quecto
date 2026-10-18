@@ -6801,7 +6801,7 @@ fn swarm_application_depends_only_inward() {
         );
     }
     for dep in [
-        "crate::domain::swarm::RunRecord",
+        "crate::domain::swarm::entities::records::RunRecord",
         "crate::application::swarm::ports::BoardRepository",
         "crate::application::swarm::dto::CreateRunRequest",
         "serde_json::Value",

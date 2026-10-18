@@ -10,7 +10,7 @@ use serde_json::{Value, json};
 use super::super::{member_arguments, wire_text};
 use super::{Recorded, answered, board, direct, execute, refused};
 use crate::composition::swarm::board_wire;
-use crate::domain::swarm::{BoardOpOutcome, RefusalKind};
+use crate::domain::swarm::events::telemetry::{BoardOpOutcome, RefusalKind};
 
 const UNREPRESENTABLE: &str = "arguments: not representable as a serde_json value: ";
 
@@ -180,7 +180,10 @@ const SECRET: &str = "sk-ant-api03-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 /// A served send, arguments refused before the board, and the running
 /// gate's refusal, on a fresh board recording in its event log, under a
 /// `fmt` subscriber: the records and the `tracing` text.
-async fn recorded_ops() -> (Vec<crate::domain::swarm::BoardOpObservation>, String) {
+async fn recorded_ops() -> (
+    Vec<crate::domain::swarm::events::telemetry::BoardOpObservation>,
+    String,
+) {
     let (_directory, context) = board();
     let log = Arc::new(Recorded::default());
     assert!(context.board.record_in(log.clone()));

@@ -398,7 +398,7 @@ impl SpawnTool {
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
 
-        crate::domain::swarm::validate_workflow(
+        crate::domain::swarm::services::participation::validate_workflow(
             self.launches_swarm_worker(),
             workflow || workflow_guards || args.get("workflow_spec").is_some_and(|v| !v.is_null()),
         )
@@ -489,7 +489,7 @@ impl SpawnTool {
     }
 
     async fn launch_uds_agent(&self, config: &SubagentConfig) -> Result<ToolResult, DomainError> {
-        crate::domain::swarm::validate_workflow(
+        crate::domain::swarm::services::participation::validate_workflow(
             self.launches_swarm_worker(),
             config.workflow || config.workflow_guards || config.workflow_spec.is_some(),
         )?;

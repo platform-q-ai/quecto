@@ -12,7 +12,9 @@ use serde_json::{Map, Value};
 use super::{Parameter, Served, member_row, take};
 use crate::application::swarm::dto::{AcceptWakeRequest, ClaimNotificationsRequest};
 use crate::application::swarm::use_cases::{AcceptWake, ClaimNotifications};
-use crate::domain::swarm::{BoardError, BoardOpDetail};
+use crate::domain::swarm::{
+    events::telemetry::BoardOpDetail, value_objects::board_error::BoardError,
+};
 
 /// `_notifications(with_generation=False)`.
 pub(super) const NOTIFICATIONS: [Parameter; 1] = [Parameter {

@@ -102,7 +102,7 @@ pub const CLAUDE_CODE_ANTHROPIC_MODELS_ONLY: &str =
 /// may. `ClaudeCode` may only when every one of these holds (O1): the
 /// launcher is a swarm participant; the launch goes into its own container
 /// (`container` omitted); no workflow is requested
-/// ([`crate::domain::swarm::validate_workflow`]); the launch hands the
+/// ([`crate::domain::swarm::services::participation::validate_workflow`]); the launch hands the
 /// child no restriction outside `config` that it would drop (#2287 review
 /// round 2, #957): no inherited tool policy, no forwarded config; no
 /// `effort` is set; and it sets no field the member would ignore (#2287
@@ -156,7 +156,7 @@ fn claude_code_launch_allowed(
         (true, _) => return refuse(CLAUDE_CODE_OWN_CONTAINER_ONLY),
         (false, _) => return refuse(CLAUDE_CODE_WORKERS_ONLY),
     }
-    crate::domain::swarm::validate_workflow(
+    crate::domain::swarm::services::participation::validate_workflow(
         true,
         *workflow || *workflow_guards || workflow_spec.is_some(),
     )?;

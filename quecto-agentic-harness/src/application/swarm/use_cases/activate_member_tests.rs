@@ -6,7 +6,10 @@ use crate::application::swarm::board_test_support::{
 };
 use crate::application::swarm::dto::{ActivateMemberRequest, LaunchIdentity};
 use crate::application::swarm::use_cases::OverRepository;
-use crate::domain::swarm::{BoardError, RefusalKind, RunState};
+use crate::domain::swarm::{
+    entities::records::RunState, events::telemetry::RefusalKind,
+    value_objects::board_error::BoardError,
+};
 
 fn launch(pid: i64, started: &str) -> LaunchIdentity {
     LaunchIdentity {

@@ -40,7 +40,11 @@ use crate::application::swarm::dto::{
     RunOwnerRow, RunRoles, RunStatusRow, ScopeObservation, StoredContract,
 };
 use crate::application::swarm::ports::{BoardEvents, BoardRepository, BoardRuns, BoardWork};
-use crate::domain::swarm::{BoardError, RefusalKind, RunRecord, RunState};
+use crate::domain::swarm::{
+    entities::records::{RunRecord, RunState},
+    events::telemetry::RefusalKind,
+    value_objects::board_error::BoardError,
+};
 
 /// `swarm_repository.ACTIVE_CLAIM`.
 pub(super) const ACTIVE_CLAIM: &str = "('claimed','blocked','submitted')";

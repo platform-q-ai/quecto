@@ -2,8 +2,11 @@
 use super::SwarmContext;
 use crate::application::swarm::ports::CoordinationPort;
 use crate::domain::error::DomainError;
-use crate::domain::swarm::MemberExit;
-use crate::domain::swarm::{Member, MemberStatus, ProcessIdentity, RunStatus, Snapshot};
+use crate::domain::swarm::value_objects::lifecycle::MemberExit;
+use crate::domain::swarm::{
+    entities::run::{Member, Snapshot},
+    value_objects::lifecycle::{MemberStatus, ProcessIdentity, RunStatus},
+};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -166,7 +169,7 @@ impl SwarmContext {
     /// read as that gate's decision.
     pub fn inference_snapshot(
         &self,
-        gate: crate::domain::swarm::AdmissionGate,
+        gate: crate::domain::swarm::value_objects::admission_gate::AdmissionGate,
     ) -> Result<Snapshot, DomainError> {
         decode(self.rpc("_request_admission", json!([gate.as_str()]))?)
     }
@@ -174,37 +177,40 @@ impl SwarmContext {
     pub(crate) fn decode_control_receipt(
         value: Value,
         wake_allowed: bool,
-    ) -> Result<crate::domain::swarm::RunControlReceipt, DomainError> {
-        Ok(crate::domain::swarm::RunControlReceipt {
-            // Reported only, never applied (owner decision, 2026-10-14): a
-            // budget it cannot read is none, never a failed control.
-            budget: value
-                .get("budget")
-                .cloned()
-                .and_then(|budget| serde_json::from_value(budget).ok()),
-            wake_allowed,
-            status: decode_status(
-                value["status"]
-                    .as_str()
-                    .ok_or_else(|| invalid("missing control status"))?,
-            )?,
-            outcome: value["outcome"].as_str().map(decode_status).transpose()?,
-            reason: value["reason"].as_str().map(str::to_owned),
-            wake_warnings: Vec::new(),
-            resume_blockers: value["resume_blockers"]
-                .as_array()
-                .map(|blockers| {
-                    blockers
-                        .iter()
-                        .filter_map(Value::as_str)
-                        .map(str::to_owned)
-                        .collect()
-                })
-                .unwrap_or_default(),
-            generation: value["generation"]
-                .as_u64()
-                .ok_or_else(|| invalid("missing control generation"))?,
-        })
+    ) -> Result<crate::domain::swarm::value_objects::run_control::RunControlReceipt, DomainError>
+    {
+        Ok(
+            crate::domain::swarm::value_objects::run_control::RunControlReceipt {
+                // Reported only, never applied (owner decision, 2026-10-14): a
+                // budget it cannot read is none, never a failed control.
+                budget: value
+                    .get("budget")
+                    .cloned()
+                    .and_then(|budget| serde_json::from_value(budget).ok()),
+                wake_allowed,
+                status: decode_status(
+                    value["status"]
+                        .as_str()
+                        .ok_or_else(|| invalid("missing control status"))?,
+                )?,
+                outcome: value["outcome"].as_str().map(decode_status).transpose()?,
+                reason: value["reason"].as_str().map(str::to_owned),
+                wake_warnings: Vec::new(),
+                resume_blockers: value["resume_blockers"]
+                    .as_array()
+                    .map(|blockers| {
+                        blockers
+                            .iter()
+                            .filter_map(Value::as_str)
+                            .map(str::to_owned)
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+                generation: value["generation"]
+                    .as_u64()
+                    .ok_or_else(|| invalid("missing control generation"))?,
+            },
+        )
     }
 
     pub fn notification_batch(&self) -> Result<(Vec<Member>, u64), DomainError> {
@@ -356,7 +362,7 @@ impl SwarmContext {
     pub(crate) fn coordinator_board_now(
         &self,
     ) -> Result<
-        Option<crate::domain::swarm::parent_wake::CoordinatorBoard>,
+        Option<crate::domain::swarm::services::parent_wake::CoordinatorBoard>,
         crate::domain::error::DomainError,
     > {
         let status = self.host_read("_status")?;
@@ -369,7 +375,7 @@ impl SwarmContext {
     pub(crate) fn worker_board_now(
         &self,
     ) -> Result<
-        Option<crate::domain::swarm::worker_wake::WorkerBoard>,
+        Option<crate::domain::swarm::services::worker_wake::WorkerBoard>,
         crate::domain::error::DomainError,
     > {
         let Some(board) = self.coordinator_board_now()? else {
@@ -392,12 +398,14 @@ impl SwarmContext {
                 Some(_) | None => break,
             }
         }
-        Ok(Some(crate::domain::swarm::worker_wake::WorkerBoard {
-            status: board.status,
-            ready: board.ready,
-            claimed_by,
-            coordinator: self.member.clone(),
-        }))
+        Ok(Some(
+            crate::domain::swarm::services::worker_wake::WorkerBoard {
+                status: board.status,
+                ready: board.ready,
+                claimed_by,
+                coordinator: self.member.clone(),
+            },
+        ))
     }
 
     fn host_read(&self, method: &str) -> Result<Value, crate::domain::error::DomainError> {
@@ -419,7 +427,7 @@ pub(crate) fn decode_coordinator_board(
     status: &Value,
     totals: impl FnOnce() -> Result<Value, crate::domain::error::DomainError>,
 ) -> Result<
-    Option<crate::domain::swarm::parent_wake::CoordinatorBoard>,
+    Option<crate::domain::swarm::services::parent_wake::CoordinatorBoard>,
     crate::domain::error::DomainError,
 > {
     let malformed = |what: &str| {
@@ -455,14 +463,16 @@ pub(crate) fn decode_coordinator_board(
     let idle_workers = count(status, "members_without_claim")?;
     let totals = totals()?;
     let tasks = totals.get("tasks").ok_or_else(|| malformed("tasks"))?;
-    Ok(Some(crate::domain::swarm::parent_wake::CoordinatorBoard {
-        status: run_status,
-        outcome,
-        ready: count(tasks, "ready")?,
-        claimed: count(tasks, "claimed")?,
-        submitted: count(tasks, "submitted")?,
-        idle_workers,
-    }))
+    Ok(Some(
+        crate::domain::swarm::services::parent_wake::CoordinatorBoard {
+            status: run_status,
+            outcome,
+            ready: count(tasks, "ready")?,
+            claimed: count(tasks, "claimed")?,
+            submitted: count(tasks, "submitted")?,
+            idle_workers,
+        },
+    ))
 }
 
 /// The owner of each claimed task in a `tasks` answer (#2471).

@@ -17,7 +17,7 @@ use crate::domain::environments::entities::environment_registry::{
 use crate::domain::environments::services::environment_retention::{
     HostedSwarmRun, MemberFinalizeMode, SwarmRunObservation,
 };
-use crate::domain::swarm::RunStatus;
+use crate::domain::swarm::value_objects::lifecycle::RunStatus;
 
 /// The board a fake reads at each environment (`None`: none hosted;
 /// `Err`: unreadable), noting how many retained kills `port` had run as

@@ -9,7 +9,7 @@ use std::sync::Arc;
 use serde_json::json;
 
 use super::{Recorded, board, direct, refused};
-use crate::domain::swarm::{
+use crate::domain::swarm::events::telemetry::{
     ArgumentFaults, BoardOpObservation, BoardOpOutcome, RefusalKind, UnexpectedArgs, WrongTypeArg,
 };
 use crate::infrastructure::tools::swarm::swarm_bridge::SwarmContext;

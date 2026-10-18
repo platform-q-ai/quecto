@@ -6,8 +6,13 @@ use crate::application::swarm::board_control::receipt;
 use crate::application::swarm::board_operation::{detail, operation, seconds, text};
 use crate::application::swarm::dto::{ControlAnswer, PauseRunRequest, RunTransition};
 use crate::application::swarm::ports::{BoardRepository, Clock};
-use crate::domain::swarm::validation::TEXT_MAX_BYTES;
-use crate::domain::swarm::{Access, BoardError, RunState, authorize, bounded};
+use crate::domain::swarm::services::validation::TEXT_MAX_BYTES;
+use crate::domain::swarm::{
+    entities::records::RunState,
+    services::policy::{Access, authorize},
+    services::validation::bounded,
+    value_objects::board_error::BoardError,
+};
 
 /// The reason is bounded before the operation gate, which admits only the
 /// coordinator. A paused run answers its receipt as it stands; any other

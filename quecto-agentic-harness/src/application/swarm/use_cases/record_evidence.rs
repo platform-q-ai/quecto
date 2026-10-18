@@ -15,7 +15,11 @@ use crate::application::swarm::dto::{
 };
 use crate::application::swarm::ports::{BoardRepository, Clock};
 use crate::domain::swarm::{
-    Access, BoardError, RefusalKind, bounded, edited_criteria, python_equal,
+    events::telemetry::RefusalKind,
+    services::policy::Access,
+    services::validation::{bounded, edited_criteria},
+    value_objects::board_error::BoardError,
+    value_objects::python_value::python_equal,
 };
 
 /// The most bytes an artifact reference may take.

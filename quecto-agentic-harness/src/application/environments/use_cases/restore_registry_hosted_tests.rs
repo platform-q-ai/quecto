@@ -16,7 +16,7 @@ use crate::domain::environments::entities::environment_registry::GONE_AT_RESTORE
 use crate::domain::environments::services::environment_retention::{
     HostedSwarmRun, SwarmRunObservation,
 };
-use crate::domain::swarm::RunStatus;
+use crate::domain::swarm::value_objects::lifecycle::RunStatus;
 
 fn run(id: &str, status: RunStatus, outcome: Option<RunStatus>) -> HostedSwarmRun {
     HostedSwarmRun {

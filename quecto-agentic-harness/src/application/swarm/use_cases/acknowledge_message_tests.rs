@@ -5,7 +5,9 @@ use crate::application::swarm::board_test_support::{
     BoardState, MemoryBoard, SteppingClock, StoredMessage, member_row, running_board,
 };
 use crate::application::swarm::dto::{MessageIdRequest, Settled};
-use crate::domain::swarm::{BoardError, RefusalKind};
+use crate::domain::swarm::{
+    events::telemetry::RefusalKind, value_objects::board_error::BoardError,
+};
 
 /// Message 1 from `worker` to `parent` unread, message 2 superseded, and
 /// message 3 to `worker`.

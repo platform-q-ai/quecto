@@ -1,6 +1,8 @@
 //! Typed supervisor control independent of model execution and queued prompts.
 use super::uds_reader_dispatch::ReaderDispatchCtx;
-use crate::domain::swarm::{RunControlAction, RunStatus};
+use crate::domain::swarm::{
+    value_objects::lifecycle::RunStatus, value_objects::run_control::RunControlAction,
+};
 use serde::Deserialize;
 
 /// Type name of the harness's own wake nudges: never a human instruction.
@@ -263,7 +265,9 @@ fn status_name(status: RunStatus) -> &'static str {
 pub(super) async fn handle_wake(ctx: &mut super::uds::DispatchCtx<'_>, generation: u64) -> bool {
     use super::protocol::AgentEvent;
     use super::uds::emit_event_to_broadcast_or_writer;
-    use crate::domain::swarm::{RunControlAction, RunStatus};
+    use crate::domain::swarm::{
+        value_objects::lifecycle::RunStatus, value_objects::run_control::RunControlAction,
+    };
 
     let generation = ctx.turn_control.take_swarm_wake(generation);
     let Some(control) = ctx.turn_control.swarm_control.clone() else {
@@ -384,7 +388,7 @@ pub(super) fn seed_control_generation(turn_control: &super::uds_cancel::TurnCont
     let seed = std::sync::Arc::clone(turn_control);
     tokio::spawn(async move {
         if let Ok(receipt) = control
-            .apply(crate::domain::swarm::RunControlAction::Status)
+            .apply(crate::domain::swarm::value_objects::run_control::RunControlAction::Status)
             .await
         {
             seed.observe_control_generation(receipt.generation);
@@ -400,7 +404,7 @@ pub(super) fn seed_control_generation(turn_control: &super::uds_cancel::TurnCont
 /// suspension not yet dated this way, so a later idle drain cannot re-date
 /// an older suspension past a resume it should honour.
 pub(super) async fn date_provider_suspension(ctx: &mut super::uds::DispatchCtx<'_>) {
-    use crate::domain::swarm::RunControlAction;
+    use crate::domain::swarm::value_objects::run_control::RunControlAction;
     if !ctx.session.needs_provider_dating() {
         return;
     }
@@ -468,7 +472,7 @@ fn member_reply_ready(
 async fn coordinator_swarm_state(
     turn_control: &super::uds_cancel::TurnControlHandle,
 ) -> Option<super::protocol::AgentEvent> {
-    use crate::domain::swarm::parent_wake::parent_wake;
+    use crate::domain::swarm::services::parent_wake::parent_wake;
     use std::sync::atomic::Ordering;
     let control = match turn_control.launched_coordinator {
         true => turn_control.swarm_control.clone()?,

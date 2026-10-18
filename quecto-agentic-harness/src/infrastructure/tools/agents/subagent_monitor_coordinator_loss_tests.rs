@@ -398,7 +398,9 @@ async fn checkout_under_the_workspace_is_opened() {
 #[tokio::test]
 async fn run_control_receipt_decodes_the_lost_coordinator_blocker() {
     use crate::application::swarm::ports::SwarmRunControl;
-    use crate::domain::swarm::{RunControlAction, RunStatus};
+    use crate::domain::swarm::{
+        value_objects::lifecycle::RunStatus, value_objects::run_control::RunControlAction,
+    };
     let dir = tempfile::tempdir().unwrap();
     let checkout = dir.path().join("checkout");
     let context = create_running_swarm(&checkout);
@@ -548,7 +550,7 @@ async fn expired_deadline_is_observed_before_the_loss_is_recorded() {
             .unwrap()
             .unwrap()
             .status,
-        crate::domain::swarm::RunStatus::Running,
+        crate::domain::swarm::value_objects::lifecycle::RunStatus::Running,
         "the membership-free status read does not run the expiry check"
     );
     let log = dir.path().join("kill-log.txt");

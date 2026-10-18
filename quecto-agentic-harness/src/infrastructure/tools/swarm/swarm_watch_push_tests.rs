@@ -15,8 +15,11 @@ use crate::application::swarm::ports::{
     BoardOpLog, CoordinationPort, SessionOpLog, SwarmRunControl,
 };
 use crate::composition::swarm::{board_wire, build_swarm_board_handles};
-use crate::domain::swarm::watch::{Nudge, REFRESH_MAX, REFRESH_MIN, WatchSchedule};
-use crate::domain::swarm::{BoardOpObservation, RunStatus, Snapshot, SwarmRunSummary};
+use crate::domain::swarm::services::watch::{Nudge, REFRESH_MAX, REFRESH_MIN, WatchSchedule};
+use crate::domain::swarm::{
+    entities::run::Snapshot, events::run_summary::SwarmRunSummary,
+    events::telemetry::BoardOpObservation, value_objects::lifecycle::RunStatus,
+};
 use crate::infrastructure::tools::swarm::swarm_bridge::{
     Participation, SwarmBoard, SwarmContext, WatchNudges,
 };

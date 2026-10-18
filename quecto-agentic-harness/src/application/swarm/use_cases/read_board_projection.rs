@@ -24,10 +24,13 @@ use crate::application::swarm::dto::{
     StoredRunColumns, StoredStateColumns,
 };
 use crate::application::swarm::ports::BoardRepository;
-use crate::domain::swarm::telemetry::run_role;
+use crate::domain::swarm::events::telemetry::run_role;
 use crate::domain::swarm::{
-    BoardError, BoardRole, MemberState, RefusalKind, RunState, TaskState, WORK_HOLDING_STATUSES,
-    participates,
+    entities::records::{MemberState, RunState, TaskState},
+    events::telemetry::{BoardRole, RefusalKind},
+    services::notification::WORK_HOLDING_STATUSES,
+    services::participation::participates,
+    value_objects::board_error::BoardError,
 };
 
 /// The most bytes of rows one projection carries, well inside a socket

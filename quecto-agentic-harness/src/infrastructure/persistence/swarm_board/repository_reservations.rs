@@ -11,7 +11,9 @@ use super::binding;
 use super::repository::{SqliteBoard, cell_at, failed, fetched, loose};
 use crate::application::swarm::dto::{FileRow, NewReservation};
 use crate::application::swarm::ports::BoardFiles;
-use crate::domain::swarm::{BoardError, RefusalKind};
+use crate::domain::swarm::{
+    events::telemetry::RefusalKind, value_objects::board_error::BoardError,
+};
 
 impl BoardFiles for SqliteBoard<'_> {
     fn delete_claim_files(&self, task: &Value, claim: &Value) -> Result<(), BoardError> {

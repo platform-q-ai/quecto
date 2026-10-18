@@ -3,7 +3,9 @@ use serde_json::{Value, json};
 use super::SqliteBoardRepository;
 use crate::application::swarm::dto::{BoardLocation, MemberClaimCounts, NewMember, RunOwnerRow};
 use crate::application::swarm::ports::{BoardRepository, BoardTransaction};
-use crate::domain::swarm::{BoardError, MemberState};
+use crate::domain::swarm::{
+    entities::records::MemberState, value_objects::board_error::BoardError,
+};
 
 fn repository() -> (tempfile::TempDir, SqliteBoardRepository) {
     let dir = tempfile::TempDir::new().unwrap();
@@ -330,7 +332,7 @@ fn an_unbindable_member_value_names_pythons_parameter() {
 /// theirs, never a catch-all.
 #[test]
 fn a_retried_request_keeps_its_refusal_kind() {
-    use crate::domain::swarm::RefusalKind;
+    use crate::domain::swarm::events::telemetry::RefusalKind;
 
     let (_dir, repository) = repository();
     within(&repository, true, |_| Ok(())).unwrap();

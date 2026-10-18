@@ -1,5 +1,5 @@
 use super::*;
-use crate::domain::swarm::RunStatus;
+use crate::domain::swarm::value_objects::lifecycle::RunStatus;
 #[test]
 fn delayed_pause_does_not_cancel_resumed_turn() {
     let (sender, mut receiver) = tokio::sync::oneshot::channel();

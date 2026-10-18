@@ -8,7 +8,12 @@ use crate::application::swarm::board_membership::MEMBER_MAX_BYTES;
 use crate::application::swarm::board_operation::{detail, operation, text};
 use crate::application::swarm::dto::{AdmissionDecision, AdmitMemberRequest, AdmittedMember};
 use crate::application::swarm::ports::{BoardRepository, Clock};
-use crate::domain::swarm::{Access, BoardError, RefusalKind, admission, bounded};
+use crate::domain::swarm::{
+    events::telemetry::RefusalKind,
+    services::policy::{Access, admission},
+    services::validation::bounded,
+    value_objects::board_error::BoardError,
+};
 
 /// Bounds the member id, then runs `Coordination.reserve_member` through
 /// the operation gate (`active=False`): `admission` decides on the run, the

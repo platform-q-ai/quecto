@@ -4,7 +4,7 @@
 //! it, one line per kind, and hands over only the drops it has not noted.
 use quecto::application::swarm::dto::DroppedRecords;
 use quecto::application::swarm::ports::{BoardOpLog, SessionOpLog};
-use quecto::domain::swarm::RunSummaryFold;
+use quecto::domain::swarm::events::run_summary::RunSummaryFold;
 use quecto::infrastructure::persistence::audit_log::AuditLog;
 use quecto::infrastructure::persistence::board_op_log::EventLogBoardOps;
 use serde_json::json;

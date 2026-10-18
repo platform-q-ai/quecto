@@ -21,7 +21,9 @@ use super::repository::{SqliteBoard, cell_at, encoded, failed, fetched, loose, r
 use super::store::TransactionError;
 use crate::application::swarm::dto::{NewTask, TaskRow, TaskUpdate};
 use crate::application::swarm::ports::{BoardRequests, BoardTasks, RequestAction};
-use crate::domain::swarm::{BoardError, RefusalKind};
+use crate::domain::swarm::{
+    events::telemetry::RefusalKind, value_objects::board_error::BoardError,
+};
 
 /// The task columns `_task` loads from JSON.
 const JSON_COLUMNS: [&str; 3] = ["acceptance", "dependencies", "evidence"];

@@ -83,7 +83,7 @@ fn an_op_with_two_unexpected_fields_names_the_first_as_python_does() {
             &json!({"goal": "ship", "constraints": [],
                 "criteria": [{"id": "tests", "kind": "command", "description": "pass"}],
                 "member_limit": 1, "deadline": deadline}),
-            &quecto::domain::swarm::ProcessIdentity {
+            &quecto::domain::swarm::value_objects::lifecycle::ProcessIdentity {
                 pid,
                 started: quecto::infrastructure::tools::swarm::swarm_bridge::process_start(pid)
                     .unwrap(),

@@ -6,7 +6,9 @@ use crate::application::swarm::board_test_support::{
 };
 use crate::application::swarm::dto::ClaimTaskRequest;
 use crate::application::swarm::use_cases::OverRepository;
-use crate::domain::swarm::{BoardError, RefusalKind};
+use crate::domain::swarm::{
+    events::telemetry::RefusalKind, value_objects::board_error::BoardError,
+};
 
 /// Tasks 1 (ready), 2 (ready, on 1), 3 (claimed by the parent).
 fn board() -> BoardState {
@@ -89,7 +91,7 @@ fn claims_check_dependencies_and_readiness_before_drawing_a_token() {
 fn a_paused_run_takes_no_claim() {
     let mut state = board();
     let run = state.run.as_mut().unwrap();
-    run.record.status = Some(crate::domain::swarm::RunState::PAUSED);
+    run.record.status = Some(crate::domain::swarm::entities::records::RunState::PAUSED);
     let board = MemoryBoard::with(state);
     let service = ClaimTask::new(
         board.clone(),

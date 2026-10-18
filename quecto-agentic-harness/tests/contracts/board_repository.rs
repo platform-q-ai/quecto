@@ -3,7 +3,10 @@
 //! role's writes, when it fails; the work's refusal comes back unchanged.
 use quecto::application::swarm::dto::BoardLocation;
 use quecto::application::swarm::ports::{BoardRepository, BoardTransaction};
-use quecto::domain::swarm::{BoardError, RefusalKind, RunState};
+use quecto::domain::swarm::{
+    entities::records::RunState, events::telemetry::RefusalKind,
+    value_objects::board_error::BoardError,
+};
 use quecto::infrastructure::persistence::swarm_board::repository::SqliteBoardRepository;
 use serde_json::json;
 
@@ -32,7 +35,7 @@ fn an_error_inside_the_work_leaves_no_rows_and_returns_the_refusal() {
         transaction.insert_member(&quecto::application::swarm::dto::NewMember {
             id: "parent".into(),
             reservation: "r".into(),
-            status: quecto::domain::swarm::MemberState::LIVE,
+            status: quecto::domain::swarm::entities::records::MemberState::LIVE,
             pid: serde_json::Value::Null,
             started: serde_json::Value::Null,
             socket: serde_json::Value::Null,
@@ -79,7 +82,7 @@ fn the_expiry_commit_survives_a_rejected_mutation() {
             },
             coordinator: "parent".into(),
             integrator: "parent".into(),
-            status: quecto::domain::swarm::RunState::RUNNING,
+            status: quecto::domain::swarm::entities::records::RunState::RUNNING,
         })
     })
     .unwrap();

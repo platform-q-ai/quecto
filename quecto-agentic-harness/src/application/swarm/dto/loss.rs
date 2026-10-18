@@ -10,7 +10,7 @@
 use serde_json::Value;
 
 use super::RunStatusRow;
-use crate::domain::swarm::{MemberExit, RunState};
+use crate::domain::swarm::{entities::records::RunState, value_objects::lifecycle::MemberExit};
 
 /// `Workbench._quarantine(member)` as `actor`.
 #[derive(Clone, Debug, PartialEq, Eq)]

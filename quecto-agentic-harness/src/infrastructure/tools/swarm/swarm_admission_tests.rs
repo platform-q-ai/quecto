@@ -8,7 +8,9 @@ use serde_json::json;
 
 use super::LaunchReservation;
 use crate::application::swarm::ports::BoardOpLog;
-use crate::domain::swarm::{BoardOpObservation, MemberExit};
+use crate::domain::swarm::{
+    events::telemetry::BoardOpObservation, value_objects::lifecycle::MemberExit,
+};
 use crate::infrastructure::tools::registry::call_work::off_the_runtime;
 use crate::infrastructure::tools::swarm::swarm_bridge::SwarmContext;
 
@@ -32,7 +34,7 @@ impl BoardOpLog for SlowLog {
     }
 
     /// No summary this test checks is written.
-    fn summarize(&self, _summary: crate::domain::swarm::SwarmRunSummary) {}
+    fn summarize(&self, _summary: crate::domain::swarm::events::run_summary::SwarmRunSummary) {}
 }
 
 impl crate::application::swarm::ports::SessionOpLog for SlowLog {

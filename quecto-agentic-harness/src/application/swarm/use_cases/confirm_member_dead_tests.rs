@@ -6,7 +6,10 @@ use crate::application::swarm::board_test_support::{
 };
 use crate::application::swarm::dto::{ConfirmMemberDeadRequest, DeathConfirmation, DeathConfirmed};
 use crate::application::swarm::use_cases::OverRepository;
-use crate::domain::swarm::{BoardError, MemberExit, RefusalKind, RunState};
+use crate::domain::swarm::{
+    entities::records::RunState, events::telemetry::RefusalKind,
+    value_objects::board_error::BoardError, value_objects::lifecycle::MemberExit,
+};
 
 /// `worker` owns tasks 1 (claimed), 2 (completed) and a reservation of
 /// task 1; `other` owns task 3.

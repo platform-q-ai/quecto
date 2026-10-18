@@ -15,7 +15,11 @@ use crate::application::swarm::dto::{
     QuarantineMemberRequest,
 };
 use crate::application::swarm::use_cases::{ConfirmMemberDead, LoseCoordinator, QuarantineMember};
-use crate::domain::swarm::{BoardError, BoardOpDetail, RunState, RunStatusKind};
+use crate::domain::swarm::{
+    entities::records::RunState,
+    events::telemetry::{BoardOpDetail, RunStatusKind},
+    value_objects::board_error::BoardError,
+};
 
 /// `_quarantine(member)`.
 pub(super) const QUARANTINE: [Parameter; 1] = [required("member")];

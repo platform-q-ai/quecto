@@ -8,7 +8,9 @@ use super::WatchTicksOnExit;
 use crate::application::swarm::dto::DroppedRecords;
 use crate::application::swarm::ports::{BoardOpLog, SessionOpLog};
 use crate::composition::swarm::{board_wire, build_swarm_board_handles};
-use crate::domain::swarm::{BoardOpObservation, SwarmRunSummary};
+use crate::domain::swarm::{
+    events::run_summary::SwarmRunSummary, events::telemetry::BoardOpObservation,
+};
 use crate::infrastructure::tools::swarm::swarm_bridge::{SwarmBoard, SwarmContext};
 
 #[derive(Default)]

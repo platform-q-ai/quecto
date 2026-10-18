@@ -20,9 +20,16 @@ use super::dto::{
 };
 use crate::domain::error::DomainError;
 use crate::domain::swarm::{
-    BoardError, BoardOpObservation, Member, MemberExit, MemberRecord, NotificationEvent,
-    NotificationState, ProcessIdentity, RunControlAction, RunControlReceipt, RunRecord, RunState,
-    RunStatus, Snapshot, SwarmRunSummary,
+    entities::records::{MemberRecord, RunRecord, RunState},
+    entities::run::{Member, Snapshot},
+    events::run_summary::SwarmRunSummary,
+    events::telemetry::BoardOpObservation,
+    services::notification::{NotificationEvent, NotificationState},
+    services::parent_wake::CoordinatorBoard,
+    services::worker_wake::WorkerBoard,
+    value_objects::board_error::BoardError,
+    value_objects::lifecycle::{MemberExit, ProcessIdentity, RunStatus},
+    value_objects::run_control::{RunControlAction, RunControlReceipt},
 };
 
 pub type PortFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
@@ -142,16 +149,11 @@ pub trait SwarmRunControl: Send + Sync {
 /// What a coordinator reads when one of its swarm workers ends a turn
 /// (#2471): `None` unless this member is its run's coordinator.
 pub trait WorkerBoardRead: Send + Sync {
-    fn worker_board(
-        &self,
-    ) -> PortFuture<'_, Result<Option<crate::domain::swarm::worker_wake::WorkerBoard>, DomainError>>;
+    fn worker_board(&self) -> PortFuture<'_, Result<Option<WorkerBoard>, DomainError>>;
 }
 
 /// [`SwarmRunControl::coordinator_board`]'s answer.
-pub type CoordinatorBoardFuture<'a> = PortFuture<
-    'a,
-    Result<Option<crate::domain::swarm::parent_wake::CoordinatorBoard>, DomainError>,
->;
+pub type CoordinatorBoardFuture<'a> = PortFuture<'a, Result<Option<CoordinatorBoard>, DomainError>>;
 
 // ─── The coordination board (epic #2265, #2270) ─────────────────────────────
 //

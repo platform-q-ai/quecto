@@ -111,22 +111,27 @@ impl crate::application::swarm::ports::SwarmRunControl for TestSwarmControl {
     fn nudge_watch(&self) {}
     fn apply(
         &self,
-        _: crate::domain::swarm::RunControlAction,
+        _: crate::domain::swarm::value_objects::run_control::RunControlAction,
     ) -> crate::application::subagent_launch::LaunchFuture<
         '_,
-        Result<crate::domain::swarm::RunControlReceipt, crate::domain::error::DomainError>,
+        Result<
+            crate::domain::swarm::value_objects::run_control::RunControlReceipt,
+            crate::domain::error::DomainError,
+        >,
     > {
         Box::pin(async {
-            Ok(crate::domain::swarm::RunControlReceipt {
-                budget: None,
-                outcome: None,
-                reason: None,
-                wake_warnings: Vec::new(),
-                resume_blockers: Vec::new(),
-                wake_allowed: false,
-                status: crate::domain::swarm::RunStatus::Paused,
-                generation: 42,
-            })
+            Ok(
+                crate::domain::swarm::value_objects::run_control::RunControlReceipt {
+                    budget: None,
+                    outcome: None,
+                    reason: None,
+                    wake_warnings: Vec::new(),
+                    resume_blockers: Vec::new(),
+                    wake_allowed: false,
+                    status: crate::domain::swarm::value_objects::lifecycle::RunStatus::Paused,
+                    generation: 42,
+                },
+            )
         })
     }
 }
@@ -294,15 +299,18 @@ impl crate::application::swarm::ports::SwarmRunControl for BlockedSwarmControl {
     fn nudge_watch(&self) {}
     fn apply(
         &self,
-        _: crate::domain::swarm::RunControlAction,
+        _: crate::domain::swarm::value_objects::run_control::RunControlAction,
     ) -> crate::application::subagent_launch::LaunchFuture<
         '_,
-        Result<crate::domain::swarm::RunControlReceipt, crate::domain::error::DomainError>,
+        Result<
+            crate::domain::swarm::value_objects::run_control::RunControlReceipt,
+            crate::domain::error::DomainError,
+        >,
     > {
         Box::pin(async {
-            Ok(crate::domain::swarm::RunControlReceipt {
+            Ok(crate::domain::swarm::value_objects::run_control::RunControlReceipt {
                 budget: None,
-                outcome: Some(crate::domain::swarm::RunStatus::Failed),
+                outcome: Some(crate::domain::swarm::value_objects::lifecycle::RunStatus::Failed),
                 reason: Some("harness exited".into()),
                 wake_warnings: Vec::new(),
                 resume_blockers: vec![
@@ -310,7 +318,7 @@ impl crate::application::swarm::ports::SwarmRunControl for BlockedSwarmControl {
                         .into(),
                 ],
                 wake_allowed: false,
-                status: crate::domain::swarm::RunStatus::Paused,
+                status: crate::domain::swarm::value_objects::lifecycle::RunStatus::Paused,
                 generation: 7,
             })
         })
@@ -397,24 +405,29 @@ impl crate::application::swarm::ports::SwarmRunControl for WatchedControl {
     }
     fn apply(
         &self,
-        _: crate::domain::swarm::RunControlAction,
+        _: crate::domain::swarm::value_objects::run_control::RunControlAction,
     ) -> crate::application::subagent_launch::LaunchFuture<
         '_,
-        Result<crate::domain::swarm::RunControlReceipt, crate::domain::error::DomainError>,
+        Result<
+            crate::domain::swarm::value_objects::run_control::RunControlReceipt,
+            crate::domain::error::DomainError,
+        >,
     > {
         self.applied
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         Box::pin(async {
-            Ok(crate::domain::swarm::RunControlReceipt {
-                budget: None,
-                outcome: None,
-                reason: None,
-                wake_warnings: Vec::new(),
-                resume_blockers: Vec::new(),
-                wake_allowed: true,
-                status: crate::domain::swarm::RunStatus::Running,
-                generation: 7,
-            })
+            Ok(
+                crate::domain::swarm::value_objects::run_control::RunControlReceipt {
+                    budget: None,
+                    outcome: None,
+                    reason: None,
+                    wake_warnings: Vec::new(),
+                    resume_blockers: Vec::new(),
+                    wake_allowed: true,
+                    status: crate::domain::swarm::value_objects::lifecycle::RunStatus::Running,
+                    generation: 7,
+                },
+            )
         })
     }
 }

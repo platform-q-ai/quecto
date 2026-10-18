@@ -297,7 +297,7 @@ fn renamed(value: Value, old: &str, new: &str) -> Value {
 }
 
 /// A task row with its recovery hint as the coordinator's call, by the
-/// argument the tool advertises (`domain::swarm::owner::owner_recovery`'s
+/// argument the tool advertises (`domain::swarm::services::owner::owner_recovery`'s
 /// three hints).
 fn task_row(mut value: Value) -> Value {
     const HINTS: [(&str, &str); 3] = [

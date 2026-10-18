@@ -7,7 +7,9 @@ use serde_json::{Value, json};
 use super::MemoryTransaction;
 use crate::application::swarm::dto::{CountedTask, NewTask, TaskRow, TaskUpdate};
 use crate::application::swarm::ports::{BoardRequests, BoardTasks, RequestAction};
-use crate::domain::swarm::{BoardError, RefusalKind};
+use crate::domain::swarm::{
+    events::telemetry::RefusalKind, value_objects::board_error::BoardError,
+};
 
 /// One `requests` row.
 #[derive(Clone, Debug, PartialEq)]

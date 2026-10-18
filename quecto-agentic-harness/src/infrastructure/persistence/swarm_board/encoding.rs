@@ -5,7 +5,9 @@ use serde_json::Value;
 
 use super::py_json::{self, PyJson};
 use crate::application::swarm::ports::BoardEncoding;
-use crate::domain::swarm::{BoardError, RefusalKind};
+use crate::domain::swarm::{
+    events::telemetry::RefusalKind, value_objects::board_error::BoardError,
+};
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct PyJsonEncoding;

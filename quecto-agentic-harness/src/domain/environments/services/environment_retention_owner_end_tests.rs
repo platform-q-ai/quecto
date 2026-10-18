@@ -3,7 +3,7 @@
 //! every swarm rule of #1924/#2070 stands untouched.
 
 use crate::domain::environments::services::environment_retention::*;
-use crate::domain::swarm::RunStatus;
+use crate::domain::swarm::value_objects::lifecycle::RunStatus;
 
 fn swarm(status: RunStatus, outcome: Option<RunStatus>) -> HostedSwarmRun {
     HostedSwarmRun {

@@ -9,10 +9,13 @@ use crate::application::swarm::board_control::receipt;
 use crate::application::swarm::board_operation::{detail, end, operation, text};
 use crate::application::swarm::dto::{ControlAnswer, RunTransition, StopRunRequest};
 use crate::application::swarm::ports::{BoardRepository, BoardTransaction, Clock};
-use crate::domain::swarm::validation::TEXT_MAX_BYTES;
+use crate::domain::swarm::services::validation::TEXT_MAX_BYTES;
 use crate::domain::swarm::{
-    Access, BoardError, RefusalKind, RunRecord, RunState, STOP_STATUSES, bounded, run_already,
-    run_already_held,
+    entities::records::{RunRecord, RunState},
+    events::telemetry::RefusalKind,
+    services::policy::{Access, STOP_STATUSES, run_already, run_already_held},
+    services::validation::bounded,
+    value_objects::board_error::BoardError,
 };
 
 /// The reason is bounded and the status must be one of `STOP_STATUSES`

@@ -24,7 +24,7 @@ pub(super) mod swarm_guidance;
 
 use crate::application::tools::ports::Tool;
 use crate::domain::error::DomainError;
-use crate::domain::swarm::RefusalKind;
+use crate::domain::swarm::events::telemetry::RefusalKind;
 use crate::domain::tool_policy::value_objects::tool::{ToolDefinition, ToolResult};
 
 /// The container-only coordination tool: the harness's own run ops

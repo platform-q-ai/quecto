@@ -7,7 +7,7 @@
 //! the `environments` application capability and its ports; nothing here
 //! performs an effect.
 
-use crate::domain::swarm::RunStatus;
+use crate::domain::swarm::value_objects::lifecycle::RunStatus;
 
 /// Why a member is being finalized. Normal exits stop the emptied
 /// environment with the retained `kill`; a launch rollback (the launch
@@ -83,7 +83,7 @@ impl HostedSwarmRun {
     /// A run the coordinator actually created (#1715): the bootstrap
     /// placeholder every container carries has deadline 0 and is no swarm.
     pub fn created(&self) -> bool {
-        crate::domain::swarm::participates(self.deadline)
+        crate::domain::swarm::services::participation::participates(self.deadline)
     }
 
     /// The run ended in an orderly way (paused holding a proposable outcome,

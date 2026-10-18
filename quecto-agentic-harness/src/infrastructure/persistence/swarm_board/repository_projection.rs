@@ -26,8 +26,11 @@ use crate::application::swarm::dto::{
     StoredMemberColumns, StoredRevision, StoredRunColumns, StoredStateColumns,
 };
 use crate::application::swarm::ports::{BoardEvents, BoardProjectionReads};
-use crate::domain::swarm::validation::MEMBER_ID_MAX_BYTES;
-use crate::domain::swarm::{BoardError, DEPENDENCIES_MAX, RefusalKind};
+use crate::domain::swarm::services::validation::MEMBER_ID_MAX_BYTES;
+use crate::domain::swarm::{
+    events::telemetry::RefusalKind, services::dependencies::DEPENDENCIES_MAX,
+    value_objects::board_error::BoardError,
+};
 
 /// The most bytes an item's stored status holds (the longest the board
 /// writes is `submitted`).

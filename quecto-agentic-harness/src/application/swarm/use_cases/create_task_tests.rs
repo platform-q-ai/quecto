@@ -6,7 +6,9 @@ use crate::application::swarm::board_test_support::{
 };
 use crate::application::swarm::dto::CreateTaskRequest;
 use crate::application::swarm::use_cases::OverRepository;
-use crate::domain::swarm::{BoardError, RefusalKind};
+use crate::domain::swarm::{
+    events::telemetry::RefusalKind, value_objects::board_error::BoardError,
+};
 
 const ACCEPTANCE: &str =
     "task acceptance criteria required: use a nonempty list[str], e.g. ['tests pass']";

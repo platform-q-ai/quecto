@@ -22,7 +22,7 @@ pub enum CancelSlot {
     Armed(tokio::sync::oneshot::Sender<()>),
     ScopedArmed(
         tokio::sync::oneshot::Sender<()>,
-        crate::domain::swarm::RunStatus,
+        crate::domain::swarm::value_objects::lifecycle::RunStatus,
         u64,
     ),
     /// Cancel was requested before the run started (or while arming).

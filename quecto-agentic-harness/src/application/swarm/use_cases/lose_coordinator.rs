@@ -9,7 +9,10 @@ use crate::application::swarm::board_loss::{
 use crate::application::swarm::board_operation::{detail, operation, text};
 use crate::application::swarm::dto::{CoordinatorLoss, LoseCoordinatorRequest};
 use crate::application::swarm::ports::{BoardRepository, Clock};
-use crate::domain::swarm::{Access, BoardError, RefusalKind, RunState};
+use crate::domain::swarm::{
+    entities::records::RunState, events::telemetry::RefusalKind, services::policy::Access,
+    value_objects::board_error::BoardError,
+};
 
 /// In one operation (`active=False`), so the expiry and any concurrent end
 /// are observed first: the setup placeholder, a running run, and a pause

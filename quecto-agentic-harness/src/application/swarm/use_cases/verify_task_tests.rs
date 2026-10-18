@@ -5,7 +5,9 @@ use crate::application::swarm::board_test_support::{
     BoardState, MemoryBoard, SteppingClock, StoredFile, member_row, running_board, stored_task,
 };
 use crate::application::swarm::dto::{TaskTransition, VerifyTaskRequest};
-use crate::domain::swarm::{BoardError, RefusalKind};
+use crate::domain::swarm::{
+    events::telemetry::RefusalKind, value_objects::board_error::BoardError,
+};
 
 fn file(path: &str, task: i64, claim: &str) -> StoredFile {
     StoredFile {

@@ -8,7 +8,9 @@ use rusqlite::{Connection, types::ValueRef};
 
 use super::py_json::{self, PyJson};
 use super::store::{CONTENDED, TransactionError, Undecodable};
-use crate::domain::swarm::{BoardError, RefusalKind};
+use crate::domain::swarm::{
+    events::telemetry::RefusalKind, value_objects::board_error::BoardError,
+};
 
 /// The most requests the idempotency ledger holds (`Store.retry`).
 pub const REQUEST_LEDGER_CAPACITY: i64 = 10_000;

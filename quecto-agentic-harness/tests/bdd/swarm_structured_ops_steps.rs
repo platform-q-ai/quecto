@@ -44,7 +44,7 @@ fn structured_worker(world: &mut QuectoWorld) {
     };
     worker
         .join(
-            &quecto::domain::swarm::ProcessIdentity {
+            &quecto::domain::swarm::value_objects::lifecycle::ProcessIdentity {
                 pid: 123,
                 started: "identity".into(),
             },

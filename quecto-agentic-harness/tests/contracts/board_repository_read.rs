@@ -7,7 +7,9 @@ use std::time::{Duration, Instant};
 
 use quecto::application::swarm::dto::BoardLocation;
 use quecto::application::swarm::ports::{BoardCallMeter, BoardRepository, BoardTransaction};
-use quecto::domain::swarm::{BoardError, RefusalKind};
+use quecto::domain::swarm::{
+    events::telemetry::RefusalKind, value_objects::board_error::BoardError,
+};
 use quecto::infrastructure::persistence::swarm_board::meter::SqliteBoardCallMeter;
 use quecto::infrastructure::persistence::swarm_board::repository::SqliteBoardRepository;
 use serde_json::json;

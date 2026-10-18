@@ -50,8 +50,8 @@ fn member(checkout: &std::path::Path, name: &str) -> SwarmContext {
     }
 }
 
-fn identity() -> crate::domain::swarm::ProcessIdentity {
-    crate::domain::swarm::ProcessIdentity {
+fn identity() -> crate::domain::swarm::value_objects::lifecycle::ProcessIdentity {
+    crate::domain::swarm::value_objects::lifecycle::ProcessIdentity {
         pid: std::process::id(),
         started: swarm_bridge::process_start(std::process::id()).unwrap(),
     }

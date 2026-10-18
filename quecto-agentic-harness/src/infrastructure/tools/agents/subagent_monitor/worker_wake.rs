@@ -21,7 +21,7 @@ use super::super::subagent_registry::{
     SwarmNoteState,
 };
 use crate::application::swarm::ports::WorkerBoardRead;
-use crate::domain::swarm::worker_wake::{Stranded, stranded_work};
+use crate::domain::swarm::services::worker_wake::{Stranded, stranded_work};
 
 /// A worker's part in its coordinator's wakes, on its registry entry.
 #[derive(Debug, Clone, Default)]
@@ -213,7 +213,7 @@ fn workers(
 /// is news after the last report; the report is recorded on every worker.
 pub(super) fn newly_stranded(
     registry: &SubagentRegistry,
-    work: &crate::domain::swarm::worker_wake::WorkerBoard,
+    work: &crate::domain::swarm::services::worker_wake::WorkerBoard,
     read: u64,
 ) -> Option<Stranded> {
     let mut entries = registry.lock().unwrap_or_else(|e| e.into_inner());

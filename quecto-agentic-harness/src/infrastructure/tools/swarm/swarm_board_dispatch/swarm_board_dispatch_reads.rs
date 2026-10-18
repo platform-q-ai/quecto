@@ -23,7 +23,9 @@ use crate::application::swarm::dto::{
 use crate::application::swarm::use_cases::{
     BootstrapMember, CreateRun, JoinMember, ListTasks, ReadRunEvents, ReadRunSummary,
 };
-use crate::domain::swarm::{BoardError, BoardOpDetail};
+use crate::domain::swarm::{
+    events::telemetry::BoardOpDetail, value_objects::board_error::BoardError,
+};
 
 /// `summary(since=None)`.
 pub(super) const SUMMARY: [Parameter; 1] = [Parameter {

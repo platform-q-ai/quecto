@@ -15,8 +15,13 @@ use crate::application::swarm::dto::{
 };
 use crate::application::swarm::ports::{BoardEncoding, BoardRepository, Clock};
 use crate::domain::swarm::{
-    Access, BoardError, MAX_REQUEST_PAYLOAD_BYTES, MAX_REQUEST_ROWS, Redelivery, RefusalKind,
-    python_equal, redelivery, request_measurement,
+    events::telemetry::RefusalKind,
+    services::policy::Access,
+    services::usage::{
+        MAX_REQUEST_PAYLOAD_BYTES, MAX_REQUEST_ROWS, Redelivery, redelivery, request_measurement,
+    },
+    value_objects::board_error::BoardError,
+    value_objects::python_value::python_equal,
 };
 
 /// The record is measured before the operation gate

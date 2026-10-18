@@ -79,7 +79,10 @@ use crate::application::swarm::use_cases::{
     ResumeRunExternally, RevalidateTask, RevokeTask, SendMessage, SetTaskDependencies, StopRun,
     SubmitTask, UnblockTask, VerifyTask, WithdrawMessage,
 };
-use crate::domain::swarm::{BoardError, BoardOpDetail, NameForm, RefusalKind};
+use crate::domain::swarm::{
+    events::telemetry::{BoardOpDetail, NameForm, RefusalKind},
+    value_objects::board_error::BoardError,
+};
 
 pub use self::binding::{BindingFaults, SchemaField, schema_field, unreadable_arguments};
 pub use self::method::may_end_run;

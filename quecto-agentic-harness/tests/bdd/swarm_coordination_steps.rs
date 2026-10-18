@@ -128,7 +128,7 @@ fn rejected_wake(world: &mut QuectoWorld) {
     };
     worker
         .join(
-            &quecto::domain::swarm::ProcessIdentity {
+            &quecto::domain::swarm::value_objects::lifecycle::ProcessIdentity {
                 pid: 123,
                 started: "identity".into(),
             },
@@ -241,7 +241,7 @@ fn contract_history(world: &mut QuectoWorld) {
 #[given("an idle swarm peer with an unavailable endpoint")]
 fn idle_peer(world: &mut QuectoWorld) {
     use quecto::application::swarm::ports::CoordinationPort;
-    use quecto::domain::swarm::ProcessIdentity;
+    use quecto::domain::swarm::value_objects::lifecycle::ProcessIdentity;
     run(world, json!({"op":"summary"}));
     let checkout = world.swarm_workspace.clone().unwrap();
     let context = quecto::infrastructure::tools::swarm::swarm_bridge::SwarmContext {
@@ -349,7 +349,10 @@ fn durable_pause(world: &mut QuectoWorld) {
 fn durable_resume(world: &mut QuectoWorld) {
     // Only the supervisor outside the swarm resumes (#1729); the member-side
     // `swarm resume` op is refused.
-    supervise(world, quecto::domain::swarm::RunControlAction::Resume);
+    supervise(
+        world,
+        quecto::domain::swarm::value_objects::run_control::RunControlAction::Resume,
+    );
     assert!(!result(world).is_error, "{}", result(world).content);
 }
 
@@ -383,7 +386,10 @@ fn supervisor_context(
 
 /// Apply a supervisor control through the same port the parent's
 /// `swarm_control` command uses, recording the receipt or error as the result.
-fn supervise(world: &mut QuectoWorld, action: quecto::domain::swarm::RunControlAction) {
+fn supervise(
+    world: &mut QuectoWorld,
+    action: quecto::domain::swarm::value_objects::run_control::RunControlAction,
+) {
     use quecto::application::swarm::ports::SwarmRunControl;
     let context = supervisor_context(world);
     let outcome = std::thread::spawn(move || {
@@ -482,12 +488,18 @@ fn member_resumes(world: &mut QuectoWorld) {
 
 #[when("the supervisor outside the swarm resumes the run")]
 fn supervisor_resumes(world: &mut QuectoWorld) {
-    supervise(world, quecto::domain::swarm::RunControlAction::Resume);
+    supervise(
+        world,
+        quecto::domain::swarm::value_objects::run_control::RunControlAction::Resume,
+    );
 }
 
 #[when("the supervisor outside the swarm closes the run")]
 fn supervisor_closes(world: &mut QuectoWorld) {
-    supervise(world, quecto::domain::swarm::RunControlAction::Close);
+    supervise(
+        world,
+        quecto::domain::swarm::value_objects::run_control::RunControlAction::Close,
+    );
     assert!(!result(world).is_error, "{}", result(world).content);
 }
 
@@ -495,7 +507,9 @@ fn supervisor_closes(world: &mut QuectoWorld) {
 fn supervisor_extends(world: &mut QuectoWorld, seconds: u64) {
     supervise(
         world,
-        quecto::domain::swarm::RunControlAction::ExtendDeadline { seconds },
+        quecto::domain::swarm::value_objects::run_control::RunControlAction::ExtendDeadline {
+            seconds,
+        },
     );
     assert!(!result(world).is_error, "{}", result(world).content);
 }

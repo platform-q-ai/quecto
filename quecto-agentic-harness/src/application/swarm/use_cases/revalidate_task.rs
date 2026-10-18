@@ -9,8 +9,13 @@ use crate::application::swarm::board_operation::{detail, operation};
 use crate::application::swarm::board_tasks::read_task;
 use crate::application::swarm::dto::{RevalidateTaskRequest, TaskRow};
 use crate::application::swarm::ports::{BoardEncoding, BoardRepository, Clock};
-use crate::domain::swarm::validation::TEXT_MAX_BYTES;
-use crate::domain::swarm::{Access, BoardError, RefusalKind, bounded_text, revalidation};
+use crate::domain::swarm::services::validation::TEXT_MAX_BYTES;
+use crate::domain::swarm::{
+    events::telemetry::RefusalKind,
+    services::policy::{Access, revalidation},
+    services::validation::bounded_text,
+    value_objects::board_error::BoardError,
+};
 
 /// The evidence's encoding is bounded before the operation gate, which
 /// admits only the coordinator (a running run). The task is read as

@@ -74,7 +74,9 @@ async fn exercise(workspace: std::path::PathBuf) -> serde_json::Value {
         )
         .unwrap();
     quecto::infrastructure::tools::registry::call_work::off_the_runtime(|| {
-        context.inference_snapshot(quecto::domain::swarm::AdmissionGate::Model)
+        context.inference_snapshot(
+            quecto::domain::swarm::value_objects::admission_gate::AdmissionGate::Model,
+        )
     })
     .unwrap();
     let budget = runtime

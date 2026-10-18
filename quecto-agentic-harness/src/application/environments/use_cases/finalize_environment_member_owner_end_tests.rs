@@ -19,7 +19,7 @@ use crate::domain::environments::entities::environment_registry::{
 use crate::domain::environments::services::environment_retention::{
     CoordinatorLoss, HostedSwarmRun, MemberFinalizeMode, SwarmRunObservation,
 };
-use crate::domain::swarm::RunStatus;
+use crate::domain::swarm::value_objects::lifecycle::RunStatus;
 
 /// One fake for both ports: the hosted run it reports, the scripts it
 /// records, and whether the cleanup fails.

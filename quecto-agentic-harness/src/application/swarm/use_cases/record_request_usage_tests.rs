@@ -7,7 +7,10 @@ use crate::application::swarm::board_test_support::{
 };
 use crate::application::swarm::dto::{NewRequestUsage, RecordRequestUsageRequest, RequestDelivery};
 use crate::application::swarm::ports::BoardEncoding;
-use crate::domain::swarm::{BoardError, RefusalKind, RunState};
+use crate::domain::swarm::{
+    entities::records::RunState, events::telemetry::RefusalKind,
+    value_objects::board_error::BoardError,
+};
 
 fn service(state: BoardState) -> (std::sync::Arc<MemoryBoard>, RecordRequestUsage) {
     let board = MemoryBoard::with(state);

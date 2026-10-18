@@ -5,7 +5,10 @@ use crate::application::swarm::board_test_support::{
     BoardState, MemoryBoard, SteppingClock, StoredFile, member_row, running_board, stored_task,
 };
 use crate::application::swarm::dto::{ReleaseFilesRequest, ReleasedFiles};
-use crate::domain::swarm::{BoardError, RefusalKind, RunState};
+use crate::domain::swarm::{
+    entities::records::RunState, events::telemetry::RefusalKind,
+    value_objects::board_error::BoardError,
+};
 
 fn file(path: &str, owner: &str, claim: &str, token: &str) -> StoredFile {
     StoredFile {

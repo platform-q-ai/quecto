@@ -7,7 +7,9 @@ use serde_json::Value;
 use super::{Parameter, Served, done, required, take};
 use crate::application::swarm::dto::{BootstrapRunRequest, JoinRunRequest, Joined, LaunchIdentity};
 use crate::application::swarm::use_cases::{BootstrapRun, CreateRun, JoinRun};
-use crate::domain::swarm::{BoardError, BoardOpDetail};
+use crate::domain::swarm::{
+    events::telemetry::BoardOpDetail, value_objects::board_error::BoardError,
+};
 
 pub(super) const BOOTSTRAP: [Parameter; 3] =
     [required("pid"), required("started"), required("socket")];

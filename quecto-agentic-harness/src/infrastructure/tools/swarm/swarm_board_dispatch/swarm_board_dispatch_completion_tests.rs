@@ -2,7 +2,9 @@ use serde_json::json;
 
 use super::super::TELEMETRY_TARGET;
 use super::super::tests::{board, captured, running};
-use crate::domain::swarm::{BoardError, RefusalKind};
+use crate::domain::swarm::{
+    events::telemetry::RefusalKind, value_objects::board_error::BoardError,
+};
 use crate::infrastructure::tools::swarm::swarm_board_dispatch::call;
 
 /// `evidence` answers the evidence as recorded and `complete` the run as it

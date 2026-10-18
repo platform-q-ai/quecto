@@ -9,8 +9,13 @@ use super::OverRepository;
 use crate::application::swarm::board_operation::{detail, operation, text};
 use crate::application::swarm::dto::{AmendRunContractRequest, AmendedContract, StoredContract};
 use crate::application::swarm::ports::{BoardEncoding, BoardRepository, Clock};
-use crate::domain::swarm::validation::TEXT_MAX_BYTES;
-use crate::domain::swarm::{Access, BoardError, RefusalKind, bounded, bounded_text, criteria};
+use crate::domain::swarm::services::validation::TEXT_MAX_BYTES;
+use crate::domain::swarm::{
+    events::telemetry::RefusalKind,
+    services::policy::Access,
+    services::validation::{bounded, bounded_text, criteria},
+    value_objects::board_error::BoardError,
+};
 
 /// The goal, the reason and the encoded constraints are bounded before the
 /// operation gate, which admits only the coordinator (a running run); the

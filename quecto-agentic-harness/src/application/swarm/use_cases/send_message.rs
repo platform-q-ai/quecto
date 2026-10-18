@@ -12,7 +12,12 @@ use crate::application::swarm::board_messages::{
 use crate::application::swarm::board_operation::{detail, operation};
 use crate::application::swarm::dto::{NewMessage, SendMessageRequest, SentMessage};
 use crate::application::swarm::ports::{BoardEncoding, BoardRepository, BoardTransaction, Clock};
-use crate::domain::swarm::{Access, BoardError, RefusalKind, bounded, status_is_alive};
+use crate::domain::swarm::{
+    events::telemetry::RefusalKind,
+    services::policy::{Access, status_is_alive},
+    services::validation::bounded,
+    value_objects::board_error::BoardError,
+};
 
 /// The longest message body, in UTF-8 bytes.
 pub const BODY_MAX_BYTES: usize = 8192;

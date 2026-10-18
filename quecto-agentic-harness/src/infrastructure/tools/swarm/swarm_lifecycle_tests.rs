@@ -26,12 +26,15 @@ fn a_supervisor_tick_records_participation_from_the_run() {
     let participation = super::super::swarm_bridge::Participation::shared();
     let mut snapshot = context.snapshot().unwrap();
     assert!(!participation.participating());
-    let mut schedule = crate::domain::swarm::watch::WatchSchedule::new();
+    let mut schedule = crate::domain::swarm::services::watch::WatchSchedule::new();
     let tick =
         super::watch::watch_tick(&context, &mut schedule, &mut snapshot, &participation, 0.0);
     assert_eq!(tick, super::watch::Tick::Snapshot);
     assert!(participation.participating(), "{snapshot:?}");
-    assert_eq!(snapshot.status, crate::domain::swarm::RunStatus::Running);
+    assert_eq!(
+        snapshot.status,
+        crate::domain::swarm::value_objects::lifecycle::RunStatus::Running
+    );
 }
 
 /// A member endpoint that answers wake hints and records their generations.
@@ -84,7 +87,7 @@ fn wake_sink(
 #[tokio::test]
 async fn a_resume_wakes_every_live_member_even_though_nothing_targets_them() {
     use crate::application::swarm::ports::SwarmRunControl;
-    use crate::domain::swarm::RunControlAction;
+    use crate::domain::swarm::value_objects::run_control::RunControlAction;
     let (directory, context) = crate::swarm_control_fixture::context();
     let socket = directory.path().join("worker.sock");
     let (sink, stop) = wake_sink(&socket);
@@ -104,7 +107,10 @@ async fn a_resume_wakes_every_live_member_even_though_nothing_targets_them() {
     })
     .unwrap();
     let receipt = context.apply(RunControlAction::Resume).await.unwrap();
-    assert_eq!(receipt.status, crate::domain::swarm::RunStatus::Running);
+    assert_eq!(
+        receipt.status,
+        crate::domain::swarm::value_objects::lifecycle::RunStatus::Running
+    );
     assert!(receipt.wake_warnings.is_empty(), "{receipt:?}");
     crate::infrastructure::tools::registry::call_work::off_the_runtime(|| context.pause("again"))
         .unwrap();
@@ -131,7 +137,10 @@ async fn a_resume_wakes_every_live_member_even_though_nothing_targets_them() {
     })
     .unwrap();
     let receipt = context.apply(RunControlAction::Resume).await.unwrap();
-    assert_eq!(receipt.status, crate::domain::swarm::RunStatus::Running);
+    assert_eq!(
+        receipt.status,
+        crate::domain::swarm::value_objects::lifecycle::RunStatus::Running
+    );
     assert_eq!(receipt.wake_warnings.len(), 1, "{receipt:?}");
     assert!(receipt.wake_warnings[0].contains("worker"), "{receipt:?}");
 }
@@ -204,12 +213,12 @@ async fn a_settled_pause_has_suspended_local_inference_on_a_current_thread_runti
 
 /// The event log, in memory: the run summaries written (#2313).
 #[derive(Default)]
-struct Summaries(std::sync::Mutex<Vec<crate::domain::swarm::SwarmRunSummary>>);
+struct Summaries(std::sync::Mutex<Vec<crate::domain::swarm::events::run_summary::SwarmRunSummary>>);
 
 impl crate::application::swarm::ports::BoardOpLog for Summaries {
-    fn record(&self, _observation: crate::domain::swarm::BoardOpObservation) {}
+    fn record(&self, _observation: crate::domain::swarm::events::telemetry::BoardOpObservation) {}
 
-    fn summarize(&self, summary: crate::domain::swarm::SwarmRunSummary) {
+    fn summarize(&self, summary: crate::domain::swarm::events::run_summary::SwarmRunSummary) {
         self.0
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -226,7 +235,7 @@ impl crate::application::swarm::ports::SessionOpLog for Summaries {
 }
 
 impl Summaries {
-    fn written(&self) -> Vec<crate::domain::swarm::SwarmRunSummary> {
+    fn written(&self) -> Vec<crate::domain::swarm::events::run_summary::SwarmRunSummary> {
         self.0
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)

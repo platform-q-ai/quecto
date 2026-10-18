@@ -5,7 +5,7 @@
 use serde_json::{Value, json};
 
 use super::{answered, board, direct, execute, refused};
-use crate::domain::swarm::owner::{OwnerState, owner_recovery};
+use crate::domain::swarm::services::owner::{OwnerState, owner_recovery};
 use crate::infrastructure::tools::swarm::swarm_board_ops::{
     BOARD_OPS, ID_ALIAS, OP_ALIASES, advertised_arg, advertised_op, tool_schema,
 };

@@ -8,10 +8,14 @@ use crate::application::swarm::board_operation::{detail, operation};
 use crate::application::swarm::board_tasks::read_task;
 use crate::application::swarm::dto::{CreateTaskRequest, CreatedTask, NewTask};
 use crate::application::swarm::ports::{BoardEncoding, BoardRepository, BoardTransaction, Clock};
-use crate::domain::swarm::validation::{TEXT_MAX_BYTES, TITLE_MAX_BYTES, has_content};
+use crate::domain::swarm::services::validation::{TEXT_MAX_BYTES, TITLE_MAX_BYTES, has_content};
 use crate::domain::swarm::{
-    Access, BoardError, RefusalKind, bounded, bounded_text, dependency_list, python_truthy,
-    validate_dependencies,
+    events::telemetry::RefusalKind,
+    services::dependencies::{dependency_list, validate_dependencies},
+    services::policy::Access,
+    services::validation::{bounded, bounded_text},
+    value_objects::board_error::BoardError,
+    value_objects::python_value::python_truthy,
 };
 
 /// The longest request id, in UTF-8 bytes (`Store.retry`).

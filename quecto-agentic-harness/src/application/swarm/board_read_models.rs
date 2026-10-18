@@ -21,8 +21,11 @@ use super::ports::{
     BoardEvents, BoardMembers, BoardRepository, BoardTasks, BoardTransaction, Clock,
 };
 use crate::domain::swarm::{
-    Access, BoardError, OWNER_IDLE_AFTER, OwnerState, PythonLookup, RefusalKind, authorize,
-    idle_transition, json_text, owner_recovery, owner_state,
+    events::telemetry::RefusalKind,
+    services::owner::{OWNER_IDLE_AFTER, OwnerState, idle_transition, owner_recovery, owner_state},
+    services::policy::{Access, authorize},
+    value_objects::board_error::BoardError,
+    value_objects::python_value::{PythonLookup, json_text},
 };
 
 /// The tasks and files a summary holds.

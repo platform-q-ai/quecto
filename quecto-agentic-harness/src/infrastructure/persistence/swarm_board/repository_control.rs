@@ -13,7 +13,10 @@ use serde_json::Value;
 
 use super::repository::{failed, fetched, text};
 use super::repository_tasks::loaded;
-use crate::domain::swarm::{BoardError, RefusalKind, python_equal};
+use crate::domain::swarm::{
+    events::telemetry::RefusalKind, value_objects::board_error::BoardError,
+    value_objects::python_value::python_equal,
+};
 
 /// `Transaction.pause_started`'s read: the latest `paused` event's
 /// `started`, NULL when its detail has none; `None` without such an event.

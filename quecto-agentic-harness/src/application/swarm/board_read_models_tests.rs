@@ -6,7 +6,9 @@ use crate::application::swarm::board_test_support::{
 };
 use crate::application::swarm::dto::{RunSummary, SummaryScan, TaskRow};
 use crate::application::swarm::ports::BoardRepository;
-use crate::domain::swarm::{BoardError, RefusalKind};
+use crate::domain::swarm::{
+    events::telemetry::RefusalKind, value_objects::board_error::BoardError,
+};
 
 fn at(actor: &str, time: f64, action: &str, member: &str) -> RecordedEvent {
     RecordedEvent {

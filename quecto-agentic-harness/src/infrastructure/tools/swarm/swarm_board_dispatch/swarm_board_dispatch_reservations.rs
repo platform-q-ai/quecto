@@ -19,7 +19,9 @@ use crate::application::swarm::dto::{
 use crate::application::swarm::use_cases::{
     ListFileOwners, RecoverTask, ReleaseFiles, ReserveFiles, RevokeTask,
 };
-use crate::domain::swarm::{BoardError, BoardOpDetail};
+use crate::domain::swarm::{
+    events::telemetry::BoardOpDetail, value_objects::board_error::BoardError,
+};
 
 /// `reserve(task_id, token, paths)`.
 pub(super) const RESERVE: [Parameter; 3] =

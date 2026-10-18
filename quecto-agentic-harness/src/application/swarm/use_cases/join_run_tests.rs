@@ -8,7 +8,9 @@ use crate::application::swarm::board_test_support::{
 };
 use crate::application::swarm::dto::{JoinRunRequest, Joined, LaunchIdentity};
 use crate::application::swarm::use_cases::OverRepository;
-use crate::domain::swarm::{BoardError, RefusalKind};
+use crate::domain::swarm::{
+    events::telemetry::RefusalKind, value_objects::board_error::BoardError,
+};
 
 fn join_run(board: &Arc<MemoryBoard>) -> JoinRun {
     JoinRun::new(

@@ -4,7 +4,9 @@
 use std::os::unix::fs::symlink;
 
 use quecto::application::swarm::ports::CheckoutPaths;
-use quecto::domain::swarm::{BoardError, RefusalKind};
+use quecto::domain::swarm::{
+    events::telemetry::RefusalKind, value_objects::board_error::BoardError,
+};
 use quecto::infrastructure::workspace::checkout_paths::ResolvedCheckout;
 
 #[test]

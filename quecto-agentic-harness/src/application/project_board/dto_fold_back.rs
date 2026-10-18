@@ -6,7 +6,7 @@ use crate::domain::project_board::value_objects::telemetry::{
     FoldBackRecord, ItemCounts, RunOutcomeKind,
 };
 use crate::domain::project_board::value_objects::vocabulary::{ItemState, RunOutcome};
-use crate::domain::swarm::{RunState, TaskState};
+use crate::domain::swarm::entities::records::{RunState, TaskState};
 
 /// What came of a fold-back.
 #[derive(Debug, Clone, PartialEq, Eq)]

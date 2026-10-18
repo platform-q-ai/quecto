@@ -5,7 +5,9 @@ use crate::application::swarm::board_test_support::{
     MemoryBoard, SteppingClock, member_row, paused, running_board,
 };
 use crate::application::swarm::dto::RunTransition;
-use crate::domain::swarm::{BoardError, RefusalKind};
+use crate::domain::swarm::{
+    events::telemetry::RefusalKind, value_objects::board_error::BoardError,
+};
 
 /// `test_completion_holds_success_until_the_supervisor_closes_it` (the
 /// close half): a running run, or a plain pause, holds nothing to close.

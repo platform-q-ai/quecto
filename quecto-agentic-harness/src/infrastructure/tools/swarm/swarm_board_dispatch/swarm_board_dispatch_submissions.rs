@@ -15,7 +15,9 @@ use crate::application::swarm::dto::{
     VerifyTaskRequest,
 };
 use crate::application::swarm::use_cases::{BlockTask, SubmitTask, UnblockTask, VerifyTask};
-use crate::domain::swarm::{BoardError, BoardOpDetail};
+use crate::domain::swarm::{
+    events::telemetry::BoardOpDetail, value_objects::board_error::BoardError,
+};
 
 /// `block(task_id, token, reason)` and `unblock(task_id, token, reason)`.
 pub(super) const BLOCK: [Parameter; 3] =

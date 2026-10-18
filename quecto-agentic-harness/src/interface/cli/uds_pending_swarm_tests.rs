@@ -1,7 +1,10 @@
 use super::dispatch_test_env::DispatchTestEnv as Env;
 use super::*;
 use crate::application::swarm::ports::SwarmRunControl;
-use crate::domain::swarm::{RunControlAction, RunControlReceipt, RunStatus};
+use crate::domain::swarm::{
+    value_objects::lifecycle::RunStatus,
+    value_objects::run_control::{RunControlAction, RunControlReceipt},
+};
 struct Control(RunStatus);
 impl SwarmRunControl for Control {
     fn coordinator_board(&self) -> crate::application::swarm::ports::CoordinatorBoardFuture<'_> {

@@ -2,7 +2,9 @@ use serde_json::{Value, json};
 
 use super::super::TELEMETRY_TARGET;
 use super::super::tests::{board, captured, running};
-use crate::domain::swarm::{BoardError, RefusalKind};
+use crate::domain::swarm::{
+    events::telemetry::RefusalKind, value_objects::board_error::BoardError,
+};
 use crate::infrastructure::tools::swarm::swarm_board_dispatch::{SwarmBoardHandles, call};
 
 /// A running run of three coordinated by `parent`, with `worker` live.

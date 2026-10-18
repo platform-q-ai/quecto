@@ -16,7 +16,7 @@
 //! one (`docs/swarm.md`, Telemetry).
 use std::collections::{BTreeMap, BTreeSet};
 
-use quecto::domain::swarm::RefusalKind;
+use quecto::domain::swarm::events::telemetry::RefusalKind;
 
 use super::swarm_board_refusal_kinds::refusals;
 
@@ -433,7 +433,7 @@ fn a_chooser_returns_the_kinds_its_function_names() {
         ["budget_exhausted", "not_running"]
     );
     let policy = chosen_kinds(
-        "src/domain/swarm/policy.rs:admission",
+        "src/domain/swarm/services/policy.rs:admission",
         "not_running (budget_spent (run) || expired (run , now))",
     );
     assert_eq!(

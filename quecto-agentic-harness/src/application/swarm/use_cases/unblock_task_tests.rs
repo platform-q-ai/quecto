@@ -5,7 +5,9 @@ use crate::application::swarm::board_test_support::{
     BoardState, MemoryBoard, SteppingClock, member_row, running_board, stored_task,
 };
 use crate::application::swarm::dto::{TaskTransition, UnblockTaskRequest};
-use crate::domain::swarm::{BoardError, RefusalKind};
+use crate::domain::swarm::{
+    events::telemetry::RefusalKind, value_objects::board_error::BoardError,
+};
 
 /// Task 1 blocked, task 2 claimed and task 3 submitted, all by the worker
 /// under `stored-token`; task 4 blocked by the parent.

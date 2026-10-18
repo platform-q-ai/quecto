@@ -6,7 +6,9 @@ use crate::application::swarm::board_test_support::{
 };
 use crate::application::swarm::dto::ReleaseTaskRequest;
 use crate::application::swarm::use_cases::OverRepository;
-use crate::domain::swarm::{BoardError, RefusalKind};
+use crate::domain::swarm::{
+    events::telemetry::RefusalKind, value_objects::board_error::BoardError,
+};
 
 fn file(path: &str, task: i64, claim: &str) -> StoredFile {
     StoredFile {

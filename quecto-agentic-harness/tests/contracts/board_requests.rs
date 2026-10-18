@@ -5,7 +5,9 @@
 //! same id is refused; a full ledger takes no new request.
 use quecto::application::swarm::dto::BoardLocation;
 use quecto::application::swarm::ports::{BoardRepository, BoardTransaction};
-use quecto::domain::swarm::{BoardError, RefusalKind};
+use quecto::domain::swarm::{
+    events::telemetry::RefusalKind, value_objects::board_error::BoardError,
+};
 use quecto::infrastructure::persistence::swarm_board::repository::SqliteBoardRepository;
 use serde_json::{Value, json};
 

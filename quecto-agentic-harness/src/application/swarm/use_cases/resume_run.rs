@@ -5,7 +5,9 @@ use std::sync::Arc;
 use super::OverRepository;
 use crate::application::swarm::dto::ControlAnswer;
 use crate::application::swarm::ports::BoardRepository;
-use crate::domain::swarm::{BoardError, RefusalKind};
+use crate::domain::swarm::{
+    events::telemetry::RefusalKind, value_objects::board_error::BoardError,
+};
 
 /// Every member, the coordinator included, is refused before any
 /// transaction opens: the supervisor resumes through

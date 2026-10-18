@@ -133,8 +133,10 @@ fn measured<T>(rows: Vec<T>, bytes: &mut i64, size: impl Fn(&T) -> i64) -> Vec<T
 impl crate::application::swarm::ports::BoardProjectionReads for super::MemoryTransaction<'_> {
     fn projection_revision(
         &self,
-    ) -> Result<crate::application::swarm::dto::StoredRevision, crate::domain::swarm::BoardError>
-    {
+    ) -> Result<
+        crate::application::swarm::dto::StoredRevision,
+        crate::domain::swarm::value_objects::board_error::BoardError,
+    > {
         let state = self.state.borrow();
         Ok(crate::application::swarm::dto::StoredRevision {
             run: state.run.as_ref().map_or(Value::Null, |run| json!(run.id)),
@@ -149,8 +151,10 @@ impl crate::application::swarm::ports::BoardProjectionReads for super::MemoryTra
     fn projection_rows(
         &self,
         limits: crate::application::swarm::dto::ProjectionLimits,
-    ) -> Result<crate::application::swarm::dto::ProjectionRows, crate::domain::swarm::BoardError>
-    {
+    ) -> Result<
+        crate::application::swarm::dto::ProjectionRows,
+        crate::domain::swarm::value_objects::board_error::BoardError,
+    > {
         use crate::application::swarm::dto::{
             ProjectionRows, StoredEvidenceColumns, StoredItemColumns, StoredMemberColumns,
             StoredRunColumns, StoredStateColumns,
@@ -185,10 +189,12 @@ impl crate::application::swarm::ports::BoardProjectionReads for super::MemoryTra
                 &run.outcome_reason,
             ]);
             if size > bytes {
-                return Err(crate::domain::swarm::BoardError::new(
-                    crate::domain::swarm::RefusalKind::Store,
-                    "the board's run is not as the board writes it",
-                ));
+                return Err(
+                    crate::domain::swarm::value_objects::board_error::BoardError::new(
+                        crate::domain::swarm::events::telemetry::RefusalKind::Store,
+                        "the board's run is not as the board writes it",
+                    ),
+                );
             }
             bytes -= size;
         }

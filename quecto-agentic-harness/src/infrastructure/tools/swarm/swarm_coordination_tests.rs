@@ -320,7 +320,7 @@ fn read_board(
     member: &str,
     status: &serde_json::Value,
     totals: serde_json::Value,
-) -> Result<Option<crate::domain::swarm::parent_wake::CoordinatorBoard>, DomainError> {
+) -> Result<Option<crate::domain::swarm::services::parent_wake::CoordinatorBoard>, DomainError> {
     decode_coordinator_board(member, status, || Ok(totals))
 }
 
@@ -337,14 +337,16 @@ fn the_coordinator_reads_its_board_from_status_and_totals() {
     .unwrap();
     assert_eq!(
         board,
-        Some(crate::domain::swarm::parent_wake::CoordinatorBoard {
-            status: RunStatus::Running,
-            outcome: None,
-            ready: 2,
-            claimed: 3,
-            submitted: 4,
-            idle_workers: 1,
-        })
+        Some(
+            crate::domain::swarm::services::parent_wake::CoordinatorBoard {
+                status: RunStatus::Running,
+                outcome: None,
+                ready: 2,
+                claimed: 3,
+                submitted: 4,
+                idle_workers: 1,
+            }
+        )
     );
 }
 
