@@ -1,6 +1,6 @@
 [package]
 name = "quecto-agentic-harness"
-version = "0.107.350"
+version = "0.107.351"
 edition = "2024"
 default-run = "quecto"
 description = "Ultra-lightweight personal AI assistant"
