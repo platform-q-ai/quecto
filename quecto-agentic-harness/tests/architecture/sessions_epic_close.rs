@@ -162,7 +162,7 @@ pub(super) const PORT_IMPLEMENTORS: &[(&str, &[&str])] = &[
     ),
     (
         "SessionExportPort",
-        &["src/infrastructure/session_export.rs"],
+        &["src/infrastructure/persistence/file/session_export.rs"],
     ),
     (
         "DurablePrefixObservation",

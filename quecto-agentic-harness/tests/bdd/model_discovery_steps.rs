@@ -127,8 +127,9 @@ fn then_valid_json(world: &mut QuectoWorld, provider: String) {
 
 #[then(expr = "no discovery temporary file should remain")]
 fn then_no_tmp(world: &mut QuectoWorld) {
-    let discovered =
-        base_path(world).join(quecto::infrastructure::catalogue_discovery::DISCOVERY_CACHE_DIR);
+    let discovered = base_path(world).join(
+        quecto::infrastructure::providers::catalogue::catalogue_discovery::DISCOVERY_CACHE_DIR,
+    );
     let leftovers: Vec<_> = std::fs::read_dir(base_path(world))
         .unwrap()
         .filter_map(Result::ok)
@@ -165,7 +166,9 @@ fn mount_catalog(world: &mut QuectoWorld, provider: &str, response: serde_json::
 
 fn discovery_cache_path(world: &QuectoWorld, provider: &str) -> std::path::PathBuf {
     base_path(world)
-        .join(quecto::infrastructure::catalogue_discovery::DISCOVERY_CACHE_DIR)
+        .join(
+            quecto::infrastructure::providers::catalogue::catalogue_discovery::DISCOVERY_CACHE_DIR,
+        )
         .join(format!("{provider}.json"))
 }
 

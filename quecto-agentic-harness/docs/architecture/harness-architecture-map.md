@@ -219,7 +219,7 @@ encodes compact rows (`own`, `session`, `restored`, `config`,
 `src/application/sessions/` (`use_cases/`, `ports.rs` + `ports/`, `dto/`,
 `active_session.rs`, `conversation_ledger.rs`, `session_home.rs`); persistence
 adapters in `src/infrastructure/persistence/` and
-`src/infrastructure/session_export.rs`; workspace discovery adapters in
+`src/infrastructure/persistence/file/session_export.rs`; workspace discovery adapters in
 `src/infrastructure/workspace/` (`git_scope_discovery.rs`,
 `filesystem_scope.rs` — the only production spawns of `git`, resolved on PATH
 once and run off the async executor); the graph in
@@ -298,8 +298,8 @@ Important invariants before later phases:
 
 **Primary code:** the compose-provider-runtime use case in
 `src/application/provider_runtime.rs`; the concrete factories in
-`src/infrastructure/provider_runtime.rs` and
-`src/infrastructure/provider_runtime_admission.rs`; the OAuth refresh wiring
+`src/infrastructure/providers/routing/provider_runtime.rs` and
+`src/infrastructure/providers/routing/provider_runtime_admission.rs`; the OAuth refresh wiring
 in `src/infrastructure/providers/refresh_wiring.rs` and the refreshed-credential
 persistence in `src/infrastructure/auth/token_refresh.rs`; the composition in
 `src/composition/runtime.rs` (`compose_and_publish_runtime`,
@@ -307,7 +307,7 @@ persistence in `src/infrastructure/auth/token_refresh.rs`; the composition in
 
 `main` hands composition's `build_agent_provider` to the CLI through
 `CliComposition` as the one `ProviderRuntimeBuilder` type
-(`src/infrastructure/runtime_configuration.rs`, aliased by the CLI); agent
+(`src/infrastructure/config/runtime_configuration.rs`, aliased by the CLI); agent
 startup (`src/interface/cli/agent.rs`) calls the injected builder, never
 constructs provider state itself (#1849 PR 1), and threads the same builder
 into the reload inputs. Reloading a running session is the
@@ -315,8 +315,8 @@ reload-runtime-configuration use case
 (`src/application/catalogue/use_cases/reload_runtime_configuration.rs`,
 #1849 PR 2): forced by the UDS `reload` command, polled before every prompt,
 `set_model` and `list_models` (#2451), over the `RuntimeConfigurationSource` port that
-`src/infrastructure/runtime_configuration.rs` implements (the ADR-0002 gate
-in `src/infrastructure/reload.rs`, one `Config` read, the injected builder)
+`src/infrastructure/config/runtime_configuration.rs` implements (the ADR-0002 gate
+in `src/infrastructure/config/reload.rs`, one `Config` read, the injected builder)
 and the `ReloadRuntime` port the agent loop implements. The use case is two
 scheduler-free phases — `rebuild`/`rebuild_if_changed` yielding a
 `ReloadStep`, then `apply` — and `src/interface/cli/uds_dispatch_reload.rs`
@@ -387,7 +387,7 @@ indentation kept, tmp + fsync + rename via `atomic_write`, an exclusive
 — never beside the document, so a refused write of a not-yet-existing
 overlay leaves the checkout clean; plus the tool-policy persistence hook as
 a caller of it, under the same lock). The runtime-configuration source
-(`src/infrastructure/runtime_configuration.rs`) rebuilds through a
+(`src/infrastructure/config/runtime_configuration.rs`) rebuilds through a
 composition-supplied `ConfigLoader` and watches the overlay as well as the
 base file, and the trust record while the overlay exists
 (`ReloadSource::while_present`). Composition (`src/composition/configuration.rs`) builds the

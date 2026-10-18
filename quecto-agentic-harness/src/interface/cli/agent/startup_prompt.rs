@@ -22,8 +22,9 @@ pub(super) fn load_agents_instructions(
             return None;
         }
     };
-    match crate::infrastructure::agents_instructions::load_agents_instructions(&initialization_dir)
-    {
+    match crate::infrastructure::config::agents_instructions::load_agents_instructions(
+        &initialization_dir,
+    ) {
         Ok(instructions) => Some(instructions),
         Err(error) => {
             stderr.push_str(&error);
@@ -48,7 +49,7 @@ pub(super) fn load_parent_playbook(
             return None;
         }
     };
-    match crate::infrastructure::parent_playbook::load(&directory) {
+    match crate::infrastructure::config::parent_playbook::load(&directory) {
         Ok(playbook) => Some(playbook),
         Err(error) => {
             stderr.push_str(&format!("{error}\n"));

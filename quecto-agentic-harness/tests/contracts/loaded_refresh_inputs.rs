@@ -7,7 +7,7 @@
 use std::sync::Arc;
 
 use quecto::application::catalogue::ports::RefreshInputsLoader;
-use quecto::infrastructure::catalogue_refresh_inputs::FileRefreshInputs;
+use quecto::infrastructure::providers::catalogue::catalogue_refresh_inputs::FileRefreshInputs;
 
 fn under_test(dir: &std::path::Path) -> Arc<dyn RefreshInputsLoader> {
     Arc::new(FileRefreshInputs::new(
@@ -40,8 +40,10 @@ fn a_refreshable_provider_feeds_the_resolve_sources_exactly_once() {
 
     // Once a cache exists for the provider, the cached layer feeds it and
     // the live source is not appended again.
-    quecto::infrastructure::catalogue_discovery::DiscoverySourceCache::new(
-        &quecto::infrastructure::catalogue_discovery::discovery_cache_dir(tmp.path()),
+    quecto::infrastructure::providers::catalogue::catalogue_discovery::DiscoverySourceCache::new(
+        &quecto::infrastructure::providers::catalogue::catalogue_discovery::discovery_cache_dir(
+            tmp.path(),
+        ),
         "openrouter",
     )
     .store_models_response(r#"{"data":[{"id":"alpha","name":"Alpha"}]}"#)

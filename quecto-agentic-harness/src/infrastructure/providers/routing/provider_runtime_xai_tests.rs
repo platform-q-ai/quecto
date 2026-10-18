@@ -7,8 +7,11 @@
 use super::*;
 
 /// A real builtin xai/grok-4.5 record, optionally with a configured baseUrl.
-fn xai_record(base_url: Option<&str>) -> crate::infrastructure::model_registry::ModelRecord {
-    let registry = crate::infrastructure::model_registry::ModelRegistry::builtin();
+fn xai_record(
+    base_url: Option<&str>,
+) -> crate::infrastructure::providers::catalogue::model_registry::ModelRecord {
+    let registry =
+        crate::infrastructure::providers::catalogue::model_registry::ModelRegistry::builtin();
     let mut model = registry
         .find("xai", "grok-4.5")
         .expect("grok-4.5 builtin")

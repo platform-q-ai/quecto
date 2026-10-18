@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use quecto::application::catalogue::ports::RuntimeConfigurationSource;
 use quecto::application::configuration::dto::ConfigSelection;
 use quecto::domain::tool_policy::value_objects::tool_descriptor::ProfileAvailabilityScope;
-use quecto::infrastructure::runtime_configuration::FileRuntimeConfiguration;
+use quecto::infrastructure::config::runtime_configuration::FileRuntimeConfiguration;
 
 const OPENAI_ONLY: &str =
     r#"{"providers":{"openai":{"api_key":"sk-test","api_base":"http://127.0.0.1:9"}}}"#;
@@ -38,7 +38,7 @@ fn under_test(dir: &std::path::Path) -> (Box<dyn RuntimeConfigurationSource>, st
     let config_path = dir.join("config.json");
     let selection = ConfigSelection::Explicit(config_path.clone());
     let source = FileRuntimeConfiguration::seeded(
-        vec![quecto::infrastructure::reload::ReloadSource::new(
+        vec![quecto::infrastructure::config::reload::ReloadSource::new(
             config_path.clone(),
         )],
         dir.to_path_buf(),

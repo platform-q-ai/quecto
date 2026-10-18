@@ -34,7 +34,7 @@ use super::directory::AuthorityDirectory;
 use super::protocol::Op;
 use crate::application::ports::Credential;
 use crate::domain::admission::value_objects::inference_admission::WorkloadClass;
-use crate::infrastructure::provider_runtime_admission::AdmissionRuntimeProposal;
+use crate::infrastructure::providers::routing::provider_runtime_admission::AdmissionRuntimeProposal;
 
 type BoxFuture<T> = Pin<Box<dyn Future<Output = T> + Send>>;
 type Reconnect = Arc<dyn Fn() -> BoxFuture<Result<AuthorityConnection, String>> + Send + Sync>;

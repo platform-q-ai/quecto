@@ -1,6 +1,10 @@
 //! Process adapters (#1935): the one owner of directly spawned children,
 //! the out-of-band parent-control delivery, and the protocol edge to a
 //! direct child. Effects only; no teardown policy lives here.
+pub mod line_cap;
+#[cfg(test)]
+mod line_cap_tests;
+pub mod runtime_identity;
 
 pub mod child_line_pipes;
 pub mod child_stderr_tail;

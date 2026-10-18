@@ -23,7 +23,7 @@ use std::path::{Path, PathBuf};
 use sha2::{Digest, Sha256};
 
 use crate::application::configuration::ports::{ConfigDocumentWriter, DocumentLock};
-use crate::infrastructure::atomic_write::atomic_write;
+use crate::infrastructure::persistence::file::atomic_write::atomic_write;
 
 pub mod tool_policy;
 

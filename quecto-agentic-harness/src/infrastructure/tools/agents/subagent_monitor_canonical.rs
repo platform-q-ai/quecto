@@ -203,9 +203,9 @@ pub fn canonical_admission_forward(
 /// violation, never permission to trim the child's payload).
 pub fn bounded_forward(forwarded: Option<String>, agent_id: &str, kind: &str) -> Option<String> {
     let fwd = forwarded?;
-    if fwd.len() > crate::infrastructure::line_cap::EVENT_LINE_JSON_BUDGET {
+    if fwd.len() > crate::infrastructure::processes::line_cap::EVENT_LINE_JSON_BUDGET {
         tracing::warn!(agent = %agent_id, len = fwd.len(),
-            cap = crate::infrastructure::line_cap::EVENT_LINE_CAP_BYTES,
+            cap = crate::infrastructure::processes::line_cap::EVENT_LINE_CAP_BYTES,
             "monitor: dropping oversized forwarded {kind} event");
         return None;
     }

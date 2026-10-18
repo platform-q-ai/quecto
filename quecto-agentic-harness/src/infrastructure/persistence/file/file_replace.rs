@@ -47,7 +47,7 @@ use std::io::{self, Write};
 use std::os::unix::fs::{FileExt, MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
-use crate::infrastructure::atomic_write::{sync_parent_dir, temp_path_in};
+use crate::infrastructure::persistence::file::atomic_write::{sync_parent_dir, temp_path_in};
 
 /// How the contents were written.
 #[derive(Debug, Clone, PartialEq, Eq)]

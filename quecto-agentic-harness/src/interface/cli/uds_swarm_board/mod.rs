@@ -176,7 +176,7 @@ fn refuse(clients: &ClientToolRegistry, client_id: u64, id: Option<&str>, error:
         return;
     };
     let mut line = serde_json::to_string(&AgentEvent::err(id, COMMAND, error)).unwrap_or_default();
-    if line.len() > crate::infrastructure::line_cap::EVENT_LINE_JSON_BUDGET {
+    if line.len() > crate::infrastructure::processes::line_cap::EVENT_LINE_JSON_BUDGET {
         line = serde_json::to_string(&AgentEvent::err(None, COMMAND, error)).unwrap_or_default();
     }
     line.push('\n');

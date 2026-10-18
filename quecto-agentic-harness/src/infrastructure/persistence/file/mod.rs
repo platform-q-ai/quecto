@@ -1,6 +1,10 @@
+pub mod atomic_write;
 pub mod context_spill;
 pub mod crash_record;
 pub mod ended_child_records;
 pub mod environment_registry_store;
+pub mod file_replace;
 pub(crate) mod filename;
+pub mod session_export;
 pub mod sessions;
+pub mod turn_origin_names;

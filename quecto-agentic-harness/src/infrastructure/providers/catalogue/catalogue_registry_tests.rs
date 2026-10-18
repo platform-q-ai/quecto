@@ -157,7 +157,7 @@ fn a_routed_api_key_provider_does_not_credit_a_keyless_sibling() {
     let mut keyed = ModelRegistry::builtin().models()[0].clone();
     keyed.provider = "custom".to_string();
     keyed.id = "keyed".to_string();
-    keyed.auth = crate::infrastructure::model_registry::AuthMode::ApiKey;
+    keyed.auth = crate::infrastructure::providers::catalogue::model_registry::AuthMode::ApiKey;
     keyed.oauth_provider = None;
     keyed.api_key = Some("sk-test".to_string());
     let mut keyless = keyed.clone();
@@ -186,12 +186,16 @@ fn snapshot_store_for_reuses_store_per_base_dir() {
     assert_eq!(second.current().generation(), 41);
 }
 
-fn api_key_record(provider: &str, id: &str) -> crate::infrastructure::model_registry::ModelRecord {
+fn api_key_record(
+    provider: &str,
+    id: &str,
+) -> crate::infrastructure::providers::catalogue::model_registry::ModelRecord {
     let mut record = ModelRegistry::builtin().models()[0].clone();
     record.provider = provider.to_string();
     record.id = id.to_string();
-    record.api = crate::infrastructure::model_registry::ProviderApi::OpenAiCompletions;
-    record.auth = crate::infrastructure::model_registry::AuthMode::ApiKey;
+    record.api =
+        crate::infrastructure::providers::catalogue::model_registry::ProviderApi::OpenAiCompletions;
+    record.auth = crate::infrastructure::providers::catalogue::model_registry::AuthMode::ApiKey;
     record.oauth_provider = None;
     record.api_key = None;
     record.base_url = Some("https://gw.example.test/v1".to_string());

@@ -1,5 +1,5 @@
 use super::*;
-use crate::infrastructure::config_admission::default_admission_directory;
+use crate::infrastructure::config::config_admission::default_admission_directory;
 
 fn load(json: &str) -> Result<Config, ConfigError> {
     let dir = tempfile::tempdir().unwrap();

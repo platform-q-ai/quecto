@@ -10,7 +10,7 @@ use quecto::infrastructure::admission::{
     AdminConnection, AdmissionRecorder, AuthorityConnection, AuthorityDirectory, AuthorityServer,
     ObservedAdmission,
 };
-use quecto::infrastructure::provider_runtime_admission::AdmissionRuntimeProposal;
+use quecto::infrastructure::providers::routing::provider_runtime_admission::AdmissionRuntimeProposal;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;

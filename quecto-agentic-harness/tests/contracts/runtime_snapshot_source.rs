@@ -5,7 +5,9 @@
 use std::sync::Arc;
 
 use quecto::application::catalogue::ports::RuntimeSnapshotSource;
-use quecto::infrastructure::catalogue_registry::{runtime_store_for, snapshot_store_for};
+use quecto::infrastructure::providers::catalogue::catalogue_registry::{
+    runtime_store_for, snapshot_store_for,
+};
 
 fn under_test(dir: &std::path::Path) -> Arc<dyn RuntimeSnapshotSource> {
     Arc::new(runtime_store_for(dir))

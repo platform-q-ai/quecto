@@ -6,19 +6,17 @@
 
 use std::path::{Path, PathBuf};
 
+use super::catalogue_discovery::{ConfiguredDiscovery, SecretsRedaction, configured_discovery};
+use super::catalogue_inputs::CatalogueInputs;
 use crate::application::catalogue::ports::RuntimeSnapshotSource;
 use crate::application::catalogue::ports::{
     LoadedRefreshInputs, RefreshInputsLoader, RefreshRedactionPort, RefreshableCatalogueSource,
 };
 use crate::application::ports::{CatalogueSource, CredentialStatusPort};
 use crate::infrastructure::auth::provider_slots::ProviderSlots;
-use crate::infrastructure::catalogue_discovery::{
-    ConfiguredDiscovery, SecretsRedaction, configured_discovery,
-};
-use crate::infrastructure::catalogue_inputs::CatalogueInputs;
 
 /// Credential status credits the slots `runtime` routes, as
-/// [`crate::infrastructure::catalogue_inputs::FileCatalogueInputs`] does (#2451).
+/// [`super::catalogue_inputs::FileCatalogueInputs`] does (#2451).
 pub struct FileRefreshInputs {
     base_dir: PathBuf,
     runtime: std::sync::Arc<dyn RuntimeSnapshotSource>,

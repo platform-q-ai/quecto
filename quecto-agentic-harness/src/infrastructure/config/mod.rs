@@ -1,3 +1,12 @@
+pub mod agents_instructions;
+#[cfg(test)]
+mod agents_instructions_tests;
+pub mod config_admission;
+pub mod parent_playbook;
+#[cfg(test)]
+mod parent_playbook_tests;
+pub mod reload;
+pub mod runtime_configuration;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
@@ -28,7 +37,7 @@ pub struct Config {
     pub container_configs: HashMap<String, ContainerConfig>,
     /// Shared inference admission (#1679). Absent keeps admission disabled.
     #[serde(default)]
-    pub admission: Option<super::config_admission::AdmissionSection>,
+    pub admission: Option<self::config_admission::AdmissionSection>,
     /// The UDS extensions every agent launches (#2446); global-only.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub extensions: Vec<extensions::ExtensionConfig>,

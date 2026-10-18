@@ -251,7 +251,7 @@ pub(super) async fn write_event(
 ) {
     if let Some(tx) = super::uds_ext_protocol::client_writer_tx(clients, client_id) {
         let mut response = serde_json::to_string(ev).unwrap_or_default();
-        if response.len() > crate::infrastructure::line_cap::EVENT_LINE_JSON_BUDGET {
+        if response.len() > crate::infrastructure::processes::line_cap::EVENT_LINE_JSON_BUDGET {
             response = serde_json::to_string(&AgentEvent::err(
                 id,
                 command,

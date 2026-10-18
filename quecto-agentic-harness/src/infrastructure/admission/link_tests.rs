@@ -6,7 +6,7 @@ use crate::domain::admission::value_objects::inference_admission::{
 use crate::infrastructure::admission::{
     AdminConnection, AuthorityConnection, AuthorityDirectory, AuthorityServer, ClientError,
 };
-use crate::infrastructure::provider_runtime_admission::AdmissionRuntimeProposal;
+use crate::infrastructure::providers::routing::provider_runtime_admission::AdmissionRuntimeProposal;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};

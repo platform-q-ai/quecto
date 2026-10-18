@@ -69,7 +69,10 @@ pub fn legacy_bridge_modules_present() -> Vec<String> {
 /// adapters may see the models.json wire format and the legacy registry
 /// parser that reads it.
 pub fn model_registry_readers(interface_sources: &[(String, String)]) -> Vec<String> {
-    offenders(interface_sources, "infrastructure::model_registry")
+    offenders(
+        interface_sources,
+        "infrastructure::providers::catalogue::model_registry",
+    )
 }
 
 /// Paths in `sources` whose production portion contains `needle`.
@@ -93,7 +96,7 @@ pub fn effort_name_inference_sites(layer_sources: &[(String, String)]) -> Vec<St
     ]
     .into_iter()
     .flat_map(|needle| offenders(layer_sources, needle))
-    .filter(|path| !path.ends_with("infrastructure/catalogue_registry.rs"))
+    .filter(|path| !path.ends_with("infrastructure/providers/catalogue/catalogue_registry.rs"))
     .collect();
     sites.sort();
     sites.dedup();
@@ -133,7 +136,7 @@ pub fn canonical_type_redefinitions(infrastructure_sources: &[(String, String)])
 /// field cannot satisfy this).
 pub fn builtin_entries() -> Vec<quecto::domain::catalogue::entities::entry::CatalogueEntry> {
     use quecto::application::catalogue::CatalogueSource as _;
-    quecto::infrastructure::catalogue_registry::BuiltinCatalogueSource
+    quecto::infrastructure::providers::catalogue::catalogue_registry::BuiltinCatalogueSource
         .load()
         .expect("builtin source loads")
         .entries

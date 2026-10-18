@@ -60,7 +60,7 @@ const CONTAINERS: &[&str] = &["Option", "Vec", "BTreeMap"];
 
 /// The adapters' file (T2), the one place besides composition that may
 /// name them.
-const ADAPTER: &str = "src/infrastructure/persistence/project_board/op_log.rs";
+const ADAPTER: &str = "src/infrastructure/observability/project_board_op_log.rs";
 
 /// Each name, and the only production paths (a file, or a directory
 /// ending in `/`) that may name it.

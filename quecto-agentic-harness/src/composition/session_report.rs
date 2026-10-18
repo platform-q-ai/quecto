@@ -9,7 +9,7 @@ use std::sync::Arc;
 use crate::application::sessions::active_session::ActiveSessionHandle;
 use crate::application::sessions::ports::export::SessionExportPort;
 use crate::application::sessions::use_cases::ExportSessionReport;
-use crate::infrastructure::session_export::FileSessionExport;
+use crate::infrastructure::persistence::file::session_export::FileSessionExport;
 use crate::interface::uds::sessions::export_report_controller::ExportSessionReportController;
 
 /// Where the loop of `base_dir` writes raw session exports.

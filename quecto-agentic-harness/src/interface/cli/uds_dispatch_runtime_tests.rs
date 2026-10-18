@@ -51,7 +51,10 @@ fn set_model_payload_carries_the_structured_selection_verdicts() {
     // The verdict's generation is the published runtime's: a plan republishes
     // the catalogue (a later generation of the same store) but the runtime
     // generation it reports is the one the router was composed with.
-    let published = crate::infrastructure::catalogue_registry::runtime_store_for(tmp.path())
+    let published =
+        crate::infrastructure::providers::catalogue::catalogue_registry::runtime_store_for(
+            tmp.path(),
+        )
         .current()
         .expect("runtime published")
         .generation();

@@ -7,7 +7,7 @@ fn falls_back_to_packaged_playbook_only_when_absent() {
     let directory = tempfile::tempdir().unwrap();
     assert_eq!(
         load(directory.path()).unwrap(),
-        include_str!("../../../PARENT_PLAYBOOK.md")
+        include_str!("../../../../PARENT_PLAYBOOK.md")
     );
     std::fs::write(directory.path().join(NAME), "project policy\n").unwrap();
     assert_eq!(load(directory.path()).unwrap(), "project policy\n");
@@ -36,6 +36,6 @@ fn never_searches_ancestors() {
     std::fs::create_dir(&child).unwrap();
     assert_eq!(
         load(&child).unwrap(),
-        include_str!("../../../PARENT_PLAYBOOK.md")
+        include_str!("../../../../PARENT_PLAYBOOK.md")
     );
 }

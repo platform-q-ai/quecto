@@ -1,6 +1,8 @@
 use super::*;
 use crate::infrastructure::auth::credential_store::{AuthMethod, Credential};
-use crate::infrastructure::model_registry::{AuthMode, ModelCost, ModelRecord, ProviderApi};
+use crate::infrastructure::providers::catalogue::model_registry::{
+    AuthMode, ModelCost, ModelRecord, ProviderApi,
+};
 
 /// Test shim keeping the legacy call shape: composes via the real
 /// infrastructure factory with interface-wired inputs.
@@ -23,7 +25,7 @@ fn test_inputs(base_dir: &std::path::Path, http_client: &reqwest::Client) -> Age
                 None,
                 http_client.clone(),
             ),
-        model_registry: crate::infrastructure::model_registry::ModelRegistry::load_from_path(
+        model_registry: crate::infrastructure::providers::catalogue::model_registry::ModelRegistry::load_from_path(
             &base_dir.join("models.json"),
         )
         .map_err(|e| e.to_string()),

@@ -12,7 +12,7 @@ use super::client::{AuthorityConnection, ClientError};
 use super::directory::AuthorityDirectory;
 use crate::application::ports::{AttemptAdmission, Credential};
 use crate::domain::admission::value_objects::inference_admission::WorkloadClass;
-use crate::infrastructure::provider_runtime_admission::{
+use crate::infrastructure::providers::routing::provider_runtime_admission::{
     AdmissionRuntimeContext, AdmissionRuntimeProposal,
 };
 use crate::infrastructure::providers::{SingleAttemptClient, default_client_builder};

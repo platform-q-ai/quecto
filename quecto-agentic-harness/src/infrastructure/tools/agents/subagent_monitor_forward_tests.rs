@@ -532,7 +532,7 @@ fn handle_monitor_line_forwards_child_admission_state_bounded_and_restamped() {
 fn handle_monitor_line_rejects_oversized_restamped_admission_state() {
     let registry = super::super::subagent_registry::new_registry();
     let (tx, mut rx) = tokio::sync::broadcast::channel::<String>(4);
-    let budget = crate::infrastructure::line_cap::EVENT_LINE_JSON_BUDGET;
+    let budget = crate::infrastructure::processes::line_cap::EVENT_LINE_JSON_BUDGET;
     // One group whose name brings the input just under the budget: the
     // re-stamped copy (identity plus defaulted fields) then crosses it.
     let frame = |name: &str| {

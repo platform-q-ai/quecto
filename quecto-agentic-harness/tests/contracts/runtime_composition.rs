@@ -2,7 +2,7 @@
 //! #1193 slice 3; #1849 PR 1): no provider construction, credential
 //! resolution, or router orchestration remains anywhere under `interface/`.
 //! That orchestration lives behind the application's `ProviderRuntimeFactory`
-//! port (implemented in `infrastructure::provider_runtime`); the composition
+//! port (implemented in `infrastructure::providers::routing::provider_runtime`); the composition
 //! layer (`composition::runtime`) wires dependencies and invokes the shared
 //! compose use case, and entry points receive its builder by injection.
 //!
@@ -90,7 +90,10 @@ fn build_agent_provider_publishes_through_the_composition_use_case() {
         &reqwest::Client::new(),
     )
     .expect("provider builds");
-    let published = quecto::infrastructure::catalogue_registry::runtime_store_for(tmp.path())
+    let published =
+        quecto::infrastructure::providers::catalogue::catalogue_registry::runtime_store_for(
+            tmp.path(),
+        )
         .current()
         .expect("the entry point published a runtime generation");
     assert!(
@@ -99,9 +102,11 @@ fn build_agent_provider_publishes_through_the_composition_use_case() {
     );
     assert_eq!(
         published.generation(),
-        quecto::infrastructure::catalogue_registry::snapshot_store_for(tmp.path())
-            .current()
-            .generation(),
+        quecto::infrastructure::providers::catalogue::catalogue_registry::snapshot_store_for(
+            tmp.path()
+        )
+        .current()
+        .generation(),
         "runtime and catalogue stores share one generation"
     );
 }

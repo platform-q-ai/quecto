@@ -12,7 +12,7 @@ use std::sync::Arc;
 use crate::application::catalogue::ports::{ReloadedConfiguration, RuntimeConfigurationSource};
 use crate::application::providers::ports::LlmProvider;
 use crate::infrastructure::config::Config;
-use crate::infrastructure::reload::{ReloadSource, RuntimeReload};
+use crate::infrastructure::config::reload::{ReloadSource, RuntimeReload};
 
 /// Composition's provider-runtime builder (#1849): composes and publishes
 /// the provider runtime for a configuration and base directory and returns

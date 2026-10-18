@@ -240,5 +240,5 @@ impl<T: serde::Serialize> std::fmt::Display for Fields<'_, T> {
 }
 
 #[cfg(test)]
-#[path = "op_log_tests.rs"]
+#[path = "project_board_op_log_tests.rs"]
 mod tests;

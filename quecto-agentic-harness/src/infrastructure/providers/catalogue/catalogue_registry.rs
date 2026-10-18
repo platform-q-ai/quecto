@@ -12,6 +12,11 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
+use super::model_registry::{
+    AuthMode, DEFAULT_CONTEXT_WINDOW, DEFAULT_MAX_OUTPUT_TOKENS, ModelOverride, ModelRecord,
+    ModelRegistry, ProviderApi, SkippedProviderBlock, UnsupportedProviderConfig,
+    resolve_registry_value,
+};
 use crate::application::ports::{
     CatalogueSnapshotStore, CatalogueSource, CredentialStatusPort, SkippedRecord, SourceEntries,
 };
@@ -27,11 +32,6 @@ use crate::domain::catalogue::value_objects::model_facts::{
 };
 use crate::domain::catalogue::value_objects::precedence::SourceLayer;
 use crate::infrastructure::auth::provider_slots::ProviderSlots;
-use crate::infrastructure::model_registry::{
-    AuthMode, DEFAULT_CONTEXT_WINDOW, DEFAULT_MAX_OUTPUT_TOKENS, ModelOverride, ModelRecord,
-    ModelRegistry, ProviderApi, SkippedProviderBlock, UnsupportedProviderConfig,
-    resolve_registry_value,
-};
 
 /// Map one legacy registry record into a domain catalogue entry. Availability
 /// starts as runnable; the resolve use case derives the real status from the

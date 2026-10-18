@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::application::ports::{AuthorityError, AuthorityStatus, Credential};
 use crate::domain::admission::value_objects::inference_admission::*;
-use crate::infrastructure::provider_runtime_admission::AdmissionRuntimeProposal;
+use crate::infrastructure::providers::routing::provider_runtime_admission::AdmissionRuntimeProposal;
 
 pub const PROTOCOL_VERSION: u8 = 1;
 /// Requests and replies are small; a large declared length is an attack, not a

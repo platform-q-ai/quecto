@@ -6,7 +6,7 @@
 use std::sync::Arc;
 
 use quecto::application::catalogue::ports::RefreshInputsLoader;
-use quecto::infrastructure::catalogue_refresh_inputs::FileRefreshInputs;
+use quecto::infrastructure::providers::catalogue::catalogue_refresh_inputs::FileRefreshInputs;
 
 fn under_test(dir: &std::path::Path) -> Arc<dyn RefreshInputsLoader> {
     Arc::new(FileRefreshInputs::new(

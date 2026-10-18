@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use quecto::application::catalogue::ports::ModelRefusalSink;
 use quecto::domain::catalogue::value_objects::identity::ModelRef;
-use quecto::infrastructure::catalogue_registry::snapshot_store_for;
+use quecto::infrastructure::providers::catalogue::catalogue_registry::snapshot_store_for;
 
 const HELD: std::time::Duration = std::time::Duration::from_secs(3600);
 

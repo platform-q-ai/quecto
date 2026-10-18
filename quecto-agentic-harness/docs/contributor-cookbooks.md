@@ -121,7 +121,7 @@ that owns the command.
 
 **Production files usually involved:**
 
-- `src/infrastructure/model_registry.rs` and `src/infrastructure/config.rs` for
+- `src/infrastructure/providers/catalogue/model_registry.rs` and `src/infrastructure/config/mod.rs` for
   model metadata, effort levels, or config defaults.
 - `src/infrastructure/providers/*` for provider-specific request/response
   handling.
@@ -165,7 +165,7 @@ serialization for UDS-visible events.
 - `src/application/agent_loop*.rs` where progress is emitted.
 - `src/interface/cli/uds_cancel.rs`, `uds_snapshots.rs`, or `protocol.rs` for
   UDS event conversion.
-- `src/infrastructure/logging.rs` or audit-specific modules for persistent audit
+- `src/infrastructure/observability/logging.rs` or audit-specific modules for persistent audit
   behaviour.
 
 **Tests to add/update:**

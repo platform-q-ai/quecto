@@ -4,7 +4,7 @@
 
 use quecto::application::ports::CatalogueSource;
 use quecto::domain::catalogue::value_objects::precedence::SourceLayer;
-use quecto::infrastructure::catalogue_registry::{
+use quecto::infrastructure::providers::catalogue::catalogue_registry::{
     BuiltinCatalogueSource, ModelsFileCatalogueSource,
 };
 

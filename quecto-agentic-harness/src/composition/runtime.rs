@@ -15,15 +15,19 @@ use crate::application::provider_runtime::{
 };
 use crate::application::providers::ports::LlmProvider;
 use crate::infrastructure::auth::provider_slots::ProviderSlots;
-use crate::infrastructure::catalogue_inputs::CatalogueInputs;
-use crate::infrastructure::catalogue_registry::{runtime_store_for, snapshot_store_for};
 use crate::infrastructure::config::Config;
-use crate::infrastructure::provider_runtime::{AgentProviderRuntimeFactory, AgentRuntimeInputs};
-use crate::infrastructure::provider_runtime_admission::{
-    AdmissionProviderRuntimeFactory, AdmissionRuntimeCandidate,
+use crate::infrastructure::providers::catalogue::catalogue_inputs::CatalogueInputs;
+use crate::infrastructure::providers::catalogue::catalogue_registry::{
+    runtime_store_for, snapshot_store_for,
 };
 use crate::infrastructure::providers::refresh_wiring::{
     make_bounded_provider_factory, make_oauth_refresh_fn,
+};
+use crate::infrastructure::providers::routing::provider_runtime::{
+    AgentProviderRuntimeFactory, AgentRuntimeInputs,
+};
+use crate::infrastructure::providers::routing::provider_runtime_admission::{
+    AdmissionProviderRuntimeFactory, AdmissionRuntimeCandidate, AdmissionRuntimeProposal,
 };
 use crate::infrastructure::providers::stream_idle::StreamIdle;
 
@@ -104,10 +108,7 @@ pub fn compose_and_publish_runtime(
 pub fn admission_inheritance(
     admission: &crate::infrastructure::admission::ProcessAdmission,
     config: &Config,
-) -> (
-    bool,
-    Option<crate::infrastructure::provider_runtime_admission::AdmissionRuntimeProposal>,
-) {
+) -> (bool, Option<AdmissionRuntimeProposal>) {
     let inherit = admission.inherits_authority();
     let proposal = if inherit {
         None
@@ -120,9 +121,7 @@ pub fn admission_inheritance(
 /// The configured proposal offered to the restart-only admission factory. An
 /// invalid or removed section yields `None`, which the factory rejects as a
 /// change rather than replacing live budgets.
-pub fn admission_candidate(
-    config: &Config,
-) -> Option<crate::infrastructure::provider_runtime_admission::AdmissionRuntimeProposal> {
+pub fn admission_candidate(config: &Config) -> Option<AdmissionRuntimeProposal> {
     config
         .admission_proposal()
         .ok()
@@ -133,7 +132,9 @@ pub fn admission_candidate(
 /// Delegates to the factory's own blank/trim helper so the initially composed
 /// provider and the post-refresh rebuilt provider share one base-URL reading.
 fn openai_api_base(config: &Config) -> Option<String> {
-    crate::infrastructure::provider_runtime::non_empty(config.providers.openai.api_base.clone())
+    crate::infrastructure::providers::routing::provider_runtime::non_empty(
+        config.providers.openai.api_base.clone(),
+    )
 }
 
 /// Compose and publish the provider runtime for this base directory, then

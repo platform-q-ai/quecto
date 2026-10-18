@@ -12,7 +12,7 @@ use quecto::application::sessions::dto::{ExportManifest, ExportRecord};
 use quecto::application::sessions::ports::export::SessionExportPort;
 use quecto::domain::conversation::value_objects::message::Message;
 use quecto::domain::sessions::entities::session::SpillEntry;
-use quecto::infrastructure::session_export::FileSessionExport;
+use quecto::infrastructure::persistence::file::session_export::FileSessionExport;
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
 

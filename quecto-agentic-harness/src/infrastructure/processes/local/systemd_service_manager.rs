@@ -100,7 +100,7 @@ impl AuthorityServiceManager for SystemdUserServiceManager {
     fn write_unit(&self, spec: &ServiceUnitSpec) -> Result<(), String> {
         std::fs::create_dir_all(&self.unit_dir)
             .map_err(|e| format!("creating unit directory {}: {e}", self.unit_dir.display()))?;
-        crate::infrastructure::atomic_write::atomic_write(
+        crate::infrastructure::persistence::file::atomic_write::atomic_write(
             &self.unit_file(),
             spec.contents.as_bytes(),
             Some(0o644),

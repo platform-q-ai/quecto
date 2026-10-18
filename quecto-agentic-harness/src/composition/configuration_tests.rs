@@ -2,7 +2,7 @@ use super::*;
 use crate::application::configuration::dto::{
     ConfigLayers, ConfigSelectionRequest, OverlayTrustRequest,
 };
-use crate::infrastructure::reload::RuntimeReload;
+use crate::infrastructure::config::reload::RuntimeReload;
 use std::path::PathBuf;
 use tempfile::TempDir;
 

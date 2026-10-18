@@ -29,7 +29,7 @@ pub fn load(initialization_dir: &Path) -> Result<String, String> {
         }
     }
     if !present {
-        return Ok(include_str!("../../../PARENT_PLAYBOOK.md").to_owned());
+        return Ok(include_str!("../../../../PARENT_PLAYBOOK.md").to_owned());
     }
     let bytes = std::fs::read(&path).map_err(|error| {
         format!(

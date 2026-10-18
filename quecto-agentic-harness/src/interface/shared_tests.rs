@@ -619,8 +619,9 @@ mod context_settings {
     /// field as the effective budget clamp (#1044 AC2).
     #[test]
     fn model_window_from_registry_clamps_the_effective_budget() {
-        let window = crate::infrastructure::model_registry::ModelRegistry::builtin()
-            .context_window_for("anthropic-api/claude-sonnet-5");
+        let window =
+            crate::infrastructure::providers::catalogue::model_registry::ModelRegistry::builtin()
+                .context_window_for("anthropic-api/claude-sonnet-5");
         assert_eq!(window, Some(1_000_000), "precondition: a known window");
         let agent = agent_with(&AgentDefaults::default(), 200_000, window);
         assert_eq!(

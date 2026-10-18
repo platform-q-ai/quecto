@@ -364,7 +364,10 @@ fn status_reports_only_published_runtime_admission_warnings() {
     };
     let before = run_with_output(args("status"), &ctx);
     assert!(!before.stderr.contains("admission-broker gating"));
-    let runtime_store = crate::infrastructure::catalogue_registry::runtime_store_for(dir.path());
+    let runtime_store =
+        crate::infrastructure::providers::catalogue::catalogue_registry::runtime_store_for(
+            dir.path(),
+        );
     let catalogue_store = CatalogueSnapshotStore::empty();
     ComposeProviderRuntimeUseCase::new()
         .compose_and_publish(

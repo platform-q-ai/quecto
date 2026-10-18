@@ -222,7 +222,7 @@ pub type CatalogueHandlesBuilder = fn(
 /// hands it on to the reload inputs, the interface never composes a
 /// provider.
 pub type ProviderRuntimeBuilder =
-    crate::infrastructure::runtime_configuration::ProviderRuntimeBuilder;
+    crate::infrastructure::config::runtime_configuration::ProviderRuntimeBuilder;
 
 /// Composition's builder of the tool-policy persistence hook (#1849): the
 /// durable `set_tool_policy … persist` writer over the run's config file.

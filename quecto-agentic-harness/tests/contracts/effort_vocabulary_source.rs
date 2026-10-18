@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use quecto::application::catalogue::ports::EffortVocabularySource;
 use quecto::domain::inference::value_objects::provider::EffortLevel::{High, Low, Medium, XHigh};
-use quecto::infrastructure::catalogue_registry::PublishedEffortVocabulary;
+use quecto::infrastructure::providers::catalogue::catalogue_registry::PublishedEffortVocabulary;
 
 fn under_test(dir: &std::path::Path) -> Arc<dyn EffortVocabularySource> {
     Arc::new(PublishedEffortVocabulary::for_base_dir(dir))

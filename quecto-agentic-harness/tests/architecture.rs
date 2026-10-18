@@ -5375,7 +5375,7 @@ fn processes_dependency_allowed(file: &str, path: &str) -> bool {
         // supervisor's termination observation is crate-private (#2286).
         ["crate"] => true,
         ["crate", "application", "admission", "ports", ..]
-        | ["crate", "infrastructure", "atomic_write", ..]
+        | ["crate", "infrastructure", "persistence", "file", "atomic_write", ..]
         | ["crate", "infrastructure", "tools", "native", "path_utils", ..] => {
             file == "systemd_service_manager.rs"
         }
@@ -5427,7 +5427,7 @@ fn process_adapters_depend_only_inward() {
     // The service manager's extra allowances are scoped to it alone.
     for dep in [
         "crate::application::admission::ports::ServiceManager",
-        "crate::infrastructure::atomic_write::write_atomic",
+        "crate::infrastructure::persistence::file::atomic_write::write_atomic",
         "crate::infrastructure::tools::native::path_utils::home_dir",
     ] {
         assert!(

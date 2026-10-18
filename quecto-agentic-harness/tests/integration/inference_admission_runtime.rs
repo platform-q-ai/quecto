@@ -21,9 +21,11 @@ use quecto::domain::catalogue::entities::entry::CatalogueEntry;
 use quecto::domain::catalogue::value_objects::precedence::SourceLayer;
 use quecto::domain::shared::error::DomainError;
 use quecto::infrastructure::config::{Config, OpenAiCompatibleEndpoint};
-use quecto::infrastructure::model_registry::ModelRegistry;
-use quecto::infrastructure::provider_runtime::{AgentProviderRuntimeFactory, AgentRuntimeInputs};
-use quecto::infrastructure::provider_runtime_admission::{
+use quecto::infrastructure::providers::catalogue::model_registry::ModelRegistry;
+use quecto::infrastructure::providers::routing::provider_runtime::{
+    AgentProviderRuntimeFactory, AgentRuntimeInputs,
+};
+use quecto::infrastructure::providers::routing::provider_runtime_admission::{
     AdmissionProviderRuntimeFactory, AdmissionRuntimeCandidate as Candidate,
     AdmissionRuntimeContext, AdmissionRuntimeProposal as Proposal,
 };

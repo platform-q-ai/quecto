@@ -91,7 +91,7 @@ fn write_bounded(
             manifest,
             &sha256,
             bytes,
-            &super::runtime_identity::current(),
+            &crate::infrastructure::processes::runtime_identity::current(),
         ))
         .map_err(|error| DomainError::Tool(error.to_string()))?,
     )

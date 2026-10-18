@@ -131,7 +131,7 @@ fn configured_provider_without_binding_remains_usable_without_gate() {
         refresh_fn: Arc::new(|_, _| Box::pin(async { panic!("no OAuth") })),
         openai_oauth_factory: Arc::new(|_| panic!("no OAuth")),
         model_registry: Ok(
-            crate::infrastructure::model_registry::ModelRegistry::from_file_records(vec![]),
+            crate::infrastructure::providers::catalogue::model_registry::ModelRegistry::from_file_records(vec![]),
         ),
     };
     let mut config = Config::default();
@@ -163,7 +163,7 @@ fn a_child_inherits_the_authority_without_matching_its_own_config() {
         refresh_fn: Arc::new(|_, _| Box::pin(async { panic!("no refresh") })),
         openai_oauth_factory: Arc::new(|_| panic!("no oauth")),
         model_registry: Ok(
-            crate::infrastructure::model_registry::ModelRegistry::from_file_records(vec![]),
+            crate::infrastructure::providers::catalogue::model_registry::ModelRegistry::from_file_records(vec![]),
         ),
     };
     let mut config = Config::default();
@@ -218,7 +218,7 @@ fn runtime_factory_preserves_authority_across_reload_and_rejects_policy_changes(
         }),
         openai_oauth_factory: Arc::new(|_| panic!("API-key composition must not create OAuth")),
         model_registry: Ok(
-            crate::infrastructure::model_registry::ModelRegistry::from_file_records(vec![]),
+            crate::infrastructure::providers::catalogue::model_registry::ModelRegistry::from_file_records(vec![]),
         ),
     };
     let mut config = Config::default();
@@ -334,7 +334,9 @@ fn an_explicit_binding_still_wins_over_the_default() {
 
 #[test]
 fn mixed_usable_slots_report_only_unbound_once_and_fallback_covers_them() {
-    use crate::infrastructure::model_registry::{AuthMode, ModelCost, ModelRecord, ProviderApi};
+    use crate::infrastructure::providers::catalogue::model_registry::{
+        AuthMode, ModelCost, ModelRecord, ProviderApi,
+    };
     let mut initial = proposal();
     initial.bindings = BTreeMap::from([("openai-api".into(), "account".into())]);
     let client = || SingleAttemptClient::build(reqwest::Client::builder().no_proxy()).unwrap();
@@ -367,7 +369,7 @@ fn mixed_usable_slots_report_only_unbound_once_and_fallback_covers_them() {
         refresh_fn: Arc::new(|_, _| Box::pin(async { panic!("no OAuth") })),
         openai_oauth_factory: Arc::new(|_| panic!("no OAuth")),
         model_registry: Ok(
-            crate::infrastructure::model_registry::ModelRegistry::from_file_records(vec![
+            crate::infrastructure::providers::catalogue::model_registry::ModelRegistry::from_file_records(vec![
                 record("one", Some("key")),
                 record("two", Some("key")),
                 {
@@ -419,7 +421,7 @@ fn all_unbound_including_compatible_endpoint_starts_but_zero_usable_still_fails(
         refresh_fn: Arc::new(|_, _| Box::pin(async { panic!("no OAuth") })),
         openai_oauth_factory: Arc::new(|_| panic!("no OAuth")),
         model_registry: Ok(
-            crate::infrastructure::model_registry::ModelRegistry::from_file_records(vec![]),
+            crate::infrastructure::providers::catalogue::model_registry::ModelRegistry::from_file_records(vec![]),
         ),
     };
     let mut config = Config::default();

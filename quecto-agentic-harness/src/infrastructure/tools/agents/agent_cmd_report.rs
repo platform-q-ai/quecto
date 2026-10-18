@@ -33,7 +33,7 @@ fn ordinal_of(message: &serde_json::Value) -> Option<u64> {
 
 /// What opened the message's turn, as the child marked it (#2226).
 pub(crate) fn turn_origin_of(message: &serde_json::Value) -> TurnOrigin {
-    crate::infrastructure::turn_origin_names::origin_from_name(
+    crate::infrastructure::persistence::file::turn_origin_names::origin_from_name(
         message.get("turnOrigin").and_then(|v| v.as_str()),
     )
 }

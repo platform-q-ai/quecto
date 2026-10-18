@@ -7,7 +7,7 @@ use crate::interface::cli::protocol::AgentEvent;
 /// shared protocol cap by shrinking the returned content page.
 #[test]
 fn ranged_get_message_accounts_for_long_request_id() {
-    let body = "x".repeat(crate::infrastructure::line_cap::EVENT_LINE_JSON_BUDGET);
+    let body = "x".repeat(crate::infrastructure::processes::line_cap::EVENT_LINE_JSON_BUDGET);
     let msg = Message::assistant(body, vec![]);
     let request_id = "r".repeat(LONG_REQUEST_ID_REGRESSION_LEN);
 
@@ -15,10 +15,10 @@ fn ranged_get_message_accounts_for_long_request_id() {
     let line = AgentEvent::ok(Some(&request_id), "get_message", Some(data.clone())).to_json_line();
 
     assert!(
-        line.len() <= crate::infrastructure::line_cap::EVENT_LINE_JSON_BUDGET,
+        line.len() <= crate::infrastructure::processes::line_cap::EVENT_LINE_JSON_BUDGET,
         "ranged response exceeded frame budget with long request id: {} > {}",
         line.len(),
-        crate::infrastructure::line_cap::EVENT_LINE_JSON_BUDGET
+        crate::infrastructure::processes::line_cap::EVENT_LINE_JSON_BUDGET
     );
     assert!(
         data["nextOffset"].as_u64().unwrap() > 0,
@@ -29,7 +29,7 @@ fn ranged_get_message_accounts_for_long_request_id() {
 
 #[test]
 fn tool_call_argument_range_reassembles_utf8_payload_with_bounded_frames() {
-    let arguments = "λ".repeat(crate::infrastructure::line_cap::EVENT_LINE_JSON_BUDGET);
+    let arguments = "λ".repeat(crate::infrastructure::processes::line_cap::EVENT_LINE_JSON_BUDGET);
     let msg = Message::assistant(
         "small content",
         vec![ToolCall {
@@ -53,7 +53,7 @@ fn tool_call_argument_range_reassembles_utf8_payload_with_bounded_frames() {
         let line = AgentEvent::ok(Some("recover-tool-call"), "get_message", Some(data.clone()))
             .to_json_line();
         assert!(
-            line.len() <= crate::infrastructure::line_cap::EVENT_LINE_JSON_BUDGET,
+            line.len() <= crate::infrastructure::processes::line_cap::EVENT_LINE_JSON_BUDGET,
             "tool-call argument page must fit the protocol frame"
         );
         recovered.push_str(data["arguments"].as_str().expect("arguments page"));
@@ -92,7 +92,7 @@ fn ranged_get_message_preserves_visible_thinking_for_recovery() {
 fn ranged_get_message_with_huge_thinking_returns_recoverable_thinking_page() {
     use crate::domain::conversation::value_objects::message::ThinkingBlock;
 
-    let visible = "r".repeat(crate::infrastructure::line_cap::EVENT_LINE_JSON_BUDGET);
+    let visible = "r".repeat(crate::infrastructure::processes::line_cap::EVENT_LINE_JSON_BUDGET);
     let mut msg = Message::assistant("answer".repeat(1024), vec![]);
     msg.thinking_blocks.push(ThinkingBlock::Normal {
         thinking: visible.clone(),
@@ -103,7 +103,7 @@ fn ranged_get_message_with_huge_thinking_returns_recoverable_thinking_page() {
     let line = AgentEvent::ok(Some("recover"), "get_message", Some(data.clone())).to_json_line();
 
     assert!(
-        line.len() <= crate::infrastructure::line_cap::EVENT_LINE_JSON_BUDGET,
+        line.len() <= crate::infrastructure::processes::line_cap::EVENT_LINE_JSON_BUDGET,
         "thinking page must fit protocol frame"
     );
     let thinking = data["thinking"][0]["text"]
@@ -122,7 +122,7 @@ fn ranged_get_message_with_huge_thinking_returns_recoverable_thinking_page() {
 fn ranged_get_message_reassembles_oversized_visible_thinking() {
     use crate::domain::conversation::value_objects::message::ThinkingBlock;
 
-    let visible = "λ".repeat(crate::infrastructure::line_cap::EVENT_LINE_JSON_BUDGET);
+    let visible = "λ".repeat(crate::infrastructure::processes::line_cap::EVENT_LINE_JSON_BUDGET);
     let mut msg = Message::assistant("answer".repeat(1024), vec![]);
     msg.thinking_blocks.push(ThinkingBlock::Normal {
         thinking: visible.clone(),
@@ -144,7 +144,7 @@ fn ranged_get_message_reassembles_oversized_visible_thinking() {
         );
         let line =
             AgentEvent::ok(Some("recover"), "get_message", Some(data.clone())).to_json_line();
-        assert!(line.len() <= crate::infrastructure::line_cap::EVENT_LINE_JSON_BUDGET);
+        assert!(line.len() <= crate::infrastructure::processes::line_cap::EVENT_LINE_JSON_BUDGET);
         assert_eq!(data["thinkingOffset"].as_u64(), Some(offset as u64));
         assert!(
             !serde_json::to_string(&data)
@@ -232,7 +232,7 @@ fn ranged_get_message_with_huge_thinking_fits_protocol_frame() {
 
     let mut msg = Message::assistant("answer".repeat(1024), vec![]);
     msg.thinking_blocks.push(ThinkingBlock::Normal {
-        thinking: "r".repeat(crate::infrastructure::line_cap::EVENT_LINE_JSON_BUDGET),
+        thinking: "r".repeat(crate::infrastructure::processes::line_cap::EVENT_LINE_JSON_BUDGET),
         signature: "private".into(),
     });
 
@@ -240,10 +240,10 @@ fn ranged_get_message_with_huge_thinking_fits_protocol_frame() {
     let line = AgentEvent::ok(Some("recover"), "get_message", Some(data)).to_json_line();
 
     assert!(
-        line.len() <= crate::infrastructure::line_cap::EVENT_LINE_JSON_BUDGET,
+        line.len() <= crate::infrastructure::processes::line_cap::EVENT_LINE_JSON_BUDGET,
         "ranged get_message must include thinking in its frame-budget fit: {} > {}",
         line.len(),
-        crate::infrastructure::line_cap::EVENT_LINE_JSON_BUDGET
+        crate::infrastructure::processes::line_cap::EVENT_LINE_JSON_BUDGET
     );
 }
 
@@ -253,14 +253,14 @@ fn unranged_get_message_with_huge_thinking_falls_back_to_bounded_page() {
 
     let mut msg = Message::assistant("answer".repeat(1024), vec![]);
     msg.thinking_blocks.push(ThinkingBlock::Normal {
-        thinking: "r".repeat(crate::infrastructure::line_cap::EVENT_LINE_JSON_BUDGET),
+        thinking: "r".repeat(crate::infrastructure::processes::line_cap::EVENT_LINE_JSON_BUDGET),
         signature: "private".into(),
     });
 
     let data = message_to_json_range_for_response(&msg, None, None, None, Some("recover"));
     let line = AgentEvent::ok(Some("recover"), "get_message", Some(data.clone())).to_json_line();
 
-    assert!(line.len() <= crate::infrastructure::line_cap::EVENT_LINE_JSON_BUDGET);
+    assert!(line.len() <= crate::infrastructure::processes::line_cap::EVENT_LINE_JSON_BUDGET);
     assert!(data["nextOffset"].as_u64().unwrap() > data["offset"].as_u64().unwrap());
 }
 
@@ -270,7 +270,7 @@ fn ranged_get_message_with_huge_thinking_still_makes_progress() {
 
     let mut msg = Message::assistant("abcdef", vec![]);
     msg.thinking_blocks.push(ThinkingBlock::Normal {
-        thinking: "r".repeat(crate::infrastructure::line_cap::EVENT_LINE_JSON_BUDGET),
+        thinking: "r".repeat(crate::infrastructure::processes::line_cap::EVENT_LINE_JSON_BUDGET),
         signature: "private".into(),
     });
 

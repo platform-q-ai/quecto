@@ -18,7 +18,7 @@ use quecto::domain::project_board::value_objects::telemetry::{
     TaskRef,
 };
 use quecto::infrastructure::observability::audit_log::AuditLog;
-use quecto::infrastructure::persistence::project_board::op_log::EventLogProjectBoardOps;
+use quecto::infrastructure::observability::project_board_op_log::EventLogProjectBoardOps;
 use serde_json::Value;
 
 fn record() -> BoardOpRecord {

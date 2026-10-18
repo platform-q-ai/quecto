@@ -32,15 +32,15 @@ use crate::domain::project_board::entities::claim::Identity;
 use crate::domain::shared::redaction::{redact_secrets, redact_url_userinfo};
 use crate::infrastructure::config::telemetry::globally_enabled;
 use crate::infrastructure::observability::audit_log::AuditLog;
+use crate::infrastructure::observability::project_board_op_log::{
+    EventLogProjectBoardOps, TracingProjectBoardOps,
+};
 use crate::infrastructure::persistence::project_board::gh_pull_requests::{
     GhPullRequestStates, github_repository,
 };
 use crate::infrastructure::persistence::project_board::git::{Git, GitEnvironment, GitError};
 use crate::infrastructure::persistence::project_board::index::BoardIndex;
 use crate::infrastructure::persistence::project_board::indexed_listings::IndexedBoardListings;
-use crate::infrastructure::persistence::project_board::op_log::{
-    EventLogProjectBoardOps, TracingProjectBoardOps,
-};
 use crate::infrastructure::persistence::project_board::store::GitBoardStore;
 use crate::infrastructure::persistence::project_board::text_cells::MarkdownTextCells;
 use crate::infrastructure::time::remote_time::ReferencedBoardClock;

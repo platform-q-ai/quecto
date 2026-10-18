@@ -433,7 +433,7 @@ fn a_refresh_credits_the_slots_the_published_runtime_routes() {
             .clone()
     };
 
-    let loaded = crate::infrastructure::catalogue_refresh_inputs::FileRefreshInputs::new(
+    let loaded = crate::infrastructure::providers::catalogue::catalogue_refresh_inputs::FileRefreshInputs::new(
         tmp.path(),
         Arc::new(runtime_store_for(tmp.path())),
     )

@@ -1,6 +1,6 @@
 use super::*;
 
-use quecto::infrastructure::logging::redact_api_keys;
+use quecto::infrastructure::observability::logging::redact_api_keys;
 
 // ===========================================================================
 // Structured Logging Steps

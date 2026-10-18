@@ -307,9 +307,10 @@ impl crate::application::providers::ports::RequestAccounting for SwarmContext {
             tokio::task::spawn_blocking(
                 crate::infrastructure::tools::registry::call_work::blocking(move || {
                     let mut value = serde_json::to_value(observation).map_err(invalid)?;
-                    value["runtime"] =
-                        serde_json::to_value(crate::infrastructure::runtime_identity::current())
-                            .map_err(invalid)?;
+                    value["runtime"] = serde_json::to_value(
+                        crate::infrastructure::processes::runtime_identity::current(),
+                    )
+                    .map_err(invalid)?;
                     context.rpc("_record_request", json!([value])).map(|_| ())
                 }),
             )

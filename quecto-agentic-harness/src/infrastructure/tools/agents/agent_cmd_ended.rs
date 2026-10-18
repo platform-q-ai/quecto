@@ -467,8 +467,9 @@ fn project(message: &Message, content_bytes: usize, tool_calls: usize) -> serde_
         fields.insert("isError".into(), true.into());
     }
     // #2404 review M2: a watermark cut's stub is told from a prompt.
-    if let Some(kind) = crate::infrastructure::turn_origin_names::user_kind_name(message.user_kind)
-    {
+    if let Some(kind) = crate::infrastructure::persistence::file::turn_origin_names::user_kind_name(
+        message.user_kind,
+    ) {
         fields.insert("userKind".into(), kind.into());
     }
     value

@@ -137,7 +137,7 @@ fn only_a_child_binding_inherits_at_composition() {
     use crate::infrastructure::admission::{
         AuthorityDirectory, AuthorityServer, Negotiation, negotiate, write_admission_context,
     };
-    use crate::infrastructure::provider_runtime_admission::AdmissionRuntimeProposal;
+    use crate::infrastructure::providers::routing::provider_runtime_admission::AdmissionRuntimeProposal;
     let rt = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
         .enable_all()
