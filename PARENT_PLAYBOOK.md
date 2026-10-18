@@ -12,6 +12,11 @@ When an epic or issue is not yet independently deliverable or has significant ar
 ### Planning and PR sizing
 Plan every PR for independent delivery, whether or not an optional spike ran. Each planned PR must be self-contained, with independently testable acceptance behavior and a manageable red-test phase before its implementation. Avoid temporary duplicate ownership and broken intermediate states: leave master buildable and green after each merge.
 
+#### PR size and decomposition
+The parent owns PR sizing and decomposition. Target no more than **500 changed lines per PR** (additions plus deletions, including tests), with a **maximum of 900** unless the human explicitly approves a justified exception before delivery. Report generated files, lockfiles, and mechanical changes separately; they must not obscure the size or complexity of substantive changes.
+
+Split larger work into small, complete vertical slices with independently testable acceptance behavior. Each PR must leave master buildable and green. Meet line limits while keeping tests with their implementation, preserving single ownership, and delivering complete behavior in each PR. Line count is a ceiling, not a substitute for judgment: split smaller PRs when their scope or complexity makes review difficult.
+
 ### Red-test phase before delivery
 After planning and before implementation, use a separate fresh red-test swarm for each PR (including a small PR identified by a spike). Derive focused unit, BDD, or acceptance tests from testable criteria and document non-testable criteria with review evidence. Write the red tests in their own commit on the delivery branch. The red-test swarm does not implement acceptance behavior. Run targeted tests to establish that each compiles and fails for the intended missing behavior, not a compile error or missing fixture. If a proposed test already passes against the baseline or the baseline cannot run, escalate for an explicit parent decision rather than inventing a failure.
 
@@ -33,7 +38,19 @@ Run each independent review in a fresh swarm with its own container/checkout, bo
 
 Run each remediation pass in a separate, fresh fix swarm, distinct from the review swarm. Give it the PR, current head SHA, and unresolved threads. Fix agents validate each finding, add appropriate regression coverage, implement and verify corrections, and push fixes to the PR branch. Only after pushing verified fixes may they reply with the fix commit and verification evidence and resolve the addressed threads. Escalate disputed findings to the parent for an explicit decision.
 
-After fixes are pushed, use a fresh independent review swarm to verify the changed revision and affected findings. Repeat review and remediation as needed. Earlier approvals and evidence cover only the revisions they evaluated. Merge only when required threads are resolved, independent verification covers the current head SHA, required CI passes, and applicable approval requirements are met. Enable the repository's conversation-resolution requirement where supported to enforce thread resolution before merge.
+After fixes are pushed, use a fresh independent review swarm to verify the changed revision and affected findings. Repeat review and remediation subject to the repeated remediation escalation checkpoint below. Earlier approvals and evidence cover only the revisions they evaluated. Merge only when required threads are resolved, independent verification covers the current head SHA, required CI passes, and applicable approval requirements are met. Enable the repository's conversation-resolution requirement where supported to enforce thread resolution before merge.
+
+#### Repeated remediation escalation
+If a PR requires **more than two remediation rounds**, pause before starting the third round and escalate to the human. A remediation round is one fix pass responding to an independent review, followed by independent re-review; individual findings or commits do not count as separate rounds.
+
+The escalation must include:
+- The PR's scope, changed-line count, and remediation history.
+- Remaining findings and the parent's assessment of why they persist.
+- Whether scope, complexity, or coupled responsibilities warrant splitting the PR.
+- A recommended course of action: continue with a bounded fix plan, split into smaller complete vertical slices, or replan the approach.
+- The proposed slices and dependency order if splitting is recommended.
+
+Proceed only after explicit human approval, and record the decision and rationale on the PR. Any split must preserve regression coverage, satisfy the red-first requirements for each resulting PR, carry forward unresolved findings to the relevant resulting PRs, and receive fresh independent review at each exact head SHA. Maintain the remediation history across splits so the escalation checkpoint remains effective.
 
 ### Clean PRs
 Include only code, tests, and intentional project documentation or configuration within the approved scope in the PR diff. Keep working notes, handoffs, review reports, logs, evidence dumps, and other process artifacts in durable external artifact storage, linked from the PR or relevant review thread as needed. Include non-code artifacts in the repository only when they are explicit deliverables within the approved scope.
