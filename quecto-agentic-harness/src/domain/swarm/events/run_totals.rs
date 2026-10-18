@@ -7,8 +7,8 @@
 //! from the board file every member shares, once, by the coordinator's
 //! harness at settle: the tasks by state, the messages by what became of
 //! them, each member's recorded requests and their token usage, and the
-//! run's wall time from its creation. Counts and kinds only: a member appears as its redacted
-//! `actor_ref`, and no board text is kept.
+//! run's wall time from its creation. Counts and kinds only: a member
+//! appears as its redacted `actor_ref`, and no board text is kept.
 use serde::{Deserialize, Serialize};
 
 use crate::domain::redaction::Redacted;
