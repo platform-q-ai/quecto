@@ -2,11 +2,11 @@ pub mod call_work;
 pub mod registration;
 #[cfg(test)]
 mod registration_tests;
-pub(super) mod registry_catalogue;
-pub(super) mod registry_inherited_policy;
-pub(super) mod registry_lifecycle_compat;
-pub(super) mod registry_tool_ids;
-pub(super) mod registry_uds;
+mod registry_catalogue;
+mod registry_inherited_policy;
+mod registry_lifecycle_compat;
+mod registry_tool_ids;
+mod registry_uds;
 
 // ToolRegistry: holds all Tool implementations, provides lookup by name.
 
@@ -730,11 +730,8 @@ mod trait_impls;
 #[path = "registry_catalogue_tests.rs"]
 mod catalogue_tests;
 #[cfg(test)]
-#[path = "inherited_tool_policy_tests.rs"]
 mod inherited_tool_policy_tests;
-#[path = "registry_persistence.rs"]
 mod registry_persistence;
-#[path = "registry_policy_ceiling.rs"]
 mod registry_policy_ceiling;
 pub use registry_policy_ceiling::ToolPolicyObserver;
 #[cfg(test)]

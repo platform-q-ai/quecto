@@ -17,8 +17,8 @@ use std::pin::Pin;
 /// embedded.
 ///
 /// `include_str!` paths are relative to this source file
-/// (`src/infrastructure/tools/`), so `../../../docs/docs-tool-embeds/` is the
-/// package embed folder. A renamed/removed doc fails the build — the embed
+/// (`src/infrastructure/tools/native/`), so `../../../../docs/docs-tool-embeds/`
+/// is the package embed folder. A renamed/removed doc fails the build — the embed
 /// cannot silently drift.
 const EMBEDDED_DOCS: &[(&str, &str)] = &[
     // The setup index is listed first: it routes every "set up X" task to

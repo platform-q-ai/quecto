@@ -53,7 +53,7 @@ Do not run live provider lanes unless the task explicitly requires them.
 **Tests to add/update:**
 
 - Tool unit tests beside the implementation, for example
-  `src/infrastructure/tools/<tool>_tests.rs`.
+  `src/infrastructure/tools/native/<tool>_tests.rs`.
 - Registry/schema tests when the tool definition changes.
 - BDD feature coverage under `tests/features/*_tool.feature` only for
   user-visible tool behaviour.
