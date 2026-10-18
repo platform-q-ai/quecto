@@ -257,7 +257,7 @@ fn agent_cmd_docs_match_tool_schema() {
     // schema. After the #841 consolidation `get_messages_tail` is no longer a
     // first-class agent_cmd command — it survives only as a deprecated UDS
     // protocol alias of `get_messages` with an optional `count`.
-    let src = read_repo_file("src/infrastructure/tools/agent_cmd_parse.rs");
+    let src = read_repo_file("src/infrastructure/tools/agents/agent_cmd_parse.rs");
     let block = src
         .split("const SUPPORTED_COMMANDS: &[&str] = &[")
         .nth(1)
@@ -492,7 +492,7 @@ fn agent_cmd_docs_match_tool_schema() {
     // The alias is still honored in code for backward compatibility even though
     // it is undocumented; pin that so a refactor can't silently drop it. The
     // dispatch in agent_cmd_parse.rs special-cases the alias name explicitly.
-    let agent_cmd = read_repo_file("src/infrastructure/tools/agent_cmd_parse.rs");
+    let agent_cmd = read_repo_file("src/infrastructure/tools/agents/agent_cmd_parse.rs");
     assert!(
         agent_cmd.contains("get_messages_tail"),
         "agent_cmd_parse.rs must still honor the backward-compat get_messages_tail alias"
@@ -722,8 +722,8 @@ fn assert_phase_0_links_resolve() {
 
 #[test]
 fn agent_cmd_and_spawn_schema_guidance_stays_in_sync_for_get_messages() {
-    let agent_cmd = read_repo_file("src/infrastructure/tools/agent_cmd.rs");
-    let spawn = read_repo_file("src/infrastructure/tools/spawn.rs");
+    let agent_cmd = read_repo_file("src/infrastructure/tools/agents/agent_cmd.rs");
+    let spawn = read_repo_file("src/infrastructure/tools/agents/spawn.rs");
     for (name, body) in [
         ("agent_cmd.rs", agent_cmd.as_str()),
         ("spawn.rs", spawn.as_str()),

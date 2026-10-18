@@ -41,13 +41,15 @@ impl WorkflowNudge {
 /// running; the parent identity is the active session key's (D10 #1979).
 pub(super) async fn has_active_workflow_descendant(ctx: &DispatchCtx<'_>) -> bool {
     let session_key = ctx.sessions.current_session_key().await;
-    crate::infrastructure::tools::subagent_identity::parent_identity_from_session_key(&session_key)
-        .is_some_and(|current_identity| {
-            crate::infrastructure::tools::subagent_registry::has_active_descendant_for_agent(
-                &ctx.subagent_registry,
-                current_identity,
-            )
-        })
+    crate::infrastructure::tools::agents::subagent_identity::parent_identity_from_session_key(
+        &session_key,
+    )
+    .is_some_and(|current_identity| {
+        crate::infrastructure::tools::agents::subagent_registry::has_active_descendant_for_agent(
+            &ctx.subagent_registry,
+            current_identity,
+        )
+    })
 }
 
 /// The next workflow nudge, if auto-continue or completion nudging is

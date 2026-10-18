@@ -348,7 +348,7 @@ fn test_build_subagent_info_list_empty_registry() {
 
 #[test]
 fn test_build_subagent_info_list_with_entries() {
-    use crate::infrastructure::tools::subagent_registry::{
+    use crate::infrastructure::tools::agents::subagent_registry::{
         SubagentEntry, SubagentStatus, new_registry,
     };
     let reg = new_registry();
@@ -375,7 +375,7 @@ fn test_build_subagent_info_list_with_entries() {
 
 #[test]
 fn test_build_subagent_info_list_maps_all_statuses() {
-    use crate::infrastructure::tools::subagent_registry::{
+    use crate::infrastructure::tools::agents::subagent_registry::{
         SubagentEntry, SubagentStatus, new_registry,
     };
     let reg = new_registry();
@@ -405,7 +405,7 @@ fn test_build_subagent_info_list_maps_all_statuses() {
 fn test_build_subagent_info_list_omits_socket_path() {
     // #1442: inspection is routed through the root/nearest reachable ancestor;
     // public topology snapshots must not expose raw UDS socket paths.
-    use crate::infrastructure::tools::subagent_registry::{
+    use crate::infrastructure::tools::agents::subagent_registry::{
         SubagentEntry, SubagentStatus, new_registry,
     };
     let reg = new_registry();
@@ -428,7 +428,7 @@ fn test_build_subagent_info_list_omits_socket_path() {
 fn test_subagent_info_socket_path_is_backcompat_input_only() {
     // The wire type still accepts older snapshots containing socketPath, but
     // newly built public snapshots omit it.
-    use crate::infrastructure::tools::subagent_registry::{
+    use crate::infrastructure::tools::agents::subagent_registry::{
         SubagentEntry, SubagentStatus, new_registry,
     };
     let reg = new_registry();
@@ -706,7 +706,7 @@ fn unit_tree_reconstructs_parentage_from_events() {
 
 #[test]
 fn build_subagent_info_list_includes_parent_and_workflow() {
-    use crate::infrastructure::tools::subagent_registry::{
+    use crate::infrastructure::tools::agents::subagent_registry::{
         SubagentEntry, WorkflowSnapshot, new_registry,
     };
     let reg = new_registry();

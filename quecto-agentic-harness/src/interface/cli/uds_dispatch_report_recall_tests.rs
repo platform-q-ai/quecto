@@ -17,8 +17,8 @@ use crate::domain::sessions::entities::session::SpillEntry;
 use crate::domain::sessions::entities::session_identity::SessionIdentity;
 use crate::infrastructure::persistence::context_spill::FileContextSpillStore;
 use crate::infrastructure::persistence::session_layout::FlatSessionLayout;
-use crate::infrastructure::tools::agent_cmd::AgentCmdTool;
-use crate::infrastructure::tools::subagent_registry::SubagentEntry;
+use crate::infrastructure::tools::agents::agent_cmd::AgentCmdTool;
+use crate::infrastructure::tools::agents::subagent_registry::SubagentEntry;
 
 /// Replies in order; `None` is a provider failure.
 #[derive(Debug)]

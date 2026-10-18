@@ -23,11 +23,11 @@ use quecto::domain::environments::entities::environment_registry::{
 use quecto::domain::ids::AgentUuid;
 use quecto::infrastructure::processes::direct_child_routing::UdsDirectChildRouting;
 use quecto::infrastructure::processes::owned_child_termination::SupervisedChildTermination;
-use quecto::infrastructure::tools::environment_member_shutdown::DelegatedMemberShutdown;
-use quecto::infrastructure::tools::subagent_registry::{
+use quecto::infrastructure::tools::agents::environment_member_shutdown::DelegatedMemberShutdown;
+use quecto::infrastructure::tools::agents::subagent_registry::{
     SubagentEntry, SubagentRegistry, SubagentStatus,
 };
-use quecto::infrastructure::tools::subagent_teardown_registry::RegistryDelegatedAgents;
+use quecto::infrastructure::tools::agents::subagent_teardown_registry::RegistryDelegatedAgents;
 
 fn launched(uuid: &str, socket: &std::path::Path, generation: u64) -> SubagentEntry {
     let mut entry =
@@ -235,8 +235,8 @@ async fn a_member_whose_end_another_path_owns_and_never_settles_is_unsettled() {
 async fn kill_container_after_a_failed_member_kill_re_attempts_and_runs_the_retained_kill_once() {
     use quecto::application::environments::use_cases::KillEnvironment;
     use quecto::domain::environments::entities::environment_registry::EnvironmentTarget;
-    use quecto::infrastructure::tools::environment_commands::ScriptEnvironmentCommands;
-    use quecto::infrastructure::tools::subagent_registry::{ClaimOwner, TeardownPhase};
+    use quecto::infrastructure::tools::agents::environment_commands::ScriptEnvironmentCommands;
+    use quecto::infrastructure::tools::agents::subagent_registry::{ClaimOwner, TeardownPhase};
 
     let marker = std::env::temp_dir().join(format!("q-ems-kill-{}", uuid::Uuid::new_v4().simple()));
     let (a_socket, a_requests) = fake_child();
@@ -265,7 +265,7 @@ async fn kill_container_after_a_failed_member_kill_re_attempts_and_runs_the_reta
         rig.port.clone(),
         Arc::new(ScriptEnvironmentCommands::inline()),
         Arc::new(
-            quecto::infrastructure::tools::environment_commands::HostedStoreObservation::new(
+            quecto::infrastructure::tools::agents::environment_commands::HostedStoreObservation::new(
                 quecto::composition::swarm::swarm_board(),
             ),
         ),

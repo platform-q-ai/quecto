@@ -165,7 +165,7 @@ const CANONICAL_FILES: &[&str] = &[
     "src/application/durable_prefix.rs",
     "src/infrastructure/persistence/session_snapshot_sources.rs",
     "src/infrastructure/persistence/fresh_session_identity.rs",
-    "src/infrastructure/tools/delegated_roster.rs",
+    "src/infrastructure/tools/agents/delegated_roster.rs",
     "src/composition/sessions.rs",
     "src/composition/active_session.rs",
     "src/composition/session_report.rs",
@@ -793,7 +793,7 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
         "src/infrastructure/persistence/fresh_session_identity.rs",
         41,
     ),
-    ("src/infrastructure/tools/delegated_roster.rs", 40),
+    ("src/infrastructure/tools/agents/delegated_roster.rs", 40),
     (
         "src/infrastructure/persistence/session_store_ordinals.rs",
         23,
@@ -1493,7 +1493,7 @@ fn fresh_session_is_requested_only_by_the_dispatch_handler() {
         ),
         (
             "impl DelegatedChildrenRoster for",
-            "src/infrastructure/tools/delegated_roster.rs",
+            "src/infrastructure/tools/agents/delegated_roster.rs",
         ),
         (
             "impl FleetSettlement for",

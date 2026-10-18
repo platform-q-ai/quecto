@@ -150,7 +150,7 @@ fn completion_calls_record_their_decisions_without_argument_text() {
 fn a_closed_runs_board_reads_as_the_view_its_board_run_is_folded_from() {
     use super::super::{CallOrigin, call_as};
     use crate::application::project_board::dto::{SwarmEnd, SwarmEvidence, SwarmItemState};
-    use crate::infrastructure::tools::coordinator_launch::swarm_run_view;
+    use crate::infrastructure::tools::agents::coordinator_launch::swarm_run_view;
     let (_dir, handles) = board(1_000.0);
     running(&handles);
     call(&handles, "parent", "_admit", json!(["worker", "r"])).unwrap();

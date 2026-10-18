@@ -5,7 +5,7 @@ use crate::domain::sessions::entities::session::{SubagentLiveness, SubagentResto
 use crate::domain::workflow::{
     WorkflowConfig, WorkflowEngine, WorkflowTemplate, WorkflowTemplateStep,
 };
-use crate::infrastructure::tools::subagent_registry::{SubagentEntry, new_registry};
+use crate::infrastructure::tools::agents::subagent_registry::{SubagentEntry, new_registry};
 
 fn engine() -> std::sync::Arc<std::sync::Mutex<WorkflowEngine>> {
     let config = WorkflowConfig {

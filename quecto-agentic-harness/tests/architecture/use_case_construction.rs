@@ -187,7 +187,7 @@ const LEGACY_RECORDS: &[&str] = &[
 /// #1666): (file, construction). Exact and non-growing: a construction
 /// that moves to composition leaves the list; nothing may join it.
 const LEGACY_CONSTRUCTIONS: &[(&str, &str)] = &[(
-    "src/infrastructure/tools/spawn.rs",
+    "src/infrastructure/tools/agents/spawn.rs",
     "SubagentLaunchUseCase::new(",
 )];
 
@@ -593,13 +593,13 @@ fn interface_declares_handles_and_composition_fills_them() {
         "the loop calls composition's builder with its runtime inputs"
     );
     // Infrastructure's inbound event sources hold handles or slots.
-    let spawn = production_code("src/infrastructure/tools/spawn_lifecycle.rs");
+    let spawn = production_code("src/infrastructure/tools/agents/spawn_lifecycle.rs");
     assert!(
         spawn
             .iter()
             .any(|(_, l)| l.contains("pub fn with_lifecycle_slot("))
     );
-    let wiring = production_code("src/infrastructure/tools/subagent_teardown_wiring.rs");
+    let wiring = production_code("src/infrastructure/tools/agents/subagent_teardown_wiring.rs");
     assert!(
         wiring
             .iter()
@@ -611,7 +611,7 @@ fn interface_declares_handles_and_composition_fills_them() {
             .any(|(_, l)| l.contains("fn build_lifecycle_use_cases")),
         "the wiring module declares handles, composition builds them"
     );
-    let cleanup = production_code("src/infrastructure/tools/subagent_cleanup.rs");
+    let cleanup = production_code("src/infrastructure/tools/agents/subagent_cleanup.rs");
     assert!(cleanup.iter().any(|(_, l)| {
         l.contains(
             "pub type MemberFinalizer = fn(EnvironmentRegistry) -> FinalizeEnvironmentMember;",

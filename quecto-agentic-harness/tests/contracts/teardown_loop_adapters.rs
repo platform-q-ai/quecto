@@ -15,7 +15,7 @@ use quecto::domain::agents::services::subagent_teardown::{
     HarnessLifecycleState, LaunchGeneration, ShutdownReason,
 };
 use quecto::domain::ids::AgentUuid;
-use quecto::infrastructure::tools::subagent_registry::{SubagentEntry, SubagentRegistry};
+use quecto::infrastructure::tools::agents::subagent_registry::{SubagentEntry, SubagentRegistry};
 use quecto::interface::cli::uds_cancel::{CancelSlot, TurnControl};
 use quecto::interface::cli::uds_teardown_handles::TeardownLoopInputs;
 use quecto::interface::uds::subagent_teardown::controller::{ControllerOutcome, DeliveryState};
@@ -49,7 +49,7 @@ fn graph(registry: Option<SubagentRegistry>, busy: bool) -> Graph {
         busy: Arc::new(std::sync::atomic::AtomicBool::new(busy)),
         exit_notify: notify.clone(),
         binding: ParentControlBinding::launched(credential()),
-        owner_exit: quecto::infrastructure::tools::owner_exit::OwnerExitFlag::new(),
+        owner_exit: quecto::infrastructure::tools::agents::owner_exit::OwnerExitFlag::new(),
         environment_control: None,
     });
     Graph {

@@ -21,11 +21,11 @@
 //! arm.
 
 use crate::application::subagents::use_cases::TerminateAllDelegatedAgents;
-use crate::infrastructure::tools::subagent_compact_roster::build_compact_subagent_roster;
+use crate::infrastructure::tools::agents::subagent_compact_roster::build_compact_subagent_roster;
 
 use super::protocol::AgentEvent;
 
-type SubagentRegistry = crate::infrastructure::tools::subagent_registry::SubagentRegistry;
+type SubagentRegistry = crate::infrastructure::tools::agents::subagent_registry::SubagentRegistry;
 
 /// Everything the reader task lends the interceptor for one command line.
 /// Mirrors `uds_busy_get_message::BusyCommandCtx`.
@@ -199,10 +199,10 @@ pub(super) async fn forward_child_command(
         .as_str()
         .expect("validated command type")
         .to_owned();
-    use crate::infrastructure::tools::subagent_registry::{
+    use crate::infrastructure::tools::agents::subagent_registry::{
         INSPECTOR_RESPONSE_TIMEOUT, send_subagent_uds_command_with_timeout,
     };
-    use crate::infrastructure::tools::subagent_routing::{
+    use crate::infrastructure::tools::agents::subagent_routing::{
         InspectionRoute, resolve_inspection_route,
     };
     let Some(registry) = subagents.as_ref() else {

@@ -153,18 +153,19 @@ pub type WebFetchToolFactory = fn(
 #[derive(Clone)]
 pub struct KillToolWiring {
     pub owner: crate::domain::ids::AgentUuid,
-    pub registry: crate::infrastructure::tools::subagent_registry::SubagentRegistry,
+    pub registry: crate::infrastructure::tools::agents::subagent_registry::SubagentRegistry,
     pub broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
-    pub notify_tx: Option<crate::infrastructure::tools::subagent_registry::NotificationTx>,
+    pub notify_tx: Option<crate::infrastructure::tools::agents::subagent_registry::NotificationTx>,
     /// The harness lifecycle cell (#1938): a frozen harness refuses new
     /// control commands; shared with the spawn tool and the teardown graph.
-    pub harness_lifecycle: crate::infrastructure::tools::harness_lifecycle::SharedHarnessLifecycle,
+    pub harness_lifecycle:
+        crate::infrastructure::tools::agents::harness_lifecycle::SharedHarnessLifecycle,
     /// The session-scoped environment registry the spawn tool commits
     /// members to; the environment control is composed over it.
     pub environment_registry:
         crate::domain::environments::entities::environment_registry::EnvironmentRegistry,
     /// Where the built agent-control tools read their composed use cases.
-    pub slots: crate::infrastructure::tools::environment_member_shutdown::TerminationSlots,
+    pub slots: crate::infrastructure::tools::agents::environment_member_shutdown::TerminationSlots,
     /// The base directory this harness's children share (#2192): where an
     /// ended child's crash record and transcript are read.
     pub base_dir: std::path::PathBuf,

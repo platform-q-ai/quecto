@@ -81,8 +81,8 @@ struct Harness {
     bind_trigger: Option<Arc<tokio::sync::Notify>>,
     /// The harness's subagent note channel and launcher registry, so a
     /// scenario can give it a direct child and deliver a note.
-    notes: quecto::infrastructure::tools::subagent_registry::NotificationTx,
-    registry: quecto::infrastructure::tools::subagent_registry::SubagentRegistry,
+    notes: quecto::infrastructure::tools::agents::subagent_registry::NotificationTx,
+    registry: quecto::infrastructure::tools::agents::subagent_registry::SubagentRegistry,
     child_runtime: Option<tokio::runtime::Runtime>,
     child_endpoint: Option<crate::selected_termination_steps::fixture::Endpoint>,
 }
@@ -396,8 +396,8 @@ fn launch_harness(world: &mut QuectoWorld, bind_deadline: BindDeadline) {
     let base_dir = base.clone();
     let sp = socket_path.clone();
     let (notes, notification_rx) =
-        quecto::infrastructure::tools::subagent_registry::new_notification_channel();
-    let registry = quecto::infrastructure::tools::subagent_registry::new_registry();
+        quecto::infrastructure::tools::agents::subagent_registry::new_notification_channel();
+    let registry = quecto::infrastructure::tools::agents::subagent_registry::new_registry();
     let registry_for_loop = registry.clone();
     let handle = std::thread::spawn(move || {
         let crate::uds_steps::UdsAgentContext {
@@ -607,7 +607,7 @@ fn when_client_prompts(world: &mut QuectoWorld) {
 fn given_slow_child(world: &mut QuectoWorld) {
     use crate::selected_termination_steps::fixture::{Behaviour, serve_with_shutdown_hook};
     use quecto::infrastructure::processes::owned_child_supervisor::ProcessGroup;
-    use quecto::infrastructure::tools::subagent_registry::{
+    use quecto::infrastructure::tools::agents::subagent_registry::{
         SequencedSubagentNotification, SubagentNotification,
     };
     let s = state(world);
@@ -660,17 +660,18 @@ fn given_slow_child(world: &mut QuectoWorld) {
         u64::from(spawned.display_pid.0),
         std::sync::atomic::Ordering::SeqCst,
     );
-    let mut entry = quecto::infrastructure::tools::subagent_registry::SubagentEntry::with_identity(
-        quecto::domain::ids::AgentUuid::new("slow-child"),
-        "slow".into(),
-        endpoint.path.clone(),
-        spawned.display_pid.0,
-    );
+    let mut entry =
+        quecto::infrastructure::tools::agents::subagent_registry::SubagentEntry::with_identity(
+            quecto::domain::ids::AgentUuid::new("slow-child"),
+            "slow".into(),
+            endpoint.path.clone(),
+            spawned.display_pid.0,
+        );
     entry.launch_generation = Some(LaunchGeneration::new(1));
     entry.owned_child = Some(spawned.handle);
     entry.owned_child_supervisor = Some(supervisor);
     let (exit_tx, _exit_rx) =
-        quecto::infrastructure::tools::subagent_registry::new_exit_signal_channel();
+        quecto::infrastructure::tools::agents::subagent_registry::new_exit_signal_channel();
     entry.exit_signal_tx = Some(exit_tx);
     harness
         .registry

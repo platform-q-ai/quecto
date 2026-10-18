@@ -190,7 +190,7 @@ pub(super) const PORT_IMPLEMENTORS: &[(&str, &[&str])] = &[
     ("FleetSettlement", &["src/composition/fleet_settlement.rs"]),
     (
         "DelegatedChildrenRoster",
-        &["src/infrastructure/tools/delegated_roster.rs"],
+        &["src/infrastructure/tools/agents/delegated_roster.rs"],
     ),
     (
         "SessionKeyPropagation",

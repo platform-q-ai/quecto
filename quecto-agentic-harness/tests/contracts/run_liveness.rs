@@ -12,8 +12,10 @@ use quecto::domain::ids::AgentUuid;
 use quecto::domain::project_board::value_objects::slug::Slug;
 use quecto::domain::sessions::entities::session::SubagentLiveness;
 use quecto::domain::tool_policy::value_objects::tool::{ToolDefinition, ToolResult};
-use quecto::infrastructure::tools::coordinator_launch::{SpawnCoordinatorLauncher, SpawnPermit};
-use quecto::infrastructure::tools::subagent_registry::{
+use quecto::infrastructure::tools::agents::coordinator_launch::{
+    SpawnCoordinatorLauncher, SpawnPermit,
+};
+use quecto::infrastructure::tools::agents::subagent_registry::{
     SubagentEntry, SubagentRegistry, SubagentStatus, new_registry,
 };
 

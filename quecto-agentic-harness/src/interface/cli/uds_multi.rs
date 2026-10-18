@@ -9,8 +9,8 @@
 use crate::application::agent_loop::AgentLoopImpl;
 use crate::application::sessions::dto::SaveTrigger;
 use crate::domain::conversation::value_objects::message::Message;
-use crate::infrastructure::tools::agent_cmd_containers::EnvironmentControlSlot;
-use crate::infrastructure::tools::owner_exit::OwnerExitFlag;
+use crate::infrastructure::tools::agents::agent_cmd_containers::EnvironmentControlSlot;
+use crate::infrastructure::tools::agents::owner_exit::OwnerExitFlag;
 
 use super::protocol::AgentEvent;
 use super::uds::{
@@ -67,13 +67,14 @@ pub(super) struct MultiClientArgs<'a> {
     /// launch-bound child ignore client churn.
     pub lifetime: crate::domain::agents::value_objects::harness_lifetime::HarnessLifetime,
     /// Receiver for subagent notifications (#523).
-    pub notification_rx: Option<crate::infrastructure::tools::subagent_registry::NotificationRx>,
+    pub notification_rx:
+        Option<crate::infrastructure::tools::agents::subagent_registry::NotificationRx>,
     /// Shared subagent registry for get_subagents / state_changed (#524).
     pub subagent_registry:
-        Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
+        Option<crate::infrastructure::tools::agents::subagent_registry::SubagentRegistry>,
     /// The lifecycle cell the spawn tool admits against (#1938).
     pub harness_lifecycle:
-        Option<crate::infrastructure::tools::harness_lifecycle::SharedHarnessLifecycle>,
+        Option<crate::infrastructure::tools::agents::harness_lifecycle::SharedHarnessLifecycle>,
     /// Shared workflow state for auto-nudge injection (#562).
     pub workflow_state: Option<crate::interface::shared::WorkflowStateHandle>,
     /// Workflow config (auto_continue, completion_nudge flags).

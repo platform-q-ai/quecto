@@ -20,7 +20,7 @@ use quecto::domain::ids::AgentUuid;
 use quecto::infrastructure::processes::direct_child_routing::{
     PROTOCOL_ACK_TIMEOUT, UdsDirectChildRouting, shutdown_over_socket,
 };
-use quecto::infrastructure::tools::subagent_registry::{SubagentEntry, SubagentRegistry};
+use quecto::infrastructure::tools::agents::subagent_registry::{SubagentEntry, SubagentRegistry};
 
 use super::teardown_fixture::{Lifecycle, identity, record};
 

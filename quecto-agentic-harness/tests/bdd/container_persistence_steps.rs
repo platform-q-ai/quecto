@@ -200,7 +200,7 @@ fn compose_session(world: &mut QuectoWorld, session: &str) {
         .expect("agent_cmd registry")
         .clone();
     let (notify_tx, notify_rx) =
-        quecto::infrastructure::tools::subagent_registry::new_notification_channel();
+        quecto::infrastructure::tools::agents::subagent_registry::new_notification_channel();
     let (broadcast_tx, broadcast_rx) = tokio::sync::broadcast::channel::<String>(64);
     world.spawn_tool = Some(quecto::composition::subagent_lifecycle::compose_launcher(
         SpawnTool::with_base_dir(vec![], base.clone())
@@ -219,7 +219,7 @@ fn compose_session(world: &mut QuectoWorld, session: &str) {
         owners.member_shutdown.clone(),
     );
     world.agent_cmd_tool = Some(
-        quecto::infrastructure::tools::agent_cmd::AgentCmdTool::new(subagent_registry)
+        quecto::infrastructure::tools::agents::agent_cmd::AgentCmdTool::new(subagent_registry)
             .with_kill_tool(owners.kill_tool)
             .with_environment_control(environment_control),
     );

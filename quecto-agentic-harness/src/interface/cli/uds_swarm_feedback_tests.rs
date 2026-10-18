@@ -187,7 +187,7 @@ async fn approval_exchange(busy: bool) {
         if busy {
             started.notified().await;
         }
-        crate::infrastructure::tools::subagent_registry::send_subagent_uds_command_with_timeout(
+        crate::infrastructure::tools::agents::subagent_registry::send_subagent_uds_command_with_timeout(
             &socket, r#"{"type":"prompt","streamingBehavior":"steer","message":"Approved: schema v2","ack":"accept","id":"approval-1"}"#,
             std::time::Duration::from_secs(2)).await.unwrap()
     });
@@ -295,7 +295,7 @@ async fn rejected_socket_steer_does_not_cancel_but_explicit_abort_does() {
         },
     );
 
-    let rejected = crate::infrastructure::tools::subagent_registry::send_subagent_uds_command_with_timeout(
+    let rejected = crate::infrastructure::tools::agents::subagent_registry::send_subagent_uds_command_with_timeout(
         &socket, r#"{"type":"prompt","streamingBehavior":"steer","message":"unretained approval","ack":"accept","id":"full"}"#, std::time::Duration::from_secs(2)).await.unwrap();
     assert_eq!(
         serde_json::from_str::<serde_json::Value>(&rejected).unwrap()["success"],
@@ -310,7 +310,7 @@ async fn rejected_socket_steer_does_not_cancel_but_explicit_abort_does() {
     );
     assert!(!ctx.turn_control.is_steer_pending());
     let aborted =
-        crate::infrastructure::tools::subagent_registry::send_subagent_uds_command_with_timeout(
+        crate::infrastructure::tools::agents::subagent_registry::send_subagent_uds_command_with_timeout(
             &socket,
             r#"{"type":"abort","ack":"accept","id":"stop"}"#,
             std::time::Duration::from_secs(2),

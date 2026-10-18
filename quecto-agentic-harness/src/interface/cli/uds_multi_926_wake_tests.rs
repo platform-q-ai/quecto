@@ -8,7 +8,7 @@ fn idle_shutdown() -> super::super::uds_shutdown::ShutdownRequest {
         tokio::sync::Notify::new(),
     ))
 }
-use crate::infrastructure::tools::subagent_registry::{
+use crate::infrastructure::tools::agents::subagent_registry::{
     SequencedSubagentNotification, SubagentNotification, new_notification_channel,
 };
 
@@ -60,7 +60,7 @@ async fn test_926_idle_parent_wakes_on_single_completion() {
 async fn test_926_dropped_rx_means_completion_cannot_wake_parent() {
     let (_cmd_tx, mut cmd_rx) = tokio::sync::mpsc::channel::<ClientMessage>(4);
     let mut notification_rx: Option<
-        crate::infrastructure::tools::subagent_registry::NotificationRx,
+        crate::infrastructure::tools::agents::subagent_registry::NotificationRx,
     > = None;
 
     // With no rx and no client messages, recv_next_message blocks forever;

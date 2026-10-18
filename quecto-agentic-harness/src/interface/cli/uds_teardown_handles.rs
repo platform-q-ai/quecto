@@ -16,8 +16,8 @@ use crate::application::subagents::use_cases::{
 };
 use crate::domain::agents::entities::parent_control::ParentControlBinding;
 use crate::domain::ids::AgentUuid;
-use crate::infrastructure::tools::harness_lifecycle::SharedHarnessLifecycle;
-use crate::infrastructure::tools::subagent_registry::{NotificationTx, SubagentRegistry};
+use crate::infrastructure::tools::agents::harness_lifecycle::SharedHarnessLifecycle;
+use crate::infrastructure::tools::agents::subagent_registry::{NotificationTx, SubagentRegistry};
 use crate::interface::uds::subagent_teardown::controller::SubagentTeardownController;
 
 use super::uds_cancel::{CancelHandle, TurnControlHandle};
@@ -58,7 +58,7 @@ pub struct TeardownLoopInputs {
     /// environments an owner exit ends; `None` builds a teardown that ends
     /// none (unit rigs).
     pub environment_control:
-        Option<crate::infrastructure::tools::agent_cmd_containers::EnvironmentControlSlot>,
+        Option<crate::infrastructure::tools::agents::agent_cmd_containers::EnvironmentControlSlot>,
 }
 
 /// The handles one dispatch loop holds: what the connection layer needs,

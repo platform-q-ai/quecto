@@ -6,7 +6,7 @@ use super::*;
 use crate::domain::environments::entities::environment_registry::{
     EnvironmentRecord, EnvironmentRegistry, EnvironmentStatus, mint_environment_uuid,
 };
-use crate::infrastructure::tools::subagent_registry::{SubagentEntry, new_registry};
+use crate::infrastructure::tools::agents::subagent_registry::{SubagentEntry, new_registry};
 use std::path::PathBuf;
 
 #[test]

@@ -188,7 +188,7 @@ async fn container_child_negotiates_admission_through_the_mounted_client_directo
     let admin = AdminConnection::connect(&dir.admin_socket()).await.unwrap();
     let group = GroupId::new("g").unwrap();
     let prompt = serde_json::json!({"type":"prompt","message":"hello","ack":"accept"}).to_string();
-    quecto::infrastructure::tools::subagent_registry::send_subagent_uds_command(
+    quecto::infrastructure::tools::agents::subagent_registry::send_subagent_uds_command(
         &child_socket,
         &prompt,
     )

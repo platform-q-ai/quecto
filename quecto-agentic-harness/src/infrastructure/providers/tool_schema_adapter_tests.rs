@@ -10,7 +10,7 @@ use crate::infrastructure::providers::anthropic::AnthropicProvider;
 use crate::infrastructure::providers::codex::CodexProvider;
 use crate::infrastructure::providers::openai::OpenAiProvider;
 use crate::infrastructure::test_support::tool_schema_portability::portability_violations;
-use crate::infrastructure::tools::spawn::SpawnTool;
+use crate::infrastructure::tools::agents::spawn::SpawnTool;
 use serde_json::Value;
 
 fn spawn_definition() -> ToolDefinition {

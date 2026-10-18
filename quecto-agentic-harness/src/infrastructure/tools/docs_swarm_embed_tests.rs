@@ -342,7 +342,7 @@ fn the_swarm_docs_name_only_real_agent_cmd_commands() {
         assert!(!named.is_empty(), "{page} names no agent_cmd command");
         for command in named {
             assert!(
-                crate::infrastructure::tools::agent_cmd_parse::SUPPORTED_COMMANDS
+                crate::infrastructure::tools::agents::agent_cmd_parse::SUPPORTED_COMMANDS
                     .contains(&command.as_str()),
                 "{page} names `agent_cmd {command}`, which is not a command"
             );

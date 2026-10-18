@@ -22,8 +22,8 @@ use crate::application::subagents::use_cases::{
 use crate::application::tools::ports::Tool;
 use crate::infrastructure::processes::direct_child_routing::UdsDirectChildRouting;
 use crate::infrastructure::processes::owned_child_termination::SupervisedChildTermination;
-use crate::infrastructure::tools::environment_member_shutdown::DelegatedMemberShutdown;
-use crate::infrastructure::tools::subagent_teardown_registry::RegistryDelegatedAgents;
+use crate::infrastructure::tools::agents::environment_member_shutdown::DelegatedMemberShutdown;
+use crate::infrastructure::tools::agents::subagent_teardown_registry::RegistryDelegatedAgents;
 use crate::infrastructure::tools::swarm::swarm_member_termination::DelegatedSwarmMemberTermination;
 use crate::interface::cli::KillToolWiring;
 use crate::interface::cli::uds_teardown_adapters::RegistryLifecycleRepository;

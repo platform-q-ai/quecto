@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use crate::domain::tool_policy::services::tool_policy::inherited_child_policy_from_catalogue;
 use crate::domain::tool_policy::value_objects::tool_descriptor::ProfileAvailabilityScope;
-use crate::infrastructure::tools::inherited_tool_policy::{
+use crate::infrastructure::tools::agents::inherited_tool_policy::{
     entrypoint_only_tools, is_entrypoint_only, recorded_scope,
 };
 use crate::infrastructure::tools::registration::ToolRegistration;
@@ -11,7 +11,7 @@ use crate::infrastructure::tools::registry::ToolRegistryImpl;
 impl ToolRegistryImpl {
     pub(crate) fn apply_inherited_tool_policy_snapshot(
         &mut self,
-        snapshot: &crate::infrastructure::tools::inherited_tool_policy::InheritedToolPolicySnapshot,
+        snapshot: &crate::infrastructure::tools::agents::inherited_tool_policy::InheritedToolPolicySnapshot,
     ) -> Vec<String> {
         let mut warnings = Vec::new();
         self.inherited_policy_scopes = snapshot

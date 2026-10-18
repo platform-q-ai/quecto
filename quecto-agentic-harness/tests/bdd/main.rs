@@ -25,10 +25,10 @@ use quecto::infrastructure::providers;
 use quecto::infrastructure::providers::router::ProviderRouter;
 
 use quecto::infrastructure::security::sandbox::Sandbox;
+use quecto::infrastructure::tools::agents::spawn::SpawnTool;
 use quecto::infrastructure::tools::bash::ExecTool;
 use quecto::infrastructure::tools::recall::RecallTool;
 use quecto::infrastructure::tools::registry::ToolRegistryImpl;
-use quecto::infrastructure::tools::spawn::SpawnTool;
 use quecto::infrastructure::tools::web_search::WebSearchTool;
 use quecto::interface::cli::{self, CliContext};
 use std::collections::HashMap;
@@ -467,7 +467,7 @@ pub struct QuectoWorld {
     /// Keeps a spawn rig's catalogue directory alive for the scenario (#1848).
     pub _spawn_tool_dir: Option<tempfile::TempDir>,
     /// AgentCmdTool for BDD (#421)
-    pub agent_cmd_tool: Option<quecto::infrastructure::tools::agent_cmd::AgentCmdTool>,
+    pub agent_cmd_tool: Option<quecto::infrastructure::tools::agents::agent_cmd::AgentCmdTool>,
     /// AgentCmdTool result for BDD (#421)
     pub agent_cmd_result: Option<ToolResult>,
     /// Live execution state observed by issue #1282 BDD scenarios.
@@ -480,7 +480,8 @@ pub struct QuectoWorld {
     pub subagent_liveness_registry_names: Vec<String>,
     pub subagent_liveness_registry_remaining: Option<usize>,
     /// Shared subagent registry for BDD (#421)
-    pub agent_cmd_registry: Option<quecto::infrastructure::tools::agent_cmd::SubagentRegistry>,
+    pub agent_cmd_registry:
+        Option<quecto::infrastructure::tools::agents::agent_cmd::SubagentRegistry>,
     /// Mock UDS server temp dir for agent_cmd BDD (kept alive)
     pub _agent_cmd_mock_tmp: Option<TempDir>,
     /// Last command sent to mock UDS server (#421)
@@ -887,9 +888,9 @@ pub struct QuectoWorld {
     /// Formatted notification message for BDD assertions
     pub notify_message: Option<String>,
     /// Notification channel sender for BDD
-    pub notify_tx: Option<quecto::infrastructure::tools::subagent_registry::NotificationTx>,
+    pub notify_tx: Option<quecto::infrastructure::tools::agents::subagent_registry::NotificationTx>,
     /// Notification channel receiver for BDD
-    pub notify_rx: Option<quecto::infrastructure::tools::subagent_registry::NotificationRx>,
+    pub notify_rx: Option<quecto::infrastructure::tools::agents::subagent_registry::NotificationRx>,
     /// Count from drain operation
     pub notify_drain_count: Option<usize>,
     /// Parent session under test for #816 passive completion-note idle delivery
@@ -903,13 +904,14 @@ pub struct QuectoWorld {
     pub notify_drained_note: Option<quecto::domain::conversation::value_objects::message::Message>,
     // --- Subagent monitor (#522) ---
     /// SubagentEntry under test for monitor BDD scenarios
-    pub monitor_entry: Option<quecto::infrastructure::tools::subagent_registry::SubagentEntry>,
+    pub monitor_entry:
+        Option<quecto::infrastructure::tools::agents::subagent_registry::SubagentEntry>,
     /// All SubagentStatus variants for display assertion
     pub monitor_status_variants:
-        Option<Vec<quecto::infrastructure::tools::subagent_registry::SubagentStatus>>,
+        Option<Vec<quecto::infrastructure::tools::agents::subagent_registry::SubagentStatus>>,
     /// Root registry for cascade-remove BDD scenarios (#831)
     pub cascade_registry:
-        Option<quecto::infrastructure::tools::subagent_registry::SubagentRegistry>,
+        Option<quecto::infrastructure::tools::agents::subagent_registry::SubagentRegistry>,
     /// Result of a cascade-remove broadcast: Some(event) or None (#831)
     pub cascade_broadcast: Option<Option<serde_json::Value>>,
     /// Broadcast receiver for SpawnTool immediate-visibility scenarios (#1028 wave 4)
@@ -919,7 +921,10 @@ pub struct QuectoWorld {
     /// Slice 2 empty-state BDD: in-flight gated spawn (tool moves into the
     /// thread and returns with the result) and the gate file releasing it.
     pub gated_spawn: Option<
-        std::thread::JoinHandle<(quecto::infrastructure::tools::spawn::SpawnTool, ToolResult)>,
+        std::thread::JoinHandle<(
+            quecto::infrastructure::tools::agents::spawn::SpawnTool,
+            ToolResult,
+        )>,
     >,
     /// The gated spawn tool's environment registry, kept so a failing wait can
     /// show the spawn side of the picture alongside the listing.
@@ -969,7 +974,7 @@ pub struct QuectoWorld {
     pub deserialized_event: Option<quecto::interface::cli::protocol::AgentEvent>,
     /// Registry for protocol BDD scenarios
     pub subagent_protocol_registry:
-        Option<quecto::infrastructure::tools::subagent_registry::SubagentRegistry>,
+        Option<quecto::infrastructure::tools::agents::subagent_registry::SubagentRegistry>,
     // --- Subagent widget (#525) ---
     /// Simulated subagent infos for widget BDD tests
     pub widget_subagent_infos: Vec<quecto::interface::cli::protocol::SubagentInfo>,
@@ -1739,7 +1744,7 @@ fn run_cucumber() {
 /// restored row, a script/container member) is left alone: nothing is
 /// signalled by pid.
 fn ask_owned_child_to_stop(
-    entry: &quecto::infrastructure::tools::subagent_registry::SubagentEntry,
+    entry: &quecto::infrastructure::tools::agents::subagent_registry::SubagentEntry,
 ) {
     use quecto::infrastructure::processes::direct_child_routing::{
         PROTOCOL_ACK_TIMEOUT, shutdown_protocol_attempt,

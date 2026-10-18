@@ -188,7 +188,7 @@ fn no_workflow_nudge_is_marked_a_prompt() {
 
 #[tokio::test]
 async fn workflow_nudge_message_scopes_generated_unnamed_sessions_independently() {
-    use crate::infrastructure::tools::subagent_registry::{
+    use crate::infrastructure::tools::agents::subagent_registry::{
         SubagentEntry, SubagentStatus, new_registry,
     };
     let mut env = DispatchTestEnv::with_selected_feature();
@@ -215,7 +215,7 @@ async fn workflow_nudge_message_scopes_generated_unnamed_sessions_independently(
 
 #[tokio::test]
 async fn workflow_nudge_message_after_new_uses_new_generated_session_identity() {
-    use crate::infrastructure::tools::subagent_registry::{
+    use crate::infrastructure::tools::agents::subagent_registry::{
         SubagentEntry, SubagentStatus, new_registry,
     };
     let mut env = DispatchTestEnv::with_selected_feature();
@@ -241,7 +241,7 @@ async fn workflow_nudge_message_after_new_uses_new_generated_session_identity() 
 
 #[tokio::test]
 async fn workflow_nudge_message_after_resume_uses_resumed_session_identity() {
-    use crate::infrastructure::tools::subagent_registry::{
+    use crate::infrastructure::tools::agents::subagent_registry::{
         SubagentEntry, SubagentStatus, new_registry,
     };
     let mut env = DispatchTestEnv::with_selected_feature();
@@ -267,7 +267,7 @@ async fn workflow_nudge_message_after_resume_uses_resumed_session_identity() {
 
 #[tokio::test]
 async fn workflow_nudge_message_is_suppressed_for_default_unnamed_parent_child() {
-    use crate::infrastructure::tools::subagent_registry::{
+    use crate::infrastructure::tools::agents::subagent_registry::{
         SubagentEntry, SubagentStatus, new_registry,
     };
     let mut env = DispatchTestEnv::with_selected_feature();
@@ -288,7 +288,7 @@ async fn workflow_nudge_message_is_suppressed_for_default_unnamed_parent_child()
 
 #[tokio::test]
 async fn workflow_nudge_message_scopes_non_cli_colon_session_to_suffix_identity() {
-    use crate::infrastructure::tools::subagent_registry::{
+    use crate::infrastructure::tools::agents::subagent_registry::{
         SubagentEntry, SubagentStatus, new_registry,
     };
     let mut env = DispatchTestEnv::with_selected_feature();
@@ -309,7 +309,7 @@ async fn workflow_nudge_message_scopes_non_cli_colon_session_to_suffix_identity(
 
 #[tokio::test]
 async fn workflow_nudge_message_scopes_raw_session_without_prefix() {
-    use crate::infrastructure::tools::subagent_registry::{
+    use crate::infrastructure::tools::agents::subagent_registry::{
         SubagentEntry, SubagentStatus, new_registry,
     };
     let mut env = DispatchTestEnv::with_selected_feature();
@@ -330,7 +330,7 @@ async fn workflow_nudge_message_scopes_raw_session_without_prefix() {
 
 #[tokio::test]
 async fn workflow_nudge_message_is_not_suppressed_by_unrelated_active_agent() {
-    use crate::infrastructure::tools::subagent_registry::{
+    use crate::infrastructure::tools::agents::subagent_registry::{
         SubagentEntry, SubagentStatus, new_registry,
     };
     let mut env = DispatchTestEnv::with_selected_feature();
@@ -350,7 +350,7 @@ async fn workflow_nudge_message_is_not_suppressed_by_unrelated_active_agent() {
 
 #[tokio::test]
 async fn workflow_nudge_message_is_suppressed_while_direct_child_active() {
-    use crate::infrastructure::tools::subagent_registry::{
+    use crate::infrastructure::tools::agents::subagent_registry::{
         SubagentEntry, SubagentStatus, new_registry,
     };
     let mut env = DispatchTestEnv::with_selected_feature();
@@ -370,7 +370,7 @@ async fn workflow_nudge_message_is_suppressed_while_direct_child_active() {
 
 #[tokio::test]
 async fn workflow_nudge_message_is_suppressed_while_transitive_descendant_active() {
-    use crate::infrastructure::tools::subagent_registry::{
+    use crate::infrastructure::tools::agents::subagent_registry::{
         SubagentEntry, SubagentStatus, new_registry,
     };
     let mut env = DispatchTestEnv::with_selected_feature();
@@ -394,7 +394,7 @@ async fn workflow_nudge_message_is_suppressed_while_transitive_descendant_active
 
 #[tokio::test]
 async fn workflow_nudge_message_resumes_after_descendants_stop_being_active() {
-    use crate::infrastructure::tools::subagent_registry::{
+    use crate::infrastructure::tools::agents::subagent_registry::{
         SubagentEntry, SubagentStatus, new_registry,
     };
     let mut env = DispatchTestEnv::with_selected_feature();

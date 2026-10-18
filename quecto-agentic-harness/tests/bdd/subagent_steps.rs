@@ -3,7 +3,7 @@ use quecto::domain::agents::services::subagent::{
     DisplayNameResolutionEntry, assert_display_name_available_for_spawn,
 };
 use quecto::domain::ids::AgentUuid;
-use quecto::infrastructure::tools::subagent_registry::{
+use quecto::infrastructure::tools::agents::subagent_registry::{
     SubagentEntry, SubagentStatus, new_registry, resolve_registry_key,
 };
 

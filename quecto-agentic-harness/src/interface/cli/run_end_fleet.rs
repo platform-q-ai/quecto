@@ -24,8 +24,8 @@ use crate::application::subagents::dto::{
 use crate::application::subagents::use_cases::TerminateAllDelegatedAgents;
 use crate::domain::agents::services::subagent_teardown::ShutdownReason;
 use crate::domain::ids::AgentUuid;
-use crate::infrastructure::tools::harness_lifecycle::SharedHarnessLifecycle;
-use crate::infrastructure::tools::subagent_registry::SubagentRegistry;
+use crate::infrastructure::tools::agents::harness_lifecycle::SharedHarnessLifecycle;
+use crate::infrastructure::tools::agents::subagent_registry::SubagentRegistry;
 
 /// What the run-end fleet of one one-shot run is built over.
 pub struct RunEndFleetInputs {

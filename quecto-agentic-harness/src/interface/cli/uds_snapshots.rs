@@ -121,9 +121,9 @@ pub(crate) fn build_get_messages_line(page: HistoryPage) -> String {
 
 /// Build the connect-time `get_subagents` snapshot line a BUSY child pushes.
 pub(crate) fn build_get_subagents_line(
-    registry: &Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
+    registry: &Option<crate::infrastructure::tools::agents::subagent_registry::SubagentRegistry>,
 ) -> String {
-    use crate::infrastructure::tools::subagent_compact_roster::build_compact_subagent_roster;
+    use crate::infrastructure::tools::agents::subagent_compact_roster::build_compact_subagent_roster;
     let roster = build_compact_subagent_roster(registry, None).unwrap_or_default();
     let mut data = serde_json::to_value(roster).unwrap_or_default();
     if let Some(obj) = data.as_object_mut() {
@@ -164,7 +164,8 @@ pub(crate) struct BusySnapshotSources<'a> {
     pub session: &'a SessionReadHandles,
     pub session_stats: &'a SessionStatsSnapshot,
     pub tool_catalogue: &'a crate::interface::cli::uds_extensions::ToolCatalogueSnapshot,
-    pub subagents: &'a Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
+    pub subagents:
+        &'a Option<crate::infrastructure::tools::agents::subagent_registry::SubagentRegistry>,
     pub workflow: &'a Option<crate::interface::shared::WorkflowStateHandle>,
     pub execution: &'a super::uds_execution_state::ExecutionStateHandle,
 }

@@ -9,7 +9,7 @@ use quecto::application::sessions::ports::HistoricalRosterSource;
 use quecto::domain::ids::AgentUuid;
 use quecto::domain::sessions::entities::session::{SubagentLiveness, SubagentRestoreReason};
 use quecto::infrastructure::persistence::session_snapshot_sources::RegistryRosterSource;
-use quecto::infrastructure::tools::subagent_registry::{
+use quecto::infrastructure::tools::agents::subagent_registry::{
     SubagentEntry, SubagentRegistry, new_registry,
 };
 

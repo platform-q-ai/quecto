@@ -165,15 +165,17 @@ async fn send_hints(
     let sends = recipients.iter().map(|&(member, socket)| {
         let line = &line;
         async move {
-            let accepted = super::super::subagent_registry::send_subagent_uds_command_with_timeout(
-                std::path::Path::new(socket),
-                line,
-                std::time::Duration::from_millis(500),
-            )
-            .await
-            .is_ok_and(|response| {
-                serde_json::from_str::<Value>(&response).is_ok_and(|value| value["success"] == true)
-            });
+            let accepted =
+                super::super::agents::subagent_registry::send_subagent_uds_command_with_timeout(
+                    std::path::Path::new(socket),
+                    line,
+                    std::time::Duration::from_millis(500),
+                )
+                .await
+                .is_ok_and(|response| {
+                    serde_json::from_str::<Value>(&response)
+                        .is_ok_and(|value| value["success"] == true)
+                });
             match accepted {
                 true => None,
                 false => Some(format!(
@@ -230,7 +232,7 @@ impl ProcessControl for RuntimeProcesses {
             let Some(socket) = &member.endpoint else {
                 return false;
             };
-            super::super::subagent_registry::send_subagent_uds_command_with_timeout(
+            super::super::agents::subagent_registry::send_subagent_uds_command_with_timeout(
                 std::path::Path::new(socket),
                 r#"{"type":"abort","ack":"accept"}"#,
                 std::time::Duration::from_millis(500),

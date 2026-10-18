@@ -3,8 +3,8 @@ use super::*;
 // AgentCmdTool BDD Steps (#421)
 // ===========================================================================
 
-use quecto::infrastructure::tools::agent_cmd::AgentCmdTool;
-use quecto::infrastructure::tools::subagent_registry::SubagentEntry;
+use quecto::infrastructure::tools::agents::agent_cmd::AgentCmdTool;
+use quecto::infrastructure::tools::agents::subagent_registry::SubagentEntry;
 
 // --- Given ---
 
@@ -12,7 +12,7 @@ use quecto::infrastructure::tools::subagent_registry::SubagentEntry;
 /// `kill` command is owned by the composed selected-termination tool over
 /// the same registry and event stream.
 pub(crate) fn agent_cmd_tool_with_kill(
-    registry: &quecto::infrastructure::tools::subagent_registry::SubagentRegistry,
+    registry: &quecto::infrastructure::tools::agents::subagent_registry::SubagentRegistry,
     broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
 ) -> AgentCmdTool {
     AgentCmdTool::new(registry.clone())
@@ -23,7 +23,7 @@ pub(crate) fn agent_cmd_tool_with_kill(
 /// (#1939): the kill tool, the environment member shutdown and the swarm
 /// member termination.
 pub(crate) fn termination_owners(
-    registry: &quecto::infrastructure::tools::subagent_registry::SubagentRegistry,
+    registry: &quecto::infrastructure::tools::agents::subagent_registry::SubagentRegistry,
     broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
 ) -> quecto::composition::subagent_termination::TerminationOwners {
     quecto::composition::subagent_termination::build_termination_owners(
@@ -33,7 +33,7 @@ pub(crate) fn termination_owners(
             broadcast_tx,
             notify_tx: None,
             harness_lifecycle:
-                quecto::infrastructure::tools::harness_lifecycle::new_shared_harness_lifecycle(),
+                quecto::infrastructure::tools::agents::harness_lifecycle::new_shared_harness_lifecycle(),
             environment_registry: quecto::domain::environments::entities::environment_registry::EnvironmentRegistry::new(),
             slots: Default::default(),
             base_dir: std::env::temp_dir(),

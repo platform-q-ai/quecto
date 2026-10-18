@@ -1,7 +1,7 @@
 use super::*;
 
 use quecto::application::subagents::ports::{DelegatedAgentRegistry, TerminationCause};
-use quecto::infrastructure::tools::subagent_teardown_registry::RegistryDelegatedAgents;
+use quecto::infrastructure::tools::agents::subagent_teardown_registry::RegistryDelegatedAgents;
 
 // Slice 2 (#1369): join, list, and kill shared script-managed environments.
 // ===========================================================================
@@ -169,7 +169,7 @@ echo "{{\"kind\":\"cleanup\",\"env_id\":\"${{QUECTO_CONTAINER_ENVIRONMENT_ID:-}}
         .expect("agent_cmd registry")
         .clone();
     let (notify_tx, notify_rx) =
-        quecto::infrastructure::tools::subagent_registry::new_notification_channel();
+        quecto::infrastructure::tools::agents::subagent_registry::new_notification_channel();
     let (broadcast_tx, broadcast_rx) = tokio::sync::broadcast::channel::<String>(64);
     world.spawn_tool = Some(quecto::composition::subagent_lifecycle::compose_launcher(
         SpawnTool::with_base_dir(vec![], base.clone())
@@ -211,9 +211,11 @@ pub(crate) fn wire_environment_control(
         owners.member_shutdown.clone(),
     );
     world.agent_cmd_tool = Some(
-        quecto::infrastructure::tools::agent_cmd::AgentCmdTool::new(subagent_registry.clone())
-            .with_kill_tool(owners.kill_tool)
-            .with_environment_control(environment_control),
+        quecto::infrastructure::tools::agents::agent_cmd::AgentCmdTool::new(
+            subagent_registry.clone(),
+        )
+        .with_kill_tool(owners.kill_tool)
+        .with_environment_control(environment_control),
     );
 }
 
@@ -1065,7 +1067,7 @@ fn then_kill_result_member_settled_or_gone(world: &mut QuectoWorld, agent_id: St
             );
             assert_eq!(
                 status,
-                quecto::infrastructure::tools::subagent_registry::SubagentStatus::Exited,
+                quecto::infrastructure::tools::agents::subagent_registry::SubagentStatus::Exited,
                 "an already-exited member is an exited row: {parsed}"
             );
         }

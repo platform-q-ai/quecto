@@ -158,7 +158,9 @@ fn served_during_the_wait(ctx: &DispatchCtx<'_>, msg: &DispatchMsg) -> bool {
 /// child's exit fits its launcher's budget.
 pub(super) fn end_with_the_fleet(
     extensions: &Extensions,
-    lifecycle: Option<crate::infrastructure::tools::harness_lifecycle::SharedHarnessLifecycle>,
+    lifecycle: Option<
+        crate::infrastructure::tools::agents::harness_lifecycle::SharedHarnessLifecycle,
+    >,
 ) {
     use crate::domain::agents::services::subagent_teardown::HarnessLifecycleState;
     let (Some(extensions), Some(lifecycle)) = (extensions.clone(), lifecycle) else {
@@ -166,7 +168,7 @@ pub(super) fn end_with_the_fleet(
     };
     tokio::spawn(async move {
         loop {
-            match crate::infrastructure::tools::harness_lifecycle::current(&lifecycle) {
+            match crate::infrastructure::tools::agents::harness_lifecycle::current(&lifecycle) {
                 HarnessLifecycleState::Accepting => {
                     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
                 }

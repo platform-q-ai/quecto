@@ -1,6 +1,6 @@
 use super::*;
-use quecto::infrastructure::tools::subagent_monitor::{apply_event, mark_exited};
-use quecto::infrastructure::tools::subagent_registry::{SubagentEntry, SubagentStatus};
+use quecto::infrastructure::tools::agents::subagent_monitor::{apply_event, mark_exited};
+use quecto::infrastructure::tools::agents::subagent_registry::{SubagentEntry, SubagentStatus};
 
 // ===========================================================================
 // Subagent Monitor BDD Steps (#522)
@@ -73,8 +73,8 @@ fn given_child_state_changed_with_two_grandchildren(
 
 #[when("the monitor forwards the child's subagent_state_changed event")]
 fn when_monitor_forwards_state_changed(world: &mut QuectoWorld) {
-    use quecto::infrastructure::tools::subagent_monitor::forward_child_state_changed;
-    use quecto::infrastructure::tools::subagent_registry::new_registry;
+    use quecto::infrastructure::tools::agents::subagent_monitor::forward_child_state_changed;
+    use quecto::infrastructure::tools::agents::subagent_registry::new_registry;
     let line = world
         .event_identity_last
         .as_ref()
@@ -320,7 +320,7 @@ fn given_root_registry_tree(
     grandchild_parent: String,
     live: String,
 ) {
-    use quecto::infrastructure::tools::subagent_registry::new_registry;
+    use quecto::infrastructure::tools::agents::subagent_registry::new_registry;
     let r = new_registry();
     {
         let mut g = r.lock().unwrap();
@@ -341,7 +341,7 @@ fn given_root_registry_tree(
 
 #[when(expr = "the parent {string} is killed")]
 fn when_parent_exits_cascade(world: &mut QuectoWorld, parent: String) {
-    use quecto::infrastructure::tools::subagent_cascade::cascade_remove_and_state_changed;
+    use quecto::infrastructure::tools::agents::subagent_cascade::cascade_remove_and_state_changed;
     let r = world
         .cascade_registry
         .as_ref()
@@ -392,7 +392,7 @@ fn then_registry_lacks_three(world: &mut QuectoWorld, a: String, b: String, c: S
             .unwrap_or_else(|| panic!("registry must retain tombstone for {id}"));
         assert_eq!(
             entry.status,
-            quecto::infrastructure::tools::subagent_registry::SubagentStatus::Exited
+            quecto::infrastructure::tools::agents::subagent_registry::SubagentStatus::Exited
         );
     }
 }
@@ -415,7 +415,7 @@ fn then_registry_contains(world: &mut QuectoWorld, id: String) {
     expr = "a root registry with child {string} and a previously-merged grandchild {string} under it"
 )]
 fn given_root_with_merged_grandchild(world: &mut QuectoWorld, child: String, grandchild: String) {
-    use quecto::infrastructure::tools::subagent_registry::new_registry;
+    use quecto::infrastructure::tools::agents::subagent_registry::new_registry;
     let r = new_registry();
     {
         let mut g = r.lock().unwrap();
@@ -432,7 +432,7 @@ fn given_root_with_merged_grandchild(world: &mut QuectoWorld, child: String, gra
 
 #[when(expr = "the child {string} forwards a subagent_state_changed with no descendants")]
 fn when_child_forwards_empty(world: &mut QuectoWorld, child: String) {
-    use quecto::infrastructure::tools::subagent_monitor::forward_child_state_changed;
+    use quecto::infrastructure::tools::agents::subagent_monitor::forward_child_state_changed;
     let r = world
         .cascade_registry
         .as_ref()
@@ -471,7 +471,7 @@ fn then_registry_has_dead_tombstone(world: &mut QuectoWorld, id: String) {
         .unwrap_or_else(|| panic!("registry must contain {id}"));
     assert_eq!(
         entry.status,
-        quecto::infrastructure::tools::subagent_registry::SubagentStatus::Exited,
+        quecto::infrastructure::tools::agents::subagent_registry::SubagentStatus::Exited,
         "registry tombstone must be dead for {id}"
     );
 }
@@ -491,7 +491,7 @@ fn given_root_registry_with_child_and_sibling(
     child: String,
     sibling: String,
 ) {
-    use quecto::infrastructure::tools::subagent_registry::new_registry;
+    use quecto::infrastructure::tools::agents::subagent_registry::new_registry;
     let r = new_registry();
     {
         let mut g = r.lock().unwrap();
@@ -506,7 +506,7 @@ fn given_root_registry_with_child_and_sibling(
 
 #[given("an empty root subagent registry")]
 fn given_empty_root_subagent_registry(world: &mut QuectoWorld) {
-    use quecto::infrastructure::tools::subagent_registry::new_registry;
+    use quecto::infrastructure::tools::agents::subagent_registry::new_registry;
     world.cascade_registry = Some(new_registry());
 }
 
@@ -516,7 +516,7 @@ fn when_child_forwards_running_grandchild(
     child: String,
     grandchild: String,
 ) {
-    use quecto::infrastructure::tools::subagent_monitor::forward_child_state_changed;
+    use quecto::infrastructure::tools::agents::subagent_monitor::forward_child_state_changed;
     let r = world
         .cascade_registry
         .as_ref()
@@ -538,7 +538,7 @@ fn when_child_forwards_n_running_grandchildren(
     child: String,
     count: usize,
 ) {
-    use quecto::infrastructure::tools::subagent_monitor::forward_child_state_changed;
+    use quecto::infrastructure::tools::agents::subagent_monitor::forward_child_state_changed;
     let r = world
         .cascade_registry
         .as_ref()
@@ -614,7 +614,7 @@ fn given_root_monitor_knows_idle_grandchild(
     grandchild: String,
     child: String,
 ) {
-    use quecto::infrastructure::tools::subagent_registry::new_registry;
+    use quecto::infrastructure::tools::agents::subagent_registry::new_registry;
     let r = new_registry();
     {
         let mut g = r.lock().unwrap();
@@ -632,7 +632,7 @@ fn given_root_monitor_knows_idle_grandchild(
 
 #[when(expr = "the child reports grandchild {string} without a status update")]
 fn when_child_reports_grandchild_without_status(world: &mut QuectoWorld, grandchild: String) {
-    use quecto::infrastructure::tools::subagent_monitor::forward_child_state_changed;
+    use quecto::infrastructure::tools::agents::subagent_monitor::forward_child_state_changed;
     let r = world
         .cascade_registry
         .as_ref()
@@ -685,7 +685,7 @@ fn then_observers_see_idle(world: &mut QuectoWorld, agent_id: String) {
 
 #[given(expr = "a root monitor with running child {string}")]
 fn given_root_monitor_with_running_child(world: &mut QuectoWorld, child: String) {
-    use quecto::infrastructure::tools::subagent_registry::new_registry;
+    use quecto::infrastructure::tools::agents::subagent_registry::new_registry;
     let r = new_registry();
     let mut entry = SubagentEntry::new(std::path::PathBuf::from("/s"), 0);
     entry.status = SubagentStatus::Running;
@@ -695,7 +695,7 @@ fn given_root_monitor_with_running_child(world: &mut QuectoWorld, child: String)
 
 #[when(expr = "the child {string} finishes its turn")]
 fn when_child_finishes_turn(world: &mut QuectoWorld, child: String) {
-    use quecto::infrastructure::tools::subagent_cascade::build_state_changed_event;
+    use quecto::infrastructure::tools::agents::subagent_cascade::build_state_changed_event;
     let r = world
         .cascade_registry
         .as_ref()
@@ -705,7 +705,7 @@ fn when_child_finishes_turn(world: &mut QuectoWorld, child: String) {
         let entry = g
             .get_mut(&child)
             .unwrap_or_else(|| panic!("child {child} not found"));
-        quecto::infrastructure::tools::subagent_monitor::apply_event(
+        quecto::infrastructure::tools::agents::subagent_monitor::apply_event(
             entry,
             r#"{"type":"agent_end","messages":[]}"#,
         );
@@ -788,8 +788,8 @@ fn then_panel_shows_idle(world: &mut QuectoWorld, agent_id: String) {
 
 #[when(expr = "the child {string} starts its turn")]
 fn when_child_starts_turn(world: &mut QuectoWorld, child: String) {
-    use quecto::infrastructure::tools::subagent_cascade::build_state_changed_event;
-    use quecto::infrastructure::tools::subagent_monitor::should_broadcast_state_changed_after_event;
+    use quecto::infrastructure::tools::agents::subagent_cascade::build_state_changed_event;
+    use quecto::infrastructure::tools::agents::subagent_monitor::should_broadcast_state_changed_after_event;
     let r = world
         .cascade_registry
         .as_ref()
@@ -800,7 +800,7 @@ fn when_child_starts_turn(world: &mut QuectoWorld, child: String) {
         let entry = g
             .get_mut(&child)
             .unwrap_or_else(|| panic!("child {child} not found"));
-        quecto::infrastructure::tools::subagent_monitor::apply_event_parsed(entry, &value);
+        quecto::infrastructure::tools::agents::subagent_monitor::apply_event_parsed(entry, &value);
     }
     // Drive the real broadcast-trigger gate (#839/#866): only record a broadcast
     // if `agent_start` actually qualifies. Initialise to `Some(None)` so the Then

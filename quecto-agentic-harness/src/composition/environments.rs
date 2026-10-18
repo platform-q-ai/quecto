@@ -30,9 +30,9 @@ use crate::infrastructure::persistence::environment_registry_store::FileEnvironm
 use crate::infrastructure::processes::containers::environment_process::ScriptEnvironmentProcess;
 use crate::infrastructure::processes::containers::preflight::ScriptPreflight;
 use crate::infrastructure::processes::containers::script_inventory::ScriptInventory;
-pub use crate::infrastructure::tools::agent_cmd_containers::EnvironmentControl;
-use crate::infrastructure::tools::coordinator_launch::KeptSwarmBoards;
-use crate::infrastructure::tools::environment_commands::{
+pub use crate::infrastructure::tools::agents::agent_cmd_containers::EnvironmentControl;
+use crate::infrastructure::tools::agents::coordinator_launch::KeptSwarmBoards;
+use crate::infrastructure::tools::agents::environment_commands::{
     HostedStoreObservation, ScriptEnvironmentCommands,
 };
 use crate::infrastructure::tools::swarm::swarm_bridge::SwarmBoard;

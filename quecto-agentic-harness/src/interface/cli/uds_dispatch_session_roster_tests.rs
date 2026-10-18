@@ -10,14 +10,17 @@ use crate::domain::sessions::entities::session::{
     PersistedSubagentRosterEntry, SubagentLiveness, SubagentRestoreReason,
 };
 use crate::domain::sessions::entities::session_identity::SessionIdentity;
-use crate::infrastructure::tools::subagent_registry;
-use subagent_registry::{SubagentEntry, SubagentStatus, new_registry};
+use crate::infrastructure::tools::agents::subagent_compact_roster::build_compact_subagent_roster;
+use crate::infrastructure::tools::agents::subagent_registry;
+use subagent_registry::{
+    SubagentEntry, SubagentRegistry, SubagentStatus, lookup_subagent_socket, new_registry,
+};
 
 /// The roster rows the save transaction records for `registry` under an
 /// explicit `restore_reason` (#1860): a real save through the composed
 /// graph over a throwaway store, read back through the store.
 pub(crate) fn persisted_roster_via_save(
-    registry: &Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
+    registry: &Option<SubagentRegistry>,
     restore_reason: SubagentRestoreReason,
 ) -> Vec<PersistedSubagentRosterEntry> {
     let rt = tokio::runtime::Runtime::new().expect("runtime");
@@ -26,7 +29,7 @@ pub(crate) fn persisted_roster_via_save(
 
 /// [`persisted_roster_via_save`] for tests already on a runtime.
 pub(crate) async fn persisted_roster_via_save_async(
-    registry: &Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
+    registry: &Option<SubagentRegistry>,
     restore_reason: SubagentRestoreReason,
 ) -> Vec<PersistedSubagentRosterEntry> {
     let tmp = tempfile::TempDir::new().expect("tempdir");
@@ -78,14 +81,14 @@ pub(crate) fn composed_sessions_over(
 
 /// The rows a routine (legacy-reason) save records for `registry`.
 pub(crate) fn snapshot_subagent_roster(
-    registry: &Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
+    registry: &Option<SubagentRegistry>,
 ) -> Vec<PersistedSubagentRosterEntry> {
     persisted_roster_via_save(registry, SubagentRestoreReason::LegacyUnspecified)
 }
 
 /// The rows a save under `restore_reason` records for `registry`.
 pub(crate) fn snapshot_subagent_roster_with_restore_reason(
-    registry: &Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
+    registry: &Option<SubagentRegistry>,
     restore_reason: SubagentRestoreReason,
 ) -> Vec<PersistedSubagentRosterEntry> {
     persisted_roster_via_save(registry, restore_reason)
@@ -96,12 +99,14 @@ pub(crate) fn snapshot_subagent_roster_with_restore_reason(
 /// through the application's departing-children collaborator (#1976,
 /// #1977).
 pub(crate) fn reset_roster_for_restore(
-    registry: &Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
+    registry: &Option<SubagentRegistry>,
     persisted: &[PersistedSubagentRosterEntry],
 ) {
     let roster = registry.clone().map(|registry| {
         std::sync::Arc::new(
-            crate::infrastructure::tools::delegated_roster::RegistryDelegatedRoster::new(registry),
+            crate::infrastructure::tools::agents::delegated_roster::RegistryDelegatedRoster::new(
+                registry,
+            ),
         )
             as std::sync::Arc<dyn crate::application::sessions::ports::DelegatedChildrenRoster>
     });
@@ -388,13 +393,10 @@ async fn restore_creates_no_operational_row_and_probes_nothing() {
         registry.lock().unwrap().keys().collect::<Vec<_>>()
     );
     assert!(
-        crate::infrastructure::tools::subagent_compact_roster::build_compact_subagent_roster(
-            &Some(registry.clone()),
-            None
-        )
-        .unwrap()
-        .subagents
-        .is_empty()
+        build_compact_subagent_roster(&Some(registry.clone()), None)
+            .unwrap()
+            .subagents
+            .is_empty()
     );
     assert!(
         crate::interface::cli::protocol::build_live_subagent_info_list(&Some(registry)).is_empty()
@@ -406,7 +408,7 @@ async fn restore_creates_no_operational_row_and_probes_nothing() {
 #[test]
 fn legacy_rows_are_not_sendable_or_running_after_restore() {
     use crate::application::tools::ports::Tool;
-    use crate::infrastructure::tools::agent_cmd::AgentCmdTool;
+    use crate::infrastructure::tools::agents::agent_cmd::AgentCmdTool;
 
     let dir = tempfile::tempdir().unwrap();
     let stale_socket = dir.path().join("stale.sock");
@@ -417,9 +419,7 @@ fn legacy_rows_are_not_sendable_or_running_after_restore() {
         &[legacy_row("restored", &stale_socket, "live", "running")],
     );
 
-    let lookup = crate::infrastructure::tools::subagent_registry::lookup_subagent_socket(
-        &registry, "restored",
-    );
+    let lookup = lookup_subagent_socket(&registry, "restored");
     assert!(lookup.is_err(), "a legacy row must not expose a socket");
 
     let rt = tokio::runtime::Runtime::new().unwrap();
@@ -484,8 +484,6 @@ fn restore_with_no_registry_is_a_noop() {
 
 #[test]
 fn ordinary_exit_resume_cycles_stay_empty_of_old_children() {
-    use crate::infrastructure::tools::subagent_compact_roster::build_compact_subagent_roster;
-
     for already_dead in [false, true] {
         let registry = new_registry();
         let mut child = SubagentEntry::with_identity(

@@ -2,12 +2,12 @@ use super::*;
 use crate::domain::workflow::{WorkflowConfig, WorkflowEngine};
 use crate::infrastructure::extensions::uds_tool::UdsExtensionTool;
 use crate::infrastructure::security::sandbox::Sandbox;
-use crate::infrastructure::tools::agent_cmd::AgentCmdTool;
+use crate::infrastructure::tools::agents::agent_cmd::AgentCmdTool;
+use crate::infrastructure::tools::agents::spawn::SpawnTool;
 use crate::infrastructure::tools::bash::ExecTool;
 use crate::infrastructure::tools::docs::DocsTool;
 use crate::infrastructure::tools::filesystem::{EditTool, LsTool, ReadTool, WriteTool};
 use crate::infrastructure::tools::grep::GrepTool;
-use crate::infrastructure::tools::spawn::SpawnTool;
 
 use crate::infrastructure::tools::web_search::WebSearchTool;
 use crate::infrastructure::tools::workflow_tool::WorkflowTool;

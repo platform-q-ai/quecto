@@ -1,5 +1,9 @@
 use crate::domain::tool_policy::value_objects::tool::ToolProfileContext;
 use crate::domain::tool_policy::value_objects::tool_descriptor::ProfileAvailabilityScope;
+use crate::infrastructure::tools::agents::{
+    agent_cmd_containers, coordinator_launch, harness_lifecycle, inherited_tool_policy,
+    subagent_registry,
+};
 use crate::infrastructure::tools::swarm::{swarm_bridge, swarm_lifecycle};
 
 /// Entrypoint policy selector for the shared tool runtime/catalogue builder.
@@ -45,8 +49,7 @@ pub(crate) struct ToolRuntimePolicyState {
     pub configured_enabled: Option<bool>,
     pub profile_enabled: Option<bool>,
     pub session_enabled: Option<bool>,
-    pub inherited_tool_policy:
-        Option<crate::infrastructure::tools::inherited_tool_policy::InheritedToolPolicySnapshot>,
+    pub inherited_tool_policy: Option<inherited_tool_policy::InheritedToolPolicySnapshot>,
 }
 
 impl ToolRuntimePolicyState {
@@ -171,8 +174,7 @@ pub(crate) struct ToolRuntimeBuildArgs<'a> {
     pub project_board:
         Option<crate::interface::tools::project_board::site::ProjectBoardHandlesBuilder>,
     pub disabled_tools: &'a [String],
-    pub inherited_tool_policy:
-        Option<crate::infrastructure::tools::inherited_tool_policy::InheritedToolPolicySnapshot>,
+    pub inherited_tool_policy: Option<inherited_tool_policy::InheritedToolPolicySnapshot>,
     pub workflow: ToolRuntimeWorkflowPolicy<'a>,
     pub stderr: &'a mut String,
 }
@@ -183,16 +185,13 @@ pub(crate) struct ToolRuntimeBuild {
     pub session_key: String,
     pub ext_registry: crate::infrastructure::extensions::registry::ExtensionRegistry,
     pub extension_prompt_snippets: String,
-    pub notification_rx: Option<crate::infrastructure::tools::subagent_registry::NotificationRx>,
-    pub subagent_registry:
-        Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
+    pub notification_rx: Option<subagent_registry::NotificationRx>,
+    pub subagent_registry: Option<subagent_registry::SubagentRegistry>,
     /// The harness lifecycle cell the spawn tool admits against (#1938).
-    pub harness_lifecycle:
-        Option<crate::infrastructure::tools::harness_lifecycle::SharedHarnessLifecycle>,
+    pub harness_lifecycle: Option<harness_lifecycle::SharedHarnessLifecycle>,
     /// The environment control slot (#2070) the dispatch loop hands the
     /// teardown, for the emptied `retained` environments an owner exit ends.
-    pub environment_control:
-        Option<crate::infrastructure::tools::agent_cmd_containers::EnvironmentControlSlot>,
+    pub environment_control: Option<agent_cmd_containers::EnvironmentControlSlot>,
     pub workflow_state: Option<crate::interface::shared::WorkflowStateHandle>,
     pub policy_state: ToolRuntimePolicyState,
     pub catalogue_entries:
@@ -395,7 +394,7 @@ pub(crate) fn build_tool_runtime(
     if let (ToolRuntimeProfileContext::Parent, Some(build)) = (profile_context, project_board) {
         // A start launches through this session's own spawn while its policy
         // allows it (S4c); an end reads the boards its teardown kept.
-        let launcher = crate::infrastructure::tools::coordinator_launch::session_launcher(
+        let launcher = coordinator_launch::session_launcher(
             &mut registry,
             &agent_control.spawn_tool,
             &agent_control.agent_cmd_tool,

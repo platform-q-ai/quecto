@@ -6,7 +6,7 @@
 use std::sync::Arc;
 
 use crate::application::subagents::use_cases::TerminateAllDelegatedAgents;
-use crate::infrastructure::tools::subagent_registry::SubagentRegistry;
+use crate::infrastructure::tools::agents::subagent_registry::SubagentRegistry;
 
 /// Run one raw command line through the reader-task busy interceptor with no
 /// sub-agent registry. Returns whether it was handled off the dispatch loop

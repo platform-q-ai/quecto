@@ -13,8 +13,8 @@ use crate::domain::environments::entities::environment_registry::{
     EnvironmentOrigin, EnvironmentRecord, EnvironmentRegistry, EnvironmentStatus,
     mint_environment_uuid,
 };
-use crate::infrastructure::tools::harness_lifecycle::new_shared_harness_lifecycle;
-use crate::infrastructure::tools::subagent_registry::{SubagentEntry, SubagentRegistry};
+use crate::infrastructure::tools::agents::harness_lifecycle::new_shared_harness_lifecycle;
+use crate::infrastructure::tools::agents::subagent_registry::{SubagentEntry, SubagentRegistry};
 
 fn logging_script(dir: &Path, op: &str, log: &Path) -> String {
     let script = dir.join(format!("{op}.sh"));

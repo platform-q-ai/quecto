@@ -7,7 +7,7 @@ use crate::application::sessions::ports::SessionStore;
 use crate::domain::conversation::value_objects::message::Message;
 use crate::domain::sessions::entities::session::{Session, SubagentLiveness};
 use crate::domain::sessions::entities::session_identity::SessionIdentity;
-use crate::infrastructure::tools::subagent_registry::{
+use crate::infrastructure::tools::agents::subagent_registry::{
     SubagentEntry, SubagentRegistry, SubagentStatus, new_registry,
 };
 

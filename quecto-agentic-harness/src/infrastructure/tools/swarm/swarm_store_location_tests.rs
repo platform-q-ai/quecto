@@ -449,7 +449,7 @@ fn a_live_swarm_whose_layout_changed_is_never_taken_for_a_plain_container() {
     use crate::domain::environments::services::environment_retention::{
         MemberFinalizeMode, SwarmRunObservation, ends_plain_environment,
     };
-    use crate::infrastructure::tools::environment_commands::HostedStoreObservation;
+    use crate::infrastructure::tools::agents::environment_commands::HostedStoreObservation;
     for mode in [
         MemberFinalizeMode::OwnerEnd,
         MemberFinalizeMode::ParentKill,
@@ -585,8 +585,8 @@ fn the_composed_teardown_keeps_a_board_runs_ended_board() {
     use crate::domain::environments::services::environment_retention::MemberFinalizeMode;
     use crate::domain::ids::AgentUuid;
     use crate::domain::project_board::value_objects::slug::Slug;
-    use crate::infrastructure::tools::coordinator_launch::KeptRunReports;
-    use crate::infrastructure::tools::subagent_registry::{SubagentEntry, new_registry};
+    use crate::infrastructure::tools::agents::coordinator_launch::KeptRunReports;
+    use crate::infrastructure::tools::agents::subagent_registry::{SubagentEntry, new_registry};
     let state = tempfile::tempdir().unwrap();
     let workspace = state.path().join("workspace");
     std::fs::create_dir_all(&workspace).unwrap();
@@ -619,7 +619,7 @@ fn the_composed_teardown_keeps_a_board_runs_ended_board() {
         .build()
         .unwrap();
     runtime.block_on(
-        super::super::super::subagent_cleanup::cleanup_registered_once(
+        super::super::super::agents::subagent_cleanup::cleanup_registered_once(
             &subagents,
             &key,
             MemberFinalizeMode::OwnerEnd,

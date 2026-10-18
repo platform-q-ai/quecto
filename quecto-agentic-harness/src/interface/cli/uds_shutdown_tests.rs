@@ -10,7 +10,7 @@ use crate::domain::agents::services::subagent_teardown::LaunchGeneration;
 use crate::domain::environments::entities::environment_registry::{
     EnvironmentRecord, EnvironmentRegistry, EnvironmentStatus,
 };
-use crate::infrastructure::tools::subagent_registry::{SubagentEntry, SubagentRegistry};
+use crate::infrastructure::tools::agents::subagent_registry::{SubagentEntry, SubagentRegistry};
 use crate::interface::cli::uds_cancel::{CancelHandle, CancelSlot, TurnControl};
 use crate::interface::cli::uds_teardown_handles::TeardownLoopInputs;
 use crate::interface::uds::subagent_teardown::controller::ControllerOutcome;
@@ -107,7 +107,7 @@ fn rig(dir: &std::path::Path) -> Rig {
         exit_notify: notify.clone(),
         binding: crate::domain::agents::entities::parent_control::ParentControlBinding::unlaunched(
         ),
-        owner_exit: crate::infrastructure::tools::owner_exit::OwnerExitFlag::new(),
+        owner_exit: crate::infrastructure::tools::agents::owner_exit::OwnerExitFlag::new(),
         environment_control: None,
     });
     Rig {

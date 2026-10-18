@@ -24,7 +24,7 @@ use crate::application::sessions::use_cases::{
 use crate::infrastructure::persistence::session_snapshot_sources::{
     RegistryRosterSource, WorkflowEngineRunSource,
 };
-use crate::infrastructure::tools::delegated_roster::RegistryDelegatedRoster;
+use crate::infrastructure::tools::agents::delegated_roster::RegistryDelegatedRoster;
 use crate::interface::cli::uds_discovery_handles::SessionDiscoveryHandles;
 use crate::interface::cli::uds_session_handles::{
     ConversationRewriteHandles, SessionHandles, SessionLoopInputs, SessionSwitchHandles,

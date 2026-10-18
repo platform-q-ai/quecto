@@ -7,7 +7,7 @@
 use quecto::application::environments::dto::SwarmBoardSnapshot;
 use quecto::application::environments::ports::EndedSwarmBoards;
 use quecto::application::project_board::dto::SwarmEnd;
-use quecto::infrastructure::tools::coordinator_launch::{KeptSwarmBoards, MAX_KEPT};
+use quecto::infrastructure::tools::agents::coordinator_launch::{KeptSwarmBoards, MAX_KEPT};
 use serde_json::json;
 
 /// A whole board whose run is `status`, having spent `tokens`.

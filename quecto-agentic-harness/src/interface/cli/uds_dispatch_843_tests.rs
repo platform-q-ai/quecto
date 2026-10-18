@@ -10,7 +10,7 @@ use super::{
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::domain::conversation::value_objects::message::Message;
 use crate::infrastructure::persistence::session_store::FileSessionStore;
-use crate::infrastructure::tools::subagent_registry::{
+use crate::infrastructure::tools::agents::subagent_registry::{
     SubagentEntry, SubagentRegistry, new_registry,
 };
 use crate::interface::cli::protocol::AgentCommand;

@@ -129,8 +129,8 @@ async fn run_task(env: &mut DispatchTestEnv) {
 /// child's state serves it: the delivered messages' contents.
 async fn first_default_report(env: &DispatchTestEnv) -> Vec<String> {
     use crate::application::tools::ports::Tool;
-    use crate::infrastructure::tools::agent_cmd::AgentCmdTool;
-    use crate::infrastructure::tools::subagent_registry::SubagentEntry;
+    use crate::infrastructure::tools::agents::agent_cmd::AgentCmdTool;
+    use crate::infrastructure::tools::agents::subagent_registry::SubagentEntry;
     let page = messages_page_json(&env.messages, HISTORY_PAGE_SIZE, None);
     let tmp = tempfile::TempDir::new().unwrap();
     let socket = tmp.path().join("child.sock");

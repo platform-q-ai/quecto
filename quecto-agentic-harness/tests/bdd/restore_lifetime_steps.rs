@@ -20,9 +20,9 @@ use quecto::domain::sessions::entities::session::Session;
 use quecto::domain::sessions::entities::session_identity::SessionIdentity;
 use quecto::infrastructure::persistence::session_layout::FlatSessionLayout;
 use quecto::infrastructure::persistence::session_store::FileSessionStore;
-use quecto::infrastructure::tools::agent_cmd::{AgentCmdTool, SubagentRegistry};
-use quecto::infrastructure::tools::spawn::SpawnTool;
-use quecto::infrastructure::tools::subagent_registry::SubagentEntry;
+use quecto::infrastructure::tools::agents::agent_cmd::{AgentCmdTool, SubagentRegistry};
+use quecto::infrastructure::tools::agents::spawn::SpawnTool;
+use quecto::infrastructure::tools::agents::subagent_registry::SubagentEntry;
 use quecto::interface::cli::uds::{UdsLoopArgs, run_uds_loop};
 
 use crate::QuectoWorld;

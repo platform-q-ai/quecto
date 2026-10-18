@@ -6,7 +6,7 @@ use crate::domain::tool_policy::value_objects::tool::{
     ToolPolicyApplyMode, ToolPolicyMutation, ToolPolicyMutationStatus, ToolProfileContext,
 };
 use crate::domain::tool_policy::value_objects::tool_descriptor::ProfileAvailabilityScope;
-use crate::infrastructure::tools::inherited_tool_policy::InheritedToolPolicySnapshot;
+use crate::infrastructure::tools::agents::inherited_tool_policy::InheritedToolPolicySnapshot;
 use crate::infrastructure::tools::registration::ToolRegistration;
 
 /// The child policy this registry hands spawn: the catalogue fold completed
@@ -213,8 +213,9 @@ fn child_names(reg: &super::ToolRegistryImpl) -> Vec<String> {
 }
 
 fn bundled_workflow() -> ToolRegistration {
-    ToolRegistration::official_native()
-        .with_provider_id(crate::infrastructure::tools::inherited_tool_policy::WORKFLOW_PROVIDER_ID)
+    ToolRegistration::official_native().with_provider_id(
+        crate::infrastructure::tools::agents::inherited_tool_policy::WORKFLOW_PROVIDER_ID,
+    )
 }
 
 #[test]
@@ -283,9 +284,10 @@ fn entrypoint_only_workflow_recorded_in_snapshot_keeps_its_ceiling() {
 
 #[test]
 fn tools_posing_as_the_workflow_tool_stay_closed() {
-    let workflow_id = crate::infrastructure::tools::inherited_tool_policy::workflow_tool_identity()
-        .stable_id
-        .into_owned();
+    let workflow_id =
+        crate::infrastructure::tools::agents::inherited_tool_policy::workflow_tool_identity()
+            .stable_id
+            .into_owned();
     let posers = [
         (
             "workflow",
@@ -300,7 +302,7 @@ fn tools_posing_as_the_workflow_tool_stay_closed() {
         (
             "workflow",
             ToolRegistration::uds_owner(
-                crate::infrastructure::tools::inherited_tool_policy::WORKFLOW_PROVIDER_ID,
+                crate::infrastructure::tools::agents::inherited_tool_policy::WORKFLOW_PROVIDER_ID,
             ),
             "a UDS tool whose owner is the workflow provider",
         ),
@@ -333,7 +335,8 @@ fn tools_posing_as_the_workflow_tool_stay_closed() {
 
 #[test]
 fn spawn_snapshot_records_a_denied_entrypoint_only_tool_the_parent_never_built() {
-    let identity = crate::infrastructure::tools::inherited_tool_policy::workflow_tool_identity();
+    let identity =
+        crate::infrastructure::tools::agents::inherited_tool_policy::workflow_tool_identity();
     let (mut reg, _tmp) = test_registry();
     assert!(
         !spawn_child_policy(&reg).contains_key(identity.stable_id.as_ref()),
@@ -374,7 +377,8 @@ fn spawn_snapshot_records_a_denied_entrypoint_only_tool_the_parent_never_built()
 
 #[test]
 fn recorded_denial_overrides_a_bundled_tool_claiming_the_workflow_stable_id() {
-    let identity = crate::infrastructure::tools::inherited_tool_policy::workflow_tool_identity();
+    let identity =
+        crate::infrastructure::tools::agents::inherited_tool_policy::workflow_tool_identity();
     let (mut reg, _tmp) = test_registry();
     reg.apply_startup_tool_restrictions(&["workflow".to_string()]);
     assert!(
@@ -450,7 +454,8 @@ fn registers_entrypoint_only_names_only_the_bundled_workflow_registration() {
 /// tool still caps children under both keys.
 #[test]
 fn persisted_workflow_denial_survives_a_same_named_runtime_tool() {
-    let identity = crate::infrastructure::tools::inherited_tool_policy::workflow_tool_identity();
+    let identity =
+        crate::infrastructure::tools::agents::inherited_tool_policy::workflow_tool_identity();
     for persisted in [
         ProfileAvailabilityScope::None,
         ProfileAvailabilityScope::Parent,
@@ -480,7 +485,8 @@ fn persisted_workflow_denial_survives_a_same_named_runtime_tool() {
 /// tool's own entry.
 #[test]
 fn persisted_workflow_scope_never_widens_a_same_named_tool_entry() {
-    let identity = crate::infrastructure::tools::inherited_tool_policy::workflow_tool_identity();
+    let identity =
+        crate::infrastructure::tools::agents::inherited_tool_policy::workflow_tool_identity();
     let (mut reg, _tmp) = test_registry();
     let mut policy = crate::infrastructure::config::ToolPolicyConfig::default();
     policy.entries.insert(
@@ -518,7 +524,8 @@ fn persisted_workflow_scope_never_widens_a_same_named_tool_entry() {
 /// stands over a wider persisted preference.
 #[test]
 fn built_workflow_records_its_effective_scope_over_its_persisted_preference() {
-    let identity = crate::infrastructure::tools::inherited_tool_policy::workflow_tool_identity();
+    let identity =
+        crate::infrastructure::tools::agents::inherited_tool_policy::workflow_tool_identity();
     let (mut reg, _tmp) = test_registry();
     let mut policy = crate::infrastructure::config::ToolPolicyConfig::default();
     policy.entries.insert(

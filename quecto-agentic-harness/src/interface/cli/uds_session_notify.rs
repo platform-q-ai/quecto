@@ -49,9 +49,9 @@ impl PendingMessage {
 
 impl NoteClass {
     pub fn of(
-        note: &crate::infrastructure::tools::subagent_registry::SequencedSubagentNotification,
+        note: &crate::infrastructure::tools::agents::subagent_registry::SequencedSubagentNotification,
     ) -> Self {
-        use crate::infrastructure::tools::subagent_registry::SubagentNotification as Note;
+        use crate::infrastructure::tools::agents::subagent_registry::SubagentNotification as Note;
         match note.notification {
             Note::Completed { .. } => Self::Completion,
             Note::SwarmState { .. } => Self::State,
@@ -121,7 +121,7 @@ impl AgentSession {
     /// dispatch loops queue the notes the monitor sends.
     pub fn enqueue_note(
         &mut self,
-        note: &crate::infrastructure::tools::subagent_registry::SequencedSubagentNotification,
+        note: &crate::infrastructure::tools::agents::subagent_registry::SequencedSubagentNotification,
     ) -> NotificationEnqueueOutcome {
         let (agent_id, sequence) = note.dedupe_key();
         self.enqueue_subagent_notification(

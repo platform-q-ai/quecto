@@ -6,7 +6,7 @@
 //! interface declares the loop inputs and the handles it holds
 //! (`interface::cli::uds_teardown_handles`) and receives this builder
 //! through its `CliContext` (`run_composed`); it never names this module.
-use crate::infrastructure::tools::retained_environment_teardown::SlotRetainedEnvironmentTeardown;
+use crate::infrastructure::tools::agents::retained_environment_teardown::SlotRetainedEnvironmentTeardown;
 use std::sync::{Arc, Mutex};
 
 use crate::application::subagents::use_cases::{
@@ -17,11 +17,11 @@ use crate::application::subagents::use_cases::{
 use crate::domain::ids::AgentUuid;
 use crate::infrastructure::processes::direct_child_routing::UdsDirectChildRouting;
 use crate::infrastructure::processes::owned_child_termination::SupervisedChildTermination;
-use crate::infrastructure::tools::harness_lifecycle::{
+use crate::infrastructure::tools::agents::harness_lifecycle::{
     SharedHarnessLifecycle, new_shared_harness_lifecycle,
 };
-use crate::infrastructure::tools::subagent_registry::{NotificationTx, SubagentRegistry};
-use crate::infrastructure::tools::subagent_teardown_registry::RegistryDelegatedAgents;
+use crate::infrastructure::tools::agents::subagent_registry::{NotificationTx, SubagentRegistry};
+use crate::infrastructure::tools::agents::subagent_teardown_registry::RegistryDelegatedAgents;
 use crate::interface::cli::uds_teardown_adapters::{
     DeferredLoopPersistence, LoopExitReadiness, LoopTurnCancellation, MonotonicShutdownClock,
     RegistryLifecycleRepository, TokioShutdownRunSpawner,

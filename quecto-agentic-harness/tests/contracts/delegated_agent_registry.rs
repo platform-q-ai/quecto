@@ -29,10 +29,10 @@ use quecto::domain::agents::services::subagent_teardown::{
 use quecto::domain::ids::AgentUuid;
 use quecto::infrastructure::processes::direct_child_routing::UdsDirectChildRouting;
 use quecto::infrastructure::processes::owned_child_termination::SupervisedChildTermination;
-use quecto::infrastructure::tools::subagent_registry::{
+use quecto::infrastructure::tools::agents::subagent_registry::{
     SubagentEntry, SubagentRegistry, TeardownPhase,
 };
-use quecto::infrastructure::tools::subagent_teardown_registry::RegistryDelegatedAgents;
+use quecto::infrastructure::tools::agents::subagent_teardown_registry::RegistryDelegatedAgents;
 
 fn identity(uuid: &str, generation: u64) -> DelegatedAgentIdentity {
     DelegatedAgentIdentity::new(uuid, LaunchGeneration::new(generation))
@@ -218,7 +218,7 @@ async fn nested_targets_are_forwarded_through_their_direct_ancestor_only() {
     let lifecycle = Arc::new(RegistryLifecycleRepository::new(
         Some(registry.clone()),
         AgentUuid::new("root"),
-        quecto::infrastructure::tools::harness_lifecycle::new_shared_harness_lifecycle(),
+        quecto::infrastructure::tools::agents::harness_lifecycle::new_shared_harness_lifecycle(),
     ));
     let lineage = lifecycle.lineage();
     assert_eq!(lineage.records.len(), 4);
@@ -306,7 +306,7 @@ async fn killing_a_nested_target_leaves_its_ancestor_and_siblings_live() {
     let lifecycle = Arc::new(RegistryLifecycleRepository::new(
         Some(registry.clone()),
         AgentUuid::new("root"),
-        quecto::infrastructure::tools::harness_lifecycle::new_shared_harness_lifecycle(),
+        quecto::infrastructure::tools::agents::harness_lifecycle::new_shared_harness_lifecycle(),
     ));
     let kill = KillDelegatedAgent::new(
         Arc::new(
@@ -334,10 +334,12 @@ async fn killing_a_nested_target_leaves_its_ancestor_and_siblings_live() {
             tokio::time::sleep(Duration::from_millis(100)).await;
             let mut entries = registry.lock().unwrap();
             let next =
-                quecto::infrastructure::tools::subagent_cascade::next_roster_sequence(&entries);
+                quecto::infrastructure::tools::agents::subagent_cascade::next_roster_sequence(
+                    &entries,
+                );
             let row = entries.get_mut("B").unwrap();
-            quecto::infrastructure::tools::subagent_cascade::mark_entry_dead(row, next);
-            quecto::infrastructure::tools::subagent_cascade::mark_entry_compensated(row);
+            quecto::infrastructure::tools::agents::subagent_cascade::mark_entry_dead(row, next);
+            quecto::infrastructure::tools::agents::subagent_cascade::mark_entry_compensated(row);
         })
     };
     let outcome = tokio::time::timeout(

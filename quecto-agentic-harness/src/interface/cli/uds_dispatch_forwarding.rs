@@ -2,7 +2,7 @@ use super::DispatchCtx;
 use super::uds_dispatch_get_message_forward::{ForwardGetMessage, forward_subagent_get_message};
 use super::{AgentCommand, AgentEvent};
 use crate::domain::ids::{AgentId, CommandId, MessageId, ToolCallId};
-use crate::infrastructure::tools::subagent_routing::{
+use crate::infrastructure::tools::agents::subagent_routing::{
     InspectionRoute, RoutableInspectionCommand, UDS_INSPECTION_ALLOWLIST, resolve_inspection_route,
 };
 use crate::interface::cli::uds_session;
@@ -152,7 +152,7 @@ pub(super) async fn forward_subagent_snapshot(
     agent_id: AgentId,
     since: Option<u64>,
 ) -> AgentEvent {
-    use crate::infrastructure::tools::subagent_registry::{
+    use crate::infrastructure::tools::agents::subagent_registry::{
         INSPECTOR_RESPONSE_TIMEOUT, send_subagent_uds_command_with_timeout,
     };
     let id_ref = id.as_ref().map(CommandId::as_str);
@@ -198,11 +198,11 @@ pub(super) async fn forward_subagent_snapshot(
 /// a row a child reported (whose uuid is its reporter's word, and could
 /// name any session) is never read under.
 fn historical_launched_child(
-    registry: &crate::infrastructure::tools::subagent_registry::SubagentRegistry,
+    registry: &crate::infrastructure::tools::agents::subagent_registry::SubagentRegistry,
     reference: &str,
 ) -> Result<Option<crate::domain::ids::AgentUuid>, String> {
     use crate::domain::agents::value_objects::child_end::ChildOrigin;
-    type Entry = crate::infrastructure::tools::subagent_registry::SubagentEntry;
+    type Entry = crate::infrastructure::tools::agents::subagent_registry::SubagentEntry;
     let entries = registry
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -252,7 +252,7 @@ pub(super) async fn forward_subagent_get_messages(
     count: Option<usize>,
     before: Option<MessageId>,
 ) -> AgentEvent {
-    use crate::infrastructure::tools::subagent_registry::{
+    use crate::infrastructure::tools::agents::subagent_registry::{
         INSPECTOR_RESPONSE_TIMEOUT, send_subagent_uds_command_with_timeout,
     };
     let id_ref = id.as_ref().map(CommandId::as_str);

@@ -11,8 +11,8 @@ use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 use cucumber::given;
-use quecto::infrastructure::tools::agent_cmd::AgentCmdTool;
-use quecto::infrastructure::tools::subagent_registry::SubagentEntry;
+use quecto::infrastructure::tools::agents::agent_cmd::AgentCmdTool;
+use quecto::infrastructure::tools::agents::subagent_registry::SubagentEntry;
 
 use super::QuectoWorld;
 

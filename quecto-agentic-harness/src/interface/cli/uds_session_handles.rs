@@ -41,7 +41,7 @@ pub struct SessionLoopInputs {
     pub workflow_state: Option<crate::interface::shared::WorkflowStateHandle>,
     /// The sub-agent registry whose rows the session records as history (#1937).
     pub subagent_registry:
-        Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
+        Option<crate::infrastructure::tools::agents::subagent_registry::SubagentRegistry>,
 }
 
 /// The handles one loop holds on the sessions capability.

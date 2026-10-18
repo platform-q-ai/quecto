@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use quecto::application::environments::ports::EnvironmentProcessCommands;
 use quecto::infrastructure::test_support::executable::write_executable;
-use quecto::infrastructure::tools::environment_commands::ScriptEnvironmentCommands;
+use quecto::infrastructure::tools::agents::environment_commands::ScriptEnvironmentCommands;
 
 fn script(dir: &std::path::Path, name: &str, body: &str) -> Vec<String> {
     let path = dir.join(name);

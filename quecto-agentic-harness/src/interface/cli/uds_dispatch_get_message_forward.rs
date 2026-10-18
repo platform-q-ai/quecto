@@ -17,10 +17,10 @@ pub(super) async fn forward_subagent_get_message(
     tn: &str,
     req: ForwardGetMessage,
 ) -> AgentEvent {
-    use crate::infrastructure::tools::subagent_registry::{
+    use crate::infrastructure::tools::agents::subagent_registry::{
         INSPECTOR_RESPONSE_TIMEOUT, send_subagent_uds_command_with_timeout,
     };
-    use crate::infrastructure::tools::subagent_routing::{
+    use crate::infrastructure::tools::agents::subagent_routing::{
         InspectionRoute, resolve_inspection_route,
     };
     let Some(registry) = ctx.subagent_registry.as_ref() else {

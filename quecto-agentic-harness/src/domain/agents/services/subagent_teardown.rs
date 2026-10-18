@@ -77,7 +77,7 @@ impl fmt::Display for RoutingDepthError {
 impl RoutingDepth {
     /// Deepest delegation tree a single command may traverse. Kept equal to
     /// the inspection walker's `MAX_INSPECTION_ROUTE_DEPTH`
-    /// (`infrastructure/tools/subagent_routing.rs`) so both bounds agree;
+    /// (`infrastructure/tools/agents/subagent_routing.rs`) so both bounds agree;
     /// that walker should consume [`LineageSnapshot`] in a later slice
     /// instead of re-walking registry `parent_id` chains.
     pub const MAX_HOPS: u32 = 32;

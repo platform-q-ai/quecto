@@ -20,12 +20,13 @@ async fn ready_failure_confirms_the_rolled_back_member_dead_and_keeps_the_run_ru
     let member = reservation.member().to_owned();
     let mut command = tokio::process::Command::new("sleep");
     command.arg("30");
-    let mut prepared = crate::infrastructure::tools::spawn_container::PreparedChild::new_for_test(
-        Some(command),
-        None,
-        None,
-    )
-    .await;
+    let mut prepared =
+        crate::infrastructure::tools::agents::spawn_container::PreparedChild::new_for_test(
+            Some(command),
+            None,
+            None,
+        )
+        .await;
     reservation.launched(prepared.display_pid).await.unwrap();
     prepared.swarm_reservation = Some(reservation);
     assert_eq!(

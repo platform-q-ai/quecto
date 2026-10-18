@@ -19,6 +19,7 @@ use crate::application::agent_loop::AgentLoopImpl;
 use crate::application::sessions::dto::SaveTrigger;
 use crate::application::subagents::use_cases::TerminateAllDelegatedAgents;
 use crate::domain::conversation::value_objects::message::Message;
+use crate::infrastructure::tools::agents::{subagent_identity, subagent_registry};
 use crate::interface::cli::uds_discovery_handles::SessionDiscoveryHandles;
 use futures::FutureExt;
 type ExtRegistry = std::sync::Arc<
@@ -142,9 +143,8 @@ pub(crate) struct DispatchCtx<'a> {
     pub _ext_registry: Option<ExtRegistry>,
     pub client_tool_registry: super::uds_ext_protocol::ClientToolRegistry,
     pub current_client_id: u64,
-    pub subagent_registry:
-        Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
-    pub notification_rx: Option<crate::infrastructure::tools::subagent_registry::NotificationRx>,
+    pub subagent_registry: Option<subagent_registry::SubagentRegistry>,
+    pub notification_rx: Option<subagent_registry::NotificationRx>,
     pub workflow_state: Option<crate::interface::shared::WorkflowStateHandle>, // #562
     pub workflow_config: Option<crate::domain::workflow::WorkflowConfig>,      // #562
     /// Fleet teardown (#1938) of delete-all and session transitions.
@@ -619,18 +619,14 @@ async fn run_drained_message_guarded(
         // therefore spawn children normally without deadlocking the registry.
         let admitted = if matches!(guard, TurnAdmissionGuard::NoActiveWorkflowDescendant) {
             let identity =
-                crate::infrastructure::tools::subagent_identity::parent_identity_from_session_key(
-                    session_key.as_str(),
-                );
+                subagent_identity::parent_identity_from_session_key(session_key.as_str());
             if let (Some(identity), Some(registry)) = (identity, &ctx.subagent_registry) {
                 let entries = registry.lock().unwrap_or_else(|e| e.into_inner());
-                if crate::infrastructure::tools::subagent_registry::has_active_descendant_for_agent_locked(
-                &entries, identity,
-            ) {
-                drop(entries);
-                disarm_cancel(&ctx.cancel_handle);
-                return PromptOutcome::Cancelled;
-            }
+                if subagent_registry::has_active_descendant_for_agent_locked(&entries, identity) {
+                    drop(entries);
+                    disarm_cancel(&ctx.cancel_handle);
+                    return PromptOutcome::Cancelled;
+                }
                 let result = run.as_mut().now_or_never();
                 drop(entries);
                 result

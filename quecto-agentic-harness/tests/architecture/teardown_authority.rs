@@ -126,13 +126,16 @@ fn last() {}
 #[test]
 fn production_code_reads_past_an_early_cfg_test_use() {
     for (path, needle) in [
-        ("src/infrastructure/tools/spawn.rs", "pub fn with_base_dir"),
         (
-            "src/infrastructure/tools/subagent_registry.rs",
+            "src/infrastructure/tools/agents/spawn.rs",
+            "pub fn with_base_dir",
+        ),
+        (
+            "src/infrastructure/tools/agents/subagent_registry.rs",
             "pub fn with_identity",
         ),
         (
-            "src/infrastructure/tools/subagent_monitor.rs",
+            "src/infrastructure/tools/agents/subagent_monitor.rs",
             "pub fn spawn_monitor_task",
         ),
         (
@@ -447,17 +450,17 @@ const NO_PID_FILES: &[&str] = &[
     "src/composition/environments.rs",
     "src/infrastructure/processes/owned_child_termination.rs",
     "src/infrastructure/processes/direct_child_routing.rs",
-    "src/infrastructure/tools/subagent_teardown_registry.rs",
-    "src/infrastructure/tools/subagent_teardown_wiring.rs",
-    "src/infrastructure/tools/environment_member_shutdown.rs",
-    "src/infrastructure/tools/owner_exit.rs",
-    "src/infrastructure/tools/retained_environment_teardown.rs",
+    "src/infrastructure/tools/agents/subagent_teardown_registry.rs",
+    "src/infrastructure/tools/agents/subagent_teardown_wiring.rs",
+    "src/infrastructure/tools/agents/environment_member_shutdown.rs",
+    "src/infrastructure/tools/agents/owner_exit.rs",
+    "src/infrastructure/tools/agents/retained_environment_teardown.rs",
     "src/infrastructure/tools/swarm/swarm_member_termination.rs",
-    "src/infrastructure/tools/subagent_cleanup.rs",
-    "src/infrastructure/tools/subagent_monitor_exit.rs",
-    "src/infrastructure/tools/spawn_reaper.rs",
-    "src/infrastructure/tools/spawn_registry.rs",
-    "src/infrastructure/tools/process_tree.rs",
+    "src/infrastructure/tools/agents/subagent_cleanup.rs",
+    "src/infrastructure/tools/agents/subagent_monitor_exit.rs",
+    "src/infrastructure/tools/agents/spawn_reaper.rs",
+    "src/infrastructure/tools/agents/spawn_registry.rs",
+    "src/infrastructure/tools/agents/process_tree.rs",
 ];
 
 fn has_pid_token(line: &str) -> bool {
@@ -503,7 +506,7 @@ fn teardown_paths_carry_no_pid() {
 /// the display-only pid of a child this harness launched.
 #[test]
 fn merged_descendants_carry_no_pid_and_the_wire_pid_is_display_only() {
-    let merge = production_code("src/infrastructure/tools/subagent_monitor_merge.rs");
+    let merge = production_code("src/infrastructure/tools/agents/subagent_monitor_merge.rs");
     let pid_lines: Vec<_> = merge
         .iter()
         .filter(|(_, line)| has_pid_token(line))
@@ -524,7 +527,7 @@ fn merged_descendants_carry_no_pid_and_the_wire_pid_is_display_only() {
         !merge.iter().any(|(_, line)| line.contains("get(\"pid\")")),
         "the merge reads no `pid` from a snapshot"
     );
-    let cascade = production_code("src/infrastructure/tools/subagent_cascade.rs");
+    let cascade = production_code("src/infrastructure/tools/agents/subagent_cascade.rs");
     let pid_lines: Vec<_> = cascade
         .iter()
         .filter(|(_, line)| has_pid_token(line))
@@ -535,7 +538,7 @@ fn merged_descendants_carry_no_pid_and_the_wire_pid_is_display_only() {
         vec!["obj.insert(\"pid\".into(), serde_json::json!(entry.pid));"],
         "the cascade only publishes the display-only pid"
     );
-    let registry = production_code("src/infrastructure/tools/subagent_registry.rs");
+    let registry = production_code("src/infrastructure/tools/agents/subagent_registry.rs");
     assert!(
         !registry
             .iter()
@@ -600,6 +603,11 @@ const RETIRED_FILES: &[&str] = &[
     "src/infrastructure/tools/subagent_monitor_merge_ownership_tests.rs",
     "src/infrastructure/tools/spawn_registry_ownership_tests.rs",
     "src/infrastructure/tools/environment_kill.rs",
+    "src/infrastructure/tools/agents/process_ownership.rs",
+    "src/infrastructure/tools/agents/process_ownership_cov_tests.rs",
+    "src/infrastructure/tools/agents/subagent_monitor_merge_ownership_tests.rs",
+    "src/infrastructure/tools/agents/spawn_registry_ownership_tests.rs",
+    "src/infrastructure/tools/agents/environment_kill.rs",
     "src/application/environment_control.rs",
     "src/domain/environment_finalization.rs",
     "tests/contracts/environment_kill_port.rs",
@@ -708,7 +716,7 @@ const SINGLE_OWNERS: &[(&str, &str, &str)] = &[
     ),
     (
         "registry claim ladder and compensation",
-        "src/infrastructure/tools/subagent_teardown_registry.rs",
+        "src/infrastructure/tools/agents/subagent_teardown_registry.rs",
         "struct RegistryDelegatedAgents",
     ),
     (

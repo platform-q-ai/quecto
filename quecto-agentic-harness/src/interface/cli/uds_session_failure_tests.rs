@@ -114,7 +114,7 @@ fn swarm_state_notes_are_not_coalesced_with_turn_ends() {
 /// #2467: each sub-agent note is queued in its class.
 #[test]
 fn each_note_is_queued_in_its_class() {
-    use crate::infrastructure::tools::subagent_registry::{
+    use crate::infrastructure::tools::agents::subagent_registry::{
         SequencedSubagentNotification as Note, SubagentNotification, SwarmNoteState,
     };
     use crate::interface::cli::uds_session::NoteClass;
@@ -205,7 +205,7 @@ fn a_swarm_state_clears_the_remembered_failure_and_never_replaces_one() {
 /// however often the same state repeats.
 #[test]
 fn the_dispatch_enqueue_keeps_every_repeated_swarm_state() {
-    use crate::infrastructure::tools::subagent_registry::{
+    use crate::infrastructure::tools::agents::subagent_registry::{
         SequencedSubagentNotification, SubagentNotification, SwarmNoteState,
     };
     let mut session = AgentSession::new("test".into());

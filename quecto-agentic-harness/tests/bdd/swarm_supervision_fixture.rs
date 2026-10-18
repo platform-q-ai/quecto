@@ -1,6 +1,6 @@
 //! Real UDS process with a synthetic, private container launch contract.
 //! This exercises production composition without claiming PID namespace isolation.
-use quecto::infrastructure::tools::subagent_registry::send_subagent_uds_command_with_timeout;
+use quecto::infrastructure::tools::agents::subagent_registry::send_subagent_uds_command_with_timeout;
 use serde_json::{Value, json};
 use std::{
     path::{Path, PathBuf},

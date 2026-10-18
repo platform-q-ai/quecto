@@ -33,7 +33,7 @@ use super::protocol::AgentEvent;
 use super::uds_ext_protocol::ClientToolRegistry;
 use crate::application::environments::dto::{BoardSighting, HostedBoardRevision};
 use crate::application::environments::use_cases::ReadSwarmBoard;
-use crate::infrastructure::tools::subagent_registry::SubagentRegistry;
+use crate::infrastructure::tools::agents::subagent_registry::SubagentRegistry;
 
 /// How often the boards are polled: no swarm is hinted more than once in
 /// this time.

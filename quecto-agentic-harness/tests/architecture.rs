@@ -1129,8 +1129,8 @@ fn kill_environment_orchestration_stays_out_of_interface_handlers() {
     // kill_container orchestration must never live in `uds_query.rs`.
     let handler_files = [
         "src/interface/cli/uds_query.rs",
-        "src/infrastructure/tools/agent_cmd.rs",
-        "src/infrastructure/tools/agent_cmd_containers.rs",
+        "src/infrastructure/tools/agents/agent_cmd.rs",
+        "src/infrastructure/tools/agents/agent_cmd_containers.rs",
     ];
     let forbidden = [
         "begin_kill",
@@ -3290,11 +3290,11 @@ fn all_four_socket_consumers_read_via_the_shared_frame_reader() {
     let consumers = [
         "src/interface/cli/uds_reader.rs",
         "src/interface/cli/uds_multi_client.rs",
-        "src/infrastructure/tools/subagent_monitor.rs",
+        "src/infrastructure/tools/agents/subagent_monitor.rs",
         // The parent→child query path (agent tool + TUI inspector poll) is a
         // socket consumer too; it must not be stranded on legacy NDJSON reads
         // when the deprecation window closes (#1059 review, finding 5).
-        "src/infrastructure/tools/subagent_transport.rs",
+        "src/infrastructure/tools/agents/subagent_transport.rs",
         "../quecto-tui/src/protocol/client.rs",
         "../quecto-api/src/infrastructure/uds/client.rs",
     ];
@@ -3863,15 +3863,15 @@ fn dependency_allowlists_use_paths_not_substrings() {
 
 #[test]
 fn application_guard_resolves_relative_paths() {
-    let file = "src/infrastructure/tools/spawn.rs";
+    let file = "src/infrastructure/tools/agents/spawn.rs";
     for source in [
-        "use super::super::super::application::secret::Bad;",
-        "use super::super::{super::application::secret::Bad};",
-        "fn run() { super::super::super::application::secret::run(); }",
-        "use super::super::super::super::escape::X;",
-        "use super::super::super as root;",
-        "mod inner { use super::super::super::super::application::secret::Bad; }",
-        "use super::super::super::app_alias::Bad;",
+        "use super::super::super::super::application::secret::Bad;",
+        "use super::super::super::{super::application::secret::Bad};",
+        "fn run() { super::super::super::super::application::secret::run(); }",
+        "use super::super::super::super::super::escape::X;",
+        "use super::super::super::super as root;",
+        "mod inner { use super::super::super::super::super::application::secret::Bad; }",
+        "use super::super::super::super::app_alias::Bad;",
     ] {
         assert!(
             !application_dependencies_allowed_at(file, source),
@@ -3880,11 +3880,11 @@ fn application_guard_resolves_relative_paths() {
     }
     for source in [
         "use super::spawn_entry::child_socket_path;",
-        "use super::super::super::application::ports::SubagentLaunchPorts;",
-        "use super::super::super::domain::tool_policy::value_objects::tool::ToolResult;",
-        "mod inner { use super::super::super::super::domain::tool_policy::value_objects::tool::ToolResult; }",
+        "use super::super::super::super::application::ports::SubagentLaunchPorts;",
+        "use super::super::super::super::domain::tool_policy::value_objects::tool::ToolResult;",
+        "mod inner { use super::super::super::super::super::domain::tool_policy::value_objects::tool::ToolResult; }",
         "use crate::application::subagent_launch::SubagentLaunchUseCase;",
-        "#[cfg(test)]\nmod tests { use super::super::super::application::secret::Bad; }",
+        "#[cfg(test)]\nmod tests { use super::super::super::super::application::secret::Bad; }",
     ] {
         assert!(
             application_dependencies_allowed_at(file, source),
@@ -4931,7 +4931,7 @@ fn subagent_teardown_ports_are_capability_local() {
 #[test]
 fn subagent_teardown_guards_reject_outward_and_wire_dependencies() {
     for dep in [
-        "crate::infrastructure::tools::subagent_registry::SubagentRegistry",
+        "crate::infrastructure::tools::agents::subagent_registry::SubagentRegistry",
         "crate::application::ports::SessionStore",
         "crate::application::environments::use_cases::ListEnvironmentsQuery",
         "crate::interface::uds::subagent_teardown::wire::TeardownResponse",
@@ -4959,7 +4959,7 @@ fn subagent_teardown_guards_reject_outward_and_wire_dependencies() {
         );
     }
     for dep in [
-        "crate::infrastructure::tools::subagent_registry::SubagentRegistry",
+        "crate::infrastructure::tools::agents::subagent_registry::SubagentRegistry",
         "crate::interface::cli::uds::DispatchCtx",
         "crate::application::ports::SessionStore",
         "tokio::net::UnixStream",
@@ -5206,20 +5206,20 @@ fn legacy_mixed_web_fetch_path_is_retired() {
 /// users outside this list (bash invocation containment) are out of this
 /// slice's ratchet by design.
 const SUBAGENT_PROCESS_MODULES: &[&str] = &[
-    "src/infrastructure/tools/spawn.rs",
-    "src/infrastructure/tools/spawn_container.rs",
-    "src/infrastructure/tools/spawn_prepared.rs",
-    "src/infrastructure/tools/spawn_launch_ports.rs",
-    "src/infrastructure/tools/spawn_reaper.rs",
-    "src/infrastructure/tools/spawn_proxy_bridge.rs",
-    "src/infrastructure/tools/spawn_registry.rs",
-    "src/infrastructure/tools/subagent_cascade.rs",
-    "src/infrastructure/tools/subagent_registry.rs",
-    "src/infrastructure/tools/subagent_monitor.rs",
-    "src/infrastructure/tools/subagent_monitor_exit.rs",
-    "src/infrastructure/tools/subagent_monitor_merge.rs",
-    "src/infrastructure/tools/subagent_teardown_registry.rs",
-    "src/infrastructure/tools/subagent_teardown_wiring.rs",
+    "src/infrastructure/tools/agents/spawn.rs",
+    "src/infrastructure/tools/agents/spawn_container.rs",
+    "src/infrastructure/tools/agents/spawn_prepared.rs",
+    "src/infrastructure/tools/agents/spawn_launch_ports.rs",
+    "src/infrastructure/tools/agents/spawn_reaper.rs",
+    "src/infrastructure/tools/agents/spawn_proxy_bridge.rs",
+    "src/infrastructure/tools/agents/spawn_registry.rs",
+    "src/infrastructure/tools/agents/subagent_cascade.rs",
+    "src/infrastructure/tools/agents/subagent_registry.rs",
+    "src/infrastructure/tools/agents/subagent_monitor.rs",
+    "src/infrastructure/tools/agents/subagent_monitor_exit.rs",
+    "src/infrastructure/tools/agents/subagent_monitor_merge.rs",
+    "src/infrastructure/tools/agents/subagent_teardown_registry.rs",
+    "src/infrastructure/tools/agents/subagent_teardown_wiring.rs",
     "src/infrastructure/processes/direct_child_routing.rs",
     "src/infrastructure/processes/owned_child_termination.rs",
     "src/infrastructure/processes/parent_control.rs",
@@ -5332,7 +5332,7 @@ fn owned_child_supervisor_is_the_one_child_owner_and_signaller() {
 /// supervisor's handle (#1935); no lease of any kind exists since #1940.
 #[test]
 fn local_launch_records_the_owned_handle_and_generation() {
-    let launch = production_source("src/infrastructure/tools/spawn_launch_ports.rs");
+    let launch = production_source("src/infrastructure/tools/agents/spawn_launch_ports.rs");
     assert!(launch.contains("entry.owned_child = prepared.owned_child;"));
     assert!(launch.contains("entry.launch_generation ="));
 }
@@ -5352,7 +5352,7 @@ fn processes_dependency_allowed(file: &str, path: &str) -> bool {
         // the environments capability's port in its own vocabulary.
         | ["crate", "application", "environments", "ports" | "dto", ..]
         | ["crate", "infrastructure", "processes", ..]
-        | ["crate", "infrastructure", "tools", "subagent_registry", ..] => true,
+        | ["crate", "infrastructure", "tools", "agents", "subagent_registry", ..] => true,
         // A lone `crate` is a `pub(crate)` visibility, not a dependency: the
         // supervisor's termination observation is crate-private (#2286).
         ["crate"] => true,
@@ -5378,7 +5378,7 @@ fn process_adapters_depend_only_inward() {
         "crate::interface::cli::uds_multi::BusyFlag",
         "crate::composition::processes::owned_child_supervisor",
         "crate::application::subagents::use_cases::ExecuteHarnessShutdown",
-        "crate::infrastructure::tools::spawn::SpawnTool",
+        "crate::infrastructure::tools::agents::spawn::SpawnTool",
     ] {
         assert!(
             !processes_dependency_allowed("systemd_service_manager.rs", dep),
@@ -5428,13 +5428,13 @@ fn process_adapters_depend_only_inward() {
 /// flag parser records only a path.
 #[test]
 fn parent_control_capability_never_travels_on_argv_or_env() {
-    let args = production_source("src/infrastructure/tools/spawn_launch_args.rs");
+    let args = production_source("src/infrastructure/tools/agents/spawn_launch_args.rs");
     assert!(args.contains("\"--parent-control\""));
     assert!(
         !args.contains("expose("),
         "the argv builder never sees the material"
     );
-    let container = production_source("src/infrastructure/tools/spawn_container.rs");
+    let container = production_source("src/infrastructure/tools/agents/spawn_container.rs");
     assert!(
         !container.contains("expose(") && !container.contains("PARENT_CONTROL"),
         "no environment variable carries the capability"
@@ -5502,8 +5502,8 @@ fn termination_paths_never_consult_a_lease_or_a_pid() {
         "src/application/subagents/use_cases/kill_delegated_agent.rs",
         "src/application/subagents/use_cases/terminate_all_delegated_agents.rs",
         "src/application/subagents/use_cases/harness_shutdown.rs",
-        "src/infrastructure/tools/spawn_registry.rs",
-        "src/infrastructure/tools/process_tree.rs",
+        "src/infrastructure/tools/agents/spawn_registry.rs",
+        "src/infrastructure/tools/agents/process_tree.rs",
         "src/interface/cli/uds_delete_all_subagents.rs",
         "src/interface/cli/uds_busy_subagents.rs",
         "src/interface/cli/uds_shutdown.rs",
@@ -5512,13 +5512,13 @@ fn termination_paths_never_consult_a_lease_or_a_pid() {
         "src/composition/subagent_teardown.rs",
         "src/application/subagents/use_cases/observe_owned_child_exit.rs",
         "src/application/subagents/use_cases/compensate_failed_launch.rs",
-        "src/infrastructure/tools/agent_cmd.rs",
-        "src/infrastructure/tools/subagent_cascade.rs",
-        "src/infrastructure/tools/subagent_teardown_registry.rs",
-        "src/infrastructure/tools/subagent_teardown_wiring.rs",
-        "src/infrastructure/tools/subagent_monitor_exit.rs",
-        "src/infrastructure/tools/spawn_reaper.rs",
-        "src/infrastructure/tools/spawn_prepared.rs",
+        "src/infrastructure/tools/agents/agent_cmd.rs",
+        "src/infrastructure/tools/agents/subagent_cascade.rs",
+        "src/infrastructure/tools/agents/subagent_teardown_registry.rs",
+        "src/infrastructure/tools/agents/subagent_teardown_wiring.rs",
+        "src/infrastructure/tools/agents/subagent_monitor_exit.rs",
+        "src/infrastructure/tools/agents/spawn_reaper.rs",
+        "src/infrastructure/tools/agents/spawn_prepared.rs",
         "src/infrastructure/processes/owned_child_termination.rs",
         "src/interface/tools/agent_cmd_kill.rs",
         "src/composition/subagent_termination.rs",
@@ -5528,10 +5528,10 @@ fn termination_paths_never_consult_a_lease_or_a_pid() {
         "src/application/environments/use_cases/kill_environment.rs",
         "src/application/environments/use_cases/finalize_environment_member.rs",
         "src/application/subagents/use_cases/settle_delegated_child.rs",
-        "src/infrastructure/tools/environment_member_shutdown.rs",
-        "src/infrastructure/tools/environment_commands.rs",
-        "src/infrastructure/tools/retained_environment_teardown.rs",
-        "src/infrastructure/tools/subagent_cleanup.rs",
+        "src/infrastructure/tools/agents/environment_member_shutdown.rs",
+        "src/infrastructure/tools/agents/environment_commands.rs",
+        "src/infrastructure/tools/agents/retained_environment_teardown.rs",
+        "src/infrastructure/tools/agents/subagent_cleanup.rs",
         "src/infrastructure/tools/swarm/swarm_member_termination.rs",
         "src/infrastructure/tools/swarm/swarm_lifecycle.rs",
         "src/application/swarm/mod.rs",
@@ -5553,12 +5553,12 @@ fn termination_paths_never_consult_a_lease_or_a_pid() {
             );
         }
     }
-    let merge = production_source("src/infrastructure/tools/subagent_monitor_merge.rs");
+    let merge = production_source("src/infrastructure/tools/agents/subagent_monitor_merge.rs");
     assert!(
         merge.contains("reported_generation"),
         "the merge carries the reported launch generation for routing"
     );
-    let cascade = production_source("src/infrastructure/tools/subagent_cascade.rs");
+    let cascade = production_source("src/infrastructure/tools/agents/subagent_cascade.rs");
     assert!(
         cascade.contains("\"launchGeneration\""),
         "the reported snapshot carries the launch generation"
@@ -5570,7 +5570,7 @@ fn termination_paths_never_consult_a_lease_or_a_pid() {
 /// interface adapter only parses, invokes one use case and presents.
 #[test]
 fn agent_cmd_kill_is_parsed_and_presented_in_the_interface_and_composed_outside_it() {
-    let agent_cmd = production_source("src/infrastructure/tools/agent_cmd.rs");
+    let agent_cmd = production_source("src/infrastructure/tools/agents/agent_cmd.rs");
     assert!(agent_cmd.contains("pub fn with_kill_tool("));
     for forbidden in [
         "cascade_remove",
@@ -5679,7 +5679,7 @@ fn agent_cmd_kill_is_parsed_and_presented_in_the_interface_and_composed_outside_
         );
     }
     // A row is `Compensated` only once its terminal effects ran.
-    let cascade = production_source("src/infrastructure/tools/subagent_cascade.rs");
+    let cascade = production_source("src/infrastructure/tools/agents/subagent_cascade.rs");
     let dead = cascade
         .split("pub fn mark_entry_dead(")
         .nth(1)
@@ -5692,7 +5692,8 @@ fn agent_cmd_kill_is_parsed_and_presented_in_the_interface_and_composed_outside_
     // ...and the one compensation marks rows compensated last: after the
     // registered cleanup, the exit-status mark, the cascade, the removed
     // rows' cleanup and the exit signals, in source order.
-    let registry = production_source("src/infrastructure/tools/subagent_teardown_registry.rs");
+    let registry =
+        production_source("src/infrastructure/tools/agents/subagent_teardown_registry.rs");
     let compensate = registry
         .split("fn compensate<'a>(")
         .nth(1)
@@ -5835,7 +5836,7 @@ fn no_interface_registry_drain_remains_after_the_fleet_teardown() {
             );
         }
     }
-    let registry = production_source("src/infrastructure/tools/spawn_registry.rs");
+    let registry = production_source("src/infrastructure/tools/agents/spawn_registry.rs");
     assert!(
         !registry.contains("fn shutdown_all"),
         "spawn_registry::shutdown_all was retired by #1938"
@@ -5944,7 +5945,7 @@ fn fleet_teardown_is_composed_once_and_reached_through_the_graph() {
     assert!(adapters.contains("impl FleetSettlement for TerminateAllDelegatedAgents"));
     // The spawn tool admits against the shared lifecycle cell.
     // `spawn.rs` leads with its test-module includes, so read it whole.
-    let spawn = fs::read_to_string("src/infrastructure/tools/spawn.rs").unwrap();
+    let spawn = fs::read_to_string("src/infrastructure/tools/agents/spawn.rs").unwrap();
     assert!(spawn.contains("harness_lifecycle::admit_spawn(&self.harness_lifecycle)"));
     let native = production_source("src/infrastructure/extensions/native.rs");
     assert!(native.contains(".with_harness_lifecycle(harness_lifecycle.clone())"));
@@ -6066,7 +6067,7 @@ fn environments_application_depends_only_inward() {
         environments_application_dependency_allowed,
     );
     for dep in [
-        "crate::infrastructure::tools::subagent_registry::SubagentRegistry",
+        "crate::infrastructure::tools::agents::subagent_registry::SubagentRegistry",
         "crate::interface::cli::uds_query::respond",
         "crate::application::subagents::ports::DirectChildRouting",
         "tokio::process::Command",
@@ -6809,10 +6810,15 @@ fn swarm_application_depends_only_inward() {
 /// kill adapter that owned member lifecycle policy is retired.
 #[test]
 fn kill_container_asks_members_before_the_retained_kill_and_never_twice() {
-    assert!(
-        !Path::new("src/infrastructure/tools/environment_kill.rs").exists(),
-        "ScriptEnvironmentKill was retired: member lifecycle policy is the application's"
-    );
+    for retired in [
+        "src/infrastructure/tools/environment_kill.rs",
+        "src/infrastructure/tools/agents/environment_kill.rs",
+    ] {
+        assert!(
+            !Path::new(retired).exists(),
+            "ScriptEnvironmentKill was retired: member lifecycle policy is the application's"
+        );
+    }
     assert!(
         !Path::new("src/application/environment_control.rs").exists(),
         "environment_control.rs was folded into application/environments"
@@ -6861,7 +6867,8 @@ fn kill_container_asks_members_before_the_retained_kill_and_never_twice() {
     // The member-shutdown adapter delegates to the subagent capability's
     // per-child settlement under the environment-kill cause; it never
     // runs a script or signals anything.
-    let adapter = production_source("src/infrastructure/tools/environment_member_shutdown.rs");
+    let adapter =
+        production_source("src/infrastructure/tools/agents/environment_member_shutdown.rs");
     assert!(adapter.contains("TerminationCause::EnvironmentKill"));
     assert!(adapter.contains("SettleDelegatedChild"));
     for forbidden in ["Command::new", "run_retained", "libc::", "kill_pid", ".pid"] {
@@ -6872,7 +6879,8 @@ fn kill_container_asks_members_before_the_retained_kill_and_never_twice() {
     }
     // The compensation honours the intent: a monitor EOF for a row the
     // environment kill claimed is not a post-mortem.
-    let registry = production_source("src/infrastructure/tools/subagent_teardown_registry.rs");
+    let registry =
+        production_source("src/infrastructure/tools/agents/subagent_teardown_registry.rs");
     assert!(registry.contains("TeardownIntent::EnvironmentKill"));
 }
 

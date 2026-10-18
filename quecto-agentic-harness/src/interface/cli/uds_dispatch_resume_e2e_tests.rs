@@ -1,7 +1,7 @@
 use crate::application::sessions::ports::SessionStore;
 use crate::domain::conversation::value_objects::message::Message;
 use crate::domain::sessions::entities::session::Session;
-use crate::infrastructure::tools::subagent_registry::new_registry;
+use crate::infrastructure::tools::agents::subagent_registry::new_registry;
 use crate::interface::cli::protocol::AgentCommand;
 
 use super::fixture_tests::Fixture;
@@ -195,7 +195,7 @@ async fn e2e_resume_restores_history_without_readopting_children() {
     // Rows the current harness held before switching away: gone too.
     registry.lock().unwrap().insert(
         "previous".into(),
-        crate::infrastructure::tools::subagent_registry::SubagentEntry::new(
+        crate::infrastructure::tools::agents::subagent_registry::SubagentEntry::new(
             dir.path().join("previous.sock"),
             0,
         ),
@@ -240,7 +240,7 @@ async fn e2e_resume_restores_history_without_readopting_children() {
         registry.lock().unwrap().keys().collect::<Vec<_>>()
     );
     let roster =
-        crate::infrastructure::tools::subagent_compact_roster::build_compact_subagent_roster(
+        crate::infrastructure::tools::agents::subagent_compact_roster::build_compact_subagent_roster(
             &Some(registry),
             None,
         )
@@ -299,8 +299,8 @@ async fn e2e_new_session_creates_no_child_row_and_probes_nothing() {
 
 // ── Session switches settle the departing session's children (#1938) ─────────
 
-use crate::infrastructure::tools::subagent_monitor::spawn_monitor_task;
-use crate::infrastructure::tools::subagent_registry::{SubagentEntry, SubagentRegistry};
+use crate::infrastructure::tools::agents::subagent_monitor::spawn_monitor_task;
+use crate::infrastructure::tools::agents::subagent_registry::{SubagentEntry, SubagentRegistry};
 use std::sync::{Arc, Mutex};
 
 const SWITCH_BOUND: std::time::Duration = std::time::Duration::from_secs(20);
@@ -379,7 +379,7 @@ async fn acking_child(
     )
     .observe_exit;
     let monitor = Arc::new(spawn_monitor_task(
-        crate::infrastructure::tools::subagent_monitor::MonitorSpec {
+        crate::infrastructure::tools::agents::subagent_monitor::MonitorSpec {
             agent_id: entry.agent_uuid.as_str().to_string(),
             socket_path,
             registry: registry.clone(),
@@ -411,7 +411,7 @@ fn production_fleet(
             broadcast_tx: None,
             notify_tx: None,
             harness_lifecycle:
-                crate::infrastructure::tools::harness_lifecycle::new_shared_harness_lifecycle(),
+                crate::infrastructure::tools::agents::harness_lifecycle::new_shared_harness_lifecycle(),
         },
     )
 }

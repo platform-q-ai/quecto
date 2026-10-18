@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 use crate::domain::tool_policy::value_objects::tool::ToolProfileContext;
 use crate::domain::tool_policy::value_objects::tool_descriptor::ProfileAvailabilityScope;
 use crate::infrastructure::config::{Config, ToolPolicyEntryConfig};
-use crate::infrastructure::tools::inherited_tool_policy::{
+use crate::infrastructure::tools::agents::inherited_tool_policy::{
     InheritedToolPolicySnapshot, workflow_tool_identity,
 };
 use crate::interface::tool_runtime::{

@@ -1,5 +1,5 @@
 use super::*;
-use crate::infrastructure::tools::launch_rollbacks::InFlight;
+use crate::infrastructure::tools::agents::launch_rollbacks::InFlight;
 
 #[tokio::test]
 async fn an_exit_waits_for_a_rollback_in_flight() {

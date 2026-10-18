@@ -87,7 +87,7 @@ that owns the command.
   `uds_dispatch_forwarding.rs`, or `uds_dispatch_sync_forward.rs`.
 - `src/interface/cli/protocol.rs`, `uds_session.rs`, and `uds_snapshots.rs`
   when response or snapshot JSON changes.
-- `src/infrastructure/tools/agent_cmd.rs` when the spawned-agent tool exposes
+- `src/infrastructure/tools/agents/agent_cmd.rs` when the spawned-agent tool exposes
   the command.
 
 **Tests to add/update:**

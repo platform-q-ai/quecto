@@ -16,11 +16,11 @@ use crate::infrastructure::processes::owned_child_supervisor::{
     OwnedChildSupervisor, ProcessGroup, TerminationBudget,
 };
 use crate::infrastructure::processes::owned_child_termination::SupervisedChildTermination;
-use crate::infrastructure::tools::harness_lifecycle::new_shared_harness_lifecycle;
-use crate::infrastructure::tools::subagent_registry::{
+use crate::infrastructure::tools::agents::harness_lifecycle::new_shared_harness_lifecycle;
+use crate::infrastructure::tools::agents::subagent_registry::{
     SubagentEntry, SubagentRegistry, SubagentStatus,
 };
-use crate::infrastructure::tools::subagent_teardown_registry::RegistryDelegatedAgents;
+use crate::infrastructure::tools::agents::subagent_teardown_registry::RegistryDelegatedAgents;
 use crate::interface::cli::uds_teardown_adapters::RegistryLifecycleRepository;
 
 /// A fake harness endpoint that acknowledges every command and records it.
@@ -198,7 +198,7 @@ async fn a_member_this_harness_launched_is_asked_through_its_delegated_agent() {
         "the row is left live for its monitor; nothing was pretended"
     );
     // Once its own path ended it, the member is found gone: no error.
-    super::super::super::subagent_monitor::mark_exited(
+    super::super::super::agents::subagent_monitor::mark_exited(
         registry.lock().unwrap().get_mut("worker-uuid").unwrap(),
     );
     termination

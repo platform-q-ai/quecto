@@ -134,9 +134,9 @@ pub(super) struct DispatchTestEnv {
     /// Pre-seeded sub-agent notification channel; `ctx()` moves it into the
     /// context, mirroring the real dispatch loop's single owned receiver.
     pub(super) notification_rx:
-        Option<crate::infrastructure::tools::subagent_registry::NotificationRx>,
+        Option<crate::infrastructure::tools::agents::subagent_registry::NotificationRx>,
     pub(super) subagent_registry:
-        Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
+        Option<crate::infrastructure::tools::agents::subagent_registry::SubagentRegistry>,
 }
 
 impl DispatchTestEnv {

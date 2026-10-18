@@ -15,7 +15,7 @@ use crate::application::subagents::ports::{
 use crate::domain::agents::services::subagent_teardown::{
     DelegatedAgentIdentity, RoutingDepth, ShutdownReason,
 };
-use crate::infrastructure::tools::subagent_registry::{
+use crate::infrastructure::tools::agents::subagent_registry::{
     SubagentRegistry, send_subagent_uds_command_with_timeout,
 };
 

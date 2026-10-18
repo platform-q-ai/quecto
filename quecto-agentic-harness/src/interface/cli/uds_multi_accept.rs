@@ -25,7 +25,7 @@ pub(super) struct AcceptLoopArgs {
     pub(super) tool_catalogue_snapshot: super::uds_extensions::ToolCatalogueSnapshot,
     pub(super) busy: BusyFlag,
     pub(super) subagent_registry:
-        Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
+        Option<crate::infrastructure::tools::agents::subagent_registry::SubagentRegistry>,
     /// Live workflow engine (#914): read mid-turn so a busy `get_state` reports
     /// current step progress, not the turn-boundary frozen snapshot.
     pub(super) workflow_state: Option<crate::interface::shared::WorkflowStateHandle>,

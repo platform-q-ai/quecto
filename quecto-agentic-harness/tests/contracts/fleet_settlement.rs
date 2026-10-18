@@ -11,8 +11,8 @@ use quecto::application::sessions::ports::FleetSettlement;
 use quecto::composition::subagent_teardown::{FleetTeardownWiring, build_fleet_teardown};
 use quecto::domain::agents::services::subagent_teardown::LaunchGeneration;
 use quecto::domain::ids::AgentUuid;
-use quecto::infrastructure::tools::harness_lifecycle::new_shared_harness_lifecycle;
-use quecto::infrastructure::tools::subagent_registry::{SubagentEntry, SubagentRegistry};
+use quecto::infrastructure::tools::agents::harness_lifecycle::new_shared_harness_lifecycle;
+use quecto::infrastructure::tools::agents::subagent_registry::{SubagentEntry, SubagentRegistry};
 
 fn under_test(registry: SubagentRegistry) -> Arc<dyn FleetSettlement> {
     build_fleet_teardown(FleetTeardownWiring {

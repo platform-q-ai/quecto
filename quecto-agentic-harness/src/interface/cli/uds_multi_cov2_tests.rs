@@ -384,7 +384,7 @@ fn tiny_extension_tool_default_session_key_is_noop() {
 #[test]
 fn the_multi_client_loop_waits_for_a_launch_rollback_at_exit() {
     use std::io::BufRead;
-    let work = crate::infrastructure::tools::launch_rollbacks::InFlight::enter();
+    let work = crate::infrastructure::tools::agents::launch_rollbacks::InFlight::enter();
     let dir = tempfile::tempdir().unwrap();
     let socket_path = dir.path().join("multi.sock");
     let listener = {
