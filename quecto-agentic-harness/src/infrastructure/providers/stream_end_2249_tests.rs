@@ -16,13 +16,13 @@ use super::stream_idle::tests::{LIVE, bounded, servers};
 use super::stream_idle_provider_tests::{Vendor, request, terminations, traced};
 use crate::application::providers::ports::ChatRequest;
 use crate::domain::conversation::value_objects::message::Message;
-use crate::domain::error::DomainError;
 use crate::domain::inference::events::request_observation::RequestTrace;
 use crate::domain::inference::services::provider_error::{
     ProviderErrorClass, classify_provider_error,
 };
 use crate::domain::inference::value_objects::attempt_diagnostics::Termination;
 use crate::domain::inference::value_objects::provider::StreamEvent;
+use crate::domain::shared::error::DomainError;
 
 const DELTA: &str = "whole";
 

@@ -157,7 +157,7 @@ fn notification_helpers_use_registry_entry_when_present() {
     let registry = super::super::subagent_registry::new_registry();
     let mut entry = wave3_test_entry();
     entry.display_name = "display".into();
-    entry.agent_uuid = crate::domain::ids::AgentUuid::new("uuid-123");
+    entry.agent_uuid = crate::domain::identity::ids::AgentUuid::new("uuid-123");
     registry.lock().unwrap().insert("uuid-123".into(), entry);
     assert_eq!(notification_display_label(&registry, "uuid-123"), "display");
     assert_eq!(
@@ -254,7 +254,7 @@ fn w5_notify_from_parsed_error_defaults_and_channel_full_drop() {
         1,
         &serde_json::json!({}),
         None,
-        crate::domain::ids::AgentUuid::new("bot"),
+        crate::domain::identity::ids::AgentUuid::new("bot"),
     );
     assert!(rx.try_recv().is_err());
 
@@ -264,7 +264,7 @@ fn w5_notify_from_parsed_error_defaults_and_channel_full_drop() {
         2,
         &serde_json::json!({"type":"response","command":"agent_error"}),
         None,
-        crate::domain::ids::AgentUuid::new("bot"),
+        crate::domain::identity::ids::AgentUuid::new("bot"),
     );
     assert!(rx.try_recv().unwrap().to_message().contains("agent error"));
 
@@ -281,7 +281,7 @@ fn w5_notify_from_parsed_error_defaults_and_channel_full_drop() {
         4,
         &serde_json::json!({"type":"tool_execution_end","isError":true}),
         None,
-        crate::domain::ids::AgentUuid::new("bot"),
+        crate::domain::identity::ids::AgentUuid::new("bot"),
     );
     assert_eq!(rx.try_recv().unwrap().sequence, 3);
     assert!(rx.try_recv().is_err());

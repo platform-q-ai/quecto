@@ -17,8 +17,8 @@ use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::application::providers::ports::{ChatRequest, LlmProvider};
 use crate::application::tools::ports::Tool;
 use crate::domain::conversation::value_objects::message::{LlmResponse, Message, ToolCall};
-use crate::domain::error::DomainError;
 use crate::domain::inference::value_objects::provider::StreamEvent;
+use crate::domain::shared::error::DomainError;
 use crate::domain::tool_policy::value_objects::tool::{ToolDefinition, ToolResult};
 use crate::interface::cli::uds_session::AgentSession;
 

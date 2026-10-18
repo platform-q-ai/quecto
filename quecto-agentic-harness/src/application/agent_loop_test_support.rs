@@ -26,7 +26,7 @@ impl super::agent_loop::AgentLoopImpl {
             dyn std::future::Future<
                     Output = Result<
                         crate::domain::tool_policy::value_objects::tool::ToolResult,
-                        crate::domain::error::DomainError,
+                        crate::domain::shared::error::DomainError,
                     >,
                 > + Send
                 + '_,

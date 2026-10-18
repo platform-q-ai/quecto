@@ -32,7 +32,7 @@ fn the_output_cap_error_names_the_cap_and_classifies_as_output_capped() {
     assert!(message.starts_with(OUTPUT_CAP_EXCEEDED), "{message}");
     assert!(message.contains("65536 bytes"), "{message}");
     let class = crate::domain::inference::services::provider_error::classify_provider_error(
-        &crate::domain::error::DomainError::Provider(message),
+        &crate::domain::shared::error::DomainError::Provider(message),
     );
     assert_eq!(
         class,

@@ -369,7 +369,7 @@ pub(crate) fn build_tool_runtime(
     let environment_control = agent_control.termination_slots.environments.clone();
     if let Some(install_termination_owners) = kill_tool {
         let installed = install_termination_owners(crate::interface::cli::KillToolWiring {
-            owner: crate::domain::ids::AgentUuid::new(if session_key.is_empty() {
+            owner: crate::domain::identity::ids::AgentUuid::new(if session_key.is_empty() {
                 "harness".to_string()
             } else {
                 session_key.clone()

@@ -166,6 +166,7 @@ fn a_crash_record_redacts_and_bounds_the_panic_message() {
         location: None,
     };
     assert!(
-        crash(&huge, None).panic.message.len() <= crate::domain::crash_record::MAX_CRASH_TEXT_BYTES
+        crash(&huge, None).panic.message.len()
+            <= crate::domain::agents::value_objects::crash_record::MAX_CRASH_TEXT_BYTES
     );
 }

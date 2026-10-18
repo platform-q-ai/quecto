@@ -4,7 +4,7 @@ use crate::domain::conversation::value_objects::message::{Message, Role};
 use crate::domain::conversation::value_objects::stored_images::MessageImageRefs;
 use crate::domain::sessions::entities::session::{Session, SessionSummary};
 use crate::domain::sessions::entities::session_identity::SessionIdentity;
-use crate::domain::{error::DomainError, workflow::WorkflowRunPersisted};
+use crate::domain::{shared::error::DomainError, workflow::WorkflowRunPersisted};
 use std::collections::BTreeMap;
 use std::future::Future;
 use std::path::{Path, PathBuf};

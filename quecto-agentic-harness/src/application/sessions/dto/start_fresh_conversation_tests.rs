@@ -1,5 +1,5 @@
 use super::*;
-use crate::domain::error::DomainError;
+use crate::domain::shared::error::DomainError;
 
 #[test]
 fn refusals_present_the_exact_transition_texts() {

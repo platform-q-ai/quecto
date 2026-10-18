@@ -1,4 +1,4 @@
-use crate::domain::constants::DEFAULT_OUTPUT_CAP_BYTES;
+use crate::domain::shared::constants::DEFAULT_OUTPUT_CAP_BYTES;
 
 #[cfg(any(test, feature = "test-support"))]
 static BUILT_PREVIEW_COUNTS_FOR_TESTS: std::sync::LazyLock<

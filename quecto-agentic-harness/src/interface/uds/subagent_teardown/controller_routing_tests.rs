@@ -8,7 +8,7 @@ use crate::application::subagents::use_cases::teardown_fakes::*;
 use crate::domain::agents::services::subagent_teardown::{
     HarnessLifecycleState, LineageSnapshot, RoutingDepth, ShutdownReason,
 };
-use crate::domain::ids::AgentUuid;
+use crate::domain::identity::ids::AgentUuid;
 use crate::interface::uds::subagent_teardown::ack_fakes::RecordingWriter;
 
 #[tokio::test]

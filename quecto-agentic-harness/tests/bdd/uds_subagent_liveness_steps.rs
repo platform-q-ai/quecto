@@ -142,7 +142,7 @@ fn send_delete_all(world: &mut QuectoWorld, id: String) {
     use quecto::infrastructure::tools::agents::subagent_registry::{SubagentEntry, new_registry};
     let registry = new_registry();
     for (index, name) in world.subagent_liveness_registry_names.iter().enumerate() {
-        let uuid = quecto::domain::ids::AgentUuid::mint();
+        let uuid = quecto::domain::identity::ids::AgentUuid::mint();
         let mut entry = SubagentEntry::with_identity(
             uuid.clone(),
             name.clone(),
@@ -158,7 +158,7 @@ fn send_delete_all(world: &mut QuectoWorld, id: String) {
     }
     let fleet = quecto::composition::subagent_teardown::build_fleet_teardown(
         quecto::composition::subagent_teardown::FleetTeardownWiring {
-            owner: quecto::domain::ids::AgentUuid::new("root"),
+            owner: quecto::domain::identity::ids::AgentUuid::new("root"),
             registry: registry.clone(),
             broadcast_tx: None,
             notify_tx: None,

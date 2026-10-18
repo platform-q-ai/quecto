@@ -220,7 +220,7 @@ impl LsJsonEnvironment {
             status: record.status.name().to_string(),
             members: record.members.len(),
             repository: present(&record.repository)
-                .map(|url| crate::domain::redaction::redact_url_userinfo(&url)),
+                .map(|url| crate::domain::shared::redaction::redact_url_userinfo(&url)),
             created_by: present(&record.created_by),
             created_at: record.created_at,
             age_s: record.created_at.map(|at| now.saturating_sub(at)),
@@ -284,7 +284,7 @@ fn present_table(records: &[&EnvironmentRecord], all: bool, total: usize, stdout
                 if record.repository.is_empty() {
                     "-".to_string()
                 } else {
-                    crate::domain::redaction::redact_url_userinfo(&record.repository)
+                    crate::domain::shared::redaction::redact_url_userinfo(&record.repository)
                 },
                 if record.created_by.is_empty() {
                     "-".to_string()

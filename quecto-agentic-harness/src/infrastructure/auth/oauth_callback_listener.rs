@@ -7,7 +7,7 @@
 //! ends the login.
 
 use super::oauth_callback_request::{CallbackConnection, CallbackLimits, Framed};
-use crate::domain::error::DomainError;
+use crate::domain::shared::error::DomainError;
 use tokio::net::TcpListener;
 use tokio::time::Instant;
 

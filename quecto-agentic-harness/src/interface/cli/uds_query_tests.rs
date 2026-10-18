@@ -46,7 +46,11 @@ impl Tool for CatalogueFixtureTool {
         &self,
         _arguments: &str,
     ) -> Pin<
-        Box<dyn Future<Output = Result<ToolResult, crate::domain::error::DomainError>> + Send + '_>,
+        Box<
+            dyn Future<Output = Result<ToolResult, crate::domain::shared::error::DomainError>>
+                + Send
+                + '_,
+        >,
     > {
         Box::pin(async move {
             Ok(ToolResult {

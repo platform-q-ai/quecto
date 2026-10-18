@@ -128,7 +128,7 @@ impl WorkflowBarState {
     /// otherwise-empty bar is allowed to CLEAR a currently-visible one (#901).
     ///
     /// The kernel only ever emits three `workflow_state.mode` values
-    /// (`src/domain/workflow.rs`, `WorkflowMode::wire_str`):
+    /// (`src/domain/workflow/mod.rs`, `WorkflowMode::wire_str`):
     /// `"selecting_template"`, `"active"`, `"complete"`. Of these only
     /// `"complete"` is terminal; the other two are transient/intermediate and
     /// must NOT clear a visible workflow. (The forwarded descendant path —

@@ -35,8 +35,9 @@ impl ContextSpillStore for MemSpillStore {
         &self,
         _session_key: &SessionIdentity,
         entry: &SpillEntry,
-    ) -> Pin<Box<dyn Future<Output = Result<(), crate::domain::error::DomainError>> + Send + '_>>
-    {
+    ) -> Pin<
+        Box<dyn Future<Output = Result<(), crate::domain::shared::error::DomainError>> + Send + '_>,
+    > {
         self.entries.lock().unwrap().push(entry.clone());
         Box::pin(async { Ok(()) })
     }
@@ -47,8 +48,9 @@ impl ContextSpillStore for MemSpillStore {
         id: &SpillId,
     ) -> Pin<
         Box<
-            dyn Future<Output = Result<Option<SpillEntry>, crate::domain::error::DomainError>>
-                + Send
+            dyn Future<
+                    Output = Result<Option<SpillEntry>, crate::domain::shared::error::DomainError>,
+                > + Send
                 + '_,
         >,
     > {
@@ -84,8 +86,9 @@ impl ContextSpillStore for MemSpillStore {
     fn clear(
         &self,
         _session_key: &SessionIdentity,
-    ) -> Pin<Box<dyn Future<Output = Result<(), crate::domain::error::DomainError>> + Send + '_>>
-    {
+    ) -> Pin<
+        Box<dyn Future<Output = Result<(), crate::domain::shared::error::DomainError>> + Send + '_>,
+    > {
         self.entries.lock().unwrap().clear();
         Box::pin(async { Ok(()) })
     }

@@ -8,7 +8,7 @@ use crate::domain::agents::services::subagent_teardown::{
     HarnessLifecycleState, LaunchGeneration, LineageSnapshot, RoutingDepth, ShutdownReason,
     TerminationRouteError,
 };
-use crate::domain::ids::AgentUuid;
+use crate::domain::identity::ids::AgentUuid;
 
 use super::super::teardown_fakes::*;
 

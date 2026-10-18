@@ -13,11 +13,11 @@ use crate::application::sessions::dto::{
 };
 use crate::application::sessions::ports::session_home::SessionMetadataRecord;
 use crate::application::sessions::session_home::SessionHomeContext;
-use crate::domain::error::DomainError;
 use crate::domain::sessions::entities::session_home::*;
 use crate::domain::sessions::services::session_metadata_search::{
     MatchedField, MetadataQuery, SessionMetadataFields, group_root, rank_of, repository_label,
 };
+use crate::domain::shared::error::DomainError;
 
 /// The metadata search over the home catalogue and workspace discovery.
 pub struct SearchSessionMetadata {

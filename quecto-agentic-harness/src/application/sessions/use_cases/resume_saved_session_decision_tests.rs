@@ -10,13 +10,13 @@ use crate::application::sessions::use_cases::start_fresh_rig::{
     FreshOptions, FreshRig, OLD_KEY, build_fresh_rig,
 };
 use crate::domain::conversation::value_objects::message::Message;
-use crate::domain::error::DomainError;
 use crate::domain::sessions::entities::session::Session;
 use crate::domain::sessions::entities::session_home::{
     AssociationProvenance, SessionHome, SessionHomeScope, WorkspaceGroup,
 };
 use crate::domain::sessions::entities::session_identity::SessionIdentity;
 use crate::domain::sessions::services::resume_decision::{HomeVersion, ResumeDecisionKind};
+use crate::domain::shared::error::DomainError;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 

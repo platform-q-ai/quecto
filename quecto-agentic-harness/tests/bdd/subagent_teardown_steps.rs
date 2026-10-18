@@ -21,7 +21,7 @@ use quecto::application::subagents::use_cases::{
 use quecto::domain::agents::services::subagent_teardown::{
     HarnessLifecycleState, LifecycleTransitionError, LineageSnapshot, RoutingDepth, ShutdownReason,
 };
-use quecto::domain::ids::AgentUuid;
+use quecto::domain::identity::ids::AgentUuid;
 use quecto::interface::uds::subagent_teardown::controller::{
     ConnectionAuthority, ControllerOutcome, DeliveryState, SubagentTeardownController,
 };

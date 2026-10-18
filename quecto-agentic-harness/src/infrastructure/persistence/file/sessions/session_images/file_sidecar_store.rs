@@ -21,8 +21,8 @@ use super::sidecar_store::{ImageSidecarStore, SidecarFuture, SidecarRead};
 use crate::domain::conversation::value_objects::stored_images::{
     ImageRef, MAX_STORED_IMAGE_TEXT, VerifiedText, is_sha256_hex,
 };
-use crate::domain::error::DomainError;
 use crate::domain::sessions::entities::session_identity::SessionIdentity;
+use crate::domain::shared::error::DomainError;
 use crate::infrastructure::atomic_write::atomic_write;
 use crate::infrastructure::persistence::file::sessions::session_layout::FlatSessionLayout;
 

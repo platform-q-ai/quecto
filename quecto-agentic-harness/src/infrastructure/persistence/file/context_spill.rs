@@ -12,9 +12,9 @@ use tokio::sync::RwLock;
 use super::sessions::session_images::ImageRefRecord;
 use super::sessions::session_layout::FlatSessionLayout;
 use crate::application::sessions::ports::{ContextSpillStore, SpillIndexList, SpillPresence};
-use crate::domain::error::DomainError;
 use crate::domain::sessions::entities::session::{SpillEntry, SpillIndex};
 use crate::domain::sessions::entities::session_identity::{SessionIdentity, SpillId};
+use crate::domain::shared::error::DomainError;
 
 /// JSONL-based spill store for context pruning.
 ///

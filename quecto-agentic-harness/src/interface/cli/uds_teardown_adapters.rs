@@ -20,7 +20,7 @@ use crate::application::subagents::ports::{
 use crate::domain::agents::services::subagent_teardown::{
     DelegatedAgentIdentity, HarnessLifecycleState, LineageRecord, LineageSnapshot, ShutdownReason,
 };
-use crate::domain::ids::AgentUuid;
+use crate::domain::identity::ids::AgentUuid;
 use crate::infrastructure::tools::agents::harness_lifecycle::SharedHarnessLifecycle;
 use crate::infrastructure::tools::agents::subagent_registry::SubagentRegistry;
 use crate::interface::uds::subagent_teardown::presenter::{AckWriteError, AckWriter};

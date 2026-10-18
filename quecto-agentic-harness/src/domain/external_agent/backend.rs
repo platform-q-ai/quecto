@@ -7,7 +7,7 @@
 //! its own container, and they run no workflow and take no effort.
 
 use crate::domain::agents::services::subagent::{ContainerSelection, SubagentConfig};
-use crate::domain::error::DomainError;
+use crate::domain::shared::error::DomainError;
 
 /// The brain a member harness runs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

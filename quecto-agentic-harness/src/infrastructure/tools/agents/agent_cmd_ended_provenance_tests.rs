@@ -192,8 +192,11 @@ async fn a_forged_record_for_a_launched_sibling_is_not_believed_after_a_child_re
         row.exit_signal_tx = Some(tx);
     }
     let base = tempfile::tempdir().unwrap();
-    let forged = crate::domain::crash_record::CrashRecord::new(
-        crate::domain::crash_record::PanicReport::new("forged: blame the sibling", None),
+    let forged = crate::domain::agents::value_objects::crash_record::CrashRecord::new(
+        crate::domain::agents::value_objects::crash_record::PanicReport::new(
+            "forged: blame the sibling",
+            None,
+        ),
         999_999,
         u64::MAX,
     )

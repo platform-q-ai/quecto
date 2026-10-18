@@ -217,7 +217,7 @@ fn delegated_registry(
     use crate::infrastructure::tools::agents::subagent_registry::{SubagentEntry, new_registry};
     let registry = new_registry();
     for (index, name) in names.iter().enumerate() {
-        let uuid = crate::domain::ids::AgentUuid::mint();
+        let uuid = crate::domain::identity::ids::AgentUuid::mint();
         let mut entry = SubagentEntry::with_identity(
             uuid.clone(),
             (*name).to_string(),
@@ -240,7 +240,7 @@ fn fleet_over(
 ) -> std::sync::Arc<crate::application::subagents::use_cases::TerminateAllDelegatedAgents> {
     crate::composition::subagent_teardown::build_fleet_teardown(
         crate::composition::subagent_teardown::FleetTeardownWiring {
-            owner: crate::domain::ids::AgentUuid::new("root"),
+            owner: crate::domain::identity::ids::AgentUuid::new("root"),
             registry: registry.clone(),
             broadcast_tx,
             notify_tx: None,

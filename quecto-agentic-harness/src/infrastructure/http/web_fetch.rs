@@ -41,9 +41,11 @@
 use crate::application::agent_turn::use_cases::web_fetch::{
     FetchFailure, FetchOutcome, FetchRequest, FetchWebContent, HttpStatus,
 };
-use crate::domain::nat64_prefix::{DISCOVERY_NAME, Nat64Prefix, discovered_prefixes};
-use crate::domain::network_destination::{
+use crate::domain::tool_policy::services::network_destination::{
     NonPublicAddress, authorize_destination, authorize_under, is_fetchable_name,
+};
+use crate::domain::tool_policy::value_objects::nat64_prefix::{
+    DISCOVERY_NAME, Nat64Prefix, discovered_prefixes,
 };
 use std::{future::Future, net::IpAddr, net::SocketAddr, pin::Pin, sync::Arc, time::Duration};
 

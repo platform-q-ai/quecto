@@ -124,13 +124,17 @@ impl crate::application::providers::ports::LlmProvider for SilentProvider {
             dyn std::future::Future<
                     Output = Result<
                         crate::domain::conversation::value_objects::message::LlmResponse,
-                        crate::domain::error::DomainError,
+                        crate::domain::shared::error::DomainError,
                     >,
                 > + Send
                 + 'a,
         >,
     > {
-        Box::pin(async { Err(crate::domain::error::DomainError::Provider("silent".into())) })
+        Box::pin(async {
+            Err(crate::domain::shared::error::DomainError::Provider(
+                "silent".into(),
+            ))
+        })
     }
 }
 
@@ -358,7 +362,7 @@ impl crate::application::providers::ports::LlmProvider for OrderedRouter {
             dyn std::future::Future<
                     Output = Result<
                         crate::domain::conversation::value_objects::message::LlmResponse,
-                        crate::domain::error::DomainError,
+                        crate::domain::shared::error::DomainError,
                     >,
                 > + Send
                 + 'a,

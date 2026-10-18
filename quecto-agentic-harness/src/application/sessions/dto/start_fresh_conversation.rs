@@ -4,7 +4,7 @@
 //! fresh session is, and how starting one failed.
 use super::SaveSessionError;
 use crate::application::sessions::conversation_ledger::LedgerAdvance;
-use crate::domain::ids::AgentUuid;
+use crate::domain::identity::ids::AgentUuid;
 use crate::domain::sessions::entities::session_identity::SessionIdentity;
 
 /// Which transition the departing children are settled for; the label

@@ -3,7 +3,7 @@ use super::swarm_bridge::{SwarmContext, process_confirmed_dead, process_start};
 use crate::application::swarm::ports::CoordinationPort;
 use crate::application::swarm::ports::PortFuture;
 use crate::application::swarm::ports::{ProcessControl, ProcessObservation};
-use crate::domain::error::DomainError;
+use crate::domain::shared::error::DomainError;
 use crate::domain::swarm::{
     entities::run::Member,
     value_objects::lifecycle::{MemberStatus, ProcessIdentity, RunStatus},

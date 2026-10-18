@@ -30,7 +30,7 @@ use std::panic::PanicHookInfo;
 use std::sync::Once;
 
 use crate::application::tool_panic_scope::{self, PanicSite, Recording, ToolScope};
-use crate::domain::crash_record::{CrashRecord, PanicReport};
+use crate::domain::agents::value_objects::crash_record::{CrashRecord, PanicReport};
 use crate::infrastructure::persistence::file::crash_record;
 
 /// What the hook does with one panic.

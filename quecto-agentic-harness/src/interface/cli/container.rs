@@ -16,7 +16,7 @@ use crate::application::environments::dto::{
 use crate::application::environments::use_cases::{
     ContainerStatus, DiagnoseContainerRuntime, InitialiseStandardContainer,
 };
-use crate::domain::redaction::redact_url_userinfo;
+use crate::domain::shared::redaction::redact_url_userinfo;
 
 /// Composition's builder of the container-runtime doctor: the create
 /// preflight of the effective container config, over the run's own

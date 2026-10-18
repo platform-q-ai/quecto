@@ -83,7 +83,7 @@ fn rig(dir: &std::path::Path) -> Rig {
     let (environments, env_ref) = environment_with_kill_script(dir, "worker");
     let subagents: SubagentRegistry = Arc::new(Mutex::new(HashMap::new()));
     let mut entry = SubagentEntry::with_identity(
-        crate::domain::ids::AgentUuid::new("worker"),
+        crate::domain::identity::ids::AgentUuid::new("worker"),
         "worker".into(),
         dir.join("never.sock"),
         0,
@@ -96,7 +96,7 @@ fn rig(dir: &std::path::Path) -> Rig {
     let notify = Arc::new(tokio::sync::Notify::new());
     let busy = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let graph = crate::composition::subagent_teardown::build_teardown_graph(TeardownLoopInputs {
-        owner: crate::domain::ids::AgentUuid::new("root"),
+        owner: crate::domain::identity::ids::AgentUuid::new("root"),
         registry: Some(subagents.clone()),
         harness_lifecycle: None,
         broadcast_tx: None,
@@ -150,7 +150,7 @@ async fn termination_runs_the_common_shutdown_and_environment_kill_then_requests
     );
     assert_eq!(
         outcome.children_shut_down,
-        [crate::domain::ids::AgentUuid::new("worker")]
+        [crate::domain::identity::ids::AgentUuid::new("worker")]
     );
     assert!(outcome.children_failed.is_empty());
     assert!(outcome.exit_signalled);

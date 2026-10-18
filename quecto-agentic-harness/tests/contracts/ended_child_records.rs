@@ -9,9 +9,9 @@ use std::sync::Arc;
 
 use quecto::application::sessions::ports::SessionStore;
 use quecto::application::subagents::ports::EndedChildRecords;
+use quecto::domain::agents::value_objects::crash_record::CrashRecord;
+use quecto::domain::agents::value_objects::crash_record::PanicReport;
 use quecto::domain::conversation::value_objects::message::Message;
-use quecto::domain::crash_record::CrashRecord;
-use quecto::domain::crash_record::PanicReport;
 use quecto::domain::sessions::entities::session::Session;
 use quecto::domain::sessions::entities::session_identity::SessionIdentity;
 use quecto::infrastructure::observability::audit_log::AuditLog;

@@ -1,6 +1,6 @@
 use super::{is_injected_system_prompt, position_by_id, user_visible_messages};
 use crate::domain::conversation::value_objects::message::Message;
-use crate::domain::ids::MessageId;
+use crate::domain::identity::ids::MessageId;
 
 #[test]
 fn injected_prompt_matches_only_the_exact_non_manifest_system_message() {

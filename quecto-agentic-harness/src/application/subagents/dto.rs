@@ -4,7 +4,7 @@ use std::fmt;
 use crate::domain::agents::services::subagent_teardown::{
     DelegatedAgentIdentity, RoutingDepth, ShutdownReason, TerminationRouteError,
 };
-use crate::domain::ids::AgentUuid;
+use crate::domain::identity::ids::AgentUuid;
 
 /// Independent inbound events that all converge on one common shutdown.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

@@ -3,7 +3,7 @@
 //! on bytes read in full, R1-H1; an I/O failure is never cached, R2-H1). A cold
 //! process seeds the summaries once from the derived index, so an unchanged
 //! directory costs one `stat` per file; an entry is reused only at its stamp.
-use crate::domain::error::DomainError;
+use crate::domain::shared::error::DomainError;
 
 use super::super::super::session_home_catalogue::persisted_walk;
 use super::super::super::session_layout::FlatSessionLayout;

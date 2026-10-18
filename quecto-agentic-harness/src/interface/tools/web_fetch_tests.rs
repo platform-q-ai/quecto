@@ -37,7 +37,7 @@ async fn non_success_status_preserves_baseline_display_for_known_and_unknown_cod
 #[test]
 fn every_fetch_failure_becomes_a_tool_error_naming_what_went_wrong() {
     use crate::application::agent_turn::use_cases::web_fetch::FetchFailure;
-    use crate::domain::error::DomainError;
+    use crate::domain::shared::error::DomainError;
     let message = |failure: FetchFailure| match super::map_failure(failure, "https://x.test/") {
         DomainError::Tool(message) => message,
         other => panic!("expected a tool error, got {other:?}"),
@@ -193,7 +193,7 @@ async fn non_boolean_flags_are_refused() {
         (r#"{"url":"https://example.com","raw":1}"#, "raw"),
     ] {
         match tool.execute(args).await {
-            Err(crate::domain::error::DomainError::Tool(message)) => {
+            Err(crate::domain::shared::error::DomainError::Tool(message)) => {
                 assert!(
                     message.contains(name) && message.contains("boolean"),
                     "{args}: {message}"

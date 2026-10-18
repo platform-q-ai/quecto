@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 use sha2::{Digest, Sha256};
 
 use crate::application::tools::ports::Tool;
-use crate::domain::error::DomainError;
+use crate::domain::shared::error::DomainError;
 use crate::domain::tool_policy::value_objects::tool::{ToolDefinition, ToolResult};
 use crate::infrastructure::security::sandbox::Sandbox;
 use crate::infrastructure::tools::native::path_utils::resolve_read_path;

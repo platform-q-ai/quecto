@@ -14,7 +14,7 @@ use std::sync::Arc;
 use crate::application::sessions::ports::ContextSpillStore;
 use crate::domain::conversation::services::conversation_view::position_by_id;
 use crate::domain::conversation::value_objects::message::{Message, ThinkingBlock};
-use crate::domain::ids::MessageId;
+use crate::domain::identity::ids::MessageId;
 
 /// Bounded ledger budgets. Eviction is oldest-first and triggers on either
 /// content bytes or entry count so long-running sessions and floods of tiny

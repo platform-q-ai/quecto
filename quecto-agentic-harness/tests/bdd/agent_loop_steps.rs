@@ -1,6 +1,6 @@
 use super::*;
 use quecto::application::agent_loop_test_support;
-use quecto::domain::constants::DEFAULT_OUTPUT_CAP_BYTES;
+use quecto::domain::shared::constants::DEFAULT_OUTPUT_CAP_BYTES;
 
 // Agent Loop Steps
 // ===========================================================================

@@ -23,8 +23,8 @@ use std::time::Duration;
 use quecto::application::inference_attempt::{AttemptAdmission, AttemptPermit};
 use quecto::application::providers::ports::{ChatRequest, LlmProvider};
 use quecto::domain::admission::value_objects::inference_admission::{Feedback, ThrottleFeedback};
-use quecto::domain::error::DomainError;
 use quecto::domain::inference::value_objects::provider::StreamEvent;
+use quecto::domain::shared::error::DomainError;
 use quecto::infrastructure::providers::{
     anthropic::AnthropicProvider, codex::CodexProvider, openai::OpenAiProvider,
 };

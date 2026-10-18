@@ -5,7 +5,7 @@
 //! read only to be ignored. No socket probe, no pid compare, no readoption.
 use crate::application::sessions::dto::SaveTrigger;
 use crate::domain::conversation::value_objects::message::Message;
-use crate::domain::ids::AgentUuid;
+use crate::domain::identity::ids::AgentUuid;
 use crate::domain::sessions::entities::session::{
     PersistedSubagentRosterEntry, SubagentLiveness, SubagentRestoreReason,
 };

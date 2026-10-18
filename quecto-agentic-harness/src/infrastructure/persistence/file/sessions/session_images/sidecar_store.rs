@@ -13,8 +13,8 @@ use std::future::Future;
 use std::pin::Pin;
 
 use crate::domain::conversation::value_objects::stored_images::{ImageRef, VerifiedText};
-use crate::domain::error::DomainError;
 use crate::domain::sessions::entities::session_identity::SessionIdentity;
+use crate::domain::shared::error::DomainError;
 
 pub type SidecarFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T, DomainError>> + Send + 'a>>;
 

@@ -3,7 +3,7 @@
 //! `https://` address written as a link. The rules are the parent
 //! module's to tell.
 use crate::domain::project_board::value_objects::board_text;
-use crate::domain::redaction::redact_secrets;
+use crate::domain::shared::redaction::redact_secrets;
 use regex::{Captures, Regex};
 use std::cell::Cell;
 use std::sync::LazyLock;

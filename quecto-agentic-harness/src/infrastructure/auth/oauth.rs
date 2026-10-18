@@ -1,6 +1,6 @@
 // OAuth: OAuth 2.0 and device-code login flows for OpenAI, Anthropic and xAI.
 
-use crate::domain::error::DomainError;
+use crate::domain::shared::error::DomainError;
 use serde::Deserialize;
 
 /// Overall request timeout for OAuth HTTP calls.

@@ -9,7 +9,7 @@ use crate::application::tools::ports::Tool;
 use crate::domain::agents::value_objects::child_end::ChildOrigin;
 use crate::domain::conversation::services::turn_origin::TurnOrigin;
 use crate::domain::conversation::value_objects::message::ToolCall;
-use crate::domain::ids::AgentUuid;
+use crate::domain::identity::ids::AgentUuid;
 use crate::domain::sessions::entities::session::Session;
 use crate::domain::sessions::entities::session::SubagentLiveness;
 use crate::infrastructure::tools::agents::agent_cmd::AgentCmdTool;

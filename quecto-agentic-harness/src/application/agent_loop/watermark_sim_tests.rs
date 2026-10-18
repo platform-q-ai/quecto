@@ -19,7 +19,7 @@ use crate::domain::conversation::value_objects::message::{
     LlmResponse, Message, StopReason, ToolCall,
 };
 use crate::domain::conversation::value_objects::user_kind::UserKind;
-use crate::domain::error::DomainError;
+use crate::domain::shared::error::DomainError;
 use crate::domain::tool_policy::value_objects::tool::{ToolDefinition, ToolResult};
 use crate::infrastructure::providers::codex::CodexProvider;
 use std::future::Future;

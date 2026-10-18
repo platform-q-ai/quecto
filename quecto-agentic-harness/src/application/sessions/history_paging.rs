@@ -5,7 +5,7 @@
 //! a unit rig needs no store to exercise either.
 use crate::application::sessions::dto::{HistoryError, HistoryPage, HistoryQuery};
 use crate::domain::conversation::{services, value_objects::message::Message};
-use crate::domain::ids::MessageId;
+use crate::domain::identity::ids::MessageId;
 use services::conversation_view::{position_by_id, user_visible_messages};
 use services::turn_origin::{ReportRef, is_substantive_reply, transcript_report_index};
 

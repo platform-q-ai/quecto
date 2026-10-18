@@ -12,7 +12,7 @@ use crate::application::swarm::ports::{
     SwarmLifecycle,
 };
 use crate::application::tools::ports::Tool;
-use crate::domain::error::DomainError;
+use crate::domain::shared::error::DomainError;
 use crate::domain::swarm::{
     entities::run::Snapshot,
     events::telemetry::BoardOpObservation,

@@ -11,7 +11,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use crate::application::tools::ports::Tool;
-use crate::domain::error::DomainError;
+use crate::domain::shared::error::DomainError;
 use crate::domain::tool_policy::value_objects::tool::{ToolDefinition, ToolResult};
 use crate::infrastructure::security::sandbox::Sandbox;
 use crate::infrastructure::tools::native::truncate::format_size;
@@ -51,7 +51,7 @@ use crate::application::search::ports::{RelevanceJudge, SearchLog};
 /// its matches (#2201); matches Quecto's GREP_MAX_LINE_LENGTH.
 const MAX_LINE_BYTES: usize = 500;
 /// Maximum total output bytes (50KB); matches Quecto's DEFAULT_MAX_BYTES.
-const MAX_OUTPUT_BYTES: usize = crate::domain::constants::DEFAULT_OUTPUT_CAP_BYTES;
+const MAX_OUTPUT_BYTES: usize = crate::domain::shared::constants::DEFAULT_OUTPUT_CAP_BYTES;
 /// Maximum individual file size for context reads (1MB); prevents OOM from huge cached files.
 const MAX_FILE_CACHE_BYTES: usize = 1024 * 1024;
 /// A match line past the file cache (#2136).

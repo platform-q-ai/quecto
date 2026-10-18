@@ -3,8 +3,8 @@ use crate::application::subagents::ports::{EndedTranscript, PortFuture};
 use crate::domain::agents::value_objects::child_end::ChildOrigin::{
     Launched, Reported, Unverified,
 };
-use crate::domain::error::DomainError;
 use crate::domain::sessions::entities::session::Session;
+use crate::domain::shared::error::DomainError;
 use std::sync::Mutex;
 
 /// Records answering one scripted transcript load and a fixed crash record,
@@ -204,7 +204,7 @@ async fn a_child_that_is_not_a_launched_identity_has_nothing_to_read() {
 #[tokio::test]
 async fn the_crash_record_is_read_for_the_childs_session() {
     let record = CrashRecord::new(
-        crate::domain::crash_record::PanicReport::new("boom", None),
+        crate::domain::agents::value_objects::crash_record::PanicReport::new("boom", None),
         1,
         2,
     )
@@ -299,7 +299,7 @@ async fn a_reported_or_unverified_child_has_no_transcript_read_on_its_word() {
 #[tokio::test]
 async fn a_reported_childs_crash_record_is_read_only_by_uuid_and_never_as_its_process() {
     let record = CrashRecord::new(
-        crate::domain::crash_record::PanicReport::new("boom", None),
+        crate::domain::agents::value_objects::crash_record::PanicReport::new("boom", None),
         999_999,
         2,
     );

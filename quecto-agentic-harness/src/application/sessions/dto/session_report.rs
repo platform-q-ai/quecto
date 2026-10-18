@@ -9,9 +9,9 @@
 use std::path::PathBuf;
 
 use crate::domain::conversation::value_objects::message::Message;
-use crate::domain::error::DomainError;
-use crate::domain::ids::MessageId;
+use crate::domain::identity::ids::MessageId;
 use crate::domain::sessions::entities::session::SpillEntry;
+use crate::domain::shared::error::DomainError;
 
 /// The report preview budget, in bytes.
 pub const REPORT_PREVIEW_BYTES: usize = 8192;

@@ -2,8 +2,8 @@
 
 use std::path::PathBuf;
 
-use crate::domain::error::DomainError;
-use crate::domain::ids::AgentUuid;
+use crate::domain::identity::ids::AgentUuid;
+use crate::domain::shared::error::DomainError;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DisplayNameResolutionEntry {

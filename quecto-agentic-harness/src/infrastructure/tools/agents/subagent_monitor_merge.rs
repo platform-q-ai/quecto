@@ -126,7 +126,7 @@ fn merge_descendants(
                     .filter(|s| !s.is_empty())
                     .map(str::to_string)
             })
-            .unwrap_or_else(|| crate::domain::ids::AgentUuid::mint().into_string());
+            .unwrap_or_else(|| crate::domain::identity::ids::AgentUuid::mint().into_string());
         // The key and label are the child's words (#2192): only what the
         // agent-id grammar admits names a row, so no label a parent is
         // shown can carry a line of its own.
@@ -184,7 +184,7 @@ fn merge_descendants(
         // never signals a process it did not launch. The merged row carries
         // pid 0; its end is observed through the forwarding child's
         // snapshots, never by process identity.
-        let agent_uuid = crate::domain::ids::AgentUuid::new(registry_key.clone());
+        let agent_uuid = crate::domain::identity::ids::AgentUuid::new(registry_key.clone());
         let entry = guard.entry(registry_key.clone()).or_insert_with(|| {
             SubagentEntry::with_identity(
                 agent_uuid,
@@ -200,7 +200,7 @@ fn merge_descendants(
         );
         entry.origin = ChildOrigin::Reported;
         // Keep identity fields authoritative from the child's snapshot.
-        entry.agent_uuid = crate::domain::ids::AgentUuid::new(registry_key.clone());
+        entry.agent_uuid = crate::domain::identity::ids::AgentUuid::new(registry_key.clone());
         entry.display_name = display_name;
         if let Some(status) = d
             .get("status")

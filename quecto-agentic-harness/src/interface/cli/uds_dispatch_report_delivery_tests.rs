@@ -11,7 +11,7 @@ use crate::application::providers::ports::{ChatRequest, LlmProvider};
 use crate::application::sessions::active_session::ActiveSessionHandle;
 use crate::application::tools::ports::Tool;
 use crate::domain::conversation::value_objects::message::LlmResponse;
-use crate::domain::error::DomainError;
+use crate::domain::shared::error::DomainError;
 use crate::domain::tool_policy::value_objects::tool::ToolResult;
 use crate::infrastructure::tools::agents::agent_cmd::AgentCmdTool;
 use crate::infrastructure::tools::agents::subagent_registry::SubagentEntry;

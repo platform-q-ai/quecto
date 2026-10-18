@@ -42,7 +42,7 @@ async fn removed_entry_cannot_signal_after_its_reaper_finishes() {
     let supervisor = Arc::new(OwnedChildSupervisor::new());
     let handle = adopt(&supervisor, "true").await;
     let mut entry = SubagentEntry::with_identity(
-        crate::domain::ids::AgentUuid::new("owned"),
+        crate::domain::identity::ids::AgentUuid::new("owned"),
         "owned".into(),
         "/tmp/owned.sock".into(),
         4242,

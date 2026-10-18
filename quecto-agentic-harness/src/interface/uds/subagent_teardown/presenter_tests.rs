@@ -4,7 +4,7 @@ use crate::application::subagents::dto::{PreparedShutdown, ShutdownToken};
 use crate::domain::agents::services::subagent_teardown::{
     DelegatedAgentIdentity, LaunchGeneration, RoutingDepth, ShutdownReason, TerminationRouteError,
 };
-use crate::domain::ids::AgentUuid;
+use crate::domain::identity::ids::AgentUuid;
 
 fn prepared() -> PreparedShutdown {
     PreparedShutdown {

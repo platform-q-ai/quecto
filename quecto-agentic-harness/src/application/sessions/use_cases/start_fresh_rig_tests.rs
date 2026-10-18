@@ -22,11 +22,11 @@ use crate::application::sessions::ports::{
     SessionKeyPropagation, SessionStore, SessionSwitchRuntime, SpillIndexList,
 };
 use crate::domain::conversation::value_objects::message::Message;
-use crate::domain::error::DomainError;
 use crate::domain::sessions::entities::session::{
     Session, SessionSummary, SpillEntries, SpillEntry,
 };
 use crate::domain::sessions::entities::session_identity::{SessionIdentity, SpillId};
+use crate::domain::shared::error::DomainError;
 use crate::domain::workflow::WorkflowRunPersisted;
 
 pub(crate) type Journal = Arc<Mutex<Vec<String>>>;

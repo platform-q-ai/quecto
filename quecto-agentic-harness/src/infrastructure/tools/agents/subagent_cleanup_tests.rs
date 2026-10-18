@@ -91,7 +91,7 @@ async fn fleet_teardown_finalizes_a_script_managed_member_and_clears_its_row() {
 
     let registry: SubagentRegistry = Arc::new(Mutex::new(HashMap::new()));
     let mut entry = SubagentEntry::with_identity(
-        crate::domain::ids::AgentUuid::new("child"),
+        crate::domain::identity::ids::AgentUuid::new("child"),
         "child".into(),
         temp.path().join("never.sock"),
         0,
@@ -104,7 +104,7 @@ async fn fleet_teardown_finalizes_a_script_managed_member_and_clears_its_row() {
 
     let fleet = crate::composition::subagent_teardown::build_fleet_teardown(
         crate::composition::subagent_teardown::FleetTeardownWiring {
-            owner: crate::domain::ids::AgentUuid::new("root"),
+            owner: crate::domain::identity::ids::AgentUuid::new("root"),
             registry: registry.clone(),
             broadcast_tx: None,
             notify_tx: None,
@@ -475,7 +475,7 @@ mod kept_under_label {
     use crate::domain::environments::services::environment_retention::{
         CoordinatorLoss, HostedSwarmRun, MemberFinalizeMode, SwarmRunObservation,
     };
-    use crate::domain::ids::AgentUuid;
+    use crate::domain::identity::ids::AgentUuid;
     use crate::domain::swarm::value_objects::lifecycle::RunStatus;
     use crate::infrastructure::tools::agents::coordinator_launch::KeptSwarmBoards;
 

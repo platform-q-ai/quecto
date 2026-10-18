@@ -15,11 +15,11 @@ use crate::application::sessions::dto::SessionListQuery;
 use crate::application::sessions::ports::session_runtime::TurnAccountingReset;
 use crate::application::sessions::ports::{ContextSpillStore, SessionStore, SpillIndexList};
 use crate::domain::conversation::value_objects::message::Message;
-use crate::domain::error::DomainError;
 use crate::domain::sessions::entities::session::{
     Session, SessionSummary, SpillEntries, SpillEntry,
 };
 use crate::domain::sessions::entities::session_identity::{SessionIdentity, SpillId};
+use crate::domain::shared::error::DomainError;
 use crate::domain::workflow::WorkflowRunPersisted;
 
 /// The effect order one transaction produced.

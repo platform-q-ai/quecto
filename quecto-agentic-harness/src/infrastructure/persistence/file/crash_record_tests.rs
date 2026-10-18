@@ -1,5 +1,5 @@
 use super::*;
-use crate::domain::crash_record::PanicReport;
+use crate::domain::agents::value_objects::crash_record::PanicReport;
 use std::os::unix::fs::PermissionsExt;
 
 /// A record as this process's hook writes it: its own pid.

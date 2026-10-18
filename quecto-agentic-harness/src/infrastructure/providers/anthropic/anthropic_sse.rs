@@ -309,7 +309,7 @@ pub(super) fn stream_event_from_delta(delta: &serde_json::Value) -> Option<Strea
 // ---------------------------------------------------------------------------
 
 use super::AnthropicProvider;
-use crate::domain::error::DomainError;
+use crate::domain::shared::error::DomainError;
 
 /// Parameters for streaming requests (avoids 5+ arg methods).
 pub(super) struct StreamParams<'a> {

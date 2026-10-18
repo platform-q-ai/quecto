@@ -206,7 +206,7 @@ async fn killing_nested_b_ends_its_subtree_while_a_and_c_survive_then_killing_a_
         .with_event_forwarding(Some(broadcast_tx.clone()), Some("root".into())),
     );
     let kill = quecto::composition::subagent_termination::build_kill_tool(KillToolWiring {
-        owner: quecto::domain::ids::AgentUuid::new("root"),
+        owner: quecto::domain::identity::ids::AgentUuid::new("root"),
         registry: registry.clone(),
         broadcast_tx: Some(broadcast_tx),
         notify_tx: None,
@@ -363,7 +363,7 @@ async fn killing_a_busy_child_is_graceful_and_prompt() {
         .with_event_forwarding(Some(broadcast_tx.clone()), Some("root".into())),
     );
     let kill = quecto::composition::subagent_termination::build_kill_tool(KillToolWiring {
-        owner: quecto::domain::ids::AgentUuid::new("root"),
+        owner: quecto::domain::identity::ids::AgentUuid::new("root"),
         registry: registry.clone(),
         broadcast_tx: Some(broadcast_tx),
         notify_tx: None,
@@ -516,7 +516,7 @@ async fn a_nested_child_that_acknowledges_but_never_exits_is_ended_by_its_owners
         .with_event_forwarding(Some(broadcast_tx.clone()), Some("root".into())),
     );
     let kill = quecto::composition::subagent_termination::build_kill_tool(KillToolWiring {
-        owner: quecto::domain::ids::AgentUuid::new("root"),
+        owner: quecto::domain::identity::ids::AgentUuid::new("root"),
         registry: registry.clone(),
         broadcast_tx: Some(broadcast_tx),
         notify_tx: None,

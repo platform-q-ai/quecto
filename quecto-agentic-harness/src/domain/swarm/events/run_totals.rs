@@ -11,7 +11,7 @@
 //! appears as its redacted `actor_ref`, and no board text is kept.
 use serde::{Deserialize, Serialize};
 
-use crate::domain::redaction::Redacted;
+use crate::domain::shared::redaction::Redacted;
 use crate::domain::swarm::events::run_summary::REQUEST_MEMBERS;
 
 /// The run's tasks by the state the board holds them in, as the run's

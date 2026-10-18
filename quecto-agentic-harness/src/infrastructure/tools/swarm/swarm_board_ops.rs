@@ -48,7 +48,7 @@ use super::swarm_board_dispatch::{
 use super::swarm_bridge::SwarmContext;
 use super::swarm_control::AfterExecution;
 use super::swarm_output::tool_err;
-use crate::domain::error::DomainError;
+use crate::domain::shared::error::DomainError;
 use crate::domain::swarm::events::telemetry::{NameForm, RefusalKind};
 use crate::domain::tool_policy::value_objects::tool::ToolResult;
 

@@ -8,7 +8,7 @@
 //! performs an effect or knows a wire field.
 use crate::domain::conversation::services::conversation_view::position_by_id;
 use crate::domain::conversation::value_objects::message::{Message, Role};
-use crate::domain::ids::MessageId;
+use crate::domain::identity::ids::MessageId;
 
 /// Clear the conversation, preserving only a leading injected system
 /// prompt (a non-manifest system message); a retention manifest at the

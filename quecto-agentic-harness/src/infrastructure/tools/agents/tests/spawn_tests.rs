@@ -454,7 +454,7 @@ async fn spawned_parent_id_tracks_session_key_changes() {
 fn initial_entry_taskless_is_idle() {
     // Shared builder used by production after socket ready (#1049).
     let entry = super::initial_registry_entry(super::InitialRegistryEntrySpec {
-        agent_uuid: crate::domain::ids::AgentUuid::new("00000000-0000-4000-8000-000000000101"),
+        agent_uuid: AgentUuid::new("00000000-0000-4000-8000-000000000101"),
         display_name: "ready".to_string(),
         socket_path: PathBuf::from("/tmp/ready.sock"),
         pid: 42,
@@ -476,7 +476,7 @@ fn initial_entry_taskless_is_idle() {
 #[test]
 fn initial_entry_with_task_stays_starting() {
     let entry = super::initial_registry_entry(super::InitialRegistryEntrySpec {
-        agent_uuid: crate::domain::ids::AgentUuid::new("00000000-0000-4000-8000-000000000102"),
+        agent_uuid: AgentUuid::new("00000000-0000-4000-8000-000000000102"),
         display_name: "ready".to_string(),
         socket_path: PathBuf::from("/tmp/ready.sock"),
         pid: 7,
@@ -503,7 +503,7 @@ fn initial_entry_taskless_broadcasts_idle_via_register() {
     let registry: SubagentRegistry = Arc::new(Mutex::new(HashMap::new()));
     let (tx, mut rx) = tokio::sync::broadcast::channel::<String>(8);
     let entry = super::initial_registry_entry(super::InitialRegistryEntrySpec {
-        agent_uuid: crate::domain::ids::AgentUuid::new("00000000-0000-4000-8000-000000000103"),
+        agent_uuid: AgentUuid::new("00000000-0000-4000-8000-000000000103"),
         display_name: "ready".to_string(),
         socket_path: PathBuf::from("/tmp/ready.sock"),
         pid: 1,
@@ -667,7 +667,6 @@ async fn stub_respawn_same_display_label_mints_fresh_uuid_and_socket() {
 
 #[test]
 fn child_runtime_paths_are_uuid_keyed() {
-    use crate::domain::ids::AgentUuid;
     let uuid = AgentUuid::new("aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee");
     let dir = PathBuf::from("/run/user/1000");
     let socket = super::child_socket_path(&dir, &uuid);
@@ -726,7 +725,7 @@ fn initial_entry_records_whether_it_was_launched_as_a_coordinator() {
         let mut config = sample_config(None);
         config.coordinator = coordinator;
         let entry = super::initial_registry_entry(super::InitialRegistryEntrySpec {
-            agent_uuid: crate::domain::ids::AgentUuid::new("00000000-0000-4000-8000-000000000109"),
+            agent_uuid: AgentUuid::new("00000000-0000-4000-8000-000000000109"),
             display_name: "coord".to_string(),
             socket_path: PathBuf::from("/tmp/coord.sock"),
             pid: 42,

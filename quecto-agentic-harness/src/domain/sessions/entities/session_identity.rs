@@ -16,7 +16,7 @@
 //!   every historical category (`telegram:<id>`, legacy `cli:<name>`, chat
 //!   keys, arbitrary keys) round-trips unchanged.
 use super::session::user_chat_key;
-use crate::domain::error::DomainError;
+use crate::domain::shared::error::DomainError;
 
 /// Opaque identity of a session: the existing raw key, read-only.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]

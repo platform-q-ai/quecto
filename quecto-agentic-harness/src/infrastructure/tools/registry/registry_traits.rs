@@ -8,7 +8,7 @@ use super::ToolRegistryImpl;
 use crate::application::tools::ports::{
     RuntimeToolLifecycleRegistry, SessionAwareTools, Tool, ToolCatalog, ToolExecutor,
 };
-use crate::domain::error::DomainError;
+use crate::domain::shared::error::DomainError;
 use crate::domain::tool_policy::value_objects::tool::{
     ToolDefinition, ToolPolicyApplyMode, ToolPolicyMutation, ToolPolicyReconciliation,
     ToolPolicyRequest, ToolProfileContext, ToolResult,

@@ -7,7 +7,7 @@ use crate::application::subagent_launch::{
     SubagentLaunchUseCase,
 };
 use crate::domain::agents::services::subagent::{ContainerSelection, SubagentConfig};
-use crate::domain::error::DomainError;
+use crate::domain::shared::error::DomainError;
 use crate::domain::tool_policy::value_objects::tool::ToolResult;
 
 #[derive(Debug, Default)]

@@ -135,7 +135,7 @@ fn renders_order_whitespace_directories_unicode_and_limit_notice() {
 
 #[test]
 fn exact_byte_cap_is_allowed_and_over_cap_never_fabricates_paths() {
-    let cap = crate::domain::constants::DEFAULT_OUTPUT_CAP_BYTES;
+    let cap = crate::domain::shared::constants::DEFAULT_OUTPUT_CAP_BYTES;
     assert_eq!(
         rendered(vec!["x".repeat(cap)], false, false),
         "x".repeat(cap)

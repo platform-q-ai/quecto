@@ -1,6 +1,7 @@
 use super::*;
 use crate::application::providers::ports::{ChatRequest, LlmProvider};
 use crate::domain::conversation::value_objects::message::LlmResponse;
+use crate::domain::shared::error::DomainError;
 use crate::domain::tool_policy::value_objects::extension_tool::ToolInvocation;
 use crate::domain::tool_policy::value_objects::tool::ToolDefinition;
 use crate::domain::tool_policy::value_objects::tool::ToolProfileContext;
@@ -26,13 +27,9 @@ impl LlmProvider for CovProvider {
         &'a self,
         _request: ChatRequest<'a>,
     ) -> std::pin::Pin<
-        Box<
-            dyn std::future::Future<Output = Result<LlmResponse, crate::domain::error::DomainError>>
-                + Send
-                + 'a,
-        >,
+        Box<dyn std::future::Future<Output = Result<LlmResponse, DomainError>> + Send + 'a>,
     > {
-        Box::pin(async { Err(crate::domain::error::DomainError::Provider("unused".into())) })
+        Box::pin(async { Err(DomainError::Provider("unused".into())) })
     }
 }
 

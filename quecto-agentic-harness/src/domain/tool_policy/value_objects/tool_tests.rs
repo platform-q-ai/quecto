@@ -167,7 +167,7 @@ fn tool_policy_mutation_result_wire_uses_camel_case_fields_and_status() {
 /// the model sees — `Error: <reason>`, an error result, nothing else.
 #[test]
 fn a_tool_error_reaches_the_model_as_an_error_result() {
-    let result = ToolResult::from_error(&crate::domain::error::DomainError::Tool(
+    let result = ToolResult::from_error(&crate::domain::shared::error::DomainError::Tool(
         "harness is frozen".into(),
     ));
     assert_eq!(result.content, "Error: tool error: harness is frozen");

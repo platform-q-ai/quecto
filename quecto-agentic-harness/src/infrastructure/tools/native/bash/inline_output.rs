@@ -12,7 +12,7 @@ use crate::infrastructure::tools::native::truncate::{
 };
 
 const TAIL_MAX_LINES: usize = 2000;
-const TAIL_MAX_BYTES: usize = crate::domain::constants::DEFAULT_OUTPUT_CAP_BYTES;
+const TAIL_MAX_BYTES: usize = crate::domain::shared::constants::DEFAULT_OUTPUT_CAP_BYTES;
 
 /// The inline view of `combined`, saving the whole to a temp file when any
 /// of it is left out; `capture_cut` says the capture itself already dropped

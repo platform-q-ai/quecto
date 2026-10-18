@@ -8,7 +8,7 @@ use crate::application::providers::ports::{ChatRequest, LlmProvider};
 use crate::domain::conversation::value_objects::message::{
     LlmResponse, Message, Role, UserImageBlock,
 };
-use crate::domain::error::DomainError;
+use crate::domain::shared::error::DomainError;
 use crate::interface::cli::protocol::{AgentCommand, ImagePayload, StreamingBehavior};
 use std::future::Future;
 use std::pin::Pin;

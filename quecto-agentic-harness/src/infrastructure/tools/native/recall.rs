@@ -20,8 +20,8 @@ use crate::application::sessions::dto::retained_context::{
 };
 use crate::application::sessions::use_cases::RecallContext;
 use crate::application::tools::ports::Tool;
-use crate::domain::error::DomainError;
 use crate::domain::sessions::entities::session_identity::SessionIdentity;
+use crate::domain::shared::error::DomainError;
 use crate::domain::tool_policy::value_objects::tool::{ToolDefinition, ToolResult};
 
 mod results;

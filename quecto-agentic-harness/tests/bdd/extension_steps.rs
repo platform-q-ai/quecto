@@ -1,7 +1,7 @@
 use cucumber::{given, then, when};
 use quecto::application::extensions::ports::Extension;
 use quecto::application::tools::ports::Tool;
-use quecto::domain::error::DomainError;
+use quecto::domain::shared::error::DomainError;
 use quecto::domain::tool_policy::value_objects::tool::{ToolDefinition, ToolResult};
 use quecto::infrastructure::config::Config;
 use quecto::infrastructure::extensions::native::{NativeExtension, build_native_extensions};

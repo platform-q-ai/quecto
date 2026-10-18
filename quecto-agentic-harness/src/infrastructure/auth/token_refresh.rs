@@ -32,7 +32,7 @@ pub fn persist_refreshed_token(
     previous_refresh_token: &str,
     refresh_result: Result<
         crate::infrastructure::auth::oauth::OAuthTokenResponse,
-        crate::domain::error::DomainError,
+        crate::domain::shared::error::DomainError,
     >,
 ) -> Option<String> {
     match refresh_result {

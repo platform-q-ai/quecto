@@ -269,7 +269,7 @@ fn the_launched_session_is_the_one_the_domain_names_for_the_child() {
     use crate::domain::agents::services::child_session::{
         child_session_identity, child_session_name,
     };
-    use crate::domain::ids::AgentUuid;
+    use crate::domain::identity::ids::AgentUuid;
     use crate::domain::sessions::entities::session_identity::SessionIdentity;
 
     let child = AgentUuid::new("65268567-be4a-471f-a805-1238dcf08b68");

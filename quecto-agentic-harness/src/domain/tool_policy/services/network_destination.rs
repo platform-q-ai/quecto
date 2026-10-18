@@ -28,7 +28,7 @@
 //! discovered (RFC 7050, through `ipv4only.arpa`) as a plain value.
 //! Residual risk: a translator that no DNS64 advertises cannot be
 //! discovered, and an address under its prefix is judged as IPv6.
-use crate::domain::nat64_prefix::{Nat64Prefix, translated};
+use crate::domain::tool_policy::value_objects::nat64_prefix::{Nat64Prefix, translated};
 use core::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 /// A refused destination: the address as written and, when it is an IPv6

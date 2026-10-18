@@ -406,7 +406,7 @@ fn production_fleet(
 ) -> Arc<crate::application::subagents::use_cases::TerminateAllDelegatedAgents> {
     crate::composition::subagent_teardown::build_fleet_teardown(
         crate::composition::subagent_teardown::FleetTeardownWiring {
-            owner: crate::domain::ids::AgentUuid::new("root"),
+            owner: crate::domain::identity::ids::AgentUuid::new("root"),
             registry: registry.clone(),
             broadcast_tx: None,
             notify_tx: None,

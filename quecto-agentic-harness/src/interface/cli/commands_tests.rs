@@ -294,7 +294,7 @@ fn status_reports_only_published_runtime_admission_warnings() {
     use crate::domain::catalogue::entities::entry::CatalogueEntry;
     use crate::domain::catalogue::value_objects::precedence::SourceLayer;
     use crate::domain::conversation::value_objects::message::LlmResponse;
-    use crate::domain::error::DomainError;
+    use crate::domain::shared::error::DomainError;
     use std::sync::Arc;
 
     #[derive(Debug)]

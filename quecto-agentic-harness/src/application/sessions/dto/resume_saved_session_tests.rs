@@ -1,6 +1,6 @@
 use super::*;
 use crate::application::sessions::dto::FleetSettlementOutcome;
-use crate::domain::ids::AgentUuid;
+use crate::domain::identity::ids::AgentUuid;
 
 #[test]
 fn a_typed_legacy_name_denotes_the_cli_session_of_that_name() {

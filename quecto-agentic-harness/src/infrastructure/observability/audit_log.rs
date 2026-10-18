@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 
 use crate::application::audit::ports::AuditSink;
 use crate::domain::audit::{AuditEnvelope, AuditEvent};
-use crate::domain::error::DomainError;
+use crate::domain::shared::error::DomainError;
 use crate::infrastructure::persistence::file::filename::{
     digest_session_key, sanitize_session_key,
 };

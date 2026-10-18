@@ -16,7 +16,7 @@ use crate::domain::conversation::services::watermark::{DEFAULT_HIGH_TOKENS, Wate
 use crate::domain::conversation::value_objects::image_tokens::estimate_image_tokens;
 use crate::domain::conversation::value_objects::message::{LlmResponse, Message, ToolCall};
 use crate::domain::conversation::value_objects::user_kind::UserKind;
-use crate::domain::error::DomainError;
+use crate::domain::shared::error::DomainError;
 use crate::domain::tool_policy::value_objects::tool::{ImageBlock, ToolDefinition, ToolResult};
 use quecto_image::samples::{encode, png_with_body};
 use std::future::Future;

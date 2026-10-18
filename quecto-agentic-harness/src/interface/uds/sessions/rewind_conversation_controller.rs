@@ -7,7 +7,7 @@
 //! page size is the wire module's.
 use crate::application::sessions::dto::{RewindConversationError, RewindRequest};
 use crate::domain::conversation::services::conversation_edit::RewindTarget;
-use crate::domain::ids::MessageId;
+use crate::domain::identity::ids::MessageId;
 
 /// The wire fields of a `rewind_to` request, as the client sent them
 /// (either may be absent).

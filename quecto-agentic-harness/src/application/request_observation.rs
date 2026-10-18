@@ -5,13 +5,13 @@
 use crate::application::providers::ports::ChatRequest;
 use crate::domain::conversation::value_objects::message::UsageInfo;
 use crate::domain::conversation::value_objects::message::{LlmResponse, Role};
-use crate::domain::error::DomainError;
 use crate::domain::inference::events::request_completion::RequestOutcome;
 use crate::domain::inference::events::request_observation::{
     RequestDiagnostics, RequestObservation, RequestTrace,
 };
 use crate::domain::inference::events::request_progress::InFlightRequest;
 use crate::domain::inference::services::provider_error::classify_provider_error;
+use crate::domain::shared::error::DomainError;
 use sha2::{Digest, Sha256};
 use std::future::Future;
 use std::pin::Pin;

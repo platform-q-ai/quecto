@@ -11,7 +11,7 @@ use crate::domain::catalogue::value_objects::identity::{AuthIdentity, ModelRef, 
 use crate::domain::catalogue::value_objects::model_facts::{ModelCapabilities, ModelCost};
 use crate::domain::catalogue::value_objects::precedence::SourceLayer;
 use crate::domain::conversation::value_objects::message::LlmResponse;
-use crate::domain::error::DomainError;
+use crate::domain::shared::error::DomainError;
 use std::sync::Mutex;
 
 #[derive(Debug)]

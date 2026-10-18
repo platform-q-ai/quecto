@@ -30,7 +30,7 @@ impl ContextSpillStore for RecordingSpillStore {
         _entry: &SpillEntry,
     ) -> std::pin::Pin<
         Box<
-            dyn std::future::Future<Output = Result<(), crate::domain::error::DomainError>>
+            dyn std::future::Future<Output = Result<(), crate::domain::shared::error::DomainError>>
                 + Send
                 + '_,
         >,
@@ -44,7 +44,7 @@ impl ContextSpillStore for RecordingSpillStore {
     ) -> std::pin::Pin<
         Box<
             dyn std::future::Future<
-                    Output = Result<Option<SpillEntry>, crate::domain::error::DomainError>,
+                    Output = Result<Option<SpillEntry>, crate::domain::shared::error::DomainError>,
                 > + Send
                 + '_,
         >,
@@ -57,7 +57,10 @@ impl ContextSpillStore for RecordingSpillStore {
     ) -> std::pin::Pin<
         Box<
             dyn std::future::Future<
-                    Output = Result<Arc<Vec<SpillIndex>>, crate::domain::error::DomainError>,
+                    Output = Result<
+                        Arc<Vec<SpillIndex>>,
+                        crate::domain::shared::error::DomainError,
+                    >,
                 > + Send
                 + '_,
         >,
@@ -69,7 +72,7 @@ impl ContextSpillStore for RecordingSpillStore {
         session_key: &SessionIdentity,
     ) -> std::pin::Pin<
         Box<
-            dyn std::future::Future<Output = Result<(), crate::domain::error::DomainError>>
+            dyn std::future::Future<Output = Result<(), crate::domain::shared::error::DomainError>>
                 + Send
                 + '_,
         >,
@@ -108,8 +111,9 @@ impl Tool for SessionAwareTool {
         _arguments: &str,
     ) -> std::pin::Pin<
         Box<
-            dyn std::future::Future<Output = Result<ToolResult, crate::domain::error::DomainError>>
-                + Send
+            dyn std::future::Future<
+                    Output = Result<ToolResult, crate::domain::shared::error::DomainError>,
+                > + Send
                 + '_,
         >,
     > {

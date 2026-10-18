@@ -9,7 +9,7 @@ use crate::application::subagents::use_cases::{
     KillDelegatedAgent, KillDelegatedAgentPorts, OwnerConclusionPorts, TerminateDelegatedAgent,
 };
 use crate::domain::agents::services::subagent_teardown::LaunchGeneration;
-use crate::domain::ids::AgentUuid;
+use crate::domain::identity::ids::AgentUuid;
 use crate::domain::swarm::{
     entities::run::Member,
     value_objects::lifecycle::{MemberStatus, ProcessIdentity},

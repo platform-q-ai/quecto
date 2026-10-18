@@ -215,7 +215,7 @@ async fn end_proxy(
 pub(super) async fn wait_for_proxy_ready_until(
     socket_path: &Path,
     deadline: tokio::time::Instant,
-) -> Result<(), crate::domain::error::DomainError> {
+) -> Result<(), crate::domain::shared::error::DomainError> {
     use tokio::io::AsyncReadExt;
     loop {
         if let Ok(mut probe) = tokio::net::UnixStream::connect(socket_path).await {
@@ -233,7 +233,7 @@ pub(super) async fn wait_for_proxy_ready_until(
             }
         }
         if tokio::time::Instant::now() >= deadline {
-            return Err(crate::domain::error::DomainError::Tool(format!(
+            return Err(crate::domain::shared::error::DomainError::Tool(format!(
                 "subagent proxy endpoint {} did not become ready within 10s",
                 socket_path.display()
             )));

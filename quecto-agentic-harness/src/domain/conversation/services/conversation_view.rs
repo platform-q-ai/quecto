@@ -7,7 +7,7 @@
 //! none re-implements the injected-prompt filter, its injection/removal
 //! or the id lookup.
 use crate::domain::conversation::value_objects::message::{Message, Role};
-use crate::domain::ids::MessageId;
+use crate::domain::identity::ids::MessageId;
 
 /// Whether `message` is the system prompt the run injected at the head of
 /// the conversation: a non-manifest system message whose content is

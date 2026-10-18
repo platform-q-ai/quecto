@@ -7,7 +7,7 @@ use super::watermark::{CutPlan, PlanMessage, PlanRole};
 use crate::domain::conversation::services::turn_origin::opens_turn;
 use crate::domain::conversation::value_objects::message::{Message, Role};
 use crate::domain::conversation::value_objects::user_kind::UserKind;
-use crate::domain::text::truncate_chars;
+use crate::domain::shared::text::truncate_chars;
 
 /// How the planner sees `message`: a user message is a prompt or a stub
 /// only when it was marked one; every other user message is the harness's,

@@ -1,7 +1,7 @@
 use super::*;
 use crate::application::sessions::dto::{RawExportReceipt, ReportPreview};
 use crate::domain::conversation::value_objects::message::Message;
-use crate::domain::ids::MessageId;
+use crate::domain::identity::ids::MessageId;
 use crate::interface::cli::uds::dispatch_session_roster_tests::{
     composed_sessions_for, seeded_read_handles,
 };
@@ -107,7 +107,7 @@ async fn raw_report_export_preserves_content_without_consuming_cursor() {
 mod export_control_tests {
     use super::*;
     use crate::application::sessions::ports::{ContextSpillStore, SpillIndexList};
-    use crate::domain::{error::DomainError, sessions::entities::session::SpillEntry};
+    use crate::domain::{sessions::entities::session::SpillEntry, shared::error::DomainError};
     use std::{future::Future, pin::Pin, sync::Arc};
     struct SlowExportStore;
     impl ContextSpillStore for SlowExportStore {

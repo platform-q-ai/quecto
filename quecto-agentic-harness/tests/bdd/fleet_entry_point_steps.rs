@@ -118,7 +118,7 @@ fn given_script_member(world: &mut QuectoWorld) {
         ),
     );
     let harness = state(world).harness.as_ref().unwrap();
-    let uuid = quecto::domain::ids::AgentUuid::mint();
+    let uuid = quecto::domain::identity::ids::AgentUuid::mint();
     let mut entry = SubagentEntry::with_identity(
         uuid.clone(),
         "container-member".into(),

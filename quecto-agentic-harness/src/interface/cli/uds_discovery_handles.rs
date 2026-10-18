@@ -7,7 +7,7 @@ use std::sync::Arc;
 use crate::application::sessions::dto::{
     ListSessionsResult, SearchSessionMetadataRequest, SearchSessionMetadataResult, SessionListScope,
 };
-use crate::domain::error::DomainError;
+use crate::domain::shared::error::DomainError;
 use crate::interface::uds::sessions::controller::ListSessionsController;
 use crate::interface::uds::sessions::search_session_metadata_controller::SearchSessionMetadataController;
 

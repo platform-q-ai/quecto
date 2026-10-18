@@ -31,7 +31,7 @@ pub enum StreamEvent {
     Error(String),
 }
 
-#[path = "../../cancel_flag.rs"]
+#[path = "cancel_flag.rs"]
 mod cancel_flag;
 pub use cancel_flag::{CancelFlag, CancelWatch};
 

@@ -313,8 +313,8 @@ async fn crash_target_child() {
     }
     // What the hook does on a fatal panic, called directly: no panic, no
     // abort, in this child.
-    let record = crate::domain::crash_record::CrashRecord::new(
-        crate::domain::crash_record::PanicReport::new("after /new", None),
+    let record = crate::domain::agents::value_objects::crash_record::CrashRecord::new(
+        crate::domain::agents::value_objects::crash_record::PanicReport::new("after /new", None),
         std::process::id(),
         1,
     );

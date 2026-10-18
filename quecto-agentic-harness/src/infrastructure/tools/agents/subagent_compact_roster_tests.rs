@@ -251,14 +251,14 @@ fn compact_roster_rows_carry_durable_uuid_for_duplicate_display_names() {
     {
         let mut guard = reg.lock().unwrap();
         let mut first = SubagentEntry::with_identity(
-            crate::domain::ids::AgentUuid::new("uuid-dup-a"),
+            crate::domain::identity::ids::AgentUuid::new("uuid-dup-a"),
             "dup".to_string(),
             "/tmp/dup-a.sock".into(),
             11,
         );
         first.notification_sequence = 1;
         let mut second = SubagentEntry::with_identity(
-            crate::domain::ids::AgentUuid::new("uuid-dup-b"),
+            crate::domain::identity::ids::AgentUuid::new("uuid-dup-b"),
             "dup".to_string(),
             "/tmp/dup-b.sock".into(),
             22,

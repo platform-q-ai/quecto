@@ -1,7 +1,7 @@
 //! Whether an agent takes part in a swarm, and what a swarm member may not
 //! run alongside it (#1715).
 
-use crate::domain::error::DomainError;
+use crate::domain::shared::error::DomainError;
 
 /// A swarm owns its coordination lifecycle; workflow engines cannot run alongside it.
 pub fn validate_workflow(swarm_agent: bool, requested: bool) -> Result<(), DomainError> {

@@ -64,7 +64,8 @@ impl ContainerRuntimePreflight for ScriptPreflight {
         cmd.stdin(std::process::Stdio::null());
         // The argv names the config's `--repo`; its userinfo is never
         // part of a report.
-        let script = crate::domain::redaction::redact_url_userinfo(&config.create.join(" "));
+        let script =
+            crate::domain::shared::redaction::redact_url_userinfo(&config.create.join(" "));
         let output = run_sync_capturing_stderr_tail(cmd, ScriptStdout::Result, PREFLIGHT_TIMEOUT)
             .map_err(|error| format!("create script `{script}`: {error}"))?;
         let checks = parse_checks(&output.stdout)

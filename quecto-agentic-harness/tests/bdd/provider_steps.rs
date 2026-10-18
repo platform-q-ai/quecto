@@ -53,7 +53,7 @@ fn given_provider_error(world: &mut QuectoWorld, status: u16) {
 
 #[given(expr = "a provider error with message {string}")]
 fn given_provider_error_with_message(world: &mut QuectoWorld, message: String) {
-    use quecto::domain::error::DomainError;
+    use quecto::domain::shared::error::DomainError;
     let err = DomainError::Provider(message);
     world.error_class = Some(classify_provider_error(&err));
 }
@@ -85,7 +85,7 @@ fn then_error_not_retryable(world: &mut QuectoWorld) {
 #[given(expr = "a 500 response whose body declares an {string} client code")]
 fn given_500_with_client_code(world: &mut QuectoWorld, code: String) {
     // Push the wire detail into the step, keeping the feature declarative (#935).
-    use quecto::domain::error::DomainError;
+    use quecto::domain::shared::error::DomainError;
     let message = format!(
         "HTTP 500 from provider: {{\"error\":{{\"code\":\"{code}\",\"message\":\"max_tokens 200000 exceeds the model output limit of 65536\"}}}}"
     );

@@ -1,4 +1,4 @@
-use crate::domain::error::DomainError;
+use crate::domain::shared::error::DomainError;
 
 /// Stable provider error classes used by application-layer retry decisions.
 ///

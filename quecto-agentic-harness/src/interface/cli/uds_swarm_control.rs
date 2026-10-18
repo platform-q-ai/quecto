@@ -187,7 +187,7 @@ pub(super) async fn intercept(ctx: &ReaderDispatchCtx<'_>) -> bool {
     let resuming = matches!(action, RunControlAction::Resume);
     let result = match &ctx.turn_control.swarm_control {
         Some(control) => control.apply(action).await,
-        None => Err(crate::domain::error::DomainError::Tool(
+        None => Err(crate::domain::shared::error::DomainError::Tool(
             "this agent has no swarm control port".into(),
         )),
     };
@@ -510,7 +510,7 @@ pub(super) enum StoreFailure {
     Durable,
 }
 
-pub(super) fn store_failure(error: &crate::domain::error::DomainError) -> StoreFailure {
+pub(super) fn store_failure(error: &crate::domain::shared::error::DomainError) -> StoreFailure {
     if error.to_string().to_ascii_lowercase().contains("is locked") {
         StoreFailure::Transient
     } else {

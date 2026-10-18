@@ -156,7 +156,7 @@ fn non_live_exact_uuid_references_report_liveness_for_command_and_inspection_rou
 fn display_aliases_route_only_when_live() {
     let reg = new_registry();
     let mut live = SubagentEntry::with_identity(
-        crate::domain::ids::AgentUuid::from("live-uuid".to_string()),
+        crate::domain::identity::ids::AgentUuid::from("live-uuid".to_string()),
         "friendly".to_string(),
         PathBuf::from("/tmp/live-display.sock"),
         0,

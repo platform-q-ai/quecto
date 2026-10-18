@@ -5,8 +5,8 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicPtr, Ordering};
 use std::sync::{Mutex, OnceLock};
 
+use crate::domain::agents::value_objects::crash_record::CrashRecord;
 use crate::domain::audit::AuditEvent;
-use crate::domain::crash_record::CrashRecord;
 use crate::domain::sessions::entities::session_identity::SessionIdentity;
 
 use super::{RecordDir, SessionRecords};

@@ -12,7 +12,7 @@ use crate::domain::agents::value_objects::child_end::{
     ChildEnd, ChildOrigin, MAX_SHOWN_NAME_BYTES, MAX_SHOWN_PANIC_BYTES, shown,
 };
 use crate::domain::conversation::value_objects::message::Message;
-use crate::domain::ids::AgentUuid;
+use crate::domain::identity::ids::AgentUuid;
 use crate::domain::sessions::entities::session::SubagentLiveness;
 use crate::domain::tool_policy::value_objects::tool::ToolResult;
 
@@ -139,7 +139,7 @@ pub fn vouched_pid(entry: &super::subagent_registry::SubagentEntry) -> Option<u3
 pub fn child_end_of(
     entry: &super::subagent_registry::SubagentEntry,
     exit: Option<&super::subagent_registry::ExitSignal>,
-    crash: Option<crate::domain::crash_record::CrashRecord>,
+    crash: Option<crate::domain::agents::value_objects::crash_record::CrashRecord>,
 ) -> ChildEnd {
     ChildEnd {
         exit_code: exit.and_then(|exit| exit.exit_code),

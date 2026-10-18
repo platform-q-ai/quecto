@@ -158,7 +158,7 @@ impl crate::application::providers::ports::LlmProvider for Hanging {
             dyn std::future::Future<
                     Output = Result<
                         crate::domain::conversation::value_objects::message::LlmResponse,
-                        crate::domain::error::DomainError,
+                        crate::domain::shared::error::DomainError,
                     >,
                 > + Send
                 + 'a,

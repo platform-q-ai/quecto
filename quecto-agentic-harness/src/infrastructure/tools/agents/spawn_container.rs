@@ -10,7 +10,7 @@ use crate::domain::agents::value_objects::subagent_launch::ParentEndpoint;
 use crate::domain::environments::entities::environment_registry::{
     EnvironmentRecord, EnvironmentRegistry,
 };
-use crate::domain::error::DomainError;
+use crate::domain::shared::error::DomainError;
 use crate::infrastructure::processes::containers::script_stderr::{
     ScriptOutput, ScriptStdout, run_capturing_stderr_tail,
 };

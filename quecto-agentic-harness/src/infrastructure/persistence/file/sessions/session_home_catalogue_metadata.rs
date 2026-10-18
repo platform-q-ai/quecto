@@ -3,11 +3,11 @@
 //! (#2042): each record is stamped once per query and read at most once, the
 //! walk's summary and the strict identity drawn from the same bytes. Nothing
 //! is ever read to MATCH: matching sees listing titles only.
-use super::FileSessionHomeCatalogue;
+use super::{DomainError, FileSessionHomeCatalogue};
 use crate::application::sessions::ports::session_home::{
     SessionHomeCatalogue, SessionMetadataRecord, SessionMetadataSnapshot,
 };
-use crate::domain::{error::DomainError, sessions::entities::session_home::SessionHomeScope};
+use crate::domain::sessions::entities::session_home::SessionHomeScope;
 use std::collections::HashMap;
 
 pub(super) async fn query(

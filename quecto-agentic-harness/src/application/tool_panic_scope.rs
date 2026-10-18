@@ -595,7 +595,7 @@ pub const MAX_PANIC_MESSAGE_BYTES: usize = 1024;
 /// redacted first (so a cut never hides one from the redaction), then cut
 /// on a character boundary to [`MAX_PANIC_MESSAGE_BYTES`], marked "…".
 pub fn shown_panic_message(message: &str) -> String {
-    use crate::domain::redaction::{redact_secrets, redact_url_userinfo};
+    use crate::domain::shared::redaction::{redact_secrets, redact_url_userinfo};
     let redacted = redact_secrets(&redact_url_userinfo(message));
     let mut end = redacted.len().min(MAX_PANIC_MESSAGE_BYTES);
     while !redacted.is_char_boundary(end) {

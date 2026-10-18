@@ -15,7 +15,7 @@ use std::sync::Arc;
 
 pub use self::registration::ToolRegistration;
 use crate::application::tools::ports::{Tool, ToolGuard};
-use crate::domain::error::DomainError;
+use crate::domain::shared::error::DomainError;
 use crate::domain::tool_policy::value_objects::tool::{
     ToolDefinition, ToolPolicyApplyMode, ToolPolicyMutation, ToolPolicyMutationResult,
     ToolPolicyMutationStatus, ToolPolicyOperation, ToolPolicyReconciliation, ToolPolicyRequest,

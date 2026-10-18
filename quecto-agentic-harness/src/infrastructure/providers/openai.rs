@@ -12,8 +12,8 @@ use super::openai_images;
 use crate::application::providers::ports::{ChatRequest, LlmProvider};
 use crate::domain::conversation::services::visible_thinking::append_visible_thinking;
 use crate::domain::conversation::value_objects::message::{LlmResponse, Message, Role, ToolCall};
-use crate::domain::error::DomainError;
 use crate::domain::inference::value_objects::provider::StreamEvent;
+use crate::domain::shared::error::DomainError;
 
 struct AbortOnDrop<T> {
     handle: Option<tokio::task::JoinHandle<T>>,

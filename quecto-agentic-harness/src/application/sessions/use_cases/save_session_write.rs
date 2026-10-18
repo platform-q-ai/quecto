@@ -4,9 +4,9 @@
 use crate::application::sessions::dto::SaveMode;
 use crate::application::sessions::ports::SessionStore;
 use crate::domain::conversation::value_objects::message::Message;
-use crate::domain::error::DomainError;
 use crate::domain::sessions::entities::session::{PersistedSubagentRosterEntry, Session};
 use crate::domain::sessions::entities::session_identity::SessionIdentity;
+use crate::domain::shared::error::DomainError;
 use crate::domain::workflow::WorkflowRunPersisted;
 
 /// One save's write: a full snapshot, a clean delta from `watermark`, or

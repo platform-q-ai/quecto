@@ -2,7 +2,7 @@
 //! whose rollback observed its exit through the owned handle (#1961).
 use super::swarm_bridge::SwarmContext;
 use crate::application::swarm::ports::CoordinationPort;
-use crate::domain::error::DomainError;
+use crate::domain::shared::error::DomainError;
 use crate::domain::swarm::value_objects::lifecycle::{MemberExit, ProcessIdentity};
 
 #[derive(Debug)]

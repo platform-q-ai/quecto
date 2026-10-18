@@ -218,7 +218,7 @@ fn a_board_with_a_log_records_one_swarm_op_per_call_and_no_argument_text() {
         .unwrap();
     let refused = parent.call("claim", json!([999])).unwrap_err();
     assert!(
-        matches!(&refused, crate::domain::error::DomainError::Tool(text) if text == "swarm: \"unknown task\""),
+        matches!(&refused, crate::domain::shared::error::DomainError::Tool(text) if text == "swarm: \"unknown task\""),
         "{refused:?}"
     );
     parent.summary().unwrap();

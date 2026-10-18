@@ -1,7 +1,7 @@
 use crate::application::agent_usage::UsageTotals;
 use crate::domain::conversation::services::reply_requirement::ReplyRequirement;
 use crate::domain::conversation::value_objects::message::{LlmResponse, StopReason};
-use crate::domain::error::DomainError;
+use crate::domain::shared::error::DomainError;
 
 /// A failed provider request, and whether its reply had already emitted
 /// events (shown output) before it failed.

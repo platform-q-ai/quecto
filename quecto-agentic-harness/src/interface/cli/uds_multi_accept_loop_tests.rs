@@ -316,7 +316,7 @@ async fn busy_harness_answers_delete_all_subagents_without_the_dispatch_loop() {
     // A child this harness launched (a launch generation, keyed by uuid)
     // whose socket never existed: the fleet teardown's protocol attempt is
     // negative at once, nothing is owned, and it is compensated unobserved.
-    let uuid = crate::domain::ids::AgentUuid::mint();
+    let uuid = crate::domain::identity::ids::AgentUuid::mint();
     let mut entry = SubagentEntry::with_identity(
         uuid.clone(),
         "worker".into(),
@@ -335,7 +335,7 @@ async fn busy_harness_answers_delete_all_subagents_without_the_dispatch_loop() {
     // every connection (#1938).
     let graph = crate::composition::subagent_teardown::build_teardown_graph(
         crate::interface::cli::uds_teardown_handles::TeardownLoopInputs {
-            owner: crate::domain::ids::AgentUuid::new("root"),
+            owner: crate::domain::identity::ids::AgentUuid::new("root"),
             registry: Some(registry.clone()),
             harness_lifecycle: None,
             broadcast_tx: Some(bcast.clone()),

@@ -8,7 +8,7 @@ use crate::application::sessions::dto::{
     ListSessionsRequest, ListSessionsResult, SessionListQuery, SessionListScope,
 };
 use crate::application::sessions::use_cases::ListSessions;
-use crate::domain::error::DomainError;
+use crate::domain::shared::error::DomainError;
 
 pub struct ListSessionsController {
     list_sessions: Arc<ListSessions>,

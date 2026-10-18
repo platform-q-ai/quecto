@@ -81,7 +81,7 @@ fn build_subagent_info_list_preserves_own_starting_status() {
 #[test]
 fn build_subagent_info_list_does_not_roll_up_ambiguous_display_name_parent_id() {
     use super::build_subagent_info_list;
-    use crate::domain::ids::AgentUuid;
+    use crate::domain::identity::ids::AgentUuid;
     use crate::infrastructure::tools::agents::subagent_registry::{
         SubagentEntry, SubagentStatus, new_registry,
     };
@@ -120,7 +120,7 @@ fn build_subagent_info_list_does_not_roll_up_ambiguous_display_name_parent_id() 
 #[test]
 fn build_subagent_info_list_rolls_up_child_using_parent_display_name_when_parent_key_is_uuid() {
     use super::build_subagent_info_list;
-    use crate::domain::ids::AgentUuid;
+    use crate::domain::identity::ids::AgentUuid;
     use crate::infrastructure::tools::agents::subagent_registry::{
         SubagentEntry, SubagentStatus, new_registry,
     };

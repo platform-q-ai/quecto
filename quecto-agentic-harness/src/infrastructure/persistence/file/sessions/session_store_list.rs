@@ -4,7 +4,7 @@
 //! record, tolerant skipping of what cannot be read or summarised (each skip
 //! named in the walk's answer), newest first. Summary-only: nothing here loads a session in full.
 use crate::application::sessions::dto::SessionListQuery;
-use crate::domain::error::DomainError;
+use crate::domain::shared::error::DomainError;
 
 use super::super::session_layout::FlatSessionLayout;
 

@@ -1,7 +1,7 @@
 use super::*;
 use crate::application::sessions::ports::SessionStore;
-use crate::domain::crash_record::CrashRecord;
-use crate::domain::crash_record::PanicReport;
+use crate::domain::agents::value_objects::crash_record::CrashRecord;
+use crate::domain::agents::value_objects::crash_record::PanicReport;
 use crate::domain::sessions::entities::session::Session;
 use crate::infrastructure::persistence::file::crash_record::Armed;
 use crate::infrastructure::tools::agents::subagent_registry::{

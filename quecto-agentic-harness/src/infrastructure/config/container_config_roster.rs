@@ -86,7 +86,7 @@ impl ContainerConfigRoster for EffectiveConfigRoster {
                     repository: config
                         .repository
                         .as_deref()
-                        .map(crate::domain::redaction::redact_url_userinfo),
+                        .map(crate::domain::shared::redaction::redact_url_userinfo),
                     joinable: !config.exec.is_empty(),
                 })
                 .collect(),

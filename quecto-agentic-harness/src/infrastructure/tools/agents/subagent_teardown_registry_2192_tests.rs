@@ -4,8 +4,8 @@ use std::path::PathBuf;
 
 use super::*;
 use crate::domain::agents::services::subagent_teardown::LaunchGeneration;
-use crate::domain::crash_record::{CrashRecord, PanicReport};
-use crate::domain::ids::AgentUuid;
+use crate::domain::agents::value_objects::crash_record::{CrashRecord, PanicReport};
+use crate::domain::identity::ids::AgentUuid;
 use crate::infrastructure::persistence::file::crash_record::Armed;
 use crate::infrastructure::tools::agents::subagent_registry::{
     new_exit_signal_channel, new_notification_channel, new_registry,

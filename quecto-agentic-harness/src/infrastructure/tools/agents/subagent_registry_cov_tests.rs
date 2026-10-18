@@ -2,7 +2,7 @@
 //! recovery, and the UDS command sender's failure/skip branches.
 
 use super::super::*;
-use crate::domain::ids::AgentUuid;
+use crate::domain::identity::ids::AgentUuid;
 use std::panic::AssertUnwindSafe;
 
 fn live_entry(uuid: &str, name: &str, sock: &str, pid: u32) -> SubagentEntry {

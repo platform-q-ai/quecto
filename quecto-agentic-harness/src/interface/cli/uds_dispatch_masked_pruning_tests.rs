@@ -63,7 +63,7 @@ async fn persist_replays_full_history_when_prefix_flagged_dirty() {
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::application::providers::ports::{ChatRequest, LlmProvider};
 use crate::domain::conversation::value_objects::message::LlmResponse;
-use crate::domain::error::DomainError;
+use crate::domain::shared::error::DomainError;
 use crate::interface::cli::uds_cancel::fire_cancel;
 use std::future::Future;
 use std::pin::Pin;

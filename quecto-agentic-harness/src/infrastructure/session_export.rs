@@ -7,7 +7,7 @@
 //! that is the use case's.
 use crate::application::sessions::dto::{ExportManifest, ExportRecord, RawExportReceipt};
 use crate::application::sessions::ports::export::{ExportOutcome, SessionExportPort};
-use crate::domain::error::DomainError;
+use crate::domain::shared::error::DomainError;
 use sha2::{Digest, Sha256};
 use std::io::Write;
 use std::path::{Path, PathBuf};

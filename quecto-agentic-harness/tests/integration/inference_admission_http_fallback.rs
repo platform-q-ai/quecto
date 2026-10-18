@@ -4,7 +4,7 @@ use quecto::application::inference_attempt::{AttemptAdmission, AttemptPermit};
 use quecto::application::providers::ports::{ChatRequest, LlmProvider};
 use quecto::domain::{
     admission::value_objects::inference_admission::{Feedback, ThrottleFeedback},
-    error::DomainError,
+    shared::error::DomainError,
 };
 use quecto::infrastructure::providers::openai::OpenAiProvider;
 use std::{

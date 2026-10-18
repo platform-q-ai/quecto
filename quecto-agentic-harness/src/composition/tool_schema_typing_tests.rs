@@ -187,7 +187,7 @@ fn built_in_definitions(workspace: &std::path::Path) -> Vec<ToolDefinition> {
     .recall;
     let kill_tool =
         super::subagent_termination::build_kill_tool(crate::interface::cli::KillToolWiring {
-            owner: crate::domain::ids::AgentUuid::new("harness".to_string()),
+            owner: crate::domain::identity::ids::AgentUuid::new("harness".to_string()),
             registry: AgentCmdTool::new_registry(),
             broadcast_tx: None,
             notify_tx: None,

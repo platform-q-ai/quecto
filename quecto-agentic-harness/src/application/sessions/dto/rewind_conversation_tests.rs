@@ -1,5 +1,5 @@
 use super::*;
-use crate::domain::error::DomainError;
+use crate::domain::shared::error::DomainError;
 
 #[test]
 fn refusals_present_the_wire_texts_verbatim_and_carry_no_ledger() {

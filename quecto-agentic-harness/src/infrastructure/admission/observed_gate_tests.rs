@@ -2,7 +2,7 @@
 //! bounded sample, byte-bounded refusal reasons, grant-anchored cooldown
 //! translation per group, and the cancellation/abandonment distinction.
 use super::*;
-use crate::domain::error::DomainError;
+use crate::domain::shared::error::DomainError;
 use std::future::Future;
 use std::pin::Pin;
 

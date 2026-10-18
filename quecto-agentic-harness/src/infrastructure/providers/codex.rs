@@ -16,8 +16,8 @@ use crate::application::providers::ports::{ChatRequest, LlmProvider};
 #[cfg(any(test, feature = "test-support"))]
 use crate::domain::conversation::value_objects::message::Message;
 use crate::domain::conversation::value_objects::message::{LlmResponse, Role, ThinkingBlock};
-use crate::domain::error::DomainError;
 use crate::domain::inference::value_objects::provider::StreamEvent;
+use crate::domain::shared::error::DomainError;
 
 #[path = "codex_sse_state.rs"]
 mod codex_sse_state;

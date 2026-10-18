@@ -16,7 +16,7 @@ use quecto::domain::agents::services::subagent_teardown::{
     DelegatedAgentIdentity, LaunchGeneration, LineageSnapshot, RoutingDepth, ShutdownReason,
     TerminationRouteError,
 };
-use quecto::domain::ids::AgentUuid;
+use quecto::domain::identity::ids::AgentUuid;
 use quecto::infrastructure::processes::direct_child_routing::{
     PROTOCOL_ACK_TIMEOUT, UdsDirectChildRouting, shutdown_over_socket,
 };

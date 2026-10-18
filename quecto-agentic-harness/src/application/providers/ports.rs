@@ -10,12 +10,12 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use crate::domain::conversation::value_objects::message::{LlmResponse, Message};
-use crate::domain::error::DomainError;
 use crate::domain::inference::events::request_observation::{RequestObservation, RequestTrace};
 use crate::domain::inference::value_objects::provider::{
     CancelFlag, EffortLevel, RequestAttempt, RequestMetadata, StreamEvent, ThinkingLevel,
     ToolChoice,
 };
+use crate::domain::shared::error::DomainError;
 use crate::domain::tool_policy::value_objects::tool::ToolDefinition;
 
 /// Parameters for a chat request to an LLM provider.

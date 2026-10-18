@@ -469,7 +469,7 @@ pub fn maybe_notify(notify_tx: Option<&NotificationTx>, agent_id: &str, line: &s
         0,
         &value,
         None,
-        crate::domain::ids::AgentUuid::new(agent_id),
+        crate::domain::identity::ids::AgentUuid::new(agent_id),
     );
 }
 
@@ -593,7 +593,7 @@ fn notify_from_parsed(
     sequence: u64,
     value: &serde_json::Value,
     workflow_mode: Option<&str>,
-    agent_uuid: crate::domain::ids::AgentUuid,
+    agent_uuid: crate::domain::identity::ids::AgentUuid,
 ) {
     let Some(tx) = notify_tx else { return };
     let event_type = match value.get("type").and_then(|v| v.as_str()) {

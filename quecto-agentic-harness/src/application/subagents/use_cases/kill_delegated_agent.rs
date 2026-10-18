@@ -24,7 +24,7 @@ use std::sync::Arc;
 use crate::domain::agents::services::subagent_teardown::{
     DelegatedAgentIdentity, LineageSnapshot, RoutingDepth, TerminationRouteError, route_length,
 };
-use crate::domain::ids::AgentUuid;
+use crate::domain::identity::ids::AgentUuid;
 
 use super::super::dto::{
     KillDelegatedAgentError, KillDelegatedAgentOutcome, KillDelegatedAgentRequest,

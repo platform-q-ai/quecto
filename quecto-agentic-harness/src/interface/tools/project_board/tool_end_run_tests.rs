@@ -32,7 +32,6 @@ use crate::domain::environments::entities::environment_registry::{
 use crate::domain::environments::services::environment_retention::{
     CoordinatorLoss, HostedSwarmRun, MemberFinalizeMode, SwarmRunObservation,
 };
-use crate::domain::error::DomainError;
 use crate::domain::project_board::entities::claim::Identity;
 use crate::domain::project_board::entities::plan::{Plan, PlanFields, PlanItem};
 use crate::domain::project_board::entities::task::{Task, TaskFields};
@@ -40,6 +39,7 @@ use crate::domain::project_board::services::starts::{Started, start};
 use crate::domain::project_board::value_objects::slug::Slug;
 use crate::domain::project_board::value_objects::timestamp::Timestamp;
 use crate::domain::project_board::value_objects::vocabulary::{PlanState, TaskKind, TaskStatus};
+use crate::domain::shared::error::DomainError;
 use crate::domain::swarm::value_objects::lifecycle::RunStatus;
 use crate::domain::tool_policy::value_objects::tool::{ToolDefinition, ToolResult};
 use crate::infrastructure::test_support::memory_board_store::MemoryBoardStore;

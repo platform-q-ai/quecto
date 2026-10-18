@@ -29,7 +29,7 @@ async fn the_exit_persist_announces_on_the_reader_task_and_its_close_withdraws()
     let flag = crate::infrastructure::tools::agents::owner_exit::OwnerExitFlag::new();
     let graph = crate::composition::subagent_teardown::build_teardown_graph(
         crate::interface::cli::uds_teardown_handles::TeardownLoopInputs {
-            owner: crate::domain::ids::AgentUuid::new("root"),
+            owner: crate::domain::identity::ids::AgentUuid::new("root"),
             registry: Some(registry),
             harness_lifecycle: None,
             broadcast_tx: Some(bcast),

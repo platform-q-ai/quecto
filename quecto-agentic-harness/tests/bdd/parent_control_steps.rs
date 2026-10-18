@@ -635,7 +635,7 @@ fn given_slow_child(world: &mut QuectoWorld) {
                     SubagentNotification::Completed {
                         agent_id: "slow".into(),
                     },
-                    quecto::domain::ids::AgentUuid::new("slow-child"),
+                    quecto::domain::identity::ids::AgentUuid::new("slow-child"),
                 ))
                 .map_err(|error| format!("{error:?}"));
             *delivery.lock().unwrap() = Some(sent);
@@ -662,7 +662,7 @@ fn given_slow_child(world: &mut QuectoWorld) {
     );
     let mut entry =
         quecto::infrastructure::tools::agents::subagent_registry::SubagentEntry::with_identity(
-            quecto::domain::ids::AgentUuid::new("slow-child"),
+            quecto::domain::identity::ids::AgentUuid::new("slow-child"),
             "slow".into(),
             endpoint.path.clone(),
             spawned.display_pid.0,

@@ -2,7 +2,7 @@
 //! test-only mocks do not count toward the production coverage denominator).
 
 use super::*;
-use crate::domain::error::DomainError;
+use crate::domain::shared::error::DomainError;
 use crate::domain::tool_policy::value_objects::tool::{ToolDefinition, ToolResult};
 use crate::infrastructure::extensions::native::OfficialToolDeps;
 use crate::infrastructure::tools::swarm::swarm_bridge::Participation;

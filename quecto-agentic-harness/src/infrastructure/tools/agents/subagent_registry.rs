@@ -12,7 +12,7 @@ use transport::{
 use crate::domain::agents::services::subagent::{
     DisplayNameResolutionEntry, resolve_live_display_name,
 };
-use crate::domain::ids::AgentUuid;
+use crate::domain::identity::ids::AgentUuid;
 use crate::domain::sessions::entities::session::SubagentLiveness;
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;

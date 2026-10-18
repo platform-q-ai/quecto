@@ -11,7 +11,7 @@ pub(crate) enum DeadlineResult {
     Completed(
         Result<
             crate::domain::agents::value_objects::agent::AgentResult,
-            crate::domain::error::DomainError,
+            crate::domain::shared::error::DomainError,
         >,
     ),
     /// The deadline expired before the agent finished.

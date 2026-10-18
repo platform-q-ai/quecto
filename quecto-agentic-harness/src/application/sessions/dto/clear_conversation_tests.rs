@@ -1,5 +1,5 @@
 use super::*;
-use crate::domain::error::DomainError;
+use crate::domain::shared::error::DomainError;
 
 #[test]
 fn a_save_failure_presents_the_store_text_and_keeps_the_ledger_position() {

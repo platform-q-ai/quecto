@@ -52,9 +52,9 @@ pub fn estimate_message_tokens(msg: &Message) -> usize {
 /// if truncated. Safe for multi-byte UTF-8 — never splits a character.
 ///
 /// Returns `Cow::Borrowed` when the string fits (no allocation). The ellipsis
-/// counts toward the budget. Bounded-scan core in [`crate::domain::text`].
+/// counts toward the budget. Bounded-scan core in [`crate::domain::shared::text`].
 pub fn truncate_utf8_safe(s: &str, max_chars: usize) -> std::borrow::Cow<'_, str> {
-    crate::domain::text::truncate_chars(s, max_chars, max_chars.saturating_sub(3), "...")
+    crate::domain::shared::text::truncate_chars(s, max_chars, max_chars.saturating_sub(3), "...")
 }
 
 /// Format the one-liner stub for a collapsed tool result.

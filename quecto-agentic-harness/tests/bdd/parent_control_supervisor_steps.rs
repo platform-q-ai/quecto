@@ -431,7 +431,7 @@ fn when_production_paths(world: &mut QuectoWorld) {
     let owners = crate::agent_cmd_tool_steps::termination_owners(&registry, None);
     let fleet = quecto::composition::subagent_teardown::build_fleet_teardown(
         quecto::composition::subagent_teardown::FleetTeardownWiring {
-            owner: quecto::domain::ids::AgentUuid::new("root"),
+            owner: quecto::domain::identity::ids::AgentUuid::new("root"),
             registry: registry.clone(),
             broadcast_tx: None,
             notify_tx: None,

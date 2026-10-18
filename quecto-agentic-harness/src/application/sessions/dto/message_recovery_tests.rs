@@ -1,5 +1,5 @@
 use super::{RecoveryError, Utf8Range};
-use crate::domain::ids::{MessageId, ToolCallId};
+use crate::domain::identity::ids::{MessageId, ToolCallId};
 
 #[test]
 fn requested_range_defaults_to_the_whole_text() {

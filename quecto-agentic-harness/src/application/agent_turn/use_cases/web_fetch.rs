@@ -1,6 +1,8 @@
 //! Application-owned web fetch policy, orchestration, and content transformation.
-use crate::domain::html_text::{markup_to_text, push_collapsed_line};
-use crate::domain::network_destination::{authorize_destination, is_fetchable_name};
+use crate::domain::shared::html_text::{markup_to_text, push_collapsed_line};
+use crate::domain::tool_policy::services::network_destination::{
+    authorize_destination, is_fetchable_name,
+};
 use std::{future::Future, net::IpAddr, pin::Pin, sync::Arc};
 
 #[path = "web_fetch_main_content.rs"]

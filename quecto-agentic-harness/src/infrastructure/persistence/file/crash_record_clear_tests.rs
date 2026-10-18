@@ -3,7 +3,7 @@
 //! session it names, and a clear removes the temporary files of writes a
 //! killed process never finished.
 use super::*;
-use crate::domain::crash_record::PanicReport;
+use crate::domain::agents::value_objects::crash_record::PanicReport;
 
 fn record(message: &str) -> CrashRecord {
     CrashRecord::new(PanicReport::new(message, None), std::process::id(), 7)

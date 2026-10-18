@@ -14,9 +14,9 @@ use crate::application::sessions::active_session::{ActiveSessionHandle, ActiveSe
 use crate::application::sessions::dto::SaveTrigger;
 use crate::application::sessions::ports::{HistoricalRosterSource, SessionStore};
 use crate::domain::conversation::value_objects::message::Message;
-use crate::domain::error::DomainError;
 use crate::domain::sessions::entities::session::{PersistedSubagentRosterEntry, Session};
 use crate::domain::sessions::entities::session_identity::SessionIdentity;
+use crate::domain::shared::error::DomainError;
 use crate::domain::workflow::WorkflowRunPersisted;
 use crate::infrastructure::persistence::file::sessions::session_layout::FlatSessionLayout;
 use crate::infrastructure::persistence::file::sessions::session_store::FileSessionStore;

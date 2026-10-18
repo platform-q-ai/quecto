@@ -21,7 +21,7 @@ pub fn register_and_broadcast(
     session_name: &str,
     entry: SubagentEntry,
     lifecycle: &SharedHarnessLifecycle,
-) -> Result<(), crate::domain::error::DomainError> {
+) -> Result<(), crate::domain::shared::error::DomainError> {
     // Insert and serialize the survivor set in ONE critical section. Locking
     // twice (insert, then re-lock inside build_state_changed_event) leaves a gap
     // in which a concurrent reaper/cascade-removal could mutate or drop the
@@ -30,7 +30,7 @@ pub fn register_and_broadcast(
     let event = {
         let mut guard = registry.lock().unwrap_or_else(|e| e.into_inner());
         admit_spawn(lifecycle).map_err(|refused| {
-            crate::domain::error::DomainError::Tool(format!(
+            crate::domain::shared::error::DomainError::Tool(format!(
                 "{refused} while registering {session_name}"
             ))
         })?;
@@ -60,7 +60,7 @@ pub fn register_and_broadcast(
                 existing.insert(entry);
             }
             Entry::Occupied(existing) => {
-                return Err(crate::domain::error::DomainError::Tool(format!(
+                return Err(crate::domain::shared::error::DomainError::Tool(format!(
                     "duplicate subagent registry key {} while registering {session_name}",
                     existing.key()
                 )));

@@ -181,7 +181,9 @@ pub(super) fn bind_socket(socket: &std::path::Path, stderr: &mut String) -> bool
     true
 }
 
-fn disable_workflow(flags: &mut AgentFlags) -> Result<(), crate::domain::error::DomainError> {
+fn disable_workflow(
+    flags: &mut AgentFlags,
+) -> Result<(), crate::domain::shared::error::DomainError> {
     crate::domain::swarm::services::participation::validate_workflow(
         true,
         flags.workflow || flags.workflow_guards || flags.workflow_spec_path.is_some(),

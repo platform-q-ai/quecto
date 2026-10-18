@@ -6,7 +6,7 @@
 use crate::domain::conversation::value_objects::message::ToolCall;
 #[cfg(test)]
 use crate::domain::conversation::value_objects::message::{LlmResponse, UsageInfo};
-use crate::domain::error::DomainError;
+use crate::domain::shared::error::DomainError;
 
 /// Maximum number of tool calls allowed in a single streaming response.
 const MAX_TOOL_CALLS: usize = 128;

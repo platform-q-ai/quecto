@@ -11,7 +11,7 @@ use std::pin::Pin;
 use crate::domain::agents::services::subagent_teardown::{
     DelegatedAgentIdentity, HarnessLifecycleState, LineageSnapshot, RoutingDepth, ShutdownReason,
 };
-use crate::domain::ids::AgentUuid;
+use crate::domain::identity::ids::AgentUuid;
 
 pub type PortFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
@@ -571,14 +571,14 @@ pub trait EndedChildRecords: Send + Sync {
         &'a self,
         child: &'a crate::domain::sessions::entities::session_identity::SessionIdentity,
         writer: Option<u32>,
-    ) -> PortFuture<'a, Option<crate::domain::crash_record::CrashRecord>>;
+    ) -> PortFuture<'a, Option<crate::domain::agents::value_objects::crash_record::CrashRecord>>;
 
     /// The persisted transcript of the child running as `child`: `None`
     /// when this harness's store holds no session of that name.
     fn transcript<'a>(
         &'a self,
         child: &'a crate::domain::sessions::entities::session_identity::SessionIdentity,
-    ) -> PortFuture<'a, Result<Option<EndedTranscript>, crate::domain::error::DomainError>>;
+    ) -> PortFuture<'a, Result<Option<EndedTranscript>, crate::domain::shared::error::DomainError>>;
 
     /// Whether a transcript of the child running as `child` is there to be
     /// read — cheaply, where the adapter can tell without reading it

@@ -1,5 +1,5 @@
 use crate::domain::conversation::value_objects::message::ThinkingBlock;
-use crate::domain::error::DomainError;
+use crate::domain::shared::error::DomainError;
 
 pub const MAX_VISIBLE_THINKING_BYTES: usize = 8 * 1024 * 1024;
 

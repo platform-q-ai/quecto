@@ -41,7 +41,7 @@ fn ports_allocate_build_success_and_duplicate_contracts() {
     assert!(ports.resolve_binary().is_ok() || ports.resolve_binary().is_err());
 
     let registry: super::super::spawn::SubagentRegistry = Arc::new(Mutex::new(HashMap::new()));
-    let duplicate_uuid = crate::domain::ids::AgentUuid::mint();
+    let duplicate_uuid = crate::domain::identity::ids::AgentUuid::mint();
     registry.lock().unwrap().insert(
         duplicate_uuid.to_string(),
         SubagentEntry::with_identity(
@@ -372,7 +372,7 @@ async fn register_and_monitor_records_the_owned_handle_and_fleet_teardown_termin
 
     let fleet = crate::composition::subagent_teardown::build_fleet_teardown(
         crate::composition::subagent_teardown::FleetTeardownWiring {
-            owner: crate::domain::ids::AgentUuid::new("root"),
+            owner: crate::domain::identity::ids::AgentUuid::new("root"),
             registry: tool.registry.clone(),
             broadcast_tx: None,
             notify_tx: None,

@@ -2,8 +2,8 @@ use super::*;
 use crate::application::sessions::active_session::ActiveSessionState;
 use crate::application::sessions::ports::SpillIndexList;
 use crate::domain::conversation::value_objects::message::ToolCall;
-use crate::domain::error::DomainError;
 use crate::domain::sessions::entities::session::{SpillEntry, SpillIndex};
+use crate::domain::shared::error::DomainError;
 use std::sync::Mutex;
 
 /// A writer that records what it was asked to write, or fails.

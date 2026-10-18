@@ -5,7 +5,7 @@
 //! run id is the board's own (a uuid it generated), recorded as found.
 use serde::{Deserialize, Serialize};
 
-use crate::domain::redaction::Redacted;
+use crate::domain::shared::redaction::Redacted;
 use crate::domain::swarm::{entities::records::RunState, value_objects::lifecycle::MemberExit};
 
 /// Why the board refused an op: a stable, allowlisted kind for every

@@ -1,7 +1,7 @@
 //! Typed coordination adapter. Python wire details stop at this boundary.
 use super::SwarmContext;
 use crate::application::swarm::ports::CoordinationPort;
-use crate::domain::error::DomainError;
+use crate::domain::shared::error::DomainError;
 use crate::domain::swarm::value_objects::lifecycle::MemberExit;
 use crate::domain::swarm::{
     entities::run::{Member, Snapshot},
@@ -363,7 +363,7 @@ impl SwarmContext {
         &self,
     ) -> Result<
         Option<crate::domain::swarm::services::parent_wake::CoordinatorBoard>,
-        crate::domain::error::DomainError,
+        crate::domain::shared::error::DomainError,
     > {
         let status = self.host_read("_status")?;
         decode_coordinator_board(&self.member, &status, || self.host_read("_run_totals"))
@@ -376,7 +376,7 @@ impl SwarmContext {
         &self,
     ) -> Result<
         Option<crate::domain::swarm::services::worker_wake::WorkerBoard>,
-        crate::domain::error::DomainError,
+        crate::domain::shared::error::DomainError,
     > {
         let Some(board) = self.coordinator_board_now()? else {
             return Ok(None);
@@ -408,7 +408,7 @@ impl SwarmContext {
         ))
     }
 
-    fn host_read(&self, method: &str) -> Result<Value, crate::domain::error::DomainError> {
+    fn host_read(&self, method: &str) -> Result<Value, crate::domain::shared::error::DomainError> {
         self.board.call_as(
             self.location(),
             &self.member,
@@ -425,13 +425,15 @@ impl SwarmContext {
 pub(crate) fn decode_coordinator_board(
     member: &str,
     status: &Value,
-    totals: impl FnOnce() -> Result<Value, crate::domain::error::DomainError>,
+    totals: impl FnOnce() -> Result<Value, crate::domain::shared::error::DomainError>,
 ) -> Result<
     Option<crate::domain::swarm::services::parent_wake::CoordinatorBoard>,
-    crate::domain::error::DomainError,
+    crate::domain::shared::error::DomainError,
 > {
     let malformed = |what: &str| {
-        crate::domain::error::DomainError::Tool(format!("coordinator board: {what} missing"))
+        crate::domain::shared::error::DomainError::Tool(format!(
+            "coordinator board: {what} missing"
+        ))
     };
     let coordinator = status
         .get("coordinator")
@@ -478,9 +480,10 @@ pub(crate) fn decode_coordinator_board(
 /// The owner of each claimed task in a `tasks` answer (#2471).
 pub(crate) fn decode_claimed_owners(
     tasks: &Value,
-) -> Result<Vec<String>, crate::domain::error::DomainError> {
-    let malformed =
-        |what: &str| crate::domain::error::DomainError::Tool(format!("worker board: {what}"));
+) -> Result<Vec<String>, crate::domain::shared::error::DomainError> {
+    let malformed = |what: &str| {
+        crate::domain::shared::error::DomainError::Tool(format!("worker board: {what}"))
+    };
     let tasks = tasks
         .as_array()
         .ok_or_else(|| malformed("tasks is not a list"))?;

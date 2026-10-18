@@ -253,9 +253,9 @@ pub use engine::*;
 mod revision;
 
 #[cfg(test)]
-#[path = "workflow_tests.rs"]
+#[path = "mod_tests.rs"]
 mod tests;
 
 #[cfg(test)]
-#[path = "workflow_comprehensive_tests.rs"]
+#[path = "mod_comprehensive_tests.rs"]
 mod comprehensive_tests;

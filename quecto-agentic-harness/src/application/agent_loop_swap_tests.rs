@@ -83,7 +83,7 @@ fn test_swap_registry_info_reflects_new_count() {
 
 use crate::application::agent_usage::UsageTotals;
 use crate::domain::conversation::value_objects::message::{LlmResponse, Message, ToolCall};
-use crate::domain::error::DomainError;
+use crate::domain::shared::error::DomainError;
 
 #[test]
 fn is_context_limit_error_matches_known_phrases() {

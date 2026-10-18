@@ -13,7 +13,7 @@ use std::sync::{Arc, Mutex};
 use super::*;
 use crate::application::providers::ports::{ChatRequest, LlmProvider};
 use crate::domain::conversation::value_objects::message::LlmResponse;
-use crate::domain::error::DomainError;
+use crate::domain::shared::error::DomainError;
 use crate::domain::tool_policy::value_objects::tool_descriptor::ProfileAvailabilityScope;
 
 #[derive(Debug)]

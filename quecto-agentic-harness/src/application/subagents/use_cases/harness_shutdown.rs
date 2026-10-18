@@ -33,7 +33,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::task::{Context, Poll, Waker};
 
 use crate::domain::agents::services::subagent_teardown::{HarnessLifecycleState, ShutdownReason};
-use crate::domain::ids::AgentUuid;
+use crate::domain::identity::ids::AgentUuid;
 
 use super::super::dto::{
     FleetTeardownError, FleetTeardownOutcome, HarnessShutdownError, PersistenceOutcome,

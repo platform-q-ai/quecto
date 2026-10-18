@@ -546,7 +546,7 @@ impl quecto::application::providers::ports::LlmProvider for MockProvider {
     ) -> std::pin::Pin<
         Box<
             dyn std::future::Future<
-                    Output = Result<LlmResponse, quecto::domain::error::DomainError>,
+                    Output = Result<LlmResponse, quecto::domain::shared::error::DomainError>,
                 > + Send
                 + '_,
         >,
@@ -555,9 +555,9 @@ impl quecto::application::providers::ports::LlmProvider for MockProvider {
             .requests
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         if let Some(error) = self.failures.lock().unwrap().pop() {
-            return Box::pin(
-                async move { Err(quecto::domain::error::DomainError::Provider(error)) },
-            );
+            return Box::pin(async move {
+                Err(quecto::domain::shared::error::DomainError::Provider(error))
+            });
         }
         if let Some(response) = self.responses.lock().unwrap().pop_front() {
             return Box::pin(async move { Ok(response) });

@@ -16,7 +16,7 @@ use quecto::application::subagents::ports::{
     DelegatedAgentRegistry, SubagentLifecycleRepository, TerminationCause, TerminationConclusion,
 };
 use quecto::domain::agents::services::subagent_teardown::{HarnessLifecycleState, ShutdownReason};
-use quecto::domain::ids::AgentUuid;
+use quecto::domain::identity::ids::AgentUuid;
 
 use crate::QuectoWorld;
 use crate::common::teardown_fixture::{Harness, RowPhase, root_tree};

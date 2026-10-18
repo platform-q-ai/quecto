@@ -18,10 +18,10 @@ use tokio::sync::RwLock;
 
 use crate::application::providers::ports::{ChatRequest, LlmProvider};
 use crate::domain::conversation::value_objects::message::LlmResponse;
-use crate::domain::error::DomainError;
 use crate::domain::inference::services::provider_error::{
     ProviderErrorClass, classify_provider_error,
 };
+use crate::domain::shared::error::DomainError;
 use crate::infrastructure::auth::credential_store::{AuthMethod, CredentialStore};
 
 /// Async function that refreshes an OAuth token.

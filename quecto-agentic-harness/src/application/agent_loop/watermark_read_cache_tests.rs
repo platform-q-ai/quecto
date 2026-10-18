@@ -13,7 +13,7 @@ use crate::domain::audit::AuditEvent;
 use crate::domain::conversation::services::turn_origin::prompt;
 use crate::domain::conversation::services::watermark::Watermark;
 use crate::domain::conversation::value_objects::message::{LlmResponse, Message, ToolCall};
-use crate::domain::error::DomainError;
+use crate::domain::shared::error::DomainError;
 use crate::domain::tool_policy::value_objects::tool::{ToolDefinition, ToolResult};
 use std::future::Future;
 use std::pin::Pin;

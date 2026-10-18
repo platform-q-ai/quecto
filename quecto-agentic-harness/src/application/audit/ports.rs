@@ -3,7 +3,7 @@ use std::future::Future;
 use std::pin::Pin;
 
 use crate::domain::audit::AuditEvent;
-use crate::domain::error::DomainError;
+use crate::domain::shared::error::DomainError;
 
 /// Port: an audit event sink. Implemented by `AuditLog` in infrastructure;
 /// the agent loop emits through it without importing infrastructure types.

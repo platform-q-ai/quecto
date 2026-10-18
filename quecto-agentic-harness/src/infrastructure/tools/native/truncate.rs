@@ -3,7 +3,7 @@
 // and human-readable size formatting.
 
 pub const DEFAULT_MAX_LINES: usize = 2_000;
-pub const DEFAULT_MAX_BYTES: usize = crate::domain::constants::DEFAULT_OUTPUT_CAP_BYTES; // 50 KB
+pub const DEFAULT_MAX_BYTES: usize = crate::domain::shared::constants::DEFAULT_OUTPUT_CAP_BYTES; // 50 KB
 pub const GREP_MAX_LINE_LENGTH: usize = 500;
 
 #[derive(Debug, Clone)]
@@ -261,9 +261,10 @@ fn build_tail_content(
 ///
 /// If the line exceeds the limit, truncates and appends `... [truncated]`
 /// (the marker does not count toward the budget). Returns
-/// `(truncated_line, was_truncated)`. Bounded-scan core in [`crate::domain::text`].
+/// `(truncated_line, was_truncated)`. Bounded-scan core in [`crate::domain::shared::text`].
 pub fn truncate_line(line: &str, max_chars: usize) -> (String, bool) {
-    match crate::domain::text::truncate_chars(line, max_chars, max_chars, "... [truncated]") {
+    match crate::domain::shared::text::truncate_chars(line, max_chars, max_chars, "... [truncated]")
+    {
         std::borrow::Cow::Borrowed(_) => (line.to_string(), false),
         std::borrow::Cow::Owned(s) => (s, true),
     }

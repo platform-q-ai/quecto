@@ -56,7 +56,7 @@ impl ContextSpillStore for MemSpillStore {
         entry: &SpillEntry,
     ) -> std::pin::Pin<
         Box<
-            dyn std::future::Future<Output = Result<(), crate::domain::error::DomainError>>
+            dyn std::future::Future<Output = Result<(), crate::domain::shared::error::DomainError>>
                 + Send
                 + '_,
         >,
@@ -73,7 +73,7 @@ impl ContextSpillStore for MemSpillStore {
     ) -> std::pin::Pin<
         Box<
             dyn std::future::Future<
-                    Output = Result<Option<SpillEntry>, crate::domain::error::DomainError>,
+                    Output = Result<Option<SpillEntry>, crate::domain::shared::error::DomainError>,
                 > + Send
                 + '_,
         >,
@@ -85,7 +85,9 @@ impl ContextSpillStore for MemSpillStore {
         self.recalls.lock().unwrap().push(key.clone());
         if self.recall_error {
             return Box::pin(async {
-                Err(crate::domain::error::DomainError::Other("boom".into()))
+                Err(crate::domain::shared::error::DomainError::Other(
+                    "boom".into(),
+                ))
             });
         }
         let hit = self.entries.lock().unwrap().get(&key).cloned();
@@ -98,7 +100,10 @@ impl ContextSpillStore for MemSpillStore {
     ) -> std::pin::Pin<
         Box<
             dyn std::future::Future<
-                    Output = Result<Arc<Vec<SpillIndex>>, crate::domain::error::DomainError>,
+                    Output = Result<
+                        Arc<Vec<SpillIndex>>,
+                        crate::domain::shared::error::DomainError,
+                    >,
                 > + Send
                 + '_,
         >,
@@ -111,7 +116,7 @@ impl ContextSpillStore for MemSpillStore {
         _session_key: &SessionIdentity,
     ) -> std::pin::Pin<
         Box<
-            dyn std::future::Future<Output = Result<(), crate::domain::error::DomainError>>
+            dyn std::future::Future<Output = Result<(), crate::domain::shared::error::DomainError>>
                 + Send
                 + '_,
         >,

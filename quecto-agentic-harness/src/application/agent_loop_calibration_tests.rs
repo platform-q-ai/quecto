@@ -172,8 +172,9 @@ impl crate::application::providers::ports::LlmProvider for NamedProvider {
         _request: crate::application::providers::ports::ChatRequest<'_>,
     ) -> std::pin::Pin<
         Box<
-            dyn std::future::Future<Output = Result<LlmResponse, crate::domain::error::DomainError>>
-                + Send
+            dyn std::future::Future<
+                    Output = Result<LlmResponse, crate::domain::shared::error::DomainError>,
+                > + Send
                 + '_,
         >,
     > {
@@ -283,7 +284,7 @@ impl crate::application::audit::ports::AuditSink for PrunedAudit {
         event: crate::domain::audit::AuditEvent,
     ) -> std::pin::Pin<
         Box<
-            dyn std::future::Future<Output = Result<(), crate::domain::error::DomainError>>
+            dyn std::future::Future<Output = Result<(), crate::domain::shared::error::DomainError>>
                 + Send
                 + '_,
         >,

@@ -2,7 +2,7 @@
 //! guessed one) replaces the reported row — this harness's own launch is
 //! authoritative — while any other duplicate key is still refused.
 use super::*;
-use crate::domain::ids::AgentUuid;
+use crate::domain::identity::ids::AgentUuid;
 
 fn row(uuid: &str, origin: ChildOrigin) -> SubagentEntry {
     let mut entry = SubagentEntry::with_identity(

@@ -15,7 +15,7 @@ use crate::application::catalogue::ports::ModelRuntime;
 use crate::application::providers::ports::{ChatRequest, LlmProvider};
 use crate::domain::conversation::services::image_input::ImageInput;
 use crate::domain::conversation::value_objects::message::{LlmResponse, Message, ToolCall};
-use crate::domain::error::DomainError;
+use crate::domain::shared::error::DomainError;
 
 /// Each request's tool-result images, as (MIME type, base64).
 type ToolImages = Vec<(String, String)>;

@@ -42,7 +42,9 @@ impl Tool for SessionRecordingTool {
         _arguments: &str,
     ) -> Pin<
         Box<
-            dyn Future<Output = Result<ToolResult, quecto::domain::error::DomainError>> + Send + '_,
+            dyn Future<Output = Result<ToolResult, quecto::domain::shared::error::DomainError>>
+                + Send
+                + '_,
         >,
     > {
         Box::pin(async move {

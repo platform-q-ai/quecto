@@ -12,9 +12,9 @@ use crate::application::sessions::ports::SessionStore;
 use crate::domain::conversation::value_objects::message::{
     LlmResponse, Message, Role, ToolCall, UserImageBlock,
 };
-use crate::domain::error::DomainError;
 use crate::domain::sessions::entities::session::Session;
 use crate::domain::sessions::entities::session_identity::SessionIdentity;
+use crate::domain::shared::error::DomainError;
 use crate::domain::tool_policy::value_objects::tool::ImageBlock;
 use crate::interface::cli::protocol::AgentCommand;
 

@@ -15,7 +15,7 @@ use crate::application::subagents::use_cases::{
     HarnessShutdownTransaction, TerminateAllDelegatedAgents,
 };
 use crate::domain::agents::entities::parent_control::ParentControlBinding;
-use crate::domain::ids::AgentUuid;
+use crate::domain::identity::ids::AgentUuid;
 use crate::infrastructure::tools::agents::harness_lifecycle::SharedHarnessLifecycle;
 use crate::infrastructure::tools::agents::subagent_registry::{NotificationTx, SubagentRegistry};
 use crate::interface::uds::subagent_teardown::controller::SubagentTeardownController;

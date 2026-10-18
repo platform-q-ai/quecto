@@ -18,7 +18,7 @@ use super::dto::{
     RunOwnerRow, RunStatusRow, ScopeObservation, StoredContract, StoredRequestUsage,
     StoredRevision, TaskRow, TaskUpdate, UsageReport, UsageRow, UsageStanding,
 };
-use crate::domain::error::DomainError;
+use crate::domain::shared::error::DomainError;
 use crate::domain::swarm::{
     entities::records::{MemberRecord, RunRecord, RunState},
     entities::run::{Member, Snapshot},

@@ -1,7 +1,7 @@
 use super::*;
 use crate::application::ports::AttemptPermit;
 use crate::domain::admission::value_objects::inference_admission::GroupId;
-use crate::domain::error::DomainError;
+use crate::domain::shared::error::DomainError;
 use std::future::Future;
 use std::pin::Pin;
 

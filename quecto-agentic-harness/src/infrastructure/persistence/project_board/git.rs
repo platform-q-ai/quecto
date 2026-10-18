@@ -12,7 +12,7 @@
 use super::own_group::{Ended, end_group, exited_unreaped};
 use crate::domain::project_board::entities::claim::Identity;
 use crate::domain::project_board::value_objects::shown_text::shown_char;
-use crate::domain::redaction::{redact_secrets, redact_url_userinfo};
+use crate::domain::shared::redaction::{redact_secrets, redact_url_userinfo};
 use crate::infrastructure::processes::parent_death_signal::{
     SPAWN_ARMS, own_session_dying_with_us,
 };

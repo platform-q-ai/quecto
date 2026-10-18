@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 
 use super::super::log::SessionLog;
 use crate::application::swarm::ports::BoardOpLog;
-use crate::domain::redaction::Redacted;
+use crate::domain::shared::redaction::Redacted;
 use crate::domain::swarm::{
     events::run_summary::SwarmRunSummary,
     events::telemetry::{BoardOpDetail, BoardOpObservation, BoardOpOutcome, BoardRole},
