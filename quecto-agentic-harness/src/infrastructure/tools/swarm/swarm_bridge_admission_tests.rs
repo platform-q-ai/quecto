@@ -8,7 +8,7 @@ async fn terminal_reports_are_admitted_only_for_the_retained_coordinator() {
         let directory = tempfile::tempdir().unwrap();
         let parent = context(&directory);
         create(&parent, 2);
-        crate::infrastructure::tools::call_work::off_the_runtime(|| {
+        crate::infrastructure::tools::registry::call_work::off_the_runtime(|| {
             parent.call("stop", json!([status, "retain diagnostic report"]))
         })
         .unwrap();
@@ -39,7 +39,7 @@ async fn terminal_tool_admission_allows_only_native_read_operations() {
     let directory = tempfile::tempdir().unwrap();
     let parent = context(&directory);
     create(&parent, 2);
-    crate::infrastructure::tools::call_work::off_the_runtime(|| {
+    crate::infrastructure::tools::registry::call_work::off_the_runtime(|| {
         parent.call("stop", json!(["failed", "report"]))
     })
     .unwrap();

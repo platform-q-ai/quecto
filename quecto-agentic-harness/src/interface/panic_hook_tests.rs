@@ -267,10 +267,11 @@ fn child_entry() {
             text[..index].len()
         }),
         "carried" => contain(&runtime, "grep", async {
-            let joined = crate::infrastructure::tools::call_work::spawn_blocking_in_call(|| {
-                panic!("carried blocking work")
-            })
-            .await;
+            let joined =
+                crate::infrastructure::tools::registry::call_work::spawn_blocking_in_call(|| {
+                    panic!("carried blocking work")
+                })
+                .await;
             println!("UNREACHABLE {}", joined.is_ok());
         }),
         "second" => contain(&runtime, "edit", async {
@@ -286,12 +287,12 @@ fn child_entry() {
             let (tx, rx) = tokio::sync::oneshot::channel::<()>();
             tool_panic_scope::scoped(ToolScope::new("bash"), async {
                 // A reader the call leaves running when it returns.
-                drop(crate::infrastructure::tools::call_work::spawn_in_call(
-                    async {
+                drop(
+                    crate::infrastructure::tools::registry::call_work::spawn_in_call(async {
                         let _ = rx.await;
                         panic!("the call's leftover reader");
-                    },
-                ));
+                    }),
+                );
             })
             .await;
             tx.send(()).unwrap();
@@ -349,10 +350,12 @@ fn child_entry() {
             let call = tool_panic_scope::scoped(ToolScope::new("grep"), async move {
                 // Carried work panics; the call is cancelled before it joins.
                 let _join =
-                    crate::infrastructure::tools::call_work::spawn_blocking_in_call(move || {
-                        let _ = tx.send(());
-                        panic!("carried work of a call that was then cancelled");
-                    });
+                    crate::infrastructure::tools::registry::call_work::spawn_blocking_in_call(
+                        move || {
+                            let _ = tx.send(());
+                            panic!("carried work of a call that was then cancelled");
+                        },
+                    );
                 std::future::pending::<()>().await;
             });
             let mut call = Box::pin(call);

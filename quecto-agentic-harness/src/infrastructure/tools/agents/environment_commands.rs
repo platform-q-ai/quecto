@@ -105,9 +105,11 @@ impl ScriptEnvironmentCommands {
         };
         match handle {
             // A panic in the script job resumes here, in the call.
-            Some(handle) => super::super::call_work::spawn_blocking_in_call_on(&handle, job)
-                .await
-                .map_err(|error| format!("retained script runner stopped: {error}")),
+            Some(handle) => {
+                super::super::registry::call_work::spawn_blocking_in_call_on(&handle, job)
+                    .await
+                    .map_err(|error| format!("retained script runner stopped: {error}"))
+            }
             None => Ok(job()),
         }
     }
@@ -539,7 +541,7 @@ fn supervised_store(
 async fn off_the_workers<T: Send + 'static>(
     job: impl FnOnce() -> T + Send + 'static,
 ) -> Result<T, String> {
-    super::super::call_work::off_the_workers(job)
+    super::super::registry::call_work::off_the_workers(job)
         .await
         .map_err(|error| format!("hosted swarm run read did not finish: {error}"))
 }

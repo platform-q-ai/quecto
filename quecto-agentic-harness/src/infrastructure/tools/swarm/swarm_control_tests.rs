@@ -38,9 +38,10 @@ async fn native_supervisor_validates_event_requests_without_mutation() {
         refused.to_string().contains("outside the swarm"),
         "{refused}"
     );
-    let resumed =
-        crate::infrastructure::tools::call_work::off_the_runtime(|| context.resume_external())
-            .unwrap();
+    let resumed = crate::infrastructure::tools::registry::call_work::off_the_runtime(|| {
+        context.resume_external()
+    })
+    .unwrap();
     assert_eq!(resumed["status"], "running");
     let cancelled = control(context, "cancel_run", json!({})).await.unwrap();
     assert_eq!(cancelled["status"], "cancelled");
@@ -54,7 +55,8 @@ fn public_tool(context: SwarmContext) -> super::super::SwarmTool {
 async fn public_swarm_tool_reports_usage_after_completion() {
     use crate::application::tools::ports::Tool;
     let (_directory, context) = crate::swarm_control_fixture::context();
-    crate::infrastructure::tools::call_work::off_the_runtime(|| context.cancel_run()).unwrap();
+    crate::infrastructure::tools::registry::call_work::off_the_runtime(|| context.cancel_run())
+        .unwrap();
     let result = public_tool(context)
         .execute(r#"{"op":"usage"}"#)
         .await
@@ -81,8 +83,10 @@ async fn public_swarm_tool_takes_no_usage_budget_op() {
         assert!(!schema.contains(gone), "{gone}");
     }
     assert!(
-        crate::infrastructure::tools::call_work::off_the_runtime(|| context.usage_report())
-            .unwrap()["budget"]["token_limit"]
+        crate::infrastructure::tools::registry::call_work::off_the_runtime(
+            || context.usage_report()
+        )
+        .unwrap()["budget"]["token_limit"]
             .is_null()
     );
 }
@@ -103,7 +107,7 @@ async fn a_workflow_enabled_agent_cannot_create_a_swarm() {
         pid: std::process::id(),
         started: super::super::swarm_bridge::process_start(std::process::id()).unwrap(),
     };
-    crate::infrastructure::tools::call_work::off_the_runtime(|| {
+    crate::infrastructure::tools::registry::call_work::off_the_runtime(|| {
         context.join(&identity, None, None)
     })
     .unwrap();
@@ -137,7 +141,7 @@ async fn a_workflow_enabled_agent_cannot_create_a_swarm() {
     .to_string();
     assert!(error.contains("cannot create a swarm"), "{error}");
     assert_eq!(
-        crate::infrastructure::tools::call_work::off_the_runtime(|| context.snapshot())
+        crate::infrastructure::tools::registry::call_work::off_the_runtime(|| context.snapshot())
             .unwrap()
             .status,
         crate::domain::swarm::RunStatus::Setup,
@@ -155,7 +159,7 @@ async fn a_workflow_enabled_agent_cannot_create_a_swarm() {
     .unwrap();
     assert_eq!(created["status"], "running");
     assert_eq!(
-        crate::infrastructure::tools::call_work::off_the_runtime(|| context.snapshot())
+        crate::infrastructure::tools::registry::call_work::off_the_runtime(|| context.snapshot())
             .unwrap()
             .status,
         crate::domain::swarm::RunStatus::Running
@@ -164,5 +168,6 @@ async fn a_workflow_enabled_agent_cannot_create_a_swarm() {
         participation.participating(),
         "the creator is now a swarm agent"
     );
-    crate::infrastructure::tools::call_work::off_the_runtime(|| context.cancel_run()).unwrap();
+    crate::infrastructure::tools::registry::call_work::off_the_runtime(|| context.cancel_run())
+        .unwrap();
 }

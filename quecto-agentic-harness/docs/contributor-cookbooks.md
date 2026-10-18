@@ -38,10 +38,11 @@ Do not run live provider lanes unless the task explicitly requires them.
 
 - `src/application/tools/ports.rs` for port changes and `src/domain/tool_policy/value_objects/tool.rs` for
   schema vocabulary changes, if needed.
-- `src/infrastructure/tools/<tool>.rs` or `src/infrastructure/tools/<tool>/` for
-  the concrete tool.
-- `src/infrastructure/tools/mod.rs` and `src/infrastructure/tools/registry.rs`
-  for registration and guard composition.
+- `src/infrastructure/tools/native/<tool>.rs` or
+  `src/infrastructure/tools/native/<tool>/` for the concrete tool.
+- `src/infrastructure/tools/native/mod.rs` and
+  `src/infrastructure/tools/registry/mod.rs` for registration and guard
+  composition.
 - `src/interface/cli/agent/agent_tool_registry.rs` when CLI/agent construction
   needs to expose the tool.
 - `src/infrastructure/security/sandbox.rs` for the path hook and the

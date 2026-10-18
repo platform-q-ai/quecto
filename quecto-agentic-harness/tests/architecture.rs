@@ -3214,19 +3214,24 @@ fn normal_build_excludes_removed_tool_installer_archive_dependencies() {
         );
     }
 
-    assert!(
-        !Path::new("src/infrastructure/tools/ensure_tool.rs").exists(),
-        "removed tool installer source should not remain compiled into the harness"
-    );
+    for folder in [
+        "src/infrastructure/tools/",
+        "src/infrastructure/tools/native/",
+    ] {
+        assert!(
+            !Path::new(&format!("{folder}ensure_tool.rs")).exists(),
+            "removed tool installer source should not remain compiled into the harness"
+        );
 
-    let tools_mod = fs::read_to_string("src/infrastructure/tools/mod.rs")
-        .expect("read tools module declarations");
-    assert!(
-        !tools_mod
-            .lines()
-            .any(|line| line.trim() == "pub mod ensure_tool;"),
-        "removed tool installer should not be declared by the tools module"
-    );
+        let tools_mod =
+            fs::read_to_string(format!("{folder}mod.rs")).expect("read tools module declarations");
+        assert!(
+            !tools_mod
+                .lines()
+                .any(|line| line.trim() == "pub mod ensure_tool;"),
+            "removed tool installer should not be declared by the tools module"
+        );
+    }
 }
 
 /// `unicode-normalization` serves three users only: macOS path matching
@@ -3253,7 +3258,7 @@ fn text_normalization_serves_only_macos_paths_and_the_board_markdown() {
         [
             "src/application/project_board/fold_back_scrub.rs",
             "src/infrastructure/persistence/project_board/markdown/chars.rs",
-            "src/infrastructure/tools/path_utils.rs",
+            "src/infrastructure/tools/native/path_utils.rs",
         ],
         "unicode-normalization serves macOS paths, the board markdown and the fold-back's \
          credential-word fold alone"
@@ -3898,7 +3903,7 @@ fn find_vertical_slice_has_one_owner_per_role() {
     for path in [
         "src/application/agent_turn/use_cases/find.rs",
         "src/interface/tools/find.rs",
-        "src/infrastructure/tools/find_fd.rs",
+        "src/infrastructure/tools/native/find_fd.rs",
         "src/composition/find.rs",
     ] {
         assert!(Path::new(path).is_file(), "missing find role owner: {path}");
@@ -3975,7 +3980,7 @@ impl FindGraphGuard<'_> {
         let names = self.concrete_names(path);
         names.iter().all(|name| {
             let owner_allowed = match name.as_str() {
-                "FdFindPaths" => self.file == "src/infrastructure/tools/find_fd.rs",
+                "FdFindPaths" => self.file == "src/infrastructure/tools/native/find_fd.rs",
                 "FindTool" => self.file == "src/interface/tools/find.rs",
                 "FindUseCase" => matches!(
                     self.file,
@@ -4131,9 +4136,13 @@ fn find_graph_guards_preserve_parenthesized_receivers() {
             "FindUseCase",
             "new",
         ),
-        ("src/infrastructure/tools/find_fd.rs", "FdFindPaths", "new"),
         (
-            "src/infrastructure/tools/find_fd.rs",
+            "src/infrastructure/tools/native/find_fd.rs",
+            "FdFindPaths",
+            "new",
+        ),
+        (
+            "src/infrastructure/tools/native/find_fd.rs",
             "FdFindPaths",
             "with_fd_binary",
         ),
@@ -4231,9 +4240,13 @@ fn find_graph_guards_reject_type_alias_constructors() {
     for (file, vertex, constructor) in [
         ("src/interface/tools/find.rs", "FindUseCase", "new"),
         ("src/interface/tools/find.rs", "FindTool", "new"),
-        ("src/infrastructure/tools/find_fd.rs", "FdFindPaths", "new"),
         (
-            "src/infrastructure/tools/find_fd.rs",
+            "src/infrastructure/tools/native/find_fd.rs",
+            "FdFindPaths",
+            "new",
+        ),
+        (
+            "src/infrastructure/tools/native/find_fd.rs",
             "FdFindPaths",
             "with_fd_binary",
         ),
@@ -4310,7 +4323,7 @@ fn find_graph_guards_resolve_self_in_the_enclosing_impl() {
             "src/application/agent_turn/use_cases/find.rs",
             "FindUseCase",
         ),
-        ("src/infrastructure/tools/find_fd.rs", "FdFindPaths"),
+        ("src/infrastructure/tools/native/find_fd.rs", "FdFindPaths"),
     ] {
         for source in [
             format!("impl {vertex} {{ fn alternate() {{ Self::new(); }} }}"),
@@ -4368,7 +4381,7 @@ fn find_concrete_graph_is_owned_by_composition() {
 #[test]
 fn infrastructure_outward_paths_follow_layer_allowlist() {
     for path in [
-        "src/infrastructure/tools/find_fd.rs",
+        "src/infrastructure/tools/native/find_fd.rs",
         "src/infrastructure/extensions/native.rs",
     ] {
         let source = fs::read_to_string(path).expect("find effect/registration owner");
@@ -4382,9 +4395,9 @@ fn infrastructure_outward_paths_follow_layer_allowlist() {
 #[test]
 fn find_graph_guards_parse_grouping_aliases_and_calls() {
     for source in [
-        "use crate::infrastructure::tools::find_fd::FdFindPaths as Backend;",
-        "use crate::{infrastructure::tools::find_fd::FdFindPaths, domain::Tool};",
-        "fn build() { crate::infrastructure::tools::find_fd::FdFindPaths::new(); }",
+        "use crate::infrastructure::tools::native::find_fd::FdFindPaths as Backend;",
+        "use crate::{infrastructure::tools::native::find_fd::FdFindPaths, domain::Tool};",
+        "fn build() { crate::infrastructure::tools::native::find_fd::FdFindPaths::new(); }",
     ] {
         assert!(find_graph_dependencies_allowed(
             "src/composition/find.rs",
@@ -4595,8 +4608,8 @@ fn find_boundary_allowlists_reject_unauthorized_siblings() {
         assert!(!find_application_dependencies_allowed(source), "{source}");
     }
     for source in [
-        "use crate::infrastructure::tools::find_fd::FdFindPaths as Backend;",
-        "use crate::{domain::Tool, infrastructure::tools::truncate::format_size};",
+        "use crate::infrastructure::tools::native::find_fd::FdFindPaths as Backend;",
+        "use crate::{domain::Tool, infrastructure::tools::native::truncate::format_size};",
         "fn run() { crate::composition::find::build_find_tool(); }",
     ] {
         assert!(!find_interface_dependencies_allowed(source), "{source}");
@@ -5192,10 +5205,15 @@ fn web_fetch_application_external_dependencies_are_allowlisted() {
 
 #[test]
 fn legacy_mixed_web_fetch_path_is_retired() {
-    assert!(
-        !Path::new("src/infrastructure/tools/web_fetch.rs").exists(),
-        "legacy mixed web_fetch implementation survives"
-    );
+    for retired in [
+        "src/infrastructure/tools/web_fetch.rs",
+        "src/infrastructure/tools/native/web_fetch.rs",
+    ] {
+        assert!(
+            !Path::new(retired).exists(),
+            "legacy mixed web_fetch implementation survives"
+        );
+    }
 }
 
 // ─── Launch-bound parent control and owned-child supervision (#1935) ────────
@@ -5358,7 +5376,7 @@ fn processes_dependency_allowed(file: &str, path: &str) -> bool {
         ["crate"] => true,
         ["crate", "application", "admission", "ports", ..]
         | ["crate", "infrastructure", "atomic_write", ..]
-        | ["crate", "infrastructure", "tools", "path_utils", ..] => {
+        | ["crate", "infrastructure", "tools", "native", "path_utils", ..] => {
             file == "systemd_service_manager.rs"
         }
         // The embedded bundle's integrity adapter (#2024 S4e) answers the
@@ -5410,7 +5428,7 @@ fn process_adapters_depend_only_inward() {
     for dep in [
         "crate::application::admission::ports::ServiceManager",
         "crate::infrastructure::atomic_write::write_atomic",
-        "crate::infrastructure::tools::path_utils::home_dir",
+        "crate::infrastructure::tools::native::path_utils::home_dir",
     ] {
         assert!(
             processes_dependency_allowed("systemd_service_manager.rs", dep),

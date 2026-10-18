@@ -84,7 +84,9 @@ async fn wait_summary(
         // refused as contended past its busy timeout is sat out and retried
         // a second later, up to ten in a row; any other refusal fails.
         let summary =
-            match quecto::infrastructure::tools::call_work::off_the_runtime(|| context.summary()) {
+            match quecto::infrastructure::tools::registry::call_work::off_the_runtime(|| {
+                context.summary()
+            }) {
                 Ok(summary) => {
                     contended = 0;
                     summary
@@ -210,7 +212,7 @@ async fn control_status(runtime: &fixture::Runtime) -> Value {
 }
 
 fn events(workspace: &Path) -> Vec<Value> {
-    quecto::infrastructure::tools::call_work::off_the_runtime(|| {
+    quecto::infrastructure::tools::registry::call_work::off_the_runtime(|| {
         context(workspace, "coordinator").events(0, 100)
     })
     .unwrap()["events"]
@@ -374,7 +376,7 @@ async fn exercise_kill(workspace: PathBuf) -> Value {
         "other_reconcile_passes": other_passes.load(std::sync::atomic::Ordering::SeqCst),
         "reclaimed_by": reclaimed,
     });
-    quecto::infrastructure::tools::call_work::off_the_runtime(|| {
+    quecto::infrastructure::tools::registry::call_work::off_the_runtime(|| {
         context(&workspace, "coordinator").cancel_run()
     })
     .unwrap();
@@ -444,7 +446,7 @@ async fn exercise_loss(workspace: PathBuf) -> Value {
     // first pass only starts the grace (its reaper would normally confirm a
     // death first); a pass past the grace records the loss.
     reconcile(&runtime, "Reconcile the board").await;
-    let observed = quecto::infrastructure::tools::call_work::off_the_runtime(|| {
+    let observed = quecto::infrastructure::tools::registry::call_work::off_the_runtime(|| {
         context(&workspace, "coordinator").summary()
     })
     .unwrap();
@@ -462,7 +464,7 @@ async fn exercise_loss(workspace: PathBuf) -> Value {
     // The same vanished pid is observed again after the resume: the
     // coordinator's reconcile (a tool call and its answer) runs to the end.
     reconcile(&runtime, "Reconcile the board again").await;
-    let after = quecto::infrastructure::tools::call_work::off_the_runtime(|| {
+    let after = quecto::infrastructure::tools::registry::call_work::off_the_runtime(|| {
         context(&workspace, "coordinator").summary()
     })
     .unwrap();
@@ -504,7 +506,7 @@ async fn exercise_loss(workspace: PathBuf) -> Value {
         "revoked": count(&events, "revoked"),
         "reclaimed_by": reclaimed,
     });
-    quecto::infrastructure::tools::call_work::off_the_runtime(|| {
+    quecto::infrastructure::tools::registry::call_work::off_the_runtime(|| {
         context(&workspace, "coordinator").cancel_run()
     })
     .unwrap();

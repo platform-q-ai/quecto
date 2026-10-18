@@ -25,7 +25,7 @@ fn bdd_feature_config() -> WorkflowConfig {
 use quecto::infrastructure::tools::agents::subagent_registry::{
     SubagentEntry, SubagentStatus, WorkflowSnapshot, new_registry,
 };
-use quecto::infrastructure::tools::workflow_tool::{broadcast_emitter, snapshot_to_event};
+use quecto::infrastructure::tools::native::workflow_tool::{broadcast_emitter, snapshot_to_event};
 use quecto::interface::cli::protocol::build_subagent_info_list;
 use std::path::PathBuf;
 

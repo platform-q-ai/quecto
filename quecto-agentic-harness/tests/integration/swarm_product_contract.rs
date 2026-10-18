@@ -24,7 +24,7 @@ fn fixture() -> (tempfile::TempDir, Arc<std::path::PathBuf>, SwarmTool) {
         .unwrap()
         .as_secs()
         + 300;
-    quecto::infrastructure::tools::call_work::off_the_runtime(|| context.create_run(&json!({"goal":"product contract","constraints":[],"criteria":[{"id":"tests","kind":"command","description":"pass"}],"member_limit":1,"deadline":deadline}),
+    quecto::infrastructure::tools::registry::call_work::off_the_runtime(|| context.create_run(&json!({"goal":"product contract","constraints":[],"criteria":[{"id":"tests","kind":"command","description":"pass"}],"member_limit":1,"deadline":deadline}),
         &quecto::domain::swarm::ProcessIdentity { pid: std::process::id(), started: quecto::infrastructure::tools::swarm::swarm_bridge::process_start(std::process::id()).unwrap() }, None)).unwrap();
     let tool = SwarmTool::new().with_context(Some(context));
 
@@ -53,7 +53,7 @@ async fn completed_run_keeps_summary_and_normal_artifact_export_serviceable() {
     );
     let rejected = tool.execute(r#"{"op":"inbox"}"#).await.unwrap();
     assert!(rejected.is_error, "{}", rejected.content);
-    let bash = quecto::infrastructure::tools::bash::ExecTool::new(
+    let bash = quecto::infrastructure::tools::native::bash::ExecTool::new(
         workspace.clone(),
         Arc::new(Sandbox::new(Some(workspace.as_ref().clone()))),
     );

@@ -58,7 +58,7 @@ fn the_permit_follows_the_registrys_policy_over_spawn() {
 fn the_permit_follows_a_persisted_policy() {
     use crate::domain::tool_policy::value_objects::tool_descriptor::ProfileAvailabilityScope;
     use crate::infrastructure::config::{ToolPolicyConfig, ToolPolicyEntryConfig};
-    use crate::infrastructure::tools::registration::ToolRegistration;
+    use crate::infrastructure::tools::registry::registration::ToolRegistration;
     let permit = SpawnPermit::default();
     let mut registry = ToolRegistryImpl::new();
     registry.register(Arc::new(Named("spawn")));

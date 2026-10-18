@@ -18,7 +18,7 @@
 //! is not the call's work, and a panic there must stay fatal. Work that IS
 //! the call's own opts in through [`carry`] (a blocking closure) or
 //! [`carry_future`] (a spawned future), and is joined so that its panic
-//! resumes in the call (`infrastructure::tools::call_work`); once the call
+//! resumes in the call (`infrastructure::tools::registry::call_work`); once the call
 //! has ended, carried work that is still running is outside any scope.
 //!
 //! Code a call runs that handles a panic itself catches it through

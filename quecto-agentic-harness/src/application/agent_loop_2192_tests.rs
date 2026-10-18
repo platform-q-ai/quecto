@@ -86,9 +86,9 @@ impl Tool for PanickingTool {
                 }
                 Crash::NonTextPayload => std::panic::panic_any(42_u32),
                 Crash::InCarriedWork => {
-                    crate::infrastructure::tools::call_work::spawn_blocking_in_call(|| {
-                        panic!("carried work panicked")
-                    })
+                    crate::infrastructure::tools::registry::call_work::spawn_blocking_in_call(
+                        || panic!("carried work panicked"),
+                    )
                     .await
                     .map_err(|error| DomainError::Tool(error.to_string()))?;
                     unreachable!("the carried panic resumes in the call")

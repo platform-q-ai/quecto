@@ -323,7 +323,7 @@ fn the_description_promises_no_null_answers() {
     );
     // The page the `docs` tool serves agents says so too (round-1 review
     // M2), and names what the changed ops answer.
-    let docs = crate::infrastructure::tools::docs::lookup_doc("swarm").unwrap();
+    let docs = crate::infrastructure::tools::native::docs::lookup_doc("swarm").unwrap();
     assert!(
         !docs.contains("for an op that\nreturns nothing") && docs.contains("never a bare `null`"),
         "the swarm docs page still says an op answers null"

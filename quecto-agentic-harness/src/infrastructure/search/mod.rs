@@ -10,7 +10,7 @@ use std::sync::Arc;
 use crate::application::tools::ports::Tool;
 use crate::infrastructure::config::GrepToolConfig;
 use crate::infrastructure::security::sandbox::Sandbox;
-use crate::infrastructure::tools::grep::GrepTool;
+use crate::infrastructure::tools::native::grep::GrepTool;
 
 use search_log::JsonlSearchLog;
 use typesafe_judge::{TYPESAFE_ENDPOINT, TypeSafeJudge, typesafe_key};

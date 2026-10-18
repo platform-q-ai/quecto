@@ -2,7 +2,7 @@ use super::*;
 use quecto::domain::workflow::{
     WorkflowConfig, WorkflowGuardRule, WorkflowTemplate, WorkflowTemplateStep,
 };
-use quecto::infrastructure::tools::workflow_tool::WorkflowTool;
+use quecto::infrastructure::tools::native::workflow_tool::WorkflowTool;
 
 fn guarded_template() -> WorkflowTemplate {
     WorkflowTemplate {

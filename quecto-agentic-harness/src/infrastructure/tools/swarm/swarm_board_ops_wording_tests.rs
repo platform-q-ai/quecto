@@ -434,7 +434,8 @@ async fn the_member_reads_the_refusals_in_task_items() {
 async fn the_running_gate_names_the_advertised_op() {
     let (_directory, context) = board();
     direct(&context, "task_create", json!(["r1", "a", ["pass"]])).unwrap();
-    crate::infrastructure::tools::call_work::off_the_runtime(|| context.pause("hold")).unwrap();
+    crate::infrastructure::tools::registry::call_work::off_the_runtime(|| context.pause("hold"))
+        .unwrap();
     for request in [
         json!({"op": "task", "task_id": 1}),
         json!({"op": "task_item", "task_item_id": 1}),

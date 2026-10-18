@@ -74,7 +74,7 @@ fn show_workflow_tool(
     agent: &mut crate::application::agent_loop::AgentLoopImpl,
     workflow: &WorkflowStateHandle,
 ) {
-    use crate::infrastructure::tools::workflow_tool::{WORKFLOW_TOOL_NAME, WorkflowTool};
+    use crate::infrastructure::tools::native::workflow_tool::{WORKFLOW_TOOL_NAME, WorkflowTool};
     let shown = agent.is_tool_model_visible(WORKFLOW_TOOL_NAME)
         || agent.register_runtime_tool(std::sync::Arc::new(WorkflowTool::new(workflow.clone())));
     assert!(shown && agent.is_tool_model_visible(WORKFLOW_TOOL_NAME));

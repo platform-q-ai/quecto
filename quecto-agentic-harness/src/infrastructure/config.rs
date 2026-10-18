@@ -497,9 +497,11 @@ impl Config {
 
     /// Resolve the workspace path, expanding `~` to the user's home directory.
     pub fn workspace_path(&self) -> String {
-        crate::infrastructure::tools::path_utils::expand_tilde(&self.agents.defaults.workspace)
-            .to_string_lossy()
-            .to_string()
+        crate::infrastructure::tools::native::path_utils::expand_tilde(
+            &self.agents.defaults.workspace,
+        )
+        .to_string_lossy()
+        .to_string()
     }
 }
 

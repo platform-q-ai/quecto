@@ -937,7 +937,7 @@ fn spawn_paged_agent(world: &mut QuectoWorld, base: &std::path::Path, session_na
         ),
         workspace,
         sandbox,
-        quecto::infrastructure::tools::bash::ExecOptions {
+        quecto::infrastructure::tools::native::bash::ExecOptions {
             max_capture_bytes: exec_settings,
             ..Default::default()
         },

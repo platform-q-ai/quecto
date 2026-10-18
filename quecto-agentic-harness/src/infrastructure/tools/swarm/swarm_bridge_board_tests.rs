@@ -288,9 +288,11 @@ async fn a_board_call_on_an_async_worker_is_refused_in_debug_builds() {
         crate::composition::swarm::swarm_board(),
     );
     let setup = parent.clone();
-    crate::infrastructure::tools::call_work::spawn_blocking_in_call(move || create(&setup))
-        .await
-        .unwrap();
+    crate::infrastructure::tools::registry::call_work::spawn_blocking_in_call(move || {
+        create(&setup)
+    })
+    .await
+    .unwrap();
     let on_worker = tokio::spawn({
         let parent = parent.clone();
         async move { parent.summary() }
@@ -315,7 +317,7 @@ async fn a_board_call_on_an_async_worker_is_refused_in_debug_builds() {
     );
     // On the blocking pool the same calls are made.
     let (summary, run) =
-        crate::infrastructure::tools::call_work::spawn_blocking_in_call(move || {
+        crate::infrastructure::tools::registry::call_work::spawn_blocking_in_call(move || {
             (parent.summary(), hosted.hosted_run())
         })
         .await

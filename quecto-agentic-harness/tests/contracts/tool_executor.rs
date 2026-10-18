@@ -111,7 +111,7 @@ async fn result_collapsed_reaches_the_registered_tool() {
     ));
     let mut reg = ToolRegistryImpl::new();
     reg.register(Arc::new(
-        quecto::infrastructure::tools::filesystem::ReadTool::new(workspace, sandbox),
+        quecto::infrastructure::tools::native::filesystem::ReadTool::new(workspace, sandbox),
     ));
     let executor: Arc<dyn ToolExecutor> = Arc::new(reg);
     let args = r#"{"path":"a.txt"}"#;

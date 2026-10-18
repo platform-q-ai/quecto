@@ -184,7 +184,8 @@ async fn task_id_and_task_item_id_disagreeing_are_refused() {
 async fn a_conflict_on_a_paused_run_meets_the_running_gate_first() {
     let (_directory, context, log) = logged();
     direct(&context, "task_create", json!(["r1", "a", ["pass"]])).unwrap();
-    crate::infrastructure::tools::call_work::off_the_runtime(|| context.pause("hold")).unwrap();
+    crate::infrastructure::tools::registry::call_work::off_the_runtime(|| context.pause("hold"))
+        .unwrap();
     log.take();
     let text = r#"{"op":"claim","task_id":1,"task_item_id":2}"#;
     let refusal = refused(&context, text).await;

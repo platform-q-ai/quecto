@@ -138,7 +138,9 @@ fn carried_work_is_joined() {
         .collect();
     assert_eq!(
         carriers,
-        [PathBuf::from("src/infrastructure/tools/call_work.rs")],
+        [PathBuf::from(
+            "src/infrastructure/tools/registry/call_work.rs"
+        )],
         "only call_work carries a call's scope, and it joins what it spawns"
     );
     // Outside application code, only call_work catches a call's panic
@@ -152,11 +154,14 @@ fn carried_work_is_joined() {
         .collect();
     assert_eq!(
         catchers,
-        [PathBuf::from("src/infrastructure/tools/call_work.rs")],
+        [PathBuf::from(
+            "src/infrastructure/tools/registry/call_work.rs"
+        )],
         "only call_work catches a call's panic outside the application"
     );
     let call_work =
-        std::fs::read_to_string(crate_root.join("src/infrastructure/tools/call_work.rs")).unwrap();
+        std::fs::read_to_string(crate_root.join("src/infrastructure/tools/registry/call_work.rs"))
+            .unwrap();
     assert!(
         call_work.contains("if error.is_panic() =>")
             && call_work.contains("std::panic::resume_unwind(error.into_panic())"),

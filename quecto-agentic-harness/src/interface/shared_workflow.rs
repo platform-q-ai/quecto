@@ -12,7 +12,9 @@ pub fn register_workflow_tool(
     registry: &mut crate::infrastructure::tools::registry::ToolRegistryImpl,
     wf_config: crate::domain::workflow::WorkflowConfig,
     guards_enabled: bool,
-    event_emitter: Option<crate::infrastructure::tools::workflow_tool::WorkflowEventEmitter>,
+    event_emitter: Option<
+        crate::infrastructure::tools::native::workflow_tool::WorkflowEventEmitter,
+    >,
 ) -> Result<WorkflowStateHandle, crate::domain::workflow::WorkflowError> {
     register_workflow_tool_with_participation(
         registry,
@@ -29,7 +31,9 @@ pub fn register_workflow_tool_with_participation(
     registry: &mut crate::infrastructure::tools::registry::ToolRegistryImpl,
     wf_config: crate::domain::workflow::WorkflowConfig,
     guards_enabled: bool,
-    event_emitter: Option<crate::infrastructure::tools::workflow_tool::WorkflowEventEmitter>,
+    event_emitter: Option<
+        crate::infrastructure::tools::native::workflow_tool::WorkflowEventEmitter,
+    >,
     participation: crate::infrastructure::tools::swarm::swarm_bridge::Participation,
 ) -> Result<WorkflowStateHandle, crate::domain::workflow::WorkflowError> {
     use crate::infrastructure::extensions::native::{
@@ -50,7 +54,8 @@ pub fn register_workflow_tool_with_participation(
     );
 
     if guards_enabled {
-        let guard = crate::infrastructure::tools::workflow_tool::WorkflowGuard::new(engine.clone());
+        let guard =
+            crate::infrastructure::tools::native::workflow_tool::WorkflowGuard::new(engine.clone());
         registry.register_guard(std::sync::Arc::new(guard));
     }
 

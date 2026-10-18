@@ -5,7 +5,7 @@ use std::sync::Arc;
 use crate::application::agent_turn::use_cases::find::FindUseCase;
 use crate::application::tools::ports::Tool;
 use crate::infrastructure::security::sandbox::Sandbox;
-use crate::infrastructure::tools::find_fd::FdFindPaths;
+use crate::infrastructure::tools::native::find_fd::FdFindPaths;
 use crate::interface::tools::find::FindTool;
 
 pub fn build_find_tool(workspace: Arc<PathBuf>, sandbox: Arc<Sandbox>) -> Arc<dyn Tool> {

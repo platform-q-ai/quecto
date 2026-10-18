@@ -50,9 +50,9 @@ async fn build_official_tool_registry_registers_common_bundled_native_surface() 
     let mut registry = build_official_tool_registry(
         tmp.path().to_path_buf(),
         sandbox,
-        crate::infrastructure::tools::bash::ExecOptions {
+        crate::infrastructure::tools::native::bash::ExecOptions {
             max_capture_bytes: 4,
-            ..crate::infrastructure::tools::bash::ExecOptions::default()
+            ..crate::infrastructure::tools::native::bash::ExecOptions::default()
         },
     );
 
@@ -450,7 +450,7 @@ fn shared_tool_runtime_builder_cli_and_uds_use_same_pipeline() {
                 }),
                 workspace: tmp.path().to_path_buf(),
                 sandbox,
-                exec_options: crate::infrastructure::tools::bash::ExecOptions::default(),
+                exec_options: crate::infrastructure::tools::native::bash::ExecOptions::default(),
                 session_key: "shared-runtime".into(),
                 recall: crate::composition::sessions::build_retention_handles(tmp.path()).recall,
                 spawned: false,

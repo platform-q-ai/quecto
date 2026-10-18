@@ -8,7 +8,7 @@
 
 use quecto::application::tools::ports::ToolGuard;
 use quecto::domain::workflow::{WorkflowConfig, WorkflowEngine, WorkflowTemplate};
-use quecto::infrastructure::tools::workflow_tool::WorkflowGuard;
+use quecto::infrastructure::tools::native::workflow_tool::WorkflowGuard;
 use std::sync::{Arc, Mutex};
 
 fn workflow_guard(templates: Vec<WorkflowTemplate>) -> Arc<dyn ToolGuard> {

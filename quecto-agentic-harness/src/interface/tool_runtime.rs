@@ -139,7 +139,7 @@ pub(crate) struct ToolRuntimeBuildArgs<'a> {
     pub web_fetch_tool: Option<std::sync::Arc<dyn crate::application::tools::ports::Tool>>,
     pub workspace: std::path::PathBuf,
     pub sandbox: crate::infrastructure::security::sandbox::Sandbox,
-    pub exec_options: crate::infrastructure::tools::bash::ExecOptions,
+    pub exec_options: crate::infrastructure::tools::native::bash::ExecOptions,
     pub session_key: String,
     /// The recall use case the `recall` tool adapts (D9 #1978), composed
     /// over the run's retention store.
@@ -297,7 +297,7 @@ pub(crate) fn build_tool_runtime(
     let mut registry = crate::infrastructure::tools::registry::ToolRegistryImpl::new();
     // Fault injection for the #2192 process tests; not compiled in production.
     #[cfg(feature = "test-support")]
-    crate::infrastructure::tools::panic_probe::register_if_requested(&mut registry);
+    crate::infrastructure::tools::native::panic_probe::register_if_requested(&mut registry);
     register_bundled_native_tools_with_scope(
         &mut registry,
         build_official_tool_extensions(OfficialToolDeps {
@@ -317,9 +317,9 @@ pub(crate) fn build_tool_runtime(
             sandbox,
             exec_options,
             docs_content_policy: if profile_context.is_child() {
-                crate::infrastructure::tools::docs::DocsContentPolicy::Child
+                crate::infrastructure::tools::native::docs::DocsContentPolicy::Child
             } else {
-                crate::infrastructure::tools::docs::DocsContentPolicy::Parent
+                crate::infrastructure::tools::native::docs::DocsContentPolicy::Parent
             },
         }),
         match profile_context {
@@ -455,7 +455,7 @@ pub(crate) fn build_tool_runtime(
     // children's own policy.
     if wf_state.is_none() && (entrypoint.workflow_supported() || swarm_agent) {
         registry.withhold_entrypoint_only_tool(
-            crate::infrastructure::tools::workflow_tool::WORKFLOW_TOOL_NAME,
+            crate::infrastructure::tools::native::workflow_tool::WORKFLOW_TOOL_NAME,
         );
     }
     // A swarm cannot be created while this composition's workflow is engaged,
@@ -547,7 +547,7 @@ fn require_requested_workflow_tool(
     if workflow_engaged {
         let visible = registry.definitions_for(context).iter().any(|definition| {
             definition.name.as_ref()
-                == crate::infrastructure::tools::workflow_tool::WORKFLOW_TOOL_NAME
+                == crate::infrastructure::tools::native::workflow_tool::WORKFLOW_TOOL_NAME
         });
         return if visible {
             Ok(())
@@ -624,7 +624,7 @@ fn build_workflow_runtime(
     }
 
     let wf_emitter = workflow.broadcast_tx.map(|tx| {
-        crate::infrastructure::tools::workflow_tool::broadcast_emitter(
+        crate::infrastructure::tools::native::workflow_tool::broadcast_emitter(
             tx,
             workflow.emitter_agent_id,
             workflow.emitter_parent_id,
@@ -667,7 +667,7 @@ fn build_workflow_runtime(
     .map_err(|error| format!("failed to initialize workflow: {error}"))?;
     debug_assert!(
         registry.registers_entrypoint_only(
-            crate::infrastructure::tools::workflow_tool::WORKFLOW_TOOL_NAME
+            crate::infrastructure::tools::native::workflow_tool::WORKFLOW_TOOL_NAME
         ),
         "the workflow tool must register as the allowlisted entrypoint-only tool"
     );

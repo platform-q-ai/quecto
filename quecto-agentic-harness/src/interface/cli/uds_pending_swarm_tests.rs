@@ -91,11 +91,16 @@ async fn production_swarm_wiring_accounts_for_a_turn_and_denies_paused_inference
     )
     .await;
     assert_eq!(
-        crate::infrastructure::tools::call_work::off_the_runtime(|| context.usage_report())
-            .unwrap()["totals"]["requests"],
+        crate::infrastructure::tools::registry::call_work::off_the_runtime(
+            || context.usage_report()
+        )
+        .unwrap()["totals"]["requests"],
         1
     );
-    crate::infrastructure::tools::call_work::off_the_runtime(|| context.pause("approval")).unwrap();
+    crate::infrastructure::tools::registry::call_work::off_the_runtime(|| {
+        context.pause("approval")
+    })
+    .unwrap();
     handle_prompt(
         &mut ctx,
         PromptCommand {
@@ -106,9 +111,10 @@ async fn production_swarm_wiring_accounts_for_a_turn_and_denies_paused_inference
         },
     )
     .await;
-    let report =
-        crate::infrastructure::tools::call_work::off_the_runtime(|| context.usage_report())
-            .unwrap();
+    let report = crate::infrastructure::tools::registry::call_work::off_the_runtime(|| {
+        context.usage_report()
+    })
+    .unwrap();
     assert_eq!(report["totals"]["attempts"], 1);
     assert_eq!(
         report["recent_requests"][0]["observation"]["outcome"],

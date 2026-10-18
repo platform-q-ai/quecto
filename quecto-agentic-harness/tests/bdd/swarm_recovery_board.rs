@@ -46,7 +46,7 @@ pub(super) fn board_call(workspace: &Path, member: &str, method: &str, args: Val
     let handles = quecto::composition::swarm::build_swarm_board_handles(location, None);
     // A board call blocks: made off the async workers, as every board
     // caller is (#2278).
-    quecto::infrastructure::tools::call_work::off_the_runtime(|| {
+    quecto::infrastructure::tools::registry::call_work::off_the_runtime(|| {
         quecto::infrastructure::tools::swarm::swarm_board_dispatch::call(
             &handles, member, method, args,
         )

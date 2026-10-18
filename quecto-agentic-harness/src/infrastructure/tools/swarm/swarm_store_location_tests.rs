@@ -78,7 +78,7 @@ fn created_run(checkout: &Path) -> (SwarmContext, String) {
 
 /// The run's id, as the store reports it.
 fn run_id(context: &SwarmContext) -> String {
-    crate::infrastructure::tools::call_work::off_the_runtime(|| {
+    crate::infrastructure::tools::registry::call_work::off_the_runtime(|| {
         context.call("_status", serde_json::json!([]))
     })
     .unwrap()["id"]
@@ -592,8 +592,10 @@ fn the_composed_teardown_keeps_a_board_runs_ended_board() {
     std::fs::create_dir_all(&workspace).unwrap();
     let (coordinator, _) = created_run(&workspace);
     let off = |method: &str, args: serde_json::Value| {
-        crate::infrastructure::tools::call_work::off_the_runtime(|| coordinator.call(method, args))
-            .unwrap()
+        crate::infrastructure::tools::registry::call_work::off_the_runtime(|| {
+            coordinator.call(method, args)
+        })
+        .unwrap()
     };
     off(
         "stop",

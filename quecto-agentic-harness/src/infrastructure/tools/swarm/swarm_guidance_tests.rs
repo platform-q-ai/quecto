@@ -171,7 +171,7 @@ async fn a_board_op_before_create_points_the_founder_at_op_create() {
         checkout: workspace,
         member: "coordinator".into(),
     };
-    crate::infrastructure::tools::call_work::off_the_runtime(|| {
+    crate::infrastructure::tools::registry::call_work::off_the_runtime(|| {
         context.call(
             "_bootstrap",
             serde_json::json!([1, "start", "/tmp/unused.sock"]),

@@ -402,7 +402,7 @@ pub(crate) fn build_agent_from_config_in(
     };
     // Workflow templates resolve against CWD and home.
     let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
-    let home_dir = crate::infrastructure::tools::path_utils::home_dir();
+    let home_dir = crate::infrastructure::tools::native::path_utils::home_dir();
     let web_fetch_tool = config.tools.web.fetch.enabled.then(|| {
         assert!(
             flags.web_fetch_tool_factory.is_some(),

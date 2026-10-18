@@ -9,7 +9,7 @@
 
 use crate::application::context_pruning::truncate_utf8_safe;
 use crate::domain::audit::content_preview;
-use crate::infrastructure::tools::truncate::truncate_line;
+use crate::infrastructure::tools::native::truncate::truncate_line;
 
 // ---------------------------------------------------------------------------
 // Item 2 — bounded preview builders (char_indices().nth). These are pure

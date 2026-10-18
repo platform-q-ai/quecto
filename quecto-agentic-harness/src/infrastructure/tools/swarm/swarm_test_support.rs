@@ -19,7 +19,7 @@ pub fn tool(workspace: Arc<PathBuf>, board: super::swarm_bridge::SwarmBoard) -> 
             .as_secs()
             + 300;
         // Test setup: the board call made off any async worker (#2278).
-        super::super::call_work::off_the_runtime(|| {
+        super::super::registry::call_work::off_the_runtime(|| {
             context.call("create", serde_json::json!(["test execution", [], [{"id":"tests","kind":"command","description":"pass"}], 10, deadline]))
         })
         .unwrap();

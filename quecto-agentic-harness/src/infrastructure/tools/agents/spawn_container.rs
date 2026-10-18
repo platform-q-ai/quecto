@@ -287,7 +287,7 @@ fn parse_exec_result(
 
 async fn spawn_local_child(child: &ChildCommand<'_>) -> Result<PreparedChild, DomainError> {
     let context = child.swarm_context.cloned();
-    let mut reservation = super::super::call_work::spawn_blocking_in_call(move || {
+    let mut reservation = super::super::registry::call_work::spawn_blocking_in_call(move || {
         context
             .map(super::super::swarm::swarm_admission::LaunchReservation::reserve)
             .transpose()

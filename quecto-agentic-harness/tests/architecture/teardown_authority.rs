@@ -139,7 +139,7 @@ fn production_code_reads_past_an_early_cfg_test_use() {
             "pub fn spawn_monitor_task",
         ),
         (
-            "src/infrastructure/tools/bash/mod.rs",
+            "src/infrastructure/tools/native/bash/mod.rs",
             "libc::kill(-(pid as libc::pid_t), libc::SIGKILL)",
         ),
         (
@@ -260,7 +260,7 @@ const PROCESS_EFFECT_ALLOWLIST: &[(&str, &[&str], &str)] = &[
          kernel when its launcher dies; nothing is sent from here)",
     ),
     (
-        "src/infrastructure/tools/bash/mod.rs",
+        "src/infrastructure/tools/native/bash/mod.rs",
         &[
             "libc::kill",
             "kill(",
@@ -295,13 +295,13 @@ const PROCESS_EFFECT_ALLOWLIST: &[(&str, &[&str], &str)] = &[
          no longer theirs to watch (#2476, #2477, #2501)",
     ),
     (
-        "src/infrastructure/tools/grep_run.rs",
+        "src/infrastructure/tools/native/grep_run.rs",
         &["start_kill", "kill_on_drop"],
         "tool invocation containment: the grep tool's own `rg` Child at its \
          output cap, on its timeout, and when the tool call is dropped (#2136)",
     ),
     (
-        "src/infrastructure/tools/find_fd.rs",
+        "src/infrastructure/tools/native/find_fd.rs",
         &["start_kill", "kill_on_drop"],
         "tool invocation containment: the find tool's own `fd` Child on a cap",
     ),

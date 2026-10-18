@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use super::*;
 use quecto::domain::tool_policy::value_objects::tool_descriptor::ToolAvailability;
-use quecto::infrastructure::tools::registration::ToolRegistration;
+use quecto::infrastructure::tools::registry::registration::ToolRegistration;
 
 #[given(expr = "a bundled native tool named {string} from provider {string}")]
 fn bundled_native_tool_from_provider(world: &mut QuectoWorld, name: String, provider: String) {

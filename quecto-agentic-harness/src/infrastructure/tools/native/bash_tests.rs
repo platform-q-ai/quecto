@@ -1,0 +1,750 @@
+use super::*;
+use tempfile::TempDir;
+
+fn test_exec() -> (ExecTool, TempDir) {
+    let tmp = TempDir::new().unwrap();
+    let sandbox = Sandbox::new(Some(tmp.path().to_path_buf()));
+    let tool = ExecTool::new(Arc::new(tmp.path().to_path_buf()), Arc::new(sandbox));
+    (tool, tmp)
+}
+
+fn test_exec_with_timeout(seconds: u64) -> (ExecTool, TempDir) {
+    let tmp = TempDir::new().unwrap();
+    let sandbox = Sandbox::new(Some(tmp.path().to_path_buf()));
+    let tool = ExecTool::with_timeout(
+        Arc::new(tmp.path().to_path_buf()),
+        Arc::new(sandbox),
+        Duration::from_secs(seconds),
+    );
+    (tool, tmp)
+}
+
+#[tokio::test]
+async fn test_exec_echo() {
+    let (tool, _tmp) = test_exec();
+    let result = tool.execute(r#"{"command": "echo hello"}"#).await.unwrap();
+    assert!(!result.is_error);
+    assert!(result.content.contains("hello"));
+}
+
+#[tokio::test]
+async fn test_exec_dangerous_command_blocked() {
+    let (tool, _tmp) = test_exec();
+    let result = tool.execute(r#"{"command": "rm -rf /"}"#).await;
+    assert!(result.is_err());
+}
+
+#[tokio::test]
+async fn test_exec_missing_command_arg() {
+    let (tool, _tmp) = test_exec();
+    let result = tool.execute(r#"{}"#).await.unwrap();
+    assert!(
+        result.is_error,
+        "expected error result, got: {}",
+        result.content
+    );
+    assert!(
+        result.content.contains("command"),
+        "should mention missing 'command', got: {}",
+        result.content
+    );
+}
+
+#[tokio::test]
+async fn test_exec_timeout_kills_long_command() {
+    let (tool, _tmp) = test_exec_with_timeout(1);
+
+    let result = tool.execute(r#"{"command": "sleep 60"}"#).await.unwrap();
+    assert!(result.is_error);
+    assert!(result.content.contains("timed out"));
+}
+
+#[tokio::test]
+async fn test_exec_inherits_quecto_env_vars() {
+    let tmp = TempDir::new().unwrap();
+    let sandbox = Sandbox::new(Some(tmp.path().to_path_buf()));
+    let tool = ExecTool::new(Arc::new(tmp.path().to_path_buf()), Arc::new(sandbox));
+
+    let mut env_vars = HashMap::new();
+    env_vars.insert("OPENAI_API_KEY".to_string(), "sk-secret".to_string());
+    env_vars.insert("HOME".to_string(), "/home/testuser".to_string());
+
+    let result = tool
+        .execute_with_env(r#"{"command": "printenv OPENAI_API_KEY"}"#, &env_vars)
+        .await
+        .unwrap();
+    assert!(result.content.contains("sk-secret"));
+}
+
+// --- Per-invocation timeout parameter ---
+
+#[tokio::test]
+async fn test_exec_per_invocation_timeout_kills_slow_command() {
+    let (tool, _tmp) = test_exec();
+    // Pass timeout=1 in JSON args — should kill sleep 10
+    let result = tool
+        .execute(r#"{"command": "sleep 10", "timeout": 1}"#)
+        .await
+        .unwrap();
+    assert!(
+        result.is_error,
+        "slow command should be killed by per-invocation timeout"
+    );
+    assert!(
+        result.content.contains("timed out"),
+        "should mention timeout, got: {}",
+        result.content
+    );
+}
+
+#[tokio::test]
+async fn test_exec_per_invocation_timeout_capped_at_max() {
+    let tmp = TempDir::new().unwrap();
+    let sandbox = Sandbox::new(Some(tmp.path().to_path_buf()));
+    // Configure tool with max 5s timeout
+    let opts = ExecOptions {
+        timeout: Duration::from_secs(5),
+        ..ExecOptions::default()
+    };
+    let tool = ExecTool::with_options(Arc::new(tmp.path().to_path_buf()), Arc::new(sandbox), opts);
+    // Request 99999s — should be capped at configured max (5s), command still runs
+    let result = tool
+        .execute(r#"{"command": "echo hi", "timeout": 99999}"#)
+        .await
+        .unwrap();
+    assert!(!result.is_error, "echo should succeed: {}", result.content);
+    assert!(result.content.contains("hi"));
+}
+
+// --- commandPrefix option ---
+
+#[tokio::test]
+async fn test_exec_command_prefix_prepended() {
+    let tmp = TempDir::new().unwrap();
+    let sandbox = Sandbox::new(Some(tmp.path().to_path_buf()));
+    let opts = ExecOptions {
+        command_prefix: Some("export MY_PREFIX_VAR=hello".to_string()),
+        ..ExecOptions::default()
+    };
+    let tool = ExecTool::with_options(Arc::new(tmp.path().to_path_buf()), Arc::new(sandbox), opts);
+    let result = tool
+        .execute(r#"{"command": "echo $MY_PREFIX_VAR"}"#)
+        .await
+        .unwrap();
+    assert!(!result.is_error, "echo should succeed: {}", result.content);
+    assert!(
+        result.content.contains("hello"),
+        "prefix should set env: {}",
+        result.content
+    );
+}
+
+// --- Shell detection ---
+
+fn bash_is_installed() -> bool {
+    ["/bin/bash", "/usr/bin/bash", "/usr/local/bin/bash"]
+        .iter()
+        .any(|path| super::shell::is_installed(path))
+}
+
+/// #2195: `SHELL=/bin/sh` gives way to bash where bash is installed.
+#[tokio::test]
+async fn test_exec_posix_shell_env_gives_way_to_bash() {
+    let (tool, _tmp) = test_exec();
+    // $0 in the spawned shell prints the shell executable name.
+    let mut env_overrides = HashMap::new();
+    env_overrides.insert("SHELL".to_string(), "/bin/sh".to_string());
+    let result = tool
+        .execute_with_env(r#"{"command": "echo $0"}"#, &env_overrides)
+        .await
+        .unwrap();
+    assert!(
+        !result.is_error,
+        "shell detection should work: {}",
+        result.content
+    );
+    assert!(
+        result.content.contains("sh"),
+        "output should name the shell, got: {}",
+        result.content
+    );
+    assert!(bash_is_installed(), "these tests require bash on the host");
+    assert!(
+        result.content.trim().ends_with("bash"),
+        "{}",
+        result.content
+    );
+}
+
+/// #2195: bash syntax works with no `SHELL` in the environment (a
+/// container) and with the parent's own, wherever bash is installed.
+#[tokio::test]
+async fn bash_syntax_runs_in_a_container_like_environment() {
+    // Test hosts have bash, as the CI images and the standard container do.
+    assert!(bash_is_installed(), "these tests require bash on the host");
+    let (tool, _tmp) = test_exec();
+    let command = r#"{"command": "[[ a == a ]] && echo {1..3}"}"#;
+    let empty = HashMap::new();
+    let contained = tool.execute_with_env(command, &empty).await.unwrap();
+    assert_eq!(contained.content.trim(), "1 2 3", "{}", contained.content);
+    let native = tool.execute(command).await.unwrap();
+    assert_eq!(native.content.trim(), "1 2 3", "{}", native.content);
+}
+
+#[test]
+fn test_exec_allowlist_excludes_arbitrary_binaries() {
+    // A non-allowlisted $SHELL is never run: the fallback (bash where
+    // installed, else /bin/sh, #2195) runs the command instead.
+    assert!(ALLOWED_SHELLS.contains(&"/bin/sh"));
+    assert!(ALLOWED_SHELLS.contains(&"/bin/bash"));
+    assert!(!ALLOWED_SHELLS.contains(&"/tmp/evil"));
+}
+
+// --- Truncation notice format ---
+
+#[test]
+fn test_exec_truncation_byte_notice_uses_truncate_tail() {
+    use crate::infrastructure::tools::native::truncate::{TruncatedBy, truncate_tail};
+    // Generate content that will be truncated by bytes (multi-line, >50KB)
+    let line = "x".repeat(50) + "\n"; // 51 bytes per line
+    let content: String = line.repeat(1500); // ~76.5KB
+    let tr = truncate_tail(&content, 2000, 50 * 1024);
+    assert!(tr.truncated, "should be truncated by bytes");
+    assert_eq!(tr.truncated_by, Some(TruncatedBy::Bytes));
+}
+
+#[test]
+fn test_exec_truncation_line_notice_uses_truncate_tail() {
+    use crate::infrastructure::tools::native::truncate::{TruncatedBy, truncate_tail};
+    // 3000 lines, each <50 bytes → truncated by lines
+    let content: String = (1..=3000).map(|i| format!("line{}\n", i)).collect();
+    let tr = truncate_tail(&content, 2000, 50 * 1024);
+    assert!(tr.truncated, "should be truncated by lines");
+    assert_eq!(tr.truncated_by, Some(TruncatedBy::Lines));
+    assert!(
+        tr.content.contains("line3000"),
+        "tail should include the last line"
+    );
+}
+
+#[tokio::test]
+async fn test_exec_empty_object_returns_actionable_error() {
+    let (tool, _tmp) = test_exec();
+    let result = tool.execute("{}").await.unwrap();
+    assert!(result.is_error, "expected error, got: {}", result.content);
+    assert!(
+        result.content.contains("command"),
+        "should mention 'command', got: {}",
+        result.content
+    );
+    assert!(
+        result.content.contains("Example"),
+        "should include example, got: {}",
+        result.content
+    );
+}
+
+#[test]
+fn test_exec_description_includes_example() {
+    let (tool, _tmp) = test_exec();
+    let def = tool.definition();
+    assert!(
+        def.description.contains("Example"),
+        "bash description should include Example, got: {}",
+        def.description
+    );
+}
+
+// --- parse_timeout tests ---
+
+#[test]
+fn test_parse_timeout_integer() {
+    let args = serde_json::json!({"timeout": 30});
+    assert_eq!(super::parse_timeout(&args), Some(Duration::from_secs(30)));
+}
+
+#[test]
+fn test_parse_timeout_float() {
+    let args = serde_json::json!({"timeout": 30.5});
+    assert_eq!(super::parse_timeout(&args), Some(Duration::from_secs(31)));
+}
+
+#[test]
+fn test_parse_timeout_zero() {
+    let args = serde_json::json!({"timeout": 0});
+    assert_eq!(super::parse_timeout(&args), None);
+}
+
+#[test]
+fn test_parse_timeout_missing() {
+    let args = serde_json::json!({"command": "ls"});
+    assert_eq!(super::parse_timeout(&args), None);
+}
+
+#[test]
+fn test_parse_timeout_negative() {
+    let args = serde_json::json!({"timeout": -5});
+    assert_eq!(super::parse_timeout(&args), None);
+}
+
+#[test]
+fn test_parse_timeout_string_ignored() {
+    let args = serde_json::json!({"timeout": "30"});
+    assert_eq!(super::parse_timeout(&args), None);
+}
+
+// --- ALLOWED_SHELLS tests ---
+
+#[test]
+fn test_allowed_shells_contains_common() {
+    assert!(super::ALLOWED_SHELLS.contains(&"/bin/sh"));
+    assert!(super::ALLOWED_SHELLS.contains(&"/bin/bash"));
+}
+
+// --- build_shell_command (pure builder: program/args/env/cwd selection) ---
+
+fn shell_program(env: &HashMap<String, String>) -> String {
+    let ws = PathBuf::from("/tmp");
+    let cmd = super::build_shell_command(&ws, "echo hi", Some(env));
+    cmd.as_std().get_program().to_string_lossy().into_owned()
+}
+
+#[test]
+fn test_build_shell_command_inherits_environment_when_no_overrides() {
+    let cmd = super::build_shell_command(&PathBuf::from("/tmp"), "echo hi", None);
+    assert!(
+        cmd.as_std().get_envs().all(|(key, value)| {
+            let key = key.to_string_lossy();
+            let context = ["HIGH_TOKENS", "LOW_TOKENS"];
+            let removed = key.starts_with("QUECTO_SWARM_")
+                || ["RUST_LOG", "BASH_ENV", "ENV"].contains(&key.as_ref())
+                || (key.strip_prefix("QUECTO_CONTEXT_")).is_some_and(|k| context.contains(&k));
+            removed && value.is_none()
+        }),
+        "ordinary environment is inherited; only swarm launch context, the harness log level and watermark marks, and shell startup files are removed"
+    );
+}
+
+#[test]
+fn test_build_shell_command_uses_allowed_shell_from_env() {
+    let mut env = HashMap::new();
+    env.insert("SHELL".to_string(), "/bin/bash".to_string());
+    assert_eq!(shell_program(&env), "/bin/bash");
+}
+
+#[test]
+fn test_build_shell_command_rejects_disallowed_shell() {
+    let mut env = HashMap::new();
+    env.insert("SHELL".to_string(), "/tmp/evil".to_string());
+    // A disallowed shell is never run: the fallback (bash where installed,
+    // else /bin/sh, #2195) runs the command instead.
+    let program = shell_program(&env);
+    assert_ne!(program, "/tmp/evil");
+    assert_eq!(
+        program,
+        super::shell::select_shell(None, super::shell::is_installed)
+    );
+}
+
+#[test]
+fn test_build_shell_command_without_shell_env_uses_the_fallback() {
+    let env = HashMap::new();
+    assert_eq!(
+        shell_program(&env),
+        super::shell::select_shell(None, super::shell::is_installed)
+    );
+}
+
+#[test]
+fn test_build_shell_command_sets_args_and_cwd() {
+    let ws = PathBuf::from("/tmp/some-workspace");
+    let env = HashMap::new();
+    let cmd = super::build_shell_command(&ws, "echo hello", Some(&env));
+    let std_cmd = cmd.as_std();
+    let args: Vec<String> = std_cmd
+        .get_args()
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(args, vec!["-c".to_string(), "echo hello".to_string()]);
+    assert_eq!(std_cmd.get_current_dir(), Some(ws.as_path()));
+}
+
+#[test]
+fn test_build_shell_command_passes_through_source_env() {
+    let mut env = HashMap::new();
+    env.insert("MY_VAR".to_string(), "my_value".to_string());
+    env.insert("PATH".to_string(), "/custom/bin".to_string());
+    let cmd = super::build_shell_command(&PathBuf::from("/tmp"), "echo hi", Some(&env));
+    let std_cmd = cmd.as_std();
+    let envs: HashMap<String, String> = std_cmd
+        .get_envs()
+        .filter_map(|(k, v)| {
+            Some((
+                k.to_string_lossy().into_owned(),
+                v?.to_string_lossy().into_owned(),
+            ))
+        })
+        .collect();
+    assert_eq!(envs.get("MY_VAR").map(|s| s.as_str()), Some("my_value"));
+    // Provided PATH is honored verbatim (no inherited-PATH injection).
+    assert_eq!(envs.get("PATH").map(|s| s.as_str()), Some("/custom/bin"));
+}
+
+#[test]
+fn test_build_shell_command_injects_path_when_overrides_omit_it() {
+    // When an explicit source env has no PATH, the process PATH is injected so
+    // the shell can find binaries.
+    let mut env = HashMap::new();
+    env.insert("MY_VAR".to_string(), "value".to_string());
+    let cmd = super::build_shell_command(&PathBuf::from("/tmp"), "echo hi", Some(&env));
+    let std_cmd = cmd.as_std();
+    let has_path = std_cmd.get_envs().any(|(k, v)| k == "PATH" && v.is_some());
+    // Only asserts when the test process itself has PATH (true in practice).
+    if std::env::var("PATH").is_ok() {
+        assert!(
+            has_path,
+            "PATH should be injected when absent from source env"
+        );
+    }
+}
+
+// --- make_exit_result (status -> ToolResult mapping) ---
+
+#[cfg(unix)]
+#[test]
+fn test_make_exit_result_success() {
+    use std::os::unix::process::ExitStatusExt;
+    let status = std::process::ExitStatus::from_raw(0);
+    let result = super::make_exit_result(status, "output text".to_string());
+    assert!(!result.is_error);
+    assert_eq!(result.content, "output text");
+    assert!(result.image_blocks.is_empty());
+}
+
+#[cfg(unix)]
+#[test]
+fn test_make_exit_result_nonzero_exit_code() {
+    use std::os::unix::process::ExitStatusExt;
+    // raw status with low byte 0 and high byte 1 => exited with code 1.
+    let status = std::process::ExitStatus::from_raw(1 << 8);
+    let result = super::make_exit_result(status, "boom".to_string());
+    assert!(result.is_error);
+    assert!(
+        result.content.starts_with("exit code 1\n"),
+        "got: {}",
+        result.content
+    );
+    assert!(result.content.contains("boom"));
+}
+
+#[cfg(unix)]
+#[test]
+fn test_make_exit_result_killed_by_signal_uses_minus_one() {
+    use std::os::unix::process::ExitStatusExt;
+    // Terminated by signal 9 => code() is None => falls back to -1.
+    let status = std::process::ExitStatus::from_raw(9);
+    let result = super::make_exit_result(status, "".to_string());
+    assert!(result.is_error);
+    assert!(
+        result.content.contains("exit code -1"),
+        "got: {}",
+        result.content
+    );
+}
+
+// --- collect_and_truncate_output (combining + truncation + temp-file hint) ---
+
+fn stream_tasks_from(
+    stdout: Option<(String, bool)>,
+    stderr: Option<(String, bool)>,
+) -> super::StreamTasks {
+    super::StreamTasks {
+        stdout_task: stdout.map(|v| tokio::spawn(async move { v }).into()),
+        stderr_task: stderr.map(|v| tokio::spawn(async move { v }).into()),
+    }
+}
+
+#[tokio::test]
+async fn test_collect_output_empty_when_no_tasks() {
+    let mut tasks = stream_tasks_from(None, None);
+    let out = super::collect_and_truncate_output(&mut tasks).await;
+    assert!(out.is_empty());
+}
+
+#[tokio::test]
+async fn test_collect_output_stdout_only_no_truncation() {
+    let mut tasks = stream_tasks_from(Some(("just stdout".to_string(), false)), None);
+    let out = super::collect_and_truncate_output(&mut tasks).await;
+    assert_eq!(out, "just stdout");
+}
+
+#[tokio::test]
+async fn test_collect_output_stderr_only_no_truncation() {
+    let mut tasks = stream_tasks_from(None, Some(("just stderr".to_string(), false)));
+    let out = super::collect_and_truncate_output(&mut tasks).await;
+    assert_eq!(out, "just stderr");
+}
+
+#[tokio::test]
+async fn test_collect_output_combines_stdout_and_stderr() {
+    let mut tasks = stream_tasks_from(
+        Some(("OUT".to_string(), false)),
+        Some(("ERR".to_string(), false)),
+    );
+    let out = super::collect_and_truncate_output(&mut tasks).await;
+    assert_eq!(out, "OUT\nERR");
+}
+
+#[tokio::test]
+async fn test_collect_output_allows_exact_50kb() {
+    let exact = "x".repeat(50 * 1024);
+    let mut tasks = stream_tasks_from(Some((exact.clone(), false)), None);
+    let out = super::collect_and_truncate_output(&mut tasks).await;
+    assert_eq!(out, exact);
+    assert!(!out.contains("Full output"));
+}
+
+#[tokio::test]
+async fn test_collect_output_byte_truncation_includes_50kb_hint() {
+    let big = "x".repeat(50 * 1024 + 1);
+    let mut tasks = stream_tasks_from(Some((big, false)), None);
+    let out = super::collect_and_truncate_output(&mut tasks).await;
+    assert!(
+        out.contains("Showing lines"),
+        "got tail: {}",
+        &out[out.len().saturating_sub(200)..]
+    );
+    assert!(out.contains("(50KB limit)"));
+    assert!(out.contains("Full output"));
+    let path = out
+        .split("Full output: ")
+        .nth(1)
+        .or_else(|| out.split("Full output saved to: ").nth(1))
+        .unwrap_or_else(|| out.rsplit(' ').next().unwrap())
+        .trim_end_matches(']');
+    assert!(std::path::Path::new(path).exists(), "{}", path);
+}
+
+#[tokio::test]
+async fn test_collect_output_allows_exact_2000_lines() {
+    let many: String = (1..=2000).map(|i| format!("l{}\n", i)).collect();
+    let mut tasks = stream_tasks_from(Some((many.clone(), false)), None);
+    let out = super::collect_and_truncate_output(&mut tasks).await;
+    assert_eq!(out, many.trim_end_matches('\n'));
+    assert!(!out.contains("Full output"));
+}
+
+#[tokio::test]
+async fn test_collect_output_line_truncation_hint_without_kb_note() {
+    let many: String = (1..=2001).map(|i| format!("l{}\n", i)).collect();
+    let mut tasks = stream_tasks_from(Some((many, false)), None);
+    let out = super::collect_and_truncate_output(&mut tasks).await;
+    assert!(out.contains("Showing lines 2-2001 of 2001"));
+    assert!(
+        !out.contains("(50KB limit)"),
+        "line truncation must omit KB note"
+    );
+    assert!(out.contains("l2001"), "tail must keep the last line");
+    assert!(!out.contains("l1\n"), "tail should omit the first line");
+}
+
+#[tokio::test]
+async fn test_collect_output_combined_streams_preserve_separator_at_boundary() {
+    let stdout = "x".repeat(50 * 1024 - 2);
+    let stderr = "y".to_string();
+    let mut tasks = stream_tasks_from(Some((stdout.clone(), false)), Some((stderr, false)));
+    let out = super::collect_and_truncate_output(&mut tasks).await;
+    assert_eq!(out, format!("{}\ny", stdout));
+}
+
+// --- run_command malformed-JSON arm (LLM-addressable error result) ---
+
+#[tokio::test]
+async fn test_exec_invalid_json_returns_error_result() {
+    let (tool, _tmp) = test_exec();
+    let result = tool.execute("{ not valid json").await.unwrap();
+    assert!(
+        result.is_error,
+        "malformed JSON should yield is_error result"
+    );
+    assert!(
+        result.content.contains("invalid JSON arguments"),
+        "got: {}",
+        result.content
+    );
+    assert!(result.content.contains("Example"));
+}
+
+// --- ExecTool accessors / Debug / ExecOptions ---
+
+#[test]
+fn test_exec_tool_timeout_getter_and_debug() {
+    let tmp = TempDir::new().unwrap();
+    let sandbox = Sandbox::new(Some(tmp.path().to_path_buf()));
+    let tool = ExecTool::with_timeout(
+        Arc::new(tmp.path().to_path_buf()),
+        Arc::new(sandbox),
+        Duration::from_secs(42),
+    );
+    assert_eq!(tool.timeout(), Duration::from_secs(42));
+    let dbg = format!("{:?}", tool);
+    assert!(dbg.contains("ExecTool"));
+    assert!(dbg.contains("42") || dbg.contains("max_capture_bytes"));
+}
+
+#[test]
+fn test_exec_options_default_and_clone() {
+    let opts = ExecOptions::default();
+    assert_eq!(opts.timeout, Duration::MAX);
+    assert!(opts.command_prefix.is_none());
+    let cloned = opts.clone();
+    assert_eq!(cloned.max_capture_bytes, opts.max_capture_bytes);
+    // Debug derive exercised.
+    assert!(format!("{:?}", cloned).contains("ExecOptions"));
+}
+
+/// Abort = full stop (#895 AC3): when the tool future is dropped mid-run
+/// (the agent loop cancels in-flight tool calls), the spawned child and its
+/// whole process group must be terminated — a `sleep && touch` chain must NOT
+/// reach the `touch`, proving the long bash did not survive the cancel.
+#[tokio::test]
+async fn test_exec_drop_kills_child_process_group() {
+    let (tool, tmp) = test_exec();
+    let marker = tmp.path().join("survived-abort.marker");
+    let cmd = format!(
+        r#"{{"command": "sleep 3 && touch '{}'"}}"#,
+        marker.display()
+    );
+
+    {
+        let fut = tool.execute(&cmd);
+        tokio::pin!(fut);
+        // Poll long enough to spawn the child, then drop the future (cancel).
+        let _ = tokio::time::timeout(Duration::from_millis(400), &mut fut).await;
+        // `fut` dropped here at end of scope → child must be killed.
+    }
+
+    // Wait past the child's sleep; if it survived, the marker would appear.
+    tokio::time::sleep(Duration::from_secs(4)).await;
+    assert!(
+        !marker.exists(),
+        "child process must be killed on cancel; the sleep&&touch reached touch"
+    );
+}
+
+/// Abort = full stop (#895 AC3), descendant reaping: the leader shell exits
+/// immediately, leaving a backgrounded subshell alive in the SAME process
+/// group. `kill_on_drop` alone only reaps the (already-gone) leader, so the
+/// detached subshell would survive and write the marker. Only the
+/// `ProcessGroupGuard`'s `kill -KILL -pgid` reaches the whole group. This test
+/// fails if the process-group machinery is removed, unlike the `&&` chain test
+/// above which the leader kill alone already defeats.
+#[tokio::test]
+async fn test_exec_drop_kills_whole_process_group() {
+    let (tool, tmp) = test_exec();
+    let marker = tmp.path().join("survived-group-abort.marker");
+    // `( ... ) &` backgrounds a subshell in the leader's process group while the
+    // leader stays alive on its own `sleep` (keeping the future pending until we
+    // drop it). `kill_on_drop` only reaps the leader shell; the backgrounded
+    // subshell survives and touches the marker unless the whole group is killed.
+    //
+    // The subshell publishes its pid before it sleeps, so the test waits on
+    // the receipt (that pid is gone) rather than sitting out a sleep long
+    // enough to prove a survivor would have touched the marker: a leaked
+    // subshell stays alive in its 60 s sleep and the bounded wait fails.
+    let pid_file = tmp.path().join("subshell.pid");
+    let cmd = format!(
+        r#"{{"command": "( sh -c 'echo $PPID' > '{}'; sleep 60 && touch '{}' ) & sleep 70"}}"#,
+        pid_file.display(),
+        marker.display(),
+    );
+
+    // Drop only once the subshell exists (it publishes its pid first), so a
+    // slow spawn under load cannot turn into a missing-pid failure.
+    let publish = async {
+        loop {
+            if let Some(pid) = std::fs::read_to_string(&pid_file)
+                .ok()
+                .and_then(|s| s.trim().parse::<u32>().ok())
+            {
+                return pid;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    };
+    let pid = {
+        let fut = tool.execute(&cmd);
+        tokio::pin!(fut);
+        tokio::select! {
+            pid = tokio::time::timeout(Duration::from_secs(10), publish) => pid.expect("the subshell publishes its pid"),
+            _ = &mut fut => panic!("the command must still be running when its pid is published"),
+        }
+        // `fut` dropped here → ProcessGroupGuard must kill the whole group.
+    };
+    let alive = |pid: u32| {
+        std::fs::read_to_string(format!("/proc/{pid}/stat"))
+            .map(|stat| !stat.contains(") Z "))
+            .unwrap_or(false)
+    };
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    while alive(pid) {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "whole process group must be killed on cancel; detached subshell {pid} survived"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(
+        !marker.exists(),
+        "a killed subshell cannot have touched the marker"
+    );
+}
+
+/// #2195: with no `SHELL` in the command's environment (as in a container),
+/// the command runs under the shell selection's choice: bash where it is
+/// installed, never a hard-coded `/bin/sh`.
+#[test]
+fn a_command_without_shell_in_its_environment_runs_under_bash_when_installed() {
+    let workspace = std::env::temp_dir();
+    let env = std::collections::HashMap::new();
+    let cmd = super::build_shell_command(&workspace, "true", Some(&env));
+    let expected = super::shell::select_shell(None, super::shell::is_installed);
+    assert_eq!(cmd.as_std().get_program(), std::ffi::OsStr::new(expected));
+    assert!(bash_is_installed(), "these tests require bash on the host");
+    assert!(expected.ends_with("/bash"), "{expected}");
+}
+
+/// #2195 review: without bash the description says commands run under a
+/// POSIX shell; with bash it adds nothing.
+#[test]
+fn the_description_names_a_posix_shell_only_without_bash() {
+    let note = super::posix_note("/bin/sh");
+    assert!(
+        note.contains("/bin/sh") && note.contains("not bash"),
+        "{note}"
+    );
+    // zsh is not POSIX sh either: the note names it, and makes no such claim.
+    let zsh = super::posix_note("/usr/bin/zsh");
+    assert!(
+        zsh.contains("/usr/bin/zsh") && !zsh.contains("POSIX"),
+        "{zsh}"
+    );
+    assert_eq!(super::posix_note("/usr/bin/bash"), "");
+}
+
+/// #2207 review: an inherited `BASH_ENV` (or `ENV`) never runs before the
+/// command: the command policy only saw the command.
+#[tokio::test]
+async fn an_inherited_bash_env_is_never_sourced() {
+    let (tool, tmp) = test_exec();
+    let startup = tmp.path().join("startup.sh");
+    std::fs::write(&startup, "echo SOURCED\n").unwrap();
+    let mut env = HashMap::new();
+    env.insert("BASH_ENV".to_string(), startup.display().to_string());
+    env.insert("ENV".to_string(), startup.display().to_string());
+    let result = tool
+        .execute_with_env(r#"{"command": "echo ok"}"#, &env)
+        .await
+        .unwrap();
+    assert_eq!(result.content.trim(), "ok", "{}", result.content);
+}

@@ -375,7 +375,7 @@ pub fn web_fetch_client_recipe() -> crate::infrastructure::http::web_fetch::WebF
 pub fn build_official_tool_registry(
     workspace: std::path::PathBuf,
     sandbox: crate::infrastructure::security::sandbox::Sandbox,
-    exec_options: crate::infrastructure::tools::bash::ExecOptions,
+    exec_options: crate::infrastructure::tools::native::bash::ExecOptions,
 ) -> crate::infrastructure::tools::registry::ToolRegistryImpl {
     crate::infrastructure::extensions::native::build_official_tool_registry_with_context(
         crate::composition::find::build_find_tool(

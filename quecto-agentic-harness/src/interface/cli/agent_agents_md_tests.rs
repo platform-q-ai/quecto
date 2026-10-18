@@ -225,7 +225,7 @@ async fn custom_playbook_prompt_path_uses_initialization_directory() {
         startup_prompt::load_parent_playbook(&context, false, &mut String::new()).unwrap();
     assert!(playbook.contains("docs/spike.md"));
     let workspace = context.cwd.as_ref().unwrap();
-    let tool = crate::infrastructure::tools::filesystem::ReadTool::new(
+    let tool = crate::infrastructure::tools::native::filesystem::ReadTool::new(
         std::sync::Arc::new(workspace.clone()),
         std::sync::Arc::new(crate::infrastructure::security::sandbox::Sandbox::new(
             Some(workspace.clone()),
