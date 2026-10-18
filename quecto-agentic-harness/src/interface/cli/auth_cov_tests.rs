@@ -335,7 +335,12 @@ fn test_status_read_failure() {
     let out = run_with_output(args("auth status"), &ctx);
     assert_eq!(out.exit_code, 1);
     // status reports the read failure on stdout.
-    assert!(out.stdout.contains("failed to read credentials"));
+    assert!(
+        out.stdout
+            .starts_with("failed to read credentials: config error: failed to parse credentials"),
+        "{}",
+        out.stdout
+    );
 }
 
 #[test]

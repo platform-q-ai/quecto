@@ -13,6 +13,8 @@
 //! - infrastructure/ imports domain/ only
 //! - interface/ imports all three (composition root)
 
+#[path = "architecture/auth_credential_authority.rs"]
+mod auth_credential_authority;
 #[path = "architecture/auth_infrastructure_edges.rs"]
 mod auth_infrastructure_edges;
 #[path = "architecture/auth_runtime_builder.rs"]

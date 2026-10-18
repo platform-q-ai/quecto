@@ -131,68 +131,6 @@ fn test_auth_logout_nonexistent_is_noop() {
 }
 
 #[test]
-fn test_auth_status_shows_credentials() {
-    let tmp = tempfile::TempDir::new().unwrap();
-    let store = CredentialStore::new(tmp.path());
-    store
-        .store(Credential {
-            provider: "openai".to_string(),
-            token: "sk-test".to_string(),
-            method: AuthMethod::Token,
-            expires_at: None,
-            refresh_token: None,
-            account_id: None,
-        })
-        .unwrap();
-
-    let ctx = CliContext {
-        base_dir: Some(tmp.path().to_path_buf()),
-        ..Default::default()
-    };
-    let out = run_with_output(args("auth status"), &ctx);
-    assert_eq!(out.exit_code, 0);
-    assert!(out.stdout.contains("openai"));
-    assert!(out.stdout.contains("active"));
-}
-
-#[test]
-fn test_auth_status_empty() {
-    let tmp = tempfile::TempDir::new().unwrap();
-    let ctx = CliContext {
-        base_dir: Some(tmp.path().to_path_buf()),
-        ..Default::default()
-    };
-    let out = run_with_output(args("auth status"), &ctx);
-    assert_eq!(out.exit_code, 0);
-    assert!(out.stdout.contains("no credentials"));
-}
-
-#[test]
-fn test_auth_status_expired() {
-    let tmp = tempfile::TempDir::new().unwrap();
-    let store = CredentialStore::new(tmp.path());
-    store
-        .store(Credential {
-            provider: "anthropic".to_string(),
-            token: "expired-tok".to_string(),
-            method: AuthMethod::Token,
-            expires_at: Some(0),
-            refresh_token: None,
-            account_id: None,
-        })
-        .unwrap();
-
-    let ctx = CliContext {
-        base_dir: Some(tmp.path().to_path_buf()),
-        ..Default::default()
-    };
-    let out = run_with_output(args("auth status"), &ctx);
-    assert_eq!(out.exit_code, 0);
-    assert!(out.stdout.contains("anthropic"));
-    assert!(out.stdout.contains("expired"));
-}
-
-#[test]
 fn test_auth_no_subcommand() {
     let tmp = tempfile::TempDir::new().unwrap();
     let ctx = CliContext {

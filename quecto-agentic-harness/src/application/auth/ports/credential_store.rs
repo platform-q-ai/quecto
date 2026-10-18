@@ -1,6 +1,6 @@
 //! The store of provider credentials (#1839): one credential per provider,
 //! durable across processes. Later use cases add the reads and removals
-//! they need (#1840–#1842).
+//! they need (#1840, #1841).
 
 use crate::domain::auth::credential::Credential;
 
@@ -19,4 +19,8 @@ pub trait CredentialStorePort: Send + Sync {
     /// any before it and leaving every other provider's untouched. On `Ok`
     /// it is durable; on `Err` the store is as it was.
     fn store(&self, credential: Credential) -> Result<(), CredentialStoreError>;
+
+    /// Every stored credential, each provider's one, in no particular
+    /// order. Reading writes nothing; an absent store lists nothing.
+    fn list(&self) -> Result<Vec<Credential>, CredentialStoreError>;
 }

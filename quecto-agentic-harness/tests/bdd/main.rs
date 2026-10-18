@@ -3,6 +3,7 @@
 use cucumber::{World, gherkin, given, then, when};
 use quecto::application::agent_turn::agent_loop::AgentLoopImpl;
 use quecto::application::agent_turn::ports::AgentLoop;
+use quecto::application::auth::dto::ProviderAuthStatus;
 use quecto::application::providers::ports::{ChatRequest, LlmProvider};
 use quecto::application::sessions::ports::{ContextSpillStore, SessionStore};
 use quecto::application::subagents::subagent::{
@@ -15,7 +16,7 @@ use quecto::domain::conversation::value_objects::message::{LlmResponse, Message,
 use quecto::domain::sessions::entities::session::Session;
 use quecto::domain::shared::error::DomainError;
 use quecto::domain::tool_policy::value_objects::tool::{ToolDefinition, ToolResult};
-use quecto::infrastructure::auth::credential_store::{CredentialStatus, CredentialStore};
+use quecto::infrastructure::auth::credential_store::CredentialStore;
 use quecto::infrastructure::config::Config;
 
 use quecto::domain::inference::services::provider_error::{
@@ -452,7 +453,7 @@ pub struct QuectoWorld {
     /// Credential store for auth scenarios
     pub credential_store: Option<CredentialStore>,
     /// Auth status summary from the last check
-    pub auth_status: Option<Vec<CredentialStatus>>,
+    pub auth_status: Option<Vec<ProviderAuthStatus>>,
     /// Raw credential file bytes captured before an interrupted update
     pub credential_file_before_update: Option<Vec<u8>>,
     /// Spawn tool result

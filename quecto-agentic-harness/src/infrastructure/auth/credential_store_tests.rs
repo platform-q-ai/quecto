@@ -12,17 +12,6 @@ fn make_credential(provider: &str, token: &str, method: AuthMethod) -> Credentia
     }
 }
 
-fn make_expired_credential(provider: &str) -> Credential {
-    Credential {
-        provider: provider.to_string(),
-        token: "expired-token".to_string(),
-        method: AuthMethod::Token,
-        expires_at: Some(0), // epoch — always expired
-        refresh_token: None,
-        account_id: None,
-    }
-}
-
 #[test]
 fn test_store_and_get() {
     let tmp = TempDir::new().unwrap();
@@ -93,36 +82,6 @@ fn test_remove_all() {
     store.remove_all().unwrap();
     assert!(!store.exists("openai").unwrap());
     assert!(!store.exists("anthropic").unwrap());
-}
-
-#[test]
-fn test_status_summary_empty() {
-    let tmp = TempDir::new().unwrap();
-    let store = CredentialStore::new(tmp.path());
-
-    let summary = store.status_summary().unwrap();
-    assert!(summary.is_empty());
-}
-
-#[test]
-fn test_status_summary_with_credentials() {
-    let tmp = TempDir::new().unwrap();
-    let store = CredentialStore::new(tmp.path());
-
-    store
-        .store(make_credential("openai", "sk-1", AuthMethod::OAuth))
-        .unwrap();
-    store.store(make_expired_credential("anthropic")).unwrap();
-
-    let summary = store.status_summary().unwrap();
-    assert_eq!(summary.len(), 2);
-
-    let openai = summary.iter().find(|s| s.provider == "openai").unwrap();
-    assert_eq!(openai.status, "active");
-    assert_eq!(openai.method, "oauth");
-
-    let anthropic = summary.iter().find(|s| s.provider == "anthropic").unwrap();
-    assert_eq!(anthropic.status, "expired");
 }
 
 #[test]
