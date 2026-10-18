@@ -4,10 +4,10 @@
 // message list: no retention handle, no store.
 
 use super::{collapse_conversation_message, exempt_flags, message_collapse_stub};
-use crate::application::context_pruning::exchanges::{
+use crate::application::agent_turn::context::context_pruning::exchanges::{
     drop_exchanges_until_under_budget, exchange_groups, keep_exchanges_whole,
 };
-use crate::application::context_pruning::{
+use crate::application::agent_turn::context::context_pruning::{
     collapse_message, estimate_message_tokens, estimate_tokens, estimate_total_tokens,
 };
 use crate::domain::conversation::services::turn_origin::report_to_keep;

@@ -1,6 +1,6 @@
 use super::*;
-use crate::application::context_pruning;
-use crate::application::context_pruning::messages::{
+use crate::application::agent_turn::context::context_pruning;
+use crate::application::agent_turn::context::context_pruning::messages::{
     CeilingLadderOutcome, enforce_context_ceiling_ladder,
 };
 use crate::application::sessions::ports::ContextSpillStore;

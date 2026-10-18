@@ -2,7 +2,7 @@
 //! decrease-only line ceiling, #2342): tool output and conversation
 //! messages are retained at creation so every later stub can be recalled.
 use super::ContextManager;
-use crate::application::context_pruning;
+use crate::application::agent_turn::context::context_pruning;
 use crate::domain::conversation::value_objects::message::Message;
 use crate::domain::conversation::value_objects::stored_images::MessageImageRefs;
 use crate::domain::sessions::entities::session::SpillEntry;

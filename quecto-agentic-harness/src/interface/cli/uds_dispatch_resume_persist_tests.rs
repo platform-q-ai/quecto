@@ -4,7 +4,7 @@
 use super::fixture_tests::{Fixture, persist_current_session, persisted_watermark};
 use super::{dispatch_command, handle_resume_session};
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
-use crate::application::context_pruning::build_manifest_text;
+use crate::application::agent_turn::context::context_pruning::build_manifest_text;
 use crate::application::providers::ports::{ChatRequest, LlmProvider};
 use crate::application::sessions::ports::SessionStore;
 use crate::domain::sessions::entities::session_identity::SessionIdentity;

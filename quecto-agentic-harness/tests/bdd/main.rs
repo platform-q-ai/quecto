@@ -234,7 +234,7 @@ impl std::ops::Deref for DebugSpillStore {
 impl DebugSpillStore {
     /// The narrow handles the pruning policy consumes, composed over this
     /// store exactly as the runtime composes them (D9 #1978).
-    fn retention(&self) -> quecto::application::context::ContextRetention {
+    fn retention(&self) -> quecto::application::agent_turn::context::ContextRetention {
         quecto::composition::retention::context_retention_over(self.0.clone())
     }
 }
@@ -681,8 +681,9 @@ pub struct QuectoWorld {
     /// Context pruning: temp dir for session persistence round-trip tests
     pub context_temp_dir: Option<TempDir>,
     /// Context pruning: outcome of the last demotion-ladder ceiling run (#1046/#1044)
-    pub context_ladder_outcome:
-        Option<quecto::application::context_pruning::messages::CeilingLadderOutcome>,
+    pub context_ladder_outcome: Option<
+        quecto::application::agent_turn::context::context_pruning::messages::CeilingLadderOutcome,
+    >,
     /// Context pruning: configured max_context_tokens for budget-derivation scenarios (#1044)
     pub context_budget_config: Option<usize>,
     /// Context pruning: the active model's known context window, if any (#1044)

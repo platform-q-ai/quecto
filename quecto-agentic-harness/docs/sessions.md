@@ -605,7 +605,7 @@ every one of these rules with exact, decrease-only inventories.
 Sessions is the single owner of durable retained context — the
 `ContextSpillStore` port, the identity-keyed recall/list/clear selection, the
 id append and deduplication. The context-pruning policy
-(`src/application/context*.rs`, the agent loop) decides *when and what* to
+(`src/application/agent_turn/context/`, the agent loop) decides *when and what* to
 retain and consumes the narrow `RetainContext`/`ListRetainedContext` handles,
 never a store method; it also allocates the spill ids (`turn{n}:{tool}:{idx}`,
 `turn{n}:msg:{role}`). The `recall` tool is an adapter over `RecallContext`:
