@@ -5,6 +5,7 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
+pub mod auth_clock;
 pub mod board_clock;
 pub mod remote_time;
 

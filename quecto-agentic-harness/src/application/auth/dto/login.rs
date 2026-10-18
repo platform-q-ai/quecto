@@ -1,5 +1,6 @@
 //! Why a login stored no credential (#1839).
 
+use crate::domain::auth::pasted_code::PasteRefusal;
 use crate::domain::auth::provider::LoginProvider;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -18,6 +19,16 @@ pub enum LoginError {
     InsideAsyncRuntime,
     /// The provider refused or did not answer the device-code request.
     DeviceCodeRequest(String),
+    /// The provider has no OAuth configuration.
+    OAuthUnsupported(LoginProvider),
+    /// A pasted redirect URL or code was refused.
+    Paste(PasteRefusal),
+    /// A pasted authorization code was empty once trimmed.
+    EmptyAuthorizationCode,
+    /// The provider's redirect URI cannot be listened on.
+    InvalidRedirect(String),
+    /// The provider refused or did not answer the token exchange.
+    TokenExchange(String),
     /// The credential could not be stored.
     Store(String),
 }

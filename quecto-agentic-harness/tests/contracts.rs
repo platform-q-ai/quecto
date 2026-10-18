@@ -33,10 +33,14 @@ mod attempt_admission;
 mod attempt_permit;
 #[path = "contracts/audit_sink.rs"]
 mod audit_sink;
+#[path = "contracts/auth_clock.rs"]
+mod auth_clock;
 #[path = "contracts/authority_admin.rs"]
 mod authority_admin;
 #[path = "contracts/authority_service_manager.rs"]
 mod authority_service_manager;
+#[path = "contracts/authorization_callback.rs"]
+mod authorization_callback;
 #[path = "contracts/board_call_meter.rs"]
 mod board_call_meter;
 #[path = "contracts/board_clock.rs"]
@@ -83,6 +87,8 @@ mod board_transaction;
 mod board_usage;
 #[path = "contracts/board_wakes.rs"]
 mod board_wakes;
+#[path = "contracts/browser_authorization.rs"]
+mod browser_authorization;
 #[path = "common/catalogue_conformance.rs"]
 mod catalogue_conformance;
 #[path = "contracts/catalogue_consumers.rs"]
@@ -238,6 +244,8 @@ mod subagent_launch_ports;
 mod swarm_run_reports;
 #[path = "common/switch_runtime_fixture.rs"]
 mod switch_runtime_fixture;
+#[path = "contracts/token_exchange.rs"]
+mod token_exchange;
 #[path = "contracts/tool.rs"]
 mod tool;
 #[path = "contracts/tool_catalog.rs"]
