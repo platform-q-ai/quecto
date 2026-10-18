@@ -7,7 +7,7 @@ pub(crate) use crate::domain::conversation::services::conversation_view::inject_
 pub(crate) use crate::domain::conversation::services::conversation_view::remove_injected_system_prompt;
 #[cfg(test)]
 use crate::domain::conversation::value_objects::message::Role;
-use crate::infrastructure::tools::agent_cmd_containers::EnvironmentControlSlot;
+use crate::infrastructure::tools::agents::agent_cmd_containers::EnvironmentControlSlot;
 #[cfg(test)]
 #[path = "uds_lifecycle_cov2_tests.rs"]
 mod cov2_tests;
@@ -40,13 +40,14 @@ pub struct UdsLoopArgs<'a> {
     pub ext_registry: Option<super::uds_extensions::ExtRegistry>,
     /// How long this harness lives (#1937): decided once at startup.
     pub lifetime: crate::domain::agents::value_objects::harness_lifetime::HarnessLifetime,
-    pub notification_rx: Option<crate::infrastructure::tools::subagent_registry::NotificationRx>,
+    pub notification_rx:
+        Option<crate::infrastructure::tools::agents::subagent_registry::NotificationRx>,
     pub subagent_registry:
-        Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
+        Option<crate::infrastructure::tools::agents::subagent_registry::SubagentRegistry>,
     /// The lifecycle cell the spawn tool admits against (#1938); the
     /// teardown graph freezes it. `None` builds a private one.
     pub harness_lifecycle:
-        Option<crate::infrastructure::tools::harness_lifecycle::SharedHarnessLifecycle>,
+        Option<crate::infrastructure::tools::agents::harness_lifecycle::SharedHarnessLifecycle>,
     /// The environment control slot (#2070) the loop hands its teardown.
     pub environment_control: Option<EnvironmentControlSlot>,
     pub workflow_state: Option<crate::interface::shared::WorkflowStateHandle>, // #562

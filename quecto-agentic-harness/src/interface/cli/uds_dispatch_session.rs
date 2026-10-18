@@ -7,10 +7,10 @@
 //! here.
 use super::super::uds_session_switch_runtime::LoopSessionSwitchRuntime;
 use super::super::uds_turn_accounting::LoopTurnAccounting;
-use super::AgentEvent;
-use super::{DispatchCtx, emit_event_to_broadcast_or_writer, emit_ledger_advanced};
+use super::{AgentEvent, DispatchCtx, emit_event_to_broadcast_or_writer, emit_ledger_advanced};
 use crate::application::sessions::dto::ResumeOutcome;
 use crate::application::sessions::ports::FleetSettlement;
+use crate::infrastructure::tools::agents::subagent_cascade;
 use crate::interface::cli::protocol::HISTORY_PAGE_SIZE;
 use crate::interface::uds::sessions::resume_session_controller::ResumeFields;
 use crate::interface::uds::sessions::rewind_conversation_controller::RewindFields;
@@ -31,9 +31,7 @@ fn fleet_settlement_of(
 /// reset, so no panel keeps a departed child.
 fn broadcast_roster_reset(ctx: &DispatchCtx<'_>) {
     if let (Some(registry), Some(tx)) = (&ctx.subagent_registry, &ctx.broadcast_tx) {
-        let _ = tx.send(
-            crate::infrastructure::tools::subagent_cascade::build_state_changed_event(registry),
-        );
+        let _ = tx.send(subagent_cascade::build_state_changed_event(registry));
     }
 }
 

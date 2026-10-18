@@ -287,7 +287,7 @@ fn busy_get_state_line_omits_snapshot_marker() {
 /// `get_subagents` request, #874).
 #[test]
 fn build_get_subagents_line_serializes_registry_view() {
-    use crate::infrastructure::tools::subagent_registry::{
+    use crate::infrastructure::tools::agents::subagent_registry::{
         SubagentEntry, SubagentRegistry, SubagentStatus,
     };
     use crate::interface::cli::uds_multi::build_get_subagents_line;

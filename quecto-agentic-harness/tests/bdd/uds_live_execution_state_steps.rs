@@ -103,9 +103,8 @@ fn state_is_idle(world: &mut QuectoWorld) {
 #[given("the agent command tool is available")]
 fn command_tool_available(world: &mut QuectoWorld) {
     let registry = Arc::new(Mutex::new(Default::default()));
-    world.agent_cmd_tool = Some(quecto::infrastructure::tools::agent_cmd::AgentCmdTool::new(
-        registry,
-    ));
+    world.agent_cmd_tool =
+        Some(quecto::infrastructure::tools::agents::agent_cmd::AgentCmdTool::new(registry));
 }
 
 #[when("a parent inspects its command guidance")]

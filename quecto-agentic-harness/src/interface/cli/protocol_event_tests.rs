@@ -41,7 +41,7 @@ fn tool_policy_changed_event_serializes_apply_mode_and_results() {
 
 #[test]
 fn build_subagent_info_list_reports_liveness_without_changing_legacy_status() {
-    use crate::infrastructure::tools::subagent_registry::{
+    use crate::infrastructure::tools::agents::subagent_registry::{
         SubagentEntry, SubagentStatus, new_registry,
     };
     let reg = new_registry();
@@ -86,7 +86,7 @@ fn build_subagent_info_list_reports_liveness_without_changing_legacy_status() {
 #[test]
 fn build_live_subagent_info_list_omits_dead_detached_and_effectively_exited_tombstones() {
     use crate::domain::sessions::entities::session::SubagentLiveness;
-    use crate::infrastructure::tools::subagent_registry::{
+    use crate::infrastructure::tools::agents::subagent_registry::{
         SubagentEntry, SubagentStatus, new_registry,
     };
     let reg = new_registry();

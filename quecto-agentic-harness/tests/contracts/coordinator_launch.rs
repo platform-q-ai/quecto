@@ -15,8 +15,8 @@ use quecto::application::tools::ports::Tool;
 use quecto::domain::error::DomainError;
 use quecto::domain::project_board::value_objects::slug::Slug;
 use quecto::domain::tool_policy::value_objects::tool::{ToolDefinition, ToolResult};
-use quecto::infrastructure::tools::coordinator_launch::SpawnCoordinatorLauncher;
-use quecto::infrastructure::tools::coordinator_launch::SpawnPermit;
+use quecto::infrastructure::tools::agents::coordinator_launch::SpawnCoordinatorLauncher;
+use quecto::infrastructure::tools::agents::coordinator_launch::SpawnPermit;
 use quecto::infrastructure::tools::registry::ToolRegistryImpl;
 
 /// A `spawn` (or, named so, `agent_cmd`) that answers `content` (an
@@ -99,7 +99,7 @@ fn launcher_over(
     let mut registry = ToolRegistryImpl::new();
     registry.register(Arc::clone(&spawn));
     registry.observe_policy(Arc::new(permit.clone()));
-    let subagents = quecto::infrastructure::tools::subagent_registry::new_registry();
+    let subagents = quecto::infrastructure::tools::agents::subagent_registry::new_registry();
     (
         SpawnCoordinatorLauncher::new(spawn, agent_cmd, permit, subagents),
         registry,
@@ -118,7 +118,7 @@ fn launcher_stopping_with(
     if !allowed {
         registry.disable_tool("spawn");
     }
-    let subagents = quecto::infrastructure::tools::subagent_registry::new_registry();
+    let subagents = quecto::infrastructure::tools::agents::subagent_registry::new_registry();
     (
         SpawnCoordinatorLauncher::new(spawn, agent_cmd, permit, subagents),
         registry,

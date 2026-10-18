@@ -4,13 +4,13 @@ use super::fixture_tests::{
 };
 use crate::domain::conversation::value_objects::message::Message;
 use crate::domain::ids::AgentUuid;
-use crate::infrastructure::tools::subagent_registry::{SubagentEntry, new_registry};
+use crate::infrastructure::tools::agents::subagent_registry::{SubagentEntry, new_registry};
 use crate::interface::cli::protocol::AgentCommand;
 
 #[test]
 fn killing_exit_empty_restore_cycles_stay_empty_but_new_live_registration_appears() {
     use crate::domain::sessions::entities::session::SubagentRestoreReason;
-    use crate::infrastructure::tools::subagent_compact_roster::build_compact_subagent_roster;
+    use crate::infrastructure::tools::agents::subagent_compact_roster::build_compact_subagent_roster;
     use crate::interface::cli::uds::dispatch_session_roster_tests::{
         reset_roster_for_restore, snapshot_subagent_roster_with_restore_reason,
     };
@@ -37,7 +37,7 @@ fn killing_exit_empty_restore_cycles_stay_empty_but_new_live_registration_appear
         "/tmp/new-child.sock".into(),
         123,
     );
-    child.status = crate::infrastructure::tools::subagent_registry::SubagentStatus::Idle;
+    child.status = crate::infrastructure::tools::agents::subagent_registry::SubagentStatus::Idle;
     registry.lock().unwrap().insert("new-child".into(), child);
 
     let roster = build_compact_subagent_roster(&Some(registry), None).unwrap();

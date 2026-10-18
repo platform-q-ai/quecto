@@ -13,8 +13,8 @@ use crate::application::tools::ports::Tool;
 use crate::domain::conversation::value_objects::message::LlmResponse;
 use crate::domain::error::DomainError;
 use crate::domain::tool_policy::value_objects::tool::ToolResult;
-use crate::infrastructure::tools::agent_cmd::AgentCmdTool;
-use crate::infrastructure::tools::subagent_registry::SubagentEntry;
+use crate::infrastructure::tools::agents::agent_cmd::AgentCmdTool;
+use crate::infrastructure::tools::agents::subagent_registry::SubagentEntry;
 use crate::interface::cli::uds_session::{HISTORY_PAGE_SIZE, messages_page_json};
 
 pub(super) const READ: &str = r#"{"agent_id":"w1","command":"get_messages"}"#;

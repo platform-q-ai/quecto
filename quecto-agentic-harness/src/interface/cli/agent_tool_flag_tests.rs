@@ -31,7 +31,7 @@ fn test_headless_agent_registry_includes_spawn_tool() {
 
     // Match what build_agent_from_config does: with_base_dir so spawn is
     // not in stub mode and will actually launch subagents.
-    use crate::infrastructure::tools::spawn::SpawnTool;
+    use crate::infrastructure::tools::agents::spawn::SpawnTool;
     use std::sync::Arc;
     let spawn = SpawnTool::with_base_dir(vec![], tmp.path().to_path_buf());
 

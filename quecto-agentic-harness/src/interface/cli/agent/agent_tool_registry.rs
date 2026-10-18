@@ -10,14 +10,14 @@ pub(super) struct ToolRegistryBuild {
     pub(super) ext_registry: ExtensionRegistry,
     pub(super) extension_prompt_snippets: String,
     pub(super) notification_rx:
-        Option<crate::infrastructure::tools::subagent_registry::NotificationRx>,
+        Option<crate::infrastructure::tools::agents::subagent_registry::NotificationRx>,
     pub(super) subagent_registry:
-        Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
+        Option<crate::infrastructure::tools::agents::subagent_registry::SubagentRegistry>,
     pub(super) harness_lifecycle:
-        Option<crate::infrastructure::tools::harness_lifecycle::SharedHarnessLifecycle>,
+        Option<crate::infrastructure::tools::agents::harness_lifecycle::SharedHarnessLifecycle>,
     /// The environment control slot (#2070) the loop hands its teardown.
     pub(super) environment_control:
-        Option<crate::infrastructure::tools::agent_cmd_containers::EnvironmentControlSlot>,
+        Option<crate::infrastructure::tools::agents::agent_cmd_containers::EnvironmentControlSlot>,
     pub(super) workflow_state: Option<crate::interface::shared::WorkflowStateHandle>, // #562
     pub(super) workspace: std::path::PathBuf,
 }

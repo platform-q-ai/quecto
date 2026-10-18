@@ -5,7 +5,9 @@ use super::{ClientDisconnected, ClientMessage};
 
 pub(super) enum DispatchMsg {
     Client(ClientMessage),
-    Notification(crate::infrastructure::tools::subagent_registry::SequencedSubagentNotification),
+    Notification(
+        crate::infrastructure::tools::agents::subagent_registry::SequencedSubagentNotification,
+    ),
     /// A termination signal was handled and its teardown has completed.
     Shutdown,
 }
@@ -13,7 +15,9 @@ pub(super) enum DispatchMsg {
 pub(super) async fn recv_next_message(
     cmd_rx: &mut tokio::sync::mpsc::Receiver<ClientMessage>,
     disconnect_rx: &mut tokio::sync::mpsc::UnboundedReceiver<ClientDisconnected>,
-    notification_rx: &mut Option<crate::infrastructure::tools::subagent_registry::NotificationRx>,
+    notification_rx: &mut Option<
+        crate::infrastructure::tools::agents::subagent_registry::NotificationRx,
+    >,
     shutdown: &super::super::uds_shutdown::ShutdownRequest,
 ) -> Option<DispatchMsg> {
     // Commands outrank disconnect sentinels: a client's queued work (an

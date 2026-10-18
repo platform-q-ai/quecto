@@ -10,7 +10,7 @@ use quecto::infrastructure::processes::owned_child_supervisor::{
     ChildExit, ChildHandleId, OwnedChildSupervisor, ProcessGroup, ProtocolOutcome, SentSignal,
     TerminationBudget, TerminationOutcome,
 };
-use quecto::infrastructure::tools::subagent_registry::SubagentEntry;
+use quecto::infrastructure::tools::agents::subagent_registry::SubagentEntry;
 
 use crate::QuectoWorld;
 use crate::parent_control_steps::{SupervisorRig, state};
@@ -365,7 +365,7 @@ fn given_fixture_process(world: &mut QuectoWorld) {
         .spawn()
         .unwrap();
     state(world).fixture = Some(child);
-    let registry = quecto::infrastructure::tools::agent_cmd::AgentCmdTool::new_registry();
+    let registry = quecto::infrastructure::tools::agents::agent_cmd::AgentCmdTool::new_registry();
     world.agent_cmd_registry = Some(registry);
 }
 
@@ -436,7 +436,7 @@ fn when_production_paths(world: &mut QuectoWorld) {
             broadcast_tx: None,
             notify_tx: None,
             harness_lifecycle:
-                quecto::infrastructure::tools::harness_lifecycle::new_shared_harness_lifecycle(),
+                quecto::infrastructure::tools::agents::harness_lifecycle::new_shared_harness_lifecycle(),
         },
     );
     let runtime = tokio::runtime::Runtime::new().unwrap();

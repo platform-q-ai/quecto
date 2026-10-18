@@ -111,7 +111,7 @@ async fn disconnect_sentinels_never_consume_command_capacity() {
 async fn recv_next_message_prefers_client_message_when_ready() {
     let (cmd_tx, mut cmd_rx) = tokio::sync::mpsc::channel(2);
     let (_notif_tx, notif_rx) =
-        crate::infrastructure::tools::subagent_registry::new_notification_channel();
+        crate::infrastructure::tools::agents::subagent_registry::new_notification_channel();
     cmd_tx
         .send(ClientMessage::Command(ClientCommand {
             line: r#"{"type":"get_state"}"#.to_string(),
@@ -143,12 +143,12 @@ async fn recv_next_message_prefers_client_message_when_ready() {
 async fn recv_next_message_returns_notification_when_no_client_ready() {
     let (_cmd_tx, mut cmd_rx) = tokio::sync::mpsc::channel(1);
     let (notif_tx, notif_rx) =
-        crate::infrastructure::tools::subagent_registry::new_notification_channel();
+        crate::infrastructure::tools::agents::subagent_registry::new_notification_channel();
     notif_tx
         .send(
-            crate::infrastructure::tools::subagent_registry::SequencedSubagentNotification::new(
+            crate::infrastructure::tools::agents::subagent_registry::SequencedSubagentNotification::new(
                 3,
-                crate::infrastructure::tools::subagent_registry::SubagentNotification::Completed {
+                crate::infrastructure::tools::agents::subagent_registry::SubagentNotification::Completed {
                     agent_id: "child".to_string(),
                 },
             ),
@@ -358,7 +358,7 @@ async fn final_roster_snapshot_does_not_preserve_historical_exit_barrier_with_ki
         PersistedSubagentRosterEntry, Session, SubagentLiveness, SubagentRestoreReason,
     };
     use crate::infrastructure::persistence::session_store::FileSessionStore;
-    use crate::infrastructure::tools::subagent_registry::new_registry;
+    use crate::infrastructure::tools::agents::subagent_registry::new_registry;
 
     fn row(
         agent_uuid: &str,
@@ -431,7 +431,7 @@ async fn final_roster_snapshot_does_not_preserve_historical_exit_barrier() {
         PersistedSubagentRosterEntry, Session, SubagentLiveness, SubagentRestoreReason,
     };
     use crate::infrastructure::persistence::session_store::FileSessionStore;
-    use crate::infrastructure::tools::subagent_registry::new_registry;
+    use crate::infrastructure::tools::agents::subagent_registry::new_registry;
 
     let tmp = tempfile::TempDir::new().unwrap();
     let store = FileSessionStore::new(
@@ -490,7 +490,7 @@ async fn commands_outrank_sentinels_with_a_live_notification_channel() {
     let (cmd_tx, mut cmd_rx) = tokio::sync::mpsc::channel::<ClientMessage>(2);
     let (disconnect_tx, mut disconnect_rx) = tokio::sync::mpsc::unbounded_channel();
     let (_notif_tx, notif_rx) =
-        crate::infrastructure::tools::subagent_registry::new_notification_channel();
+        crate::infrastructure::tools::agents::subagent_registry::new_notification_channel();
     let mut with_notifications = Some(notif_rx);
     disconnect_tx
         .send(ClientDisconnected { client_id: 5 })

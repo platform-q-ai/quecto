@@ -6,7 +6,7 @@ use serde_json::json;
 #[when("a swarm participant requests a workflow-enabled worker")]
 async fn reject_workflow(world: &mut QuectoWorld) {
     use quecto::application::tools::ports::Tool;
-    let tool = quecto::infrastructure::tools::spawn::SpawnTool::new(vec![])
+    let tool = quecto::infrastructure::tools::agents::spawn::SpawnTool::new(vec![])
         .with_swarm_context(Some(
             quecto::infrastructure::tools::swarm::swarm_bridge::SwarmContext {
                 board: quecto::composition::swarm::swarm_board(),
@@ -34,7 +34,7 @@ async fn ordinary_container_workflow(world: &mut QuectoWorld) {
     use quecto::application::tools::ports::Tool;
     // No container runtime is configured here, so the launch fails later on
     // configuration; the point is that validation no longer refuses workflow.
-    let tool = quecto::infrastructure::tools::spawn::SpawnTool::new(vec![]);
+    let tool = quecto::infrastructure::tools::agents::spawn::SpawnTool::new(vec![]);
     world.swarm_result = Some(
         tool.execute(r#"{"agent_id":"c2","container":true,"workflow":true}"#)
             .await

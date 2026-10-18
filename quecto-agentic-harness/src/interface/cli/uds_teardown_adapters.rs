@@ -21,8 +21,8 @@ use crate::domain::agents::services::subagent_teardown::{
     DelegatedAgentIdentity, HarnessLifecycleState, LineageRecord, LineageSnapshot, ShutdownReason,
 };
 use crate::domain::ids::AgentUuid;
-use crate::infrastructure::tools::harness_lifecycle::SharedHarnessLifecycle;
-use crate::infrastructure::tools::subagent_registry::SubagentRegistry;
+use crate::infrastructure::tools::agents::harness_lifecycle::SharedHarnessLifecycle;
+use crate::infrastructure::tools::agents::subagent_registry::SubagentRegistry;
 use crate::interface::uds::subagent_teardown::presenter::{AckWriteError, AckWriter};
 use crate::interface::uds::subagent_teardown::wire::TeardownResponse;
 
@@ -221,7 +221,7 @@ impl SubagentLifecycleRepository for RegistryLifecycleRepository {
                 if entry.persisted_liveness
                     == crate::domain::sessions::entities::session::SubagentLiveness::Dead
                     || entry.status
-                        == crate::infrastructure::tools::subagent_registry::SubagentStatus::Exited
+                        == crate::infrastructure::tools::agents::subagent_registry::SubagentStatus::Exited
                 {
                     continue;
                 }

@@ -10,10 +10,10 @@ pub(super) async fn forward_subagent_sync(
     epoch: u64,
     since_rev: u64,
 ) -> AgentEvent {
-    use crate::infrastructure::tools::subagent_registry::{
+    use crate::infrastructure::tools::agents::subagent_registry::{
         INSPECTOR_RESPONSE_TIMEOUT, send_subagent_uds_command_with_timeout,
     };
-    use crate::infrastructure::tools::subagent_routing::{
+    use crate::infrastructure::tools::agents::subagent_routing::{
         InspectionRoute, resolve_inspection_route,
     };
     let id_ref = id.as_ref().map(CommandId::as_str);

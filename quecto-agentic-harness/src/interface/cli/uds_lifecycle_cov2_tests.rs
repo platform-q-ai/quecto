@@ -562,7 +562,7 @@ async fn composed_runtime_warning_reaches_multi_client_push_and_requested_state(
 #[test]
 fn the_single_client_loop_waits_for_a_launch_rollback_at_exit() {
     use std::io::BufRead;
-    let work = crate::infrastructure::tools::launch_rollbacks::InFlight::enter();
+    let work = crate::infrastructure::tools::agents::launch_rollbacks::InFlight::enter();
     let dir = tempfile::tempdir().unwrap();
     let (client, server_std) = std::os::unix::net::UnixStream::pair().unwrap();
     let task = std::thread::spawn(move || {

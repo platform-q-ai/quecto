@@ -114,7 +114,7 @@ fn when_launcher_composed_with_discovery(world: &mut QuectoWorld) {
         .container_config_roster()
         .expect("the checkout launcher composes the roster query");
     world.agent_cmd_tool = Some(
-        quecto::infrastructure::tools::agent_cmd::AgentCmdTool::new(registry)
+        quecto::infrastructure::tools::agents::agent_cmd::AgentCmdTool::new(registry)
             .with_container_config_roster(Some(roster)),
     );
     world.spawn_tool = Some(spawn);

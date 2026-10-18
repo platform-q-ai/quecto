@@ -1,5 +1,5 @@
 use super::*;
-use quecto::infrastructure::tools::subagent_registry::{
+use quecto::infrastructure::tools::agents::subagent_registry::{
     SubagentEntry, SubagentStatus, new_registry,
 };
 use quecto::interface::cli::protocol::{

@@ -9,7 +9,7 @@ use quecto::application::environments::ports::HostedSwarmBoard;
 use quecto::domain::environments::entities::environment_registry::{
     EnvironmentOrigin, EnvironmentRecord, EnvironmentStatus, mint_environment_uuid,
 };
-use quecto::infrastructure::tools::environment_commands::HostedStoreObservation;
+use quecto::infrastructure::tools::agents::environment_commands::HostedStoreObservation;
 use quecto::infrastructure::tools::swarm::swarm_bridge::SwarmContext;
 use serde_json::json;
 

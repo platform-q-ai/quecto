@@ -22,7 +22,7 @@ fn bdd_feature_config() -> WorkflowConfig {
     }
 }
 
-use quecto::infrastructure::tools::subagent_registry::{
+use quecto::infrastructure::tools::agents::subagent_registry::{
     SubagentEntry, SubagentStatus, WorkflowSnapshot, new_registry,
 };
 use quecto::infrastructure::tools::workflow_tool::{broadcast_emitter, snapshot_to_event};
@@ -153,7 +153,7 @@ fn given_parent_with_subagent(world: &mut QuectoWorld, parent: String, child: St
 
 #[when(expr = "{string} advances its workflow")]
 fn when_child_advances_workflow(world: &mut QuectoWorld, child: String) {
-    use quecto::infrastructure::tools::subagent_monitor::forward_child_workflow_event;
+    use quecto::infrastructure::tools::agents::subagent_monitor::forward_child_workflow_event;
     // The child emits its own workflow_state line; the parent's monitor
     // re-stamps it with the child's identity before forwarding.
     let engine = WorkflowEngine::new(bdd_feature_config(), false).unwrap();

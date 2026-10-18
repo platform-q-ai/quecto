@@ -2,7 +2,7 @@
 use super::super::uds_dispatch_sync_forward::forward_subagent_sync;
 use super::{AgentCommand, ForwardGetMessage, dispatch_command, forward_subagent_get_message};
 use crate::domain::conversation::value_objects::message::Message;
-use crate::infrastructure::tools::subagent_registry::new_registry;
+use crate::infrastructure::tools::agents::subagent_registry::new_registry;
 
 use super::tests_843::{
     Fx, register_child, spawn_recording_child, spawn_recording_get_message_child,

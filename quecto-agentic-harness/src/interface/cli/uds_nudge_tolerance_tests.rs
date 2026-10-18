@@ -390,11 +390,12 @@ async fn unrelated_pending_turn_progress_is_not_attributed_to_the_nudge() {
     // progress), call 1 is the drained sub-agent note's turn (advances the
     // workflow), calls 2-3 are the remaining nudged turns (no progress).
     let mut env = Env::with_progress_script(vec![false, true, false, false]);
-    let (tx, rx) = crate::infrastructure::tools::subagent_registry::new_notification_channel();
+    let (tx, rx) =
+        crate::infrastructure::tools::agents::subagent_registry::new_notification_channel();
     tx.try_send(
-        crate::infrastructure::tools::subagent_registry::SequencedSubagentNotification::new(
+        crate::infrastructure::tools::agents::subagent_registry::SequencedSubagentNotification::new(
             1,
-            crate::infrastructure::tools::subagent_registry::SubagentNotification::Completed {
+            crate::infrastructure::tools::agents::subagent_registry::SubagentNotification::Completed {
                 agent_id: "child-1".into(),
             },
         ),
@@ -431,7 +432,7 @@ async fn unrelated_pending_turn_progress_is_not_attributed_to_the_nudge() {
 #[tokio::test]
 #[serial_test::serial(workflow_nudge_injection_hook)]
 async fn selected_nudge_is_cancelled_when_direct_child_becomes_active_before_injection() {
-    use crate::infrastructure::tools::subagent_registry::{
+    use crate::infrastructure::tools::agents::subagent_registry::{
         SubagentEntry, SubagentStatus, new_registry,
     };
 
@@ -462,7 +463,7 @@ async fn selected_nudge_is_cancelled_when_direct_child_becomes_active_before_inj
 #[tokio::test]
 #[serial_test::serial(workflow_nudge_injection_hook)]
 async fn selected_nudge_is_cancelled_when_transitive_descendant_becomes_active_before_injection() {
-    use crate::infrastructure::tools::subagent_registry::{
+    use crate::infrastructure::tools::agents::subagent_registry::{
         SubagentEntry, SubagentStatus, new_registry,
     };
 
@@ -496,7 +497,7 @@ async fn selected_nudge_is_cancelled_when_transitive_descendant_becomes_active_b
 #[tokio::test]
 #[serial_test::serial(workflow_nudge_injection_hook)]
 async fn selected_nudge_runs_when_unrelated_child_becomes_active_before_injection() {
-    use crate::infrastructure::tools::subagent_registry::{
+    use crate::infrastructure::tools::agents::subagent_registry::{
         SubagentEntry, SubagentStatus, new_registry,
     };
 
@@ -528,7 +529,7 @@ async fn selected_nudge_runs_when_unrelated_child_becomes_active_before_injectio
 #[serial_test::serial(workflow_nudge_injection_hook)]
 async fn selected_nudge_is_cancelled_when_child_becomes_active_after_final_recheck_before_turn_admission()
  {
-    use crate::infrastructure::tools::subagent_registry::{
+    use crate::infrastructure::tools::agents::subagent_registry::{
         SubagentEntry, SubagentStatus, new_registry,
     };
 

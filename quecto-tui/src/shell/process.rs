@@ -19,7 +19,7 @@ use std::time::Duration;
 // `infrastructure/processes/direct_child_routing.rs`,
 // `TerminationBudget::DEFAULT` in `infrastructure/processes/owned_child_supervisor.rs`,
 // `COMPENSATION_WAIT_SLACK` / `DEFAULT_COMPENSATION_WAIT` in
-// `infrastructure/tools/subagent_teardown_registry.rs`, and
+// `infrastructure/tools/agents/subagent_teardown_registry.rs`, and
 // `FORCE_EXIT_AFTER` in `interface/cli/uds_shutdown.rs`. The TUI does not
 // depend on the harness crate, so they are restated here and pinned against
 // the harness sources by `budget_tests.rs`.

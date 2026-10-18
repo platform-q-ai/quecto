@@ -17,11 +17,11 @@ use quecto::domain::agents::services::subagent_teardown::{
     DelegatedAgentIdentity, LaunchGeneration,
 };
 use quecto::domain::ids::AgentUuid;
-use quecto::infrastructure::tools::subagent_registry::{
+use quecto::infrastructure::tools::agents::subagent_registry::{
     ExitSignalKind, SubagentEntry, SubagentNotification, SubagentRegistry, SubagentStatus,
     TeardownPhase, new_exit_signal_channel, new_notification_channel,
 };
-use quecto::infrastructure::tools::subagent_teardown_registry::RegistryDelegatedAgents;
+use quecto::infrastructure::tools::agents::subagent_teardown_registry::RegistryDelegatedAgents;
 
 fn identity(uuid: &str) -> DelegatedAgentIdentity {
     DelegatedAgentIdentity::new(uuid, LaunchGeneration::new(1))

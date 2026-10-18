@@ -8,10 +8,10 @@ use std::time::{Duration, Instant};
 
 use cucumber::{given, then, when};
 use quecto::application::tools::ports::Tool;
-use quecto::infrastructure::tools::agent_cmd::AgentCmdTool;
-use quecto::infrastructure::tools::spawn::SpawnTool;
-use quecto::infrastructure::tools::subagent_monitor_merge::REPORTED_DESCENDANT_PID;
-use quecto::infrastructure::tools::subagent_registry::{SubagentRegistry, SubagentStatus};
+use quecto::infrastructure::tools::agents::agent_cmd::AgentCmdTool;
+use quecto::infrastructure::tools::agents::spawn::SpawnTool;
+use quecto::infrastructure::tools::agents::subagent_monitor_merge::REPORTED_DESCENDANT_PID;
+use quecto::infrastructure::tools::agents::subagent_registry::{SubagentRegistry, SubagentStatus};
 
 use crate::QuectoWorld;
 

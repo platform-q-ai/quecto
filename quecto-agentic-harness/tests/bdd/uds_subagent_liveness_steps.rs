@@ -139,7 +139,7 @@ fn registry_holds(world: &mut QuectoWorld, a: String, b: String) {
 /// fleet teardown (#1938), which settles them unobserved and prunes them.
 #[when(expr = "a client sends delete_all_subagents with correlation id {string}")]
 fn send_delete_all(world: &mut QuectoWorld, id: String) {
-    use quecto::infrastructure::tools::subagent_registry::{SubagentEntry, new_registry};
+    use quecto::infrastructure::tools::agents::subagent_registry::{SubagentEntry, new_registry};
     let registry = new_registry();
     for (index, name) in world.subagent_liveness_registry_names.iter().enumerate() {
         let uuid = quecto::domain::ids::AgentUuid::mint();
@@ -163,7 +163,7 @@ fn send_delete_all(world: &mut QuectoWorld, id: String) {
             broadcast_tx: None,
             notify_tx: None,
             harness_lifecycle:
-                quecto::infrastructure::tools::harness_lifecycle::new_shared_harness_lifecycle(),
+                quecto::infrastructure::tools::agents::harness_lifecycle::new_shared_harness_lifecycle(),
         },
     );
     let rt = tokio::runtime::Builder::new_multi_thread()

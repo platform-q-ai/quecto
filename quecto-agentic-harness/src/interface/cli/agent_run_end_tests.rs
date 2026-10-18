@@ -13,7 +13,7 @@ use crate::domain::environments::entities::environment_registry::{
     EnvironmentOrigin, EnvironmentRecord, EnvironmentRegistry, EnvironmentStatus,
     mint_environment_uuid,
 };
-use crate::infrastructure::tools::subagent_registry::{SubagentEntry, SubagentRegistry};
+use crate::infrastructure::tools::agents::subagent_registry::{SubagentEntry, SubagentRegistry};
 use crate::interface::cli::run_end_fleet::{RunEnd, RunHandles};
 
 /// One launched plain container child, the only member of the environment
@@ -94,7 +94,7 @@ impl Child {
                 Some(crate::composition::subagent_teardown::build_run_end_fleet),
                 Some(self.registry.clone()),
                 Some(
-                    crate::infrastructure::tools::harness_lifecycle::new_shared_harness_lifecycle(),
+                    crate::infrastructure::tools::agents::harness_lifecycle::new_shared_harness_lifecycle(),
                 ),
                 false,
             ),

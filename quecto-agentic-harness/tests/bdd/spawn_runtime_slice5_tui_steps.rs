@@ -96,12 +96,13 @@ fn is_environment_row(row: &str, env_ref: &str) -> bool {
             .is_none_or(|c| c == ' ')
 }
 
-fn test_entry() -> quecto::infrastructure::tools::subagent_registry::SubagentEntry {
-    let mut entry = quecto::infrastructure::tools::subagent_registry::SubagentEntry::new(
+fn test_entry() -> quecto::infrastructure::tools::agents::subagent_registry::SubagentEntry {
+    let mut entry = quecto::infrastructure::tools::agents::subagent_registry::SubagentEntry::new(
         std::path::PathBuf::new(),
         0,
     );
-    entry.status = quecto::infrastructure::tools::subagent_registry::SubagentStatus::Running;
+    entry.status =
+        quecto::infrastructure::tools::agents::subagent_registry::SubagentStatus::Running;
     entry
 }
 
@@ -117,7 +118,7 @@ fn given_killed_subtree_harness_broadcast(
     grandchild: String,
     sibling: String,
 ) {
-    let registry = quecto::infrastructure::tools::subagent_registry::new_registry();
+    let registry = quecto::infrastructure::tools::agents::subagent_registry::new_registry();
     {
         let mut guard = registry.lock().unwrap();
         guard.insert(parent.clone(), test_entry());
@@ -130,9 +131,10 @@ fn given_killed_subtree_harness_broadcast(
         guard.insert(sibling, test_entry());
     }
 
-    let outcome = quecto::infrastructure::tools::subagent_cascade::cascade_remove_and_state_changed(
-        &registry, &child,
-    );
+    let outcome =
+        quecto::infrastructure::tools::agents::subagent_cascade::cascade_remove_and_state_changed(
+            &registry, &child,
+        );
     let line = outcome.event.expect("killed subtree broadcast");
     world.cascade_broadcast = Some(Some(serde_json::from_str(&line).unwrap()));
 }

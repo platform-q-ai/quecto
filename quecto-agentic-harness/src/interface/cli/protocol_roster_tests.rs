@@ -1,6 +1,6 @@
 //! The interface side of the compact roster: the `get_subagents` command and
 //! its `since` cursor. The roster itself is built (and tested) beside the
-//! registry in `infrastructure/tools/subagent_compact_roster.rs`.
+//! registry in `infrastructure/tools/agents/subagent_compact_roster.rs`.
 use super::*;
 
 #[test]

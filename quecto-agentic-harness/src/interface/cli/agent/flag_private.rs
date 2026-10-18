@@ -26,7 +26,7 @@ pub(super) fn load_inherited_tool_policy_for_valid_child(
         return None;
     }
 
-    match crate::infrastructure::tools::inherited_tool_policy::load_validate_unlink(path) {
+    match crate::infrastructure::tools::agents::inherited_tool_policy::load_validate_unlink(path) {
         Ok(snapshot) => {
             flags.inherited_tool_policy = Some(snapshot);
             Some(())

@@ -135,8 +135,8 @@ impl Rig {
                 persistence: persistence.clone(),
                 exit: exit.clone(),
                 spawner: spawner.clone(),
-                owner_exit: quecto::infrastructure::tools::owner_exit::OwnerExitFlag::new(),
-                retained: quecto::infrastructure::tools::retained_environment_teardown::SlotRetainedEnvironmentTeardown::new(Default::default()),
+                owner_exit: quecto::infrastructure::tools::agents::owner_exit::OwnerExitFlag::new(),
+                retained: quecto::infrastructure::tools::agents::retained_environment_teardown::SlotRetainedEnvironmentTeardown::new(Default::default()),
             },
         ));
         let terminate = Arc::new(TerminateDelegatedAgent::new(

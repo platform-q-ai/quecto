@@ -43,7 +43,7 @@ pub(crate) struct ClientHandlerArgs {
     /// Sub-agent registry, read mid-turn to serve `get_subagents` and forward
     /// child-targeted `sync` off the blocked dispatcher (spike).
     pub(crate) subagent_registry:
-        Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
+        Option<crate::infrastructure::tools::agents::subagent_registry::SubagentRegistry>,
     /// Launch-bound parent control and teardown edge (#1935). `None` only
     /// for test rigs that exercise the plain reader path.
     pub(crate) teardown: Option<Arc<ConnectionTeardown>>,

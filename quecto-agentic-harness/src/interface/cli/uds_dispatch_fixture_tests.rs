@@ -38,7 +38,8 @@ pub(super) struct Fixture {
     /// and the active session's marker. Default `""` keeps existing callers
     /// free of live/durable skew.
     pub(super) system_prompt: String,
-    subagent_registry: Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
+    subagent_registry:
+        Option<crate::infrastructure::tools::agents::subagent_registry::SubagentRegistry>,
     /// The run's reloadable configuration (#1849): `Some` composes the
     /// reload use case over it and installs its tool-policy persistence on
     /// the agent, as the CLI's agent build does.
@@ -163,7 +164,7 @@ impl Fixture {
     /// transaction records it.
     pub(super) fn set_subagent_registry(
         &mut self,
-        registry: crate::infrastructure::tools::subagent_registry::SubagentRegistry,
+        registry: crate::infrastructure::tools::agents::subagent_registry::SubagentRegistry,
     ) {
         self.subagent_registry = Some(registry);
         self.compose_sessions();

@@ -18,7 +18,7 @@ const CLIENT_ID: u64 = 7;
 /// fleet teardown a busy-path `delete_all_subagents` invokes (#1938).
 async fn run(
     line: &str,
-    subagents: &Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
+    subagents: &Option<crate::infrastructure::tools::agents::subagent_registry::SubagentRegistry>,
     fleet: Option<
         &std::sync::Arc<crate::application::subagents::use_cases::TerminateAllDelegatedAgents>,
     >,
@@ -116,7 +116,7 @@ async fn child_targeted_sync_is_answered_off_the_dispatch_loop() {
 #[tokio::test]
 async fn child_targeted_sync_reports_unknown_child_as_error() {
     let (clients, mut rx) = registry_with_writer();
-    let registry = Some(crate::infrastructure::tools::subagent_registry::new_registry());
+    let registry = Some(crate::infrastructure::tools::agents::subagent_registry::new_registry());
 
     assert!(
         run(
@@ -213,8 +213,8 @@ async fn direct_feed_sync_is_served_inline_by_the_child_local_fast_path() {
 /// process is owned, so the fleet compensates them unobserved.
 fn delegated_registry(
     names: &[&str],
-) -> crate::infrastructure::tools::subagent_registry::SubagentRegistry {
-    use crate::infrastructure::tools::subagent_registry::{SubagentEntry, new_registry};
+) -> crate::infrastructure::tools::agents::subagent_registry::SubagentRegistry {
+    use crate::infrastructure::tools::agents::subagent_registry::{SubagentEntry, new_registry};
     let registry = new_registry();
     for (index, name) in names.iter().enumerate() {
         let uuid = crate::domain::ids::AgentUuid::mint();
@@ -235,7 +235,7 @@ fn delegated_registry(
 }
 
 fn fleet_over(
-    registry: &crate::infrastructure::tools::subagent_registry::SubagentRegistry,
+    registry: &crate::infrastructure::tools::agents::subagent_registry::SubagentRegistry,
     broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
 ) -> std::sync::Arc<crate::application::subagents::use_cases::TerminateAllDelegatedAgents> {
     crate::composition::subagent_teardown::build_fleet_teardown(
@@ -245,7 +245,7 @@ fn fleet_over(
             broadcast_tx,
             notify_tx: None,
             harness_lifecycle:
-                crate::infrastructure::tools::harness_lifecycle::new_shared_harness_lifecycle(),
+                crate::infrastructure::tools::agents::harness_lifecycle::new_shared_harness_lifecycle(),
         },
     )
 }

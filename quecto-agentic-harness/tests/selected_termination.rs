@@ -13,7 +13,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use quecto::application::tools::ports::Tool;
-use quecto::infrastructure::tools::subagent_registry::{SubagentRegistry, SubagentStatus};
+use quecto::infrastructure::tools::agents::subagent_registry::{SubagentRegistry, SubagentStatus};
 use quecto::interface::cli::KillToolWiring;
 
 const READY_TIMEOUT: Duration = Duration::from_secs(120);
@@ -193,14 +193,17 @@ async fn killing_nested_b_ends_its_subtree_while_a_and_c_survive_then_killing_a_
         std::env::set_var("QUECTO_CHILD_BINARY", env!("CARGO_BIN_EXE_quecto"));
         std::env::set_var("QUECTO_BASE_DIR", &base);
     }
-    let registry = quecto::infrastructure::tools::agent_cmd::AgentCmdTool::new_registry();
+    let registry = quecto::infrastructure::tools::agents::agent_cmd::AgentCmdTool::new_registry();
     let (broadcast_tx, _broadcast_rx) = tokio::sync::broadcast::channel::<String>(256);
     let spawn = quecto::composition::subagent_lifecycle::compose_launcher(
-        quecto::infrastructure::tools::spawn::SpawnTool::with_base_dir(vec![], base.clone())
-            .with_socket_dir(sockets.clone())
-            .with_registry(registry.clone())
-            .with_parent_config_path(Some(config.clone()))
-            .with_event_forwarding(Some(broadcast_tx.clone()), Some("root".into())),
+        quecto::infrastructure::tools::agents::spawn::SpawnTool::with_base_dir(
+            vec![],
+            base.clone(),
+        )
+        .with_socket_dir(sockets.clone())
+        .with_registry(registry.clone())
+        .with_parent_config_path(Some(config.clone()))
+        .with_event_forwarding(Some(broadcast_tx.clone()), Some("root".into())),
     );
     let kill = quecto::composition::subagent_termination::build_kill_tool(KillToolWiring {
         owner: quecto::domain::ids::AgentUuid::new("root"),
@@ -208,7 +211,7 @@ async fn killing_nested_b_ends_its_subtree_while_a_and_c_survive_then_killing_a_
         broadcast_tx: Some(broadcast_tx),
         notify_tx: None,
         harness_lifecycle:
-            quecto::infrastructure::tools::harness_lifecycle::new_shared_harness_lifecycle(),
+            quecto::infrastructure::tools::agents::harness_lifecycle::new_shared_harness_lifecycle(),
         environment_registry:
             quecto::domain::environments::entities::environment_registry::EnvironmentRegistry::new(),
         slots: Default::default(),
@@ -347,14 +350,17 @@ async fn killing_a_busy_child_is_graceful_and_prompt() {
         std::env::set_var("QUECTO_CHILD_BINARY", env!("CARGO_BIN_EXE_quecto"));
         std::env::set_var("QUECTO_BASE_DIR", &base);
     }
-    let registry = quecto::infrastructure::tools::agent_cmd::AgentCmdTool::new_registry();
+    let registry = quecto::infrastructure::tools::agents::agent_cmd::AgentCmdTool::new_registry();
     let (broadcast_tx, _broadcast_rx) = tokio::sync::broadcast::channel::<String>(256);
     let spawn = quecto::composition::subagent_lifecycle::compose_launcher(
-        quecto::infrastructure::tools::spawn::SpawnTool::with_base_dir(vec![], base.clone())
-            .with_socket_dir(sockets.clone())
-            .with_registry(registry.clone())
-            .with_parent_config_path(Some(config.clone()))
-            .with_event_forwarding(Some(broadcast_tx.clone()), Some("root".into())),
+        quecto::infrastructure::tools::agents::spawn::SpawnTool::with_base_dir(
+            vec![],
+            base.clone(),
+        )
+        .with_socket_dir(sockets.clone())
+        .with_registry(registry.clone())
+        .with_parent_config_path(Some(config.clone()))
+        .with_event_forwarding(Some(broadcast_tx.clone()), Some("root".into())),
     );
     let kill = quecto::composition::subagent_termination::build_kill_tool(KillToolWiring {
         owner: quecto::domain::ids::AgentUuid::new("root"),
@@ -362,7 +368,7 @@ async fn killing_a_busy_child_is_graceful_and_prompt() {
         broadcast_tx: Some(broadcast_tx),
         notify_tx: None,
         harness_lifecycle:
-            quecto::infrastructure::tools::harness_lifecycle::new_shared_harness_lifecycle(),
+            quecto::infrastructure::tools::agents::harness_lifecycle::new_shared_harness_lifecycle(),
         environment_registry:
             quecto::domain::environments::entities::environment_registry::EnvironmentRegistry::new(),
         slots: Default::default(),
@@ -497,14 +503,17 @@ async fn a_nested_child_that_acknowledges_but_never_exits_is_ended_by_its_owners
             "1",
         );
     }
-    let registry = quecto::infrastructure::tools::agent_cmd::AgentCmdTool::new_registry();
+    let registry = quecto::infrastructure::tools::agents::agent_cmd::AgentCmdTool::new_registry();
     let (broadcast_tx, _broadcast_rx) = tokio::sync::broadcast::channel::<String>(256);
     let spawn = quecto::composition::subagent_lifecycle::compose_launcher(
-        quecto::infrastructure::tools::spawn::SpawnTool::with_base_dir(vec![], base.clone())
-            .with_socket_dir(sockets.clone())
-            .with_registry(registry.clone())
-            .with_parent_config_path(Some(config.clone()))
-            .with_event_forwarding(Some(broadcast_tx.clone()), Some("root".into())),
+        quecto::infrastructure::tools::agents::spawn::SpawnTool::with_base_dir(
+            vec![],
+            base.clone(),
+        )
+        .with_socket_dir(sockets.clone())
+        .with_registry(registry.clone())
+        .with_parent_config_path(Some(config.clone()))
+        .with_event_forwarding(Some(broadcast_tx.clone()), Some("root".into())),
     );
     let kill = quecto::composition::subagent_termination::build_kill_tool(KillToolWiring {
         owner: quecto::domain::ids::AgentUuid::new("root"),
@@ -512,7 +521,7 @@ async fn a_nested_child_that_acknowledges_but_never_exits_is_ended_by_its_owners
         broadcast_tx: Some(broadcast_tx),
         notify_tx: None,
         harness_lifecycle:
-            quecto::infrastructure::tools::harness_lifecycle::new_shared_harness_lifecycle(),
+            quecto::infrastructure::tools::agents::harness_lifecycle::new_shared_harness_lifecycle(),
         environment_registry:
             quecto::domain::environments::entities::environment_registry::EnvironmentRegistry::new(),
         slots: Default::default(),

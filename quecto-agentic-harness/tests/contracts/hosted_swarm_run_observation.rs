@@ -12,7 +12,7 @@ use quecto::domain::environments::entities::environment_registry::{
 };
 use quecto::domain::environments::services::environment_retention::SwarmRunObservation;
 use quecto::domain::swarm::RunStatus;
-use quecto::infrastructure::tools::environment_commands::HostedStoreObservation;
+use quecto::infrastructure::tools::agents::environment_commands::HostedStoreObservation;
 use quecto::infrastructure::tools::swarm::swarm_bridge::SwarmContext;
 
 fn port() -> Arc<dyn HostedSwarmRunObservation + Send + Sync> {

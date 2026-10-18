@@ -17,7 +17,7 @@ use quecto::infrastructure::processes::owned_child_supervisor::{
     ChildHandleId, OwnedChildSupervisor, ProcessGroup, SentSignal, TerminationBudget,
 };
 use quecto::infrastructure::processes::owned_child_termination::SupervisedChildTermination;
-use quecto::infrastructure::tools::subagent_registry::{SubagentEntry, SubagentRegistry};
+use quecto::infrastructure::tools::agents::subagent_registry::{SubagentEntry, SubagentRegistry};
 
 const FAST: TerminationBudget = TerminationBudget {
     exit_after_ack: Duration::from_millis(300),

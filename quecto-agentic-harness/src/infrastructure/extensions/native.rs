@@ -202,8 +202,9 @@ pub struct AgentControlToolDeps {
     pub socket_dir: PathBuf,
     pub broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
     pub parent_session_name: Option<String>,
-    pub inherited_tool_policy:
-        Option<crate::infrastructure::tools::inherited_tool_policy::InheritedToolPolicySnapshot>,
+    pub inherited_tool_policy: Option<
+        crate::infrastructure::tools::agents::inherited_tool_policy::InheritedToolPolicySnapshot,
+    >,
     /// The parent agent's own config path (#1369 follow-up): container spawns
     /// without an explicit `config` argument fall back to it.
     pub parent_config_path: Option<PathBuf>,
@@ -236,18 +237,20 @@ pub struct AgentControlToolDeps {
 
 pub struct AgentControlToolBuild {
     pub extensions: Vec<Arc<dyn Extension>>,
-    pub subagent_registry: crate::infrastructure::tools::subagent_registry::SubagentRegistry,
+    pub subagent_registry:
+        crate::infrastructure::tools::agents::subagent_registry::SubagentRegistry,
     /// The one lifecycle cell this composition's spawn admission reads (#1938).
-    pub harness_lifecycle: crate::infrastructure::tools::harness_lifecycle::SharedHarnessLifecycle,
-    pub notification_tx: crate::infrastructure::tools::subagent_registry::NotificationTx,
-    pub notification_rx: crate::infrastructure::tools::subagent_registry::NotificationRx,
+    pub harness_lifecycle:
+        crate::infrastructure::tools::agents::harness_lifecycle::SharedHarnessLifecycle,
+    pub notification_tx: crate::infrastructure::tools::agents::subagent_registry::NotificationTx,
+    pub notification_rx: crate::infrastructure::tools::agents::subagent_registry::NotificationRx,
     /// The slots the built tools read their composed use cases from
     /// (#1936, #1939): `agent_cmd kill`, the launch lifecycle the spawn
     /// tool hands its reaper and monitor, and the environment control
     /// `agent_cmd` serves. Composition fills them; this layer never
     /// composes a use case.
     pub termination_slots:
-        crate::infrastructure::tools::environment_member_shutdown::TerminationSlots,
+        crate::infrastructure::tools::agents::environment_member_shutdown::TerminationSlots,
     /// The session-scoped environment registry the spawn tool commits
     /// members to; composition builds the environment control over it.
     pub environment_registry:
@@ -262,25 +265,27 @@ pub struct AgentControlToolBuild {
 }
 
 pub fn build_agent_control_tool_extensions(deps: AgentControlToolDeps) -> AgentControlToolBuild {
-    let registry = crate::infrastructure::tools::agent_cmd::AgentCmdTool::new_registry();
+    let registry = crate::infrastructure::tools::agents::agent_cmd::AgentCmdTool::new_registry();
     let harness_lifecycle =
-        crate::infrastructure::tools::harness_lifecycle::new_shared_harness_lifecycle();
+        crate::infrastructure::tools::agents::harness_lifecycle::new_shared_harness_lifecycle();
     let (notification_tx, notification_rx) = tokio::sync::mpsc::channel(64);
     let environment_registry = deps.environment_registry.unwrap_or_default();
 
-    let mut spawn =
-        crate::infrastructure::tools::spawn::SpawnTool::with_base_dir(Vec::new(), deps.base_dir)
-            .with_swarm_context(deps.swarm_context)
-            .with_swarm_participation(deps.swarm_participation)
-            .with_socket_dir(deps.socket_dir)
-            .with_environment_registry(environment_registry.clone())
-            .with_parent_config_path(deps.parent_config_path)
-            .with_child_extensions(deps.child_extensions)
-            .with_effort_control(deps.effort_control)
-            .with_container_config_selection(deps.container_config_selection)
-            .with_container_config_roster(deps.container_config_roster.clone())
-            .with_owned_child_supervisor(deps.owned_child_supervisor)
-            .with_harness_lifecycle(harness_lifecycle.clone());
+    let mut spawn = crate::infrastructure::tools::agents::spawn::SpawnTool::with_base_dir(
+        Vec::new(),
+        deps.base_dir,
+    )
+    .with_swarm_context(deps.swarm_context)
+    .with_swarm_participation(deps.swarm_participation)
+    .with_socket_dir(deps.socket_dir)
+    .with_environment_registry(environment_registry.clone())
+    .with_parent_config_path(deps.parent_config_path)
+    .with_child_extensions(deps.child_extensions)
+    .with_effort_control(deps.effort_control)
+    .with_container_config_selection(deps.container_config_selection)
+    .with_container_config_roster(deps.container_config_roster.clone())
+    .with_owned_child_supervisor(deps.owned_child_supervisor)
+    .with_harness_lifecycle(harness_lifecycle.clone());
     if let Some(snapshot) = deps.inherited_tool_policy {
         spawn = spawn.with_inherited_tool_policy(snapshot);
     }
@@ -297,13 +302,14 @@ pub fn build_agent_control_tool_extensions(deps: AgentControlToolDeps) -> AgentC
     // launched through the termination composition binds. Empty slots
     // refuse, never compose.
     let termination_slots =
-        crate::infrastructure::tools::environment_member_shutdown::TerminationSlots::default();
+        crate::infrastructure::tools::agents::environment_member_shutdown::TerminationSlots::default();
     let spawn = spawn.with_lifecycle_slot(termination_slots.lifecycle.clone());
-    let agent_cmd = crate::infrastructure::tools::agent_cmd::AgentCmdTool::new(registry.clone())
-        .with_kill_slot(termination_slots.kill.clone())
-        .with_environment_control_slot(termination_slots.environments.clone())
-        .with_ended_child_slot(termination_slots.ended.clone())
-        .with_container_config_roster(deps.container_config_roster);
+    let agent_cmd =
+        crate::infrastructure::tools::agents::agent_cmd::AgentCmdTool::new(registry.clone())
+            .with_kill_slot(termination_slots.kill.clone())
+            .with_environment_control_slot(termination_slots.environments.clone())
+            .with_ended_child_slot(termination_slots.ended.clone())
+            .with_container_config_roster(deps.container_config_roster);
 
     let spawn_tool: Arc<dyn crate::application::tools::ports::Tool> = Arc::new(spawn);
     let agent_cmd_tool: Arc<dyn crate::application::tools::ports::Tool> = Arc::new(agent_cmd);

@@ -44,7 +44,7 @@ use crate::domain::swarm::RunStatus;
 use crate::domain::tool_policy::value_objects::tool::{ToolDefinition, ToolResult};
 use crate::infrastructure::test_support::memory_board_store::MemoryBoardStore;
 use crate::infrastructure::time::board_clock::SystemBoardClock;
-use crate::infrastructure::tools::coordinator_launch::{
+use crate::infrastructure::tools::agents::coordinator_launch::{
     KeptRunReports, KeptSwarmBoards, SpawnCoordinatorLauncher, SpawnPermit,
 };
 
@@ -296,7 +296,7 @@ fn agent_tool(environments: &EnvironmentRegistry) -> super::BoardTool {
         Arc::new(Unused),
         Arc::new(Unused),
         SpawnPermit::default(),
-        crate::infrastructure::tools::subagent_registry::new_registry(),
+        crate::infrastructure::tools::agents::subagent_registry::new_registry(),
     );
     tool(BoardSite::agent(
         ".".into(),

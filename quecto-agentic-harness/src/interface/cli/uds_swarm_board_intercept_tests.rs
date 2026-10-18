@@ -5,7 +5,7 @@
 use super::tests::{Gated, OneBoard, hint, read_over, view};
 use super::{BoardHints, BoardViewCtx, MALFORMED, Seen, intercept};
 use crate::application::environments::dto::HostedBoardRevision;
-use crate::infrastructure::tools::subagent_registry::SubagentRegistry;
+use crate::infrastructure::tools::agents::subagent_registry::SubagentRegistry;
 use serde_json::{Value, json};
 use std::sync::Arc;
 use std::time::Duration;

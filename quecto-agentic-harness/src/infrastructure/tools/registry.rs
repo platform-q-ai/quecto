@@ -246,7 +246,7 @@ impl ToolRegistryImpl {
         self.apply_retained_persisted_policy(&name, &mut metadata);
         // #2216: the closed default never reaches an entrypoint-only tool.
         let closed_default =
-            if crate::infrastructure::tools::inherited_tool_policy::is_entrypoint_only(
+            if crate::infrastructure::tools::agents::inherited_tool_policy::is_entrypoint_only(
                 &name, &metadata,
             ) {
                 None

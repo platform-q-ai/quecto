@@ -1,6 +1,6 @@
 use super::*;
-use quecto::infrastructure::tools::subagent_monitor::spawn_monitor_task;
-use quecto::infrastructure::tools::subagent_registry::{
+use quecto::infrastructure::tools::agents::subagent_monitor::spawn_monitor_task;
+use quecto::infrastructure::tools::agents::subagent_registry::{
     SequencedSubagentNotification, SubagentEntry, SubagentNotification, new_notification_channel,
     new_registry,
 };
@@ -41,7 +41,7 @@ fn drive_monitor_with_lines(
         )
         .observe_exit;
         let handle = spawn_monitor_task(
-            quecto::infrastructure::tools::subagent_monitor::MonitorSpec {
+            quecto::infrastructure::tools::agents::subagent_monitor::MonitorSpec {
                 agent_id: agent_id.to_string(),
                 socket_path: socket_path.clone(),
                 registry,

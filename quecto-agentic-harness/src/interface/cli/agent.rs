@@ -4,8 +4,8 @@ use crate::application::configuration::dto::ConfigSelection;
 use crate::domain::external_agent::backend::MemberBackend;
 use crate::infrastructure::config::Config;
 use crate::infrastructure::extensions::registry::ExtensionRegistry;
-use crate::infrastructure::tools::harness_lifecycle::SharedHarnessLifecycle;
-use crate::infrastructure::tools::subagent_registry::{NotificationRx, SubagentRegistry};
+use crate::infrastructure::tools::agents::harness_lifecycle::SharedHarnessLifecycle;
+use crate::infrastructure::tools::agents::subagent_registry::{NotificationRx, SubagentRegistry};
 use std::sync::Arc;
 /// Max byte length for `--socket` paths (the portable macOS/Linux limit).
 const MAX_SOCKET_PATH_BYTES: usize = 104;

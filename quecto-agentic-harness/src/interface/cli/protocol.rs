@@ -288,7 +288,7 @@ pub struct SubagentInfo {
     pub parent_id: Option<String>,
     /// Latest workflow snapshot for this subagent, if any (PRD Stage B).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub workflow: Option<crate::infrastructure::tools::subagent_registry::WorkflowSnapshot>,
+    pub workflow: Option<crate::infrastructure::tools::agents::subagent_registry::WorkflowSnapshot>,
     /// Whether this sub-agent was spawned read-only (`write` + `edit` disabled).
     /// The TUI renders an observer marker next to its name when true (#966).
     #[serde(default)]
@@ -301,8 +301,9 @@ pub struct SubagentInfo {
     /// Environment metadata for script-managed sub-agents; absent for local
     /// ones. Additive versioned field (#1369 slice 4).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub environment:
-        Option<crate::infrastructure::tools::subagent_environment_wire::SubagentEnvironmentWire>,
+    pub environment: Option<
+        crate::infrastructure::tools::agents::subagent_environment_wire::SubagentEnvironmentWire,
+    >,
     /// The generation a selected termination addresses this agent by
     /// (#1936): minted by the harness that launched it. Absent for rows
     /// that are not delegated agents. Additive versioned field.
@@ -311,7 +312,7 @@ pub struct SubagentInfo {
 }
 
 fn default_execution_backend() -> String {
-    crate::infrastructure::tools::subagent_environment_wire::BACKEND_LOCAL.to_string()
+    crate::infrastructure::tools::agents::subagent_environment_wire::BACKEND_LOCAL.to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -367,7 +368,7 @@ pub struct ToolResultContent {
 /// Acquires the registry mutex briefly and maps each entry to the protocol type.
 /// Returns an empty vec if the registry is `None` or empty.
 pub fn build_subagent_info_list(
-    registry: &Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
+    registry: &Option<crate::infrastructure::tools::agents::subagent_registry::SubagentRegistry>,
 ) -> Vec<SubagentInfo> {
     build_subagent_info_list_filtered(registry, |_| true)
 }
@@ -380,18 +381,18 @@ pub fn build_subagent_info_list(
 /// broadcasts must not resurrect them in clients that treat the event as the
 /// root roster snapshot.
 pub fn build_live_subagent_info_list(
-    registry: &Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
+    registry: &Option<crate::infrastructure::tools::agents::subagent_registry::SubagentRegistry>,
 ) -> Vec<SubagentInfo> {
     build_subagent_info_list_filtered(registry, |effective| {
         effective.persisted_liveness
             == crate::domain::sessions::entities::session::SubagentLiveness::Live
             && *effective.status
-                != crate::infrastructure::tools::subagent_registry::SubagentStatus::Exited
+                != crate::infrastructure::tools::agents::subagent_registry::SubagentStatus::Exited
     })
 }
 
 fn build_subagent_info_list_filtered(
-    registry: &Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
+    registry: &Option<crate::infrastructure::tools::agents::subagent_registry::SubagentRegistry>,
     include: impl Fn(&SubagentInfoBuildEntry<'_>) -> bool,
 ) -> Vec<SubagentInfo> {
     let Some(reg) = registry else {
@@ -403,7 +404,7 @@ fn build_subagent_info_list_filtered(
             .iter()
             .filter_map(|(id, entry)| {
                 let status =
-                    crate::infrastructure::tools::subagent_registry::effective_status(&guard, id)
+                    crate::infrastructure::tools::agents::subagent_registry::effective_status(&guard, id)
                         .unwrap_or_else(|| entry.status.clone());
                 if !include(&SubagentInfoBuildEntry {
                     persisted_liveness: entry.persisted_liveness,
@@ -413,11 +414,11 @@ fn build_subagent_info_list_filtered(
                 }
                 let display_name = entry.effective_display_name(id).to_string();
                 let environment =
-                    crate::infrastructure::tools::subagent_environment_wire::environment_wire(
+                    crate::infrastructure::tools::agents::subagent_environment_wire::environment_wire(
                         entry,
                     );
                 let execution_backend =
-                    crate::infrastructure::tools::subagent_environment_wire::execution_backend(
+                    crate::infrastructure::tools::agents::subagent_environment_wire::execution_backend(
                         entry,
                         environment.as_ref(),
                     );
@@ -460,7 +461,7 @@ fn build_subagent_info_list_filtered(
 
 struct SubagentInfoBuildEntry<'a> {
     persisted_liveness: crate::domain::sessions::entities::session::SubagentLiveness,
-    status: &'a crate::infrastructure::tools::subagent_registry::SubagentStatus,
+    status: &'a crate::infrastructure::tools::agents::subagent_registry::SubagentStatus,
 }
 
 /// The unit tree reconstructed purely from an identity-tagged event stream

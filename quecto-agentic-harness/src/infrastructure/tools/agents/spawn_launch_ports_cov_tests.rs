@@ -1,0 +1,747 @@
+use super::*;
+use crate::infrastructure::tools::agents::spawn_container::PreparedChild;
+use crate::infrastructure::tools::agents::subagent_registry::SubagentEntry;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+
+fn tool() -> SpawnTool {
+    let dir = tempfile::tempdir().unwrap().keep();
+    crate::composition::subagent_lifecycle::compose_launcher(
+        SpawnTool::new(vec![]).with_socket_dir(dir),
+    )
+}
+
+fn config() -> SubagentConfig {
+    SubagentConfig {
+        agent_id: Some("worker".into()),
+        system: None,
+        task: None,
+        model: None,
+        effort: None,
+        config_path: None,
+        workflow: false,
+        workflow_guards: false,
+        workflow_spec: None,
+        disable_tools: vec![],
+        read_only: false,
+        container: crate::domain::agents::services::subagent::ContainerSelection::Local,
+        backend: Default::default(),
+        coordinator: false,
+    }
+}
+
+#[test]
+fn ports_allocate_build_success_and_duplicate_contracts() {
+    let tool = tool();
+    let mut ports = SpawnLaunchPorts::new(&tool);
+    let cfg = config();
+    let identity = ports.allocate_identity(&cfg).unwrap();
+    let args = ports.build_cli_args(&identity, &cfg).unwrap();
+    assert!(args.iter().any(|arg| arg.to_string_lossy() == "--mode"));
+    assert!(ports.resolve_binary().is_ok() || ports.resolve_binary().is_err());
+
+    let registry: super::super::spawn::SubagentRegistry = Arc::new(Mutex::new(HashMap::new()));
+    let duplicate_uuid = crate::domain::ids::AgentUuid::mint();
+    registry.lock().unwrap().insert(
+        duplicate_uuid.to_string(),
+        SubagentEntry::with_identity(
+            duplicate_uuid,
+            "worker".into(),
+            std::path::PathBuf::from("/tmp/a.sock"),
+            0,
+        ),
+    );
+    // The ports borrow the tool until dropped (their drop guard runs then).
+    drop(ports);
+    let duplicate_tool = tool.with_registry(registry);
+    let mut duplicate_ports = SpawnLaunchPorts::new(&duplicate_tool);
+    assert!(duplicate_ports.allocate_identity(&cfg).is_err());
+}
+
+#[test]
+fn initial_prompt_retry_deadline_defaults_to_none_for_non_proxy_ports() {
+    let tool = tool();
+    let ports = SpawnLaunchPorts::new(&tool);
+    assert!(ports.initial_prompt_retry_deadline().is_none());
+}
+
+// Paused clock: `ready()` polls a socket nobody binds for the full 10 s
+// readiness deadline; every connect fails immediately, so the runtime
+// auto-advances through the interval ticks instead of sleeping them.
+#[tokio::test(start_paused = true)]
+async fn ports_ready_rollback_prompt_uncommit_and_success_paths() {
+    let tool = tool();
+    let mut ports = SpawnLaunchPorts::new(&tool);
+    let cfg = config();
+    let identity = ports.allocate_identity(&cfg).unwrap();
+    let socket = ports.socket_path.clone().unwrap();
+    let mut prepared = PreparedChild::new_for_test(
+        None,
+        Some("env".into()),
+        Some(
+            crate::domain::agents::value_objects::subagent_launch::ParentEndpoint::Direct {
+                socket_path: socket.clone(),
+            },
+        ),
+    )
+    .await;
+
+    let ready = ports.ready(&mut prepared).await;
+    assert!(ready.is_err());
+    ports.rollback_prepared(&mut prepared).await;
+    assert!(
+        ports
+            .send_initial_prompt(&socket, "hi", None)
+            .await
+            .is_err()
+    );
+    ports.uncommit_registered("missing").await;
+    let result = ports.success(&identity, Some("env"));
+    assert!(!result.is_error);
+    assert!(result.content.contains("environment_ref=env"));
+}
+
+/// The spawn result names the config the container was created with and
+/// carries the selection diagnostics verbatim (#2024 S4a review M): the
+/// model, not only the operator's stderr, learns which layers applied.
+#[tokio::test]
+async fn success_names_the_container_config_and_relays_the_selection_diagnostics() {
+    let tool = tool();
+    let env_ref = tool.environment_registry.mint_ref().unwrap();
+    tool.environment_registry
+        .commit(crate::domain::environments::entities::environment_registry::EnvironmentRecord {
+            environment_ref: env_ref.clone(),
+            environment_id: "env-named".into(),
+            environment_uuid: crate::domain::environments::entities::environment_registry::mint_environment_uuid(),
+            name: None,
+            workspace_path: std::path::PathBuf::from("/workspace"),
+            repository: String::new(),
+            script_name: "repo-r".into(),
+            retained_exec_argv: vec![],
+            retained_kill_argv: vec![],
+            retained_cleanup_argv: vec![],
+            retained_inspect_argv: vec![],
+            members: vec![],
+            status: crate::domain::environments::entities::environment_registry::EnvironmentStatus::Running,
+            metadata: serde_json::json!({}),
+            last_error: None,
+            origin: crate::domain::environments::entities::environment_registry::EnvironmentOrigin::Created,
+            created_by: String::new(),
+            created_at: None,
+        });
+    let mut ports = SpawnLaunchPorts::new(&tool);
+    let identity = ports.allocate_identity(&config()).unwrap();
+    let silent = ports.success(&identity, Some(&env_ref));
+    assert!(
+        silent.content.contains(&format!(
+            "environment_ref={env_ref} container_config=repo-r workspace=/workspace."
+        )),
+        "{}",
+        silent.content
+    );
+    assert!(!silent.content.contains("diagnostic"), "{}", silent.content);
+    let mut prepared = PreparedChild::new_for_test(None, Some(env_ref.clone()), None).await;
+    prepared.container_diagnostics = vec![
+        "repo-local config overlay /r/.quecto/config.json is not trusted (sha256 x) and was not applied; review it, then run `quecto config trust` from this directory".into(),
+    ];
+    let runtime = PreparedRuntime {
+        socket_path: std::path::PathBuf::from("/tmp/named.sock"),
+        pid: 0,
+        environment_ref: Some(env_ref.clone()),
+    };
+    ports
+        .register_and_monitor(&identity, runtime, &mut prepared, &config())
+        .await
+        .unwrap();
+    // #2173: the registered entry owns the cleanup, so dropping the
+    // prepared launch no longer rolls it back.
+    assert!(prepared.settled);
+    assert_ne!(ports.stage, LaunchStage::Unregistered);
+    let result = ports.success(&identity, Some(&env_ref));
+    assert!(!result.is_error);
+    let expected = format!(
+        "Subagent 'worker' is running (uuid={}) environment_ref={env_ref} container_config=repo-r workspace=/workspace. Use agent_cmd to interact.\nConfiguration diagnostics:\nrepo-local config overlay /r/.quecto/config.json is not trusted (sha256 x) and was not applied; review it, then run `quecto config trust` from this directory",
+        identity.registry_key
+    );
+    assert_eq!(result.content, expected);
+    // S4c: what it launched, for its callers, never in its words.
+    let metadata: serde_json::Value =
+        serde_json::from_str(result.delivery_metadata.as_deref().unwrap()).unwrap();
+    assert_eq!(
+        metadata,
+        serde_json::json!({"spawned": {"uuid": identity.registry_key, "environment_ref": env_ref}})
+    );
+    let local = ports.success(&identity, None);
+    let named = SpawnedChild::local(identity.registry_key.clone());
+    assert_eq!(SpawnedChild::of(&local), Some(named));
+    assert!(
+        local
+            .delivery_metadata
+            .unwrap()
+            .contains(r#""environment_ref":null"#)
+    );
+}
+
+/// #1390 review finding: a join racing a kill must not register into a
+/// no-longer-running environment — the launch fails and the just-registered
+/// entry is removed again.
+#[tokio::test]
+async fn register_into_a_stopped_environment_fails_and_unregisters() {
+    let (btx, mut brx) = tokio::sync::broadcast::channel::<String>(8);
+    let tool = tool().with_event_forwarding(Some(btx), None);
+    let env_ref = tool.environment_registry.mint_ref().unwrap();
+    tool.environment_registry
+        .commit(crate::domain::environments::entities::environment_registry::EnvironmentRecord {
+            environment_ref: env_ref.clone(),
+            environment_id: "env-raced".into(),
+            environment_uuid: crate::domain::environments::entities::environment_registry::mint_environment_uuid(),
+            name: None,
+            workspace_path: std::path::PathBuf::from("/workspace"),
+            repository: String::new(),
+            script_name: "default".into(),
+            retained_exec_argv: vec![],
+            retained_kill_argv: vec![],
+            retained_cleanup_argv: vec![],
+            retained_inspect_argv: vec![],
+            members: vec![],
+            status: crate::domain::environments::entities::environment_registry::EnvironmentStatus::Running,
+            metadata: serde_json::json!({}),
+            last_error: None,
+            origin: crate::domain::environments::entities::environment_registry::EnvironmentOrigin::Created,
+            created_by: String::new(),
+            created_at: None,
+        });
+    let claim = tool.environment_registry.begin_kill(&env_ref).unwrap();
+    tool.environment_registry.complete_kill(claim);
+
+    let mut ports = SpawnLaunchPorts::new(&tool);
+    let cfg = config();
+    let identity = ports.allocate_identity(&cfg).unwrap();
+    let mut prepared = PreparedChild::new_for_test(None, Some(env_ref.clone()), None).await;
+    let runtime = PreparedRuntime {
+        socket_path: std::path::PathBuf::from("/tmp/raced.sock"),
+        pid: 0,
+        environment_ref: Some(env_ref.clone()),
+    };
+    let err = ports
+        .register_and_monitor(&identity, runtime, &mut prepared, &cfg)
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains(&env_ref), "{err}");
+    assert!(
+        !prepared.settled,
+        "a failed registration is still rolled back"
+    );
+    assert_eq!(ports.stage, LaunchStage::Unregistered);
+    assert!(
+        !tool
+            .registry
+            .lock()
+            .unwrap()
+            .contains_key(&identity.registry_key),
+        "the raced entry must be unregistered"
+    );
+    assert!(
+        tool.environment_registry
+            .get(&env_ref)
+            .unwrap()
+            .members
+            .is_empty(),
+        "no membership may be recorded in a stopped environment"
+    );
+    // The refused registration must be withdrawn from subscribers too: the
+    // last broadcast survivor set may not contain the phantom agent.
+    let mut last_event = None;
+    while let Ok(event) = brx.try_recv() {
+        last_event = Some(event);
+    }
+    let last_event = last_event.expect("registration and withdrawal were broadcast");
+    assert!(
+        !last_event.contains(&identity.registry_key),
+        "withdrawal broadcast must omit the phantom agent: {last_event}"
+    );
+}
+
+#[tokio::test]
+async fn contract_accessor_yields_working_production_ports() {
+    let tool = tool();
+    let mut ports = tool.launch_ports_for_contract();
+    let identity = ports.allocate_identity(&config()).unwrap();
+    assert_eq!(identity.session_name, "worker");
+    assert!(!identity.registry_key.is_empty());
+}
+
+#[test]
+fn container_child_cli_args_fall_back_to_parents_config_and_local_does_not() {
+    // PR #1401 review: the child of a zero-config container spawn must be
+    // launched with the parent's effective config — the same path that
+    // authorized its environment — while local spawns keep the old chain.
+    let parent_cfg = std::path::PathBuf::from("/abs/team.json");
+    let tool = tool().with_parent_config_path(Some(parent_cfg.clone()));
+    let mut ports = SpawnLaunchPorts::new(&tool);
+    let mut cfg = config();
+    cfg.container = crate::domain::agents::services::subagent::ContainerSelection::New {
+        container_config: None,
+        name: None,
+    };
+    let identity = ports.allocate_identity(&cfg).unwrap();
+    let args = ports.build_cli_args(&identity, &cfg).unwrap();
+    let args: Vec<String> = args
+        .iter()
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect();
+    let pos = args.iter().position(|a| a == "--config").expect(
+        "container spawn without explicit config forwards the parent's config to the child",
+    );
+    assert_eq!(args[pos + 1], parent_cfg.to_string_lossy());
+
+    // An explicit spawn `config` still wins for container spawns.
+    let mut explicit_cfg = cfg.clone();
+    explicit_cfg.config_path = Some(std::path::PathBuf::from("/abs/explicit.json"));
+    let mut ports2 = SpawnLaunchPorts::new(&tool);
+    let identity2 = ports2.allocate_identity(&explicit_cfg).unwrap();
+    let args2: Vec<String> = ports2
+        .build_cli_args(&identity2, &explicit_cfg)
+        .unwrap()
+        .iter()
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect();
+    let pos2 = args2.iter().position(|a| a == "--config").unwrap();
+    assert_eq!(args2[pos2 + 1], "/abs/explicit.json");
+
+    // Local spawns keep the explicit→inherited chain: no parent fallback.
+    let mut ports3 = SpawnLaunchPorts::new(&tool);
+    let local_cfg = config();
+    let identity3 = ports3.allocate_identity(&local_cfg).unwrap();
+    let args3: Vec<String> = ports3
+        .build_cli_args(&identity3, &local_cfg)
+        .unwrap()
+        .iter()
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect();
+    assert!(!args3.iter().any(|a| a == "--config"));
+}
+
+/// #1935/#1938: the local launch path is the ONLY place a spawned child
+/// becomes owned. Registering a real child must record the supervisor
+/// handle and a launch generation (no other process authority), and the fleet
+/// teardown must terminate that child through the supervisor: the protocol
+/// attempt against its (never bound) socket is negative, so TERM follows and
+/// the child is reported as a fallback.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn register_and_monitor_records_the_owned_handle_and_fleet_teardown_terminates_child() {
+    let tool = tool();
+    let mut ports = SpawnLaunchPorts::new(&tool);
+    let cfg = config();
+    let identity = ports.allocate_identity(&cfg).unwrap();
+    // Building the argv mints the parent control credential and its sidecar.
+    let args = ports.build_cli_args(&identity, &cfg).unwrap();
+    let sidecar = args
+        .iter()
+        .position(|a| a == "--parent-control")
+        .map(|i| std::path::PathBuf::from(&args[i + 1]))
+        .expect("the sidecar path is on argv");
+    assert!(sidecar.exists());
+    let mut sleep = tokio::process::Command::new("sleep");
+    sleep
+        .arg("30")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    let mut prepared = PreparedChild::new_for_test(Some(sleep), None, None).await;
+    let pid = prepared.display_pid;
+    assert!(pid > 0, "live child pid");
+    let runtime = PreparedRuntime {
+        socket_path: ports.socket_path.clone().unwrap(),
+        pid,
+        environment_ref: None,
+    };
+    ports
+        .register_and_monitor(&identity, runtime, &mut prepared, &cfg)
+        .await
+        .expect("local registration succeeds");
+    {
+        let entries = tool.registry.lock().unwrap();
+        let entry = &entries[&identity.registry_key];
+        assert_eq!(entry.pid, pid, "the launched pid is display-only");
+        assert!(
+            entry.holds_owned_child(),
+            "the supervisor retains the handle"
+        );
+        assert!(entry.launch_generation.is_some());
+    }
+
+    let fleet = crate::composition::subagent_teardown::build_fleet_teardown(
+        crate::composition::subagent_teardown::FleetTeardownWiring {
+            owner: crate::domain::ids::AgentUuid::new("root"),
+            registry: tool.registry.clone(),
+            broadcast_tx: None,
+            notify_tx: None,
+            harness_lifecycle: tool.harness_lifecycle.clone(),
+        },
+    );
+    let outcome = tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        fleet.execute(
+            crate::application::subagents::dto::TerminateAllDelegatedAgentsRequest {
+                reason: crate::domain::agents::services::subagent_teardown::ShutdownReason::OperatorRequest,
+                authority: crate::application::subagents::dto::FleetTeardownAuthority::Harness,
+            },
+        ),
+    )
+    .await
+    .expect("bounded")
+    .expect("the fleet run completed");
+    assert!(outcome.is_settled(), "{outcome:?}");
+    assert_eq!(outcome.settled.len(), 1);
+    assert_eq!(
+        outcome.settled[0].result,
+        crate::application::subagents::dto::FleetChildResult::Fallback,
+        "a child that never binds cannot ACK: TERM ends it"
+    );
+    assert!(tool.registry.lock().unwrap().is_empty(), "tombstone pruned");
+
+    // The reaper task owns the child handle; once the SIGTERM lands it reaps,
+    // and /proc/<pid> disappears. A skipped signal leaves sleep alive.
+    let proc_dir = std::path::PathBuf::from(format!("/proc/{pid}"));
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let mut gone = false;
+    while std::time::Instant::now() < deadline {
+        let zombie = std::fs::read_to_string(proc_dir.join("stat"))
+            .map(|stat| stat.contains(") Z "))
+            .unwrap_or(false);
+        if !proc_dir.exists() || zombie {
+            gone = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    if !gone {
+        // SAFETY: best-effort cleanup of the leaked sleep child.
+        unsafe {
+            libc::kill(pid as libc::pid_t, libc::SIGKILL);
+        }
+    }
+    assert!(gone, "the fleet teardown must terminate the launched child");
+}
+
+fn poison<T: Send + 'static>(mutex: &std::sync::Arc<std::sync::Mutex<T>>) {
+    let shared = mutex.clone();
+    let _ = std::thread::spawn(move || {
+        let _guard = shared.lock().unwrap();
+        panic!("poison for coverage");
+    })
+    .join();
+    assert!(mutex.lock().is_err());
+}
+
+/// Poisoned registry / parent-id locks are recovered on every launch step,
+/// and `uncommit_registered` of a launched child terminates it through the
+/// supervised owned handle.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn launch_steps_recover_from_poisoned_locks_and_uncommit_terminates_child() {
+    let tool = tool();
+    poison(&tool.registry);
+    poison(&tool.parent_id);
+    let mut ports = SpawnLaunchPorts::new(&tool);
+    let cfg = config();
+    let identity = ports.allocate_identity(&cfg).unwrap();
+    let args = ports.build_cli_args(&identity, &cfg).unwrap();
+    assert!(!args.is_empty());
+    let mut sleep = tokio::process::Command::new("sleep");
+    sleep
+        .arg("30")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    let mut prepared = PreparedChild::new_for_test(Some(sleep), None, None).await;
+    let pid = prepared.display_pid;
+    assert!(pid > 0, "live child pid");
+    let runtime = PreparedRuntime {
+        socket_path: ports.socket_path.clone().unwrap(),
+        pid,
+        environment_ref: None,
+    };
+    ports
+        .register_and_monitor(&identity, runtime, &mut prepared, &cfg)
+        .await
+        .expect("local registration succeeds on a poisoned registry");
+
+    ports.uncommit_registered(&identity.registry_key).await;
+    assert!(
+        !tool
+            .registry
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .contains_key(&identity.registry_key)
+    );
+    let proc_dir = std::path::PathBuf::from(format!("/proc/{pid}"));
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let mut gone = false;
+    while std::time::Instant::now() < deadline {
+        let zombie = std::fs::read_to_string(proc_dir.join("stat"))
+            .map(|stat| stat.contains(") Z "))
+            .unwrap_or(false);
+        if !proc_dir.exists() || zombie {
+            gone = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    if !gone {
+        // SAFETY: best-effort cleanup of the leaked sleep child.
+        unsafe {
+            libc::kill(pid as libc::pid_t, libc::SIGKILL);
+        }
+    }
+    assert!(gone, "uncommit must terminate the launched child");
+}
+
+/// #2173 review: a launch dropped before registration (cancelled) removes
+/// the parent-control sidecar it wrote; a registered one leaves it to the
+/// child that consumes it.
+#[test]
+fn an_unregistered_launch_drops_its_sidecar_and_a_registered_one_keeps_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let tool = tool();
+    for (stage, kept) in [
+        (LaunchStage::Unregistered, false),
+        (LaunchStage::Complete, true),
+    ] {
+        let sidecar = dir.path().join(format!("control-{kept}"));
+        std::fs::write(&sidecar, "credential").unwrap();
+        let mut ports = SpawnLaunchPorts::new(&tool);
+        ports.parent_control_path = Some(sidecar.clone());
+        ports.stage = stage;
+        drop(ports);
+        assert_eq!(sidecar.exists(), kept);
+    }
+}
+
+/// #2173 swarm review: a launch cancelled after registration but before its
+/// initial prompt arrived (the caller dropped during the send) is
+/// compensated as a failed launch: unregistered, its child ended.
+#[tokio::test]
+async fn a_registered_launch_dropped_before_its_prompt_is_compensated() {
+    let tool = tool();
+    let mut ports = SpawnLaunchPorts::new(&tool);
+    let mut cfg = config();
+    cfg.task = Some("the task that never arrives".into());
+    let identity = ports.allocate_identity(&cfg).unwrap();
+    ports.build_cli_args(&identity, &cfg).unwrap();
+    let mut sleep = tokio::process::Command::new("sleep");
+    sleep
+        .arg("30")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    let mut prepared = PreparedChild::new_for_test(Some(sleep), None, None).await;
+    let supervisor = std::sync::Arc::clone(&prepared.supervisor);
+    let handle = prepared.owned_child.expect("a child");
+    let runtime = PreparedRuntime {
+        socket_path: ports.socket_path.clone().unwrap(),
+        pid: prepared.display_pid,
+        environment_ref: None,
+    };
+    ports
+        .register_and_monitor(&identity, runtime, &mut prepared, &cfg)
+        .await
+        .unwrap();
+    assert_eq!(
+        ports.stage,
+        LaunchStage::AwaitingPrompt(identity.registry_key.clone())
+    );
+    // The send is aborted mid-way (the caller cancelled): a child that
+    // accepts and never answers holds it.
+    let dir = tempfile::tempdir().unwrap();
+    let silent = dir.path().join("silent.sock");
+    let _listener = std::os::unix::net::UnixListener::bind(&silent).unwrap();
+    let aborted = tokio::time::timeout(
+        std::time::Duration::from_millis(100),
+        ports.send_initial_prompt(&silent, "the task", None),
+    )
+    .await;
+    assert!(aborted.is_err(), "the send was cut off");
+    drop(ports);
+    assert!(super::super::launch_rollbacks::settled(std::time::Duration::from_secs(30)).await);
+    assert!(
+        !tool
+            .registry
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .contains_key(&identity.registry_key),
+        "the cancelled launch is unregistered"
+    );
+    assert!(
+        tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            supervisor.wait_exit(handle)
+        )
+        .await
+        .is_ok(),
+        "its child is ended"
+    );
+}
+
+/// A launch with no task is complete once registered: nothing to undo.
+#[tokio::test]
+async fn a_registered_launch_without_a_task_is_complete() {
+    let tool = tool();
+    let mut ports = SpawnLaunchPorts::new(&tool);
+    let mut cfg = config();
+    cfg.task = None;
+    let identity = ports.allocate_identity(&cfg).unwrap();
+    ports.build_cli_args(&identity, &cfg).unwrap();
+    let mut prepared = PreparedChild::new_for_test(None, None, None).await;
+    let runtime = PreparedRuntime {
+        socket_path: ports.socket_path.clone().unwrap(),
+        pid: 0,
+        environment_ref: None,
+    };
+    ports
+        .register_and_monitor(&identity, runtime, &mut prepared, &cfg)
+        .await
+        .unwrap();
+    assert_eq!(ports.stage, LaunchStage::Complete);
+}
+
+/// #2173 swarm review: a delivered initial prompt completes the launch, so
+/// dropping the ports afterwards (the ordinary end of every spawn) leaves
+/// the registered child alone.
+#[tokio::test]
+async fn a_delivered_prompt_completes_the_launch_and_keeps_it() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let dir = tempfile::tempdir().unwrap();
+    let child_socket = dir.path().join("child.sock");
+    let listener = tokio::net::UnixListener::bind(&child_socket).unwrap();
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        // The request is framed (ADR-0008): read until its JSON has closed
+        // and take the `id` it was stamped with.
+        let mut received = Vec::new();
+        let mut chunk = [0u8; 4096];
+        let id = loop {
+            let n = stream.read(&mut chunk).await.unwrap();
+            assert!(n > 0, "the request arrives");
+            received.extend_from_slice(&chunk[..n]);
+            let text = String::from_utf8_lossy(&received).into_owned();
+            let json_start = text.find('{');
+            let parsed = json_start.and_then(|start| {
+                serde_json::from_str::<serde_json::Value>(text[start..].trim_end()).ok()
+            });
+            if let Some(request) = parsed {
+                break request["id"].clone();
+            }
+        };
+        let reply = serde_json::json!({
+            "type": "response",
+            "id": id,
+            "command": "prompt",
+            "success": true,
+        });
+        stream
+            .write_all(format!("{reply}\n").as_bytes())
+            .await
+            .unwrap();
+    });
+    let tool = tool();
+    let mut ports = SpawnLaunchPorts::new(&tool);
+    let mut cfg = config();
+    cfg.task = Some("work".into());
+    let identity = ports.allocate_identity(&cfg).unwrap();
+    ports.build_cli_args(&identity, &cfg).unwrap();
+    let mut prepared = PreparedChild::new_for_test(None, None, None).await;
+    let runtime = PreparedRuntime {
+        socket_path: ports.socket_path.clone().unwrap(),
+        pid: 0,
+        environment_ref: None,
+    };
+    ports
+        .register_and_monitor(&identity, runtime, &mut prepared, &cfg)
+        .await
+        .unwrap();
+    // A first attempt that fails leaves the launch awaiting its prompt; the
+    // retry that delivers it completes the launch.
+    let missing = dir.path().join("missing.sock");
+    assert!(
+        ports
+            .send_initial_prompt(&missing, "work", None)
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        ports.stage,
+        LaunchStage::AwaitingPrompt(identity.registry_key.clone())
+    );
+    ports
+        .send_initial_prompt(&child_socket, "work", None)
+        .await
+        .unwrap();
+    server.await.unwrap();
+    assert_eq!(ports.stage, LaunchStage::Complete);
+    drop(ports);
+    assert!(super::super::launch_rollbacks::settled(std::time::Duration::from_secs(30)).await);
+    assert!(
+        tool.registry
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .contains_key(&identity.registry_key),
+        "a delivered launch stays registered"
+    );
+}
+
+/// #2173 review 3: an uncommit cancelled part-way (the turn stopped while a
+/// failed launch was being compensated) still completes: the compensation
+/// runs detached, and the launch is not compensated a second time.
+#[tokio::test]
+async fn an_uncommit_cancelled_part_way_still_completes() {
+    let tool = tool();
+    let mut ports = SpawnLaunchPorts::new(&tool);
+    let mut cfg = config();
+    cfg.task = Some("work".into());
+    let identity = ports.allocate_identity(&cfg).unwrap();
+    ports.build_cli_args(&identity, &cfg).unwrap();
+    let mut sleep = tokio::process::Command::new("sleep");
+    sleep
+        .arg("30")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    let mut prepared = PreparedChild::new_for_test(Some(sleep), None, None).await;
+    let supervisor = std::sync::Arc::clone(&prepared.supervisor);
+    let handle = prepared.owned_child.expect("a child");
+    let runtime = PreparedRuntime {
+        socket_path: ports.socket_path.clone().unwrap(),
+        pid: prepared.display_pid,
+        environment_ref: None,
+    };
+    ports
+        .register_and_monitor(&identity, runtime, &mut prepared, &cfg)
+        .await
+        .unwrap();
+    // The child's socket accepts and never answers: the compensation's
+    // shutdown ask waits there, and the uncommit is cancelled meanwhile.
+    let socket = ports.socket_path.clone().unwrap();
+    let _silent = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+    let cut = tokio::time::timeout(
+        std::time::Duration::from_millis(100),
+        ports.uncommit_registered(&identity.registry_key),
+    )
+    .await;
+    assert!(cut.is_err(), "the uncommit was cancelled part-way");
+    assert_eq!(ports.stage, LaunchStage::Complete, "no second compensation");
+    drop(ports);
+    assert!(super::super::launch_rollbacks::settled(std::time::Duration::from_secs(30)).await);
+    assert!(
+        !tool
+            .registry
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .contains_key(&identity.registry_key)
+    );
+    assert!(
+        tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            supervisor.wait_exit(handle)
+        )
+        .await
+        .is_ok(),
+        "the child is ended"
+    );
+}

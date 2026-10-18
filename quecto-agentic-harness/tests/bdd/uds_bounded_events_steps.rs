@@ -711,10 +711,13 @@ fn when_subagent_completes_turn_on_parent(world: &mut QuectoWorld) {
     let rt = tokio::runtime::Runtime::new().expect("monitor runtime");
     let forwarded = rt.block_on(async {
         let listener = tokio::net::UnixListener::bind(&socket).expect("bind child socket");
-        let registry = quecto::infrastructure::tools::subagent_registry::new_registry();
+        let registry = quecto::infrastructure::tools::agents::subagent_registry::new_registry();
         registry.lock().expect("registry").insert(
             "worker".into(),
-            quecto::infrastructure::tools::subagent_registry::SubagentEntry::new(socket.clone(), 0),
+            quecto::infrastructure::tools::agents::subagent_registry::SubagentEntry::new(
+                socket.clone(),
+                0,
+            ),
         );
         let (tx, mut rx) = tokio::sync::broadcast::channel(8);
         let observer = quecto::composition::subagent_lifecycle::build_lifecycle_use_cases(
@@ -724,8 +727,8 @@ fn when_subagent_completes_turn_on_parent(world: &mut QuectoWorld) {
             None,
         )
         .observe_exit;
-        let monitor = quecto::infrastructure::tools::subagent_monitor::spawn_monitor_task(
-            quecto::infrastructure::tools::subagent_monitor::MonitorSpec {
+        let monitor = quecto::infrastructure::tools::agents::subagent_monitor::spawn_monitor_task(
+            quecto::infrastructure::tools::agents::subagent_monitor::MonitorSpec {
                 agent_id: "worker".into(),
                 socket_path: socket,
                 registry,

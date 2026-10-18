@@ -8,7 +8,7 @@ pub(super) struct ReaderDispatchCtx<'a> {
     pub session: &'a SessionReadHandles,
     pub registry: &'a super::uds_ext_protocol::ClientToolRegistry,
     pub subagent_registry:
-        &'a Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
+        &'a Option<crate::infrastructure::tools::agents::subagent_registry::SubagentRegistry>,
     /// The fleet teardown a busy-path `delete_all_subagents` invokes (#1938).
     pub fleet: Option<
         &'a std::sync::Arc<crate::application::subagents::use_cases::TerminateAllDelegatedAgents>,

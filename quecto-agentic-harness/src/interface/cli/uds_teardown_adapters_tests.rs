@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use super::*;
 use crate::domain::agents::services::subagent_teardown::LaunchGeneration;
-use crate::infrastructure::tools::subagent_registry::SubagentEntry;
+use crate::infrastructure::tools::agents::subagent_registry::SubagentEntry;
 use crate::interface::cli::uds_cancel::{CancelSlot, TurnControl};
 
 #[tokio::test]
@@ -136,7 +136,8 @@ fn lifecycle_repository_lists_only_launched_children_as_direct() {
         merged.parent_id = Some("child-a".into());
         entries.insert("grandchild".into(), merged);
     }
-    let shared = crate::infrastructure::tools::harness_lifecycle::new_shared_harness_lifecycle();
+    let shared =
+        crate::infrastructure::tools::agents::harness_lifecycle::new_shared_harness_lifecycle();
     let repository =
         RegistryLifecycleRepository::new(Some(registry), AgentUuid::new("me"), shared.clone());
     assert_eq!(repository.lifecycle(), HarnessLifecycleState::Accepting);
@@ -144,7 +145,7 @@ fn lifecycle_repository_lists_only_launched_children_as_direct() {
     assert_eq!(repository.lifecycle(), HarnessLifecycleState::Frozen);
     // The freeze is what the spawn tool observes under the registry lock.
     assert_eq!(
-        crate::infrastructure::tools::harness_lifecycle::current(&shared),
+        crate::infrastructure::tools::agents::harness_lifecycle::current(&shared),
         HarnessLifecycleState::Frozen
     );
     assert!(std::sync::Arc::ptr_eq(&repository.shared_state(), &shared));
@@ -166,7 +167,7 @@ fn lifecycle_repository_lists_only_launched_children_as_direct() {
     let without = RegistryLifecycleRepository::new(
         None,
         AgentUuid::new("solo"),
-        crate::infrastructure::tools::harness_lifecycle::new_shared_harness_lifecycle(),
+        crate::infrastructure::tools::agents::harness_lifecycle::new_shared_harness_lifecycle(),
     );
     assert!(without.lineage().records.is_empty());
 }

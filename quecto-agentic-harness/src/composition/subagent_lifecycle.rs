@@ -19,10 +19,10 @@ use crate::infrastructure::config::loaders::FilesystemConfigDocumentStore;
 use crate::infrastructure::config::main_worktree::GitMetadataWorktreeLocator;
 use crate::infrastructure::processes::direct_child_routing::UdsDirectChildRouting;
 use crate::infrastructure::processes::owned_child_termination::SupervisedChildTermination;
-use crate::infrastructure::tools::spawn::SpawnTool;
-use crate::infrastructure::tools::subagent_registry::{NotificationTx, SubagentRegistry};
-use crate::infrastructure::tools::subagent_teardown_registry::RegistryDelegatedAgents;
-pub use crate::infrastructure::tools::subagent_teardown_wiring::SubagentLifecycleUseCases;
+use crate::infrastructure::tools::agents::spawn::SpawnTool;
+use crate::infrastructure::tools::agents::subagent_registry::{NotificationTx, SubagentRegistry};
+use crate::infrastructure::tools::agents::subagent_teardown_registry::RegistryDelegatedAgents;
+pub use crate::infrastructure::tools::agents::subagent_teardown_wiring::SubagentLifecycleUseCases;
 
 /// The lifecycle use cases a launcher hands its reaper, monitor and
 /// rollback, over the launcher's registry, event stream and notification

@@ -145,7 +145,7 @@ pub fn disarm_cancel(handle: &CancelHandle) {
 
 // ─── Event sink ───────────────────────────────────────────────────────────────
 
-use crate::infrastructure::tools::subagent_registry::{
+use crate::infrastructure::tools::agents::subagent_registry::{
     NotificationRx, SequencedSubagentNotification, SubagentRegistry,
 };
 

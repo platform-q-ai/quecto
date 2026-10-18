@@ -1,5 +1,5 @@
 use super::*;
-use crate::infrastructure::tools::owner_exit::OwnerExitFlag;
+use crate::infrastructure::tools::agents::owner_exit::OwnerExitFlag;
 
 #[test]
 fn only_the_exit_persist_announces_and_it_is_still_forwarded() {

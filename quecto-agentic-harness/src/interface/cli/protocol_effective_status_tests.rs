@@ -1,7 +1,7 @@
 #[test]
 fn build_subagent_info_list_reports_idle_parent_with_running_direct_child_as_running() {
     use super::build_subagent_info_list;
-    use crate::infrastructure::tools::subagent_registry::{
+    use crate::infrastructure::tools::agents::subagent_registry::{
         SubagentEntry, SubagentStatus, new_registry,
     };
     let reg = new_registry();
@@ -22,7 +22,7 @@ fn build_subagent_info_list_reports_idle_parent_with_running_direct_child_as_run
 
 #[test]
 fn parent_identity_from_session_key_covers_generated_named_colon_raw_and_empty() {
-    use crate::infrastructure::tools::subagent_identity::parent_identity_from_session_key;
+    use crate::infrastructure::tools::agents::subagent_identity::parent_identity_from_session_key;
 
     assert_eq!(
         parent_identity_from_session_key("chat-abc"),
@@ -39,7 +39,7 @@ fn parent_identity_from_session_key_covers_generated_named_colon_raw_and_empty()
 
 #[test]
 fn effective_descendant_activity_reports_false_for_missing_registry_or_no_children() {
-    use crate::infrastructure::tools::subagent_registry::{
+    use crate::infrastructure::tools::agents::subagent_registry::{
         SubagentEntry, SubagentStatus, has_active_descendant_for_agent, new_registry,
     };
 
@@ -60,7 +60,7 @@ fn effective_descendant_activity_reports_false_for_missing_registry_or_no_childr
 #[test]
 fn build_subagent_info_list_preserves_own_starting_status() {
     use super::build_subagent_info_list;
-    use crate::infrastructure::tools::subagent_registry::{
+    use crate::infrastructure::tools::agents::subagent_registry::{
         SubagentEntry, SubagentStatus, new_registry,
     };
     let reg = new_registry();
@@ -82,7 +82,7 @@ fn build_subagent_info_list_preserves_own_starting_status() {
 fn build_subagent_info_list_does_not_roll_up_ambiguous_display_name_parent_id() {
     use super::build_subagent_info_list;
     use crate::domain::ids::AgentUuid;
-    use crate::infrastructure::tools::subagent_registry::{
+    use crate::infrastructure::tools::agents::subagent_registry::{
         SubagentEntry, SubagentStatus, new_registry,
     };
     let reg = new_registry();
@@ -121,7 +121,7 @@ fn build_subagent_info_list_does_not_roll_up_ambiguous_display_name_parent_id() 
 fn build_subagent_info_list_rolls_up_child_using_parent_display_name_when_parent_key_is_uuid() {
     use super::build_subagent_info_list;
     use crate::domain::ids::AgentUuid;
-    use crate::infrastructure::tools::subagent_registry::{
+    use crate::infrastructure::tools::agents::subagent_registry::{
         SubagentEntry, SubagentStatus, new_registry,
     };
     let reg = new_registry();
@@ -149,7 +149,7 @@ fn build_subagent_info_list_rolls_up_child_using_parent_display_name_when_parent
 #[test]
 fn build_subagent_info_list_reports_idle_parent_with_running_grandchild_as_running() {
     use super::build_subagent_info_list;
-    use crate::infrastructure::tools::subagent_registry::{
+    use crate::infrastructure::tools::agents::subagent_registry::{
         SubagentEntry, SubagentStatus, new_registry,
     };
     let reg = new_registry();

@@ -107,12 +107,15 @@ fn persist_refused_launcher(base: &Path) {
     );
     // SAFETY: single-threaded at this point, so the env write cannot race.
     unsafe { std::env::set_var("QUECTO_CHILD_BINARY", &wrapper) };
-    let registry = quecto::infrastructure::tools::agent_cmd::AgentCmdTool::new_registry();
+    let registry = quecto::infrastructure::tools::agents::agent_cmd::AgentCmdTool::new_registry();
     let tool = quecto::composition::subagent_lifecycle::compose_launcher(
-        quecto::infrastructure::tools::spawn::SpawnTool::with_base_dir(vec![], base.to_path_buf())
-            .with_socket_dir(sockets)
-            .with_registry(registry.clone())
-            .with_parent_config_path(Some(config.clone())),
+        quecto::infrastructure::tools::agents::spawn::SpawnTool::with_base_dir(
+            vec![],
+            base.to_path_buf(),
+        )
+        .with_socket_dir(sockets)
+        .with_registry(registry.clone())
+        .with_parent_config_path(Some(config.clone())),
     );
     let args = serde_json::json!({
         "agent_id": "refused-child",
@@ -153,12 +156,15 @@ fn launcher_role() {
     // The child binary must be the real quecto, not this test executable.
     // SAFETY: single-threaded at this point, so the env write cannot race.
     unsafe { std::env::set_var("QUECTO_CHILD_BINARY", env!("CARGO_BIN_EXE_quecto")) };
-    let registry = quecto::infrastructure::tools::agent_cmd::AgentCmdTool::new_registry();
+    let registry = quecto::infrastructure::tools::agents::agent_cmd::AgentCmdTool::new_registry();
     let tool = quecto::composition::subagent_lifecycle::compose_launcher(
-        quecto::infrastructure::tools::spawn::SpawnTool::with_base_dir(vec![], base.clone())
-            .with_socket_dir(sockets.clone())
-            .with_registry(registry.clone())
-            .with_parent_config_path(Some(config.clone())),
+        quecto::infrastructure::tools::agents::spawn::SpawnTool::with_base_dir(
+            vec![],
+            base.clone(),
+        )
+        .with_socket_dir(sockets.clone())
+        .with_registry(registry.clone())
+        .with_parent_config_path(Some(config.clone())),
     );
     let runtime = tokio::runtime::Runtime::new().unwrap();
     let args = serde_json::json!({

@@ -14,7 +14,7 @@ use std::sync::atomic::AtomicU32;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use crate::domain::conversation::value_objects::message::Message;
-use crate::infrastructure::tools::subagent_registry::{SubagentEntry, SubagentStatus};
+use crate::infrastructure::tools::agents::subagent_registry::{SubagentEntry, SubagentStatus};
 use crate::interface::cli::protocol::SessionState;
 use crate::interface::cli::uds_cancel::CancelSlot;
 
@@ -24,7 +24,9 @@ use crate::interface::cli::uds_cancel::CancelSlot;
 pub(super) fn make_args(
     socket_path: &std::path::Path,
     busy: bool,
-    subagent_registry: Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
+    subagent_registry: Option<
+        crate::infrastructure::tools::agents::subagent_registry::SubagentRegistry,
+    >,
 ) -> (
     AcceptLoopArgs,
     tokio::sync::broadcast::Sender<String>,
@@ -118,7 +120,7 @@ async fn busy_accept_loop_pushes_get_subagents_snapshot() {
 
     let mut entry = SubagentEntry::new("/tmp/gc.sock".into(), 4321);
     entry.status = SubagentStatus::Running;
-    let registry: crate::infrastructure::tools::subagent_registry::SubagentRegistry =
+    let registry: crate::infrastructure::tools::agents::subagent_registry::SubagentRegistry =
         Arc::new(std::sync::Mutex::new(std::collections::HashMap::from([(
             "grandchild".to_string(),
             entry,
@@ -209,7 +211,7 @@ async fn idle_accept_loop_pushes_workspace_and_state_before_client_input() {
     let dir = tempfile::tempdir().expect("tempdir");
     let socket_path = dir.path().join("idle.sock");
 
-    let registry: crate::infrastructure::tools::subagent_registry::SubagentRegistry =
+    let registry: crate::infrastructure::tools::agents::subagent_registry::SubagentRegistry =
         Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
 
     let (args, _bcast, _cmd_tx, _cmd_rx) =
@@ -324,7 +326,7 @@ async fn busy_harness_answers_delete_all_subagents_without_the_dispatch_loop() {
     entry.status = SubagentStatus::Running;
     entry.launch_generation =
         Some(crate::domain::agents::services::subagent_teardown::LaunchGeneration::new(1));
-    let registry = crate::infrastructure::tools::subagent_registry::new_registry();
+    let registry = crate::infrastructure::tools::agents::subagent_registry::new_registry();
     registry.lock().unwrap().insert(uuid.into_string(), entry);
 
     let (mut args, bcast, _cmd_tx, mut cmd_rx) =
@@ -344,7 +346,7 @@ async fn busy_harness_answers_delete_all_subagents_without_the_dispatch_loop() {
             exit_notify: Arc::new(tokio::sync::Notify::new()),
             binding:
                 crate::domain::agents::entities::parent_control::ParentControlBinding::unlaunched(),
-            owner_exit: crate::infrastructure::tools::owner_exit::OwnerExitFlag::new(),
+            owner_exit: crate::infrastructure::tools::agents::owner_exit::OwnerExitFlag::new(),
             environment_control: None,
         },
     );
@@ -412,7 +414,7 @@ async fn busy_harness_answers_delete_all_subagents_without_the_dispatch_loop() {
 /// Given serialized dispatch is held, inspection must use the real connect projection.
 #[tokio::test]
 async fn busy_inspection_accepts_production_projection_without_dispatch() {
-    use crate::infrastructure::tools::subagent_registry::send_subagent_uds_command_with_timeout;
+    use crate::infrastructure::tools::agents::subagent_registry::send_subagent_uds_command_with_timeout;
     let dir = tempfile::tempdir().unwrap();
     let socket = dir.path().join("inspection.sock");
     let (args, _broadcast, _commands, _held_dispatch) = make_args(&socket, true, None);

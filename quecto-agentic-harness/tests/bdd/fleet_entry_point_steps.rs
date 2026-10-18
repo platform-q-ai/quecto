@@ -14,7 +14,7 @@ use quecto::application::sessions::ports::SessionStore;
 use quecto::domain::sessions::entities::session_identity::SessionIdentity;
 use quecto::infrastructure::persistence::session_layout::FlatSessionLayout;
 use quecto::infrastructure::persistence::session_store::FileSessionStore;
-use quecto::infrastructure::tools::subagent_registry::SubagentEntry;
+use quecto::infrastructure::tools::agents::subagent_registry::SubagentEntry;
 
 use crate::QuectoWorld;
 use crate::restore_lifetime_steps::{base, process_alive, read_until, send, state};

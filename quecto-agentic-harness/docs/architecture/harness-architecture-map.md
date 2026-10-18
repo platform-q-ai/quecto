@@ -75,7 +75,7 @@ See also the [UDS protocol reference](../uds-protocol.md) and
 
 ## Subagent lifecycle
 
-**Primary code:** `src/infrastructure/tools/spawn.rs`,
+**Primary code:** `src/infrastructure/tools/agents/spawn.rs`,
 `spawn_binary.rs`, `subagent_registry.rs`, `subagent_monitor.rs`,
 `subagent_monitor_stall.rs`, `subagent_monitor_merge.rs`,
 and `agent_cmd.rs`.
@@ -122,7 +122,7 @@ overlay document `EffectiveConfig.overlay_document` now exposes, and
 `repository` read from the create argv). `composition/container_configs.rs`
 builds `ContainerConfigHandles { selection, roster }` over one adapter;
 the spawn tool renders `roster` into its description
-(`infrastructure/tools/spawn_discovery.rs`, one line ≤120 chars), cached
+(`infrastructure/tools/agents/spawn_discovery.rs`, one line ≤120 chars), cached
 against the port's revision token (file metadata of the layers and the
 trust record) because `definition()` is rendered for every model call, and
 `agent_cmd get_container_configs` (`agent_cmd_containers.rs`) encodes it.
@@ -205,7 +205,7 @@ journal-only for a spawned child) and `build_container_inventory` (the
 parses `container ls|kill|gc` and presents. `agent_cmd get_containers`
 asks `ListEnvironmentsQuery::listing` for a bounded listing (#2220:
 joinable plus own by default, `all` for every record, ref-number order,
-capped with counts) and `infrastructure/tools/agent_cmd_container_listing.rs`
+capped with counts) and `infrastructure/tools/agents/agent_cmd_container_listing.rs`
 encodes compact rows (`own`, `session`, `restored`, `config`,
 `created_at`, `checkout`).
 
@@ -493,5 +493,5 @@ cap.
 Current largest production/library files are at the 750-line cap, including
 `src/interface/cli/uds_snapshots.rs`, `src/interface/cli/uds_dispatch.rs`,
 `src/interface/cli/uds.rs`, `src/interface/cli/protocol.rs`,
-`src/infrastructure/tools/subagent_monitor.rs`, and
+`src/infrastructure/tools/agents/subagent_monitor.rs`, and
 `src/application/agent_loop.rs`.

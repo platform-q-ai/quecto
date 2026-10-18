@@ -21,7 +21,7 @@ pub(super) struct SingleClientArgs<'a> {
     pub(super) system_prompt: String,
     pub(super) ext_registry: Option<ExtRegistry>,
     pub(super) subagent_registry:
-        Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
+        Option<crate::infrastructure::tools::agents::subagent_registry::SubagentRegistry>,
     pub(super) workflow_state: Option<crate::interface::shared::WorkflowStateHandle>,
 }
 

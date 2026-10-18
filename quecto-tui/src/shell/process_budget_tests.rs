@@ -102,7 +102,7 @@ fn mirrored_constants_match_the_harness_sources() {
         Duration::from_secs(secs_after(default_block, "kill_grace:")),
         HARNESS_KILL_GRACE
     );
-    let registry = harness_source("infrastructure/tools/subagent_teardown_registry.rs");
+    let registry = harness_source("infrastructure/tools/agents/subagent_teardown_registry.rs");
     assert_eq!(
         Duration::from_secs(secs_after(&registry, "const COMPENSATION_WAIT_SLACK")),
         HARNESS_COMPENSATION_WAIT_SLACK

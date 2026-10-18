@@ -21,7 +21,7 @@ use crate::infrastructure::processes::direct_child_routing::{
     PROTOCOL_ACK_TIMEOUT, shutdown_over_socket,
 };
 
-use super::super::subagent_registry::SubagentRegistry;
+use super::super::agents::subagent_registry::SubagentRegistry;
 
 /// Ask the member's harness to shut down over the endpoint it registered.
 /// The only authority over a member this harness did not launch.

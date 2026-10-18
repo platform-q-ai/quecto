@@ -20,7 +20,7 @@ use quecto::domain::tool_policy::value_objects::tool::ToolResult;
 use quecto::infrastructure::processes::owned_child_supervisor::{
     ChildHandleId, OwnedChildSupervisor, ProcessGroup,
 };
-use quecto::infrastructure::tools::subagent_registry::{
+use quecto::infrastructure::tools::agents::subagent_registry::{
     SubagentEntry, SubagentRegistry, TeardownPhase, new_exit_signal_channel, new_registry,
 };
 use quecto::interface::cli::KillToolWiring;
@@ -226,7 +226,7 @@ pub(crate) fn state(world: &mut QuectoWorld) -> &mut SelectedTerminationState {
                 broadcast_tx: Some(broadcast_tx.clone()),
                 notify_tx: None,
                 harness_lifecycle:
-                    quecto::infrastructure::tools::harness_lifecycle::new_shared_harness_lifecycle(),
+                    quecto::infrastructure::tools::agents::harness_lifecycle::new_shared_harness_lifecycle(),
                 environment_registry:
                     quecto::domain::environments::entities::environment_registry::EnvironmentRegistry::new(),
                 slots: Default::default(),

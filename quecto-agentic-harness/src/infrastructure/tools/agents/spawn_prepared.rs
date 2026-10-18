@@ -1,0 +1,310 @@
+//! The prepared child of one launch (#1369/#1935): what a launch adapter
+//! holds between spawning (or script-managed creation) and registration —
+//! the opaque owned-process handle, the environment it created, and the
+//! cleanup plan a rollback consumes exactly once.
+use std::sync::Arc;
+
+use crate::application::subagents::ports::{ProtocolAttempt, TerminationConclusion};
+use crate::domain::agents::value_objects::subagent_launch::ParentEndpoint;
+use crate::domain::environments::entities::environment_registry::EnvironmentRegistry;
+use crate::infrastructure::processes::child_stderr_tail::StderrTail;
+use crate::infrastructure::processes::containers::script_stderr::{
+    ScriptStdout, run_capturing_stderr_tail,
+};
+#[cfg(test)]
+use crate::infrastructure::processes::owned_child_supervisor::ProcessGroup;
+use crate::infrastructure::processes::owned_child_supervisor::{
+    ChildHandleId, OwnedChildSupervisor,
+};
+use crate::infrastructure::processes::owned_child_termination::{
+    ROLLBACK_BUDGET, conclude_retained,
+};
+
+use super::cleanup_command;
+
+/// A rolled-back child was never handed work: a short protocol budget
+/// suffices before the supervisor's fallback.
+const ROLLBACK_PROTOCOL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
+
+#[derive(Debug)]
+pub(in crate::infrastructure::tools) struct PreparedChild {
+    pub(in crate::infrastructure::tools) swarm_reservation:
+        Option<super::super::super::swarm::swarm_admission::LaunchReservation>,
+    /// Opaque handle of the locally spawned process, owned by the one
+    /// supervisor from the moment it was spawned (#1935). `None` for
+    /// script-managed launches: they hold no process.
+    pub owned_child: Option<ChildHandleId>,
+    /// Display-only pid captured at adoption (retained until #1940).
+    pub display_pid: u32,
+    pub supervisor: Arc<OwnedChildSupervisor>,
+    pub environment_ref: Option<String>,
+    /// Typed parent endpoint from the create/exec result (#1369 slice 3).
+    /// `None` for local children, whose requested socket path is authoritative.
+    pub endpoint: Option<ParentEndpoint>,
+    /// Proxy bridge materialized at readiness; carried so registration can
+    /// take ownership and rollback can abort it.
+    pub proxy_bridge: Option<super::super::spawn_proxy_bridge::ProxyBridge>,
+    pub process_owner: super::super::process_tree::ProcessOwner,
+    pub(in crate::infrastructure::tools) cleanup_environment_id: Option<String>,
+    pub(in crate::infrastructure::tools) cleanup_argv: Vec<String>,
+    /// Session registry the environment was committed to, so rollback can
+    /// uncommit the entry it created.
+    pub(in crate::infrastructure::tools) environments: Option<EnvironmentRegistry>,
+    /// Bounded tail of a locally spawned child's stderr, for the launch
+    /// failure report (#1937 review). `None` for script-managed launches.
+    pub stderr_tail: Option<StderrTail>,
+    /// What the container-config selection reported about the layers it
+    /// read (#2024 S4a): an overlay that was not applied, a retired local
+    /// file. Empty for local children and joins; the launch adapter puts
+    /// the lines in the spawn result so the model sees them.
+    pub(in crate::infrastructure::tools) container_diagnostics: Vec<String>,
+    /// Rolled back, or handed to the registry, which then owns its
+    /// cleanup. Until then, dropping it rolls it back (#2173).
+    pub(in crate::infrastructure::tools) settled: bool,
+}
+
+impl Drop for PreparedChild {
+    fn drop(&mut self) {
+        // Only an unsettled launch that still holds something is rolled
+        // back: it was dropped before registration, so it was cancelled.
+        match (self.settled, self.holds_launch_state()) {
+            (false, true) => {}
+            (true, _) | (false, false) => return,
+        }
+        // In a task of its own; an exiting process waits for it.
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            tracing::warn!(
+                environment_ref = self.environment_ref.as_deref().unwrap_or_default(),
+                "a cancelled launch could not be rolled back: no runtime"
+            );
+            return;
+        };
+        // Taken settled: a runtime shutting down drops the task unrun, and
+        // the pending launch must not spawn another rollback from its drop.
+        let mut pending = self.take_for_rollback();
+        let flight = super::super::launch_rollbacks::InFlight::enter();
+        runtime.spawn(async move {
+            pending.rollback_once_via(None).await;
+            drop(flight);
+        });
+    }
+}
+
+/// How long a launch failure report waits for the child's stderr to reach
+/// EOF after its exit was observed; a descendant holding the pipe open
+/// cannot stall the report beyond this.
+const STDERR_REPORT_GRACE: std::time::Duration = std::time::Duration::from_millis(500);
+
+impl PreparedChild {
+    #[cfg(test)]
+    pub(in crate::infrastructure::tools) async fn new_for_test(
+        command: Option<tokio::process::Command>,
+        environment_ref: Option<String>,
+        endpoint: Option<ParentEndpoint>,
+    ) -> Self {
+        let supervisor = Arc::new(OwnedChildSupervisor::new());
+        let (owned_child, display_pid, stderr_tail) = match command {
+            Some(mut command) => {
+                command.stderr(std::process::Stdio::piped());
+                let spawned = supervisor
+                    .spawn(command, ProcessGroup::Inherited)
+                    .await
+                    .expect("test child spawns");
+                let tail = spawned
+                    .stderr
+                    .map(|stderr| supervisor.retain_stderr_tail(stderr));
+                (Some(spawned.handle), spawned.display_pid.0, tail)
+            }
+            None => (None, 0, None),
+        };
+        Self {
+            swarm_reservation: None,
+            owned_child,
+            display_pid,
+            supervisor,
+            environment_ref,
+            endpoint,
+            proxy_bridge: None,
+            process_owner: super::super::process_tree::ProcessOwner::DirectPid,
+            cleanup_environment_id: None,
+            cleanup_argv: vec![],
+            environments: None,
+            stderr_tail,
+            container_diagnostics: Vec::new(),
+            settled: false,
+        }
+    }
+
+    /// Hand the launch to the registry: the registered entry owns its
+    /// cleanup from here, so dropping this no longer rolls back.
+    pub(in crate::infrastructure::tools) fn hand_over(&mut self) {
+        self.settled = true;
+    }
+
+    /// Whether anything a rollback would undo is still held. A join holds
+    /// none of it: its child, started detached in a shared environment,
+    /// never bound a parent and ends itself at its bind deadline
+    /// (`parent_never_bound`), and the environment is not the join's to end.
+    fn holds_launch_state(&self) -> bool {
+        self.owned_child.is_some()
+            || self.proxy_bridge.is_some()
+            || !self.cleanup_argv.is_empty()
+            || (self.environments.is_some() && self.environment_ref.is_some())
+    }
+
+    /// Everything a rollback undoes, moved into a new prepared child that
+    /// is rolled back explicitly, never by its drop; this one is left
+    /// settled and empty.
+    fn take_for_rollback(&mut self) -> Self {
+        self.settled = true;
+        Self {
+            swarm_reservation: self.swarm_reservation.take(),
+            owned_child: self.owned_child.take(),
+            display_pid: self.display_pid,
+            supervisor: Arc::clone(&self.supervisor),
+            environment_ref: self.environment_ref.take(),
+            endpoint: self.endpoint.take(),
+            proxy_bridge: self.proxy_bridge.take(),
+            process_owner: self.process_owner,
+            cleanup_environment_id: self.cleanup_environment_id.take(),
+            cleanup_argv: std::mem::take(&mut self.cleanup_argv),
+            environments: self.environments.take(),
+            stderr_tail: self.stderr_tail.take(),
+            container_diagnostics: Vec::new(),
+            settled: true,
+        }
+    }
+
+    /// True when this launch created its environment (rather than joining an
+    /// existing one) and therefore owns the record on rollback.
+    pub fn owns_environment(&self) -> bool {
+        self.environments.is_some()
+    }
+
+    pub fn cleanup_plan(&self) -> (Option<String>, Vec<String>) {
+        (
+            self.cleanup_environment_id.clone(),
+            self.cleanup_argv.clone(),
+        )
+    }
+
+    /// The child's last stderr output for a launch failure report; empty
+    /// when nothing was captured. Waits (bounded) for the pipe's EOF so the
+    /// refusal a child printed just before exiting is included.
+    pub async fn stderr_tail_report(&self) -> String {
+        let Some(tail) = &self.stderr_tail else {
+            return String::new();
+        };
+        tail.wait_eof(STDERR_REPORT_GRACE).await;
+        tail.snapshot()
+    }
+
+    /// Wait for the launched process to exit; `None` when this launch holds
+    /// no process (script-managed) or the handle is unknown.
+    pub async fn wait_owned_child_exit(
+        &self,
+    ) -> Option<crate::infrastructure::processes::owned_child_supervisor::ChildExit> {
+        let handle = self.owned_child?;
+        self.supervisor.wait_exit(handle).await
+    }
+
+    /// Roll back with no endpoint to ask: the protocol attempt is negative
+    /// by construction.
+    #[cfg(test)]
+    pub async fn rollback_once(&mut self) {
+        self.rollback_once_via(None).await;
+    }
+
+    /// Roll back a launch that never registered (#1936: a registered launch
+    /// is compensated through `CompensateFailedLaunch`; this transaction
+    /// still holds the handle of one that failed before that). When the
+    /// child's requested endpoint is known the `shutdown` protocol is
+    /// attempted there first (a child that became ready but whose
+    /// registration failed still answers it); the same owned-handle
+    /// conclusion as every other termination then applies: a signal only
+    /// after a negative outcome or an exit timeout.
+    pub async fn rollback_once_via(&mut self, endpoint: Option<&std::path::Path>) {
+        // The handle is let go only once concluded: a rollback cancelled
+        // on the way is taken up again by the drop guard (#2173 review).
+        if let Some(handle) = self.owned_child {
+            let attempt = match endpoint {
+                Some(endpoint) => {
+                    match crate::infrastructure::processes::direct_child_routing::shutdown_over_socket(
+                        endpoint,
+                        crate::domain::agents::services::subagent_teardown::ShutdownReason::OperatorRequest,
+                        ROLLBACK_PROTOCOL_TIMEOUT,
+                    )
+                    .await
+                    {
+                        Ok(()) => ProtocolAttempt::Acknowledged,
+                        Err(error) => ProtocolAttempt::Negative(error.to_string()),
+                    }
+                }
+                None => ProtocolAttempt::Negative("launch rolled back before readiness".into()),
+            };
+            let conclusion =
+                conclude_retained(&self.supervisor, handle, attempt, ROLLBACK_BUDGET).await;
+            tracing::info!(?conclusion, "rolled back launched child");
+            // No reaper task ever runs for a launch that never registered:
+            // the slot is retired here (or as soon as the reap completes).
+            self.supervisor.retire_when_reaped(handle);
+            self.owned_child = None;
+            let exit = match conclusion {
+                TerminationConclusion::StillRunning(_)
+                | TerminationConclusion::NoRetainedHandle => None,
+                // Already gone before it was asked: its tool groups may
+                // have outlived it.
+                TerminationConclusion::AlreadyExited => {
+                    Some(crate::domain::swarm::MemberExit::Abrupt)
+                }
+                TerminationConclusion::ExitedAfterProtocol
+                | TerminationConclusion::ExitedAfterFallback => {
+                    Some(crate::domain::swarm::MemberExit::Orderly)
+                }
+            };
+            if let (Some(exit), Some(reservation)) = (exit, &mut self.swarm_reservation) {
+                if let Err(error) = reservation.rolled_back(exit).await {
+                    tracing::error!(%error, "swarm launch rollback requires reconciliation");
+                }
+            }
+        }
+        if let Some(bridge) = self.proxy_bridge.take() {
+            bridge.teardown();
+        }
+        // Taken before it runs: cancelled mid-script, the script still
+        // finishes on its own and must not be started a second time.
+        let mut cleanup_argv = std::mem::take(&mut self.cleanup_argv);
+        run_cleanup_once(self.cleanup_environment_id.clone(), &mut cleanup_argv).await;
+        if let (Some(environments), Some(env_ref)) = (&self.environments, &self.environment_ref) {
+            environments.remove(env_ref);
+        }
+        self.settled = true;
+    }
+}
+
+pub(in crate::infrastructure::tools) async fn run_cleanup_once(
+    env_ref: Option<String>,
+    cleanup_argv: &mut Vec<String>,
+) {
+    if let Some(cmd) = cleanup_command(env_ref.as_deref(), cleanup_argv) {
+        // Best effort by contract, but never silent (#2024 S4b): a cleanup
+        // that fails leaves an environment behind, and its own account is
+        // the only lead.
+        match run_capturing_stderr_tail(cmd, ScriptStdout::Discard).await {
+            Ok(output) if !output.status.success() => {
+                tracing::warn!(
+                    environment_id = env_ref.as_deref().unwrap_or_default(),
+                    "{}",
+                    output.failure_message("cleanup")
+                );
+            }
+            Ok(_) => {}
+            Err(error) => tracing::warn!(
+                environment_id = env_ref.as_deref().unwrap_or_default(),
+                %error,
+                "script-managed cleanup could not be started"
+            ),
+        }
+        cleanup_argv.clear();
+    }
+}

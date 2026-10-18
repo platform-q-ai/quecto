@@ -17,11 +17,11 @@ use crate::infrastructure::persistence::context_spill::FileContextSpillStore;
 use crate::infrastructure::persistence::session_layout::FlatSessionLayout;
 use crate::infrastructure::security::sandbox::Sandbox;
 use crate::infrastructure::test_support::tool_schema_portability::portability_violations;
-use crate::infrastructure::tools::agent_cmd::AgentCmdTool;
+use crate::infrastructure::tools::agents::agent_cmd::AgentCmdTool;
+use crate::infrastructure::tools::agents::spawn::SpawnTool;
 use crate::infrastructure::tools::grep::GrepTool;
 use crate::infrastructure::tools::panic_probe::PanicProbeTool;
 use crate::infrastructure::tools::recall::RecallTool;
-use crate::infrastructure::tools::spawn::SpawnTool;
 use crate::infrastructure::tools::web_search::WebSearchTool;
 use crate::infrastructure::tools::workflow_tool::WorkflowTool;
 
@@ -192,7 +192,7 @@ fn built_in_definitions(workspace: &std::path::Path) -> Vec<ToolDefinition> {
             broadcast_tx: None,
             notify_tx: None,
             harness_lifecycle:
-                crate::infrastructure::tools::harness_lifecycle::new_shared_harness_lifecycle(),
+                crate::infrastructure::tools::agents::harness_lifecycle::new_shared_harness_lifecycle(),
             environment_registry: crate::domain::environments::entities::environment_registry::EnvironmentRegistry::new(),
             slots: Default::default(),
             base_dir: workspace.to_path_buf(),

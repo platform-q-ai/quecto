@@ -3,7 +3,7 @@ use super::tool_runtime::*;
 use crate::domain::tool_policy::value_objects::tool_descriptor::ProfileAvailabilityScope;
 use crate::infrastructure::config::{Config, ToolPolicyEntryConfig};
 use crate::infrastructure::security::sandbox::Sandbox;
-use crate::infrastructure::tools::inherited_tool_policy::InheritedToolPolicySnapshot;
+use crate::infrastructure::tools::agents::inherited_tool_policy::InheritedToolPolicySnapshot;
 
 fn runtime(
     root: &std::path::Path,

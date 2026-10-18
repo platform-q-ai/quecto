@@ -16,7 +16,7 @@ use crate::application::subagents::ports::{
     ConclusionBudget, OwnedChildTermination, PortFuture, ProtocolAttempt, TerminationConclusion,
 };
 use crate::domain::agents::services::subagent_teardown::DelegatedAgentIdentity;
-use crate::infrastructure::tools::subagent_registry::SubagentRegistry;
+use crate::infrastructure::tools::agents::subagent_registry::SubagentRegistry;
 
 use super::owned_child_supervisor::{
     ChildHandleId, OwnedChildSupervisor, ProtocolOutcome, TerminationBudget, TerminationOutcome,

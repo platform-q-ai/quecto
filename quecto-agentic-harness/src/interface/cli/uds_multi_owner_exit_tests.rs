@@ -22,11 +22,11 @@ async fn until(mut condition: impl FnMut() -> bool, what: &str) {
 async fn the_exit_persist_announces_on_the_reader_task_and_its_close_withdraws() {
     let dir = tempfile::tempdir().expect("tempdir");
     let socket_path = dir.path().join("owner-exit.sock");
-    let registry = crate::infrastructure::tools::subagent_registry::new_registry();
+    let registry = crate::infrastructure::tools::agents::subagent_registry::new_registry();
     // The dispatch channel is never drained: a turn that has not ended.
     let (mut args, bcast, _cmd_tx, mut cmd_rx) =
         make_args(&socket_path, true, Some(registry.clone()));
-    let flag = crate::infrastructure::tools::owner_exit::OwnerExitFlag::new();
+    let flag = crate::infrastructure::tools::agents::owner_exit::OwnerExitFlag::new();
     let graph = crate::composition::subagent_teardown::build_teardown_graph(
         crate::interface::cli::uds_teardown_handles::TeardownLoopInputs {
             owner: crate::domain::ids::AgentUuid::new("root"),

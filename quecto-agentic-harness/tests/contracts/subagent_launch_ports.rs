@@ -168,7 +168,7 @@ mod real_adapters {
     use quecto::domain::environments::entities::environment_registry::EnvironmentRegistry;
     use quecto::domain::error::DomainError;
     use quecto::domain::tool_policy::value_objects::tool::ToolResult;
-    use quecto::infrastructure::tools::spawn::SpawnTool;
+    use quecto::infrastructure::tools::agents::spawn::SpawnTool;
 
     /// Serializes scenarios that set `QUECTO_CHILD_BINARY`.
     static ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());

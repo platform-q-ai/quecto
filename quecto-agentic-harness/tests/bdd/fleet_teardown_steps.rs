@@ -29,7 +29,8 @@ pub(crate) struct FleetTeardownState {
     shutdown: Option<ShutdownOutcome>,
     spawn_refusal: Option<String>,
     busy_response: Option<serde_json::Value>,
-    busy_registry: Option<quecto::infrastructure::tools::subagent_registry::SubagentRegistry>,
+    busy_registry:
+        Option<quecto::infrastructure::tools::agents::subagent_registry::SubagentRegistry>,
 }
 
 impl std::fmt::Debug for FleetTeardownState {
@@ -200,9 +201,9 @@ fn when_shutdown(world: &mut QuectoWorld, reason: String) {
 
 #[when("a spawn is registered against a frozen harness")]
 fn when_spawn_frozen(world: &mut QuectoWorld) {
-    use quecto::infrastructure::tools::harness_lifecycle::new_shared_harness_lifecycle;
-    use quecto::infrastructure::tools::spawn::register_and_broadcast;
-    use quecto::infrastructure::tools::subagent_registry::{SubagentEntry, new_registry};
+    use quecto::infrastructure::tools::agents::harness_lifecycle::new_shared_harness_lifecycle;
+    use quecto::infrastructure::tools::agents::spawn::register_and_broadcast;
+    use quecto::infrastructure::tools::agents::subagent_registry::{SubagentEntry, new_registry};
     let registry = new_registry();
     let lifecycle = new_shared_harness_lifecycle();
     *lifecycle.lock().unwrap() = HarnessLifecycleState::Frozen;
@@ -220,9 +221,9 @@ fn when_spawn_frozen(world: &mut QuectoWorld) {
 
 #[when("a spawn is registered against an accepting harness")]
 fn when_spawn_accepting(world: &mut QuectoWorld) {
-    use quecto::infrastructure::tools::harness_lifecycle::new_shared_harness_lifecycle;
-    use quecto::infrastructure::tools::spawn::register_and_broadcast;
-    use quecto::infrastructure::tools::subagent_registry::{SubagentEntry, new_registry};
+    use quecto::infrastructure::tools::agents::harness_lifecycle::new_shared_harness_lifecycle;
+    use quecto::infrastructure::tools::agents::spawn::register_and_broadcast;
+    use quecto::infrastructure::tools::agents::subagent_registry::{SubagentEntry, new_registry};
     let registry = new_registry();
     register_and_broadcast(
         &registry,
@@ -241,7 +242,7 @@ fn when_spawn_accepting(world: &mut QuectoWorld) {
 )]
 fn when_busy_delete(world: &mut QuectoWorld, rows: usize) {
     use quecto::composition::subagent_teardown::{FleetTeardownWiring, build_fleet_teardown};
-    use quecto::infrastructure::tools::subagent_registry::{SubagentEntry, new_registry};
+    use quecto::infrastructure::tools::agents::subagent_registry::{SubagentEntry, new_registry};
     let registry = new_registry();
     for index in 0..rows {
         let uuid = AgentUuid::mint();
@@ -264,7 +265,7 @@ fn when_busy_delete(world: &mut QuectoWorld, rows: usize) {
         broadcast_tx: None,
         notify_tx: None,
         harness_lifecycle:
-            quecto::infrastructure::tools::harness_lifecycle::new_shared_harness_lifecycle(),
+            quecto::infrastructure::tools::agents::harness_lifecycle::new_shared_harness_lifecycle(),
     });
     let rt = runtime(world);
     let (handled, response) =

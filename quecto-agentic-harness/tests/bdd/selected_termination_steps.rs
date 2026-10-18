@@ -14,7 +14,7 @@ use quecto::domain::agents::services::subagent_teardown::{
     DelegatedAgentIdentity, LaunchGeneration, TerminationRouteError,
 };
 use quecto::domain::ids::AgentUuid;
-use quecto::infrastructure::tools::subagent_registry::{
+use quecto::infrastructure::tools::agents::subagent_registry::{
     SubagentEntry, SubagentStatus, TeardownPhase,
 };
 
@@ -130,8 +130,8 @@ fn given_in_flight(world: &mut QuectoWorld, uuid: String) {
     s.registry.as_ref().unwrap().lock().unwrap()[&uuid]
         .teardown
         .send_replace(TeardownPhase::Stopping(
-            quecto::infrastructure::tools::subagent_registry::StoppingClaim::first(
-                quecto::infrastructure::tools::subagent_registry::TeardownIntent::SelectedTermination,
+            quecto::infrastructure::tools::agents::subagent_registry::StoppingClaim::first(
+                quecto::infrastructure::tools::agents::subagent_registry::TeardownIntent::SelectedTermination,
             ),
         ));
 }
@@ -158,10 +158,10 @@ fn given_reaper(world: &mut QuectoWorld, uuid: String) {
     // The production reaper: it publishes the exit, hands it to the
     // observation use case and retires the handle.
     let _guard = s.runtime.as_ref().unwrap().enter();
-    quecto::infrastructure::tools::spawn_reaper::spawn_reaper_task(
+    quecto::infrastructure::tools::agents::spawn_reaper::spawn_reaper_task(
         handle,
         supervisor,
-        quecto::infrastructure::tools::spawn_reaper::ReaperContext {
+        quecto::infrastructure::tools::agents::spawn_reaper::ReaperContext {
             exit_tx,
             child,
             observer,
@@ -178,7 +178,8 @@ fn given_agent_cmd_over_root(world: &mut QuectoWorld) {
     };
     world.agent_cmd_registry = Some(registry.clone());
     world.agent_cmd_tool = Some(
-        quecto::infrastructure::tools::agent_cmd::AgentCmdTool::new(registry).with_kill_tool(kill),
+        quecto::infrastructure::tools::agents::agent_cmd::AgentCmdTool::new(registry)
+            .with_kill_tool(kill),
     );
 }
 
@@ -230,7 +231,7 @@ fn when_kill_nested(world: &mut QuectoWorld, reference: String, via: String, pru
         let line = serde_json::json!({"type": "subagent_state_changed", "subagents": survivors})
             .to_string();
         let forwarded =
-            quecto::infrastructure::tools::subagent_monitor::forward_child_state_changed(
+            quecto::infrastructure::tools::agents::subagent_monitor::forward_child_state_changed(
                 &line, &registry, &via,
             )
             .expect("a state_changed line is merged");
@@ -288,10 +289,11 @@ fn when_forwards(world: &mut QuectoWorld, via: String, child: String, generation
         "parentId": via, "executionBackend": "local", "launchGeneration": generation,
     }]})
     .to_string();
-    let forwarded = quecto::infrastructure::tools::subagent_monitor::forward_child_state_changed(
-        &line, &registry, &via,
-    )
-    .expect("merged");
+    let forwarded =
+        quecto::infrastructure::tools::agents::subagent_monitor::forward_child_state_changed(
+            &line, &registry, &via,
+        )
+        .expect("merged");
     assert!(forwarded.contains("\"launchGeneration\""));
 }
 
@@ -352,7 +354,7 @@ fn then_result(world: &mut QuectoWorld, result: String) {
 /// the second `shutdown` reaching the child is the observation.
 #[then(expr = "a retry of the kill of {string} re-takes the claim and sends a second shutdown")]
 fn then_retry_re_attempts(world: &mut QuectoWorld, reference: String) {
-    use quecto::infrastructure::tools::subagent_registry::{ClaimOwner, TeardownPhase};
+    use quecto::infrastructure::tools::agents::subagent_registry::{ClaimOwner, TeardownPhase};
     let s = state(world);
     let requests = s
         .endpoints
@@ -492,10 +494,10 @@ fn then_claimed_stopping(world: &mut QuectoWorld, a: String) {
     assert_eq!(
         entries[&a].teardown_phase(),
         TeardownPhase::Stopping(
-            quecto::infrastructure::tools::subagent_registry::StoppingClaim {
-                intent: quecto::infrastructure::tools::subagent_registry::TeardownIntent::SelectedTermination,
+            quecto::infrastructure::tools::agents::subagent_registry::StoppingClaim {
+                intent: quecto::infrastructure::tools::agents::subagent_registry::TeardownIntent::SelectedTermination,
                 attempt: 1,
-                owner: quecto::infrastructure::tools::subagent_registry::ClaimOwner::Returned,
+                owner: quecto::infrastructure::tools::agents::subagent_registry::ClaimOwner::Returned,
             }
         ),
         "effects reached the child: its eventual exit is this kill's"
@@ -596,7 +598,7 @@ fn then_compensated_as_kill(world: &mut QuectoWorld, uuid: String) {
         .expect("the compensation published the exit");
     assert_eq!(
         signal.kind,
-        quecto::infrastructure::tools::subagent_registry::ExitSignalKind::Terminated,
+        quecto::infrastructure::tools::agents::subagent_registry::ExitSignalKind::Terminated,
         "a kept claim makes the later exit this kill's, never a post-mortem"
     );
 }
@@ -635,7 +637,7 @@ fn then_lineage(world: &mut QuectoWorld, child: String, generation: u64, parent:
     let lifecycle = quecto::composition::subagent_teardown::LifecycleAdapter::new(
         s.registry.clone(),
         AgentUuid::new("root"),
-        quecto::infrastructure::tools::harness_lifecycle::new_shared_harness_lifecycle(),
+        quecto::infrastructure::tools::agents::harness_lifecycle::new_shared_harness_lifecycle(),
     );
     let lineage = lifecycle.lineage();
     assert!(
@@ -652,7 +654,7 @@ fn then_lineage(world: &mut QuectoWorld, child: String, generation: u64, parent:
 fn then_snapshot_generations(world: &mut QuectoWorld, a: String, b: String) {
     let s = state(world);
     let event: serde_json::Value = serde_json::from_str(
-        quecto::infrastructure::tools::subagent_cascade::build_state_changed_event(
+        quecto::infrastructure::tools::agents::subagent_cascade::build_state_changed_event(
             s.registry.as_ref().unwrap(),
         )
         .trim(),
@@ -681,10 +683,12 @@ fn then_kill_forwarded(world: &mut QuectoWorld, child: String, via: String, gene
             tokio::time::sleep(Duration::from_millis(100)).await;
             let mut guard = entries.lock().unwrap();
             let next =
-                quecto::infrastructure::tools::subagent_cascade::next_roster_sequence(&guard);
+                quecto::infrastructure::tools::agents::subagent_cascade::next_roster_sequence(
+                    &guard,
+                );
             let row = guard.get_mut(&child).unwrap();
-            quecto::infrastructure::tools::subagent_cascade::mark_entry_dead(row, next);
-            quecto::infrastructure::tools::subagent_cascade::mark_entry_compensated(row);
+            quecto::infrastructure::tools::agents::subagent_cascade::mark_entry_dead(row, next);
+            quecto::infrastructure::tools::agents::subagent_cascade::mark_entry_compensated(row);
         })
     };
     run_kill(world, &child);

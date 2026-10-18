@@ -15,10 +15,10 @@ use std::sync::OnceLock;
 
 /// A crate source file's module path, from its crate's real module tree
 /// (walked from each of [`CRATE_ROOTS`] through every `mod` declaration,
-/// following `#[path]`): `src/infrastructure/tools/spawn.rs` →
-/// `["infrastructure", "tools", "spawn"]`, and a `#[path]` child is named by
-/// the module that declares it, not by where its file sits. A file outside the
-/// tree is a caller bug.
+/// following `#[path]`): `src/infrastructure/tools/agents/spawn.rs` →
+/// `["infrastructure", "tools", "agents", "spawn"]`, and a `#[path]` child is
+/// named by the module that declares it, not by where its file sits. A file
+/// outside the tree is a caller bug.
 pub(super) fn module_path(file: &str) -> Vec<String> {
     assert!(
         !test_only_file(file),
@@ -584,8 +584,8 @@ fn production_text_keeps_cfg_combinations_and_multiline_paths() {
 #[test]
 fn module_paths_follow_the_module_tree() {
     assert_eq!(
-        module_path("src/infrastructure/tools/spawn.rs"),
-        ["infrastructure", "tools", "spawn"]
+        module_path("src/infrastructure/tools/agents/spawn.rs"),
+        ["infrastructure", "tools", "agents", "spawn"]
     );
     assert_eq!(module_path("src/domain/mod.rs"), ["domain"]);
     assert!(module_path("src/lib.rs").is_empty());
@@ -726,24 +726,24 @@ fn files_outside_the_module_tree_are_refused() {
 
 #[test]
 fn relative_paths_resolve_to_crate_paths() {
-    let module = module_path("src/infrastructure/tools/spawn.rs");
+    let module = module_path("src/infrastructure/tools/agents/spawn.rs");
     for (path, expected) in [
         (
             "super::spawn_entry::X",
-            "crate::infrastructure::tools::spawn_entry::X",
+            "crate::infrastructure::tools::agents::spawn_entry::X",
         ),
         (
             "self::inner::Y",
-            "crate::infrastructure::tools::spawn::inner::Y",
+            "crate::infrastructure::tools::agents::spawn::inner::Y",
         ),
         (
-            "super::super::super::application::secret::Bad",
+            "super::super::super::super::application::secret::Bad",
             "crate::application::secret::Bad",
         ),
-        ("super::super::super::super::x", UNRESOLVABLE),
+        ("super::super::super::super::super::x", UNRESOLVABLE),
         ("crate::domain::X", "crate::domain::X"),
         ("std::fs::read", "std::fs::read"),
-        ("super", "crate::infrastructure::tools"),
+        ("super", "crate::infrastructure::tools::agents"),
     ] {
         assert_eq!(resolve_relative(&module, path), expected, "{path}");
     }

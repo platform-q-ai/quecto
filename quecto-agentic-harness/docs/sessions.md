@@ -255,7 +255,7 @@ Declared only under `src/application/sessions/ports.rs` and
 | `TurnAccountingReset` | `interface/cli/uds_turn_accounting.rs`, `uds_session_switch_runtime.rs` | usage/context/pending reset when history is replaced |
 | `FreshSessionIdentityGenerator` | `infrastructure/persistence/fresh_session_identity.rs` | wall clock + pid + counter → a fresh `chat-…` identity |
 | `FleetSettlement` | `composition/fleet_settlement.rs` (adapts `TerminateAllDelegatedAgents`) | settle delegated children before a switch (#1938) |
-| `DelegatedChildrenRoster` | `infrastructure/tools/delegated_roster.rs` | live delegated rows and roster replacement |
+| `DelegatedChildrenRoster` | `infrastructure/tools/agents/delegated_roster.rs` | live delegated rows and roster replacement |
 | `SessionKeyPropagation` | `interface/cli/uds_session_switch_runtime.rs` | the agent loop and its session-aware tools adopt the new identity |
 | `SessionSwitchRuntime` | `interface/cli/uds_session_switch_runtime.rs` | effort reset, workflow reset/restore |
 

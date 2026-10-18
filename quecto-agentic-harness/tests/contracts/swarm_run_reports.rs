@@ -12,7 +12,7 @@ use quecto::application::environments::ports::EndedSwarmBoards;
 use quecto::application::project_board::dto::{SwarmEnd, SwarmItemState};
 use quecto::application::project_board::ports::SwarmRunReports;
 use quecto::domain::project_board::value_objects::slug::Slug;
-use quecto::infrastructure::tools::coordinator_launch::{KeptRunReports, KeptSwarmBoards};
+use quecto::infrastructure::tools::agents::coordinator_launch::{KeptRunReports, KeptSwarmBoards};
 use serde_json::json;
 
 /// The reports of `session` over `kept`, as composition builds them.

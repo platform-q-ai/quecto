@@ -21,7 +21,7 @@ use crate::domain::error::DomainError;
 use crate::domain::ids::AgentUuid;
 use crate::domain::sessions::entities::session::{Session, SubagentLiveness};
 use crate::domain::tool_policy::value_objects::tool::{ToolDefinition, ToolResult};
-use crate::infrastructure::tools::subagent_registry::{SubagentEntry, new_registry};
+use crate::infrastructure::tools::agents::subagent_registry::{SubagentEntry, new_registry};
 use crate::interface::cli::protocol::AgentCommand;
 use crate::interface::cli::uds::{inject_system_prompt, remove_injected_system_prompt};
 use crate::interface::cli::uds_session::{HISTORY_PAGE_SIZE, messages_page_json};
@@ -731,7 +731,9 @@ async fn persist_current_session_clears_previously_persisted_roster_when_registr
         .unwrap();
     fx.messages = vec![Message::user("old"), Message::assistant("new", Vec::new())];
     fx.set_watermark(1);
-    fx.set_subagent_registry(crate::infrastructure::tools::subagent_registry::new_registry());
+    fx.set_subagent_registry(
+        crate::infrastructure::tools::agents::subagent_registry::new_registry(),
+    );
     {
         let mut ctx = fx.ctx();
         persist_current_session(&mut ctx).await.unwrap();
