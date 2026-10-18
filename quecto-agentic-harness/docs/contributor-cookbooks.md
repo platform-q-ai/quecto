@@ -213,7 +213,7 @@ paths.
   for the wire edge: parse the command, map it to the DTO, request the
   injected use case, present the response. Handlers admit and present; they
   never claim, load, save, release or switch anything themselves.
-- `src/application/context*.rs` when the *pruning* decision changes; the
+- `src/application/agent_turn/context/` when the *pruning* decision changes; the
   retained-context store and its recall stay sessions-owned.
 
 **Tests to add/update:**
