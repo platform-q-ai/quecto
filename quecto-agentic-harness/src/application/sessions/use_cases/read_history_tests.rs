@@ -6,8 +6,8 @@ use crate::domain::conversation::value_objects::message::Message;
 use crate::domain::ids::MessageId;
 use crate::domain::sessions::entities::session::Session;
 use crate::domain::sessions::entities::session_identity::SessionIdentity;
-use crate::infrastructure::persistence::session_layout::FlatSessionLayout;
-use crate::infrastructure::persistence::session_store::FileSessionStore;
+use crate::infrastructure::persistence::file::sessions::session_layout::FlatSessionLayout;
+use crate::infrastructure::persistence::file::sessions::session_store::FileSessionStore;
 use std::sync::Arc;
 
 fn read_history(base: &std::path::Path) -> ReadHistory {

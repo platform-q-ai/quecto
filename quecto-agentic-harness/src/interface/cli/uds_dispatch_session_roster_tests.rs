@@ -10,6 +10,9 @@ use crate::domain::sessions::entities::session::{
     PersistedSubagentRosterEntry, SubagentLiveness, SubagentRestoreReason,
 };
 use crate::domain::sessions::entities::session_identity::SessionIdentity;
+use crate::infrastructure::persistence::file::filename;
+use crate::infrastructure::persistence::file::sessions::session_layout::FlatSessionLayout;
+use crate::infrastructure::persistence::file::sessions::session_store::FileSessionStore;
 use crate::infrastructure::tools::agents::subagent_compact_roster::build_compact_subagent_roster;
 use crate::infrastructure::tools::agents::subagent_registry;
 use subagent_registry::{
@@ -62,8 +65,7 @@ pub(crate) fn composed_sessions_from(
 }
 
 /// The file store a rig holds and composes its loops over.
-pub(crate) type RigStore =
-    std::sync::Arc<crate::infrastructure::persistence::session_store::FileSessionStore>;
+pub(crate) type RigStore = std::sync::Arc<FileSessionStore>;
 
 /// A rig's own file store under `base`.
 pub(crate) fn rig_store(base: &std::path::Path) -> RigStore {
@@ -297,13 +299,10 @@ async fn legacy_session_on_disk(
     rows: serde_json::Value,
 ) -> crate::domain::sessions::entities::session::Session {
     use crate::application::sessions::ports::SessionStore;
-    let store = crate::infrastructure::persistence::session_store::FileSessionStore::new(
-        crate::infrastructure::persistence::session_layout::FlatSessionLayout::new(dir),
-    );
-    let path = dir.join("sessions").join(format!(
-        "{}.json",
-        crate::infrastructure::persistence::filename::sanitize_session_key(key)
-    ));
+    let store = FileSessionStore::new(FlatSessionLayout::new(dir));
+    let path = dir
+        .join("sessions")
+        .join(format!("{}.json", filename::sanitize_session_key(key)));
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     let snapshot = serde_json::json!({
         "type": "snapshot",
@@ -595,7 +594,7 @@ pub(crate) fn composed_sessions_for(
 /// rig's own `store`, with `messages` already published as its live
 /// transcript.
 pub(crate) fn handles_over(
-    store: std::sync::Arc<crate::infrastructure::persistence::session_store::FileSessionStore>,
+    store: std::sync::Arc<FileSessionStore>,
     session_key: &str,
     spill_store: Option<std::sync::Arc<dyn crate::application::sessions::ports::ContextSpillStore>>,
     messages: &[Message],
@@ -614,10 +613,7 @@ pub(crate) fn handles_over(
 /// Record a home at the current directory for `key` (#2009) before its
 /// transcript is seeded directly into `store`, so the rig's resume
 /// admission sees the authority a real save would have written.
-pub(crate) async fn seed_home(
-    store: &std::sync::Arc<crate::infrastructure::persistence::session_store::FileSessionStore>,
-    key: &str,
-) {
+pub(crate) async fn seed_home(store: &std::sync::Arc<FileSessionStore>, key: &str) {
     crate::composition::session_home::build_session_home(store.clone())
         .record_new(&SessionIdentity::from_persisted_key(key))
         .await
@@ -627,7 +623,7 @@ pub(crate) async fn seed_home(
 /// The read handles of a session opened on `session_key` over the rig's
 /// own `store`, with `messages` already published as its live transcript.
 pub(crate) fn read_handles_over(
-    store: std::sync::Arc<crate::infrastructure::persistence::session_store::FileSessionStore>,
+    store: std::sync::Arc<FileSessionStore>,
     session_key: &str,
     spill_store: Option<std::sync::Arc<dyn crate::application::sessions::ports::ContextSpillStore>>,
     messages: &[Message],

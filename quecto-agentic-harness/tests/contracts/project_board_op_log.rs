@@ -17,7 +17,7 @@ use quecto::domain::project_board::value_objects::telemetry::{
     Access, BoardOpRecord, Client, FoldBackRecord, FrontEnd, OpKind, OpOutcome, RunOutcomeKind,
     TaskRef,
 };
-use quecto::infrastructure::persistence::audit_log::AuditLog;
+use quecto::infrastructure::observability::audit_log::AuditLog;
 use quecto::infrastructure::persistence::project_board::op_log::EventLogProjectBoardOps;
 use serde_json::Value;
 

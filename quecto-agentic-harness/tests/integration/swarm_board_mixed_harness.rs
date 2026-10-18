@@ -15,7 +15,7 @@ use serde_json::{Value, json};
 use quecto::application::swarm::dto::BoardLocation;
 use quecto::application::swarm::ports::{BoardOpLog, Clock, IdSource};
 use quecto::composition::swarm::{SwarmBoardHandles, build_swarm_board_handles_with};
-use quecto::infrastructure::persistence::swarm_board::repository::SqliteBoardRepository;
+use quecto::infrastructure::persistence::sqlite::swarm_board::repository::SqliteBoardRepository;
 use quecto::infrastructure::tools::registry::call_work::off_the_runtime;
 use quecto::infrastructure::tools::swarm::swarm_bridge::{SwarmBoard, SwarmContext};
 use quecto::infrastructure::workspace::checkout_paths::ResolvedCheckout;

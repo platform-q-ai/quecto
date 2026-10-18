@@ -198,7 +198,7 @@ async fn a_forged_record_for_a_launched_sibling_is_not_believed_after_a_child_re
         u64::MAX,
     )
     .in_call("edit");
-    crate::infrastructure::persistence::crash_record::Armed::new(
+    crate::infrastructure::persistence::file::crash_record::Armed::new(
         base.path(),
         Some(&format!("cli:{UUID}")),
         None,

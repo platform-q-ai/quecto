@@ -1,0 +1,691 @@
+use super::*;
+use crate::application::sessions::dto::SessionListQuery;
+use crate::domain::sessions::entities::session_identity::{SessionIdentity, SessionKeyPrefix};
+use crate::infrastructure::persistence::file::sessions::session_layout::FlatSessionLayout;
+use std::os::unix::fs::symlink;
+use tempfile::TempDir;
+
+fn id(k: &str) -> SessionIdentity {
+    SessionIdentity::from_persisted_key(k)
+}
+
+fn make_message(role: Role, content: &str) -> Message {
+    match role {
+        Role::System => Message::system(content),
+        Role::User => Message::user(content),
+        Role::Assistant => Message::assistant(content, vec![]),
+        Role::Tool => Message::tool("call", content),
+    }
+}
+
+#[tokio::test]
+async fn empty_conversation_is_not_persisted() {
+    let tmp = TempDir::new().unwrap();
+    let store = FileSessionStore::new(FlatSessionLayout::new(tmp.path()));
+
+    store.save(&Session::new(id("test:empty"))).await.unwrap();
+
+    assert!(
+        !store.exists(&id("test:empty")).await.unwrap(),
+        "saving an empty conversation must not create a resumable session"
+    );
+    assert!(
+        store.load(&id("test:empty")).await.unwrap().is_none(),
+        "loading an empty conversation key must behave like an unknown session"
+    );
+}
+
+#[tokio::test]
+async fn empty_delta_is_not_persisted() {
+    let tmp = TempDir::new().unwrap();
+    let store = FileSessionStore::new(FlatSessionLayout::new(tmp.path()));
+
+    store
+        .save_delta(&id("test:empty-delta"), &[], 0, None)
+        .await
+        .unwrap();
+    store
+        .save_clean_delta(&id("test:empty-clean-delta"), &[], 0, None)
+        .await
+        .unwrap();
+
+    assert!(
+        !store.exists(&id("test:empty-delta")).await.unwrap(),
+        "saving an empty delta must not create a zero-message session"
+    );
+    assert!(
+        !store.exists(&id("test:empty-clean-delta")).await.unwrap(),
+        "saving an empty clean delta must not create a zero-message session"
+    );
+}
+
+#[tokio::test]
+async fn appending_a_completed_turn_preserves_previously_saved_bytes() {
+    let tmp = TempDir::new().unwrap();
+    let store = FileSessionStore::new(FlatSessionLayout::new(tmp.path()));
+
+    let mut session = Session::new(id("test:append"));
+    session.messages.push(make_message(Role::User, "first"));
+    session
+        .messages
+        .push(make_message(Role::Assistant, "response"));
+    store.save(&session).await.unwrap();
+    let path = tmp.path().join("sessions/test_append.json");
+    let before = tokio::fs::read(&path).await.unwrap();
+
+    session.messages.push(make_message(Role::User, "follow-up"));
+    session
+        .messages
+        .push(make_message(Role::Assistant, "second response"));
+    store.save(&session).await.unwrap();
+
+    let after = tokio::fs::read(&path).await.unwrap();
+    assert!(
+        after.starts_with(&before),
+        "normal turns should append new durable records without rewriting previously saved data"
+    );
+    let appended = std::str::from_utf8(&after[before.len()..]).unwrap();
+    let appended_record: serde_json::Value = serde_json::from_str(appended.trim()).unwrap();
+    assert_eq!(appended_record["type"], "append");
+    assert_eq!(appended_record["messages"].as_array().unwrap().len(), 2);
+    assert_eq!(appended_record["messages"][0]["content"], "follow-up");
+    assert_eq!(appended_record["messages"][1]["content"], "second response");
+    assert!(!appended.contains("first"));
+    assert!(!appended.contains("\"content\":\"response\""));
+
+    let loaded = store.load(&id("test:append")).await.unwrap().unwrap();
+    assert_eq!(loaded.messages.len(), 4);
+    assert_eq!(loaded.messages[0].content, "first");
+    assert_eq!(loaded.messages[3].content, "second response");
+}
+
+#[tokio::test]
+async fn appending_refuses_symlinked_session_file() {
+    let tmp = TempDir::new().unwrap();
+    let store = FileSessionStore::new(FlatSessionLayout::new(tmp.path()));
+
+    let mut session = Session::new(id("test:symlink"));
+    session.messages.push(make_message(Role::User, "first"));
+    store.save(&session).await.unwrap();
+    let path = tmp.path().join("sessions/test_symlink.json");
+    let target = tmp.path().join("target.json");
+    tokio::fs::rename(&path, &target).await.unwrap();
+    symlink(&target, &path).unwrap();
+
+    session
+        .messages
+        .push(make_message(Role::Assistant, "second"));
+    let err = store.save(&session).await.unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("refusing to append to symlinked session file"),
+        "{err}"
+    );
+}
+
+#[tokio::test]
+async fn append_reports_directory_open_failure() {
+    let tmp = TempDir::new().unwrap();
+    let path = tmp.path().join("session-dir");
+    tokio::fs::create_dir(&path).await.unwrap();
+
+    let record = SessionRecordRef::Append {
+        start_index: Some(0),
+        messages: vec![],
+        workflow_run: None,
+        workflow_run_cleared: true,
+        subagent_roster: None,
+    };
+    let err = append_record(&path, &record).await.unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("failed to open session for append"),
+        "{err}"
+    );
+}
+
+#[tokio::test]
+async fn compact_write_reports_missing_parent_directory() {
+    let tmp = TempDir::new().unwrap();
+    let path = tmp.path().join("missing-parent/session.json");
+    let mut session = Session::new(id("test:compact-write-error"));
+    session.messages.push(make_message(Role::User, "first"));
+
+    let err = write_compacted(&path, &session).await.unwrap_err();
+    assert!(err.to_string().contains("failed to write session"), "{err}");
+}
+
+#[tokio::test]
+async fn append_reports_missing_file_when_path_disappears_after_compaction_decision() {
+    let tmp = TempDir::new().unwrap();
+    let store = FileSessionStore::new(FlatSessionLayout::new(tmp.path()));
+
+    let mut session = Session::new(id("test:missing-append"));
+    session.messages.push(make_message(Role::User, "first"));
+    store.save(&session).await.unwrap();
+    let path = tmp.path().join("sessions/test_missing-append.json");
+    tokio::fs::remove_file(&path).await.unwrap();
+
+    let record = SessionRecordRef::Append {
+        start_index: Some(1),
+        messages: vec![],
+        workflow_run: None,
+        workflow_run_cleared: true,
+        subagent_roster: None,
+    };
+    let err = append_record(&path, &record).await.unwrap_err();
+    assert!(
+        err.to_string().contains("failed to inspect session"),
+        "{err}"
+    );
+}
+
+#[tokio::test]
+async fn interrupted_append_preserves_last_completed_session() {
+    let tmp = TempDir::new().unwrap();
+    let store = FileSessionStore::new(FlatSessionLayout::new(tmp.path()));
+
+    let mut session = Session::new(id("test:interrupted"));
+    session.messages.push(make_message(Role::User, "first"));
+    session
+        .messages
+        .push(make_message(Role::Assistant, "response"));
+    store.save(&session).await.unwrap();
+
+    let path = tmp.path().join("sessions/test_interrupted.json");
+    let mut file = tokio::fs::OpenOptions::new()
+        .append(true)
+        .open(&path)
+        .await
+        .unwrap();
+    use tokio::io::AsyncWriteExt;
+    file.write_all(br#"{"type":"append","messages":[{"role":"user","content":"lost"}]"#)
+        .await
+        .unwrap();
+    file.flush().await.unwrap();
+
+    let loaded = store.load(&id("test:interrupted")).await.unwrap().unwrap();
+    assert_eq!(loaded.messages.len(), 2);
+    assert_eq!(loaded.messages[0].content, "first");
+    assert_eq!(loaded.messages[1].content, "response");
+}
+
+/// A delta whose watermark lies past the end of the file (the file was
+/// replaced by a shorter one) never appends onto it — the loader would
+/// reject that record and every later one. The writer's live transcript is
+/// authoritative and is written whole, never mixed with the file's (#2218).
+#[tokio::test]
+async fn append_delta_from_stale_cached_index_does_not_mix_replaced_history() {
+    let tmp = TempDir::new().unwrap();
+    let store = FileSessionStore::new(FlatSessionLayout::new(tmp.path()));
+
+    let mut first_process = Session::new(id("test:stale"));
+    first_process
+        .messages
+        .push(make_message(Role::User, "old 1"));
+    first_process
+        .messages
+        .push(make_message(Role::Assistant, "old 2"));
+    store.save(&first_process).await.unwrap();
+
+    let mut second_process = Session::new(id("test:stale"));
+    second_process
+        .messages
+        .push(make_message(Role::User, "replacement"));
+    store.save(&second_process).await.unwrap();
+
+    first_process
+        .messages
+        .push(make_message(Role::User, "stale tail"));
+    store
+        .save_delta(
+            &first_process.key,
+            &first_process.messages,
+            2,
+            first_process.workflow_run.clone(),
+        )
+        .await
+        .unwrap();
+
+    let loaded = store.load(&id("test:stale")).await.unwrap().unwrap();
+    let contents: Vec<_> = loaded.messages.iter().map(|m| m.content.as_str()).collect();
+    assert_eq!(contents, ["old 1", "old 2", "stale tail"]);
+}
+
+/// Pins the shrink SHORTCUT (`previously_persisted > messages.len()` inside
+/// `persisted_prefix_changed`): a shorter live history must force a compact
+/// rewrite and resume exactly. NOTE (#1073 review): this behavior was also
+/// satisfied by the pre-#1072 inline guard, so this test alone does not
+/// falsify the masked-prefix detection — that new logic (same-length or
+/// longer history with a changed prefix) is pinned by the sibling
+/// `masked_pruning_*` tests below; this one guards the shortcut against
+/// regressions that would make a shrunk history reach the prefix `zip`
+/// (which would index out of bounds or append against a stale prefix).
+#[tokio::test]
+async fn shorter_history_shortcut_forces_compact_and_resumes_exactly() {
+    let tmp = TempDir::new().unwrap();
+    let store = FileSessionStore::new(FlatSessionLayout::new(tmp.path()));
+    let mut session = Session::new(id("test:shorter-prune"));
+    for content in ["old 1", "old 2", "old 3"] {
+        session.messages.push(make_message(Role::User, content));
+    }
+    store.save(&session).await.unwrap();
+
+    session.messages = vec![make_message(Role::User, "old 3")];
+    store
+        .save_delta(&session.key, &session.messages, 3, None)
+        .await
+        .unwrap();
+
+    let resumed = store.load(&session.key).await.unwrap().unwrap();
+    assert_eq!(resumed.messages.len(), 1);
+    assert_eq!(resumed.messages[0].role, Role::User);
+    assert_eq!(resumed.messages[0].content, "old 3");
+}
+
+#[tokio::test]
+async fn masked_pruning_compacts_and_resumes_exact_current_history() {
+    let tmp = TempDir::new().unwrap();
+    let store = FileSessionStore::new(FlatSessionLayout::new(tmp.path()));
+    let mut session = Session::new(id("test:masked-prune"));
+    for content in ["old 1", "old 2", "old 3"] {
+        session.messages.push(make_message(Role::User, content));
+    }
+    store.save(&session).await.unwrap();
+
+    session.messages = vec![
+        make_message(Role::User, "old 3"),
+        make_message(Role::User, "new prompt"),
+        make_message(Role::Assistant, "new answer"),
+    ];
+    store
+        .save_delta(&session.key, &session.messages, 3, None)
+        .await
+        .unwrap();
+
+    let resumed = store.load(&session.key).await.unwrap().unwrap();
+    let contents: Vec<_> = resumed
+        .messages
+        .iter()
+        .map(|m| m.content.as_str())
+        .collect();
+    assert_eq!(contents, ["old 3", "new prompt", "new answer"]);
+}
+
+#[tokio::test]
+async fn masked_pruning_with_longer_current_history_resumes_exactly() {
+    let tmp = TempDir::new().unwrap();
+    let store = FileSessionStore::new(FlatSessionLayout::new(tmp.path()));
+    let mut session = Session::new(id("test:masked-prune-longer"));
+    for content in ["old 1", "old 2", "old 3"] {
+        session.messages.push(make_message(Role::User, content));
+    }
+    store.save(&session).await.unwrap();
+
+    session.messages = vec![
+        make_message(Role::User, "old 3"),
+        make_message(Role::User, "new prompt"),
+        make_message(Role::Assistant, "new answer"),
+        make_message(Role::User, "later prompt"),
+    ];
+    store
+        .save_delta(&session.key, &session.messages, 3, None)
+        .await
+        .unwrap();
+
+    let resumed = store.load(&session.key).await.unwrap().unwrap();
+    let contents: Vec<_> = resumed
+        .messages
+        .iter()
+        .map(|message| message.content.as_str())
+        .collect();
+    assert_eq!(
+        contents,
+        ["old 3", "new prompt", "new answer", "later prompt"]
+    );
+}
+
+#[tokio::test]
+async fn replacing_history_compacts_to_the_requested_messages() {
+    let tmp = TempDir::new().unwrap();
+    let store = FileSessionStore::new(FlatSessionLayout::new(tmp.path()));
+
+    let mut session = Session::new(id("test:compact"));
+    for idx in 0..6 {
+        session
+            .messages
+            .push(make_message(Role::User, &format!("message {idx}")));
+    }
+    store.save(&session).await.unwrap();
+    let path = tmp.path().join("sessions/test_compact.json");
+    let before = tokio::fs::read(&path).await.unwrap();
+
+    session.messages = session.messages.split_off(4);
+    store.save(&session).await.unwrap();
+
+    let after = tokio::fs::read(&path).await.unwrap();
+    assert!(
+        !after.starts_with(&before),
+        "replaced histories should compact instead of appending to obsolete records"
+    );
+    let compacted_record: serde_json::Value =
+        serde_json::from_slice(after.strip_suffix(b"\n").unwrap_or(&after)).unwrap();
+    assert_eq!(compacted_record["type"], "snapshot");
+    assert_eq!(compacted_record["messages"].as_array().unwrap().len(), 2);
+
+    let loaded = store.load(&id("test:compact")).await.unwrap().unwrap();
+    assert_eq!(loaded.messages.len(), 2);
+    assert_eq!(loaded.messages[0].content, "message 4");
+    assert_eq!(loaded.messages[1].content, "message 5");
+}
+
+#[tokio::test]
+async fn load_malformed_json_returns_parse_error() {
+    let tmp = TempDir::new().unwrap();
+    let store = FileSessionStore::new(FlatSessionLayout::new(tmp.path()));
+    let dir = tmp.path().join("sessions");
+    tokio::fs::create_dir_all(&dir).await.unwrap();
+    tokio::fs::write(dir.join("bad_json.json"), b"not-json")
+        .await
+        .unwrap();
+
+    let err = store.load(&id("bad:json")).await.unwrap_err();
+    assert!(err.to_string().contains("failed to parse session"));
+}
+
+#[tokio::test]
+async fn list_skips_malformed_and_non_json_files() {
+    let tmp = TempDir::new().unwrap();
+    let store = FileSessionStore::new(FlatSessionLayout::new(tmp.path()));
+
+    let mut good = Session::new(id("ok:list"));
+    good.messages
+        .push(make_message(Role::User, "visible title"));
+    store.save(&good).await.unwrap();
+
+    let mut other = Session::new(id("other:list"));
+    other.messages.push(make_message(Role::User, "other title"));
+    store.save(&other).await.unwrap();
+
+    let dir = tmp.path().join("sessions");
+    tokio::fs::write(dir.join("bad.json"), b"not-json")
+        .await
+        .unwrap();
+    tokio::fs::write(dir.join("ignored.txt"), b"not-json")
+        .await
+        .unwrap();
+
+    let summaries = store
+        .list(&SessionListQuery::ExistingKeyPrefix(
+            SessionKeyPrefix::new("ok:").unwrap(),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(summaries.len(), 1);
+    assert_eq!(summaries[0].key, "ok:list");
+    assert_eq!(summaries[0].title, "visible title");
+
+    let summaries = store.list(&SessionListQuery::All).await.unwrap();
+    assert_eq!(summaries.len(), 2);
+    assert!(summaries.iter().any(|summary| summary.key == "other:list"));
+}
+
+#[tokio::test]
+async fn load_legacy_snapshot_json_migrates_to_session() {
+    let tmp = TempDir::new().unwrap();
+    let store = FileSessionStore::new(FlatSessionLayout::new(tmp.path()));
+    let dir = tmp.path().join("sessions");
+    tokio::fs::create_dir_all(&dir).await.unwrap();
+    tokio::fs::write(
+        dir.join("legacy_key.json"),
+        br#"{"key":"legacy:key","messages":[{"role":"assistant","content":"old","tool_calls":[{"id":"c1","name":"n","arguments":"{}"}]}]}"#,
+    )
+    .await
+    .unwrap();
+
+    let loaded = store.load(&id("legacy:key")).await.unwrap().unwrap();
+    assert_eq!(loaded.key.runtime_key(), "legacy:key");
+    assert_eq!(loaded.messages.len(), 1);
+    assert_eq!(loaded.messages[0].role, Role::Assistant);
+    assert_eq!(loaded.messages[0].tool_calls.len(), 1);
+}
+
+#[tokio::test]
+async fn append_or_compact_rewrites_legacy_snapshot_as_jsonl() {
+    let tmp = TempDir::new().unwrap();
+    let store = FileSessionStore::new(FlatSessionLayout::new(tmp.path()));
+    let dir = tmp.path().join("sessions");
+    tokio::fs::create_dir_all(&dir).await.unwrap();
+    let path = dir.join("legacy_rewrite.json");
+    tokio::fs::write(
+        &path,
+        br#"{"key":"legacy:rewrite","messages":[{"role":"user","content":"old"}]}"#,
+    )
+    .await
+    .unwrap();
+
+    let mut session = Session::new(id("legacy:rewrite"));
+    session.messages.push(make_message(Role::User, "new"));
+    store.save(&session).await.unwrap();
+
+    let raw = tokio::fs::read_to_string(&path).await.unwrap();
+    assert!(raw.starts_with(r#"{"type":"snapshot""#), "raw={raw}");
+    let loaded = store.load(&id("legacy:rewrite")).await.unwrap().unwrap();
+    assert_eq!(loaded.messages[0].content, "new");
+}
+
+#[tokio::test]
+async fn save_clean_delta_with_zero_watermark_compacts() {
+    let tmp = TempDir::new().unwrap();
+    let store = FileSessionStore::new(FlatSessionLayout::new(tmp.path()));
+    let messages = vec![make_message(Role::User, "clean compact")];
+    store
+        .save_clean_delta(&id("clean:zero"), &messages, 0, None)
+        .await
+        .unwrap();
+    let raw = tokio::fs::read_to_string(tmp.path().join("sessions/clean_zero.json"))
+        .await
+        .unwrap();
+    assert!(raw.starts_with(r#"{"type":"snapshot""#), "raw={raw}");
+}
+
+// ─── #1460: session-key single-writer ownership on the write path ───────────
+
+/// Writing through the real store to a key whose lock is held by another
+/// live process must be refused with an error naming the key and owner —
+/// the guard exists to protect this path, not only `acquire` in isolation.
+#[tokio::test]
+async fn save_to_key_owned_by_another_live_process_is_refused() {
+    use std::io::Write;
+
+    fn hold_foreign_owner(tmp: &TempDir, key: &str) -> (std::fs::File, u32) {
+        let sessions_dir = tmp.path().join("sessions");
+        std::fs::create_dir_all(&sessions_dir).unwrap();
+        // Simulated other live process: an independently opened file description
+        // holding the exclusive lock, stamped with the parent's (test runner's)
+        // pid so the refusal message names a pid that is not this process.
+        let owner_pid = std::os::unix::process::parent_id();
+        let lock_file =
+            crate::infrastructure::persistence::file::sessions::session_ownership::open_stamp_file(
+                &FlatSessionLayout::new(tmp.path()),
+                &id(key),
+            )
+            .unwrap();
+        lock_file.try_lock().unwrap();
+        (&lock_file)
+            .write_all(owner_pid.to_string().as_bytes())
+            .unwrap();
+        (lock_file, owner_pid)
+    }
+
+    async fn assert_refused(result: Result<(), DomainError>, key: &str, owner_pid: u32) {
+        let err = result
+            .expect_err("write/delete owned by another process must be refused")
+            .to_string();
+        assert!(err.contains(key), "must name the key: {err}");
+        assert!(
+            err.contains(&owner_pid.to_string()),
+            "must name the owning pid: {err}"
+        );
+    }
+
+    let tmp = TempDir::new().unwrap();
+    let store = FileSessionStore::new(FlatSessionLayout::new(tmp.path()));
+
+    let (_lock, owner_pid) = hold_foreign_owner(&tmp, "owned:save");
+    assert_refused(
+        <FileSessionStore as SessionStore>::save(
+            &store,
+            &Session {
+                key: id("owned:save"),
+                messages: Vec::new(),
+                workflow_run: None,
+                subagent_roster: Vec::new(),
+            },
+        )
+        .await,
+        "owned:save",
+        owner_pid,
+    )
+    .await;
+
+    let (_lock, owner_pid) = hold_foreign_owner(&tmp, "owned:delta");
+    assert_refused(
+        <FileSessionStore as SessionStore>::save_delta(&store, &id("owned:delta"), &[], 0, None)
+            .await,
+        "owned:delta",
+        owner_pid,
+    )
+    .await;
+
+    let (_lock, owner_pid) = hold_foreign_owner(&tmp, "owned:clean-delta");
+    assert_refused(
+        <FileSessionStore as SessionStore>::save_clean_delta(
+            &store,
+            &id("owned:clean-delta"),
+            &[],
+            0,
+            None,
+        )
+        .await,
+        "owned:clean-delta",
+        owner_pid,
+    )
+    .await;
+}
+
+/// A key stamped by a dead process is reclaimed transparently: the write
+/// succeeds and the stamp now records this process.
+#[tokio::test]
+async fn save_to_key_stamped_by_dead_process_reclaims_and_succeeds() {
+    let tmp = TempDir::new().unwrap();
+    let sessions_dir = tmp.path().join("sessions");
+    std::fs::create_dir_all(&sessions_dir).unwrap();
+    let mut child = std::process::Command::new("true").spawn().unwrap();
+    let dead = child.id();
+    child.wait().unwrap();
+    let stamp = FlatSessionLayout::new(tmp.path()).ownership_stamp(&id("owned:dead"));
+    std::fs::write(&stamp, dead.to_string()).unwrap();
+
+    let store = FileSessionStore::new(FlatSessionLayout::new(tmp.path()));
+    let messages = vec![make_message(Role::User, "reclaimed")];
+    store
+        .save_clean_delta(&id("owned:dead"), &messages, 0, None)
+        .await
+        .expect("a key stamped by a dead process must be reclaimable");
+    let contents = std::fs::read_to_string(&stamp).unwrap();
+    assert!(contents.contains(&std::process::id().to_string()));
+}
+
+#[tokio::test]
+async fn legacy_jsonl_append_ordinals_survive_replay_compaction_and_reload() {
+    let dir = TempDir::new().unwrap();
+    let sessions = dir.path().join("sessions");
+    std::fs::create_dir_all(&sessions).unwrap();
+    let path = sessions.join("ordinals_legacy-append.json");
+    std::fs::write(
+        &path,
+        concat!(
+            r#"{"type":"snapshot","key":"ordinals:legacy-append","messages":[{"ordinal":7,"role":"user","content":"assigned"}]}"#,
+            "\n",
+            r#"{"type":"append","start_index":1,"messages":[{"role":"assistant","content":"legacy missing"},{"ordinal":11,"role":"user","content":"preserved"},{"role":"assistant","content":"second missing"}]}"#,
+            "\n"
+        ),
+    )
+    .unwrap();
+    let store = FileSessionStore::new(FlatSessionLayout::new(dir.path()));
+
+    let replayed = store
+        .load(&id("ordinals:legacy-append"))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        replayed
+            .messages
+            .iter()
+            .map(|m| m.ordinal)
+            .collect::<Vec<_>>(),
+        vec![Some(7), Some(12), Some(11), Some(13)]
+    );
+
+    let compacted = Session {
+        messages: replayed.messages.clone(),
+        ..replayed
+    };
+    store.save(&compacted).await.unwrap();
+    let reloaded = store
+        .load(&id("ordinals:legacy-append"))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        reloaded
+            .messages
+            .iter()
+            .map(|m| m.ordinal)
+            .collect::<Vec<_>>(),
+        vec![Some(7), Some(12), Some(11), Some(13)]
+    );
+}
+
+#[tokio::test]
+async fn append_time_ordinals_survive_reload_and_compaction_while_ids_regenerate() {
+    let dir = TempDir::new().unwrap();
+    let store = FileSessionStore::new(FlatSessionLayout::new(dir.path()));
+    let session = Session {
+        key: id("ordinals:reload"),
+        messages: vec![Message::user("one"), Message::assistant("two", vec![])],
+        workflow_run: None,
+        subagent_roster: Vec::new(),
+    };
+    store.save(&session).await.unwrap();
+    let loaded = store.load(&id("ordinals:reload")).await.unwrap().unwrap();
+    assert_eq!(
+        loaded
+            .messages
+            .iter()
+            .map(|m| m.ordinal)
+            .collect::<Vec<_>>(),
+        vec![Some(1), Some(2)]
+    );
+    assert_ne!(loaded.messages[0].id(), session.messages[0].id());
+
+    let compacted = Session {
+        key: id("ordinals:reload"),
+        messages: loaded.messages.clone(),
+        workflow_run: None,
+        subagent_roster: Vec::new(),
+    };
+    store.save(&compacted).await.unwrap();
+    let reloaded = store.load(&id("ordinals:reload")).await.unwrap().unwrap();
+    assert_eq!(
+        reloaded
+            .messages
+            .iter()
+            .map(|m| m.ordinal)
+            .collect::<Vec<_>>(),
+        vec![Some(1), Some(2)]
+    );
+    assert_ne!(reloaded.messages[0].id(), loaded.messages[0].id());
+}

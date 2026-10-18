@@ -227,7 +227,7 @@ const SANCTIONED_CATCHES: &[(&str, &str, &str)] = &[
         "the containment every tool call runs in",
     ),
     (
-        "src/infrastructure/persistence/swarm_board/meter.rs",
+        "src/infrastructure/persistence/sqlite/swarm_board/meter.rs",
         "busy_callback",
         "SQLite's busy handler (#2303): an extern \"C\" callback, which a panic must never unwind out of into SQLite; it gives up the wait instead",
     ),

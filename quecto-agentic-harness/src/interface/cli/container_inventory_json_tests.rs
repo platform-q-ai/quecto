@@ -9,7 +9,7 @@ use crate::application::environments::ports::EnvironmentRegistryStore;
 use crate::domain::environments::entities::environment_registry::{
     EnvironmentOrigin, EnvironmentRecord, EnvironmentStatus,
 };
-use crate::infrastructure::persistence::environment_registry_store::FileEnvironmentRegistryStore;
+use crate::infrastructure::persistence::file::environment_registry_store::FileEnvironmentRegistryStore;
 use crate::interface::cli::CliContext;
 
 const POCKET: &str = "cli:pocket-7";

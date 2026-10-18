@@ -271,7 +271,7 @@ const PROCESS_EFFECT_ALLOWLIST: &[(&str, &[&str], &str)] = &[
         "bash-owned invocation containment of the tool's own process group",
     ),
     (
-        "src/infrastructure/persistence/session_ownership.rs",
+        "src/infrastructure/persistence/file/sessions/session_ownership.rs",
         &["libc::kill", "kill("],
         "signal-0 liveness observation of a session lock holder",
     ),
@@ -376,10 +376,11 @@ fn process_effects_are_exactly_the_allowlisted_files_and_vocabulary() {
 /// carries signal 0.
 #[test]
 fn session_ownership_only_probes_with_signal_zero() {
-    let calls: Vec<_> = production_code("src/infrastructure/persistence/session_ownership.rs")
-        .into_iter()
-        .filter(|(_, line)| line.contains("libc::kill"))
-        .collect();
+    let calls: Vec<_> =
+        production_code("src/infrastructure/persistence/file/sessions/session_ownership.rs")
+            .into_iter()
+            .filter(|(_, line)| line.contains("libc::kill"))
+            .collect();
     assert_eq!(calls.len(), 1, "{calls:?}");
     assert!(calls[0].1.contains(", 0)"), "{}", calls[0].1);
 }

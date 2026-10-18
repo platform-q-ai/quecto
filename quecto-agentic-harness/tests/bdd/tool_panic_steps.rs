@@ -3,7 +3,7 @@
 //! that asks for one `panic_probe` call, then answers.
 use super::QuectoWorld;
 use cucumber::{given, then, when};
-use quecto::infrastructure::persistence::audit_log::AuditLog;
+use quecto::infrastructure::observability::audit_log::AuditLog;
 use serde_json::{Value, json};
 use std::os::unix::process::ExitStatusExt;
 use std::path::PathBuf;

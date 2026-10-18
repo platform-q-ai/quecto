@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use quecto::application::sessions::ports::FreshSessionIdentityGenerator;
 use quecto::domain::sessions::entities::session::USER_CHAT_PREFIX;
-use quecto::infrastructure::persistence::fresh_session_identity::ProcessClockIdentityGenerator;
+use quecto::infrastructure::persistence::file::sessions::fresh_session_identity::ProcessClockIdentityGenerator;
 
 fn under_test() -> Arc<dyn FreshSessionIdentityGenerator> {
     Arc::new(ProcessClockIdentityGenerator::new())

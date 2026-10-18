@@ -482,7 +482,7 @@ fn waiting_board(environment: &ProjectBoardEnvironment) -> Result<ProjectBoardHa
 /// `cancelled` (epic #2481 T3).
 #[tokio::test(flavor = "multi_thread")]
 async fn dropping_a_call_sets_its_cancel_flag() {
-    use crate::infrastructure::persistence::audit_log::AuditLog;
+    use crate::infrastructure::observability::audit_log::AuditLog;
     let base = tempfile::tempdir().unwrap();
     let log = AuditLog::open_sync(base.path(), "dropped").unwrap();
     let recordings = Arc::new(SessionRecording::default());

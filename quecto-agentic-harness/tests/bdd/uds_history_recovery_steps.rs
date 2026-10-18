@@ -13,8 +13,8 @@ use quecto::application::sessions::ports::SessionStore;
 use quecto::domain::conversation::value_objects::message::{Message, ToolCall};
 use quecto::domain::sessions::entities::session::Session;
 use quecto::domain::sessions::entities::session_identity::SessionIdentity;
-use quecto::infrastructure::persistence::session_layout::FlatSessionLayout;
-use quecto::infrastructure::persistence::session_store::FileSessionStore;
+use quecto::infrastructure::persistence::file::sessions::session_layout::FlatSessionLayout;
+use quecto::infrastructure::persistence::file::sessions::session_store::FileSessionStore;
 use std::time::Duration;
 
 const UNKNOWN_MESSAGE_ID: &str = "00000000-0000-0000-0000-000000000000";

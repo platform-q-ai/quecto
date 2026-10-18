@@ -37,7 +37,7 @@ const SECRET: &str = "sk-ant-api03-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 /// name or a code string holding a secret) is never recorded.
 #[tokio::test]
 async fn each_refused_op_records_its_kind_and_never_the_members_text() {
-    use crate::infrastructure::persistence::audit_log::AuditLog;
+    use crate::infrastructure::observability::audit_log::AuditLog;
     let base = tempfile::tempdir().unwrap();
     let event_log = AuditLog::open_sync(base.path(), "cli:refusals").unwrap();
     let board = crate::composition::swarm::swarm_board();
@@ -169,7 +169,7 @@ async fn each_refused_op_records_its_kind_and_never_the_members_text() {
 /// The `swarm_op` records in the event log under `base`.
 fn swarm_ops(base: &std::path::Path) -> Vec<serde_json::Value> {
     let path =
-        crate::infrastructure::persistence::audit_log::AuditLog::file_path(base, "cli:refusals");
+        crate::infrastructure::observability::audit_log::AuditLog::file_path(base, "cli:refusals");
     std::fs::read_to_string(path)
         .unwrap_or_default()
         .lines()

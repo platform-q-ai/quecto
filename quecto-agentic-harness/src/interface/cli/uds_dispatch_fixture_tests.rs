@@ -5,7 +5,7 @@
 use super::cov_tests::make_agent;
 use crate::application::agent_loop::AgentLoopImpl;
 use crate::domain::conversation::value_objects::message::Message;
-use crate::infrastructure::persistence::session_store::FileSessionStore;
+use crate::infrastructure::persistence::file::sessions::session_store::FileSessionStore;
 use crate::interface::cli::uds::DispatchCtx;
 use crate::interface::cli::uds_cancel::{CancelHandle, CancelSlot};
 use crate::interface::cli::uds_ext_protocol::{ClientToolRegistry, new_client_tool_registry};

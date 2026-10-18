@@ -1,7 +1,7 @@
 use quecto::application::sessions::ports::session_home::SessionHomeCatalogue;
 use quecto::domain::sessions::entities::session_home::SessionHomeScope;
 use quecto::domain::sessions::entities::session_identity::SessionIdentity;
-use quecto::infrastructure::persistence::{
+use quecto::infrastructure::persistence::file::sessions::{
     session_home_catalogue::FileSessionHomeCatalogue, session_layout::FlatSessionLayout,
 };
 
@@ -30,7 +30,7 @@ use quecto::domain::{
     sessions::entities::session::Session,
     sessions::entities::session_home::{AssociationProvenance, SessionHome, WorkspaceGroup},
 };
-use quecto::infrastructure::persistence::session_store::FileSessionStore;
+use quecto::infrastructure::persistence::file::sessions::session_store::FileSessionStore;
 use std::sync::Arc;
 
 fn home() -> SessionHome {

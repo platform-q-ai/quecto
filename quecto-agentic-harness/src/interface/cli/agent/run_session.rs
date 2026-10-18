@@ -4,10 +4,10 @@
 //! never constructs one.
 use super::run_session_save::TranscriptSave;
 use super::{AgentFlags, AgentOutput, DeadlineResult, run_with_deadline, settle_stopped_run};
-use crate::application::agent_loop::AgentLoopImpl;
-use crate::application::agent_turn::ports::AgentLoop;
+use crate::application::{agent_loop::AgentLoopImpl, agent_turn::ports::AgentLoop};
 use crate::domain::conversation::value_objects::message::Message;
 use crate::domain::sessions::entities::session_identity::SessionIdentity;
+use crate::infrastructure::persistence::file::crash_record;
 
 use crate::interface::cli::uds_session_handles::SessionLoopInputs;
 
@@ -61,7 +61,7 @@ pub(crate) fn run_agent_session(
     // owned by another live process is refused at open, #1460), loads it and
     // arms its crash record (#2192); an ephemeral run touches no store.
     let mut messages: Vec<Message> = match rt.block_on(sessions.switch.resume.open_at_startup()) {
-        Ok(opened) => crate::infrastructure::persistence::crash_record::claimed(opened).messages,
+        Ok(opened) => crash_record::claimed(opened).messages,
         Err(e) => {
             out.stderr.push_str(&format!("{e}\n"));
             return 1;

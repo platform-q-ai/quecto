@@ -11,8 +11,8 @@ use quecto::application::sessions::ports::session_home::SessionHomeCatalogue;
 use quecto::domain::sessions::entities::session_home::SessionHomeScope;
 use quecto::domain::sessions::entities::session_identity::SessionIdentity;
 use quecto::domain::sessions::services::resume_decision::{HomeVersion, ResumeDecisionKind};
-use quecto::infrastructure::persistence::session_home_catalogue::FileSessionHomeCatalogue;
-use quecto::infrastructure::persistence::session_store::FileSessionStore;
+use quecto::infrastructure::persistence::file::sessions::session_home_catalogue::FileSessionHomeCatalogue;
+use quecto::infrastructure::persistence::file::sessions::session_store::FileSessionStore;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 

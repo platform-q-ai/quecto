@@ -72,8 +72,8 @@ async fn the_file_retention_graph_shares_one_store_across_writer_reader_and_reca
 async fn the_graph_over_a_supplied_store_uses_it_as_is() {
     let tmp = tempfile::tempdir().unwrap();
     let store: Arc<dyn ContextSpillStore> = Arc::new(
-        crate::infrastructure::persistence::context_spill::FileContextSpillStore::new(
-            crate::infrastructure::persistence::session_layout::FlatSessionLayout::new(tmp.path()),
+        crate::infrastructure::persistence::file::context_spill::FileContextSpillStore::new(
+            crate::infrastructure::persistence::file::sessions::session_layout::FlatSessionLayout::new(tmp.path()),
         ),
     );
     let handles = retention_handles_over(store.clone());

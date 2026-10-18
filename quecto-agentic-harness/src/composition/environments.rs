@@ -26,7 +26,7 @@ use crate::application::environments::use_cases::{
 };
 use crate::domain::environments::entities::environment_registry::EnvironmentRegistry;
 use crate::infrastructure::config::container_config_lookup::SelectedConfigLookup;
-use crate::infrastructure::persistence::environment_registry_store::FileEnvironmentRegistryStore;
+use crate::infrastructure::persistence::file::environment_registry_store::FileEnvironmentRegistryStore;
 use crate::infrastructure::processes::containers::environment_process::ScriptEnvironmentProcess;
 use crate::infrastructure::processes::containers::preflight::ScriptPreflight;
 use crate::infrastructure::processes::containers::script_inventory::ScriptInventory;

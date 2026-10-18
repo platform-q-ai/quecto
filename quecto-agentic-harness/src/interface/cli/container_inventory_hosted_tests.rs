@@ -7,7 +7,7 @@
 use super::tests::{composed_with_exited_containers, run};
 use crate::application::environments::ports::EnvironmentRegistryStore;
 use crate::domain::environments::entities::environment_registry::EnvironmentStatus;
-use crate::infrastructure::persistence::environment_registry_store::FileEnvironmentRegistryStore;
+use crate::infrastructure::persistence::file::environment_registry_store::FileEnvironmentRegistryStore;
 use crate::infrastructure::tools::swarm::swarm_bridge::SwarmContext;
 use std::sync::Arc;
 

@@ -21,8 +21,8 @@ use std::time::{Duration, Instant};
 use quecto::application::sessions::dto::SessionListQuery;
 use quecto::application::sessions::ports::SessionStore;
 use quecto::domain::sessions::entities::session_identity::{SessionIdentity, SessionKeyPrefix};
-use quecto::infrastructure::persistence::session_layout::FlatSessionLayout;
-use quecto::infrastructure::persistence::session_store::FileSessionStore;
+use quecto::infrastructure::persistence::file::sessions::session_layout::FlatSessionLayout;
+use quecto::infrastructure::persistence::file::sessions::session_store::FileSessionStore;
 
 fn env_usize(name: &str, default: usize) -> usize {
     std::env::var(name)

@@ -6,8 +6,8 @@
 //! `session_op_log.rs`.
 use quecto::application::swarm::dto::{BoardLocation, MessageTally};
 use quecto::application::swarm::ports::{BoardCallMeter, BoardRepository};
-use quecto::infrastructure::persistence::swarm_board::meter::SqliteBoardCallMeter;
-use quecto::infrastructure::persistence::swarm_board::repository::SqliteBoardRepository;
+use quecto::infrastructure::persistence::sqlite::swarm_board::meter::SqliteBoardCallMeter;
+use quecto::infrastructure::persistence::sqlite::swarm_board::repository::SqliteBoardRepository;
 use serde_json::json;
 
 fn board() -> (tempfile::TempDir, std::path::PathBuf, SqliteBoardRepository) {

@@ -357,7 +357,7 @@ async fn final_roster_snapshot_does_not_preserve_historical_exit_barrier_with_ki
     use crate::domain::sessions::entities::session::{
         PersistedSubagentRosterEntry, Session, SubagentLiveness, SubagentRestoreReason,
     };
-    use crate::infrastructure::persistence::session_store::FileSessionStore;
+    use crate::infrastructure::persistence::file::sessions::session_store::FileSessionStore;
     use crate::infrastructure::tools::agents::subagent_registry::new_registry;
 
     fn row(
@@ -380,7 +380,9 @@ async fn final_roster_snapshot_does_not_preserve_historical_exit_barrier_with_ki
 
     let tmp = tempfile::TempDir::new().unwrap();
     let store = FileSessionStore::new(
-        crate::infrastructure::persistence::session_layout::FlatSessionLayout::new(tmp.path()),
+        crate::infrastructure::persistence::file::sessions::session_layout::FlatSessionLayout::new(
+            tmp.path(),
+        ),
     );
     let previous_roster = vec![
         row(
@@ -430,12 +432,14 @@ async fn final_roster_snapshot_does_not_preserve_historical_exit_barrier() {
     use crate::domain::sessions::entities::session::{
         PersistedSubagentRosterEntry, Session, SubagentLiveness, SubagentRestoreReason,
     };
-    use crate::infrastructure::persistence::session_store::FileSessionStore;
+    use crate::infrastructure::persistence::file::sessions::session_store::FileSessionStore;
     use crate::infrastructure::tools::agents::subagent_registry::new_registry;
 
     let tmp = tempfile::TempDir::new().unwrap();
     let store = FileSessionStore::new(
-        crate::infrastructure::persistence::session_layout::FlatSessionLayout::new(tmp.path()),
+        crate::infrastructure::persistence::file::sessions::session_layout::FlatSessionLayout::new(
+            tmp.path(),
+        ),
     );
     store
         .save(&Session {

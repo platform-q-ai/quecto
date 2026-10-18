@@ -19,8 +19,8 @@ use quecto::domain::sessions::entities::session::{
 };
 use quecto::domain::sessions::entities::session_identity::SessionIdentity;
 use quecto::infrastructure::config::Config;
-use quecto::infrastructure::persistence::session_layout::FlatSessionLayout;
-use quecto::infrastructure::persistence::session_store::FileSessionStore;
+use quecto::infrastructure::persistence::file::sessions::session_layout::FlatSessionLayout;
+use quecto::infrastructure::persistence::file::sessions::session_store::FileSessionStore;
 use quecto::infrastructure::security::sandbox::Sandbox;
 use quecto::infrastructure::tools::registry::ToolRegistryImpl;
 use quecto::interface::cli::uds::{UdsLoopArgs, run_uds_loop};

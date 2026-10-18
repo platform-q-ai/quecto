@@ -2,7 +2,7 @@
 
 use quecto::application::audit::ports::AuditSink;
 use quecto::domain::audit::AuditEvent;
-use quecto::infrastructure::persistence::audit_log::AuditLog;
+use quecto::infrastructure::observability::audit_log::AuditLog;
 use std::sync::Arc;
 
 fn tool_call(id: &str) -> AuditEvent {

@@ -21,7 +21,7 @@ use crate::application::sessions::use_cases::{
     ClearConversation, DepartingChildren, ReadHistory, RecoverMessage, ResumeSavedSession,
     RewindConversation, SaveSession, StartFreshConversation, SynchronizeTranscript,
 };
-use crate::infrastructure::persistence::session_snapshot_sources::{
+use crate::infrastructure::persistence::file::sessions::session_snapshot_sources::{
     RegistryRosterSource, WorkflowEngineRunSource,
 };
 use crate::infrastructure::tools::agents::delegated_roster::RegistryDelegatedRoster;

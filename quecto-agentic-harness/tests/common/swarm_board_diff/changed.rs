@@ -267,7 +267,7 @@ fn json_of(value: SqlValue) -> Value {
 fn loaded(column: &str, value: SqlValue) -> Result<Value, String> {
     match value {
         SqlValue::Text(text) => {
-            quecto::infrastructure::persistence::swarm_board::py_json::decode(&text)
+            quecto::infrastructure::persistence::sqlite::swarm_board::py_json::decode(&text)
                 .and_then(|value| value.to_value())
                 .map_err(|error| format!("column {column} holds no JSON: {error}"))
         }

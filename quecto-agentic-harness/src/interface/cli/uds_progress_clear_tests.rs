@@ -182,10 +182,12 @@ fn test_rewind_to_type_name() {
 async fn test_spill_store_clear_removes_entries_and_recall() {
     use crate::application::sessions::ports::ContextSpillStore;
     use crate::domain::sessions::entities::session::SpillEntry;
-    use crate::infrastructure::persistence::context_spill::FileContextSpillStore;
+    use crate::infrastructure::persistence::file::context_spill::FileContextSpillStore;
     let tmp = tempfile::tempdir().unwrap();
     let store = std::sync::Arc::new(FileContextSpillStore::new(
-        crate::infrastructure::persistence::session_layout::FlatSessionLayout::new(tmp.path()),
+        crate::infrastructure::persistence::file::sessions::session_layout::FlatSessionLayout::new(
+            tmp.path(),
+        ),
     ));
     let key =
         &crate::domain::sessions::entities::session_identity::SessionIdentity::from_persisted_key(

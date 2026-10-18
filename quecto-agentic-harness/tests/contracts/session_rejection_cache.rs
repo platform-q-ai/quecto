@@ -13,9 +13,9 @@ use quecto::application::sessions::ports::session_home::{
 use quecto::domain::conversation::value_objects::message::Message;
 use quecto::domain::sessions::entities::session::Session;
 use quecto::domain::sessions::entities::session_identity::SessionIdentity;
-use quecto::infrastructure::persistence::session_home_catalogue::FileSessionHomeCatalogue;
-use quecto::infrastructure::persistence::session_layout::FlatSessionLayout;
-use quecto::infrastructure::persistence::session_store::FileSessionStore;
+use quecto::infrastructure::persistence::file::sessions::session_home_catalogue::FileSessionHomeCatalogue;
+use quecto::infrastructure::persistence::file::sessions::session_layout::FlatSessionLayout;
+use quecto::infrastructure::persistence::file::sessions::session_store::FileSessionStore;
 use std::sync::Arc;
 
 struct Process {
@@ -200,7 +200,7 @@ async fn a_doctored_rejection_names_no_file_outside_the_layout_and_no_other_reco
 /// untouched); the next query reads it again and the row is back.
 #[tokio::test]
 async fn a_transient_read_failure_is_reported_once_and_never_remembered() {
-    use quecto::infrastructure::persistence::session_record_read::fail_next_reads;
+    use quecto::infrastructure::persistence::file::sessions::session_record_read::fail_next_reads;
     let dir = tempfile::tempdir().unwrap();
     let layout = FlatSessionLayout::new(dir.path().join("base"));
     let process = Process::over(&layout);
@@ -348,7 +348,7 @@ async fn the_pass_stamps_each_record_once_warm_and_a_rebuild_reads_each_once() {
 /// named for that answer, remembered by neither half, read again next time.
 #[tokio::test]
 async fn a_record_rewritten_under_its_read_is_remembered_by_neither_half() {
-    use quecto::infrastructure::persistence::session_record_read::rewrite_after_next_read;
+    use quecto::infrastructure::persistence::file::sessions::session_record_read::rewrite_after_next_read;
     let dir = tempfile::tempdir().unwrap();
     let layout = FlatSessionLayout::new(dir.path().join("base"));
     let process = Process::over(&layout);
@@ -418,7 +418,7 @@ async fn a_deleted_record_leaves_both_caches_and_a_warm_query_stamps_each_record
 /// content verdict, and read once it is small again.
 #[tokio::test]
 async fn an_oversized_record_is_refused_from_its_stamp_and_never_read() {
-    use quecto::infrastructure::persistence::session_record_read::MAX_RECORD_BYTES;
+    use quecto::infrastructure::persistence::file::sessions::session_record_read::MAX_RECORD_BYTES;
     let dir = tempfile::tempdir().unwrap();
     let layout = FlatSessionLayout::new(dir.path().join("base"));
     let process = Process::over(&layout);

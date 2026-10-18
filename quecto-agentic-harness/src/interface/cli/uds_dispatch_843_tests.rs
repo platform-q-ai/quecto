@@ -9,7 +9,7 @@ use super::{
 };
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::domain::conversation::value_objects::message::Message;
-use crate::infrastructure::persistence::session_store::FileSessionStore;
+use crate::infrastructure::persistence::file::sessions::session_store::FileSessionStore;
 use crate::infrastructure::tools::agents::subagent_registry::{
     SubagentEntry, SubagentRegistry, new_registry,
 };
@@ -37,7 +37,7 @@ impl Fx {
     pub(super) fn new() -> Self {
         let tmp = tempfile::TempDir::new().unwrap();
         let store = FileSessionStore::new(
-            crate::infrastructure::persistence::session_layout::FlatSessionLayout::new(tmp.path()),
+            crate::infrastructure::persistence::file::sessions::session_layout::FlatSessionLayout::new(tmp.path()),
         );
         Self {
             agent: AgentLoopImpl::new(AgentLoopConfig {

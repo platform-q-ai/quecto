@@ -1,0 +1,662 @@
+use super::*;
+use crate::application::sessions::dto::SessionListQuery;
+use crate::domain::conversation::value_objects::message::ToolCall;
+use crate::domain::sessions::entities::session_identity::SessionIdentity;
+use crate::infrastructure::persistence::file::sessions::session_layout::FlatSessionLayout;
+use tempfile::TempDir;
+
+pub(super) fn id(k: &str) -> SessionIdentity {
+    SessionIdentity::from_persisted_key(k)
+}
+
+/// The record file name the layout projects for `key` (what
+/// `FileSessionStore::key_to_filename` used to return).
+fn key_to_filename(key: &str) -> String {
+    FlatSessionLayout::new("")
+        .session_file(&id(key))
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned()
+}
+
+pub(super) fn make_message(role: Role, content: &str) -> Message {
+    match role {
+        Role::System => Message::system(content),
+        Role::User => Message::user(content),
+        Role::Assistant => Message::assistant(content, vec![]),
+        Role::Tool => Message::tool("call", content),
+    }
+}
+#[tokio::test]
+async fn test_save_and_load_session() {
+    let tmp = TempDir::new().unwrap();
+    let store = FileSessionStore::new(FlatSessionLayout::new(tmp.path()));
+    let session = Session {
+        key: id("telegram:12345"),
+        messages: vec![
+            make_message(Role::User, "Hello"),
+            make_message(Role::Assistant, "Hi there!"),
+        ],
+        workflow_run: None,
+        subagent_roster: Vec::new(),
+    };
+    store.save(&session).await.unwrap();
+    let loaded = store.load(&id("telegram:12345")).await.unwrap();
+    assert!(loaded.is_some());
+    let loaded = loaded.unwrap();
+    assert_eq!(loaded.key.runtime_key(), "telegram:12345");
+    assert_eq!(loaded.messages.len(), 2);
+    assert_eq!(loaded.messages[0].content, "Hello");
+    assert_eq!(loaded.messages[0].role, Role::User);
+    assert_eq!(loaded.messages[1].content, "Hi there!");
+    assert_eq!(loaded.messages[1].role, Role::Assistant);
+}
+#[tokio::test]
+async fn test_load_nonexistent_session() {
+    let tmp = TempDir::new().unwrap();
+    let store = FileSessionStore::new(FlatSessionLayout::new(tmp.path()));
+    let loaded = store.load(&id("nonexistent")).await.unwrap();
+    assert!(loaded.is_none());
+}
+#[tokio::test]
+async fn test_exists() {
+    let tmp = TempDir::new().unwrap();
+    let store = FileSessionStore::new(FlatSessionLayout::new(tmp.path()));
+    assert!(!store.exists(&id("telegram:12345")).await.unwrap());
+    let mut session = Session::new(id("telegram:12345"));
+    session.messages.push(make_message(Role::User, "hello"));
+    store.save(&session).await.unwrap();
+    assert!(store.exists(&id("telegram:12345")).await.unwrap());
+}
+#[tokio::test]
+async fn test_key_to_filename() {
+    assert_eq!(key_to_filename("telegram:12345"), "telegram_12345.json");
+    assert_eq!(key_to_filename("cli:default"), "cli_default.json");
+}
+#[test]
+fn test_key_to_filename_sanitizes_path_traversal_chars() {
+    let filename = key_to_filename("../../tmp/escape");
+    assert!(!filename.contains(".."));
+    assert!(!filename.contains('/'));
+    assert!(!filename.contains('\\'));
+    assert!(filename.ends_with(".json"));
+}
+#[test]
+fn test_key_to_filename_avoids_collision_for_unsafe_keys() {
+    let a = key_to_filename("a/b");
+    let b = key_to_filename("a?b");
+    assert_ne!(a, b);
+}
+#[tokio::test]
+async fn test_session_with_tool_calls() {
+    let tmp = TempDir::new().unwrap();
+    let store = FileSessionStore::new(FlatSessionLayout::new(tmp.path()));
+    let session = Session {
+        key: id("test:tools"),
+        messages: vec![
+            make_message(Role::User, "run a command"),
+            Message::assistant(
+                String::new(),
+                vec![ToolCall {
+                    id: "call_1".to_string(),
+                    name: "bash".to_string(),
+                    arguments: r#"{"command":"ls"}"#.to_string(),
+                }],
+            ),
+            Message::tool("call_1", "file1.txt\nfile2.txt"),
+        ],
+        workflow_run: None,
+        subagent_roster: Vec::new(),
+    };
+    store.save(&session).await.unwrap();
+    let loaded = store.load(&id("test:tools")).await.unwrap().unwrap();
+    assert_eq!(loaded.messages.len(), 3);
+    assert_eq!(loaded.messages[1].tool_calls.len(), 1);
+    assert_eq!(loaded.messages[1].tool_calls[0].name, "bash");
+    assert_eq!(loaded.messages[2].tool_call_id.as_deref(), Some("call_1"));
+}
+#[test]
+fn test_session_build_key() {
+    assert_eq!(Session::build_key("telegram", "12345"), "telegram:12345");
+    assert_eq!(Session::build_key("cli", "default"), "cli:default");
+}
+
+#[tokio::test]
+async fn test_persistence_across_store_instances() {
+    let tmp = TempDir::new().unwrap();
+
+    // Save with one store instance
+    let store1 = FileSessionStore::new(FlatSessionLayout::new(tmp.path()));
+    let session = Session {
+        key: id("telegram:persist"),
+        messages: vec![make_message(Role::User, "persisted message")],
+        workflow_run: None,
+        subagent_roster: Vec::new(),
+    };
+    store1.save(&session).await.unwrap();
+
+    // Load with a new store instance pointing to the same directory
+    let store2 = FileSessionStore::new(FlatSessionLayout::new(tmp.path()));
+    let loaded = store2.load(&id("telegram:persist")).await.unwrap();
+    assert!(loaded.is_some());
+    assert_eq!(loaded.unwrap().messages[0].content, "persisted message");
+}
+
+// --- Pruning metadata round-trip tests ---
+
+#[tokio::test]
+async fn test_turn_field_survives_round_trip() {
+    let tmp = TempDir::new().unwrap();
+    let store = FileSessionStore::new(FlatSessionLayout::new(tmp.path()));
+
+    let mut tool_msg = Message::tool("call_1", "tool output");
+    tool_msg.turn = Some(3);
+
+    let session = Session {
+        key: id("test:turn"),
+        messages: vec![tool_msg],
+        workflow_run: None,
+        subagent_roster: Vec::new(),
+    };
+    store.save(&session).await.unwrap();
+    let loaded = store.load(&id("test:turn")).await.unwrap().unwrap();
+    assert_eq!(
+        loaded.messages[0].turn,
+        Some(3),
+        "turn field should survive save/load"
+    );
+}
+
+#[tokio::test]
+async fn test_is_collapsed_survives_round_trip() {
+    let tmp = TempDir::new().unwrap();
+    let store = FileSessionStore::new(FlatSessionLayout::new(tmp.path()));
+
+    let mut tool_msg = Message::tool("call_1", "[bash: echo hello (100 tokens)]");
+    tool_msg.is_collapsed = true;
+
+    let session = Session {
+        key: id("test:collapsed"),
+        messages: vec![tool_msg],
+        workflow_run: None,
+        subagent_roster: Vec::new(),
+    };
+    store.save(&session).await.unwrap();
+    let loaded = store.load(&id("test:collapsed")).await.unwrap().unwrap();
+    assert!(
+        loaded.messages[0].is_collapsed,
+        "is_collapsed should survive save/load"
+    );
+}
+
+/// #2226: each message's turn origin survives a full save and an appended
+/// delta, so pruning or a restart never changes which reply is the report;
+/// a name this build does not know loads as unrecognised (ranked last).
+#[tokio::test]
+async fn turn_origin_survives_a_save_and_an_append() {
+    use crate::domain::conversation::services::turn_origin::{
+        TurnOrigin, instruction, progress_nudge,
+    };
+    let tmp = TempDir::new().unwrap();
+    let store = FileSessionStore::new(FlatSessionLayout::new(tmp.path()));
+    let mut answer = Message::assistant("REPORT", vec![]);
+    answer.turn_origin = TurnOrigin::Instruction;
+    let mut messages = vec![instruction("task".into()), answer, Message::user("legacy")];
+    store
+        .save_clean_delta(&id("test:origin"), &messages, 0, None)
+        .await
+        .unwrap();
+    messages.push(progress_nudge("continue".into()));
+    store
+        .save_clean_delta(&id("test:origin"), &messages, 3, None)
+        .await
+        .unwrap();
+    let loaded = store.load(&id("test:origin")).await.unwrap().unwrap();
+    let origins: Vec<TurnOrigin> = loaded.messages.iter().map(|m| m.turn_origin).collect();
+    use TurnOrigin::{Instruction as I, ProgressNudge as N, Unknown as U};
+    assert_eq!(origins, [I, I, U, N]);
+    let path = tmp.path().join("sessions/test_origin.json");
+    let raw = tokio::fs::read_to_string(&path).await.unwrap();
+    assert!(raw.contains(r#""turn_origin":"progressNudge""#), "{raw}");
+    tokio::fs::write(&path, raw.replace("progressNudge", "somethingNew"))
+        .await
+        .unwrap();
+    let reloaded = store.load(&id("test:origin")).await.unwrap().unwrap();
+    assert_eq!(reloaded.messages[3].turn_origin, TurnOrigin::Unrecognised);
+}
+
+/// #2403: a prompt and a cut's stub keep their kind through a full save
+/// and an appended delta, so a resumed watermark context still pins the
+/// latest prompt and archives the stub; a harness message stays unmarked,
+/// and a kind this build does not know loads unmarked.
+#[tokio::test]
+async fn user_kind_survives_a_save_and_an_append() {
+    use crate::domain::conversation::services::turn_origin::{harness_note, prompt};
+    use crate::domain::conversation::services::watermark_cut::archive_stub;
+    use crate::domain::conversation::value_objects::user_kind::UserKind;
+    let tmp = TempDir::new().unwrap();
+    let store = FileSessionStore::new(FlatSessionLayout::new(tmp.path()));
+    let mut messages = vec![prompt("brief".into()), archive_stub(3, Some("archive"))];
+    store
+        .save_clean_delta(&id("test:kind"), &messages, 0, None)
+        .await
+        .unwrap();
+    messages.push(harness_note("a wake".into(), &[]));
+    messages.push(prompt("latest".into()));
+    store
+        .save_clean_delta(&id("test:kind"), &messages, 2, None)
+        .await
+        .unwrap();
+    let loaded = store.load(&id("test:kind")).await.unwrap().unwrap();
+    let kinds: Vec<UserKind> = loaded.messages.iter().map(|m| m.user_kind).collect();
+    use UserKind::{ArchiveStub as S, Prompt as P, Unmarked as U};
+    assert_eq!(kinds, [P, S, U, P]);
+    let path = tmp.path().join("sessions/test_kind.json");
+    let raw = tokio::fs::read_to_string(&path).await.unwrap();
+    assert!(raw.contains(r#""user_kind":"archiveStub""#), "{raw}");
+    tokio::fs::write(&path, raw.replace("archiveStub", "somethingNew"))
+        .await
+        .unwrap();
+    let reloaded = store.load(&id("test:kind")).await.unwrap().unwrap();
+    assert_eq!(reloaded.messages[1].user_kind, UserKind::Unmarked);
+}
+
+#[tokio::test]
+async fn test_is_manifest_survives_round_trip() {
+    let tmp = TempDir::new().unwrap();
+    let store = FileSessionStore::new(FlatSessionLayout::new(tmp.path()));
+
+    let mut manifest = Message::system("[Session memory: 5 spilled entries]");
+    manifest.is_manifest = true;
+    manifest.is_pinned = true;
+
+    let session = Session {
+        key: id("test:manifest"),
+        messages: vec![manifest],
+        workflow_run: None,
+        subagent_roster: Vec::new(),
+    };
+    store.save(&session).await.unwrap();
+    let loaded = store.load(&id("test:manifest")).await.unwrap().unwrap();
+    assert!(
+        loaded.messages[0].is_manifest,
+        "is_manifest should survive save/load"
+    );
+}
+
+#[tokio::test]
+async fn test_is_pinned_survives_round_trip() {
+    let tmp = TempDir::new().unwrap();
+    let store = FileSessionStore::new(FlatSessionLayout::new(tmp.path()));
+
+    let mut user_msg = Message::user("first message");
+    user_msg.is_pinned = true;
+
+    let session = Session {
+        key: id("test:pinned"),
+        messages: vec![user_msg],
+        workflow_run: None,
+        subagent_roster: Vec::new(),
+    };
+    store.save(&session).await.unwrap();
+    let loaded = store.load(&id("test:pinned")).await.unwrap().unwrap();
+    assert!(
+        loaded.messages[0].is_pinned,
+        "is_pinned should survive save/load for non-system messages"
+    );
+}
+
+#[tokio::test]
+async fn test_tool_name_survives_round_trip() {
+    let tmp = TempDir::new().unwrap();
+    let store = FileSessionStore::new(FlatSessionLayout::new(tmp.path()));
+
+    let mut tool_msg = Message::tool("call_1", "output");
+    tool_msg.tool_name = Some("bash".to_string());
+
+    let session = Session {
+        key: id("test:toolname"),
+        messages: vec![tool_msg],
+        workflow_run: None,
+        subagent_roster: Vec::new(),
+    };
+    store.save(&session).await.unwrap();
+    let loaded = store.load(&id("test:toolname")).await.unwrap().unwrap();
+    assert_eq!(
+        loaded.messages[0].tool_name.as_deref(),
+        Some("bash"),
+        "tool_name should survive save/load"
+    );
+}
+
+#[tokio::test]
+async fn test_input_preview_survives_round_trip() {
+    let tmp = TempDir::new().unwrap();
+    let store = FileSessionStore::new(FlatSessionLayout::new(tmp.path()));
+
+    let mut tool_msg = Message::tool("call_1", "output");
+    tool_msg.input_preview = Some("echo hello".to_string());
+
+    let session = Session {
+        key: id("test:preview"),
+        messages: vec![tool_msg],
+        workflow_run: None,
+        subagent_roster: Vec::new(),
+    };
+    store.save(&session).await.unwrap();
+    let loaded = store.load(&id("test:preview")).await.unwrap().unwrap();
+    assert_eq!(
+        loaded.messages[0].input_preview.as_deref(),
+        Some("echo hello"),
+        "input_preview should survive save/load"
+    );
+}
+
+#[tokio::test]
+async fn test_spill_id_survives_round_trip() {
+    let tmp = TempDir::new().unwrap();
+    let store = FileSessionStore::new(FlatSessionLayout::new(tmp.path()));
+
+    let mut tool_msg = Message::tool("call_1", "output");
+    tool_msg.spill_id = Some("turn1:bash:0".to_string());
+
+    let session = Session {
+        key: id("test:spillid"),
+        messages: vec![tool_msg],
+        workflow_run: None,
+        subagent_roster: Vec::new(),
+    };
+    store.save(&session).await.unwrap();
+    let loaded = store.load(&id("test:spillid")).await.unwrap().unwrap();
+    assert_eq!(
+        loaded.messages[0].spill_id.as_deref(),
+        Some("turn1:bash:0"),
+        "spill_id should survive save/load"
+    );
+}
+
+#[tokio::test]
+async fn test_list_sessions_returns_cli_names_and_message_counts() {
+    let tmp = TempDir::new().unwrap();
+    let store = FileSessionStore::new(FlatSessionLayout::new(tmp.path()));
+
+    store
+        .save(&Session {
+            key: id("chat-default"),
+            messages: vec![make_message(Role::User, "hello")],
+            workflow_run: None,
+            subagent_roster: Vec::new(),
+        })
+        .await
+        .unwrap();
+    store
+        .save(&Session {
+            key: id("chat-work"),
+            messages: vec![
+                make_message(Role::User, "question"),
+                make_message(Role::Assistant, "answer"),
+            ],
+            workflow_run: None,
+            subagent_roster: Vec::new(),
+        })
+        .await
+        .unwrap();
+
+    let summaries = store.list(&SessionListQuery::All).await.unwrap();
+    assert_eq!(summaries.len(), 2);
+    let work = summaries.iter().find(|s| s.key == "chat-work").unwrap();
+    assert_eq!(work.title, "question");
+    assert_eq!(work.title, "question");
+    assert_eq!(work.message_count, 2);
+    let default = summaries.iter().find(|s| s.key == "chat-default").unwrap();
+    assert_eq!(default.title, "hello");
+    assert_eq!(default.message_count, 1);
+}
+
+#[tokio::test]
+async fn test_list_sessions_skips_corrupt_json_files() {
+    let tmp = TempDir::new().unwrap();
+    let store = FileSessionStore::new(FlatSessionLayout::new(tmp.path()));
+
+    store
+        .save(&Session {
+            key: id("chat-good"),
+            messages: vec![make_message(Role::User, "hello")],
+            workflow_run: None,
+            subagent_roster: Vec::new(),
+        })
+        .await
+        .unwrap();
+    let sessions_dir = tmp.path().join("sessions");
+    tokio::fs::write(sessions_dir.join("cli_bad.json"), "{ invalid json\n}")
+        .await
+        .unwrap();
+
+    let summaries = store.list(&SessionListQuery::All).await.unwrap();
+    assert_eq!(summaries.len(), 1);
+    assert_eq!(summaries[0].key, "chat-good");
+    assert_eq!(summaries[0].title, "hello");
+}
+
+#[tokio::test]
+async fn test_system_is_pinned_default_survives_round_trip() {
+    let tmp = TempDir::new().unwrap();
+    let store = FileSessionStore::new(FlatSessionLayout::new(tmp.path()));
+
+    let session = Session {
+        key: id("test:sys_pinned"),
+        messages: vec![Message::system("system prompt")],
+        workflow_run: None,
+        subagent_roster: Vec::new(),
+    };
+    store.save(&session).await.unwrap();
+    let loaded = store.load(&id("test:sys_pinned")).await.unwrap().unwrap();
+    // System messages are pinned by default in constructor,
+    // so this should pass even without explicit persistence —
+    // but user messages marked as pinned would fail.
+    assert!(
+        loaded.messages[0].is_pinned,
+        "system message should remain pinned after round-trip"
+    );
+}
+
+// ── Coverage: full conversion round-trip + pure mappers ─────────────────────
+
+#[tokio::test]
+async fn roundtrip_preserves_roles_toolcalls_stop_reason_and_thinking() {
+    use crate::domain::conversation::value_objects::message::{
+        StopReason, ThinkingBlock, ToolCall,
+    };
+    let tmp = TempDir::new().unwrap();
+    let store = FileSessionStore::new(FlatSessionLayout::new(tmp.path()));
+
+    let mut asst = Message::assistant(
+        "answer",
+        vec![ToolCall {
+            id: "c1".into(),
+            name: "search".into(),
+            arguments: "{}".into(),
+        }],
+    );
+    asst.stop_reason = Some(StopReason::ToolUse);
+    asst.thinking_blocks = vec![
+        ThinkingBlock::Normal {
+            thinking: "reasoning".into(),
+            signature: "sig".into(),
+        },
+        ThinkingBlock::Redacted {
+            data: "redacted".into(),
+        },
+    ];
+    asst.is_pinned = true;
+    asst.is_manifest = true;
+    asst.is_collapsed = true;
+
+    let session = Session {
+        key: id("cli:roundtrip"),
+        messages: vec![
+            Message::system("sys"),
+            Message::user("u"),
+            asst,
+            Message::tool("c1", "tool result"),
+        ],
+        workflow_run: None,
+        subagent_roster: Vec::new(),
+    };
+    store.save(&session).await.unwrap();
+    let loaded = store.load(&id("cli:roundtrip")).await.unwrap().unwrap();
+
+    assert_eq!(loaded.messages.len(), 4);
+    assert_eq!(loaded.messages[0].role, Role::System);
+    assert_eq!(loaded.messages[1].role, Role::User);
+    let a = &loaded.messages[2];
+    assert_eq!(a.role, Role::Assistant);
+    assert_eq!(a.tool_calls.len(), 1);
+    assert_eq!(a.tool_calls[0].id, "c1");
+    assert_eq!(a.stop_reason, Some(StopReason::ToolUse));
+    assert_eq!(a.thinking_blocks.len(), 2);
+    assert!(a.is_pinned);
+    assert!(a.is_manifest);
+    assert!(a.is_collapsed);
+    let t = &loaded.messages[3];
+    assert_eq!(t.role, Role::Tool);
+    assert_eq!(t.tool_call_id.as_deref(), Some("c1"));
+}
+
+#[test]
+fn stop_reason_to_str_covers_all_variants() {
+    use crate::domain::conversation::value_objects::message::StopReason;
+    let cases = [
+        (StopReason::EndTurn, "end_turn"),
+        (StopReason::MaxTokens, "max_tokens"),
+        (StopReason::ToolUse, "tool_use"),
+        (StopReason::Refusal, "refusal"),
+        (StopReason::Error, "error"),
+        (StopReason::Aborted, "aborted"),
+    ];
+    for (sr, s) in cases {
+        assert_eq!(sr.to_string(), s);
+        assert_eq!(StopReason::parse(s), sr);
+    }
+    assert_eq!(StopReason::Unknown("weird".into()).to_string(), "weird");
+}
+
+#[test]
+fn role_str_mapping_roundtrips_and_defaults() {
+    for r in [Role::System, Role::User, Role::Assistant, Role::Tool] {
+        assert_eq!(super::str_to_role(super::role_to_str(&r)), r);
+    }
+    assert_eq!(super::str_to_role("not-a-role"), Role::User);
+}
+
+// --- #765: list() derives summaries from a lightweight header only ---
+//
+// Acceptance: list() computes title/count without fully deserializing the
+// `messages` array (heavy per-message fields like thinking_blocks). This is
+// pinned structurally: the fixture carries a thinking_blocks entry with a tag
+// the full MessageRecord/ThinkingBlockRecord model *rejects* (the enum has no
+// catch-all). The companion assertion below proves a full parse (load()) does
+// reject this exact file, so list() can only succeed by NOT paying the
+// full-deserialize cost — a catch-all on ThinkingBlockRecord would break the
+// load() assertion and so cannot game this test.
+const HEAVY_UNPARSEABLE_SESSION: &str = r#"{
+    "key": "chat-heavy",
+    "messages": [
+        {"role": "user", "content": "what is the answer"},
+        {"role": "assistant", "content": "42",
+         "thinking_blocks": [{"type": "totally-unknown-variant", "x": 1}]}
+    ]
+}"#;
+
+#[tokio::test]
+async fn test_list_ignores_unparseable_heavy_message_fields() {
+    let tmp = TempDir::new().unwrap();
+    let store = FileSessionStore::new(FlatSessionLayout::new(tmp.path()));
+
+    let sessions_dir = tmp.path().join("sessions");
+    tokio::fs::create_dir_all(&sessions_dir).await.unwrap();
+    tokio::fs::write(
+        sessions_dir.join("chat-heavy.json"),
+        HEAVY_UNPARSEABLE_SESSION,
+    )
+    .await
+    .unwrap();
+
+    // A full parse (load) MUST reject the unknown heavy field; otherwise the
+    // listing assertion would not prove the header path skips message bodies.
+    assert!(
+        store.load(&id("chat-heavy")).await.is_err(),
+        "fixture must be unparseable by the full message model"
+    );
+
+    let summaries = store.list(&SessionListQuery::All).await.unwrap();
+    let s = summaries
+        .iter()
+        .find(|s| s.key == "chat-heavy")
+        .expect("session with unparseable heavy field should still be listed");
+    assert_eq!(s.title, "what is the answer");
+    assert_eq!(s.message_count, 2);
+}
+
+// Sync guard for the duplicated lightweight schema (#765 review). The header
+// is an independent serde view of the full SessionFile/MessageRecord model;
+// nothing at the type level links `key`/`messages`/`role`/`content`. This test
+// serializes REAL records (exactly what save() writes) and asserts the header
+// reads back identical `key`/`role`/`content`. If a field is renamed or its
+// representation changes on the authoritative model, the header would fall back
+// to its serde defaults and this test fails — instead of silently producing
+// blank titles in production.
+#[test]
+fn test_session_header_stays_in_sync_with_full_record() {
+    let file = SessionFile {
+        key: "chat-sync".to_string(),
+        messages: vec![
+            message_to_record(&make_message(Role::User, "first user line")),
+            message_to_record(&make_message(Role::Assistant, "assistant reply")),
+        ],
+        workflow_run: None,
+        subagent_roster: Vec::new(),
+    };
+    let json = serde_json::to_string(&file).unwrap();
+
+    let header: SessionHeader = serde_json::from_str(&json).unwrap();
+    assert_eq!(header.key, "chat-sync");
+    assert_eq!(header.messages.len(), 2);
+    assert_eq!(header.messages[0].role, "user");
+    assert_eq!(header.messages[0].content, "first user line");
+    assert_eq!(header.messages[1].role, "assistant");
+    assert_eq!(header.messages[1].content, "assistant reply");
+}
+
+// list() is summary-only and is NOT a load guarantee (#765 review): a session
+// whose message bodies are malformed is still surfaced by list() but rejected
+// by load(). Callers must degrade gracefully. This pins that exact contract.
+#[tokio::test]
+async fn test_listed_session_with_malformed_body_fails_to_load() {
+    let tmp = TempDir::new().unwrap();
+    let store = FileSessionStore::new(FlatSessionLayout::new(tmp.path()));
+
+    let sessions_dir = tmp.path().join("sessions");
+    tokio::fs::create_dir_all(&sessions_dir).await.unwrap();
+    tokio::fs::write(
+        sessions_dir.join("chat-heavy.json"),
+        HEAVY_UNPARSEABLE_SESSION,
+    )
+    .await
+    .unwrap();
+
+    // It is listed (summary derivable from the header)...
+    let summaries = store.list(&SessionListQuery::All).await.unwrap();
+    assert!(
+        summaries.iter().any(|s| s.key == "chat-heavy"),
+        "summary-only listing should surface the session"
+    );
+
+    // ...but opening it returns an error, NOT a panic or silent success. The
+    // caller is expected to handle this gracefully.
+    assert!(
+        store.load(&id("chat-heavy")).await.is_err(),
+        "a listed session is not guaranteed to load"
+    );
+}

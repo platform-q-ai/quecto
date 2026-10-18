@@ -146,7 +146,7 @@ pub(super) const PORT_IMPLEMENTORS: &[(&str, &[&str])] = &[
     // #2009 capability-local ports retain one concrete adapter each.
     (
         "SessionHomeCatalogue",
-        &["src/infrastructure/persistence/session_home_catalogue.rs"],
+        &["src/infrastructure/persistence/file/sessions/session_home_catalogue.rs"],
     ),
     (
         "WorkspaceDiscovery",
@@ -154,11 +154,11 @@ pub(super) const PORT_IMPLEMENTORS: &[(&str, &[&str])] = &[
     ),
     (
         "SessionStore",
-        &["src/infrastructure/persistence/session_store.rs"],
+        &["src/infrastructure/persistence/file/sessions/session_store.rs"],
     ),
     (
         "ContextSpillStore",
-        &["src/infrastructure/persistence/context_spill.rs"],
+        &["src/infrastructure/persistence/file/context_spill.rs"],
     ),
     (
         "SessionExportPort",
@@ -170,11 +170,11 @@ pub(super) const PORT_IMPLEMENTORS: &[(&str, &[&str])] = &[
     ),
     (
         "WorkflowRunSource",
-        &["src/infrastructure/persistence/session_snapshot_sources.rs"],
+        &["src/infrastructure/persistence/file/sessions/session_snapshot_sources.rs"],
     ),
     (
         "HistoricalRosterSource",
-        &["src/infrastructure/persistence/session_snapshot_sources.rs"],
+        &["src/infrastructure/persistence/file/sessions/session_snapshot_sources.rs"],
     ),
     (
         "TurnAccountingReset",
@@ -185,7 +185,7 @@ pub(super) const PORT_IMPLEMENTORS: &[(&str, &[&str])] = &[
     ),
     (
         "FreshSessionIdentityGenerator",
-        &["src/infrastructure/persistence/fresh_session_identity.rs"],
+        &["src/infrastructure/persistence/file/sessions/fresh_session_identity.rs"],
     ),
     ("FleetSettlement", &["src/composition/fleet_settlement.rs"]),
     (
@@ -207,8 +207,8 @@ pub(super) const PORT_IMPLEMENTORS: &[(&str, &[&str])] = &[
 /// declarations the loop is composed over.
 const SESSION_STORE_HOLDERS: &[&str] = &[
     // #2009 authority and derived catalogue share the composed store.
-    "src/infrastructure/persistence/session_home_catalogue.rs",
-    "src/infrastructure/persistence/session_store_home.rs",
+    "src/infrastructure/persistence/file/sessions/session_home_catalogue.rs",
+    "src/infrastructure/persistence/file/sessions/session_store_home.rs",
     "src/application/sessions/ports.rs",
     "src/application/sessions/use_cases/list_sessions.rs",
     "src/application/sessions/use_cases/read_history.rs",
@@ -228,13 +228,13 @@ const SESSION_STORE_HOLDERS: &[&str] = &[
     // #2009 the home context is composed over the one file store.
     "src/composition/session_home.rs",
     "src/composition/sessions.rs",
-    "src/infrastructure/persistence/session_store.rs",
+    "src/infrastructure/persistence/file/sessions/session_store.rs",
     // #2218 the file store's write paths and intactness record.
-    "src/infrastructure/persistence/session_store_write.rs",
+    "src/infrastructure/persistence/file/sessions/session_store_write.rs",
     // #2192 a parent reads an ended child's transcript through the store.
-    "src/infrastructure/persistence/ended_child_records.rs",
+    "src/infrastructure/persistence/file/ended_child_records.rs",
     // #2192 the bounded read of a session its owner no longer holds.
-    "src/infrastructure/persistence/session_store_bounded.rs",
+    "src/infrastructure/persistence/file/sessions/session_store_bounded.rs",
     "src/interface/cli/uds_session_handles.rs",
 ];
 

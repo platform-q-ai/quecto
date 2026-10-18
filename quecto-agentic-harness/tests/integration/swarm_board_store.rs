@@ -13,7 +13,7 @@ use std::path::Path;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
-use quecto::infrastructure::persistence::swarm_board::store::{BoardStore, StoreRefusal};
+use quecto::infrastructure::persistence::sqlite::swarm_board::store::{BoardStore, StoreRefusal};
 use serial_test::serial;
 
 const SCHEMA_FIXTURE: &str = concat!(

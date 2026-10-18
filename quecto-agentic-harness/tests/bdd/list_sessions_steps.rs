@@ -6,8 +6,8 @@ use super::*;
 use quecto::domain::conversation::value_objects::message::Message;
 use quecto::domain::sessions::entities::session::Session;
 use quecto::domain::sessions::entities::session_identity::SessionIdentity;
-use quecto::infrastructure::persistence::session_layout::FlatSessionLayout;
-use quecto::infrastructure::persistence::session_store::FileSessionStore;
+use quecto::infrastructure::persistence::file::sessions::session_layout::FlatSessionLayout;
+use quecto::infrastructure::persistence::file::sessions::session_store::FileSessionStore;
 
 fn list_sessions_response(world: &QuectoWorld) -> serde_json::Value {
     uds_steps::find_agent_response(world, "list_sessions").unwrap_or_else(|| {

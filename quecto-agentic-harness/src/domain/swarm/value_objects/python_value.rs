@@ -10,7 +10,7 @@
 //! This models Python's *semantics* over values already read; the board's
 //! Python-compatible JSON *text* (reading and writing columns byte for byte,
 //! with values a `serde_json::Value` cannot hold) is
-//! `infrastructure::persistence::swarm_board::py_json`. The two are separate
+//! `infrastructure::persistence::sqlite::swarm_board::py_json`. The two are separate
 //! because the domain must not depend on that infrastructure codec. These
 //! comparisons are only as exact as their inputs: an argument must be decoded
 //! by `py_json` (correctly rounded floats), not by `serde_json`, before it

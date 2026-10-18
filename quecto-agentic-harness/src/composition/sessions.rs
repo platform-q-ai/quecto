@@ -4,11 +4,11 @@
 //! and `session_search`, the active session, its use cases and discovery.
 use crate::application::sessions::ports::{FreshSessionIdentityGenerator, SessionStore};
 use crate::application::sessions::use_cases::ListSessions;
-use crate::infrastructure::persistence::context_spill::FileContextSpillStore;
-use crate::infrastructure::persistence::fresh_session_identity::ProcessClockIdentityGenerator;
-use crate::infrastructure::persistence::session_images::FileImageSidecarStore;
-use crate::infrastructure::persistence::session_layout::FlatSessionLayout;
-use crate::infrastructure::persistence::session_store::FileSessionStore;
+use crate::infrastructure::persistence::file::context_spill::FileContextSpillStore;
+use crate::infrastructure::persistence::file::sessions::fresh_session_identity::ProcessClockIdentityGenerator;
+use crate::infrastructure::persistence::file::sessions::session_images::FileImageSidecarStore;
+use crate::infrastructure::persistence::file::sessions::session_layout::FlatSessionLayout;
+use crate::infrastructure::persistence::file::sessions::session_store::FileSessionStore;
 use crate::interface::cli::retention_handles::RetentionHandles;
 use crate::interface::uds::sessions::controller::ListSessionsController;
 use std::sync::Arc;

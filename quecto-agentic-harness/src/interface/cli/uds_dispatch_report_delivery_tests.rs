@@ -131,7 +131,7 @@ struct Observed {
 struct Probe {
     /// Filled once the agent is installed (installing recomposes the graph).
     state: Arc<Mutex<Option<ActiveSessionHandle>>>,
-    store: Arc<crate::infrastructure::persistence::session_store::FileSessionStore>,
+    store: Arc<crate::infrastructure::persistence::file::sessions::session_store::FileSessionStore>,
     observed: Arc<Mutex<Vec<Observed>>>,
 }
 

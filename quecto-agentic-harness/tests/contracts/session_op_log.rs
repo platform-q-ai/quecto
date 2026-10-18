@@ -5,8 +5,8 @@
 use quecto::application::swarm::dto::DroppedRecords;
 use quecto::application::swarm::ports::{BoardOpLog, SessionOpLog};
 use quecto::domain::swarm::events::run_summary::RunSummaryFold;
-use quecto::infrastructure::persistence::audit_log::AuditLog;
-use quecto::infrastructure::persistence::board_op_log::EventLogBoardOps;
+use quecto::infrastructure::observability::audit_log::AuditLog;
+use quecto::infrastructure::observability::board_op_log::EventLogBoardOps;
 use serde_json::json;
 
 fn lines(base: &std::path::Path, key: &str) -> Vec<serde_json::Value> {

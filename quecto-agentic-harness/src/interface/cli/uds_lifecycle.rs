@@ -119,7 +119,7 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
     // loads it and lets the watermark stand for what the store holds.
     // Claimed, the session's crash record is this process's too (#2192).
     let opened = match sessions.switch.resume.open_at_startup().await {
-        Ok(opened) => crate::infrastructure::persistence::crash_record::claimed(opened),
+        Ok(opened) => crate::infrastructure::persistence::file::crash_record::claimed(opened),
         Err(err) => {
             eprintln!("{err}");
             return 1;

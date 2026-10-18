@@ -560,8 +560,8 @@ fn write_panic_child() {
         return;
     }
     use crate::application::tool_panic_scope::{ToolScope, scoped};
-    use crate::infrastructure::persistence::audit_log::AuditLog;
-    use crate::infrastructure::persistence::crash_record;
+    use crate::infrastructure::observability::audit_log::AuditLog;
+    use crate::infrastructure::persistence::file::crash_record;
     crate::interface::panic_hook::install();
     let base = tempfile::tempdir().unwrap();
     crash_record::prepare(crash_record::CrashTarget {

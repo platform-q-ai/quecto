@@ -440,7 +440,7 @@ fn test_run_agent_session_named_session_keeps_spill_file() {
     // Scrubbing is ephemeral-only: a named session's spill store must persist
     // for /resume + recall across runs.
     let tmp = tempfile::TempDir::new().unwrap();
-    let key_dir = crate::infrastructure::persistence::filename::sanitize_session_key(
+    let key_dir = crate::infrastructure::persistence::file::filename::sanitize_session_key(
         &crate::domain::sessions::entities::session::Session::build_key("cli", "keepme"),
     );
     let spill_path = tmp

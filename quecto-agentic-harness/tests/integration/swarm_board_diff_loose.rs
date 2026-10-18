@@ -661,7 +661,7 @@ const EXTERNAL_PINS: [(&str, &str, &str); 4] = [
     ),
     (
         "real_to_text_digits",
-        include_str!("../../src/infrastructure/persistence/swarm_board/binding_tests.rs"),
+        include_str!("../../src/infrastructure/persistence/sqlite/swarm_board/binding_tests.rs"),
         "a_float_reaching_text_affinity_reads_as_the_bundled_sqlite_writes_it",
     ),
 ];

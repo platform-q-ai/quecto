@@ -7,7 +7,7 @@ use quecto::domain::swarm::{
     entities::records::RunState, events::telemetry::RefusalKind,
     value_objects::board_error::BoardError,
 };
-use quecto::infrastructure::persistence::swarm_board::repository::SqliteBoardRepository;
+use quecto::infrastructure::persistence::sqlite::swarm_board::repository::SqliteBoardRepository;
 use serde_json::json;
 
 fn board() -> (tempfile::TempDir, SqliteBoardRepository) {

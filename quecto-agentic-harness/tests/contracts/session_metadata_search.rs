@@ -20,9 +20,9 @@ use quecto::domain::sessions::entities::session::Session;
 use quecto::domain::sessions::entities::session_home::SessionHomeScope;
 use quecto::domain::sessions::services::resume_decision::HomeVersion;
 use quecto::domain::sessions::services::session_metadata_search::MatchedField;
-use quecto::infrastructure::persistence::session_home_catalogue::FileSessionHomeCatalogue;
-use quecto::infrastructure::persistence::session_layout::FlatSessionLayout;
-use quecto::infrastructure::persistence::session_store::FileSessionStore;
+use quecto::infrastructure::persistence::file::sessions::session_home_catalogue::FileSessionHomeCatalogue;
+use quecto::infrastructure::persistence::file::sessions::session_layout::FlatSessionLayout;
+use quecto::infrastructure::persistence::file::sessions::session_store::FileSessionStore;
 use std::sync::Arc;
 
 async fn search(

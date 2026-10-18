@@ -16,6 +16,7 @@ pub mod file_replace;
 pub mod line_cap;
 pub mod logging;
 pub mod model_registry;
+pub mod observability;
 pub mod parent_playbook;
 #[cfg(test)]
 mod parent_playbook_tests;

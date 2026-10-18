@@ -6664,7 +6664,7 @@ fn ambient_state(source: &str) -> Vec<String> {
 fn the_board_store_keeps_no_ambient_state() {
     let mut files = Vec::new();
     collect_rs_files(
-        Path::new("src/infrastructure/persistence/swarm_board"),
+        Path::new("src/infrastructure/persistence/sqlite/swarm_board"),
         &mut files,
     );
     assert!(files.len() > 5, "the scan reads the board store");
@@ -6774,7 +6774,7 @@ fn swarm_application_depends_only_inward() {
     }
     for dep in [
         "rusqlite::Connection",
-        "crate::infrastructure::persistence::swarm_board::store::BoardStore",
+        "crate::infrastructure::persistence::sqlite::swarm_board::store::BoardStore",
         "crate::infrastructure::tools::swarm::swarm_lifecycle::SystemClock",
         "crate::interface::cli::CliContext",
         "crate::composition::swarm::build_swarm_board_handles",

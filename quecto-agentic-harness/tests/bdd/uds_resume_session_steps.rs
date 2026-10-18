@@ -6,8 +6,8 @@ use super::*;
 use quecto::application::sessions::ports::SessionStore;
 use quecto::domain::sessions::entities::session::Session;
 use quecto::domain::sessions::entities::session_identity::SessionIdentity;
-use quecto::infrastructure::persistence::session_layout::FlatSessionLayout;
-use quecto::infrastructure::persistence::session_store::FileSessionStore;
+use quecto::infrastructure::persistence::file::sessions::session_layout::FlatSessionLayout;
+use quecto::infrastructure::persistence::file::sessions::session_store::FileSessionStore;
 
 #[given(expr = "a saved UDS session {string} with {int} messages in the base directory")]
 fn given_saved_uds_session(world: &mut QuectoWorld, key: String, count: usize) {
@@ -79,7 +79,7 @@ fn then_live_resume_refused(world: &mut QuectoWorld, error: String) {
 /// the harness is still serving.
 #[then(expr = "a second claimant is refused session key {string} while the harness serves")]
 fn then_second_claimant_refused(world: &mut QuectoWorld, key: String) {
-    use quecto::infrastructure::persistence::session_ownership::SessionOwnershipRegistry;
+    use quecto::infrastructure::persistence::file::sessions::session_ownership::SessionOwnershipRegistry;
     let base = super::restore_lifetime_steps::base(world);
     let identity = SessionIdentity::from_persisted_key(key.as_str());
     let claimant = SessionOwnershipRegistry::default();

@@ -18,8 +18,8 @@ use quecto::domain::agents::value_objects::harness_lifetime::{
 use quecto::domain::conversation::value_objects::message::Message;
 use quecto::domain::sessions::entities::session::Session;
 use quecto::domain::sessions::entities::session_identity::SessionIdentity;
-use quecto::infrastructure::persistence::session_layout::FlatSessionLayout;
-use quecto::infrastructure::persistence::session_store::FileSessionStore;
+use quecto::infrastructure::persistence::file::sessions::session_layout::FlatSessionLayout;
+use quecto::infrastructure::persistence::file::sessions::session_store::FileSessionStore;
 use quecto::infrastructure::tools::agents::agent_cmd::{AgentCmdTool, SubagentRegistry};
 use quecto::infrastructure::tools::agents::spawn::SpawnTool;
 use quecto::infrastructure::tools::agents::subagent_registry::SubagentEntry;

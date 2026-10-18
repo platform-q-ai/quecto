@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use crate::application::agent_loop::AgentLoopImpl;
 use crate::application::audit::ports::AuditSink;
-use crate::infrastructure::persistence::audit_log::AuditLog;
+use crate::infrastructure::observability::audit_log::AuditLog;
 use crate::interface::cli::board::BoardToolRecordingBuilder;
 use crate::interface::tools::project_board::session_recording::SessionRecording;
 
@@ -92,7 +92,7 @@ pub(super) fn decided_with(
 pub(in crate::interface::cli) fn follow_session(
     session_key: Option<&str>,
 ) -> Option<Arc<dyn AuditSink>> {
-    let log = crate::infrastructure::persistence::crash_record::follow(session_key)?;
+    let log = crate::infrastructure::persistence::file::crash_record::follow(session_key)?;
     let board = crate::infrastructure::tools::swarm::swarm_bridge::process_board();
     Some(followed(log, board, BoardToolSession::process()))
 }
@@ -196,7 +196,7 @@ pub(super) fn attach(
     target: &SessionLogTarget<'_>,
     stderr: &mut String,
 ) {
-    use crate::infrastructure::persistence::crash_record::{CrashTarget, prepare};
+    use crate::infrastructure::persistence::file::crash_record::{CrashTarget, prepare};
     let board = crate::infrastructure::tools::swarm::swarm_bridge::process_board();
     let board_tool = BoardToolSession::process();
     let crash_line = attach_to(board, board_tool, agent, target, flags, stderr);
@@ -237,7 +237,7 @@ pub(super) fn attach_to(
     target: &SessionLogTarget<'_>,
     flags: &super::AgentFlags,
     stderr: &mut String,
-) -> Option<crate::infrastructure::persistence::audit_log::AuditCrashLine> {
+) -> Option<crate::infrastructure::observability::audit_log::AuditCrashLine> {
     let SessionLogTarget {
         base_dir,
         session_key,

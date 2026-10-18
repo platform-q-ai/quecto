@@ -18,8 +18,8 @@ use crate::domain::error::DomainError;
 use crate::domain::sessions::entities::session::{PersistedSubagentRosterEntry, Session};
 use crate::domain::sessions::entities::session_identity::SessionIdentity;
 use crate::domain::workflow::WorkflowRunPersisted;
-use crate::infrastructure::persistence::session_layout::FlatSessionLayout;
-use crate::infrastructure::persistence::session_store::FileSessionStore;
+use crate::infrastructure::persistence::file::sessions::session_layout::FlatSessionLayout;
+use crate::infrastructure::persistence::file::sessions::session_store::FileSessionStore;
 
 struct Rows(Vec<PersistedSubagentRosterEntry>);
 

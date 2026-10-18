@@ -63,7 +63,7 @@ pub fn build_ended_child_inspection(base_dir: &Path) -> Arc<InspectEndedChild> {
     let transcripts = Arc::new(super::sessions::build_file_session_store(base_dir));
     Arc::new(InspectEndedChild::new(
         Arc::new(
-            crate::infrastructure::persistence::ended_child_records::FileEndedChildRecords::new(
+            crate::infrastructure::persistence::file::ended_child_records::FileEndedChildRecords::new(
                 base_dir,
                 transcripts,
             ),

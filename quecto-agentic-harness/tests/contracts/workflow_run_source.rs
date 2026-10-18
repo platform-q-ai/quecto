@@ -7,7 +7,7 @@ use quecto::application::sessions::ports::WorkflowRunSource;
 use quecto::domain::workflow::{
     WorkflowConfig, WorkflowEngine, WorkflowTemplate, WorkflowTemplateStep,
 };
-use quecto::infrastructure::persistence::session_snapshot_sources::WorkflowEngineRunSource;
+use quecto::infrastructure::persistence::file::sessions::session_snapshot_sources::WorkflowEngineRunSource;
 
 fn engine() -> Arc<Mutex<WorkflowEngine>> {
     let config = WorkflowConfig {

@@ -120,7 +120,7 @@ impl Answer {
 
 /// A result text read as Python's `json.loads` reads it.
 pub fn decoded(text: &str) -> Value {
-    quecto::infrastructure::persistence::swarm_board::py_json::decode(text)
+    quecto::infrastructure::persistence::sqlite::swarm_board::py_json::decode(text)
         .and_then(|value| value.to_value())
         .unwrap_or_else(|error| panic!("a golden result {text:?}: {error}"))
 }

@@ -5,7 +5,7 @@
 //! SQL.
 use quecto::application::swarm::dto::{BoardLocation, FileRow, NewReservation};
 use quecto::application::swarm::ports::BoardRepository;
-use quecto::infrastructure::persistence::swarm_board::repository::SqliteBoardRepository;
+use quecto::infrastructure::persistence::sqlite::swarm_board::repository::SqliteBoardRepository;
 use serde_json::json;
 
 #[test]

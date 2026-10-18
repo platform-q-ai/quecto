@@ -7,7 +7,7 @@ use super::{
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::application::sessions::ports::{ContextSpillStore, SessionStore};
 use crate::domain::sessions::entities::session_identity::{SessionIdentity, SpillId};
-use crate::infrastructure::persistence::session_layout::FlatSessionLayout;
+use crate::infrastructure::persistence::file::sessions::session_layout::FlatSessionLayout;
 
 fn id(key: impl Into<String>) -> SessionIdentity {
     SessionIdentity::from_persisted_key(key)
@@ -16,7 +16,7 @@ use crate::application::tools::ports::Tool;
 use crate::domain::conversation::value_objects::message::Message;
 use crate::domain::sessions::entities::session::{Session, SpillEntry, SpillIndex};
 use crate::domain::tool_policy::value_objects::tool::{ToolDefinition, ToolResult};
-use crate::infrastructure::persistence::session_store::FileSessionStore;
+use crate::infrastructure::persistence::file::sessions::session_store::FileSessionStore;
 use crate::interface::cli::protocol::{AgentCommand, ToolRegistration};
 use std::sync::Arc;
 #[derive(Debug, Default)]
