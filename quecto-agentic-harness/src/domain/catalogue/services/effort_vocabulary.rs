@@ -1,5 +1,5 @@
-//! The reasoning-effort vocabulary rule (#1996), split out of
-//! `catalogue.rs` to respect the per-file line cap.
+//! The reasoning-effort vocabulary rule (#1996), split out of the
+//! catalogue domain module to respect the per-file line cap.
 
 use crate::domain::catalogue::value_objects::identity::{ProviderId, TransportKind};
 use crate::domain::inference::value_objects::provider::EffortLevel;
