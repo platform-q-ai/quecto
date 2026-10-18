@@ -9,8 +9,6 @@ mod agent_usage;
 pub mod audit;
 pub mod catalogue;
 pub mod configuration;
-pub mod context;
-pub mod context_pruning;
 pub mod durable_prefix;
 pub mod environments;
 pub mod extensions;

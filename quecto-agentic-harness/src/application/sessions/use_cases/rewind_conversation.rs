@@ -21,7 +21,7 @@
 //! place: no rollback, staging or cleanup-status result exists.
 use super::SaveSession;
 use super::clear_conversation::{clear_retention_best_effort, retention_of, visible_message_count};
-use crate::application::context_pruning::messages::message_stub_without_recall;
+use crate::application::agent_turn::context::context_pruning::messages::message_stub_without_recall;
 use crate::application::sessions::active_session::{ActiveSessionHandle, ActiveSessionState};
 use crate::application::sessions::conversation_ledger::LedgerAdvance;
 use crate::application::sessions::dto::{

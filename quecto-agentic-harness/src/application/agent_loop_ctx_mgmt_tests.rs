@@ -609,7 +609,9 @@ async fn the_tool_definitions_count_against_the_budget() {
         vec![turn(1), turn(2), turn(3), turn(4), Message::user("now")]
     };
     let messages_total =
-        crate::application::context_pruning::estimate_total_tokens(&conversation());
+        crate::application::agent_turn::context::context_pruning::estimate_total_tokens(
+            &conversation(),
+        );
     let agent_with = |tools: &[&str]| {
         let mut registry = MockRegistry::new();
         for name in tools {

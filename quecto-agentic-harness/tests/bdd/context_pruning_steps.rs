@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use super::agent_loop_steps::ensure_mock_llm;
 use super::*;
-use quecto::application::context_pruning;
+use quecto::application::agent_turn::context::context_pruning;
 use quecto::application::sessions::ports::{ContextSpillStore, SessionStore};
 use quecto::domain::sessions::entities::session::{Session, SpillEntry, SpillIndex};
 use quecto::domain::sessions::entities::session_identity::{SessionIdentity, SpillId};
@@ -1359,7 +1359,7 @@ fn then_list_entries_from_cache(world: &mut QuectoWorld, expected: usize) {
 // #1044: window-aware budget + observable unmet ceiling
 // ===========================================================================
 
-use quecto::application::context_pruning::messages as msg_pruning;
+use quecto::application::agent_turn::context::context_pruning::messages as msg_pruning;
 
 /// Complete one text-only prompt through the REAL agent loop, so these
 /// scenarios fail if the loop's creation-time spilling (#1046 AC1) is ever

@@ -17,7 +17,7 @@
 //! the session memory is cleared. It holds only recall ids and previews.
 
 use super::{ContextManager, ContextPlan};
-use crate::application::context_pruning;
+use crate::application::agent_turn::context::context_pruning;
 use crate::domain::audit::{
     AuditEvent, ContextCutRecord, ContextCutSkippedRecord, CutMarks, CutSkipReason,
 };

@@ -5,11 +5,11 @@ mod run_loop;
 use super::durable_prefix::DurablePrefixLatch;
 use crate::application::agent_loop_policy::ToolPolicyState;
 use crate::application::agent_loop_stream;
+use crate::application::agent_turn::context::context_pruning;
+use crate::application::agent_turn::context::{ContextManager, ContextManagerConfig};
 use crate::application::agent_turn::ports::AgentLoop;
 pub use crate::application::agent_usage::UsageTotals;
 use crate::application::audit::ports::AuditSink;
-use crate::application::context::{ContextManager, ContextManagerConfig};
-use crate::application::context_pruning;
 use crate::application::providers::ports::LlmProvider;
 use crate::application::tools::ports::{
     RuntimeToolLifecycleRegistry, SessionAwareTools, ToolCatalog, ToolExecutor, ToolRegistry,
@@ -84,7 +84,7 @@ pub struct AgentLoopConfig {
     pub temperature: f32,
     /// The loop's retention handles (D9 #1978), composed over the one
     /// retention store; `None` retains nothing.
-    pub retention: Option<crate::application::context::ContextRetention>,
+    pub retention: Option<crate::application::agent_turn::context::ContextRetention>,
     pub session_key: String,
     pub max_context_tokens: usize,
     /// Optional live progress events callback (REPL renderer); `None` = headless no-op.

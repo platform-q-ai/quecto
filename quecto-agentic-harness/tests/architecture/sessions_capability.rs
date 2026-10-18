@@ -745,33 +745,48 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     // #2405: the window rule moved to the domain, the gauge poison to the
     // tests (→ 300); #2403: the manifest refresh moved beside the
     // watermark pass (→ 297); #2414: the old rules' pass removed (→ 224).
-    ("src/application/context.rs", 224),
+    ("src/application/agent_turn/context/mod.rs", 224),
     // #2342: new modules (the swarm member's cap; the spill writers).
-    ("src/application/context_ceiling_cap.rs", 30),
-    ("src/application/context_spill_writers.rs", 70),
+    (
+        "src/application/agent_turn/context/context_ceiling_cap.rs",
+        30,
+    ),
+    (
+        "src/application/agent_turn/context/context_spill_writers.rs",
+        70,
+    ),
     // #2212: new modules (the gauge and its estimate scale; the pure ratio;
     // the per-class estimate).
-    ("src/application/context_gauge.rs", 98),
+    ("src/application/agent_turn/context/context_gauge.rs", 98),
     ("src/domain/inference/services/context_calibration.rs", 168),
     ("src/domain/inference/value_objects/token_estimate.rs", 207),
     // #2212: the estimate doc points at the per-class module (244 → 242);
     // #2349 review M1: the drop moved to the exchanges module (→ 209);
     // #2414: the tool-count dial removed (→ 162); #2424: its real length (→ 161).
-    ("src/application/context_pruning.rs", 161),
+    ("src/application/agent_turn/context/context_pruning.rs", 161),
     // #2349 review M1: new module (removal keeps exchanges whole).
-    ("src/application/context_pruning_exchanges.rs", 86),
+    (
+        "src/application/agent_turn/context/context_pruning_exchanges.rs",
+        86,
+    ),
     // #2213: the demotion-ladder ceiling moved to its own module (304 → 217);
     // #2414: the message-count dial removed (→ 164).
-    ("src/application/context_pruning_messages.rs", 164),
+    (
+        "src/application/agent_turn/context/context_pruning_messages.rs",
+        164,
+    ),
     // #2213: new module (the ladder, the low-water mark and the dials' batch);
     // #2342: the count dials' batch moved to its own module (203 → 186);
     // #2414: the ladder alone remains (→ 170).
-    ("src/application/context_pruning_ceiling.rs", 170),
+    (
+        "src/application/agent_turn/context/context_pruning_ceiling.rs",
+        170,
+    ),
     // #2348: the plan, split from `context.rs` so it stays within its
     // ceiling; #2414: the old rules' counts removed (→ 25). (#2342's count
     // dials and superseded snapshots, #2348's size-aware collapse and its
     // swarm switch were removed with the old rules, #2414.)
-    ("src/application/context_plan.rs", 25),
+    ("src/application/agent_turn/context/context_plan.rs", 25),
     ("src/application/agent_loop_spill.rs", 56),
     // #2212: the gauge wrappers moved to their own module (749 → 703);
     // #2414: the old rules' dials left the constructor (→ 682);
@@ -1784,9 +1799,9 @@ const RETENTION_PORT_HOLDERS: &[&str] = &[
 /// non-empty; they never name the port or call a store method.
 const PRUNING_POLICY_OWNERS: &[&str] = &[
     "src/application/agent_loop.rs",
-    "src/application/context.rs",
-    "src/application/context_pruning.rs",
-    "src/application/context_pruning_messages.rs",
+    "src/application/agent_turn/context/mod.rs",
+    "src/application/agent_turn/context/context_pruning.rs",
+    "src/application/agent_turn/context/context_pruning_messages.rs",
 ];
 
 /// The spill-id allocators (D9 #1978): the tool-result grammar
@@ -1798,7 +1813,7 @@ const SPILL_ID_ALLOCATORS: &[(&str, &str)] = &[
         "format!(\"turn{}:{}:{}\", current_turn, tc.name, idx)",
     ),
     (
-        "src/application/context_pruning_messages.rs",
+        "src/application/agent_turn/context/context_pruning_messages.rs",
         "format!(\"turn{}:msg:{role}\", msg.turn.unwrap_or(0))",
     ),
 ];

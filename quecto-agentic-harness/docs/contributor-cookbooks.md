@@ -213,7 +213,7 @@ paths.
   for the wire edge: parse the command, map it to the DTO, request the
   injected use case, present the response. Handlers admit and present; they
   never claim, load, save, release or switch anything themselves.
-- `src/application/context*.rs` when the *pruning* decision changes; the
+- `src/application/agent_turn/context/` when the *pruning* decision changes; the
   retained-context store and its recall stay sessions-owned.
 
 **Tests to add/update:**
@@ -294,10 +294,11 @@ or `agent_cmd` surface that exposes it.
 
 **Production files usually involved:**
 
-- `src/application/context_pruning.rs` and
-  `src/application/context_pruning_messages.rs`.
+- `src/application/agent_turn/context/context_pruning.rs` and
+  `src/application/agent_turn/context/context_pruning_messages.rs`.
 - `src/application/agent_loop_pruning.rs`, `agent_loop_spill.rs`, and
-  the context gauge (`ContextGaugeCalibration` in `context.rs`).
+  the context gauge (`ContextGaugeCalibration` in
+  `src/application/agent_turn/context/context_gauge.rs`).
 - `src/domain/sessions/entities/session.rs` for spill index, dirty-prefix, or message metadata.
 - `src/infrastructure/persistence/*` when spill/session storage changes.
 

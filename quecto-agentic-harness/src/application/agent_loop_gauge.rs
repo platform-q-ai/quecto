@@ -1,6 +1,6 @@
 //! The agent loop's context-gauge wrappers and their test hooks (split
 //! from `agent_loop.rs` for the 750-line cap, #2212). The gauge itself and
-//! its calibration live in `application::context`.
+//! its calibration live in `application::agent_turn::context`.
 
 use super::AgentLoopImpl;
 

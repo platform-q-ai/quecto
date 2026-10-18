@@ -7,7 +7,7 @@
 
 #![cfg(test)]
 
-use crate::application::context_pruning::truncate_utf8_safe;
+use crate::application::agent_turn::context::context_pruning::truncate_utf8_safe;
 use crate::domain::audit::content_preview;
 use crate::infrastructure::tools::native::truncate::truncate_line;
 
