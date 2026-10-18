@@ -8,7 +8,7 @@ async fn reject_workflow(world: &mut QuectoWorld) {
     use quecto::application::tools::ports::Tool;
     let tool = quecto::infrastructure::tools::spawn::SpawnTool::new(vec![])
         .with_swarm_context(Some(
-            quecto::infrastructure::tools::swarm_bridge::SwarmContext {
+            quecto::infrastructure::tools::swarm::swarm_bridge::SwarmContext {
                 board: quecto::composition::swarm::swarm_board(),
                 checkout: std::env::temp_dir(),
                 member: "coordinator".into(),
@@ -16,7 +16,7 @@ async fn reject_workflow(world: &mut QuectoWorld) {
             },
         ))
         .with_swarm_participation(
-            quecto::infrastructure::tools::swarm_bridge::Participation::Fixed(true),
+            quecto::infrastructure::tools::swarm::swarm_bridge::Participation::Fixed(true),
         );
     // A spawn refusal is a tool error (#2221), shown to the model as the
     // agent loop renders it.
@@ -52,8 +52,9 @@ fn not_rejected_for_workflow(world: &mut QuectoWorld) {
     );
 }
 
-fn engaged_workflow() -> quecto::infrastructure::tools::swarm_bridge::WorkflowEngineSlot {
-    let slot: quecto::infrastructure::tools::swarm_bridge::WorkflowEngineSlot = Default::default();
+fn engaged_workflow() -> quecto::infrastructure::tools::swarm::swarm_bridge::WorkflowEngineSlot {
+    let slot: quecto::infrastructure::tools::swarm::swarm_bridge::WorkflowEngineSlot =
+        Default::default();
     let _ = slot.set(std::sync::Arc::new(std::sync::Mutex::new(
         quecto::domain::workflow::WorkflowEngine::new(
             quecto::domain::workflow::WorkflowConfig::default(),
@@ -68,7 +69,7 @@ fn engaged_workflow() -> quecto::infrastructure::tools::swarm_bridge::WorkflowEn
 fn workflow_agent_creates(world: &mut QuectoWorld) {
     let directory = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(directory.path().join(".quecto")).unwrap();
-    let context = quecto::infrastructure::tools::swarm_bridge::SwarmContext {
+    let context = quecto::infrastructure::tools::swarm::swarm_bridge::SwarmContext {
         board: quecto::composition::swarm::swarm_board(),
         checkout: directory.path().to_path_buf(),
         member: "coordinator".into(),
@@ -81,13 +82,13 @@ fn workflow_agent_creates(world: &mut QuectoWorld) {
         + 300;
     // The create step runs on a blocking pool, so it needs a Tokio runtime.
     let outcome = tokio::runtime::Runtime::new().unwrap().block_on(
-        quecto::infrastructure::tools::swarm_control::control_with_workflow(
+        quecto::infrastructure::tools::swarm::swarm_control::control_with_workflow(
             context,
             "create",
             json!({"goal":"g","constraints":[],
                 "criteria":[{"id":"t","kind":"command","description":"pass"}],
                 "member_limit":2,"deadline":deadline}),
-            quecto::infrastructure::tools::swarm_bridge::Participation::shared(),
+            quecto::infrastructure::tools::swarm::swarm_bridge::Participation::shared(),
             engaged_workflow(),
         ),
     );
@@ -111,7 +112,7 @@ fn rejected_wake(world: &mut QuectoWorld) {
     use std::io::Write;
     run(world, json!({"op":"summary"}));
     let workspace = world.swarm_workspace.clone().unwrap();
-    let context = quecto::infrastructure::tools::swarm_bridge::SwarmContext {
+    let context = quecto::infrastructure::tools::swarm::swarm_bridge::SwarmContext {
         board: quecto::composition::swarm::swarm_board(),
         checkout: workspace.clone(),
         member: "coordinator".into(),
@@ -121,7 +122,7 @@ fn rejected_wake(world: &mut QuectoWorld) {
     let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
     use quecto::application::swarm::ports::CoordinationPort;
     context.reserve_member("worker", "reservation").unwrap();
-    let worker = quecto::infrastructure::tools::swarm_bridge::SwarmContext {
+    let worker = quecto::infrastructure::tools::swarm::swarm_bridge::SwarmContext {
         member: "worker".into(),
         ..context
     };
@@ -176,7 +177,7 @@ fn rejected_wake(world: &mut QuectoWorld) {
 
 #[then("the rejected wake still leaves the message in the recipient inbox")]
 fn durable_rejected_wake(world: &mut QuectoWorld) {
-    let context = quecto::infrastructure::tools::swarm_bridge::SwarmContext {
+    let context = quecto::infrastructure::tools::swarm::swarm_bridge::SwarmContext {
         board: quecto::composition::swarm::swarm_board(),
         checkout: world.swarm_workspace.clone().unwrap(),
         member: "worker".into(),
@@ -243,7 +244,7 @@ fn idle_peer(world: &mut QuectoWorld) {
     use quecto::domain::swarm::ProcessIdentity;
     run(world, json!({"op":"summary"}));
     let checkout = world.swarm_workspace.clone().unwrap();
-    let context = quecto::infrastructure::tools::swarm_bridge::SwarmContext {
+    let context = quecto::infrastructure::tools::swarm::swarm_bridge::SwarmContext {
         board: quecto::composition::swarm::swarm_board(),
         checkout: checkout.clone(),
         member: "coordinator".into(),
@@ -252,7 +253,7 @@ fn idle_peer(world: &mut QuectoWorld) {
     context
         .reserve_member("idle-peer", "idle-reservation")
         .unwrap();
-    let worker = quecto::infrastructure::tools::swarm_bridge::SwarmContext {
+    let worker = quecto::infrastructure::tools::swarm::swarm_bridge::SwarmContext {
         member: "idle-peer".into(),
         ..context
     };
@@ -371,8 +372,8 @@ fn unchanged_board(world: &mut QuectoWorld) {
 
 fn supervisor_context(
     world: &QuectoWorld,
-) -> quecto::infrastructure::tools::swarm_bridge::SwarmContext {
-    quecto::infrastructure::tools::swarm_bridge::SwarmContext {
+) -> quecto::infrastructure::tools::swarm::swarm_bridge::SwarmContext {
+    quecto::infrastructure::tools::swarm::swarm_bridge::SwarmContext {
         board: quecto::composition::swarm::swarm_board(),
         checkout: world.swarm_workspace.clone().unwrap(),
         member: "coordinator".into(),

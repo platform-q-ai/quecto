@@ -24,7 +24,7 @@ use crate::infrastructure::processes::direct_child_routing::UdsDirectChildRoutin
 use crate::infrastructure::processes::owned_child_termination::SupervisedChildTermination;
 use crate::infrastructure::tools::environment_member_shutdown::DelegatedMemberShutdown;
 use crate::infrastructure::tools::subagent_teardown_registry::RegistryDelegatedAgents;
-use crate::infrastructure::tools::swarm_member_termination::DelegatedSwarmMemberTermination;
+use crate::infrastructure::tools::swarm::swarm_member_termination::DelegatedSwarmMemberTermination;
 use crate::interface::cli::KillToolWiring;
 use crate::interface::cli::uds_teardown_adapters::RegistryLifecycleRepository;
 use crate::interface::tools::agent_cmd_kill::KillDelegatedAgentTool;
@@ -70,7 +70,7 @@ pub fn install_termination_owners(inputs: KillToolWiring) -> bool {
     let lifecycle_installed = slots.lifecycle.install(lifecycle);
     let environments_installed = slots.environments.install(environment_control);
     let ended_installed = slots.ended.install(ended);
-    crate::infrastructure::tools::swarm_lifecycle::bind_member_termination(
+    crate::infrastructure::tools::swarm::swarm_lifecycle::bind_member_termination(
         owners.swarm_member_termination,
     );
     kill_installed && lifecycle_installed && environments_installed && ended_installed

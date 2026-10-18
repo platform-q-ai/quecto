@@ -7,7 +7,7 @@ use serde_json::{Map, Value};
 
 use super::lookup_doc;
 use crate::domain::swarm::owner::OWNER_IDLE_AFTER;
-use crate::infrastructure::tools::swarm_board_ops::{
+use crate::infrastructure::tools::swarm::swarm_board_ops::{
     ArgSpec, BOARD_OPS, OpSpec, advertised_arg, advertised_op,
 };
 

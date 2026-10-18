@@ -4,7 +4,7 @@
 //! subagents manual's process-effect table is the architecture allowlist.
 use std::collections::BTreeSet;
 
-use quecto::infrastructure::tools::swarm_board_ops::BOARD_OPS;
+use quecto::infrastructure::tools::swarm::swarm_board_ops::BOARD_OPS;
 
 use crate::common::read_repo_file;
 

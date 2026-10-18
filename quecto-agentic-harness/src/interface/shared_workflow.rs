@@ -19,7 +19,7 @@ pub fn register_workflow_tool(
         wf_config,
         guards_enabled,
         event_emitter,
-        crate::infrastructure::tools::swarm_bridge::Participation::none(),
+        crate::infrastructure::tools::swarm::swarm_bridge::Participation::none(),
     )
 }
 
@@ -30,7 +30,7 @@ pub fn register_workflow_tool_with_participation(
     wf_config: crate::domain::workflow::WorkflowConfig,
     guards_enabled: bool,
     event_emitter: Option<crate::infrastructure::tools::workflow_tool::WorkflowEventEmitter>,
-    participation: crate::infrastructure::tools::swarm_bridge::Participation,
+    participation: crate::infrastructure::tools::swarm::swarm_bridge::Participation,
 ) -> Result<WorkflowStateHandle, crate::domain::workflow::WorkflowError> {
     use crate::infrastructure::extensions::native::{
         WorkflowToolDeps, build_workflow_tool_extension, register_bundled_native_tools,

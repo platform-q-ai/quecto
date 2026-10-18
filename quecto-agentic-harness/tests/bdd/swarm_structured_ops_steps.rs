@@ -31,14 +31,14 @@ fn structured_worker(world: &mut QuectoWorld) {
     use quecto::application::swarm::ports::CoordinationPort;
     use quecto::application::tools::ports::Tool;
     let workspace = world.swarm_workspace.clone().unwrap();
-    let coordinator = quecto::infrastructure::tools::swarm_bridge::SwarmContext {
+    let coordinator = quecto::infrastructure::tools::swarm::swarm_bridge::SwarmContext {
         board: quecto::composition::swarm::swarm_board(),
         checkout: workspace.clone(),
         member: "coordinator".into(),
         lifecycle: std::sync::Arc::new(quecto::application::ports::SwarmTestLifecycle),
     };
     coordinator.reserve_member("worker", "reservation").unwrap();
-    let worker = quecto::infrastructure::tools::swarm_bridge::SwarmContext {
+    let worker = quecto::infrastructure::tools::swarm::swarm_bridge::SwarmContext {
         member: "worker".into(),
         ..coordinator
     };

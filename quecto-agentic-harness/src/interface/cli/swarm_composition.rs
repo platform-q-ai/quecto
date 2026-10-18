@@ -1,6 +1,6 @@
 //! Swarm-specific execution ports and cancellation wiring at the CLI boundary.
 use crate::application::agent_loop::AgentLoopImpl;
-use crate::infrastructure::tools::swarm_bridge::{Participation, SwarmContext};
+use crate::infrastructure::tools::swarm::swarm_bridge::{Participation, SwarmContext};
 use std::sync::Arc;
 
 /// A member's tool gate, request usage record and model gates, all over
@@ -51,9 +51,9 @@ pub(super) fn bind_suspension(
     context: Option<SwarmContext>,
 ) {
     if let Some(context) = context {
-        crate::infrastructure::tools::swarm_lifecycle::bind_local_suspension(suspension_callback(
-            cancel, context,
-        ));
+        crate::infrastructure::tools::swarm::swarm_lifecycle::bind_local_suspension(
+            suspension_callback(cancel, context),
+        );
     }
 }
 

@@ -6,7 +6,7 @@
 //! The interface holds and passes on handles only; it never constructs a
 //! board use case or adapter.
 
-pub use crate::infrastructure::tools::swarm_board_dispatch::BoardWire;
-pub use crate::infrastructure::tools::swarm_bridge::{
+pub use crate::infrastructure::tools::swarm::swarm_board_dispatch::BoardWire;
+pub use crate::infrastructure::tools::swarm::swarm_bridge::{
     SwarmBoardHandlesBuilder, SwarmBoardOpLogBuilder,
 };

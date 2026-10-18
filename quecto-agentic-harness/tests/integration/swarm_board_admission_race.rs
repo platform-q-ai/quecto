@@ -18,7 +18,7 @@ use quecto::application::swarm::dto::BoardLocation;
 use quecto::application::swarm::ports::BoardRepository;
 use quecto::composition::swarm::build_swarm_board_handles;
 use quecto::infrastructure::persistence::swarm_board::repository::SqliteBoardRepository;
-use quecto::infrastructure::tools::swarm_board_dispatch::call;
+use quecto::infrastructure::tools::swarm::swarm_board_dispatch::call;
 use serde_json::json;
 use serial_test::serial;
 

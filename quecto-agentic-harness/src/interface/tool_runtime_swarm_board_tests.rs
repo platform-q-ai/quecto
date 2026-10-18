@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use crate::application::swarm::ports::SwarmRunControl;
 use crate::domain::swarm::watch::Nudge;
-use crate::infrastructure::tools::swarm_bridge::{bind_process_board, process_board};
+use crate::infrastructure::tools::swarm::swarm_bridge::{bind_process_board, process_board};
 
 const CHILD: &str =
     "interface::tool_runtime::swarm_board_tests::the_process_contexts_share_the_process_board";

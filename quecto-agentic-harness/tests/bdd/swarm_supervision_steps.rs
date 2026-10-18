@@ -56,7 +56,7 @@ async fn exercise(workspace: std::path::PathBuf) -> serde_json::Value {
         .await;
     runtime.wait_report("APPROVED").await;
     let receipt = runtime.wait_receipt(&approval["id"], "completed").await;
-    let context = quecto::infrastructure::tools::swarm_bridge::SwarmContext {
+    let context = quecto::infrastructure::tools::swarm::swarm_bridge::SwarmContext {
         board: quecto::composition::swarm::swarm_board(),
         checkout: workspace.clone(),
         member: "coordinator".into(),
@@ -181,7 +181,7 @@ async fn exercise_resume(workspace: std::path::PathBuf) -> serde_json::Value {
         .await;
     runtime.wait_report("RECOVERED").await;
     let restored = runtime.command(json!({"type":"get_state"})).await;
-    let context = quecto::infrastructure::tools::swarm_bridge::SwarmContext {
+    let context = quecto::infrastructure::tools::swarm::swarm_bridge::SwarmContext {
         board: quecto::composition::swarm::swarm_board(),
         checkout: workspace.clone(),
         member: "coordinator".into(),

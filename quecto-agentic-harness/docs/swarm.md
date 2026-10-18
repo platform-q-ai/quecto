@@ -554,9 +554,9 @@ inward:
   ports (`persistence/swarm_board/`: the verbatim schema, pragmas,
   `BEGIN IMMEDIATE` transactions and the Python-compatible JSON codec), the
   checkout-path adapter (`workspace/checkout_paths.rs`), and the tool
-  adapters (`tools/swarm_board_dispatch.rs`, the method-name dispatch;
-  `tools/swarm_board_ops.rs`, the structured ops; `tools/swarm_bridge.rs`,
-  the harness's own calls). Linux identity checks, UDS commands and timer
+  adapters in `tools/swarm/` (`swarm_board_dispatch/`, the method-name
+  dispatch; `swarm_board_ops.rs`, the structured ops; `swarm_bridge.rs`, the
+  harness's own calls). Linux identity checks, UDS commands and timer
   scheduling stay infrastructure too.
 - **Composition** (`src/composition/swarm.rs`) is the only place the board's
   use cases and adapters are built; the interface only holds and passes the

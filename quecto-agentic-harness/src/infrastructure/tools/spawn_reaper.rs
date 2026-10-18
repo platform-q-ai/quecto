@@ -26,7 +26,7 @@ pub struct ReaperContext {
     pub observer: Arc<ObserveOwnedChildExit>,
     /// The swarm this launch reserved a member in, with that member's id
     /// (#1961): the reaped exit is the authoritative death of the member.
-    pub swarm_member: Option<(super::swarm_bridge::SwarmContext, String)>,
+    pub swarm_member: Option<(super::swarm::swarm_bridge::SwarmContext, String)>,
 }
 
 pub fn spawn_reaper_task(
@@ -66,7 +66,7 @@ pub fn spawn_reaper_task(
         if let Some((context, member)) = swarm_member {
             let _ = tokio::task::spawn_blocking(super::call_work::blocking(move || {
                 if let Err(error) =
-                    super::swarm_lifecycle::member_exited(&context, &member, member_exit)
+                    super::swarm::swarm_lifecycle::member_exited(&context, &member, member_exit)
                 {
                     tracing::error!(%error, member, "swarm reaper could not confirm the member's death; capacity retained");
                 }

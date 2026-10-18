@@ -4,6 +4,7 @@
 
 use super::integration_tests::{args, composed_ctx};
 use super::*;
+use crate::infrastructure::tools::swarm::swarm_bridge::Participation;
 
 /// The selection a test hands the build path for a file at `path`: explicit
 /// (must exist) or the global layer with no overlay candidate.
@@ -46,7 +47,7 @@ fn test_build_agent_from_config_no_config_file() {
         workflow: false,
         workflow_guards: false,
         workflow_disabled: false,
-        swarm_participation: crate::infrastructure::tools::swarm_bridge::Participation::none(),
+        swarm_participation: Participation::none(),
         workflow_spec_path: None,
         inherited_tool_policy: None,
         parent_id: None,
@@ -106,7 +107,7 @@ fn test_build_agent_from_config_explicit_missing_errors() {
         workflow: false,
         workflow_guards: false,
         workflow_disabled: false,
-        swarm_participation: crate::infrastructure::tools::swarm_bridge::Participation::none(),
+        swarm_participation: Participation::none(),
         workflow_spec_path: None,
         inherited_tool_policy: None,
         parent_id: None,
@@ -169,7 +170,7 @@ fn test_build_agent_from_config_invalid_json() {
         workflow: false,
         workflow_guards: false,
         workflow_disabled: false,
-        swarm_participation: crate::infrastructure::tools::swarm_bridge::Participation::none(),
+        swarm_participation: Participation::none(),
         workflow_spec_path: None,
         inherited_tool_policy: None,
         parent_id: None,
@@ -234,7 +235,7 @@ fn test_build_agent_from_config_no_providers() {
         workflow: false,
         workflow_guards: false,
         workflow_disabled: false,
-        swarm_participation: crate::infrastructure::tools::swarm_bridge::Participation::none(),
+        swarm_participation: Participation::none(),
         workflow_spec_path: None,
         inherited_tool_policy: None,
         parent_id: None,
@@ -299,7 +300,7 @@ fn test_build_agent_from_config_with_model_override() {
         workflow: false,
         workflow_guards: false,
         workflow_disabled: false,
-        swarm_participation: crate::infrastructure::tools::swarm_bridge::Participation::none(),
+        swarm_participation: Participation::none(),
         workflow_spec_path: None,
         inherited_tool_policy: None,
         parent_id: None,
@@ -393,7 +394,7 @@ fn admission_flags() -> AgentFlags {
         workflow: false,
         workflow_guards: false,
         workflow_disabled: true,
-        swarm_participation: crate::infrastructure::tools::swarm_bridge::Participation::none(),
+        swarm_participation: Participation::none(),
         workflow_spec_path: None,
         inherited_tool_policy: None,
         parent_id: None,

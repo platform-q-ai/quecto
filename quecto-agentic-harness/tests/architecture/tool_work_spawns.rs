@@ -199,27 +199,27 @@ const ALLOWED: &[(&str, &str, &str)] = &[
         "a stall timer for the parent, outliving the call",
     ),
     (
-        "src/infrastructure/tools/swarm_coordination.rs",
+        "src/infrastructure/tools/swarm/swarm_coordination.rs",
         "impl SwarmContext::record",
         "records swarm coordination off the workers (call_work::blocking)",
     ),
     (
-        "src/infrastructure/tools/swarm_lifecycle.rs",
+        "src/infrastructure/tools/swarm/swarm_lifecycle.rs",
         "fn supervise",
         "the swarm watcher's own thread, which builds a fresh current-thread runtime (#2278), never an async worker",
     ),
     (
-        "src/infrastructure/tools/swarm_lifecycle.rs",
+        "src/infrastructure/tools/swarm/swarm_lifecycle.rs",
         "impl Supervisor<'_>::announce",
         "builds a fresh current-thread runtime on the swarm watcher's thread (#2278)",
     ),
     (
-        "src/infrastructure/tools/swarm_lifecycle.rs",
+        "src/infrastructure/tools/swarm/swarm_lifecycle.rs",
         "fn watch_until_ended",
         "blocks on the fresh current-thread runtime supervise built, on the swarm watcher's thread (#2278)",
     ),
     (
-        "src/infrastructure/tools/swarm_lifecycle.rs",
+        "src/infrastructure/tools/swarm/swarm_lifecycle.rs",
         "fn settle_observed_snapshot",
         "builds a fresh current-thread runtime on the swarm watcher's thread (#2278)",
     ),

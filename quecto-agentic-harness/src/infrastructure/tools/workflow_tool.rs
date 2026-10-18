@@ -50,7 +50,7 @@ pub struct WorkflowTool {
     event_emitter: Option<WorkflowEventEmitter>,
     /// Inside a swarm the tool stays registered but refuses to act (#1715):
     /// an ordinary container may become a swarm after composition.
-    participation: super::swarm_bridge::Participation,
+    participation: super::swarm::swarm_bridge::Participation,
 }
 
 impl std::fmt::Debug for WorkflowTool {
@@ -64,7 +64,7 @@ impl WorkflowTool {
         Self {
             engine,
             event_emitter: None,
-            participation: super::swarm_bridge::Participation::none(),
+            participation: super::swarm::swarm_bridge::Participation::none(),
         }
     }
 
@@ -72,12 +72,15 @@ impl WorkflowTool {
         Self {
             engine,
             event_emitter: Some(emitter),
-            participation: super::swarm_bridge::Participation::none(),
+            participation: super::swarm::swarm_bridge::Participation::none(),
         }
     }
 
     /// Where the tool reads swarm participation from (tests inject an answer).
-    pub fn with_participation(mut self, participation: super::swarm_bridge::Participation) -> Self {
+    pub fn with_participation(
+        mut self,
+        participation: super::swarm::swarm_bridge::Participation,
+    ) -> Self {
         self.participation = participation;
         self
     }

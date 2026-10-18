@@ -13,7 +13,7 @@ use quecto::domain::environments::entities::environment_registry::{
 use quecto::domain::environments::services::environment_retention::SwarmRunObservation;
 use quecto::domain::swarm::RunStatus;
 use quecto::infrastructure::tools::environment_commands::HostedStoreObservation;
-use quecto::infrastructure::tools::swarm_bridge::SwarmContext;
+use quecto::infrastructure::tools::swarm::swarm_bridge::SwarmContext;
 
 fn port() -> Arc<dyn HostedSwarmRunObservation + Send + Sync> {
     Arc::new(HostedStoreObservation::new(
@@ -71,7 +71,7 @@ fn create_run(context: &SwarmContext) {
             &serde_json::json!({"goal":"ship", "constraints":[], "criteria":[{"id":"tests","kind":"command","description":"pass"}], "member_limit":3, "deadline":deadline}),
             &quecto::domain::swarm::ProcessIdentity {
                 pid: std::process::id(),
-                started: quecto::infrastructure::tools::swarm_bridge::process_start(
+                started: quecto::infrastructure::tools::swarm::swarm_bridge::process_start(
                     std::process::id(),
                 )
                 .unwrap(),

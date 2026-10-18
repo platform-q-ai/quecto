@@ -11,7 +11,7 @@ use crate::domain::environments::entities::environment_registry::{
     EnvironmentRecord, EnvironmentRegistry, EnvironmentStatus, mint_environment_uuid,
 };
 use crate::infrastructure::test_support::executable::write_executable;
-use crate::infrastructure::tools::swarm_bridge::SwarmContext;
+use crate::infrastructure::tools::swarm::swarm_bridge::SwarmContext;
 use serde_json::json;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -410,7 +410,7 @@ async fn run_control_receipt_decodes_the_lost_coordinator_blocker() {
     let dir = tempfile::tempdir().unwrap();
     let checkout = dir.path().join("checkout");
     let context = create_running_swarm(&checkout);
-    let store = crate::infrastructure::tools::swarm_bridge::HostedStore::at(
+    let store = crate::infrastructure::tools::swarm::swarm_bridge::HostedStore::at(
         checkout.clone(),
         crate::composition::swarm::swarm_board(),
     );
@@ -556,7 +556,7 @@ async fn expired_deadline_is_observed_before_the_loss_is_recorded() {
         "the board holds one run"
     );
     drop(board);
-    let store = crate::infrastructure::tools::swarm_bridge::HostedStore::at(
+    let store = crate::infrastructure::tools::swarm::swarm_bridge::HostedStore::at(
         checkout.clone(),
         crate::composition::swarm::swarm_board(),
     );

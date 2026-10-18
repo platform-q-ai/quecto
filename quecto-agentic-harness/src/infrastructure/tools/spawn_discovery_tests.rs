@@ -315,7 +315,7 @@ fn the_spawn_and_swarm_descriptions_stay_within_the_budget() {
         spawn_len + ROSTER_LINE_MAX_CHARS * 4 <= DESCRIPTION_BUDGET_BYTES,
         "spawn description is {spawn_len} bytes"
     );
-    let swarm_len = include_str!("swarm_assets/tool_description.txt").len();
+    let swarm_len = include_str!("swarm/swarm_assets/tool_description.txt").len();
     assert!(
         swarm_len <= SWARM_DESCRIPTION_BUDGET_BYTES,
         "swarm description is {swarm_len} bytes"
@@ -340,7 +340,7 @@ const SWARM_DESCRIPTION_BUDGET_BYTES: usize = 3_510;
 
 #[test]
 fn the_swarm_descriptions_coordinator_prose_is_in_the_docs_page() {
-    let description = include_str!("swarm_assets/tool_description.txt");
+    let description = include_str!("swarm/swarm_assets/tool_description.txt");
     let docs = crate::infrastructure::tools::docs::lookup_doc("swarm").unwrap();
     for moved in [
         "keep the run **running**",
@@ -372,7 +372,7 @@ fn the_swarm_descriptions_coordinator_prose_is_in_the_docs_page() {
 /// revoke/recover need a running run, a recorded loss pauses it.
 #[test]
 fn the_swarm_description_keeps_the_coordinators_evidence_rule() {
-    let description = include_str!("swarm_assets/tool_description.txt");
+    let description = include_str!("swarm/swarm_assets/tool_description.txt");
     for rule in [
         "accept or reject reported evidence by the criteria; never redo the work",
         "revoke/recover need a running run",
@@ -387,7 +387,7 @@ fn the_swarm_description_keeps_the_coordinators_evidence_rule() {
 /// keeps the rules the old pointer carried.
 #[test]
 fn the_swarm_description_sends_no_one_to_read_a_guide() {
-    let description = include_str!("swarm_assets/tool_description.txt");
+    let description = include_str!("swarm/swarm_assets/tool_description.txt");
     for pointer in [
         r#"docs {"name":"swarm"}"#,
         r#""name":"swarm""#,
@@ -415,7 +415,7 @@ fn the_swarm_description_sends_no_one_to_read_a_guide() {
 /// board member id, and a reused request id carrying a new payload.
 #[test]
 fn the_swarm_description_states_the_send_rules_members_tripped_on() {
-    let description = include_str!("swarm_assets/tool_description.txt");
+    let description = include_str!("swarm/swarm_assets/tool_description.txt");
     for rule in [
         "recipient is a member id from op=summary",
         "a retry reuses its request with the same payload; new content needs a new request",
@@ -430,7 +430,7 @@ fn the_swarm_description_states_the_send_rules_members_tripped_on() {
 /// board is the coordination channel, so the description says so.
 #[test]
 fn the_swarm_description_sends_the_coordinator_to_its_inbox() {
-    let description = include_str!("swarm_assets/tool_description.txt");
+    let description = include_str!("swarm/swarm_assets/tool_description.txt");
     for rule in [
         "read your inbox and ack what you act on",
         "direct members with send, not agent_cmd steer",
@@ -445,7 +445,7 @@ fn the_swarm_description_sends_the_coordinator_to_its_inbox() {
 /// board, so the description points there.
 #[test]
 fn the_swarm_description_keeps_the_coordinator_off_worker_transcripts() {
-    let description = include_str!("swarm_assets/tool_description.txt");
+    let description = include_str!("swarm/swarm_assets/tool_description.txt");
     let rule = "read your inbox and ack what you act on, not agent_cmd get_messages";
     assert!(description.contains(rule), "missing {rule:?}");
 }

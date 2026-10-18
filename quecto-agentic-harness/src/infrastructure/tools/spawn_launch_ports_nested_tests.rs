@@ -48,7 +48,7 @@ async fn a_nested_container_refusal_follows_the_launchers_swarm_participation() 
         let (tool, _socket_dir) = tool();
         let tool = tool
             .with_swarm_context(Some(
-                crate::infrastructure::tools::swarm_bridge::SwarmContext {
+                crate::infrastructure::tools::swarm::swarm_bridge::SwarmContext {
                     board: crate::composition::swarm::swarm_board(),
                     checkout: std::env::temp_dir(),
                     member: "member-1".into(),
@@ -56,7 +56,9 @@ async fn a_nested_container_refusal_follows_the_launchers_swarm_participation() 
                 },
             ))
             .with_swarm_participation(
-                crate::infrastructure::tools::swarm_bridge::Participation::Fixed(participating),
+                crate::infrastructure::tools::swarm::swarm_bridge::Participation::Fixed(
+                    participating,
+                ),
             );
         let mut container = config();
         container.container = crate::domain::agents::services::subagent::ContainerSelection::New {
@@ -79,14 +81,16 @@ async fn a_nested_container_refusal_follows_the_launchers_swarm_participation() 
 #[test]
 fn only_a_run_creator_s_swarm_workers_settle_their_turn_ends_by_its_board() {
     let context = || {
-        Some(crate::infrastructure::tools::swarm_bridge::SwarmContext {
-            board: crate::composition::swarm::swarm_board(),
-            checkout: std::env::temp_dir(),
-            member: "member-1".into(),
-            lifecycle: Arc::new(crate::application::swarm::LifecycleService),
-        })
+        Some(
+            crate::infrastructure::tools::swarm::swarm_bridge::SwarmContext {
+                board: crate::composition::swarm::swarm_board(),
+                checkout: std::env::temp_dir(),
+                member: "member-1".into(),
+                lifecycle: Arc::new(crate::application::swarm::LifecycleService),
+            },
+        )
     };
-    use crate::infrastructure::tools::swarm_bridge::Participation;
+    use crate::infrastructure::tools::swarm::swarm_bridge::Participation;
     let launcher = |participation| {
         let (tool, _socket_dir) = tool();
         tool.with_swarm_context(context())
@@ -115,13 +119,14 @@ async fn register_gives_a_run_creator_s_worker_the_launcher_board() {
     ] {
         let mut launch = config();
         launch.task = task.map(str::to_owned);
-        let context = crate::infrastructure::tools::swarm_bridge::SwarmContext {
+        let context = crate::infrastructure::tools::swarm::swarm_bridge::SwarmContext {
             board: crate::composition::swarm::swarm_board(),
             checkout: std::env::temp_dir(),
             member: "coordinator".into(),
             lifecycle: Arc::new(crate::application::swarm::LifecycleService),
         };
-        let participation = crate::infrastructure::tools::swarm_bridge::Participation::shared();
+        let participation =
+            crate::infrastructure::tools::swarm::swarm_bridge::Participation::shared();
         participation.record_creator(created_run);
         participation.set(true);
         let (tool, _socket_dir) = tool();
@@ -136,7 +141,7 @@ async fn register_gives_a_run_creator_s_worker_the_launcher_board() {
             )
             .await;
         prepared.swarm_reservation = Some(
-            crate::infrastructure::tools::swarm_admission::LaunchReservation::held_for_test(
+            crate::infrastructure::tools::swarm::swarm_admission::LaunchReservation::held_for_test(
                 context, "m-1",
             ),
         );

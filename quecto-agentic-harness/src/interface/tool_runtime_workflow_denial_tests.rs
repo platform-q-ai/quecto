@@ -27,7 +27,7 @@ use crate::interface::tool_runtime::{
 fn uds_parent_without_workflow(
     root: &std::path::Path,
     disabled_tools: &[String],
-    swarm_context: Option<crate::infrastructure::tools::swarm_bridge::SwarmContext>,
+    swarm_context: Option<crate::infrastructure::tools::swarm::swarm_bridge::SwarmContext>,
     workflow_disabled: bool,
 ) -> ToolRuntimeBuild {
     parent_in(
@@ -43,7 +43,7 @@ fn parent_in(
     entrypoint: ToolEntrypoint,
     root: &std::path::Path,
     disabled_tools: &[String],
-    swarm_context: Option<crate::infrastructure::tools::swarm_bridge::SwarmContext>,
+    swarm_context: Option<crate::infrastructure::tools::swarm::swarm_bridge::SwarmContext>,
     workflow_disabled: bool,
 ) -> ToolRuntimeBuild {
     let client = reqwest::Client::new();
@@ -52,7 +52,8 @@ fn parent_in(
     build_tool_runtime(ToolRuntimeBuildArgs {
         child_extensions: Vec::new(),
         swarm_context,
-        swarm_participation: crate::infrastructure::tools::swarm_bridge::Participation::shared(),
+        swarm_participation:
+            crate::infrastructure::tools::swarm::swarm_bridge::Participation::shared(),
         entrypoint,
         profile_context: ToolRuntimeProfileContext::Parent,
         base_dir: root,

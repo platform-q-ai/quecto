@@ -12,7 +12,7 @@ fn fixture() -> (tempfile::TempDir, Arc<std::path::PathBuf>, SwarmTool) {
             .join(".quecto/container-environments/environment/workspace/repo"),
     );
     std::fs::create_dir_all(workspace.as_ref()).unwrap();
-    let context = quecto::infrastructure::tools::swarm_bridge::SwarmContext {
+    let context = quecto::infrastructure::tools::swarm::swarm_bridge::SwarmContext {
         board: quecto::composition::swarm::swarm_board(),
         checkout: workspace.as_ref().clone(),
         member: "coordinator".into(),
@@ -25,7 +25,7 @@ fn fixture() -> (tempfile::TempDir, Arc<std::path::PathBuf>, SwarmTool) {
         .as_secs()
         + 300;
     quecto::infrastructure::tools::call_work::off_the_runtime(|| context.create_run(&json!({"goal":"product contract","constraints":[],"criteria":[{"id":"tests","kind":"command","description":"pass"}],"member_limit":1,"deadline":deadline}),
-        &quecto::domain::swarm::ProcessIdentity { pid: std::process::id(), started: quecto::infrastructure::tools::swarm_bridge::process_start(std::process::id()).unwrap() }, None)).unwrap();
+        &quecto::domain::swarm::ProcessIdentity { pid: std::process::id(), started: quecto::infrastructure::tools::swarm::swarm_bridge::process_start(std::process::id()).unwrap() }, None)).unwrap();
     let tool = SwarmTool::new().with_context(Some(context));
 
     (root, workspace, tool)
@@ -67,7 +67,7 @@ async fn completed_run_keeps_summary_and_normal_artifact_export_serviceable() {
 
 #[test]
 fn isolated_context_is_detected_when_container_contract_is_supplied() {
-    let context = quecto::infrastructure::tools::swarm_bridge::SwarmContext::discover(
+    let context = quecto::infrastructure::tools::swarm::swarm_bridge::SwarmContext::discover(
         Arc::new(quecto::application::swarm::LifecycleService),
         quecto::composition::swarm::swarm_board(),
     );

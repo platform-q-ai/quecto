@@ -188,7 +188,8 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
         workflow,
         workflow_guards,
         workflow_disabled: no_workflow_requested,
-        swarm_participation: crate::infrastructure::tools::swarm_bridge::Participation::shared(),
+        swarm_participation:
+            crate::infrastructure::tools::swarm::swarm_bridge::Participation::shared(),
         workflow_spec_path,
         inherited_tool_policy: None,
         parent_id,

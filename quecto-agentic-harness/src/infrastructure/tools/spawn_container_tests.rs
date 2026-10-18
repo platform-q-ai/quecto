@@ -573,8 +573,8 @@ async fn a_named_launch_over_a_withheld_overlay_carries_the_diagnostic() {
 
 fn container_swarm_context(
     checkout: &Path,
-) -> crate::infrastructure::tools::swarm_bridge::SwarmContext {
-    crate::infrastructure::tools::swarm_bridge::SwarmContext {
+) -> crate::infrastructure::tools::swarm::swarm_bridge::SwarmContext {
+    crate::infrastructure::tools::swarm::swarm_bridge::SwarmContext {
         board: crate::composition::swarm::swarm_board(),
         lifecycle: Arc::new(crate::application::swarm::LifecycleService),
         checkout: checkout.to_path_buf(),

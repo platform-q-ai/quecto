@@ -28,7 +28,8 @@ fn runtime_with_board(
     build_tool_runtime(ToolRuntimeBuildArgs {
         child_extensions: Vec::new(),
         swarm_context: None,
-        swarm_participation: crate::infrastructure::tools::swarm_bridge::Participation::shared(),
+        swarm_participation:
+            crate::infrastructure::tools::swarm::swarm_bridge::Participation::shared(),
         entrypoint: ToolEntrypoint::CliAgent,
         profile_context,
         base_dir: tmp.path(),
@@ -221,7 +222,7 @@ fn trial_isolated_runtime_build_does_not_enroll_in_full_ambient_swarm() {
     use crate::application::swarm::ports::CoordinationPort;
     use crate::domain::swarm::ProcessIdentity;
     let tmp = tempfile::tempdir().unwrap();
-    let context = crate::infrastructure::tools::swarm_bridge::SwarmContext {
+    let context = crate::infrastructure::tools::swarm::swarm_bridge::SwarmContext {
         board: crate::composition::swarm::swarm_board(),
         checkout: tmp.path().into(),
         member: "coordinator".into(),
@@ -240,7 +241,7 @@ fn trial_isolated_runtime_build_does_not_enroll_in_full_ambient_swarm() {
         "member_limit":1,"deadline":deadline}),
             &ProcessIdentity {
                 pid: std::process::id(),
-                started: crate::infrastructure::tools::swarm_bridge::process_start(
+                started: crate::infrastructure::tools::swarm::swarm_bridge::process_start(
                     std::process::id(),
                 )
                 .unwrap(),
@@ -289,9 +290,9 @@ fn workflow_enabled_policy<'a>(
 }
 
 fn runtime_in_container(
-    context: crate::infrastructure::tools::swarm_bridge::SwarmContext,
+    context: crate::infrastructure::tools::swarm::swarm_bridge::SwarmContext,
     tmp: &std::path::Path,
-    participation: crate::infrastructure::tools::swarm_bridge::Participation,
+    participation: crate::infrastructure::tools::swarm::swarm_bridge::Participation,
 ) -> Result<crate::interface::tool_runtime::ToolRuntimeBuild, String> {
     let config = crate::infrastructure::config::Config::default();
     let client = reqwest::Client::new();
@@ -335,19 +336,22 @@ fn container_runtime_workflow_follows_swarm_participation() {
     use crate::domain::swarm::ProcessIdentity;
     let identity = ProcessIdentity {
         pid: std::process::id(),
-        started: crate::infrastructure::tools::swarm_bridge::process_start(std::process::id())
-            .unwrap(),
+        started: crate::infrastructure::tools::swarm::swarm_bridge::process_start(
+            std::process::id(),
+        )
+        .unwrap(),
     };
     let ordinary = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(ordinary.path().join(".quecto")).unwrap();
-    let context = crate::infrastructure::tools::swarm_bridge::SwarmContext {
+    let context = crate::infrastructure::tools::swarm::swarm_bridge::SwarmContext {
         board: crate::composition::swarm::swarm_board(),
         checkout: ordinary.path().to_path_buf(),
         member: "ordinary".into(),
         lifecycle: std::sync::Arc::new(crate::application::swarm::LifecycleService),
     };
     context.join(&identity, None, None).unwrap();
-    let ordinary_handle = crate::infrastructure::tools::swarm_bridge::Participation::shared();
+    let ordinary_handle =
+        crate::infrastructure::tools::swarm::swarm_bridge::Participation::shared();
     let built = runtime_in_container(context, ordinary.path(), ordinary_handle.clone()).unwrap();
     assert!(
         built.workflow_state.is_some(),
@@ -356,7 +360,7 @@ fn container_runtime_workflow_follows_swarm_participation() {
     assert!(!ordinary_handle.participating());
     assert!(names_for(&built, ToolProfileContext::Child).contains("workflow"));
     let (swarm_dir, swarm) = crate::swarm_control_fixture::context();
-    let swarm_handle = crate::infrastructure::tools::swarm_bridge::Participation::shared();
+    let swarm_handle = crate::infrastructure::tools::swarm::swarm_bridge::Participation::shared();
     let built = runtime_in_container(swarm, swarm_dir.path(), swarm_handle.clone()).unwrap();
     assert!(
         built.workflow_state.is_none(),

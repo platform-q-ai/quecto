@@ -8,8 +8,9 @@ use syn::visit::Visit;
 
 use super::cfg_test_gated;
 
-const DISPATCH: &str = "src/infrastructure/tools/swarm_board_dispatch.rs";
-const METHODS: &str = "src/infrastructure/tools/swarm_board_dispatch_method.rs";
+const DISPATCH: &str = "src/infrastructure/tools/swarm/swarm_board_dispatch/mod.rs";
+const METHODS: &str =
+    "src/infrastructure/tools/swarm/swarm_board_dispatch/swarm_board_dispatch_method.rs";
 
 /// Method names only a test or `test-support` build serves, by the
 /// `Method` variant each parses to.

@@ -36,7 +36,8 @@ fn build_runtime_with_entrypoint(
     build_tool_runtime(ToolRuntimeBuildArgs {
         child_extensions: Vec::new(),
         swarm_context: None,
-        swarm_participation: crate::infrastructure::tools::swarm_bridge::Participation::shared(),
+        swarm_participation:
+            crate::infrastructure::tools::swarm::swarm_bridge::Participation::shared(),
         entrypoint,
         profile_context,
         base_dir: tmp.path(),
@@ -156,7 +157,7 @@ fn swarm_runtime_omits_workflow_engine_tool_and_guards() {
         &config,
         workflow,
         &mut String::new(),
-        crate::infrastructure::tools::swarm_bridge::Participation::Fixed(true),
+        crate::infrastructure::tools::swarm::swarm_bridge::Participation::Fixed(true),
     )
     .unwrap();
     assert!(state.engine.is_none());
@@ -182,7 +183,7 @@ fn swarm_runtime_rejects_guards_and_bound_specs_before_loading_files() {
             &config,
             workflow,
             &mut String::new(),
-            crate::infrastructure::tools::swarm_bridge::Participation::Fixed(true),
+            crate::infrastructure::tools::swarm::swarm_bridge::Participation::Fixed(true),
         )
         .unwrap_err();
         assert!(error.contains("workflow is unavailable for swarm agents"));

@@ -9,7 +9,7 @@
 use super::*;
 
 use quecto::domain::environments::entities::environment_registry::EnvironmentStatus;
-use quecto::infrastructure::tools::swarm_bridge::{HostedStore, SwarmContext};
+use quecto::infrastructure::tools::swarm::swarm_bridge::{HostedStore, SwarmContext};
 use std::sync::Arc;
 
 fn state_dir(world: &QuectoWorld) -> PathBuf {
@@ -48,7 +48,7 @@ fn create_running_swarm(checkout: &std::path::Path) -> String {
             &serde_json::json!({"goal":"ship", "constraints":[], "criteria":[{"id":"tests","kind":"command","description":"pass"}], "member_limit":3, "deadline":deadline}),
             &quecto::domain::swarm::ProcessIdentity {
                 pid: std::process::id(),
-                started: quecto::infrastructure::tools::swarm_bridge::process_start(
+                started: quecto::infrastructure::tools::swarm::swarm_bridge::process_start(
                     std::process::id(),
                 )
                 .unwrap(),

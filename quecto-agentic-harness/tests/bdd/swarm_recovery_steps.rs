@@ -5,7 +5,7 @@
 use super::supervision_steps::fixture::{self, Reply, Turn};
 use super::{QuectoWorld, result_json};
 use cucumber::{then, when};
-use quecto::infrastructure::tools::swarm_bridge::SwarmContext;
+use quecto::infrastructure::tools::swarm::swarm_bridge::SwarmContext;
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -135,7 +135,8 @@ fn launched_member(summary: &Value) -> Option<Value> {
 /// A second live member that can claim the reopened work.
 async fn admit_other(workspace: &Path) {
     let started =
-        quecto::infrastructure::tools::swarm_bridge::process_start(std::process::id()).unwrap();
+        quecto::infrastructure::tools::swarm::swarm_bridge::process_start(std::process::id())
+            .unwrap();
     admit_and_activate(workspace, "other", std::process::id(), &started);
 }
 
@@ -319,7 +320,7 @@ async fn exercise_kill(workspace: PathBuf) -> Value {
         );
         std::thread::spawn(move || {
             while racing.load(std::sync::atomic::Ordering::SeqCst) {
-                quecto::infrastructure::tools::swarm_lifecycle::reconcile(&context).unwrap();
+                quecto::infrastructure::tools::swarm::swarm_lifecycle::reconcile(&context).unwrap();
                 passes.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                 std::thread::sleep(RACING_RECONCILE_PAUSE);
             }
@@ -433,7 +434,7 @@ async fn exercise_loss(workspace: PathBuf) -> Value {
         .spawn()
         .unwrap();
     let pid = ghost.id();
-    let started = quecto::infrastructure::tools::swarm_bridge::process_start(pid).unwrap();
+    let started = quecto::infrastructure::tools::swarm::swarm_bridge::process_start(pid).unwrap();
     admit_and_activate(&workspace, "ghost", pid, &started);
     worker_claim(&workspace, "ghost").await;
     // Its harness vanishes without anyone observing the exit.
@@ -569,7 +570,8 @@ fn member_admitted_and_activated(world: &mut QuectoWorld, member: String) {
     // The world's tool creates the store as the coordinator on first use.
     super::run(world, json!({"op":"summary"}));
     let started =
-        quecto::infrastructure::tools::swarm_bridge::process_start(std::process::id()).unwrap();
+        quecto::infrastructure::tools::swarm::swarm_bridge::process_start(std::process::id())
+            .unwrap();
     let workspace = world.swarm_workspace.clone().unwrap();
     admit_and_activate(&workspace, &member, std::process::id(), &started);
     let summary = world_op(world, json!({"op":"summary"}));
@@ -689,7 +691,7 @@ fn stale_token_refused(world: &mut QuectoWorld) {
 /// could not see in env-7GMSw7cZqQ.
 #[when(expr = "that owner has been silent on the board for {int} seconds")]
 fn owner_silent(world: &mut QuectoWorld, seconds: u64) {
-    let database = quecto::infrastructure::tools::swarm_bridge::store_database(
+    let database = quecto::infrastructure::tools::swarm::swarm_bridge::store_database(
         world.swarm_workspace.as_ref().unwrap(),
     );
     let board = rusqlite::Connection::open(&database).expect("open the board");

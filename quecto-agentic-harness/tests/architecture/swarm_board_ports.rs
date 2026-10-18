@@ -12,8 +12,8 @@ use super::dependency_scan;
 
 /// The files checked: the dispatcher and its telemetry records.
 const FILES: [&str; 2] = [
-    "src/infrastructure/tools/swarm_board_dispatch.rs",
-    "src/infrastructure/tools/swarm_board_telemetry.rs",
+    "src/infrastructure/tools/swarm/swarm_board_dispatch/mod.rs",
+    "src/infrastructure/tools/swarm/swarm_board_telemetry.rs",
 ];
 
 /// The crate modules those files may name: the application's and the
@@ -22,8 +22,8 @@ const FILES: [&str; 2] = [
 const ALLOWED: &[&str] = &[
     "crate::application::",
     "crate::domain::",
-    "crate::infrastructure::tools::swarm_board_dispatch::",
-    "crate::infrastructure::tools::swarm_board_telemetry::",
+    "crate::infrastructure::tools::swarm::swarm_board_dispatch::",
+    "crate::infrastructure::tools::swarm::swarm_board_telemetry::",
 ];
 
 fn allowed(path: &str) -> bool {
@@ -131,7 +131,7 @@ fn module(path: &str) -> Vec<String> {
 
 #[test]
 fn the_scan_finds_crate_paths_anywhere_in_the_code() {
-    let here = module("infrastructure::tools::swarm_board_dispatch");
+    let here = module("infrastructure::tools::swarm::swarm_board_dispatch");
     let found = crate_paths(
         r#"
         use crate::application::swarm::ports::BoardOpLog;
@@ -139,7 +139,7 @@ fn the_scan_finds_crate_paths_anywhere_in_the_code() {
         use super::swarm_board_telemetry::trace;
         fn f(meter: crate::infrastructure::persistence::swarm_board::meter::Meter) {
             let _ = crate::infrastructure::persistence::audit_log::AuditLog::open();
-            let _: Vec<super::super::persistence::B> = Vec::new();
+            let _: Vec<super::super::super::persistence::B> = Vec::new();
             tracing::warn!("{}", crate::infrastructure::c());
             match x { crate::infrastructure::D::E => {} _ => {} }
         }
@@ -152,14 +152,14 @@ fn the_scan_finds_crate_paths_anywhere_in_the_code() {
         "crate::application::swarm::ports::BoardOpLog",
         "crate::domain::swarm::RefusalKind",
         "crate::infrastructure::persistence::A",
-        "crate::infrastructure::tools::swarm_board_telemetry::trace",
+        "crate::infrastructure::tools::swarm::swarm_board_telemetry::trace",
         "crate::infrastructure::persistence::swarm_board::meter::Meter",
         "crate::infrastructure::persistence::audit_log::AuditLog::open",
         "crate::infrastructure::persistence::B",
         "crate::infrastructure::c",
         "crate::infrastructure::D::E",
-        "crate::infrastructure::tools::swarm_board_dispatch::Served",
-        "crate::infrastructure::tools::x",
+        "crate::infrastructure::tools::swarm::swarm_board_dispatch::Served",
+        "crate::infrastructure::tools::swarm::x",
     ] {
         assert!(
             found.iter().any(|path| path == expected),
@@ -172,7 +172,7 @@ fn the_scan_finds_crate_paths_anywhere_in_the_code() {
 
 #[test]
 fn a_crate_alias_is_never_allowed() {
-    let here = module("infrastructure::tools::swarm_board_dispatch");
+    let here = module("infrastructure::tools::swarm::swarm_board_dispatch");
     let found = crate_paths("use crate as root; fn f() { root::x(); }", &here);
     assert!(
         found.iter().any(|path| !allowed(path)),

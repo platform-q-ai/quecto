@@ -93,7 +93,7 @@ pub(in crate::interface::cli) fn follow_session(
     session_key: Option<&str>,
 ) -> Option<Arc<dyn AuditSink>> {
     let log = crate::infrastructure::persistence::crash_record::follow(session_key)?;
-    let board = crate::infrastructure::tools::swarm_bridge::process_board();
+    let board = crate::infrastructure::tools::swarm::swarm_bridge::process_board();
     Some(followed(log, board, BoardToolSession::process()))
 }
 
@@ -101,7 +101,7 @@ pub(in crate::interface::cli) fn follow_session(
 /// `log`: `board` (the swarm's) and `board_tool` record there from now on.
 pub(super) fn followed(
     log: AuditLog,
-    board: Option<&crate::infrastructure::tools::swarm_bridge::SwarmBoard>,
+    board: Option<&crate::infrastructure::tools::swarm::swarm_bridge::SwarmBoard>,
     board_tool: &BoardToolSession,
 ) -> Arc<dyn AuditSink> {
     if let Some(board) = board {
@@ -197,7 +197,7 @@ pub(super) fn attach(
     stderr: &mut String,
 ) {
     use crate::infrastructure::persistence::crash_record::{CrashTarget, prepare};
-    let board = crate::infrastructure::tools::swarm_bridge::process_board();
+    let board = crate::infrastructure::tools::swarm::swarm_bridge::process_board();
     let board_tool = BoardToolSession::process();
     let crash_line = attach_to(board, board_tool, agent, target, flags, stderr);
     let SessionLogTarget {
@@ -231,7 +231,7 @@ pub(super) struct SessionLogTarget<'a> {
 /// is on (what it held since admission first), and binds `board_tool`'s
 /// recording to it; answers the log's crash line.
 pub(super) fn attach_to(
-    board: Option<&crate::infrastructure::tools::swarm_bridge::SwarmBoard>,
+    board: Option<&crate::infrastructure::tools::swarm::swarm_bridge::SwarmBoard>,
     board_tool: &BoardToolSession,
     agent: &mut AgentLoopImpl,
     target: &SessionLogTarget<'_>,

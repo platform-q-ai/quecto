@@ -37,7 +37,7 @@ pub(super) struct ChildCommand<'a> {
     /// isolated-PID (swarm-capable) container carries it (the runtime's
     /// `isolated-pid-v1` launch contract, #2204), a swarm run or not; an
     /// agent in any other container, or on the host, has none.
-    pub swarm_context: Option<&'a super::swarm_bridge::SwarmContext>,
+    pub swarm_context: Option<&'a super::swarm::swarm_bridge::SwarmContext>,
     /// Whether the launching agent takes part in a created swarm run
     /// (#1715): only ever true with a `swarm_context`.
     pub swarm_member: bool,
@@ -289,7 +289,7 @@ async fn spawn_local_child(child: &ChildCommand<'_>) -> Result<PreparedChild, Do
     let context = child.swarm_context.cloned();
     let mut reservation = super::call_work::spawn_blocking_in_call(move || {
         context
-            .map(super::swarm_admission::LaunchReservation::reserve)
+            .map(super::swarm::swarm_admission::LaunchReservation::reserve)
             .transpose()
     })
     .await

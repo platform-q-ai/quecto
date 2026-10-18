@@ -119,7 +119,7 @@ impl crate::application::swarm::ports::SessionOpLog for RecordedOps {
 #[test]
 fn a_host_side_loss_is_recorded_in_the_process_boards_event_log() {
     use crate::application::environments::ports::HostedSwarmRunObservation;
-    use crate::infrastructure::tools::swarm_bridge::{SwarmContext, process_start};
+    use crate::infrastructure::tools::swarm::swarm_bridge::{SwarmContext, process_start};
     let dir = tempfile::tempdir().unwrap();
     let workspace = dir.path().join("workspace");
     std::fs::create_dir_all(workspace.join(".quecto")).unwrap();
@@ -181,7 +181,7 @@ fn the_board_view_reads_through_a_board_of_its_own() {
         "one view board"
     );
     assert!(!view.is_the_same_board(&super::host_board()));
-    if let Some(process) = crate::infrastructure::tools::swarm_bridge::process_board() {
+    if let Some(process) = crate::infrastructure::tools::swarm::swarm_bridge::process_board() {
         assert!(!view.is_the_same_board(process));
     }
 }
