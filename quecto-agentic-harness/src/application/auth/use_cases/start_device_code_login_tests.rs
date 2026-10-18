@@ -61,11 +61,24 @@ fn an_unknown_provider_is_refused_without_asking_anyone() {
 }
 
 #[test]
-fn a_provider_without_the_flow_is_reported_as_unsupported() {
+fn a_provider_not_offering_the_flow_is_refused_without_asking_anyone() {
+    // Even a flow that would grant one (a test server) is never asked.
+    let flow = FakeFlow::answering(Ok(grant()));
+    for provider in [LoginProvider::Xai, LoginProvider::Anthropic] {
+        assert_eq!(
+            start(&flow).execute(provider.id()),
+            Err(LoginError::DeviceCodeUnsupported(provider))
+        );
+    }
+    assert!(flow.asked.lock().unwrap().is_empty());
+}
+
+#[test]
+fn a_flow_without_the_providers_endpoint_is_reported_as_unsupported() {
     let flow = FakeFlow::answering(Err(DeviceCodeError::Unsupported));
     assert_eq!(
-        start(&flow).execute("xai"),
-        Err(LoginError::DeviceCodeUnsupported(LoginProvider::Xai))
+        start(&flow).execute("openai"),
+        Err(LoginError::DeviceCodeUnsupported(LoginProvider::OpenAi))
     );
 }
 
@@ -76,9 +89,9 @@ fn a_refused_request_and_a_missing_runtime_keep_their_reasons() {
         start(&refused).execute("openai"),
         Err(LoginError::DeviceCodeRequest("(500)".to_string()))
     );
-    let no_runtime = FakeFlow::answering(Err(DeviceCodeError::Runtime("EAGAIN".to_string())));
+    let no_runtime = FakeFlow::answering(Err(DeviceCodeError::Unavailable("EAGAIN".to_string())));
     assert_eq!(
-        start(&no_runtime).execute("anthropic"),
-        Err(LoginError::Runtime("EAGAIN".to_string()))
+        start(&no_runtime).execute("openai"),
+        Err(LoginError::Unavailable("EAGAIN".to_string()))
     );
 }

@@ -10,8 +10,9 @@ pub enum LoginError {
     EmptyToken,
     /// The provider offers no device-code flow.
     DeviceCodeUnsupported(LoginProvider),
-    /// The login could not run at all (no async runtime).
-    Runtime(String),
+    /// The login could not run at all here (e.g. no thread could be
+    /// started); in the mechanism's words.
+    Unavailable(String),
     /// The provider refused or did not answer the device-code request.
     DeviceCodeRequest(String),
     /// The credential could not be stored.

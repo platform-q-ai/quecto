@@ -100,6 +100,48 @@ fn the_file_keeps_its_format() {
     );
 }
 
+/// Byte for byte, as `serde_json::to_string_pretty` wrote it before the
+/// credential moved to the domain: field order included.
+#[test]
+fn the_file_keeps_its_exact_bytes() {
+    let token_base = TempDir::new().unwrap();
+    under_test(&token_base)
+        .store(token("anthropic", "fake-t"))
+        .unwrap();
+    assert_eq!(
+        std::fs::read_to_string(token_base.path().join("credentials.json")).unwrap(),
+        r#"{
+  "credentials": {
+    "anthropic": {
+      "provider": "anthropic",
+      "token": "fake-t",
+      "method": "token",
+      "expires_at": null
+    }
+  }
+}"#
+    );
+    let oauth_base = TempDir::new().unwrap();
+    under_test(&oauth_base)
+        .store(oauth("openai", "fake-o"))
+        .unwrap();
+    assert_eq!(
+        std::fs::read_to_string(oauth_base.path().join("credentials.json")).unwrap(),
+        r#"{
+  "credentials": {
+    "openai": {
+      "provider": "openai",
+      "token": "fake-o",
+      "method": "oauth",
+      "expires_at": 1700000000,
+      "refresh_token": "fake-refresh-openai",
+      "account_id": "acct-fake"
+    }
+  }
+}"#
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn the_file_is_readable_by_its_owner_only() {

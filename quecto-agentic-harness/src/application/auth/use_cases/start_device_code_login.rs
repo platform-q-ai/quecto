@@ -17,19 +17,23 @@ impl StartDeviceCodeLogin {
         Self { flow }
     }
 
-    /// Request `provider`'s grant. A provider outside the login allowlist
-    /// is refused without a request.
+    /// Request `provider`'s grant. A provider outside the login allowlist,
+    /// or one not offering a device-code login, is refused without a
+    /// request.
     pub fn execute(&self, provider: &str) -> Result<DeviceCodeInstructions, LoginError> {
         let Some(login) = LoginProvider::parse(provider) else {
             return Err(LoginError::UnknownProvider(provider.to_string()));
         };
+        if !login.offers_device_code() {
+            return Err(LoginError::DeviceCodeUnsupported(login));
+        }
         match self.flow.request(login) {
             Ok(grant) => Ok(DeviceCodeInstructions {
                 verification_uri: grant.verification_uri,
                 user_code: grant.user_code,
             }),
             Err(DeviceCodeError::Unsupported) => Err(LoginError::DeviceCodeUnsupported(login)),
-            Err(DeviceCodeError::Runtime(reason)) => Err(LoginError::Runtime(reason)),
+            Err(DeviceCodeError::Unavailable(reason)) => Err(LoginError::Unavailable(reason)),
             Err(DeviceCodeError::Request(reason)) => Err(LoginError::DeviceCodeRequest(reason)),
         }
     }

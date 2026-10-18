@@ -27,3 +27,12 @@ fn a_name_outside_the_allowlist_is_no_login_provider() {
         assert_eq!(LoginProvider::parse(name), None, "{name:?}");
     }
 }
+
+#[test]
+fn only_openai_offers_a_device_code_login() {
+    let offered: Vec<_> = LoginProvider::ALL
+        .into_iter()
+        .filter(|provider| provider.offers_device_code())
+        .collect();
+    assert_eq!(offered, [LoginProvider::OpenAi]);
+}

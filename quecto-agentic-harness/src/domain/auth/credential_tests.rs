@@ -52,6 +52,7 @@ fn an_oauth_expiry_keeps_a_five_minute_margin() {
 #[test]
 fn an_oauth_expiry_saturates_instead_of_overflowing() {
     assert_eq!(oauth_expires_at(i64::MAX, u64::MAX), i64::MAX - 300);
+    assert_eq!(oauth_expires_at(0, u64::MAX), i64::MAX - 300);
 }
 
 #[test]

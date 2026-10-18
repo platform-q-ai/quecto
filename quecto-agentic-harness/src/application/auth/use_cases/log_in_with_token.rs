@@ -36,7 +36,10 @@ impl LogInWithToken {
             refresh_token: None,
             account_id: None,
         };
-        debug_assert_eq!(credential.expires_at, None, "a token never expires");
+        debug_assert!(
+            !credential.token.is_empty() && credential.provider == login.id(),
+            "a stored token is non-empty and keyed by its login provider"
+        );
         self.store
             .store(credential)
             .map_err(|error| LoginError::Store(error.0))?;

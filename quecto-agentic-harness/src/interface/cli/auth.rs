@@ -176,7 +176,7 @@ fn login_refusal(error: &LoginError) -> String {
             "auth login: device code flow is not supported for '{}' (use --oauth instead)\n",
             provider.id()
         ),
-        LoginError::Runtime(why) => format!("auth login: failed to create runtime: {why}\n"),
+        LoginError::Unavailable(why) => format!("auth login: failed to create runtime: {why}\n"),
         LoginError::DeviceCodeRequest(why) => {
             format!("auth login: device code request failed: {why}\n")
         }
@@ -335,7 +335,7 @@ fn cmd_auth_login_openai_oauth(
     ));
     flush_stdout(ctx, out);
 
-    let rt = match super::build_tokio_runtime() {
+    let rt = match crate::infrastructure::processes::tokio_runtime::build_tokio_runtime() {
         Ok(rt) => rt,
         Err(e) => {
             out.stderr
@@ -557,7 +557,7 @@ fn cmd_auth_login_anthropic_oauth(
         return 1;
     }
 
-    let rt = match super::build_tokio_runtime() {
+    let rt = match crate::infrastructure::processes::tokio_runtime::build_tokio_runtime() {
         Ok(rt) => rt,
         Err(e) => {
             out.stderr
@@ -594,7 +594,7 @@ fn cmd_auth_import_external(ctx: &CliContext, out: &mut Output<'_>) -> i32 {
     };
 
     let store = CredentialStore::new(ctx.base_dir());
-    let rt = match super::build_tokio_runtime() {
+    let rt = match crate::infrastructure::processes::tokio_runtime::build_tokio_runtime() {
         Ok(rt) => rt,
         Err(e) => {
             out.stderr

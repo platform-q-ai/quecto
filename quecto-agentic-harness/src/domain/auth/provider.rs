@@ -21,6 +21,17 @@ impl LoginProvider {
         Self::ALL.into_iter().find(|provider| provider.id() == name)
     }
 
+    /// Whether a device-code login is offered for this provider. Only
+    /// OpenAI's: Anthropic has no device-code endpoint, and xAI's flow is
+    /// withheld because the grant is never polled for a token, so offering
+    /// it would report a login that never happens (PR #1087 review).
+    pub fn offers_device_code(self) -> bool {
+        match self {
+            LoginProvider::OpenAi => true,
+            LoginProvider::Anthropic | LoginProvider::Xai => false,
+        }
+    }
+
     /// The provider's id: its credential's key in the store.
     pub fn id(self) -> &'static str {
         match self {

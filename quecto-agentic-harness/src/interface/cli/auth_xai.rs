@@ -33,7 +33,7 @@ pub(crate) fn cmd_auth_login_xai_oauth(
     ));
     flush_stdout(ctx, out);
 
-    let rt = match super::super::build_tokio_runtime() {
+    let rt = match crate::infrastructure::processes::tokio_runtime::build_tokio_runtime() {
         Ok(rt) => rt,
         Err(e) => {
             out.stderr
