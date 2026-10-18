@@ -17,6 +17,7 @@ use crate::application::admission::dto::{
 };
 use crate::infrastructure::admission::{AuthorityDirectory, AuthorityServer, ServerError};
 use crate::infrastructure::config::Config;
+use crate::infrastructure::providers::routing::provider_runtime_admission::AdmissionRuntimeProposal;
 
 /// Parsed options shared by the broker actions.
 struct BrokerArgs {
@@ -130,13 +131,7 @@ fn validate_explicit_directory(
 fn configured_directory(
     ctx: &CliContext,
     opts: &BrokerArgs,
-) -> Result<
-    (
-        PathBuf,
-        crate::infrastructure::providers::routing::provider_runtime_admission::AdmissionRuntimeProposal,
-    ),
-    String,
->{
+) -> Result<(PathBuf, AdmissionRuntimeProposal), String> {
     let base_dir = ctx.base_dir();
     let config_path = global_config_path(ctx, opts);
     if !config_path.exists() {
@@ -170,13 +165,7 @@ fn configured_directory(
 fn run_plan(
     ctx: &CliContext,
     opts: &BrokerArgs,
-) -> Result<
-    (
-        PathBuf,
-        crate::infrastructure::providers::routing::provider_runtime_admission::AdmissionRuntimeProposal,
-    ),
-    String,
->{
+) -> Result<(PathBuf, AdmissionRuntimeProposal), String> {
     let (directory, proposal) = configured_directory(ctx, opts)?;
     if let Some(explicit) = &opts.directory {
         validate_explicit_directory(&ctx.base_dir(), explicit)?;
@@ -504,7 +493,7 @@ fn cmd_run(ctx: &CliContext, opts: &BrokerArgs, stdout: &mut String, stderr: &mu
 
 async fn run(
     dir: AuthorityDirectory,
-    proposal: crate::infrastructure::providers::routing::provider_runtime_admission::AdmissionRuntimeProposal,
+    proposal: AdmissionRuntimeProposal,
     accept_missing_ledger: bool,
     stdout: &mut String,
     stderr: &mut String,
@@ -530,7 +519,7 @@ async fn run(
 /// lifecycle is testable in-process.
 pub(crate) async fn run_until(
     dir: AuthorityDirectory,
-    proposal: crate::infrastructure::providers::routing::provider_runtime_admission::AdmissionRuntimeProposal,
+    proposal: AdmissionRuntimeProposal,
     accept_missing_ledger: bool,
     stop: impl std::future::Future<Output = ()>,
     stdout: &mut String,

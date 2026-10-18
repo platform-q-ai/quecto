@@ -11,7 +11,7 @@
 use crate::application::sessions::dto::{RecoveredContent, Utf8Range};
 use crate::domain::conversation::services::visible_thinking as thinking;
 use crate::domain::conversation::value_objects::message::{Message, ToolCall};
-use crate::infrastructure::{persistence::file::turn_origin_names::*, processes::line_cap};
+use crate::infrastructure::{persistence::file::turn_origin_names as names, processes::line_cap};
 use crate::interface::cli::protocol::AgentEvent;
 
 #[cfg(test)]
@@ -51,8 +51,8 @@ fn message_to_json_with_content(msg: &Message, content: &str) -> serde_json::Val
         "toolName": msg.tool_name,
         "isError": msg.is_error,
         "collapsed": msg.is_collapsed,
-        "turnOrigin": origin_name(msg.turn_origin),
-        "userKind": user_kind_name(msg.user_kind),
+        "turnOrigin": names::origin_name(msg.turn_origin),
+        "userKind": names::user_kind_name(msg.user_kind),
     })
 }
 
@@ -165,8 +165,8 @@ fn message_range_json(
     if !ranged {
         let mut value = super::message_to_json(msg);
         // The same marks as a ranged read (#2226, #2404).
-        value["turnOrigin"] = serde_json::json!(origin_name(msg.turn_origin));
-        value["userKind"] = serde_json::json!(user_kind_name(msg.user_kind));
+        value["turnOrigin"] = serde_json::json!(names::origin_name(msg.turn_origin));
+        value["userKind"] = serde_json::json!(names::user_kind_name(msg.user_kind));
         if data_fits_frame(&value, request_id) {
             return value;
         }

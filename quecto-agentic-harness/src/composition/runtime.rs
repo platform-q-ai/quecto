@@ -27,7 +27,7 @@ use crate::infrastructure::providers::routing::provider_runtime::{
     AgentProviderRuntimeFactory, AgentRuntimeInputs,
 };
 use crate::infrastructure::providers::routing::provider_runtime_admission::{
-    AdmissionProviderRuntimeFactory, AdmissionRuntimeCandidate,
+    AdmissionProviderRuntimeFactory, AdmissionRuntimeCandidate, AdmissionRuntimeProposal,
 };
 use crate::infrastructure::providers::stream_idle::StreamIdle;
 
@@ -108,10 +108,7 @@ pub fn compose_and_publish_runtime(
 pub fn admission_inheritance(
     admission: &crate::infrastructure::admission::ProcessAdmission,
     config: &Config,
-) -> (
-    bool,
-    Option<crate::infrastructure::providers::routing::provider_runtime_admission::AdmissionRuntimeProposal>,
-){
+) -> (bool, Option<AdmissionRuntimeProposal>) {
     let inherit = admission.inherits_authority();
     let proposal = if inherit {
         None
@@ -124,11 +121,7 @@ pub fn admission_inheritance(
 /// The configured proposal offered to the restart-only admission factory. An
 /// invalid or removed section yields `None`, which the factory rejects as a
 /// change rather than replacing live budgets.
-pub fn admission_candidate(
-    config: &Config,
-) -> Option<
-    crate::infrastructure::providers::routing::provider_runtime_admission::AdmissionRuntimeProposal,
-> {
+pub fn admission_candidate(config: &Config) -> Option<AdmissionRuntimeProposal> {
     config
         .admission_proposal()
         .ok()
