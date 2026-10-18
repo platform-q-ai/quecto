@@ -34,8 +34,8 @@ Important invariants before Phase 2:
 
 **Primary code:** `src/application/agent_turn/context/context_pruning.rs`,
 `context_pruning_messages.rs`, `agent_turn/agent_loop/agent_loop_pruning.rs`,
-`agent_turn/agent_loop/agent_loop_spill.rs`, the context gauge in `agent_turn/context/context_gauge.rs`, and related
-context/spill tests.
+`agent_turn/agent_loop/agent_loop_spill.rs`, the context gauge in
+`agent_turn/context/context_gauge.rs`, and related context/spill tests.
 
 Context management already exists as a conceptual subsystem. It plans what can
 be sent to a provider within the model budget, protects pinned recent turns,

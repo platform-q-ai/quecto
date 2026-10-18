@@ -1,5 +1,13 @@
 use super::*;
 const SESSIONS: &str = "domain/sessions";
+// Fixture placement and transitional rows: the checked-in policy retired
+// its last transitional row with #2366, so the transitional branches of the
+// placement check are exercised with these.
+const FIXTURE_TRANSITIONAL: &[(&str, &str)] = &[("application", "agent_loop")];
+const FIXTURE_ROWS: &[Placement<'_>] = &[
+    ("application", &["sessions", "agent_loop"]),
+    ("domain", &["sessions"]),
+];
 const DOMAIN_EMPTY: FlatBudget<'_> = FlatBudget {
     path: "domain",
     expected: 0,
@@ -64,10 +72,13 @@ fn fragments(failures: &[Violation], required: &[&str]) {
         assert!(message.contains(text), "{message}");
     }
 }
-fn populate_transitional(root: &Tree) {
-    for (layer, name) in TRANSITIONAL {
+fn populate_transitional(root: &Tree, rows: &[(&str, &str)]) {
+    for (layer, name) in rows {
         root.mkdir(&format!("{layer}/{name}"));
     }
+}
+fn fixture_placements(root: &Path, rows: &[Placement<'_>]) -> Vec<Violation> {
+    validate_with(root, &[], &[], Some(rows), FIXTURE_TRANSITIONAL, &scan)
 }
 #[test]
 fn exact_budget_counts_and_count_neutral_changes() {
@@ -250,29 +261,30 @@ fn placement_future_targets_unknowns_and_stale_transitional_rows() {
         ("application/sessions", "application/helpers"),
         (SESSIONS, "domain/unknown"),
     ] {
+        // A transitional row whose directory exists passes.
         let root = fixture(LAYERS, &[]);
-        populate_transitional(&root);
-        assert!(placements(root.path(), PLACEMENTS).is_empty());
+        populate_transitional(&root, FIXTURE_TRANSITIONAL);
+        assert!(fixture_placements(root.path(), FIXTURE_ROWS).is_empty());
         root.mkdir(known);
         root.write("application/legacy.rs");
-        assert!(placements(root.path(), PLACEMENTS).is_empty());
+        assert!(fixture_placements(root.path(), FIXTURE_ROWS).is_empty());
         root.mkdir(unknown);
         assert_eq!(
-            placements(root.path(), PLACEMENTS),
+            fixture_placements(root.path(), FIXTURE_ROWS),
             vec![Violation::UnlistedPlacement(unknown.into())]
         );
     }
-    // A transitional row whose directory is gone is stale (fixture rows: the
-    // checked-in policy retired its last transitional row with #2366).
+    // A transitional row whose directory is gone is stale.
     let root = fixture(LAYERS, &[]);
-    let rows: &[Placement<'_>] = &[("application", &["agent_loop"])];
-    let transitional = &[("application", "agent_loop")];
-    let failures = validate_with(root.path(), &[], &[], Some(rows), transitional, &scan);
+    let failures = fixture_placements(root.path(), FIXTURE_ROWS);
     assert_eq!(failures.len(), 1);
     fragments(
         &failures,
         &["remove application/agent_loop from PLACEMENTS", WIKI],
     );
+    // A transitional row whose name no placement row lists is not checked.
+    let unlisted: &[Placement<'_>] = &[("application", &["sessions"]), ("domain", &["sessions"])];
+    assert!(fixture_placements(root.path(), unlisted).is_empty());
 }
 #[test]
 fn diagnostics_prescribe_each_actual_repair_and_budget_direction() {
@@ -380,21 +392,26 @@ fn symlink_ancestors_descendants_and_caller_root_aliases() {
     assert!(flat(&root.at("linked_root"), "domain", 0).is_empty());
     let real = fixture(LAYERS, &[]);
     real.mkdir(SESSIONS);
-    populate_transitional(&real);
+    populate_transitional(&real, FIXTURE_TRANSITIONAL);
     symlink(real.path(), root.at("alias")).unwrap();
     assert!(flat(&root.at("alias"), "domain", 0).is_empty());
     assert!(
-        validate_all(
+        validate_with(
             &root.at("alias"),
             &[DOMAIN_EMPTY],
             &[],
-            Some(PLACEMENTS),
+            Some(FIXTURE_ROWS),
+            FIXTURE_TRANSITIONAL,
             &scan
         )
         .is_empty()
     );
     symlink(outside.path(), real.at("domain/link")).unwrap();
-    inspection(&placements(real.path(), PLACEMENTS), Some("domain"), "link");
+    inspection(
+        &fixture_placements(real.path(), FIXTURE_ROWS),
+        Some("domain"),
+        "link",
+    );
 }
 #[cfg(unix)]
 #[test]

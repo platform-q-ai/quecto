@@ -12,7 +12,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::atomic::Ordering;
 
 #[derive(Debug, Default, Clone)]
-pub(in crate::application) struct ToolPolicyState {
+pub(in crate::application::agent_turn) struct ToolPolicyState {
     pub(super) disabled_tools: HashSet<String>,
     pub(super) enabled_tools: HashSet<String>,
     pub(super) scopes: HashMap<String, ProfileAvailabilityScope>,
