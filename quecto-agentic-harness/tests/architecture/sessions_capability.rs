@@ -1312,9 +1312,12 @@ fn one_layout_owns_the_sessions_join_sanitizer_and_file_names() {
             production_code(&path)
                 .into_iter()
                 .filter(move |(_, line)| {
-                    forms_session_path(line)
-                        && !(sanitizes
-                            && !forms_session_path(&line.replace("sanitize_session_key(", "")))
+                    let scanned = if sanitizes {
+                        line.replace("sanitize_session_key(", "")
+                    } else {
+                        line.to_string()
+                    };
+                    forms_session_path(&scanned)
                 })
                 .map(move |(n, line)| format!("{path}:{n}: {}", line.trim()))
         })

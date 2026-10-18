@@ -50,7 +50,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::domain::crash_record::CrashRecord;
 
-use super::super::super::observability::audit_log::AuditLog;
+use crate::infrastructure::observability::audit_log::AuditLog;
 
 /// The largest crash record read back: a record is one short line.
 pub const MAX_RECORD_BYTES: u64 = 16 * 1024;

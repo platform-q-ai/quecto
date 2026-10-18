@@ -9,8 +9,8 @@ use crate::domain::audit::AuditEvent;
 use crate::domain::crash_record::CrashRecord;
 use crate::domain::sessions::entities::session_identity::SessionIdentity;
 
-use super::super::super::super::observability::audit_log::{AuditCrashLine, AuditLog};
 use super::{RecordDir, SessionRecords};
+use crate::infrastructure::observability::audit_log::{AuditCrashLine, AuditLog};
 
 /// Where this process's panics are recorded. Set once; the hook reads it
 /// without a lock and swaps nothing but the session and crash-line
