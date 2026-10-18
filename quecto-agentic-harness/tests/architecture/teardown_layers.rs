@@ -183,18 +183,22 @@ const RETIRED_DOMAIN_PORTS: &[(&str, &str, &str)] = &[
         "src/application/subagent_launch.rs",
     ),
     (
-        "src/domain/swarm/mod.rs",
+        "src/domain/swarm/value_objects/lifecycle.rs",
         "trait ProcessControl",
         SWARM_PORTS,
     ),
     (
-        "src/domain/swarm/mod.rs",
+        "src/domain/swarm/value_objects/lifecycle.rs",
         "trait ProcessObservation",
         SWARM_PORTS,
     ),
-    ("src/domain/swarm/mod.rs", "trait Clock", SWARM_PORTS),
     (
-        "src/domain/swarm/mod.rs",
+        "src/domain/swarm/value_objects/lifecycle.rs",
+        "trait Clock",
+        SWARM_PORTS,
+    ),
+    (
+        "src/domain/swarm/value_objects/lifecycle.rs",
         "trait SwarmLifecycle",
         SWARM_PORTS,
     ),
@@ -285,12 +289,12 @@ const RETIRED_DOMAIN_PORTS: &[(&str, &str, &str)] = &[
         "src/application/providers/ports.rs",
     ),
     (
-        "src/domain/swarm/mod.rs",
+        "src/domain/swarm/entities/run.rs",
         "trait CoordinationPort",
         SWARM_PORTS,
     ),
     (
-        "src/domain/swarm/mod.rs",
+        "src/domain/swarm/entities/run.rs",
         "trait SwarmRunControl",
         SWARM_PORTS,
     ),

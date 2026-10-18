@@ -1,13 +1,13 @@
 //! The run-wide section of a run summary (#2313 review M1): what every
 //! member of the run did, as the board holds it when the run settles.
 //!
-//! A harness's [`crate::domain::swarm::events::run_summary::RunSummaryFold`] sees only its own board calls
-//! (each member is a process of its own, with a board of its own), so its
-//! counts are that process's. The run's own totals are read from the board
-//! file every member shares, once, by the coordinator's harness at settle:
-//! the tasks by state, the messages by what became of them, each member's
-//! recorded requests and their token usage, and the run's wall time from
-//! its creation. Counts and kinds only: a member appears as its redacted
+//! A harness's [`super::run_summary::RunSummaryFold`] sees only its own
+//! board calls (each member is a process of its own, with a board of its
+//! own), so its counts are that process's. The run's own totals are read
+//! from the board file every member shares, once, by the coordinator's
+//! harness at settle: the tasks by state, the messages by what became of
+//! them, each member's recorded requests and their token usage, and the
+//! run's wall time from its creation. Counts and kinds only: a member appears as its redacted
 //! `actor_ref`, and no board text is kept.
 use serde::{Deserialize, Serialize};
 
