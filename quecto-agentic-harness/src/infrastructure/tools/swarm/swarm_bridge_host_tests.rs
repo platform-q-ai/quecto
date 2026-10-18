@@ -120,7 +120,7 @@ fn sql(directory: &tempfile::TempDir, statements: &str) {
 fn run_with_items(directory: &tempfile::TempDir) -> [String; 2] {
     let context = context(directory);
     create(&context, 2);
-    super::super::super::call_work::off_the_runtime(|| {
+    super::super::super::registry::call_work::off_the_runtime(|| {
         let create = |request: &str, title: &str, depends: serde_json::Value| {
             context
                 .call("task_create", json!([request, title, ["passes"], depends]))
@@ -228,7 +228,7 @@ fn recording_usage_moves_the_revision() {
     let hosted = hosted(&directory);
     let before = hosted.board_revision().unwrap().unwrap().revision;
     let context = context(&directory);
-    super::super::super::call_work::off_the_runtime(|| {
+    super::super::super::registry::call_work::off_the_runtime(|| {
         let failed = json!({"request_id": "r9", "instrumented_attempts": 1, "outcome": "failed"});
         context.call("_record_request", json!([failed])).unwrap();
     });

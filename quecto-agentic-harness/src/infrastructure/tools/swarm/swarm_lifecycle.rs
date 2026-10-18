@@ -106,7 +106,8 @@ pub fn member_exited(
 pub async fn notify(context: &SwarmContext) -> Vec<String> {
     let ctx = context.clone();
     let Ok(Ok((members, generation))) =
-        super::super::call_work::spawn_blocking_in_call(move || ctx.notification_batch()).await
+        super::super::registry::call_work::spawn_blocking_in_call(move || ctx.notification_batch())
+            .await
     else {
         return vec!["swarm notification summary unavailable; inspect durable inbox".into()];
     };
@@ -120,7 +121,7 @@ pub async fn notify(context: &SwarmContext) -> Vec<String> {
 pub async fn wake_after_resume(context: &SwarmContext, generation: u64) -> Vec<String> {
     let ctx = context.clone();
     let Ok(Ok(snapshot)) =
-        super::super::call_work::spawn_blocking_in_call(move || ctx.snapshot()).await
+        super::super::registry::call_work::spawn_blocking_in_call(move || ctx.snapshot()).await
     else {
         return vec![
             "swarm membership unavailable after resume; members re-arm on their next wake".into(),
@@ -280,9 +281,10 @@ async fn settle_suspending(
     suspend: Option<LocalSuspend>,
 ) -> Result<Value, DomainError> {
     let ctx = context.clone();
-    let snapshot = super::super::call_work::spawn_blocking_in_call(move || ctx.snapshot())
-        .await
-        .map_err(|e| DomainError::Tool(e.to_string()))??;
+    let snapshot =
+        super::super::registry::call_work::spawn_blocking_in_call(move || ctx.snapshot())
+            .await
+            .map_err(|e| DomainError::Tool(e.to_string()))??;
     context
         .lifecycle
         .settle(
@@ -292,7 +294,7 @@ async fn settle_suspending(
             &LinuxProcesses,
         )
         .await?;
-    super::super::call_work::spawn_blocking_in_call(move || settled(&context))
+    super::super::registry::call_work::spawn_blocking_in_call(move || settled(&context))
         .await
         .map_err(|e| DomainError::Tool(e.to_string()))?
 }
@@ -301,9 +303,9 @@ async fn settle_suspending(
 /// review L6), and returns once it has finished (#2278 final review L1,
 /// L2): the caller cannot await it (a drop, or a synchronous port method
 /// on an async worker), yet what follows depends on it (a released slot,
-/// a suspended turn). See [`super::call_work::block_here`].
+/// a suspended turn). See [`super::super::registry::call_work::block_here`].
 pub(super) fn run_off_the_workers(job: impl FnOnce()) {
-    super::super::call_work::block_here(job);
+    super::super::registry::call_work::block_here(job);
 }
 
 /// A per-process watcher also observes outcomes set by other members: it
@@ -325,7 +327,7 @@ pub fn supervise(
     // The watcher's own thread, never an async worker: it blocks on the
     // board's latch between ticks and drives a runtime of its own only for
     // its settlement, so its board calls are marked as blocking work (#2278).
-    std::thread::spawn(super::super::call_work::blocking(move || {
+    std::thread::spawn(super::super::registry::call_work::blocking(move || {
         let mut watched = watch::watch_until_terminal(
             &context,
             snapshot,
@@ -516,7 +518,7 @@ impl crate::application::providers::ports::RequestAdmission for SwarmContext {
         let actor = self.member.clone();
         let gate = crate::domain::swarm::AdmissionGate::for_attempt(attempt);
         Box::pin(async move {
-            let snapshot = super::super::call_work::spawn_blocking_in_call(move || {
+            let snapshot = super::super::registry::call_work::spawn_blocking_in_call(move || {
                 context.inference_snapshot(gate)
             })
             .await
@@ -555,26 +557,27 @@ impl crate::application::swarm::ports::SwarmRunControl for SwarmContext {
         Box::pin(async move {
             let resuming = matches!(action, crate::domain::swarm::RunControlAction::Resume);
             let fan_out = context.clone();
-            let mut receipt = super::super::call_work::spawn_blocking_in_call(move || {
-                use crate::domain::swarm::RunControlAction;
-                let mut wake_allowed = false;
-                let value = match action {
-                    RunControlAction::Wake { generation } => {
-                        wake_allowed = context.accept_wake(generation)?;
-                        context.control_status()?
-                    }
-                    RunControlAction::Pause { reason } => context.pause(&reason)?,
-                    RunControlAction::Resume => context.resume_external()?,
-                    RunControlAction::Close => context.close()?,
-                    RunControlAction::ExtendDeadline { seconds } => {
-                        context.extend_deadline(seconds)?
-                    }
-                    RunControlAction::Status => context.control_status()?,
-                };
-                SwarmContext::decode_control_receipt(value, wake_allowed)
-            })
-            .await
-            .map_err(|error| DomainError::Tool(error.to_string()))??;
+            let mut receipt =
+                super::super::registry::call_work::spawn_blocking_in_call(move || {
+                    use crate::domain::swarm::RunControlAction;
+                    let mut wake_allowed = false;
+                    let value = match action {
+                        RunControlAction::Wake { generation } => {
+                            wake_allowed = context.accept_wake(generation)?;
+                            context.control_status()?
+                        }
+                        RunControlAction::Pause { reason } => context.pause(&reason)?,
+                        RunControlAction::Resume => context.resume_external()?,
+                        RunControlAction::Close => context.close()?,
+                        RunControlAction::ExtendDeadline { seconds } => {
+                            context.extend_deadline(seconds)?
+                        }
+                        RunControlAction::Status => context.control_status()?,
+                    };
+                    SwarmContext::decode_control_receipt(value, wake_allowed)
+                })
+                .await
+                .map_err(|error| DomainError::Tool(error.to_string()))??;
             if resuming {
                 receipt.wake_warnings = wake_after_resume(&fan_out, receipt.generation).await;
             }
@@ -591,9 +594,11 @@ impl crate::application::swarm::ports::SwarmRunControl for SwarmContext {
     fn coordinator_board(&self) -> crate::application::swarm::ports::CoordinatorBoardFuture<'_> {
         let context = self.clone();
         Box::pin(async move {
-            super::super::call_work::spawn_blocking_in_call(move || context.coordinator_board_now())
-                .await
-                .map_err(|error| DomainError::Tool(error.to_string()))?
+            super::super::registry::call_work::spawn_blocking_in_call(move || {
+                context.coordinator_board_now()
+            })
+            .await
+            .map_err(|error| DomainError::Tool(error.to_string()))?
         })
     }
 }
@@ -606,9 +611,11 @@ impl crate::application::swarm::ports::WorkerBoardRead for SwarmContext {
     {
         let context = self.clone();
         Box::pin(async move {
-            super::super::call_work::spawn_blocking_in_call(move || context.worker_board_now())
-                .await
-                .map_err(|error| DomainError::Tool(error.to_string()))?
+            super::super::registry::call_work::spawn_blocking_in_call(move || {
+                context.worker_board_now()
+            })
+            .await
+            .map_err(|error| DomainError::Tool(error.to_string()))?
         })
     }
 }
@@ -624,7 +631,7 @@ impl crate::application::tools::ports::ToolExecutionAdmission for SwarmContext {
     ) -> PortFuture<'a, Result<(), DomainError>> {
         let context = self.clone();
         Box::pin(async move {
-            let snapshot = super::super::call_work::spawn_blocking_in_call(move || {
+            let snapshot = super::super::registry::call_work::spawn_blocking_in_call(move || {
                 context.inference_snapshot(crate::domain::swarm::AdmissionGate::Tool)
             })
             .await

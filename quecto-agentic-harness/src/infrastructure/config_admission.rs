@@ -166,7 +166,7 @@ impl Config {
 
 pub fn default_admission_directory(base_dir: &Path) -> PathBuf {
     let base = if base_dir.as_os_str().is_empty() {
-        crate::infrastructure::tools::path_utils::home_dir()
+        crate::infrastructure::tools::native::path_utils::home_dir()
             .map(|home| home.join(".quecto"))
             .unwrap_or_else(|| PathBuf::from(".quecto"))
     } else {

@@ -15,7 +15,7 @@ fn context(directory: &tempfile::TempDir) -> SwarmContext {
 
 fn create(context: &SwarmContext, limit: u64) {
     std::fs::create_dir_all(context.checkout.join(".quecto")).unwrap();
-    super::super::call_work::off_the_runtime(|| {
+    super::super::registry::call_work::off_the_runtime(|| {
         context.call("create", json!(["ship", [], [{"id":"tests","kind":"command","description":"pass"}], limit,
             std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() + 300]))
     })
@@ -165,11 +165,12 @@ async fn run_creation_requires_authorized_container_and_bounded_policy() {
     let created = tool.execute(&json!({"op":"create","goal":"ship","constraints":[],"criteria":[{"id":"test","kind":"command","description":"pass"}],"member_limit":25,"deadline":deadline}).to_string()).await.unwrap();
     assert!(!created.is_error, "{}", created.content);
     assert_eq!(
-        crate::infrastructure::tools::call_work::off_the_runtime(|| context.summary()).unwrap()["usage"],
+        crate::infrastructure::tools::registry::call_work::off_the_runtime(|| context.summary())
+            .unwrap()["usage"],
         1
     );
     for index in 1..25 {
-        crate::infrastructure::tools::call_work::off_the_runtime(|| {
+        crate::infrastructure::tools::registry::call_work::off_the_runtime(|| {
             context.call(
                 "_admit",
                 json!([format!("worker-{index}"), format!("r-{index}")]),
@@ -178,11 +179,12 @@ async fn run_creation_requires_authorized_container_and_bounded_policy() {
         .unwrap();
     }
     assert_eq!(
-        crate::infrastructure::tools::call_work::off_the_runtime(|| context.summary()).unwrap()["usage"],
+        crate::infrastructure::tools::registry::call_work::off_the_runtime(|| context.summary())
+            .unwrap()["usage"],
         25
     );
     assert!(
-        crate::infrastructure::tools::call_work::off_the_runtime(
+        crate::infrastructure::tools::registry::call_work::off_the_runtime(
             || context.call("_admit", json!(["worker-25", "r-25"]))
         )
         .unwrap_err()
@@ -203,8 +205,9 @@ async fn expired_budget_retains_coordinator_when_abort_endpoint_is_unavailable()
         .unwrap();
     let pid = child.id().unwrap();
     let summary =
-        crate::infrastructure::tools::call_work::off_the_runtime(|| context.summary()).unwrap();
-    crate::infrastructure::tools::call_work::off_the_runtime(|| {
+        crate::infrastructure::tools::registry::call_work::off_the_runtime(|| context.summary())
+            .unwrap();
+    crate::infrastructure::tools::registry::call_work::off_the_runtime(|| {
         context.call(
             "_activate",
             json!([
@@ -217,7 +220,7 @@ async fn expired_budget_retains_coordinator_when_abort_endpoint_is_unavailable()
         )
     })
     .unwrap();
-    crate::infrastructure::tools::call_work::off_the_runtime(|| {
+    crate::infrastructure::tools::registry::call_work::off_the_runtime(|| {
         context.call("stop", json!(["budget-exhausted", "deadline"]))
     })
     .unwrap();
@@ -236,15 +239,15 @@ async fn terminal_notifications_do_not_queue_impossible_inbox_work() {
     create(&context, 2);
     let socket = directory.path().join("worker.sock");
     let listener = tokio::net::UnixListener::bind(&socket).unwrap();
-    crate::infrastructure::tools::call_work::off_the_runtime(|| {
+    crate::infrastructure::tools::registry::call_work::off_the_runtime(|| {
         context.call("_admit", json!(["worker", "r"]))
     })
     .unwrap();
-    crate::infrastructure::tools::call_work::off_the_runtime(|| {
+    crate::infrastructure::tools::registry::call_work::off_the_runtime(|| {
         context.call("_activate", json!(["worker", "r", 123, "identity", socket]))
     })
     .unwrap();
-    crate::infrastructure::tools::call_work::off_the_runtime(|| {
+    crate::infrastructure::tools::registry::call_work::off_the_runtime(|| {
         context.call("stop", json!(["blocked", "report partial result"]))
     })
     .unwrap();
@@ -257,7 +260,8 @@ async fn terminal_notifications_do_not_queue_impossible_inbox_work() {
         "an ended run queued another wake hint"
     );
     let summary =
-        crate::infrastructure::tools::call_work::off_the_runtime(|| context.summary()).unwrap();
+        crate::infrastructure::tools::registry::call_work::off_the_runtime(|| context.summary())
+            .unwrap();
     assert_eq!(
         (summary["status"].as_str(), summary["outcome"].as_str()),
         (Some("paused"), Some("blocked"))
@@ -282,7 +286,7 @@ async fn a_failed_run_never_signals_its_coordinator_through_its_socket() {
         checkout: directory.path().to_path_buf(),
         member: "coordinator".into(),
     };
-    crate::infrastructure::tools::call_work::off_the_runtime(|| {
+    crate::infrastructure::tools::registry::call_work::off_the_runtime(|| {
         coordinator.register_endpoint(socket.to_str().unwrap())
     })
     .unwrap();
@@ -306,15 +310,15 @@ async fn live_wake_hint_is_coalesced_and_carries_an_actionable_generation() {
     create(&context, 2);
     let socket = directory.path().join("worker.sock");
     let listener = tokio::net::UnixListener::bind(&socket).unwrap();
-    crate::infrastructure::tools::call_work::off_the_runtime(|| {
+    crate::infrastructure::tools::registry::call_work::off_the_runtime(|| {
         context.call("_admit", json!(["worker", "r"]))
     })
     .unwrap();
-    crate::infrastructure::tools::call_work::off_the_runtime(|| {
+    crate::infrastructure::tools::registry::call_work::off_the_runtime(|| {
         context.call("_activate", json!(["worker", "r", 123, "identity", socket]))
     })
     .unwrap();
-    crate::infrastructure::tools::call_work::off_the_runtime(|| {
+    crate::infrastructure::tools::registry::call_work::off_the_runtime(|| {
         context.call("task_create", json!(["work", "implement", ["pass"]]))
     })
     .unwrap();
@@ -378,9 +382,10 @@ async fn summary_cursor_suppresses_unchanged_tool_payload_and_rejects_bad_cursor
     let directory = tempfile::tempdir().unwrap();
     let context = context(&directory);
     create(&context, 1);
-    let cursor = crate::infrastructure::tools::call_work::off_the_runtime(|| context.summary())
-        .unwrap()["event_cursor"]
-        .clone();
+    let cursor =
+        crate::infrastructure::tools::registry::call_work::off_the_runtime(|| context.summary())
+            .unwrap()["event_cursor"]
+            .clone();
     let delta = super::swarm_control::control(context.clone(), "summary", json!({"since":cursor}))
         .await
         .unwrap();
@@ -411,11 +416,14 @@ async fn paused_summary_delta_is_read_only_and_stays_compact() {
     let directory = tempfile::tempdir().unwrap();
     let context = context(&directory);
     create(&context, 1);
-    crate::infrastructure::tools::call_work::off_the_runtime(|| context.pause("inspection"))
-        .unwrap();
-    let cursor = crate::infrastructure::tools::call_work::off_the_runtime(|| context.summary())
-        .unwrap()["event_cursor"]
-        .clone();
+    crate::infrastructure::tools::registry::call_work::off_the_runtime(|| {
+        context.pause("inspection")
+    })
+    .unwrap();
+    let cursor =
+        crate::infrastructure::tools::registry::call_work::off_the_runtime(|| context.summary())
+            .unwrap()["event_cursor"]
+            .clone();
     let delta = super::swarm_control::control(context.clone(), "summary", json!({"since":cursor}))
         .await
         .unwrap();

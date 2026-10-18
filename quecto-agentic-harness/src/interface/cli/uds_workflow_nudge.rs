@@ -62,9 +62,9 @@ pub(super) async fn workflow_nudge_message(ctx: &DispatchCtx<'_>) -> Option<Work
         return None;
     }
     // #2226: auto-continue names the workflow tool; only a shown one.
-    let workflow_tool_shown = ctx
-        .agent
-        .is_tool_model_visible(crate::infrastructure::tools::workflow_tool::WORKFLOW_TOOL_NAME);
+    let workflow_tool_shown = ctx.agent.is_tool_model_visible(
+        crate::infrastructure::tools::native::workflow_tool::WORKFLOW_TOOL_NAME,
+    );
     let engine = crate::domain::workflow::lock_engine(ws);
     // The engine owns all nudge policy (kept live by `set_automation`): it
     // yields the template selector even with auto-continue disabled, the sole

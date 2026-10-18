@@ -93,9 +93,9 @@ pub(super) fn build_tool_registry(args: ToolRegistryArgs<'_>) -> Result<ToolRegi
     );
     let sandbox = Sandbox::for_agent_workspace(config, workspace.clone());
     let exec_settings = ToolRegistryImpl::exec_registry_settings_from_config(config);
-    let exec_options = crate::infrastructure::tools::bash::ExecOptions {
+    let exec_options = crate::infrastructure::tools::native::bash::ExecOptions {
         max_capture_bytes: exec_settings,
-        ..crate::infrastructure::tools::bash::ExecOptions::default()
+        ..crate::infrastructure::tools::native::bash::ExecOptions::default()
     };
     let parent_session_name = if flags.no_session || flags.session_name.as_deref() == Some("-") {
         None

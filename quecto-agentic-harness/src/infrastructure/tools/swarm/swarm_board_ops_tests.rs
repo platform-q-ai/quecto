@@ -151,7 +151,9 @@ pub(super) fn direct(
     method: &str,
     args: Value,
 ) -> Result<Value, DomainError> {
-    crate::infrastructure::tools::call_work::off_the_runtime(|| context.call(method, args))
+    crate::infrastructure::tools::registry::call_work::off_the_runtime(|| {
+        context.call(method, args)
+    })
 }
 
 pub(super) fn deadline() -> u64 {
@@ -395,9 +397,10 @@ async fn claim_by_op_is_claim_by_board() {
         .expect("the claim carries its token");
     assert_eq!(token.len(), 32, "{claim}");
     assert_eq!(claim["status"], "claimed", "{claim}");
-    let events =
-        crate::infrastructure::tools::call_work::off_the_runtime(|| context.events(0, 100))
-            .unwrap();
+    let events = crate::infrastructure::tools::registry::call_work::off_the_runtime(|| {
+        context.events(0, 100)
+    })
+    .unwrap();
     let claimed: Vec<&Value> = events["events"]
         .as_array()
         .unwrap()
@@ -521,7 +524,7 @@ pub(super) fn rejecting_worker(context: &SwarmContext) -> std::thread::JoinHandl
         ..context.clone()
     };
     // Board calls, made off the async workers (#2278 review L6).
-    crate::infrastructure::tools::call_work::off_the_runtime(|| {
+    crate::infrastructure::tools::registry::call_work::off_the_runtime(|| {
         context.reserve_member("worker", "reservation").unwrap();
         worker
             .join(
@@ -625,7 +628,10 @@ async fn read_ops_do_not_touch_the_lifecycle() {
 async fn inbox_and_ack_are_refused_while_paused() {
     let (_directory, context) = board();
     direct(&context, "send", json!(["m1", "coordinator", "hi"])).unwrap();
-    crate::infrastructure::tools::call_work::off_the_runtime(|| context.pause("approval")).unwrap();
+    crate::infrastructure::tools::registry::call_work::off_the_runtime(|| {
+        context.pause("approval")
+    })
+    .unwrap();
     for (op, arguments) in [
         ("inbox", r#"{"op":"inbox"}"#),
         ("ack", r#"{"op":"ack","message_id":1}"#),

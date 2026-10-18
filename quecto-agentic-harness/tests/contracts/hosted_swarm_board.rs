@@ -58,7 +58,7 @@ fn create_run(context: &SwarmContext) {
         .unwrap()
         .as_secs()
         + 600;
-    quecto::infrastructure::tools::call_work::off_the_runtime(|| {
+    quecto::infrastructure::tools::registry::call_work::off_the_runtime(|| {
         context.create_run(
             &json!({"goal":"ship", "constraints":[], "criteria":[{"id":"tests","kind":"command","description":"pass"}], "member_limit":3, "deadline":deadline}),
             &quecto::domain::swarm::ProcessIdentity {

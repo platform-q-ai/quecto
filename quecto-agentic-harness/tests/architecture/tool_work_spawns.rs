@@ -84,32 +84,32 @@ const TREES: &[&str] = &["src/infrastructure/tools", "src/interface/tools"];
 /// its own.
 const ALLOWED: &[(&str, &str, &str)] = &[
     (
-        "src/infrastructure/tools/call_work.rs",
+        "src/infrastructure/tools/registry/call_work.rs",
         "fn spawn_blocking_in_call",
         "the one place a call carries blocking work: joined through join_carried",
     ),
     (
-        "src/infrastructure/tools/call_work.rs",
+        "src/infrastructure/tools/registry/call_work.rs",
         "fn spawn_blocking_in_call_on",
         "carries blocking work onto a given runtime: joined through join_carried",
     ),
     (
-        "src/infrastructure/tools/call_work.rs",
+        "src/infrastructure/tools/registry/call_work.rs",
         "fn spawn_in_call",
         "the one place a call carries a task: joined through join_carried",
     ),
     (
-        "src/infrastructure/tools/call_work.rs",
+        "src/infrastructure/tools/registry/call_work.rs",
         "fn block_here",
         "runs a call's blocking work in place on a multi-thread worker",
     ),
     (
-        "src/infrastructure/tools/call_work.rs",
+        "src/infrastructure/tools/registry/call_work.rs",
         "fn off_the_runtime",
         "test support only: a test's blocking setup on a scoped thread, joined, its panic resumed",
     ),
     (
-        "src/infrastructure/tools/call_work.rs",
+        "src/infrastructure/tools/registry/call_work.rs",
         "fn std_thread_in_call",
         "the call's own detached thread, carried into its scope: a panic fails the call through execute_contained's backstop",
     ),
@@ -124,12 +124,12 @@ const ALLOWED: &[(&str, &str, &str)] = &[
         "waits, on the same board call's blocking thread and at most its kill bound, for the session's agent_cmd kill of a coordinator that came up wrong, run as the call's own carried task (call_work::spawn_in_call) so it goes on to its end past the wait: a kill dropped half-way would leave the child claimed as stopping",
     ),
     (
-        "src/infrastructure/tools/find_fd.rs",
+        "src/infrastructure/tools/native/find_fd.rs",
         "impl FdFindPaths::find",
         "drives its own current-thread runtime on the find owner's thread (call_work::std_thread_in_call), never a worker",
     ),
     (
-        "src/infrastructure/tools/panic_probe.rs",
+        "src/infrastructure/tools/native/panic_probe.rs",
         "impl PanicProbeTool::execute",
         "test-support fault injection (#2192): a panic outside any call, on purpose",
     ),

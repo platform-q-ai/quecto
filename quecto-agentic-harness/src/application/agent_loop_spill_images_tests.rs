@@ -18,7 +18,7 @@ use crate::domain::sessions::entities::session_identity::SessionIdentity;
 use crate::domain::tool_policy::value_objects::tool::{ImageBlock, ToolDefinition, ToolResult};
 use crate::infrastructure::persistence::context_spill::FileContextSpillStore;
 use crate::infrastructure::persistence::session_layout::FlatSessionLayout;
-use crate::infrastructure::tools::recall::RecallTool;
+use crate::infrastructure::tools::native::recall::RecallTool;
 
 const PNG: &[u8] = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR\0\0\0\x02\0\0\0\x03\x08\x02\0\0\0";
 const KEY: &str = "cli:recall-images";

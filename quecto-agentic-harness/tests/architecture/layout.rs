@@ -81,7 +81,7 @@ const BUDGETS: &[FlatBudget<'_>] = &[
     FlatBudget { path: "infrastructure", expected: 28 },
     FlatBudget { path: "composition", expected: 24 },
     FlatBudget { path: "interface/cli", expected: 106 },
-    FlatBudget { path: "infrastructure/tools", expected: 32 },
+    FlatBudget { path: "infrastructure/tools", expected: 1 },
     FlatBudget { path: "infrastructure/persistence", expected: 36 },
     FlatBudget { path: "application/swarm", expected: 22 },
     FlatBudget { path: "domain/swarm", expected: 15 },
@@ -98,6 +98,7 @@ const MIGRATED: &[Capability<'_>] = &[
     Capability("domain/agents", &["entities", "value_objects", "services"]),
     Capability("domain/environments", &["entities", "services"]),
     Capability("domain/project_board", &["entities", "value_objects", "services"]),
+    Capability("infrastructure/tools", &["agents", "native", "registry", "swarm"]),
 ];
 // Wiki target-source-tree anchors define allowed future names; Transitional rows must exist.
 // https://github.com/platform-q-ai/quecto/wiki/Agentic-Harness-Target-Architecture#target-source-tree

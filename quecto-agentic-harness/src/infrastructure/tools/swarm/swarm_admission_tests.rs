@@ -9,7 +9,7 @@ use serde_json::json;
 use super::LaunchReservation;
 use crate::application::swarm::ports::BoardOpLog;
 use crate::domain::swarm::{BoardOpObservation, MemberExit};
-use crate::infrastructure::tools::call_work::off_the_runtime;
+use crate::infrastructure::tools::registry::call_work::off_the_runtime;
 use crate::infrastructure::tools::swarm::swarm_bridge::SwarmContext;
 
 /// The event log, in memory, slow to record one op: a call of that op

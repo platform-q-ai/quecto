@@ -10,7 +10,7 @@ use crate::agent_tools_steps::interpret_escapes;
 /// Execute bash with a SHELL env variable override via execute_with_env.
 #[when(regex = r#"^the agent executes bash "([^"]+)" with shell env "([^"]+)"$"#)]
 fn when_exec_bash_with_shell(world: &mut QuectoWorld, command: String, shell: String) {
-    use quecto::infrastructure::tools::bash::{ExecOptions, ExecTool};
+    use quecto::infrastructure::tools::native::bash::{ExecOptions, ExecTool};
     let ws = world
         .tool_workspace
         .as_ref()
@@ -33,7 +33,7 @@ fn when_exec_bash_with_shell(world: &mut QuectoWorld, command: String, shell: St
 /// Execute bash with a command prefix option (constructs a custom ExecTool).
 #[when(regex = r#"^the agent executes bash with command prefix "([^"]+)" and command "([^"]+)"$"#)]
 fn when_exec_bash_with_prefix(world: &mut QuectoWorld, prefix: String, command: String) {
-    use quecto::infrastructure::tools::bash::{ExecOptions, ExecTool};
+    use quecto::infrastructure::tools::native::bash::{ExecOptions, ExecTool};
     let ws = world
         .tool_workspace
         .as_ref()

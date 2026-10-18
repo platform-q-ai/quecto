@@ -298,15 +298,15 @@ impl crate::application::providers::ports::RequestAccounting for SwarmContext {
         // which the agent loop logs and drops, never a panic resumed in the
         // loop (#2278 final review L3).
         Box::pin(async move {
-            tokio::task::spawn_blocking(crate::infrastructure::tools::call_work::blocking(
-                move || {
+            tokio::task::spawn_blocking(
+                crate::infrastructure::tools::registry::call_work::blocking(move || {
                     let mut value = serde_json::to_value(observation).map_err(invalid)?;
                     value["runtime"] =
                         serde_json::to_value(crate::infrastructure::runtime_identity::current())
                             .map_err(invalid)?;
                     context.rpc("_record_request", json!([value])).map(|_| ())
-                },
-            ))
+                }),
+            )
             .await
             .map_err(invalid)?
         })

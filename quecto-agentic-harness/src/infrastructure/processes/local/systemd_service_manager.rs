@@ -41,7 +41,7 @@ impl SystemdUserServiceManager {
             .map(PathBuf::from)
             .filter(|path| path.is_absolute())
             .or_else(|| {
-                crate::infrastructure::tools::path_utils::home_dir()
+                crate::infrastructure::tools::native::path_utils::home_dir()
                     .map(|home| home.join(".config"))
             })
             .ok_or_else(|| {

@@ -9,7 +9,7 @@ use crate::domain::workflow::{
 };
 use crate::infrastructure::persistence::session_store::FileSessionStore;
 use crate::infrastructure::test_support::message_contents;
-use crate::infrastructure::tools::registration::ToolRegistration;
+use crate::infrastructure::tools::registry::registration::ToolRegistration;
 use crate::interface::cli::uds::dispatch_session_roster_tests::list_handle;
 use std::{future::Future, pin::Pin, sync::Arc};
 

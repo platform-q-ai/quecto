@@ -311,8 +311,8 @@ fn build_official_tool_extensions_lists_core_workspace_tools() {
         swarm_context: None,
         workspace: tmp.path().to_path_buf(),
         sandbox,
-        exec_options: crate::infrastructure::tools::bash::ExecOptions::default(),
-        docs_content_policy: crate::infrastructure::tools::docs::DocsContentPolicy::Parent,
+        exec_options: crate::infrastructure::tools::native::bash::ExecOptions::default(),
+        docs_content_policy: crate::infrastructure::tools::native::docs::DocsContentPolicy::Parent,
     });
     assert_eq!(exts.len(), 1);
     assert_eq!(exts[0].name(), "quecto:official-tools");
@@ -453,8 +453,9 @@ fn register_bundled_native_tools_marks_official_not_extension_tracked() {
             swarm_context: None,
             workspace: tmp.path().to_path_buf(),
             sandbox,
-            exec_options: crate::infrastructure::tools::bash::ExecOptions::default(),
-            docs_content_policy: crate::infrastructure::tools::docs::DocsContentPolicy::Parent,
+            exec_options: crate::infrastructure::tools::native::bash::ExecOptions::default(),
+            docs_content_policy:
+                crate::infrastructure::tools::native::docs::DocsContentPolicy::Parent,
         }),
     );
     assert!(registry.get("bash").is_some());

@@ -308,7 +308,7 @@ fn spawn_issue_1093_agent(world: &mut QuectoWorld, base: &std::path::Path) {
         ),
         workspace,
         sandbox,
-        quecto::infrastructure::tools::bash::ExecOptions {
+        quecto::infrastructure::tools::native::bash::ExecOptions {
             max_capture_bytes: exec_settings,
             ..Default::default()
         },

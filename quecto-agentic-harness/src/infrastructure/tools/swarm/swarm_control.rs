@@ -36,54 +36,55 @@ pub async fn control_with_workflow(
     let resuming = op == "resume";
     let op = op.to_owned();
     let participation = participation.clone();
-    let result = super::super::call_work::spawn_blocking_in_call(move || match op.as_str() {
-        "create" => {
-            crate::domain::swarm::validate_swarm_creation(super::swarm_bridge::workflow_engaged(
-                &workflow_engine,
-            ))?;
-            let database = ctx.database();
-            std::fs::create_dir_all(database.parent().expect("the store has a directory"))
-                .map_err(|e| DomainError::Tool(e.to_string()))?;
-            let process = ProcessIdentity {
-                pid: std::process::id(),
-                started: super::swarm_bridge::process_start(std::process::id())
-                    .ok_or_else(|| DomainError::Tool("process identity unavailable".into()))?,
-            };
-            let snapshot = ctx.create_run(
-                &input,
-                &process,
-                super::swarm_bridge::process_socket().and_then(|s| s.to_str()),
-            )?;
-            // From here on this process and its local children are swarm agents.
-            participation.set(true);
-            super::swarm_lifecycle::supervise(ctx.clone(), snapshot, participation.clone());
-            ctx.summary()
-        }
-        "usage" => ctx.usage_report(),
-        "summary" => ctx.summary_since(optional_cursor(&input, "since")?),
-        "reconcile" => super::swarm_lifecycle::reconcile(&ctx),
-        "pause" => ctx.pause(
-            input["reason"]
-                .as_str()
-                .unwrap_or("operator requested pause"),
-        ),
-        "resume" => ctx.resume(),
-        "events" => {
-            let limit = optional_cursor(&input, "limit")?.unwrap_or(25);
-            if (1..=100).contains(&limit) {
-                ctx.events(optional_cursor(&input, "after")?.unwrap_or(0), limit as u32)
-            } else {
-                Err(DomainError::Tool("event limit must be 1..100".into()))
+    let result =
+        super::super::registry::call_work::spawn_blocking_in_call(move || match op.as_str() {
+            "create" => {
+                crate::domain::swarm::validate_swarm_creation(
+                    super::swarm_bridge::workflow_engaged(&workflow_engine),
+                )?;
+                let database = ctx.database();
+                std::fs::create_dir_all(database.parent().expect("the store has a directory"))
+                    .map_err(|e| DomainError::Tool(e.to_string()))?;
+                let process = ProcessIdentity {
+                    pid: std::process::id(),
+                    started: super::swarm_bridge::process_start(std::process::id())
+                        .ok_or_else(|| DomainError::Tool("process identity unavailable".into()))?,
+                };
+                let snapshot = ctx.create_run(
+                    &input,
+                    &process,
+                    super::swarm_bridge::process_socket().and_then(|s| s.to_str()),
+                )?;
+                // From here on this process and its local children are swarm agents.
+                participation.set(true);
+                super::swarm_lifecycle::supervise(ctx.clone(), snapshot, participation.clone());
+                ctx.summary()
             }
-        }
-        "cancel_run" => {
-            ctx.cancel_run()?;
-            ctx.summary()
-        }
-        _ => Err(DomainError::Tool(format!("unknown swarm operation {op}"))),
-    })
-    .await
-    .map_err(|e| DomainError::Tool(e.to_string()))??;
+            "usage" => ctx.usage_report(),
+            "summary" => ctx.summary_since(optional_cursor(&input, "since")?),
+            "reconcile" => super::swarm_lifecycle::reconcile(&ctx),
+            "pause" => ctx.pause(
+                input["reason"]
+                    .as_str()
+                    .unwrap_or("operator requested pause"),
+            ),
+            "resume" => ctx.resume(),
+            "events" => {
+                let limit = optional_cursor(&input, "limit")?.unwrap_or(25);
+                if (1..=100).contains(&limit) {
+                    ctx.events(optional_cursor(&input, "after")?.unwrap_or(0), limit as u32)
+                } else {
+                    Err(DomainError::Tool("event limit must be 1..100".into()))
+                }
+            }
+            "cancel_run" => {
+                ctx.cancel_run()?;
+                ctx.summary()
+            }
+            _ => Err(DomainError::Tool(format!("unknown swarm operation {op}"))),
+        })
+        .await
+        .map_err(|e| DomainError::Tool(e.to_string()))??;
     let result = if resuming {
         with_resume_wakes(&context, result).await
     } else {
@@ -117,7 +118,7 @@ async fn with_resume_wakes(context: &SwarmContext, mut receipt: Value) -> Value 
 /// The summary the harness judges a run by after a structured op: the
 /// harness's own read, recorded as `host` (#2279 S15 final review).
 pub async fn execution_state(context: SwarmContext) -> Result<Value, DomainError> {
-    super::super::call_work::spawn_blocking_in_call(move || context.host_summary())
+    super::super::registry::call_work::spawn_blocking_in_call(move || context.host_summary())
         .await
         .map_err(|e| DomainError::Tool(e.to_string()))?
 }

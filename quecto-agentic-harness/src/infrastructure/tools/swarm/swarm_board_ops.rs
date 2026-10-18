@@ -544,7 +544,7 @@ pub(super) async fn board_op(
 async fn blocking<T: Send + 'static>(
     job: impl FnOnce() -> T + Send + 'static,
 ) -> Result<T, DomainError> {
-    super::super::call_work::spawn_blocking_in_call(job)
+    super::super::registry::call_work::spawn_blocking_in_call(job)
         .await
         .map_err(|error| DomainError::Tool(error.to_string()))
 }

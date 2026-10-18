@@ -4,19 +4,25 @@ use quecto::domain::inference::value_objects::provider::RequestAttempt;
 async fn real_admission_tracks_pause_resume_and_terminal_actor() {
     let (_directory, context) = super::swarm_control_fixture::context();
     context.check(RequestAttempt::First).await.unwrap();
-    quecto::infrastructure::tools::call_work::off_the_runtime(|| context.pause("approval"))
-        .unwrap();
+    quecto::infrastructure::tools::registry::call_work::off_the_runtime(|| {
+        context.pause("approval")
+    })
+    .unwrap();
     assert!(context.check(RequestAttempt::First).await.is_err());
     // #2339 review L3: the pause refuses every attempt, a reattempt too.
     assert!(context.check(RequestAttempt::Reattempt).await.is_err());
     assert!(
-        quecto::infrastructure::tools::call_work::off_the_runtime(|| context.resume()).is_err(),
+        quecto::infrastructure::tools::registry::call_work::off_the_runtime(|| context.resume())
+            .is_err(),
         "members cannot resume (#1729)"
     );
-    quecto::infrastructure::tools::call_work::off_the_runtime(|| context.resume_external())
-        .unwrap();
+    quecto::infrastructure::tools::registry::call_work::off_the_runtime(|| {
+        context.resume_external()
+    })
+    .unwrap();
     context.check(RequestAttempt::First).await.unwrap();
-    quecto::infrastructure::tools::call_work::off_the_runtime(|| context.cancel_run()).unwrap();
+    quecto::infrastructure::tools::registry::call_work::off_the_runtime(|| context.cancel_run())
+        .unwrap();
     context.check(RequestAttempt::First).await.unwrap();
     let unknown = quecto::infrastructure::tools::swarm::swarm_bridge::SwarmContext {
         member: "unknown".into(),

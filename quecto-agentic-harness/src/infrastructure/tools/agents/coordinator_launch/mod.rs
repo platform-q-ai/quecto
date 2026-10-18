@@ -104,8 +104,9 @@ impl SpawnCoordinatorLauncher {
         // wait: one dropped half-way would leave the child claimed as
         // stopping, so every later kill of it, and end_run, would refuse.
         let agent_cmd = Arc::clone(&self.agent_cmd);
-        let killing =
-            super::super::call_work::spawn_in_call(async move { agent_cmd.execute(&kill).await });
+        let killing = super::super::registry::call_work::spawn_in_call(async move {
+            agent_cmd.execute(&kill).await
+        });
         let stop = tokio::time::timeout(self.kill_timeout, killing);
         let failed = match runtime.block_on(stop) {
             Ok(Ok(Ok(result))) => match result.is_error {

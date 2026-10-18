@@ -517,7 +517,7 @@ impl SwarmBoard {
         // (`call_work::spawn_blocking_in_call`) or outside any runtime,
         // never on an async worker (#2278 review L6).
         debug_assert!(
-            crate::infrastructure::tools::call_work::may_block(),
+            crate::infrastructure::tools::registry::call_work::may_block(),
             "a board call ({method}) is made off the async workers (#2278)"
         );
         // #2390: a control change to a board file a watch here waits on

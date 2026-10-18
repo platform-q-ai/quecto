@@ -178,7 +178,7 @@ support_modules = [
   "src/infrastructure/providers/mod.rs",
   "src/infrastructure/providers/openai_sse.rs",
   "src/infrastructure/security/sandbox.rs",
-  "src/infrastructure/tools/bash/nsjail.rs",
+  "src/infrastructure/tools/native/bash/nsjail.rs",
   "src/infrastructure/tools/agents/subagent_registry.rs",
 ]
 

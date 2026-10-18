@@ -6,7 +6,7 @@ use quecto::application::search::ports::{
 use quecto::application::tools::ports::Tool;
 use quecto::infrastructure::search::search_log::JsonlSearchLog;
 use quecto::infrastructure::security::sandbox::Sandbox;
-use quecto::infrastructure::tools::grep::GrepTool;
+use quecto::infrastructure::tools::native::grep::GrepTool;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tempfile::TempDir;

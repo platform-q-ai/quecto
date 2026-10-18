@@ -137,7 +137,7 @@ pub(crate) fn build_uds_agent(
         ),
         workspace.clone(),
         sandbox,
-        quecto::infrastructure::tools::bash::ExecOptions {
+        quecto::infrastructure::tools::native::bash::ExecOptions {
             max_capture_bytes: exec_settings,
             ..Default::default()
         },
@@ -153,7 +153,11 @@ pub(crate) fn build_uds_agent(
 
     // Build workflow event emitter from broadcast channel (#598).
     let wf_emitter = broadcast_tx.as_ref().map(|tx| {
-        quecto::infrastructure::tools::workflow_tool::broadcast_emitter(tx.clone(), None, None)
+        quecto::infrastructure::tools::native::workflow_tool::broadcast_emitter(
+            tx.clone(),
+            None,
+            None,
+        )
     });
 
     // Register workflow engine when scenario requests it (#568–#577).

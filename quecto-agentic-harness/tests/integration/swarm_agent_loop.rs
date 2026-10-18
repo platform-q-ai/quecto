@@ -4,7 +4,7 @@ use quecto::application::agent_turn::ports::AgentLoop;
 use quecto::domain::conversation::value_objects::message::{LlmResponse, Message, ToolCall};
 use quecto::infrastructure::security::sandbox::Sandbox;
 use quecto::infrastructure::tools::{
-    filesystem::WriteTool,
+    native::filesystem::WriteTool,
     registry::ToolRegistryImpl,
     swarm::{SwarmTool, swarm_bridge::SwarmContext},
 };
@@ -128,7 +128,7 @@ async fn fake_provider_decomposes_resolves_blocker_and_verifies_swarm() {
         .unwrap()
         .as_secs()
         + 60;
-    quecto::infrastructure::tools::call_work::off_the_runtime(|| context.create_run(&serde_json::json!({"goal":"ship","constraints":[],"criteria":[{"id":"tests","kind":"command","description":"pass"}],"member_limit":1,"deadline":deadline}),
+    quecto::infrastructure::tools::registry::call_work::off_the_runtime(|| context.create_run(&serde_json::json!({"goal":"ship","constraints":[],"criteria":[{"id":"tests","kind":"command","description":"pass"}],"member_limit":1,"deadline":deadline}),
         &quecto::domain::swarm::ProcessIdentity { pid: std::process::id(), started: quecto::infrastructure::tools::swarm::swarm_bridge::process_start(std::process::id()).unwrap() }, None)).unwrap();
     let tool = SwarmTool::new().with_context(Some(context));
     let provider = Arc::new(MockProvider::new(STEPS));
@@ -151,15 +151,18 @@ async fn fake_provider_decomposes_resolves_blocker_and_verifies_swarm() {
         member: "coordinator".into(),
     };
     let summary =
-        quecto::infrastructure::tools::call_work::off_the_runtime(|| context.summary()).unwrap();
+        quecto::infrastructure::tools::registry::call_work::off_the_runtime(|| context.summary())
+            .unwrap();
     assert_eq!(
         (summary["status"].as_str(), summary["outcome"].as_str()),
         (Some("paused"), Some("succeeded"))
     );
     assert_eq!(summary["counts"]["completed"], 2);
     assert!(
-        quecto::infrastructure::tools::call_work::off_the_runtime(|| context.events(0, 100))
-            .unwrap()["events"]
+        quecto::infrastructure::tools::registry::call_work::off_the_runtime(
+            || context.events(0, 100)
+        )
+        .unwrap()["events"]
             .as_array()
             .unwrap()
             .iter()
@@ -284,7 +287,7 @@ fn recorded_run(directory: &tempfile::TempDir) -> (SwarmContext, Arc<BoardCalls>
         )
         .unwrap(),
     };
-    quecto::infrastructure::tools::call_work::off_the_runtime(|| {
+    quecto::infrastructure::tools::registry::call_work::off_the_runtime(|| {
         context.create_run(
             &serde_json::json!({"goal":"ship","constraints":[],
                 "criteria":[{"id":"tests","kind":"command","description":"pass"}],

@@ -30,7 +30,7 @@ fn build_runtime_with_entrypoint(
     let client = reqwest::Client::new();
     let workspace = tmp.path().to_path_buf();
     let sandbox = crate::infrastructure::security::sandbox::Sandbox::new(Some(workspace.clone()));
-    let exec_options = crate::infrastructure::tools::bash::ExecOptions::default();
+    let exec_options = crate::infrastructure::tools::native::bash::ExecOptions::default();
     let mut stderr = String::new();
 
     build_tool_runtime(ToolRuntimeBuildArgs {

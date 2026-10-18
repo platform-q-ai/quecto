@@ -4,7 +4,7 @@ use crate::QuectoWorld;
 use cucumber::{given, then, when};
 use quecto::application::tools::ports::Tool;
 use quecto::infrastructure::security::sandbox::Sandbox;
-use quecto::infrastructure::tools::filesystem::LsTool;
+use quecto::infrastructure::tools::native::filesystem::LsTool;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tempfile::TempDir;

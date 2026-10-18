@@ -88,23 +88,26 @@ async fn a_resume_wakes_every_live_member_even_though_nothing_targets_them() {
     let (directory, context) = crate::swarm_control_fixture::context();
     let socket = directory.path().join("worker.sock");
     let (sink, stop) = wake_sink(&socket);
-    crate::infrastructure::tools::call_work::off_the_runtime(|| {
+    crate::infrastructure::tools::registry::call_work::off_the_runtime(|| {
         context.call("_admit", serde_json::json!(["worker", "r"]))
     })
     .unwrap();
-    crate::infrastructure::tools::call_work::off_the_runtime(|| {
+    crate::infrastructure::tools::registry::call_work::off_the_runtime(|| {
         context.call(
             "_activate",
             serde_json::json!(["worker", "r", 123, "identity", socket]),
         )
     })
     .unwrap();
-    crate::infrastructure::tools::call_work::off_the_runtime(|| context.pause("member failed"))
-        .unwrap();
+    crate::infrastructure::tools::registry::call_work::off_the_runtime(|| {
+        context.pause("member failed")
+    })
+    .unwrap();
     let receipt = context.apply(RunControlAction::Resume).await.unwrap();
     assert_eq!(receipt.status, crate::domain::swarm::RunStatus::Running);
     assert!(receipt.wake_warnings.is_empty(), "{receipt:?}");
-    crate::infrastructure::tools::call_work::off_the_runtime(|| context.pause("again")).unwrap();
+    crate::infrastructure::tools::registry::call_work::off_the_runtime(|| context.pause("again"))
+        .unwrap();
     // The coordinator's own `swarm resume` op is refused (#1729); only the
     // supervisor's control port resumes, and it wakes everyone.
     let refused =
@@ -123,8 +126,10 @@ async fn a_resume_wakes_every_live_member_even_though_nothing_targets_them() {
     assert_eq!(generations, [receipt.generation, second.generation]);
     // A member that cannot be reached is reported, not fatal.
     std::fs::remove_file(&socket).unwrap();
-    crate::infrastructure::tools::call_work::off_the_runtime(|| context.pause("and again"))
-        .unwrap();
+    crate::infrastructure::tools::registry::call_work::off_the_runtime(|| {
+        context.pause("and again")
+    })
+    .unwrap();
     let receipt = context.apply(RunControlAction::Resume).await.unwrap();
     assert_eq!(receipt.status, crate::domain::swarm::RunStatus::Running);
     assert_eq!(receipt.wake_warnings.len(), 1, "{receipt:?}");
@@ -164,7 +169,8 @@ fn a_member_that_cannot_end_itself_stops_trying_after_a_bounded_number_of_attemp
 /// time the tool call answers.
 async fn settling_a_pause_suspends_local_inference_before_it_returns() {
     let (_directory, context) = crate::swarm_control_fixture::context();
-    crate::infrastructure::tools::call_work::off_the_runtime(|| context.pause("inspect")).unwrap();
+    crate::infrastructure::tools::registry::call_work::off_the_runtime(|| context.pause("inspect"))
+        .unwrap();
     let suspended = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
     let recorded = suspended.clone();
     let suspend: LocalSuspend = std::sync::Arc::new(move |status, generation| {
@@ -240,7 +246,8 @@ async fn the_coordinators_settlement_writes_the_run_summary_once() {
         member: "worker".into(),
         ..context.clone()
     };
-    crate::infrastructure::tools::call_work::off_the_runtime(|| context.cancel_run()).unwrap();
+    crate::infrastructure::tools::registry::call_work::off_the_runtime(|| context.cancel_run())
+        .unwrap();
     // A stranger's settlement reads the board as no member: refused.
     let _refused = settle(worker).await;
     assert!(
@@ -354,7 +361,7 @@ async fn the_supervisor_pushes_a_local_change_to_a_members_endpoint() {
     let (directory, context) = crate::swarm_control_fixture::context();
     let socket = directory.path().join("worker.sock");
     let (sink, stop) = command_sink(&socket);
-    crate::infrastructure::tools::call_work::off_the_runtime(|| {
+    crate::infrastructure::tools::registry::call_work::off_the_runtime(|| {
         context.call("_admit", serde_json::json!(["worker", "r"]))?;
         context.call(
             "_activate",
@@ -374,14 +381,18 @@ async fn the_supervisor_pushes_a_local_change_to_a_members_endpoint() {
         .snapshot
     });
     tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-    crate::infrastructure::tools::call_work::off_the_runtime(|| context.pause("operator")).unwrap();
+    crate::infrastructure::tools::registry::call_work::off_the_runtime(|| {
+        context.pause("operator")
+    })
+    .unwrap();
     // The watch reads the pause at once, suspends, then pushes.
     tokio::time::sleep(std::time::Duration::from_millis(1_500)).await;
     let other = SwarmContext {
         board: crate::composition::swarm::swarm_board(),
         ..context.clone()
     };
-    crate::infrastructure::tools::call_work::off_the_runtime(|| other.cancel_run()).unwrap();
+    crate::infrastructure::tools::registry::call_work::off_the_runtime(|| other.cancel_run())
+        .unwrap();
     crate::application::swarm::ports::SwarmRunControl::nudge_watch(&context);
     let ended = tokio::task::spawn_blocking(move || watch.join().unwrap())
         .await

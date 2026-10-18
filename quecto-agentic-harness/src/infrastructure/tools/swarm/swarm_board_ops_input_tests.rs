@@ -200,7 +200,8 @@ async fn recorded_ops() -> (Vec<crate::domain::swarm::BoardOpObservation>, Strin
     .await;
     let text = format!(r#"{{"op":"claim","task_id":1e400,"note":"{SECRET}"}}"#);
     refused(&context, &text).await;
-    crate::infrastructure::tools::call_work::off_the_runtime(|| context.pause("hold")).unwrap();
+    crate::infrastructure::tools::registry::call_work::off_the_runtime(|| context.pause("hold"))
+        .unwrap();
     refused(&context, r#"{"op":"inbox"}"#).await;
     drop(guard);
     let traced = captured.0.lock().unwrap().clone();

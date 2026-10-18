@@ -26,10 +26,10 @@ use quecto::infrastructure::providers::router::ProviderRouter;
 
 use quecto::infrastructure::security::sandbox::Sandbox;
 use quecto::infrastructure::tools::agents::spawn::SpawnTool;
-use quecto::infrastructure::tools::bash::ExecTool;
-use quecto::infrastructure::tools::recall::RecallTool;
+use quecto::infrastructure::tools::native::bash::ExecTool;
+use quecto::infrastructure::tools::native::recall::RecallTool;
+use quecto::infrastructure::tools::native::web_search::WebSearchTool;
 use quecto::infrastructure::tools::registry::ToolRegistryImpl;
-use quecto::infrastructure::tools::web_search::WebSearchTool;
 use quecto::interface::cli::{self, CliContext};
 use std::collections::HashMap;
 use std::fs;
@@ -700,7 +700,8 @@ pub struct QuectoWorld {
     /// Input string for truncation scenarios
     pub truncation_input: Option<String>,
     /// Result from truncate_head / truncate_tail
-    pub truncation_result: Option<quecto::infrastructure::tools::truncate::TruncationResult>,
+    pub truncation_result:
+        Option<quecto::infrastructure::tools::native::truncate::TruncationResult>,
     /// Result from truncate_line
     pub truncation_line_result: Option<(String, bool)>,
     // --- Issue #996 efficiency BDD fields ---
@@ -859,7 +860,7 @@ pub struct QuectoWorld {
     // --- Workflow V2 (UDS-only, #568–#577) ---
     // V1 BDD workflow fields removed. V2 workflow is covered by unit tests in:
     //   src/domain/workflow_tests.rs
-    //   src/infrastructure/tools/workflow_tool_comprehensive_tests.rs
+    //   src/infrastructure/tools/native/workflow_tool_comprehensive_tests.rs
     //   src/interface/shared_tests.rs
     //   src/interface/cli/agent_tests.rs
     //   src/interface/cli/protocol_tests.rs
@@ -1052,7 +1053,7 @@ pub struct QuectoWorld {
     pub _workflow_enabled: bool,
     pub uds_selected_workflow_template: Option<String>,
     /// Workflow tool BDD: direct tool under test.
-    pub workflow_tool: Option<quecto::infrastructure::tools::workflow_tool::WorkflowTool>,
+    pub workflow_tool: Option<quecto::infrastructure::tools::native::workflow_tool::WorkflowTool>,
     /// Workflow tool BDD: captured workflow_state events emitted by the tool.
     pub workflow_events: Option<Arc<Mutex<Vec<serde_json::Value>>>>,
     /// Workflow tool BDD: last direct tool execution result.

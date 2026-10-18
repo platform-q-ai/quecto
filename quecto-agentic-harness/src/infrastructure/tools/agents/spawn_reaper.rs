@@ -64,7 +64,7 @@ pub fn spawn_reaper_task(
             }
         }
         if let Some((context, member)) = swarm_member {
-            let _ = tokio::task::spawn_blocking(super::super::call_work::blocking(move || {
+            let _ = tokio::task::spawn_blocking(super::super::registry::call_work::blocking(move || {
                 if let Err(error) =
                     super::super::swarm::swarm_lifecycle::member_exited(&context, &member, member_exit)
                 {

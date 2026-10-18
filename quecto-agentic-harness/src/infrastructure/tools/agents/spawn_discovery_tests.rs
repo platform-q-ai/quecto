@@ -341,7 +341,7 @@ const SWARM_DESCRIPTION_BUDGET_BYTES: usize = 3_510;
 #[test]
 fn the_swarm_descriptions_coordinator_prose_is_in_the_docs_page() {
     let description = include_str!("../swarm/swarm_assets/tool_description.txt");
-    let docs = crate::infrastructure::tools::docs::lookup_doc("swarm").unwrap();
+    let docs = crate::infrastructure::tools::native::docs::lookup_doc("swarm").unwrap();
     for moved in [
         "keep the run **running**",
         "the master can resume or close",
@@ -407,7 +407,7 @@ fn the_swarm_description_sends_no_one_to_read_a_guide() {
     ] {
         assert!(description.contains(rule), "missing {rule:?}");
     }
-    assert!(crate::infrastructure::tools::docs::lookup_doc("swarm").is_some());
+    assert!(crate::infrastructure::tools::native::docs::lookup_doc("swarm").is_some());
 }
 
 /// The first swarm run on the description alone (2026-10-01) had its two

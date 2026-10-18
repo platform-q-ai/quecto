@@ -23,7 +23,7 @@ fn test_headless_agent_registry_includes_spawn_tool() {
         ),
         workspace.clone(),
         sandbox,
-        crate::infrastructure::tools::bash::ExecOptions {
+        crate::infrastructure::tools::native::bash::ExecOptions {
             max_capture_bytes: exec_settings,
             ..Default::default()
         },

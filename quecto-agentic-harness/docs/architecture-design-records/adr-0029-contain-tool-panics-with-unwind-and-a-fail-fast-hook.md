@@ -151,7 +151,7 @@ tokio would also quietly turn a panic in any spawned task into a
      teardown included — either fails the call or ends the process; it is
      never lost.
 5. **A call's own work, handed to another task or thread, is carried and
-   joined.** `infrastructure::tools::call_work` is the only place that
+   joined.** `infrastructure::tools::registry::call_work` is the only place that
    carries a scope: `spawn_blocking_in_call`, `spawn_blocking_in_call_on`
    and `spawn_in_call` run the work in the call's scope and return a
    `CarriedJoin`, whose `await` resumes a panic in the call;

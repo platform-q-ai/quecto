@@ -19,11 +19,11 @@ use crate::infrastructure::security::sandbox::Sandbox;
 use crate::infrastructure::test_support::tool_schema_portability::portability_violations;
 use crate::infrastructure::tools::agents::agent_cmd::AgentCmdTool;
 use crate::infrastructure::tools::agents::spawn::SpawnTool;
-use crate::infrastructure::tools::grep::GrepTool;
-use crate::infrastructure::tools::panic_probe::PanicProbeTool;
-use crate::infrastructure::tools::recall::RecallTool;
-use crate::infrastructure::tools::web_search::WebSearchTool;
-use crate::infrastructure::tools::workflow_tool::WorkflowTool;
+use crate::infrastructure::tools::native::grep::GrepTool;
+use crate::infrastructure::tools::native::panic_probe::PanicProbeTool;
+use crate::infrastructure::tools::native::recall::RecallTool;
+use crate::infrastructure::tools::native::web_search::WebSearchTool;
+use crate::infrastructure::tools::native::workflow_tool::WorkflowTool;
 
 /// Every production `impl Tool for` type and the name its definition
 /// carries among the checked definitions. `UdsExtensionTool` serves the
@@ -48,7 +48,7 @@ const TOOL_TYPES: &[(&str, Option<&str>)] = &[
     ("WebFetchTool", Some("web_fetch")),
     (
         "WorkflowTool",
-        Some(crate::infrastructure::tools::workflow_tool::WORKFLOW_TOOL_NAME),
+        Some(crate::infrastructure::tools::native::workflow_tool::WORKFLOW_TOOL_NAME),
     ),
     ("RecallTool", Some("recall")),
     (
@@ -57,7 +57,7 @@ const TOOL_TYPES: &[(&str, Option<&str>)] = &[
     ),
     (
         "PanicProbeTool",
-        Some(crate::infrastructure::tools::panic_probe::PANIC_PROBE_TOOL),
+        Some(crate::infrastructure::tools::native::panic_probe::PANIC_PROBE_TOOL),
     ),
     ("UdsExtensionTool", None),
 ];

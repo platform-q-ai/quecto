@@ -11,12 +11,13 @@ async fn ready_failure_confirms_the_rolled_back_member_dead_and_keeps_the_run_ru
     let directory = tempfile::tempdir().unwrap();
     let context = context(&directory);
     create(&context, 2);
-    let mut reservation = crate::infrastructure::tools::call_work::off_the_runtime(|| {
-        crate::infrastructure::tools::swarm::swarm_admission::LaunchReservation::reserve(
-            context.clone(),
-        )
-    })
-    .unwrap();
+    let mut reservation =
+        crate::infrastructure::tools::registry::call_work::off_the_runtime(|| {
+            crate::infrastructure::tools::swarm::swarm_admission::LaunchReservation::reserve(
+                context.clone(),
+            )
+        })
+        .unwrap();
     let member = reservation.member().to_owned();
     let mut command = tokio::process::Command::new("sleep");
     command.arg("30");
@@ -30,7 +31,8 @@ async fn ready_failure_confirms_the_rolled_back_member_dead_and_keeps_the_run_ru
     reservation.launched(prepared.display_pid).await.unwrap();
     prepared.swarm_reservation = Some(reservation);
     assert_eq!(
-        crate::infrastructure::tools::call_work::off_the_runtime(|| context.summary()).unwrap()["usage"],
+        crate::infrastructure::tools::registry::call_work::off_the_runtime(|| context.summary())
+            .unwrap()["usage"],
         2
     );
     prepared.rollback_once().await;
@@ -39,7 +41,8 @@ async fn ready_failure_confirms_the_rolled_back_member_dead_and_keeps_the_run_ru
     // never a lost-harness pause. The slot is free again and the run keeps
     // running.
     let summary =
-        crate::infrastructure::tools::call_work::off_the_runtime(|| context.summary()).unwrap();
+        crate::infrastructure::tools::registry::call_work::off_the_runtime(|| context.summary())
+            .unwrap();
     assert_eq!(summary["usage"], 1, "{summary}");
     assert_eq!(summary["status"], "running", "{summary}");
     let rolled_back = summary["members"]
@@ -49,9 +52,10 @@ async fn ready_failure_confirms_the_rolled_back_member_dead_and_keeps_the_run_ru
         .find(|m| m["id"] == member)
         .unwrap();
     assert_eq!(rolled_back["status"], "dead", "{summary}");
-    let events =
-        crate::infrastructure::tools::call_work::off_the_runtime(|| context.events(0, 100))
-            .unwrap();
+    let events = crate::infrastructure::tools::registry::call_work::off_the_runtime(|| {
+        context.events(0, 100)
+    })
+    .unwrap();
     let confirmed = events["events"]
         .as_array()
         .unwrap()

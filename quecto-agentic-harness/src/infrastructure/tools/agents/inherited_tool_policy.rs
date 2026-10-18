@@ -7,11 +7,11 @@ use crate::domain::tool_policy::value_objects::tool_descriptor::{
     ProfileAvailabilityScope, ToolSource,
 };
 use crate::domain::tool_policy::value_objects::tool_id::ToolIdentity;
-use crate::infrastructure::tools::registration::ToolRegistration;
+use crate::infrastructure::tools::registry::registration::ToolRegistration;
 
 const INHERITED_TOOL_POLICY_SNAPSHOT_VERSION: u32 = 1;
 
-pub(crate) use crate::infrastructure::tools::workflow_tool::{
+pub(crate) use crate::infrastructure::tools::native::workflow_tool::{
     WORKFLOW_PROVIDER_ID, WORKFLOW_TOOL_NAME,
 };
 

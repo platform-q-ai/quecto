@@ -174,7 +174,7 @@ const CANONICAL_FILES: &[&str] = &[
     "src/interface/cli/uds_session_handles.rs",
     "src/interface/cli/retention_handles.rs",
     "src/infrastructure/persistence/context_spill.rs",
-    "src/infrastructure/tools/recall.rs",
+    "src/infrastructure/tools/native/recall.rs",
     "src/interface/cli/uds_sync.rs",
     "src/interface/cli/uds_turn_accounting.rs",
     "src/interface/cli/uds_session_switch_runtime.rs",
@@ -469,7 +469,7 @@ const INTERFACE_FORBIDDEN_NEEDLES: &[&str] = &[
     "scrub_session_spill_sync",
     ".scrub_sync(",
     "RecallTool::new(",
-    "tools::recall::",
+    "tools::native::recall::",
     ".list_entries(",
     ".has_entries(",
     "fn spill_store(",
@@ -734,7 +734,7 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     ("src/application/sessions/dto/retained_context.rs", 92),
     ("src/composition/retention.rs", 35),
     ("src/interface/cli/retention_handles.rs", 33),
-    ("src/infrastructure/tools/recall.rs", 152),
+    ("src/infrastructure/tools/native/recall.rs", 152),
     // #2212: the gauge moved to its own module (336 → 332); #2342: the
     // spill writers and the swarm cap moved to their own modules (→ 310);
     // #2348: the plan moved to its own module (the size-aware rule fits);
@@ -1885,7 +1885,7 @@ fn retained_context_has_exactly_one_owner_per_role() {
         production_files_calling("impl ContextSpillStore for"),
         set(&["src/infrastructure/persistence/context_spill.rs"])
     );
-    let recall_tool = "src/infrastructure/tools/recall.rs";
+    let recall_tool = "src/infrastructure/tools/native/recall.rs";
     assert_eq!(
         production_files_calling("impl Tool for RecallTool"),
         set(&[recall_tool])

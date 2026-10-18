@@ -67,7 +67,9 @@ impl LaunchReservation {
     /// cancelled mid-way never leaves it running beside the drop's release
     /// of the same member, which follows it.
     pub async fn rolled_back(&mut self, exit: MemberExit) -> Result<(), DomainError> {
-        super::super::call_work::block_here(|| self.context.confirm_dead(&self.member, exit))?;
+        super::super::registry::call_work::block_here(|| {
+            self.context.confirm_dead(&self.member, exit)
+        })?;
         self.launched = true;
         Ok(())
     }
@@ -104,7 +106,7 @@ impl LaunchReservation {
 async fn off_the_workers(
     job: impl FnOnce() -> Result<(), DomainError> + Send + 'static,
 ) -> Result<(), DomainError> {
-    super::super::call_work::off_the_workers(job)
+    super::super::registry::call_work::off_the_workers(job)
         .await
         .map_err(|error| DomainError::Tool(format!("swarm reservation update: {error}")))?
 }

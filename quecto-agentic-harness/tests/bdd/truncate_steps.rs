@@ -1,5 +1,5 @@
 use super::*;
-use quecto::infrastructure::tools::truncate::{
+use quecto::infrastructure::tools::native::truncate::{
     TruncatedBy, format_size, truncate_head, truncate_line, truncate_tail,
 };
 

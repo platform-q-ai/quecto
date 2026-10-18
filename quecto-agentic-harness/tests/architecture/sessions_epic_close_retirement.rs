@@ -60,7 +60,7 @@ const RAW_KEY_CONVERSION_SITES: &[&str] = &[
     // directory walk into `session_store_list_record.rs`; the walk itself
     // no longer converts (the summary carries its identity).
     "src/infrastructure/persistence/session_store_list_record.rs",
-    "src/infrastructure/tools/recall.rs",
+    "src/infrastructure/tools/native/recall.rs",
 ];
 
 /// The tool registry's startup key (exact): the tools capability's raw
@@ -464,7 +464,10 @@ fn raw_key_conversion_and_startup_key_sites_are_exact() {
         .into_iter()
         .filter(|p| p.starts_with("src/infrastructure/tools/"))
         .collect();
-    assert_eq!(converters, set(&["src/infrastructure/tools/recall.rs"]));
+    assert_eq!(
+        converters,
+        set(&["src/infrastructure/tools/native/recall.rs"])
+    );
     // The loop's runtime inputs are typed: no interface handle struct
     // carries a raw session key.
     let handles = production_code("src/interface/cli/uds_session_handles.rs");

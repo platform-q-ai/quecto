@@ -104,8 +104,8 @@ pub struct OfficialToolDeps {
     pub workflow_engine: crate::infrastructure::tools::swarm::swarm_bridge::WorkflowEngineSlot,
     pub workspace: PathBuf,
     pub sandbox: crate::infrastructure::security::sandbox::Sandbox,
-    pub exec_options: crate::infrastructure::tools::bash::ExecOptions,
-    pub docs_content_policy: crate::infrastructure::tools::docs::DocsContentPolicy,
+    pub exec_options: crate::infrastructure::tools::native::bash::ExecOptions,
+    pub docs_content_policy: crate::infrastructure::tools::native::docs::DocsContentPolicy,
 }
 
 pub fn build_official_tool_extensions(deps: OfficialToolDeps) -> Vec<Arc<dyn Extension>> {
@@ -116,34 +116,44 @@ pub fn build_official_tool_extensions(deps: OfficialToolDeps) -> Vec<Arc<dyn Ext
         "quecto:official-tools",
         "Bundled Quecto tool capabilities",
         vec![
-            Arc::new(crate::infrastructure::tools::bash::ExecTool::with_options(
-                workspace.clone(),
-                sandbox.clone(),
-                deps.exec_options,
-            )),
-            Arc::new(crate::infrastructure::tools::filesystem::ReadTool::new(
-                workspace.clone(),
-                sandbox.clone(),
-            )),
-            Arc::new(crate::infrastructure::tools::filesystem::WriteTool::new(
-                workspace.clone(),
-                sandbox.clone(),
-            )),
-            Arc::new(crate::infrastructure::tools::filesystem::EditTool::new(
-                workspace.clone(),
-                sandbox.clone(),
-            )),
-            Arc::new(crate::infrastructure::tools::filesystem::LsTool::new(
-                workspace.clone(),
-                sandbox.clone(),
-            )),
+            Arc::new(
+                crate::infrastructure::tools::native::bash::ExecTool::with_options(
+                    workspace.clone(),
+                    sandbox.clone(),
+                    deps.exec_options,
+                ),
+            ),
+            Arc::new(
+                crate::infrastructure::tools::native::filesystem::ReadTool::new(
+                    workspace.clone(),
+                    sandbox.clone(),
+                ),
+            ),
+            Arc::new(
+                crate::infrastructure::tools::native::filesystem::WriteTool::new(
+                    workspace.clone(),
+                    sandbox.clone(),
+                ),
+            ),
+            Arc::new(
+                crate::infrastructure::tools::native::filesystem::EditTool::new(
+                    workspace.clone(),
+                    sandbox.clone(),
+                ),
+            ),
+            Arc::new(
+                crate::infrastructure::tools::native::filesystem::LsTool::new(
+                    workspace.clone(),
+                    sandbox.clone(),
+                ),
+            ),
             match &deps.grep {
                 Some(wiring) => crate::infrastructure::search::build_grep_tool(
                     workspace.clone(),
                     sandbox.clone(),
                     wiring,
                 ),
-                None => Arc::new(crate::infrastructure::tools::grep::GrepTool::new(
+                None => Arc::new(crate::infrastructure::tools::native::grep::GrepTool::new(
                     workspace.clone(),
                     sandbox.clone(),
                 )),
@@ -159,7 +169,7 @@ pub fn build_official_tool_extensions(deps: OfficialToolDeps) -> Vec<Arc<dyn Ext
             // policy owns availability; the docs tool only receives explicit
             // role-compatible construction; manual content is shared by all agents.
             Arc::new(
-                crate::infrastructure::tools::docs::DocsTool::with_content_policy(
+                crate::infrastructure::tools::native::docs::DocsTool::with_content_policy(
                     deps.docs_content_policy,
                 ),
             ),
@@ -187,10 +197,12 @@ pub fn build_session_tool_extensions(deps: SessionToolDeps) -> Vec<Arc<dyn Exten
     vec![Arc::new(NativeExtension::new(
         "quecto:session-tools",
         "Bundled Quecto session memory tools",
-        Arc::new(crate::infrastructure::tools::recall::RecallTool::new(
-            deps.recall,
-            deps.session_key,
-        )),
+        Arc::new(
+            crate::infrastructure::tools::native::recall::RecallTool::new(
+                deps.recall,
+                deps.session_key,
+            ),
+        ),
     ))]
 }
 
@@ -331,8 +343,9 @@ pub fn build_agent_control_tool_extensions(deps: AgentControlToolDeps) -> AgentC
 }
 
 pub struct WorkflowToolDeps {
-    pub engine: crate::infrastructure::tools::workflow_tool::WorkflowEngineHandle,
-    pub event_emitter: Option<crate::infrastructure::tools::workflow_tool::WorkflowEventEmitter>,
+    pub engine: crate::infrastructure::tools::native::workflow_tool::WorkflowEngineHandle,
+    pub event_emitter:
+        Option<crate::infrastructure::tools::native::workflow_tool::WorkflowEventEmitter>,
     /// Shared swarm participation (#1715); the tool refuses inside a swarm.
     pub participation: crate::infrastructure::tools::swarm::swarm_bridge::Participation,
 }
@@ -340,16 +353,16 @@ pub struct WorkflowToolDeps {
 pub fn build_workflow_tool_extension(deps: WorkflowToolDeps) -> Arc<dyn Extension> {
     let tool = match deps.event_emitter {
         Some(emitter) => {
-            crate::infrastructure::tools::workflow_tool::WorkflowTool::with_event_emitter(
+            crate::infrastructure::tools::native::workflow_tool::WorkflowTool::with_event_emitter(
                 deps.engine,
                 emitter,
             )
         }
-        None => crate::infrastructure::tools::workflow_tool::WorkflowTool::new(deps.engine),
+        None => crate::infrastructure::tools::native::workflow_tool::WorkflowTool::new(deps.engine),
     };
     let tool: Arc<dyn Tool> = Arc::new(tool.with_participation(deps.participation));
     Arc::new(NativeExtension::new(
-        crate::infrastructure::tools::workflow_tool::WORKFLOW_PROVIDER_ID,
+        crate::infrastructure::tools::native::workflow_tool::WORKFLOW_PROVIDER_ID,
         "Bundled Quecto workflow tool",
         tool,
     ))
@@ -386,7 +399,7 @@ pub fn build_official_tool_registry(
     find_tool: Arc<dyn crate::application::tools::ports::Tool>,
     workspace: PathBuf,
     sandbox: crate::infrastructure::security::sandbox::Sandbox,
-    exec_options: crate::infrastructure::tools::bash::ExecOptions,
+    exec_options: crate::infrastructure::tools::native::bash::ExecOptions,
 ) -> crate::infrastructure::tools::registry::ToolRegistryImpl {
     build_official_tool_registry_with_context(find_tool, workspace, sandbox, exec_options, None)
 }
@@ -395,7 +408,7 @@ pub fn build_official_tool_registry_with_context(
     find_tool: Arc<dyn crate::application::tools::ports::Tool>,
     workspace: PathBuf,
     sandbox: crate::infrastructure::security::sandbox::Sandbox,
-    exec_options: crate::infrastructure::tools::bash::ExecOptions,
+    exec_options: crate::infrastructure::tools::native::bash::ExecOptions,
     swarm_context: Option<crate::infrastructure::tools::swarm::swarm_bridge::SwarmContext>,
 ) -> crate::infrastructure::tools::registry::ToolRegistryImpl {
     let mut registry = crate::infrastructure::tools::registry::ToolRegistryImpl::new();
@@ -411,7 +424,8 @@ pub fn build_official_tool_registry_with_context(
             workspace,
             sandbox,
             exec_options,
-            docs_content_policy: crate::infrastructure::tools::docs::DocsContentPolicy::Parent,
+            docs_content_policy:
+                crate::infrastructure::tools::native::docs::DocsContentPolicy::Parent,
         }),
     );
     registry
@@ -443,7 +457,7 @@ pub fn build_native_extensions(
             None
         };
         web_tools.push(Arc::new(
-            crate::infrastructure::tools::web_search::WebSearchTool::with_client_and_limits(
+            crate::infrastructure::tools::native::web_search::WebSearchTool::with_client_and_limits(
                 api_key,
                 http_client.clone(),
                 web_config.brave.max_results,

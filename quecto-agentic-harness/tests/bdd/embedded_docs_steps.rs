@@ -1,6 +1,6 @@
 use super::*;
 use quecto::application::tools::ports::Tool;
-use quecto::infrastructure::tools::docs::DocsTool;
+use quecto::infrastructure::tools::native::docs::DocsTool;
 
 async fn run_docs(world: &mut QuectoWorld, args: &str) {
     let result = DocsTool::new().execute(args).await.expect("docs tool");
