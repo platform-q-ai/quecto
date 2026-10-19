@@ -1,8 +1,9 @@
 //! The Responses (Codex) wire as the attempt transport reads it (#2597):
 //! typed events, `[DONE]` or `response.completed` as the end,
-//! `response.failed`, `response.incomplete`, `error` and an untyped error
-//! chunk (#2249 review) as a failure, and output in each delta event's
-//! `delta` string. It knows only the Responses events.
+//! `response.failed`, `error`, an untyped error chunk (#2249 review) and
+//! `response.incomplete` — unless cut off at the output limit (#2593) — as
+//! a failure, and output in each delta event's `delta` string. It knows
+//! only the Responses events.
 use std::borrow::Cow;
 
 use serde_json::Value;
