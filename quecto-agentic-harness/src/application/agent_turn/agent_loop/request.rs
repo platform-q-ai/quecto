@@ -16,13 +16,13 @@ fn attempt_facts(
 ) -> AttemptFacts {
     let output = Output::from_emitted(emitted_event);
     let diagnostics = trace.attempt_diagnostics();
-    let response = match (output, diagnostics.is_empty()) {
-        (Output::Shown, _) => Response::Received,
-        (Output::NotShown, true) => Response::Unknown,
-        (Output::NotShown, false) if diagnostics.iter().any(|d| d.wire_status.is_some()) => {
-            Response::Received
-        }
-        (Output::NotShown, false) => Response::NotReceived,
+    let answered = diagnostics.iter().any(|d| d.wire_status.is_some());
+    // "Not received" is proven only when every attempt left a record.
+    let every_attempt_recorded = diagnostics.len() >= (trace.attempts() as usize).max(1);
+    let response = match (output, answered, every_attempt_recorded) {
+        (Output::Shown, _, _) | (Output::NotShown, true, _) => Response::Received,
+        (Output::NotShown, false, true) => Response::NotReceived,
+        (Output::NotShown, false, false) => Response::Unknown,
     };
     // An OAuth refresh resends the request once (#2459 review): that is
     // no transient retry, so it is not counted as one.

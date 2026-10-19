@@ -1,6 +1,6 @@
 //! #2459 and #2531 through the agent turn: a terminal failure's guidance
 //! says what the request did (its attempts, whether output streamed), and
-//! a Codex 507 for an exhausted upstream retry buffer is retried before
+//! an Envoy 507 for an exhausted upstream retry buffer is retried before
 //! any output like any server failure.
 use crate::application::agent_turn::agent_loop::tests::{
     MockRegistry, MockStreamingProvider, test_config, text_response,
@@ -63,7 +63,7 @@ async fn a_failure_before_output_after_retries_states_the_attempt_count() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn a_codex_507_retry_buffer_limit_before_output_is_retried() {
+async fn an_envoy_507_retry_buffer_limit_before_output_is_retried() {
     let (mut agent, provider) = streaming(vec![
         vec![StreamEvent::Error(
             "HTTP 507 from Codex: exceeded request buffer limit while retrying upstream".into(),
@@ -164,6 +164,14 @@ fn attempt_facts_read_the_trace() {
     unanswered.record_attempt(record(None));
     let facts = attempt_facts(&unanswered, false);
     assert_eq!((facts.attempts, facts.response), (2, Response::NotReceived));
+
+    // A retry that left no record proves nothing about a response.
+    let partly = RequestTrace::default();
+    partly.start();
+    partly.record_attempt(record(None));
+    partly.retry();
+    let facts = attempt_facts(&partly, false);
+    assert_eq!((facts.attempts, facts.response), (2, Response::Unknown));
 
     let answered = RequestTrace::default();
     answered.start();

@@ -123,7 +123,7 @@ fn zero_recorded_attempts_read_as_one() {
 }
 
 #[test]
-fn the_codex_507_retry_buffer_limit_gets_server_guidance() {
+fn the_envoy_507_retry_buffer_limit_gets_server_guidance() {
     let message = "HTTP 507 from Codex: exceeded request buffer limit while retrying upstream";
     assert!(
         guidance(message, facts(3, Output::NotShown, Response::Received)).starts_with(
@@ -299,4 +299,12 @@ fn admission_gate_errors_get_no_provider_guidance() {
             message
         );
     }
+}
+
+/// #2600 review round 2: the gate's own error is recognised before any
+/// other rule, even when it names a context limit.
+#[test]
+fn an_admission_gate_error_naming_a_limit_gets_no_guidance() {
+    let message = "admission: admission refused: context window too many tokens";
+    assert_eq!(explained(message, PLAIN), message);
 }

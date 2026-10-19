@@ -33,7 +33,7 @@ impl Output {
 pub enum Response {
     /// An attempt got an HTTP status or streamed output.
     Received,
-    /// Every attempt was recorded and none got a status: a connect error
+    /// Every attempt left a record and none got a status: a connect error
     /// or a timeout before any response.
     NotReceived,
     /// The attempts left no record to tell.
@@ -77,19 +77,19 @@ pub fn explain_terminal_failure(err: DomainError, facts: AttemptFacts) -> Domain
     }
 }
 
-/// The guidance `message` gets: a limit or a refusal names its own
-/// remediation (each appended once), any other failure its class's.
+/// The guidance `message` gets: the inference-admission gate's error says
+/// what to do itself; a limit or a refusal names its own remediation (each
+/// appended once); any other failure gets its class's.
 fn guidance_for(message: &str, facts: AttemptFacts) -> Option<String> {
+    let err = DomainError::Provider(message.to_string());
+    if is_admission_gate_error(&err) {
+        return None;
+    }
     if is_context_or_output_limit_error(message) {
         let explained = message
             .to_ascii_lowercase()
             .contains("context/output limit");
         return (!explained).then(|| CONTEXT_LIMIT_GUIDANCE.to_string());
-    }
-    let err = DomainError::Provider(message.to_string());
-    // The inference-admission gate's error says what to do itself.
-    if is_admission_gate_error(&err) {
-        return None;
     }
     if model_refusal(&err).is_some() {
         return (!message.ends_with(MODEL_REFUSED_GUIDANCE))

@@ -545,10 +545,11 @@ fn http_402_is_billing() {
     }
 }
 
-/// #2531: Codex's 507 for an exhausted upstream retry buffer is a provider
-/// capacity failure: retryable `Server`. Any other 507 stays `Unknown`.
+/// #2531: Envoy's router 507 local reply for a request body past its retry
+/// buffer (any provider behind Envoy; Codex sent it) is retryable `Server`.
+/// Any other 507 stays `Unknown`.
 #[test]
-fn codex_507_upstream_retry_buffer_limit_is_retryable_server() {
+fn envoy_507_upstream_retry_buffer_limit_is_retryable_server() {
     let err = DomainError::Provider(
         "HTTP 507 from Codex: exceeded request buffer limit while retrying upstream".to_string(),
     );
