@@ -84,10 +84,8 @@ async fn view_when(
 async fn view_when_authority(
     admin: &AdminConnection,
     what: &str,
-    expected: impl Fn(
-        &quecto::application::admission::services::inference_authority::AuthorityStatus,
-    ) -> bool,
-) -> quecto::application::admission::services::inference_authority::AuthorityStatus {
+    expected: impl Fn(&quecto::application::admission::dto::broker::AuthorityStatus) -> bool,
+) -> quecto::application::admission::dto::broker::AuthorityStatus {
     let deadline = tokio::time::Instant::now() + LIMIT;
     loop {
         let status = admin.inspect().await.unwrap();

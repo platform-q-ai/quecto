@@ -3,5 +3,6 @@
 //! shapes to and from them and never leaks a wire or systemd type inward.
 
 pub mod authority;
+pub mod broker;
 pub mod negotiation;
 pub mod service;

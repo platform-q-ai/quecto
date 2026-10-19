@@ -11,9 +11,8 @@ use super::journal::FileJournal;
 use super::protocol::*;
 use super::secret::RandomSecretSource;
 use super::server::{Clock, wall_ms};
-use crate::application::admission::services::inference_authority::{
-    AdmissionAuthority, AuthorityError, Credential,
-};
+use crate::application::admission::dto::broker::{AuthorityError, Credential};
+use crate::application::admission::services::inference_authority::AdmissionAuthority;
 use crate::domain::admission::value_objects::inference_admission::{
     RequestId, RequestState, ScopeId, TerminalOutcome,
 };
