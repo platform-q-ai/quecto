@@ -72,7 +72,7 @@ fn hosted_swarm_context(
             .clone()
             .expect("a hosted swarm run was set up"),
         member: "coordinator".into(),
-        lifecycle: std::sync::Arc::new(quecto::application::ports::SwarmTestLifecycle),
+        lifecycle: std::sync::Arc::new(quecto::application::swarm::LifecycleService),
     }
 }
 

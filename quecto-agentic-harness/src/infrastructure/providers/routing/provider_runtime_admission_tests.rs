@@ -1,5 +1,5 @@
 use super::*;
-use crate::application::ports::AttemptPermit;
+use crate::application::admission::ports::inference_attempt::AttemptPermit;
 use crate::domain::admission::value_objects::inference_admission::GroupId;
 use crate::domain::shared::error::DomainError;
 use std::future::Future;

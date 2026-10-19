@@ -1,7 +1,7 @@
 //! Startup presentation of the published runtime's advisory admission slots.
 
 pub(super) fn publish_startup_warnings(
-    store: &crate::application::ports::RuntimeSnapshotStore,
+    store: &crate::application::provider_runtime::RuntimeSnapshotStore,
 ) -> Vec<String> {
     let slots = store
         .current()
@@ -27,7 +27,7 @@ pub(super) fn publish_startup_warnings(
 /// Overlay the latest published generation for a busy/connect-time inspector read.
 pub(super) fn overlay_current(
     state: &mut super::protocol::SessionState,
-    store: &crate::application::ports::RuntimeSnapshotStore,
+    store: &crate::application::provider_runtime::RuntimeSnapshotStore,
 ) {
     if let Some(runtime) = store.current() {
         state.admission_warnings = runtime

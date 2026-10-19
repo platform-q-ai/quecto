@@ -1,5 +1,7 @@
 use super::*;
-use crate::application::admission::dto::{NegotiationInputs, NegotiationPlan};
+use crate::application::admission::dto::{
+    negotiation::NegotiationInputs, negotiation::NegotiationPlan,
+};
 use std::path::PathBuf;
 
 #[test]

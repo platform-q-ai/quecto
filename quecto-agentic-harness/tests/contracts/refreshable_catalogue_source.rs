@@ -4,8 +4,9 @@
 //! and whose refresh honours the run's bounds and reports a typed outcome.
 
 use quecto::application::catalogue::dto::RefreshBounds;
-use quecto::application::ports::{
-    CatalogueSource, RefreshChange, RefreshContext, RefreshError, RefreshableCatalogueSource,
+use quecto::application::{
+    catalogue::ports::catalogue_source::CatalogueSource,
+    catalogue::ports::{RefreshChange, RefreshContext, RefreshError, RefreshableCatalogueSource},
 };
 use quecto::domain::catalogue::value_objects::precedence::SourceLayer;
 use quecto::infrastructure::providers::catalogue::catalogue_discovery::{

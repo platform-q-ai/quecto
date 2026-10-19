@@ -12,7 +12,9 @@ use quecto::application::catalogue::ports::{
 };
 use quecto::application::catalogue::use_cases::{ChangeActiveModel, ChangeReasoningEffort};
 use quecto::application::catalogue::{
-    CatalogueSnapshotStore, CatalogueSource, CredentialStatusPort, SourceEntries,
+    ports::catalogue_source::{CatalogueSource, SourceEntries},
+    ports::credential_status::CredentialStatusPort,
+    services::snapshot_store::CatalogueSnapshotStore,
 };
 use quecto::application::provider_runtime::CatalogueRuntimeSnapshot;
 use quecto::domain::catalogue::entities::entry::{
@@ -266,11 +268,13 @@ fn given_runtime_over_inputs(world: &mut QuectoWorld) {
             order.push(provider);
         }
     }
-    let resolved = quecto::application::catalogue::ResolveCatalogueUseCase.resolve_and_publish(
-        &[&AmSource(entries)],
-        &AmCredentials(denied),
-        &am_store(&mut world.active_model),
-    );
+    let resolved =
+        quecto::application::catalogue::use_cases::resolve_catalogue::ResolveCatalogueUseCase
+            .resolve_and_publish(
+                &[&AmSource(entries)],
+                &AmCredentials(denied),
+                &am_store(&mut world.active_model),
+            );
     world.active_model.runtime = Some(Arc::new(CatalogueRuntimeSnapshot {
         catalogue: resolved.snapshot,
         provider: Arc::new(AmProvider(order)),

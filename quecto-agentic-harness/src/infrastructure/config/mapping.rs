@@ -4,7 +4,7 @@
 //! every load-time validation, the environment overrides, and the
 //! [`ConfigValidator`] port the configuration use cases validate through.
 //! The section-wise overlay merge itself is a pure function of the
-//! application (`application::configuration::overlay_policy`), reached by
+//! application (`application::configuration::services::overlay_policy`), reached by
 //! the resolve use case directly.
 
 use std::collections::HashMap;

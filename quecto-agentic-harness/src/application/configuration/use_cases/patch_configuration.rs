@@ -32,14 +32,14 @@ use crate::application::configuration::dto::{
     ConfigLayer, ConfigPatch, ConfigPatchError, ConfigPatchReceipt, ConfigSelection, ConfigUnset,
     OverlayOrigin,
 };
-use crate::application::configuration::overlay_policy::{
-    global_only_path, global_only_values, key_segments, policy_entry_id, remove_path, set_path,
-};
 use crate::application::configuration::ports::{
     ConfigDocumentStore, ConfigDocumentWriter, ConfigValidator, OverlayDocument, OverlayTrust,
     OverlayTrustStore,
 };
-use crate::application::configuration::removed_keys::{
+use crate::application::configuration::services::overlay_policy::{
+    global_only_path, global_only_values, key_segments, policy_entry_id, remove_path, set_path,
+};
+use crate::application::configuration::services::removed_keys::{
     WHY_REMOVED, removed_keys_set, without_removed_keys,
 };
 use crate::application::configuration::use_cases::ResolveEffectiveConfig;

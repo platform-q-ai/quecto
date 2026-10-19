@@ -6,7 +6,7 @@ use std::time::Duration;
 /// provider) cannot be enumerated.
 pub const REGISTRY_FILE_SOURCE: &str = "models.json";
 
-use crate::application::catalogue::ResolvedCatalogue;
+use crate::application::catalogue::dto::resolved_catalogue::ResolvedCatalogue;
 
 /// Hard bounds every remote refresh runs under, so unattended refreshes can
 /// never hang forever or buffer an unbounded response.

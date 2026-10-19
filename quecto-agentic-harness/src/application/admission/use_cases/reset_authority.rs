@@ -5,7 +5,7 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use crate::application::admission::dto::{AuthorityAdminError, ResetReport};
+use crate::application::admission::dto::{authority::AuthorityAdminError, authority::ResetReport};
 use crate::application::admission::ports::AuthorityAdmin;
 
 pub struct ResetAuthority {

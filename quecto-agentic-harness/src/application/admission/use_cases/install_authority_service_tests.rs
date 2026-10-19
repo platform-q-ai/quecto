@@ -1,5 +1,5 @@
 use super::*;
-use crate::application::admission::dto::{InstallServiceRequest, ServiceAction};
+use crate::application::admission::dto::{service::InstallServiceRequest, service::ServiceAction};
 use crate::application::admission::ports::{AuthorityServiceManager, ServiceUnitSpec, UnitStatus};
 use std::path::PathBuf;
 use std::sync::Mutex;

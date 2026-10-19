@@ -7,7 +7,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::HashMap;
 
 /// Why the keys went. The keys are the configuration capability's
-/// removed-key policy (`application::configuration::removed_keys`); the
+/// removed-key policy (`application::configuration::services::removed_keys`); the
 /// schema names its own fields, and its tests pin that they match.
 const WHY_REMOVED: &str = "removed in #2414: the watermark context is the only context mode \
     (the context only grows at its end and is cut once at context_high_tokens down to \

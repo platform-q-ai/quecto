@@ -76,7 +76,7 @@ const WIKI: &str =
 #[rustfmt::skip] // One readable source-policy row per path.
 const BUDGETS: &[FlatBudget<'_>] = &[
     FlatBudget { path: "domain", expected: 1 },
-    FlatBudget { path: "application", expected: 3 },
+    FlatBudget { path: "application", expected: 2 },
     FlatBudget { path: "interface", expected: 6 },
     FlatBudget { path: "infrastructure", expected: 1 },
     FlatBudget { path: "composition", expected: 24 },
@@ -104,6 +104,9 @@ const MIGRATED: &[Capability<'_>] = &[
     Capability("infrastructure/tools", &["agents", "native", "registry", "swarm"]),
     Capability("infrastructure/persistence", &["file", "sqlite", "project_board"]),
     Capability("application/auth", &["use_cases", "ports", "dto"]),
+    Capability("application/catalogue", &["use_cases", "ports", "dto", "services"]),
+    Capability("application/configuration", &["use_cases", "ports", "dto", "services"]),
+    Capability("application/admission", &["use_cases", "ports", "dto", "services"]),
 ];
 // Wiki target-source-tree anchors define allowed future names; Transitional rows must exist.
 // https://github.com/platform-q-ai/quecto/wiki/Agentic-Harness-Target-Architecture#target-source-tree

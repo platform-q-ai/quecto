@@ -116,7 +116,7 @@ fn rejected_wake(world: &mut QuectoWorld) {
         board: quecto::composition::swarm::swarm_board(),
         checkout: workspace.clone(),
         member: "coordinator".into(),
-        lifecycle: std::sync::Arc::new(quecto::application::ports::SwarmTestLifecycle),
+        lifecycle: std::sync::Arc::new(quecto::application::swarm::LifecycleService),
     };
     let socket = workspace.join("worker.sock");
     let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
@@ -181,7 +181,7 @@ fn durable_rejected_wake(world: &mut QuectoWorld) {
         board: quecto::composition::swarm::swarm_board(),
         checkout: world.swarm_workspace.clone().unwrap(),
         member: "worker".into(),
-        lifecycle: std::sync::Arc::new(quecto::application::ports::SwarmTestLifecycle),
+        lifecycle: std::sync::Arc::new(quecto::application::swarm::LifecycleService),
     };
     use quecto::application::tools::ports::Tool;
     let tool = quecto::infrastructure::tools::swarm::SwarmTool::new().with_context(Some(context));
@@ -248,7 +248,7 @@ fn idle_peer(world: &mut QuectoWorld) {
         board: quecto::composition::swarm::swarm_board(),
         checkout: checkout.clone(),
         member: "coordinator".into(),
-        lifecycle: std::sync::Arc::new(quecto::application::ports::SwarmTestLifecycle),
+        lifecycle: std::sync::Arc::new(quecto::application::swarm::LifecycleService),
     };
     context
         .reserve_member("idle-peer", "idle-reservation")
@@ -380,7 +380,7 @@ fn supervisor_context(
         board: quecto::composition::swarm::swarm_board(),
         checkout: world.swarm_workspace.clone().unwrap(),
         member: "coordinator".into(),
-        lifecycle: std::sync::Arc::new(quecto::application::ports::SwarmTestLifecycle),
+        lifecycle: std::sync::Arc::new(quecto::application::swarm::LifecycleService),
     }
 }
 

@@ -35,7 +35,7 @@ fn structured_worker(world: &mut QuectoWorld) {
         board: quecto::composition::swarm::swarm_board(),
         checkout: workspace.clone(),
         member: "coordinator".into(),
-        lifecycle: std::sync::Arc::new(quecto::application::ports::SwarmTestLifecycle),
+        lifecycle: std::sync::Arc::new(quecto::application::swarm::LifecycleService),
     };
     coordinator.reserve_member("worker", "reservation").unwrap();
     let worker = quecto::infrastructure::tools::swarm::swarm_bridge::SwarmContext {

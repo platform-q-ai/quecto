@@ -13,6 +13,8 @@
 //! - infrastructure/ imports domain/ only
 //! - interface/ imports all three (composition root)
 
+#[path = "architecture/auth_credential_authority.rs"]
+mod auth_credential_authority;
 #[path = "architecture/auth_infrastructure_edges.rs"]
 mod auth_infrastructure_edges;
 #[path = "architecture/auth_runtime_builder.rs"]
@@ -571,8 +573,8 @@ fn infrastructure_has_no_application_imports() {
 /// The ports surface is an allowlist (#1637 review): whatever a ports
 /// module (`ports.rs`, `ports/**`, or an inline `mod ports`) exposes — a
 /// re-export of any visibility but private, or a type alias — names only the
-/// domain, another `ports`/`dto` module, or a contract the root
-/// `application::ports` has always listed. A use case, a `use_cases` path or
+/// domain, another `ports`/`dto` module, or a contract
+/// `CONTRACTS_OUTSIDE_PORTS` lists. A use case, a `use_cases` path or
 /// a whole capability module cannot be reached through `…::ports`.
 #[test]
 fn ports_modules_expose_only_contracts() {
@@ -601,27 +603,6 @@ const CONTRACTS_OUTSIDE_PORTS: &[(&str, &[&str])] = &[
     ("sessions::conversation_ledger", &["LedgerAdvance"]),
     ("subagents::standard_script", &["StandardScriptVerdict"]),
     (
-        "catalogue",
-        &[
-            "CatalogueSnapshotStore",
-            "CatalogueSource",
-            "CatalogueSourceError",
-            "CredentialStatusPort",
-            "ResolvedCatalogue",
-            "SkippedRecord",
-            "SourceEntries",
-        ],
-    ),
-    (
-        "admission::services::inference_admission",
-        &[
-            "AdmissionClient",
-            "AdmissionDispatcher",
-            "AdmissionRecovery",
-            "AdmissionRegistry",
-        ],
-    ),
-    (
         "admission::services::inference_authority",
         &[
             "AdmissionAuthority",
@@ -629,6 +610,10 @@ const CONTRACTS_OUTSIDE_PORTS: &[(&str, &[&str])] = &[
             "AuthorityStatus",
             "Credential",
         ],
+    ),
+    (
+        "catalogue::services::snapshot_store",
+        &["CatalogueSnapshotStore"],
     ),
     (
         "provider_runtime",
@@ -1212,6 +1197,16 @@ fn application_dependencies_allowed_at(file: &str, content: &str) -> bool {
     refused_application_paths(file, content).is_empty()
 }
 
+/// Per-file exceptions to the infrastructure → application rule: (file,
+/// path). The swarm tool's test support (mounted only in test and
+/// `test-support` builds) builds the lifecycle service the deleted
+/// `application::ports` facade re-exported as `SwarmTestLifecycle` under the
+/// same cfg (#2367); no production file may name it.
+const TEST_SUPPORT_APPLICATION_PATHS: &[(&str, &str)] = &[(
+    "src/infrastructure/tools/swarm/swarm_test_support.rs",
+    "crate::application::swarm::LifecycleService",
+)];
+
 /// The crate paths `file` names that the infrastructure → application rule
 /// refuses, relative paths resolved; a file that does not parse is refused.
 fn refused_application_paths(file: &str, content: &str) -> Vec<String> {
@@ -1219,6 +1214,7 @@ fn refused_application_paths(file: &str, content: &str) -> Vec<String> {
         Some(paths) => paths
             .into_iter()
             .filter(|path| !application_path_allowed(path))
+            .filter(|path| !TEST_SUPPORT_APPLICATION_PATHS.contains(&(file, path.as_str())))
             .collect(),
         None => vec!["<does not parse>".to_string()],
     }
@@ -1446,10 +1442,108 @@ const SWARM_BOARD_DTOS: &[&str] = &[
     "TaskPage",
 ];
 
+/// The contracts the deleted `application::ports` facade re-exported
+/// (#2367), named at their owners: exactly the ones infrastructure
+/// implements or holds, keyed by module path under `application`, until
+/// their capabilities give them a home under `ports/` (admission #1910,
+/// launch #1880). The catalogue's snapshot store is the capability's shared
+/// state (`services/`, #2578), held by the provider adapters' refusal sink.
+/// Every entry is declared in its module, and every non-`dto` entry is also
+/// a `CONTRACTS_OUTSIDE_PORTS` contract
+/// (`facade_contract_paths_are_listed_contracts`).
+const FACADE_CONTRACT_PATHS: &[(&str, &[&str])] = &[
+    (
+        "catalogue::services::snapshot_store",
+        &["CatalogueSnapshotStore"],
+    ),
+    (
+        "provider_runtime",
+        &["ProviderRuntimeFactory", "RuntimeSnapshotStore"],
+    ),
+    (
+        "provider_runtime::dto",
+        &["AdmissionBindingDiagnostic", "ProviderRuntimeOutcome"],
+    ),
+    (
+        "admission::services::inference_authority",
+        &[
+            "AdmissionAuthority",
+            "AuthorityError",
+            "AuthorityStatus",
+            "Credential",
+        ],
+    ),
+    ("subagent_launch", &["LaunchFuture", "SubagentLaunchPorts"]),
+];
+
+fn facade_contract_path(parts: &[&str]) -> bool {
+    match parts {
+        ["crate", "application", owner @ .., name] => {
+            let owner = owner.join("::");
+            FACADE_CONTRACT_PATHS
+                .iter()
+                .any(|(module, names)| *module == owner && names.contains(name))
+        }
+        _ => false,
+    }
+}
+
+/// Whether `src/application/<module>.rs` (or `<module>/mod.rs`) declares a
+/// public struct, enum, trait or type alias named `name`.
+fn application_module_declares(module: &str, name: &str) -> bool {
+    let base = format!("src/application/{}", module.replace("::", "/"));
+    [format!("{base}.rs"), format!("{base}/mod.rs")]
+        .iter()
+        .filter_map(|path| fs::read_to_string(path).ok())
+        .any(|source| {
+            source.lines().any(|line| {
+                let line = line.trim_start();
+                ["pub struct ", "pub enum ", "pub trait ", "pub type "]
+                    .iter()
+                    .filter_map(|keyword| line.strip_prefix(keyword))
+                    .any(|rest| {
+                        rest.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+                            .next()
+                            == Some(name)
+                    })
+            })
+        })
+}
+
+/// A stale owner-path entry fails here (#2367 review): each entry is
+/// declared in its module (`dto` entries included), and each non-`dto` entry
+/// names a contract `CONTRACTS_OUTSIDE_PORTS` lists for the same module; a
+/// `dto` entry sits in a `dto` module, which the ports surface admits by
+/// rule.
+#[test]
+fn facade_contract_paths_are_listed_contracts() {
+    for (module, names) in FACADE_CONTRACT_PATHS {
+        for name in *names {
+            let file = module.replace("::", "/");
+            assert!(
+                application_module_declares(module, name),
+                "{module}::{name} is allowed for infrastructure but neither src/application/{file}.rs nor src/application/{file}/mod.rs declares it"
+            );
+            let listed = match module.rsplit("::").next() {
+                Some("dto") => true,
+                _ => CONTRACTS_OUTSIDE_PORTS
+                    .iter()
+                    .any(|(owner, contracts)| owner == module && contracts.contains(name)),
+            };
+            assert!(
+                listed,
+                "{module}::{name} is allowed for infrastructure but is no listed contract"
+            );
+        }
+    }
+}
+
 fn application_path_allowed(path: &str) -> bool {
     let parts: Vec<_> = path.split("::").collect();
+    if facade_contract_path(&parts) {
+        return true;
+    }
     match parts.as_slice() {
-        ["crate", "application", "ports", ..] => true,
         // A tool call's own work carries its panic scope (#2192, ADR-0029):
         // only `call_work`, which joins what it spawns (`carried_work_is_joined`),
         // and catches a panic of work whose call answers it itself (#2517;
@@ -1668,11 +1762,10 @@ fn application_path_allowed(path: &str) -> bool {
             | "ReadSwarmBoard",
             ..,
         ] => true,
-        // The launch port (#1940) is reached through
-        // `application::ports` like every other contract (#1637). The
-        // spawn tool still builds the launch use case over its own
-        // ports; moving that construction to composition belongs to
-        // "Launch a delegated agent" (#1880).
+        // The launch port (#1940) and its future are named at
+        // `subagent_launch` (above). The spawn tool still builds the
+        // launch use case over its own ports; moving that construction to
+        // composition belongs to "Launch a delegated agent" (#1880).
         ["crate", "application", "subagent_launch", "SubagentLaunchUseCase"] => true,
         // The admission-operation capability (#2024 S3): the admin
         // adapter implements its `AuthorityAdmin` port and builds the
@@ -1685,6 +1778,7 @@ fn application_path_allowed(path: &str) -> bool {
             "application",
             "admission",
             "dto",
+            "authority",
             "AuthorityReport" | "AuthorityGroupReport" | "ResetReport"
             | "AuthorityAdminError",
             ..,
@@ -3824,14 +3918,17 @@ fn dependency_allowlists_use_paths_not_substrings() {
         assert!(!query_dependencies_allowed(source), "{source}");
     }
     for source in [
-        "use crate::application::ports::EnvironmentRuntime;",
-        "use crate::application::{ports::EnvironmentRuntime, environments::use_cases::ListEnvironmentsQuery};",
+        "use crate::application::environments::ports::EnvironmentRuntime;",
+        "use crate::application::{environments::ports::EnvironmentRuntime, environments::use_cases::ListEnvironmentsQuery};",
+        "use crate::application::subagent_launch::LaunchFuture;",
     ] {
         assert!(application_dependencies_allowed(source), "{source}");
     }
     for source in [
-        "use crate::application::secret::Bad; // crate::application::ports",
-        "use crate::application::{ports::Good, secret::Bad};",
+        // The shared ports facade is gone (#2367): its old path is refused.
+        "use crate::application::ports::EnvironmentRuntime;",
+        "use crate::application::secret::Bad; // crate::application::environments::ports::EnvironmentRuntime",
+        "use crate::application::{environments::ports::Good, secret::Bad};",
         "fn effect() { crate::application::secret::run(); }",
         "use crate::application::environments::use_cases::ListEnvironmentsQueryExtra;",
         // The patch handle is a use-case handle, never an infrastructure
@@ -3848,9 +3945,8 @@ fn dependency_allowlists_use_paths_not_substrings() {
         "use crate::{self as root};",
         // A use case after a test module is production code.
         "#[cfg(test)]\nmod tests;\nuse crate::application::secret::Bad;",
-        // Only the launch use case is excepted (#1880); the rest of the
-        // launch surface goes through `application::ports`.
-        "use crate::application::subagent_launch::LaunchFuture;",
+        // Only the launch use case and its contracts are named at
+        // `subagent_launch` (#1880, #2367); nothing else there.
         "use crate::application::subagent_launch::SubagentLaunchUseCaseExtra;",
         // The crate under another root, macro tokens and attribute strings
         // are read too (#1637 review).
@@ -3861,6 +3957,25 @@ fn dependency_allowlists_use_paths_not_substrings() {
     ] {
         assert!(!application_dependencies_allowed(source), "{source}");
     }
+}
+
+/// The swarm lifecycle service is named only by the swarm tool's test
+/// support (#2367 review): the same path in any production infrastructure
+/// file is refused.
+#[test]
+fn only_swarm_test_support_names_the_lifecycle_service() {
+    let source = "fn probe() -> crate::application::swarm::LifecycleService { loop {} }";
+    assert_eq!(
+        refused_application_paths("src/infrastructure/tools/swarm/swarm_control.rs", source),
+        ["crate::application::swarm::LifecycleService"]
+    );
+    assert_eq!(
+        refused_application_paths(
+            "src/infrastructure/tools/swarm/swarm_test_support.rs",
+            source
+        ),
+        Vec::<String>::new()
+    );
 }
 
 #[test]
@@ -3882,7 +3997,7 @@ fn application_guard_resolves_relative_paths() {
     }
     for source in [
         "use super::spawn_entry::child_socket_path;",
-        "use super::super::super::super::application::ports::SubagentLaunchPorts;",
+        "use super::super::super::super::application::subagent_launch::SubagentLaunchPorts;",
         "use super::super::super::super::domain::tool_policy::value_objects::tool::ToolResult;",
         "mod inner { use super::super::super::super::super::domain::tool_policy::value_objects::tool::ToolResult; }",
         "use crate::application::subagent_launch::SubagentLaunchUseCase;",
@@ -4887,10 +5002,16 @@ fn declared_pub_traits(path: &str) -> Vec<String> {
         .collect()
 }
 
-/// `pub trait`s the shared application facade is allowed to declare. It
-/// declares none today; a teardown port (or any new port) added there
-/// fails this pin.
-const SHARED_APPLICATION_PORT_TRAITS: &[&str] = &[];
+/// Ports belong to the capability whose use case requires them; the shared
+/// application ports facade is gone (#2367) and must not come back.
+#[test]
+fn application_has_no_shared_ports_facade() {
+    assert!(
+        !Path::new("src/application/ports.rs").exists()
+            && !Path::new("src/application/ports").exists(),
+        "application/ports is a shared ports facade; ports are capability-local"
+    );
+}
 
 #[test]
 fn subagent_teardown_ports_are_capability_local() {
@@ -4909,17 +5030,6 @@ fn subagent_teardown_ports_are_capability_local() {
         actual, expected,
         "application/subagents/ports.rs must declare exactly TEARDOWN_PORTS and \
          SUBAGENT_INSPECTION_PORTS"
-    );
-    // Ports belong to the capability whose use case requires them; the
-    // shared application facade must not grow a port.
-    let shared = declared_pub_traits("src/application/ports.rs");
-    assert_eq!(
-        shared,
-        SHARED_APPLICATION_PORT_TRAITS
-            .iter()
-            .map(|p| p.to_string())
-            .collect::<Vec<_>>(),
-        "application/ports.rs gained a trait; ports are capability-local"
     );
     // Only this capability declares them: no duplicate port definitions.
     let mut files = Vec::new();
@@ -4942,7 +5052,7 @@ fn subagent_teardown_ports_are_capability_local() {
 fn subagent_teardown_guards_reject_outward_and_wire_dependencies() {
     for dep in [
         "crate::infrastructure::tools::agents::subagent_registry::SubagentRegistry",
-        "crate::application::ports::SessionStore",
+        "crate::application::sessions::ports::SessionStore",
         "crate::application::environments::use_cases::ListEnvironmentsQuery",
         "crate::interface::uds::subagent_teardown::wire::TeardownResponse",
         "tokio::sync::Notify",
@@ -4971,7 +5081,7 @@ fn subagent_teardown_guards_reject_outward_and_wire_dependencies() {
     for dep in [
         "crate::infrastructure::tools::agents::subagent_registry::SubagentRegistry",
         "crate::interface::cli::uds::DispatchCtx",
-        "crate::application::ports::SessionStore",
+        "crate::application::sessions::ports::SessionStore",
         "tokio::net::UnixStream",
         "std::os::unix::net::UnixStream",
     ] {

@@ -3,7 +3,7 @@
 //! while preserving the non-secret remainder.
 
 use quecto::application::catalogue::ports::NoopRedaction;
-use quecto::application::ports::RefreshRedactionPort;
+use quecto::application::catalogue::ports::RefreshRedactionPort;
 use quecto::infrastructure::providers::catalogue::catalogue_discovery::SecretsRedaction;
 
 fn assert_redaction_contract(port: &dyn RefreshRedactionPort, secrets: &[&str]) {

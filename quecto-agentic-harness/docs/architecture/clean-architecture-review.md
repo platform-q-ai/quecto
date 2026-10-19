@@ -8,6 +8,8 @@ Review one logical area at a time, with at most one active review agent. All age
 
 For each confirmed finding record evidence (`file:line`), the concrete architectural cost, a practical improvement, trade-offs, and a verification approach. Separate open questions and cross-area follow-ups from confirmed findings. Prefer improvements that reduce coupling or clarify policy ownership over abstraction for its own sake.
 
+> **Later change (#2367):** the shared `application::ports` facade (`src/application/ports.rs`) that several findings below cite or recommend was removed. Each contract is now named at the capability that owns it (`application/<capability>/ports…`, or the explicit owner paths in `tests/architecture.rs`). Read references to `application::ports` as historical.
+
 ## Review sequence
 
 Paths below are relative to `quecto-agentic-harness`.

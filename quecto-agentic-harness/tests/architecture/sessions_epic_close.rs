@@ -209,7 +209,7 @@ const SESSION_STORE_HOLDERS: &[&str] = &[
     // #2009 authority and derived catalogue share the composed store.
     "src/infrastructure/persistence/file/sessions/session_home_catalogue.rs",
     "src/infrastructure/persistence/file/sessions/session_store_home.rs",
-    "src/application/sessions/ports.rs",
+    "src/application/sessions/ports/mod.rs",
     "src/application/sessions/use_cases/list_sessions.rs",
     "src/application/sessions/use_cases/read_history.rs",
     "src/application/sessions/use_cases/resume_saved_session.rs",
@@ -511,8 +511,7 @@ fn ports_and_dtos_are_declared_once_and_capability_local() {
         );
         let owner = declarers.iter().next().unwrap();
         assert!(
-            owner == "src/application/sessions/ports.rs"
-                || owner.starts_with("src/application/sessions/ports/"),
+            owner.starts_with("src/application/sessions/ports/"),
             "port {port} is declared under the capability's ports, not {owner}"
         );
     }
