@@ -652,3 +652,7 @@ mod openai_limits_tests;
 #[cfg(test)]
 #[path = "model_registry_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "model_registry_prices_tests.rs"]
+mod prices_tests;
