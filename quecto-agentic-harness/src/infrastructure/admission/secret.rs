@@ -1,5 +1,5 @@
 //! Operating-system randomness for capability material.
-use crate::application::ports::AdmissionSecretSource;
+use crate::application::admission::ports::inference_authority_ports::AdmissionSecretSource;
 use rand::RngCore;
 
 /// 256 bits of OS randomness rendered as lowercase hex (64 alphanumeric chars).

@@ -32,7 +32,7 @@ use std::time::Duration;
 use super::client::{AuthorityConnection, ClientError, Inner, expect_credential};
 use super::directory::AuthorityDirectory;
 use super::protocol::Op;
-use crate::application::ports::Credential;
+use crate::application::admission::services::inference_authority::Credential;
 use crate::domain::admission::value_objects::inference_admission::WorkloadClass;
 use crate::infrastructure::providers::routing::provider_runtime_admission::AdmissionRuntimeProposal;
 

@@ -8,10 +8,12 @@ use std::time::Duration;
 
 use quecto::application::admission::ports::inference_attempt::{AttemptAdmission, AttemptPermit};
 use quecto::application::admission::services::inference_admission::AdmissionService;
+use quecto::application::admission::services::inference_admission::{
+    AdmissionClient, AdmissionDispatcher, AdmissionRegistry,
+};
 use quecto::application::catalogue::{
     CatalogueSnapshotStore, CatalogueSource, CredentialStatusPort, SourceEntries,
 };
-use quecto::application::ports::{AdmissionClient, AdmissionDispatcher, AdmissionRegistry};
 use quecto::application::provider_runtime::{
     ComposeProviderRuntimeUseCase, CompositionPorts, ProviderRuntimeFactory, RuntimeSnapshotStore,
 };

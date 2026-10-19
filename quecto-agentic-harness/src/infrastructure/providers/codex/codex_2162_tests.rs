@@ -444,7 +444,7 @@ async fn a_responses_reasoning_rides_the_next_request() {
 struct Grant;
 #[derive(Debug)]
 struct Granted;
-impl crate::application::ports::AttemptPermit for Granted {
+impl crate::application::admission::ports::inference_attempt::AttemptPermit for Granted {
     fn feedback(
         &mut self,
         _: crate::domain::admission::value_objects::inference_admission::ThrottleFeedback,
@@ -456,10 +456,15 @@ impl crate::application::ports::AttemptPermit for Granted {
     ) {
     }
 }
-impl crate::application::ports::AttemptAdmission for Grant {
-    fn acquire(&self) -> crate::application::ports::AttemptAcquisition<'_> {
+impl crate::application::admission::ports::inference_attempt::AttemptAdmission for Grant {
+    fn acquire(
+        &self,
+    ) -> crate::application::admission::ports::inference_attempt::AttemptAcquisition<'_> {
         Box::pin(async {
-            Ok(Box::new(Granted) as Box<dyn crate::application::ports::AttemptPermit>)
+            Ok(Box::new(Granted)
+                as Box<
+                    dyn crate::application::admission::ports::inference_attempt::AttemptPermit,
+                >)
         })
     }
 }

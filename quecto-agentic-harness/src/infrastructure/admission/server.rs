@@ -16,7 +16,7 @@ use super::protocol::*;
 use super::secret::RandomSecretSource;
 use super::server_actor::Actor;
 use super::session;
-use crate::application::ports::AdmissionAuthority;
+use crate::application::admission::services::inference_authority::AdmissionAuthority;
 use crate::infrastructure::providers::routing::provider_runtime_admission::AdmissionRuntimeProposal;
 
 pub(super) use super::server_actor::Command;
@@ -60,7 +60,7 @@ pub(super) fn wall_ms() -> u64 {
 
 /// Fresh owner token per start, 0600 in the authority root (never in `client/`).
 fn write_owner_token(dir: &AuthorityDirectory) -> Result<String, ServerError> {
-    use crate::application::ports::AdmissionSecretSource;
+    use crate::application::admission::ports::inference_authority_ports::AdmissionSecretSource;
     use std::io::Write;
     use std::os::unix::fs::OpenOptionsExt;
     let token = RandomSecretSource.mint();

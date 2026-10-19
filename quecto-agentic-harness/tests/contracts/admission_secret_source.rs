@@ -1,6 +1,6 @@
 //! AdmissionSecretSource contract: capability material is opaque, non-empty and
 //! never repeats within an authority.
-use quecto::application::ports::AdmissionSecretSource;
+use quecto::application::admission::ports::inference_authority_ports::AdmissionSecretSource;
 use quecto::infrastructure::admission::RandomSecretSource;
 use std::collections::BTreeSet;
 

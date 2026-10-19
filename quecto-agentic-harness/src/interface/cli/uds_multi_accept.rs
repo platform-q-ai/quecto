@@ -19,7 +19,7 @@ pub(super) struct AcceptLoopArgs {
     pub(super) client_tool_registry: super::uds_ext_protocol::ClientToolRegistry,
     pub(super) session: SessionReadHandles,
     pub(super) state_snapshot: StateSnapshot,
-    pub(super) runtime_store: crate::application::ports::RuntimeSnapshotStore,
+    pub(super) runtime_store: crate::application::provider_runtime::RuntimeSnapshotStore,
     pub(super) execution_state: super::uds_execution_state::ExecutionStateHandle,
     pub(super) session_stats_snapshot: super::uds_snapshots::SessionStatsSnapshot,
     pub(super) tool_catalogue_snapshot: super::uds_extensions::ToolCatalogueSnapshot,

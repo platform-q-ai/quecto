@@ -4,8 +4,11 @@
 
 use super::inference_admission_authority_steps::{LIMIT, group, new_root, rt};
 use super::*;
-use quecto::application::ports::AttemptPermit;
-use quecto::application::ports::{AdmissionObservation, AttemptAdmission};
+use quecto::application::admission::ports::inference_attempt::AttemptPermit;
+use quecto::application::{
+    admission::ports::inference_attempt::AttemptAdmission,
+    admission::ports::inference_observation::AdmissionObservation,
+};
 use quecto::domain::admission::value_objects::inference_admission::{Feedback, GroupId};
 use quecto::infrastructure::admission::AuthorityConnection;
 use quecto::infrastructure::admission::{AdmissionRecorder, ObservedAdmission};

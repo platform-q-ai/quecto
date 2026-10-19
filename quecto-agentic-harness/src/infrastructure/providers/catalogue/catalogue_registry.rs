@@ -17,7 +17,7 @@ use super::model_registry::{
     ModelRegistry, ProviderApi, SkippedProviderBlock, UnsupportedProviderConfig,
     resolve_registry_value,
 };
-use crate::application::ports::{
+use crate::application::catalogue::{
     CatalogueSnapshotStore, CatalogueSource, CredentialStatusPort, SkippedRecord, SourceEntries,
 };
 use crate::domain::catalogue::entities::entry::{
@@ -576,8 +576,10 @@ pub fn snapshot_store_for(base_dir: &Path) -> CatalogueSnapshotStore {
 /// entry point composing or selecting for that directory shares the same
 /// published runtime generation, paired with [`snapshot_store_for`]'s
 /// catalogue store.
-pub fn runtime_store_for(base_dir: &Path) -> crate::application::ports::RuntimeSnapshotStore {
-    use crate::application::ports::RuntimeSnapshotStore;
+pub fn runtime_store_for(
+    base_dir: &Path,
+) -> crate::application::provider_runtime::RuntimeSnapshotStore {
+    use crate::application::provider_runtime::RuntimeSnapshotStore;
     static STORES: OnceLock<Mutex<HashMap<PathBuf, RuntimeSnapshotStore>>> = OnceLock::new();
     let stores = STORES.get_or_init(|| Mutex::new(HashMap::new()));
     let mut stores = stores

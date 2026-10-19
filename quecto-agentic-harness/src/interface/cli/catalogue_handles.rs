@@ -34,7 +34,7 @@ pub struct CatalogueHandles {
     pub reload: Arc<ReloadRuntimeConfiguration>,
     /// The runtime snapshot published by composition; interface readers only
     /// receive this application port and never reach into infrastructure globals.
-    pub runtime_store: crate::application::ports::RuntimeSnapshotStore,
+    pub runtime_store: crate::application::provider_runtime::RuntimeSnapshotStore,
     /// The warnings the run's startup model drew (#2435, #2126): a model
     /// its provider does not list, a refused one, an unconfigured
     /// provider. Startup fills it; `get_state` carries it to clients.

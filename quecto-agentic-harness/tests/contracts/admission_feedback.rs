@@ -1,6 +1,8 @@
 //! #1679 P2 AC5: receipt feedback is distinct from transport completion.
 use quecto::application::admission::services::inference_admission::AdmissionService;
-use quecto::application::ports::{AdmissionClient, AdmissionDispatcher, AdmissionRegistry};
+use quecto::application::admission::services::inference_admission::{
+    AdmissionClient, AdmissionDispatcher, AdmissionRegistry,
+};
 use quecto::domain::admission::value_objects::inference_admission::*;
 use std::collections::BTreeMap;
 

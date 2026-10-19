@@ -11,7 +11,7 @@ use quecto::infrastructure::providers::catalogue::catalogue_inputs::FileCatalogu
 fn under_test(dir: &std::path::Path) -> Arc<dyn CatalogueInputsLoader> {
     Arc::new(FileCatalogueInputs::new(
         dir,
-        Arc::new(quecto::application::ports::RuntimeSnapshotStore::new()),
+        Arc::new(quecto::application::provider_runtime::RuntimeSnapshotStore::new()),
     ))
 }
 
