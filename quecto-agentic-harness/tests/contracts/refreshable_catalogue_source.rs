@@ -5,8 +5,8 @@
 
 use quecto::application::catalogue::dto::RefreshBounds;
 use quecto::application::{
-    catalogue::CatalogueSource, catalogue::ports::RefreshChange, catalogue::ports::RefreshContext,
-    catalogue::ports::RefreshError, catalogue::ports::RefreshableCatalogueSource,
+    catalogue::CatalogueSource,
+    catalogue::ports::{RefreshChange, RefreshContext, RefreshError, RefreshableCatalogueSource},
 };
 use quecto::domain::catalogue::value_objects::precedence::SourceLayer;
 use quecto::infrastructure::providers::catalogue::catalogue_discovery::{

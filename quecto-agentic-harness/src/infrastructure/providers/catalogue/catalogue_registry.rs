@@ -17,9 +17,8 @@ use super::model_registry::{
     ModelRegistry, ProviderApi, SkippedProviderBlock, UnsupportedProviderConfig,
     resolve_registry_value,
 };
-use crate::application::{
-    catalogue::CatalogueSnapshotStore, catalogue::CatalogueSource, catalogue::CredentialStatusPort,
-    catalogue::SkippedRecord, catalogue::SourceEntries,
+use crate::application::catalogue::{
+    CatalogueSnapshotStore, CatalogueSource, CredentialStatusPort, SkippedRecord, SourceEntries,
 };
 use crate::domain::catalogue::entities::entry::{
     CatalogueEntry, ModelDescriptor, ProviderDescriptor,

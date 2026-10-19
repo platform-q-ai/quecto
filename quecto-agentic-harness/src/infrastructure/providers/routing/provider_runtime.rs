@@ -11,8 +11,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::application::{
-    provider_runtime::ProviderRuntimeFactory, provider_runtime::dto::AdmissionBindingDiagnostic,
-    provider_runtime::dto::ProviderRuntimeOutcome,
+    provider_runtime::ProviderRuntimeFactory,
+    provider_runtime::dto::{AdmissionBindingDiagnostic, ProviderRuntimeOutcome},
 };
 use crate::infrastructure::auth::refresh_wiring::RefreshFn;
 use crate::infrastructure::providers::routing::refreshable::ProviderFactory;

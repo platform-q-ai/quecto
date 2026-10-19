@@ -12,10 +12,8 @@ use tokio::sync::Notify;
 use super::client::{ClientError, Inner};
 use super::link::AuthorityLink;
 use super::protocol::{Body, Op};
-use crate::application::{
-    admission::ports::inference_attempt::AttemptAcquisition,
-    admission::ports::inference_attempt::AttemptAdmission,
-    admission::ports::inference_attempt::AttemptPermit,
+use crate::application::admission::ports::inference_attempt::{
+    AttemptAcquisition, AttemptAdmission, AttemptPermit,
 };
 use crate::domain::admission::value_objects::inference_admission::{Feedback, ThrottleFeedback};
 use crate::domain::shared::error::DomainError;

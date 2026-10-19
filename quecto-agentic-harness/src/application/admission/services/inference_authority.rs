@@ -5,15 +5,11 @@
 //! after the release is durable. Failure of either path fails closed.
 use std::collections::BTreeMap;
 
-use crate::application::admission::services::inference_admission::AdmissionService;
-use crate::application::{
-    admission::ports::inference_authority_ports::AdmissionJournal,
-    admission::ports::inference_authority_ports::AdmissionSecretSource,
-    admission::ports::inference_authority_ports::JournalError,
-    admission::services::inference_admission::AdmissionClient,
-    admission::services::inference_admission::AdmissionDispatcher,
-    admission::services::inference_admission::AdmissionRecovery,
-    admission::services::inference_admission::AdmissionRegistry,
+use crate::application::admission::ports::inference_authority_ports::{
+    AdmissionJournal, AdmissionSecretSource, JournalError,
+};
+use crate::application::admission::services::inference_admission::{
+    AdmissionClient, AdmissionDispatcher, AdmissionRecovery, AdmissionRegistry, AdmissionService,
 };
 use crate::domain::admission::value_objects::inference_admission::*;
 

@@ -5,10 +5,8 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::application::{
-    admission::services::inference_authority::AuthorityError,
-    admission::services::inference_authority::AuthorityStatus,
-    admission::services::inference_authority::Credential,
+use crate::application::admission::services::inference_authority::{
+    AuthorityError, AuthorityStatus, Credential,
 };
 use crate::domain::admission::value_objects::inference_admission::*;
 use crate::infrastructure::providers::routing::provider_runtime_admission::AdmissionRuntimeProposal;
