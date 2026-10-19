@@ -26,6 +26,7 @@ use crate::application::configuration::dto::{
 use crate::application::configuration::ports::{
     ConfigDocumentStore, ConfigValidator, OverlayDocument, OverlayTrust, OverlayTrustStore,
 };
+use crate::application::configuration::services::document_parse::parse_document;
 use crate::application::configuration::services::overlay_policy::{
     global_only_key, looks_like_config, merge_overlay,
 };
@@ -446,11 +447,10 @@ impl ResolveEffectiveConfig {
         path: &Path,
         bytes: &[u8],
     ) -> Result<Map<String, Value>, EffectiveConfigError> {
-        let value: Value =
-            serde_json::from_slice(bytes).map_err(|error| EffectiveConfigError::Parse {
-                path: path.to_path_buf(),
-                reason: error.to_string(),
-            })?;
+        let value: Value = parse_document(bytes).map_err(|reason| EffectiveConfigError::Parse {
+            path: path.to_path_buf(),
+            reason,
+        })?;
         if !value.is_object() {
             return Err(EffectiveConfigError::NotAnObject(path.to_path_buf()));
         }

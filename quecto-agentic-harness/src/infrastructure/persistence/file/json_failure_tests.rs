@@ -97,3 +97,23 @@ fn malformed_and_truncated_text_is_placed_by_line_and_column() {
         "malformed JSON at line 1 column 26"
     );
 }
+
+/// One wording for a malformed document (#2617 review): the configuration
+/// readers' describer and this helper say the same.
+#[test]
+fn the_configuration_readers_word_a_malformed_document_the_same() {
+    use crate::application::configuration::services::document_parse::parse_document;
+    for text in [
+        "{ nope",
+        "{\"a\": ",
+        "[1, 2",
+        "{\"a\": 1} trailing",
+        "\"unterminated",
+    ] {
+        assert_eq!(
+            parse_document(text.as_bytes()).unwrap_err(),
+            describe(&serde_json::from_str::<serde_json::Value>(text).unwrap_err()),
+            "{text}"
+        );
+    }
+}
