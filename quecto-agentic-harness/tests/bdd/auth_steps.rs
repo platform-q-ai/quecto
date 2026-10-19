@@ -138,44 +138,40 @@ fn then_credential_file_should_be_unchanged(world: &mut QuectoWorld) {
     );
 }
 
-#[when("I check auth status")]
-fn when_check_auth_status(world: &mut QuectoWorld) {
+/// Composition's auth handles over the world's credential store's base
+/// directory.
+fn composed_auth_handles(world: &QuectoWorld) -> quecto::interface::cli::auth::AuthHandles {
     let store = world
         .credential_store
         .as_ref()
         .expect("credential store not set");
-    // Through the composed `auth status` use case over the store's base
-    // directory, as `quecto auth status` runs it.
     let base = store
         .path()
         .parent()
         .expect("credentials path has a parent")
         .to_path_buf();
-    let handles = quecto::composition::bootstrap::auth::build_auth_handles(
+    quecto::composition::bootstrap::auth::build_auth_handles(
         &quecto::interface::cli::auth::AuthEnvironment {
             base_dir: base,
             oauth_base_url: None,
         },
-    );
+    )
+}
+
+#[when("I check auth status")]
+fn when_check_auth_status(world: &mut QuectoWorld) {
+    // Through the composed `auth status` use case over the store's base
+    // directory, as `quecto auth status` runs it.
+    let handles = composed_auth_handles(world);
     world.auth_status = Some(handles.status.execute().unwrap());
 }
 
 #[when(expr = "I remove the credential for {string}")]
 fn when_remove_credential(world: &mut QuectoWorld, provider: String) {
-    let store = world
-        .credential_store
-        .as_ref()
-        .expect("credential store not set");
-    store.remove(&provider).unwrap();
-}
-
-#[when("I remove all credentials")]
-fn when_remove_all_credentials(world: &mut QuectoWorld) {
-    let store = world
-        .credential_store
-        .as_ref()
-        .expect("credential store not set");
-    store.remove_all().unwrap();
+    // Through the composed `auth logout` use case over the store's base
+    // directory, as `quecto auth logout` runs it.
+    let handles = composed_auth_handles(world);
+    handles.logout.execute(&provider).unwrap();
 }
 
 #[then(expr = "the credential for {string} should exist")]

@@ -23,6 +23,10 @@ impl CredentialStorePort for FakeStore {
     fn list(&self) -> Result<Vec<Credential>, CredentialStoreError> {
         Ok(self.stored.lock().unwrap().clone())
     }
+
+    fn remove(&self, _provider: &str) -> Result<bool, CredentialStoreError> {
+        unreachable!("a token login removes nothing")
+    }
 }
 
 fn login(store: &Arc<FakeStore>) -> LogInWithToken {

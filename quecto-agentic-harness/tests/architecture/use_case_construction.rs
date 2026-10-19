@@ -131,6 +131,7 @@ const USE_CASES: &[&str] = &[
     "ReleaseFiles",
     "ReleaseTask",
     "ReleaseUnlaunchedMember",
+    "RemoveStoredCredentials",
     "ReloadRuntimeConfiguration",
     "ReserveFiles",
     "ResetAuthority",

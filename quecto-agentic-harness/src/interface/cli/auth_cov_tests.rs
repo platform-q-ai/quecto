@@ -312,7 +312,13 @@ fn test_logout_remove_failure() {
     let ctx = corrupt_store_ctx(&tmp);
     let out = run_with_output(args("auth logout --provider openai"), &ctx);
     assert_eq!(out.exit_code, 1);
-    assert!(out.stderr.contains("failed to remove credential"));
+    assert!(
+        out.stderr.starts_with(
+            "auth logout: failed to remove credential: config error: failed to parse credentials"
+        ),
+        "{}",
+        out.stderr
+    );
 }
 
 #[test]
@@ -321,6 +327,7 @@ fn test_logout_positional_arg_ignored() {
     let tmp = tempfile::TempDir::new().unwrap();
     let ctx = CliContext {
         base_dir: Some(tmp.path().to_path_buf()),
+        auth: Some(crate::composition::bootstrap::auth::build_auth_handles),
         ..Default::default()
     };
     let out = run_with_output(args("auth logout extra --provider openai"), &ctx);
