@@ -1,6 +1,33 @@
 use super::*;
 use crate::application::agent_turn::agent_loop::agent_loop_stream::ends_turn_empty;
 use crate::application::providers::ports::ChatRequest;
+use crate::domain::inference::services::terminal_guidance::{
+    AttemptFacts, Output, Response, explain_terminal_failure,
+};
+
+/// What a failed request did, from its trace (#2459): the attempts made,
+/// whether output streamed, and whether any attempt got a response — an
+/// HTTP status recorded, or output, which only a response carries.
+fn attempt_facts(
+    trace: &crate::domain::inference::events::request_observation::RequestTrace,
+    emitted_event: bool,
+) -> AttemptFacts {
+    let output = Output::from_emitted(emitted_event);
+    let diagnostics = trace.attempt_diagnostics();
+    let response = match (output, diagnostics.is_empty()) {
+        (Output::Shown, _) => Response::Received,
+        (Output::NotShown, true) => Response::Unknown,
+        (Output::NotShown, false) if diagnostics.iter().any(|d| d.wire_status.is_some()) => {
+            Response::Received
+        }
+        (Output::NotShown, false) => Response::NotReceived,
+    };
+    AttemptFacts {
+        attempts: trace.attempts(),
+        output,
+        response,
+    }
+}
 
 impl AgentLoopImpl {
     /// Send a chat request using incremental streaming.
@@ -172,8 +199,11 @@ impl AgentLoopImpl {
                 error,
                 emitted_event,
             })?;
+        // The guidance says what the request did (#2459): its attempts,
+        // whether output streamed, and whether any attempt was answered.
+        let facts = attempt_facts(&observation.trace(), emitted_event);
         result.map_err(|error| StreamProviderError {
-            error,
+            error: explain_terminal_failure(error, facts),
             emitted_event,
         })
     }
@@ -196,9 +226,11 @@ impl AgentLoopImpl {
             if let Some(trace) = &request.trace {
                 trace.start();
             }
-            return self.provider.chat(request).await.map_err(|error| {
-                StreamProviderError::before_output(enhance_provider_error(error))
-            });
+            return self
+                .provider
+                .chat(request)
+                .await
+                .map_err(StreamProviderError::before_output);
         }
 
         // Streaming initiation *is* retried here: the decorator forwards
@@ -230,7 +262,7 @@ impl AgentLoopImpl {
                     // Replaying after emitted content would corrupt output;
                     // the turn is told output was shown (#2155).
                     return Err(StreamProviderError {
-                        error: enhance_provider_error(stream_error.error),
+                        error: stream_error.error,
                         emitted_event: true,
                     });
                 }
@@ -249,9 +281,7 @@ impl AgentLoopImpl {
                         || !class.is_retryable()
                         || !capped.allows_another(&class)
                     {
-                        return Err(StreamProviderError::before_output(enhance_provider_error(
-                            err,
-                        )));
+                        return Err(StreamProviderError::before_output(err));
                     }
                     tracing::warn!(
                         target: "provider_retry",
@@ -269,9 +299,7 @@ impl AgentLoopImpl {
                             std::time::Duration::from_secs(30),
                         )
                     else {
-                        return Err(StreamProviderError::before_output(enhance_provider_error(
-                            err,
-                        )));
+                        return Err(StreamProviderError::before_output(err));
                     };
                     tokio::time::sleep(delay).await;
                 }
@@ -283,3 +311,8 @@ impl AgentLoopImpl {
         )))
     }
 }
+
+// #2459, #2531: truthful terminal guidance; the Codex 507 is retried.
+#[cfg(test)]
+#[path = "agent_loop_2459_tests.rs"]
+mod terminal_guidance_tests;

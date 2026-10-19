@@ -2,6 +2,7 @@ use super::agent_loop_turn::*;
 use crate::domain::conversation::services::reply_requirement::ReplyRequirement;
 use crate::domain::conversation::value_objects::message::{LlmResponse, ToolCall};
 use crate::domain::inference::services::provider_error::ProviderErrorClass;
+use crate::domain::inference::services::terminal_guidance::Output;
 use crate::domain::shared::error::DomainError;
 
 fn next_state_after_provider_failure(

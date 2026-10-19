@@ -187,6 +187,13 @@ pub fn classify_provider_error(err: &DomainError) -> ProviderErrorClass {
         if class == ProviderErrorClass::Auth && is_transient_chat_endpoint_denial(&lowered) {
             return ProviderErrorClass::Server;
         }
+        // #2531: Codex answers a 507 when its own upstream retry ran out of
+        // request buffer: a capacity failure on the provider's side that
+        // succeeds on retry, so retryable `Server`. Narrow to the phrase,
+        // like the xAI denial above: any other 507 stays `Unknown`.
+        if status == 507 && is_upstream_retry_buffer_limit(&lowered) {
+            return ProviderErrorClass::Server;
+        }
         return class;
     }
 
@@ -397,6 +404,12 @@ fn json_field_is(lowered: &str, field: &str, value: &str) -> bool {
 /// (already lowercased) to avoid catching genuine permission failures.
 fn is_transient_chat_endpoint_denial(lowered: &str) -> bool {
     lowered.contains("access to the chat endpoint is denied")
+}
+
+/// Recognise Codex's HTTP 507 body "exceeded request buffer limit while
+/// retrying upstream" (#2531), already lowercased.
+fn is_upstream_retry_buffer_limit(lowered: &str) -> bool {
+    lowered.contains("exceeded request buffer limit while retrying upstream")
 }
 
 /// Errors raised by the inference-admission gate (#2024 S3) before any

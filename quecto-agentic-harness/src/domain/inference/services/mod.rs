@@ -2,6 +2,7 @@ pub mod context_calibration;
 pub mod output_limit;
 pub mod provider_error;
 pub mod provider_retry;
+pub mod terminal_guidance;
 pub mod usage_accounting;
 
 #[cfg(test)]

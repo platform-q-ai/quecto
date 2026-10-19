@@ -544,3 +544,28 @@ fn http_402_is_billing() {
         );
     }
 }
+
+/// #2531: Codex's 507 for an exhausted upstream retry buffer is a provider
+/// capacity failure: retryable `Server`. Any other 507 stays `Unknown`.
+#[test]
+fn codex_507_upstream_retry_buffer_limit_is_retryable_server() {
+    let err = DomainError::Provider(
+        "HTTP 507 from Codex: exceeded request buffer limit while retrying upstream".to_string(),
+    );
+    let class = classify_provider_error(&err);
+    assert_eq!(class, ProviderErrorClass::Server);
+    assert!(class.is_retryable());
+    assert_eq!(provider_http_status(&err), Some(507));
+    for other in [
+        "HTTP 507 from Codex: insufficient storage",
+        "HTTP 500 from Codex: exceeded request buffer limit while retrying upstream x",
+    ] {
+        let class = classify_provider_error(&DomainError::Provider(other.into()));
+        let expected = if other.starts_with("HTTP 507") {
+            ProviderErrorClass::Unknown
+        } else {
+            ProviderErrorClass::Server
+        };
+        assert_eq!(class, expected, "{other}");
+    }
+}

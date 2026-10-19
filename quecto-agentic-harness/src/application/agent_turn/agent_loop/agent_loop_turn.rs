@@ -1,9 +1,11 @@
-use super::is_context_or_output_limit_error;
 use crate::application::agent_turn::agent_loop::agent_loop_stream::ends_turn_empty;
 use crate::domain::conversation::services::reply_requirement::ReplyRequirement;
 use crate::domain::conversation::value_objects::message::LlmResponse;
 use crate::domain::inference::services::provider_error::{
     ProviderErrorClass, classify_provider_error, model_refusal, provider_http_status,
+};
+use crate::domain::inference::services::terminal_guidance::{
+    Output, is_context_or_output_limit_error,
 };
 use crate::domain::shared::error::DomainError;
 
@@ -51,26 +53,6 @@ pub(super) fn classify_provider_response(
         ProviderResponseTransition::FinalAssistantResponse
     } else {
         ProviderResponseTransition::ToolCallContinuation
-    }
-}
-
-/// Whether a failed request had already shown output to the user (#2155).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum Output {
-    /// Nothing reached the user: the request may be sent again.
-    NotShown,
-    /// Text, thinking or a tool call already streamed: sending the request
-    /// again would show a second reply after the first one's fragment.
-    Shown,
-}
-
-impl Output {
-    /// The output state of a stream that did (`true`) or did not emit events.
-    pub(super) fn from_emitted(emitted_event: bool) -> Self {
-        match emitted_event {
-            true => Self::Shown,
-            false => Self::NotShown,
-        }
     }
 }
 
