@@ -3,6 +3,12 @@
 //! Every client operation carries a capability issued here. Grants become
 //! visible only after the ledger is durable; completions are acknowledged only
 //! after the release is durable. Failure of either path fails closed.
+//!
+//! The durability sequences (dispatch, completion, epoch reset, checkpoint)
+//! are the admission use cases' (#1910): they hold the journal port and drive
+//! the raw operations here, which are visible only inside the capability. The
+//! authority is the single owner of the journal-health flag; only those use
+//! cases set it.
 use std::collections::BTreeMap;
 
 use crate::application::admission::dto::broker::{AuthorityError, AuthorityStatus, Credential};
@@ -10,7 +16,7 @@ use crate::application::admission::ports::inference_admission::{
     AdmissionClient, AdmissionDispatcher, AdmissionRecovery, AdmissionRegistry,
 };
 use crate::application::admission::ports::inference_authority_ports::{
-    AdmissionJournal, AdmissionSecretSource, JournalError,
+    AdmissionSecretSource, JournalError,
 };
 use crate::application::admission::services::inference_admission::AdmissionService;
 use crate::domain::admission::value_objects::inference_admission::*;
@@ -31,16 +37,17 @@ struct Issued {
 }
 
 #[derive(Debug)]
-pub struct AdmissionAuthority<J, S> {
+pub struct AdmissionAuthority<S> {
     service: AdmissionService,
-    journal: J,
     secrets: S,
     issued: BTreeMap<ScopeId, Issued>,
     groups: Vec<GroupId>,
     journal_healthy: bool,
 }
 
-fn constant_time_eq(a: &str, b: &str) -> bool {
+/// Compare two capability secrets without an early exit on the first
+/// difference.
+pub fn constant_time_eq(a: &str, b: &str) -> bool {
     let (a, b) = (a.as_bytes(), b.as_bytes());
     let mut diff = a.len() ^ b.len();
     for (x, y) in a.iter().zip(b.iter()) {
@@ -49,17 +56,11 @@ fn constant_time_eq(a: &str, b: &str) -> bool {
     diff == 0
 }
 
-impl<J: AdmissionJournal, S: AdmissionSecretSource> AdmissionAuthority<J, S> {
-    pub fn new(
-        epoch: u64,
-        config: AdmissionConfig,
-        journal: J,
-        secrets: S,
-    ) -> Result<Self, AuthorityError> {
+impl<S: AdmissionSecretSource> AdmissionAuthority<S> {
+    pub fn new(epoch: u64, config: AdmissionConfig, secrets: S) -> Result<Self, AuthorityError> {
         let groups = config.groups.keys().cloned().collect();
         Ok(Self::compose(
             AdmissionService::new(epoch, config)?,
-            journal,
             secrets,
             groups,
         ))
@@ -69,23 +70,20 @@ impl<J: AdmissionJournal, S: AdmissionSecretSource> AdmissionAuthority<J, S> {
     pub fn restore(
         config: AdmissionConfig,
         ledger: &AdmissionLedger,
-        journal: J,
         secrets: S,
         now: u64,
     ) -> Result<Self, AuthorityError> {
         let groups = config.groups.keys().cloned().collect();
         Ok(Self::compose(
             AdmissionService::restore(config, ledger, now)?,
-            journal,
             secrets,
             groups,
         ))
     }
 
-    fn compose(service: AdmissionService, journal: J, secrets: S, groups: Vec<GroupId>) -> Self {
+    fn compose(service: AdmissionService, secrets: S, groups: Vec<GroupId>) -> Self {
         Self {
             service,
-            journal,
             secrets,
             issued: BTreeMap::new(),
             groups,
@@ -118,23 +116,17 @@ impl<J: AdmissionJournal, S: AdmissionSecretSource> AdmissionAuthority<J, S> {
         self.journal_healthy
     }
 
-    /// Persist the current ledger (initial checkpoint or operator probe).
-    pub fn checkpoint(&mut self, now: u64) -> Result<(), AuthorityError> {
-        self.persist(now)
+    /// The journal's last outcome, recorded by the use case that wrote it.
+    pub(in crate::application::admission) fn record_journal(&mut self, healthy: bool) {
+        self.journal_healthy = healthy;
     }
 
-    fn persist(&mut self, now: u64) -> Result<(), AuthorityError> {
-        let ledger = self.service.ledger(now)?;
-        match self.journal.persist(&ledger) {
-            Ok(()) => {
-                self.journal_healthy = true;
-                Ok(())
-            }
-            Err(_) => {
-                self.journal_healthy = false;
-                Err(AuthorityError::JournalUnavailable)
-            }
-        }
+    /// The current ledger, for a use case to make durable.
+    pub(in crate::application::admission) fn ledger(
+        &mut self,
+        now: u64,
+    ) -> Result<AdmissionLedger, AuthorityError> {
+        Ok(self.service.ledger(now)?)
     }
 
     pub fn register_root(
@@ -193,15 +185,13 @@ impl<J: AdmissionJournal, S: AdmissionSecretSource> AdmissionAuthority<J, S> {
             .enqueue(credential.scope, sequence, alias, now)?)
     }
 
-    /// Dispatch every grant the policy allows, making each durable first. On a
-    /// journal failure the undelivered grants are withdrawn and no grant is
-    /// returned until a later durable write succeeds. While the journal is
-    /// known unhealthy a probe write precedes any selection, so queued work is
-    /// held rather than withdrawn one grant at a time.
-    pub fn pump(&mut self, now: u64) -> Result<Vec<RequestId>, AuthorityError> {
-        if !self.journal_healthy {
-            self.persist(now)?;
-        }
+    /// Select every grant the policy allows, not yet durable; the dispatch
+    /// use case makes them durable or withdraws them. The first policy error
+    /// is returned beside whatever was selected before it.
+    pub(in crate::application::admission) fn select_grants(
+        &mut self,
+        now: u64,
+    ) -> (Vec<RequestId>, Option<AdmissionError>) {
         let mut grants = Vec::new();
         let mut first_error = None;
         for group in self.groups.clone() {
@@ -216,19 +206,19 @@ impl<J: AdmissionJournal, S: AdmissionSecretSource> AdmissionAuthority<J, S> {
                 }
             }
         }
-        if grants.is_empty() {
-            return match first_error {
-                Some(error) => Err(error.into()),
-                None => Ok(grants),
-            };
+        (grants, first_error)
+    }
+
+    /// Withdraw grants that could not be made durable.
+    pub(in crate::application::admission) fn withdraw_grants(
+        &mut self,
+        grants: &[RequestId],
+        now: u64,
+    ) -> Result<(), AuthorityError> {
+        for id in grants {
+            self.service.withdraw(id.scope, id.sequence, now)?;
         }
-        if self.persist(now).is_err() {
-            for id in &grants {
-                self.service.withdraw(id.scope, id.sequence, now)?;
-            }
-            return Err(AuthorityError::JournalUnavailable);
-        }
-        Ok(grants)
+        Ok(())
     }
 
     pub fn cancel(
@@ -255,9 +245,9 @@ impl<J: AdmissionJournal, S: AdmissionSecretSource> AdmissionAuthority<J, S> {
             .report_feedback(credential.scope, sequence, report, feedback, now)?)
     }
 
-    /// The release is durable before it is acknowledged; a failed write leaves
-    /// the in-memory release but reports the failure so the client retries.
-    pub fn complete(
+    /// Release a finished attempt in memory; the completion use case makes it
+    /// durable before it is acknowledged.
+    pub(in crate::application::admission) fn complete_unpersisted(
         &mut self,
         credential: &Credential,
         sequence: u64,
@@ -265,11 +255,9 @@ impl<J: AdmissionJournal, S: AdmissionSecretSource> AdmissionAuthority<J, S> {
         now: u64,
     ) -> Result<RequestState, AuthorityError> {
         self.authenticate(credential)?;
-        let state = self
+        Ok(self
             .service
-            .complete(credential.scope, sequence, feedback, now)?;
-        self.persist(now)?;
-        Ok(state)
+            .complete(credential.scope, sequence, feedback, now)?)
     }
 
     pub fn status(
@@ -376,8 +364,11 @@ impl<J: AdmissionJournal, S: AdmissionSecretSource> AdmissionAuthority<J, S> {
         }
     }
 
-    /// Operator reset: durable successor epoch, every capability revoked.
-    pub fn reset(&mut self, now: u64) -> Result<u64, AuthorityError> {
+    /// The successor epoch's ledger an operator reset makes durable first.
+    pub(in crate::application::admission) fn successor_ledger(
+        &mut self,
+        now: u64,
+    ) -> Result<AdmissionLedger, AuthorityError> {
         let probe = self.service.ledger(now)?;
         let mut successor = probe.clone();
         successor.epoch = probe
@@ -385,13 +376,18 @@ impl<J: AdmissionJournal, S: AdmissionSecretSource> AdmissionAuthority<J, S> {
             .checked_add(1)
             .ok_or(AuthorityError::Admission(AdmissionError::ScopeLimit))?;
         successor.outstanding.clear();
-        if self.journal.persist(&successor).is_err() {
-            self.journal_healthy = false;
-            return Err(AuthorityError::JournalUnavailable);
-        }
-        self.journal_healthy = true;
+        Ok(successor)
+    }
+
+    /// Adopt the successor epoch once it is durable: every capability is
+    /// revoked.
+    pub(in crate::application::admission) fn adopt_successor(
+        &mut self,
+        durable_epoch: u64,
+        now: u64,
+    ) -> Result<u64, AuthorityError> {
         let epoch = self.service.reset(now)?;
-        debug_assert_eq!(epoch, successor.epoch, "durable epoch matches policy");
+        debug_assert_eq!(epoch, durable_epoch, "durable epoch matches policy");
         self.issued.clear();
         Ok(epoch)
     }

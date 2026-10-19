@@ -7,12 +7,13 @@ use std::time::{Duration, Instant};
 
 use tokio::sync::{mpsc, oneshot, watch};
 
-use super::journal::FileJournal;
 use super::protocol::*;
 use super::secret::RandomSecretSource;
-use super::server::{Clock, wall_ms};
+use super::server::{AuthorityUseCases, Clock, wall_ms};
 use crate::application::admission::dto::broker::{AuthorityError, Credential};
-use crate::application::admission::services::inference_authority::AdmissionAuthority;
+use crate::application::admission::services::inference_authority::{
+    AdmissionAuthority, constant_time_eq,
+};
 use crate::domain::admission::value_objects::inference_admission::{
     RequestId, RequestState, ScopeId, TerminalOutcome,
 };
@@ -40,10 +41,11 @@ struct Session {
     notices: mpsc::UnboundedSender<Reply>,
 }
 
-type Authority = AdmissionAuthority<FileJournal, RandomSecretSource>;
+type Authority = AdmissionAuthority<RandomSecretSource>;
 
 pub(super) struct Actor {
     authority: Authority,
+    use_cases: AuthorityUseCases,
     clock: Clock,
     proposal: ProposalWire,
     owner_token: String,
@@ -63,12 +65,14 @@ fn far_future() -> Instant {
 impl Actor {
     pub(super) fn new(
         authority: Authority,
+        use_cases: AuthorityUseCases,
         clock: Clock,
         proposal: ProposalWire,
         owner_token: String,
     ) -> Self {
         Self {
             authority,
+            use_cases,
             clock,
             proposal,
             owner_token,
@@ -282,7 +286,10 @@ impl Actor {
     }
 
     fn reset(&mut self, now: u64) -> Result<Body, AuthorityError> {
-        let epoch = self.authority.reset(now)?;
+        let epoch = self
+            .use_cases
+            .advance_epoch
+            .execute(&mut self.authority, now)?;
         self.bound.clear();
         for state in self.sessions.values_mut() {
             if state.credential.take().is_some() {
@@ -343,8 +350,15 @@ impl Actor {
                 .feedback(credential, *sequence, *report, (*feedback).into(), now)
                 .map(|()| Body::Ok),
             Op::Complete { sequence, feedback } => self
-                .authority
-                .complete(credential, *sequence, (*feedback).into(), now)
+                .use_cases
+                .complete
+                .execute(
+                    &mut self.authority,
+                    credential,
+                    *sequence,
+                    (*feedback).into(),
+                    now,
+                )
                 .map(|state| Body::State {
                     state: state.into(),
                 }),
@@ -395,7 +409,7 @@ impl Actor {
     /// Dispatch, answer waiters, emit cancellation notices, compute the wake.
     fn settle(&mut self) -> Instant {
         let now = self.clock.now_ms();
-        match self.authority.pump(now) {
+        match self.use_cases.dispatch.execute(&mut self.authority, now) {
             Err(AuthorityError::Admission(_)) | Ok(_) => {
                 if self.last_dispatch_failure.take().is_some() {
                     tracing::info!("admission dispatch recovered");
@@ -478,13 +492,4 @@ fn grant_or_terminal(state: RequestState, now: u64) -> Body {
             state: state.into(),
         },
     }
-}
-
-fn constant_time_eq(a: &str, b: &str) -> bool {
-    let (a, b) = (a.as_bytes(), b.as_bytes());
-    let mut diff = a.len() ^ b.len();
-    for (x, y) in a.iter().zip(b.iter()) {
-        diff |= usize::from(x ^ y);
-    }
-    diff == 0
 }

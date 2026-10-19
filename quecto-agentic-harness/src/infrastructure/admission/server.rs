@@ -17,9 +17,28 @@ use super::secret::RandomSecretSource;
 use super::server_actor::Actor;
 use super::session;
 use crate::application::admission::services::inference_authority::AdmissionAuthority;
+use crate::application::admission::use_cases::{
+    AdvanceAuthorityEpoch, CheckpointLedger, CompleteAdmission, DispatchAdmissions,
+};
 use crate::infrastructure::providers::routing::provider_runtime_admission::AdmissionRuntimeProposal;
 
 pub(super) use super::server_actor::Command;
+
+/// The authority's durability use cases (#1910), built by composition over
+/// the one journal of the directory this server serves; the actor invokes
+/// them and never constructs one.
+pub struct AuthorityUseCases {
+    pub dispatch: DispatchAdmissions,
+    pub complete: CompleteAdmission,
+    pub advance_epoch: AdvanceAuthorityEpoch,
+    pub checkpoint: CheckpointLedger,
+}
+
+/// Composition's builder of [`AuthorityUseCases`] over a directory's journal.
+/// The server calls it for the directory it serves, once it holds that
+/// directory's singleton lock, so the use cases can never write another
+/// broker's journal.
+pub type AuthorityUseCaseBuilder = fn(&AuthorityDirectory) -> AuthorityUseCases;
 
 #[derive(Debug)]
 pub enum ServerError {
@@ -105,8 +124,9 @@ impl AuthorityServer {
     pub(crate) async fn start(
         dir: AuthorityDirectory,
         proposal: AdmissionRuntimeProposal,
+        build_use_cases: AuthorityUseCaseBuilder,
     ) -> Result<Self, ServerError> {
-        Self::start_with(dir, proposal, false, FRAME_DEADLINE).await
+        Self::start_with(dir, proposal, build_use_cases, false, FRAME_DEADLINE).await
     }
 
     /// Start with a framing deadline other than [`FRAME_DEADLINE`]: the
@@ -115,9 +135,10 @@ impl AuthorityServer {
     pub(crate) async fn start_with_frame_deadline(
         dir: AuthorityDirectory,
         proposal: AdmissionRuntimeProposal,
+        build_use_cases: AuthorityUseCaseBuilder,
         frame_deadline: Duration,
     ) -> Result<Self, ServerError> {
-        Self::start_with(dir, proposal, false, frame_deadline).await
+        Self::start_with(dir, proposal, build_use_cases, false, frame_deadline).await
     }
 
     /// Operator acknowledgement that a ledger missing after prior operation
@@ -126,13 +147,15 @@ impl AuthorityServer {
     pub(crate) async fn start_accepting_missing_ledger(
         dir: AuthorityDirectory,
         proposal: AdmissionRuntimeProposal,
+        build_use_cases: AuthorityUseCaseBuilder,
     ) -> Result<Self, ServerError> {
-        Self::start_with(dir, proposal, true, FRAME_DEADLINE).await
+        Self::start_with(dir, proposal, build_use_cases, true, FRAME_DEADLINE).await
     }
 
     async fn start_with(
         dir: AuthorityDirectory,
         proposal: AdmissionRuntimeProposal,
+        build_use_cases: AuthorityUseCaseBuilder,
         accept_missing_ledger: bool,
         frame_deadline: Duration,
     ) -> Result<Self, ServerError> {
@@ -167,7 +190,6 @@ impl AuthorityServer {
         let clock = Clock {
             start: Instant::now(),
         };
-        let journal = FileJournal::new(&dir);
         let ledger = FileJournal::load(&dir).map_err(|e| ServerError::Journal(format!("{e:?}")))?;
         if ledger.is_none() && previously_operated && !accept_missing_ledger {
             return Err(ServerError::Journal(format!(
@@ -179,26 +201,25 @@ impl AuthorityServer {
             Some(ledger) => AdmissionAuthority::restore(
                 proposal.policy.clone(),
                 &ledger,
-                journal,
                 RandomSecretSource,
                 clock.now_ms(),
             ),
-            None => {
-                AdmissionAuthority::new(1, proposal.policy.clone(), journal, RandomSecretSource)
-            }
+            None => AdmissionAuthority::new(1, proposal.policy.clone(), RandomSecretSource),
         }
         .map_err(|e| ServerError::Journal(format!("ledger incompatible with policy: {e:?}")))?;
+        let use_cases = build_use_cases(&dir);
         // A ledger exists from the first start onward, so "missing" is never
         // ambiguous again.
-        authority
-            .checkpoint(clock.now_ms())
+        use_cases
+            .checkpoint
+            .execute(&mut authority, clock.now_ms())
             .map_err(|e| ServerError::Journal(format!("initial ledger not durable: {e:?}")))?;
         let owner_token = write_owner_token(&dir)?;
         let client_listener = bind_private(&dir.client_socket())?;
         let admin_listener = bind_private(&dir.admin_socket())?;
         let (tx, rx) = mpsc::unbounded_channel();
         let (shutdown, shutdown_rx) = watch::channel(false);
-        let actor = Actor::new(authority, clock, proposal_wire, owner_token);
+        let actor = Actor::new(authority, use_cases, clock, proposal_wire, owner_token);
         let tasks = vec![
             tokio::spawn(actor.run(rx, shutdown_rx.clone())),
             tokio::spawn(accept_loop(

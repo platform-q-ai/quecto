@@ -26,4 +26,4 @@ pub use process::{
 };
 pub use remote_gate::RemoteAdmission;
 pub use secret::RandomSecretSource;
-pub use server::{AuthorityServer, ServerError};
+pub use server::{AuthorityServer, AuthorityUseCaseBuilder, AuthorityUseCases, ServerError};
