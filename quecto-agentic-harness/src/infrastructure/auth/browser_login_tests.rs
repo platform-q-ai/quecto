@@ -39,14 +39,17 @@ fn a_process_that_cannot_start_a_thread_cannot_wait_or_exchange() {
 #[tokio::test]
 async fn a_call_from_inside_a_runtime_is_unavailable_not_a_panic() {
     let login = OAuthBrowserLogin::new(OAuthEndpoints::new(Some("http://127.0.0.1:1".to_string())));
-    let inside = "called from inside an async runtime".to_string();
     assert_eq!(
         login.receive(LoginProvider::Xai, "fake-state"),
-        Err(AuthorizationCallbackError::Unavailable(inside.clone()))
+        Err(AuthorizationCallbackError::InsideAsyncRuntime)
+    );
+    assert_eq!(
+        login.receive(LoginProvider::OpenAi, "fake-state"),
+        Err(AuthorizationCallbackError::InsideAsyncRuntime)
     );
     assert_eq!(
         login.exchange_code(LoginProvider::OpenAi, "fake-code", "fake-verifier"),
-        Err(TokenExchangeError::Unavailable(inside))
+        Err(TokenExchangeError::InsideAsyncRuntime)
     );
 }
 
@@ -59,4 +62,27 @@ fn starting_an_authorization_needs_no_runtime() {
             .authorization_url
             .starts_with("http://127.0.0.1:1/authorize?")
     );
+}
+
+#[test]
+fn openais_listener_and_shown_address_come_from_its_redirect_uri() {
+    // One source (#2591 review): the registered redirect URI.
+    let pending = OAuthBrowserLogin::new(OAuthEndpoints::new(None))
+        .begin(LoginProvider::OpenAi)
+        .unwrap();
+    assert_eq!(
+        pending.returns,
+        AuthorizationReturn::Loopback {
+            waiting_on: "http://localhost:1455".to_string()
+        }
+    );
+    assert_eq!(
+        listener_address("http://localhost:1455/auth/callback").unwrap(),
+        ("127.0.0.1:1455".to_string(), "/auth/callback".to_string())
+    );
+    assert_eq!(
+        listener_address("http://127.0.0.1:56121/callback").unwrap(),
+        ("127.0.0.1:56121".to_string(), "/callback".to_string())
+    );
+    assert!(listener_address("http://example.test/callback").is_err());
 }

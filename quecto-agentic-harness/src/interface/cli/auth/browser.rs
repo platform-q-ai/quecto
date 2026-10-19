@@ -3,14 +3,20 @@
 //! outcome. What is trusted and stored is the `LogInWithOAuth` use case's.
 
 use super::{Output, flush_stdout, login_refusal, read_line, skip_browser_callback};
-use crate::application::auth::dto::{CallbackFailure, LoginError, OAuthLoginAttempt};
-use crate::application::auth::ports::AuthorizationReturn;
+use crate::application::auth::dto::{
+    AuthorizationReturn, CallbackFailure, LoginError, OAuthLoginAttempt,
+};
 use crate::domain::auth::provider::LoginProvider;
 use crate::interface::cli::CliContext;
 
-/// Why a REPL command or supplied input reads a paste at once.
-const CALLBACK_SKIPPED: &str =
-    "provider error: browser callback skipped for supplied input or non-interactive REPL";
+/// Why a REPL command or supplied input reads a paste at once, worded as
+/// a provider failure like every other reason the callback brought no code.
+fn callback_skipped() -> String {
+    crate::domain::shared::error::DomainError::Provider(
+        "browser callback skipped for supplied input or non-interactive REPL".to_string(),
+    )
+    .to_string()
+}
 
 /// OAuth browser-based login flow.
 pub(super) fn cmd_auth_login_oauth(
@@ -37,7 +43,7 @@ pub(super) fn cmd_auth_login_oauth(
         AuthorizationReturn::Loopback { .. } => {
             // Supplied input and non-interactive REPL commands paste at once.
             let failed = match skip_browser_callback(ctx) {
-                true => CALLBACK_SKIPPED.to_string(),
+                true => callback_skipped(),
                 false => match login.await_callback(&attempt) {
                     Ok(code) => return complete(login, attempt, code, out),
                     Err(CallbackFailure::PasteInstead(why)) => why,
@@ -128,3 +134,7 @@ fn capitalize(s: &str) -> String {
         Some(f) => f.to_uppercase().to_string() + c.as_str(),
     }
 }
+
+#[cfg(test)]
+#[path = "browser_tests.rs"]
+mod tests;

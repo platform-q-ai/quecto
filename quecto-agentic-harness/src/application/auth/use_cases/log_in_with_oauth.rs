@@ -83,6 +83,9 @@ impl LogInWithOAuth {
             Err(AuthorizationCallbackError::Unavailable(reason)) => {
                 Err(CallbackFailure::Refused(LoginError::Unavailable(reason)))
             }
+            Err(AuthorizationCallbackError::InsideAsyncRuntime) => {
+                Err(CallbackFailure::Refused(LoginError::InsideAsyncRuntime))
+            }
         }
     }
 
@@ -120,6 +123,7 @@ impl LogInWithOAuth {
             .exchange_code(provider, code.as_str(), &attempt.pending().verifier)
             .map_err(|error| match error {
                 TokenExchangeError::Unavailable(reason) => LoginError::Unavailable(reason),
+                TokenExchangeError::InsideAsyncRuntime => LoginError::InsideAsyncRuntime,
                 TokenExchangeError::Rejected(reason) => LoginError::TokenExchange(reason),
             })?;
         let account_id_missing = provider == LoginProvider::OpenAi && issued.account_id.is_none();

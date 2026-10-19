@@ -16,6 +16,7 @@ struct Fakes {
     exchanged: Mutex<Vec<(LoginProvider, String, String)>>,
     stored: Mutex<Vec<Credential>>,
     returns: AuthorizationReturn,
+    unsupported: bool,
     callback: Result<String, AuthorizationCallbackError>,
     exchange: Result<IssuedToken, TokenExchangeError>,
     store_refusal: Option<String>,
@@ -31,6 +32,7 @@ impl Fakes {
             returns: AuthorizationReturn::Loopback {
                 waiting_on: "http://localhost:1455".to_string(),
             },
+            unsupported: false,
             callback: Ok("fake-callback-code".to_string()),
             exchange: Ok(issued(Some("acct-fake"))),
             store_refusal: None,
@@ -60,6 +62,9 @@ impl BrowserAuthorization for Fakes {
         provider: LoginProvider,
     ) -> Result<PendingAuthorization, BrowserAuthorizationError> {
         self.begun.lock().unwrap().push(provider);
+        if self.unsupported {
+            return Err(BrowserAuthorizationError::Unsupported);
+        }
         Ok(PendingAuthorization {
             authorization_url: format!("https://auth.example.test/{}", provider.id()),
             state: "fake-state".to_string(),
@@ -345,4 +350,36 @@ fn debug_never_shows_the_verifier_or_the_code() {
     let shown = format!("{attempt:?} {code:?}");
     assert!(!shown.contains("fake-verifier"), "{shown}");
     assert!(!shown.contains("fake-callback-code"), "{shown}");
+}
+
+#[test]
+fn a_provider_without_an_oauth_configuration_is_unsupported() {
+    let fakes = Arc::new(Fakes {
+        unsupported: true,
+        ..Fakes::loopback()
+    });
+    assert_eq!(
+        login(&fakes).begin("anthropic").unwrap_err(),
+        LoginError::OAuthUnsupported(LoginProvider::Anthropic)
+    );
+}
+
+#[test]
+fn a_login_started_inside_a_runtime_is_refused_as_such() {
+    let fakes = Arc::new(Fakes {
+        callback: Err(AuthorizationCallbackError::InsideAsyncRuntime),
+        exchange: Err(TokenExchangeError::InsideAsyncRuntime),
+        ..Fakes::loopback()
+    });
+    let login = login(&fakes);
+    let attempt = login.begin("openai").unwrap();
+    assert_eq!(
+        login.await_callback(&attempt).unwrap_err(),
+        CallbackFailure::Refused(LoginError::InsideAsyncRuntime)
+    );
+    let code = login.accept_pasted(&attempt, "bare-code").unwrap();
+    assert_eq!(
+        login.complete(attempt, code).unwrap_err(),
+        LoginError::InsideAsyncRuntime
+    );
 }

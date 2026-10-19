@@ -356,7 +356,7 @@ fn test_device_code_unsupported_provider_resolve_none() {
     );
 }
 
-// --- extract_fallback_code: no extractable code ---
+// --- browser login paste: no extractable code ---
 
 #[test]
 fn test_openai_oauth_fallback_empty_code() {
@@ -401,7 +401,8 @@ fn token_mock() -> String {
 #[test]
 fn the_openai_dialog_keeps_its_wording() {
     let tmp = tempfile::TempDir::new().unwrap();
-    let ctx = oauth_ctx(tmp.path(), token_mock(), "the-code\n");
+    let uri = token_mock();
+    let ctx = oauth_ctx(tmp.path(), uri.clone(), "the-code\n");
     let out = run_with_output(args("auth login --provider openai"), &ctx);
     assert_eq!(out.exit_code, 0, "stderr: {}", out.stderr);
     assert!(
@@ -411,13 +412,15 @@ fn the_openai_dialog_keeps_its_wording() {
         out.stdout
     );
     assert!(
-        out.stdout.ends_with(
-            "\n\nWaiting for browser callback on http://localhost:1455 ...\n\
+        // A test server stands in for OpenAI, so its redirect's origin
+        // (the server's) is where the callback is awaited.
+        out.stdout.ends_with(&format!(
+            "\n\nWaiting for browser callback on {uri} ...\n\
              (If the browser doesn't open, copy the URL above and paste it manually)\n\
              \nCallback failed (provider error: browser callback skipped for supplied input \
              or non-interactive REPL). Paste the authorization code or redirect URL:\n\
              Openai OAuth credential stored successfully\n"
-        ),
+        )),
         "{}",
         out.stdout
     );

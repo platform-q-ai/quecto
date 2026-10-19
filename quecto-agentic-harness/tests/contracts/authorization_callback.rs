@@ -2,7 +2,8 @@
 //! loopback listener on the provider's redirect URI returns the code of
 //! the callback carrying the login's state, keeps waiting past one that
 //! does not, reports an OAuth error callback as a failure the user may
-//! paste past, and refuses a redirect URI it must not listen on. Only the
+//! paste past, gives up at its deadline, and refuses a redirect URI it must
+//! not listen on. Only the
 //! test itself calls the listener; no provider is contacted.
 use std::io::{Read, Write};
 use std::net::TcpStream;
@@ -105,4 +106,21 @@ fn a_provider_without_a_callback_fails_at_once() {
         login.receive(LoginProvider::Anthropic, "fake-state"),
         Err(AuthorizationCallbackError::Failed(_))
     ));
+}
+
+#[test]
+fn a_callback_that_never_comes_fails_at_the_deadline() {
+    let port = free_port();
+    let login = OAuthBrowserLogin::with_callback_timeout_secs(
+        OAuthEndpoints::new(Some(format!("http://127.0.0.1:{port}"))),
+        1,
+    );
+    let started = std::time::Instant::now();
+    assert_eq!(
+        login.receive(LoginProvider::Xai, "fake-state"),
+        Err(AuthorizationCallbackError::Failed(
+            "provider error: OAuth callback timed out".to_string()
+        ))
+    );
+    assert!(started.elapsed() < Duration::from_secs(10));
 }

@@ -10,15 +10,18 @@ pub enum AuthorizationCallbackError {
     /// The provider's redirect URI cannot be listened on.
     InvalidRedirect(String),
     /// The listener could not run at all here (e.g. no thread could be
-    /// started, or the caller is itself inside an async runtime).
+    /// started); in the mechanism's words.
     Unavailable(String),
+    /// The caller is itself inside an async runtime, where a blocking
+    /// listener cannot run.
+    InsideAsyncRuntime,
 }
 
 pub trait AuthorizationCallback: Send + Sync {
     /// Wait for `provider`'s browser callback carrying `state` and return
     /// its authorization code. A callback with any other state is refused
     /// and waiting goes on; waiting is bounded. Blocking: never call it
-    /// from inside an async runtime (it answers `Unavailable` there).
+    /// from inside an async runtime (it answers `InsideAsyncRuntime` there).
     fn receive(
         &self,
         provider: LoginProvider,

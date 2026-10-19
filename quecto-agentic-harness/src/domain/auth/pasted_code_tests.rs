@@ -9,16 +9,41 @@ fn a_full_redirect_url_yields_its_code() {
 }
 
 #[test]
-fn a_bare_query_without_a_question_mark_yields_its_code() {
+fn a_bare_query_without_a_question_mark_must_carry_the_state_too() {
+    // Carrying `code=` makes it query-shaped (#2591 review): no state, no
+    // trust.
     assert_eq!(
         code_from_paste("a=1&code=LAST", STATE),
+        Err(PasteRefusal::StateMissing)
+    );
+    assert_eq!(
+        code_from_paste("a=1&code=LAST&state=expected", STATE),
         Ok("LAST".to_string())
     );
 }
 
 #[test]
-fn an_empty_code_parameter_falls_back_to_the_raw_input() {
-    assert_eq!(code_from_paste("code=", STATE), Ok("code=".to_string()));
+fn a_state_parameter_alone_makes_input_query_shaped() {
+    assert_eq!(
+        code_from_paste("code=C&state=wrong", STATE),
+        Err(PasteRefusal::StateMismatch)
+    );
+}
+
+#[test]
+fn a_query_shaped_paste_without_a_code_has_no_code() {
+    assert_eq!(
+        code_from_paste("?state=expected", STATE),
+        Err(PasteRefusal::NoCode)
+    );
+    assert_eq!(
+        code_from_paste("http://localhost/cb?code=&state=expected", STATE),
+        Err(PasteRefusal::NoCode)
+    );
+    assert_eq!(
+        code_from_paste("code=", STATE),
+        Err(PasteRefusal::StateMissing)
+    );
 }
 
 #[test]

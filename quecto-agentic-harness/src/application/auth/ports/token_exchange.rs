@@ -29,8 +29,11 @@ impl std::fmt::Debug for IssuedToken {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TokenExchangeError {
     /// The exchange could not run at all here (e.g. no thread could be
-    /// started, or the caller is itself inside an async runtime).
+    /// started); in the mechanism's words.
     Unavailable(String),
+    /// The caller is itself inside an async runtime, where a blocking
+    /// exchange cannot run.
+    InsideAsyncRuntime,
     /// The provider refused or did not answer; no response body is quoted.
     Rejected(String),
 }
@@ -38,7 +41,7 @@ pub enum TokenExchangeError {
 pub trait TokenExchange: Send + Sync {
     /// Exchange `code`, proven with the PKCE `verifier`, for `provider`'s
     /// tokens. Blocking: never call it from inside an async runtime (it
-    /// answers `Unavailable` there).
+    /// answers `InsideAsyncRuntime` there).
     fn exchange_code(
         &self,
         provider: LoginProvider,
