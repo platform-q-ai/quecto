@@ -613,7 +613,7 @@ const CONTRACTS_OUTSIDE_PORTS: &[(&str, &[&str])] = &[
         ],
     ),
     (
-        "inference_admission",
+        "admission::services::inference_admission",
         &[
             "AdmissionClient",
             "AdmissionDispatcher",
@@ -622,11 +622,7 @@ const CONTRACTS_OUTSIDE_PORTS: &[(&str, &[&str])] = &[
         ],
     ),
     (
-        "inference_attempt",
-        &["AttemptAcquisition", "AttemptAdmission", "AttemptPermit"],
-    ),
-    (
-        "inference_authority",
+        "admission::services::inference_authority",
         &[
             "AdmissionAuthority",
             "AuthorityError",
@@ -634,11 +630,6 @@ const CONTRACTS_OUTSIDE_PORTS: &[(&str, &[&str])] = &[
             "Credential",
         ],
     ),
-    (
-        "inference_authority_ports",
-        &["AdmissionJournal", "AdmissionSecretSource", "JournalError"],
-    ),
-    ("inference_observation", &["AdmissionObservation"]),
     (
         "provider_runtime",
         &[

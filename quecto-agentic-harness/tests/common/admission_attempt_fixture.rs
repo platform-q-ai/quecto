@@ -1,7 +1,7 @@
 //! Proposed inward public API (parent owns production implementation):
 //!
 //! ```ignore
-//! // application::inference_attempt
+//! // application::admission::ports::inference_attempt
 //! pub trait AttemptAdmission: Debug + Send + Sync {
 //!     fn acquire(&self) -> Pin<Box<dyn Future<Output =
 //!         Result<Box<dyn AttemptPermit>, DomainError>> + Send + '_>>;
@@ -30,7 +30,7 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use quecto::application::inference_attempt::{AttemptAdmission, AttemptPermit};
+use quecto::application::admission::ports::inference_attempt::{AttemptAdmission, AttemptPermit};
 use quecto::application::providers::ports::{ChatRequest, LlmProvider};
 use quecto::domain::admission::value_objects::inference_admission::{Feedback, ThrottleFeedback};
 use quecto::domain::inference::value_objects::cancel_flag::CancelFlag;

@@ -371,7 +371,7 @@ mod oracle {
         assert_eq!(actual, expected, "exact authority cooldown boundary");
     }
     pub fn deadline_policy() {
-        use quecto::application::inference_admission::{
+        use quecto::application::admission::services::inference_admission::{
             AdmissionClient, AdmissionDispatcher, AdmissionRegistry, AdmissionService,
         };
         use quecto::domain::admission::value_objects::inference_admission::*;

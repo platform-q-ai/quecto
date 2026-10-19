@@ -7,6 +7,10 @@ use std::path::{Path, PathBuf};
 
 use super::dto::{AuthorityAdminError, AuthorityReport, ResetReport};
 
+pub mod inference_attempt;
+pub mod inference_authority_ports;
+pub mod inference_observation;
+
 /// Owner-only administration of a running authority over its admin socket.
 /// Every operation names the directory it addresses so nothing depends on the
 /// working directory.

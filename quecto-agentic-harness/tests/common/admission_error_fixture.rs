@@ -8,7 +8,7 @@ use std::{
 };
 
 use quecto::{
-    application::inference_attempt::{AttemptAdmission, AttemptPermit},
+    application::admission::ports::inference_attempt::{AttemptAdmission, AttemptPermit},
     application::providers::ports::{ChatRequest, LlmProvider},
     domain::{
         admission::value_objects::inference_admission::{Feedback, ThrottleFeedback},

@@ -80,7 +80,8 @@ impl AgentLoopImpl {
         self.flush_request_accounting()
             .await
             .map_err(StreamProviderError::before_output)?;
-        let prefix = crate::application::request_observation::prefix(&request);
+        let prefix =
+            crate::application::agent_turn::agent_loop::request_observation::prefix(&request);
         let unchanged = self
             .request_prefix
             .lock()
@@ -102,8 +103,8 @@ impl AgentLoopImpl {
         // #2436: each attempt is counted and announced as it ends.
         trace.on_attempt_end(self.request_completion_sink(request.model));
         request.trace = Some(trace.clone());
-        let mut observation = crate::application::request_observation::ObservationGuard::new(
-            crate::application::request_observation::ObservationSinks {
+        let mut observation = crate::application::agent_turn::agent_loop::request_observation::ObservationGuard::new(
+            crate::application::agent_turn::agent_loop::request_observation::ObservationSinks {
                 log: &self.request_observations,
                 outbox: self
                     .request_accounting
@@ -116,18 +117,19 @@ impl AgentLoopImpl {
             &request,
             self.provider.name(),
             estimate,
-            crate::application::request_observation::PrefixObservation {
+            crate::application::agent_turn::agent_loop::request_observation::PrefixObservation {
                 sha256: prefix.0,
                 bytes: prefix.1,
                 unchanged,
             },
             trace,
         );
-        let outcome = crate::application::request_observation::MarkDropping::new(
-            observation.trace(),
-            self.request_provider_response_inner(request, requirement),
-        )
-        .await;
+        let outcome =
+            crate::application::agent_turn::agent_loop::request_observation::MarkDropping::new(
+                observation.trace(),
+                self.request_provider_response_inner(request, requirement),
+            )
+            .await;
         // Whether the failed reply had shown output travels beside the
         // error, which is observed and accounted as before (#2155).
         let (result, emitted_event) = match outcome {

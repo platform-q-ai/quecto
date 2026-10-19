@@ -44,7 +44,10 @@ mod transport_tests {
         fn finish(self: Box<Self>, _: Feedback) {}
     }
     impl AttemptAdmission for Gate {
-        fn acquire(&self) -> crate::application::inference_attempt::AttemptAcquisition<'_> {
+        fn acquire(
+            &self,
+        ) -> crate::application::admission::ports::inference_attempt::AttemptAcquisition<'_>
+        {
             Box::pin(async { Ok(Box::new(Permit) as Box<dyn AttemptPermit>) })
         }
     }
@@ -60,7 +63,10 @@ mod transport_tests {
         }
     }
     impl AttemptAdmission for DeadlineGate {
-        fn acquire(&self) -> crate::application::inference_attempt::AttemptAcquisition<'_> {
+        fn acquire(
+            &self,
+        ) -> crate::application::admission::ports::inference_attempt::AttemptAcquisition<'_>
+        {
             Box::pin(async { Ok(Box::new(DeadlinePermit) as Box<dyn AttemptPermit>) })
         }
     }

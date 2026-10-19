@@ -1,6 +1,6 @@
 //! Candidate HTTP status is typed throttle evidence unless structured terminal
 //! fields override it. No display-text classification or leaf escalation.
-use quecto::application::inference_attempt::{AttemptAdmission, AttemptPermit};
+use quecto::application::admission::ports::inference_attempt::{AttemptAdmission, AttemptPermit};
 use quecto::application::providers::ports::{ChatRequest, LlmProvider};
 use quecto::domain::{
     admission::value_objects::inference_admission::{Feedback, ThrottleFeedback},

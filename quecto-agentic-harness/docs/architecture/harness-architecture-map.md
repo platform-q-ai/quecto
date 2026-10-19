@@ -297,7 +297,7 @@ Important invariants before later phases:
 ## Provider runtime composition
 
 **Primary code:** the compose-provider-runtime use case in
-`src/application/provider_runtime.rs`; the concrete factories in
+`src/application/provider_runtime/mod.rs`; the concrete factories in
 `src/infrastructure/providers/routing/provider_runtime.rs` and
 `src/infrastructure/providers/routing/provider_runtime_admission.rs`; the OAuth refresh wiring
 in `src/infrastructure/auth/refresh_wiring.rs`, the refreshed-credential

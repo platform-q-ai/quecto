@@ -10,21 +10,13 @@ pub mod ports;
 pub mod project_board;
 pub mod provider_runtime;
 pub mod providers;
-mod request_observation;
 pub mod search;
 pub mod sessions;
-pub mod subagent;
 pub mod subagent_launch;
 #[cfg(test)]
 mod subagent_launch_tests;
 pub mod subagents;
 
-pub mod inference_admission;
-pub mod inference_authority;
-pub mod inference_authority_ports;
-pub mod inference_observation;
-
-pub mod inference_attempt;
 pub mod swarm;
 pub mod tools;
 

@@ -9,4 +9,5 @@
 pub mod dto;
 pub mod ports;
 pub mod standard_script;
+pub mod subagent;
 pub mod use_cases;

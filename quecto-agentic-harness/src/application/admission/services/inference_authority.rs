@@ -5,8 +5,8 @@
 //! after the release is durable. Failure of either path fails closed.
 use std::collections::BTreeMap;
 
-use super::inference_admission::AdmissionService;
-use super::ports::{
+use crate::application::admission::services::inference_admission::AdmissionService;
+use crate::application::ports::{
     AdmissionClient, AdmissionDispatcher, AdmissionJournal, AdmissionRecovery, AdmissionRegistry,
     AdmissionSecretSource, JournalError,
 };
