@@ -4,7 +4,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::application::admission::dto::{ServiceAction, ServiceReport};
+use crate::application::admission::dto::{service::ServiceAction, service::ServiceReport};
 use crate::application::admission::ports::AuthorityServiceManager;
 
 pub struct UninstallAuthorityService {

@@ -1,5 +1,5 @@
 use super::*;
-use crate::application::admission::dto::NegotiationPlan;
+use crate::application::admission::dto::negotiation::NegotiationPlan;
 
 const VALID: &str = r#"{"directory":"/tmp/quecto-authority","groups":{"g":{"capacity":1,"reserve":0,"min_interval_ms":1,"queue_capacity":1,"queue_timeout_ms":1,"attempt_timeout_ms":1,"fallback_base_ms":1,"max_cooldown_ms":1}},"aliases":{"a":"g"},"bindings":{"openai":"a"}}"#;
 const INVALID: &str = r#"{"directory":"relative","groups":{"g":{"capacity":1,"reserve":0,"min_interval_ms":1,"queue_capacity":1,"queue_timeout_ms":1,"attempt_timeout_ms":1,"fallback_base_ms":1,"max_cooldown_ms":1}},"aliases":{"a":"g"},"bindings":{"openai":"a"}}"#;

@@ -6,7 +6,9 @@
 //! use case, then performs the plan through the infrastructure binding.
 use std::path::Path;
 
-use crate::application::admission::dto::{NegotiationInputs, NegotiationPlan};
+use crate::application::admission::dto::{
+    negotiation::NegotiationInputs, negotiation::NegotiationPlan,
+};
 use crate::application::admission::use_cases::NegotiateAuthority;
 use crate::infrastructure::admission::{Negotiation, process};
 use crate::infrastructure::config::Config;

@@ -371,9 +371,10 @@ mod oracle {
         assert_eq!(actual, expected, "exact authority cooldown boundary");
     }
     pub fn deadline_policy() {
-        use quecto::application::admission::services::inference_admission::{
-            AdmissionClient, AdmissionDispatcher, AdmissionRegistry, AdmissionService,
+        use quecto::application::admission::ports::inference_admission::{
+            AdmissionClient, AdmissionDispatcher, AdmissionRegistry,
         };
+        use quecto::application::admission::services::inference_admission::AdmissionService;
         use quecto::domain::admission::value_objects::inference_admission::*;
         let group = GroupId::new("fixture").unwrap();
         let mut service = AdmissionService::new(

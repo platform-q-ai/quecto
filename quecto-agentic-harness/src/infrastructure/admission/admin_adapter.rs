@@ -7,7 +7,8 @@ use std::path::Path;
 
 use super::{AdminConnection, AuthorityDirectory};
 use crate::application::admission::dto::{
-    AuthorityAdminError, AuthorityGroupReport, AuthorityReport, ResetReport,
+    authority::AuthorityAdminError, authority::AuthorityGroupReport, authority::AuthorityReport,
+    authority::ResetReport,
 };
 use crate::application::admission::ports::AuthorityAdmin;
 
