@@ -126,3 +126,76 @@ fn status_without_composed_configuration_refuses() {
     assert_eq!(out.exit_code, 1);
     assert_eq!(out.stderr, "configuration capability not composed\n");
 }
+
+/// A hand-edited name is printed escaped and capped, so it can neither
+/// forge a status line nor send a terminal escape sequence.
+#[test]
+fn a_hand_edited_name_cannot_forge_a_status_line() {
+    let base = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        base.path().join("config.json"),
+        r#"{"providers": {"openai_compatible": {"endpoints": [
+            {"prefix": "groq\n  OpenAI API:    configured\u001b[31m", "api_key": "fake-g", "api_base": "https://g.test/v1"}
+        ]}}}"#,
+    )
+    .unwrap();
+    let long = "p".repeat(100);
+    std::fs::write(
+        base.path().join("credentials.json"),
+        format!(
+            r#"{{"credentials": {{
+                "a": {{"provider": "evil\n  Anthropic API: configured\u001b[0m", "token": "fake-1", "method": "token", "expires_at": null}},
+                "b": {{"provider": "{long}", "token": "fake-2", "method": "token", "expires_at": null}}
+            }}}}"#
+        ),
+    )
+    .unwrap();
+    let out = status(base.path());
+    assert_eq!(out.exit_code, 0, "stderr: {}", out.stderr);
+    let capped = format!("{}…", "p".repeat(64));
+    assert_eq!(
+        presence_lines(&out.stdout),
+        [
+            "  OpenAI API:    not set",
+            "  Anthropic API: not set",
+            r"  Endpoint keys: groq\n  OpenAI API:    configured\u{1b}[31m",
+            &format!(
+                r"  Credentials:   evil\n  Anthropic API: configured\u{{1b}}[0m (token) — active, {capped} (token) — active"
+            ),
+        ]
+    );
+    assert!(!out.stdout.contains('\u{1b}'), "{:?}", out.stdout);
+}
+
+/// The workspace and model come from a hand-editable file too: escaped,
+/// never capped, since a long path is still worth reading whole.
+#[test]
+fn a_hand_edited_workspace_or_model_cannot_forge_a_status_line() {
+    let base = tempfile::TempDir::new().unwrap();
+    let long = "w".repeat(100);
+    std::fs::write(
+        base.path().join("config.json"),
+        format!(
+            r#"{{"agents": {{"defaults": {{
+                "workspace": "/{long}\n  Model:     forged",
+                "model": "m\n  Effort:    forged\u001b[31m"
+            }}}}}}"#
+        ),
+    )
+    .unwrap();
+    let out = status(base.path());
+    assert_eq!(out.exit_code, 0, "stderr: {}", out.stderr);
+    let lines: Vec<&str> = out.stdout.lines().collect();
+    assert!(
+        lines.contains(&format!(r"  Workspace: /{long}\n  Model:     forged").as_str()),
+        "{lines:?}"
+    );
+    assert!(
+        lines.contains(&r"  Model:     m\n  Effort:    forged\u{1b}[31m"),
+        "{lines:?}"
+    );
+    for label in ["  Model:", "  Effort:"] {
+        let count = lines.iter().filter(|line| line.starts_with(label)).count();
+        assert_eq!(count, 1, "{label} forged: {lines:?}");
+    }
+}

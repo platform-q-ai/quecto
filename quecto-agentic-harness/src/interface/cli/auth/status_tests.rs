@@ -132,3 +132,35 @@ fn a_hand_edited_store_naming_a_provider_twice_lists_both() {
         "Credentials:\n  openai (token) — active\n  openai (token) — active\n"
     );
 }
+
+/// A hand-edited provider name is printed escaped and capped, as
+/// `quecto status` prints it: it cannot forge a line or send an escape.
+#[test]
+fn a_hand_edited_provider_name_cannot_forge_an_auth_status_line() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let long = "p".repeat(100);
+    std::fs::write(
+        tmp.path().join("credentials.json"),
+        format!(
+            r#"{{"credentials": {{
+                "a": {{"provider": "evil\n  xai (oauth) — active\u001b[0m", "token": "fake-1", "method": "token", "expires_at": null}},
+                "b": {{"provider": "{long}", "token": "fake-2", "method": "token", "expires_at": null}}
+            }}}}"#
+        ),
+    )
+    .unwrap();
+    let ctx = CliContext {
+        base_dir: Some(tmp.path().to_path_buf()),
+        auth: Some(crate::composition::bootstrap::auth::build_auth_handles),
+        ..Default::default()
+    };
+    let out = run_with_output(args("auth status"), &ctx);
+    assert_eq!(out.exit_code, 0, "stderr: {}", out.stderr);
+    assert_eq!(
+        out.stdout,
+        format!(
+            "Credentials:\n  evil\\n  xai (oauth) — active\\u{{1b}}[0m (token) — active\n  {}… (token) — active\n",
+            "p".repeat(64)
+        )
+    );
+}
