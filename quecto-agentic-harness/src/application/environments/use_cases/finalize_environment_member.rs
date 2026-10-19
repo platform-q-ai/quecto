@@ -17,8 +17,9 @@ use crate::domain::environments::services::environment_retention::{
     retains_environment, retention_reason, unrecorded_loss_reason,
 };
 
-use super::super::ports::{
-    EndedSwarmBoards, EnvironmentProcessCommands, HostedSwarmBoard, HostedSwarmRunObservation,
+use crate::application::environments::ports::{
+    hosted_swarm::EndedSwarmBoards, hosted_swarm::HostedSwarmBoard,
+    hosted_swarm::HostedSwarmRunObservation, process::EnvironmentProcessCommands,
 };
 
 pub struct FinalizeEnvironmentMember {

@@ -48,10 +48,11 @@ use super::super::dto::{
     GcCandidate, GcKept, GcRefused, GcRemoval, GcReport, GcRequest, RuntimeContainer,
     state_dir_argument,
 };
-use super::super::ports::{
-    ContainerConfigLookup, ContainerRuntimeInventory, EnvironmentProcess, HostedSwarmRunInspection,
-};
 use super::box_residue::{Residue, ResidueProbe};
+use crate::application::environments::ports::{
+    container::ContainerConfigLookup, container::ContainerRuntimeInventory,
+    hosted_swarm::HostedSwarmRunInspection, process::EnvironmentProcess,
+};
 
 /// A directory without a container younger than this is a create that may
 /// still be running its clone: kept, never collected.

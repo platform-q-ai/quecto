@@ -7,7 +7,7 @@
 //! outside it through a symlink, is `NoStore`; nothing is written.
 use std::sync::Arc;
 
-use quecto::application::environments::ports::HostedSwarmRunInspection;
+use quecto::application::environments::ports::hosted_swarm::HostedSwarmRunInspection;
 use quecto::domain::environments::entities::environment_registry::{
     EnvironmentRecord, EnvironmentStatus, mint_environment_uuid,
 };

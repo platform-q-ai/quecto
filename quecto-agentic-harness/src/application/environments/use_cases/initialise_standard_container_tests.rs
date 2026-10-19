@@ -7,7 +7,7 @@ use super::rig_tests::*;
 use crate::application::environments::dto::{
     ContainerConfigEntry, ContainerConfigLayer, InitialiseStandardContainerError, RepositoryOrigin,
 };
-use crate::application::environments::ports::ContainerConfigRosterReport;
+use crate::application::environments::ports::container::ContainerConfigRosterReport;
 
 #[test]
 fn writes_the_bundle_and_a_default_entry_naming_the_materialised_scripts() {

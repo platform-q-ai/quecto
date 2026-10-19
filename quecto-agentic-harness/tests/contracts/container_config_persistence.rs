@@ -21,7 +21,7 @@ use tempfile::TempDir;
 
 use quecto::application::configuration::dto::{ConfigLayers, ConfigSelection};
 use quecto::application::environments::dto::ContainerConfigDocument;
-use quecto::application::environments::ports::ContainerConfigPersistence;
+use quecto::application::environments::ports::container::ContainerConfigPersistence;
 use quecto::composition::standard_container::build_container_config_persistence;
 
 struct Rig {

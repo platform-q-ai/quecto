@@ -2,7 +2,7 @@ use std::path::Path;
 
 use super::{EmbeddedStandardAssets, STANDARD_ASSET_VERSION};
 use crate::application::environments::dto::{AssetOutcome, AssetOwnership, AssetState};
-use crate::application::environments::ports::ContainerAssetStore;
+use crate::application::environments::ports::container::ContainerAssetStore;
 
 fn workspace_file(relative: &str) -> String {
     std::fs::read_to_string(

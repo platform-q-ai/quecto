@@ -5,7 +5,7 @@
 //! parsed strictly, and an empty argv is refused rather than executed.
 use std::sync::Arc;
 
-use quecto::application::environments::ports::EnvironmentProcessCommands;
+use quecto::application::environments::ports::process::EnvironmentProcessCommands;
 use quecto::infrastructure::test_support::executable::write_executable;
 use quecto::infrastructure::tools::agents::environment_commands::ScriptEnvironmentCommands;
 

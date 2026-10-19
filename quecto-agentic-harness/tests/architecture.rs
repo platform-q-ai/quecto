@@ -958,7 +958,7 @@ fn port_items(
 
 #[test]
 fn ports_guard_is_an_allowlist() {
-    let file = "src/application/environments/ports.rs";
+    let file = "src/application/environments/ports/mod.rs";
     for source in [
         "pub use super::use_cases::FinalizeEnvironmentMember as X;",
         "pub(crate) use super::use_cases::FinalizeEnvironmentMember as X;",
@@ -4990,6 +4990,22 @@ fn sessions_interface_only_parses_maps_and_presents() {
 }
 
 /// `pub trait` names declared in a source file, in declaration order.
+/// How many times `source` declares a trait named exactly `name`, whatever
+/// its visibility: `trait {name}` followed by a non-identifier character, so
+/// `trait {name}Ext` does not count.
+fn trait_declarations(source: &str, name: &str) -> usize {
+    let needle = format!("trait {name}");
+    source
+        .match_indices(&needle)
+        .filter(|(at, _)| {
+            source[at + needle.len()..]
+                .chars()
+                .next()
+                .is_none_or(|next| !(next.is_alphanumeric() || next == '_'))
+        })
+        .count()
+}
+
 fn declared_pub_traits(path: &str) -> Vec<String> {
     let source = fs::read_to_string(path).unwrap_or_else(|e| panic!("read {path}: {e}"));
     source
@@ -6208,7 +6224,7 @@ fn environments_application_depends_only_inward() {
     }
     for dep in [
         "crate::domain::environments::entities::environment_registry::EnvironmentRegistry",
-        "crate::application::environments::ports::EnvironmentMemberShutdown",
+        "crate::application::environments::ports::process::EnvironmentMemberShutdown",
         "serde_json::Value",
         "std::sync::Arc",
     ] {
@@ -6597,33 +6613,69 @@ fn domain_holds_no_environment_use_case_or_effect_port() {
     }
 }
 
+/// The files of the environments capability's `ports/` folder (#2367).
+const ENVIRONMENT_PORT_FILES: &[&str] = &[
+    "mod.rs",
+    "container.rs",
+    "hosted_swarm.rs",
+    "process.rs",
+    "registry.rs",
+];
+
 #[test]
 fn environment_ports_are_capability_local_and_contracted() {
-    let declared = declared_pub_traits("src/application/environments/ports.rs");
+    // Every file under `ports/` is read, and the folder holds exactly
+    // `ENVIRONMENT_PORT_FILES`: a new port file (or a second declaration of a
+    // port) cannot escape the check (#2367 review).
+    let mut port_files = Vec::new();
+    collect_rs_files(
+        Path::new("src/application/environments/ports"),
+        &mut port_files,
+    );
+    let mut on_disk: Vec<String> = port_files
+        .iter()
+        .map(|file| file.split_once(":\n").unwrap().0.to_string())
+        .collect();
+    let mut listed: Vec<String> = ENVIRONMENT_PORT_FILES
+        .iter()
+        .map(|file| format!("src/application/environments/ports/{file}"))
+        .collect();
+    on_disk.sort();
+    listed.sort();
+    assert_eq!(
+        on_disk, listed,
+        "application/environments/ports/ must hold exactly ENVIRONMENT_PORT_FILES"
+    );
+    let mut actual: Vec<String> = on_disk
+        .iter()
+        .flat_map(|path| declared_pub_traits(path))
+        .collect();
     let mut expected: Vec<String> = ENVIRONMENT_PORTS.iter().map(|p| p.to_string()).collect();
-    let mut actual = declared.clone();
     expected.sort();
     actual.sort();
     assert_eq!(
         actual, expected,
-        "application/environments/ports.rs must declare exactly ENVIRONMENT_PORTS"
+        "application/environments/ports/ must declare exactly ENVIRONMENT_PORTS"
     );
     let use_cases =
         declared_pub_traits("src/application/environments/use_cases/kill_environment.rs");
     assert!(use_cases.is_empty(), "use cases declare no ports");
+    // Each port is declared exactly once in the whole crate, and that once is
+    // under `ports/`. Sibling files in the folder could otherwise each hold a
+    // private `trait {port}` without a compile error (#2367 review round 2).
     let mut files = Vec::new();
     collect_rs_files(Path::new("src"), &mut files);
-    for file in &files {
-        let (path, source) = file.split_once(":\n").unwrap();
-        if path == "src/application/environments/ports.rs" {
-            continue;
-        }
-        for port in ENVIRONMENT_PORTS {
-            assert!(
-                !source.contains(&format!("trait {port}")),
-                "{path} redeclares environment port {port}"
-            );
-        }
+    for port in ENVIRONMENT_PORTS {
+        let declarations: Vec<&str> = files
+            .iter()
+            .filter_map(|file| file.split_once(":\n"))
+            .flat_map(|(path, source)| std::iter::repeat_n(path, trait_declarations(source, port)))
+            .collect();
+        assert!(
+            declarations.len() == 1
+                && declarations[0].starts_with("src/application/environments/ports/"),
+            "environment port {port} must be declared exactly once, under ports/; found {declarations:?}"
+        );
     }
     let contracts = active_contract_modules();
     for port in ENVIRONMENT_PORTS {

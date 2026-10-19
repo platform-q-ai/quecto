@@ -9,7 +9,7 @@ use super::rig_tests::*;
 use crate::application::environments::dto::{
     ContainerConfigDocument, EntryValueChange, InitialiseStandardContainerError, RepositoryOrigin,
 };
-use crate::application::environments::ports::ContainerConfigRosterReport;
+use crate::application::environments::ports::container::ContainerConfigRosterReport;
 
 #[test]
 fn a_second_init_keeps_the_existing_repo_and_image_unless_the_flag_is_given() {

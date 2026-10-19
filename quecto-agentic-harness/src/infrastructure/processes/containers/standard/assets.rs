@@ -19,7 +19,7 @@ use std::path::Path;
 use crate::application::environments::dto::{
     AssetOutcome, AssetOwnership, AssetState, ContainerAsset, ContainerAssetCatalogue,
 };
-use crate::application::environments::ports::ContainerAssetStore;
+use crate::application::environments::ports::container::ContainerAssetStore;
 
 /// Bumped when an embedded asset changes, so `status` can say which
 /// bundle a project carries.

@@ -20,6 +20,10 @@ impl CredentialStorePort for Fakes {
     fn list(&self) -> Result<Vec<Credential>, CredentialStoreError> {
         self.stored.clone()
     }
+
+    fn remove(&self, _provider: &str) -> Result<bool, CredentialStoreError> {
+        unreachable!("inspecting removes nothing")
+    }
 }
 
 impl AuthClock for Fakes {

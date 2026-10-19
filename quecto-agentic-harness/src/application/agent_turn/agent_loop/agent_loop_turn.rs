@@ -1,12 +1,6 @@
 use crate::application::agent_turn::agent_loop::agent_loop_stream::ends_turn_empty;
 use crate::domain::conversation::services::reply_requirement::ReplyRequirement;
 use crate::domain::conversation::value_objects::message::LlmResponse;
-use crate::domain::inference::services::provider_error::is_context_or_output_limit_error;
-use crate::domain::inference::services::provider_error::{
-    ProviderErrorClass, classify_provider_error, model_refusal, provider_http_status,
-};
-use crate::domain::inference::services::terminal_guidance::Output;
-use crate::domain::shared::error::DomainError;
 
 /// Internal vocabulary for the agent turn lifecycle.
 ///
@@ -16,13 +10,11 @@ use crate::domain::shared::error::DomainError;
 pub(super) enum TurnState {
     PrepareProviderRequest,
     AwaitProviderResponse,
-    RecoverMalformedResponse,
     ExecuteToolCalls,
     FinalizeAssistantResponse,
     /// The model answered tool results with nothing (#2434): the turn
     /// ends with no reply recorded.
     EndTurnWithoutReply,
-    FailProviderRequest,
     StopAtToolIterationLimit,
 }
 
@@ -31,12 +23,6 @@ pub(super) enum ProviderResponseTransition {
     FinalAssistantResponse,
     ToolCallContinuation,
     EmptyEndOfTurn,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) enum ProviderFailureTransition {
-    RecoverMalformedRequest,
-    Terminal(ProviderErrorClass),
 }
 
 /// What a reply does to the turn: tool calls continue it; an empty reply
@@ -55,35 +41,6 @@ pub(super) fn classify_provider_response(
     }
 }
 
-/// What follows a failed provider request. Only a malformed request (an
-/// HTTP 400 or 422, or a 5xx wrapping an explicit `invalid_request_error`,
-/// #935) whose reply showed nothing is repaired and sent again, while the
-/// budget lasts; everything else ends the turn (#2155).
-pub(super) fn classify_provider_failure(
-    error: &DomainError,
-    output: Output,
-    malformed_retries: u32,
-    max_malformed_retries: u32,
-) -> ProviderFailureTransition {
-    let class = classify_provider_error(error);
-    // A model the provider refused for the account (#2435) is no
-    // malformed request: no repair makes the provider accept it.
-    let is_malformed_request = matches!(error, DomainError::Provider(message)
-        if class == ProviderErrorClass::Client
-            && matches!(provider_http_status(error), Some(400 | 422 | 500..=599))
-            && !is_context_or_output_limit_error(message)
-            && model_refusal(error).is_none());
-
-    if is_malformed_request
-        && output == Output::NotShown
-        && malformed_retries < max_malformed_retries
-    {
-        ProviderFailureTransition::RecoverMalformedRequest
-    } else {
-        ProviderFailureTransition::Terminal(class)
-    }
-}
-
 pub(super) fn next_state_after_provider_response(
     response: &LlmResponse,
     requirement: ReplyRequirement,
@@ -92,14 +49,5 @@ pub(super) fn next_state_after_provider_response(
         ProviderResponseTransition::FinalAssistantResponse => TurnState::FinalizeAssistantResponse,
         ProviderResponseTransition::ToolCallContinuation => TurnState::ExecuteToolCalls,
         ProviderResponseTransition::EmptyEndOfTurn => TurnState::EndTurnWithoutReply,
-    }
-}
-
-pub(super) fn state_for_provider_failure_transition(
-    transition: &ProviderFailureTransition,
-) -> TurnState {
-    match transition {
-        ProviderFailureTransition::RecoverMalformedRequest => TurnState::RecoverMalformedResponse,
-        ProviderFailureTransition::Terminal(_) => TurnState::FailProviderRequest,
     }
 }

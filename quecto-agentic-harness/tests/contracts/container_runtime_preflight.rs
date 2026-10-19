@@ -12,7 +12,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use quecto::application::environments::dto::{CheckStatus, DiagnosableContainerConfig};
-use quecto::application::environments::ports::ContainerRuntimePreflight;
+use quecto::application::environments::ports::container::ContainerRuntimePreflight;
 use quecto::composition::environments::build_container_runtime_preflight;
 use quecto::infrastructure::processes::containers::preflight::MANDATORY_CHECKS;
 

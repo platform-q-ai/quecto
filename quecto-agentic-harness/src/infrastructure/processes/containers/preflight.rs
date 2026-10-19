@@ -20,7 +20,7 @@ use std::time::Duration;
 use crate::application::environments::dto::{
     CheckStatus, DiagnosableContainerConfig, PreflightCheck,
 };
-use crate::application::environments::ports::ContainerRuntimePreflight;
+use crate::application::environments::ports::container::ContainerRuntimePreflight;
 
 use super::script_stderr::{ScriptStdout, run_sync_capturing_stderr_tail};
 

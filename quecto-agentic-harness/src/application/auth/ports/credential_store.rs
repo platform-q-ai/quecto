@@ -1,6 +1,6 @@
 //! The store of provider credentials (#1839): one credential per provider,
-//! durable across processes. Later use cases add the reads and removals
-//! they need (#1840, #1841).
+//! durable across processes: stored, listed and removed by the auth use
+//! cases (#1839, #1841, #1842).
 
 use crate::domain::auth::credential::Credential;
 
@@ -24,4 +24,12 @@ pub trait CredentialStorePort: Send + Sync {
     /// name a provider twice. Reading writes nothing; an absent store lists
     /// nothing.
     fn list(&self) -> Result<Vec<Credential>, CredentialStoreError>;
+
+    /// Remove `provider`'s stored credential, leaving every other
+    /// provider's untouched; whether there was one. Like a store, it is one
+    /// read-modify-write under the cross-process credentials lock, so a
+    /// concurrent write (a refresh's rotated token) is never lost. When
+    /// nothing was stored it still writes: an empty store (with its lock
+    /// file) where there was none. On `Err` the store is as it was.
+    fn remove(&self, provider: &str) -> Result<bool, CredentialStoreError>;
 }

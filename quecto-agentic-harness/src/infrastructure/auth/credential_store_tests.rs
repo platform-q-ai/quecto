@@ -68,23 +68,6 @@ fn test_remove() {
 }
 
 #[test]
-fn test_remove_all() {
-    let tmp = TempDir::new().unwrap();
-    let store = CredentialStore::new(tmp.path());
-
-    store
-        .store(make_credential("openai", "sk-1", AuthMethod::Token))
-        .unwrap();
-    store
-        .store(make_credential("anthropic", "sk-2", AuthMethod::Token))
-        .unwrap();
-
-    store.remove_all().unwrap();
-    assert!(!store.exists("openai").unwrap());
-    assert!(!store.exists("anthropic").unwrap());
-}
-
-#[test]
 fn test_list() {
     let tmp = TempDir::new().unwrap();
     let store = CredentialStore::new(tmp.path());

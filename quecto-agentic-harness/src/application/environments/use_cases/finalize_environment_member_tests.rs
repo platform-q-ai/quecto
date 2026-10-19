@@ -1,7 +1,7 @@
 use std::sync::{Arc, Mutex};
 
 use crate::application::environments::ports::{
-    EnvironmentProcessCommands, HostedSwarmRunObservation, PortFuture,
+    PortFuture, hosted_swarm::HostedSwarmRunObservation, process::EnvironmentProcessCommands,
 };
 use crate::application::environments::use_cases::FinalizeEnvironmentMember;
 use crate::domain::environments::entities::environment_registry::{

@@ -23,7 +23,7 @@ use std::sync::Arc;
 use crate::application::environments::dto::{
     ContainerConfigInventory, ContainerConfigLayer, STANDARD_CONTAINER_CONFIG,
 };
-use crate::application::environments::ports::ContainerConfigRoster;
+use crate::application::environments::ports::container::ContainerConfigRoster;
 
 pub struct ListContainerConfigs {
     roster: Arc<dyn ContainerConfigRoster>,

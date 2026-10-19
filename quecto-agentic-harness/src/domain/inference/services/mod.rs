@@ -1,4 +1,5 @@
 pub mod context_calibration;
+pub mod inference_recovery;
 pub mod output_limit;
 pub mod provider_error;
 pub mod provider_retry;

@@ -5,7 +5,7 @@
 //! one that is no whole ended run is not kept; and only the newest boards are kept, so a long-lived process
 //! never grows without end.
 use quecto::application::environments::dto::SwarmBoardSnapshot;
-use quecto::application::environments::ports::EndedSwarmBoards;
+use quecto::application::environments::ports::hosted_swarm::EndedSwarmBoards;
 use quecto::application::project_board::dto::SwarmEnd;
 use quecto::infrastructure::tools::agents::coordinator_launch::{KeptSwarmBoards, MAX_KEPT};
 use serde_json::json;

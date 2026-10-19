@@ -75,7 +75,9 @@ impl AgentLoopImpl {
                                 trace.record_unfinished_usage(usage);
                             }
                             Err(StreamProviderError {
-                                error: DomainError::Provider(empty_stream_error_message(&response)),
+                                error: DomainError::Provider(
+                                    crate::domain::inference::services::output_limit::empty_stream_error_message(&response),
+                                ),
                                 emitted_event,
                                 source: FailureSource::Provider,
                             })

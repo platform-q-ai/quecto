@@ -2,7 +2,7 @@ use super::ReadSwarmBoard;
 use crate::application::environments::dto::{
     BoardSighting, HostedBoardRevision, SwarmBoardRefusal, SwarmBoardSnapshot,
 };
-use crate::application::environments::ports::{HostedSwarmBoard, PortFuture};
+use crate::application::environments::ports::{PortFuture, hosted_swarm::HostedSwarmBoard};
 use crate::domain::environments::entities::environment_registry::{
     EnvironmentJournal, EnvironmentOrigin, EnvironmentRecord, EnvironmentRegistry,
     EnvironmentStatus, JournalWrite,

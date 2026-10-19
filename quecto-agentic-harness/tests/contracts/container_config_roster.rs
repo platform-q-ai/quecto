@@ -17,7 +17,7 @@ use tempfile::TempDir;
 
 use quecto::application::configuration::dto::{ConfigLayers, ConfigSelection, OverlayTrustRequest};
 use quecto::application::environments::dto::ContainerConfigLayer;
-use quecto::application::environments::ports::ContainerConfigRoster;
+use quecto::application::environments::ports::container::ContainerConfigRoster;
 use quecto::composition::container_configs::build_container_config_roster;
 
 fn entry(default: bool, repo: Option<&str>) -> serde_json::Value {

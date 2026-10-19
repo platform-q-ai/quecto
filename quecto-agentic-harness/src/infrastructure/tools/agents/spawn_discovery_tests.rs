@@ -4,7 +4,9 @@ use super::{ROSTER_LINE_MAX_CHARS, ROSTER_PREFIX, format_roster_line, roster_lin
 use crate::application::environments::dto::{
     ContainerConfigEntry, ContainerConfigInventory, ContainerConfigLayer,
 };
-use crate::application::environments::ports::{ContainerConfigRoster, ContainerConfigRosterReport};
+use crate::application::environments::ports::{
+    container::ContainerConfigRoster, container::ContainerConfigRosterReport,
+};
 use crate::application::environments::use_cases::ListContainerConfigs;
 
 fn entry(name: &str, default: bool, layer: ContainerConfigLayer) -> ContainerConfigEntry {
