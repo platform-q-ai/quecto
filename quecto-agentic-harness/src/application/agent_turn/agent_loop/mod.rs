@@ -25,17 +25,13 @@ use crate::domain::sessions::entities::session_identity::SessionIdentity;
 use crate::domain::tool_policy::value_objects::tool;
 use crate::domain::tool_policy::value_objects::tool_descriptor::ToolDescriptor;
 use crate::domain::{audit::AuditEvent, shared::error::DomainError};
-use agent_loop_stream::{
-    StreamProviderError, TurnEnd, empty_stream_error_message, is_cut_off_without_answer,
-    is_empty_streamed_response,
-};
+use agent_loop_stream::{StreamProviderError, TurnEnd, is_empty_streamed_response};
 use std::{pin::Pin, sync::Arc};
 use tool::{ToolDefinition, ToolPolicyReconciliation, ToolPolicyRequest, ToolProfileContext};
 pub type ToolPolicyPersistence =
     Arc<dyn Fn(&ToolPolicyReconciliation) -> Result<(), String> + Send + Sync>;
 mod agent_loop_clamp;
 mod agent_loop_effort;
-mod agent_loop_errors;
 mod agent_loop_gauge;
 mod agent_loop_lifecycle_compat;
 mod agent_loop_policy;
@@ -56,21 +52,11 @@ pub mod durable_prefix;
 mod request_observation;
 pub mod tool_panic_scope;
 use crate::domain::inference::services::terminal_guidance::Output;
-use agent_loop_errors::{
-    append_feedback, append_malformed_feedback, output_limit_feedback,
-    provider_failure_audit_event, record_feedback, tool_call_cut_off_feedback,
-};
 use agent_loop_spill::ToolMessageArgs;
-use agent_loop_turn::{
-    ProviderFailureTransition, TurnState, classify_provider_failure,
-    next_state_after_provider_response, state_for_provider_failure_transition,
-};
-use agent_loop_turn_flow::AfterResponse;
+use agent_loop_turn::{TurnState, next_state_after_provider_response};
 const DEFAULT_MAX_TOOL_ITERATIONS: u32 = 999_999;
 const MAX_PROVIDER_ATTEMPTS: usize = 3;
 const PROVIDER_RETRY_BACKOFF_MS: u64 = 100;
-/// Cap on model-malformed requests re-prompted as addressable feedback (#931).
-const MAX_MALFORMED_REQUEST_RETRIES: u32 = 3;
 pub struct AgentLoopConfig {
     pub provider: Arc<dyn LlmProvider>,
     pub tool_registry: Box<dyn ToolRegistry>,

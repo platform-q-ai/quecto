@@ -59,38 +59,6 @@ fn empty_stream_detection_requires_no_text_tools_or_thinking() {
     )));
 }
 
-#[test]
-fn empty_stream_error_message_distinguishes_max_tokens_from_provider_empty() {
-    assert_eq!(
-        empty_stream_error_message(&response(None, vec![], vec![], Some(StopReason::MaxTokens))),
-        "stream completed without assistant output: stop_reason=max_tokens"
-    );
-    assert_eq!(
-        empty_stream_error_message(&response(None, vec![], vec![], Some(StopReason::EndTurn))),
-        "stream completed without assistant output: synthetic=empty_stream"
-    );
-    assert_eq!(
-        empty_stream_error_message(&response(None, vec![], vec![], None)),
-        "stream completed without assistant output: synthetic=empty_stream"
-    );
-}
-
-#[test]
-fn empty_stream_has_no_wire_status_or_overload_claim() {
-    use crate::domain::inference::services::provider_error::{
-        classify_provider_error, provider_http_status,
-    };
-    let error = DomainError::Provider(empty_stream_error_message(&response(
-        None,
-        vec![],
-        vec![],
-        None,
-    )));
-    assert_eq!(provider_http_status(&error), None);
-    assert_eq!(classify_provider_error(&error).as_str(), "empty_stream");
-    assert!(classify_provider_error(&error).is_retryable());
-}
-
 /// #2162 review: encrypted reasoning alone is no output — a reply with only
 /// that is still an empty stream (retried), never a blank final answer.
 #[test]

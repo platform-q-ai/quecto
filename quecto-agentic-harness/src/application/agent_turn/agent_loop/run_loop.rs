@@ -1,6 +1,8 @@
-use super::agent_loop_turn_flow::MAX_TOOL_CALL_CUT_OFF_RETRIES;
 use super::*;
-use crate::domain::inference::services::output_limit::cut_off_tool_call;
+use crate::domain::inference::services::inference_recovery::{
+    Correction, InferenceRecovery, MAX_CUT_OFF_RETRIES, MAX_MALFORMED_REQUEST_RETRIES,
+    MAX_TOOL_CALL_CUT_OFF_RETRIES, Recovery,
+};
 
 impl AgentLoopImpl {
     /// Run the LLM-tool loop.
@@ -33,11 +35,8 @@ impl AgentLoopImpl {
         // itself (any mutating ladder/collapse outcome) rather than diffing a
         // pre-run id snapshot — in-place stub demotion changes content while
         // every message id stays the same, which a snapshot comparison misses.
-        // Count of model-malformed requests turned into addressable feedback.
-        let mut malformed_retries: u32 = 0;
-        let mut cut_off_retries: u32 = 0;
-        // #2593: consecutive replies cut off inside a tool call.
-        let mut tool_cut_off_retries: u32 = 0;
+        // #1908: the run's corrections, their budgets and their feedback.
+        let mut recovery = InferenceRecovery::for_run();
 
         loop {
             if iterations > 0 {
@@ -95,48 +94,43 @@ impl AgentLoopImpl {
             let timing = (current_turn, estimated_context_tokens, llm_duration_ms);
             self.account_response(&response, timing, &mut usage_totals)
                 .await;
-            let after = match response {
-                // #2124: nothing visible before the output limit is no answer.
-                Ok(response)
-                    if is_cut_off_without_answer(&response, self.last_request_max_tokens()) =>
-                {
-                    let feedback = output_limit_feedback(self.last_request_max_tokens());
-                    let recovery = (&mut cut_off_retries, &mut appended_messages, feedback);
-                    self.after_cut_off_answer(messages, &response, current_turn, recovery)
-                        .await
+            let (reply, recovered) = match response {
+                Ok(response) => {
+                    let next = recovery.after_reply(&response, self.last_request_max_tokens());
+                    (Some(response), next)
                 }
-                // #2593: a call cut off by the output limit is corrected,
-                // while the budget lasts; then answered as invalid (#2123).
-                Ok(response)
-                    if tool_cut_off_retries < MAX_TOOL_CALL_CUT_OFF_RETRIES
-                        && cut_off_tool_call(&response).is_some() =>
-                {
-                    let recovery = (&mut tool_cut_off_retries, &mut appended_messages);
-                    self.after_cut_off_tool_call(messages, &response, current_turn, recovery)
-                }
-                Ok(response) => AfterResponse::Proceed(response),
-                Err(error) => {
-                    let recovery = (&mut malformed_retries, &mut appended_messages);
-                    self.after_provider_failure(messages, (error, output), current_turn, recovery)
-                        .await
-                }
+                Err(error) => (None, recovery.after_failure(error, output)),
             };
-            let response = match after {
-                AfterResponse::Proceed(response) => {
-                    cut_off_retries = 0;
-                    // A reply that cut no call off restores the budget; one
-                    // past the budget keeps it spent.
-                    match cut_off_tool_call(&response) {
-                        Some(_) => {}
-                        None => tool_cut_off_retries = 0,
+            let response = match (recovered, reply) {
+                (Recovery::Proceed, Some(response)) => response,
+                (Recovery::Proceed, None) => unreachable!("a failed request never proceeds"),
+                (
+                    Recovery::Correct {
+                        feedback,
+                        boost_output,
+                        correction,
+                    },
+                    _,
+                ) => {
+                    log_correction(&correction);
+                    recovery.correct(messages, &mut appended_messages, feedback, current_turn);
+                    // The retry may use the model's cap, not repeat the budget.
+                    if boost_output {
+                        self.output_boost
+                            .store(true, std::sync::atomic::Ordering::Relaxed);
                     }
-                    response
-                }
-                AfterResponse::Retry => {
                     current_turn += 1;
                     continue;
                 }
-                AfterResponse::Finish(result) => return result,
+                (Recovery::Fail(error), _) => {
+                    // #2132: no unsettled feedback outlives the failed turn.
+                    recovery.withdraw(messages, &mut appended_messages);
+                    self.notify(|| AgentProgressEvent::ConversationChanged {
+                        messages: messages.clone().into(),
+                    });
+                    self.drain_tool_policy_mutations_at_boundary();
+                    return self.fail_provider_request(current_turn, error).await;
+                }
             };
 
             match next_state_after_provider_response(&response, requirement) {
@@ -174,7 +168,9 @@ impl AgentLoopImpl {
             let ledger_from = appended_messages.len();
             // #2593: past the correction budget the cut-off call is
             // answered as invalid (#2123), whatever its argument text.
-            let cut_off = cut_off_tool_call(&response).map(|cut| cut.id.to_owned());
+            let cut_off =
+                crate::domain::inference::services::output_limit::cut_off_tool_call(&response)
+                    .map(|cut| cut.id.to_owned());
             self.execute_tool_calls_for_response(
                 messages,
                 current_turn,
@@ -209,3 +205,35 @@ impl AgentLoopImpl {
         }
     }
 }
+
+/// The operator log of a correction the run makes (#1908): one warning
+/// per correction, with its attempt within its budget.
+fn log_correction(correction: &Correction) {
+    match correction {
+        Correction::MalformedRequest { attempt, error } => tracing::warn!(
+            target: "provider_retry",
+            attempt,
+            max = MAX_MALFORMED_REQUEST_RETRIES,
+            error = %error,
+            "provider rejected request as malformed — re-prompting with addressable feedback"
+        ),
+        Correction::CutOffAnswer { attempt } => tracing::warn!(
+            target: "provider_retry",
+            attempt,
+            max = MAX_CUT_OFF_RETRIES,
+            "reply hit the output limit with nothing visible — asking again, concisely"
+        ),
+        Correction::CutOffCall { attempt, tool } => tracing::warn!(
+            target: "provider_retry",
+            attempt,
+            max = MAX_TOOL_CALL_CUT_OFF_RETRIES,
+            tool = tool.as_str(),
+            "reply hit the output limit inside a tool call — asking again with smaller calls"
+        ),
+    }
+}
+
+// #2132: feedback whose correction failed is withdrawn with the turn.
+#[cfg(test)]
+#[path = "agent_loop_2132_tests.rs"]
+mod failed_turn_feedback_tests;
