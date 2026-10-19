@@ -18,16 +18,22 @@ use crate::domain::inference::value_objects::attempt_diagnostics::{
 /// One error type or code a wire names (#2609 review): what an attempt's
 /// diagnostics record it as, and what it tells admission and retry.
 #[derive(Debug, Clone, Copy)]
+/// Its fields are private (#2620 review): the `const` constructors below
+/// are the only way to declare one, which the architecture test reads.
 pub(in crate::infrastructure::providers) struct ErrorName {
-    pub name: &'static str,
-    pub code: ErrorCode,
+    name: &'static str,
+    code: ErrorCode,
     /// A throttle admission should hear of.
-    pub throttle: bool,
+    throttle: bool,
     /// A failure no retry fixes: an HTTP error naming it never throttles.
-    pub terminal: bool,
+    terminal: bool,
 }
 
 impl ErrorName {
+    /// What an attempt's diagnostics record it as.
+    pub(in crate::infrastructure::providers) fn code(&self) -> ErrorCode {
+        self.code
+    }
     /// An error that is neither a throttle nor terminal.
     pub(in crate::infrastructure::providers) const fn plain(
         name: &'static str,

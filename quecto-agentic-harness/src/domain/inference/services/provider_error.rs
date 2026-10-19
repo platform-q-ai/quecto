@@ -363,6 +363,11 @@ pub const BILLING_ERROR_NAMES: &[&str] = &[
     "billing_hard_limit_reached",
     "usage_limit_reached",
     "billing_error",
+    // The quota errors the official Codex client reads as such (codex-rs
+    // `responses_error.rs`; #2620 review).
+    "credit_balance_exhausted",
+    "organization_spend_limit_exceeded",
+    "project_spend_limit_exceeded",
 ];
 
 /// Whether `name`, an error's `type` or `code`, is a billing error.

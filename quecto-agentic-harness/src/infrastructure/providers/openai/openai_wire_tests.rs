@@ -377,7 +377,7 @@ fn a_chat_error_records_its_code() {
         ("invalid_api_key", ErrorCode::InvalidApiKey),
     ] {
         assert_eq!(
-            OPENAI_WIRE.error_name(name).map(|known| known.code),
+            OPENAI_WIRE.error_name(name).map(|known| known.code()),
             Some(code),
             "{name}"
         );

@@ -55,7 +55,7 @@ pub(super) fn typed(d: &mut AttemptDiagnostics, wire: &dyn WireDialect, value: &
     for error in wire.error_objects(value) {
         for field in ["code", "type"] {
             if let Some(known) = error[field].as_str().and_then(|name| wire.error_name(name)) {
-                d.error_code = Some(known.code);
+                d.error_code = Some(known.code());
             }
         }
     }

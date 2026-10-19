@@ -608,42 +608,110 @@ fn every_way_out_of_the_folder_is_refused() {
     assert!(escapes(&mounted, Path::new("transport"), &in_folder).is_empty());
 }
 
-/// The error names the wires declare (`ErrorName::throttle("…", …)` and its
-/// siblings in each `*_wire.rs`), read from their sources.
+/// The error names the wires declare, read from the source of every module
+/// of `providers/` outside `transport/` that implements `WireDialect`
+/// (#2620 review). `ErrorName`'s fields are private, so its `const`
+/// constructors (`ErrorName::throttle("…", …)` and its siblings) are the
+/// only way to declare one: each must name a string literal, and each
+/// file's names must number exactly its `[ErrorName; N]` tables.
 fn wire_error_names() -> Vec<String> {
+    let mut wires = Vec::new();
+    rust_files(Path::new("src/infrastructure/providers"), &mut wires);
+    let mut all = Vec::new();
+    let mut files = 0;
+    for wire in wires.iter().filter(|file| !file.starts_with(TRANSPORT)) {
+        let source = std::fs::read_to_string(wire).expect("read a source");
+        if !source.contains("impl WireDialect for") {
+            continue;
+        }
+        files += 1;
+        all.extend(declared_error_names(&source, &wire.display().to_string()));
+    }
+    assert!(files >= 3, "every wire was read ({files})");
+    all
+}
+
+/// The error names `source` (the file `file`) declares; panics on an
+/// `ErrorName` named by anything but a string literal, or names that do not
+/// number its `[ErrorName; N]` tables.
+fn declared_error_names(source: &str, file: &str) -> Vec<String> {
     #[derive(Default)]
-    struct Names(Vec<String>);
+    struct Names {
+        names: Vec<String>,
+        declared: usize,
+    }
     impl<'ast> Visit<'ast> for Names {
         fn visit_expr_call(&mut self, call: &'ast syn::ExprCall) {
-            let declared = matches!(
-                &*call.func,
-                syn::Expr::Path(path)
-                    if path.path.segments.len() == 2
-                        && path.path.segments[0].ident == "ErrorName"
-            );
-            if let (
-                true,
-                Some(syn::Expr::Lit(syn::ExprLit {
-                    lit: syn::Lit::Str(name),
-                    ..
-                })),
-            ) = (declared, call.args.first())
-            {
-                self.0.push(name.value());
+            let segments: Vec<String> = match &*call.func {
+                syn::Expr::Path(path) => path
+                    .path
+                    .segments
+                    .iter()
+                    .map(|segment| segment.ident.to_string())
+                    .collect(),
+                _ => Vec::new(),
+            };
+            let constructor = segments.len() >= 2 && segments[segments.len() - 2] == "ErrorName";
+            if constructor {
+                match call.args.first() {
+                    Some(syn::Expr::Lit(syn::ExprLit {
+                        lit: syn::Lit::Str(name),
+                        ..
+                    })) => self.names.push(name.value()),
+                    other => panic!(
+                        "an ErrorName must name a string literal: {}",
+                        other.map_or(String::new(), |arg| arg.to_token_stream().to_string())
+                    ),
+                }
             }
             syn::visit::visit_expr_call(self, call);
         }
+        fn visit_type_array(&mut self, array: &'ast syn::TypeArray) {
+            let of_names = matches!(
+                &*array.elem,
+                syn::Type::Path(path) if path.path.segments.last().is_some_and(|last| last.ident == "ErrorName")
+            );
+            if of_names {
+                match &array.len {
+                    syn::Expr::Lit(syn::ExprLit {
+                        lit: syn::Lit::Int(count),
+                        ..
+                    }) => self.declared += count.base10_parse::<usize>().expect("a table length"),
+                    other => panic!(
+                        "an ErrorName table has a literal length: {}",
+                        other.to_token_stream()
+                    ),
+                }
+            }
+            syn::visit::visit_type_array(self, array);
+        }
     }
     let mut names = Names::default();
-    for wire in [
-        "src/infrastructure/providers/codex/codex_wire.rs",
-        "src/infrastructure/providers/anthropic/anthropic_wire.rs",
-        "src/infrastructure/providers/openai/openai_wire.rs",
+    names.visit_file(&syn::parse_file(source).expect("a wire parses"));
+    assert_eq!(
+        names.names.len(),
+        names.declared,
+        "{file}: the error names declared are those its tables hold"
+    );
+    names.names
+}
+
+/// #2620 review: an error name declared any other way than a constructor
+/// on a string literal, or a table the names do not fill, is refused.
+#[test]
+fn error_names_are_declared_only_as_literals_in_counted_tables() {
+    let declared = "static E: [ErrorName; 2] = [\
+        ErrorName::throttle(\"a\", ErrorCode::Overloaded),\
+        crate::x::ErrorName::plain(\"b\", ErrorCode::ServerError)];";
+    assert_eq!(declared_error_names(declared, "fixture"), ["a", "b"]);
+    for refused in [
+        "const N: &str = \"overloaded_error\";\nstatic E: [ErrorName; 1] = [ErrorName::throttle(N, ErrorCode::Overloaded)];",
+        "static E: [ErrorName; 2] = [ErrorName::throttle(\"a\", ErrorCode::Overloaded)];",
+        "static E: [ErrorName; 1] = [ErrorName::plain(concat!(\"a\", \"b\"), ErrorCode::ServerError)];",
     ] {
-        let source = std::fs::read_to_string(wire).expect("read a wire");
-        names.visit_file(&syn::parse_file(&source).expect("a wire parses"));
+        let caught = std::panic::catch_unwind(|| declared_error_names(refused, "fixture"));
+        assert!(caught.is_err(), "not refused: {refused}");
     }
-    names.0
 }
 
 /// Every literal of `stream`, decoded.

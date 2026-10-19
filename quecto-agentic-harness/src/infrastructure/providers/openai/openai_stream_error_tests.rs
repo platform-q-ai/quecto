@@ -465,3 +465,17 @@ fn a_bare_string_error_chunk_is_classified_as_the_unknown_object_form() {
 fn a_chunk_without_an_error_never_renders_as_a_stream_error() {
     let _ = openai_stream_error(&serde_json::json!({"error": null}));
 }
+
+/// #2620 review, declared: the chat wire reads a chunk's `error` object
+/// only, so a Responses-shaped root `code` beside it no longer makes the
+/// chunk a throttle. Such a chunk renders as the unknown 502, retried as a
+/// gateway failure, not as a 429; the same name inside `error` still is.
+#[test]
+fn a_root_throttle_code_beside_the_error_object_is_not_read() {
+    let root = serde_json::json!({"type": "error", "code": "rate_limit_exceeded", "error": {"message": "x"}});
+    assert_eq!(chunk_status(root.clone()), 502, "{root}");
+    assert!(!super::is_throttle_chunk(&root));
+    let inside = serde_json::json!({"error": {"code": "rate_limit_exceeded", "message": "x"}});
+    assert_eq!(chunk_status(inside.clone()), 429, "{inside}");
+    assert!(super::is_throttle_chunk(&inside));
+}

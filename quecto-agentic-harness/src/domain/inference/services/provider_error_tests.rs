@@ -96,6 +96,27 @@ fn classify_openai_insufficient_quota_is_terminal_billing_not_rate_limit() {
     assert_eq!(classify_provider_error(&err), ProviderErrorClass::Billing);
 }
 
+/// #2620 review: the quota errors the official Codex client reads as such
+/// are billing errors, terminal even as a 429.
+#[test]
+fn the_codex_clients_quota_errors_are_billing() {
+    for name in [
+        "credit_balance_exhausted",
+        "organization_spend_limit_exceeded",
+        "project_spend_limit_exceeded",
+    ] {
+        assert!(super::is_billing_error_name(name), "{name}");
+        let err = provider(&format!(
+            r#"HTTP 429 from Codex: {{"error":{{"type":"requests","code":"{name}","message":"m"}}}}"#
+        ));
+        assert_eq!(
+            classify_provider_error(&err),
+            ProviderErrorClass::Billing,
+            "{name}"
+        );
+    }
+}
+
 #[test]
 fn classify_parenthesized_status_known_code() {
     // A parenthesised status that maps to a known class is trusted.

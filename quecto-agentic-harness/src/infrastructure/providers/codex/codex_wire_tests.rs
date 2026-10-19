@@ -476,7 +476,7 @@ fn a_responses_error_records_its_code_and_incomplete_reason() {
         ("invalid_api_key", ErrorCode::InvalidApiKey),
     ] {
         assert_eq!(
-            CODEX_WIRE.error_name(name).map(|known| known.code),
+            CODEX_WIRE.error_name(name).map(|known| known.code()),
             Some(code),
             "{name}"
         );

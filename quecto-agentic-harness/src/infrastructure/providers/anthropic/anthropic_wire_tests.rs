@@ -379,7 +379,7 @@ fn a_messages_error_records_its_code() {
         ("invalid_request_error", ErrorCode::InvalidRequestError),
     ] {
         assert_eq!(
-            ANTHROPIC_WIRE.error_name(name).map(|known| known.code),
+            ANTHROPIC_WIRE.error_name(name).map(|known| known.code()),
             Some(code),
             "{name}"
         );
