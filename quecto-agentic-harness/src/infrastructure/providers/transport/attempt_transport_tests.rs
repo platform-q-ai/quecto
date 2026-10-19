@@ -162,6 +162,14 @@ fn protocol_dispatch_matches_each_vendors_terminal_vocabulary() {
             true,
             true,
         ),
+        // #2593: a reply cut off at its output limit completes.
+        (
+            Vendor::Codex,
+            "",
+            r#"{"type":"response.incomplete","response":{"incomplete_details":{"reason":"max_output_tokens"}}}"#,
+            true,
+            false,
+        ),
         // #2249 review: an untyped error chunk fails a Responses attempt
         // too, `{}` included; an empty string `error`, or one on a typed
         // event, is no failure.

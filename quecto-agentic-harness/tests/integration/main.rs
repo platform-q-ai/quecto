@@ -41,6 +41,7 @@ mod inference_admission_sse_observer;
 mod inference_admission_transport;
 mod issue_1193_completion;
 mod legacy_session_startup;
+mod output_limit_write_recovery;
 mod repl_production;
 mod swarm_agent_loop;
 mod swarm_board_admission_race;

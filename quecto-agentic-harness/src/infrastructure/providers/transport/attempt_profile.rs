@@ -270,6 +270,24 @@ pub(super) fn stream_error_status(value: &serde_json::Value) -> u16 {
     }
 }
 
+/// Whether a Responses event ends its reply at the output limit (#2593):
+/// `response.incomplete` with a reason the domain allowlists. Such a reply
+/// is cut off, not failed: it finishes with `MaxTokens` and what it got.
+pub(crate) fn ends_at_output_limit(event: &serde_json::Value) -> bool {
+    event["type"].as_str() == Some("response.incomplete")
+        && event["response"]["incomplete_details"]["reason"]
+            .as_str()
+            .is_some_and(
+                crate::domain::inference::services::output_limit::is_responses_output_limit,
+            )
+}
+
+/// Whether a Responses event finishes its reply: `response.completed`, or
+/// a reply cut off at the output limit ([`ends_at_output_limit`]).
+pub(crate) fn finishes_reply(event: &serde_json::Value) -> bool {
+    event["type"].as_str() == Some("response.completed") || ends_at_output_limit(event)
+}
+
 #[cfg(test)]
 #[path = "attempt_profile_tests.rs"]
 mod tests;

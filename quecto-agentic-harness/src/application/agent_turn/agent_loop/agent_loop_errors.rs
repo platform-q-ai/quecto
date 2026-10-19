@@ -84,6 +84,19 @@ pub(super) fn output_limit_feedback(max_tokens: u32) -> String {
     )
 }
 
+/// Feedback for a reply the output limit cut off partway through a call's
+/// arguments (#2593): no call of the reply ran, and how to fit the work
+/// in. No number: on some paths (Codex behind a ChatGPT sign-in) the
+/// request's limit is never sent, so the provider's limit is not known.
+pub(super) fn tool_call_cut_off_feedback(tool: &str) -> String {
+    format!(
+        "Your previous reply hit the output limit partway through the arguments of a `{tool}` \
+         call, so the reply was cut off and none of its tool calls were run. Keep each call \
+         small enough to finish within the limit: split large content across several calls \
+         (for a large file, write the first part, then add the rest with `edit`)."
+    )
+}
+
 /// Adds `feedback` for the model as its own message (#2403): a message
 /// already sent is never edited, so the next request extends the last one.
 pub(super) fn append_feedback(messages: &mut Vec<Message>, feedback: String, current_turn: u32) {

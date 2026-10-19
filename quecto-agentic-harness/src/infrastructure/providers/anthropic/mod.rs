@@ -347,6 +347,19 @@ impl AnthropicProvider {
         let usage = body["usage"].as_object().map(usage::parse_usage);
 
         let stop_reason = body["stop_reason"].as_str().map(StopReason::parse);
+        // #2593: Anthropic documents a `tool_use` block that ends a
+        // `max_tokens` reply as incomplete. Its input arrives parsed, so it
+        // cannot show the cut: the call is reported with no arguments, which
+        // the domain reads as cut off (`output_limit::cut_off_tool_call`).
+        let ends_in_tool_use = content_blocks
+            .last()
+            .is_some_and(|block| block["type"].as_str() == Some("tool_use"));
+        if stop_reason == Some(StopReason::MaxTokens) && ends_in_tool_use {
+            let cut = tool_calls
+                .last_mut()
+                .expect("a reply ending in tool_use has a call");
+            cut.arguments.clear();
+        }
 
         Ok(LlmResponse {
             content,
