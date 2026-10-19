@@ -90,3 +90,7 @@ fn oauth_entry(file: &serde_json::Value, provider: LoginProvider) -> Option<Exte
         access_token,
     })
 }
+
+#[cfg(test)]
+#[path = "auth_json_tests.rs"]
+mod tests;
