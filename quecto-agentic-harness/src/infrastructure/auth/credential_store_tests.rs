@@ -527,6 +527,14 @@ fn a_wrong_typed_field_is_never_echoed_in_a_parse_error() {
             r#"{"credentials":{"openai":{"provider":"openai","token":["fake-secret-array"],"method":"token","expires_at":null}}}"#,
             "fake-secret-array",
         ),
+        (
+            r#"{"credentials":{"openai":{"provider":"openai","token":"x","method":"sk-FAKE-METHOD-SECRET","expires_at":null}}}"#,
+            "sk-FAKE-METHOD-SECRET",
+        ),
+        (
+            r#"{"credentials":{"openai":{"provider":"openai","token":"x","method":"token","expires_at":"sk-FAKE-SECRET-IN-WRONG-FIELD"}}}"#,
+            "sk-FAKE-SECRET-IN-WRONG-FIELD",
+        ),
     ] {
         std::fs::write(store.path(), content).unwrap();
         let errors = [

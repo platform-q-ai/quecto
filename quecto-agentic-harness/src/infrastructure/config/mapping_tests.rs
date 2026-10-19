@@ -108,3 +108,43 @@ fn realize_applies_env_overrides_after_the_document_and_rejects_bad_ones() {
     let error = realize_config(json!({"agents": 1}), &env, base.path()).unwrap_err();
     assert!(error.contains("failed to parse config"), "{error}");
 }
+
+/// #2617: a wrong-typed field of config.json may hold a secret (an
+/// `api_key` given as a number); no error a caller passes on quotes it.
+/// The field is named by its path instead.
+#[test]
+fn a_wrong_typed_field_is_named_never_quoted() {
+    let base = TempDir::new().unwrap();
+    let validator = ConfigValidatorAdapter;
+    for (document, secret, path) in [
+        (
+            json!({"providers": {"openai": {"api_key": 98765432123u64}}}),
+            "98765432123",
+            "providers.openai.api_key",
+        ),
+        (
+            json!({"providers": {"anthropic": {"api_key": ["sk-FAKE-SECRET-IN-ARRAY"]}}}),
+            "sk-FAKE-SECRET-IN-ARRAY",
+            "providers.anthropic.api_key",
+        ),
+        (
+            json!({"providers": {"openai_compatible": {"endpoints": [{"prefix": "p", "api_key": {"k": "sk-FAKE-NESTED"}}]}}}),
+            "sk-FAKE-NESTED",
+            "providers.openai_compatible.endpoints[0].api_key",
+        ),
+    ] {
+        let errors = [
+            validator.validate(&document).unwrap_err(),
+            realize_config(document.clone(), &HashMap::new(), base.path()).unwrap_err(),
+            Config::from_document(document.clone())
+                .err()
+                .unwrap()
+                .to_string(),
+        ];
+        for error in errors {
+            assert!(!error.contains(secret), "{secret} quoted in: {error}");
+            assert!(error.contains("failed to parse config"), "{error}");
+            assert!(error.contains(path), "the field is named: {error}");
+        }
+    }
+}
