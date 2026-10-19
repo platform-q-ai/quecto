@@ -66,7 +66,7 @@ fn truncate_line_bounds_and_multibyte() {
 
 // ---------------------------------------------------------------------------
 // Item 8 — consolidated UsageInfo parser. The five near-identical JSON usage
-// parsers collapse into `providers::usage`. These tests drive the shared entry
+// parsers collapse into `providers::openai::usage`. These tests drive the shared entry
 // points and pin their behaviour (RED: the module does not exist yet).
 // ---------------------------------------------------------------------------
 

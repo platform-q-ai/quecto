@@ -1,6 +1,6 @@
 //! Test-only accessors for `CodexProvider`'s private request builders.
 //!
-//! Kept out of `codex.rs` so production code stays within the repo's
+//! Kept out of `codex/mod.rs` so production code stays within the repo's
 //! file-size budget; these are compiled only under `test` or the
 //! `test-support` feature.
 

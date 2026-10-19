@@ -467,7 +467,7 @@ impl crate::application::ports::AttemptAdmission for Grant {
 fn gated_at(server: &wiremock::MockServer) -> CodexProvider {
     oauth_at(server).with_attempt_admission(
         std::sync::Arc::new(Grant),
-        crate::infrastructure::providers::transport::SingleAttemptClient::build(
+        crate::infrastructure::providers::transport::single_attempt_client::SingleAttemptClient::build(
             reqwest::Client::builder().no_proxy(),
         )
         .unwrap(),

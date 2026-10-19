@@ -351,7 +351,7 @@ pub fn build_http_client() -> reqwest::Client {
     // long LLM generations. The connect_timeout gates the initial handshake;
     // per-request timeouts are set at the call site when needed (e.g.
     // web_fetch uses its own 10s timeout).
-    crate::infrastructure::providers::transport::default_client_builder()
+    crate::infrastructure::providers::transport::single_attempt_client::default_client_builder()
         .build()
         .unwrap_or_default()
 }
@@ -360,8 +360,9 @@ pub fn build_http_client() -> reqwest::Client {
 /// recipe's connect timeout and the built-in TLS roots. web_fetch builds
 /// its own client from these, so no transport can be handed to it.
 pub fn web_fetch_client_recipe() -> crate::infrastructure::http::web_fetch::WebFetchClientRecipe {
-    crate::infrastructure::http::web_fetch::WebFetchClientRecipe::default()
-        .connect_timeout(crate::infrastructure::providers::transport::CONNECT_TIMEOUT)
+    crate::infrastructure::http::web_fetch::WebFetchClientRecipe::default().connect_timeout(
+        crate::infrastructure::providers::transport::single_attempt_client::CONNECT_TIMEOUT,
+    )
 }
 
 /// Build the shared official-tool catalogue/registry root used by CLI, REPL,

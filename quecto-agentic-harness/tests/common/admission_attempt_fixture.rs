@@ -77,7 +77,7 @@ impl Leaf {
     pub fn provider(self, url: &str, gate: Arc<Gate>) -> Arc<dyn LlmProvider> {
         // Bypass environment proxies; this suite must never leave loopback.
         let client = reqwest::Client::builder().no_proxy().build().unwrap();
-        let safe_client = quecto::infrastructure::providers::transport::SingleAttemptClient::build(
+        let safe_client = quecto::infrastructure::providers::transport::single_attempt_client::SingleAttemptClient::build(
             reqwest::Client::builder().no_proxy(),
         )
         .unwrap();

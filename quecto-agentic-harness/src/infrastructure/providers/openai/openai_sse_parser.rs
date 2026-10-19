@@ -1,6 +1,6 @@
 //! SSE response parser for OpenAI chat completions.
 //!
-//! Extracted from `openai.rs` to keep the provider file under the 750-line
+//! Extracted from `openai/mod.rs` to keep the provider file under the 750-line
 //! limit and to make the parser independently testable.
 
 use crate::domain::conversation::value_objects::message::ToolCall;

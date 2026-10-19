@@ -24,7 +24,7 @@ use crate::application::providers::ports::LlmProvider;
 #[derive(Clone)]
 pub(crate) struct AttemptTransportBinding {
     pub gate: Arc<dyn crate::application::ports::AttemptAdmission>,
-    pub client: transport::SingleAttemptClient,
+    pub client: transport::single_attempt_client::SingleAttemptClient,
 }
 
 /// What binds one provider's leaf transport: its admission capability, when

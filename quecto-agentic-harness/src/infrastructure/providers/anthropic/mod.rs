@@ -51,7 +51,7 @@ impl AnthropicProvider {
     pub fn with_attempt_admission(
         mut self,
         gate: std::sync::Arc<dyn crate::application::ports::AttemptAdmission>,
-        client: crate::infrastructure::providers::transport::SingleAttemptClient,
+        client: crate::infrastructure::providers::transport::single_attempt_client::SingleAttemptClient,
     ) -> Self {
         self.client = client.into_client();
         self.attempt_admission = Some(gate);

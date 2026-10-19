@@ -1,12 +1,12 @@
 // Issue #1338: sub-agent note delivery on the Responses path. `openai-oauth`
-// routes here rather than to `openai.rs`, and system messages fold into
+// routes here rather than to `openai/mod.rs`, and system messages fold into
 // `instructions`, so a note injected as a system message never entered
 // `input`. Split from codex_tests.rs for the 750-line limit.
 
 // Nested under `codex_tests`, so `super::super` is the codex module itself.
 use super::super::*;
 
-/// `openai-oauth` routes here, not to `openai.rs` (`provider_runtime.rs`
+/// `openai-oauth` routes here, not to `openai/mod.rs` (`routing/provider_runtime.rs`
 /// build_single_provider). A sub-agent note as a system message folded into
 /// `instructions` and never entered `input`, so the request ended on the
 /// parent's own assistant turn and the model just continued its previous

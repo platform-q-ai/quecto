@@ -1,6 +1,6 @@
 //! Incremental SSE byte-stream parser for OpenAI chat completions.
 //!
-//! Extracted from `openai.rs` to keep both files under the 750-line limit.
+//! Extracted from `openai/mod.rs` to keep both files under the 750-line limit.
 //! Uses the shared SSE pump from [`sse_common`].
 
 use crate::domain::conversation::value_objects::message::{

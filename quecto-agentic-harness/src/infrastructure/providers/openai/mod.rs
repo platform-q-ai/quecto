@@ -1,5 +1,5 @@
 pub mod openai_endpoint_router;
-pub(super) mod openai_images;
+mod openai_images;
 pub(super) mod provider_images;
 #[path = "openai_request.rs"]
 mod request_body;
@@ -81,7 +81,7 @@ impl OpenAiProvider {
     pub fn with_attempt_admission(
         mut self,
         gate: std::sync::Arc<dyn crate::application::ports::AttemptAdmission>,
-        client: crate::infrastructure::providers::transport::SingleAttemptClient,
+        client: crate::infrastructure::providers::transport::single_attempt_client::SingleAttemptClient,
     ) -> Self {
         self.client = client.into_client();
         self.attempt_admission = Some(gate);
@@ -565,9 +565,7 @@ impl LlmProvider for OpenAiProvider {
     }
 }
 
-#[path = "openai_sse.rs"]
 pub(super) mod openai_sse;
-#[path = "openai_sse_parser.rs"]
 pub(crate) mod openai_sse_parser;
 
 #[cfg(test)]

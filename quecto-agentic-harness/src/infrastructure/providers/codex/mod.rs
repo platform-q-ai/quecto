@@ -19,7 +19,6 @@ use crate::domain::conversation::value_objects::message::{LlmResponse, Role, Thi
 use crate::domain::inference::value_objects::provider::StreamEvent;
 use crate::domain::shared::error::DomainError;
 
-#[path = "codex_sse_state.rs"]
 mod codex_sse_state;
 use codex_sse_state::SseAccumulator;
 
@@ -78,7 +77,7 @@ impl CodexProvider {
     pub fn with_attempt_admission(
         mut self,
         gate: std::sync::Arc<dyn crate::application::ports::AttemptAdmission>,
-        client: crate::infrastructure::providers::transport::SingleAttemptClient,
+        client: crate::infrastructure::providers::transport::single_attempt_client::SingleAttemptClient,
     ) -> Self {
         self.client = client.into_client();
         self.attempt_admission = Some(gate);
@@ -579,9 +578,7 @@ impl LlmProvider for CodexProvider {
     }
 }
 
-#[path = "codex_input.rs"]
 mod codex_input;
-#[path = "codex_replay.rs"]
 mod codex_replay;
 /// FNV-1a 32-bit: fast, dependency-free, deterministic.
 fn fnv1a(text: &str) -> u32 {
@@ -593,7 +590,6 @@ fn fnv1a(text: &str) -> u32 {
     hash
 }
 
-#[path = "codex_sse_handler.rs"]
 mod codex_sse_handler;
 #[cfg(test)]
 use super::transport::sse_common::{SseHandler, SseLineOutcome};

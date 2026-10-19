@@ -49,8 +49,11 @@ impl crate::application::ports::AttemptAdmission for Grant {
         })
     }
 }
-pub(super) fn single_attempt() -> super::transport::SingleAttemptClient {
-    super::transport::SingleAttemptClient::build(reqwest::Client::builder().no_proxy()).unwrap()
+pub(super) fn single_attempt() -> super::transport::single_attempt_client::SingleAttemptClient {
+    super::transport::single_attempt_client::SingleAttemptClient::build(
+        reqwest::Client::builder().no_proxy(),
+    )
+    .unwrap()
 }
 
 #[derive(Clone, Copy, Debug)]

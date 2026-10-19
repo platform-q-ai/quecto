@@ -18,7 +18,7 @@ use crate::domain::shared::error::DomainError;
 /// The progress bound: well under the idle bound, well over the gaps.
 const PROGRESS: Duration = Duration::from_millis(500);
 /// The gap between events: fast enough that the events a stall needs
-/// ([`super::stream_idle::PROGRESS_EVENTS`]) come within the bound.
+/// ([`super::transport::stream_idle::PROGRESS_EVENTS`]) come within the bound.
 const EVERY: Duration = Duration::from_millis(1);
 
 /// The vendor's event that carries no output, sent again and again.

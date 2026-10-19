@@ -100,7 +100,7 @@ async fn auth_refresh_rebuild_reacquires_same_bound_gate() {
             )
             .with_attempt_admission(
                 gate.clone(),
-                quecto::infrastructure::providers::transport::SingleAttemptClient::build(
+                quecto::infrastructure::providers::transport::single_attempt_client::SingleAttemptClient::build(
                     reqwest::Client::builder().no_proxy(),
                 )
                 .unwrap(),
@@ -129,7 +129,7 @@ async fn auth_refresh_rebuild_reacquires_same_bound_gate() {
                 )
                 .with_attempt_admission(
                     bound_gate.clone(),
-                    quecto::infrastructure::providers::transport::SingleAttemptClient::build(
+                    quecto::infrastructure::providers::transport::single_attempt_client::SingleAttemptClient::build(
                         reqwest::Client::builder().no_proxy(),
                     )
                     .unwrap(),

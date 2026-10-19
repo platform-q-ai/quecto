@@ -39,7 +39,7 @@ async fn check(status: u16, body: &str, expected: bool) {
     let provider = OpenAiProvider::new("fixture".into(), Some(server.uri()))
         .with_attempt_admission(
             gate.clone(),
-            quecto::infrastructure::providers::transport::SingleAttemptClient::build(
+            quecto::infrastructure::providers::transport::single_attempt_client::SingleAttemptClient::build(
                 reqwest::Client::builder().no_proxy(),
             )
             .unwrap(),
@@ -125,7 +125,7 @@ async fn assembled_responses_reports_sse_throttle_before_body_eof() {
     )
     .with_attempt_admission(
         gate.clone(),
-        quecto::infrastructure::providers::transport::SingleAttemptClient::build(
+        quecto::infrastructure::providers::transport::single_attempt_client::SingleAttemptClient::build(
             reqwest::Client::builder().no_proxy(),
         )
         .unwrap(),
