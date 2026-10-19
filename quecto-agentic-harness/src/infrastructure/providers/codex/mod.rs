@@ -9,6 +9,7 @@ mod request_body;
 // - API keys use the standard `api.openai.com/v1/responses` endpoint with
 //   plain `Authorization: Bearer` auth and none of the OAuth-only headers.
 
+use codex_wire::CODEX_WIRE;
 use std::future::Future;
 use std::pin::Pin;
 
@@ -461,7 +462,7 @@ impl CodexProvider {
         let attempt = super::transport::attempt_transport::PassiveAttempt::begin(
             call.trace.clone(),
             super::transport::attempt_profile::Profile::new(
-                &crate::infrastructure::providers::codex::codex_wire::CODEX_WIRE,
+                &CODEX_WIRE,
                 super::transport::attempt_profile::Surface::Incremental,
                 idle,
             ),
@@ -591,6 +592,7 @@ impl LlmProvider for CodexProvider {
 mod codex_input;
 mod codex_replay;
 pub(in crate::infrastructure::providers) mod codex_wire;
+mod input_prefix;
 /// FNV-1a 32-bit: fast, dependency-free, deterministic.
 fn fnv1a(text: &str) -> u32 {
     let mut hash: u32 = 0x811c_9dc5;

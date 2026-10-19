@@ -50,14 +50,15 @@ impl LineObserver {
 pub(super) struct ProtocolObserver {
     dialect: &'static dyn WireDialect,
     pub(super) terminal: bool,
-    event: String,
+    /// The name the last `event:` line gave the data after it.
+    event: &'static str,
 }
 impl ProtocolObserver {
     pub(super) fn new(profile: Profile) -> Self {
         Self {
             dialect: profile.dialect,
             terminal: false,
-            event: String::new(),
+            event: "",
         }
     }
     pub(super) fn observe(&mut self, line: &str, receipt: &Receipt) {
@@ -66,7 +67,7 @@ impl ProtocolObserver {
         }
         if let Some(event) = line.strip_prefix("event: ") {
             if let Some(named) = self.dialect.event_line(event) {
-                self.event = named.to_owned();
+                self.event = named;
                 return;
             }
         }
@@ -134,9 +135,9 @@ impl ProtocolObserver {
                         state.diagnostics.first_token_ms =
                             Some(u64::try_from(elapsed).unwrap_or(u64::MAX));
                     }
-                    let kind = self.dialect.event_kind(&self.event, &value);
+                    let kind = self.dialect.event_kind(self.event, &value);
                     count_kind(&mut state, kind);
-                    let event = self.dialect.event_name(&self.event, &value);
+                    let event = self.dialect.event_name(self.event, &value);
                     let terminal = match event {
                         _ if self.dialect.is_error_chunk(&value) => Some(TerminalEvent::Error),
                         "response.completed" => Some(TerminalEvent::ResponseCompleted),
@@ -163,34 +164,37 @@ impl ProtocolObserver {
                 }
             }
         };
-        match self.dialect.ending(&self.event, parsed.as_ref()) {
-            Ending::Open => {}
+        let (record, failure) = match self.dialect.ending(self.event, parsed.as_ref()) {
+            Ending::Open => return,
             Ending::Failed {
                 feedback,
                 throttle,
                 record,
-            } => {
-                if let Some(record) = record {
-                    let mut state = receipt.0.lock().unwrap();
+            } => (record, Some((feedback, throttle))),
+            Ending::Completed { record } => (record, None),
+        };
+        {
+            let mut state = receipt.0.lock().unwrap();
+            match record {
+                Some(record) => {
                     state.diagnostics.terminal_event = Some(record);
                     state.diagnostics.termination = Termination::Completed;
                 }
-                match throttle {
-                    Some(throttle) => receipt.typed_as(&feedback, throttle),
-                    None => receipt.typed(&feedback),
-                }
-                receipt.fail();
-                self.terminal = true;
-            }
-            Ending::Completed { record } => {
-                if let Some(record) = record {
-                    let mut state = receipt.0.lock().unwrap();
-                    state.diagnostics.terminal_event = Some(record);
-                    state.diagnostics.termination = Termination::Completed;
-                }
-                self.terminal = true;
+                // An ending that records nothing relies on the event having
+                // been recorded as terminal when its data was read: the
+                // dialect's `ending` and its error chunks agree with the
+                // terminal names (#2605 review).
+                None => debug_assert!(
+                    state.diagnostics.terminal_event.is_some(),
+                    "an ending with no record follows a recorded terminal event"
+                ),
             }
         }
+        if let Some((feedback, throttle)) = failure {
+            receipt.typed_as(&feedback, throttle);
+            receipt.fail();
+        }
+        self.terminal = true;
     }
 }
 

@@ -2,11 +2,13 @@
 //! recovery when the service refuses it: the request is sent once more
 //! without replay, and the provider replays no more — replay is an
 //! optimisation, and a refused item must not fail every later turn.
+use super::codex_wire::CODEX_WIRE;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
 use super::CodexProvider;
 use super::codex_sse_handler::CodexSseHandler;
+use super::input_prefix::PendingInput;
 use crate::application::providers::ports::ChatRequest;
 use crate::domain::conversation::value_objects::message::{LlmResponse, Message, ThinkingBlock};
 use crate::domain::inference::events::request_observation::RequestTrace;
@@ -15,7 +17,6 @@ use crate::domain::inference::value_objects::provider::StreamEvent;
 use crate::domain::shared::error::DomainError;
 use crate::infrastructure::providers::transport::attempt_profile::{Profile, Surface};
 use crate::infrastructure::providers::transport::attempt_transport::PassiveAttempt;
-use crate::infrastructure::providers::transport::input_prefix::PendingInput;
 use crate::infrastructure::providers::transport::stream_idle::BodyError;
 
 /// Everything one request's sends share.
@@ -167,11 +168,7 @@ impl CodexProvider {
                 call.trace.clone(),
                 call.cancel.as_ref(),
                 builder,
-                Profile::new(
-                    &crate::infrastructure::providers::codex::codex_wire::CODEX_WIRE,
-                    Surface::Assembled,
-                    self.stream_idle,
-                ),
+                Profile::new(&CODEX_WIRE, Surface::Assembled, self.stream_idle),
                 |raw| {
                     let mut parsed = Self::parse_sse_reply(raw)
                         .map_err(|cut| cut.account(call.trace.as_deref(), &call.model))?;
@@ -183,11 +180,7 @@ impl CodexProvider {
         }
         // Observed beside the request, never altering it (#2151, #2210).
         let idle = self.stream_idle;
-        let profile = Profile::new(
-            &crate::infrastructure::providers::codex::codex_wire::CODEX_WIRE,
-            Surface::Assembled,
-            idle,
-        );
+        let profile = Profile::new(&CODEX_WIRE, Surface::Assembled, idle);
         let attempt = PassiveAttempt::begin(call.trace.clone(), profile);
         let resp = match idle.within(builder.send()).await {
             Ok(sent) => sent
@@ -291,11 +284,7 @@ impl CodexProvider {
                     gate,
                     (call.trace.clone(), call.cancel.as_ref()),
                     builder,
-                    Profile::new(
-                        &crate::infrastructure::providers::codex::codex_wire::CODEX_WIRE,
-                        Surface::Incremental,
-                        self.stream_idle,
-                    ),
+                    Profile::new(&CODEX_WIRE, Surface::Incremental, self.stream_idle),
                     tx,
                     handler,
                 )

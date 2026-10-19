@@ -23,7 +23,11 @@ fn the_empty_stream_is_cut_short_and_retried() {
         classify_provider_error(&DomainError::Provider(EMPTY_STREAM.into())),
         ProviderErrorClass::EmptyStream
     );
-    for message in ["stream read error: x", "HTTP 500 from Codex: boom", ""] {
+    for message in [
+        "stream read error: x",
+        "HTTP 500 from the provider: boom",
+        "",
+    ] {
         assert!(!is_cut_short(message), "{message}");
     }
     let cut_short = &format!("Test stream {CUT_SHORT} its end");

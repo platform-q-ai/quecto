@@ -8,7 +8,8 @@ use std::borrow::Cow;
 use serde_json::Value;
 
 use crate::infrastructure::providers::openai::openai_stream_error::is_stream_error_chunk;
-use crate::infrastructure::providers::transport::attempt_transport::attempt_events::named_kind;
+use crate::infrastructure::providers::transport::admission_feedback::is_typed_throttle;
+use crate::infrastructure::providers::transport::attempt_events::named_kind;
 use crate::infrastructure::providers::transport::wire_dialect::{Ending, WireDialect, text_len};
 
 /// The Responses (Codex) wire.
@@ -67,7 +68,7 @@ impl WireDialect for CodexWire {
         {
             Ending::Failed {
                 feedback: Cow::Borrowed(value),
-                throttle: None,
+                throttle: is_typed_throttle(value),
                 record: None,
             }
         } else {

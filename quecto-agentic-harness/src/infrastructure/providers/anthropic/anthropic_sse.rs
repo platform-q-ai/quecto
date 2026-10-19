@@ -3,6 +3,7 @@
 //
 // #437: Added `signature_delta` handling for thinking block signature capture.
 
+use super::anthropic_wire::ANTHROPIC_WIRE;
 use crate::domain::conversation::services::visible_thinking::{
     MAX_VISIBLE_THINKING_BYTES, append_visible_thinking,
 };
@@ -350,11 +351,7 @@ impl AnthropicProvider {
 
         let idle = self.stream_idle;
         // Observed beside the request, never altering it (#2151, #2210).
-        let profile = Profile::new(
-            &crate::infrastructure::providers::anthropic::anthropic_wire::ANTHROPIC_WIRE,
-            Surface::Assembled,
-            idle,
-        );
+        let profile = Profile::new(&ANTHROPIC_WIRE, Surface::Assembled, idle);
         let trace = params.trace.clone();
         let attempt =
             crate::infrastructure::providers::transport::attempt_transport::PassiveAttempt::begin(
@@ -523,11 +520,7 @@ impl AnthropicProvider {
         let attempt =
             crate::infrastructure::providers::transport::attempt_transport::PassiveAttempt::begin(
                 params.base.trace,
-                Profile::new(
-                    &crate::infrastructure::providers::anthropic::anthropic_wire::ANTHROPIC_WIRE,
-                    Surface::Incremental,
-                    idle,
-                ),
+                Profile::new(&ANTHROPIC_WIRE, Surface::Incremental, idle),
             );
         let mut response = match idle.within(request_builder.send()).await {
             Ok(Ok(r)) => r,

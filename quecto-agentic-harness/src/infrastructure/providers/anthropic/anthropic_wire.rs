@@ -7,8 +7,9 @@ use std::borrow::Cow;
 use serde_json::Value;
 
 use crate::domain::inference::value_objects::attempt_diagnostics::TerminalEvent;
+use crate::infrastructure::providers::transport::admission_feedback::is_typed_throttle;
+use crate::infrastructure::providers::transport::attempt_events::named_kind;
 use crate::infrastructure::providers::transport::attempt_profile::Surface;
-use crate::infrastructure::providers::transport::attempt_transport::attempt_events::named_kind;
 use crate::infrastructure::providers::transport::wire_dialect::{Ending, WireDialect, text_len};
 
 /// The Messages (Anthropic) wire.
@@ -70,11 +71,14 @@ impl WireDialect for AnthropicWire {
     /// successful decoding, or later ignored bytes become feedback.
     fn ending<'a>(&self, named: &str, parsed: Option<&'a Value>) -> Ending<'a> {
         match named {
-            "error" => Ending::Failed {
-                feedback: parsed.map_or(Cow::Owned(Value::Null), Cow::Borrowed),
-                throttle: None,
-                record: Some(TerminalEvent::Error),
-            },
+            "error" => {
+                let feedback = parsed.map_or(Cow::Owned(Value::Null), Cow::Borrowed);
+                Ending::Failed {
+                    throttle: is_typed_throttle(&feedback),
+                    feedback,
+                    record: Some(TerminalEvent::Error),
+                }
+            }
             "message_stop" => Ending::Completed {
                 record: Some(TerminalEvent::MessageStop),
             },

@@ -17,8 +17,6 @@ use crate::domain::inference::value_objects::cancel_flag::CancelFlag;
 use crate::domain::inference::value_objects::provider::StreamEvent;
 use crate::domain::shared::error::DomainError;
 
-#[path = "attempt_events.rs"]
-pub(in crate::infrastructure::providers) mod attempt_events;
 #[path = "attempt_observer.rs"]
 mod observer;
 use observer::{LineObserver, ProtocolObserver};
@@ -130,9 +128,6 @@ impl Receipt {
             }
             _ => {}
         }
-    }
-    fn typed(&self, value: &serde_json::Value) {
-        self.typed_as(value, is_typed_throttle(value));
     }
     /// A typed error payload that is (`throttled`) or is not a throttle.
     fn typed_as(&self, value: &serde_json::Value, throttled: bool) {

@@ -2,7 +2,7 @@
 //! the names its events are counted under, and the events its handler
 //! consumes — moved out of `transport/` with the vendor-neutral contract.
 use super::*;
-use crate::infrastructure::providers::transport::attempt_transport::attempt_events::KNOWN_EVENTS;
+use crate::infrastructure::providers::transport::attempt_events::KNOWN_EVENTS;
 use serde_json::json;
 
 #[test]

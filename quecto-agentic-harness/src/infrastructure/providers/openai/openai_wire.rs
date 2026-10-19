@@ -8,8 +8,8 @@ use serde_json::Value;
 
 use super::openai_stream_error::{is_stream_error_chunk, is_throttle_chunk};
 use crate::infrastructure::providers::transport::admission_feedback::is_typed_throttle;
+use crate::infrastructure::providers::transport::attempt_events::KNOWN_EVENTS;
 use crate::infrastructure::providers::transport::attempt_profile::Surface;
-use crate::infrastructure::providers::transport::attempt_transport::attempt_events::KNOWN_EVENTS;
 use crate::infrastructure::providers::transport::wire_dialect::{Ending, WireDialect, text_len};
 
 /// The OpenAI chat wire.
@@ -57,7 +57,7 @@ impl WireDialect for OpenAiWire {
             // A numeric 429/529 chunk throttles too (#2155 review).
             Some(value) if is_stream_error_chunk(value) => Ending::Failed {
                 feedback: Cow::Borrowed(value),
-                throttle: Some(is_typed_throttle(value) || is_throttle_chunk(value)),
+                throttle: is_typed_throttle(value) || is_throttle_chunk(value),
                 record: None,
             },
             _ => Ending::Open,

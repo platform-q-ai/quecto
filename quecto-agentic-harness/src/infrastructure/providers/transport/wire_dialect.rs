@@ -16,12 +16,13 @@ pub(in crate::infrastructure::providers) enum Ending<'a> {
     /// The stream goes on.
     Open,
     /// The attempt failed. `feedback` is the typed error body admission
-    /// hears; `throttle` is whether it is a throttle when the wire knows a
-    /// throttle by more than its typed fields (`None`: by those alone);
-    /// `record` is the terminal event recorded however the data parsed.
+    /// hears; `throttle` is whether the failure is a throttle (at least
+    /// whenever the body's typed fields say so,
+    /// `admission_feedback::is_typed_throttle`); `record` is the terminal
+    /// event recorded however the data parsed.
     Failed {
         feedback: Cow<'a, Value>,
-        throttle: Option<bool>,
+        throttle: bool,
         record: Option<TerminalEvent>,
     },
     /// The reply ended; `record` as for [`Ending::Failed`].
@@ -75,7 +76,7 @@ pub(in crate::infrastructure::providers) trait WireDialect:
     /// Whether the non-terminal event `name` (`value`) is one the harness
     /// knows.
     fn known_event(&self, name: &str, _value: &Value) -> bool {
-        super::attempt_transport::attempt_events::KNOWN_EVENTS.contains(&name)
+        super::attempt_events::KNOWN_EVENTS.contains(&name)
     }
     /// How the event `parsed` (`None` when its data was not JSON), named
     /// `named` by its `event:` line, ends the attempt.
@@ -120,7 +121,7 @@ impl WireDialect for TestWire {
         format!("HTTP error: {error}")
     }
     fn event_kind(&self, _named: &str, _value: &Value) -> &'static str {
-        super::attempt_transport::attempt_events::UNKNOWN_KIND
+        super::attempt_events::UNKNOWN_KIND
     }
     fn output_bytes(&self, _value: &Value) -> u64 {
         0

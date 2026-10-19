@@ -35,7 +35,7 @@ fn allowed(path: &str) -> bool {
 /// `crate`, `super` or `self`, and each such path in a macro's tokens. A
 /// crate alias (`use crate as c`) or an `extern crate` cannot be followed,
 /// and is [`dependency_scan::UNRESOLVABLE`], which no allowlist admits.
-fn crate_paths(source: &str, module: &[String]) -> Vec<String> {
+pub(super) fn crate_paths(source: &str, module: &[String]) -> Vec<String> {
     let file = syn::parse_file(source).expect("a crate source parses");
     let mut found = Paths {
         module: module.to_vec(),
