@@ -6,7 +6,10 @@ use super::teardown_authority::{production_code, production_files};
 
 /// The adapters that block on a runtime, each of which must use the
 /// shared builder.
-const BLOCKING_ADAPTERS: &[&str] = &["src/infrastructure/auth/device_code_flow.rs"];
+const BLOCKING_ADAPTERS: &[&str] = &[
+    "src/infrastructure/auth/browser_login.rs",
+    "src/infrastructure/auth/device_code_flow.rs",
+];
 
 #[test]
 fn no_auth_adapter_builds_its_own_runtime() {

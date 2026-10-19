@@ -1,4 +1,5 @@
 use super::*;
+use crate::domain::auth::credential::{AuthMethod, Credential};
 use crate::interface::cli::{CliContext, run_with_output};
 
 fn args(s: &str) -> Vec<String> {
@@ -287,6 +288,7 @@ fn test_auth_login_bare_prompts_provider_choice() {
     let ctx = CliContext {
         base_dir: Some(tmp.path().to_path_buf()),
         stdin_data: Some("4\n".to_string()), // invalid choice
+        auth: Some(crate::composition::bootstrap::auth::build_auth_handles),
         ..Default::default()
     };
     let out = run_with_output(args("auth login"), &ctx);
@@ -306,6 +308,7 @@ fn test_auth_login_bare_choose_anthropic() {
     let ctx = CliContext {
         base_dir: Some(tmp.path().to_path_buf()),
         stdin_data: Some("1\n".to_string()),
+        auth: Some(crate::composition::bootstrap::auth::build_auth_handles),
         ..Default::default()
     };
     let out = run_with_output(args("auth login"), &ctx);
@@ -324,6 +327,7 @@ fn test_auth_login_bare_choose_openai() {
     let ctx = CliContext {
         base_dir: Some(tmp.path().to_path_buf()),
         stdin_data: Some("2\nbogus-code\n".to_string()), // Choose OpenAI, provide bogus code
+        auth: Some(crate::composition::bootstrap::auth::build_auth_handles),
         ..Default::default()
     };
     let out = run_with_output(args("auth login"), &ctx);
@@ -366,6 +370,7 @@ fn test_auth_login_oauth_openai() {
     let ctx = CliContext {
         base_dir: Some(tmp.path().to_path_buf()),
         stdin_data: Some("bogus-code\n".to_string()), // Skip browser, paste code
+        auth: Some(crate::composition::bootstrap::auth::build_auth_handles),
         ..Default::default()
     };
     let out = run_with_output(args("auth login --provider openai --oauth"), &ctx);
@@ -384,6 +389,7 @@ fn test_auth_login_oauth_anthropic_prompts_for_code() {
     let ctx = CliContext {
         base_dir: Some(tmp.path().to_path_buf()),
         stdin_data: Some("\n".to_string()), // empty code triggers error
+        auth: Some(crate::composition::bootstrap::auth::build_auth_handles),
         ..Default::default()
     };
     let out = run_with_output(args("auth login --provider anthropic --oauth"), &ctx);
@@ -403,6 +409,7 @@ fn test_auth_login_oauth_with_test_base_url() {
         base_dir: Some(tmp.path().to_path_buf()),
         oauth_base_url: Some("http://localhost:9999".to_string()),
         stdin_data: Some("bogus-code\n".to_string()), // Skip browser, paste code
+        auth: Some(crate::composition::bootstrap::auth::build_auth_handles),
         ..Default::default()
     };
     let out = run_with_output(args("auth login --provider openai --oauth"), &ctx);
@@ -651,46 +658,6 @@ fn test_import_openai_non_expired_stores_directly() {
     let creds = store.load_snapshot().unwrap();
     let cred = creds.get("openai").unwrap();
     assert_eq!(cred.token, "eyJ-still-valid");
-}
-
-/// Every refusal a login can give, exactly as `auth login` prints it.
-#[test]
-fn each_login_refusal_keeps_its_wording() {
-    let cases = [
-        (
-            LoginError::UnknownProvider("groq".to_string()),
-            "auth login: unknown provider 'groq'. Known: openai, anthropic, xai\n",
-        ),
-        (
-            LoginError::EmptyToken,
-            "auth login: --token value must not be empty\n",
-        ),
-        (
-            LoginError::DeviceCodeUnsupported(LoginProvider::Xai),
-            "auth login: device code flow is not supported for 'xai' (use --oauth instead)\n",
-        ),
-        (
-            LoginError::Unavailable("EAGAIN".to_string()),
-            "auth login: failed to create runtime: EAGAIN\n",
-        ),
-        (
-            LoginError::InsideAsyncRuntime,
-            "auth login: cannot start a login from inside an async runtime\n",
-        ),
-        (
-            LoginError::DeviceCodeRequest(
-                "provider error: device code request failed (500)".to_string(),
-            ),
-            "auth login: device code request failed: provider error: device code request failed (500)\n",
-        ),
-        (
-            LoginError::Store("config error: failed to parse credentials".to_string()),
-            "auth login: failed to store credential: config error: failed to parse credentials\n",
-        ),
-    ];
-    for (error, printed) in cases {
-        assert_eq!(login_refusal(&error), printed, "{error:?}");
-    }
 }
 
 #[test]

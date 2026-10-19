@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 
-use crate::application::auth::use_cases::{LogInWithToken, StartDeviceCodeLogin};
+use crate::application::auth::use_cases::{LogInWithOAuth, LogInWithToken, StartDeviceCodeLogin};
 use crate::interface::cli::CliContext;
 
 /// Composition's builder of the auth handles, injected through the CLI
@@ -30,6 +30,8 @@ pub struct AuthHandles {
     pub token_login: Arc<LogInWithToken>,
     /// `auth login --provider P --device-code`.
     pub device_code_login: Arc<StartDeviceCodeLogin>,
+    /// `auth login [--provider P]`: the browser OAuth login.
+    pub oauth_login: Arc<LogInWithOAuth>,
 }
 
 /// The composed auth handles for `ctx`'s base directory; without them,

@@ -93,6 +93,7 @@ const USE_CASES: &[&str] = &[
     "ListRetainedContext",
     "ListSessions",
     "ListTasks",
+    "LogInWithOAuth",
     "LogInWithToken",
     "LoseCoordinator",
     "NegotiateAuthority",
