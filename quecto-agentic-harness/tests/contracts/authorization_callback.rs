@@ -28,6 +28,8 @@ const SUCCESS_HEAD: &str = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nConnec
 const SUCCESS_MARK: &str = "Authentication successful!";
 const STATE_MISMATCH: &str =
     "HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 14\r\n\r\nState mismatch";
+const NOT_FOUND: &str =
+    "HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 9\r\n\r\nNot found";
 const AUTH_FAILURE: &str =
     "HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 12\r\n\r\nAuth failure";
 
@@ -119,8 +121,10 @@ impl Attempt {
 }
 
 /// Whether an attempt met another attempt's listener or a foreign server
-/// instead of its own: its listener could not bind, or it timed out with
-/// none of the calls answered by it.
+/// instead of its own: its listener could not bind, or it timed out while
+/// something else answered the calls (none of the answers its own). A
+/// timeout with no answers at all is no evidence of a stranger: the
+/// listener itself may be refusing its own path, which is asserted.
 fn met_a_stranger(
     received: &Result<String, AuthorizationCallbackError>,
     answers: &[Option<String>],
@@ -128,7 +132,7 @@ fn met_a_stranger(
     match received {
         Err(AuthorizationCallbackError::Failed(why)) if why.contains("failed to bind") => true,
         Err(AuthorizationCallbackError::Failed(why)) if why.contains("timed out") => {
-            !answers.iter().any(from_the_listener)
+            answers.iter().any(Option::is_some) && !answers.iter().any(from_the_listener)
         }
         _ => false,
     }
@@ -163,7 +167,10 @@ fn receive_while(
         }
         last = Some((received, answers));
     }
-    panic!("three attempts in a row met a stranger; last: {last:?}");
+    panic!(
+        "three attempts in a row failed without meeting their listener: a stranger held \
+         the port each time, or the listener refuses its own path; last: {last:?}"
+    );
 }
 
 #[test]
@@ -184,6 +191,28 @@ fn a_callback_with_another_state_is_refused_and_waiting_goes_on() {
     assert_eq!(
         answers[0].as_deref(),
         Some(STATE_MISMATCH),
+        "{answers:?} / {received:?}"
+    );
+    assert!(succeeded(&answers[1]), "{answers:?} / {received:?}");
+    assert_eq!(received, Ok("fake-code".to_string()), "{answers:?}");
+}
+
+#[test]
+fn a_callback_on_another_path_is_not_found_and_waiting_goes_on() {
+    // What keeps concurrent attempts apart: a listener takes only its own
+    // path, so a callback meant for another listener on a reused port is
+    // answered "404 Not found" and never accepted.
+    let (received, answers) = receive_while(|attempt| {
+        let foreign = call(
+            attempt.port,
+            &format!("/elsewhere/callback?code=foreign&state={}", attempt.state()),
+        );
+        let accepted = attempt.call("code=fake-code&state={state}");
+        vec![foreign, accepted]
+    });
+    assert_eq!(
+        answers[0].as_deref(),
+        Some(NOT_FOUND),
         "{answers:?} / {received:?}"
     );
     assert!(succeeded(&answers[1]), "{answers:?} / {received:?}");

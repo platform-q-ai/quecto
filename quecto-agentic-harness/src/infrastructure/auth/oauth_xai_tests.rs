@@ -266,20 +266,30 @@ fn test_parse_loopback_redirect_rejects_malformed() {
 
 // --- Callback listener (wait_for_oauth_callback_at) ---
 
-/// Bind an ephemeral port and return (addr, join-handle resolving to the result).
+/// A callback listener on a port it already holds, and the join-handle
+/// resolving to its result. The port is bound here and handed to the
+/// listener bound — never released and re-bound — so no concurrent test
+/// can take it in between and feed it, or be fed by, another test's
+/// requests (#2612).
 fn spawn_listener(
     state: &str,
     timeout_secs: u64,
 ) -> (String, tokio::task::JoinHandle<Result<String, DomainError>>) {
-    // Bind first with std to learn a free port, then release it for the
-    // helper. Small race, acceptable in tests.
-    let probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let addr = probe.local_addr().unwrap().to_string();
-    drop(probe);
+    let bound = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = bound.local_addr().unwrap().to_string();
+    bound.set_nonblocking(true).unwrap();
+    let listener = tokio::net::TcpListener::from_std(bound).unwrap();
     let state = state.to_string();
-    let addr_clone = addr.clone();
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(timeout_secs);
     let handle = tokio::spawn(async move {
-        wait_for_oauth_callback_at(&addr_clone, "/callback", &state, timeout_secs).await
+        crate::infrastructure::auth::oauth_callback_listener::serve_oauth_callback(
+            listener,
+            "/callback",
+            &state,
+            deadline,
+            &crate::infrastructure::auth::oauth_callback_request::CallbackLimits::PRODUCTION,
+        )
+        .await
     });
     (addr, handle)
 }

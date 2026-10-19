@@ -179,8 +179,12 @@ fn a_callback_carrying_the_state_stores_the_credential_without_a_paste_prompt() 
             &mut std::io::empty(),
         );
         let answer = caller.join().unwrap();
-        let lost_a_race = !succeeded(&answer)
-            && (stdout.contains("failed to bind") || stdout.contains("OAuth callback timed out"));
+        // Repeated only when the listener could not bind, or timed out while
+        // something other than it answered the call: a stranger on the port.
+        let lost_a_race = stdout.contains("failed to bind")
+            || (stdout.contains("OAuth callback timed out")
+                && answer.is_some()
+                && !succeeded(&answer));
         if !lost_a_race {
             outcome = Some((base, code, stdout, stderr, answer));
             break;
@@ -188,7 +192,10 @@ fn a_callback_carrying_the_state_stores_the_credential_without_a_paste_prompt() 
         last = Some((stdout, stderr, answer));
     }
     let Some((base, code, stdout, stderr, answer)) = outcome else {
-        panic!("three port races in a row; last attempt: {last:?}");
+        panic!(
+            "three attempts in a row failed without meeting their listener: a stranger held \
+             the port each time, or the listener refuses its own path; last: {last:?}"
+        );
     };
     assert!(succeeded(&answer), "{answer:?} / {stdout} / {stderr}");
     assert_eq!(code, 0, "stderr: {stderr}");
