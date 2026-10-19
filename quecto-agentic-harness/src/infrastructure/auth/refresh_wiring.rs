@@ -11,7 +11,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
-use crate::domain::error::DomainError;
+use crate::domain::shared::error::DomainError;
 use crate::infrastructure::auth::credential_store::CredentialStore;
 use crate::infrastructure::auth::token_refresh::persist_refreshed_token;
 

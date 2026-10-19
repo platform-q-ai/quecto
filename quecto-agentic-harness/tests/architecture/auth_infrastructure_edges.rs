@@ -1,13 +1,20 @@
 //! `infrastructure/auth` depends on no provider code (#1839 A3 review):
 //! the providers' refresh decorator names auth's `RefreshFn`, never the
 //! reverse, so the edge runs one way (providers → auth), as L22 (#2580)
-//! expects. Exact: the infrastructure siblings an auth adapter may name are
-//! listed, and anything else — `providers` first of all — fails.
+//! expects. Exact: the infrastructure modules an auth adapter may name are
+//! listed, and anything else — `providers` first of all, the layer itself,
+//! or an alias the scan cannot follow — fails.
 use std::path::Path;
 
-/// The infrastructure modules `infrastructure/auth` may name: itself, the
-/// clock, the shared runtime builder and the atomic file write.
-const AUTH_MAY_NAME: &[&str] = &["auth", "time", "processes", "atomic_write"];
+/// The infrastructure modules `infrastructure/auth` may name, as paths
+/// under `crate::infrastructure`: itself, the clock, the shared runtime
+/// builder and the atomic file write. Anything else is refused.
+const AUTH_MAY_NAME: &[&[&str]] = &[
+    &["auth"],
+    &["time"],
+    &["processes", "tokio_runtime"],
+    &["persistence", "file", "atomic_write"],
+];
 
 /// The `infrastructure` siblings `file`'s production code names that are
 /// not allowed, relative paths resolved.
@@ -18,9 +25,19 @@ fn refused_siblings(file: &str, source: &str) -> Vec<String> {
     paths
         .into_iter()
         .filter(|path| {
+            // An alias (`use crate::infrastructure as infra`) cannot be
+            // followed, so it is refused rather than trusted.
+            if path == super::dependency_scan::UNRESOLVABLE {
+                return true;
+            }
             let parts: Vec<&str> = path.split("::").collect();
             match parts.as_slice() {
-                ["crate", "infrastructure", sibling, ..] => !AUTH_MAY_NAME.contains(sibling),
+                ["crate", "infrastructure", rest @ ..] if !rest.is_empty() => !AUTH_MAY_NAME
+                    .iter()
+                    .any(|allowed| rest.starts_with(allowed)),
+                // The layer itself (`use crate::infrastructure;`,
+                // `use super::super;`) would reach any sibling through it.
+                ["crate", "infrastructure"] => true,
                 _ => false,
             }
         })
@@ -60,6 +77,11 @@ fn the_edge_check_refuses_the_reverse_edge_however_spelled() {
         "fn f() -> crate::infrastructure::providers::refreshable::ProviderFactory { todo() }",
         "use super::super::providers::refreshable::RefreshableProvider;",
         "use crate::infrastructure::{auth::oauth, providers::router::Router};",
+        "use crate::infrastructure; fn f() { let _ = infrastructure::providers::router::x(); }",
+        "use super::super; fn f() { let _ = super::providers::x(); }",
+        "use crate::infrastructure as infra;",
+        "use super::super as up;",
+        "use crate as root;",
     ] {
         assert!(
             !refused_siblings(file, source).is_empty(),
