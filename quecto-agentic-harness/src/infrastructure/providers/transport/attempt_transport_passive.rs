@@ -214,6 +214,14 @@ pub(in crate::infrastructure::providers) async fn pump_observed<H: SseHandler>(
 ) {
     match attempt {
         Some(attempt) => {
+            // The attempt's own profile names the wire (#2609 review): the
+            // caller's must be the same one.
+            let observed = attempt.observer.dialect();
+            debug_assert!(
+                observed.name() == wire.name(),
+                "the observed wire is the one pumped"
+            );
+            let wire = observed;
             let receipt = attempt.receipt.clone();
             let mut handler = Observed {
                 inner,

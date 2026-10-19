@@ -61,6 +61,10 @@ impl ProtocolObserver {
             event: "",
         }
     }
+    /// The wire this observer reads.
+    pub(super) fn dialect(&self) -> &'static dyn WireDialect {
+        self.dialect
+    }
     pub(super) fn observe(&mut self, line: &str, receipt: &Receipt) {
         if self.terminal {
             return;

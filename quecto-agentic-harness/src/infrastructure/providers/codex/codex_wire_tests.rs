@@ -323,3 +323,18 @@ fn a_long_codex_event_is_output_by_the_type_its_start_names() {
         assert!(!long(start), "{start}");
     }
 }
+
+/// #2609 review: full reasoning text is ordinary Responses traffic, known
+/// and never terminal.
+#[test]
+fn codex_knows_streamed_reasoning_text() {
+    for name in [
+        "response.reasoning_text.delta",
+        "response.reasoning_text.done",
+    ] {
+        let event = json!({"type": name, "delta": "hm"});
+        assert!(CODEX_WIRE.known_event(name, &event), "{name}");
+        assert_eq!(CODEX_WIRE.event_kind("", &event), name);
+        assert_eq!(CODEX_WIRE.terminal_event(name, &event), None);
+    }
+}

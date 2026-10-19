@@ -44,6 +44,10 @@ static RESPONSES: Vocabulary = Vocabulary {
         "response.reasoning_summary_text.delta",
         "response.reasoning_summary_text.done",
         "response.reasoning.summary_text.delta",
+        // Reasoning text a model streams in full (the OpenAI SDK's
+        // `ResponseReasoningText{Delta,Done}Event`; #2609 review).
+        "response.reasoning_text.delta",
+        "response.reasoning_text.done",
     ],
     terminal: &[
         ("response.completed", TerminalEvent::ResponseCompleted),

@@ -402,7 +402,7 @@ async fn within_after(idle: &mut EventIdle, chunks: &[&str]) -> bool {
 async fn an_sse_bound_restarts_at_events_only() {
     let bound = StreamIdle::new(GAP * 3);
     // Keep-alives alone: comments, blank lines, other fields, empty chunks.
-    let keep_alives = [": keepalive\n", "\n", "", "event: ping\n", "\r\n", ": x"];
+    let keep_alives = [": keepalive\n", "\n", "", "event: tick\n", "\r\n", ": x"];
     assert!(!within_after(&mut EventIdle::events(bound, &TEST_WIRE), &keep_alives).await);
     // Each event restarts it, split across reads or not.
     let events = [
@@ -496,7 +496,7 @@ async fn the_idle_bound_and_the_parsers_agree_on_events() {
         " data: x",
         "\tdata: x",
         ": data: x",
-        "event: ping",
+        "event: tick",
         "id: 1",
         "",
         "dat",

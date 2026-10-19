@@ -105,7 +105,7 @@ async fn every(
 }
 
 /// A keep-alive event a reply sends while it thinks, carrying no output.
-const PING: &str = "event: ping\ndata: {\"type\":\"working\"}\n\n";
+const PING: &str = "event: tick\ndata: {\"type\":\"working\"}\n\n";
 
 /// #2433 review round 3 (L1, L2): pings are events, so they restart the
 /// idle bound, and 200 of them would take 50 minutes; the backstop ends a

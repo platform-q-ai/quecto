@@ -384,7 +384,7 @@ mod transport_tests {
     #[tokio::test]
     async fn a_refused_stream_ends_as_rejected() {
         let server = MockServer::start().await;
-        let chunk = r#"data: {"choices":[{"index":0,"delta":{"content":"hi"}}]}"#;
+        let chunk = r#"data: {"type":"output","text":"hi"}"#;
         Mock::given(method("GET"))
             .respond_with(ResponseTemplate::new(200).set_body_string(format!("{chunk}\n")))
             .mount(&server)
