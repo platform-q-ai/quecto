@@ -8,6 +8,8 @@ use std::borrow::Cow;
 
 use serde_json::Value;
 
+use crate::domain::inference::services::provider_error::ProviderErrorClass;
+
 use crate::domain::inference::value_objects::attempt_diagnostics::{
     ErrorCode, IncompleteReason, TerminalEvent,
 };
@@ -58,11 +60,13 @@ static RESPONSES: Vocabulary = Vocabulary {
 /// The error types and codes the Responses wire names (#2609 review),
 /// with the throttles the official Codex client reads as a rate limit
 /// (`slow_down`) and as overloaded (`server_is_overloaded`; #2620 review).
-static RESPONSES_ERRORS: [ErrorName; 8] = [
+static RESPONSES_ERRORS: [ErrorName; 9] = [
     ErrorName::throttle("rate_limit_exceeded", ErrorCode::RateLimitExceeded),
     ErrorName::throttle("slow_down", ErrorCode::RateLimitExceeded),
     ErrorName::throttle("server_is_overloaded", ErrorCode::Overloaded),
     ErrorName::plain("server_error", ErrorCode::ServerError),
+    // An overloaded backend's type (Refs #2531).
+    ErrorName::plain("service_unavailable_error", ErrorCode::ServerError),
     ErrorName::plain("insufficient_quota", ErrorCode::InsufficientQuota),
     ErrorName::plain("usage_limit_reached", ErrorCode::UsageLimitReached),
     ErrorName::terminal("invalid_request_error", ErrorCode::InvalidRequestError),
@@ -198,6 +202,39 @@ impl WireDialect for CodexWire {
             Ending::Open
         }
     }
+}
+
+/// The class a Responses failure's error fields name (Refs #2531), so the
+/// domain classifies its rendering: a billing name (the domain's list) in
+/// any field first; then its `code`, as the official client reads it — a
+/// `code` this wire does not know names nothing, whatever the `type` says
+/// (#2620 review); only a failure with no `code` is named by its `type`.
+pub(in crate::infrastructure::providers) fn failure_class(
+    code: Option<&str>,
+    kind: Option<&str>,
+) -> Option<ProviderErrorClass> {
+    use crate::domain::inference::services::provider_error::is_billing_error_name;
+    if [code, kind]
+        .into_iter()
+        .flatten()
+        .any(is_billing_error_name)
+    {
+        return Some(ProviderErrorClass::Billing);
+    }
+    let named = match (code, kind) {
+        (Some(code), _) => CODEX_WIRE.error_name(code),
+        (None, Some(kind)) => CODEX_WIRE.error_name(kind),
+        (None, None) => None,
+    };
+    named.map(|known| match known.code() {
+        ErrorCode::RateLimitExceeded => ProviderErrorClass::RateLimit,
+        ErrorCode::Overloaded | ErrorCode::ServerError => ProviderErrorClass::Server,
+        ErrorCode::InsufficientQuota | ErrorCode::UsageLimitReached => ProviderErrorClass::Billing,
+        ErrorCode::AuthenticationError | ErrorCode::InvalidApiKey | ErrorCode::PermissionError => {
+            ProviderErrorClass::Auth
+        }
+        ErrorCode::InvalidRequestError => ProviderErrorClass::Client,
+    })
 }
 
 /// Whether a Responses event ends its reply at the output limit (#2593):
