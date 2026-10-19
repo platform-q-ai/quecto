@@ -10,14 +10,17 @@
 //!   starts with an [`ALLOWED`] prefix — or, in a test module only, a
 //!   [`TEST_RIG_ALLOWED`] one — and a crate or module alias, which cannot be
 //!   followed, is refused;
-//! - it invokes only the macros of [`MACROS`], so no `concat!` or
-//!   `include_str!` assembles a name the scan cannot see;
-//! - no identifier, and no literal outside a `#[doc = "…"]` attribute (what
-//!   comments are), names a vendor ([`VENDOR_WORDS`]).
+//! - it invokes only the macros of [`MACROS`], so no `concat!`,
+//!   `include_str!` or local `macro_rules!` assembles a name the scan cannot
+//!   see, and imports or renames nothing to one of their names;
+//! - no identifier, and no literal (decoded, so no escape hides a letter)
+//!   outside a `#[doc = "…"]` attribute (what comments are), names a vendor
+//!   ([`VENDOR_WORDS`]).
 use super::{dependency_scan, swarm_board_ports::crate_paths};
-use proc_macro2::{Delimiter, TokenStream, TokenTree};
+use proc_macro2::{Delimiter, Spacing, TokenStream, TokenTree};
 use quote::ToTokens;
 use std::path::{Path, PathBuf};
+use syn::visit::Visit;
 
 const TRANSPORT: &str = "src/infrastructure/providers/transport";
 
@@ -44,9 +47,7 @@ const TEST_RIG_ALLOWED: &[&str] = &[
 const MACROS: &[&str] = &[
     "assert",
     "assert_eq",
-    "assert_ne",
     "debug_assert",
-    "debug_assert_eq",
     "format",
     "join",
     "json",
@@ -54,10 +55,8 @@ const MACROS: &[&str] = &[
     "panic",
     "pin",
     "select",
-    "unreachable",
     "vec",
     "write",
-    "writeln",
 ];
 
 /// The vendors, as they may appear in an identifier or a literal: any case,
@@ -104,9 +103,28 @@ fn doc_text(before: &[TokenTree], group: &proc_macro2::Group) -> bool {
     attribute && group.delimiter() == Delimiter::Bracket && text
 }
 
+/// Whether `ident` is a keyword (`if`, `return`, …), which a `!` after
+/// negates rather than invokes: a keyword is no identifier syn accepts.
+fn keyword(ident: &proc_macro2::Ident) -> bool {
+    syn::parse2::<syn::Ident>(ident.to_token_stream()).is_err()
+}
+
+/// What `literal` says, decoded (escapes resolved, #2605 review round 3):
+/// a string, byte string, C string, character or byte; otherwise its text.
+fn decoded(literal: &proc_macro2::Literal) -> String {
+    match syn::parse2::<syn::Lit>(literal.to_token_stream()) {
+        Ok(syn::Lit::Str(text)) => text.value(),
+        Ok(syn::Lit::ByteStr(bytes)) => String::from_utf8_lossy(&bytes.value()).into_owned(),
+        Ok(syn::Lit::CStr(text)) => text.value().to_string_lossy().into_owned(),
+        Ok(syn::Lit::Char(c)) => c.value().to_string(),
+        Ok(syn::Lit::Byte(b)) => char::from(b.value()).to_string(),
+        _ => literal.to_string(),
+    }
+}
+
 /// What `stream` breaks of the token rules: each identifier and literal
-/// naming a vendor outside documentation text, and each macro invoked
-/// outside [`MACROS`].
+/// naming a vendor outside documentation text, each macro invoked outside
+/// [`MACROS`], and each rename to one of their names.
 fn token_violations(stream: TokenStream, found: &mut Vec<String>) {
     let tokens: Vec<TokenTree> = stream.into_iter().collect();
     for (at, token) in tokens.iter().enumerate() {
@@ -121,21 +139,52 @@ fn token_violations(stream: TokenStream, found: &mut Vec<String>) {
                 if VENDOR_WORDS.iter().any(|vendor| word.contains(vendor)) {
                     found.push(ident.to_string());
                 }
+                // A `!` alone after a name invokes it, whatever follows
+                // (`macro_rules! m { … }` too); `!=` is joint.
                 let invoked = matches!(
-                    &tokens[at + 1..],
-                    [TokenTree::Punct(bang), TokenTree::Group(_), ..] if bang.as_char() == '!'
+                    tokens.get(at + 1),
+                    Some(TokenTree::Punct(bang))
+                        if bang.as_char() == '!' && bang.spacing() == Spacing::Alone
                 );
-                if invoked && !MACROS.contains(&ident.to_string().as_str()) {
+                if invoked && !keyword(ident) && !MACROS.contains(&ident.to_string().as_str()) {
                     found.push(format!("{ident}!"));
+                }
+                let renamed = matches!(
+                    tokens.get(at + 1),
+                    Some(TokenTree::Ident(to)) if ident == "as" && MACROS.contains(&to.to_string().as_str())
+                );
+                if renamed {
+                    found.push(format!("as {}", tokens[at + 1]));
                 }
             }
             TokenTree::Literal(literal) => {
-                let text = literal.to_string().to_ascii_lowercase();
+                let text = decoded(literal).to_ascii_lowercase();
                 if VENDOR_WORDS.iter().any(|vendor| text.contains(vendor)) {
                     found.push(literal.to_string());
                 }
             }
             TokenTree::Punct(_) => {}
+        }
+    }
+}
+
+/// The `use` leaves of a file named like an allowed macro: an import that
+/// would let another macro be invoked by that name (#2605 review round 3).
+#[derive(Default)]
+struct MacroImports(Vec<String>);
+
+impl<'ast> Visit<'ast> for MacroImports {
+    fn visit_use_name(&mut self, name: &'ast syn::UseName) {
+        if MACROS.contains(&name.ident.to_string().as_str()) {
+            self.0.push(format!("use …::{}", name.ident));
+        }
+    }
+    fn visit_use_rename(&mut self, rename: &'ast syn::UseRename) {
+        for ident in [&rename.ident, &rename.rename] {
+            if MACROS.contains(&ident.to_string().as_str()) {
+                self.0
+                    .push(format!("use …::{} as {}", rename.ident, rename.rename));
+            }
         }
     }
 }
@@ -149,30 +198,44 @@ fn violations(source: &str, module: &[String], test: bool) -> Vec<String> {
         .collect();
     let file = syn::parse_file(source).expect("a crate source parses");
     token_violations(file.to_token_stream(), &mut found);
+    let mut imports = MacroImports::default();
+    imports.visit_file(&file);
+    found.extend(imports.0);
+    found
+}
+
+/// The modules mounted under `transport/` (`mounted`) whose file lies
+/// outside `folder` — reached by a `#[path]`, a `#[cfg_attr(…, path)]`, an
+/// `include!` or a test fixture's mount — and the files in `folder` (`in_folder`)
+/// that are no such module.
+fn escapes(
+    mounted: &[(PathBuf, Vec<String>, bool)],
+    folder: &Path,
+    in_folder: &[PathBuf],
+) -> Vec<String> {
+    let outside = mounted
+        .iter()
+        .filter(|(file, _, _)| !file.starts_with(folder))
+        .map(|(file, _, _)| format!("outside: {}", file.display()));
+    let unmounted = in_folder
+        .iter()
+        .filter(|file| !mounted.iter().any(|(mounted, _, _)| mounted == *file))
+        .map(|file| format!("unmounted: {}", file.display()));
+    let mut found: Vec<String> = outside.chain(unmounted).collect();
+    found.sort();
+    found.dedup();
     found
 }
 
 #[test]
 fn transport_names_only_vendor_neutral_paths_and_no_vendor() {
     let mounted = dependency_scan::mounted_under(&MODULE);
-    let outside: Vec<&PathBuf> = mounted
-        .iter()
-        .map(|(file, _, _)| file)
-        .filter(|file| !file.starts_with(TRANSPORT))
-        .collect();
-    assert!(
-        outside.is_empty(),
-        "a module of transport/ reaches a file outside it (#[path] or include!): {outside:?}"
-    );
     let mut files = Vec::new();
     rust_files(Path::new(TRANSPORT), &mut files);
-    let unmounted: Vec<&PathBuf> = files
-        .iter()
-        .filter(|file| !mounted.iter().any(|(mounted, _, _)| mounted == *file))
-        .collect();
+    let escaped = escapes(&mounted, Path::new(TRANSPORT), &files);
     assert!(
-        unmounted.is_empty(),
-        "a file in transport/ is no module of it: {unmounted:?}"
+        escaped.is_empty(),
+        "transport/'s modules and its files must be one set: {escaped:?}"
     );
     let names: Vec<String> = mounted
         .iter()
@@ -236,6 +299,16 @@ fn the_scan_refuses_every_way_of_naming_a_vendor() {
         "#[doc = include_str!(\"vendor.md\")]\nfn o() {}",
         "use crate::infrastructure::providers::ProviderBindingWire;",
         "use crate::infrastructure::providers::AttemptTransportBinding;",
+        // #2605 review round 3.
+        "macro_rules! join { ($($s:tt)*) => { $($s)::* } }\n\
+         fn p(_: join!(crate infrastructure providers routing retry RetryConfig)) {}",
+        "use std::concat as pin;\nconst P: &str = pin!(\"a\", \"b\");",
+        "use std::include_str as vec;",
+        "fn q() { let _ = { use std::concat as select; 1 }; }",
+        "const ESCAPED: &str = \"\\x6fpenai\";",
+        "const UNICODE: &str = \"c\\u{6f}dex\";",
+        "const BYTES_ESCAPED: &[u8] = b\"\\x63laude\";",
+        "const CHARS: [char; 2] = ['a', '\\x41']; const C: &str = \"\\u{41}nthropic\";",
     ] {
         for test in [false, true] {
             assert!(
@@ -268,7 +341,10 @@ fn the_scan_refuses_every_way_of_naming_a_vendor() {
         "fn k(vendor: &str) -> bool { vendor.is_empty() }",
         "const DONE: &str = \"[DONE]\";",
         "#![doc = \"Anthropic, inner.\"]\nfn q() { assert!(matches!(1, 1), \"{}\", format!(\"x\")); }",
-        "#[doc = \"OpenAI\"]\nfn r() { debug_assert_eq!(vec![1u8], [1]); }",
+        "#[doc = \"OpenAI\"]\nfn r() { debug_assert!(vec![1u8].len() == 1); }",
+        "use std::pin::Pin;\nfn s(a: u8, b: u8) -> bool { a != b && !(a == 0) }",
+        "fn t(x: bool) -> bool { if !x { return !x; } while !x {} match !x { _ => !x } }",
+        "const PLAIN: &str = \"\\x41\\u{42}\";",
     ] {
         for test in [false, true] {
             assert!(
@@ -278,4 +354,63 @@ fn the_scan_refuses_every_way_of_naming_a_vendor() {
             );
         }
     }
+}
+
+/// #2605 review round 3: a module of `transport/` whose file lies outside
+/// it — by `#[path]`, `#[cfg_attr(…, path)]`, `include!` or a test fixture's
+/// mount of a production file, whichever is mounted first — and a file there
+/// that is no module of it are each refused; a folder whose files are its
+/// modules is not.
+#[test]
+fn every_way_out_of_the_folder_is_refused() {
+    let transport = "mod inner;\n\
+        #[path = \"../other/away.rs\"] mod away;\n\
+        include!(\"../spliced.rs\");\n\
+        #[cfg(test)] #[path = \"../other/prod.rs\"] mod fixture;\n\
+        #[cfg_attr(all(), path = \"../other/attr.rs\")] mod conditional;";
+    for lib in ["mod transport;\nmod other;", "mod other;\nmod transport;"] {
+        let files = [
+            ("lib.rs", lib),
+            ("transport/mod.rs", transport),
+            ("transport/inner.rs", ""),
+            ("transport/stray.rs", ""),
+            ("other/mod.rs", "mod prod;"),
+            ("other/prod.rs", ""),
+            ("other/away.rs", ""),
+            ("other/attr.rs", ""),
+            ("spliced.rs", ""),
+        ];
+        let in_folder: Vec<PathBuf> = files
+            .iter()
+            .map(|(path, _)| PathBuf::from(path))
+            .filter(|path| path.starts_with("transport"))
+            .collect();
+        let mounted = dependency_scan::fixture_mounted_under(&files, &["transport"]);
+        assert_eq!(
+            escapes(&mounted, Path::new("transport"), &in_folder),
+            [
+                "outside: other/attr.rs",
+                "outside: other/away.rs",
+                "outside: other/prod.rs",
+                "outside: spliced.rs",
+                "unmounted: transport/stray.rs",
+            ],
+            "{lib}"
+        );
+    }
+    let files = [
+        ("lib.rs", "mod transport;"),
+        (
+            "transport/mod.rs",
+            "mod inner;\n#[cfg(test)] #[path = \"inner_tests.rs\"] mod tests;",
+        ),
+        ("transport/inner.rs", ""),
+        ("transport/inner_tests.rs", ""),
+    ];
+    let in_folder: Vec<PathBuf> = files[1..]
+        .iter()
+        .map(|(path, _)| PathBuf::from(path))
+        .collect();
+    let mounted = dependency_scan::fixture_mounted_under(&files, &["transport"]);
+    assert!(escapes(&mounted, Path::new("transport"), &in_folder).is_empty());
 }

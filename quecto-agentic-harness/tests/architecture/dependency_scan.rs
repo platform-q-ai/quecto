@@ -58,8 +58,9 @@ pub(super) fn production_file(file: &str) -> bool {
 struct Tree {
     production: BTreeMap<PathBuf, Vec<String>>,
     test_only: std::collections::BTreeSet<PathBuf>,
-    /// The modules each test-only file is mounted as (a shared fixture may
-    /// be mounted more than once).
+    /// The modules each file is mounted as under `#[cfg(test)]`: a test-only
+    /// file, or a production file a test module mounts as a fixture (a
+    /// shared fixture may be mounted more than once).
     test_modules: BTreeMap<PathBuf, Vec<Vec<String>>>,
 }
 
@@ -69,7 +70,19 @@ struct Tree {
 /// `mod` declaration, `#[path]` and `include!`, so a file mounted from
 /// elsewhere is found wherever it sits.
 pub(super) fn mounted_under(prefix: &[&str]) -> Vec<(PathBuf, Vec<String>, bool)> {
-    let tree = crate_tree();
+    mounted_in(crate_tree(), prefix)
+}
+
+/// [`mounted_under`] in the synthetic crate `files` (relative path →
+/// source, rooted at `lib.rs`), with paths relative to it.
+pub(super) fn fixture_mounted_under(
+    files: &[(&str, &str)],
+    prefix: &[&str],
+) -> Vec<(PathBuf, Vec<String>, bool)> {
+    mounted_in(&walk_fixture_tree(files), prefix)
+}
+
+fn mounted_in(tree: &Tree, prefix: &[&str]) -> Vec<(PathBuf, Vec<String>, bool)> {
     let under = |module: &Vec<String>| {
         module.len() >= prefix.len() && module.iter().zip(prefix).all(|(a, b)| a == b)
     };
@@ -167,8 +180,15 @@ fn mount(
     tree: &mut Tree,
 ) {
     let key = normalize(file);
+    if test {
+        // Every test mount is recorded, a production file's included: a
+        // test module may mount one as a fixture (#2605 review round 3).
+        tree.test_modules
+            .entry(key.clone())
+            .or_default()
+            .push(module.clone());
+    }
     if let Some(mounted) = tree.production.get(&key) {
-        // A test module may mount a production file as a fixture.
         if !test {
             assert_eq!(
                 mounted,
@@ -179,14 +199,8 @@ fn mount(
         }
         return;
     }
-    if test {
-        tree.test_modules
-            .entry(key.clone())
-            .or_default()
-            .push(module.clone());
-        if !tree.test_only.insert(key.clone()) {
-            return;
-        }
+    if test && !tree.test_only.insert(key.clone()) {
+        return;
     }
     let source = std::fs::read_to_string(file)
         .unwrap_or_else(|e| panic!("read module file {}: {e}", file.display()));
@@ -194,7 +208,6 @@ fn mount(
         .unwrap_or_else(|e| panic!("parse module file {}: {e}", file.display()));
     if !test {
         tree.test_only.remove(&key);
-        tree.test_modules.remove(&key);
         tree.production.insert(key, module.clone());
     }
     let dirs = Dirs {
@@ -278,9 +291,15 @@ fn walk_items(
     }
 }
 
-/// The `#[path = "…"]` value, if any.
+/// The `#[path = "…"]` value, if any: given directly, or by a
+/// `#[cfg_attr(<predicate>, path = "…")]`, taken as if its predicate held
+/// (#2605 review round 3), so a conditional path is mounted all the same.
 fn path_attribute(attrs: &[syn::Attribute]) -> Option<String> {
-    attrs.iter().find_map(|attr| match &attr.meta {
+    attrs.iter().find_map(|attr| path_of(&attr.meta))
+}
+
+fn path_of(meta: &syn::Meta) -> Option<String> {
+    match meta {
         syn::Meta::NameValue(value) if value.path.is_ident("path") => match &value.value {
             syn::Expr::Lit(syn::ExprLit {
                 lit: syn::Lit::Str(path),
@@ -288,8 +307,16 @@ fn path_attribute(attrs: &[syn::Attribute]) -> Option<String> {
             }) => Some(path.value()),
             _ => None,
         },
+        syn::Meta::List(list) if list.path.is_ident("cfg_attr") => {
+            let nested = list
+                .parse_args_with(
+                    syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated,
+                )
+                .unwrap_or_else(|e| panic!("cfg_attr without attributes: {e}"));
+            nested.iter().skip(1).find_map(path_of)
+        }
         _ => None,
-    })
+    }
 }
 
 /// Marker for a path that climbs above the crate root or aliases a module
@@ -733,7 +760,11 @@ fn walker_follows_inline_paths_includes_and_non_mod_rs_children() {
         tests.test_modules.get(Path::new("t_tests.rs")),
         Some(&vec![vec!["t1".to_string()], vec!["t2".to_string()]])
     );
-    assert_eq!(tests.test_modules.get(Path::new("real.rs")), None);
+    assert_eq!(
+        tests.test_modules.get(Path::new("real.rs")),
+        Some(&vec![vec!["fixture".to_string()]]),
+        "a production file a test module mounts is recorded too"
+    );
     assert!(
         walk_fixture_tree(&[
             ("lib.rs", "#[cfg(test)] mod fakes;"),
