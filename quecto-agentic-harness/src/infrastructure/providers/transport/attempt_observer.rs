@@ -89,8 +89,9 @@ impl ProtocolObserver {
             state.diagnostics.termination = Termination::Completed;
             return;
         }
-        // Parsed once: the diagnostics below and the failure check after.
-        let parsed = {
+        // Parsed once: the diagnostics below and the failure check after;
+        // `recorded` is whether this event was recorded as terminal.
+        let (parsed, recorded) = {
             let mut state = receipt.0.lock().unwrap();
             match serde_json::from_str::<serde_json::Value>(data) {
                 Ok(value) => {
@@ -154,13 +155,13 @@ impl ProtocolObserver {
                         state.diagnostics.unknown_events =
                             state.diagnostics.unknown_events.saturating_add(1);
                     }
-                    Some(value)
+                    (Some(value), terminal.is_some())
                 }
                 Err(_) => {
                     state.diagnostics.parse_errors =
                         state.diagnostics.parse_errors.saturating_add(1);
                     live(&state, 0);
-                    None
+                    (None, false)
                 }
             }
         };
@@ -180,13 +181,13 @@ impl ProtocolObserver {
                     state.diagnostics.terminal_event = Some(record);
                     state.diagnostics.termination = Termination::Completed;
                 }
-                // An ending that records nothing relies on the event having
-                // been recorded as terminal when its data was read: the
-                // dialect's `ending` and its error chunks agree with the
-                // terminal names (#2605 review).
+                // An ending that records nothing relies on this event having
+                // been recorded as terminal when its data was read — not an
+                // earlier one: the dialect's `ending` and its error chunks
+                // agree with the terminal names (#2605 review).
                 None => debug_assert!(
-                    state.diagnostics.terminal_event.is_some(),
-                    "an ending with no record follows a recorded terminal event"
+                    recorded,
+                    "an ending with no record follows this event's terminal record"
                 ),
             }
         }

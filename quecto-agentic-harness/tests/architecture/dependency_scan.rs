@@ -58,6 +58,33 @@ pub(super) fn production_file(file: &str) -> bool {
 struct Tree {
     production: BTreeMap<PathBuf, Vec<String>>,
     test_only: std::collections::BTreeSet<PathBuf>,
+    /// The modules each test-only file is mounted as (a shared fixture may
+    /// be mounted more than once).
+    test_modules: BTreeMap<PathBuf, Vec<Vec<String>>>,
+}
+
+/// Every file the crate roots mount as a module under `prefix` (#2605
+/// review): each production module, and each module of a file mounted only
+/// under `#[cfg(test)]`, with whether it is test-only. Walked through every
+/// `mod` declaration, `#[path]` and `include!`, so a file mounted from
+/// elsewhere is found wherever it sits.
+pub(super) fn mounted_under(prefix: &[&str]) -> Vec<(PathBuf, Vec<String>, bool)> {
+    let tree = crate_tree();
+    let under = |module: &Vec<String>| {
+        module.len() >= prefix.len() && module.iter().zip(prefix).all(|(a, b)| a == b)
+    };
+    let production = tree
+        .production
+        .iter()
+        .filter(|(_, module)| under(module))
+        .map(|(file, module)| (file.clone(), module.clone(), false));
+    let tests = tree.test_modules.iter().flat_map(|(file, modules)| {
+        modules
+            .iter()
+            .filter(|module| under(module))
+            .map(move |module| (file.clone(), module.clone(), true))
+    });
+    production.chain(tests).collect()
 }
 
 fn crate_tree() -> &'static Tree {
@@ -152,8 +179,14 @@ fn mount(
         }
         return;
     }
-    if test && !tree.test_only.insert(key.clone()) {
-        return;
+    if test {
+        tree.test_modules
+            .entry(key.clone())
+            .or_default()
+            .push(module.clone());
+        if !tree.test_only.insert(key.clone()) {
+            return;
+        }
     }
     let source = std::fs::read_to_string(file)
         .unwrap_or_else(|e| panic!("read module file {}: {e}", file.display()));
@@ -161,6 +194,7 @@ fn mount(
         .unwrap_or_else(|e| panic!("parse module file {}: {e}", file.display()));
     if !test {
         tree.test_only.remove(&key);
+        tree.test_modules.remove(&key);
         tree.production.insert(key, module.clone());
     }
     let dirs = Dirs {
@@ -628,6 +662,11 @@ fn walk_fixture_tree(files: &[(&str, &str)]) -> Tree {
             .map(|(path, module)| (relative(path), module))
             .collect(),
         test_only: tree.test_only.into_iter().map(relative).collect(),
+        test_modules: tree
+            .test_modules
+            .into_iter()
+            .map(|(path, modules)| (relative(path), modules))
+            .collect(),
     }
 }
 
@@ -677,8 +716,24 @@ fn walker_follows_inline_paths_includes_and_non_mod_rs_children() {
         module("inc.rs"),
         Some(vec!["a".to_string(), "x".to_string()])
     );
-    // Test-only mounts are not production and may share a file.
+    // Test-only mounts are not production and may share a file; each
+    // module a test-only file is mounted as is recorded (#2605 review).
     assert_eq!(module("t_tests.rs"), None);
+    let tests = walk_fixture_tree(&[
+        (
+            "lib.rs",
+            "#[cfg(test)] #[path = \"t_tests.rs\"] mod t1;\n\
+             #[cfg(test)] #[path = \"t_tests.rs\"] mod t2;\nmod real;\n\
+             #[cfg(test)] #[path = \"real.rs\"] mod fixture;",
+        ),
+        ("t_tests.rs", ""),
+        ("real.rs", ""),
+    ]);
+    assert_eq!(
+        tests.test_modules.get(Path::new("t_tests.rs")),
+        Some(&vec![vec!["t1".to_string()], vec!["t2".to_string()]])
+    );
+    assert_eq!(tests.test_modules.get(Path::new("real.rs")), None);
     assert!(
         walk_fixture_tree(&[
             ("lib.rs", "#[cfg(test)] mod fakes;"),
