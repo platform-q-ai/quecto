@@ -3,7 +3,9 @@
 #[derive(Debug)]
 pub enum ConfigError {
     Io(String, std::io::Error),
-    Parse(serde_json::Error),
+    /// The document does not fit the schema, described without its
+    /// content (#2617): what kind of failure and where.
+    Parse(String),
     WorkflowStep(String),
     /// Workflow template directory discovery/load failure (slice 2); the
     /// message names the offending file or directory.
@@ -28,7 +30,7 @@ impl std::fmt::Display for ConfigError {
             ConfigError::Io(path, err) => {
                 write!(f, "failed to read config file '{}': {}", path, err)
             }
-            ConfigError::Parse(err) => write!(f, "failed to parse config: {}", err),
+            ConfigError::Parse(why) => write!(f, "failed to parse config: {why}"),
             ConfigError::WorkflowStep(err) => write!(f, "failed to load workflow step: {err}"),
             ConfigError::WorkflowTemplate(err) => {
                 write!(f, "failed to load workflow template: {err}")

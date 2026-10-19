@@ -5,6 +5,7 @@ use std::path::{Component, Path, PathBuf};
 const MAX_WORKFLOW_STEP_FILE_BYTES: u64 = 64 * 1024;
 
 use crate::domain::workflow::WorkflowConfig;
+use crate::infrastructure::persistence::file::json_failure as json;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Config {
@@ -359,8 +360,7 @@ impl Config {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Config::default()),
             Err(e) => return Err(ConfigError::Io(path.to_string(), e)),
         };
-        let mut value: serde_json::Value =
-            serde_json::from_str(&content).map_err(ConfigError::Parse)?;
+        let mut value: serde_json::Value = json::from_str(&content).map_err(ConfigError::Parse)?;
         Self::reject_retired_keys(&value)?;
         let resolved_references = resolve_workflow_step_entries(&mut value, Path::new(path))?;
         // Deserializing the resolved Value loses line/column error context, so
@@ -368,7 +368,7 @@ impl Config {
         if resolved_references {
             Self::from_document(value)
         } else {
-            let config: Config = serde_json::from_str(&content).map_err(ConfigError::Parse)?;
+            let config: Config = json::from_str(&content).map_err(ConfigError::Parse)?;
             config.validated()
         }
     }

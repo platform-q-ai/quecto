@@ -7,6 +7,7 @@ use crate::domain::shared::error::DomainError;
 
 use crate::application::auth::ports::{CredentialStoreError, CredentialStorePort};
 use crate::domain::auth::credential::{AuthMethod, Credential};
+use crate::infrastructure::persistence::file::json_failure;
 
 /// How the store spells a credential's method on disk.
 #[derive(Clone, Copy, serde::Serialize, serde::Deserialize)]
@@ -135,12 +136,8 @@ impl CredentialStore {
         }
         let data = std::fs::read_to_string(&self.path)
             .map_err(|e| DomainError::Config(format!("failed to read credentials: {}", e)))?;
-        let file: CredentialsFile = serde_json::from_str(&data).map_err(|error| {
-            DomainError::Config(format!(
-                "failed to parse credentials: {}",
-                parse_failure(&error)
-            ))
-        })?;
+        let file: CredentialsFile = json_failure::from_str(&data)
+            .map_err(|why| DomainError::Config(format!("failed to parse credentials: {why}")))?;
         Ok(file
             .credentials
             .into_iter()
@@ -337,25 +334,6 @@ impl CredentialStore {
         let all = self.load_snapshot()?;
         Ok(all.into_values().collect())
     }
-}
-
-/// Why `credentials.json` did not parse, without its content (#2617):
-/// serde's own message quotes the offending value (`invalid type: integer
-/// `12345678``), and a wrong-typed field may hold part of a secret. Only
-/// the category and the position leave the adapter.
-fn parse_failure(error: &serde_json::Error) -> String {
-    use serde_json::error::Category;
-    let category = match error.classify() {
-        Category::Syntax => "malformed JSON",
-        Category::Data => "a field has the wrong type or value",
-        Category::Eof => "the file ends early",
-        Category::Io => "the file could not be read",
-    };
-    format!(
-        "{category} at line {} column {}",
-        error.line(),
-        error.column()
-    )
 }
 
 /// The application's credential store over `credentials.json`.

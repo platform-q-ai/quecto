@@ -5,6 +5,7 @@ pub mod ended_child_records;
 pub mod environment_registry_store;
 pub mod file_replace;
 pub(crate) mod filename;
+pub mod json_failure;
 pub mod session_export;
 pub mod sessions;
 pub mod turn_origin_names;

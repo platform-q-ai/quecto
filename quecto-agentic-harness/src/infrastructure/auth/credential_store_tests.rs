@@ -568,7 +568,7 @@ fn a_parse_error_names_its_category_and_position() {
     .unwrap();
     assert_eq!(
         store.load_snapshot().unwrap_err().to_string(),
-        "config error: failed to parse credentials: a field has the wrong type or value at line 2 column 61"
+        "config error: failed to parse credentials: a field has the wrong type or value at credentials.openai.token (line 2 column 61)"
     );
     std::fs::write(store.path(), "{ not json").unwrap();
     assert_eq!(
