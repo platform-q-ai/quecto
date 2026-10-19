@@ -46,7 +46,7 @@ async fn notify_child_exited_cascades_descendants_and_reports_reason() {
         &registry,
         "parent",
         &observer,
-        crate::application::subagents::ports::ExitObservation::ConnectionClosed,
+        crate::application::subagents::ports::delegated_agent_registry::ExitObservation::ConnectionClosed,
     )
     .await;
 

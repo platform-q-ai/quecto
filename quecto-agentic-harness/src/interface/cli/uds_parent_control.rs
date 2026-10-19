@@ -75,7 +75,8 @@ pub struct ConnectionTeardown {
     pub busy: BusyFlag,
     /// The owner's exit announcement (#2070) the reader task raises on the
     /// owning TUI's exit persist and withdraws when that connection closes.
-    pub owner_exit: Arc<dyn crate::application::subagents::ports::OwnerExitAnnouncement>,
+    pub owner_exit:
+        Arc<dyn crate::application::subagents::ports::harness_shutdown::OwnerExitAnnouncement>,
 }
 
 impl ConnectionTeardown {

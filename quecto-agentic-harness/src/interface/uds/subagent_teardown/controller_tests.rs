@@ -3,8 +3,8 @@ use std::sync::atomic::Ordering;
 
 use super::rig::*;
 use super::*;
-use crate::application::subagents::ports::ExitReadiness;
-use crate::application::subagents::ports::SubagentLifecycleRepository;
+use crate::application::subagents::ports::harness_shutdown::ExitReadiness;
+use crate::application::subagents::ports::harness_shutdown::SubagentLifecycleRepository;
 use crate::application::subagents::use_cases::teardown_fakes::*;
 use crate::domain::agents::services::subagent_teardown::{HarnessLifecycleState, ShutdownReason};
 use crate::interface::uds::subagent_teardown::ack_fakes::RecordingWriter;

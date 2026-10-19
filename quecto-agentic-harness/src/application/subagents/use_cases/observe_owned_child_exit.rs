@@ -12,7 +12,10 @@ use std::sync::Arc;
 
 use super::super::dto::{ObserveOwnedChildExitRequest, ObservedExit};
 use super::super::ports::{
-    DelegatedAgentRegistry, ExitObservation, TeardownCompensation, TerminalClaim, TerminationCause,
+    delegated_agent_registry::{
+        DelegatedAgentRegistry, ExitObservation, TerminalClaim, TerminationCause,
+    },
+    teardown_compensation::TeardownCompensation,
 };
 
 pub struct ObserveOwnedChildExit {

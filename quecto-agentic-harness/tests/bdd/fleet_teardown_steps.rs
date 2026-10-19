@@ -13,7 +13,9 @@ use quecto::application::subagents::dto::{
     TerminateAllDelegatedAgentsRequest,
 };
 use quecto::application::subagents::ports::{
-    DelegatedAgentRegistry, SubagentLifecycleRepository, TerminationCause, TerminationConclusion,
+    delegated_agent_registry::{DelegatedAgentRegistry, TerminationCause},
+    harness_shutdown::SubagentLifecycleRepository,
+    owned_child_termination::TerminationConclusion,
 };
 use quecto::domain::agents::services::subagent_teardown::{HarnessLifecycleState, ShutdownReason};
 use quecto::domain::identity::ids::AgentUuid;
@@ -174,7 +176,7 @@ fn when_kill_finishes(world: &mut QuectoWorld, child: String) {
         let identity = rows.resolve(&child).unwrap();
         assert_eq!(
             rows.claim_terminal(&identity),
-            quecto::application::subagents::ports::TerminalClaim::Claimed
+            quecto::application::subagents::ports::delegated_agent_registry::TerminalClaim::Claimed
         );
         // The kill's compensation ran.
         rows.set(&child, RowPhase::Compensated);

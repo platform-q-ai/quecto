@@ -14,7 +14,9 @@ use crate::application::environments::ports::{
     process::MemberShutdownResult, process::SettledMember, process::UnsettledMember,
 };
 use crate::application::subagents::dto::FleetChildResult;
-use crate::application::subagents::ports::{DelegatedAgentRegistry, ResolutionError};
+use crate::application::subagents::ports::delegated_agent_registry::{
+    DelegatedAgentRegistry, ResolutionError,
+};
 use crate::application::subagents::use_cases::{ChildSettlement, SettleDelegatedChild};
 use crate::domain::agents::services::subagent_teardown::ShutdownReason;
 
@@ -54,7 +56,7 @@ impl DelegatedMemberShutdown {
             .settle(
                 identity,
                 ShutdownReason::OperatorRequest,
-                crate::application::subagents::ports::TerminationCause::EnvironmentKill,
+                crate::application::subagents::ports::delegated_agent_registry::TerminationCause::EnvironmentKill,
             )
             .await
         {

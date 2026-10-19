@@ -14,7 +14,9 @@ use super::subagent_registry::{SubagentEntry, SubagentRegistry};
 use crate::application::subagents::dto::{
     FleetTeardownAuthority, TerminateAllDelegatedAgentsRequest,
 };
-use crate::application::subagents::ports::{TeardownCompensation, TerminationCause};
+use crate::application::subagents::ports::{
+    delegated_agent_registry::TerminationCause, teardown_compensation::TeardownCompensation,
+};
 use crate::domain::agents::services::subagent_teardown::{
     DelegatedAgentIdentity, LaunchGeneration, ShutdownReason,
 };
@@ -173,7 +175,7 @@ async fn a_selected_kill_of_a_plain_child_is_the_owners_word() {
 /// its plain container still ends for good.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn an_exit_observed_for_a_run_end_claim_is_the_run_ends() {
-    use crate::application::subagents::ports::{
+    use crate::application::subagents::ports::delegated_agent_registry::{
         DelegatedAgentRegistry, ExitObservation, TerminalClaim,
     };
     let rig = rig();

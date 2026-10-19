@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use super::*;
 use crate::application::subagents::dto::ObserveOwnedChildExitRequest;
-use crate::application::subagents::ports::CompensationObservation;
+use crate::application::subagents::ports::delegated_agent_registry::CompensationObservation;
 use crate::domain::identity::ids::AgentUuid;
 
 use super::super::lifecycle_fakes::*;

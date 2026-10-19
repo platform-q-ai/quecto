@@ -40,7 +40,7 @@ use super::super::dto::{
     PrepareShutdownRequest, PreparedShutdown, ReleaseOutcome, ShutdownOutcome, ShutdownToken,
     ShutdownTrigger, TerminateAllDelegatedAgentsRequest,
 };
-use super::super::ports::{
+use super::super::ports::harness_shutdown::{
     CompositionExitReadiness, ExitReadiness, OwnerExitAnnouncement, RetainedEnvironmentTeardown,
     ShutdownClock, ShutdownRunSpawner, ShutdownSessionPersistence, SubagentLifecycleRepository,
     TurnCancellation,

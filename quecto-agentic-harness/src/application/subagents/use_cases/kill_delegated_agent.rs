@@ -28,13 +28,17 @@ use crate::domain::identity::ids::AgentUuid;
 
 use super::super::dto::{
     KillDelegatedAgentError, KillDelegatedAgentOutcome, KillDelegatedAgentRequest,
-    TerminateDelegatedAgentError, TerminateDelegatedAgentRequest, TerminationResult,
-    TerminationRouted,
+    TerminateDelegatedAgentError, TerminateDelegatedAgentRequest, TerminationRouted,
 };
+use super::super::ports::owned_child_termination::TerminationResult;
 use super::super::ports::{
-    CompensationObservation, DelegatedAgentRegistry, DownstreamRejection, ResolutionError,
-    StoppingClaimError, SubagentLifecycleRepository, TeardownCompensation, TerminalClaim,
-    TerminationCause,
+    child_routing::DownstreamRejection,
+    delegated_agent_registry::{
+        CompensationObservation, DelegatedAgentRegistry, ResolutionError, StoppingClaimError,
+        TerminalClaim, TerminationCause,
+    },
+    harness_shutdown::SubagentLifecycleRepository,
+    teardown_compensation::TeardownCompensation,
 };
 use super::terminate_delegated_agent::TerminateDelegatedAgent;
 

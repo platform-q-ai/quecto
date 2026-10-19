@@ -10,8 +10,8 @@ use std::path::{Path, PathBuf};
 use super::{EmbeddedScriptIntegrity, RefreshingScriptIntegrity, refuse_altered_script};
 use crate::application::environments::dto::AssetState;
 use crate::application::environments::ports::container::ContainerAssetStore;
-use crate::application::subagents::dto::StandardScriptVerdict;
-use crate::application::subagents::ports::ContainerScriptIntegrity;
+use crate::application::subagents::dto::standard_script::StandardScriptVerdict;
+use crate::application::subagents::ports::container_configs::ContainerScriptIntegrity;
 use crate::infrastructure::processes::containers::standard::assets::{
     EmbeddedStandardAssets, STANDARD_ASSET_VERSION,
 };

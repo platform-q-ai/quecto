@@ -603,7 +603,6 @@ fn ports_modules_expose_only_contracts() {
 /// module, keyed by module path under `application`.
 const CONTRACTS_OUTSIDE_PORTS: &[(&str, &[&str])] = &[
     ("sessions::conversation_ledger", &["LedgerAdvance"]),
-    ("subagents::standard_script", &["StandardScriptVerdict"]),
     (
         "admission::services::inference_authority",
         &[
@@ -1020,7 +1019,7 @@ fn ports_guard_is_an_allowlist() {
     }
     // A `dto` module is surface too: it cannot launder a use case.
     let (_, refused) = port_exposures(
-        "src/application/subagents/dto.rs",
+        "src/application/subagents/dto/mod.rs",
         "pub use super::use_cases::KillDelegatedAgent;",
     );
     assert_eq!(
@@ -1649,8 +1648,16 @@ fn application_path_allowed(path: &str) -> bool {
             | "CompensateFailedLaunchRequest"
             | "FleetChildResult"
             | "KillDelegatedAgentError"
-            | "KillDelegatedAgentRequest"
-            | "ContainerConfigSource"
+            | "KillDelegatedAgentRequest",
+            ..,
+        ]
+        | [
+            "crate",
+            "application",
+            "subagents",
+            "dto",
+            "container_config",
+            "ContainerConfigSource"
             | "ContainerConfigsError"
             | "ContainerLaunchConfig"
             | "EffectiveContainerConfigSet"
@@ -1658,10 +1665,18 @@ fn application_path_allowed(path: &str) -> bool {
             // The doctor's lookup rewords the withheld-overlay
             // refusal for its own command (#2024 S4b review).
             | "SelectContainerConfigError"
-            | "SelectedContainerConfig"
-            // The embedded bundle's integrity adapter (#2024 S4e)
-            // answers the launch policy's port with its verdict.
-            | "StandardScriptVerdict",
+            | "SelectedContainerConfig",
+            ..,
+        ]
+        // The embedded bundle's integrity adapter (#2024 S4e) answers the
+        // launch policy's port with its verdict.
+        | [
+            "crate",
+            "application",
+            "subagents",
+            "dto",
+            "standard_script",
+            "StandardScriptVerdict",
             ..,
         ]
         // The container-script preflight and the doctor's config
@@ -5031,11 +5046,48 @@ fn application_has_no_shared_ports_facade() {
     );
 }
 
+/// The files of `application/subagents/ports/` (#2367): one per concern.
+const SUBAGENT_PORT_FILES: &[&str] = &[
+    "child_routing.rs",
+    "container_configs.rs",
+    "delegated_agent_registry.rs",
+    "ended_child_records.rs",
+    "harness_shutdown.rs",
+    "mod.rs",
+    "owned_child_termination.rs",
+    "teardown_compensation.rs",
+];
+
 #[test]
 fn subagent_teardown_ports_are_capability_local() {
     // The capability declares exactly this port set: an unlisted addition
-    // fails here so every new port is a deliberate contract change.
-    let declared = declared_pub_traits("src/application/subagents/ports.rs");
+    // fails here so every new port is a deliberate contract change. Every
+    // file under `ports/` is read, and the folder holds exactly
+    // `SUBAGENT_PORT_FILES`, so a new port file cannot escape the check.
+    let mut ports_files = Vec::new();
+    teardown_authority::walk(
+        Path::new("src/application/subagents/ports"),
+        &mut ports_files,
+    );
+    let listed: Vec<String> = SUBAGENT_PORT_FILES
+        .iter()
+        .map(|file| format!("src/application/subagents/ports/{file}"))
+        .collect();
+    assert_eq!(
+        ports_files, listed,
+        "application/subagents/ports/ must hold exactly SUBAGENT_PORT_FILES"
+    );
+    // The ports surface names each port at its owning file: no re-export.
+    for file in &ports_files {
+        assert!(
+            !fs::read_to_string(file).unwrap().contains("pub use "),
+            "{file} re-exports; importers name each port at its owning file"
+        );
+    }
+    let declared: Vec<String> = ports_files
+        .iter()
+        .flat_map(|file| declared_pub_traits(file))
+        .collect();
     let mut expected: Vec<String> = TEARDOWN_PORTS
         .iter()
         .chain(SUBAGENT_INSPECTION_PORTS)
@@ -5046,7 +5098,7 @@ fn subagent_teardown_ports_are_capability_local() {
     actual.sort();
     assert_eq!(
         actual, expected,
-        "application/subagents/ports.rs must declare exactly TEARDOWN_PORTS and \
+        "application/subagents/ports/ must declare exactly TEARDOWN_PORTS and \
          SUBAGENT_INSPECTION_PORTS"
     );
     // Only this capability declares them: no duplicate port definitions.
@@ -5054,7 +5106,7 @@ fn subagent_teardown_ports_are_capability_local() {
     collect_rs_files(Path::new("src"), &mut files);
     for file in &files {
         let (path, source) = file.split_once(":\n").unwrap();
-        if path == "src/application/subagents/ports.rs" {
+        if path.starts_with("src/application/subagents/ports/") {
             continue;
         }
         for port in TEARDOWN_PORTS.iter().chain(SUBAGENT_INSPECTION_PORTS) {
@@ -5506,7 +5558,14 @@ fn processes_dependency_allowed(file: &str, path: &str) -> bool {
         }
         // The embedded bundle's integrity adapter (#2024 S4e) answers the
         // launch policy's port in its own verdict vocabulary.
-        ["crate", "application", "subagents", "dto", "StandardScriptVerdict"] => {
+        [
+            "crate",
+            "application",
+            "subagents",
+            "dto",
+            "standard_script",
+            "StandardScriptVerdict",
+        ] => {
             file == "integrity.rs"
         }
         ["crate", ..] => false,
@@ -5530,7 +5589,7 @@ fn process_adapters_depend_only_inward() {
     }
     for dep in [
         "crate::domain::agents::entities::parent_control::ParentControlCredential",
-        "crate::application::subagents::ports::DirectChildRouting",
+        "crate::application::subagents::ports::child_routing::DirectChildRouting",
         "super::owned_child_supervisor::ProtocolOutcome",
         "tokio::sync::watch",
         "crate",
@@ -5543,11 +5602,11 @@ fn process_adapters_depend_only_inward() {
     // The verdict vocabulary is the integrity adapter's alone.
     assert!(processes_dependency_allowed(
         "integrity.rs",
-        "crate::application::subagents::dto::StandardScriptVerdict"
+        "crate::application::subagents::dto::standard_script::StandardScriptVerdict"
     ));
     assert!(!processes_dependency_allowed(
         "owned_child_supervisor.rs",
-        "crate::application::subagents::dto::StandardScriptVerdict"
+        "crate::application::subagents::dto::standard_script::StandardScriptVerdict"
     ));
     // The service manager's extra allowances are scoped to it alone.
     for dep in [
@@ -5921,7 +5980,8 @@ fn agent_cmd_kill_is_parsed_and_presented_in_the_interface_and_composed_outside_
 /// graceful / fallback / already-exited / failed.
 #[test]
 fn kill_result_vocabulary_is_graceful_fallback_already_exited_failed() {
-    let ports = fs::read_to_string("src/application/subagents/ports.rs").unwrap();
+    let ports =
+        fs::read_to_string("src/application/subagents/ports/owned_child_termination.rs").unwrap();
     for word in ["\"graceful\"", "\"fallback\"", "\"already-exited\""] {
         assert!(ports.contains(word), "ports lack {word}");
     }
@@ -6212,7 +6272,7 @@ fn environments_application_depends_only_inward() {
     for dep in [
         "crate::infrastructure::tools::agents::subagent_registry::SubagentRegistry",
         "crate::interface::cli::uds_query::respond",
-        "crate::application::subagents::ports::DirectChildRouting",
+        "crate::application::subagents::ports::child_routing::DirectChildRouting",
         "tokio::process::Command",
         "std::process::Command",
         "libc::kill",
@@ -6388,7 +6448,7 @@ fn external_agent_application_depends_only_inward() {
     for dep in [
         "crate::infrastructure::external_agents::claude_code::stream_json::StreamJsonDecoder",
         "crate::interface::cli::protocol::SessionStats",
-        "crate::application::subagents::ports::DirectChildRouting",
+        "crate::application::subagents::ports::child_routing::DirectChildRouting",
         "tokio::process::Command",
         "std::process::Command",
         "std::fs::read",

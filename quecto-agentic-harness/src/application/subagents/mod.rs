@@ -6,11 +6,9 @@
 //! processes or persistence formats; those live in adapters that implement
 //! [`ports`] and in the interface that maps wire DTOs onto [`dto`].
 //!
-//! It also holds [`subagent::SubagentContext`], a child agent's context with
+//! It also holds [`dto::subagent::SubagentContext`], a child agent's context with
 //! its inherited tool policy.
 
 pub mod dto;
 pub mod ports;
-pub mod standard_script;
-pub mod subagent;
 pub mod use_cases;

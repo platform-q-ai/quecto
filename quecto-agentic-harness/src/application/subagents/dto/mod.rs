@@ -6,6 +6,8 @@ use crate::domain::agents::services::subagent_teardown::{
 };
 use crate::domain::identity::ids::AgentUuid;
 
+use super::ports::owned_child_termination::TerminationResult;
+
 /// Independent inbound events that all converge on one common shutdown.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ShutdownTrigger {
@@ -205,7 +207,7 @@ pub enum TerminateDelegatedAgentError {
     /// its own, relayed distinctly.
     Downstream {
         via: AgentUuid,
-        rejection: super::ports::DownstreamRejection,
+        rejection: super::ports::child_routing::DownstreamRejection,
     },
 }
 
@@ -237,8 +239,6 @@ pub struct KillDelegatedAgentRequest {
     pub reference: String,
 }
 
-pub use super::ports::TerminationResult;
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KillDelegatedAgentOutcome {
     pub target: DelegatedAgentIdentity,
@@ -254,7 +254,7 @@ pub struct KillDelegatedAgentOutcome {
 pub enum KillDelegatedAgentError {
     /// The reference names no live delegated agent (unknown, ambiguous,
     /// exited, or not launched through this harness).
-    Unresolved(super::ports::ResolutionError),
+    Unresolved(super::ports::delegated_agent_registry::ResolutionError),
     /// Another termination of the same agent is already in flight.
     AlreadyStopping,
     /// Routing policy refused: stale generation, cycle, depth, or the
@@ -306,7 +306,7 @@ impl std::error::Error for KillDelegatedAgentError {}
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ObserveOwnedChildExitRequest {
     pub child: DelegatedAgentIdentity,
-    pub observation: super::ports::ExitObservation,
+    pub observation: super::ports::delegated_agent_registry::ExitObservation,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -314,7 +314,7 @@ pub enum ObservedExit {
     /// This observation claimed and ran the row's terminal effects.
     Compensated { removed: Vec<AgentUuid> },
     /// Another path had already claimed them; this observation joined it.
-    Joined(super::ports::CompensationObservation),
+    Joined(super::ports::delegated_agent_registry::CompensationObservation),
     /// A connection-level observation of a child whose process this harness
     /// still retains: the reaper observes the authoritative exit and runs
     /// the compensation, so nothing was removed while the process lived.
@@ -333,7 +333,7 @@ pub struct CompensateFailedLaunchRequest {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FailedLaunchCompensated {
-    pub conclusion: super::ports::TerminationConclusion,
+    pub conclusion: super::ports::owned_child_termination::TerminationConclusion,
     pub removed: Vec<AgentUuid>,
 }
 
@@ -469,10 +469,6 @@ impl fmt::Display for FleetTeardownError {
 
 impl std::error::Error for FleetTeardownError {}
 
-mod container_config;
-pub use super::standard_script::StandardScriptVerdict;
-pub use container_config::{
-    ContainerConfigSource, ContainerConfigsError, ContainerLaunchConfig,
-    EffectiveContainerConfigSet, REPO_STANDARD_CONTAINER, SelectContainerConfigError,
-    SelectContainerConfigRequest, SelectedContainerConfig,
-};
+pub mod container_config;
+pub mod standard_script;
+pub mod subagent;

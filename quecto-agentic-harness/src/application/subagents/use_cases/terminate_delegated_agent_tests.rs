@@ -217,7 +217,7 @@ async fn an_unreachable_child_is_reported_in_capability_vocabulary() {
 #[tokio::test]
 async fn the_receiver_claims_the_target_stopping_before_routing_its_edge() {
     use super::super::lifecycle_fakes::{FakeRegistry, Phase};
-    use crate::application::subagents::ports::TerminationCause;
+    use crate::application::subagents::ports::delegated_agent_registry::TerminationCause;
     let registry = FakeRegistry::new()
         .with_row("A", 1, "alpha")
         .with_row("B", 1, "bravo")
@@ -302,9 +302,10 @@ mod owner {
     };
     use super::super::super::teardown_fakes::{FakeLifecycle, FakeRouting, root_tree};
     use super::*;
-    use crate::application::subagents::dto::TerminationResult;
+    use crate::application::subagents::ports::owned_child_termination::TerminationResult;
     use crate::application::subagents::ports::{
-        DownstreamRejection, TerminationCause, TerminationConclusion,
+        child_routing::DownstreamRejection, delegated_agent_registry::TerminationCause,
+        owned_child_termination::TerminationConclusion,
     };
 
     struct Rig {
@@ -486,7 +487,7 @@ mod owner {
             .collect();
         assert_eq!(
             attempts,
-            [crate::application::subagents::ports::ProtocolAttempt::Acknowledged]
+            [crate::application::subagents::ports::owned_child_termination::ProtocolAttempt::Acknowledged]
         );
     }
 

@@ -6,7 +6,7 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use quecto::application::subagents::ports::ExitReadiness;
+use quecto::application::subagents::ports::harness_shutdown::ExitReadiness;
 use quecto::composition::subagent_teardown::build_teardown_graph;
 use quecto::domain::agents::entities::parent_control::{
     BindingState, ParentControlBinding, ParentControlCapability, ParentControlCredential,

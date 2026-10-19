@@ -1,6 +1,6 @@
 use super::*;
-use crate::application::subagents::dto::TerminationResult;
-use crate::application::subagents::ports::ResolutionError;
+use crate::application::subagents::ports::delegated_agent_registry::ResolutionError;
+use crate::application::subagents::ports::owned_child_termination::TerminationResult;
 use crate::domain::agents::services::subagent_teardown::{
     DelegatedAgentIdentity, LaunchGeneration, TerminationRouteError,
 };
@@ -115,7 +115,7 @@ fn errors_present_failed_as_a_result_and_refusals_as_agent_cmd_errors() {
 
 #[tokio::test]
 async fn the_tool_parses_invokes_and_presents() {
-    use crate::application::subagents::ports::TerminationConclusion;
+    use crate::application::subagents::ports::owned_child_termination::TerminationConclusion;
     use crate::application::subagents::use_cases::lifecycle_fakes::{
         FakeCompensation, FakeRegistry, FakeTermination,
     };

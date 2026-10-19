@@ -5,7 +5,9 @@
 use std::sync::atomic::Ordering;
 
 use super::tests::{Rig, protocol, rig};
-use crate::application::subagents::ports::{OwnerExitAnnouncement, TerminationCause};
+use crate::application::subagents::ports::{
+    delegated_agent_registry::TerminationCause, harness_shutdown::OwnerExitAnnouncement,
+};
 use crate::domain::agents::services::subagent_teardown::ShutdownReason;
 
 async fn shut_down(

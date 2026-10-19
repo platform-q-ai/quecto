@@ -16,9 +16,14 @@ use crate::domain::agents::services::subagent_teardown::ShutdownReason;
 
 use super::super::dto::{CompensateFailedLaunchRequest, FailedLaunchCompensated};
 use super::super::ports::{
-    ConclusionBudget, DelegatedAgentRegistry, DirectChildRouting, OwnedChildTermination,
-    ProtocolAttempt, StoppingClaimError, TeardownCompensation, TerminalClaim, TerminationCause,
-    TerminationConclusion,
+    child_routing::DirectChildRouting,
+    delegated_agent_registry::{
+        DelegatedAgentRegistry, StoppingClaimError, TerminalClaim, TerminationCause,
+    },
+    owned_child_termination::{
+        ConclusionBudget, OwnedChildTermination, ProtocolAttempt, TerminationConclusion,
+    },
+    teardown_compensation::TeardownCompensation,
 };
 
 pub struct CompensateFailedLaunchPorts {

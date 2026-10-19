@@ -521,7 +521,7 @@ async fn e2e_a_session_switch_is_refused_while_a_departing_child_cannot_be_settl
     let fleet = fake_fleet(lifecycle, routing, FakeSpawner::new());
     fleet.termination.conclude_child_with(
         "A",
-        crate::application::subagents::ports::TerminationConclusion::StillRunning(
+        crate::application::subagents::ports::owned_child_termination::TerminationConclusion::StillRunning(
             "ignores TERM and KILL".into(),
         ),
     );

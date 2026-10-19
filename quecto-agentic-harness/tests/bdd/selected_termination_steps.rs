@@ -5,10 +5,12 @@ use std::time::Duration;
 
 use cucumber::{given, then, when};
 use quecto::application::subagents::dto::{
-    KillDelegatedAgentError, ObserveOwnedChildExitRequest, ObservedExit, TerminationResult,
+    KillDelegatedAgentError, ObserveOwnedChildExitRequest, ObservedExit,
 };
+use quecto::application::subagents::ports::owned_child_termination::TerminationResult;
 use quecto::application::subagents::ports::{
-    ExitObservation, ResolutionError, TerminationConclusion,
+    delegated_agent_registry::{ExitObservation, ResolutionError},
+    owned_child_termination::TerminationConclusion,
 };
 use quecto::domain::agents::services::subagent_teardown::{
     DelegatedAgentIdentity, LaunchGeneration, TerminationRouteError,
@@ -632,7 +634,7 @@ fn then_second_rollback(world: &mut QuectoWorld, conclusion: String) {
 
 #[then(expr = "the root's lineage lists {string} at generation {int} beneath {string}")]
 fn then_lineage(world: &mut QuectoWorld, child: String, generation: u64, parent: String) {
-    use quecto::application::subagents::ports::SubagentLifecycleRepository;
+    use quecto::application::subagents::ports::harness_shutdown::SubagentLifecycleRepository;
     let s = state(world);
     let lifecycle = quecto::composition::subagent_teardown::LifecycleAdapter::new(
         s.registry.clone(),
@@ -750,9 +752,9 @@ fn then_vocabulary(_world: &mut QuectoWorld) {
         assert!(!format!("{conclusion:?}").is_empty());
     }
     for error in [
-        quecto::application::subagents::ports::StoppingClaimError::Unknown,
-        quecto::application::subagents::ports::StoppingClaimError::AlreadyStopping,
-        quecto::application::subagents::ports::StoppingClaimError::Exited,
+        quecto::application::subagents::ports::delegated_agent_registry::StoppingClaimError::Unknown,
+        quecto::application::subagents::ports::delegated_agent_registry::StoppingClaimError::AlreadyStopping,
+        quecto::application::subagents::ports::delegated_agent_registry::StoppingClaimError::Exited,
     ] {
         assert!(!error.to_string().is_empty());
     }

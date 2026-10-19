@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use super::*;
 use crate::application::subagents::dto::CompensateFailedLaunchRequest;
-use crate::application::subagents::ports::TerminationConclusion;
+use crate::application::subagents::ports::owned_child_termination::TerminationConclusion;
 use crate::domain::identity::ids::AgentUuid;
 
 use super::super::lifecycle_fakes::*;
@@ -164,7 +164,7 @@ async fn a_child_already_ending_is_rolled_back_as_an_acknowledged_attempt() {
     let rig = rig(registry.clone(), TerminationConclusion::ExitedAfterProtocol);
     rig.routing.downstream.lock().unwrap().push((
         AgentUuid::new("A"),
-        crate::application::subagents::ports::DownstreamRejection::AlreadyExited,
+        crate::application::subagents::ports::child_routing::DownstreamRejection::AlreadyExited,
     ));
     let outcome = rig.use_case.execute(request("A", false)).await;
     assert_eq!(

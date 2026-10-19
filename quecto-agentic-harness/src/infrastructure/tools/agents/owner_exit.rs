@@ -5,7 +5,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use crate::application::subagents::ports::OwnerExitAnnouncement;
+use crate::application::subagents::ports::harness_shutdown::OwnerExitAnnouncement;
 
 #[derive(Debug, Default)]
 pub struct OwnerExitFlag(Mutex<Option<u64>>);

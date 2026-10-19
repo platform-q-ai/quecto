@@ -2,7 +2,7 @@
 //! the reader task, which a running turn never blocks: the owning TUI sends
 //! its exit persist and signals within seconds, so the announcement must not
 //! wait behind the dispatch queue. The same connection's close withdraws it.
-use crate::application::subagents::ports::OwnerExitAnnouncement;
+use crate::application::subagents::ports::harness_shutdown::OwnerExitAnnouncement;
 use crate::domain::sessions::entities::session::SubagentRestoreReason;
 
 /// Raise the announcement when `line` is the owning TUI's exit persist. The

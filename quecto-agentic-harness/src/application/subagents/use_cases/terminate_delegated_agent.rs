@@ -17,14 +17,20 @@ use crate::domain::agents::services::subagent_teardown::{
 };
 
 use super::super::dto::{
-    TerminateDelegatedAgentError, TerminateDelegatedAgentRequest, TerminationResult,
-    TerminationRouted,
+    TerminateDelegatedAgentError, TerminateDelegatedAgentRequest, TerminationRouted,
 };
+use super::super::ports::owned_child_termination::TerminationResult;
 use super::super::ports::{
-    ChildRoutingError, CompensationObservation, ConclusionBudget, DelegatedAgentRegistry,
-    DirectChildRouting, OwnedChildTermination, ProtocolAttempt, StoppingClaimError,
-    SubagentLifecycleRepository, TeardownCompensation, TerminalClaim, TerminationCause,
-    TerminationConclusion,
+    child_routing::{ChildRoutingError, DirectChildRouting},
+    delegated_agent_registry::{
+        CompensationObservation, DelegatedAgentRegistry, StoppingClaimError, TerminalClaim,
+        TerminationCause,
+    },
+    harness_shutdown::SubagentLifecycleRepository,
+    owned_child_termination::{
+        ConclusionBudget, OwnedChildTermination, ProtocolAttempt, TerminationConclusion,
+    },
+    teardown_compensation::TeardownCompensation,
 };
 
 /// What the owner of a direct child concludes its end with: the fallback

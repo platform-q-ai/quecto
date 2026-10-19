@@ -4,7 +4,9 @@
 //! cleanup plan a rollback consumes exactly once.
 use std::sync::Arc;
 
-use crate::application::subagents::ports::{ProtocolAttempt, TerminationConclusion};
+use crate::application::subagents::ports::owned_child_termination::{
+    ProtocolAttempt, TerminationConclusion,
+};
 use crate::domain::agents::value_objects::subagent_launch::ParentEndpoint;
 use crate::domain::environments::entities::environment_registry::EnvironmentRegistry;
 use crate::infrastructure::processes::child_stderr_tail::StderrTail;

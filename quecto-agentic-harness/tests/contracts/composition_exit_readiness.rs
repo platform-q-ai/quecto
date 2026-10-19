@@ -4,7 +4,7 @@
 use std::sync::Arc;
 
 use quecto::application::subagents::dto::HarnessShutdownError;
-use quecto::application::subagents::ports::{
+use quecto::application::subagents::ports::harness_shutdown::{
     CompositionExitReadiness, ExitReadiness, SubagentLifecycleRepository,
 };
 use quecto::domain::agents::services::subagent_teardown::{HarnessLifecycleState, ShutdownReason};

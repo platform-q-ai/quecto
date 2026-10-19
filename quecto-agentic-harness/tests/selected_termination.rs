@@ -582,7 +582,7 @@ async fn a_nested_child_that_acknowledges_but_never_exits_is_ended_by_its_owners
             entries[&b.key].delegated_identity().unwrap(),
         )
     };
-    use quecto::application::subagents::ports::{
+    use quecto::application::subagents::ports::child_routing::{
         ChildRoutingError, DirectChildRouting, DownstreamRejection,
     };
     let answer = tokio::time::timeout(
