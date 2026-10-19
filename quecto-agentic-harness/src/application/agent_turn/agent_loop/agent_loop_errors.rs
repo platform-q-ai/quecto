@@ -1,23 +1,14 @@
-//! Terminal provider-error enhancement for the agent loop (#931).
-//!
-//! After retries are exhausted (or for a non-retryable error), turn a raw
-//! provider string into a classified, actionable message: name the error class
-//! and the remediation so the agent/parent can react sensibly.
+//! The agent loop's provider-failure records and correction feedback (#931):
+//! the audit event a terminal failure persists, and the feedback a
+//! malformed or cut-off reply is corrected with. The guidance a terminal
+//! failure gets is the domain's (`terminal_guidance`).
 
 use crate::domain::audit::AuditEvent;
 use crate::domain::conversation::value_objects::message::{Message, Role};
 use crate::domain::inference::services::provider_error::{
-    ProviderErrorClass, classify_provider_error, model_refusal, provider_http_status,
+    classify_provider_error, provider_http_status,
 };
 use crate::domain::shared::error::DomainError;
-
-/// The guidance a model refused for the account or auth mode ends with
-/// (#2435). The loop does not know the hold, so the guidance says what a
-/// hold does without claiming one: with `model_refusal_ttl_secs = 0` none is.
-const MODEL_REFUSED_GUIDANCE: &str = "Model unavailable: the provider refused this model for \
-     the account or auth mode in use. While a refusal is held (providers.model_refusal_ttl_secs, \
-     an hour by default; 0 holds none) the model is not offered, until the provider serves it \
-     again; choose another model (list_models, then set_model).";
 
 /// Build the audit event that persists a terminal provider failure (#937).
 ///
@@ -105,90 +96,6 @@ pub(super) fn append_feedback(messages: &mut Vec<Message>, feedback: String, cur
     // The loop's own feedback continues the open turn (#2226).
     msg.turn_origin = crate::domain::conversation::services::turn_origin::current_phase(messages);
     messages.push(msg);
-}
-
-pub(super) fn enhance_provider_error(err: DomainError) -> DomainError {
-    let DomainError::Provider(message) = err else {
-        return err;
-    };
-
-    if is_context_or_output_limit_error(&message)
-        && !message
-            .to_ascii_lowercase()
-            .contains("context/output limit")
-    {
-        return DomainError::Provider(format!(
-            "{message}\n\nContext/output limit: the provider rejected the request because the prompt plus requested output appears to exceed a model limit. Try reducing prompt history, lowering max output tokens, or enabling/prioritizing context pruning before retrying."
-        ));
-    }
-
-    if model_refusal(&DomainError::Provider(message.clone())).is_some() {
-        // Enhanced once: a message that already ends with the guidance is
-        // returned as it is.
-        if message.ends_with(MODEL_REFUSED_GUIDANCE) {
-            return DomainError::Provider(message);
-        }
-        return DomainError::Provider(format!("{message}\n\n{MODEL_REFUSED_GUIDANCE}"));
-    }
-
-    // Class-specific, actionable guidance for terminal failures (#931). After
-    // retries are exhausted (or for a non-retryable error), name the class and
-    // the remediation rather than surfacing a raw provider string.
-    if let Some(guidance) = terminal_class_guidance(&DomainError::Provider(message.clone())) {
-        return DomainError::Provider(format!("{message}\n\n{guidance}"));
-    }
-
-    DomainError::Provider(message)
-}
-
-/// Class-specific remediation appended to a terminal provider error so the
-/// agent/parent gets an actionable message (e.g. "rate limited … try later")
-/// instead of a raw string. `Auth` gets a re-authenticate hint (no retry-later);
-/// `Client` (4xx) is the request's own fault and is passed through unchanged.
-fn terminal_class_guidance(err: &DomainError) -> Option<&'static str> {
-    match classify_provider_error(err) {
-        ProviderErrorClass::RateLimit => Some(
-            "Rate limit: the provider throttled the request. It was retried with backoff and still failed — wait and retry later, or reduce request frequency.",
-        ),
-        ProviderErrorClass::EmptyStream => Some(
-            "Empty stream: the provider stream ended without assistant output. This is a synthetic classification; no HTTP failure or overload is established.",
-        ),
-        ProviderErrorClass::Server => Some(
-            "Server/overload: the provider is overloaded or returned a 5xx error. It was retried and still failed — retry later.",
-        ),
-        ProviderErrorClass::Stalled => Some(
-            "Stalled: the provider stopped sending, or kept sending events with no output (the limit is in the error above), and the reply was abandoned. Retry later.",
-        ),
-        ProviderErrorClass::OutputCapped => Some(
-            "Output cap: the reply kept streaming past its output cap (the cap is in the error above), the mark of a runaway such as a repetition loop, and was abandoned. It was not retried: resending the same request tends to repeat it. Narrow or rephrase the request before trying again.",
-        ),
-        ProviderErrorClass::Network => Some(
-            "Network: could not reach the provider (connection/timeout). It was retried and still failed — check connectivity and retry later.",
-        ),
-        ProviderErrorClass::Auth => Some(
-            "Authentication: the provider rejected your credentials (not retryable). Check the API key or re-authenticate (`quecto auth login`), then retry.",
-        ),
-        ProviderErrorClass::Billing => Some(
-            "Billing/quota: the provider reports exhausted credit or a billing limit (not retryable). Check the account plan, billing, or quota before retrying.",
-        ),
-        // An admission refusal already says what to do (respawn, restart).
-        ProviderErrorClass::Client
-        | ProviderErrorClass::Cancelled
-        | ProviderErrorClass::Admission
-        | ProviderErrorClass::Unknown => None,
-    }
-}
-
-pub(super) fn is_context_or_output_limit_error(message: &str) -> bool {
-    let lowered = message.to_ascii_lowercase();
-    (lowered.contains("maximum context length")
-        || lowered.contains("context length")
-        || lowered.contains("context window")
-        || lowered.contains("too many tokens")
-        || lowered.contains("max_tokens")
-        || lowered.contains("max output")
-        || lowered.contains("requested") && lowered.contains("tokens"))
-        && (lowered.contains("token") || lowered.contains("context"))
 }
 
 #[cfg(test)]

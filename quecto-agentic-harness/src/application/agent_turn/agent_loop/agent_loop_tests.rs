@@ -52,20 +52,20 @@ impl MockProvider {
 }
 
 #[derive(Debug)]
-struct MockStreamingProvider {
+pub(super) struct MockStreamingProvider {
     responses: Mutex<Vec<Vec<StreamEvent>>>,
     request_count: Mutex<usize>,
 }
 
 impl MockStreamingProvider {
-    fn new(responses: Vec<Vec<StreamEvent>>) -> Self {
+    pub(super) fn new(responses: Vec<Vec<StreamEvent>>) -> Self {
         Self {
             responses: Mutex::new(responses),
             request_count: Mutex::new(0),
         }
     }
 
-    fn request_count(&self) -> usize {
+    pub(super) fn request_count(&self) -> usize {
         *self.request_count.lock().unwrap()
     }
 }

@@ -83,68 +83,6 @@ fn test_swap_registry_info_reflects_new_count() {
 
 use crate::application::agent_turn::agent_loop::agent_usage::UsageTotals;
 use crate::domain::conversation::value_objects::message::{LlmResponse, Message, ToolCall};
-use crate::domain::shared::error::DomainError;
-
-#[test]
-fn is_context_limit_error_matches_known_phrases() {
-    use super::is_context_or_output_limit_error as f;
-    assert!(f("maximum context length exceeded for this model token"));
-    assert!(f("the context length is too long, too many tokens"));
-    assert!(f("context window exceeded: too many tokens"));
-    assert!(f("requested 5000 tokens but limit reached"));
-    assert!(f("max_tokens is too large for this context"));
-    assert!(f("max output tokens exceeds context"));
-}
-
-#[test]
-fn is_context_limit_error_rejects_unrelated() {
-    use super::is_context_or_output_limit_error as f;
-    assert!(!f("authentication failed"));
-    assert!(!f("rate limited, try again"));
-    assert!(!f(""));
-    // Contains "token" but no context/limit phrase → not a limit error.
-    assert!(!f("invalid token provided"));
-}
-
-#[test]
-fn enhance_provider_error_appends_limit_hint() {
-    let err = DomainError::Provider("maximum context length exceeded: too many tokens".into());
-    match super::enhance_provider_error(err) {
-        DomainError::Provider(m) => assert!(m.contains("Context/output limit")),
-        other => panic!("expected Provider, got {other:?}"),
-    }
-}
-
-#[test]
-fn enhance_provider_error_does_not_double_append() {
-    let err = DomainError::Provider("Context/output limit: too many tokens in context".into());
-    match super::enhance_provider_error(err) {
-        DomainError::Provider(m) => {
-            assert_eq!(m.matches("Context/output limit").count(), 1);
-        }
-        other => panic!("expected Provider, got {other:?}"),
-    }
-}
-
-#[test]
-fn enhance_provider_error_passes_through_non_limit() {
-    // An Unknown-class provider error (no recognised status/keyword) carries no
-    // class guidance and must pass through verbatim.
-    let err = DomainError::Provider("something unexpected went wrong".into());
-    match super::enhance_provider_error(err) {
-        DomainError::Provider(m) => assert_eq!(m, "something unexpected went wrong"),
-        other => panic!("expected Provider, got {other:?}"),
-    }
-}
-
-#[test]
-fn enhance_provider_error_leaves_non_provider_unchanged() {
-    let err = DomainError::Tool("boom".into());
-    match super::enhance_provider_error(err) {
-        DomainError::Tool(m) => assert_eq!(m, "boom"),
-        other => panic!("expected Tool, got {other:?}"),
-    }
-}
 
 /// Minimal agent for exercising instance methods like `finalize_text_response`.
 fn bare_agent() -> AgentLoopImpl {
