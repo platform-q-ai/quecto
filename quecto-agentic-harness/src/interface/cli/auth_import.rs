@@ -1,7 +1,8 @@
 //! Import credentials from a compatible auth.json file.
 
 use super::Output;
-use crate::infrastructure::auth::credential_store::{AuthMethod, Credential, CredentialStore};
+use crate::domain::auth::credential::{AuthMethod, Credential};
+use crate::infrastructure::auth::credential_store::CredentialStore;
 
 /// Load and parse a compatible auth.json file.
 pub(super) fn load_external_auth_json(stderr: &mut String) -> Option<serde_json::Value> {
@@ -95,7 +96,7 @@ pub(super) fn import_anthropic(
         (
             access.to_string(),
             refresh.to_string(),
-            expires_s - crate::infrastructure::auth::token_refresh::OAUTH_EXPIRY_MARGIN_SECS,
+            expires_s - crate::domain::auth::credential::OAUTH_EXPIRY_MARGIN_SECS,
         )
     };
 
@@ -194,7 +195,7 @@ pub(crate) fn import_openai(
         (
             access.to_string(),
             refresh.to_string(),
-            expires_s - crate::infrastructure::auth::token_refresh::OAUTH_EXPIRY_MARGIN_SECS,
+            expires_s - crate::domain::auth::credential::OAUTH_EXPIRY_MARGIN_SECS,
             acct_id,
         )
     };

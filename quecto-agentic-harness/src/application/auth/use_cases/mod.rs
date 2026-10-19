@@ -1,0 +1,8 @@
+//! Use cases of the auth capability. Constructed only by
+//! `composition::bootstrap::auth`; the interface holds injected handles.
+
+pub mod log_in_with_token;
+pub mod start_device_code_login;
+
+pub use log_in_with_token::LogInWithToken;
+pub use start_device_code_login::StartDeviceCodeLogin;

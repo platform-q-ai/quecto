@@ -5,85 +5,68 @@ use std::path::{Path, PathBuf};
 
 use crate::domain::shared::error::DomainError;
 
-/// How the credential was obtained.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub enum AuthMethod {
+use crate::application::auth::ports::{CredentialStoreError, CredentialStorePort};
+use crate::domain::auth::credential::{AuthMethod, Credential};
+
+/// How the store spells a credential's method on disk.
+#[derive(Clone, Copy, serde::Serialize, serde::Deserialize)]
+enum StoredMethod {
     #[serde(rename = "token")]
     Token,
     #[serde(rename = "oauth")]
     OAuth,
 }
 
-impl AuthMethod {
-    pub fn as_str(&self) -> &str {
-        match self {
-            AuthMethod::Token => "token",
-            AuthMethod::OAuth => "oauth",
-        }
-    }
-}
-
-/// A stored credential for a provider.
-///
-/// `Debug` is manually implemented to redact the token field, preventing
-/// accidental exposure of secrets in debug logs, panic backtraces, or
-/// `unwrap()` failure messages.
+/// A credential as `credentials.json` records it: the domain
+/// [`Credential`] mapped at this boundary, so the file format stays here.
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
-pub struct Credential {
-    pub provider: String,
-    pub token: String,
-    pub method: AuthMethod,
-    /// Unix timestamp (seconds) when this credential expires, or None if no expiry.
-    pub expires_at: Option<i64>,
-    /// Refresh token for OAuth credentials. Used to obtain new access tokens.
+struct StoredCredential {
+    provider: String,
+    token: String,
+    method: StoredMethod,
+    expires_at: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub refresh_token: Option<String>,
-    /// Account ID for OpenAI OAuth (chatgpt_account_id from JWT).
+    refresh_token: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub account_id: Option<String>,
+    account_id: Option<String>,
 }
 
-impl std::fmt::Debug for Credential {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Credential")
-            .field("provider", &self.provider)
-            .field("token", &"[REDACTED]")
-            .field("method", &self.method)
-            .field("expires_at", &self.expires_at)
-            .field(
-                "refresh_token",
-                &self.refresh_token.as_ref().map(|_| "[REDACTED]"),
-            )
-            .field("account_id", &self.account_id)
-            .finish()
-    }
-}
-
-impl Credential {
-    /// Check if this credential is expired.
-    pub fn is_expired(&self) -> bool {
-        if let Some(expires_at) = self.expires_at {
-            let now = crate::infrastructure::time::unix_timestamp_secs();
-            now >= expires_at
-        } else {
-            false
+impl From<StoredCredential> for Credential {
+    fn from(stored: StoredCredential) -> Self {
+        Self {
+            provider: stored.provider,
+            token: stored.token,
+            method: match stored.method {
+                StoredMethod::Token => AuthMethod::Token,
+                StoredMethod::OAuth => AuthMethod::OAuth,
+            },
+            expires_at: stored.expires_at,
+            refresh_token: stored.refresh_token,
+            account_id: stored.account_id,
         }
     }
+}
 
-    /// Return the status string: "active" or "expired".
-    pub fn status(&self) -> &str {
-        if self.is_expired() {
-            "expired"
-        } else {
-            "active"
+impl From<&Credential> for StoredCredential {
+    fn from(credential: &Credential) -> Self {
+        Self {
+            provider: credential.provider.clone(),
+            token: credential.token.clone(),
+            method: match credential.method {
+                AuthMethod::Token => StoredMethod::Token,
+                AuthMethod::OAuth => StoredMethod::OAuth,
+            },
+            expires_at: credential.expires_at,
+            refresh_token: credential.refresh_token.clone(),
+            account_id: credential.account_id.clone(),
         }
     }
 }
 
 /// Serializable credentials file.
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[derive(serde::Serialize, serde::Deserialize)]
 struct CredentialsFile {
-    credentials: HashMap<String, Credential>,
+    credentials: HashMap<String, StoredCredential>,
 }
 
 /// File-based credential store. Stores credentials as JSON in a single file.
@@ -154,7 +137,11 @@ impl CredentialStore {
             .map_err(|e| DomainError::Config(format!("failed to read credentials: {}", e)))?;
         let file: CredentialsFile = serde_json::from_str(&data)
             .map_err(|e| DomainError::Config(format!("failed to parse credentials: {}", e)))?;
-        Ok(file.credentials)
+        Ok(file
+            .credentials
+            .into_iter()
+            .map(|(provider, stored)| (provider, Credential::from(stored)))
+            .collect())
     }
 
     /// Get the path to the credentials file.
@@ -251,7 +238,12 @@ impl CredentialStore {
             })?;
         }
         let file = CredentialsFile {
-            credentials: credentials.clone(),
+            credentials: credentials
+                .iter()
+                .map(|(provider, credential)| {
+                    (provider.clone(), StoredCredential::from(credential))
+                })
+                .collect(),
         };
         let json = serde_json::to_string_pretty(&file)
             .map_err(|e| DomainError::Config(format!("failed to serialize credentials: {}", e)))?;
@@ -305,7 +297,7 @@ impl CredentialStore {
         let mut all = self.load_snapshot()?;
         if let Some(existing) = all.get(&credential.provider)
             && existing.refresh_token.as_deref() != Some(refreshed_from)
-            && !existing.is_expired()
+            && !existing.is_expired_at(crate::infrastructure::time::unix_timestamp_secs())
         {
             return Ok(existing.clone());
         }
@@ -354,14 +346,23 @@ impl CredentialStore {
         if all.is_empty() {
             return Ok(vec![]);
         }
+        let now = crate::infrastructure::time::unix_timestamp_secs();
         Ok(all
             .values()
             .map(|c| CredentialStatus {
                 provider: c.provider.clone(),
                 method: c.method.as_str().to_string(),
-                status: c.status().to_string(),
+                status: c.state_at(now).as_str().to_string(),
             })
             .collect())
+    }
+}
+
+/// The application's credential store over `credentials.json`.
+impl CredentialStorePort for CredentialStore {
+    fn store(&self, credential: Credential) -> Result<(), CredentialStoreError> {
+        CredentialStore::store(self, credential)
+            .map_err(|error| CredentialStoreError(error.to_string()))
     }
 }
 

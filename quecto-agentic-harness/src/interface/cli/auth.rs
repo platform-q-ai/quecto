@@ -2,9 +2,20 @@
 pub(crate) mod auth_import;
 #[path = "auth_xai.rs"]
 pub(crate) mod auth_xai;
+mod handles;
+pub use handles::{AuthEnvironment, AuthHandles, AuthHandlesBuilder};
+
 use super::CliContext;
-use crate::infrastructure::auth::credential_store::{AuthMethod, Credential, CredentialStore};
-const KNOWN_PROVIDERS: &[&str] = &["openai", "anthropic", "xai"];
+use crate::application::auth::dto::LoginError;
+use crate::domain::auth::credential::{AuthMethod, Credential};
+use crate::domain::auth::provider::LoginProvider;
+use crate::infrastructure::auth::credential_store::CredentialStore;
+
+/// The login allowlist as a refusal lists it: "openai, anthropic, xai".
+fn known_providers() -> String {
+    LoginProvider::ALL.map(LoginProvider::id).join(", ")
+}
+
 pub(crate) struct Output<'a> {
     pub stdout: &'a mut String,
     pub stderr: &'a mut String,
@@ -136,39 +147,43 @@ fn cmd_auth_login_token(
             .push_str("auth login: --provider is required when using --token\n");
         return 1;
     };
-    if !KNOWN_PROVIDERS.contains(&provider.as_str()) {
-        out.stderr.push_str(&format!(
-            "auth login: unknown provider '{}'. Known: {}\n",
-            provider,
-            KNOWN_PROVIDERS.join(", ")
-        ));
+    let Some(handles) = handles::login_handles(ctx, out.stderr) else {
         return 1;
-    }
-    let token = token_val.trim().to_string();
-    if token.is_empty() {
-        out.stderr
-            .push_str("auth login: --token value must not be empty\n");
-        return 1;
-    }
-    let store = CredentialStore::new(ctx.base_dir());
-    match store.store(Credential {
-        provider: provider.clone(),
-        token,
-        method: AuthMethod::Token,
-        expires_at: None,
-        refresh_token: None,
-        account_id: None,
-    }) {
-        Ok(()) => {
+    };
+    match handles.token_login.execute(&provider, token_val) {
+        Ok(stored) => {
             out.stdout
-                .push_str(&format!("Credential stored for {}\n", provider));
+                .push_str(&format!("Credential stored for {}\n", stored.id()));
             0
         }
-        Err(e) => {
-            out.stderr
-                .push_str(&format!("auth login: failed to store credential: {}\n", e));
+        Err(error) => {
+            out.stderr.push_str(&login_refusal(&error));
             1
         }
+    }
+}
+
+/// A login's refusal as `auth login` prints it, newline-terminated.
+fn login_refusal(error: &LoginError) -> String {
+    match error {
+        LoginError::UnknownProvider(provider) => format!(
+            "auth login: unknown provider '{}'. Known: {}\n",
+            provider,
+            known_providers()
+        ),
+        LoginError::EmptyToken => "auth login: --token value must not be empty\n".to_string(),
+        LoginError::DeviceCodeUnsupported(provider) => format!(
+            "auth login: device code flow is not supported for '{}' (use --oauth instead)\n",
+            provider.id()
+        ),
+        LoginError::Unavailable(why) => format!("auth login: failed to create runtime: {why}\n"),
+        LoginError::InsideAsyncRuntime => {
+            "auth login: cannot start a login from inside an async runtime\n".to_string()
+        }
+        LoginError::DeviceCodeRequest(why) => {
+            format!("auth login: device code request failed: {why}\n")
+        }
+        LoginError::Store(why) => format!("auth login: failed to store credential: {why}\n"),
     }
 }
 
@@ -180,12 +195,9 @@ fn resolve_provider_interactive(
 ) -> Option<String> {
     match provider {
         Some(p) => {
-            if !KNOWN_PROVIDERS.contains(&p.as_str()) {
-                out.stderr.push_str(&format!(
-                    "auth login: unknown provider '{}'. Known: {}\n",
-                    p,
-                    KNOWN_PROVIDERS.join(", ")
-                ));
+            if LoginProvider::parse(&p).is_none() {
+                out.stderr
+                    .push_str(&login_refusal(&LoginError::UnknownProvider(p)));
                 return None;
             }
             Some(p)
@@ -326,7 +338,7 @@ fn cmd_auth_login_openai_oauth(
     ));
     flush_stdout(ctx, out);
 
-    let rt = match super::build_tokio_runtime() {
+    let rt = match crate::infrastructure::processes::tokio_runtime::build_tokio_runtime() {
         Ok(rt) => rt,
         Err(e) => {
             out.stderr
@@ -548,7 +560,7 @@ fn cmd_auth_login_anthropic_oauth(
         return 1;
     }
 
-    let rt = match super::build_tokio_runtime() {
+    let rt = match crate::infrastructure::processes::tokio_runtime::build_tokio_runtime() {
         Ok(rt) => rt,
         Err(e) => {
             out.stderr
@@ -585,7 +597,7 @@ fn cmd_auth_import_external(ctx: &CliContext, out: &mut Output<'_>) -> i32 {
     };
 
     let store = CredentialStore::new(ctx.base_dir());
-    let rt = match super::build_tokio_runtime() {
+    let rt = match crate::infrastructure::processes::tokio_runtime::build_tokio_runtime() {
         Ok(rt) => rt,
         Err(e) => {
             out.stderr
@@ -624,40 +636,28 @@ fn cmd_auth_import_external(ctx: &CliContext, out: &mut Output<'_>) -> i32 {
 
 /// Device code login flow for headless environments.
 fn cmd_auth_login_device_code(ctx: &CliContext, provider: &str, out: &mut Output<'_>) -> i32 {
-    let config = match resolve_oauth_config(ctx, provider, "device code flow", out.stderr) {
-        Some(c) => c,
-        None => return 1,
-    };
-
-    if config.device_code_url.is_empty() {
-        out.stderr.push_str(&format!(
-            "auth login: device code flow is not supported for '{}' (use --oauth instead)\n",
-            provider
-        ));
+    let Some(handles) = handles::login_handles(ctx, out.stderr) else {
         return 1;
-    }
-
-    let rt = match super::build_tokio_runtime() {
-        Ok(rt) => rt,
-        Err(e) => {
-            out.stderr
-                .push_str(&format!("auth login: failed to create runtime: {}\n", e));
-            return 1;
-        }
     };
-    match rt.block_on(crate::infrastructure::auth::oauth::request_device_code(
-        &config,
-    )) {
-        Ok(resp) => {
+    match handles.device_code_login.execute(provider) {
+        Ok(shown) => {
             out.stdout.push_str(&format!(
                 "Go to: {}\nEnter code: {}\n\nWaiting for authorization...\n",
-                resp.verification_uri, resp.user_code
+                shown.verification_uri, shown.user_code
             ));
             0
         }
-        Err(e) => {
-            out.stderr
-                .push_str(&format!("auth login: device code request failed: {}\n", e));
+        // A device-code login names no provider outside the allowlist as
+        // unknown: it has no flow to offer one.
+        Err(LoginError::UnknownProvider(provider)) => {
+            out.stderr.push_str(&format!(
+                "auth login: device code flow is not supported for '{}'\n",
+                provider
+            ));
+            1
+        }
+        Err(error) => {
+            out.stderr.push_str(&login_refusal(&error));
             1
         }
     }

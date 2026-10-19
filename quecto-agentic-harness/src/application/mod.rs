@@ -7,6 +7,7 @@ mod agent_loop_stream;
 pub mod agent_loop_test_support;
 mod agent_usage;
 pub mod audit;
+pub mod auth;
 pub mod catalogue;
 pub mod configuration;
 pub mod durable_prefix;

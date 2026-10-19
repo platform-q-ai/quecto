@@ -1,5 +1,6 @@
 pub mod agents;
 pub mod audit;
+pub mod auth;
 pub mod catalogue;
 pub mod conversation;
 pub mod environments;

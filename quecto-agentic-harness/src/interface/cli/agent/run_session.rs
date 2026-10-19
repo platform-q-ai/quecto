@@ -46,7 +46,7 @@ pub(crate) fn run_agent_session(
         workflow_state: None,
         subagent_registry: None,
     });
-    let rt = match crate::interface::cli::build_tokio_runtime() {
+    let rt = match crate::infrastructure::processes::tokio_runtime::build_tokio_runtime() {
         Ok(rt) => rt,
         Err(e) => {
             out.stderr

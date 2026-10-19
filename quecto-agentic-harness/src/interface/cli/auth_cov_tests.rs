@@ -293,6 +293,7 @@ fn test_xai_device_code_rejected() {
     let tmp = tempfile::TempDir::new().unwrap();
     let ctx = CliContext {
         base_dir: Some(tmp.path().to_path_buf()),
+        auth: Some(crate::composition::bootstrap::auth::build_auth_handles),
         ..Default::default()
     };
     let out = run_with_output(args("auth login --provider xai --device-code"), &ctx);
@@ -317,6 +318,7 @@ fn test_device_code_login_success() {
     let ctx = CliContext {
         base_dir: Some(tmp.path().to_path_buf()),
         oauth_base_url: Some(uri),
+        auth: Some(crate::composition::bootstrap::auth::build_auth_handles),
         ..Default::default()
     };
     let out = run_with_output(args("auth login --provider openai --device-code"), &ctx);
@@ -332,6 +334,7 @@ fn test_device_code_login_request_failure() {
     let ctx = CliContext {
         base_dir: Some(tmp.path().to_path_buf()),
         oauth_base_url: Some(uri),
+        auth: Some(crate::composition::bootstrap::auth::build_auth_handles),
         ..Default::default()
     };
     let out = run_with_output(args("auth login --provider openai --device-code"), &ctx);
@@ -383,6 +386,7 @@ fn test_login_positional_arg_is_ignored() {
     let tmp = tempfile::TempDir::new().unwrap();
     let ctx = CliContext {
         base_dir: Some(tmp.path().to_path_buf()),
+        auth: Some(crate::composition::bootstrap::auth::build_auth_handles),
         ..Default::default()
     };
     let out = run_with_output(
@@ -425,6 +429,7 @@ fn corrupt_store_ctx(tmp: &tempfile::TempDir) -> CliContext {
     std::fs::write(tmp.path().join("credentials.json"), "{ not json ").unwrap();
     CliContext {
         base_dir: Some(tmp.path().to_path_buf()),
+        auth: Some(crate::composition::bootstrap::auth::build_auth_handles),
         ..Default::default()
     }
 }
@@ -541,11 +546,12 @@ fn test_login_oauth_generic_provider_branch() {
 
 #[test]
 fn test_device_code_unsupported_provider_resolve_none() {
-    // An unknown provider has no OAuthConfig and no base-url override → the
-    // device-code flow fails in resolve_oauth_config.
+    // A provider outside the login allowlist has no device-code flow: the
+    // refusal names it, without " (use --oauth instead)".
     let tmp = tempfile::TempDir::new().unwrap();
     let ctx = CliContext {
         base_dir: Some(tmp.path().to_path_buf()),
+        auth: Some(crate::composition::bootstrap::auth::build_auth_handles),
         ..Default::default()
     };
     let out = run_with_output(args("auth login --provider weird --device-code"), &ctx);

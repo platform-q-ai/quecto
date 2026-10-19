@@ -96,34 +96,6 @@ fn test_remove_all() {
 }
 
 #[test]
-fn test_credential_expired() {
-    let cred = make_expired_credential("test");
-    assert!(cred.is_expired());
-    assert_eq!(cred.status(), "expired");
-}
-
-#[test]
-fn test_credential_not_expired() {
-    let cred = Credential {
-        provider: "test".to_string(),
-        token: "token".to_string(),
-        method: AuthMethod::OAuth,
-        expires_at: Some(i64::MAX), // far future
-        refresh_token: None,
-        account_id: None,
-    };
-    assert!(!cred.is_expired());
-    assert_eq!(cred.status(), "active");
-}
-
-#[test]
-fn test_credential_no_expiry() {
-    let cred = make_credential("test", "token", AuthMethod::Token);
-    assert!(!cred.is_expired());
-    assert_eq!(cred.status(), "active");
-}
-
-#[test]
 fn test_status_summary_empty() {
     let tmp = TempDir::new().unwrap();
     let store = CredentialStore::new(tmp.path());

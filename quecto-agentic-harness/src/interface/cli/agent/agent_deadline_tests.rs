@@ -80,7 +80,7 @@ fn a_tool_running_at_the_deadline_is_stopped_with_the_run() {
             .mount(&server),
     );
     let mut agent = agent_at(&server.uri(), tmp.path());
-    let rt = crate::interface::cli::build_tokio_runtime().unwrap();
+    let rt = crate::infrastructure::processes::tokio_runtime::build_tokio_runtime().unwrap();
     let mut messages = vec![Message::user("run it")];
 
     let started = Instant::now();
@@ -121,7 +121,7 @@ fn a_provider_that_never_answers_is_abandoned_at_the_deadline() {
         std::thread::sleep(Duration::from_secs(10));
     });
     let mut agent = agent_at(&format!("http://{address}"), tmp.path());
-    let rt = crate::interface::cli::build_tokio_runtime().unwrap();
+    let rt = crate::infrastructure::processes::tokio_runtime::build_tokio_runtime().unwrap();
     let mut messages = vec![Message::user("hello")];
 
     let started = Instant::now();
@@ -177,7 +177,7 @@ fn a_stopped_run_records_its_unfinished_request_and_why() {
     )
     .unwrap();
     agent.set_audit_log(Some(std::sync::Arc::new(audit)));
-    let rt = crate::interface::cli::build_tokio_runtime().unwrap();
+    let rt = crate::infrastructure::processes::tokio_runtime::build_tokio_runtime().unwrap();
     let mut messages = vec![Message::user("hello")];
 
     let result = run_with_deadline(&rt, &mut agent, &mut messages, 1);

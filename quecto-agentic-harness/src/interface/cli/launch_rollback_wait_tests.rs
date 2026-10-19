@@ -24,7 +24,7 @@ async fn an_exit_gives_up_at_its_limit() {
 /// ended, before its runtime is dropped.
 #[test]
 fn the_exit_guard_waits_for_a_rollback_in_flight() {
-    let rt = crate::interface::cli::build_tokio_runtime().unwrap();
+    let rt = crate::infrastructure::processes::tokio_runtime::build_tokio_runtime().unwrap();
     let work = InFlight::enter();
     let releaser = std::thread::spawn(move || {
         std::thread::sleep(Duration::from_millis(300));

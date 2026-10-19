@@ -5,7 +5,8 @@
 use super::*;
 use std::sync::Arc;
 
-use crate::infrastructure::auth::credential_store::{AuthMethod, Credential, CredentialStore};
+use crate::domain::auth::credential::{AuthMethod, Credential};
+use crate::infrastructure::auth::credential_store::CredentialStore;
 
 fn jwt_with_account_id(account_id: &str) -> String {
     use base64::Engine;

@@ -63,7 +63,7 @@ pub struct UdsLoopArgs<'a> {
     pub extensions: crate::domain::agents::entities::configured_extensions::AgentExtensions, // #2446
 }
 pub fn run_uds_loop(args: UdsLoopArgs<'_>) -> i32 {
-    let rt = match crate::interface::cli::build_tokio_runtime() {
+    let rt = match crate::infrastructure::processes::tokio_runtime::build_tokio_runtime() {
         Ok(rt) => rt,
         Err(e) => {
             eprintln!("failed to create runtime: {e}");

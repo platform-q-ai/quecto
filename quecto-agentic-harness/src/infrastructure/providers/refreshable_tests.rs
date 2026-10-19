@@ -1,9 +1,10 @@
 use super::*;
 use crate::application::providers::ports::{ChatRequest, LlmProvider};
+use crate::domain::auth::credential::{AuthMethod, Credential};
 use crate::domain::conversation::value_objects::message::LlmResponse;
 use crate::domain::inference::value_objects::provider::StreamEvent;
 use crate::domain::shared::error::DomainError;
-use crate::infrastructure::auth::credential_store::{AuthMethod, Credential, CredentialStore};
+use crate::infrastructure::auth::credential_store::CredentialStore;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;

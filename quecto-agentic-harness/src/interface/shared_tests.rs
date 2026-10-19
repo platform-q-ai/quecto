@@ -183,7 +183,8 @@ fn workflow_guard_not_registered_when_guards_disabled() {
 
 #[tokio::test]
 async fn test_resolve_api_key_with_refresh_async_returns_valid_token() {
-    use crate::infrastructure::auth::credential_store::{AuthMethod, Credential, CredentialStore};
+    use crate::domain::auth::credential::{AuthMethod, Credential};
+    use crate::infrastructure::auth::credential_store::CredentialStore;
     let tmp = tempfile::TempDir::new().unwrap();
     let store = CredentialStore::new(tmp.path());
     store
@@ -213,7 +214,8 @@ async fn test_resolve_api_key_with_refresh_async_falls_back_to_config_on_no_cred
 
 #[tokio::test]
 async fn test_resolve_api_key_with_refresh_async_refreshes_expired_token() {
-    use crate::infrastructure::auth::credential_store::{AuthMethod, Credential, CredentialStore};
+    use crate::domain::auth::credential::{AuthMethod, Credential};
+    use crate::infrastructure::auth::credential_store::CredentialStore;
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -260,7 +262,8 @@ async fn test_resolve_api_key_with_refresh_async_refreshes_expired_token() {
 
 #[tokio::test]
 async fn test_resolve_api_key_with_refresh_async_falls_back_on_refresh_failure() {
-    use crate::infrastructure::auth::credential_store::{AuthMethod, Credential, CredentialStore};
+    use crate::domain::auth::credential::{AuthMethod, Credential};
+    use crate::infrastructure::auth::credential_store::CredentialStore;
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -297,7 +300,8 @@ async fn test_resolve_api_key_with_refresh_async_falls_back_on_refresh_failure()
 
 #[tokio::test]
 async fn test_resolve_api_key_with_refresh_async_preserves_old_refresh_token_when_omitted() {
-    use crate::infrastructure::auth::credential_store::{AuthMethod, Credential, CredentialStore};
+    use crate::domain::auth::credential::{AuthMethod, Credential};
+    use crate::infrastructure::auth::credential_store::CredentialStore;
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -347,7 +351,8 @@ async fn test_resolve_api_key_with_refresh_async_preserves_old_refresh_token_whe
 
 #[tokio::test]
 async fn test_resolve_api_key_with_refresh_async_updates_refresh_token_when_provided() {
-    use crate::infrastructure::auth::credential_store::{AuthMethod, Credential, CredentialStore};
+    use crate::domain::auth::credential::{AuthMethod, Credential};
+    use crate::infrastructure::auth::credential_store::CredentialStore;
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -415,7 +420,7 @@ fn test_append_extension_prompt_empty_is_noop() {
 
 #[test]
 fn test_resolve_api_key_uses_cred_when_valid() {
-    use crate::infrastructure::auth::credential_store::{AuthMethod, Credential};
+    use crate::domain::auth::credential::{AuthMethod, Credential};
     let mut creds = std::collections::HashMap::new();
     creds.insert(
         "anthropic".to_string(),
@@ -434,7 +439,7 @@ fn test_resolve_api_key_uses_cred_when_valid() {
 
 #[test]
 fn test_resolve_api_key_falls_back_when_expired() {
-    use crate::infrastructure::auth::credential_store::{AuthMethod, Credential};
+    use crate::domain::auth::credential::{AuthMethod, Credential};
     let mut creds = std::collections::HashMap::new();
     creds.insert(
         "anthropic".to_string(),
@@ -478,7 +483,7 @@ fn test_check_provider_readiness_empty() {
 
 #[test]
 fn test_check_provider_readiness_with_expired() {
-    use crate::infrastructure::auth::credential_store::{AuthMethod, Credential};
+    use crate::domain::auth::credential::{AuthMethod, Credential};
     let mut creds = std::collections::HashMap::new();
     creds.insert(
         "anthropic".to_string(),
@@ -497,7 +502,7 @@ fn test_check_provider_readiness_with_expired() {
 
 #[test]
 fn test_check_provider_readiness_valid_not_flagged() {
-    use crate::infrastructure::auth::credential_store::{AuthMethod, Credential};
+    use crate::domain::auth::credential::{AuthMethod, Credential};
     let mut creds = std::collections::HashMap::new();
     creds.insert(
         "anthropic".to_string(),

@@ -41,7 +41,7 @@ pub(crate) fn run(ctx: &CliContext, flags: &AgentFlags, stderr: &mut String) -> 
             return 1;
         }
     };
-    let runtime = match super::build_tokio_runtime() {
+    let runtime = match crate::infrastructure::processes::tokio_runtime::build_tokio_runtime() {
         Ok(runtime) => runtime,
         Err(error) => {
             stderr.push_str(&format!("agent: failed to create runtime: {error}\n"));

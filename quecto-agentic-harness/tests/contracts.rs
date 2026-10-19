@@ -119,6 +119,8 @@ mod container_script_integrity;
 mod context_spill_store;
 #[path = "contracts/credential_status_port.rs"]
 mod credential_status_port;
+#[path = "contracts/credential_store_port.rs"]
+mod credential_store_port;
 #[path = "contracts/delegated_children_roster.rs"]
 mod delegated_children_roster;
 #[path = "contracts/document_lock.rs"]
@@ -285,6 +287,8 @@ mod composition_exit_readiness;
 mod coordinator_launch;
 #[path = "contracts/delegated_agent_registry.rs"]
 mod delegated_agent_registry;
+#[path = "contracts/device_code_flow.rs"]
+mod device_code_flow;
 #[path = "contracts/direct_child_routing.rs"]
 mod direct_child_routing;
 #[path = "contracts/ended_child_records.rs"]

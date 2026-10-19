@@ -584,7 +584,7 @@ fn test_run_with_deadline_completes_before_timeout() {
     })
     .with_max_tool_iterations(1);
 
-    let rt = crate::interface::cli::build_tokio_runtime().unwrap();
+    let rt = crate::infrastructure::processes::tokio_runtime::build_tokio_runtime().unwrap();
     let mut messages = vec![Message::user("test")];
     let result = run_with_deadline(&rt, &mut agent, &mut messages, 30);
     match result {
@@ -601,7 +601,7 @@ fn test_run_with_deadline_completes_before_timeout() {
 fn test_run_with_deadline_exercises_timeout_path() {
     let tmp = tempfile::TempDir::new().unwrap();
     let mut agent = make_test_agent(tmp.path());
-    let rt = crate::interface::cli::build_tokio_runtime().unwrap();
+    let rt = crate::infrastructure::processes::tokio_runtime::build_tokio_runtime().unwrap();
     let mut messages = vec![Message::user("test")];
     let result = run_with_deadline(&rt, &mut agent, &mut messages, 1);
     match result {

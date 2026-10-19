@@ -17,12 +17,13 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use crate::application::providers::ports::{ChatRequest, LlmProvider};
+use crate::domain::auth::credential::AuthMethod;
 use crate::domain::conversation::value_objects::message::LlmResponse;
 use crate::domain::inference::services::provider_error::{
     ProviderErrorClass, classify_provider_error,
 };
 use crate::domain::shared::error::DomainError;
-use crate::infrastructure::auth::credential_store::{AuthMethod, CredentialStore};
+use crate::infrastructure::auth::credential_store::CredentialStore;
 
 /// Async function that refreshes an OAuth token.
 ///
@@ -113,7 +114,9 @@ impl RefreshableProvider {
     fn credential_needs_refresh(&self) -> bool {
         let creds = self.store.load_snapshot().unwrap_or_default();
         if let Some(cred) = creds.get(&self.credential_provider) {
-            cred.method == AuthMethod::OAuth && cred.refresh_token.is_some() && cred.is_expired()
+            cred.method == AuthMethod::OAuth
+                && cred.refresh_token.is_some()
+                && cred.is_expired_at(crate::infrastructure::time::unix_timestamp_secs())
         } else {
             false
         }

@@ -13,6 +13,14 @@ fn default_ctx() -> CliContext {
     CliContext::default()
 }
 
+/// A context whose `auth login` reaches the composed use cases.
+fn composed_ctx() -> CliContext {
+    CliContext {
+        auth: Some(crate::composition::bootstrap::auth::build_auth_handles),
+        ..Default::default()
+    }
+}
+
 #[test]
 fn test_auth_missing_subcommand() {
     let out = run_with_output(args("auth"), &default_ctx());
@@ -27,6 +35,7 @@ fn test_auth_login_stores_token_openai() {
     let tmp = tempfile::TempDir::new().unwrap();
     let ctx = CliContext {
         base_dir: Some(tmp.path().to_path_buf()),
+        auth: Some(crate::composition::bootstrap::auth::build_auth_handles),
         ..Default::default()
     };
     let out = run_with_output(
@@ -47,6 +56,7 @@ fn test_auth_login_stores_token_anthropic() {
     let tmp = tempfile::TempDir::new().unwrap();
     let ctx = CliContext {
         base_dir: Some(tmp.path().to_path_buf()),
+        auth: Some(crate::composition::bootstrap::auth::build_auth_handles),
         ..Default::default()
     };
     let out = run_with_output(
@@ -210,6 +220,7 @@ fn test_auth_login_unknown_provider_rejected() {
     let tmp = tempfile::TempDir::new().unwrap();
     let ctx = CliContext {
         base_dir: Some(tmp.path().to_path_buf()),
+        auth: Some(crate::composition::bootstrap::auth::build_auth_handles),
         ..Default::default()
     };
     let out = run_with_output(args("auth login --provider groq --token sk-test"), &ctx);
@@ -223,6 +234,7 @@ fn test_auth_login_empty_token_rejected() {
     let tmp = tempfile::TempDir::new().unwrap();
     let ctx = CliContext {
         base_dir: Some(tmp.path().to_path_buf()),
+        auth: Some(crate::composition::bootstrap::auth::build_auth_handles),
         ..Default::default()
     };
     // We pass a token that's all whitespace
@@ -329,6 +341,7 @@ fn test_auth_login_token_still_works() {
     let tmp = tempfile::TempDir::new().unwrap();
     let ctx = CliContext {
         base_dir: Some(tmp.path().to_path_buf()),
+        auth: Some(crate::composition::bootstrap::auth::build_auth_handles),
         ..Default::default()
     };
     let out = run_with_output(
@@ -412,6 +425,7 @@ fn test_auth_login_device_code_unsupported_provider() {
     let tmp = tempfile::TempDir::new().unwrap();
     let ctx = CliContext {
         base_dir: Some(tmp.path().to_path_buf()),
+        auth: Some(crate::composition::bootstrap::auth::build_auth_handles),
         ..Default::default()
     };
     let out = run_with_output(args("auth login --provider anthropic --device-code"), &ctx);
@@ -480,10 +494,37 @@ fn test_auth_logout_missing_provider() {
 // ===================================================================
 
 #[test]
-fn test_known_providers_constant() {
-    assert!(KNOWN_PROVIDERS.contains(&"openai"));
-    assert!(KNOWN_PROVIDERS.contains(&"anthropic"));
-    assert!(!KNOWN_PROVIDERS.contains(&"groq"));
+fn a_refusal_lists_the_login_providers_in_order() {
+    assert_eq!(known_providers(), "openai, anthropic, xai");
+}
+
+#[test]
+fn auth_login_refuses_without_composed_auth_handles() {
+    let out = run_with_output(
+        args("auth login --provider openai --token sk-1"),
+        &CliContext::default(),
+    );
+    assert_eq!(out.exit_code, 1);
+    assert_eq!(out.stderr, "auth login: auth capability not composed\n");
+    let device = run_with_output(
+        args("auth login --provider openai --device-code"),
+        &CliContext::default(),
+    );
+    assert_eq!(device.exit_code, 1);
+    assert_eq!(device.stderr, "auth login: auth capability not composed\n");
+}
+
+#[test]
+fn the_unknown_provider_refusal_keeps_its_wording() {
+    let out = run_with_output(
+        args("auth login --provider bogus --token sk-1"),
+        &composed_ctx(),
+    );
+    assert_eq!(out.exit_code, 1);
+    assert_eq!(
+        out.stderr,
+        "auth login: unknown provider 'bogus'. Known: openai, anthropic, xai\n"
+    );
 }
 
 // ===================================================================
@@ -610,4 +651,73 @@ fn test_import_openai_non_expired_stores_directly() {
     let creds = store.load_snapshot().unwrap();
     let cred = creds.get("openai").unwrap();
     assert_eq!(cred.token, "eyJ-still-valid");
+}
+
+/// Every refusal a login can give, exactly as `auth login` prints it.
+#[test]
+fn each_login_refusal_keeps_its_wording() {
+    let cases = [
+        (
+            LoginError::UnknownProvider("groq".to_string()),
+            "auth login: unknown provider 'groq'. Known: openai, anthropic, xai\n",
+        ),
+        (
+            LoginError::EmptyToken,
+            "auth login: --token value must not be empty\n",
+        ),
+        (
+            LoginError::DeviceCodeUnsupported(LoginProvider::Xai),
+            "auth login: device code flow is not supported for 'xai' (use --oauth instead)\n",
+        ),
+        (
+            LoginError::Unavailable("EAGAIN".to_string()),
+            "auth login: failed to create runtime: EAGAIN\n",
+        ),
+        (
+            LoginError::InsideAsyncRuntime,
+            "auth login: cannot start a login from inside an async runtime\n",
+        ),
+        (
+            LoginError::DeviceCodeRequest(
+                "provider error: device code request failed (500)".to_string(),
+            ),
+            "auth login: device code request failed: provider error: device code request failed (500)\n",
+        ),
+        (
+            LoginError::Store("config error: failed to parse credentials".to_string()),
+            "auth login: failed to store credential: config error: failed to parse credentials\n",
+        ),
+    ];
+    for (error, printed) in cases {
+        assert_eq!(login_refusal(&error), printed, "{error:?}");
+    }
+}
+
+#[test]
+fn a_device_code_login_for_an_unknown_provider_names_no_alternative() {
+    let out = run_with_output(
+        args("auth login --provider weird --device-code"),
+        &composed_ctx(),
+    );
+    assert_eq!(out.exit_code, 1);
+    assert_eq!(
+        out.stderr,
+        "auth login: device code flow is not supported for 'weird'\n"
+    );
+}
+
+#[test]
+fn a_device_code_login_for_xai_is_refused_even_against_a_test_server() {
+    let out = run_with_output(
+        args("auth login --provider xai --device-code"),
+        &CliContext {
+            oauth_base_url: Some("http://127.0.0.1:1".to_string()),
+            ..composed_ctx()
+        },
+    );
+    assert_eq!(out.exit_code, 1);
+    assert_eq!(
+        out.stderr,
+        "auth login: device code flow is not supported for 'xai' (use --oauth instead)\n"
+    );
 }
