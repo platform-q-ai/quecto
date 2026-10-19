@@ -9,6 +9,10 @@
 //! channel and a service manager. Infrastructure implements them; the
 //! interface parses one command into one use case and presents the outcome;
 //! composition constructs the handles.
+//!
+//! It also holds the runtime authority and attempt lifecycle (#1910): the
+//! attempt, journal/secret and observation ports in [`ports`], and the
+//! admission service and durable authority in [`services`].
 
 pub mod dto;
 pub mod ports;
