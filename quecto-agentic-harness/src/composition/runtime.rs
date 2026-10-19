@@ -21,7 +21,7 @@ use crate::infrastructure::providers::catalogue::catalogue_inputs::CatalogueInpu
 use crate::infrastructure::providers::catalogue::catalogue_registry::{
     runtime_store_for, snapshot_store_for,
 };
-use crate::infrastructure::providers::provider_factory::make_bounded_provider_factory;
+use crate::infrastructure::providers::routing::provider_factory::make_bounded_provider_factory;
 use crate::infrastructure::providers::routing::provider_runtime::{
     AgentProviderRuntimeFactory, AgentRuntimeInputs,
 };

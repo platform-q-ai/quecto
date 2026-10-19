@@ -6,9 +6,9 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-/// The only sub-folders, each with its exhaustive production files (a
-/// path relative to the folder; tests are the `*_tests.rs` files a listed
-/// module declares).
+/// The only sub-folders, each with its exhaustive production files. A
+/// folder holds nothing else but the `*_tests.rs` files its production
+/// modules declare: no sub-folder, no file of another kind.
 const FOLDERS: &[(&str, &[&str])] = &[
     (
         "anthropic",
@@ -77,6 +77,7 @@ const FOLDERS: &[(&str, &[&str])] = &[
         &[
             "mod.rs",
             "model_refusal.rs",
+            "provider_factory.rs",
             "provider_runtime.rs",
             "provider_runtime_admission.rs",
             "refreshable.rs",
@@ -99,13 +100,11 @@ const FOLDERS: &[(&str, &[&str])] = &[
     ),
 ];
 
-/// Every file the providers root may hold:
-/// - its `mod.rs` and the module's own tests;
-/// - the cross-vendor suites `mod.rs` declares (each drives every vendor
-///   through the factory or the shared stream bounds, so none belongs to
-///   one folder; #2580 records why each stays);
-/// - `refresh_wiring.rs` and its tests until auth A3 (#2589) moves them to
-///   `infrastructure/auth/`.
+/// Every file the providers root may hold, each of which must exist: its
+/// `mod.rs`, the module's own tests, and the cross-vendor suites `mod.rs`
+/// declares (each drives every vendor through the factory or the shared
+/// stream bounds, so none belongs to one folder; #2580 records why each
+/// stays).
 const ROOT_FILES: &[&str] = &[
     "mod.rs",
     "mod_tests.rs",
@@ -119,8 +118,6 @@ const ROOT_FILES: &[&str] = &[
     "stream_idle_provider_tests.rs",
     "stream_progress_provider_tests.rs",
     "tool_schema_adapter_tests.rs",
-    "refresh_wiring.rs",
-    "refresh_wiring_tests.rs",
 ];
 
 fn providers() -> PathBuf {
@@ -139,23 +136,80 @@ fn names(path: &Path) -> Vec<(String, bool)> {
         .collect()
 }
 
-/// Every production file under `folder`, relative to it, at any depth.
-fn production_files(folder: &Path, prefix: &str, found: &mut BTreeSet<String>) {
-    for (name, is_dir) in names(folder) {
-        let relative = format!("{prefix}{name}");
-        if is_dir {
-            production_files(&folder.join(&name), &format!("{relative}/"), found);
-        } else if name.ends_with(".rs") && !name.ends_with("_tests.rs") {
-            found.insert(relative);
+/// The entries of one provider folder: its production modules, and the
+/// test files declared from them — by a production module, or by a test
+/// file declared in turn. Anything else is refused by name: a sub-folder,
+/// a file that is not Rust, or a test file nothing in the folder declares.
+struct FolderContents {
+    production: BTreeSet<String>,
+    refused: Vec<String>,
+}
+
+/// Whether `source` declares the module file `file`: by `#[path]`, or as
+/// a sibling `mod` of its stem.
+fn declares(source: &str, file: &str) -> bool {
+    let stem = file.trim_end_matches(".rs");
+    source.contains(&format!("#[path = \"{file}\"]"))
+        || source.lines().any(|line| {
+            line.trim()
+                .trim_start_matches("pub ")
+                .starts_with(&format!("mod {stem};"))
+        })
+}
+
+fn folder_contents(folder: &Path) -> FolderContents {
+    let entries = names(folder);
+    let read = |name: &str| std::fs::read_to_string(folder.join(name)).expect("read a module");
+    let production: BTreeSet<String> = entries
+        .iter()
+        .filter(|(name, is_dir)| !is_dir && name.ends_with(".rs") && !name.ends_with("_tests.rs"))
+        .map(|(name, _)| name.clone())
+        .collect();
+    let tests: Vec<&String> = entries
+        .iter()
+        .filter(|(name, is_dir)| !is_dir && name.ends_with("_tests.rs"))
+        .map(|(name, _)| name)
+        .collect();
+    let mut sources: Vec<String> = production.iter().map(|name| read(name)).collect();
+    let mut declared: BTreeSet<&String> = BTreeSet::new();
+    loop {
+        let found: Vec<&String> = tests
+            .iter()
+            .copied()
+            .filter(|test| !declared.contains(test))
+            .filter(|test| sources.iter().any(|source| declares(source, test)))
+            .collect();
+        if found.is_empty() {
+            break;
         }
+        for test in found {
+            sources.push(read(test));
+            declared.insert(test);
+        }
+    }
+    let refused = entries
+        .iter()
+        .filter(
+            |(name, is_dir)| match (is_dir, name.ends_with("_tests.rs")) {
+                (true, _) => true,
+                (false, true) => !declared.contains(name),
+                (false, false) => !name.ends_with(".rs"),
+            },
+        )
+        .map(|(name, _)| name.clone())
+        .collect();
+    FolderContents {
+        production,
+        refused,
     }
 }
 
 #[test]
 fn the_providers_root_holds_only_its_listed_files_and_folders() {
     let folders: BTreeSet<&str> = FOLDERS.iter().map(|(folder, _)| *folder).collect();
-    let stray: Vec<String> = names(&providers())
-        .into_iter()
+    let entries = names(&providers());
+    let stray: Vec<&String> = entries
+        .iter()
         .filter(|(name, is_dir)| match is_dir {
             true => !folders.contains(name.as_str()),
             false => !ROOT_FILES.contains(&name.as_str()),
@@ -166,17 +220,30 @@ fn the_providers_root_holds_only_its_listed_files_and_folders() {
         stray.is_empty(),
         "unlisted entries at the providers root: {stray:?}"
     );
+    let missing: Vec<&&str> = ROOT_FILES
+        .iter()
+        .chain(&folders)
+        .filter(|listed| !entries.iter().any(|(name, _)| name == **listed))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "listed providers-root entries that do not exist: {missing:?}"
+    );
 }
 
 #[test]
-fn each_provider_folder_holds_exactly_its_listed_modules() {
+fn each_provider_folder_holds_exactly_its_listed_modules_and_their_tests() {
     for (folder, expected) in FOLDERS {
-        let mut found = BTreeSet::new();
-        production_files(&providers().join(folder), "", &mut found);
+        let contents = folder_contents(&providers().join(folder));
         let expected: BTreeSet<String> = expected.iter().map(|file| file.to_string()).collect();
         assert_eq!(
-            found, expected,
+            contents.production, expected,
             "src/infrastructure/providers/{folder}/ production files"
+        );
+        assert!(
+            contents.refused.is_empty(),
+            "src/infrastructure/providers/{folder}/ holds entries no listed module accounts for: {:?}",
+            contents.refused
         );
     }
 }

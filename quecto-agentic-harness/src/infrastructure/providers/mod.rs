@@ -4,7 +4,6 @@ pub mod codex;
 #[cfg(test)]
 mod issue_996_efficiency_tests;
 pub mod openai;
-pub mod provider_factory;
 pub mod routing;
 pub mod transport;
 
