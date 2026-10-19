@@ -25,8 +25,16 @@ impl StoredCredentialPresence for AuthStatusPresence {
     fn stored(&self) -> Result<Vec<StoredCredential>, StoredCredentialsUnavailable> {
         self.status
             .execute()
-            // Red: no stored credential is reported yet.
-            .map(|_statuses| Vec::<StoredCredential>::new())
+            .map(|statuses| {
+                statuses
+                    .into_iter()
+                    .map(|status| StoredCredential {
+                        provider: status.provider,
+                        method: status.method.as_str().to_string(),
+                        state: status.state.as_str().to_string(),
+                    })
+                    .collect()
+            })
             .map_err(|AuthStatusError::Unreadable(reason)| unavailable(&reason))
     }
 }

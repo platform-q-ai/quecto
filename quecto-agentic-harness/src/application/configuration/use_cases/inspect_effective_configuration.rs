@@ -42,9 +42,19 @@ impl InspectEffectiveConfiguration {
         &self,
         selection: &ConfigSelection,
     ) -> Result<ConfigurationInspection, InspectionError> {
-        // Red: the inspection is not built yet.
-        let _ = (&self.resolve, &self.settings, &self.credentials, selection);
-        Err(InspectionError::Settings("not inspected yet".to_string()))
+        let effective = self
+            .resolve
+            .execute(selection)
+            .map_err(InspectionError::Effective)?;
+        let settings = self
+            .settings
+            .settings(effective.document)
+            .map_err(InspectionError::Settings)?;
+        Ok(ConfigurationInspection {
+            sources: effective.sources,
+            settings,
+            stored_credentials: self.credentials.stored(),
+        })
     }
 }
 

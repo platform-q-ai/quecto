@@ -194,9 +194,23 @@ impl ConfigRunSettings {
 
 impl RunSettingsSource for ConfigRunSettings {
     fn settings(&self, document: serde_json::Value) -> Result<RunSettings, String> {
-        // Red: no settings are realized yet.
-        let _ = (&self.base_dir, document, realize_config);
-        Err("not realized yet".to_string())
+        let config = realize_config(document, &HashMap::new(), &self.base_dir)?;
+        let has = |key: &str| !key.is_empty();
+        Ok(RunSettings {
+            workspace: config.workspace_path(),
+            model: config.agents.defaults.model.clone(),
+            effort: config.agents.defaults.effort.clone(),
+            openai_key: has(&config.providers.openai.api_key),
+            anthropic_key: has(&config.providers.anthropic.api_key),
+            endpoint_keys: config
+                .providers
+                .openai_compatible
+                .endpoints
+                .iter()
+                .filter(|endpoint| has(&endpoint.api_key))
+                .map(|endpoint| endpoint.prefix.clone())
+                .collect(),
+        })
     }
 }
 
