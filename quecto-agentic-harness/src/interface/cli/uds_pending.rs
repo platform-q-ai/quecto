@@ -44,11 +44,11 @@ pub(super) async fn drain_and_run_pending(ctx: &mut DispatchCtx<'_>) {
                 return;
             }
             if let Some(control) = &ctx.turn_control.swarm_control {
+                use crate::domain::inference::services::turn_suspension::Work;
                 use crate::domain::swarm::{
                     value_objects::lifecycle::RunStatus,
                     value_objects::run_control::RunControlAction,
                 };
-                use crate::interface::cli::uds_session::PendingMessage;
                 let status = control.apply(RunControlAction::Status).await;
                 if let Ok(receipt) = &status {
                     ctx.turn_control
@@ -57,10 +57,7 @@ pub(super) async fn drain_and_run_pending(ctx: &mut DispatchCtx<'_>) {
                         .automatic_turns()
                         .observe_control_generation(Some(receipt.generation));
                 }
-                let explicit = matches!(
-                    pending_msg,
-                    PendingMessage::User { .. } | PendingMessage::Control { .. }
-                );
+                let explicit = matches!(work, Work::Instruction(_));
                 let admission = match status {
                     Ok(receipt) => match receipt.status {
                         RunStatus::Setup | RunStatus::Running => Some(true),
@@ -157,12 +154,10 @@ fn take_explicit_instructions(
 fn work_of(
     message: &crate::interface::cli::uds_session::PendingMessage,
 ) -> crate::domain::inference::services::turn_suspension::Work {
-    use crate::domain::inference::services::turn_suspension::{Instruction, Work};
+    use crate::domain::inference::services::turn_suspension::Work;
     use crate::interface::cli::uds_session::PendingMessage;
     match message {
-        PendingMessage::User { .. } | PendingMessage::Control { .. } => {
-            Work::Instruction(Instruction::FollowUp)
-        }
+        PendingMessage::User { .. } | PendingMessage::Control { .. } => Work::FOLLOW_UP,
         PendingMessage::Automatic(_)
         | PendingMessage::SubagentNotification { .. }
         | PendingMessage::CoalescedSubagentNotification { .. } => Work::Automatic,
@@ -175,16 +170,17 @@ pub(super) async fn queue_prompt(
     id: Option<&str>,
     type_name: &str,
     message: crate::interface::cli::uds_session::PromptBody,
-    steer: bool,
+    work: crate::domain::inference::services::turn_suspension::Work,
 ) -> bool {
-    let type_name = if steer { "steer" } else { type_name };
-    if steer {
+    use crate::domain::inference::services::turn_suspension::Work;
+    let type_name = if work.is_steer() { "steer" } else { type_name };
+    if work.is_steer() {
         ctx.turn_control.consume_steer();
     }
-    let retained = ctx.session.enqueue_control(id, type_name, message, steer);
-    match retained {
-        true => {}
-        false => ctx.turn_control.client_instruction_refused(),
+    let retained = ctx.session.enqueue_control(id, type_name, message, work);
+    // Only a client's instruction was counted as taken (#2467).
+    if let (false, Work::Instruction(_)) = (retained, work) {
+        ctx.turn_control.client_instruction_refused();
     }
     ctx.session.record_control(
         id,

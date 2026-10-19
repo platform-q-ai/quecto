@@ -346,6 +346,9 @@ pub(super) async fn handle_wake(ctx: &mut super::uds::DispatchCtx<'_>, generatio
                 )
                 .await;
             } else if receipt.wake_allowed {
+                // The change wake is the member's turn: a turn a resume
+                // owed it (a run paused again since) is done by this one.
+                ctx.session.automatic_turns().take_owed_turn();
                 super::uds::handle_prompt(
                     ctx,
                     super::uds::PromptCommand {

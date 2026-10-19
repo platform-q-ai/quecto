@@ -1038,8 +1038,8 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     // and every turn ends with the one routine save, run by the turn itself
     // before `agent_end` (711 → 698).
     // #1909: a prompt or steer re-arms through the automatic-turns use case
-    // (695 → 691).
-    ("src/interface/cli/uds.rs", 691),
+    // (695 → 690; the steer is now read from the turn's work).
+    ("src/interface/cli/uds.rs", 690),
     ("src/interface/cli/uds_session_history.rs", 205),
     // #2404: the ranged builder's unused thinking switch went (290 → 283).
     ("src/interface/cli/uds_session_message_range.rs", 283),

@@ -139,14 +139,14 @@ pub(super) async fn handle_busy_prompt(
 ) {
     match streaming_behavior {
         Some(behavior) => {
-            pending::queue_prompt(
-                ctx,
-                id,
-                type_name,
-                message,
-                matches!(behavior, StreamingBehavior::Steer),
-            )
-            .await;
+            use crate::domain::inference::services::turn_suspension::{Instruction, Work};
+            // A busy client's prompt queues as the instruction it asked for.
+            let instruction = match behavior {
+                StreamingBehavior::Steer => Instruction::Steer,
+                StreamingBehavior::FollowUp => Instruction::FollowUp,
+            };
+            pending::queue_prompt(ctx, id, type_name, message, Work::Instruction(instruction))
+                .await;
         }
         None => {
             ctx.session.record_control(

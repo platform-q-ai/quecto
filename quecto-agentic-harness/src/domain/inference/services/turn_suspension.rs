@@ -58,6 +58,16 @@ pub enum Work {
     Automatic,
 }
 
+impl Work {
+    /// A queued follow-up instruction.
+    pub const FOLLOW_UP: Self = Self::Instruction(Instruction::FollowUp);
+
+    /// Whether this is a client's steer, which goes ahead of queued work.
+    pub fn is_steer(self) -> bool {
+        matches!(self, Self::Instruction(Instruction::Steer))
+    }
+}
+
 /// Whether a session takes automatic turns, the suspension that stopped
 /// them, the latest control generation it has seen, and the turn a resume
 /// owes the run.
@@ -173,8 +183,10 @@ impl AutomaticTurns {
         let Some(suspension) = &mut self.suspension else {
             return false;
         };
-        if suspension.cause != SuspensionCause::ProviderFailure {
-            return false;
+        // Only a provider-failure suspension lifts on a resume.
+        match suspension.cause {
+            SuspensionCause::ProviderFailure => {}
+            SuspensionCause::StoreRejection => return false,
         }
         match suspension.generation {
             Some(seen) if generation > seen => {

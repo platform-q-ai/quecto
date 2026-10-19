@@ -342,7 +342,14 @@ pub(super) async fn handle_follow_up(
 ) -> bool {
     // A retained follow-up cannot revoke a later admitted steer. Only that
     // steer's handler (or explicit abort) releases the priority gate.
-    let retained = super::pending::queue_prompt(ctx, id, type_name, message, false).await;
+    let retained = super::pending::queue_prompt(
+        ctx,
+        id,
+        type_name,
+        message,
+        crate::domain::inference::services::turn_suspension::Work::FOLLOW_UP,
+    )
+    .await;
     if retained && !ctx.session.is_streaming() {
         super::drain_pending_and_nudge(ctx).await;
     }

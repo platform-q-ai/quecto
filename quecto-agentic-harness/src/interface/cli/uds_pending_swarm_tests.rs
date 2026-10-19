@@ -1,6 +1,7 @@
 use super::dispatch_test_env::DispatchTestEnv as Env;
 use super::*;
 use crate::application::swarm::ports::SwarmRunControl;
+use crate::domain::inference::services::turn_suspension::Work;
 use crate::domain::swarm::{
     value_objects::lifecycle::RunStatus,
     value_objects::run_control::{RunControlAction, RunControlReceipt},
@@ -41,8 +42,12 @@ async fn paused_pending_controls_are_retained_without_attempting_inference() {
             std::sync::Arc::new(Control(RunStatus::Paused)),
         )),
     );
-    ctx.session
-        .enqueue_control(Some("approval"), "follow_up", "approved".into(), false);
+    ctx.session.enqueue_control(
+        Some("approval"),
+        "follow_up",
+        "approved".into(),
+        Work::FOLLOW_UP,
+    );
     drain_and_run_pending(&mut ctx).await;
     assert!(ctx.messages.is_empty());
     assert_eq!(ctx.session.drain_pending().len(), 1);
@@ -62,8 +67,12 @@ async fn terminal_notifications_do_not_create_extra_report_turns() {
         "worker ended".into(),
         crate::interface::cli::uds_session::NoteClass::Completion,
     );
-    ctx.session
-        .enqueue_control(Some("report"), "follow_up", "final report".into(), false);
+    ctx.session.enqueue_control(
+        Some("report"),
+        "follow_up",
+        "final report".into(),
+        Work::FOLLOW_UP,
+    );
     drain_and_run_pending(&mut ctx).await;
     let prompts: Vec<_> = ctx
         .messages
@@ -468,7 +477,7 @@ async fn a_drained_turn_failure_is_dated_after_the_turn() {
         .observe_control_generation(Some(4));
     with_control(&mut ctx, Answer(Ok((RunStatus::Running, 6))));
     ctx.session
-        .enqueue_control(Some("f1"), "follow_up", "carry on".into(), false);
+        .enqueue_control(Some("f1"), "follow_up", "carry on".into(), Work::FOLLOW_UP);
     drain_pending_and_nudge(&mut ctx).await;
     assert!(
         !ctx.session.automatic_turns_allowed(),
@@ -517,7 +526,7 @@ async fn an_explicit_follow_up_re_arms_a_provider_suspended_idle_member() {
 
     ctx.turn_control.mark_steer();
     ctx.session
-        .enqueue_control(Some("f1"), "follow_up", "carry on".into(), false);
+        .enqueue_control(Some("f1"), "follow_up", "carry on".into(), Work::FOLLOW_UP);
     drain_and_run_pending(&mut ctx).await;
     assert!(
         user_prompts(&ctx).is_empty(),
@@ -585,7 +594,14 @@ async fn only_an_admitted_explicit_instruction_re_arms() {
     );
     let mut ctx = env.ctx();
     abort_tests::suspend_rejected_at(&mut ctx, 3);
-    super::pending::queue_prompt(&mut ctx, Some("f2"), "follow_up", "carry on".into(), false).await;
+    super::pending::queue_prompt(
+        &mut ctx,
+        Some("f2"),
+        "follow_up",
+        "carry on".into(),
+        Work::FOLLOW_UP,
+    )
+    .await;
     with_control(&mut ctx, Answer(Ok((RunStatus::Paused, 3))));
     drain_and_run_pending(&mut ctx).await;
     assert!(
@@ -610,7 +626,7 @@ async fn only_an_admitted_explicit_instruction_re_arms() {
         None,
         "swarm_wake",
         "Swarm work changed.".into(),
-        false,
+        Work::Automatic,
     )
     .await;
     ctx.turn_control.clear_steer();
@@ -638,7 +654,7 @@ async fn only_an_admitted_explicit_instruction_re_arms() {
         None,
         "swarm_wake",
         "Swarm work changed.".into(),
-        false,
+        Work::Automatic,
     )
     .await;
     drain_and_run_pending(&mut ctx).await;
@@ -699,9 +715,9 @@ fn wake_nudges_queue_as_automatic_messages() {
         None,
         crate::interface::cli::uds_swarm_control::SWARM_WAKE,
         "Swarm work changed.".into(),
-        false
+        Work::Automatic
     ));
-    assert!(session.enqueue_control(None, "prompt", "do it".into(), false));
+    assert!(session.enqueue_control(None, "prompt", "do it".into(), Work::FOLLOW_UP));
     assert_eq!(
         session.drain_pending(),
         [

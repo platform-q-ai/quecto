@@ -10,7 +10,14 @@ async fn a_stale_abort_drain_dates_a_failed_explicit_turn() {
     );
     let mut ctx = env.ctx();
     suspend_failed_at(&mut ctx, 4).await;
-    super::pending::queue_prompt(&mut ctx, Some("f3"), "follow_up", "carry on".into(), false).await;
+    super::pending::queue_prompt(
+        &mut ctx,
+        Some("f3"),
+        "follow_up",
+        "carry on".into(),
+        crate::domain::inference::services::turn_suspension::Work::FOLLOW_UP,
+    )
+    .await;
     // Every status probe sees a later control generation (6, 16, 26, ...):
     // the prompt's own arming probe, the drain's admission probe, the
     // drained turn's arming probe, then the post-failure dating probe.
@@ -134,6 +141,11 @@ async fn a_prompt_re_arms_and_dates_a_failure_in_its_turn() {
     );
     let mut ctx = env.ctx();
     suspend_failed_at(&mut ctx, 1).await;
+    // The session alone knows an older generation: only the one the prompt
+    // hands the turn dates its failure at 5 (#2618 review).
+    ctx.session
+        .automatic_turns()
+        .observe_control_generation(Some(2));
     ctx.turn_control.observe_control_generation(5);
     super::handle_prompt(&mut ctx, prompt("hello")).await;
     assert!(!ctx.session.automatic_turns_allowed(), "the turn failed");
