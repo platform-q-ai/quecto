@@ -285,6 +285,17 @@ fn placement_future_targets_unknowns_and_stale_transitional_rows() {
     // A transitional row whose name no placement row lists is not checked.
     let unlisted: &[Placement<'_>] = &[("application", &["sessions"]), ("domain", &["sessions"])];
     assert!(fixture_placements(root.path(), unlisted).is_empty());
+    // Nor is one whose name only another layer's row lists.
+    let elsewhere: &[Placement<'_>] =
+        &[("application", &["sessions"]), ("domain", &["agent_loop"])];
+    assert!(fixture_placements(root.path(), elsewhere).is_empty());
+    // A file in place of the transitional directory leaves the row stale.
+    root.write("application/agent_loop");
+    let failures = fixture_placements(root.path(), FIXTURE_ROWS);
+    assert_eq!(
+        failures,
+        vec![Violation::StalePlacement("application/agent_loop".into())]
+    );
 }
 #[test]
 fn diagnostics_prescribe_each_actual_repair_and_budget_direction() {
