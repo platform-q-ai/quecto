@@ -92,8 +92,20 @@ fn free_port() -> u16 {
         .port()
 }
 
-/// Request `path` from the listener on `port` once it accepts.
-fn call(port: u16, path: &str) -> String {
+/// The listener's success page, head and body marker as it writes them.
+const SUCCESS_HEAD: &str = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nConnection: close\r\n";
+const SUCCESS_MARK: &str = "Authentication successful!";
+
+fn succeeded(answer: &Option<String>) -> bool {
+    answer
+        .as_deref()
+        .is_some_and(|answer| answer.starts_with(SUCCESS_HEAD) && answer.contains(SUCCESS_MARK))
+}
+
+/// Request `path` from whatever accepts on `port`, within bounds: up to
+/// 10 s to connect, 10 s to read, the connection closed after one answer.
+/// `None` when nothing answered in time.
+fn call(port: u16, path: &str) -> Option<String> {
     let deadline = std::time::Instant::now() + Duration::from_secs(10);
     let mut stream = loop {
         match std::net::TcpStream::connect(("127.0.0.1", port)) {
@@ -101,15 +113,24 @@ fn call(port: u16, path: &str) -> String {
             Err(_) if std::time::Instant::now() < deadline => {
                 std::thread::sleep(Duration::from_millis(20));
             }
-            Err(error) => panic!("the listener never accepted: {error}"),
+            Err(_) => return None,
         }
     };
     stream
-        .write_all(format!("GET {path} HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n").as_bytes())
-        .unwrap();
+        .set_read_timeout(Some(Duration::from_secs(10)))
+        .ok()?;
+    stream
+        .write_all(
+            format!("GET {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+                .as_bytes(),
+        )
+        .ok()?;
     let mut answer = String::new();
-    let _ = stream.read_to_string(&mut answer);
-    answer
+    match stream.read_to_string(&mut answer) {
+        Ok(_) => Some(answer),
+        Err(_) if !answer.is_empty() => Some(answer),
+        Err(_) => None,
+    }
 }
 
 fn login_args() -> Vec<String> {
@@ -119,34 +140,41 @@ fn login_args() -> Vec<String> {
 #[test]
 fn a_callback_carrying_the_state_stores_the_credential_without_a_paste_prompt() {
     // A free port can be taken by another test's server between its
-    // release and the listener's bind; then the run is repeated.
-    let (base, code, stdout, stderr) = (0..3)
-        .find_map(|_| {
-            let base = tempfile::TempDir::new().unwrap();
-            let port = free_port();
-            let ctx = CliContext {
-                base_dir: Some(base.path().to_path_buf()),
-                oauth_base_url: Some(format!("http://127.0.0.1:{port}")),
-                auth: Some(callback_rig),
-                ..Default::default()
-            };
-            let caller =
-                std::thread::spawn(move || call(port, "/callback?code=fake&state=fake-state"));
-            let (mut stdout, mut stderr) = (String::new(), String::new());
-            let code = cmd_auth_with_reader(
-                &ctx,
-                &login_args(),
-                &mut stdout,
-                &mut stderr,
-                &mut std::io::empty(),
-            );
-            caller
-                .join()
-                .unwrap()
-                .starts_with("HTTP/1.1 200")
-                .then_some((base, code, stdout, stderr))
-        })
-        .expect("three free ports were taken before the listener bound them");
+    // release and the listener's bind. Only a run whose listener could not
+    // bind, or timed out without the call reaching it, is repeated.
+    let mut last = None;
+    let mut outcome = None;
+    for _attempt in 0..3 {
+        let base = tempfile::TempDir::new().unwrap();
+        let port = free_port();
+        let ctx = CliContext {
+            base_dir: Some(base.path().to_path_buf()),
+            oauth_base_url: Some(format!("http://127.0.0.1:{port}")),
+            auth: Some(callback_rig),
+            ..Default::default()
+        };
+        let caller = std::thread::spawn(move || call(port, "/callback?code=fake&state=fake-state"));
+        let (mut stdout, mut stderr) = (String::new(), String::new());
+        let code = cmd_auth_with_reader(
+            &ctx,
+            &login_args(),
+            &mut stdout,
+            &mut stderr,
+            &mut std::io::empty(),
+        );
+        let answer = caller.join().unwrap();
+        let lost_a_race = !succeeded(&answer)
+            && (stdout.contains("failed to bind") || stdout.contains("OAuth callback timed out"));
+        if !lost_a_race {
+            outcome = Some((base, code, stdout, stderr, answer));
+            break;
+        }
+        last = Some((stdout, stderr, answer));
+    }
+    let Some((base, code, stdout, stderr, answer)) = outcome else {
+        panic!("three port races in a row; last attempt: {last:?}");
+    };
+    assert!(succeeded(&answer), "{answer:?} / {stdout} / {stderr}");
     assert_eq!(code, 0, "stderr: {stderr}");
     assert_eq!(stderr, "");
     assert!(!stdout.contains("Paste"), "{stdout}");

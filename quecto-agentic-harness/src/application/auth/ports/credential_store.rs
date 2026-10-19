@@ -20,7 +20,8 @@ pub trait CredentialStorePort: Send + Sync {
     /// it is durable; on `Err` the store is as it was.
     fn store(&self, credential: Credential) -> Result<(), CredentialStoreError>;
 
-    /// Every stored credential, each provider's one, in no particular
-    /// order. Reading writes nothing; an absent store lists nothing.
+    /// Every stored entry, in no particular order; a hand-edited store may
+    /// name a provider twice. Reading writes nothing; an absent store lists
+    /// nothing.
     fn list(&self) -> Result<Vec<Credential>, CredentialStoreError>;
 }

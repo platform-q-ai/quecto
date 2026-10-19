@@ -128,3 +128,33 @@ fn a_provider_named_twice_by_a_hand_edited_store_is_reported_twice() {
     assert_eq!(statuses.len(), 2);
     assert!(statuses.iter().all(|status| status.provider == "openai"));
 }
+
+#[test]
+fn a_provider_named_twice_is_listed_in_one_order_whatever_the_store_order() {
+    let expired_token = credential("openai", AuthMethod::Token, Some(NOW - 1));
+    let oauth = credential("openai", AuthMethod::OAuth, None);
+    let active_token = credential("openai", AuthMethod::Token, None);
+    let listed = |stored: Vec<Credential>| {
+        let (_, use_case) = inspect(Ok(stored));
+        use_case
+            .execute()
+            .unwrap()
+            .into_iter()
+            .map(|status| (status.method, status.state))
+            .collect::<Vec<_>>()
+    };
+    let expected = vec![
+        (AuthMethod::OAuth, CredentialState::Active),
+        (AuthMethod::Token, CredentialState::Active),
+        (AuthMethod::Token, CredentialState::Expired),
+    ];
+    assert_eq!(
+        listed(vec![
+            expired_token.clone(),
+            oauth.clone(),
+            active_token.clone()
+        ]),
+        expected
+    );
+    assert_eq!(listed(vec![active_token, expired_token, oauth]), expected);
+}

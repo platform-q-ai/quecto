@@ -22,7 +22,8 @@ impl InspectAuthStatus {
         Self { store, clock }
     }
 
-    /// Every stored credential's status now, ordered by provider. Reading
+    /// Every stored credential's status now, ordered by provider (then
+    /// method and state). Reading
     /// changes nothing. A hand-edited store may name one provider twice
     /// (under two keys); each entry is reported.
     pub fn execute(&self) -> Result<Vec<ProviderAuthStatus>, AuthStatusError> {
@@ -39,7 +40,15 @@ impl InspectAuthStatus {
                 provider: credential.provider,
             })
             .collect();
-        statuses.sort_by(|a, b| a.provider.cmp(&b.provider));
+        // Ties (a provider a hand-edited store names twice) order by method
+        // then state, so the listing never depends on the store's order.
+        statuses.sort_by(|a, b| {
+            (a.provider.as_str(), a.method.as_str(), a.state.as_str()).cmp(&(
+                b.provider.as_str(),
+                b.method.as_str(),
+                b.state.as_str(),
+            ))
+        });
         Ok(statuses)
     }
 }
