@@ -655,3 +655,6 @@ mod issue_2421_tests;
 #[cfg(test)]
 #[path = "codex_2593_tests.rs"]
 mod issue_2593_tests;
+#[cfg(test)]
+#[path = "codex_observation_tests.rs"]
+mod observation_tests;

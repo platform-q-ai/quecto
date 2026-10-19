@@ -570,6 +570,47 @@ pub(in crate::infrastructure::providers) async fn collect(
     })
 }
 
+/// What a fresh attempt of `profile` makes of the SSE `lines` (#2597): the
+/// terminal flag after each line, whether the attempt failed and whether it
+/// told its gate of a throttle, and its diagnostics, with the first-token
+/// time (a clock reading) reduced to whether one arrived. The vendors'
+/// observation characterisation tests pin this text.
+#[cfg(test)]
+pub(in crate::infrastructure::providers) fn observation(
+    profile: Profile,
+    lines: &[&str],
+) -> String {
+    #[derive(Debug)]
+    struct Quiet;
+    impl AttemptPermit for Quiet {
+        fn feedback(&mut self, _: ThrottleFeedback) {}
+        fn finish(self: Box<Self>, _: Feedback) {}
+    }
+    let receipt = Receipt(Arc::new(Mutex::new(State {
+        permit: Some(Box::new(Quiet)),
+        failure: false,
+        hinted: false,
+        trace: None,
+        diagnostics: Default::default(),
+        started: std::time::Instant::now(),
+    })));
+    let mut observer = ProtocolObserver::new(profile);
+    let terminal: Vec<bool> = lines
+        .iter()
+        .map(|line| {
+            observer.observe(line, &receipt);
+            observer.terminal
+        })
+        .collect();
+    let mut state = receipt.0.lock().unwrap();
+    let token = state.diagnostics.first_token_ms.take().is_some();
+    let diagnostics = serde_json::to_string(&state.diagnostics).expect("diagnostics serialise");
+    format!(
+        "terminal={terminal:?} failure={} hinted={} first_token={token}\n{diagnostics}",
+        state.failure, state.hinted
+    )
+}
+
 #[cfg(test)]
 #[path = "attempt_transport_2436_tests.rs"]
 mod admission_wait_tests;

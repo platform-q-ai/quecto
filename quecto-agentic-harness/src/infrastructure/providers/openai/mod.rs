@@ -630,3 +630,7 @@ impl OpenAiProvider {
         .build_request_body(request)
     }
 }
+
+#[cfg(test)]
+#[path = "openai_observation_tests.rs"]
+mod observation_tests;
