@@ -264,13 +264,18 @@ fn test_parse_loopback_redirect_rejects_malformed() {
     assert!(parse_loopback_redirect("http://127.0.0.1/callback").is_err());
 }
 
-// --- Callback listener (wait_for_oauth_callback_at) ---
+// --- Callback listener (serve_oauth_callback, as wait_for_oauth_callback_at runs it) ---
 
 /// A callback listener on a port it already holds, and the join-handle
 /// resolving to its result. The port is bound here and handed to the
 /// listener bound — never released and re-bound — so no concurrent test
 /// can take it in between and feed it, or be fed by, another test's
 /// requests (#2612).
+///
+/// Mirroring `wait_for_oauth_callback_at`'s body is deliberate: that
+/// function binds its own address, which is the race these tests must not
+/// run. This helper keeps everything after the bind identical: the same
+/// `serve_oauth_callback`, deadline and production limits.
 fn spawn_listener(
     state: &str,
     timeout_secs: u64,

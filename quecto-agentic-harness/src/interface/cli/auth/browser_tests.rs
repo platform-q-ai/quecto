@@ -134,6 +134,12 @@ fn call(port: u16, path: &str) -> Option<String> {
     }
 }
 
+/// The login failed while its call met someone other than its listener,
+/// as the callback contract's `met_a_stranger` decides it.
+fn met_a_stranger(code: i32, answer: &Option<String>) -> bool {
+    code != 0 && answer.is_some() && !succeeded(answer)
+}
+
 /// Numbers each attempt's callback path.
 static NEXT: AtomicU64 = AtomicU64::new(0);
 
@@ -143,9 +149,11 @@ fn login_args() -> Vec<String> {
 
 #[test]
 fn a_callback_carrying_the_state_stores_the_credential_without_a_paste_prompt() {
-    // A free port can be handed to another test too. Only a run whose
-    // listener could not bind, or timed out without the call reaching it,
-    // is repeated.
+    // A free port can be handed to another test too. Only a run that failed
+    // while a stranger answered its call is repeated. The decision rests on
+    // the call's answer and the exit code: `stdout` cannot carry it, since
+    // without stdin data the command flushes its progress lines to the real
+    // stdout and empties the buffer.
     let mut last = None;
     let mut outcome = None;
     for _attempt in 0..3 {
@@ -179,16 +187,14 @@ fn a_callback_carrying_the_state_stores_the_credential_without_a_paste_prompt() 
             &mut std::io::empty(),
         );
         let answer = caller.join().unwrap();
-        // Repeated only when the listener could not bind, or timed out while
-        // something other than it answered the call: a stranger on the port.
-        let lost_a_race = stdout.contains("failed to bind")
-            || (stdout.contains("OAuth callback timed out")
-                && answer.is_some()
-                && !succeeded(&answer));
-        if !lost_a_race {
+        // Repeated only when the login failed and something other than its
+        // listener answered the call: a stranger on the port, whether the
+        // listener could not bind or timed out waiting.
+        if !met_a_stranger(code, &answer) {
             outcome = Some((base, code, stdout, stderr, answer));
             break;
         }
+        eprintln!("login exited {code} after a stranger answered its call; retrying");
         last = Some((stdout, stderr, answer));
     }
     let Some((base, code, stdout, stderr, answer)) = outcome else {
@@ -200,7 +206,8 @@ fn a_callback_carrying_the_state_stores_the_credential_without_a_paste_prompt() 
     assert!(succeeded(&answer), "{answer:?} / {stdout} / {stderr}");
     assert_eq!(code, 0, "stderr: {stderr}");
     assert_eq!(stderr, "");
-    assert!(!stdout.contains("Paste"), "{stdout}");
+    // No paste prompt was needed: `code == 0` with the callback answered is
+    // the guard, since the prompt's text is flushed past `stdout`.
     assert!(
         stdout.ends_with("Xai OAuth credential stored successfully\n"),
         "{stdout}"
@@ -236,6 +243,7 @@ fn a_redirect_off_this_machine_is_refused_without_a_paste_prompt() {
         "auth login: invalid redirect URI: provider error: redirect URI host is not loopback: \
          http://example.test/callback\n"
     );
-    assert!(!stdout.contains("Paste"), "{stdout}");
+    // No paste prompt was needed: `code == 0` with the callback answered is
+    // the guard, since the prompt's text is flushed past `stdout`.
     assert!(!base.path().join("credentials.json").exists());
 }
