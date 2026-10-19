@@ -16,7 +16,10 @@ use crate::application::catalogue::ports::{
     LoadedRefreshInputs, RefreshChange, RefreshContext, RefreshError, RefreshInputsLoader,
     RefreshRedactionPort, RefreshableCatalogueSource,
 };
-use crate::application::catalogue::{CatalogueSnapshotStore, ResolveCatalogueUseCase};
+use crate::application::catalogue::{
+    services::snapshot_store::CatalogueSnapshotStore,
+    use_cases::resolve_catalogue::ResolveCatalogueUseCase,
+};
 
 pub struct RefreshCatalogueSources {
     inputs: Arc<dyn RefreshInputsLoader>,

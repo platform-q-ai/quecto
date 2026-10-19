@@ -1,6 +1,6 @@
 use super::*;
-use crate::application::catalogue::CatalogueSourceError;
 use crate::application::catalogue::dto::{ListedModel, ListingDiagnostic, ModelCatalogueListing};
+use crate::application::catalogue::ports::catalogue_source::CatalogueSourceError;
 use crate::domain::catalogue::entities::entry::{
     CatalogueEntry, ModelDescriptor, ProviderDescriptor,
 };

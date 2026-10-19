@@ -328,7 +328,10 @@ async fn single_client_socket_override_serves_get_state() {
 // the source of these warnings. The composed catalogue handles must carry its
 // store through lifecycle, dispatch and (for multi-client) the accept push.
 fn publish_admission_slots(base: &std::path::Path, slots: &[&str]) {
-    use crate::application::catalogue::{CatalogueSource, CredentialStatusPort, SourceEntries};
+    use crate::application::catalogue::{
+        ports::catalogue_source::{CatalogueSource, SourceEntries},
+        ports::credential_status::CredentialStatusPort,
+    };
     use crate::application::provider_runtime::{
         AdmissionBindingDiagnostic, ComposeProviderRuntimeUseCase, CompositionPorts,
         ProviderRuntimeFactory, ProviderRuntimeOutcome,

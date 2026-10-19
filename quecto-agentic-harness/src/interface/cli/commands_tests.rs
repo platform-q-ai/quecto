@@ -284,7 +284,9 @@ fn test_status_invalid_config_fails() {
 #[test]
 fn status_reports_only_published_runtime_admission_warnings() {
     use crate::application::catalogue::{
-        CatalogueSnapshotStore, CatalogueSource, CredentialStatusPort, SourceEntries,
+        ports::catalogue_source::{CatalogueSource, SourceEntries},
+        ports::credential_status::CredentialStatusPort,
+        services::snapshot_store::CatalogueSnapshotStore,
     };
     use crate::application::provider_runtime::{
         AdmissionBindingDiagnostic, ComposeProviderRuntimeUseCase, CompositionPorts,

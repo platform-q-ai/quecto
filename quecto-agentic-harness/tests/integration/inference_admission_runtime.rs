@@ -12,7 +12,9 @@ use quecto::application::admission::services::inference_admission::{
     AdmissionClient, AdmissionDispatcher, AdmissionRegistry,
 };
 use quecto::application::catalogue::{
-    CatalogueSnapshotStore, CatalogueSource, CredentialStatusPort, SourceEntries,
+    ports::catalogue_source::{CatalogueSource, SourceEntries},
+    ports::credential_status::CredentialStatusPort,
+    services::snapshot_store::CatalogueSnapshotStore,
 };
 use quecto::application::provider_runtime::{
     ComposeProviderRuntimeUseCase, CompositionPorts, ProviderRuntimeFactory, RuntimeSnapshotStore,

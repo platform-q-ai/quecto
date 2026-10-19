@@ -3,7 +3,9 @@
 //! state (#1845). Reading `models.json`, discovery caches and the credential
 //! store is infrastructure's; the use case only resolves what it is handed.
 
-use crate::application::catalogue::{CatalogueSource, CredentialStatusPort};
+use crate::application::catalogue::{
+    ports::catalogue_source::CatalogueSource, ports::credential_status::CredentialStatusPort,
+};
 
 /// One loaded set of inputs. Sources are borrowed from the load so a
 /// resolve describes exactly one read.

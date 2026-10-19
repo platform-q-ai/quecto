@@ -10,12 +10,11 @@ fn outcome(source: &str, status: SourceRefreshStatus) -> SourceRefreshOutcome {
 
 #[test]
 fn a_republish_renders_the_exact_published_generation() {
-    let store = crate::application::catalogue::CatalogueSnapshotStore::empty();
-    let resolved = crate::application::catalogue::ResolveCatalogueUseCase.resolve_and_publish(
-        &[],
-        &GrantNone,
-        &store,
-    );
+    let store =
+        crate::application::catalogue::services::snapshot_store::CatalogueSnapshotStore::empty();
+    let resolved =
+        crate::application::catalogue::use_cases::resolve_catalogue::ResolveCatalogueUseCase
+            .resolve_and_publish(&[], &GrantNone, &store);
     let json = render(&CatalogueRefreshReport {
         outcomes: vec![],
         resolved: Some(resolved),
@@ -26,11 +25,13 @@ fn a_republish_renders_the_exact_published_generation() {
 
 struct GrantNone;
 
-impl crate::application::catalogue::CredentialStatusPort for GrantNone {
+impl crate::application::catalogue::ports::credential_status::CredentialStatusPort for GrantNone {
     fn for_composed_routes(
         &self,
         _routes: &[String],
-    ) -> Option<Box<dyn crate::application::catalogue::CredentialStatusPort + '_>> {
+    ) -> Option<
+        Box<dyn crate::application::catalogue::ports::credential_status::CredentialStatusPort + '_>,
+    > {
         None // this fake's status does not depend on routes
     }
     fn credential_available(

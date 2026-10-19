@@ -2,7 +2,9 @@ use super::uds_session::AgentSession;
 #[test]
 fn advisory_is_read_from_published_runtime_and_deduplicated() {
     use crate::application::catalogue::{
-        CatalogueSnapshotStore, CatalogueSource, CredentialStatusPort, SourceEntries,
+        ports::catalogue_source::{CatalogueSource, SourceEntries},
+        ports::credential_status::CredentialStatusPort,
+        services::snapshot_store::CatalogueSnapshotStore,
     };
     use crate::application::provider_runtime::{
         AdmissionBindingDiagnostic, ComposeProviderRuntimeUseCase, CompositionPorts,

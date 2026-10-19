@@ -603,18 +603,6 @@ const CONTRACTS_OUTSIDE_PORTS: &[(&str, &[&str])] = &[
     ("sessions::conversation_ledger", &["LedgerAdvance"]),
     ("subagents::standard_script", &["StandardScriptVerdict"]),
     (
-        "catalogue",
-        &[
-            "CatalogueSnapshotStore",
-            "CatalogueSource",
-            "CatalogueSourceError",
-            "CredentialStatusPort",
-            "ResolvedCatalogue",
-            "SkippedRecord",
-            "SourceEntries",
-        ],
-    ),
-    (
         "admission::services::inference_admission",
         &[
             "AdmissionClient",
@@ -1465,16 +1453,16 @@ fn application_path_allowed(path: &str) -> bool {
         // The contracts the deleted `application::ports` facade re-exported
         // (#2367), named at their owners: exactly the ones infrastructure
         // implements or holds, until their capabilities give them a home
-        // under `ports/` (catalogue L20 #2578, admission #1910, launch #1880).
+        // under `ports/` (admission #1910, launch #1880). The catalogue's
+        // snapshot store is the capability's shared state (`services/`,
+        // #2578), held by the provider adapters' refusal sink.
         [
             "crate",
             "application",
             "catalogue",
-            "CatalogueSnapshotStore"
-            | "CatalogueSource"
-            | "CredentialStatusPort"
-            | "SkippedRecord"
-            | "SourceEntries",
+            "services",
+            "snapshot_store",
+            "CatalogueSnapshotStore",
         ]
         | [
             "crate",
