@@ -298,7 +298,7 @@ fn a_removal_waits_for_the_credentials_lock() {
             .is_err(),
         "a removal must wait for the lock another locker holds"
     );
-    // Receipt, not timing: while the lock is held the file is untouched.
+    // While the lock is held the file is untouched.
     assert_eq!(
         CredentialStore::new(base.path())
             .get("openai")
@@ -306,11 +306,30 @@ fn a_removal_waits_for_the_credentials_lock() {
             .map(|credential| credential.token),
         Some("fake-o".to_string())
     );
+    // The holder's own write, as a concurrent refresh would make it: the
+    // removal must read the store only once it holds the lock, so this
+    // write survives it.
+    std::fs::write(
+        base.path().join("credentials.json"),
+        serde_json::json!({"credentials": {
+            "openai": {"provider": "openai", "token": "fake-o", "method": "token", "expires_at": null},
+            "anthropic": {"provider": "anthropic", "token": "fake-rotated", "method": "oauth", "expires_at": null, "refresh_token": "fake-refresh-rotated"},
+        }})
+        .to_string(),
+    )
+    .unwrap();
     held.unlock().unwrap();
     drop(held);
     assert_eq!(removed.recv().unwrap(), Ok(true));
     remover.join().unwrap();
-    assert!(store.list().unwrap().is_empty());
+    let left = store.list().unwrap();
+    assert_eq!(left.len(), 1, "the holder's write survives: {left:?}");
+    assert_eq!(left[0].provider, "anthropic");
+    assert_eq!(left[0].token, "fake-rotated");
+    assert_eq!(
+        left[0].refresh_token.as_deref(),
+        Some("fake-refresh-rotated")
+    );
 }
 
 #[test]
@@ -318,14 +337,24 @@ fn concurrent_stores_and_a_removal_lose_nothing() {
     let base = TempDir::new().unwrap();
     let store = under_test(&base);
     store.store(token("victim", "fake-v")).unwrap();
+    // All nine start together, so their cycles overlap.
+    let start = Arc::new(std::sync::Barrier::new(9));
     let writers: Vec<_> = (0..8)
         .map(|n| {
             let store = Arc::clone(&store);
-            std::thread::spawn(move || store.store(token(&format!("p{n}"), "fake-p")).unwrap())
+            let start = Arc::clone(&start);
+            std::thread::spawn(move || {
+                start.wait();
+                store.store(token(&format!("p{n}"), "fake-p")).unwrap()
+            })
         })
         .chain(std::iter::once({
             let store = Arc::clone(&store);
-            std::thread::spawn(move || assert!(store.remove("victim").unwrap()))
+            let start = Arc::clone(&start);
+            std::thread::spawn(move || {
+                start.wait();
+                assert!(store.remove("victim").unwrap())
+            })
         }))
         .collect();
     for writer in writers {
