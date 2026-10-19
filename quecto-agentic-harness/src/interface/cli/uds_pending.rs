@@ -36,10 +36,9 @@ pub(super) async fn drain_and_run_pending(ctx: &mut DispatchCtx<'_>) {
         }
         let mut remaining = pending.into_iter();
         while let Some(pending_msg) = remaining.next() {
-            let explicit = is_explicit(&pending_msg);
-            if ctx.turn_control.is_steer_pending()
-                || (!ctx.session.automatic_turns_allowed() && !explicit)
-            {
+            // The domain decides which work a suspended member admits.
+            let work = work_of(&pending_msg);
+            if ctx.turn_control.is_steer_pending() || !ctx.session.automatic_turns().admits(work) {
                 ctx.session
                     .restore_pending(std::iter::once(pending_msg).chain(remaining));
                 return;
@@ -98,11 +97,7 @@ pub(super) async fn drain_and_run_pending(ctx: &mut DispatchCtx<'_>) {
             // #1712: only an explicit instruction the run admits re-arms a
             // suspended member; a paused run or a failed probe keeps both the
             // suspension and the instruction.
-            if !ctx.session.automatic_turns_allowed() {
-                ctx.session.automatic_turns().rearm(
-                    crate::domain::inference::services::turn_suspension::Instruction::FollowUp,
-                );
-            }
+            ctx.session.automatic_turns().start_turn(work, None);
             let correlation = match &pending_msg {
                 crate::interface::cli::uds_session::PendingMessage::Control {
                     id, command, ..
@@ -142,7 +137,12 @@ fn take_explicit_instructions(
         .session
         .drain_pending()
         .into_iter()
-        .partition(is_explicit);
+        .partition(|message| {
+            matches!(
+                work_of(message),
+                crate::domain::inference::services::turn_suspension::Work::Instruction(_)
+            )
+        });
     ctx.session.restore_pending(automatic.into_iter());
     if explicit.is_empty() {
         None
@@ -151,14 +151,22 @@ fn take_explicit_instructions(
     }
 }
 
-/// Human or parent intent (a prompt or a queued control), as opposed to
-/// harness-generated notes and nudges.
-fn is_explicit(message: &crate::interface::cli::uds_session::PendingMessage) -> bool {
+/// The work a queued message is (#1909): human or parent intent (a prompt
+/// or a queued control) is an admitted follow-up instruction; harness
+/// notes are automatic work. The domain decides what each may do.
+fn work_of(
+    message: &crate::interface::cli::uds_session::PendingMessage,
+) -> crate::domain::inference::services::turn_suspension::Work {
+    use crate::domain::inference::services::turn_suspension::{Instruction, Work};
     use crate::interface::cli::uds_session::PendingMessage;
-    matches!(
-        message,
-        PendingMessage::User { .. } | PendingMessage::Control { .. }
-    )
+    match message {
+        PendingMessage::User { .. } | PendingMessage::Control { .. } => {
+            Work::Instruction(Instruction::FollowUp)
+        }
+        PendingMessage::Automatic(_)
+        | PendingMessage::SubagentNotification { .. }
+        | PendingMessage::CoalescedSubagentNotification { .. } => Work::Automatic,
+    }
 }
 
 /// A second-stage dispatch acknowledgment must reflect actual retention.

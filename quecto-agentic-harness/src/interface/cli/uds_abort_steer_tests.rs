@@ -693,6 +693,9 @@ async fn session_stats_expose_request_diagnostics_after_failed_prompt() {
             type_name: "prompt".into(),
             message: "work".into(),
             streaming_behavior: None,
+            work: crate::domain::inference::services::turn_suspension::Work::Instruction(
+                crate::domain::inference::services::turn_suspension::Instruction::Prompt,
+            ),
         },
     )
     .await;
@@ -728,6 +731,9 @@ async fn direct_rejected_and_precancelled_prompts_have_correlated_receipts() {
                 type_name: "prompt".into(),
                 message: "approved".into(),
                 streaming_behavior: None,
+                work: crate::domain::inference::services::turn_suspension::Work::Instruction(
+                    crate::domain::inference::services::turn_suspension::Instruction::Prompt,
+                ),
             },
         )
         .await;

@@ -7,9 +7,7 @@
 //! it needs, to date a suspension and to see a resume: the delivery
 //! adapter owns that port for the process and passes it in.
 use crate::application::swarm::ports::SwarmRunControl;
-use crate::domain::inference::services::turn_suspension::{
-    AutomaticTurns, Instruction, SuspensionCause, TurnSuspension,
-};
+use crate::domain::inference::services::turn_suspension::{AutomaticTurns, SuspensionCause, Work};
 use crate::domain::shared::error::DomainError;
 use crate::domain::swarm::value_objects::run_control::RunControlAction;
 
@@ -41,11 +39,6 @@ impl ResumeAfterProviderFailure {
         self.turns.allowed()
     }
 
-    /// The suspension in force, if any.
-    pub fn suspension(&self) -> Option<TurnSuspension> {
-        self.turns.suspension()
-    }
-
     /// Record a swarm control generation the session has seen.
     pub fn observe_control_generation(&mut self, generation: Option<u64>) {
         self.turns.observe_control_generation(generation);
@@ -65,28 +58,22 @@ impl ResumeAfterProviderFailure {
 
     /// Stop automatic turns for `cause`, dated at `generation` when it is
     /// known, else at the latest control generation the session has seen.
-    pub fn suspend(&mut self, cause: SuspensionCause, generation: Option<u64>) {
+    fn suspend(&mut self, cause: SuspensionCause, generation: Option<u64>) {
         self.turns.suspend(cause, generation);
         debug_assert!(!self.turns.allowed());
     }
 
-    /// A swarm control generation arrived: a resume since a provider-failure
-    /// suspension re-arms automatic turns and owes the run a turn (`true`).
-    pub fn resume_after_control_change(&mut self, generation: u64) -> bool {
-        self.turns.resume_after_control_change(generation)
+    /// Whether `work` may start a turn now (the domain decides: an
+    /// instruction always, automatic work only while automatic turns run).
+    pub fn admits(&self, work: Work) -> bool {
+        self.turns.admits(work)
     }
 
-    /// An explicit instruction re-arms automatic turns.
-    pub fn rearm(&mut self, instruction: Instruction) {
-        self.turns.rearm(instruction);
-        debug_assert!(self.turns.allowed());
-    }
-
-    /// A client's prompt or steer starts a turn: it re-arms automatic turns,
-    /// and a failure during the turn is dated at `generation`, the control
-    /// generation known now (#1721).
-    pub fn rearm_for_turn(&mut self, instruction: Instruction, generation: Option<u64>) {
-        self.rearm(instruction);
+    /// `work` starts a turn ([`AutomaticTurns::start`]); a failure during
+    /// it is dated at `generation`, the control generation known now
+    /// (#1721).
+    pub fn start_turn(&mut self, work: Work, generation: Option<u64>) {
+        self.turns.start(work);
         self.observe_control_generation(generation);
     }
 
@@ -119,7 +106,7 @@ impl ResumeAfterProviderFailure {
         debug_assert!(!self.turns.allowed(), "only a suspended session probes");
         let receipt = control.apply(RunControlAction::Status).await?;
         let generation = receipt.generation;
-        Ok(match self.resume_after_control_change(generation) {
+        Ok(match self.turns.resume_after_control_change(generation) {
             true => SuspendedProbe::Rearmed { generation },
             false => SuspendedProbe::StillSuspended { generation },
         })

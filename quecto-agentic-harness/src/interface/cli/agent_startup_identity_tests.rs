@@ -194,3 +194,26 @@ fn an_agent_run_refuses_to_start_without_a_composed_admission_builder() {
         "{stderr}"
     );
 }
+
+/// #2618 review: each missing loop builder refuses the start with its own
+/// reason; the interface constructs neither.
+#[test]
+fn an_agent_run_refuses_to_start_without_composed_automatic_turns() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let ctx = CliContext {
+        base_dir: Some(tmp.path().to_path_buf()),
+        sessions: Some(crate::composition::sessions::build_session_handles),
+        automatic_turns: None,
+        ..Default::default()
+    };
+    let mut stderr = String::new();
+    assert!(composed_loop_builders(&ctx, &mut stderr).is_none());
+    assert_eq!(stderr, "agent: agent-turn capability not composed\n");
+    let ctx = CliContext {
+        automatic_turns: Some(crate::composition::bootstrap::agent_turn::build_automatic_turns),
+        ..Default::default()
+    };
+    let mut stderr = String::new();
+    assert!(composed_loop_builders(&ctx, &mut stderr).is_none());
+    assert_eq!(stderr, "agent: sessions capability not composed\n");
+}

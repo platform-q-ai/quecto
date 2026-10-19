@@ -329,16 +329,9 @@ pub(super) async fn handle_steer(
         );
         emit_event_to_broadcast_or_writer(ctx, &event).await;
     }
-    super::handle_prompt(
-        ctx,
-        super::PromptCommand {
-            id: id.map(str::to_owned),
-            type_name: type_name.into(),
-            message,
-            streaming_behavior: Some(super::StreamingBehavior::Steer),
-        },
-    )
-    .await
+    let steer = Some(super::StreamingBehavior::Steer);
+    let cmd = super::PromptCommand::client(id.map(str::to_owned), type_name.into(), message, steer);
+    super::handle_prompt(ctx, cmd).await
 }
 
 pub(super) async fn handle_follow_up(

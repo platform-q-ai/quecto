@@ -341,6 +341,7 @@ pub(super) async fn handle_wake(ctx: &mut super::uds::DispatchCtx<'_>, generatio
                         type_name: SWARM_WAKE.into(),
                         message: RESUMED_WAKE.into(),
                         streaming_behavior: None,
+                        work: crate::domain::inference::services::turn_suspension::Work::Automatic,
                     },
                 )
                 .await;
@@ -352,6 +353,7 @@ pub(super) async fn handle_wake(ctx: &mut super::uds::DispatchCtx<'_>, generatio
                         type_name: SWARM_WAKE.into(),
                         message: CHANGED_WAKE.into(),
                         streaming_behavior: None,
+                        work: crate::domain::inference::services::turn_suspension::Work::Automatic,
                     },
                 )
                 .await;

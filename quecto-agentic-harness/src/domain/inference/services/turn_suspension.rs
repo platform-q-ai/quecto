@@ -50,6 +50,14 @@ impl Instruction {
     }
 }
 
+/// The work that would start a turn (#1909): an explicit instruction, or
+/// automatic work (a swarm wake, a queued note, a workflow nudge).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Work {
+    Instruction(Instruction),
+    Automatic,
+}
+
 /// Whether a session takes automatic turns, the suspension that stopped
 /// them, the latest control generation it has seen, and the turn a resume
 /// owes the run.
@@ -108,9 +116,35 @@ impl AutomaticTurns {
         debug_assert!(!self.allowed && self.suspension.is_some());
     }
 
-    /// An explicit instruction re-arms automatic turns and does the work a
-    /// resume turn was owed for.
-    pub fn rearm(&mut self, _instruction: Instruction) {
+    /// Whether `work` may start a turn now: an instruction always (it
+    /// re-arms a suspended session); automatic work only while automatic
+    /// turns run.
+    pub fn admits(&self, work: Work) -> bool {
+        match work {
+            Work::Instruction(_) => true,
+            Work::Automatic => self.allowed,
+        }
+    }
+
+    /// `work` starts a turn. A client's prompt or steer re-arms automatic
+    /// turns and does the work a resume turn was owed for; an admitted
+    /// follow-up re-arms a suspended session and leaves an owed turn to a
+    /// running one; automatic work starts only once admitted.
+    pub fn start(&mut self, work: Work) {
+        match work {
+            Work::Instruction(Instruction::Prompt | Instruction::Steer) => self.rearm(),
+            Work::Instruction(Instruction::FollowUp) => match self.allowed {
+                true => {}
+                false => self.rearm(),
+            },
+            Work::Automatic => {
+                assert!(self.allowed, "automatic work starts only once admitted");
+            }
+        }
+        debug_assert!(self.allowed);
+    }
+
+    fn rearm(&mut self) {
         self.allowed = true;
         self.pending_resume_turn = false;
         self.suspension = None;

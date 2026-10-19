@@ -193,12 +193,7 @@ async fn run_message(
     ctx.turn_control.client_instruction_taken();
     match kind {
         MessageKind::Prompt(streaming_behavior) => {
-            let cmd = PromptCommand {
-                id,
-                type_name,
-                message: body,
-                streaming_behavior,
-            };
+            let cmd = PromptCommand::client(id, type_name, body, streaming_behavior);
             super::handle_prompt(ctx, cmd).await
         }
         MessageKind::Steer => {
@@ -232,6 +227,27 @@ async fn admit_prompt_body(
             let ev = AgentEvent::err(id, type_name, refusal.to_string());
             emit_event_to_broadcast_or_writer(ctx, &ev).await;
             None
+        }
+    }
+}
+
+impl PromptCommand {
+    /// A client's prompt or steer (#1909): an instruction, a steer when it
+    /// steers. Swarm wake turns are built as automatic work instead.
+    pub(super) fn client(
+        id: Option<String>,
+        type_name: String,
+        message: crate::interface::cli::uds_session::PromptBody,
+        streaming_behavior: Option<StreamingBehavior>,
+    ) -> Self {
+        use crate::domain::inference::services::turn_suspension::{Instruction, Work};
+        let steer = matches!(streaming_behavior, Some(StreamingBehavior::Steer));
+        Self {
+            id,
+            type_name,
+            message,
+            streaming_behavior,
+            work: Work::Instruction(Instruction::client(steer)),
         }
     }
 }

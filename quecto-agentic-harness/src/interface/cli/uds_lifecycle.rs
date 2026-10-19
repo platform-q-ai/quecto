@@ -105,7 +105,6 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
         automatic_turns,
         extensions,
     } = args;
-
     let session_key = identity.runtime_key().to_string(); // presenters, owner uuid
     let sessions = sessions(SessionLoopInputs {
         base_dir: base_dir.to_path_buf(),

@@ -275,6 +275,8 @@ pub(super) struct PromptCommand {
     pub(super) type_name: String,
     pub(super) message: super::uds_session::PromptBody,
     pub(super) streaming_behavior: Option<StreamingBehavior>,
+    /// The work the turn is: a client's instruction, or a swarm wake (#1909).
+    pub(super) work: crate::domain::inference::services::turn_suspension::Work,
 }
 
 /// Persist the user prompt about to run so it survives an ungraceful exit
@@ -295,6 +297,7 @@ pub(super) async fn handle_prompt(ctx: &mut DispatchCtx<'_>, cmd: PromptCommand)
         type_name,
         message,
         streaming_behavior,
+        work,
     } = cmd;
     if ctx.session.is_streaming() {
         prompt_admission::handle_busy_prompt(
@@ -313,15 +316,11 @@ pub(super) async fn handle_prompt(ctx: &mut DispatchCtx<'_>, cmd: PromptCommand)
         pending::queue_prompt(ctx, id.as_deref(), &type_name, message, false).await;
         return false;
     }
-    // #1909: a prompt or steer re-arms automatic turns; a failure during
-    // its turn is dated at the control generation known now (#1721).
+    // #1909: the turn starts as the work it is (a prompt or steer re-arms
+    // automatic turns); a failure in it is dated at the generation now (#1721).
     let steer = matches!(streaming_behavior, Some(StreamingBehavior::Steer));
     let generation = ctx.turn_control.control_generation();
-    let instruction =
-        crate::domain::inference::services::turn_suspension::Instruction::client(steer);
-    ctx.session
-        .automatic_turns()
-        .rearm_for_turn(instruction, generation);
+    ctx.session.automatic_turns().start_turn(work, generation);
     // Reload runtime configuration (#1849): the pull-based poll before every
     // prompt (ADR-0002), rebuilt off the runtime; a failure keeps last-good.
     super::uds_dispatch_reload::poll_reload(ctx).await;

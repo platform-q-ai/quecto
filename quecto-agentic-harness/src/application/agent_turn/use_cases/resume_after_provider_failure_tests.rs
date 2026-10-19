@@ -67,7 +67,7 @@ async fn a_failure_is_dated_after_it_and_only_a_later_resume_re_arms() {
     turns.suspend_after_failure();
     assert!(!turns.allowed());
     assert_eq!(turns.date_suspension(Some(&run)).await, Some(4));
-    let dated = turns.suspension().expect("suspended");
+    let dated = turns.turns.suspension().expect("suspended");
     assert_eq!(
         (dated.cause, dated.generation, dated.dated),
         (SuspensionCause::ProviderFailure, Some(4), true)
@@ -96,7 +96,7 @@ async fn without_a_swarm_or_an_answer_the_pre_turn_generation_stands() {
     assert_eq!(turns.date_suspension(None).await, None);
     let locked = Run::at(u64::MAX);
     assert_eq!(turns.date_suspension(Some(&locked)).await, None);
-    let kept = turns.suspension().expect("suspended");
+    let kept = turns.turns.suspension().expect("suspended");
     assert_eq!((kept.generation, kept.dated), (Some(2), false));
 }
 
@@ -112,7 +112,12 @@ async fn a_store_rejection_waits_for_an_instruction() {
         turns.probe_while_suspended(&run).await.unwrap(),
         SuspendedProbe::StillSuspended { generation: 9 }
     );
-    turns.rearm(Instruction::FollowUp);
+    turns.start_turn(
+        Work::Instruction(
+            crate::domain::inference::services::turn_suspension::Instruction::FollowUp,
+        ),
+        None,
+    );
     assert!(turns.allowed());
     assert!(
         !turns.take_owed_turn(),
@@ -130,4 +135,21 @@ async fn a_probe_the_store_cannot_answer_is_the_stores_error() {
         .expect_err("the caller decides what a busy store means");
     assert!(error.to_string().contains("locked"), "{error}");
     assert!(!turns.allowed(), "still suspended");
+}
+
+/// #2618 review: a turn starts as its work: a prompt re-arms a suspended
+/// session and dates a later failure at the generation given; automatic
+/// work is admitted only while automatic turns run.
+#[test]
+fn a_turn_starts_as_its_work() {
+    use crate::domain::inference::services::turn_suspension::Instruction;
+    let mut turns = ResumeAfterProviderFailure::new();
+    turns.suspend(SuspensionCause::ProviderFailure, Some(1));
+    assert!(!turns.admits(Work::Automatic));
+    assert!(turns.admits(Work::Instruction(Instruction::Prompt)));
+    turns.start_turn(Work::Instruction(Instruction::Prompt), Some(5));
+    assert!(turns.allowed());
+    assert!(turns.admits(Work::Automatic));
+    turns.suspend_after_failure();
+    assert_eq!(turns.turns.suspension().and_then(|s| s.generation), Some(5));
 }

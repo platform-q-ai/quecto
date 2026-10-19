@@ -64,7 +64,7 @@ fn the_owed_resume_turn_does_not_outlive_a_prompt_or_a_later_suspension() {
     assert!(!s.needs_provider_dating(), "dated at suspension time");
     assert!(s.resume_after_control_change(2));
     // An explicit prompt does the work the resume turn was owed for.
-    s.rearm(Instruction::Prompt);
+    s.start(Work::Instruction(Instruction::Prompt));
     assert!(
         !s.take_pending_resume_turn(),
         "prompt consumed the owed turn"
@@ -95,7 +95,7 @@ fn store_rejections_and_explicit_prompts_behave_as_before() {
         "a store rejection waits for a human"
     );
     assert!(!s.allowed());
-    s.rearm(Instruction::Prompt);
+    s.start(Work::Instruction(Instruction::Prompt));
     assert!(s.allowed());
     assert!(!s.resume_after_control_change(200), "nothing suspended");
     let mut u = session();
@@ -117,9 +117,43 @@ fn every_explicit_instruction_re_arms_any_suspension() {
             let mut turns = session();
             turns.suspend(cause, Some(1));
             assert_eq!(turns.suspension().map(|s| s.cause), Some(cause));
-            turns.rearm(instruction);
+            assert!(turns.admits(Work::Instruction(instruction)));
+            assert!(!turns.admits(Work::Automatic), "automatic work waits");
+            turns.start(Work::Instruction(instruction));
             assert!(turns.allowed(), "{instruction:?} re-arms {cause:?}");
             assert_eq!(turns.suspension(), None);
         }
     }
+}
+
+/// #2618 review: only an instruction is admitted while suspended; a
+/// running session admits automatic work, and a follow-up there leaves the
+/// turn a resume owed to the run, while a prompt does that work itself.
+#[test]
+fn the_domain_decides_which_work_starts_a_turn() {
+    let mut turns = session();
+    assert!(turns.admits(Work::Automatic));
+    turns.start(Work::Automatic);
+    turns.suspend(SuspensionCause::ProviderFailure, Some(1));
+    assert!(turns.resume_after_control_change(2));
+    turns.start(Work::Instruction(Instruction::FollowUp));
+    assert!(
+        turns.take_pending_resume_turn(),
+        "a follow-up keeps the owed turn"
+    );
+    turns.suspend(SuspensionCause::ProviderFailure, Some(2));
+    assert!(turns.resume_after_control_change(3));
+    turns.start(Work::Instruction(Instruction::Prompt));
+    assert!(
+        !turns.take_pending_resume_turn(),
+        "a prompt does the owed work"
+    );
+}
+
+#[test]
+#[should_panic(expected = "automatic work starts only once admitted")]
+fn automatic_work_never_starts_a_suspended_session() {
+    let mut turns = session();
+    turns.suspend(SuspensionCause::ProviderFailure, Some(1));
+    turns.start(Work::Automatic);
 }

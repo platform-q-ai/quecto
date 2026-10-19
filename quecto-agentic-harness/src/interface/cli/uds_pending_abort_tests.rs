@@ -4,15 +4,12 @@ use super::*;
 
 #[tokio::test]
 async fn a_stale_abort_drain_dates_a_failed_explicit_turn() {
-    use crate::domain::inference::services::turn_suspension::SuspensionCause;
     let mut env = Env::new(
         super::dispatch_test_env::make_workflow(),
         std::sync::Arc::new(FailingProvider),
     );
     let mut ctx = env.ctx();
-    ctx.session
-        .automatic_turns()
-        .suspend(SuspensionCause::ProviderFailure, Some(4));
+    suspend_failed_at(&mut ctx, 4).await;
     super::pending::queue_prompt(&mut ctx, Some("f3"), "follow_up", "carry on".into(), false).await;
     // Every status probe sees a later control generation (6, 16, 26, ...):
     // the prompt's own arming probe, the drain's admission probe, the
@@ -30,6 +27,9 @@ async fn a_stale_abort_drain_dates_a_failed_explicit_turn() {
             type_name: "prompt".into(),
             message: "hello".into(),
             streaming_behavior: None,
+            work: crate::domain::inference::services::turn_suspension::Work::Instruction(
+                crate::domain::inference::services::turn_suspension::Instruction::Prompt,
+            ),
         },
     )
     .await;
@@ -40,16 +40,10 @@ async fn a_stale_abort_drain_dates_a_failed_explicit_turn() {
     );
     assert!(!ctx.session.automatic_turns_allowed());
     assert!(
-        !ctx.session
-            .automatic_turns()
-            .resume_after_control_change(26),
+        !resumed_at(&mut ctx, 26).await,
         "dated after the failed drained turn (36), not at a generation seen before or during it"
     );
-    assert!(
-        ctx.session
-            .automatic_turns()
-            .resume_after_control_change(37)
-    );
+    assert!(resumed_at(&mut ctx, 37).await);
 }
 
 /// A control port whose generation rises by ten on every probe.
@@ -79,4 +73,70 @@ impl SwarmRunControl for Rising {
             })
         })
     }
+}
+
+/// Suspend as a failed turn does, dated at `generation` by the run, as the
+/// dispatch loop dates it after the failure (#1721).
+pub(super) async fn suspend_failed_at(ctx: &mut DispatchCtx<'_>, generation: u64) {
+    let turns = ctx.session.automatic_turns();
+    turns.suspend_after_failure();
+    turns
+        .date_suspension(Some(&super::RunningAt(generation)))
+        .await;
+}
+
+/// Suspend as a durable store rejection does, at `generation`.
+pub(super) fn suspend_rejected_at(ctx: &mut DispatchCtx<'_>, generation: u64) {
+    let turns = ctx.session.automatic_turns();
+    turns.observe_control_generation(Some(generation));
+    turns.suspend_after_store_rejection();
+}
+
+/// Whether a wake at `generation` re-arms the suspended session by a resume.
+pub(super) async fn resumed_at(ctx: &mut DispatchCtx<'_>, generation: u64) -> bool {
+    use crate::application::agent_turn::use_cases::resume_after_provider_failure::SuspendedProbe;
+    let probe = ctx
+        .session
+        .automatic_turns()
+        .probe_while_suspended(&super::RunningAt(generation))
+        .await;
+    matches!(probe, Ok(SuspendedProbe::Rearmed { .. }))
+}
+
+fn prompt(text: &str) -> super::PromptCommand {
+    use crate::domain::inference::services::turn_suspension::{Instruction, Work};
+    super::PromptCommand {
+        id: None,
+        type_name: "prompt".into(),
+        message: text.into(),
+        streaming_behavior: None,
+        work: Work::Instruction(Instruction::Prompt),
+    }
+}
+
+/// #2618 review: a client's prompt re-arms a suspended session, and a
+/// failure in its turn is dated at the control generation known when the
+/// prompt arrived, not at the old suspension's.
+#[tokio::test]
+async fn a_prompt_re_arms_and_dates_a_failure_in_its_turn() {
+    let mut env = Env::with_unselected_workflow();
+    let mut ctx = env.ctx();
+    suspend_failed_at(&mut ctx, 1).await;
+    super::handle_prompt(&mut ctx, prompt("hello")).await;
+    assert!(
+        ctx.session.automatic_turns_allowed(),
+        "the prompt re-armed it"
+    );
+
+    let mut env = Env::new(
+        super::dispatch_test_env::make_workflow(),
+        std::sync::Arc::new(FailingProvider),
+    );
+    let mut ctx = env.ctx();
+    suspend_failed_at(&mut ctx, 1).await;
+    ctx.turn_control.observe_control_generation(5);
+    super::handle_prompt(&mut ctx, prompt("hello")).await;
+    assert!(!ctx.session.automatic_turns_allowed(), "the turn failed");
+    assert!(!resumed_at(&mut ctx, 5).await, "dated at 5, the prompt's");
+    assert!(resumed_at(&mut ctx, 6).await);
 }

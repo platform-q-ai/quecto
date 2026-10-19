@@ -1008,7 +1008,7 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     // the moved lines are ratcheted at their new home.
     // #1909 hands both loops composition's automatic-turns builder (the
     // resume-after-a-provider-failure use case; was 193 and 127).
-    ("src/interface/cli/uds_lifecycle.rs", 198),
+    ("src/interface/cli/uds_lifecycle.rs", 197),
     ("src/interface/cli/uds_single_client.rs", 129),
     // #2446 moved the client-disconnect bookkeeping to `uds_multi/clients.rs`.
     ("src/interface/cli/uds_multi.rs", 599),
@@ -1038,8 +1038,8 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     // and every turn ends with the one routine save, run by the turn itself
     // before `agent_end` (711 → 698).
     // #1909: a prompt or steer re-arms through the automatic-turns use case
-    // (695 → 692).
-    ("src/interface/cli/uds.rs", 692),
+    // (695 → 691).
+    ("src/interface/cli/uds.rs", 691),
     ("src/interface/cli/uds_session_history.rs", 205),
     // #2404: the ranged builder's unused thinking switch went (290 → 283).
     ("src/interface/cli/uds_session_message_range.rs", 283),

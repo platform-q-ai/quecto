@@ -90,6 +90,9 @@ async fn production_swarm_wiring_accounts_for_a_turn_and_denies_paused_inference
             type_name: "prompt".into(),
             message: "inspect".into(),
             streaming_behavior: None,
+            work: crate::domain::inference::services::turn_suspension::Work::Instruction(
+                crate::domain::inference::services::turn_suspension::Instruction::Prompt,
+            ),
         },
     )
     .await;
@@ -111,6 +114,9 @@ async fn production_swarm_wiring_accounts_for_a_turn_and_denies_paused_inference
             type_name: "prompt".into(),
             message: "wait".into(),
             streaming_behavior: None,
+            work: crate::domain::inference::services::turn_suspension::Work::Instruction(
+                crate::domain::inference::services::turn_suspension::Instruction::Prompt,
+            ),
         },
     )
     .await;
@@ -172,7 +178,7 @@ fn composed_suspension_rechecks_durable_generation_before_cancelling() {
 
 /// A running run at a given control generation that never grants a wake, so
 /// the re-arming can be observed without a model turn.
-struct RunningAt(u64);
+pub(super) struct RunningAt(pub(super) u64);
 impl SwarmRunControl for RunningAt {
     fn coordinator_board(&self) -> crate::application::swarm::ports::CoordinatorBoardFuture<'_> {
         Box::pin(async { Ok(None) })
@@ -207,7 +213,6 @@ impl SwarmRunControl for RunningAt {
 /// rejection never re-arms this way.
 #[tokio::test]
 async fn a_resume_wake_re_arms_a_provider_suspended_member() {
-    use crate::domain::inference::services::turn_suspension::SuspensionCause;
     let mut env = Env::with_unselected_workflow();
     let mut ctx = env.ctx();
     ctx.turn_control = std::sync::Arc::new(
@@ -215,9 +220,7 @@ async fn a_resume_wake_re_arms_a_provider_suspended_member() {
             std::sync::Arc::new(RunningAt(5)),
         )),
     );
-    ctx.session
-        .automatic_turns()
-        .suspend(SuspensionCause::ProviderFailure, Some(5));
+    abort_tests::suspend_failed_at(&mut ctx, 5).await;
     ctx.turn_control.queue_swarm_wake(40);
     crate::interface::cli::uds_swarm_control::handle_wake(&mut ctx, 40).await;
     assert!(
@@ -253,9 +256,7 @@ async fn a_resume_wake_re_arms_a_provider_suspended_member() {
         !ctx.session.automatic_turns().take_owed_turn(),
         "the owed turn was consumed"
     );
-    ctx.session
-        .automatic_turns()
-        .suspend(SuspensionCause::StoreRejection, Some(7));
+    abort_tests::suspend_rejected_at(&mut ctx, 7);
     ctx.turn_control = std::sync::Arc::new(
         crate::interface::cli::uds_cancel::TurnControl::with_swarm_control(Some(
             std::sync::Arc::new(RunningAt(9)),
@@ -324,12 +325,9 @@ fn user_prompts(ctx: &DispatchCtx<'_>) -> Vec<String> {
 /// the owed turn waits until the run admits inference again.
 #[tokio::test]
 async fn a_re_arm_while_paused_owes_the_turn_until_the_run_runs() {
-    use crate::domain::inference::services::turn_suspension::SuspensionCause;
     let mut env = Env::with_unselected_workflow();
     let mut ctx = env.ctx();
-    ctx.session
-        .automatic_turns()
-        .suspend(SuspensionCause::ProviderFailure, Some(5));
+    abort_tests::suspend_failed_at(&mut ctx, 5).await;
     with_control(&mut ctx, Answer(Ok((RunStatus::Paused, 7))));
     ctx.turn_control.queue_swarm_wake(40);
     crate::interface::cli::uds_swarm_control::handle_wake(&mut ctx, 40).await;
@@ -352,12 +350,9 @@ async fn a_re_arm_while_paused_owes_the_turn_until_the_run_runs() {
 /// message), a durable rejection drops it.
 #[tokio::test]
 async fn a_failed_status_probe_keeps_a_suspended_member_suspended() {
-    use crate::domain::inference::services::turn_suspension::SuspensionCause;
     let mut env = Env::with_unselected_workflow();
     let mut ctx = env.ctx();
-    ctx.session
-        .automatic_turns()
-        .suspend(SuspensionCause::ProviderFailure, Some(5));
+    abort_tests::suspend_failed_at(&mut ctx, 5).await;
     with_control(&mut ctx, Answer(Err("database is locked")));
     ctx.turn_control.queue_swarm_wake(40);
     crate::interface::cli::uds_swarm_control::handle_wake(&mut ctx, 40).await;
@@ -385,48 +380,40 @@ async fn a_failed_status_probe_keeps_a_suspended_member_suspended() {
 /// re-arm it; anything else is left alone.
 #[tokio::test]
 async fn a_provider_suspension_is_dated_after_the_failed_turn() {
-    use crate::domain::inference::services::turn_suspension::SuspensionCause;
     let mut env = Env::with_unselected_workflow();
     let mut ctx = env.ctx();
     ctx.session
         .automatic_turns()
         .observe_control_generation(Some(4));
-    ctx.session
-        .automatic_turns()
-        .suspend(SuspensionCause::ProviderFailure, None);
+    ctx.session.automatic_turns().suspend_after_failure();
     with_control(&mut ctx, Answer(Ok((RunStatus::Running, 6))));
     crate::interface::cli::uds_swarm_control::date_provider_suspension(&mut ctx).await;
     assert_eq!(ctx.turn_control.control_generation(), Some(6));
     assert!(
-        !ctx.session.automatic_turns().resume_after_control_change(6),
+        !abort_tests::resumed_at(&mut ctx, 6).await,
         "the pause/resume during the turn is not a resume after it"
     );
-    assert!(ctx.session.automatic_turns().resume_after_control_change(7));
+    assert!(abort_tests::resumed_at(&mut ctx, 7).await);
     // A suspension already dated after its failure is not re-dated by a
     // later idle drain: the resume it should honour stays visible.
-    ctx.session
-        .automatic_turns()
-        .suspend(SuspensionCause::ProviderFailure, Some(4));
+    abort_tests::suspend_failed_at(&mut ctx, 4).await;
     with_control(&mut ctx, Answer(Ok((RunStatus::Running, 9))));
     crate::interface::cli::uds_swarm_control::date_provider_suspension(&mut ctx).await;
     assert!(
-        ctx.session.automatic_turns().resume_after_control_change(9),
+        abort_tests::resumed_at(&mut ctx, 9).await,
         "still dated at 4"
     );
     // Store rejections and healthy sessions are untouched.
-    ctx.session
-        .automatic_turns()
-        .suspend(SuspensionCause::StoreRejection, Some(1));
+    abort_tests::suspend_rejected_at(&mut ctx, 1);
     with_control(&mut ctx, Answer(Ok((RunStatus::Running, 9))));
     crate::interface::cli::uds_swarm_control::date_provider_suspension(&mut ctx).await;
-    assert!(
-        !ctx.session
-            .automatic_turns()
-            .resume_after_control_change(10)
+    assert!(!abort_tests::resumed_at(&mut ctx, 10).await);
+    ctx.session.automatic_turns().start_turn(
+        crate::domain::inference::services::turn_suspension::Work::Instruction(
+            crate::domain::inference::services::turn_suspension::Instruction::Prompt,
+        ),
+        None,
     );
-    ctx.session
-        .automatic_turns()
-        .rearm(crate::domain::inference::services::turn_suspension::Instruction::Prompt);
     with_control(&mut ctx, Answer(Err("run not found")));
     crate::interface::cli::uds_swarm_control::date_provider_suspension(&mut ctx).await;
     assert!(ctx.session.automatic_turns_allowed());
@@ -487,13 +474,11 @@ async fn a_drained_turn_failure_is_dated_after_the_turn() {
         !ctx.session.automatic_turns_allowed(),
         "the drained turn failed"
     );
-    let dated = ctx.session.automatic_turns().suspension().map(|s| s.dated);
-    assert_eq!(dated, Some(true), "dated after the failure");
     assert!(
-        !ctx.session.automatic_turns().resume_after_control_change(6),
+        !abort_tests::resumed_at(&mut ctx, 6).await,
         "a pause/resume during the drained turn does not re-arm"
     );
-    assert!(ctx.session.automatic_turns().resume_after_control_change(7));
+    assert!(abort_tests::resumed_at(&mut ctx, 7).await);
 }
 
 /// #1712: an explicit instruction (a parent's fast-acked prompt becomes a
@@ -502,16 +487,13 @@ async fn a_drained_turn_failure_is_dated_after_the_turn() {
 /// steer still outranks the drain.
 #[tokio::test]
 async fn an_explicit_follow_up_re_arms_a_provider_suspended_idle_member() {
-    use crate::domain::inference::services::turn_suspension::SuspensionCause;
     let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let mut env = Env::new(
         super::dispatch_test_env::make_workflow(),
         std::sync::Arc::new(CountingProvider(calls.clone())),
     );
     let mut ctx = env.ctx();
-    ctx.session
-        .automatic_turns()
-        .suspend(SuspensionCause::ProviderFailure, Some(1));
+    abort_tests::suspend_failed_at(&mut ctx, 1).await;
     ctx.session.enqueue_subagent_notification(
         "worker".into(),
         1,
@@ -572,12 +554,9 @@ async fn an_explicit_follow_up_re_arms_a_provider_suspended_idle_member() {
 /// converted follow-up executes it rather than parking it as queued.
 #[tokio::test]
 async fn an_idle_suspended_member_executes_a_forwarded_follow_up() {
-    use crate::domain::inference::services::turn_suspension::SuspensionCause;
     let mut env = Env::with_unselected_workflow();
     let mut ctx = env.ctx();
-    ctx.session
-        .automatic_turns()
-        .suspend(SuspensionCause::ProviderFailure, Some(1));
+    abort_tests::suspend_failed_at(&mut ctx, 1).await;
     super::uds_dispatch::handle_follow_up(
         &mut ctx,
         Some("p1"),
@@ -599,16 +578,13 @@ async fn an_idle_suspended_member_executes_a_forwarded_follow_up() {
 /// as an instruction.
 #[tokio::test]
 async fn only_an_admitted_explicit_instruction_re_arms() {
-    use crate::domain::inference::services::turn_suspension::SuspensionCause;
     let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let mut env = Env::new(
         super::dispatch_test_env::make_workflow(),
         std::sync::Arc::new(CountingProvider(calls.clone())),
     );
     let mut ctx = env.ctx();
-    ctx.session
-        .automatic_turns()
-        .suspend(SuspensionCause::StoreRejection, Some(3));
+    abort_tests::suspend_rejected_at(&mut ctx, 3);
     super::pending::queue_prompt(&mut ctx, Some("f2"), "follow_up", "carry on".into(), false).await;
     with_control(&mut ctx, Answer(Ok((RunStatus::Paused, 3))));
     drain_and_run_pending(&mut ctx).await;
@@ -656,9 +632,7 @@ async fn only_an_admitted_explicit_instruction_re_arms() {
         "the nudge drains after the instruction: {prompts:?}"
     );
     // A nudge alone never re-arms.
-    ctx.session
-        .automatic_turns()
-        .suspend(SuspensionCause::ProviderFailure, Some(3));
+    abort_tests::suspend_failed_at(&mut ctx, 3).await;
     super::pending::queue_prompt(
         &mut ctx,
         None,
