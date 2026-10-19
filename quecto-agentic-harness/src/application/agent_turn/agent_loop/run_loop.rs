@@ -125,6 +125,9 @@ impl AgentLoopImpl {
                 (Recovery::Fail(error), _) => {
                     // #2132: no unsettled feedback outlives the failed turn.
                     recovery.withdraw(messages, &mut appended_messages);
+                    self.notify(|| AgentProgressEvent::ConversationChanged {
+                        messages: messages.clone().into(),
+                    });
                     self.drain_tool_policy_mutations_at_boundary();
                     return self.fail_provider_request(current_turn, error).await;
                 }

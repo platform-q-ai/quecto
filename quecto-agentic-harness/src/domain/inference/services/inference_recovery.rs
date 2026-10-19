@@ -71,7 +71,7 @@ pub enum Correction {
 /// whose reply showed nothing is corrected while the budget lasts;
 /// everything else ends the turn with its class.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ProviderFailureTransition {
+enum ProviderFailureTransition {
     RecoverMalformedRequest,
     Terminal(ProviderErrorClass),
 }
@@ -210,7 +210,7 @@ impl InferenceRecovery {
 /// HTTP 400 or 422, or a 5xx wrapping an explicit `invalid_request_error`,
 /// #935) whose reply showed nothing is repaired and sent again, while the
 /// budget lasts; everything else ends the turn (#2155).
-pub fn classify_provider_failure(
+fn classify_provider_failure(
     error: &DomainError,
     output: Output,
     malformed_retries: u32,

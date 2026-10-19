@@ -117,3 +117,36 @@ async fn a_turn_that_recovers_keeps_its_feedback() {
     assert_eq!(result.response, "fixed");
     assert_eq!(feedback(&messages).len(), 1);
 }
+
+/// #2606 review: the withdrawal is announced: the last conversation the
+/// loop reports is the one the failed turn left, without the feedback.
+#[tokio::test]
+async fn a_failed_turn_reports_the_conversation_without_its_feedback() {
+    use crate::domain::agents::value_objects::agent::AgentProgressEvent;
+    let sizes = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let seen = sizes.clone();
+    let callback: crate::domain::agents::value_objects::agent::ProgressCallback =
+        Arc::new(move |event| {
+            if let AgentProgressEvent::ConversationChanged { messages } = event {
+                seen.lock().unwrap().push(messages.len());
+            }
+        });
+    let provider = Arc::new(MockProvider::new_results(vec![
+        malformed(),
+        malformed(),
+        malformed(),
+        malformed(),
+    ]));
+    let mut agent = AgentLoopImpl::new(AgentLoopConfig {
+        progress_callback: Some(callback),
+        ..test_config(provider, Box::new(MockRegistry::new()))
+    });
+    let mut messages = vec![Message::user("the task")];
+    agent.run_loop(&mut messages).await.expect_err("fails");
+    assert_eq!(messages.len(), 1);
+    assert_eq!(
+        sizes.lock().unwrap().last().copied(),
+        Some(1),
+        "the last reported conversation has the feedback withdrawn"
+    );
+}
