@@ -328,12 +328,6 @@ impl CredentialStore {
         Ok(removed)
     }
 
-    /// Remove all credentials.
-    pub fn remove_all(&self) -> Result<(), DomainError> {
-        let _lock = self.lock_exclusive()?;
-        self.save_all(&HashMap::new())
-    }
-
     /// List all stored credentials.
     pub fn list(&self) -> Result<Vec<Credential>, DomainError> {
         let all = self.load_snapshot()?;
@@ -350,6 +344,11 @@ impl CredentialStorePort for CredentialStore {
 
     fn list(&self) -> Result<Vec<Credential>, CredentialStoreError> {
         CredentialStore::list(self).map_err(|error| CredentialStoreError(error.to_string()))
+    }
+
+    fn remove(&self, provider: &str) -> Result<bool, CredentialStoreError> {
+        CredentialStore::remove(self, provider)
+            .map_err(|error| CredentialStoreError(error.to_string()))
     }
 }
 

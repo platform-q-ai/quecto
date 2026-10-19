@@ -3,7 +3,9 @@
 //! credential, leaves every other provider's untouched, keeps the file's
 //! format and owner-only mode, and refuses — changing nothing — when the
 //! file cannot be read; a listing returns every stored credential whole,
-//! writes nothing, and refuses an unreadable file.
+//! writes nothing, and refuses an unreadable file; a removal takes its
+//! provider's credential alone, says whether there was one, and refuses —
+//! changing nothing — when the file cannot be read.
 use std::sync::Arc;
 
 use tempfile::TempDir;
@@ -210,4 +212,38 @@ fn an_unreadable_store_cannot_be_listed() {
         refused.0.contains("failed to parse credentials"),
         "{refused}"
     );
+}
+
+#[test]
+fn a_removal_takes_its_providers_credential_alone() {
+    let base = TempDir::new().unwrap();
+    let store = under_test(&base);
+    store.store(oauth("openai", "fake-o")).unwrap();
+    store.store(token("anthropic", "fake-a")).unwrap();
+    assert!(store.remove("openai").unwrap());
+    let left = store.list().unwrap();
+    assert_eq!(left.len(), 1);
+    assert_eq!(left[0].provider, "anthropic");
+    assert!(!store.remove("openai").unwrap(), "nothing left to remove");
+}
+
+#[test]
+fn removing_from_an_empty_store_removes_nothing() {
+    let base = TempDir::new().unwrap();
+    assert!(!under_test(&base).remove("openai").unwrap());
+}
+
+#[test]
+fn an_unreadable_store_refuses_a_removal_and_changes_nothing() {
+    let base = TempDir::new().unwrap();
+    let path = base.path().join("credentials.json");
+    std::fs::write(&path, "{ not json ").unwrap();
+    let refused = under_test(&base)
+        .remove("openai")
+        .expect_err("a corrupt store refuses");
+    assert!(
+        refused.0.contains("failed to parse credentials"),
+        "{refused}"
+    );
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "{ not json ");
 }

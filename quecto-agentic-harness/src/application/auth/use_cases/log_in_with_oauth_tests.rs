@@ -115,6 +115,10 @@ impl CredentialStorePort for Fakes {
     fn list(&self) -> Result<Vec<Credential>, CredentialStoreError> {
         unreachable!("a browser login lists nothing")
     }
+
+    fn remove(&self, _provider: &str) -> Result<bool, CredentialStoreError> {
+        unreachable!("a browser login removes nothing")
+    }
 }
 
 impl AuthClock for Fakes {
