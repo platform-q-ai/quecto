@@ -25,9 +25,7 @@ use crate::domain::sessions::entities::session_identity::SessionIdentity;
 use crate::domain::tool_policy::value_objects::tool;
 use crate::domain::tool_policy::value_objects::tool_descriptor::ToolDescriptor;
 use crate::domain::{audit::AuditEvent, shared::error::DomainError};
-use agent_loop_stream::{
-    StreamProviderError, TurnEnd, empty_stream_error_message, is_empty_streamed_response,
-};
+use agent_loop_stream::{StreamProviderError, TurnEnd, is_empty_streamed_response};
 use std::{pin::Pin, sync::Arc};
 use tool::{ToolDefinition, ToolPolicyReconciliation, ToolPolicyRequest, ToolProfileContext};
 pub type ToolPolicyPersistence =

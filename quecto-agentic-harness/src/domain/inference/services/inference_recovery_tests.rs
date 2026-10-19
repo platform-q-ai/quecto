@@ -1,4 +1,4 @@
-//! The recovery use case (#1908): the corrections it chooses, their
+//! The recovery policy (#1908): the corrections it chooses, their
 //! budgets, the feedback it adds and withdraws (#2132), and the
 //! failure classification it corrects by (#931, #2155, migrated from the
 //! agent loop's turn tests).
@@ -56,6 +56,7 @@ fn feedback_of(recovery: Recovery) -> (String, bool) {
         Recovery::Correct {
             feedback,
             boost_output,
+            ..
         } => (feedback, boost_output),
         other => panic!("expected a correction, got {other:?}"),
     }
@@ -63,7 +64,7 @@ fn feedback_of(recovery: Recovery) -> (String, bool) {
 
 #[test]
 fn a_whole_reply_proceeds() {
-    let mut recovery = RecoverInferenceFailure::for_run();
+    let mut recovery = InferenceRecovery::for_run();
     assert!(matches!(
         recovery.after_reply(&text("done"), 8192),
         Recovery::Proceed
@@ -72,7 +73,7 @@ fn a_whole_reply_proceeds() {
 
 #[test]
 fn a_reasoning_only_cut_off_is_corrected_once_with_room_then_fails() {
-    let mut recovery = RecoverInferenceFailure::for_run();
+    let mut recovery = InferenceRecovery::for_run();
     let cut = reply(Some(StopReason::MaxTokens), &[], true);
     let (feedback, boost) = feedback_of(recovery.after_reply(&cut, 8192));
     assert!(
@@ -93,7 +94,7 @@ fn a_reasoning_only_cut_off_is_corrected_once_with_room_then_fails() {
 
 #[test]
 fn a_cut_off_call_is_corrected_twice_then_proceeds_as_invalid() {
-    let mut recovery = RecoverInferenceFailure::for_run();
+    let mut recovery = InferenceRecovery::for_run();
     for _ in 0..MAX_TOOL_CALL_CUT_OFF_RETRIES {
         let (feedback, boost) = feedback_of(recovery.after_reply(&cut_write(), 8192));
         assert!(feedback.contains("`write`") && boost, "{feedback}");
@@ -121,7 +122,7 @@ fn a_cut_off_call_is_corrected_twice_then_proceeds_as_invalid() {
 
 #[test]
 fn a_malformed_request_is_corrected_without_a_boost_until_the_budget_runs_out() {
-    let mut recovery = RecoverInferenceFailure::for_run();
+    let mut recovery = InferenceRecovery::for_run();
     for _ in 0..MAX_MALFORMED_REQUEST_RETRIES {
         let (feedback, boost) = feedback_of(recovery.after_failure(malformed(), Output::NotShown));
         assert!(feedback.contains("rejected by the provider as malformed"));
@@ -135,7 +136,7 @@ fn a_malformed_request_is_corrected_without_a_boost_until_the_budget_runs_out() 
 
 #[test]
 fn a_failure_after_output_or_of_another_class_fails_at_once() {
-    let mut recovery = RecoverInferenceFailure::for_run();
+    let mut recovery = InferenceRecovery::for_run();
     assert!(matches!(
         recovery.after_failure(malformed(), Output::Shown),
         Recovery::Fail(_)
@@ -155,7 +156,7 @@ fn feedback_is_its_own_message_with_the_open_turns_origin() {
         (progress_nudge("continue".into()), TurnOrigin::ProgressNudge),
         (instruction("task".into()), TurnOrigin::Instruction),
     ] {
-        let mut recovery = RecoverInferenceFailure::for_run();
+        let mut recovery = InferenceRecovery::for_run();
         let mut messages = vec![opener.clone()];
         let mut ledger = Vec::new();
         recovery.correct(&mut messages, &mut ledger, "try again".into(), 3);
@@ -168,7 +169,7 @@ fn feedback_is_its_own_message_with_the_open_turns_origin() {
         assert_eq!(ledger.len(), 1, "the run added it, once");
         assert_eq!(ledger[0].id(), feedback.id());
     }
-    let mut recovery = RecoverInferenceFailure::for_run();
+    let mut recovery = InferenceRecovery::for_run();
     let mut unstamped = vec![Message::assistant("", vec![])];
     recovery.correct(&mut unstamped, &mut Vec::new(), "try again".into(), 1);
     assert_eq!(unstamped[1].turn_origin, TurnOrigin::Unknown);
@@ -178,7 +179,7 @@ fn feedback_is_its_own_message_with_the_open_turns_origin() {
 /// settle, from the conversation and the ledger; settled feedback stays.
 #[test]
 fn withdraw_removes_only_unsettled_feedback() {
-    let mut recovery = RecoverInferenceFailure::for_run();
+    let mut recovery = InferenceRecovery::for_run();
     let mut messages = vec![Message::user("task")];
     let mut ledger = Vec::new();
     recovery.correct(&mut messages, &mut ledger, "settled".into(), 1);
@@ -201,7 +202,7 @@ fn withdraw_removes_only_unsettled_feedback() {
 /// #2132: feedback a pruning pass already dropped is simply gone.
 #[test]
 fn withdraw_tolerates_feedback_already_pruned() {
-    let mut recovery = RecoverInferenceFailure::for_run();
+    let mut recovery = InferenceRecovery::for_run();
     let mut messages = vec![Message::user("task")];
     let mut ledger = Vec::new();
     recovery.correct(&mut messages, &mut ledger, "pruned".into(), 1);
@@ -372,4 +373,53 @@ fn only_malformed_statuses_are_recovered() {
             "{message}"
         );
     }
+}
+
+/// #2606 review: chained corrections of every kind stay unsettled until an
+/// accepted reply; a failure then withdraws all of them, from the
+/// conversation and the ledger.
+#[test]
+fn chained_corrections_are_all_withdrawn_when_the_turn_fails() {
+    let mut recovery = InferenceRecovery::for_run();
+    let mut messages = vec![Message::user("task")];
+    let mut ledger = Vec::new();
+    // Each correction is added before the next reply is judged.
+    let (feedback, _) = feedback_of(recovery.after_failure(malformed(), Output::NotShown));
+    recovery.correct(&mut messages, &mut ledger, feedback, 1);
+    let (feedback, _) = feedback_of(recovery.after_reply(&cut_write(), 8192));
+    recovery.correct(&mut messages, &mut ledger, feedback, 2);
+    let reasoning_only = reply(Some(StopReason::MaxTokens), &[], true);
+    let (feedback, _) = feedback_of(recovery.after_reply(&reasoning_only, 8192));
+    recovery.correct(&mut messages, &mut ledger, feedback, 3);
+    assert_eq!(messages.len(), 4);
+    let failed = recovery.after_reply(&reply(Some(StopReason::MaxTokens), &[], true), 8192);
+    assert!(matches!(failed, Recovery::Fail(_)), "{failed:?}");
+    recovery.withdraw(&mut messages, &mut ledger);
+    let left: Vec<&str> = messages.iter().map(|m| m.content.as_str()).collect();
+    assert_eq!(left, ["task"]);
+    assert!(ledger.is_empty(), "the ledger withdraws them too");
+}
+
+#[test]
+fn each_correction_names_its_kind_and_attempt() {
+    let mut recovery = InferenceRecovery::for_run();
+    let kind = |r: Recovery| match r {
+        Recovery::Correct { correction, .. } => correction,
+        other => panic!("expected a correction, got {other:?}"),
+    };
+    assert!(matches!(
+        kind(recovery.after_failure(malformed(), Output::NotShown)),
+        Correction::MalformedRequest { attempt: 1, .. }
+    ));
+    assert_eq!(
+        kind(recovery.after_reply(&cut_write(), 8192)),
+        Correction::CutOffCall {
+            attempt: 1,
+            tool: "write".into()
+        }
+    );
+    assert_eq!(
+        kind(recovery.after_reply(&reply(Some(StopReason::MaxTokens), &[], true), 8192)),
+        Correction::CutOffAnswer { attempt: 1 }
+    );
 }

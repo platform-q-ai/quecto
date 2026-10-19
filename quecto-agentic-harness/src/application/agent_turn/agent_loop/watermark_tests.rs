@@ -454,14 +454,9 @@ async fn a_rewind_after_the_stub_leaves_no_dangling_archive_and_resets_the_guard
 /// edited.
 #[tokio::test]
 async fn feedback_never_edits_a_sent_prompt() {
-    use crate::application::agent_turn::use_cases::recover_inference_failure::RecoverInferenceFailure;
+    use crate::domain::inference::services::inference_recovery::InferenceRecovery;
     let mut messages = vec![prompt("the prompt".to_string())];
-    RecoverInferenceFailure::for_run().correct(
-        &mut messages,
-        &mut Vec::new(),
-        "feedback".to_string(),
-        1,
-    );
+    InferenceRecovery::for_run().correct(&mut messages, &mut Vec::new(), "feedback".to_string(), 1);
     assert_eq!(messages[0].user_kind, UserKind::Prompt);
     assert_eq!(
         messages[0].content, "the prompt",

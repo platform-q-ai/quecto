@@ -1,6 +1,7 @@
 use super::*;
-use crate::application::agent_turn::use_cases::recover_inference_failure::{
-    RecoverInferenceFailure, Recovery,
+use crate::domain::inference::services::inference_recovery::{
+    Correction, InferenceRecovery, MAX_CUT_OFF_RETRIES, MAX_MALFORMED_REQUEST_RETRIES,
+    MAX_TOOL_CALL_CUT_OFF_RETRIES, Recovery,
 };
 
 impl AgentLoopImpl {
@@ -35,7 +36,7 @@ impl AgentLoopImpl {
         // pre-run id snapshot — in-place stub demotion changes content while
         // every message id stays the same, which a snapshot comparison misses.
         // #1908: the run's corrections, their budgets and their feedback.
-        let mut recovery = RecoverInferenceFailure::for_run();
+        let mut recovery = InferenceRecovery::for_run();
 
         loop {
             if iterations > 0 {
@@ -107,9 +108,11 @@ impl AgentLoopImpl {
                     Recovery::Correct {
                         feedback,
                         boost_output,
+                        correction,
                     },
                     _,
                 ) => {
+                    log_correction(&correction);
                     recovery.correct(messages, &mut appended_messages, feedback, current_turn);
                     // The retry may use the model's cap, not repeat the budget.
                     if boost_output {
@@ -197,6 +200,33 @@ impl AgentLoopImpl {
                 return Ok(result);
             }
         }
+    }
+}
+
+/// The operator log of a correction the run makes (#1908): one warning
+/// per correction, with its attempt within its budget.
+fn log_correction(correction: &Correction) {
+    match correction {
+        Correction::MalformedRequest { attempt, error } => tracing::warn!(
+            target: "provider_retry",
+            attempt,
+            max = MAX_MALFORMED_REQUEST_RETRIES,
+            error = %error,
+            "provider rejected request as malformed — re-prompting with addressable feedback"
+        ),
+        Correction::CutOffAnswer { attempt } => tracing::warn!(
+            target: "provider_retry",
+            attempt,
+            max = MAX_CUT_OFF_RETRIES,
+            "reply hit the output limit with nothing visible — asking again, concisely"
+        ),
+        Correction::CutOffCall { attempt, tool } => tracing::warn!(
+            target: "provider_retry",
+            attempt,
+            max = MAX_TOOL_CALL_CUT_OFF_RETRIES,
+            tool = tool.as_str(),
+            "reply hit the output limit inside a tool call — asking again with smaller calls"
+        ),
     }
 }
 

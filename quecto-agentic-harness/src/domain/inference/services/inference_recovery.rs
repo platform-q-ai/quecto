@@ -1,5 +1,6 @@
-//! Recover from transient inference failures (#1908): what one agent run
-//! does after a reply it cannot take as it is, or a failed request.
+//! Recovery from transient inference failures (#1908): the policy for what
+//! one agent run does after a reply it cannot take as it is, or a failed
+//! request.
 //!
 //! - A request the provider rejected as malformed, with nothing shown, is
 //!   corrected with feedback while its budget lasts (#931, #2155).
@@ -12,11 +13,11 @@
 //!   is the domain's (`terminal_guidance`).
 //!
 //! Transport retries are not here: the provider decorators and the loop's
-//! stream initiation own them. This use case owns the corrections, their
+//! stream initiation own them. This policy owns the corrections, their
 //! budgets and the feedback messages they add, and withdraws the feedback
-//! whose correction did not succeed when the turn fails (#2132). It holds
-//! no effects: the conversation it corrects is passed in, and the agent
-//! loop runs the requests, the audit and the progress events.
+//! whose correction did not succeed when the turn fails (#2132). It is pure:
+//! the conversation it corrects is passed in, and the agent loop runs the
+//! requests, the logs, the audit and the progress events.
 use crate::domain::conversation::services::turn_origin::current_phase;
 use crate::domain::conversation::value_objects::message::{LlmResponse, Message, Role};
 use crate::domain::inference::services::output_limit::{
@@ -41,16 +42,29 @@ pub const MAX_TOOL_CALL_CUT_OFF_RETRIES: u32 = 2;
 pub enum Recovery {
     /// Take the reply as it is.
     Proceed,
-    /// Add `feedback` for the model ([`RecoverInferenceFailure::correct`])
+    /// Add `feedback` for the model ([`InferenceRecovery::correct`])
     /// and ask again; `boost_output` lets the next request go above the
-    /// effective output limit (#2124).
+    /// effective output limit (#2124); `correction` says which, for the log.
     Correct {
         feedback: String,
         boost_output: bool,
+        correction: Correction,
     },
     /// End the turn with this failure, once the feedback whose correction
-    /// did not succeed is withdrawn ([`RecoverInferenceFailure::withdraw`]).
+    /// did not succeed is withdrawn ([`InferenceRecovery::withdraw`]).
     Fail(DomainError),
+}
+
+/// Which correction a [`Recovery::Correct`] is, and its attempt within
+/// its budget.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Correction {
+    /// A request the provider rejected as malformed (#931).
+    MalformedRequest { attempt: u32, error: String },
+    /// A reply cut off at the output limit with nothing visible (#2124).
+    CutOffAnswer { attempt: u32 },
+    /// A reply cut off inside its last tool call (#2593).
+    CutOffCall { attempt: u32, tool: String },
 }
 
 /// What follows a failed provider request (#2155): a malformed request
@@ -65,7 +79,7 @@ pub enum ProviderFailureTransition {
 /// One run's corrections: their budgets, and the feedback not yet settled
 /// by an accepted reply.
 #[derive(Debug, Default)]
-pub struct RecoverInferenceFailure {
+pub struct InferenceRecovery {
     malformed_retries: u32,
     cut_off_retries: u32,
     tool_cut_off_retries: u32,
@@ -74,7 +88,7 @@ pub struct RecoverInferenceFailure {
     unsettled: Vec<uuid::Uuid>,
 }
 
-impl RecoverInferenceFailure {
+impl InferenceRecovery {
     /// A run's recovery, every budget whole.
     pub fn for_run() -> Self {
         Self::default()
@@ -89,16 +103,13 @@ impl RecoverInferenceFailure {
         if let Some(cut) = cut_off_tool_call(response) {
             if self.tool_cut_off_retries < MAX_TOOL_CALL_CUT_OFF_RETRIES {
                 self.tool_cut_off_retries += 1;
-                tracing::warn!(
-                    target: "provider_retry",
-                    attempt = self.tool_cut_off_retries,
-                    max = MAX_TOOL_CALL_CUT_OFF_RETRIES,
-                    tool = cut.tool,
-                    "reply hit the output limit inside a tool call — asking again with smaller calls"
-                );
                 return Recovery::Correct {
                     feedback: tool_call_cut_off_feedback(cut.tool),
                     boost_output: true,
+                    correction: Correction::CutOffCall {
+                        attempt: self.tool_cut_off_retries,
+                        tool: cut.tool.to_string(),
+                    },
                 };
             }
         } else {
@@ -122,16 +133,13 @@ impl RecoverInferenceFailure {
         match transition {
             ProviderFailureTransition::RecoverMalformedRequest => {
                 self.malformed_retries += 1;
-                tracing::warn!(
-                    target: "provider_retry",
-                    attempt = self.malformed_retries,
-                    max = MAX_MALFORMED_REQUEST_RETRIES,
-                    error = %error,
-                    "provider rejected request as malformed — re-prompting with addressable feedback"
-                );
                 Recovery::Correct {
                     feedback: malformed_feedback(&error),
                     boost_output: false,
+                    correction: Correction::MalformedRequest {
+                        attempt: self.malformed_retries,
+                        error: error.to_string(),
+                    },
                 }
             }
             ProviderFailureTransition::Terminal(_) => Recovery::Fail(error),
@@ -172,8 +180,11 @@ impl RecoverInferenceFailure {
         messages.retain(|m| !unsettled.contains(&m.id()));
         ledger.retain(|m| !unsettled.contains(&m.id()));
         assert!(
-            messages.iter().all(|m| !unsettled.contains(&m.id())),
-            "no withdrawn feedback stays in the conversation"
+            messages
+                .iter()
+                .chain(ledger.iter())
+                .all(|m| !unsettled.contains(&m.id())),
+            "no withdrawn feedback stays in the conversation or the ledger"
         );
     }
 
@@ -183,15 +194,12 @@ impl RecoverInferenceFailure {
     fn after_cut_off_answer(&mut self, response: &LlmResponse, max_tokens: u32) -> Recovery {
         if self.cut_off_retries < MAX_CUT_OFF_RETRIES {
             self.cut_off_retries += 1;
-            tracing::warn!(
-                target: "provider_retry",
-                attempt = self.cut_off_retries,
-                max = MAX_CUT_OFF_RETRIES,
-                "reply hit the output limit with nothing visible — asking again, concisely"
-            );
             return Recovery::Correct {
                 feedback: output_limit_feedback(max_tokens),
                 boost_output: true,
+                correction: Correction::CutOffAnswer {
+                    attempt: self.cut_off_retries,
+                },
             };
         }
         Recovery::Fail(DomainError::Provider(empty_stream_error_message(response)))
@@ -257,5 +265,5 @@ fn tool_call_cut_off_feedback(tool: &str) -> String {
 }
 
 #[cfg(test)]
-#[path = "recover_inference_failure_tests.rs"]
+#[path = "inference_recovery_tests.rs"]
 mod tests;

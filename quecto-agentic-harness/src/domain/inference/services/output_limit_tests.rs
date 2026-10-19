@@ -175,3 +175,32 @@ fn a_reply_with_nothing_visible_at_the_limit_is_cut_off_without_an_answer() {
         8192
     ));
 }
+
+#[test]
+fn empty_stream_error_message_distinguishes_max_tokens_from_provider_empty() {
+    assert_eq!(
+        empty_stream_error_message(&reply(Some(StopReason::MaxTokens), &[])),
+        "stream completed without assistant output: stop_reason=max_tokens"
+    );
+    assert_eq!(
+        empty_stream_error_message(&reply(Some(StopReason::EndTurn), &[])),
+        "stream completed without assistant output: synthetic=empty_stream"
+    );
+    assert_eq!(
+        empty_stream_error_message(&reply(None, &[])),
+        "stream completed without assistant output: synthetic=empty_stream"
+    );
+}
+
+#[test]
+fn empty_stream_has_no_wire_status_or_overload_claim() {
+    use crate::domain::inference::services::provider_error::{
+        classify_provider_error, provider_http_status,
+    };
+    let error = crate::domain::shared::error::DomainError::Provider(empty_stream_error_message(
+        &reply(None, &[]),
+    ));
+    assert_eq!(provider_http_status(&error), None);
+    assert_eq!(classify_provider_error(&error).as_str(), "empty_stream");
+    assert!(classify_provider_error(&error).is_retryable());
+}
