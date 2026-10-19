@@ -5,7 +5,9 @@
 
 use std::sync::Arc;
 
-use crate::application::auth::use_cases::{LogInWithOAuth, LogInWithToken, StartDeviceCodeLogin};
+use crate::application::auth::use_cases::{
+    InspectAuthStatus, LogInWithOAuth, LogInWithToken, StartDeviceCodeLogin,
+};
 use crate::interface::cli::CliContext;
 
 /// Composition's builder of the auth handles, injected through the CLI
@@ -32,13 +34,24 @@ pub struct AuthHandles {
     pub device_code_login: Arc<StartDeviceCodeLogin>,
     /// `auth login [--provider P]`: the browser OAuth login.
     pub oauth_login: Arc<LogInWithOAuth>,
+    /// `auth status`.
+    pub status: Arc<InspectAuthStatus>,
 }
 
 /// The composed auth handles for `ctx`'s base directory; without them,
 /// `auth login`'s refusal is written to `stderr` and there are none.
 pub(super) fn login_handles(ctx: &CliContext, stderr: &mut String) -> Option<AuthHandles> {
+    composed(ctx, "auth login", stderr)
+}
+
+/// [`login_handles`] for `auth status`.
+pub(super) fn status_handles(ctx: &CliContext, stderr: &mut String) -> Option<AuthHandles> {
+    composed(ctx, "auth status", stderr)
+}
+
+fn composed(ctx: &CliContext, command: &str, stderr: &mut String) -> Option<AuthHandles> {
     let Some(build) = ctx.auth else {
-        stderr.push_str("auth login: auth capability not composed\n");
+        stderr.push_str(&format!("{command}: auth capability not composed\n"));
         return None;
     };
     Some(build(&AuthEnvironment {
