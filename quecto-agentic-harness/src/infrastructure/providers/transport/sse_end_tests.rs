@@ -13,19 +13,11 @@ fn done_is_recognised_with_trailing_whitespace_only() {
     }
 }
 
-/// Every vendor's cut-short error is one, classified as a retryable
-/// network failure; the empty stream is one, retried as an empty stream.
+/// The empty stream is a cut-short error, retried as an empty stream; a
+/// reply that ended early after an event keeps its wire's own message
+/// (#2597: each vendor's cut-short message is tested beside its codec).
 #[test]
-fn every_cut_short_error_is_recognised_and_retried() {
-    for message in [
-        super::super::super::codex::RESPONSES_CUT_SHORT,
-        super::super::super::anthropic::anthropic_sse::ANTHROPIC_CUT_SHORT,
-        super::super::super::openai::openai_sse::OPENAI_CUT_SHORT,
-    ] {
-        assert!(is_cut_short(message), "{message}");
-        let class = classify_provider_error(&DomainError::Provider(message.into()));
-        assert_eq!(class, ProviderErrorClass::Network, "{message}");
-    }
+fn the_empty_stream_is_cut_short_and_retried() {
     assert!(is_cut_short(EMPTY_STREAM));
     assert_eq!(
         classify_provider_error(&DomainError::Provider(EMPTY_STREAM.into())),
@@ -34,20 +26,10 @@ fn every_cut_short_error_is_recognised_and_retried() {
     for message in ["stream read error: x", "HTTP 500 from Codex: boom", ""] {
         assert!(!is_cut_short(message), "{message}");
     }
-    assert_eq!(
-        ended_early(
-            false,
-            super::super::super::openai::openai_sse::OPENAI_CUT_SHORT
-        ),
-        EMPTY_STREAM
-    );
-    assert_eq!(
-        ended_early(
-            true,
-            super::super::super::openai::openai_sse::OPENAI_CUT_SHORT
-        ),
-        super::super::super::openai::openai_sse::OPENAI_CUT_SHORT
-    );
+    let cut_short = &format!("Test stream {CUT_SHORT} its end");
+    assert!(is_cut_short(cut_short));
+    assert_eq!(ended_early(false, cut_short), EMPTY_STREAM);
+    assert_eq!(ended_early(true, cut_short), *cut_short);
 }
 
 #[test]

@@ -1,10 +1,12 @@
 pub mod openai_endpoint_router;
 mod openai_images;
+pub(in crate::infrastructure::providers) mod openai_stream_error;
+pub(in crate::infrastructure::providers) mod openai_wire;
 pub(super) mod provider_images;
 #[path = "openai_request.rs"]
 mod request_body;
 pub mod usage;
-use crate::infrastructure::providers::transport::attempt_profile::{Profile, Surface, Vendor};
+use crate::infrastructure::providers::transport::attempt_profile::{Profile, Surface};
 // OpenAI adapter: impl LlmProvider for OpenAiProvider.
 
 use super::transport::stream_idle::StreamIdle;
@@ -233,7 +235,11 @@ impl OpenAiProvider {
         let handler = openai_sse::OpenAiSseHandler::with_model(model).with_trace(trace.clone());
         let attempt = super::transport::attempt_transport::PassiveAttempt::begin(
             trace,
-            Profile::new(Vendor::OpenAi, Surface::Assembled, self.stream_idle),
+            Profile::new(
+                &crate::infrastructure::providers::openai::openai_wire::OPENAI_WIRE,
+                Surface::Assembled,
+                self.stream_idle,
+            ),
         );
         let request_builder = self
             .client
@@ -323,7 +329,11 @@ impl OpenAiProvider {
         let handler = openai_sse::OpenAiSseHandler::with_model(model).with_trace(trace.clone());
         let attempt = super::transport::attempt_transport::PassiveAttempt::begin(
             trace,
-            Profile::new(Vendor::OpenAi, Surface::Incremental, self.stream_idle),
+            Profile::new(
+                &crate::infrastructure::providers::openai::openai_wire::OPENAI_WIRE,
+                Surface::Incremental,
+                self.stream_idle,
+            ),
         );
         let request_builder = self
             .client
@@ -412,7 +422,11 @@ impl LlmProvider for OpenAiProvider {
                     trace.clone(),
                     cancel.as_ref(),
                     request_builder,
-                    Profile::new(Vendor::OpenAi, Surface::Chat, self.stream_idle),
+                    Profile::new(
+                        &crate::infrastructure::providers::openai::openai_wire::OPENAI_WIRE,
+                        Surface::Chat,
+                        self.stream_idle,
+                    ),
                     |text| {
                         let json = serde_json::from_str(text).map_err(|e| {
                             DomainError::Provider(format!("failed to parse response JSON: {e}"))
@@ -432,7 +446,11 @@ impl LlmProvider for OpenAiProvider {
             // whole reply at once has no first token to time.
             let attempt = super::transport::attempt_transport::PassiveAttempt::begin(
                 trace,
-                Profile::new(Vendor::OpenAi, Surface::Chat, self.stream_idle),
+                Profile::new(
+                    &crate::infrastructure::providers::openai::openai_wire::OPENAI_WIRE,
+                    Surface::Chat,
+                    self.stream_idle,
+                ),
             );
             // A whole reply sends nothing until complete: bounded in total.
             let exchange = async {
@@ -516,7 +534,11 @@ impl LlmProvider for OpenAiProvider {
                     gate,
                     (trace.clone(), cancel.as_ref()),
                     builder,
-                    Profile::new(Vendor::OpenAi, Surface::Assembled, self.stream_idle),
+                    Profile::new(
+                        &crate::infrastructure::providers::openai::openai_wire::OPENAI_WIRE,
+                        Surface::Assembled,
+                        self.stream_idle,
+                    ),
                     tx,
                     openai_sse::OpenAiSseHandler::with_model(&model).with_trace(trace.clone()),
                 );
@@ -555,7 +577,11 @@ impl LlmProvider for OpenAiProvider {
                         gate,
                         (trace.clone(), cancel.as_ref()),
                         builder,
-                        Profile::new(Vendor::OpenAi, Surface::Incremental, provider.stream_idle),
+                        Profile::new(
+                            &crate::infrastructure::providers::openai::openai_wire::OPENAI_WIRE,
+                            Surface::Incremental,
+                            provider.stream_idle,
+                        ),
                         tx,
                         openai_sse::OpenAiSseHandler::with_model(&model).with_trace(trace.clone()),
                     )

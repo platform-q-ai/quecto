@@ -8,3 +8,4 @@ pub(crate) mod sse_end;
 pub(crate) mod sse_limits;
 pub(crate) mod sse_progress;
 pub mod stream_idle;
+pub(in crate::infrastructure::providers) mod wire_dialect;

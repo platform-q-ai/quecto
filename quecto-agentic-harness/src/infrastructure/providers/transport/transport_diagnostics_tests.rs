@@ -81,7 +81,7 @@ mod transport_tests {
             started: std::time::Instant::now(),
         })));
         let mut observer = LineObserver::new(Profile::new(
-            Vendor::Codex,
+            &crate::infrastructure::providers::transport::wire_dialect::TEST_WIRE,
             crate::infrastructure::providers::transport::attempt_profile::Surface::Assembled,
             Default::default(),
         ));
@@ -125,7 +125,11 @@ mod transport_tests {
         let gate: Arc<dyn AttemptAdmission> = Arc::new(Gate);
         let surface =
             crate::infrastructure::providers::transport::attempt_profile::Surface::Assembled;
-        let profile = Profile::new(Vendor::OpenAi, surface, Default::default());
+        let profile = Profile::new(
+            &crate::infrastructure::providers::transport::wire_dialect::TEST_WIRE,
+            surface,
+            Default::default(),
+        );
         let refuse =
             |_: &str| -> Result<(), DomainError> { Err(DomainError::Provider("bad".into())) };
         let accept = |_: &str| -> Result<(), DomainError> { Ok(()) };
@@ -346,7 +350,7 @@ mod transport_tests {
                 (Some(saved), None),
                 reqwest::Client::new().get(server.uri()),
                 Profile::new(
-                    Vendor::Codex,
+                    &crate::infrastructure::providers::transport::wire_dialect::TEST_WIRE,
                     crate::infrastructure::providers::transport::attempt_profile::Surface::Incremental,
                     Default::default(),
                 ),
@@ -394,7 +398,7 @@ mod transport_tests {
                 (Some(saved), None),
                 reqwest::Client::new().get(server.uri()),
                 Profile::new(
-                    Vendor::OpenAi,
+                    &crate::infrastructure::providers::transport::wire_dialect::TEST_WIRE,
                     crate::infrastructure::providers::transport::attempt_profile::Surface::Incremental,
                     Default::default(),
                 ),
@@ -453,7 +457,7 @@ mod transport_tests {
                 None,
                 reqwest::Client::new().get(server.uri()),
                 Profile::new(
-                    Vendor::Codex,
+                    &crate::infrastructure::providers::transport::wire_dialect::TEST_WIRE,
                     crate::infrastructure::providers::transport::attempt_profile::Surface::Assembled,
                     Default::default(),
                 ),

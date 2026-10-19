@@ -1,11 +1,16 @@
 //! #2597: what the attempt observer makes of the Messages (Anthropic) wire, pinned
 //! before attempt observation moved out of `transport/` into per-vendor
 //! strategies: every case must read exactly as it did.
-use crate::infrastructure::providers::transport::attempt_profile::{Profile, Surface, Vendor};
-use crate::infrastructure::providers::transport::attempt_transport::observation;
+use crate::domain::inference::value_objects::attempt_diagnostics::{TerminalEvent, Termination};
+use crate::infrastructure::providers::transport::attempt_profile::{Profile, Surface};
+use crate::infrastructure::providers::transport::attempt_transport::{observation, observed};
 
 fn profile() -> Profile {
-    Profile::new(Vendor::Anthropic, Surface::Incremental, Default::default())
+    Profile::new(
+        &super::anthropic_wire::ANTHROPIC_WIRE,
+        Surface::Incremental,
+        Default::default(),
+    )
 }
 
 /// Each case: its name, the SSE lines, and the observation they make.
@@ -114,5 +119,51 @@ const CASES: &[(&str, &[&str], &str)] = &[
 fn the_observer_reads_anthropic_streams_as_it_did() {
     for (name, lines, expected) in CASES {
         assert_eq!(observation(profile(), lines), *expected, "{name}");
+    }
+}
+
+/// #2236, #2249 review: which events end an attempt and which fail it, on
+/// this wire's own vocabulary (moved from `transport/` with the dialects).
+#[test]
+fn protocol_dispatch_matches_this_wires_terminal_vocabulary() {
+    for (event, data, terminal, failure) in [
+        (
+            "ignored",
+            r#"{"type":"error","error":{"type":"overloaded_error"}}"#,
+            false,
+            false,
+        ),
+        ("message_stop", "{}", true, false),
+        (
+            "error",
+            r#"{"error":{"type":"overloaded_error"}}"#,
+            true,
+            true,
+        ),
+    ] {
+        let lines = [format!("event: {event}"), format!("data: {data}")];
+        let lines: Vec<&str> = lines.iter().map(String::as_str).collect();
+        let seen = observed(profile(), &lines, None);
+        assert_eq!(
+            (seen.terminal[1], seen.failure),
+            (terminal, failure),
+            "event={event} data={data}"
+        );
+    }
+}
+
+#[test]
+fn malformed_anthropic_terminal_retains_event_without_payload_content() {
+    for (event, terminal) in [
+        ("error", TerminalEvent::Error),
+        ("message_stop", TerminalEvent::MessageStop),
+    ] {
+        let named = format!("event: {event}");
+        let seen = observed(profile(), &[&named, "data: {SECRET"], None);
+        let d = &seen.diagnostics;
+        assert_eq!(d.terminal_event, Some(terminal));
+        assert_eq!(d.termination, Termination::Completed);
+        assert_eq!(d.parse_errors, 1);
+        assert!(!serde_json::to_string(d).unwrap().contains("SECRET"));
     }
 }

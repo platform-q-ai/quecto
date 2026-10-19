@@ -1,11 +1,16 @@
 //! #2597: what the attempt observer makes of the Responses (Codex) wire, pinned
 //! before attempt observation moved out of `transport/` into per-vendor
 //! strategies: every case must read exactly as it did.
-use crate::infrastructure::providers::transport::attempt_profile::{Profile, Surface, Vendor};
-use crate::infrastructure::providers::transport::attempt_transport::observation;
+use crate::domain::inference::value_objects::attempt_diagnostics::Termination;
+use crate::infrastructure::providers::transport::attempt_profile::{Profile, Surface};
+use crate::infrastructure::providers::transport::attempt_transport::{observation, observed};
 
 fn profile() -> Profile {
-    Profile::new(Vendor::Codex, Surface::Incremental, Default::default())
+    Profile::new(
+        &super::codex_wire::CODEX_WIRE,
+        Surface::Incremental,
+        Default::default(),
+    )
 }
 
 /// Each case: its name, the SSE lines, and the observation they make.
@@ -111,4 +116,137 @@ fn the_observer_reads_codex_streams_as_it_did() {
     for (name, lines, expected) in CASES {
         assert_eq!(observation(profile(), lines), *expected, "{name}");
     }
+}
+
+/// #2236, #2249 review: which events end an attempt and which fail it, on
+/// this wire's own vocabulary (moved from `transport/` with the dialects).
+#[test]
+fn protocol_dispatch_matches_this_wires_terminal_vocabulary() {
+    for (event, data, terminal, failure) in [
+        (
+            "",
+            r#"{"type":"extension","error":{"code":"rate_limit_exceeded"}}"#,
+            false,
+            false,
+        ),
+        (
+            "",
+            r#"{"type":"response.completed","response":{}}"#,
+            true,
+            false,
+        ),
+        (
+            "",
+            r#"{"type":"error","code":"rate_limit_exceeded"}"#,
+            true,
+            true,
+        ),
+        (
+            "",
+            r#"{"type":"response.failed","response":{"error":{}}}"#,
+            true,
+            true,
+        ),
+        (
+            "",
+            r#"{"type":"response.incomplete","response":{}}"#,
+            true,
+            true,
+        ),
+        // #2593: a reply cut off at its output limit completes; one
+        // incomplete for another reason still fails.
+        (
+            "",
+            r#"{"type":"response.incomplete","response":{"incomplete_details":{"reason":"max_output_tokens"}}}"#,
+            true,
+            false,
+        ),
+        (
+            "",
+            r#"{"type":"response.incomplete","response":{"incomplete_details":{"reason":"content_filter"}}}"#,
+            true,
+            true,
+        ),
+        ("", r#"{"error":"model crashed"}"#, true, true),
+        ("", r#"{"error":{"message":"model crashed"}}"#, true, true),
+        (
+            "",
+            r#"{"type":null,"error":{"message":"model crashed"}}"#,
+            true,
+            true,
+        ),
+        ("", r#"{"error":""}"#, false, false),
+        ("", r#"{"error":{}}"#, true, true),
+        (
+            "",
+            r#"{"type":"response.created","error":"x"}"#,
+            false,
+            false,
+        ),
+    ] {
+        let lines = [format!("event: {event}"), format!("data: {data}")];
+        let lines: Vec<&str> = lines.iter().map(String::as_str).collect();
+        let seen = observed(profile(), &lines, None);
+        assert_eq!(
+            (seen.terminal[1], seen.failure),
+            (terminal, failure),
+            "event={event} data={data}"
+        );
+    }
+}
+
+#[test]
+fn supported_dotted_reasoning_remains_visible_on_read_failure() {
+    let seen = observed(
+        profile(),
+        &[r#"data: {"type":"response.reasoning.summary_text.delta","delta":"SECRET"}"#],
+        Some(Termination::ReadError),
+    );
+    let d = &seen.diagnostics;
+    assert!(d.generated_thinking);
+    assert_eq!(d.unknown_events, 0);
+    assert_eq!(d.termination, Termination::ReadError);
+    assert!(!serde_json::to_string(d).unwrap().contains("SECRET"));
+}
+
+/// #2158: a recorded Codex tool-call stream counts no unknown events; an
+/// event nobody knows still counts, before the terminal event, after which
+/// nothing is counted.
+#[test]
+fn a_codex_tool_call_stream_has_no_unknown_events() {
+    let stream = [
+        r#"data: {"type":"response.created","response":{}}"#,
+        r#"data: {"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","call_id":"c1","name":"read","arguments":""}}"#,
+        r#"data: {"type":"response.function_call_arguments.delta","output_index":0,"delta":"{\"path\""}"#,
+        r#"data: {"type":"response.function_call_arguments.delta","output_index":0,"delta":":\"a\"}"}"#,
+        r#"data: {"type":"response.function_call_arguments.done","output_index":0,"arguments":"{\"path\":\"a\"}"}"#,
+        r#"data: {"type":"response.output_item.done","output_index":0,"item":{"type":"function_call"}}"#,
+    ];
+    assert_eq!(
+        observed(profile(), &stream, None)
+            .diagnostics
+            .unknown_events,
+        0
+    );
+    let mut ended = stream.to_vec();
+    ended.push(r#"data: {"type":"response.never_heard_of"}"#);
+    ended.push(r#"data: {"type":"response.completed","response":{"status":"completed"}}"#);
+    ended.push(r#"data: {"type":"response.never_heard_of"}"#);
+    assert_eq!(
+        observed(profile(), &ended, None).diagnostics.unknown_events,
+        1
+    );
+}
+
+/// #2155 review: another wire's numeric throttle code does not throttle a
+/// Responses attempt; its typed fields alone decide.
+#[test]
+fn a_numeric_throttle_code_does_not_throttle_a_responses_attempt() {
+    let seen = observed(
+        profile(),
+        &[r#"data: {"type":"error","error":{"code":429}}"#],
+        None,
+    );
+    assert!(!seen.hinted);
+    assert!(seen.failure, "an error event always fails the attempt");
 }

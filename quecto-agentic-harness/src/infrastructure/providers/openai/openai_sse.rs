@@ -127,11 +127,8 @@ impl SseHandler for OpenAiSseHandler {
             // A mid-stream error chunk ends the stream as an error (#2236),
             // on this path too, which runs without admission: never skipped,
             // or end of file would send the partial reply as a whole one.
-            if crate::infrastructure::providers::transport::attempt_profile::is_stream_error_chunk(
-                &chunk,
-            ) {
-                let message =
-                    crate::infrastructure::providers::transport::attempt_profile::openai_stream_error(&chunk);
+            if super::openai_stream_error::is_stream_error_chunk(&chunk) {
+                let message = super::openai_stream_error::openai_stream_error(&chunk);
                 let _ = tx.send(StreamEvent::Error(message)).await;
                 return SseLineOutcome::Done;
             }

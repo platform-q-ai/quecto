@@ -1,5 +1,5 @@
 mod request_body;
-use crate::infrastructure::providers::transport::attempt_profile::{Profile, Surface, Vendor};
+use crate::infrastructure::providers::transport::attempt_profile::{Profile, Surface};
 use crate::infrastructure::providers::transport::attempt_transport::queue_before_spawn;
 // Anthropic adapter: impl LlmProvider for AnthropicProvider.
 //
@@ -25,6 +25,7 @@ use claude_code::{CLAUDE_CODE_VERSION, sanitize_surrogates, to_claude_code_name}
 
 pub(super) mod anthropic_sse;
 mod anthropic_user_msg;
+pub(in crate::infrastructure::providers) mod anthropic_wire;
 
 /// Anthropic LLM provider.
 #[derive(Debug, Clone)]
@@ -413,7 +414,7 @@ impl LlmProvider for AnthropicProvider {
                     trace.clone(),
                     cancel.as_ref(),
                     request_builder,
-                    Profile::new(Vendor::Anthropic, Surface::Chat, self.stream_idle),
+                    Profile::new(&crate::infrastructure::providers::anthropic::anthropic_wire::ANTHROPIC_WIRE, Surface::Chat, self.stream_idle),
                     |text| {
                         let json = serde_json::from_str(text).map_err(|e| {
                             DomainError::Provider(format!("failed to parse response JSON: {e}"))
@@ -475,7 +476,7 @@ impl LlmProvider for AnthropicProvider {
                     trace.clone(),
                     cancel.as_ref(),
                     builder,
-                    Profile::new(Vendor::Anthropic, Surface::Assembled, self.stream_idle),
+                    Profile::new(&crate::infrastructure::providers::anthropic::anthropic_wire::ANTHROPIC_WIRE, Surface::Assembled, self.stream_idle),
                     |raw| {
                         let mut parsed = Self::parse_sse_reply(raw, tools_snapshot)
                             .map_err(|cut| cut.account(trace.as_deref(), &model))?;
@@ -542,7 +543,7 @@ impl LlmProvider for AnthropicProvider {
                         (trace.clone(), cancel.as_ref()),
                         builder,
                         Profile::new(
-                            Vendor::Anthropic,
+                            &crate::infrastructure::providers::anthropic::anthropic_wire::ANTHROPIC_WIRE,
                             Surface::Incremental,
                             provider.stream_idle,
                         ),

@@ -1,11 +1,16 @@
 //! #2597: what the attempt observer makes of the OpenAI chat wire, pinned
 //! before attempt observation moved out of `transport/` into per-vendor
 //! strategies: every case must read exactly as it did.
-use crate::infrastructure::providers::transport::attempt_profile::{Profile, Surface, Vendor};
-use crate::infrastructure::providers::transport::attempt_transport::observation;
+use crate::domain::inference::value_objects::attempt_diagnostics::{TerminalEvent, Termination};
+use crate::infrastructure::providers::transport::attempt_profile::{Profile, Surface};
+use crate::infrastructure::providers::transport::attempt_transport::{observation, observed};
 
 fn profile() -> Profile {
-    Profile::new(Vendor::OpenAi, Surface::Incremental, Default::default())
+    Profile::new(
+        &super::openai_wire::OPENAI_WIRE,
+        Surface::Incremental,
+        Default::default(),
+    )
 }
 
 /// Each case: its name, the SSE lines, and the observation they make.
@@ -107,5 +112,116 @@ const CASES: &[(&str, &[&str], &str)] = &[
 fn the_observer_reads_openai_streams_as_it_did() {
     for (name, lines, expected) in CASES {
         assert_eq!(observation(profile(), lines), *expected, "{name}");
+    }
+}
+
+/// #2236, #2249 review: which events end an attempt and which fail it, on
+/// this wire's own vocabulary (moved from `transport/` with the dialects).
+#[test]
+fn protocol_dispatch_matches_this_wires_terminal_vocabulary() {
+    for (event, data, terminal, failure) in [
+        ("", r#"{"type":"response.completed"}"#, false, false),
+        (
+            "",
+            r#"{"choices":[{"finish_reason":"stop"}]}"#,
+            false,
+            false,
+        ),
+        (
+            "",
+            r#"{"type":"error","code":"rate_limit_exceeded"}"#,
+            false,
+            false,
+        ),
+        (
+            "",
+            r#"{"error":{"code":"rate_limit_exceeded"}}"#,
+            true,
+            true,
+        ),
+        ("", r#"{"error":"model crashed"}"#, true, true),
+        ("", r#"{"error":null}"#, false, false),
+        ("", r#"{"error":42}"#, false, false),
+        ("", r#"{"error":["x"]}"#, false, false),
+        ("", r#"{"error":""}"#, false, false),
+        ("", r#"{"error":{}}"#, true, true),
+    ] {
+        let lines = [format!("event: {event}"), format!("data: {data}")];
+        let lines: Vec<&str> = lines.iter().map(String::as_str).collect();
+        let seen = observed(profile(), &lines, None);
+        assert_eq!(
+            (seen.terminal[1], seen.failure),
+            (terminal, failure),
+            "event={event} data={data}"
+        );
+    }
+}
+
+#[test]
+fn supported_error_and_reasoning_events_retain_truthful_metadata() {
+    let seen = observed(
+        profile(),
+        &[r#"data: {"error":{"code":"rate_limit_exceeded","message":"SECRET"}}"#],
+        None,
+    );
+    assert_eq!(seen.diagnostics.terminal_event, Some(TerminalEvent::Error));
+    assert_eq!(seen.diagnostics.termination, Termination::Completed);
+}
+
+/// #2155 review: an OpenAI-compatible error chunk with a numeric 429 or 529
+/// (OpenRouter's shape) throttles admission like a typed one; a billing
+/// error or a server status does not.
+#[test]
+fn numeric_throttle_chunks_throttle_admission() {
+    for (data, throttled) in [
+        (r#"{"error":{"code":429,"message":"m"}}"#, true),
+        (r#"{"error":{"code":529}}"#, true),
+        (r#"{"error":{"type":"rate_limit_error"}}"#, true),
+        (r#"{"error":{"code":500,"type":"rate_limit_error"}}"#, true),
+        (
+            r#"{"error":{"code":429,"type":"insufficient_quota"}}"#,
+            false,
+        ),
+        (r#"{"error":{"code":529,"type":"billing_error"}}"#, false),
+        (r#"{"error":{"code":502}}"#, false),
+        (r#"{"error":{"type":"server_error"}}"#, false),
+    ] {
+        let seen = observed(profile(), &[&format!("data: {data}")], None);
+        assert_eq!(seen.hinted, throttled, "{data}");
+        assert!(
+            seen.failure,
+            "an error chunk always fails the attempt: {data}"
+        );
+    }
+}
+
+/// #2236: through admission, a mid-stream error chunk of either shape ends
+/// the stream as an error after the partial text, never as a `Done` reply,
+/// and the end of file after it cannot turn the partial text into a whole
+/// answer.
+#[tokio::test]
+async fn an_error_chunk_of_either_shape_ends_an_admitted_stream_as_an_error() {
+    use crate::domain::inference::value_objects::provider::StreamEvent;
+    use crate::infrastructure::providers::transport::attempt_transport::observed_stream;
+    let text = r#"data: {"choices":[{"index":0,"delta":{"content":"partial"}}]}"#;
+    for (error, status) in [
+        (r#"{"error":"model crashed"}"#, "HTTP 502 "),
+        (r#"{"error":{"message":"model crashed"}}"#, "HTTP 502 "),
+        (r#"{"error":{"type":"invalid_request_error"}}"#, "HTTP 400 "),
+    ] {
+        let line = format!("data: {error}");
+        let (done, events, terminal) = observed_stream(
+            profile(),
+            super::openai_sse::OpenAiSseHandler::with_model("m"),
+            &[text, &line],
+        )
+        .await;
+        assert_eq!(done, [false, true], "{error}");
+        assert!(
+            matches!(&events[..], [StreamEvent::TextDelta(t), StreamEvent::Error(e)]
+                if t == "partial" && e.starts_with(status)),
+            "{error}: {events:?}"
+        );
+        assert_eq!(terminal, Some(TerminalEvent::Error));
     }
 }
