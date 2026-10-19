@@ -969,7 +969,7 @@ fn only_composition_and_the_application_construct_use_cases_on_the_syntax_tree()
 /// documents is caught, and handle positions are spared.
 #[test]
 fn ast_construction_scan_catches_multiline_self_qualified_and_aliased_constructions() {
-    let names: BTreeSet<String> = ["ListSessions", "KillEnvironment"]
+    let names: BTreeSet<String> = ["ListSessions", "KillEnvironment", "NegotiateAuthority"]
         .into_iter()
         .map(str::to_string)
         .collect();
@@ -987,6 +987,12 @@ fn ast_construction_scan_catches_multiline_self_qualified_and_aliased_constructi
         "fn f() -> ListSessions {\n    ListSessions {\n        store,\n    }\n}",
         "struct Parts;\nimpl From<Parts> for ListSessions { fn from(p: Parts) -> Self { todo() } }",
         "fn f() { let k = Arc::new(\n    KillEnvironment::new(\n        a,\n    ),\n); }",
+        // #1910: a unit-struct use case is built by naming it as a value.
+        "fn f() { let plan = NegotiateAuthority.execute(inputs); }",
+        "fn f() { let uc = Arc::new(NegotiateAuthority); }",
+        "fn f() { let uc = crate::application::admission::use_cases::NegotiateAuthority; }",
+        "impl NegotiateAuthority { fn alt() -> Self { Self } }",
+        "fn f() { let uc = ListSessions(store); }",
     ];
     for source in caught {
         assert!(
@@ -1005,6 +1011,9 @@ fn ast_construction_scan_catches_multiline_self_qualified_and_aliased_constructi
         "#[cfg(test)]\nmod tests { fn rig() { let x = ListSessions::new(store); } }",
         "impl Thing { #[cfg(test)] fn rig() { ListSessions::new(store); } }",
         "fn f() { let x = Other::new(ListSessions::name()); }",
+        "fn f() -> Event { Event::NegotiateAuthority }",
+        "fn f(uc: &NegotiateAuthority) { uc.execute(inputs); }",
+        "fn f() { let x = <NegotiateAuthority as Probe>::NAME; }",
     ];
     for source in spared {
         let found = ast_constructions(source, &names);
