@@ -108,3 +108,27 @@ fn auth_status_lists_providers_in_order_and_refuses_uncomposed() {
         "auth status: auth capability not composed\n"
     );
 }
+
+#[test]
+fn a_hand_edited_store_naming_a_provider_twice_lists_both() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        tmp.path().join("credentials.json"),
+        r#"{"credentials": {
+            "openai": {"provider": "openai", "token": "fake-1", "method": "token", "expires_at": null},
+            "openai-old": {"provider": "openai", "token": "fake-2", "method": "token", "expires_at": null}
+        }}"#,
+    )
+    .unwrap();
+    let ctx = CliContext {
+        base_dir: Some(tmp.path().to_path_buf()),
+        auth: Some(crate::composition::bootstrap::auth::build_auth_handles),
+        ..Default::default()
+    };
+    let out = run_with_output(args("auth status"), &ctx);
+    assert_eq!(out.exit_code, 0, "stderr: {}", out.stderr);
+    assert_eq!(
+        out.stdout,
+        "Credentials:\n  openai (token) — active\n  openai (token) — active\n"
+    );
+}

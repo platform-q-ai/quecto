@@ -1,12 +1,30 @@
-//! One credential-presence authority (#1842, #2451): whether a stored
-//! credential has expired is decided only by `domain::auth::credential`.
-//! The status use case and the provider slots the catalogue's
-//! `CredentialStatusPort` reads both ask that rule; no other code compares
-//! a credential's expiry itself.
-use super::teardown_authority::{production_code, production_files};
+//! One expiry rule (#1842, #2451): a stored credential's `expires_at` is
+//! read only where the allowlist says — the domain rule that decides
+//! expiry, and the store's mapping to and from `credentials.json`. The
+//! status use case and the provider slots behind the catalogue's
+//! `CredentialStatusPort` both ask the domain rule.
+//!
+//! Exact and parsed, not a pattern: any field read `….expires_at` and any
+//! pattern binding an `expires_at` field counts, whatever is done with it
+//! (`c.expires_at.is_some_and(…)`, `matches!(c.expires_at, …)`,
+//! `Credential { expires_at, .. }`). Building a credential (a struct
+//! literal's `expires_at: …`) is no read.
+use std::collections::BTreeSet;
 
-/// The one owner of the expiry comparison.
-const OWNER: &str = "src/domain/auth/credential.rs";
+use syn::visit::Visit;
+
+use super::teardown_authority::production_files;
+
+/// The files that may read a credential's `expires_at`.
+const MAY_READ_EXPIRY: &[&str] = &[
+    // The rule: `is_expired_at`, `state_at`.
+    "src/domain/auth/credential.rs",
+    // The boundary mapping of the domain credential to its file record.
+    "src/infrastructure/auth/credential_store.rs",
+    // Transitional: `OAuthStoreParams.expires_at` in the browser login,
+    // which #2591 (A2 of #1839) retires; drop this row with it.
+    "src/interface/cli/auth.rs",
+];
 
 /// The two readers of credential presence, and the domain rule each asks.
 const READERS: &[(&str, &str)] = &[
@@ -20,64 +38,98 @@ const READERS: &[(&str, &str)] = &[
     ),
 ];
 
-/// A comparison against a credential's `expires_at`, either way round
-/// (`now >= c.expires_at`, `expires_at < now`); `->` and `=>` are no
-/// comparisons.
-fn compares_expiry(line: &str) -> bool {
-    static PATTERN: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    PATTERN
-        .get_or_init(|| {
-            regex::Regex::new(r"(?:^|[^-=<>])[<>]=?\s*[\w.]*expires_at\b|\bexpires_at\s*[<>]")
-                .expect("expiry comparison pattern")
-        })
-        .is_match(line)
+#[derive(Default)]
+struct ExpiryReads(usize);
+
+impl<'ast> Visit<'ast> for ExpiryReads {
+    fn visit_expr_field(&mut self, field: &'ast syn::ExprField) {
+        if matches!(&field.member, syn::Member::Named(name) if name == "expires_at") {
+            self.0 += 1;
+        }
+        syn::visit::visit_expr_field(self, field);
+    }
+
+    fn visit_field_pat(&mut self, field: &'ast syn::FieldPat) {
+        if matches!(&field.member, syn::Member::Named(name) if name == "expires_at") {
+            self.0 += 1;
+        }
+        syn::visit::visit_field_pat(self, field);
+    }
+
+    fn visit_macro(&mut self, mac: &'ast syn::Macro) {
+        // A macro's tokens (`matches!(c.expires_at, …)`) are read as an
+        // expression list when they parse as one.
+        if let Ok(exprs) = mac.parse_body_with(
+            syn::punctuated::Punctuated::<syn::Expr, syn::Token![,]>::parse_terminated,
+        ) {
+            for expr in &exprs {
+                self.visit_expr(expr);
+            }
+        } else if mac.tokens.to_string().contains("expires_at") {
+            // Unparsable macro tokens naming the field count as a read.
+            self.0 += 1;
+        }
+        syn::visit::visit_macro(self, mac);
+    }
+}
+
+/// How many times `source` reads an `expires_at` field.
+fn expiry_reads(source: &str) -> usize {
+    let file = syn::parse_file(source).expect("a crate source parses");
+    let mut reads = ExpiryReads::default();
+    reads.visit_file(&file);
+    reads.0
 }
 
 #[test]
-fn only_the_domain_compares_a_credentials_expiry() {
-    let offenders: Vec<String> = production_files()
+fn only_the_allowlist_reads_a_credentials_expiry() {
+    let readers: BTreeSet<String> = production_files()
         .into_iter()
-        .filter(|file| file != OWNER)
-        .flat_map(|file| {
-            production_code(&file)
-                .into_iter()
-                .filter(|(_, line)| compares_expiry(line))
-                .map(move |(number, line)| format!("{file}:{number}: {}", line.trim()))
+        .filter(|file| {
+            let source = std::fs::read_to_string(file).expect("read a production file");
+            expiry_reads(&source) > 0
         })
         .collect();
+    let allowed: BTreeSet<String> = MAY_READ_EXPIRY.iter().map(|s| s.to_string()).collect();
+    let stray: Vec<_> = readers.difference(&allowed).collect();
     assert!(
-        offenders.is_empty(),
-        "compare a credential's expiry through domain::auth::credential: {offenders:#?}"
+        stray.is_empty(),
+        "read a credential's expiry through domain::auth::credential: {stray:#?}"
     );
+    let stale: Vec<_> = allowed.difference(&readers).collect();
     assert!(
-        production_code(OWNER)
-            .iter()
-            .any(|(_, line)| line.contains("now >= expires_at")),
-        "the owner keeps the rule"
+        stale.is_empty(),
+        "allowlisted but reads no expiry: {stale:#?}"
     );
 }
 
 #[test]
 fn every_presence_reader_asks_the_domain_rule() {
     for (reader, rule) in READERS {
+        let source = std::fs::read_to_string(reader).expect("read the reader");
         assert!(
-            production_code(reader)
-                .iter()
-                .any(|(_, line)| line.contains(rule)),
+            source.contains(rule),
             "{reader} must decide presence through domain::auth ({rule})"
         );
     }
 }
 
 #[test]
-fn the_expiry_scan_sees_both_spellings() {
-    assert!(compares_expiry("if now >= c.expires_at {"));
-    assert!(compares_expiry("expires_at < now"));
-    assert!(compares_expiry("x.expires_at > now"));
-    assert!(!compares_expiry("expires_at: Some(at),"));
-    assert!(!compares_expiry(".field(\"expires_at\", &self.expires_at)"));
-    assert!(!compares_expiry(
-        "fn f() -> Option<i64> { self.expires_at }"
-    ));
-    assert!(!compares_expiry("Some(at) => expires_at,"));
+fn every_spelling_of_an_expiry_read_counts() {
+    for read in [
+        "fn f(c: &C) -> bool { c.expires_at.is_some_and(|at| at <= 0) }",
+        "fn f(c: Option<&C>) -> bool { c.and_then(|c| c.expires_at).is_some_and(|at| at <= 0) }",
+        "fn f(c: &C) -> bool { matches!(c.expires_at, Some(at) if at < 0) }",
+        "fn f(c: &C) -> bool { c.expires_at.map_or(false, |at| 0i64.ge(&at)) }",
+        "fn f(c: &C) -> bool { let C { expires_at, .. } = c; expires_at.is_none() }",
+        "fn f(c: &C) -> bool { if let C { expires_at: Some(at), .. } = c { *at < 0 } else { false } }",
+    ] {
+        assert_eq!(expiry_reads(read), 1, "not counted: {read}");
+    }
+    for build in [
+        "fn f() -> C { C { expires_at: None } }",
+        "fn f() { let _ = format!(\"expires_at\"); }",
+    ] {
+        assert_eq!(expiry_reads(build), 0, "miscounted: {build}");
+    }
 }

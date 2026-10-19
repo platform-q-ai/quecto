@@ -1,8 +1,11 @@
 //! Inspect authentication status (#1842): `auth status` lists each stored
 //! credential and whether it is usable now. Whether a credential has
-//! expired is the domain's rule (`Credential::state_at`), the same one the
-//! provider slots behind the catalogue's `CredentialStatusPort` ask, so the
-//! two can never disagree on presence.
+//! expired is the domain's rule (`Credential::state_at`); the provider
+//! slots behind the catalogue's `CredentialStatusPort` share that expiry
+//! rule. They do not share the presence decision: the catalogue still
+//! credits an expired OAuth credential it refreshes lazily (#811), refuses
+//! an empty token and counts configured API keys, none of which status
+//! reports.
 
 use std::sync::Arc;
 
@@ -20,7 +23,8 @@ impl InspectAuthStatus {
     }
 
     /// Every stored credential's status now, ordered by provider. Reading
-    /// changes nothing.
+    /// changes nothing. A hand-edited store may name one provider twice
+    /// (under two keys); each entry is reported.
     pub fn execute(&self) -> Result<Vec<ProviderAuthStatus>, AuthStatusError> {
         let stored = self
             .store
@@ -36,12 +40,6 @@ impl InspectAuthStatus {
             })
             .collect();
         statuses.sort_by(|a, b| a.provider.cmp(&b.provider));
-        debug_assert!(
-            statuses
-                .windows(2)
-                .all(|pair| pair[0].provider < pair[1].provider),
-            "the store holds one credential per provider"
-        );
         Ok(statuses)
     }
 }

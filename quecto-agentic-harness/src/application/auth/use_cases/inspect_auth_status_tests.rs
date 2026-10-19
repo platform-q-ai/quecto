@@ -117,3 +117,14 @@ fn nothing_secret_reaches_the_status() {
     let shown = format!("{:?}", use_case.execute());
     assert!(!shown.contains("fake-openai"), "{shown}");
 }
+
+#[test]
+fn a_provider_named_twice_by_a_hand_edited_store_is_reported_twice() {
+    let (_, use_case) = inspect(Ok(vec![
+        credential("openai", AuthMethod::OAuth, Some(NOW - 1)),
+        credential("openai", AuthMethod::Token, None),
+    ]));
+    let statuses = use_case.execute().unwrap();
+    assert_eq!(statuses.len(), 2);
+    assert!(statuses.iter().all(|status| status.provider == "openai"));
+}
