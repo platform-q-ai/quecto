@@ -12,7 +12,10 @@ use super::tests::{
 use super::*;
 use crate::application::catalogue::dto::REGISTRY_FILE_SOURCE;
 use crate::application::catalogue::ports::NoopRedaction;
-use crate::application::catalogue::{CatalogueSource, CredentialStatusPort, SourceEntries};
+use crate::application::catalogue::{
+    ports::catalogue_source::CatalogueSource, ports::catalogue_source::SourceEntries,
+    ports::credential_status::CredentialStatusPort,
+};
 use crate::domain::catalogue::value_objects::precedence::SourceLayer;
 
 /// A fake whose refresh sleeps for a fixed time before reporting an update,

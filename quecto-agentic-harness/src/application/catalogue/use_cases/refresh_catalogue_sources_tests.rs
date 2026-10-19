@@ -7,7 +7,10 @@ use std::time::Duration;
 
 use super::*;
 use crate::application::catalogue::ports::NoopRedaction;
-use crate::application::catalogue::{CatalogueSource, CredentialStatusPort, SourceEntries};
+use crate::application::catalogue::{
+    ports::catalogue_source::CatalogueSource, ports::catalogue_source::SourceEntries,
+    ports::credential_status::CredentialStatusPort,
+};
 
 /// Inputs borrowed from a rig's stack fakes.
 pub(super) struct BorrowedInputs<'a> {

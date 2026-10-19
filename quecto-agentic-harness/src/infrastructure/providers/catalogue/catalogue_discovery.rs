@@ -12,11 +12,11 @@ use serde_json::Value;
 
 use super::model_registry::{AuthMode, ProviderApi, ProviderDefaults};
 use crate::application::{
+    catalogue::ports::catalogue_source::{CatalogueSource, SkippedRecord, SourceEntries},
     catalogue::ports::{
         RefreshChange, RefreshContext, RefreshError, RefreshRedactionPort,
         RefreshableCatalogueSource,
     },
-    catalogue::{CatalogueSource, SkippedRecord, SourceEntries},
 };
 use crate::domain::catalogue::entities::entry::{
     CatalogueEntry, ModelDescriptor, ProviderDescriptor,

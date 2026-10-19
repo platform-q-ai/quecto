@@ -7,7 +7,9 @@ use std::sync::{Arc, Mutex};
 use super::*;
 use crate::application::catalogue::ports::LoadedCatalogueInputs;
 use crate::application::catalogue::{
-    CatalogueSource, CatalogueSourceError, CredentialStatusPort, SkippedRecord, SourceEntries,
+    ports::catalogue_source::CatalogueSource, ports::catalogue_source::CatalogueSourceError,
+    ports::catalogue_source::SkippedRecord, ports::catalogue_source::SourceEntries,
+    ports::credential_status::CredentialStatusPort,
 };
 use crate::domain::catalogue::entities::entry::{
     CatalogueEntry, ModelDescriptor, ProviderDescriptor,

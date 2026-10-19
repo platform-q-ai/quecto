@@ -11,8 +11,10 @@ use quecto::application::catalogue::dto::ModelListingOutcome;
 use quecto::application::catalogue::ports::{CatalogueInputsLoader, LoadedCatalogueInputs};
 use quecto::application::catalogue::use_cases::ListModels;
 use quecto::application::catalogue::{
-    CatalogueSnapshotStore, CatalogueSource, CredentialStatusPort, ResolveCatalogueUseCase,
-    ResolvedCatalogue, SourceEntries,
+    dto::resolved_catalogue::ResolvedCatalogue, ports::catalogue_source::CatalogueSource,
+    ports::catalogue_source::SourceEntries, ports::credential_status::CredentialStatusPort,
+    services::snapshot_store::CatalogueSnapshotStore,
+    use_cases::resolve_catalogue::ResolveCatalogueUseCase,
 };
 use quecto::domain::catalogue::entities::entry::{
     CatalogueEntry, ModelDescriptor, ProviderDescriptor,

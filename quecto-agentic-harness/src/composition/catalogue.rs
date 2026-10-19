@@ -133,14 +133,15 @@ pub fn list_models_wire_for(base_dir: &std::path::Path) -> serde_json::Value {
 #[cfg(any(test, feature = "test-support"))]
 pub fn resolve_catalogue_for(
     base_dir: &std::path::Path,
-) -> crate::application::catalogue::ResolvedCatalogue {
+) -> crate::application::catalogue::dto::resolved_catalogue::ResolvedCatalogue {
     use crate::application::catalogue::ports::CatalogueInputsLoader;
     let inputs = FileCatalogueInputs::new(base_dir, Arc::new(runtime_store_for(base_dir))).load();
-    crate::application::catalogue::ResolveCatalogueUseCase.resolve_and_publish(
-        &inputs.sources(),
-        inputs.credentials(),
-        &snapshot_store_for(base_dir),
-    )
+    crate::application::catalogue::use_cases::resolve_catalogue::ResolveCatalogueUseCase
+        .resolve_and_publish(
+            &inputs.sources(),
+            inputs.credentials(),
+            &snapshot_store_for(base_dir),
+        )
 }
 
 /// The per-model limits the composed change-active-model use case reads for
