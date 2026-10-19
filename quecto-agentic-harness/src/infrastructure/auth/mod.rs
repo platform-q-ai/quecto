@@ -1,3 +1,4 @@
+pub mod browser_login;
 pub mod credential_store;
 pub mod device_code_flow;
 pub mod oauth;

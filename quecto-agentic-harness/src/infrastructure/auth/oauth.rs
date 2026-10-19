@@ -488,27 +488,9 @@ pub fn parse_loopback_redirect(redirect_uri: &str) -> Result<(String, String), D
     Ok((addr, path.to_string()))
 }
 
-/// Start a local HTTP server to receive the OAuth callback and return the authorization code.
-///
-/// Listens on `127.0.0.1:1455` and waits up to 5 minutes for the callback.
-/// Returns the code from the `?code=` query parameter if the state matches.
-pub async fn wait_for_oauth_callback(
-    expected_state: &str,
-    timeout_secs: u64,
-) -> Result<String, DomainError> {
-    wait_for_oauth_callback_at(
-        "127.0.0.1:1455",
-        "/auth/callback",
-        expected_state,
-        timeout_secs,
-    )
-    .await
-}
-
 /// Start a local HTTP server on `addr` to receive an OAuth callback on
-/// `callback_path` and return the authorization code. Generalised variant of
-/// [`wait_for_oauth_callback`] for providers with different registered
-/// redirect URIs (e.g. xAI's `127.0.0.1:56121/callback`).
+/// `callback_path` and return the authorization code, for a provider's
+/// registered loopback redirect URI (e.g. xAI's `127.0.0.1:56121/callback`).
 pub async fn wait_for_oauth_callback_at(
     addr: &str,
     callback_path: &str,

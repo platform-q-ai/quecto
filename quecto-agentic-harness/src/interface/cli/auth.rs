@@ -1,13 +1,11 @@
 #[path = "auth_import.rs"]
 pub(crate) mod auth_import;
-#[path = "auth_xai.rs"]
-pub(crate) mod auth_xai;
+mod browser;
 mod handles;
 pub use handles::{AuthEnvironment, AuthHandles, AuthHandlesBuilder};
 
 use super::CliContext;
 use crate::application::auth::dto::LoginError;
-use crate::domain::auth::credential::{AuthMethod, Credential};
 use crate::domain::auth::provider::LoginProvider;
 use crate::infrastructure::auth::credential_store::CredentialStore;
 
@@ -133,7 +131,7 @@ fn cmd_auth_login(
         None => return 1,
     };
 
-    cmd_auth_login_oauth(ctx, &provider, &mut out, reader)
+    browser::cmd_auth_login_oauth(ctx, &provider, &mut out, reader)
 }
 
 fn cmd_auth_login_token(
@@ -164,7 +162,7 @@ fn cmd_auth_login_token(
 }
 
 /// A login's refusal as `auth login` prints it, newline-terminated.
-fn login_refusal(error: &LoginError) -> String {
+pub(super) fn login_refusal(error: &LoginError) -> String {
     match error {
         LoginError::UnknownProvider(provider) => format!(
             "auth login: unknown provider '{}'. Known: {}\n",
@@ -183,6 +181,16 @@ fn login_refusal(error: &LoginError) -> String {
         LoginError::DeviceCodeRequest(why) => {
             format!("auth login: device code request failed: {why}\n")
         }
+        LoginError::OAuthUnsupported(provider) => format!(
+            "auth login: OAuth is not supported for '{}'\n",
+            provider.id()
+        ),
+        LoginError::Paste(refusal) => format!("auth login: {}\n", refusal.reason()),
+        LoginError::EmptyAuthorizationCode => {
+            "auth login: authorization code must not be empty\n".to_string()
+        }
+        LoginError::InvalidRedirect(why) => format!("auth login: invalid redirect URI: {why}\n"),
+        LoginError::TokenExchange(why) => format!("auth login: token exchange failed: {why}\n"),
         LoginError::Store(why) => format!("auth login: failed to store credential: {why}\n"),
     }
 }
@@ -229,7 +237,7 @@ fn resolve_provider_interactive(
     }
 }
 
-fn read_line(reader: &mut dyn std::io::BufRead) -> Result<String, String> {
+pub(super) fn read_line(reader: &mut dyn std::io::BufRead) -> Result<String, String> {
     let mut line = String::new();
     reader
         .read_line(&mut line)
@@ -253,340 +261,10 @@ pub(crate) fn flush_stdout(ctx: &CliContext, out: &mut Output<'_>) {
     out.stdout.clear();
 }
 
-fn resolve_oauth_config(
-    ctx: &CliContext,
-    provider: &str,
-    flow_name: &str,
-    stderr: &mut String,
-) -> Option<crate::infrastructure::auth::oauth::OAuthConfig> {
-    use crate::infrastructure::auth::oauth::OAuthConfig;
-
-    if let Some(ref base_url) = ctx.oauth_base_url {
-        Some(OAuthConfig::with_base_url(base_url))
-    } else {
-        match OAuthConfig::for_provider(provider) {
-            Some(c) => Some(c),
-            None => {
-                stderr.push_str(&format!(
-                    "auth login: {} is not supported for '{}'\n",
-                    flow_name, provider
-                ));
-                None
-            }
-        }
-    }
-}
-
-/// OAuth browser-based login flow.
-fn cmd_auth_login_oauth(
-    ctx: &CliContext,
-    provider: &str,
-    out: &mut Output<'_>,
-    reader: &mut dyn std::io::BufRead,
-) -> i32 {
-    let config = match resolve_oauth_config(ctx, provider, "OAuth", out.stderr) {
-        Some(c) => c,
-        None => return 1,
-    };
-
-    if provider == "anthropic" {
-        return cmd_auth_login_anthropic_oauth(ctx, &config, out, reader);
-    }
-
-    if provider == "openai" {
-        return cmd_auth_login_openai_oauth(ctx, &config, out, reader);
-    }
-
-    if provider == "xai" {
-        return auth_xai::cmd_auth_login_xai_oauth(ctx, &config, out, reader);
-    }
-
-    out.stdout.push_str(&format!(
-        "Open this URL in your browser:\n{}\n\nWaiting for authorization...\n",
-        config.authorization_url
-    ));
-    0
-}
-
 /// Redirected stdin only disables browser callbacks in the REPL, where waiting
 /// would stall a command stream. Standalone callbacks do not require stdin.
-fn skip_browser_callback(ctx: &CliContext) -> bool {
+pub(super) fn skip_browser_callback(ctx: &CliContext) -> bool {
     ctx.stdin_data.is_some() || (ctx.is_repl && ctx.stdin_is_tty == Some(false))
-}
-
-/// OpenAI OAuth login: PKCE + browser callback on localhost:1455.
-fn cmd_auth_login_openai_oauth(
-    ctx: &CliContext,
-    config: &crate::infrastructure::auth::oauth::OAuthConfig,
-    out: &mut Output<'_>,
-    reader: &mut dyn std::io::BufRead,
-) -> i32 {
-    use crate::infrastructure::auth::oauth::{
-        build_openai_auth_url, exchange_openai_code, extract_openai_account_id, generate_pkce,
-        generate_state, wait_for_oauth_callback,
-    };
-
-    let pkce = generate_pkce();
-    let state = generate_state();
-    let auth_url = build_openai_auth_url(config, &pkce, &state);
-
-    out.stdout.push_str(&format!(
-        "Open this URL in your browser to authenticate with OpenAI:\n\n{}\n\n\
-         Waiting for browser callback on http://localhost:1455 ...\n\
-         (If the browser doesn't open, copy the URL above and paste it manually)\n",
-        auth_url
-    ));
-    flush_stdout(ctx, out);
-
-    let rt = match crate::infrastructure::processes::tokio_runtime::build_tokio_runtime() {
-        Ok(rt) => rt,
-        Err(e) => {
-            out.stderr
-                .push_str(&format!("auth login: failed to create runtime: {}\n", e));
-            return 1;
-        }
-    };
-
-    // Test input and non-interactive REPL commands use the manual fallback.
-    let code = if skip_browser_callback(ctx) {
-        let err = crate::domain::shared::error::DomainError::Provider(
-            "browser callback skipped for supplied input or non-interactive REPL".into(),
-        );
-        match extract_fallback_code_with_reader(ctx, err, Some(&state), out, reader) {
-            Some(code) => code,
-            None => return 1,
-        }
-    } else {
-        match rt.block_on(wait_for_oauth_callback(&state, 300)) {
-            Ok(code) => code,
-            Err(e) => match extract_fallback_code_with_reader(ctx, e, Some(&state), out, reader) {
-                Some(code) => code,
-                None => return 1,
-            },
-        }
-    };
-
-    match rt.block_on(exchange_openai_code(config, &code, &pkce.verifier)) {
-        Ok(token_resp) => {
-            let account_id = extract_openai_account_id(&token_resp.access_token);
-            if account_id.is_none() {
-                out.stderr
-                    .push_str("auth login: warning — could not extract account ID from token\n");
-            }
-            let expires = crate::infrastructure::auth::token_refresh::expires_at_with_margin(
-                token_resp.expires_in,
-            );
-            let params = OAuthStoreParams {
-                provider: "openai".to_string(),
-                account_id,
-                expires_at: expires,
-            };
-            store_oauth_credential(ctx, params, &token_resp, out)
-        }
-        Err(e) => {
-            out.stderr
-                .push_str(&format!("auth login: token exchange failed: {}\n", e));
-            1
-        }
-    }
-}
-
-/// Fallback: prompt user to paste code when callback fails.
-/// When `expected_state` is provided and the pasted input is a redirect URL
-/// or query fragment (i.e. it carries a query string), it MUST carry a
-/// `state` parameter that matches `expected_state`; otherwise the input is
-/// rejected (PR #1087 review). Bare authorization codes cannot carry state
-/// and are accepted as-is, because some providers display a bare code.
-pub(super) fn extract_fallback_code_with_reader(
-    ctx: &CliContext,
-    err: crate::domain::shared::error::DomainError,
-    expected_state: Option<&str>,
-    out: &mut Output<'_>,
-    reader: &mut dyn std::io::BufRead,
-) -> Option<String> {
-    out.stdout.push_str(&format!(
-        "\nCallback failed ({}). Paste the authorization code or redirect URL:\n",
-        err
-    ));
-    flush_stdout(ctx, out);
-    match read_line(reader) {
-        Ok(line) => {
-            let line = line.trim().to_string();
-            if let Some(reason) = fallback_state_rejection(&line, expected_state) {
-                out.stderr.push_str(&format!("auth login: {}\n", reason));
-                return None;
-            }
-            let code = extract_code_from_input(&line);
-            if code.is_none() {
-                out.stderr
-                    .push_str("auth login: could not extract authorization code\n");
-            }
-            code
-        }
-        Err(e) => {
-            out.stderr.push_str(&format!("auth login: {}\n", e));
-            None
-        }
-    }
-}
-
-/// Returns `Some(reason)` when pasted `input` must be rejected on state
-/// grounds, or `None` when it is acceptable.
-///
-/// URL/query-shaped input (anything containing `?`) is required to carry a
-/// non-empty `state` matching `expected`. Bare codes (no query string) are
-/// exempt because they cannot carry state.
-fn fallback_state_rejection(input: &str, expected: Option<&str>) -> Option<String> {
-    let expected = expected?;
-    // Only enforce for URL/query-shaped input; a bare code has no `?`.
-    if !input.contains('?') {
-        return None;
-    }
-    match extract_param_from_input(input, "state") {
-        Some(state) if state == expected => None,
-        Some(_) => Some("state mismatch in pasted redirect URL".to_string()),
-        None => Some("pasted redirect URL is missing the state parameter".to_string()),
-    }
-}
-
-pub(crate) struct OAuthStoreParams {
-    pub(crate) provider: String,
-    pub(crate) account_id: Option<String>,
-    pub(crate) expires_at: i64,
-}
-
-pub(crate) fn store_oauth_credential(
-    ctx: &CliContext,
-    params: OAuthStoreParams,
-    token_resp: &crate::infrastructure::auth::oauth::OAuthTokenResponse,
-    out: &mut Output<'_>,
-) -> i32 {
-    let store = CredentialStore::new(ctx.base_dir());
-    match store.store(Credential {
-        provider: params.provider.clone(),
-        token: token_resp.access_token.clone(),
-        method: AuthMethod::OAuth,
-        expires_at: Some(params.expires_at),
-        refresh_token: token_resp.refresh_token.clone(),
-        account_id: params.account_id,
-    }) {
-        Ok(()) => {
-            out.stdout.push_str(&format!(
-                "{} OAuth credential stored successfully\n",
-                capitalize(&params.provider)
-            ));
-            0
-        }
-        Err(e) => {
-            out.stderr
-                .push_str(&format!("auth login: failed to store credential: {}\n", e));
-            1
-        }
-    }
-}
-
-fn capitalize(s: &str) -> String {
-    let mut c = s.chars();
-    match c.next() {
-        None => String::new(),
-        Some(f) => f.to_uppercase().to_string() + c.as_str(),
-    }
-}
-
-fn extract_code_from_input(input: &str) -> Option<String> {
-    if input.contains("code=") {
-        if let Some(code) = extract_param_from_input(input, "code") {
-            return Some(code);
-        }
-    }
-    if !input.is_empty() {
-        Some(input.to_string())
-    } else {
-        None
-    }
-}
-
-fn extract_param_from_input(input: &str, name: &str) -> Option<String> {
-    let query = input.split('?').nth(1).unwrap_or(input);
-    let prefix = format!("{}=", name);
-    for param in query.split('&') {
-        if let Some(value) = param.strip_prefix(prefix.as_str()) {
-            if !value.is_empty() {
-                return Some(
-                    urlencoding::decode(value)
-                        .map(|v| v.into_owned())
-                        .unwrap_or_else(|_| value.to_string()),
-                );
-            }
-        }
-    }
-    None
-}
-
-fn cmd_auth_login_anthropic_oauth(
-    ctx: &CliContext,
-    config: &crate::infrastructure::auth::oauth::OAuthConfig,
-    out: &mut Output<'_>,
-    reader: &mut dyn std::io::BufRead,
-) -> i32 {
-    use crate::infrastructure::auth::oauth::{
-        build_anthropic_auth_url, exchange_anthropic_code, generate_pkce, generate_state,
-    };
-
-    let pkce = generate_pkce();
-    let state = generate_state();
-    let auth_url = build_anthropic_auth_url(config, &pkce, &state);
-
-    out.stdout.push_str(&format!(
-        "Open this URL in your browser to authenticate with Anthropic:\n\n{}\n\n\
-         After authorizing, you'll be redirected to a page with a URL containing\n\
-         an authorization code. Copy the FULL URL or code and paste it below.\n\n\
-         Paste the authorization code:\n",
-        auth_url
-    ));
-    flush_stdout(ctx, out);
-
-    let auth_code = match read_line(reader) {
-        Ok(line) => line.trim().to_string(),
-        Err(e) => {
-            out.stderr.push_str(&format!("auth login: {}\n", e));
-            return 1;
-        }
-    };
-
-    if auth_code.is_empty() {
-        out.stderr
-            .push_str("auth login: authorization code must not be empty\n");
-        return 1;
-    }
-
-    let rt = match crate::infrastructure::processes::tokio_runtime::build_tokio_runtime() {
-        Ok(rt) => rt,
-        Err(e) => {
-            out.stderr
-                .push_str(&format!("auth login: failed to create runtime: {}\n", e));
-            return 1;
-        }
-    };
-
-    match rt.block_on(exchange_anthropic_code(config, &auth_code, &pkce.verifier)) {
-        Ok(token_resp) => {
-            let expires = crate::infrastructure::auth::token_refresh::expires_at_with_margin(
-                token_resp.expires_in,
-            );
-            let params = OAuthStoreParams {
-                provider: "anthropic".to_string(),
-                account_id: None,
-                expires_at: expires,
-            };
-            store_oauth_credential(ctx, params, &token_resp, out)
-        }
-        Err(e) => {
-            out.stderr
-                .push_str(&format!("auth login: token exchange failed: {}\n", e));
-            1
-        }
-    }
 }
 
 /// Import credentials from an external auth.json file.
@@ -746,3 +424,7 @@ mod tests;
 #[cfg(test)]
 #[path = "auth_cov_tests.rs"]
 mod cov_tests;
+
+#[cfg(test)]
+#[path = "auth_refusal_tests.rs"]
+mod refusal_tests;

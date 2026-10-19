@@ -1,12 +1,10 @@
 //! Additional region-coverage tests for `auth.rs`.
 //!
-//! Covers the pure helpers (`extract_code_from_input`, `capitalize`) and the
-//! OAuth/device-code login command flows driven through `run_with_output`
+//! Covers the OAuth/device-code login command flows driven through `run_with_output`
 //! against a leaked-on-a-dedicated-runtime `wiremock` server (avoids the
 //! nested-runtime panic that would occur if the mock shared the CLI runtime).
 
 use super::*;
-use crate::infrastructure::auth::oauth::OAuthTokenResponse;
 use crate::interface::cli::run_with_output;
 
 fn args(s: &str) -> Vec<String> {
@@ -51,109 +49,9 @@ fn oauth_ctx(base: &std::path::Path, uri: String, stdin: &str) -> CliContext {
         base_dir: Some(base.to_path_buf()),
         oauth_base_url: Some(uri),
         stdin_data: Some(stdin.to_string()),
+        auth: Some(crate::composition::bootstrap::auth::build_auth_handles),
         ..Default::default()
     }
-}
-
-// --- extract_code_from_input / capitalize (pure) ---
-
-#[test]
-fn test_extract_code_full_url() {
-    let url = "http://localhost:1455/auth/callback?code=ABC123&state=xyz";
-    assert_eq!(extract_code_from_input(url), Some("ABC123".to_string()));
-}
-
-#[test]
-fn test_extract_code_last_segment() {
-    assert_eq!(
-        extract_code_from_input("a=1&code=LAST"),
-        Some("LAST".to_string())
-    );
-}
-
-#[test]
-fn test_extract_code_empty_code_falls_back_to_raw() {
-    // `code=` is present but empty → fall through to returning raw input.
-    assert_eq!(extract_code_from_input("code="), Some("code=".to_string()));
-}
-
-#[test]
-fn test_extract_code_raw_value() {
-    assert_eq!(
-        extract_code_from_input("just-a-code"),
-        Some("just-a-code".to_string())
-    );
-}
-
-#[test]
-fn test_extract_code_empty_is_none() {
-    assert_eq!(extract_code_from_input(""), None);
-}
-
-// --- fallback_state_rejection (PR #1087 follow-up) ---
-
-#[test]
-fn test_fallback_state_bare_code_accepted_without_state() {
-    // A bare code (no query string) cannot carry state and stays supported.
-    assert_eq!(fallback_state_rejection("ABC123", Some("expected")), None);
-}
-
-#[test]
-fn test_fallback_state_matching_url_accepted() {
-    let url = "http://127.0.0.1:56121/callback?code=ABC&state=expected";
-    assert_eq!(fallback_state_rejection(url, Some("expected")), None);
-}
-
-#[test]
-fn test_fallback_state_mismatch_url_rejected() {
-    let url = "http://127.0.0.1:56121/callback?code=ABC&state=wrong";
-    let reason = fallback_state_rejection(url, Some("expected")).unwrap();
-    assert!(reason.contains("mismatch"), "got: {}", reason);
-}
-
-#[test]
-fn test_fallback_state_url_without_state_rejected() {
-    // Regression: URL-shaped input with no state must NOT slip through.
-    let url = "http://127.0.0.1:56121/callback?code=ABC";
-    let reason = fallback_state_rejection(url, Some("expected")).unwrap();
-    assert!(reason.contains("missing the state"), "got: {}", reason);
-}
-
-#[test]
-fn test_fallback_state_url_with_empty_state_rejected() {
-    let url = "http://127.0.0.1:56121/callback?code=ABC&state=";
-    // Empty state is treated as absent -> rejected.
-    assert!(fallback_state_rejection(url, Some("expected")).is_some());
-}
-
-#[test]
-fn test_fallback_state_query_fragment_enforced() {
-    // A bare query fragment (starts with `?`) is also URL-shaped.
-    assert!(fallback_state_rejection("?code=ABC", Some("expected")).is_some());
-    assert_eq!(
-        fallback_state_rejection("?code=ABC&state=expected", Some("expected")),
-        None
-    );
-}
-
-#[test]
-fn test_fallback_state_url_decodes_before_compare() {
-    // state=exp%2Bected decodes to exp+ected and must match.
-    let url = "http://127.0.0.1:56121/callback?code=ABC&state=exp%2Bected";
-    assert_eq!(fallback_state_rejection(url, Some("exp+ected")), None);
-}
-
-#[test]
-fn test_fallback_state_no_expected_is_noop() {
-    // When no expected state is provided, nothing is enforced.
-    assert_eq!(fallback_state_rejection("?code=ABC", None), None);
-}
-
-#[test]
-fn test_capitalize() {
-    assert_eq!(capitalize("openai"), "Openai");
-    assert_eq!(capitalize(""), "");
-    assert_eq!(capitalize("a"), "A");
 }
 
 // --- OpenAI OAuth login flow ---
@@ -342,41 +240,6 @@ fn test_device_code_login_request_failure() {
     assert!(out.stderr.contains("device code request failed"));
 }
 
-// --- store_oauth_credential (direct) ---
-
-#[test]
-fn test_store_oauth_credential_success() {
-    let tmp = tempfile::TempDir::new().unwrap();
-    let ctx = CliContext {
-        base_dir: Some(tmp.path().to_path_buf()),
-        ..Default::default()
-    };
-    let token_resp = OAuthTokenResponse {
-        access_token: "tok-abc".to_string(),
-        refresh_token: Some("rt-abc".to_string()),
-        expires_in: 3600,
-    };
-    let params = OAuthStoreParams {
-        provider: "openai".to_string(),
-        account_id: Some("acct-1".to_string()),
-        expires_at: 999,
-    };
-    let mut stdout = String::new();
-    let mut stderr = String::new();
-    let mut out = Output {
-        stdout: &mut stdout,
-        stderr: &mut stderr,
-    };
-    let code = store_oauth_credential(&ctx, params, &token_resp, &mut out);
-    assert_eq!(code, 0);
-    assert!(stdout.contains("stored successfully"));
-
-    let store = CredentialStore::new(tmp.path());
-    let cred = store.get("openai").unwrap().unwrap();
-    assert_eq!(cred.token, "tok-abc");
-    assert_eq!(cred.account_id, Some("acct-1".to_string()));
-}
-
 // --- login arg parsing / positional handling ---
 
 #[test]
@@ -444,31 +307,6 @@ fn test_token_login_store_failure() {
 }
 
 #[test]
-fn test_store_oauth_credential_failure() {
-    let tmp = tempfile::TempDir::new().unwrap();
-    let ctx = corrupt_store_ctx(&tmp);
-    let token_resp = OAuthTokenResponse {
-        access_token: "tok".to_string(),
-        refresh_token: None,
-        expires_in: 3600,
-    };
-    let params = OAuthStoreParams {
-        provider: "openai".to_string(),
-        account_id: None,
-        expires_at: 1,
-    };
-    let mut stdout = String::new();
-    let mut stderr = String::new();
-    let mut out = Output {
-        stdout: &mut stdout,
-        stderr: &mut stderr,
-    };
-    let code = store_oauth_credential(&ctx, params, &token_resp, &mut out);
-    assert_eq!(code, 1);
-    assert!(stderr.contains("failed to store credential"));
-}
-
-#[test]
 fn test_logout_remove_failure() {
     let tmp = tempfile::TempDir::new().unwrap();
     let ctx = corrupt_store_ctx(&tmp);
@@ -500,50 +338,6 @@ fn test_status_read_failure() {
     assert!(out.stdout.contains("failed to read credentials"));
 }
 
-// --- resolve_oauth_config / cmd_auth_login_oauth direct branches ---
-
-#[test]
-fn test_login_oauth_unsupported_provider_direct() {
-    // No oauth_base_url + a provider OAuthConfig::for_provider can't resolve →
-    // resolve_oauth_config returns None and the flow exits 1.
-    let tmp = tempfile::TempDir::new().unwrap();
-    let ctx = CliContext {
-        base_dir: Some(tmp.path().to_path_buf()),
-        ..Default::default()
-    };
-    let mut stdout = String::new();
-    let mut stderr = String::new();
-    let mut out = Output {
-        stdout: &mut stdout,
-        stderr: &mut stderr,
-    };
-    let code = cmd_auth_login_oauth(&ctx, "weird", &mut out, &mut std::io::empty());
-    assert_eq!(code, 1);
-    assert!(stderr.contains("OAuth is not supported for 'weird'"));
-}
-
-#[test]
-fn test_login_oauth_generic_provider_branch() {
-    // A non-anthropic/non-openai provider with a resolvable (base-url) config
-    // takes the generic "Open this URL" branch and returns 0.
-    let tmp = tempfile::TempDir::new().unwrap();
-    let ctx = CliContext {
-        base_dir: Some(tmp.path().to_path_buf()),
-        oauth_base_url: Some("http://127.0.0.1:1".to_string()),
-        ..Default::default()
-    };
-    let mut stdout = String::new();
-    let mut stderr = String::new();
-    let mut out = Output {
-        stdout: &mut stdout,
-        stderr: &mut stderr,
-    };
-    let code = cmd_auth_login_oauth(&ctx, "weird", &mut out, &mut std::io::empty());
-    assert_eq!(code, 0, "stderr: {}", stderr);
-    assert!(stdout.contains("Open this URL in your browser"));
-    assert!(stdout.contains("Waiting for authorization"));
-}
-
 #[test]
 fn test_device_code_unsupported_provider_resolve_none() {
     // A provider outside the login allowlist has no device-code flow: the
@@ -562,7 +356,7 @@ fn test_device_code_unsupported_provider_resolve_none() {
     );
 }
 
-// --- extract_fallback_code: no extractable code ---
+// --- browser login paste: no extractable code ---
 
 #[test]
 fn test_openai_oauth_fallback_empty_code() {
@@ -590,8 +384,106 @@ fn test_flush_stdout_clears_buffer() {
     assert!(out.stdout.is_empty(), "buffer should be flushed/cleared");
 }
 
+// --- Browser login wording (#1839: the dialog is unchanged) ---
+
+fn token_mock() -> String {
+    leak_mock(
+        "/oauth/token",
+        200,
+        serde_json::json!({
+            "access_token": "fake-access-token",
+            "refresh_token": "fake-refresh-token",
+            "expires_in": 3600
+        }),
+    )
+}
+
 #[test]
-fn extract_param_invalid_percent_escape_falls_back_to_raw_value() {
-    let got = extract_param_from_input("?code=%ZZ&state=ok", "code").unwrap();
-    assert_eq!(got, "%ZZ");
+fn the_openai_dialog_keeps_its_wording() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let uri = token_mock();
+    let ctx = oauth_ctx(tmp.path(), uri.clone(), "the-code\n");
+    let out = run_with_output(args("auth login --provider openai"), &ctx);
+    assert_eq!(out.exit_code, 0, "stderr: {}", out.stderr);
+    assert!(
+        out.stdout
+            .starts_with("Open this URL in your browser to authenticate with OpenAI:\n\n"),
+        "{}",
+        out.stdout
+    );
+    assert!(
+        // A test server stands in for OpenAI, so its redirect's origin
+        // (the server's) is where the callback is awaited.
+        out.stdout.ends_with(&format!(
+            "\n\nWaiting for browser callback on {uri} ...\n\
+             (If the browser doesn't open, copy the URL above and paste it manually)\n\
+             \nCallback failed (provider error: browser callback skipped for supplied input \
+             or non-interactive REPL). Paste the authorization code or redirect URL:\n\
+             Openai OAuth credential stored successfully\n"
+        )),
+        "{}",
+        out.stdout
+    );
+    assert_eq!(
+        out.stderr,
+        "auth login: warning — could not extract account ID from token\n"
+    );
+}
+
+#[test]
+fn the_xai_dialog_waits_on_its_redirect_uri() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let uri = token_mock();
+    let ctx = oauth_ctx(tmp.path(), uri.clone(), "the-code\n");
+    let out = run_with_output(args("auth login --provider xai"), &ctx);
+    assert_eq!(out.exit_code, 0, "stderr: {}", out.stderr);
+    assert!(out.stdout.starts_with(
+        "Open this URL in your browser to authenticate with xAI (SuperGrok / X Premium+):\n\n"
+    ));
+    assert!(out.stdout.contains(&format!(
+        "Waiting for browser callback on {uri}/callback ...\n"
+    )));
+    assert!(
+        out.stdout
+            .ends_with("Xai OAuth credential stored successfully\n")
+    );
+    assert_eq!(out.stderr, "");
+}
+
+#[test]
+fn a_pasted_redirect_with_another_state_is_refused_without_an_exchange() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let ctx = oauth_ctx(
+        tmp.path(),
+        "http://127.0.0.1:1".to_string(),
+        "http://localhost:1455/auth/callback?code=c&state=wrong\n",
+    );
+    let out = run_with_output(args("auth login --provider openai"), &ctx);
+    assert_eq!(out.exit_code, 1);
+    assert_eq!(
+        out.stderr,
+        "auth login: state mismatch in pasted redirect URL\n"
+    );
+    assert!(!tmp.path().join("credentials.json").exists());
+}
+
+#[test]
+fn the_anthropic_dialog_refuses_an_empty_code() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let ctx = oauth_ctx(tmp.path(), "http://127.0.0.1:1".to_string(), "\n");
+    let out = run_with_output(args("auth login --provider anthropic"), &ctx);
+    assert_eq!(out.exit_code, 1);
+    assert!(
+        out.stdout.ends_with(
+            "\n\nAfter authorizing, you'll be redirected to a page with a URL containing\n\
+             an authorization code. Copy the FULL URL or code and paste it below.\n\n\
+             Paste the authorization code:\n"
+        ),
+        "{}",
+        out.stdout
+    );
+    assert_eq!(
+        out.stderr,
+        "auth login: authorization code must not be empty\n"
+    );
 }
