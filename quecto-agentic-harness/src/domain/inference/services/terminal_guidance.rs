@@ -3,7 +3,8 @@
 //! happened. A retry is claimed only when one was made, and "could not
 //! reach the provider" only when no response arrived.
 use crate::domain::inference::services::provider_error::{
-    ProviderErrorClass, classify_provider_error, model_refusal,
+    ProviderErrorClass, classify_provider_error, is_admission_gate_error,
+    is_context_or_output_limit_error, model_refusal,
 };
 use crate::domain::shared::error::DomainError;
 
@@ -86,6 +87,10 @@ fn guidance_for(message: &str, facts: AttemptFacts) -> Option<String> {
         return (!explained).then(|| CONTEXT_LIMIT_GUIDANCE.to_string());
     }
     let err = DomainError::Provider(message.to_string());
+    // The inference-admission gate's error says what to do itself.
+    if is_admission_gate_error(&err) {
+        return None;
+    }
     if model_refusal(&err).is_some() {
         return (!message.ends_with(MODEL_REFUSED_GUIDANCE))
             .then(|| MODEL_REFUSED_GUIDANCE.to_string());
@@ -145,21 +150,6 @@ fn network_guidance(facts: AttemptFacts) -> String {
         ),
         (Response::Received | Response::Unknown, false) => "Network: the connection to the provider failed (connection/timeout). It was not retried — retry later.".into(),
     }
-}
-
-/// Whether a provider error says the prompt plus requested output exceeds
-/// a model limit: never a malformed request to repair, and its guidance is
-/// to shrink the request.
-pub fn is_context_or_output_limit_error(message: &str) -> bool {
-    let lowered = message.to_ascii_lowercase();
-    (lowered.contains("maximum context length")
-        || lowered.contains("context length")
-        || lowered.contains("context window")
-        || lowered.contains("too many tokens")
-        || lowered.contains("max_tokens")
-        || lowered.contains("max output")
-        || lowered.contains("requested") && lowered.contains("tokens"))
-        && (lowered.contains("token") || lowered.contains("context"))
 }
 
 #[cfg(test)]

@@ -78,3 +78,110 @@ async fn a_codex_507_retry_buffer_limit_before_output_is_retried() {
     assert_eq!(result.response, "recovered");
     assert_eq!(provider.request_count(), 2);
 }
+
+/// A request admission gate that admits the first send and refuses every
+/// reattempt, or refuses at once.
+#[derive(Debug)]
+struct Gate {
+    refuse_first: bool,
+}
+
+impl crate::application::providers::ports::RequestAdmission for Gate {
+    fn check(
+        &self,
+        attempt: crate::domain::inference::value_objects::provider::RequestAttempt,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<Output = Result<(), crate::domain::shared::error::DomainError>>
+                + Send
+                + '_,
+        >,
+    > {
+        use crate::domain::inference::value_objects::provider::RequestAttempt;
+        let refused = match attempt {
+            RequestAttempt::First => self.refuse_first,
+            RequestAttempt::Reattempt => true,
+        };
+        Box::pin(async move {
+            match refused {
+                true => Err(crate::domain::shared::error::DomainError::Provider(
+                    "run admission refused: the connection to the run board closed".into(),
+                )),
+                false => Ok(()),
+            }
+        })
+    }
+}
+
+/// #2600 review: the request admission gate's refusal, on the first send
+/// or on a reattempt, is returned as it is: no provider guidance.
+#[tokio::test(start_paused = true)]
+async fn an_admission_refusal_gets_no_provider_guidance() {
+    for refuse_first in [true, false] {
+        let (agent, provider) = streaming(vec![
+            vec![StreamEvent::Error(CUT_SHORT.into())],
+            vec![StreamEvent::Done(text_response("unused"))],
+        ]);
+        let mut agent = agent.with_request_admission(Some(Arc::new(Gate { refuse_first })));
+        let mut messages = vec![Message::user("hello")];
+        let err = agent.run_loop(&mut messages).await.expect_err("refused");
+        assert_eq!(
+            err.to_string(),
+            "provider error: run admission refused: the connection to the run board closed",
+            "refuse_first={refuse_first}"
+        );
+        let sent = if refuse_first { 0 } else { 1 };
+        assert_eq!(provider.request_count(), sent);
+    }
+}
+
+fn record(
+    wire_status: Option<u16>,
+) -> crate::domain::inference::value_objects::attempt_diagnostics::AttemptDiagnostics {
+    crate::domain::inference::value_objects::attempt_diagnostics::AttemptDiagnostics {
+        attempt_number: 1,
+        wire_status,
+        ..Default::default()
+    }
+}
+
+/// #2600 review: what the trace says the request did.
+#[test]
+fn attempt_facts_read_the_trace() {
+    use super::attempt_facts;
+    use crate::domain::inference::events::request_observation::RequestTrace;
+    use crate::domain::inference::services::terminal_guidance::{Output, Response};
+
+    let none = RequestTrace::default();
+    none.start();
+    let facts = attempt_facts(&none, false);
+    assert_eq!((facts.attempts, facts.response), (1, Response::Unknown));
+
+    let unanswered = RequestTrace::default();
+    unanswered.start();
+    unanswered.record_attempt(record(None));
+    unanswered.retry();
+    unanswered.record_attempt(record(None));
+    let facts = attempt_facts(&unanswered, false);
+    assert_eq!((facts.attempts, facts.response), (2, Response::NotReceived));
+
+    let answered = RequestTrace::default();
+    answered.start();
+    answered.record_attempt(record(None));
+    answered.retry();
+    answered.record_attempt(record(Some(503)));
+    assert_eq!(attempt_facts(&answered, false).response, Response::Received);
+
+    let shown = attempt_facts(&unanswered, true);
+    assert_eq!(
+        (shown.output, shown.response),
+        (Output::Shown, Response::Received)
+    );
+
+    // An OAuth refresh resends once: that is no transient retry.
+    let refreshed = RequestTrace::default();
+    refreshed.start();
+    refreshed.oauth_retry();
+    assert_eq!(refreshed.attempts(), 2);
+    assert_eq!(attempt_facts(&refreshed, false).attempts, 1);
+}

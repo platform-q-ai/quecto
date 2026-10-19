@@ -187,29 +187,116 @@ fn a_model_refused_for_the_account_gets_the_refusal_guidance_once() {
 }
 
 #[test]
-fn context_limit_phrases_are_recognised_and_unrelated_ones_are_not() {
-    for yes in [
-        "maximum context length exceeded for this model token",
-        "the context length is too long, too many tokens",
-        "context window exceeded: too many tokens",
-        "requested 5000 tokens but limit reached",
-        "max_tokens is too large for this context",
-        "max output tokens exceeds context",
-    ] {
-        assert!(is_context_or_output_limit_error(yes), "{yes}");
-    }
-    for no in [
-        "authentication failed",
-        "rate limited, try again",
-        "",
-        "invalid token provided",
-    ] {
-        assert!(!is_context_or_output_limit_error(no), "{no}");
-    }
-}
-
-#[test]
 fn output_reads_from_whether_the_stream_emitted() {
     assert_eq!(Output::from_emitted(true), Output::Shown);
     assert_eq!(Output::from_emitted(false), Output::NotShown);
+}
+
+/// #2600 review: every class × facts branch of the approved guidance,
+/// pinned exactly.
+#[test]
+fn every_retryable_class_and_fact_has_its_exact_guidance() {
+    use Output::{NotShown, Shown};
+    use Response::{NotReceived, Received, Unknown};
+    let rate = "provider error (429): rate limit exceeded";
+    let server = "HTTP 503 from OpenAI: service unavailable";
+    let network = "HTTP error: error sending request: connection refused";
+    let rows: [(&str, AttemptFacts, &str); 11] = [
+        (
+            rate,
+            facts(2, Shown, Received),
+            "Rate limit: the provider throttled the request partway through the reply. It was not retried, because a reply that has already streamed output is never replayed; continuing or re-prompting is safe once the limit clears.",
+        ),
+        (
+            rate,
+            facts(3, NotShown, Received),
+            "Rate limit: the provider throttled the request. It was retried with backoff (3 attempts) and still failed — wait and retry later, or reduce request frequency.",
+        ),
+        (
+            rate,
+            facts(1, NotShown, Received),
+            "Rate limit: the provider throttled the request. It was not retried — wait and retry later, or reduce request frequency.",
+        ),
+        (
+            server,
+            facts(1, Shown, Received),
+            "Server/overload: the provider failed partway through the reply (overloaded or a 5xx error). It was not retried, because a reply that has already streamed output is never replayed; continuing or re-prompting is safe.",
+        ),
+        (
+            server,
+            facts(3, NotShown, Received),
+            "Server/overload: the provider is overloaded or returned a 5xx error. It was retried (3 attempts) and still failed — retry later.",
+        ),
+        (
+            server,
+            facts(1, NotShown, Received),
+            "Server/overload: the provider is overloaded or returned a 5xx error. It was not retried — retry later.",
+        ),
+        (
+            network,
+            facts(1, Shown, Received),
+            "Network: the provider closed the connection partway through the reply. It was not retried, because a reply that has already streamed output is never replayed; continuing or re-prompting is safe.",
+        ),
+        (
+            network,
+            facts(3, NotShown, NotReceived),
+            "Network: could not reach the provider (connection/timeout). It was retried (3 attempts) and still failed — check connectivity and retry later.",
+        ),
+        (
+            network,
+            facts(1, NotShown, NotReceived),
+            "Network: could not reach the provider (connection/timeout). It was not retried — check connectivity and retry later.",
+        ),
+        (
+            network,
+            facts(2, NotShown, Unknown),
+            "Network: the connection to the provider failed (connection/timeout). It was retried (2 attempts) and still failed — retry later.",
+        ),
+        (
+            network,
+            facts(1, NotShown, Received),
+            "Network: the connection to the provider failed (connection/timeout). It was not retried — retry later.",
+        ),
+    ];
+    for (message, at, expected) in rows {
+        assert_eq!(guidance(message, at), expected, "{message} {at:?}");
+    }
+}
+
+/// #2600 review: the classes whose guidance does not depend on attempts
+/// keep their exact text, and an unknown failure passes through unchanged.
+#[test]
+fn auth_billing_and_unknown_failures_are_unchanged() {
+    assert_eq!(
+        guidance("provider error (401): invalid credentials", PLAIN),
+        "Authentication: the provider rejected your credentials (not retryable). Check the API key or re-authenticate (`quecto auth login`), then retry."
+    );
+    assert_eq!(
+        guidance(
+            r#"HTTP 429 from OpenAI: {"error":{"code":"insufficient_quota"}}"#,
+            PLAIN
+        ),
+        "Billing/quota: the provider reports exhausted credit or a billing limit (not retryable). Check the account plan, billing, or quota before retrying."
+    );
+    let unknown = "something unexpected went wrong";
+    assert_eq!(
+        explained(unknown, facts(3, Output::NotShown, Response::Received)),
+        unknown
+    );
+}
+
+/// #2600 review: the inference-admission gate's own errors say what to do
+/// themselves; no provider guidance is appended, whatever their class.
+#[test]
+fn admission_gate_errors_get_no_provider_guidance() {
+    for message in [
+        "admission: admission transport failure: connection refused",
+        "admission: admission authority connection closed",
+        "admission: admission refused: capability revoked by an authority reset",
+    ] {
+        assert_eq!(
+            explained(message, facts(2, Output::NotShown, Response::NotReceived)),
+            message
+        );
+    }
 }
