@@ -10,9 +10,12 @@
 //!   starts with an [`ALLOWED`] prefix — or, in a test module only, a
 //!   [`TEST_RIG_ALLOWED`] one — and a crate or module alias, which cannot be
 //!   followed, is refused;
-//! - it invokes only the macros of [`MACROS`], so no `concat!`,
-//!   `include_str!` or local `macro_rules!` assembles a name the scan cannot
-//!   see, and imports or renames nothing to one of their names;
+//! - it invokes only the std prelude macros of [`PRELUDE_MACROS`] by name
+//!   and the others of [`PATHED_MACROS`] by their full path, so no
+//!   `concat!`, `include_str!` or local `macro_rules!` assembles a name the
+//!   scan cannot see; it imports or renames nothing to one of their names,
+//!   and no module of the crate defines or re-exports one, nor does an
+//!   ancestor of `transport/` `#[macro_use]` anything;
 //! - no identifier, and no literal (decoded, so no escape hides a letter)
 //!   outside a `#[doc = "…"]` attribute (what comments are), names a vendor
 //!   ([`VENDOR_WORDS`]).
@@ -43,21 +46,76 @@ const TEST_RIG_ALLOWED: &[&str] = &[
     "crate::infrastructure::tools::registry::",
 ];
 
-/// The macros `transport/` may invoke (by their last path segment).
-const MACROS: &[&str] = &[
+/// The std prelude macros `transport/` may invoke by their bare name.
+const PRELUDE_MACROS: &[&str] = &[
     "assert",
     "assert_eq",
     "debug_assert",
     "format",
-    "join",
-    "json",
     "matches",
     "panic",
-    "pin",
-    "select",
     "vec",
     "write",
 ];
+
+/// The other macros `transport/` may invoke, each only by its full path
+/// (#2605 review round 4): never bare, nor through `crate::`, `super::` or
+/// `self::`, where a macro of the same name could be defined.
+const PATHED_MACROS: &[&str] = &[
+    "serde_json::json",
+    "tokio::join",
+    "tokio::pin",
+    "tokio::select",
+];
+
+/// Every name an allowed macro is invoked by: what no `use` in `transport/`
+/// may import or rename to, and no module of the crate may define or
+/// re-export.
+fn macro_names() -> impl Iterator<Item = &'static str> {
+    PRELUDE_MACROS.iter().copied().chain(
+        PATHED_MACROS
+            .iter()
+            .filter_map(|path| path.rsplit("::").next()),
+    )
+}
+
+fn macro_name(name: &str) -> bool {
+    macro_names().any(|allowed| allowed == name)
+}
+
+/// The path a macro named at `tokens[at]` is invoked by: its name and the
+/// `a::b::` segments before it.
+fn invoked_path(tokens: &[TokenTree], at: usize) -> String {
+    let mut segments = vec![tokens[at].to_string()];
+    let mut from = at;
+    while from >= 3 {
+        let colons = matches!(
+            (&tokens[from - 2], &tokens[from - 1]),
+            (TokenTree::Punct(a), TokenTree::Punct(b)) if a.as_char() == ':' && b.as_char() == ':'
+        );
+        match (colons, &tokens[from - 3]) {
+            (true, TokenTree::Ident(segment)) => segments.insert(0, segment.to_string()),
+            _ => break,
+        }
+        from -= 3;
+    }
+    // A leading `::` names no allowed path.
+    let rooted = from >= 2
+        && matches!(
+            (&tokens[from - 2], &tokens[from - 1]),
+            (TokenTree::Punct(a), TokenTree::Punct(b)) if a.as_char() == ':' && b.as_char() == ':'
+        );
+    match rooted {
+        true => format!("::{}", segments.join("::")),
+        false => segments.join("::"),
+    }
+}
+
+/// Whether the macro invoked by `path` is allowed: a prelude macro by its
+/// bare name, or another by its full path.
+fn allowed_macro(path: &str) -> bool {
+    PRELUDE_MACROS.contains(&path) || PATHED_MACROS.contains(&path)
+}
 
 /// The vendors, as they may appear in an identifier or a literal: any case,
 /// any position (`AnthropicQuirk`, `openai_wire`, `"OpenAI"`, `b"codex"`).
@@ -123,8 +181,9 @@ fn decoded(literal: &proc_macro2::Literal) -> String {
 }
 
 /// What `stream` breaks of the token rules: each identifier and literal
-/// naming a vendor outside documentation text, each macro invoked outside
-/// [`MACROS`], and each rename to one of their names.
+/// naming a vendor outside documentation text, each macro invoked other
+/// than as [`PRELUDE_MACROS`] or [`PATHED_MACROS`] allow, and each rename to
+/// one of their names.
 fn token_violations(stream: TokenStream, found: &mut Vec<String>) {
     let tokens: Vec<TokenTree> = stream.into_iter().collect();
     for (at, token) in tokens.iter().enumerate() {
@@ -146,12 +205,15 @@ fn token_violations(stream: TokenStream, found: &mut Vec<String>) {
                     Some(TokenTree::Punct(bang))
                         if bang.as_char() == '!' && bang.spacing() == Spacing::Alone
                 );
-                if invoked && !keyword(ident) && !MACROS.contains(&ident.to_string().as_str()) {
-                    found.push(format!("{ident}!"));
+                if invoked && !keyword(ident) {
+                    let path = invoked_path(&tokens, at);
+                    if !allowed_macro(&path) {
+                        found.push(format!("{path}!"));
+                    }
                 }
                 let renamed = matches!(
                     tokens.get(at + 1),
-                    Some(TokenTree::Ident(to)) if ident == "as" && MACROS.contains(&to.to_string().as_str())
+                    Some(TokenTree::Ident(to)) if ident == "as" && macro_name(&to.to_string())
                 );
                 if renamed {
                     found.push(format!("as {}", tokens[at + 1]));
@@ -175,13 +237,13 @@ struct MacroImports(Vec<String>);
 
 impl<'ast> Visit<'ast> for MacroImports {
     fn visit_use_name(&mut self, name: &'ast syn::UseName) {
-        if MACROS.contains(&name.ident.to_string().as_str()) {
+        if macro_name(&name.ident.to_string()) {
             self.0.push(format!("use …::{}", name.ident));
         }
     }
     fn visit_use_rename(&mut self, rename: &'ast syn::UseRename) {
         for ident in [&rename.ident, &rename.rename] {
-            if MACROS.contains(&ident.to_string().as_str()) {
+            if macro_name(&ident.to_string()) {
                 self.0
                     .push(format!("use …::{} as {}", rename.ident, rename.rename));
             }
@@ -197,11 +259,61 @@ fn violations(source: &str, module: &[String], test: bool) -> Vec<String> {
         .filter(|path| !allowed(path, test))
         .collect();
     let file = syn::parse_file(source).expect("a crate source parses");
+    // Paths an attribute names in a string (`deserialize_with = "…"`).
+    found.extend(
+        dependency_scan::string_paths_in_tokens(file.to_token_stream())
+            .into_iter()
+            .map(|path| match path.as_str() {
+                dependency_scan::UNRESOLVABLE => path,
+                _ => dependency_scan::resolve_relative(module, &path),
+            })
+            .filter(|path| !allowed(path, test)),
+    );
     token_violations(file.to_token_stream(), &mut found);
     let mut imports = MacroImports::default();
     imports.visit_file(&file);
     found.extend(imports.0);
     found
+}
+
+/// The macro definitions and re-exports of `source` under an allowed
+/// macro's name, and its `#[macro_use]` attributes (#2605 review round 4):
+/// what could stand in for an allowed macro in `transport/`.
+fn macro_stand_ins(source: &str) -> Vec<String> {
+    #[derive(Default)]
+    struct StandIns(Vec<String>);
+    impl<'ast> Visit<'ast> for StandIns {
+        fn visit_item_macro(&mut self, item: &'ast syn::ItemMacro) {
+            let defined = item.mac.path.is_ident("macro_rules")
+                && item
+                    .ident
+                    .as_ref()
+                    .is_some_and(|name| macro_name(&name.to_string()));
+            if defined {
+                self.0
+                    .push(format!("macro_rules! {}", item.ident.as_ref().unwrap()));
+            }
+            syn::visit::visit_item_macro(self, item);
+        }
+        fn visit_item_use(&mut self, item: &'ast syn::ItemUse) {
+            if !matches!(item.vis, syn::Visibility::Inherited) {
+                let mut leaves = MacroImports::default();
+                leaves.visit_item_use(item);
+                self.0
+                    .extend(leaves.0.into_iter().map(|leaf| format!("pub {leaf}")));
+            }
+            syn::visit::visit_item_use(self, item);
+        }
+        fn visit_attribute(&mut self, attr: &'ast syn::Attribute) {
+            if attr.path().is_ident("macro_use") {
+                self.0.push("#[macro_use]".to_string());
+            }
+        }
+    }
+    let file = syn::parse_file(source).expect("a crate source parses");
+    let mut found = StandIns::default();
+    found.visit_file(&file);
+    found.0
 }
 
 /// The modules mounted under `transport/` (`mounted`) whose file lies
@@ -267,6 +379,76 @@ fn transport_names_only_vendor_neutral_paths_and_no_vendor() {
     );
 }
 
+/// #2605 review round 4: no module of either crate defines or re-exports a
+/// macro under an allowed macro's name, nor `#[macro_use]`s one, so an
+/// allowed name in `transport/` — bare, through a glob import, or from an
+/// ancestor's textual scope — is the macro the allowlist means.
+#[test]
+fn no_module_stands_in_for_an_allowed_macro() {
+    let modules = dependency_scan::mounted_under(&[]);
+    assert!(modules.len() > 500, "both crates were walked");
+    let found: Vec<String> = modules
+        .iter()
+        .flat_map(|(file, _, _)| {
+            let source = std::fs::read_to_string(file).expect("read a source");
+            macro_stand_ins(&source)
+                .into_iter()
+                .map(move |hit| format!("{}: {hit}", file.display()))
+        })
+        .collect();
+    assert!(
+        found.is_empty(),
+        "a stand-in for an allowed macro: {found:#?}"
+    );
+    for stand_in in [
+        "macro_rules! select { () => {} }\npub mod transport {}",
+        "#[macro_export] macro_rules! vec { () => {} }",
+        "pub use std::concat as vec;",
+        "pub(crate) use tokio::select;",
+        "pub(in crate::domain) use std::{concat as json};",
+        "#[macro_use] mod helpers;",
+    ] {
+        assert!(
+            !macro_stand_ins(stand_in).is_empty(),
+            "not caught: {stand_in}"
+        );
+    }
+    for neutral in [
+        "use serde_json::json;",
+        "macro_rules! bind_attempt_admission { () => {} }",
+        "pub use std::pin::Pin;",
+    ] {
+        assert!(macro_stand_ins(neutral).is_empty(), "refused: {neutral}");
+    }
+}
+
+/// #2605 review round 4 (A3): each rename guard catches on its own what the
+/// other cannot see — an import outside macro tokens, and a rename inside
+/// them.
+#[test]
+fn each_rename_guard_catches_its_own_case() {
+    let imported = "use crate::domain::x::vec;";
+    let file = syn::parse_file(imported).unwrap();
+    let mut imports = MacroImports::default();
+    imports.visit_file(&file);
+    assert!(!imports.0.is_empty(), "the import visitor: {imported}");
+    let mut tokens = Vec::new();
+    token_violations(file.to_token_stream(), &mut tokens);
+    assert!(tokens.is_empty(), "not the token rule: {tokens:?}");
+    let inside = "fn f() { tokio::select! { _ = async { use std::concat as pin; } => {} } }";
+    let file = syn::parse_file(inside).unwrap();
+    let mut imports = MacroImports::default();
+    imports.visit_file(&file);
+    assert!(
+        imports.0.is_empty(),
+        "not the import visitor: {:?}",
+        imports.0
+    );
+    let mut tokens = Vec::new();
+    token_violations(file.to_token_stream(), &mut tokens);
+    assert_eq!(tokens, ["as pin"], "the token rule: {inside}");
+}
+
 /// Each way a vendor could be named from `transport/` is caught (#2605
 /// review H1), and vendor-neutral code is not.
 #[test]
@@ -309,6 +491,15 @@ fn the_scan_refuses_every_way_of_naming_a_vendor() {
         "const UNICODE: &str = \"c\\u{6f}dex\";",
         "const BYTES_ESCAPED: &[u8] = b\"\\x63laude\";",
         "const CHARS: [char; 2] = ['a', '\\x41']; const C: &str = \"\\u{41}nthropic\";",
+        // #2605 review round 4.
+        "fn a() { crate::domain::shared::vec!(); }",
+        "fn b() { super::select!(); }",
+        "fn c() { self::json!(); }",
+        "use crate::domain::shared::*;\nfn d() { select! { _ = async {} => {} } }",
+        "fn e() { let _ = json!({}); }",
+        "fn g() { ::tokio::join!(); }",
+        "#[derive(serde::Deserialize)]\nstruct S { #[serde(deserialize_with = \"crate::infrastructure::providers::routing::provider_factory::f\")] f: u8 }",
+        "#[derive(serde::Deserialize)]\nstruct T { #[serde(deserialize_with = \"super::super::routing::router::f\")] f: u8 }",
     ] {
         for test in [false, true] {
             assert!(
@@ -343,6 +534,8 @@ fn the_scan_refuses_every_way_of_naming_a_vendor() {
         "#![doc = \"Anthropic, inner.\"]\nfn q() { assert!(matches!(1, 1), \"{}\", format!(\"x\")); }",
         "#[doc = \"OpenAI\"]\nfn r() { debug_assert!(vec![1u8].len() == 1); }",
         "use std::pin::Pin;\nfn s(a: u8, b: u8) -> bool { a != b && !(a == 0) }",
+        "fn h(x: u8) { tokio::select! { _ = async {} => {} } let _ = serde_json::json!({}); tokio::pin!(x); }",
+        "#[derive(serde::Deserialize)]\nstruct N { #[serde(deserialize_with = \"crate::domain::x::f\")] f: u8 }",
         "fn t(x: bool) -> bool { if !x { return !x; } while !x {} match !x { _ => !x } }",
         "const PLAIN: &str = \"\\x41\\u{42}\";",
     ] {
