@@ -201,7 +201,7 @@ async fn actual_runtime_oauth_refresh(enabled: bool, bound: bool) {
                 "stable-explicit-account".into(),
                 gate.clone() as Arc<dyn AttemptAdmission>,
             )]),
-            quecto::infrastructure::providers::SingleAttemptClient::build(
+            quecto::infrastructure::providers::transport::single_attempt_client::SingleAttemptClient::build(
                 reqwest::Client::builder().no_proxy(),
             )
             .unwrap(),

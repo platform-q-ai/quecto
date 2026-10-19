@@ -2,7 +2,7 @@
 //! encrypted reasoning a turn carries back to its model (#2162).
 use super::CodexProvider;
 use crate::domain::conversation::value_objects::message::{Message, Role, ThinkingBlock};
-use crate::infrastructure::providers::provider_images::{DETAIL, data_url, images};
+use crate::infrastructure::providers::openai::provider_images::{DETAIL, data_url, images};
 
 impl CodexProvider {
     /// `build_input` replaying no reasoning (tests of the rest of it).

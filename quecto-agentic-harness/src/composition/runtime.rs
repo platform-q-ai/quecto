@@ -21,14 +21,14 @@ use crate::infrastructure::providers::catalogue::catalogue_inputs::CatalogueInpu
 use crate::infrastructure::providers::catalogue::catalogue_registry::{
     runtime_store_for, snapshot_store_for,
 };
-use crate::infrastructure::providers::provider_factory::make_bounded_provider_factory;
+use crate::infrastructure::providers::routing::provider_factory::make_bounded_provider_factory;
 use crate::infrastructure::providers::routing::provider_runtime::{
     AgentProviderRuntimeFactory, AgentRuntimeInputs,
 };
 use crate::infrastructure::providers::routing::provider_runtime_admission::{
     AdmissionProviderRuntimeFactory, AdmissionRuntimeCandidate, AdmissionRuntimeProposal,
 };
-use crate::infrastructure::providers::stream_idle::StreamIdle;
+use crate::infrastructure::providers::transport::stream_idle::StreamIdle;
 
 /// Compose the concrete provider runtime for `base_dir` via the shared use
 /// case and publish runtime + catalogue as one coherent generation into the

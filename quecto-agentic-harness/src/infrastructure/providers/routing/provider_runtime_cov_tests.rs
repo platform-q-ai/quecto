@@ -20,7 +20,7 @@ fn test_inputs(base_dir: &std::path::Path, http_client: &reqwest::Client) -> Age
         http_client: http_client.clone(),
         refresh_fn: crate::infrastructure::auth::refresh_wiring::make_oauth_refresh_fn(),
         openai_oauth_factory:
-            crate::infrastructure::providers::provider_factory::make_provider_factory(
+            crate::infrastructure::providers::routing::provider_factory::make_provider_factory(
                 "openai",
                 None,
                 http_client.clone(),

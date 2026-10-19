@@ -73,11 +73,11 @@ fn auth_infrastructure_names_no_provider_code() {
 fn the_edge_check_refuses_the_reverse_edge_however_spelled() {
     let file = "src/infrastructure/auth/refresh_wiring.rs";
     for source in [
-        "use crate::infrastructure::providers::refreshable::RefreshableProvider;",
-        "fn f() -> crate::infrastructure::providers::refreshable::ProviderFactory { todo() }",
+        "use crate::infrastructure::providers::routing::refreshable::RefreshableProvider;",
+        "fn f() -> crate::infrastructure::providers::routing::refreshable::ProviderFactory { todo() }",
         "use super::super::providers::refreshable::RefreshableProvider;",
         "use crate::infrastructure::{auth::oauth, providers::router::Router};",
-        "use crate::infrastructure; fn f() { let _ = infrastructure::providers::router::x(); }",
+        "use crate::infrastructure; fn f() { let _ = infrastructure::providers::routing::router::x(); }",
         "use super::super; fn f() { let _ = super::providers::x(); }",
         "use crate::infrastructure as infra;",
         "use super::super as up;",

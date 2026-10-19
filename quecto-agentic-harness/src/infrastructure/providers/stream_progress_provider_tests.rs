@@ -5,9 +5,9 @@
 //! Real sockets, so short bounds in real time.
 use std::time::Duration;
 
-use super::stream_idle::StreamIdle;
-use super::stream_idle::tests::{LIVE, servers};
 use super::stream_idle_provider_tests::{Vendor, assembled, codex_chat, incremental};
+use super::transport::stream_idle::StreamIdle;
+use super::transport::stream_idle::tests::{LIVE, servers};
 use crate::domain::inference::services::provider_error::{
     ProviderErrorClass, classify_provider_error,
 };
@@ -18,7 +18,7 @@ use crate::domain::shared::error::DomainError;
 /// The progress bound: well under the idle bound, well over the gaps.
 const PROGRESS: Duration = Duration::from_millis(500);
 /// The gap between events: fast enough that the events a stall needs
-/// ([`super::stream_idle::PROGRESS_EVENTS`]) come within the bound.
+/// ([`super::transport::stream_idle::PROGRESS_EVENTS`]) come within the bound.
 const EVERY: Duration = Duration::from_millis(1);
 
 /// The vendor's event that carries no output, sent again and again.
@@ -37,7 +37,7 @@ fn bounds() -> StreamIdle {
 }
 
 fn stalled_message() -> String {
-    super::stream_idle::Idle::no_output(PROGRESS).to_string()
+    super::transport::stream_idle::Idle::no_output(PROGRESS).to_string()
 }
 
 #[tokio::test]

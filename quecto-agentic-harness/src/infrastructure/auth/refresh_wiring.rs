@@ -3,7 +3,7 @@
 //! through the kernel's OAuth endpoints, persists it, and pushes the
 //! refreshed store to the runtime manager. Handed to the runtime
 //! composition; the provider it serves is rebuilt by
-//! `infrastructure::providers::provider_factory`. Dependencies run one
+//! `infrastructure::providers::routing::provider_factory`. Dependencies run one
 //! way: the providers' refresh decorator names this module, never the
 //! reverse.
 

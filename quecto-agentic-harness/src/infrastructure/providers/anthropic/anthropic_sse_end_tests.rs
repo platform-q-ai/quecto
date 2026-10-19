@@ -7,7 +7,7 @@ use crate::domain::inference::services::provider_error::{
     ProviderErrorClass, classify_provider_error,
 };
 use crate::domain::inference::value_objects::provider::StreamEvent;
-use crate::infrastructure::providers::sse_common::{SseHandler, SseLineOutcome};
+use crate::infrastructure::providers::transport::sse_common::{SseHandler, SseLineOutcome};
 
 const TEXT: [&str; 2] = [
     "event: content_block_delta",

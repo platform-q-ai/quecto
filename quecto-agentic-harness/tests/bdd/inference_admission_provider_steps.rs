@@ -9,7 +9,7 @@ pub mod attempts;
 pub mod feedback;
 use quecto::domain::admission::value_objects::inference_admission::{Feedback, ThrottleFeedback};
 use quecto::domain::inference::value_objects::provider::StreamEvent;
-use quecto::infrastructure::providers::retry::{RetryConfig, RetryingProvider};
+use quecto::infrastructure::providers::routing::retry::{RetryConfig, RetryingProvider};
 use tokio::sync::mpsc;
 
 #[derive(Default)]

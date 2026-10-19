@@ -7,7 +7,7 @@ use crate::domain::inference::value_objects::provider::StreamEvent;
 #[cfg(any(test, feature = "test-support"))]
 use super::anthropic_sse::AnthropicSseHandler;
 #[cfg(any(test, feature = "test-support"))]
-use crate::infrastructure::providers::sse_common::{SseHandler, SseLineOutcome};
+use crate::infrastructure::providers::transport::sse_common::{SseHandler, SseLineOutcome};
 
 #[cfg(any(test, feature = "test-support"))]
 impl AnthropicProvider {
@@ -100,7 +100,8 @@ impl AnthropicProvider {
     pub fn with_stream_idle_limit(mut self, limit: std::time::Duration) -> Self {
         let total = self.stream_idle.total();
         self.stream_idle =
-            crate::infrastructure::providers::stream_idle::StreamIdle::new(limit).with_total(total);
+            crate::infrastructure::providers::transport::stream_idle::StreamIdle::new(limit)
+                .with_total(total);
         self
     }
 

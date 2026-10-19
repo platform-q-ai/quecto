@@ -357,9 +357,9 @@ async fn gate_trail(sending: Sending) -> Vec<(String, Option<String>)> {
     config.streaming = sending.streaming;
     if !sending.streaming {
         config.provider = Arc::new(
-            quecto::infrastructure::providers::retry::RetryingProvider::new(
+            quecto::infrastructure::providers::routing::retry::RetryingProvider::new(
                 provider.clone(),
-                quecto::infrastructure::providers::retry::RetryConfig::no_delay(3),
+                quecto::infrastructure::providers::routing::retry::RetryConfig::no_delay(3),
             ),
         );
     }

@@ -12,8 +12,8 @@
 //! - Usage a cut-short Anthropic reply reported is still counted.
 use std::sync::Arc;
 
-use super::stream_idle::tests::{LIVE, bounded, servers};
 use super::stream_idle_provider_tests::{Vendor, request, terminations, traced};
+use super::transport::stream_idle::tests::{LIVE, bounded, servers};
 use crate::application::providers::ports::ChatRequest;
 use crate::domain::conversation::value_objects::message::Message;
 use crate::domain::inference::events::request_observation::RequestTrace;

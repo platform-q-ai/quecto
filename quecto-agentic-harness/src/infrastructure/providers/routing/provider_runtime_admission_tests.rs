@@ -55,7 +55,7 @@ fn context_rejects_unknown_alias_and_missing_capability() {
         AdmissionRuntimeContext::new(
             unknown,
             gates(),
-            crate::infrastructure::providers::SingleAttemptClient::build(
+            crate::infrastructure::providers::transport::single_attempt_client::SingleAttemptClient::build(
                 reqwest::Client::builder().no_proxy()
             )
             .unwrap()
@@ -66,7 +66,7 @@ fn context_rejects_unknown_alias_and_missing_capability() {
         AdmissionRuntimeContext::new(
             proposal(),
             BTreeMap::new(),
-            crate::infrastructure::providers::SingleAttemptClient::build(
+            crate::infrastructure::providers::transport::single_attempt_client::SingleAttemptClient::build(
                 reqwest::Client::builder().no_proxy()
             )
             .unwrap()
@@ -82,7 +82,7 @@ fn mixed_case_slot_binding_cannot_bypass_admission() {
     let context = AdmissionRuntimeContext::new(
         proposal,
         gates(),
-        crate::infrastructure::providers::SingleAttemptClient::build(
+        crate::infrastructure::providers::transport::single_attempt_client::SingleAttemptClient::build(
             reqwest::Client::builder().no_proxy(),
         )
         .unwrap(),
@@ -102,7 +102,7 @@ fn ambiguous_case_folded_slot_bindings_are_rejected() {
         AdmissionRuntimeContext::new(
             proposal,
             gates(),
-            crate::infrastructure::providers::SingleAttemptClient::build(
+            crate::infrastructure::providers::transport::single_attempt_client::SingleAttemptClient::build(
                 reqwest::Client::builder().no_proxy()
             )
             .unwrap(),
@@ -118,7 +118,7 @@ fn configured_provider_without_binding_remains_usable_without_gate() {
     let context = AdmissionRuntimeContext::new(
         proposal.clone(),
         gates(),
-        crate::infrastructure::providers::SingleAttemptClient::build(
+        crate::infrastructure::providers::transport::single_attempt_client::SingleAttemptClient::build(
             reqwest::Client::builder().no_proxy(),
         )
         .unwrap(),

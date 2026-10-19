@@ -1114,7 +1114,7 @@ fn then_persisted_credential_has_margin(
 // --- RefreshableProvider BDD steps (issue #255) ---
 
 use quecto::infrastructure::auth::refresh_wiring::RefreshFn;
-use quecto::infrastructure::providers::refreshable::{
+use quecto::infrastructure::providers::routing::refreshable::{
     ProviderFactory, RefreshableConfig, RefreshableProvider,
 };
 

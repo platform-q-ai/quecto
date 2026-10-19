@@ -2,7 +2,7 @@ use std::path::Path;
 
 use crate::domain::catalogue::value_objects::model_facts::PromptLimit;
 use crate::domain::conversation::value_objects::message::{ModelPricing, model_pricing};
-use crate::infrastructure::providers::stream_idle::{StreamIdle, StreamLimits};
+use crate::infrastructure::providers::transport::stream_idle::{StreamIdle, StreamLimits};
 
 /// The price of a Claude 5 built-in, `None` for any other id.
 fn claude_5_pricing(id: &str) -> Option<ModelPricing> {

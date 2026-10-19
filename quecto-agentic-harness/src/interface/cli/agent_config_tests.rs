@@ -389,7 +389,7 @@ fn router_provider_names(
     assert!(
         provider
             .as_any()
-            .downcast_ref::<crate::infrastructure::providers::retry::RetryingProvider>()
+            .downcast_ref::<crate::infrastructure::providers::routing::retry::RetryingProvider>()
             .is_some(),
         "build_agent_provider should return a RetryingProvider"
     );

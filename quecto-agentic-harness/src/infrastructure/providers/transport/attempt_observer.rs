@@ -88,7 +88,7 @@ impl ProtocolObserver {
             state.diagnostics.event_count = state.diagnostics.event_count.saturating_add(1);
         }
         if matches!(self.vendor, Vendor::OpenAi | Vendor::Codex)
-            && crate::infrastructure::providers::sse_end::is_done_marker(data)
+            && crate::infrastructure::providers::transport::sse_end::is_done_marker(data)
         {
             self.terminal = true;
             let mut state = receipt.0.lock().unwrap();

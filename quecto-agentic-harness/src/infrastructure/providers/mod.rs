@@ -1,30 +1,11 @@
-pub mod admission_feedback;
 pub mod anthropic;
-pub(crate) mod attempt_profile;
-pub(crate) mod attempt_transport;
 pub mod catalogue;
 pub mod codex;
-pub(crate) mod input_prefix;
 #[cfg(test)]
 mod issue_996_efficiency_tests;
-pub mod model_refusal;
 pub mod openai;
-pub mod openai_endpoint_router;
-mod openai_images;
-pub mod provider_factory;
-mod provider_images;
-pub mod refreshable;
-pub mod retry;
-pub mod router;
 pub mod routing;
-pub mod single_attempt_client;
-pub use single_attempt_client::{CONNECT_TIMEOUT, SingleAttemptClient, default_client_builder};
-pub mod sse_common;
-pub(crate) mod sse_end;
-pub(crate) mod sse_limits;
-pub(crate) mod sse_progress;
-pub mod stream_idle;
-pub mod usage;
+pub mod transport;
 
 #[cfg(test)]
 #[path = "sse_wire_cov_tests.rs"]
@@ -42,7 +23,7 @@ use crate::application::providers::ports::LlmProvider;
 #[derive(Clone)]
 pub(crate) struct AttemptTransportBinding {
     pub gate: Arc<dyn crate::application::ports::AttemptAdmission>,
-    pub client: SingleAttemptClient,
+    pub client: transport::single_attempt_client::SingleAttemptClient,
 }
 
 /// What binds one provider's leaf transport: its admission capability, when
@@ -51,7 +32,7 @@ pub(crate) struct AttemptTransportBinding {
 #[derive(Clone, Default)]
 pub(crate) struct ProviderBinding {
     pub admission: Option<AttemptTransportBinding>,
-    pub stream_idle: stream_idle::StreamIdle,
+    pub stream_idle: transport::stream_idle::StreamIdle,
 }
 
 /// Shared HTTP connection pool and the provider's binding.
@@ -290,12 +271,14 @@ pub(crate) fn create_named_openai_provider_with_client_and_admission(
         codex::CodexProvider::with_api_key(api_key, api_base, client,),
         binding.clone()
     ));
-    Ok(Arc::new(openai_endpoint_router::OpenAiEndpointRouter::new(
-        provider_name.to_string(),
-        chat_completions,
-        responses,
-        reasoning_model_ids,
-    )))
+    Ok(Arc::new(
+        openai::openai_endpoint_router::OpenAiEndpointRouter::new(
+            provider_name.to_string(),
+            chat_completions,
+            responses,
+            reasoning_model_ids,
+        ),
+    ))
 }
 
 /// Create the built-in OpenAI provider with explicit OAuth-header control.

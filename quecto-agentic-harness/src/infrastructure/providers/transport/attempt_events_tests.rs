@@ -10,9 +10,9 @@ fn every_event_the_codex_handler_consumes_is_known() {
         "response.incomplete",
     ];
     for source in [
-        include_str!("codex.rs"),
-        include_str!("codex_sse_state.rs"),
-        include_str!("codex_sse_handler.rs"),
+        include_str!("../codex/mod.rs"),
+        include_str!("../codex/codex_sse_state.rs"),
+        include_str!("../codex/codex_sse_handler.rs"),
     ] {
         for event in source
             .split('"')

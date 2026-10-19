@@ -218,7 +218,7 @@ fn runtime_factory(
         AdmissionRuntimeContext::new(
             effective,
             gates,
-            quecto::infrastructure::providers::SingleAttemptClient::build(
+            quecto::infrastructure::providers::transport::single_attempt_client::SingleAttemptClient::build(
                 reqwest::Client::builder().no_proxy(),
             )
             .unwrap(),
@@ -723,7 +723,7 @@ async fn builtin_and_models_json_requests_observe_only_their_explicit_gate() {
             "account-a".into(),
             gate.clone() as Arc<dyn AttemptAdmission>,
         )]),
-        quecto::infrastructure::providers::SingleAttemptClient::build(
+        quecto::infrastructure::providers::transport::single_attempt_client::SingleAttemptClient::build(
             reqwest::Client::builder().no_proxy(),
         )
         .unwrap(),
@@ -760,7 +760,7 @@ async fn builtin_and_models_json_requests_observe_only_their_explicit_gate() {
             "account-a".into(),
             second_gate.clone() as Arc<dyn AttemptAdmission>,
         )]),
-        quecto::infrastructure::providers::SingleAttemptClient::build(
+        quecto::infrastructure::providers::transport::single_attempt_client::SingleAttemptClient::build(
             reqwest::Client::builder().no_proxy(),
         )
         .unwrap(),

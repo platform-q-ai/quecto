@@ -1,6 +1,6 @@
 //! Test-only accessors for `CodexProvider`'s private request builders.
 //!
-//! Kept out of `codex.rs` so production code stays within the repo's
+//! Kept out of `codex/mod.rs` so production code stays within the repo's
 //! file-size budget; these are compiled only under `test` or the
 //! `test-support` feature.
 
@@ -12,7 +12,8 @@ impl CodexProvider {
     pub fn with_stream_idle_limit(mut self, limit: std::time::Duration) -> Self {
         let total = self.stream_idle.total();
         self.stream_idle =
-            crate::infrastructure::providers::stream_idle::StreamIdle::new(limit).with_total(total);
+            crate::infrastructure::providers::transport::stream_idle::StreamIdle::new(limit)
+                .with_total(total);
         self
     }
 

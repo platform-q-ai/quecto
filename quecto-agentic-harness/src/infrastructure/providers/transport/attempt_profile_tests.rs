@@ -125,7 +125,7 @@ fn the_openai_stream_error_status_comes_from_typed_fields_never_the_message() {
 /// bound; a whole non-streaming reply sends nothing until complete.
 #[tokio::test(start_paused = true)]
 async fn only_streaming_surfaces_bound_a_silent_step() {
-    use crate::infrastructure::providers::stream_idle::{STREAM_IDLE_LIMIT, StreamIdle};
+    use crate::infrastructure::providers::transport::stream_idle::{STREAM_IDLE_LIMIT, StreamIdle};
     use std::time::Duration;
     let bound = StreamIdle::new(Duration::from_secs(5));
     for (surface, streams) in [

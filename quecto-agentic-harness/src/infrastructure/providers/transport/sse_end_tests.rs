@@ -18,9 +18,9 @@ fn done_is_recognised_with_trailing_whitespace_only() {
 #[test]
 fn every_cut_short_error_is_recognised_and_retried() {
     for message in [
-        super::super::codex::RESPONSES_CUT_SHORT,
-        super::super::anthropic::anthropic_sse::ANTHROPIC_CUT_SHORT,
-        super::super::openai::openai_sse::OPENAI_CUT_SHORT,
+        super::super::super::codex::RESPONSES_CUT_SHORT,
+        super::super::super::anthropic::anthropic_sse::ANTHROPIC_CUT_SHORT,
+        super::super::super::openai::openai_sse::OPENAI_CUT_SHORT,
     ] {
         assert!(is_cut_short(message), "{message}");
         let class = classify_provider_error(&DomainError::Provider(message.into()));
@@ -35,12 +35,18 @@ fn every_cut_short_error_is_recognised_and_retried() {
         assert!(!is_cut_short(message), "{message}");
     }
     assert_eq!(
-        ended_early(false, super::super::openai::openai_sse::OPENAI_CUT_SHORT),
+        ended_early(
+            false,
+            super::super::super::openai::openai_sse::OPENAI_CUT_SHORT
+        ),
         EMPTY_STREAM
     );
     assert_eq!(
-        ended_early(true, super::super::openai::openai_sse::OPENAI_CUT_SHORT),
-        super::super::openai::openai_sse::OPENAI_CUT_SHORT
+        ended_early(
+            true,
+            super::super::super::openai::openai_sse::OPENAI_CUT_SHORT
+        ),
+        super::super::super::openai::openai_sse::OPENAI_CUT_SHORT
     );
 }
 

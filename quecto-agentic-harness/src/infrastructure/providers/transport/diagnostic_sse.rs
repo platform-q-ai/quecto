@@ -1,8 +1,8 @@
 //! Instrumented pump preserves the common pump behavior while reporting transport exits;
 //! so do the send and the error body read of an owned attempt.
 use super::*;
-use crate::infrastructure::providers::sse_common::line_within_limit;
-use crate::infrastructure::providers::stream_idle::StreamIdle;
+use crate::infrastructure::providers::transport::sse_common::line_within_limit;
+use crate::infrastructure::providers::transport::stream_idle::StreamIdle;
 
 impl Receipt {
     /// A whole reply was read: accepted, it completed; refused because its
@@ -68,7 +68,7 @@ pub(super) fn whole_read_termination<T>(parsed: &Result<T, DomainError>) -> Term
     match parsed {
         Ok(_) => Termination::Completed,
         Err(DomainError::Provider(message))
-            if crate::infrastructure::providers::sse_end::is_cut_short(message) =>
+            if crate::infrastructure::providers::transport::sse_end::is_cut_short(message) =>
         {
             Termination::CutShort
         }

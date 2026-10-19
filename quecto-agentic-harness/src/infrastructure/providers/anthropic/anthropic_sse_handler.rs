@@ -6,8 +6,8 @@ use super::{SseAccumulator, dispatch_sse_event};
 use crate::domain::inference::events::request_observation::RequestTrace;
 use crate::domain::inference::value_objects::provider::StreamEvent;
 use crate::domain::tool_policy::value_objects::tool::ToolDefinition;
-use crate::infrastructure::providers::sse_common::{SseHandler, SseLineOutcome};
-use crate::infrastructure::providers::sse_end;
+use crate::infrastructure::providers::transport::sse_common::{SseHandler, SseLineOutcome};
+use crate::infrastructure::providers::transport::sse_end;
 
 /// SSE line handler for the Anthropic Messages API.
 pub(crate) struct AnthropicSseHandler {
@@ -69,7 +69,7 @@ impl SseHandler for AnthropicSseHandler {
         line: &str,
         tx: &tokio::sync::mpsc::Sender<StreamEvent>,
     ) -> SseLineOutcome {
-        let data = crate::infrastructure::providers::sse_common::event_data(line);
+        let data = crate::infrastructure::providers::transport::sse_common::event_data(line);
         if line.starts_with("event: ") || data.is_some() {
             self.saw_event = true;
         }

@@ -302,7 +302,7 @@ Important invariants before later phases:
 `src/infrastructure/providers/routing/provider_runtime_admission.rs`; the OAuth refresh wiring
 in `src/infrastructure/auth/refresh_wiring.rs`, the refreshed-credential
 persistence in `src/infrastructure/auth/token_refresh.rs` and the provider
-rebuild after a refresh in `src/infrastructure/providers/provider_factory.rs`; the composition in
+rebuild after a refresh in `src/infrastructure/providers/routing/provider_factory.rs`; the composition in
 `src/composition/runtime.rs` (`compose_and_publish_runtime`,
 `build_agent_provider`).
 

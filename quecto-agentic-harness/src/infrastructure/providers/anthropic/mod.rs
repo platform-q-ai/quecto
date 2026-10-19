@@ -1,6 +1,6 @@
 mod request_body;
-use crate::infrastructure::providers::attempt_profile::{Profile, Surface, Vendor};
-use crate::infrastructure::providers::attempt_transport::queue_before_spawn;
+use crate::infrastructure::providers::transport::attempt_profile::{Profile, Surface, Vendor};
+use crate::infrastructure::providers::transport::attempt_transport::queue_before_spawn;
 // Anthropic adapter: impl LlmProvider for AnthropicProvider.
 //
 // See gap analysis #437 for Anthropic API parity work.
@@ -40,7 +40,7 @@ pub struct AnthropicProvider {
     /// vendor can appear under multiple distinct routing keys.
     router_name: String,
     /// The bound on a silent streaming reply (#2210).
-    stream_idle: crate::infrastructure::providers::stream_idle::StreamIdle,
+    stream_idle: crate::infrastructure::providers::transport::stream_idle::StreamIdle,
 }
 
 impl AnthropicProvider {
@@ -51,7 +51,7 @@ impl AnthropicProvider {
     pub fn with_attempt_admission(
         mut self,
         gate: std::sync::Arc<dyn crate::application::ports::AttemptAdmission>,
-        client: crate::infrastructure::providers::SingleAttemptClient,
+        client: crate::infrastructure::providers::transport::single_attempt_client::SingleAttemptClient,
     ) -> Self {
         self.client = client.into_client();
         self.attempt_admission = Some(gate);
@@ -389,7 +389,7 @@ impl LlmProvider for AnthropicProvider {
             let request_builder = self.apply_headers(request_builder, &model);
 
             if let Some(gate) = &self.attempt_admission {
-                return crate::infrastructure::providers::attempt_transport::text(
+                return crate::infrastructure::providers::transport::attempt_transport::text(
                     gate,
                     trace.clone(),
                     cancel.as_ref(),
@@ -451,7 +451,7 @@ impl LlmProvider for AnthropicProvider {
             }
             if let Some(gate) = &self.attempt_admission {
                 let builder = self.apply_headers(self.client.post(&url).json(&body), &model);
-                return crate::infrastructure::providers::attempt_transport::assembled(
+                return crate::infrastructure::providers::transport::attempt_transport::assembled(
                     gate,
                     trace.clone(),
                     cancel.as_ref(),
@@ -518,7 +518,7 @@ impl LlmProvider for AnthropicProvider {
                 if let Some(gate) = &provider.attempt_admission {
                     let builder =
                         provider.apply_headers(provider.client.post(&url).json(&body), &model);
-                    crate::infrastructure::providers::attempt_transport::stream(
+                    crate::infrastructure::providers::transport::attempt_transport::stream(
                         gate,
                         (trace.clone(), cancel.as_ref()),
                         builder,

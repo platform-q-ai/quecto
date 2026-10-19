@@ -7,16 +7,16 @@ use crate::domain::conversation::value_objects::message::Message;
 /// The detail every image is sent at (#2421 review D): `high` caps an
 /// image at about 3,000 tokens on OpenAI's side, within the harness's
 /// estimate of an image, where `original` (or none) would not.
-pub(super) const DETAIL: &str = "high";
+pub(in crate::infrastructure::providers) const DETAIL: &str = "high";
 
 /// An image as both OpenAI wires take it inline.
-pub(super) fn data_url(mime_type: &str, data: &str) -> String {
+pub(in crate::infrastructure::providers) fn data_url(mime_type: &str, data: &str) -> String {
     format!("data:{mime_type};base64,{data}")
 }
 
 /// Every image `message` carries, as (MIME type, base64 data): a user's and
 /// a tool result's alike, so none is left out whichever it is.
-pub(super) fn images(message: &Message) -> Vec<(&str, &str)> {
+pub(in crate::infrastructure::providers) fn images(message: &Message) -> Vec<(&str, &str)> {
     message
         .user_image_blocks
         .iter()

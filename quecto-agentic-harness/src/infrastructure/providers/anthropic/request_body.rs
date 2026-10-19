@@ -76,7 +76,7 @@ impl AnthropicProvider {
                     // (`context_pruning::update_spill_manifest`) left the agent
                     // running with its entire prompt replaced by one line of
                     // recall guidance. Codex does the same join
-                    // (`codex.rs`); OpenAI demotes later system messages to
+                    // (`codex/mod.rs`); OpenAI demotes later system messages to
                     // `user` in place.
                     match &mut system_prompt {
                         Some(existing) => {

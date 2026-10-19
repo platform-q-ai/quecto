@@ -95,7 +95,7 @@ async fn sync_credentials_to_manager_noop_when_env_unset() {
 /// push for ever; the request is abandoned at its timeout.
 #[tokio::test]
 async fn a_credential_push_to_a_silent_manager_times_out() {
-    use crate::infrastructure::providers::stream_idle::tests::{bounded, servers};
+    use crate::infrastructure::providers::transport::stream_idle::tests::{bounded, servers};
     let url = servers::never_answering().await;
     let timeout = std::time::Duration::from_millis(200);
     let started = std::time::Instant::now();
@@ -116,7 +116,7 @@ async fn a_credential_push_to_a_silent_manager_times_out() {
 /// that never answers it returns once that long has passed (paused clock).
 #[tokio::test(start_paused = true)]
 async fn the_credential_sync_gives_up_after_its_timeout() {
-    use crate::infrastructure::providers::stream_idle::tests::{bounded, servers};
+    use crate::infrastructure::providers::transport::stream_idle::tests::{bounded, servers};
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("credentials.json");
     std::fs::write(&path, "{}").unwrap();

@@ -9,7 +9,8 @@ use quecto::domain::admission::value_objects::inference_admission::{Feedback, Th
 use quecto::domain::inference::value_objects::provider::StreamEvent;
 use quecto::domain::shared::error::DomainError;
 use quecto::infrastructure::providers::{
-    SingleAttemptClient, anthropic::AnthropicProvider, codex::CodexProvider, openai::OpenAiProvider,
+    anthropic::AnthropicProvider, codex::CodexProvider, openai::OpenAiProvider,
+    transport::single_attempt_client::SingleAttemptClient,
 };
 #[path = "../common/admission_redirect_oracle.rs"]
 mod oracle;

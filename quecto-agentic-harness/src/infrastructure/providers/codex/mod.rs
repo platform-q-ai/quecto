@@ -19,7 +19,6 @@ use crate::domain::conversation::value_objects::message::{LlmResponse, Role, Thi
 use crate::domain::inference::value_objects::provider::StreamEvent;
 use crate::domain::shared::error::DomainError;
 
-#[path = "codex_sse_state.rs"]
 mod codex_sse_state;
 use codex_sse_state::SseAccumulator;
 
@@ -57,13 +56,16 @@ pub struct CodexProvider {
     /// swarm review). Empty for ChatGPT OAuth, whose account identifies it.
     key_origin: String,
     /// The bound on a silent streaming reply (#2210).
-    stream_idle: super::stream_idle::StreamIdle,
+    stream_idle: super::transport::stream_idle::StreamIdle,
 }
 
 impl CodexProvider {
     /// Bound its replies by `stream_idle`: a provider's configured stream
     /// idle limit (#2433 review), or the defaults.
-    pub fn with_stream_idle(mut self, stream_idle: super::stream_idle::StreamIdle) -> Self {
+    pub fn with_stream_idle(
+        mut self,
+        stream_idle: super::transport::stream_idle::StreamIdle,
+    ) -> Self {
         self.stream_idle = stream_idle;
         self
     }
@@ -75,7 +77,7 @@ impl CodexProvider {
     pub fn with_attempt_admission(
         mut self,
         gate: std::sync::Arc<dyn crate::application::ports::AttemptAdmission>,
-        client: crate::infrastructure::providers::SingleAttemptClient,
+        client: crate::infrastructure::providers::transport::single_attempt_client::SingleAttemptClient,
     ) -> Self {
         self.client = client.into_client();
         self.attempt_admission = Some(gate);
@@ -280,7 +282,7 @@ impl CodexProvider {
 
         let usage = body["usage"]
             .as_object()
-            .map(crate::infrastructure::providers::usage::parse_codex_usage);
+            .map(crate::infrastructure::providers::openai::usage::parse_codex_usage);
 
         let thinking_blocks = if reasoning.is_empty() {
             Vec::new()
@@ -305,12 +307,14 @@ impl CodexProvider {
     /// Parse SSE stream from the Responses API and assemble a complete response.
     #[cfg(any(test, feature = "test-support"))]
     fn parse_sse_response(raw: &str) -> Result<LlmResponse, DomainError> {
-        Self::parse_sse_reply(raw).map_err(super::sse_end::UnfinishedReply::into_error)
+        Self::parse_sse_reply(raw).map_err(super::transport::sse_end::UnfinishedReply::into_error)
     }
 
     /// [`Self::parse_sse_response`], keeping the usage a reply cut short
     /// before its terminal event reported, to be accounted (#2249 review).
-    fn parse_sse_reply(raw: &str) -> Result<LlmResponse, super::sse_end::UnfinishedReply> {
+    fn parse_sse_reply(
+        raw: &str,
+    ) -> Result<LlmResponse, super::transport::sse_end::UnfinishedReply> {
         let mut acc = SseAccumulator::default();
         let mut saw_terminal = false;
         let mut saw_event = false;
@@ -318,11 +322,11 @@ impl CodexProvider {
         for line in raw.lines() {
             // Only line ends are trimmed: an indented line is no event.
             let line = line.trim_end();
-            let Some(data) = super::sse_common::event_data(line) else {
+            let Some(data) = super::transport::sse_common::event_data(line) else {
                 continue;
             };
             saw_event = true;
-            if super::sse_end::is_done_marker(data) {
+            if super::transport::sse_end::is_done_marker(data) {
                 saw_terminal = true;
                 break;
             }
@@ -342,8 +346,8 @@ impl CodexProvider {
         // reply cut short, and no event at all an empty stream (#2249
         // review), never taken as a whole answer.
         if !saw_terminal {
-            return Err(super::sse_end::UnfinishedReply {
-                error: DomainError::Provider(super::sse_end::ended_early(
+            return Err(super::transport::sse_end::UnfinishedReply {
+                error: DomainError::Provider(super::transport::sse_end::ended_early(
                     saw_event,
                     RESPONSES_CUT_SHORT,
                 )),
@@ -364,7 +368,7 @@ impl CodexProvider {
     fn format_stream_failure(event: &serde_json::Value) -> Option<String> {
         let kind = match event["type"].as_str() {
             Some(kind @ ("response.failed" | "response.incomplete" | "error")) => kind,
-            None if super::attempt_profile::is_untyped_error_chunk(event) => "error",
+            None if super::transport::attempt_profile::is_untyped_error_chunk(event) => "error",
             _ => return None,
         };
         let mut parts = vec![format!("Responses stream {kind}")];
@@ -444,11 +448,11 @@ impl CodexProvider {
         handler: CodexSseHandler,
     ) {
         let idle = self.stream_idle;
-        let attempt = super::attempt_transport::PassiveAttempt::begin(
+        let attempt = super::transport::attempt_transport::PassiveAttempt::begin(
             call.trace.clone(),
-            super::attempt_profile::Profile::new(
-                super::attempt_profile::Vendor::Codex,
-                super::attempt_profile::Surface::Incremental,
+            super::transport::attempt_profile::Profile::new(
+                super::transport::attempt_profile::Vendor::Codex,
+                super::transport::attempt_profile::Surface::Incremental,
                 idle,
             ),
         );
@@ -462,7 +466,7 @@ impl CodexProvider {
                 let _ = tx
                     .send(StreamEvent::Error(format!(
                         "Codex request failed: {}",
-                        super::sse_common::format_send_error(&e)
+                        super::transport::sse_common::format_send_error(&e)
                     )))
                     .await;
                 return;
@@ -480,7 +484,9 @@ impl CodexProvider {
         if status != 200 {
             let read = idle.text(response).await;
             attempt.iter().for_each(|a| a.error_read(status, &read));
-            let text = super::sse_common::truncate_error_body(super::stream_idle::error_text(read));
+            let text = super::transport::sse_common::truncate_error_body(
+                super::transport::stream_idle::error_text(read),
+            );
             let _ = tx
                 .send(StreamEvent::Error(format!(
                     "HTTP {status} from Codex: {text}"
@@ -488,7 +494,14 @@ impl CodexProvider {
                 .await;
             return;
         }
-        super::attempt_transport::pump_observed(&mut response, &tx, handler, attempt, idle).await;
+        super::transport::attempt_transport::pump_observed(
+            &mut response,
+            &tx,
+            handler,
+            attempt,
+            idle,
+        )
+        .await;
     }
 
     #[cfg(test)]
@@ -497,7 +510,13 @@ impl CodexProvider {
         tx: tokio::sync::mpsc::Sender<StreamEvent>,
     ) {
         let mut handler = CodexSseHandler::new();
-        super::sse_common::pump_sse(&mut response, &tx, &mut handler, Default::default()).await;
+        super::transport::sse_common::pump_sse(
+            &mut response,
+            &tx,
+            &mut handler,
+            Default::default(),
+        )
+        .await;
     }
 
     /// Public accessor for `parse_sse_response` (for BDD/integration tests).
@@ -549,7 +568,7 @@ impl LlmProvider for CodexProvider {
         let provider = self.clone();
         Box::pin(async move {
             let (tx, rx) = tokio::sync::mpsc::channel(64);
-            super::attempt_transport::queue_before_spawn(
+            super::transport::attempt_transport::queue_before_spawn(
                 provider.attempt_admission.as_ref(),
                 call.trace.as_ref(),
             );
@@ -559,9 +578,7 @@ impl LlmProvider for CodexProvider {
     }
 }
 
-#[path = "codex_input.rs"]
 mod codex_input;
-#[path = "codex_replay.rs"]
 mod codex_replay;
 /// FNV-1a 32-bit: fast, dependency-free, deterministic.
 fn fnv1a(text: &str) -> u32 {
@@ -573,10 +590,9 @@ fn fnv1a(text: &str) -> u32 {
     hash
 }
 
-#[path = "codex_sse_handler.rs"]
 mod codex_sse_handler;
 #[cfg(test)]
-use super::sse_common::{SseHandler, SseLineOutcome};
+use super::transport::sse_common::{SseHandler, SseLineOutcome};
 use codex_sse_handler::CodexSseHandler;
 pub(crate) use codex_sse_handler::RESPONSES_CUT_SHORT;
 

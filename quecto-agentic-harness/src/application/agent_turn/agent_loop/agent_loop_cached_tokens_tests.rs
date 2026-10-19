@@ -81,7 +81,7 @@ fn cache_writes(records: &[AuditEvent]) -> Vec<Option<usize>> {
 
 #[tokio::test]
 async fn openai_chat_cached_tokens_are_recorded_as_a_share_of_the_input() {
-    // As `providers::usage::parse_openai_usage` normalizes
+    // As `providers::openai::usage::parse_openai_usage` normalizes
     // `prompt_tokens_details.cached_tokens` (pinned by its `usage_tests`).
     let records = turn_end_records(Some(usage(3_000, Some(6_000), None, 9_000))).await;
     assert_eq!(cached_and_input(&records), vec![(Some(6_000), 9_000)]);
@@ -90,7 +90,7 @@ async fn openai_chat_cached_tokens_are_recorded_as_a_share_of_the_input() {
 
 #[tokio::test]
 async fn codex_responses_cached_tokens_are_recorded() {
-    // As `providers::usage::parse_codex_usage` normalizes
+    // As `providers::openai::usage::parse_codex_usage` normalizes
     // `input_tokens_details.cached_tokens` (pinned by its `usage_tests`).
     let records = turn_end_records(Some(usage(1_000, Some(11_000), None, 12_000))).await;
     assert_eq!(cached_and_input(&records), vec![(Some(11_000), 12_000)]);

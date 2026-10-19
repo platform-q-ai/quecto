@@ -13,10 +13,10 @@ use crate::domain::inference::events::request_observation::RequestTrace;
 use crate::domain::inference::value_objects::cancel_flag::CancelFlag;
 use crate::domain::inference::value_objects::provider::StreamEvent;
 use crate::domain::shared::error::DomainError;
-use crate::infrastructure::providers::attempt_profile::{Profile, Surface, Vendor};
-use crate::infrastructure::providers::attempt_transport::PassiveAttempt;
-use crate::infrastructure::providers::input_prefix::PendingInput;
-use crate::infrastructure::providers::stream_idle::BodyError;
+use crate::infrastructure::providers::transport::attempt_profile::{Profile, Surface, Vendor};
+use crate::infrastructure::providers::transport::attempt_transport::PassiveAttempt;
+use crate::infrastructure::providers::transport::input_prefix::PendingInput;
+use crate::infrastructure::providers::transport::stream_idle::BodyError;
 
 /// Everything one request's sends share.
 #[derive(Clone)]
@@ -162,7 +162,7 @@ impl CodexProvider {
             .apply_headers(self.client.post(&call.url), call.session.as_deref())
             .json(body);
         if let Some(gate) = &self.attempt_admission {
-            return super::super::attempt_transport::assembled(
+            return super::super::transport::attempt_transport::assembled(
                 gate,
                 call.trace.clone(),
                 call.cancel.as_ref(),
@@ -187,7 +187,7 @@ impl CodexProvider {
                 .map_err(|e| {
                     DomainError::Provider(format!(
                         "Codex request failed: {}",
-                        super::super::sse_common::format_send_error(&e)
+                        super::super::transport::sse_common::format_send_error(&e)
                     ))
                 })?,
             Err(silent) => {
@@ -202,7 +202,8 @@ impl CodexProvider {
         if status != 200 {
             let read = idle.text(resp).await;
             attempt.iter().for_each(|a| a.error_read(status, &read));
-            let error_body = crate::infrastructure::providers::stream_idle::error_text(read);
+            let error_body =
+                crate::infrastructure::providers::transport::stream_idle::error_text(read);
             return Err(DomainError::Provider(format!(
                 "HTTP {status} from Codex: {error_body}"
             )));
@@ -278,7 +279,7 @@ impl CodexProvider {
                 let builder = self
                     .apply_headers(self.client.post(&call.url), call.session.as_deref())
                     .json(&body);
-                super::super::attempt_transport::stream(
+                super::super::transport::attempt_transport::stream(
                     gate,
                     (call.trace.clone(), call.cancel.as_ref()),
                     builder,

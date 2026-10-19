@@ -1,12 +1,3 @@
-pub mod agents_instructions;
-#[cfg(test)]
-mod agents_instructions_tests;
-pub mod config_admission;
-pub mod parent_playbook;
-#[cfg(test)]
-mod parent_playbook_tests;
-pub mod reload;
-pub mod runtime_configuration;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
@@ -723,7 +714,16 @@ pub mod mapping;
 pub mod context_marks;
 pub mod persistence;
 // #2414: the removed context keys, refused at load.
+pub mod agents_instructions;
+#[cfg(test)]
+mod agents_instructions_tests;
+pub mod config_admission;
+pub mod parent_playbook;
+#[cfg(test)]
+mod parent_playbook_tests;
+pub mod reload;
 pub mod removed_keys;
+pub mod runtime_configuration;
 pub mod writer;
 
 #[cfg(test)]

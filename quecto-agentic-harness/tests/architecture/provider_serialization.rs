@@ -5,17 +5,17 @@ use std::fs;
 use std::path::Path;
 
 const SOURCE_CAPS: &[(&str, usize)] = &[
-    ("src/infrastructure/providers/openai_request.rs", 200),
+    ("src/infrastructure/providers/openai/openai_request.rs", 200),
     (
         "src/infrastructure/providers/anthropic/request_body.rs",
         300,
     ),
-    ("src/infrastructure/providers/codex_request.rs", 200),
+    ("src/infrastructure/providers/codex/codex_request.rs", 200),
     ("src/application/agent_turn/agent_loop/request.rs", 450),
     ("src/application/agent_turn/agent_loop/run_loop.rs", 350),
-    ("src/infrastructure/providers/openai.rs", 750),
+    ("src/infrastructure/providers/openai/mod.rs", 750),
     ("src/infrastructure/providers/anthropic/mod.rs", 750),
-    ("src/infrastructure/providers/codex.rs", 750),
+    ("src/infrastructure/providers/codex/mod.rs", 750),
     (
         "src/application/agent_turn/agent_loop/agent_loop_turn_flow.rs",
         750,

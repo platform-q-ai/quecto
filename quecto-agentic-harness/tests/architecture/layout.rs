@@ -352,6 +352,8 @@ fn source_tree_layout_obeys_checked_in_policy() {
 mod environments;
 #[path = "layout/fixtures.rs"]
 mod fixtures;
+#[path = "layout/providers.rs"]
+mod providers;
 
 const AGENT_MODULES: &[&str] = &[
     "agent",

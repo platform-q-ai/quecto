@@ -4,7 +4,7 @@
 //! Split from `config.rs` to keep that file within the line-count gate.
 use serde::{Deserialize, Serialize};
 
-use crate::infrastructure::providers::stream_idle::{StreamIdle, StreamLimits};
+use crate::infrastructure::providers::transport::stream_idle::{StreamIdle, StreamLimits};
 
 /// The stream limits of one provider entry, in seconds; unset is the
 /// default. Serialized flat into the entry.

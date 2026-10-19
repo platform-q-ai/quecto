@@ -1,6 +1,6 @@
 //! SSE response parser for OpenAI chat completions.
 //!
-//! Extracted from `openai.rs` to keep the provider file under the 750-line
+//! Extracted from `openai/mod.rs` to keep the provider file under the 750-line
 //! limit and to make the parser independently testable.
 
 use crate::domain::conversation::value_objects::message::ToolCall;
@@ -24,7 +24,7 @@ pub(crate) const MAX_OPENAI_SSE_CONTENT_BYTES: usize = 8 * 1024 * 1024;
 /// adversarial tool-call argument accumulator from growing without bound.
 pub(crate) const MAX_OPENAI_SSE_TOOL_ARGUMENT_BYTES: usize = 2 * 1024 * 1024;
 
-pub(crate) use crate::infrastructure::providers::sse_limits::append_with_limit;
+pub(crate) use crate::infrastructure::providers::transport::sse_limits::append_with_limit;
 
 /// The stop reason a Chat Completions `choice` reports, if it names one
 /// (#2116). A choice without a string `finish_reason` reports nothing, so
@@ -60,10 +60,11 @@ pub(crate) fn parse_sse_response(raw: &str) -> Result<LlmResponse, DomainError> 
 
     for line in raw.lines() {
         let line = line.trim_end();
-        let Some(data) = crate::infrastructure::providers::sse_common::event_data(line) else {
+        let Some(data) = crate::infrastructure::providers::transport::sse_common::event_data(line)
+        else {
             continue;
         };
-        if crate::infrastructure::providers::sse_end::is_done_marker(data) {
+        if crate::infrastructure::providers::transport::sse_end::is_done_marker(data) {
             break;
         }
         let chunk: serde_json::Value = serde_json::from_str(data).unwrap_or_default();
@@ -82,9 +83,7 @@ pub(crate) fn parse_sse_response(raw: &str) -> Result<LlmResponse, DomainError> 
         }
 
         if let Some(u) = chunk.get("usage").and_then(|v| v.as_object()) {
-            usage = Some(crate::infrastructure::providers::usage::parse_openai_usage(
-                u,
-            ));
+            usage = Some(crate::infrastructure::providers::openai::usage::parse_openai_usage(u));
         }
     }
 

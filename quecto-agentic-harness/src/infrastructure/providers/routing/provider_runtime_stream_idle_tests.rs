@@ -10,7 +10,7 @@ fn inputs(base_dir: &std::path::Path) -> AgentRuntimeInputs {
         http_client: client.clone(),
         refresh_fn: crate::infrastructure::auth::refresh_wiring::make_oauth_refresh_fn(),
         openai_oauth_factory:
-            crate::infrastructure::providers::provider_factory::make_provider_factory(
+            crate::infrastructure::providers::routing::provider_factory::make_provider_factory(
                 "openai", None, client,
             ),
         model_registry: crate::infrastructure::providers::catalogue::model_registry::ModelRegistry::load_from_path(
@@ -147,7 +147,7 @@ fn a_configured_limit_binds_its_providers() {
         .unwrap();
     assert!(shows(&*built, 300), "{built:?}");
 
-    let limits = crate::infrastructure::providers::stream_idle::StreamLimits {
+    let limits = crate::infrastructure::providers::transport::stream_idle::StreamLimits {
         idle_seconds: Some(1200),
         progress_seconds: None,
     };
@@ -159,16 +159,17 @@ fn a_configured_limit_binds_its_providers() {
             .unwrap();
         assert!(shows(&*built, 1200), "{name}: {built:?}");
     }
-    let rebuild = crate::infrastructure::providers::provider_factory::make_bounded_provider_factory(
-        "openai", None, idle, client,
-    );
+    let rebuild =
+        crate::infrastructure::providers::routing::provider_factory::make_bounded_provider_factory(
+            "openai", None, idle, client,
+        );
     let rebuilt = rebuild("plain-non-jwt-token");
     assert!(shows(&*rebuilt, 1200), "{rebuilt:?}");
 }
 
 #[test]
 fn the_allowed_ranges_are_half_a_minute_to_half_an_hour_and_a_minute_to_an_hour() {
-    use crate::infrastructure::providers::stream_idle::StreamLimits;
+    use crate::infrastructure::providers::transport::stream_idle::StreamLimits;
     let idle = |seconds| StreamLimits {
         idle_seconds: Some(seconds),
         progress_seconds: None,

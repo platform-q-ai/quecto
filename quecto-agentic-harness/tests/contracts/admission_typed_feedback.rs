@@ -1,5 +1,5 @@
 //! #1679 P2 AC5: typed body/event classification, never human error prose.
-use quecto::infrastructure::providers::admission_feedback::is_typed_throttle;
+use quecto::infrastructure::providers::transport::admission_feedback::is_typed_throttle;
 use serde_json::json;
 
 #[test]

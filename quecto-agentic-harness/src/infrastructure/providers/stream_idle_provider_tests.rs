@@ -9,7 +9,7 @@ use std::sync::Arc;
 use super::anthropic::AnthropicProvider;
 use super::codex::CodexProvider;
 use super::openai::OpenAiProvider;
-use super::stream_idle::tests::{GAP, LIVE, SILENT, bounded, servers};
+use super::transport::stream_idle::tests::{GAP, LIVE, SILENT, bounded, servers};
 
 /// The total bound for a whole reply: past the idle bound, so a reply the
 /// idle bound would end still arrives within it.
@@ -49,8 +49,11 @@ impl crate::application::ports::AttemptAdmission for Grant {
         })
     }
 }
-pub(super) fn single_attempt() -> super::SingleAttemptClient {
-    super::SingleAttemptClient::build(reqwest::Client::builder().no_proxy()).unwrap()
+pub(super) fn single_attempt() -> super::transport::single_attempt_client::SingleAttemptClient {
+    super::transport::single_attempt_client::SingleAttemptClient::build(
+        reqwest::Client::builder().no_proxy(),
+    )
+    .unwrap()
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -87,7 +90,7 @@ impl Vendor {
         gated: bool,
         bound: std::time::Duration,
     ) -> Arc<dyn LlmProvider> {
-        let bounds = super::stream_idle::StreamIdle::new(bound).with_total(WHOLE);
+        let bounds = super::transport::stream_idle::StreamIdle::new(bound).with_total(WHOLE);
         self.bounded_provider(url, gated, bounds)
     }
 
@@ -96,7 +99,7 @@ impl Vendor {
         self,
         url: String,
         gated: bool,
-        bounds: super::stream_idle::StreamIdle,
+        bounds: super::transport::stream_idle::StreamIdle,
     ) -> Arc<dyn LlmProvider> {
         let client = reqwest::Client::new();
         let gate = || (Arc::new(Grant), single_attempt());
@@ -216,12 +219,12 @@ pub(super) fn terminations(trace: &RequestTrace) -> Vec<Termination> {
 
 /// The idle error of an SSE body for the [`SILENT`] bound: no event came.
 fn idle_message() -> String {
-    super::stream_idle::tests::no_event_message(SILENT)
+    super::transport::stream_idle::tests::no_event_message(SILENT)
 }
 
 /// The idle error of a send no response head answered: nothing came.
 fn send_idle_message() -> String {
-    super::stream_idle::tests::idle_message(SILENT)
+    super::transport::stream_idle::tests::idle_message(SILENT)
 }
 
 fn is_idle_event(event: &Option<StreamEvent>) -> bool {
@@ -461,7 +464,7 @@ async fn a_whole_reply_is_bounded_in_total_not_by_silence() {
 /// bound, as a timeout, recorded as `Termination::TimedOut` where observed.
 #[tokio::test]
 async fn a_whole_reply_that_never_arrives_is_abandoned_at_the_total_limit() {
-    let expected = super::stream_idle::tests::timed_out_message(WHOLE);
+    let expected = super::transport::stream_idle::tests::timed_out_message(WHOLE);
     for vendor in [Vendor::OpenAi, Vendor::Anthropic] {
         for gated in [false, true] {
             let url = servers::never_answering().await;
