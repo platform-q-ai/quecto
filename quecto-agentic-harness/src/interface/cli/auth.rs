@@ -4,6 +4,7 @@ mod browser;
 mod handles;
 mod status;
 pub use handles::{AuthEnvironment, AuthHandles, AuthHandlesBuilder};
+pub(super) use status::{credential_entry, shown_name, shown_text};
 
 use super::CliContext;
 use crate::application::auth::dto::{LoginError, Removal, RemoveError};

@@ -164,3 +164,17 @@ fn a_hand_edited_provider_name_cannot_forge_an_auth_status_line() {
         )
     );
 }
+
+#[test]
+fn a_shown_name_is_escaped_and_capped_at_its_limit() {
+    use super::{SHOWN_NAME_CHARS, shown_name, shown_text};
+    let exact = "n".repeat(SHOWN_NAME_CHARS);
+    assert_eq!(shown_name(&exact), exact, "a name at the limit is whole");
+    assert_eq!(
+        shown_name(&format!("{exact}x")),
+        format!("{exact}…"),
+        "one past the limit is cut"
+    );
+    assert_eq!(shown_name("a\tb\u{7}c"), r"a\tb\u{7}c");
+    assert_eq!(shown_text(&"w".repeat(200)), "w".repeat(200));
+}

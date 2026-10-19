@@ -1,3 +1,4 @@
+use super::auth::{credential_entry, shown_name, shown_text};
 use super::config_loading::{layer_diagnostics, overlay_summary};
 use super::{CliContext, selected_config_missing};
 use crate::application::configuration::dto::ConfigurationInspection;
@@ -58,11 +59,14 @@ fn present(inspection: &ConfigurationInspection, stdout: &mut String, stderr: &m
         stderr.push('\n');
     }
     let settings = &inspection.settings;
-    stdout.push_str(&format!("  Workspace: {}\n", settings.workspace));
-    stdout.push_str(&format!("  Model:     {}\n", settings.model));
+    stdout.push_str(&format!(
+        "  Workspace: {}\n",
+        shown_text(&settings.workspace)
+    ));
+    stdout.push_str(&format!("  Model:     {}\n", shown_text(&settings.model)));
     stdout.push_str(&format!(
         "  Effort:    {}\n",
-        settings.effort.as_deref().unwrap_or("default")
+        shown_text(settings.effort.as_deref().unwrap_or("default"))
     ));
     let presence = |set: bool| if set { "configured" } else { "not set" };
     stdout.push_str(&format!(
@@ -76,7 +80,12 @@ fn present(inspection: &ConfigurationInspection, stdout: &mut String, stderr: &m
     if !settings.endpoint_keys.is_empty() {
         stdout.push_str(&format!(
             "  Endpoint keys: {}\n",
-            settings.endpoint_keys.join(", ")
+            settings
+                .endpoint_keys
+                .iter()
+                .map(|prefix| shown_name(prefix))
+                .collect::<Vec<_>>()
+                .join(", ")
         ));
     }
     let credentials = match &inspection.stored_credentials {
@@ -84,10 +93,7 @@ fn present(inspection: &ConfigurationInspection, stdout: &mut String, stderr: &m
         Ok(stored) => stored
             .iter()
             .map(|credential| {
-                format!(
-                    "{} ({}) — {}",
-                    credential.provider, credential.method, credential.state
-                )
+                credential_entry(&credential.provider, &credential.method, &credential.state)
             })
             .collect::<Vec<_>>()
             .join(", "),
