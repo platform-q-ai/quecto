@@ -1212,6 +1212,16 @@ fn application_dependencies_allowed_at(file: &str, content: &str) -> bool {
     refused_application_paths(file, content).is_empty()
 }
 
+/// Per-file exceptions to the infrastructure → application rule: (file,
+/// path). The swarm tool's test support (mounted only in test and
+/// `test-support` builds) builds the lifecycle service the deleted
+/// `application::ports` facade re-exported as `SwarmTestLifecycle` under the
+/// same cfg (#2367); no production file may name it.
+const TEST_SUPPORT_APPLICATION_PATHS: &[(&str, &str)] = &[(
+    "src/infrastructure/tools/swarm/swarm_test_support.rs",
+    "crate::application::swarm::LifecycleService",
+)];
+
 /// The crate paths `file` names that the infrastructure → application rule
 /// refuses, relative paths resolved; a file that does not parse is refused.
 fn refused_application_paths(file: &str, content: &str) -> Vec<String> {
@@ -1219,6 +1229,7 @@ fn refused_application_paths(file: &str, content: &str) -> Vec<String> {
         Some(paths) => paths
             .into_iter()
             .filter(|path| !application_path_allowed(path))
+            .filter(|path| !TEST_SUPPORT_APPLICATION_PATHS.contains(&(file, path.as_str())))
             .collect(),
         None => vec!["<does not parse>".to_string()],
     }
@@ -1490,9 +1501,6 @@ fn application_path_allowed(path: &str) -> bool {
             "subagent_launch",
             "LaunchFuture" | "SubagentLaunchPorts",
         ] => true,
-        // The swarm tool's test support builds the lifecycle service the
-        // facade re-exported as `SwarmTestLifecycle` (test-support builds).
-        ["crate", "application", "swarm", "LifecycleService"] => true,
         // A tool call's own work carries its panic scope (#2192, ADR-0029):
         // only `call_work`, which joins what it spawns (`carried_work_is_joined`),
         // and catches a panic of work whose call answers it itself (#2517;
@@ -3875,8 +3883,8 @@ fn dependency_allowlists_use_paths_not_substrings() {
     for source in [
         // The shared ports facade is gone (#2367): its old path is refused.
         "use crate::application::ports::EnvironmentRuntime;",
-        "use crate::application::secret::Bad; // crate::application::ports",
-        "use crate::application::{ports::Good, secret::Bad};",
+        "use crate::application::secret::Bad; // crate::application::environments::ports::EnvironmentRuntime",
+        "use crate::application::{environments::ports::Good, secret::Bad};",
         "fn effect() { crate::application::secret::run(); }",
         "use crate::application::environments::use_cases::ListEnvironmentsQueryExtra;",
         // The patch handle is a use-case handle, never an infrastructure
@@ -3905,6 +3913,25 @@ fn dependency_allowlists_use_paths_not_substrings() {
     ] {
         assert!(!application_dependencies_allowed(source), "{source}");
     }
+}
+
+/// The swarm lifecycle service is named only by the swarm tool's test
+/// support (#2367 review): the same path in any production infrastructure
+/// file is refused.
+#[test]
+fn only_swarm_test_support_names_the_lifecycle_service() {
+    let source = "fn probe() -> crate::application::swarm::LifecycleService { loop {} }";
+    assert_eq!(
+        refused_application_paths("src/infrastructure/tools/swarm/swarm_control.rs", source),
+        ["crate::application::swarm::LifecycleService"]
+    );
+    assert_eq!(
+        refused_application_paths(
+            "src/infrastructure/tools/swarm/swarm_test_support.rs",
+            source
+        ),
+        Vec::<String>::new()
+    );
 }
 
 #[test]
@@ -4977,7 +5004,7 @@ fn subagent_teardown_ports_are_capability_local() {
 fn subagent_teardown_guards_reject_outward_and_wire_dependencies() {
     for dep in [
         "crate::infrastructure::tools::agents::subagent_registry::SubagentRegistry",
-        "crate::application::ports::SessionStore",
+        "crate::application::sessions::ports::SessionStore",
         "crate::application::environments::use_cases::ListEnvironmentsQuery",
         "crate::interface::uds::subagent_teardown::wire::TeardownResponse",
         "tokio::sync::Notify",
@@ -5006,7 +5033,7 @@ fn subagent_teardown_guards_reject_outward_and_wire_dependencies() {
     for dep in [
         "crate::infrastructure::tools::agents::subagent_registry::SubagentRegistry",
         "crate::interface::cli::uds::DispatchCtx",
-        "crate::application::ports::SessionStore",
+        "crate::application::sessions::ports::SessionStore",
         "tokio::net::UnixStream",
         "std::os::unix::net::UnixStream",
     ] {
