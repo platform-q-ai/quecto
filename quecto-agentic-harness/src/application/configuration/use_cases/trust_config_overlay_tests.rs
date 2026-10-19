@@ -28,7 +28,10 @@ fn a_valid_overlay_is_approved_by_content() {
 fn nothing_that_would_not_apply_is_approved() {
     type Expectation = fn(&OverlayTrustError) -> bool;
     let cases: [(&str, Expectation); 5] = [
-        ("{ nope", |e| matches!(e, OverlayTrustError::Parse { .. })),
+        (
+            "{ nope",
+            |e| matches!(e, OverlayTrustError::Parse { reason, .. } if reason == "malformed JSON at line 1 column 3"),
+        ),
         ("[1]", |e| matches!(e, OverlayTrustError::NotAnObject(_))),
         (
             r#"{"providers":{}}"#,
