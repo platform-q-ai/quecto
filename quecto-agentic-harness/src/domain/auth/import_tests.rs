@@ -13,9 +13,11 @@ fn stated(expires_at: Option<i64>, refresh_token: Option<&str>) -> Credential {
 }
 
 #[test]
-fn only_an_entry_with_an_access_token_is_importable() {
-    assert!(importable("fake-access"));
-    assert!(!importable(""));
+fn an_entry_with_an_access_or_a_refresh_token_is_importable() {
+    assert!(importable("fake-access", ""));
+    assert!(importable("", "fake-refresh"));
+    assert!(importable("fake-access", "fake-refresh"));
+    assert!(!importable("", ""));
 }
 
 #[test]

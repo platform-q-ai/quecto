@@ -38,8 +38,8 @@ impl ImportExternalCredentials {
     }
 
     /// Import every importable external credential, in the source's order.
-    /// One that would be stored expired, with a refresh token, is refreshed
-    /// first; a failed refresh ends the import there (what was
+    /// One with a refresh token is refreshed first when it has no access
+    /// token or would be stored expired; a failed refresh ends the import there (what was
     /// stored stays stored). A failed store is reported and the import
     /// goes on.
     pub fn execute(&self) -> Result<ImportReport, ImportError> {
@@ -56,11 +56,15 @@ impl ImportExternalCredentials {
         };
         for found in external
             .into_iter()
-            .filter(|found| importable(&found.access_token))
+            .filter(|found| importable(&found.access_token, &found.refresh_token))
         {
             let provider = found.provider;
             let stated = as_stated(&found);
             let refreshed = import_refresh_due(&stated, self.clock.now_unix_secs());
+            debug_assert!(
+                refreshed || !stated.token.is_empty(),
+                "a credential without an access token is refreshed, never stored empty"
+            );
             let credential = match refreshed {
                 true => match self.refreshed(found) {
                     Ok(credential) => credential,
