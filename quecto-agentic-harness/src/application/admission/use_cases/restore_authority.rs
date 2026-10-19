@@ -39,10 +39,12 @@ impl RestoreAuthority {
             .map_err(|error| RestoreError::Unreadable(format!("{error:?}")))?;
         let mut authority = match ledger {
             Some(ledger) => AdmissionAuthority::restore(start.policy, &ledger, secrets, now),
-            None if start.previously_operated && !start.accept_missing_ledger => {
-                return Err(RestoreError::MissingLedger);
+            // No ledger is owed: a fresh directory, or the operator accepted
+            // starting empty after prior operation.
+            None if !start.previously_operated || start.accept_missing_ledger => {
+                AdmissionAuthority::new(FIRST_EPOCH, start.policy, secrets)
             }
-            None => AdmissionAuthority::new(FIRST_EPOCH, start.policy, secrets),
+            None => return Err(RestoreError::MissingLedger),
         }
         .map_err(RestoreError::Incompatible)?;
         persist_current(&self.journal, &mut authority, now).map_err(RestoreError::NotDurable)?;

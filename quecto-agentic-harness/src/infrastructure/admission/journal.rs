@@ -123,10 +123,6 @@ impl FileJournal {
 
     /// `None` only when no ledger file exists. Any unreadable or corrupt file is
     /// an error: an authority must never restart with an empty ledger by accident.
-    pub fn load(dir: &AuthorityDirectory) -> Result<Option<AdmissionLedger>, JournalError> {
-        Self::read(&dir.journal_path())
-    }
-
     fn read(path: &std::path::Path) -> Result<Option<AdmissionLedger>, JournalError> {
         match fs::read(path) {
             Ok(bytes) => decode(&bytes).map(Some),

@@ -8,6 +8,7 @@
 
 use super::oauth_callback_request::{CallbackConnection, CallbackLimits, Framed};
 use crate::domain::shared::error::DomainError;
+use crate::domain::shared::secret_compare::constant_time_eq;
 use tokio::net::TcpListener;
 use tokio::time::Instant;
 
@@ -178,17 +179,6 @@ fn route(line: &str, callback_path: &str, expected_state: &str) -> Route {
         Some(code) if !code.is_empty() => Route::Authorized(code.to_string()),
         Some(_) | None => Route::Declined(MISSING_CODE_RESPONSE),
     }
-}
-
-/// Compare two strings in time that depends only on their lengths, so the
-/// callback's state cannot be guessed byte by byte from response timing.
-fn constant_time_eq(a: &str, b: &str) -> bool {
-    let (a, b) = (a.as_bytes(), b.as_bytes());
-    let mut diff = a.len() ^ b.len();
-    for (x, y) in a.iter().zip(b.iter()) {
-        diff |= usize::from(x ^ y);
-    }
-    diff == 0
 }
 
 #[cfg(test)]

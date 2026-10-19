@@ -411,10 +411,33 @@ broker. Its use cases under `use_cases/` are `inspect_authority`,
 `negotiate_authority` — the one home of the rule that a **child inherits its
 parent's authority unconditionally** (#2023): an inherited `--admission-context`
 always wins over the child's own (possibly `null`) config. Its capability-local
-ports (`ports.rs`) are `AuthorityAdmin` (admin-socket inspect/reset, addressed
-by directory) and `AuthorityServiceManager` (the systemd *user* unit and
-`systemctl --user` lifecycle); connection and reconnect stay behind the existing
-admission client port. DTOs are in `dto.rs`.
+ports live in `ports/` (`mod.rs` holds `AuthorityAdmin`, admin-socket
+inspect/reset addressed by directory, and `AuthorityServiceManager`, the systemd
+*user* unit and `systemctl --user` lifecycle; `inference_admission.rs`,
+`inference_attempt.rs`, `inference_authority_ports.rs` and
+`inference_observation.rs` hold the runtime authority's ports); connection and
+reconnect stay behind the existing admission client port. DTOs are in `dto/`
+(`authority.rs` for the admin reports, `service.rs`, `negotiation.rs`, and
+`broker.rs` for the running authority's own values: `Credential`,
+`AuthorityError`, `AuthorityStatus`, `Settlement`, `AuthorityStart` and
+`RestoreError`).
+
+The running authority (#1910) is the admission service and the credential-gated
+`AdmissionAuthority` over it, both in `services/`. The authority holds no
+journal: the use cases own durability and session policy, each holding the one
+`SharedJournal` composition builds (`build_authority_use_cases`):
+`restore_authority` (reads the ledger through `AdmissionJournal::load`, refuses
+a ledger missing after prior operation unless the operator accepted it, and
+makes the initial ledger durable), `settle_authority` (one turn: dispatch
+through `dispatch_admissions`, which persists a grant before it is visible,
+then the waiter answers, the cancellations due and the next wake),
+`complete_admission` (a release is durable before it is acknowledged),
+`advance_authority_epoch` (an operator reset is durable before it is adopted),
+`bind_scope` and `disconnect_scope` (a connection's scope bound, superseded or
+dropped). The authority's raw operations are visible only inside the
+capability. The broker's actor (`src/infrastructure/admission/server_actor.rs`)
+keeps only transport: sessions, bindings, the handshake, the owner-token and
+admin-role gates, and the timer for the next wake.
 
 Infrastructure: `src/infrastructure/admission/admin_adapter.rs`
 (`SocketAuthorityAdmin` over `AdminConnection`), `link.rs` (`AuthorityLink`, the

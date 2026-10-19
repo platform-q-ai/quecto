@@ -21,6 +21,7 @@ use crate::application::admission::ports::inference_authority_ports::{
 };
 use crate::application::admission::services::inference_admission::AdmissionService;
 use crate::domain::admission::value_objects::inference_admission::*;
+use crate::domain::shared::secret_compare::constant_time_eq;
 
 /// The journal failing is the authority's `JournalUnavailable`: grants and
 /// acknowledgements fail closed.
@@ -44,17 +45,6 @@ pub struct AdmissionAuthority<S> {
     issued: BTreeMap<ScopeId, Issued>,
     groups: Vec<GroupId>,
     journal_healthy: bool,
-}
-
-/// Compare two capability secrets without an early exit on the first
-/// difference.
-pub fn constant_time_eq(a: &str, b: &str) -> bool {
-    let (a, b) = (a.as_bytes(), b.as_bytes());
-    let mut diff = a.len() ^ b.len();
-    for (x, y) in a.iter().zip(b.iter()) {
-        diff |= usize::from(x ^ y);
-    }
-    diff == 0
 }
 
 impl<S: AdmissionSecretSource> AdmissionAuthority<S> {

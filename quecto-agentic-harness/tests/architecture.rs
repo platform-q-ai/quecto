@@ -1234,10 +1234,6 @@ const AUTHORITY_SERVER_APPLICATION_PATHS: &[(&str, &str)] = &[
         "crate::application::admission::dto::broker::RestoreError",
     ),
     (
-        "src/infrastructure/admission/server_actor.rs",
-        "crate::application::admission::services::inference_authority::constant_time_eq",
-    ),
-    (
         "src/infrastructure/admission/server.rs",
         "crate::application::admission::use_cases::CompleteAdmission",
     ),
@@ -4049,10 +4045,7 @@ fn only_the_authority_server_names_the_durability_use_cases() {
     );
     let elsewhere = "src/infrastructure/admission/link.rs";
     let service = "crate::application::admission::services::inference_authority::";
-    let (authority, token) = (
-        format!("{service}AdmissionAuthority"),
-        format!("{service}constant_time_eq"),
-    );
+    let authority = format!("{service}AdmissionAuthority");
     let use_case = |name: &str| format!("crate::application::admission::use_cases::{name}");
     let durable = [
         "AdvanceAuthorityEpoch",
@@ -4083,8 +4076,7 @@ fn only_the_authority_server_names_the_durability_use_cases() {
             "{path}"
         );
     }
-    assert!(!refused(actor, &authority) && !refused(actor, &token));
-    assert!(refused(server, &token) && refused(elsewhere, &token));
+    assert!(!refused(actor, &authority));
     // Dispatch is settling's own step, and any other admission use case
     // stays refused, even in the server.
     assert!(refused(server, &use_case("DispatchAdmissions")));
@@ -4102,7 +4094,6 @@ fn only_the_authority_server_names_the_durability_use_cases() {
 #[test]
 fn the_authority_surface_is_an_exhaustive_allowlist() {
     const PUBLIC: &[&str] = &[
-        "constant_time_eq",
         "new",
         "restore",
         "register_root",
@@ -4271,16 +4262,33 @@ fn the_authority_actor_settles_binds_and_disconnects_through_use_cases() {
 #[test]
 fn the_authority_server_neither_reads_the_journal_nor_builds_the_authority() {
     let server = production_source("src/infrastructure/admission/server.rs");
-    for needle in ["FileJournal", "AdmissionAuthority::", ".checkpoint"] {
-        assert!(!server.contains(needle), "server.rs names `{needle}`");
+    for file in [
+        "src/infrastructure/admission/server.rs",
+        "src/infrastructure/admission/server_actor.rs",
+    ] {
+        let source = production_source(file);
+        for needle in ["FileJournal", "AdmissionAuthority::", ".checkpoint"] {
+            assert!(!source.contains(needle), "{file} names `{needle}`");
+        }
     }
     let compact: String = server.split_whitespace().collect();
     assert!(
         compact.contains("use_cases.restore.execute("),
         "the server restores through its use case"
     );
-    let actor = production_source("src/infrastructure/admission/server_actor.rs");
-    assert!(!actor.contains("fn constant_time_eq("), "one token check");
+    // One constant-time comparison, in the domain's shared primitives, used
+    // by every secret check.
+    let mut files = Vec::new();
+    teardown_authority::walk(Path::new("src"), &mut files);
+    let owners: Vec<String> = files
+        .into_iter()
+        .filter(|file| {
+            fs::read_to_string(file)
+                .unwrap()
+                .contains("fn constant_time_eq(")
+        })
+        .collect();
+    assert_eq!(owners, ["src/domain/shared/secret_compare.rs"], "one owner");
     let journal = production_source("src/application/admission/ports/inference_authority_ports.rs");
     assert!(
         journal

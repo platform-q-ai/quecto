@@ -20,12 +20,11 @@ use super::protocol::*;
 use super::secret::RandomSecretSource;
 use super::server::{AuthorityUseCases, Clock, wall_ms};
 use crate::application::admission::dto::broker::{AuthorityError, Credential};
-use crate::application::admission::services::inference_authority::{
-    AdmissionAuthority, constant_time_eq,
-};
+use crate::application::admission::services::inference_authority::AdmissionAuthority;
 use crate::domain::admission::value_objects::inference_admission::{
     RequestId, RequestState, ScopeId, TerminalOutcome,
 };
+use crate::domain::shared::secret_compare::constant_time_eq;
 
 pub(super) enum Command {
     Open {
