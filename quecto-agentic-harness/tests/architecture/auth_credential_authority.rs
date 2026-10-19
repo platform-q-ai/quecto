@@ -21,9 +21,6 @@ const MAY_READ_EXPIRY: &[&str] = &[
     "src/domain/auth/credential.rs",
     // The boundary mapping of the domain credential to its file record.
     "src/infrastructure/auth/credential_store.rs",
-    // Transitional: `OAuthStoreParams.expires_at` in the browser login,
-    // which #2591 (A2 of #1839) retires; drop this row with it.
-    "src/interface/cli/auth.rs",
 ];
 
 /// The two readers of credential presence, and the domain rule each asks.

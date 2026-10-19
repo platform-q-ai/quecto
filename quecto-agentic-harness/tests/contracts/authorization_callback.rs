@@ -44,26 +44,47 @@ fn call(port: u16, path: &str) -> String {
     answer
 }
 
+/// How long a listener under test waits: long enough for a loaded
+/// runner, short enough that a lost port race costs seconds, not the
+/// production 300.
+const TEST_CALLBACK_SECS: u64 = 15;
+
 /// The xAI listener on a test server's loopback redirect, receiving on a
-/// thread while `calls` run against it.
+/// thread while `calls` run against it. `calls` answers whether every
+/// answer came from this listener: a free port can be taken by another
+/// test's server between its release and the listener's bind, and then
+/// the attempt is repeated on a fresh port.
 fn receive_while(
-    calls: impl FnOnce(u16) + Send + 'static,
+    calls: impl Fn(u16) -> bool + Send + Sync + Clone + 'static,
 ) -> Result<String, AuthorizationCallbackError> {
-    let port = free_port();
-    let login = OAuthBrowserLogin::new(OAuthEndpoints::new(Some(format!(
-        "http://127.0.0.1:{port}"
-    ))));
-    let caller = std::thread::spawn(move || calls(port));
-    let received = login.receive(LoginProvider::Xai, "fake-state");
-    caller.join().unwrap();
-    received
+    for _attempt in 0..3 {
+        let port = free_port();
+        let login = OAuthBrowserLogin::with_callback_timeout_secs(
+            OAuthEndpoints::new(Some(format!("http://127.0.0.1:{port}"))),
+            TEST_CALLBACK_SECS,
+        );
+        let caller = {
+            let calls = calls.clone();
+            std::thread::spawn(move || calls(port))
+        };
+        let received = login.receive(LoginProvider::Xai, "fake-state");
+        if caller.join().unwrap() {
+            return received;
+        }
+    }
+    panic!("three free ports were taken before the listener bound them");
+}
+
+/// Whether `answer` is the listener's (a port race answers otherwise).
+fn from_the_listener(answer: &str, status: &str) -> bool {
+    answer.starts_with(status)
 }
 
 #[test]
 fn the_callback_carrying_the_state_returns_its_code() {
     let received = receive_while(|port| {
         let answer = call(port, "/callback?code=fake-code&state=fake-state");
-        assert!(answer.starts_with("HTTP/1.1 200"), "{answer}");
+        from_the_listener(&answer, "HTTP/1.1 200")
     });
     assert_eq!(received, Ok("fake-code".to_string()));
 }
@@ -72,8 +93,16 @@ fn the_callback_carrying_the_state_returns_its_code() {
 fn a_callback_with_another_state_is_refused_and_waiting_goes_on() {
     let received = receive_while(|port| {
         let refused = call(port, "/callback?code=forged&state=other");
-        assert!(refused.starts_with("HTTP/1.1 400"), "{refused}");
-        call(port, "/callback?code=fake-code&state=fake-state");
+        if !from_the_listener(
+            &refused,
+            "HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 14\r\n\r\nState mismatch",
+        ) {
+            return false;
+        }
+        from_the_listener(
+            &call(port, "/callback?code=fake-code&state=fake-state"),
+            "HTTP/1.1 200",
+        )
     });
     assert_eq!(received, Ok("fake-code".to_string()));
 }
@@ -81,7 +110,10 @@ fn a_callback_with_another_state_is_refused_and_waiting_goes_on() {
 #[test]
 fn an_oauth_error_callback_is_a_failure_to_paste_past() {
     let received = receive_while(|port| {
-        call(port, "/callback?error=access_denied&state=fake-state");
+        from_the_listener(
+            &call(port, "/callback?error=access_denied&state=fake-state"),
+            "HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 12\r\n\r\nAuth failure",
+        )
     });
     assert!(
         matches!(received, Err(AuthorizationCallbackError::Failed(_))),

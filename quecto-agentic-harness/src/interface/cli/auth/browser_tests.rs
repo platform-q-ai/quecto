@@ -69,9 +69,11 @@ impl TokenExchange for IssuesForTheCallbackCode {
 /// endpoint.
 fn callback_rig(environment: &AuthEnvironment) -> AuthHandles {
     let mut handles = crate::composition::bootstrap::auth::build_auth_handles(environment);
-    let listener = Arc::new(OAuthBrowserLogin::new(OAuthEndpoints::new(
-        environment.oauth_base_url.clone(),
-    )));
+    // A short wait: a lost port race (see the test) costs seconds.
+    let listener = Arc::new(OAuthBrowserLogin::with_callback_timeout_secs(
+        OAuthEndpoints::new(environment.oauth_base_url.clone()),
+        15,
+    ));
     handles.oauth_login = Arc::new(LogInWithOAuth::new(
         Arc::new(KnownState),
         listener,
@@ -116,24 +118,35 @@ fn login_args() -> Vec<String> {
 
 #[test]
 fn a_callback_carrying_the_state_stores_the_credential_without_a_paste_prompt() {
-    let base = tempfile::TempDir::new().unwrap();
-    let port = free_port();
-    let ctx = CliContext {
-        base_dir: Some(base.path().to_path_buf()),
-        oauth_base_url: Some(format!("http://127.0.0.1:{port}")),
-        auth: Some(callback_rig),
-        ..Default::default()
-    };
-    let caller = std::thread::spawn(move || call(port, "/callback?code=fake&state=fake-state"));
-    let (mut stdout, mut stderr) = (String::new(), String::new());
-    let code = cmd_auth_with_reader(
-        &ctx,
-        &login_args(),
-        &mut stdout,
-        &mut stderr,
-        &mut std::io::empty(),
-    );
-    assert!(caller.join().unwrap().starts_with("HTTP/1.1 200"));
+    // A free port can be taken by another test's server between its
+    // release and the listener's bind; then the run is repeated.
+    let (base, code, stdout, stderr) = (0..3)
+        .find_map(|_| {
+            let base = tempfile::TempDir::new().unwrap();
+            let port = free_port();
+            let ctx = CliContext {
+                base_dir: Some(base.path().to_path_buf()),
+                oauth_base_url: Some(format!("http://127.0.0.1:{port}")),
+                auth: Some(callback_rig),
+                ..Default::default()
+            };
+            let caller =
+                std::thread::spawn(move || call(port, "/callback?code=fake&state=fake-state"));
+            let (mut stdout, mut stderr) = (String::new(), String::new());
+            let code = cmd_auth_with_reader(
+                &ctx,
+                &login_args(),
+                &mut stdout,
+                &mut stderr,
+                &mut std::io::empty(),
+            );
+            caller
+                .join()
+                .unwrap()
+                .starts_with("HTTP/1.1 200")
+                .then_some((base, code, stdout, stderr))
+        })
+        .expect("three free ports were taken before the listener bound them");
     assert_eq!(code, 0, "stderr: {stderr}");
     assert_eq!(stderr, "");
     assert!(!stdout.contains("Paste"), "{stdout}");
