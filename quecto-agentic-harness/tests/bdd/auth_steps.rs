@@ -144,7 +144,20 @@ fn when_check_auth_status(world: &mut QuectoWorld) {
         .credential_store
         .as_ref()
         .expect("credential store not set");
-    world.auth_status = Some(store.status_summary().unwrap());
+    // Through the composed `auth status` use case over the store's base
+    // directory, as `quecto auth status` runs it.
+    let base = store
+        .path()
+        .parent()
+        .expect("credentials path has a parent")
+        .to_path_buf();
+    let handles = quecto::composition::bootstrap::auth::build_auth_handles(
+        &quecto::interface::cli::auth::AuthEnvironment {
+            base_dir: base,
+            oauth_base_url: None,
+        },
+    );
+    world.auth_status = Some(handles.status.execute().unwrap());
 }
 
 #[when(expr = "I remove the credential for {string}")]
@@ -236,9 +249,12 @@ fn then_auth_status_for_provider(
         .find(|s| s.provider == provider)
         .unwrap_or_else(|| panic!("no auth status for provider '{}'", provider));
     assert_eq!(
-        entry.status, expected_status,
+        entry.state.as_str(),
+        expected_status,
         "expected status '{}' for '{}', got '{}'",
-        expected_status, provider, entry.status
+        expected_status,
+        provider,
+        entry.state.as_str()
     );
 }
 

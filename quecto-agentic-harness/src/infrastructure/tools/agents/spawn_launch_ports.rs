@@ -6,7 +6,9 @@ use super::spawn_entry::{
 use super::spawn_launch_args::write_private_new;
 use super::spawn_registry::register_and_broadcast;
 use super::subagent_registry::new_exit_signal_channel;
-use crate::application::ports::{LaunchFuture, SubagentLaunchPorts as SubagentLaunchPortsTrait};
+use crate::application::{
+    subagent_launch::LaunchFuture, subagent_launch::SubagentLaunchPorts as SubagentLaunchPortsTrait,
+};
 use crate::domain::agents::services::subagent::SubagentConfig;
 use crate::domain::agents::services::subagent::{
     DisplayNameResolutionEntry, DisplayNameResolveError, assert_display_name_available_for_spawn,
@@ -41,7 +43,10 @@ pub(super) struct SpawnLaunchPorts<'a> {
     container_diagnostics: Vec<String>,
     /// The admission scope registered for the child and the context file
     /// that hands it over, until the launch is registered.
-    admission_registration: Option<(PathBuf, crate::application::ports::Credential)>,
+    admission_registration: Option<(
+        PathBuf,
+        crate::application::admission::services::inference_authority::Credential,
+    )>,
     /// How far the launch got; what dropping these ports must undo.
     stage: LaunchStage,
 }

@@ -6,7 +6,7 @@ use super::inference_admission_authority_steps::{
     LIMIT, group, inspect, new_root, proposal, rt, wait_for,
 };
 use super::*;
-use quecto::application::ports::AttemptPermit;
+use quecto::application::admission::ports::inference_attempt::AttemptPermit;
 use quecto::domain::admission::value_objects::inference_admission::{Feedback, WorkloadClass};
 use quecto::infrastructure::admission::{AuthorityConnection, AuthorityDirectory, AuthorityServer};
 use std::time::{Duration, Instant};

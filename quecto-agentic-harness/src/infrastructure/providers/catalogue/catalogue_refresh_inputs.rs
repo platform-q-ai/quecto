@@ -12,7 +12,7 @@ use crate::application::catalogue::ports::RuntimeSnapshotSource;
 use crate::application::catalogue::ports::{
     LoadedRefreshInputs, RefreshInputsLoader, RefreshRedactionPort, RefreshableCatalogueSource,
 };
-use crate::application::ports::{CatalogueSource, CredentialStatusPort};
+use crate::application::catalogue::{CatalogueSource, CredentialStatusPort};
 use crate::infrastructure::auth::provider_slots::ProviderSlots;
 
 /// Credential status credits the slots `runtime` routes, as

@@ -35,3 +35,17 @@ fn the_device_code_login_refuses_a_provider_without_the_flow_offline() {
         Err(crate::application::auth::dto::LoginError::DeviceCodeUnsupported(LoginProvider::Xai))
     );
 }
+
+#[test]
+fn the_status_reads_the_base_directorys_credentials() {
+    let base = tempfile::TempDir::new().unwrap();
+    let handles = build_auth_handles(&environment(base.path()));
+    handles.token_login.execute("openai", "fake-token").unwrap();
+    let statuses = handles.status.execute().unwrap();
+    assert_eq!(statuses.len(), 1);
+    assert_eq!(statuses[0].provider, "openai");
+    assert_eq!(
+        statuses[0].state,
+        crate::domain::auth::credential::CredentialState::Active
+    );
+}

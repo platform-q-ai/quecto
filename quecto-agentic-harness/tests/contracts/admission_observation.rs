@@ -1,7 +1,10 @@
 //! AdmissionObservation contract (#1679 P4): every gate transition is visible
 //! as an orthogonal admission state with group, reason, elapsed wait and a
 //! bounded, fresh aggregate. Proven over the real remote gate and authority.
-use quecto::application::ports::{AdmissionObservation, AttemptAdmission};
+use quecto::application::{
+    admission::ports::inference_attempt::AttemptAdmission,
+    admission::ports::inference_observation::AdmissionObservation,
+};
 use quecto::domain::admission::value_objects::inference_admission::{
     AdmissionActivity, AdmissionConfig, AdmissionPhase, CooldownState, Feedback, GroupId,
     GroupPolicy, ThrottleFeedback, WorkloadClass,
@@ -80,8 +83,10 @@ async fn view_when(
 async fn view_when_authority(
     admin: &AdminConnection,
     what: &str,
-    expected: impl Fn(&quecto::application::ports::AuthorityStatus) -> bool,
-) -> quecto::application::ports::AuthorityStatus {
+    expected: impl Fn(
+        &quecto::application::admission::services::inference_authority::AuthorityStatus,
+    ) -> bool,
+) -> quecto::application::admission::services::inference_authority::AuthorityStatus {
     let deadline = tokio::time::Instant::now() + LIMIT;
     loop {
         let status = admin.inspect().await.unwrap();

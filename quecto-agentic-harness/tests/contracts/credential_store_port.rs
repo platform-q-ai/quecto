@@ -1,8 +1,9 @@
-//! Contract for the auth capability's `CredentialStorePort` (#1839) over
-//! `credentials.json`: a store makes the credential its provider's one
+//! Contract for the auth capability's `CredentialStorePort` (#1839, #1842)
+//! over `credentials.json`: a store makes the credential its provider's one
 //! credential, leaves every other provider's untouched, keeps the file's
 //! format and owner-only mode, and refuses — changing nothing — when the
-//! file cannot be read.
+//! file cannot be read; a listing returns every stored credential whole,
+//! writes nothing, and refuses an unreadable file.
 use std::sync::Arc;
 
 use tempfile::TempDir;
@@ -169,4 +170,44 @@ fn an_unreadable_store_refuses_and_changes_nothing() {
     );
     assert!(!refused.0.contains("fake-t"), "never quotes the secret");
     assert_eq!(std::fs::read_to_string(&path).unwrap(), "{ not json ");
+}
+
+#[test]
+fn a_store_with_no_file_lists_nothing() {
+    let base = TempDir::new().unwrap();
+    assert!(under_test(&base).list().unwrap().is_empty());
+    assert!(
+        !base.path().join("credentials.json").exists(),
+        "listing writes nothing"
+    );
+}
+
+#[test]
+fn the_listing_holds_each_providers_one_credential_whole() {
+    let base = TempDir::new().unwrap();
+    let store = under_test(&base);
+    store.store(oauth("openai", "fake-old")).unwrap();
+    store.store(token("anthropic", "fake-t")).unwrap();
+    store.store(oauth("openai", "fake-new")).unwrap();
+    let mut listed = store.list().unwrap();
+    listed.sort_by(|a, b| a.provider.cmp(&b.provider));
+    assert_eq!(listed.len(), 2);
+    assert_eq!(listed[0].provider, "anthropic");
+    assert_eq!(listed[0].method, AuthMethod::Token);
+    assert_eq!(listed[1].token, "fake-new");
+    assert_eq!(listed[1].expires_at, Some(1_700_000_000));
+    assert_eq!(listed[1].account_id.as_deref(), Some("acct-fake"));
+}
+
+#[test]
+fn an_unreadable_store_cannot_be_listed() {
+    let base = TempDir::new().unwrap();
+    std::fs::write(base.path().join("credentials.json"), "{ not json ").unwrap();
+    let refused = under_test(&base)
+        .list()
+        .expect_err("a corrupt store refuses");
+    assert!(
+        refused.0.contains("failed to parse credentials"),
+        "{refused}"
+    );
 }

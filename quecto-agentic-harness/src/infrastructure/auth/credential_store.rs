@@ -339,23 +339,6 @@ impl CredentialStore {
         let all = self.load_snapshot()?;
         Ok(all.into_values().collect())
     }
-
-    /// Get a summary of all credentials for the auth status display.
-    pub fn status_summary(&self) -> Result<Vec<CredentialStatus>, DomainError> {
-        let all = self.load_snapshot()?;
-        if all.is_empty() {
-            return Ok(vec![]);
-        }
-        let now = crate::infrastructure::time::unix_timestamp_secs();
-        Ok(all
-            .values()
-            .map(|c| CredentialStatus {
-                provider: c.provider.clone(),
-                method: c.method.as_str().to_string(),
-                status: c.state_at(now).as_str().to_string(),
-            })
-            .collect())
-    }
 }
 
 /// The application's credential store over `credentials.json`.
@@ -364,14 +347,10 @@ impl CredentialStorePort for CredentialStore {
         CredentialStore::store(self, credential)
             .map_err(|error| CredentialStoreError(error.to_string()))
     }
-}
 
-/// Summary of a credential's status.
-#[derive(Debug, Clone)]
-pub struct CredentialStatus {
-    pub provider: String,
-    pub method: String,
-    pub status: String,
+    fn list(&self) -> Result<Vec<Credential>, CredentialStoreError> {
+        CredentialStore::list(self).map_err(|error| CredentialStoreError(error.to_string()))
+    }
 }
 
 #[cfg(test)]
