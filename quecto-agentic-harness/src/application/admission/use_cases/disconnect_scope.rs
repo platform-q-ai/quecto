@@ -15,8 +15,10 @@ impl DisconnectScope {
 
     /// The scope's queued work is cancelled and its active work stays
     /// unverified until the same capability reconnects and completes it.
-    /// When nothing unverified remains the scope is released as well, so an
-    /// abrupt exit never holds a scope slot until a reset.
+    /// When the scope holds no active attempt at all (newly or already
+    /// unverified) it is released as well, so an abrupt exit never holds a
+    /// scope slot until a reset, while a scope that reconnected and dropped
+    /// again keeps its capability for the work it still owes.
     pub fn execute<S: AdmissionSecretSource>(
         &self,
         authority: &mut AdmissionAuthority<S>,
@@ -24,7 +26,13 @@ impl DisconnectScope {
         now: u64,
     ) -> Result<AbandonReport, AuthorityError> {
         let report = authority.disconnect(scope, now)?;
-        if report.uncertain == 0 {
+        debug_assert!(
+            report.uncertain <= report.active,
+            "newly unverified attempts are active ones"
+        );
+        if report.active == 0 {
+            // A known scope with nothing active always retires; a failure
+            // here is an invariant breach, reported rather than ignored.
             authority.release(scope)?;
         }
         Ok(report)

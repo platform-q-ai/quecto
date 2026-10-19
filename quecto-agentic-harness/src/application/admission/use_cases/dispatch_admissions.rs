@@ -9,6 +9,11 @@ use crate::application::admission::ports::inference_authority_ports::{
 use crate::application::admission::services::inference_authority::AdmissionAuthority;
 use crate::domain::admission::value_objects::inference_admission::RequestId;
 
+/// The durability sequence of a dispatch on its own. Settling a turn
+/// (`SettleAuthority`) is its one production caller and composition builds
+/// it into that; it stays a use case of its own because it is the unit the
+/// journal contract tests drive directly (grant before visibility, withdrawal
+/// on a failed write, the unhealthy probe), with its errors unflattened.
 pub struct DispatchAdmissions {
     journal: SharedJournal,
 }

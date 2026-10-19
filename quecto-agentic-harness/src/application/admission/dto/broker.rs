@@ -51,8 +51,9 @@ pub struct Settlement {
     pub answers: Vec<(RequestId, Result<RequestState, AuthorityError>)>,
     /// Active attempts whose owners must stop their transport.
     pub cancellation_due: Vec<RequestId>,
-    /// When the policy next needs a turn, on the authority's clock.
-    pub next_wake: Result<Option<u64>, AuthorityError>,
+    /// When the authority next needs a turn, on its clock; `None` when
+    /// nothing is pending.
+    pub wake_at: Option<u64>,
     /// Whether the journal accepted its last write; while it has not, held
     /// work proceeds only after a successful probe.
     pub journal_healthy: bool,

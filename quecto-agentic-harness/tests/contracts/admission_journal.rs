@@ -98,6 +98,8 @@ impl Authority {
         self.settlement.execute(&mut self.authority, waiting, now)
     }
 
+    /// The cancellations due, read the way the broker reads them: through a
+    /// settling turn, which also dispatches whatever the policy allows.
     fn cancellation_due(&mut self, now: u64) -> Vec<RequestId> {
         self.settle(&[], now).cancellation_due
     }

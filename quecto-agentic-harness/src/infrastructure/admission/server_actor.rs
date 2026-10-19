@@ -2,6 +2,15 @@
 //! the connected sessions, the scope bindings and the deferred (queued)
 //! replies, and services `Command`s from the session tasks in arrival order.
 //! Lifecycle, sockets and the accept loops are `server`.
+//!
+//! The admission decisions are the admission use cases' (#1910): settling a
+//! turn (dispatch, waiter answers, cancellations due and the next wake),
+//! binding and disconnecting a scope, completion and an epoch reset. What
+//! stays here is transport: the session table and its bindings, the hello
+//! handshake, the owner-token gate on `RegisterRoot` and the admin-role gate
+//! on `Inspect`/`Reset` (both properties of the connection, checked before any
+//! authority operation), answering a client's own cancel to the waiter it
+//! deferred, and turning the next wake into a timer.
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::{Duration, Instant};
 
@@ -55,7 +64,6 @@ pub(super) struct Actor {
     last_dispatch_failure: Option<String>,
 }
 
-const JOURNAL_PROBE_INTERVAL: Duration = Duration::from_millis(250);
 fn far_future() -> Instant {
     Instant::now() + Duration::from_secs(3600)
 }
@@ -454,18 +462,9 @@ impl Actor {
             }
         }
         self.notified.retain(|id| due.contains(id));
-        let wake = match settlement.next_wake {
-            Ok(Some(ms)) => self.clock.instant_at(ms),
-            Ok(None) => far_future(),
-            Err(_) => Instant::now() + Duration::from_millis(50),
-        };
-        // During a ledger outage held work can only proceed after a successful
-        // probe write, so probe at a bounded cadence rather than waiting for
-        // queue deadlines.
-        if settlement.journal_healthy {
-            wake
-        } else {
-            wake.min(Instant::now() + JOURNAL_PROBE_INTERVAL)
+        match settlement.wake_at {
+            Some(ms) => self.clock.instant_at(ms),
+            None => far_future(),
         }
     }
 }
