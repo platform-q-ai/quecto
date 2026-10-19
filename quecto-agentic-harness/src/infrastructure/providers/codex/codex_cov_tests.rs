@@ -604,13 +604,13 @@ async fn handler_response_incomplete_emits_error_instead_of_empty_done() {
     let mut handler = CodexSseHandler::new();
     let out = handler
         .process_line(
-            r#"data: {"type":"response.incomplete","response":{"status":"incomplete","incomplete_details":{"reason":"max_output_tokens"}}}"#,
+            r#"data: {"type":"response.incomplete","response":{"status":"incomplete","incomplete_details":{"reason":"content_filter"}}}"#,
             &tx,
         )
         .await;
     assert!(matches!(out, SseLineOutcome::Done));
     match rx.recv().await.unwrap() {
-        StreamEvent::Error(e) => assert!(e.contains("max_output_tokens"), "{e}"),
+        StreamEvent::Error(e) => assert!(e.contains("content_filter"), "{e}"),
         other => panic!("unexpected: {other:?}"),
     }
 }

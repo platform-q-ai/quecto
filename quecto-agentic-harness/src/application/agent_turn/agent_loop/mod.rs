@@ -58,7 +58,7 @@ pub mod tool_panic_scope;
 use agent_loop_errors::{
     append_feedback, append_malformed_feedback, enhance_provider_error,
     is_context_or_output_limit_error, output_limit_feedback, provider_failure_audit_event,
-    record_feedback,
+    record_feedback, tool_call_cut_off_feedback,
 };
 use agent_loop_spill::ToolMessageArgs;
 use agent_loop_turn::{

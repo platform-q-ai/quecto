@@ -335,7 +335,7 @@ impl CodexProvider {
                     return Err(DomainError::Provider(error).into());
                 }
                 acc.handle_event(&event)?;
-                if event["type"].as_str() == Some("response.completed") {
+                if super::transport::attempt_profile::finishes_reply(&event) {
                     saw_terminal = true;
                     break;
                 }
@@ -366,6 +366,10 @@ impl CodexProvider {
     /// top level (`code`, `message`); both are read. A `response.*`
     /// failure keeps its established rendering (type and message).
     fn format_stream_failure(event: &serde_json::Value) -> Option<String> {
+        // A reply cut off at its output limit is no failure (#2593).
+        if super::transport::attempt_profile::ends_at_output_limit(event) {
+            return None;
+        }
         let kind = match event["type"].as_str() {
             Some(kind @ ("response.failed" | "response.incomplete" | "error")) => kind,
             None if super::transport::attempt_profile::is_untyped_error_chunk(event) => "error",
@@ -641,3 +645,7 @@ mod issue_2398_tests;
 #[cfg(test)]
 #[path = "codex_2421_tests.rs"]
 mod issue_2421_tests;
+
+#[cfg(test)]
+#[path = "codex_2593_tests.rs"]
+mod issue_2593_tests;

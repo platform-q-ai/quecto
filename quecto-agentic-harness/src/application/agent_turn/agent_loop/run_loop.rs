@@ -1,4 +1,6 @@
+use super::agent_loop_turn_flow::MAX_TOOL_CALL_CUT_OFF_RETRIES;
 use super::*;
+use crate::domain::inference::services::output_limit::cut_off_tool_call;
 
 impl AgentLoopImpl {
     /// Run the LLM-tool loop.
@@ -34,6 +36,8 @@ impl AgentLoopImpl {
         // Count of model-malformed requests turned into addressable feedback.
         let mut malformed_retries: u32 = 0;
         let mut cut_off_retries: u32 = 0;
+        // #2593: consecutive replies cut off inside a tool call.
+        let mut tool_cut_off_retries: u32 = 0;
 
         loop {
             if iterations > 0 {
@@ -101,6 +105,15 @@ impl AgentLoopImpl {
                     self.after_cut_off_answer(messages, &response, current_turn, recovery)
                         .await
                 }
+                // #2593: a call cut off by the output limit is corrected,
+                // while the budget lasts; then answered as invalid (#2123).
+                Ok(response)
+                    if tool_cut_off_retries < MAX_TOOL_CALL_CUT_OFF_RETRIES
+                        && cut_off_tool_call(&response).is_some() =>
+                {
+                    let recovery = (&mut tool_cut_off_retries, &mut appended_messages);
+                    self.after_cut_off_tool_call(messages, &response, current_turn, recovery)
+                }
                 Ok(response) => AfterResponse::Proceed(response),
                 Err(error) => {
                     let recovery = (&mut malformed_retries, &mut appended_messages);
@@ -111,6 +124,9 @@ impl AgentLoopImpl {
             let response = match after {
                 AfterResponse::Proceed(response) => {
                     cut_off_retries = 0;
+                    if cut_off_tool_call(&response).is_none() {
+                        tool_cut_off_retries = 0;
+                    }
                     response
                 }
                 AfterResponse::Retry => {
