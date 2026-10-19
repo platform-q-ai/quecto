@@ -462,6 +462,15 @@ fn cmd_run(ctx: &CliContext, opts: &BrokerArgs, stdout: &mut String, stderr: &mu
             return 1;
         }
     };
+    // The composed handles come first: a broker that cannot build its
+    // authority never announces that it is serving.
+    let handles = match ctx.admission_handles() {
+        Ok(handles) => handles,
+        Err(error) => {
+            stderr.push_str(&format!("admission-broker: {error}\n"));
+            return 1;
+        }
+    };
     stderr.push_str(&format!(
         "admission-broker: serving authority directory {}\n",
         directory.display()
@@ -484,13 +493,6 @@ fn cmd_run(ctx: &CliContext, opts: &BrokerArgs, stdout: &mut String, stderr: &mu
                 "admission-broker: directory {}: {error}\n",
                 directory.display()
             ));
-            return 1;
-        }
-    };
-    let handles = match ctx.admission_handles() {
-        Ok(handles) => handles,
-        Err(error) => {
-            stderr.push_str(&format!("admission-broker: {error}\n"));
             return 1;
         }
     };

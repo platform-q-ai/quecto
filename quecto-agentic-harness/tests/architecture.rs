@@ -1203,10 +1203,9 @@ const TEST_SUPPORT_APPLICATION_PATHS: &[(&str, &str)] = &[(
 )];
 
 /// Per-file exceptions for the admission authority server (#1910): it runs
-/// the authority the admission capability owns, holds the durability use
-/// cases composition builds and passes in (`AuthorityUseCases`), and its
-/// actor compares capability tokens with the authority's own constant-time
-/// check. No other infrastructure file may name them.
+/// the authority the admission capability owns and holds the durability use
+/// cases composition builds and passes in (`AuthorityUseCases`). No other
+/// infrastructure file may name them.
 const AUTHORITY_SERVER_APPLICATION_PATHS: &[(&str, &str)] = &[
     (
         "src/infrastructure/admission/server.rs",
@@ -1231,10 +1230,6 @@ const AUTHORITY_SERVER_APPLICATION_PATHS: &[(&str, &str)] = &[
     (
         "src/infrastructure/admission/server.rs",
         "crate::application::admission::use_cases::DispatchAdmissions",
-    ),
-    (
-        "src/infrastructure/admission/server_actor.rs",
-        "crate::application::admission::services::inference_authority::constant_time_eq",
     ),
 ];
 
@@ -4021,63 +4016,69 @@ fn only_swarm_test_support_names_the_lifecycle_service() {
     );
 }
 
-/// The authority, its durability use cases and its token check are named
-/// only by the two server files (#1910): the same paths anywhere else in
+/// The authority and its durability use cases are named only by the two
+/// server files (#1910): the same paths anywhere else in
 /// infrastructure are refused, and each file has only its own allowance.
 #[test]
 fn only_the_authority_server_names_the_durability_use_cases() {
-    let use_cases = "use crate::application::admission::use_cases::{\n    AdvanceAuthorityEpoch, CheckpointLedger, CompleteAdmission, DispatchAdmissions,\n};";
-    let token_check =
-        "use crate::application::admission::services::inference_authority::constant_time_eq;";
-    let all_use_cases = [
-        "crate::application::admission::use_cases::AdvanceAuthorityEpoch",
-        "crate::application::admission::use_cases::CheckpointLedger",
-        "crate::application::admission::use_cases::CompleteAdmission",
-        "crate::application::admission::use_cases::DispatchAdmissions",
-    ];
-    let server = "src/infrastructure/admission/server.rs";
-    let actor = "src/infrastructure/admission/server_actor.rs";
+    let (server, actor) = (
+        "src/infrastructure/admission/server.rs",
+        "src/infrastructure/admission/server_actor.rs",
+    );
     let elsewhere = "src/infrastructure/admission/link.rs";
-    assert_eq!(
-        refused_application_paths(server, use_cases),
-        Vec::<String>::new()
-    );
-    assert_eq!(
-        refused_application_paths(actor, token_check),
-        Vec::<String>::new()
-    );
-    assert_eq!(
-        refused_application_paths(elsewhere, use_cases),
-        all_use_cases
-    );
-    assert_eq!(refused_application_paths(actor, use_cases), all_use_cases);
-    assert_eq!(
-        refused_application_paths(server, token_check),
-        ["crate::application::admission::services::inference_authority::constant_time_eq"]
-    );
-    // The authority itself is the two server files' alone.
-    let authority =
-        "use crate::application::admission::services::inference_authority::AdmissionAuthority;";
-    assert_eq!(
-        refused_application_paths(server, authority),
-        Vec::<String>::new()
-    );
-    assert_eq!(
-        refused_application_paths(actor, authority),
-        Vec::<String>::new()
-    );
-    assert_eq!(
-        refused_application_paths(elsewhere, authority),
-        ["crate::application::admission::services::inference_authority::AdmissionAuthority"]
-    );
+    let service = "crate::application::admission::services::inference_authority::";
+    let authority = format!("{service}AdmissionAuthority");
+    let use_case = |name: &str| format!("crate::application::admission::use_cases::{name}");
+    let durable = [
+        "AdvanceAuthorityEpoch",
+        "CheckpointLedger",
+        "CompleteAdmission",
+        "DispatchAdmissions",
+    ]
+    .map(use_case);
+    let refused = |file: &str, path: &str| {
+        refused_application_paths(file, &format!("use {path};")) == [path.to_string()]
+    };
+    for path in durable.iter().chain([&authority]) {
+        assert!(!refused(server, path), "the server may name {path}");
+        assert!(refused(elsewhere, path), "no other file may name {path}");
+    }
+    for path in &durable {
+        assert!(
+            refused(actor, path),
+            "the actor holds no use case of its own: {path}"
+        );
+    }
+    assert!(!refused(actor, &authority));
     // Any other admission use case stays refused, even in the server.
-    assert_eq!(
-        refused_application_paths(
-            server,
-            "use crate::application::admission::use_cases::ResetAuthority;"
-        ),
-        ["crate::application::admission::use_cases::ResetAuthority"]
-    );
+    assert!(refused(server, &use_case("ResetAuthority")));
+}
+
+/// The authority's raw operations (#1910) bypass durability on their own, so
+/// they stay visible only inside the admission capability, where the use
+/// cases sequence them with the journal. Each is declared once, restricted.
+#[test]
+fn the_authority_raw_operations_stay_inside_the_admission_capability() {
+    let authority = production_source("src/application/admission/services/inference_authority.rs");
+    for name in [
+        "record_journal",
+        "ledger",
+        "select_grants",
+        "withdraw_grants",
+        "complete_unpersisted",
+        "successor_ledger",
+        "adopt_successor",
+    ] {
+        assert_eq!(
+            authority.matches(&format!(" fn {name}(")).count(),
+            1,
+            "`{name}` is declared once"
+        );
+        assert!(
+            authority.contains(&format!("pub(in crate::application::admission) fn {name}(")),
+            "`{name}` stays visible only inside the admission capability"
+        );
+    }
 }
 
 /// Durability belongs to the admission use cases (#1910): the authority

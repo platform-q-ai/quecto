@@ -322,3 +322,23 @@ fn start(dir: &AuthorityDirectory, proposal: &AdmissionRuntimeProposal) -> Broke
         accept_missing_ledger: false,
     }
 }
+
+/// A broker that cannot build its authority (#1910: the durability use
+/// cases come from the composed handles) refuses before it announces that
+/// it is serving.
+#[test]
+fn run_without_composed_handles_refuses_before_serving() {
+    let temp = tempfile::tempdir().unwrap();
+    let authority = temp.path().join("authority");
+    let config = ENABLED.replace("DIR", &format!("{:?}", authority.to_string_lossy()));
+    std::fs::write(temp.path().join("config.json"), config).unwrap();
+    let uncomposed = CliContext {
+        admission: None,
+        ..ctx(temp.path())
+    };
+    let (code, _, err) = run(&uncomposed, &["run"]);
+    assert_eq!(code, 1, "{err}");
+    assert!(err.contains("admission capability not composed"), "{err}");
+    assert!(!err.contains("serving authority directory"), "{err}");
+    assert!(!authority.exists(), "nothing was opened");
+}

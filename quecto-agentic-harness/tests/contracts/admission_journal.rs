@@ -325,6 +325,13 @@ fn reset_is_refused_when_the_journal_cannot_record_it() {
     journal.log().fail = true;
     assert_eq!(a.reset(1).err(), Some(AuthorityError::JournalUnavailable));
     assert_eq!(a.inspect(1).epoch, 7, "epoch unchanged");
+    assert!(
+        !a.inspect(1).journal_healthy,
+        "the failed write is recorded"
+    );
+    journal.log().fail = false;
+    assert_eq!(a.reset(2).unwrap(), 8, "a durable reset advances the epoch");
+    assert!(a.inspect(2).journal_healthy, "and restores health");
 }
 
 #[test]
@@ -429,6 +436,29 @@ fn a_checkpoint_persists_the_current_ledger_and_tracks_journal_health() {
         a.inspect(2).journal_healthy,
         "a durable write restores health"
     );
+}
+
+/// A panic while the journal's lock was held poisons it; the durability use
+/// cases recover the journal rather than turning every later write into a
+/// panic.
+#[test]
+fn a_poisoned_journal_lock_still_takes_durable_writes() {
+    let journal = FakeJournal::default();
+    let shared: SharedJournal = Arc::new(Mutex::new(journal.clone()));
+    let poisoner = shared.clone();
+    let poisoned = std::thread::spawn(move || {
+        let _held = poisoner.lock().unwrap();
+        panic!("poison the journal lock");
+    })
+    .join();
+    assert!(poisoned.is_err(), "the holder panicked");
+    assert!(shared.is_poisoned());
+    let mut authority = AdmissionAuthority::new(7, config(), Counter(0)).unwrap();
+    CheckpointLedger::new(shared)
+        .execute(&mut authority, 0)
+        .unwrap();
+    assert_eq!(journal.log().writes.len(), 1, "the write went through");
+    assert!(authority.inspect(0).journal_healthy);
 }
 
 #[test]

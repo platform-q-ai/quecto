@@ -45,9 +45,7 @@ pub struct AdmissionAuthority<S> {
     journal_healthy: bool,
 }
 
-/// Compare two capability secrets without an early exit on the first
-/// difference.
-pub fn constant_time_eq(a: &str, b: &str) -> bool {
+fn constant_time_eq(a: &str, b: &str) -> bool {
     let (a, b) = (a.as_bytes(), b.as_bytes());
     let mut diff = a.len() ^ b.len();
     for (x, y) in a.iter().zip(b.iter()) {

@@ -21,7 +21,13 @@ pub(super) fn persist<S: AdmissionSecretSource>(
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
         .persist(ledger);
-    authority.record_journal(written.is_ok());
+    let healthy = written.is_ok();
+    authority.record_journal(healthy);
+    debug_assert_eq!(
+        authority.journal_healthy(),
+        healthy,
+        "the authority holds the journal's last outcome"
+    );
     written.map_err(|_| AuthorityError::JournalUnavailable)
 }
 
