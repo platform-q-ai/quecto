@@ -2,7 +2,9 @@
 //! journal, framed protocol, client capability lifetime and recovery.
 #![cfg(unix)]
 
-use quecto::composition::admission::start_authority;
+use quecto::composition::admission::{
+    start_authority, start_authority_accepting_missing_ledger, start_authority_with_frame_deadline,
+};
 use std::collections::BTreeMap;
 use std::os::unix::fs::PermissionsExt;
 use std::sync::Arc;
@@ -588,7 +590,7 @@ async fn missing_ledger_after_prior_operation_fails_closed() {
         Ok(_) => panic!("a vanished ledger must not start an empty budget"),
     };
     assert!(refused.contains("missing"), "{refused}");
-    let accepted = AuthorityServer::start_accepting_missing_ledger(dir.clone(), proposal(1, 300))
+    let accepted = start_authority_accepting_missing_ledger(dir.clone(), proposal(1, 300))
         .await
         .expect("explicit operator acknowledgement starts a fresh ledger");
     accepted.shutdown().await;
@@ -695,7 +697,7 @@ async fn a_stalled_frame_is_disconnected_within_the_framing_deadline() {
         Duration::from_secs(15)
     );
     let frame_deadline = Duration::from_millis(300);
-    let server = AuthorityServer::start_with_frame_deadline(
+    let server = start_authority_with_frame_deadline(
         AuthorityDirectory::open(&temp.path().join("authority")).unwrap(),
         proposal(1, 300),
         frame_deadline,
@@ -950,8 +952,7 @@ async fn start_time_preconditions_map_to_named_refusals() {
     }
     std::fs::remove_file(dir.journal_path()).unwrap();
     std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o500)).unwrap();
-    let outcome =
-        AuthorityServer::start_accepting_missing_ledger(dir.clone(), proposal(1, 300)).await;
+    let outcome = start_authority_accepting_missing_ledger(dir.clone(), proposal(1, 300)).await;
     std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
     match outcome {
         Err(ServerError::Journal(message)) | Err(ServerError::Io(message)) => {
@@ -961,7 +962,7 @@ async fn start_time_preconditions_map_to_named_refusals() {
     }
     // A pre-existing directory at the socket path cannot be unlinked or bound.
     std::fs::create_dir_all(dir.client_socket()).unwrap();
-    match AuthorityServer::start_accepting_missing_ledger(dir.clone(), proposal(1, 300)).await {
+    match start_authority_accepting_missing_ledger(dir.clone(), proposal(1, 300)).await {
         Err(ServerError::Io(message)) => assert!(message.contains("bind"), "{message}"),
         other => panic!("unexpected {other:?}"),
     }

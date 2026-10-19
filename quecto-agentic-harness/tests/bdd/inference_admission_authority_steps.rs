@@ -5,7 +5,7 @@ use super::*;
 use quecto::application::{
     admission::dto::broker::Credential, admission::ports::inference_attempt::AttemptPermit,
 };
-use quecto::composition::admission::start_authority;
+use quecto::composition::admission::{start_authority, start_authority_accepting_missing_ledger};
 use quecto::domain::admission::value_objects::inference_admission::{
     Feedback, GroupId, GroupPolicy, WorkloadClass,
 };
@@ -676,7 +676,7 @@ fn then_restart_refused(world: &mut QuectoWorld) {
     assert!(message.contains("missing"), "{message}");
     let dir = AuthorityDirectory::open(&s.temp.as_ref().unwrap().path().join("authority")).unwrap();
     let accepted = rt(s)
-        .block_on(AuthorityServer::start_accepting_missing_ledger(
+        .block_on(start_authority_accepting_missing_ledger(
             dir.clone(),
             proposal(2, 300),
         ))
