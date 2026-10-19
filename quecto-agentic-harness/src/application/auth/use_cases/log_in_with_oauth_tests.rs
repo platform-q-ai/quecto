@@ -111,6 +111,10 @@ impl CredentialStorePort for Fakes {
         self.stored.lock().unwrap().push(credential);
         Ok(())
     }
+
+    fn list(&self) -> Result<Vec<Credential>, CredentialStoreError> {
+        unreachable!("a browser login lists nothing")
+    }
 }
 
 impl AuthClock for Fakes {

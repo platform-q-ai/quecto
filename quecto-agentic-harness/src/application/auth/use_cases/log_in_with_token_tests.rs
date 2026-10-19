@@ -19,6 +19,10 @@ impl CredentialStorePort for FakeStore {
         self.stored.lock().unwrap().push(credential);
         Ok(())
     }
+
+    fn list(&self) -> Result<Vec<Credential>, CredentialStoreError> {
+        Ok(self.stored.lock().unwrap().clone())
+    }
 }
 
 fn login(store: &Arc<FakeStore>) -> LogInWithToken {

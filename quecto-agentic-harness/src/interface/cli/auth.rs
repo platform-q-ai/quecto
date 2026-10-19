@@ -2,6 +2,7 @@
 pub(crate) mod auth_import;
 mod browser;
 mod handles;
+mod status;
 pub use handles::{AuthEnvironment, AuthHandles, AuthHandlesBuilder};
 
 use super::CliContext;
@@ -46,7 +47,7 @@ pub(crate) fn cmd_auth_with_reader(
     match args[0].as_str() {
         "login" => cmd_auth_login(ctx, &args[1..], stdout, stderr, reader),
         "logout" => cmd_auth_logout(&base, &args[1..], stdout, stderr),
-        "status" => cmd_auth_status(&base, stdout),
+        "status" => status::cmd_auth_status(ctx, stdout, stderr),
         other => {
             stderr.push_str(&format!("auth: unknown subcommand '{}'\n", other));
             1
@@ -391,27 +392,6 @@ fn cmd_auth_logout(
                 "auth logout: failed to remove credential: {}\n",
                 e
             ));
-            1
-        }
-    }
-}
-
-fn cmd_auth_status(base: &std::path::Path, stdout: &mut String) -> i32 {
-    let store = CredentialStore::new(base);
-    match store.status_summary() {
-        Ok(statuses) => {
-            if statuses.is_empty() {
-                stdout.push_str("no credentials stored\n");
-            } else {
-                stdout.push_str("Credentials:\n");
-                for s in &statuses {
-                    stdout.push_str(&format!("  {} ({}) — {}\n", s.provider, s.method, s.status));
-                }
-            }
-            0
-        }
-        Err(e) => {
-            stdout.push_str(&format!("failed to read credentials: {}\n", e));
             1
         }
     }
