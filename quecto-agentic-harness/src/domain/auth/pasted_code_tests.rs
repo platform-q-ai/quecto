@@ -135,3 +135,16 @@ fn refusals_read_as_the_login_messages() {
         "could not extract authorization code"
     );
 }
+
+#[test]
+fn naming_a_state_alone_makes_input_query_shaped() {
+    // No `?` and no `code=`: the `state=` parameter alone is the query.
+    assert_eq!(
+        code_from_paste("x&state=wrong", STATE),
+        Err(PasteRefusal::StateMismatch)
+    );
+    assert_eq!(
+        code_from_paste("x&state=expected", STATE),
+        Err(PasteRefusal::NoCode)
+    );
+}

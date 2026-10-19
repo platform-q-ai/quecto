@@ -86,3 +86,9 @@ fn openais_listener_and_shown_address_come_from_its_redirect_uri() {
     );
     assert!(listener_address("http://example.test/callback").is_err());
 }
+
+#[test]
+fn a_zero_callback_timeout_waits_one_second() {
+    let login = OAuthBrowserLogin::with_callback_timeout_secs(OAuthEndpoints::new(None), 0);
+    assert_eq!(login.callback_timeout_secs, 1);
+}
