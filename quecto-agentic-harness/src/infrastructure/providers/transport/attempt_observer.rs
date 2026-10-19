@@ -48,35 +48,26 @@ impl LineObserver {
 }
 
 pub(super) struct ProtocolObserver {
-    vendor: Vendor,
+    dialect: &'static dyn WireDialect,
     pub(super) terminal: bool,
-    event: String,
+    /// The name the last `event:` line gave the data after it.
+    event: &'static str,
 }
 impl ProtocolObserver {
     pub(super) fn new(profile: Profile) -> Self {
         Self {
-            vendor: profile.vendor,
+            dialect: profile.dialect,
             terminal: false,
-            event: String::new(),
+            event: "",
         }
     }
     pub(super) fn observe(&mut self, line: &str, receipt: &Receipt) {
         if self.terminal {
             return;
         }
-        if matches!(self.vendor, Vendor::Anthropic) {
-            if let Some(event) = line.strip_prefix("event: ") {
-                self.event = match event {
-                    "error"
-                    | "message_stop"
-                    | "message_start"
-                    | "message_delta"
-                    | "content_block_start"
-                    | "content_block_delta"
-                    | "content_block_stop"
-                    | "ping" => event.to_owned(),
-                    _ => String::new(),
-                };
+        if let Some(event) = line.strip_prefix("event: ") {
+            if let Some(named) = self.dialect.event_line(event) {
+                self.event = named;
                 return;
             }
         }
@@ -87,7 +78,7 @@ impl ProtocolObserver {
             let mut state = receipt.0.lock().unwrap();
             state.diagnostics.event_count = state.diagnostics.event_count.saturating_add(1);
         }
-        if matches!(self.vendor, Vendor::OpenAi | Vendor::Codex)
+        if self.dialect.ends_on_done()
             && crate::infrastructure::providers::transport::sse_end::is_done_marker(data)
         {
             self.terminal = true;
@@ -98,8 +89,9 @@ impl ProtocolObserver {
             state.diagnostics.termination = Termination::Completed;
             return;
         }
-        // Parsed once: the diagnostics below and the failure check after.
-        let parsed = {
+        // Parsed once: the diagnostics below and the failure check after;
+        // `recorded` is whether this event was recorded as terminal.
+        let (parsed, recorded) = {
             let mut state = receipt.0.lock().unwrap();
             match serde_json::from_str::<serde_json::Value>(data) {
                 Ok(value) => {
@@ -132,7 +124,7 @@ impl ProtocolObserver {
                     let token = state.diagnostics.generated_text
                         || state.diagnostics.generated_tool_call
                         || state.diagnostics.generated_thinking;
-                    let output = attempt_output::output_bytes(self.vendor, &value);
+                    let output = self.dialect.output_bytes(&value);
                     state.diagnostics.output_bytes =
                         state.diagnostics.output_bytes.saturating_add(output);
                     live(&state, output);
@@ -144,15 +136,11 @@ impl ProtocolObserver {
                         state.diagnostics.first_token_ms =
                             Some(u64::try_from(elapsed).unwrap_or(u64::MAX));
                     }
-                    let kind = attempt_events::event_kind(self.vendor, &self.event, &value);
+                    let kind = self.dialect.event_kind(self.event, &value);
                     count_kind(&mut state, kind);
-                    let event = if matches!(self.vendor, Vendor::Anthropic) {
-                        self.event.as_str()
-                    } else {
-                        value["type"].as_str().unwrap_or("")
-                    };
+                    let event = self.dialect.event_name(self.event, &value);
                     let terminal = match event {
-                        _ if is_error_chunk(self.vendor, &value) => Some(TerminalEvent::Error),
+                        _ if self.dialect.is_error_chunk(&value) => Some(TerminalEvent::Error),
                         "response.completed" => Some(TerminalEvent::ResponseCompleted),
                         "response.failed" => Some(TerminalEvent::ResponseFailed),
                         "response.incomplete" => Some(TerminalEvent::ResponseIncomplete),
@@ -163,76 +151,51 @@ impl ProtocolObserver {
                     if terminal.is_some() {
                         state.diagnostics.terminal_event = terminal;
                         state.diagnostics.termination = Termination::Completed;
-                    } else if attempt_events::KNOWN_EVENTS.contains(&event)
-                        || (matches!(self.vendor, Vendor::OpenAi) && value.get("choices").is_some())
-                    {
-                    } else {
+                    } else if !self.dialect.known_event(event, &value) {
                         state.diagnostics.unknown_events =
                             state.diagnostics.unknown_events.saturating_add(1);
                     }
-                    Some(value)
+                    (Some(value), terminal.is_some())
                 }
                 Err(_) => {
                     state.diagnostics.parse_errors =
                         state.diagnostics.parse_errors.saturating_add(1);
                     live(&state, 0);
-                    None
+                    (None, false)
                 }
             }
         };
-        if matches!(self.vendor, Vendor::Anthropic) {
-            // Both Anthropic parsers dispatch by event name and substitute a
-            // null value for malformed JSON. Terminal dispatch must not depend
-            // on successful decoding, or later ignored bytes become feedback.
-            match self.event.as_str() {
-                "error" => {
-                    let mut state = receipt.0.lock().unwrap();
-                    state.diagnostics.terminal_event = Some(TerminalEvent::Error);
+        let (record, failure) = match self.dialect.ending(self.event, parsed.as_ref()) {
+            Ending::Open => return,
+            Ending::Failed {
+                feedback,
+                throttle,
+                record,
+            } => (record, Some((feedback, throttle))),
+            Ending::Completed { record } => (record, None),
+        };
+        {
+            let mut state = receipt.0.lock().unwrap();
+            match record {
+                Some(record) => {
+                    state.diagnostics.terminal_event = Some(record);
                     state.diagnostics.termination = Termination::Completed;
-                    drop(state);
-                    receipt.typed(&parsed.clone().unwrap_or_default());
-                    receipt.fail();
-                    self.terminal = true;
                 }
-                "message_stop" => {
-                    let mut state = receipt.0.lock().unwrap();
-                    state.diagnostics.terminal_event = Some(TerminalEvent::MessageStop);
-                    state.diagnostics.termination = Termination::Completed;
-                    self.terminal = true;
-                }
-                _ => {}
-            }
-        } else {
-            let Some(value) = parsed else {
-                return;
-            };
-            let (failed, completed) = match self.vendor {
-                Vendor::OpenAi => (is_error_chunk(self.vendor, &value), false),
-                // A reply cut off at its output limit completes (#2593).
-                Vendor::Codex => (
-                    (matches!(
-                        value["type"].as_str(),
-                        Some("response.failed" | "response.incomplete" | "error")
-                    ) && !super::super::attempt_profile::ends_at_output_limit(&value))
-                        || is_error_chunk(self.vendor, &value),
-                    super::super::attempt_profile::finishes_reply(&value),
+                // An ending that records nothing relies on this event having
+                // been recorded as terminal when its data was read — not an
+                // earlier one: the dialect's `ending` and its error chunks
+                // agree with the terminal names (#2605 review).
+                None => debug_assert!(
+                    recorded,
+                    "an ending with no record follows this event's terminal record"
                 ),
-                Vendor::Anthropic => unreachable!("Anthropic dispatch handled above"),
-            };
-            if failed {
-                match self.vendor {
-                    // A numeric 429/529 chunk throttles too (#2155 review).
-                    Vendor::OpenAi => receipt.typed_as(
-                        &value,
-                        is_typed_throttle(&value)
-                            || super::super::attempt_profile::is_throttle_chunk(&value),
-                    ),
-                    _ => receipt.typed(&value),
-                }
-                receipt.fail();
             }
-            self.terminal = failed || completed;
         }
+        if let Some((feedback, throttle)) = failure {
+            receipt.typed_as(&feedback, throttle);
+            receipt.fail();
+        }
+        self.terminal = true;
     }
 }
 
@@ -254,17 +217,5 @@ fn live(state: &State, output: u64) {
             || state.diagnostics.generated_tool_call
             || state.diagnostics.generated_thinking;
         trace.observe_event(std::time::Instant::now(), output, token);
-    }
-}
-
-/// Whether `value` is an untyped mid-stream error chunk for `vendor`'s
-/// protocol: any OpenAI-compatible error chunk (#2236), or a Responses
-/// chunk with no `type` carrying one (#2249 review). Anthropic's errors
-/// are named by their `event:` line, never by this shape.
-fn is_error_chunk(vendor: Vendor, value: &serde_json::Value) -> bool {
-    match vendor {
-        Vendor::OpenAi => super::super::attempt_profile::is_stream_error_chunk(value),
-        Vendor::Codex => super::super::attempt_profile::is_untyped_error_chunk(value),
-        Vendor::Anthropic => false,
     }
 }

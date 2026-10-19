@@ -9,6 +9,7 @@ mod request_body;
 // - API keys use the standard `api.openai.com/v1/responses` endpoint with
 //   plain `Authorization: Bearer` auth and none of the OAuth-only headers.
 
+use codex_wire::CODEX_WIRE;
 use std::future::Future;
 use std::pin::Pin;
 
@@ -341,7 +342,7 @@ impl CodexProvider {
                     return Err(DomainError::Provider(error).into());
                 }
                 acc.handle_event(&event)?;
-                if super::transport::attempt_profile::finishes_reply(&event) {
+                if codex_wire::finishes_reply(&event) {
                     saw_terminal = true;
                     break;
                 }
@@ -373,12 +374,12 @@ impl CodexProvider {
     /// failure keeps its established rendering (type and message).
     fn format_stream_failure(event: &serde_json::Value) -> Option<String> {
         // A reply cut off at its output limit is no failure (#2593).
-        if super::transport::attempt_profile::ends_at_output_limit(event) {
+        if codex_wire::ends_at_output_limit(event) {
             return None;
         }
         let kind = match event["type"].as_str() {
             Some(kind @ ("response.failed" | "response.incomplete" | "error")) => kind,
-            None if super::transport::attempt_profile::is_untyped_error_chunk(event) => "error",
+            None if codex_wire::is_untyped_error_chunk(event) => "error",
             _ => return None,
         };
         let mut parts = vec![format!("Responses stream {kind}")];
@@ -461,7 +462,7 @@ impl CodexProvider {
         let attempt = super::transport::attempt_transport::PassiveAttempt::begin(
             call.trace.clone(),
             super::transport::attempt_profile::Profile::new(
-                super::transport::attempt_profile::Vendor::Codex,
+                &CODEX_WIRE,
                 super::transport::attempt_profile::Surface::Incremental,
                 idle,
             ),
@@ -590,6 +591,8 @@ impl LlmProvider for CodexProvider {
 
 mod codex_input;
 mod codex_replay;
+pub(in crate::infrastructure::providers) mod codex_wire;
+mod input_prefix;
 /// FNV-1a 32-bit: fast, dependency-free, deterministic.
 fn fnv1a(text: &str) -> u32 {
     let mut hash: u32 = 0x811c_9dc5;
@@ -655,3 +658,6 @@ mod issue_2421_tests;
 #[cfg(test)]
 #[path = "codex_2593_tests.rs"]
 mod issue_2593_tests;
+#[cfg(test)]
+#[path = "codex_observation_tests.rs"]
+mod observation_tests;

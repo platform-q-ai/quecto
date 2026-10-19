@@ -7,8 +7,9 @@ use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 
 use super::admission_feedback::{CooldownHint, is_typed_throttle, normalize_throttle};
-use super::attempt_profile::{Profile, Vendor};
+use super::attempt_profile::Profile;
 use super::sse_common::{SseHandler, SseLineOutcome};
+use super::wire_dialect::{Ending, WireDialect};
 use crate::application::admission::ports::inference_attempt::{AttemptAdmission, AttemptPermit};
 use crate::domain::admission::value_objects::inference_admission::{Feedback, ThrottleFeedback};
 use crate::domain::conversation::value_objects::message::LlmResponse;
@@ -16,10 +17,6 @@ use crate::domain::inference::value_objects::cancel_flag::CancelFlag;
 use crate::domain::inference::value_objects::provider::StreamEvent;
 use crate::domain::shared::error::DomainError;
 
-#[path = "attempt_events.rs"]
-mod attempt_events;
-#[path = "attempt_output.rs"]
-mod attempt_output;
 #[path = "attempt_observer.rs"]
 mod observer;
 use observer::{LineObserver, ProtocolObserver};
@@ -131,9 +128,6 @@ impl Receipt {
             }
             _ => {}
         }
-    }
-    fn typed(&self, value: &serde_json::Value) {
-        self.typed_as(value, is_typed_throttle(value));
     }
     /// A typed error payload that is (`throttled`) or is not a throttle.
     fn typed_as(&self, value: &serde_json::Value, throttled: bool) {
@@ -568,6 +562,112 @@ pub(in crate::infrastructure::providers) async fn collect(
             "stream ended without completion".into(),
         ))
     })
+}
+
+/// What a fresh attempt observed, for the vendors' tests (#2597).
+#[cfg(test)]
+pub(in crate::infrastructure::providers) struct Observed {
+    /// The observer's terminal flag after each line.
+    pub terminal: Vec<bool>,
+    /// Whether the attempt failed.
+    pub failure: bool,
+    /// Whether the attempt told its gate of a throttle.
+    pub hinted: bool,
+    pub diagnostics: AttemptDiagnostics,
+}
+
+/// A fresh attempt of `profile`, with a gate that grants and hears nothing.
+#[cfg(test)]
+fn test_receipt() -> Receipt {
+    #[derive(Debug)]
+    struct Quiet;
+    impl AttemptPermit for Quiet {
+        fn feedback(&mut self, _: ThrottleFeedback) {}
+        fn finish(self: Box<Self>, _: Feedback) {}
+    }
+    Receipt(Arc::new(Mutex::new(State {
+        permit: Some(Box::new(Quiet)),
+        failure: false,
+        hinted: false,
+        trace: None,
+        diagnostics: Default::default(),
+        started: std::time::Instant::now(),
+    })))
+}
+
+/// What a fresh attempt of `profile` makes of the SSE `lines`, then of its
+/// body ending as `ended` when given.
+#[cfg(test)]
+pub(in crate::infrastructure::providers) fn observed(
+    profile: Profile,
+    lines: &[&str],
+    ended: Option<Termination>,
+) -> Observed {
+    let receipt = test_receipt();
+    let mut observer = ProtocolObserver::new(profile);
+    let terminal = lines
+        .iter()
+        .map(|line| {
+            observer.observe(line, &receipt);
+            observer.terminal
+        })
+        .collect();
+    if let Some(termination) = ended {
+        receipt.termination(termination);
+    }
+    let state = receipt.0.lock().unwrap();
+    Observed {
+        terminal,
+        failure: state.failure,
+        hinted: state.hinted,
+        diagnostics: state.diagnostics.clone(),
+    }
+}
+
+/// [`observed`] as the text the vendors' characterisation tests pin: the
+/// first-token time (a clock reading) is reduced to whether one arrived.
+#[cfg(test)]
+pub(in crate::infrastructure::providers) fn observation(
+    profile: Profile,
+    lines: &[&str],
+) -> String {
+    let mut observed = observed(profile, lines, None);
+    let token = observed.diagnostics.first_token_ms.take().is_some();
+    let diagnostics = serde_json::to_string(&observed.diagnostics).expect("diagnostics serialise");
+    format!(
+        "terminal={:?} failure={} hinted={} first_token={token}\n{diagnostics}",
+        observed.terminal, observed.failure, observed.hinted
+    )
+}
+
+/// The events and terminal event of `lines` handled by `inner` under an
+/// attempt of `profile`, as an admitted stream handles them: each line's
+/// outcome is whether it ended the stream.
+#[cfg(test)]
+pub(in crate::infrastructure::providers) async fn observed_stream<H: SseHandler>(
+    profile: Profile,
+    inner: H,
+    lines: &[&str],
+) -> (Vec<bool>, Vec<StreamEvent>, Option<TerminalEvent>) {
+    let receipt = test_receipt();
+    let mut handler = ObservedHandler {
+        inner,
+        receipt: receipt.clone(),
+        protocol: ProtocolObserver::new(profile),
+    };
+    let (tx, mut rx) = tokio::sync::mpsc::channel(lines.len().max(1) * 4);
+    let mut done = Vec::new();
+    for line in lines {
+        let outcome = handler.process_line(line, &tx).await;
+        done.push(matches!(outcome, SseLineOutcome::Done));
+    }
+    drop(tx);
+    let mut events = Vec::new();
+    while let Some(event) = rx.recv().await {
+        events.push(event);
+    }
+    let terminal = receipt.0.lock().unwrap().diagnostics.terminal_event;
+    (done, events, terminal)
 }
 
 #[cfg(test)]
