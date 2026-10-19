@@ -6,7 +6,9 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use crate::application::admission::dto::{AuthorityAdminError, AuthorityReport};
+use crate::application::admission::dto::{
+    authority::AuthorityAdminError, authority::AuthorityReport,
+};
 use crate::application::admission::ports::AuthorityAdmin;
 
 pub struct InspectAuthority {

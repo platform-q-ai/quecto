@@ -4,7 +4,9 @@
 
 use std::sync::Arc;
 
-use crate::application::admission::dto::{InstallServiceRequest, ServiceAction, ServiceReport};
+use crate::application::admission::dto::{
+    service::InstallServiceRequest, service::ServiceAction, service::ServiceReport,
+};
 use crate::application::admission::ports::{AuthorityServiceManager, ServiceUnitSpec, UnitStatus};
 
 pub struct InstallAuthorityService {

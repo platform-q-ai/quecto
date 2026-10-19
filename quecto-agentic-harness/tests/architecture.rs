@@ -603,15 +603,6 @@ const CONTRACTS_OUTSIDE_PORTS: &[(&str, &[&str])] = &[
     ("sessions::conversation_ledger", &["LedgerAdvance"]),
     ("subagents::standard_script", &["StandardScriptVerdict"]),
     (
-        "admission::services::inference_admission",
-        &[
-            "AdmissionClient",
-            "AdmissionDispatcher",
-            "AdmissionRecovery",
-            "AdmissionRegistry",
-        ],
-    ),
-    (
         "admission::services::inference_authority",
         &[
             "AdmissionAuthority",
@@ -1725,6 +1716,7 @@ fn application_path_allowed(path: &str) -> bool {
             "application",
             "admission",
             "dto",
+            "authority",
             "AuthorityReport" | "AuthorityGroupReport" | "ResetReport"
             | "AuthorityAdminError",
             ..,

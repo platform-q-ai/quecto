@@ -3,15 +3,17 @@
 //! process or touch a filesystem themselves. Connection and reconnect stay
 //! behind the existing admission client port in `infrastructure/admission`.
 //!
-//! The runtime authority's ports sit beside them: the per-attempt admission
-//! (`inference_attempt`), the authority's journal and secret source
-//! (`inference_authority_ports`), and the read port for admission activity
-//! (`inference_observation`).
+//! The runtime authority's ports sit beside them: the admission service's
+//! registry, client, dispatcher and recovery ports (`inference_admission`),
+//! the per-attempt admission (`inference_attempt`), the authority's journal
+//! and secret source (`inference_authority_ports`), and the read port for
+//! admission activity (`inference_observation`).
 
 use std::path::{Path, PathBuf};
 
-use super::dto::{AuthorityAdminError, AuthorityReport, ResetReport};
+use super::dto::authority::{AuthorityAdminError, AuthorityReport, ResetReport};
 
+pub mod inference_admission;
 pub mod inference_attempt;
 pub mod inference_authority_ports;
 pub mod inference_observation;
