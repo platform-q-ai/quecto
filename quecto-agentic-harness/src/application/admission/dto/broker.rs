@@ -5,7 +5,7 @@
 use std::collections::BTreeMap;
 
 use crate::domain::admission::value_objects::inference_admission::{
-    AdmissionError, GroupId, GroupSnapshot, RequestId, RequestState, ScopeId,
+    AdmissionConfig, AdmissionError, GroupId, GroupSnapshot, RequestId, RequestState, ScopeId,
 };
 
 /// Scope identity plus the opaque secret proving the caller was issued it.
@@ -83,4 +83,28 @@ impl Settlement {
         let probe = armed_at.saturating_add(JOURNAL_PROBE_INTERVAL_MS);
         Some(wake.map_or(probe, |wake| wake.min(probe)))
     }
+}
+
+/// How the running authority starts (#1910): its policy, whether its
+/// directory shows prior operation, and whether the operator accepted that
+/// a ledger missing after prior operation starts empty.
+#[derive(Debug, Clone)]
+pub struct AuthorityStart {
+    pub policy: AdmissionConfig,
+    pub previously_operated: bool,
+    pub accept_missing_ledger: bool,
+}
+
+/// Why the running authority could not start from its journal.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RestoreError {
+    /// The journal could not be read, or its ledger is corrupt.
+    Unreadable(String),
+    /// The ledger is missing after prior operation, and the operator has not
+    /// accepted starting empty: outstanding remote work cannot be accounted.
+    MissingLedger,
+    /// The ledger does not fit the policy.
+    Incompatible(AuthorityError),
+    /// The initial ledger could not be made durable.
+    NotDurable(AuthorityError),
 }

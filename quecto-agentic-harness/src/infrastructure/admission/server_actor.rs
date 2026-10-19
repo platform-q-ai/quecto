@@ -20,7 +20,9 @@ use super::protocol::*;
 use super::secret::RandomSecretSource;
 use super::server::{AuthorityUseCases, Clock, wall_ms};
 use crate::application::admission::dto::broker::{AuthorityError, Credential};
-use crate::application::admission::services::inference_authority::AdmissionAuthority;
+use crate::application::admission::services::inference_authority::{
+    AdmissionAuthority, constant_time_eq,
+};
 use crate::domain::admission::value_objects::inference_admission::{
     RequestId, RequestState, ScopeId, TerminalOutcome,
 };
@@ -493,13 +495,4 @@ fn grant_or_terminal(state: RequestState, now: u64) -> Body {
             state: state.into(),
         },
     }
-}
-
-fn constant_time_eq(a: &str, b: &str) -> bool {
-    let (a, b) = (a.as_bytes(), b.as_bytes());
-    let mut diff = a.len() ^ b.len();
-    for (x, y) in a.iter().zip(b.iter()) {
-        diff |= usize::from(x ^ y);
-    }
-    diff == 0
 }
