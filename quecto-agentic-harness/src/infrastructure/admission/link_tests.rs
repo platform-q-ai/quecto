@@ -1,5 +1,5 @@
 use super::*;
-use crate::application::ports::AttemptAdmission;
+use crate::application::admission::ports::inference_attempt::AttemptAdmission;
 use crate::domain::admission::value_objects::inference_admission::{
     AdmissionConfig, Feedback, GroupId, GroupPolicy, WorkloadClass,
 };

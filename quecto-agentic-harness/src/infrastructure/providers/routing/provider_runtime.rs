@@ -10,8 +10,9 @@ use std::collections::{BTreeSet, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::application::ports::{
-    AdmissionBindingDiagnostic, ProviderRuntimeFactory, ProviderRuntimeOutcome,
+use crate::application::{
+    provider_runtime::ProviderRuntimeFactory, provider_runtime::dto::AdmissionBindingDiagnostic,
+    provider_runtime::dto::ProviderRuntimeOutcome,
 };
 use crate::infrastructure::auth::refresh_wiring::RefreshFn;
 use crate::infrastructure::providers::routing::refreshable::ProviderFactory;

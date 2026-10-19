@@ -6,9 +6,14 @@
 use std::collections::BTreeMap;
 
 use crate::application::admission::services::inference_admission::AdmissionService;
-use crate::application::ports::{
-    AdmissionClient, AdmissionDispatcher, AdmissionJournal, AdmissionRecovery, AdmissionRegistry,
-    AdmissionSecretSource, JournalError,
+use crate::application::{
+    admission::ports::inference_authority_ports::AdmissionJournal,
+    admission::ports::inference_authority_ports::AdmissionSecretSource,
+    admission::ports::inference_authority_ports::JournalError,
+    admission::services::inference_admission::AdmissionClient,
+    admission::services::inference_admission::AdmissionDispatcher,
+    admission::services::inference_admission::AdmissionRecovery,
+    admission::services::inference_admission::AdmissionRegistry,
 };
 use crate::domain::admission::value_objects::inference_admission::*;
 

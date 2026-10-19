@@ -3,8 +3,11 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
-use quecto::application::ports::{AttemptAdmission, AttemptPermit};
 use quecto::application::providers::ports::{ChatRequest, LlmProvider};
+use quecto::application::{
+    admission::ports::inference_attempt::AttemptAdmission,
+    admission::ports::inference_attempt::AttemptPermit,
+};
 use quecto::domain::admission::value_objects::inference_admission::{Feedback, ThrottleFeedback};
 use quecto::domain::inference::value_objects::provider::StreamEvent;
 use quecto::domain::shared::error::DomainError;

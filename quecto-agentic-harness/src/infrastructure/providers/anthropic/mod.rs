@@ -32,7 +32,11 @@ pub struct AnthropicProvider {
     api_key: String,
     api_base: String,
     client: reqwest::Client,
-    attempt_admission: Option<std::sync::Arc<dyn crate::application::ports::AttemptAdmission>>,
+    attempt_admission: Option<
+        std::sync::Arc<
+            dyn crate::application::admission::ports::inference_attempt::AttemptAdmission,
+        >,
+    >,
     /// Whether the token is an OAuth access token (Bearer auth + OAuth beta headers).
     is_oauth: bool,
     /// Router-facing provider name. Defaults to `"anthropic"`; registry-built
@@ -50,7 +54,9 @@ impl AnthropicProvider {
     /// construct it from your configured builder to retain proxy/TLS/timeouts.
     pub fn with_attempt_admission(
         mut self,
-        gate: std::sync::Arc<dyn crate::application::ports::AttemptAdmission>,
+        gate: std::sync::Arc<
+            dyn crate::application::admission::ports::inference_attempt::AttemptAdmission,
+        >,
         client: crate::infrastructure::providers::transport::single_attempt_client::SingleAttemptClient,
     ) -> Self {
         self.client = client.into_client();

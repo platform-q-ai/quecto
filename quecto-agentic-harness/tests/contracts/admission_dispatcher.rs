@@ -1,6 +1,10 @@
 //! AdmissionDispatcher reserve recovery regression (#1679 AC2).
 use quecto::application::admission::services::inference_admission::AdmissionService;
-use quecto::application::ports::{AdmissionClient, AdmissionDispatcher, AdmissionRegistry};
+use quecto::application::{
+    admission::services::inference_admission::AdmissionClient,
+    admission::services::inference_admission::AdmissionDispatcher,
+    admission::services::inference_admission::AdmissionRegistry,
+};
 use quecto::domain::admission::value_objects::inference_admission::{
     AdmissionConfig, Feedback, GroupId, GroupPolicy, WorkloadClass,
 };

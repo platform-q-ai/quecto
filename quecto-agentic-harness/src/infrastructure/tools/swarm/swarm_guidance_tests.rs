@@ -167,7 +167,7 @@ async fn a_board_op_before_create_points_the_founder_at_op_create() {
     std::fs::create_dir_all(workspace.join(".quecto")).unwrap();
     let context = crate::infrastructure::tools::swarm::swarm_bridge::SwarmContext {
         board: crate::composition::swarm::swarm_board(),
-        lifecycle: std::sync::Arc::new(crate::application::ports::SwarmTestLifecycle),
+        lifecycle: std::sync::Arc::new(crate::application::swarm::LifecycleService),
         checkout: workspace,
         member: "coordinator".into(),
     };

@@ -9,7 +9,10 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 use super::directory::AuthorityDirectory;
-use crate::application::ports::{AdmissionJournal, JournalError};
+use crate::application::{
+    admission::ports::inference_authority_ports::AdmissionJournal,
+    admission::ports::inference_authority_ports::JournalError,
+};
 use crate::domain::admission::value_objects::inference_admission::{
     AdmissionLedger, GroupId, LedgerGroup, OutstandingAttempt,
 };

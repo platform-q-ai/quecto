@@ -11,9 +11,11 @@ use std::path::{Path, PathBuf};
 use serde_json::Value;
 
 use super::model_registry::{AuthMode, ProviderApi, ProviderDefaults};
-use crate::application::ports::{
-    CatalogueSource, RefreshChange, RefreshContext, RefreshError, RefreshRedactionPort,
-    RefreshableCatalogueSource, SkippedRecord, SourceEntries,
+use crate::application::{
+    catalogue::CatalogueSource, catalogue::SkippedRecord, catalogue::SourceEntries,
+    catalogue::ports::RefreshChange, catalogue::ports::RefreshContext,
+    catalogue::ports::RefreshError, catalogue::ports::RefreshRedactionPort,
+    catalogue::ports::RefreshableCatalogueSource,
 };
 use crate::domain::catalogue::entities::entry::{
     CatalogueEntry, ModelDescriptor, ProviderDescriptor,

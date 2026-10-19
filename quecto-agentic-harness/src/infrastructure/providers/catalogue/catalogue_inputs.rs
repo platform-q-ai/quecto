@@ -144,12 +144,13 @@ impl CatalogueInputs {
         &self.provider_defaults
     }
 
-    pub(crate) fn sources(&self) -> Vec<&dyn crate::application::ports::CatalogueSource> {
-        let mut sources: Vec<&dyn crate::application::ports::CatalogueSource> = vec![&self.builtin];
+    pub(crate) fn sources(&self) -> Vec<&dyn crate::application::catalogue::CatalogueSource> {
+        let mut sources: Vec<&dyn crate::application::catalogue::CatalogueSource> =
+            vec![&self.builtin];
         sources.extend(
             self.discovered
                 .iter()
-                .map(|c| c as &dyn crate::application::ports::CatalogueSource),
+                .map(|c| c as &dyn crate::application::catalogue::CatalogueSource),
         );
         sources.push(&self.user_file);
         sources.push(&self.user_overrides);
@@ -175,7 +176,7 @@ fn synthesize_discovered_records(
     provider_defaults: &[(String, super::model_registry::ProviderDefaults)],
     file_records: &[super::model_registry::ModelRecord],
 ) -> Vec<super::model_registry::ModelRecord> {
-    use crate::application::ports::CatalogueSource as _;
+    use crate::application::catalogue::CatalogueSource as _;
     let mut records = Vec::new();
     for cache in caches {
         let Some((key, defaults)) = provider_defaults
@@ -238,11 +239,11 @@ impl crate::application::catalogue::ports::CatalogueInputsLoader for FileCatalog
 }
 
 impl crate::application::catalogue::ports::LoadedCatalogueInputs for CatalogueInputs {
-    fn sources(&self) -> Vec<&dyn crate::application::ports::CatalogueSource> {
+    fn sources(&self) -> Vec<&dyn crate::application::catalogue::CatalogueSource> {
         CatalogueInputs::sources(self)
     }
 
-    fn credentials(&self) -> &dyn crate::application::ports::CredentialStatusPort {
+    fn credentials(&self) -> &dyn crate::application::catalogue::CredentialStatusPort {
         &self.credentials
     }
 }

@@ -21,7 +21,7 @@ pub struct AgentSession {
     /// model now active.
     startup_warnings: Vec<(String, String)>,
     extensions: super::uds_extensions::Extensions, // #2446: warnings, generation
-    runtime_store: Option<crate::application::ports::RuntimeSnapshotStore>,
+    runtime_store: Option<crate::application::provider_runtime::RuntimeSnapshotStore>,
     streaming: bool,
     pub(crate) automatic_turns_allowed: bool,
     /// Why automatic turns are off and at which swarm control generation

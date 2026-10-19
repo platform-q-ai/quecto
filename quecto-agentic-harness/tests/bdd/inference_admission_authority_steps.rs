@@ -2,7 +2,10 @@
 //! singleton lock). Every Then observes the authority through its admin
 //! socket or a client reply, never through fixture bookkeeping.
 use super::*;
-use quecto::application::ports::{AttemptPermit, Credential};
+use quecto::application::{
+    admission::ports::inference_attempt::AttemptPermit,
+    admission::services::inference_authority::Credential,
+};
 use quecto::domain::admission::value_objects::inference_admission::{
     Feedback, GroupId, GroupPolicy, WorkloadClass,
 };
@@ -103,7 +106,9 @@ pub(super) fn new_root(s: &AuthorityState) -> AuthorityConnection {
     })
 }
 
-pub(super) fn inspect(s: &AuthorityState) -> quecto::application::ports::AuthorityStatus {
+pub(super) fn inspect(
+    s: &AuthorityState,
+) -> quecto::application::admission::services::inference_authority::AuthorityStatus {
     let admin_socket = s.server.as_ref().unwrap().directory().admin_socket();
     rt(s).block_on(async {
         AdminConnection::connect(&admin_socket)
@@ -357,7 +362,9 @@ fn ops(world: &mut QuectoWorld) -> (&mut AuthorityState, &mut OperationsState) {
     (&mut world.authority, &mut world.authority_ops)
 }
 
-fn admin_status(s: &AuthorityState) -> quecto::application::ports::AuthorityStatus {
+fn admin_status(
+    s: &AuthorityState,
+) -> quecto::application::admission::services::inference_authority::AuthorityStatus {
     inspect(s)
 }
 

@@ -59,7 +59,11 @@ pub struct OpenAiProvider {
     api_key: String,
     api_base: String,
     client: reqwest::Client,
-    attempt_admission: Option<std::sync::Arc<dyn crate::application::ports::AttemptAdmission>>,
+    attempt_admission: Option<
+        std::sync::Arc<
+            dyn crate::application::admission::ports::inference_attempt::AttemptAdmission,
+        >,
+    >,
     /// Account ID for OAuth tokens (chatgpt_account_id from JWT).
     account_id: Option<String>,
     /// The bound on a silent streaming reply (#2210).
@@ -80,7 +84,9 @@ impl OpenAiProvider {
     /// construct it from your configured builder to retain proxy/TLS/timeouts.
     pub fn with_attempt_admission(
         mut self,
-        gate: std::sync::Arc<dyn crate::application::ports::AttemptAdmission>,
+        gate: std::sync::Arc<
+            dyn crate::application::admission::ports::inference_attempt::AttemptAdmission,
+        >,
         client: crate::infrastructure::providers::transport::single_attempt_client::SingleAttemptClient,
     ) -> Self {
         self.client = client.into_client();

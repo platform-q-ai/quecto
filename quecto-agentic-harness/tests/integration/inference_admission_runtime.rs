@@ -11,11 +11,15 @@ use quecto::application::admission::services::inference_admission::AdmissionServ
 use quecto::application::catalogue::{
     CatalogueSnapshotStore, CatalogueSource, CredentialStatusPort, SourceEntries,
 };
-use quecto::application::ports::{AdmissionClient, AdmissionDispatcher, AdmissionRegistry};
 use quecto::application::provider_runtime::{
     ComposeProviderRuntimeUseCase, CompositionPorts, ProviderRuntimeFactory, RuntimeSnapshotStore,
 };
 use quecto::application::providers::ports::{ChatRequest, LlmProvider};
+use quecto::application::{
+    admission::services::inference_admission::AdmissionClient,
+    admission::services::inference_admission::AdmissionDispatcher,
+    admission::services::inference_admission::AdmissionRegistry,
+};
 use quecto::domain::admission::value_objects::inference_admission::*;
 use quecto::domain::catalogue::entities::entry::CatalogueEntry;
 use quecto::domain::catalogue::value_objects::precedence::SourceLayer;

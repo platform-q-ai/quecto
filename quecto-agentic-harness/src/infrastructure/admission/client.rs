@@ -16,7 +16,11 @@ use tokio::task::JoinHandle;
 
 use super::protocol::*;
 use super::remote_gate::RemoteAdmission;
-use crate::application::ports::{AttemptAdmission, AuthorityStatus, Credential};
+use crate::application::{
+    admission::ports::inference_attempt::AttemptAdmission,
+    admission::services::inference_authority::AuthorityStatus,
+    admission::services::inference_authority::Credential,
+};
 use crate::domain::admission::value_objects::inference_admission::{
     Feedback, RequestState, ScopeId, WorkloadClass,
 };

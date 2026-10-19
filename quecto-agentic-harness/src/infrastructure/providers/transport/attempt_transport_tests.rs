@@ -377,7 +377,9 @@ async fn a_cancel_wait_is_woken_by_the_cancel_never_by_polling() {
 #[derive(Debug)]
 struct Grant(Mutex<Option<Box<dyn AttemptPermit>>>);
 impl AttemptAdmission for Grant {
-    fn acquire(&self) -> crate::application::ports::AttemptAcquisition<'_> {
+    fn acquire(
+        &self,
+    ) -> crate::application::admission::ports::inference_attempt::AttemptAcquisition<'_> {
         let permit = self.0.lock().unwrap().take();
         Box::pin(async move {
             match permit {

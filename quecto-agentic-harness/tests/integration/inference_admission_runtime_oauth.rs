@@ -8,8 +8,11 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use base64::Engine;
-use quecto::application::ports::{AttemptAdmission, AttemptPermit, ProviderRuntimeFactory};
 use quecto::application::providers::ports::{ChatRequest, LlmProvider};
+use quecto::application::{
+    admission::ports::inference_attempt::AttemptAdmission,
+    admission::ports::inference_attempt::AttemptPermit, provider_runtime::ProviderRuntimeFactory,
+};
 use quecto::domain::admission::value_objects::inference_admission::*;
 use quecto::domain::auth::credential::{AuthMethod, Credential};
 use quecto::domain::shared::error::DomainError;

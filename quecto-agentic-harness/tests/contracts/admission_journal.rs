@@ -4,7 +4,11 @@
 use quecto::application::admission::services::inference_authority::{
     AdmissionAuthority, AuthorityError, Credential,
 };
-use quecto::application::ports::{AdmissionJournal, AdmissionSecretSource, JournalError};
+use quecto::application::{
+    admission::ports::inference_authority_ports::AdmissionJournal,
+    admission::ports::inference_authority_ports::AdmissionSecretSource,
+    admission::ports::inference_authority_ports::JournalError,
+};
 use quecto::domain::admission::value_objects::inference_admission::{
     AdmissionConfig, AdmissionError, AdmissionLedger, Feedback, GroupId, GroupPolicy, RequestId,
     RequestState, TerminalOutcome, WorkloadClass,
