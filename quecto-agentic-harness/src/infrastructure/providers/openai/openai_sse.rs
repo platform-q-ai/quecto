@@ -232,6 +232,7 @@ pub(crate) async fn pump_sse_bytes(
         tx,
         &mut handler,
         Default::default(),
+        &super::openai_wire::OPENAI_WIRE,
     )
     .await;
 }
@@ -243,8 +244,15 @@ pub(crate) async fn pump_sse_bytes_for_model(
     attempt: Option<super::super::transport::attempt_transport::PassiveAttempt>,
     idle: super::super::transport::stream_idle::StreamIdle,
 ) {
-    super::super::transport::attempt_transport::pump_observed(response, tx, handler, attempt, idle)
-        .await;
+    super::super::transport::attempt_transport::pump_observed(
+        response,
+        tx,
+        handler,
+        attempt,
+        idle,
+        &super::openai_wire::OPENAI_WIRE,
+    )
+    .await;
 }
 
 /// Consume an owned OpenAI SSE byte stream, emitting `StreamEvent`s per delta.

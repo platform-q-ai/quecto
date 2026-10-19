@@ -1,16 +1,27 @@
 //! The OpenAI chat wire as the attempt transport reads it (#2597): chunks
 //! with no event names, `[DONE]` as the end, output in the first choice's
 //! delta, and an error chunk (#2155, #2236) as a failure that throttles
-//! admission by its typed fields or a numeric 429/529 code.
+//! admission by its typed fields or a numeric 429/529 code. Its chunks are
+//! named by their choices: it knows no other wire's events.
 use std::borrow::Cow;
 
 use serde_json::Value;
 
 use super::openai_stream_error::{is_stream_error_chunk, is_throttle_chunk};
 use crate::infrastructure::providers::transport::admission_feedback::is_typed_throttle;
-use crate::infrastructure::providers::transport::attempt_events::KNOWN_EVENTS;
+use crate::infrastructure::providers::transport::attempt_events::Vocabulary;
 use crate::infrastructure::providers::transport::attempt_profile::Surface;
-use crate::infrastructure::providers::transport::wire_dialect::{Ending, WireDialect, text_len};
+use crate::infrastructure::providers::transport::sse_progress::filled;
+use crate::infrastructure::providers::transport::wire_dialect::{
+    Ending, Generated, WireDialect, text_len,
+};
+
+/// The chat wire names no events: a chunk is known by its choices, and an
+/// error chunk is its only terminal event.
+static CHAT: Vocabulary = Vocabulary {
+    known: &[],
+    terminal: &[],
+};
 
 /// The OpenAI chat wire.
 pub(in crate::infrastructure::providers) struct OpenAiWire;
@@ -40,8 +51,25 @@ impl WireDialect for OpenAiWire {
     fn strict_error_body(&self, surface: Surface) -> bool {
         matches!(surface, Surface::Chat)
     }
+    fn vocabulary(&self) -> &'static Vocabulary {
+        &CHAT
+    }
     fn event_kind(&self, _named: &str, value: &Value) -> &'static str {
         chat_kind(value)
+    }
+    /// What the first choice's delta carries. OpenAI-compatible reasoning
+    /// models (DeepSeek, GLM, OpenRouter) stream thinking as `reasoning` or
+    /// `reasoning_content` (#2151).
+    fn generated(&self, value: &Value) -> Generated {
+        let delta = &value["choices"][0]["delta"];
+        let text = |field: &str| delta[field].as_str().is_some_and(|s| !s.is_empty());
+        Generated {
+            text: text("content"),
+            tool_call: delta["tool_calls"]
+                .as_array()
+                .is_some_and(|calls| !calls.is_empty()),
+            thinking: CHAT_REASONING_FIELDS.iter().any(|field| text(field)),
+        }
     }
     fn output_bytes(&self, value: &Value) -> u64 {
         chat_output(value)
@@ -49,8 +77,28 @@ impl WireDialect for OpenAiWire {
     fn is_error_chunk(&self, value: &Value) -> bool {
         is_stream_error_chunk(value)
     }
-    fn known_event(&self, name: &str, value: &Value) -> bool {
-        KNOWN_EVENTS.contains(&name) || value.get("choices").is_some()
+    fn known_event(&self, _name: &str, value: &Value) -> bool {
+        value.get("choices").is_some()
+    }
+    /// A chat chunk carries output when a choice's delta holds content,
+    /// reasoning, a refusal or a tool call naming a function or carrying
+    /// arguments, or the choice finishes.
+    fn carries_output(&self, value: &Value) -> bool {
+        value["choices"]
+            .as_array()
+            .is_some_and(|choices| choices.iter().any(chat_choice))
+    }
+    /// A chat chunk opens with its `choices` (a `"type"` inside them, such
+    /// as a tool call's, is not the chunk's): one too long to read whole
+    /// carries output when its choices hold content, reasoning, a refusal or
+    /// a tool call (#2433 review round 3).
+    fn long_event_carries_output(&self, start: &str) -> bool {
+        let chat = match (start.find("\"choices\""), start.find("\"type\"")) {
+            (Some(choices), Some(kind)) => choices < kind,
+            (Some(_), None) => true,
+            (None, _) => false,
+        };
+        chat && CHAT_OUTPUT_FIELDS.iter().any(|field| start.contains(field))
     }
     fn ending<'a>(&self, _named: &str, parsed: Option<&'a Value>) -> Ending<'a> {
         match parsed {
@@ -63,6 +111,32 @@ impl WireDialect for OpenAiWire {
             _ => Ending::Open,
         }
     }
+}
+
+/// The fields of a chat choice's delta that hold output, as a long chunk's
+/// start names them.
+const CHAT_OUTPUT_FIELDS: &[&str] = &[
+    "\"content\"",
+    "\"reasoning\"",
+    "\"reasoning_content\"",
+    "\"refusal\"",
+    "\"tool_calls\"",
+];
+
+/// A chat choice that carries output.
+fn chat_choice(choice: &Value) -> bool {
+    let delta = &choice["delta"];
+    ["content", "refusal", "reasoning", "reasoning_content"]
+        .iter()
+        .any(|field| filled(&delta[*field]))
+        || delta["tool_calls"].as_array().is_some_and(|calls| {
+            calls.iter().any(|call| {
+                ["name", "arguments"]
+                    .iter()
+                    .any(|field| filled(&call["function"][*field]))
+            })
+        })
+        || choice["finish_reason"].is_string()
 }
 
 /// An OpenAI chat chunk's type: the first delta field of its first choice
