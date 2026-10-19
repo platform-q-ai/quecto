@@ -23,6 +23,8 @@ pub fn is_responses_output_limit(reason: &str) -> bool {
 /// A tool call the output limit cut off partway through its arguments.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CutOffCall<'a> {
+    /// The call's id, which its answer names.
+    pub id: &'a str,
     /// The tool the call named.
     pub tool: &'a str,
 }
@@ -35,20 +37,23 @@ pub struct CutOffCall<'a> {
 /// are whole is a call, limit or not; invalid arguments without the limit
 /// are a malformed call (#2123), not a cut-off one.
 pub fn cut_off_tool_call(response: &LlmResponse) -> Option<CutOffCall<'_>> {
-    if response.stop_reason != Some(StopReason::MaxTokens) {
-        return None;
-    }
+    let at_the_limit = response.stop_reason == Some(StopReason::MaxTokens);
     let last = response.tool_calls.len().checked_sub(1);
-    response
-        .tool_calls
-        .iter()
-        .enumerate()
-        .find(|(index, call)| match call.argument_shape() {
-            ToolArguments::Invalid(_) => true,
-            ToolArguments::Empty => Some(*index) == last,
-            ToolArguments::Object(_) => false,
+    at_the_limit
+        .then(|| {
+            response
+                .tool_calls
+                .iter()
+                .enumerate()
+                .find(|(index, call)| match call.argument_shape() {
+                    ToolArguments::Invalid(_) => true,
+                    ToolArguments::Empty => Some(*index) == last,
+                    ToolArguments::Object(_) => false,
+                })
         })
+        .flatten()
         .map(|(_, call)| CutOffCall {
+            id: call.id.as_str(),
             tool: call.name.as_str(),
         })
 }

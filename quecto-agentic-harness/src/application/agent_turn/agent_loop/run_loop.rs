@@ -124,8 +124,11 @@ impl AgentLoopImpl {
             let response = match after {
                 AfterResponse::Proceed(response) => {
                     cut_off_retries = 0;
-                    if cut_off_tool_call(&response).is_none() {
-                        tool_cut_off_retries = 0;
+                    // A reply that cut no call off restores the budget; one
+                    // past the budget keeps it spent.
+                    match cut_off_tool_call(&response) {
+                        Some(_) => {}
+                        None => tool_cut_off_retries = 0,
                     }
                     response
                 }
@@ -169,11 +172,14 @@ impl AgentLoopImpl {
             // — never recovered from a positional slice of `messages`, which
             // pruning can shrink or demote in place.
             let ledger_from = appended_messages.len();
+            // #2593: past the correction budget the cut-off call is
+            // answered as invalid (#2123), whatever its argument text.
+            let cut_off = cut_off_tool_call(&response).map(|cut| cut.id.to_owned());
             self.execute_tool_calls_for_response(
                 messages,
                 current_turn,
                 response,
-                &mut appended_messages,
+                (&mut appended_messages, cut_off.as_deref()),
             )
             .await;
             // Stream this turn's output (assistant message + tool results) over

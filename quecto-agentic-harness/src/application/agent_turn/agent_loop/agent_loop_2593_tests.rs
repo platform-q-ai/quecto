@@ -275,3 +275,32 @@ async fn whole_calls_in_a_cut_off_reply_are_not_run_and_the_feedback_says_so() {
         feedback[0].content
     );
 }
+
+/// Review round 2 of #2598: past the budget, a call cut off before any
+/// argument text is answered as invalid (#2123) like any cut-off call;
+/// it never runs as a call with no arguments.
+#[tokio::test]
+async fn past_the_budget_a_call_cut_off_with_no_arguments_never_runs() {
+    let mut empty = cut_off_write();
+    empty.tool_calls[0].arguments = String::new();
+    let mut run = run_with(
+        vec![
+            Ok(empty.clone()),
+            Ok(empty.clone()),
+            Ok(empty),
+            Ok(text_response("done")),
+        ],
+        false,
+    );
+    let mut messages = vec![Message::user("write the big file")];
+    run.agent.run_loop(&mut messages).await.unwrap();
+    assert!(run.ran.lock().unwrap().is_empty(), "never run as `{{}}`");
+    assert_eq!(cut_off_feedback(&messages).len(), 2);
+    let answers: Vec<&str> = messages
+        .iter()
+        .filter(|m| m.role == Role::Tool)
+        .map(|m| m.content.as_str())
+        .collect();
+    assert_eq!(answers.len(), 1, "{answers:?}");
+    assert!(answers[0].contains("not a JSON object"), "{answers:?}");
+}

@@ -25,7 +25,10 @@ fn a_call_with_cut_arguments_at_the_output_limit_is_cut_off() {
     let response = reply(Some(StopReason::MaxTokens), &[("write", CUT)]);
     assert_eq!(
         cut_off_tool_call(&response),
-        Some(CutOffCall { tool: "write" })
+        Some(CutOffCall {
+            id: "call_write",
+            tool: "write"
+        })
     );
 }
 
@@ -57,7 +60,10 @@ fn the_last_call_with_no_arguments_at_the_output_limit_is_cut_off() {
     );
     assert_eq!(
         cut_off_tool_call(&response),
-        Some(CutOffCall { tool: "write" })
+        Some(CutOffCall {
+            id: "call_write",
+            tool: "write"
+        })
     );
 }
 
