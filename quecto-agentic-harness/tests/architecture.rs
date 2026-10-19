@@ -1528,9 +1528,10 @@ fn application_module_declares(module: &str, name: &str) -> bool {
 fn facade_contract_paths_are_listed_contracts() {
     for (module, names) in FACADE_CONTRACT_PATHS {
         for name in *names {
+            let file = module.replace("::", "/");
             assert!(
                 application_module_declares(module, name),
-                "{module}::{name} is allowed for infrastructure but src/application/{module} declares no such item"
+                "{module}::{name} is allowed for infrastructure but neither src/application/{file}.rs nor src/application/{file}/mod.rs declares it"
             );
             let listed = match module.rsplit("::").next() {
                 Some("dto") => true,
