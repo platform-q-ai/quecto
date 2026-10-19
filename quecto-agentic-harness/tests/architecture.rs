@@ -621,6 +621,10 @@ const CONTRACTS_OUTSIDE_PORTS: &[(&str, &[&str])] = &[
         ],
     ),
     (
+        "catalogue::services::snapshot_store",
+        &["CatalogueSnapshotStore"],
+    ),
+    (
         "provider_runtime",
         &[
             "CatalogueRuntimeSnapshot",
@@ -1447,50 +1451,107 @@ const SWARM_BOARD_DTOS: &[&str] = &[
     "TaskPage",
 ];
 
+/// The contracts the deleted `application::ports` facade re-exported
+/// (#2367), named at their owners: exactly the ones infrastructure
+/// implements or holds, keyed by module path under `application`, until
+/// their capabilities give them a home under `ports/` (admission #1910,
+/// launch #1880). The catalogue's snapshot store is the capability's shared
+/// state (`services/`, #2578), held by the provider adapters' refusal sink.
+/// Every entry is declared in its module, and every non-`dto` entry is also
+/// a `CONTRACTS_OUTSIDE_PORTS` contract
+/// (`facade_contract_paths_are_listed_contracts`).
+const FACADE_CONTRACT_PATHS: &[(&str, &[&str])] = &[
+    (
+        "catalogue::services::snapshot_store",
+        &["CatalogueSnapshotStore"],
+    ),
+    (
+        "provider_runtime",
+        &["ProviderRuntimeFactory", "RuntimeSnapshotStore"],
+    ),
+    (
+        "provider_runtime::dto",
+        &["AdmissionBindingDiagnostic", "ProviderRuntimeOutcome"],
+    ),
+    (
+        "admission::services::inference_authority",
+        &[
+            "AdmissionAuthority",
+            "AuthorityError",
+            "AuthorityStatus",
+            "Credential",
+        ],
+    ),
+    ("subagent_launch", &["LaunchFuture", "SubagentLaunchPorts"]),
+];
+
+fn facade_contract_path(parts: &[&str]) -> bool {
+    match parts {
+        ["crate", "application", owner @ .., name] => {
+            let owner = owner.join("::");
+            FACADE_CONTRACT_PATHS
+                .iter()
+                .any(|(module, names)| *module == owner && names.contains(name))
+        }
+        _ => false,
+    }
+}
+
+/// Whether `src/application/<module>.rs` (or `<module>/mod.rs`) declares a
+/// public struct, enum, trait or type alias named `name`.
+fn application_module_declares(module: &str, name: &str) -> bool {
+    let base = format!("src/application/{}", module.replace("::", "/"));
+    [format!("{base}.rs"), format!("{base}/mod.rs")]
+        .iter()
+        .filter_map(|path| fs::read_to_string(path).ok())
+        .any(|source| {
+            source.lines().any(|line| {
+                let line = line.trim_start();
+                ["pub struct ", "pub enum ", "pub trait ", "pub type "]
+                    .iter()
+                    .filter_map(|keyword| line.strip_prefix(keyword))
+                    .any(|rest| {
+                        rest.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+                            .next()
+                            == Some(name)
+                    })
+            })
+        })
+}
+
+/// A stale owner-path entry fails here (#2367 review): each entry is
+/// declared in its module (`dto` entries included), and each non-`dto` entry
+/// names a contract `CONTRACTS_OUTSIDE_PORTS` lists for the same module; a
+/// `dto` entry sits in a `dto` module, which the ports surface admits by
+/// rule.
+#[test]
+fn facade_contract_paths_are_listed_contracts() {
+    for (module, names) in FACADE_CONTRACT_PATHS {
+        for name in *names {
+            assert!(
+                application_module_declares(module, name),
+                "{module}::{name} is allowed for infrastructure but src/application/{module} declares no such item"
+            );
+            let listed = match module.rsplit("::").next() {
+                Some("dto") => true,
+                _ => CONTRACTS_OUTSIDE_PORTS
+                    .iter()
+                    .any(|(owner, contracts)| owner == module && contracts.contains(name)),
+            };
+            assert!(
+                listed,
+                "{module}::{name} is allowed for infrastructure but is no listed contract"
+            );
+        }
+    }
+}
+
 fn application_path_allowed(path: &str) -> bool {
     let parts: Vec<_> = path.split("::").collect();
+    if facade_contract_path(&parts) {
+        return true;
+    }
     match parts.as_slice() {
-        // The contracts the deleted `application::ports` facade re-exported
-        // (#2367), named at their owners: exactly the ones infrastructure
-        // implements or holds, until their capabilities give them a home
-        // under `ports/` (admission #1910, launch #1880). The catalogue's
-        // snapshot store is the capability's shared state (`services/`,
-        // #2578), held by the provider adapters' refusal sink.
-        [
-            "crate",
-            "application",
-            "catalogue",
-            "services",
-            "snapshot_store",
-            "CatalogueSnapshotStore",
-        ]
-        | [
-            "crate",
-            "application",
-            "provider_runtime",
-            "ProviderRuntimeFactory" | "RuntimeSnapshotStore",
-        ]
-        | [
-            "crate",
-            "application",
-            "provider_runtime",
-            "dto",
-            "AdmissionBindingDiagnostic" | "ProviderRuntimeOutcome",
-        ]
-        | [
-            "crate",
-            "application",
-            "admission",
-            "services",
-            "inference_authority",
-            "AdmissionAuthority" | "AuthorityError" | "AuthorityStatus" | "Credential",
-        ]
-        | [
-            "crate",
-            "application",
-            "subagent_launch",
-            "LaunchFuture" | "SubagentLaunchPorts",
-        ] => true,
         // A tool call's own work carries its panic scope (#2192, ADR-0029):
         // only `call_work`, which joins what it spawns (`carried_work_is_joined`),
         // and catches a panic of work whose call answers it itself (#2517;
@@ -4948,6 +5009,17 @@ fn declared_pub_traits(path: &str) -> Vec<String> {
         .collect()
 }
 
+/// Ports belong to the capability whose use case requires them; the shared
+/// application ports facade is gone (#2367) and must not come back.
+#[test]
+fn application_has_no_shared_ports_facade() {
+    assert!(
+        !Path::new("src/application/ports.rs").exists()
+            && !Path::new("src/application/ports").exists(),
+        "application/ports is a shared ports facade; ports are capability-local"
+    );
+}
+
 #[test]
 fn subagent_teardown_ports_are_capability_local() {
     // The capability declares exactly this port set: an unlisted addition
@@ -4965,13 +5037,6 @@ fn subagent_teardown_ports_are_capability_local() {
         actual, expected,
         "application/subagents/ports.rs must declare exactly TEARDOWN_PORTS and \
          SUBAGENT_INSPECTION_PORTS"
-    );
-    // Ports belong to the capability whose use case requires them; the
-    // shared application facade is gone (#2367) and must not come back.
-    assert!(
-        !Path::new("src/application/ports.rs").exists()
-            && !Path::new("src/application/ports").exists(),
-        "application/ports is a shared ports facade; ports are capability-local"
     );
     // Only this capability declares them: no duplicate port definitions.
     let mut files = Vec::new();
