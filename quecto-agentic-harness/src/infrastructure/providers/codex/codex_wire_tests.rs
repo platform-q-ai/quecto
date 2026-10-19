@@ -324,17 +324,17 @@ fn a_long_codex_event_is_output_by_the_type_its_start_names() {
     }
 }
 
-/// #2609 review: full reasoning text is ordinary Responses traffic, known
-/// and never terminal.
+/// #2609 review round 1: full reasoning text (the OpenAI SDK's
+/// `ResponseReasoningText{Delta,Done}Event`) stays unknown until the Codex
+/// handler consumes it, so the #2158 unknown-event count shows it arriving.
 #[test]
-fn codex_knows_streamed_reasoning_text() {
+fn codex_reasoning_text_stays_unknown_until_handled() {
     for name in [
         "response.reasoning_text.delta",
         "response.reasoning_text.done",
     ] {
         let event = json!({"type": name, "delta": "hm"});
-        assert!(CODEX_WIRE.known_event(name, &event), "{name}");
-        assert_eq!(CODEX_WIRE.event_kind("", &event), name);
-        assert_eq!(CODEX_WIRE.terminal_event(name, &event), None);
+        assert!(!CODEX_WIRE.known_event(name, &event), "{name}");
+        assert_eq!(CODEX_WIRE.event_kind("", &event), "(unknown)");
     }
 }
