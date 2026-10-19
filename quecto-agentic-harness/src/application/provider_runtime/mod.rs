@@ -12,8 +12,10 @@
 use std::sync::{Arc, RwLock};
 
 use crate::application::catalogue::{
-    CatalogueSnapshotStore, CatalogueSource, CredentialStatusPort, ResolveCatalogueUseCase,
-    ResolvedCatalogue,
+    dto::resolved_catalogue::ResolvedCatalogue, ports::catalogue_source::CatalogueSource,
+    ports::credential_status::CredentialStatusPort,
+    services::snapshot_store::CatalogueSnapshotStore,
+    use_cases::resolve_catalogue::ResolveCatalogueUseCase,
 };
 use crate::application::providers::ports::LlmProvider;
 use crate::domain::catalogue::entities::entry::CatalogueEntry;

@@ -8,7 +8,7 @@
 use std::sync::Arc;
 
 use super::*;
-use quecto::application::catalogue::ResolvedCatalogue;
+use quecto::application::catalogue::dto::resolved_catalogue::ResolvedCatalogue;
 use quecto::composition::catalogue::list_models_wire_for;
 use quecto::composition::catalogue::resolve_catalogue_for;
 use quecto::domain::catalogue::entities::snapshot::CatalogueSnapshot;

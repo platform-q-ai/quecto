@@ -2,7 +2,9 @@
 //! selection (issue #1573, epic #1193 slice 3).
 
 use super::*;
-use crate::application::catalogue::{CatalogueSnapshotStore, SourceEntries};
+use crate::application::catalogue::{
+    ports::catalogue_source::SourceEntries, services::snapshot_store::CatalogueSnapshotStore,
+};
 use crate::application::providers::ports::ChatRequest;
 use crate::domain::catalogue::entities::entry::{
     CatalogueEntry, ModelDescriptor, ProviderDescriptor,

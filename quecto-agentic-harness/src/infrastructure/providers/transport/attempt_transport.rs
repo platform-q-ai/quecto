@@ -9,7 +9,7 @@ use std::task::{Context, Poll};
 use super::admission_feedback::{CooldownHint, is_typed_throttle, normalize_throttle};
 use super::attempt_profile::{Profile, Vendor};
 use super::sse_common::{SseHandler, SseLineOutcome};
-use crate::application::ports::{AttemptAdmission, AttemptPermit};
+use crate::application::admission::ports::inference_attempt::{AttemptAdmission, AttemptPermit};
 use crate::domain::admission::value_objects::inference_admission::{Feedback, ThrottleFeedback};
 use crate::domain::conversation::value_objects::message::LlmResponse;
 use crate::domain::inference::value_objects::cancel_flag::CancelFlag;

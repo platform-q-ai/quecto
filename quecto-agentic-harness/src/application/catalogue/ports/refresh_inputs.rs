@@ -5,7 +5,9 @@
 //! infrastructure's; the use case only drives what it is handed.
 
 use crate::application::catalogue::ports::{RefreshRedactionPort, RefreshableCatalogueSource};
-use crate::application::catalogue::{CatalogueSource, CredentialStatusPort};
+use crate::application::catalogue::{
+    ports::catalogue_source::CatalogueSource, ports::credential_status::CredentialStatusPort,
+};
 
 /// One loaded set of refresh inputs. Sources are borrowed from the load so a
 /// run's enumeration and its post-refresh resolve describe one read.

@@ -8,6 +8,7 @@ pub mod effort;
 pub mod model_listing;
 pub mod refresh;
 pub mod reload;
+pub mod resolved_catalogue;
 
 pub use active_model::{
     CatalogueStanding, ModelLimits, ModelSelectionVerdict, ModelSwitchError, ModelSwitchPlan,

@@ -45,7 +45,11 @@ pub struct CodexProvider {
     api_key: String,
     api_base: String,
     client: reqwest::Client,
-    attempt_admission: Option<std::sync::Arc<dyn crate::application::ports::AttemptAdmission>>,
+    attempt_admission: Option<
+        std::sync::Arc<
+            dyn crate::application::admission::ports::inference_attempt::AttemptAdmission,
+        >,
+    >,
     auth: ResponsesAuth,
     /// Set once the service refused replayed reasoning: this provider (and
     /// its clones) replays no more (#2162 review).
@@ -76,7 +80,9 @@ impl CodexProvider {
     /// construct it from your configured builder to retain proxy/TLS/timeouts.
     pub fn with_attempt_admission(
         mut self,
-        gate: std::sync::Arc<dyn crate::application::ports::AttemptAdmission>,
+        gate: std::sync::Arc<
+            dyn crate::application::admission::ports::inference_attempt::AttemptAdmission,
+        >,
         client: crate::infrastructure::providers::transport::single_attempt_client::SingleAttemptClient,
     ) -> Self {
         self.client = client.into_client();

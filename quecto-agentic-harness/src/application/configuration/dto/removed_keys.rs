@@ -2,7 +2,7 @@
 //! removed, and the message that names every one with the command that
 //! removes it.
 
-use crate::application::configuration::removed_keys::{WHY_REMOVED, removed_keys_set};
+use crate::application::configuration::services::removed_keys::{WHY_REMOVED, removed_keys_set};
 use serde_json::{Map, Value};
 use std::path::Path;
 

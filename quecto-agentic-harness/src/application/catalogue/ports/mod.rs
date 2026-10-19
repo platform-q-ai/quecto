@@ -1,8 +1,11 @@
-//! Capability-local ports of the catalogue. The source and credential ports
-//! predate the target layout and stay in the capability root (`CatalogueSource`,
-//! `CredentialStatusPort`); this folder holds the ports the use cases added.
+//! Capability-local ports of the catalogue: the source and credential ports
+//! the resolve use case loads through (`catalogue_source`,
+//! `credential_status`, moved here from the capability root by #2578) and the
+//! ports the other use cases added.
 
 pub mod catalogue_inputs;
+pub mod catalogue_source;
+pub mod credential_status;
 pub mod effort_default_persistence;
 pub mod effort_runtime;
 pub mod effort_vocabulary;

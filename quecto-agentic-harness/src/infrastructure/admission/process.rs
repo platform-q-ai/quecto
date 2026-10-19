@@ -10,7 +10,10 @@ use serde::{Deserialize, Serialize};
 
 use super::client::{AuthorityConnection, ClientError};
 use super::directory::AuthorityDirectory;
-use crate::application::ports::{AttemptAdmission, Credential};
+use crate::application::{
+    admission::ports::inference_attempt::AttemptAdmission,
+    admission::services::inference_authority::Credential,
+};
 use crate::domain::admission::value_objects::inference_admission::WorkloadClass;
 use crate::infrastructure::providers::routing::provider_runtime_admission::{
     AdmissionRuntimeContext, AdmissionRuntimeProposal,
@@ -170,7 +173,10 @@ impl ProcessAdmission {
         self.client_dir.join("admission.sock")
     }
     /// Bounded, fresh admission activity of this process (P4 observation).
-    pub fn observation(&self) -> Arc<dyn crate::application::ports::AdmissionObservation> {
+    pub fn observation(
+        &self,
+    ) -> Arc<dyn crate::application::admission::ports::inference_observation::AdmissionObservation>
+    {
         self.recorder.clone()
     }
     /// Receive a fresh view after every admission transition of this process.

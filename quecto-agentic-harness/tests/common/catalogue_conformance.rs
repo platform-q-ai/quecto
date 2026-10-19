@@ -135,7 +135,7 @@ pub fn canonical_type_redefinitions(infrastructure_sources: &[(String, String)])
 /// capabilities declare an effort vocabulary" (a comment mentioning the
 /// field cannot satisfy this).
 pub fn builtin_entries() -> Vec<quecto::domain::catalogue::entities::entry::CatalogueEntry> {
-    use quecto::application::catalogue::CatalogueSource as _;
+    use quecto::application::catalogue::ports::catalogue_source::CatalogueSource as _;
     quecto::infrastructure::providers::catalogue::catalogue_registry::BuiltinCatalogueSource
         .load()
         .expect("builtin source loads")

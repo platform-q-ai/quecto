@@ -5,7 +5,7 @@
 
 use super::inference_admission_authority_steps::{LIMIT, rt};
 use super::*;
-use quecto::application::ports::AdmissionObservation;
+use quecto::application::admission::ports::inference_observation::AdmissionObservation;
 use quecto::infrastructure::admission::AdmissionRecorder;
 use quecto::interface::cli::{AdmissionStateProbe, admission_broadcast_hook};
 use std::sync::Arc;

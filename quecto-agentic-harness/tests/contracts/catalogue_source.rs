@@ -2,7 +2,7 @@
 //! implementation is a named, layered input whose `load` either yields domain
 //! entries or a descriptive error — and parsing stays behind the port.
 
-use quecto::application::ports::CatalogueSource;
+use quecto::application::catalogue::ports::catalogue_source::CatalogueSource;
 use quecto::domain::catalogue::value_objects::precedence::SourceLayer;
 use quecto::infrastructure::providers::catalogue::catalogue_registry::{
     BuiltinCatalogueSource, ModelsFileCatalogueSource,

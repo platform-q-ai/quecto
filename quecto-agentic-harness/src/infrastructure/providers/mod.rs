@@ -22,7 +22,7 @@ use crate::application::providers::ports::LlmProvider;
 /// Cohesive leaf capability: a gate never arrives without a single-send transport.
 #[derive(Clone)]
 pub(crate) struct AttemptTransportBinding {
-    pub gate: Arc<dyn crate::application::ports::AttemptAdmission>,
+    pub gate: Arc<dyn crate::application::admission::ports::inference_attempt::AttemptAdmission>,
     pub client: transport::single_attempt_client::SingleAttemptClient,
 }
 

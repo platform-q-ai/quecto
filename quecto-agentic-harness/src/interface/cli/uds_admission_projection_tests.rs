@@ -3,7 +3,7 @@ use super::uds_admission_projection::{
 };
 use super::uds_execution_state::ExecutionState;
 use super::uds_state_projection::{slim_state_projection, slim_state_response_data};
-use crate::application::ports::AdmissionObservation;
+use crate::application::admission::ports::inference_observation::AdmissionObservation;
 use crate::domain::admission::value_objects::inference_admission::{
     AdmissionActivity, AdmissionPhase, AttemptObservation, CooldownState, GroupActivity, GroupId,
 };

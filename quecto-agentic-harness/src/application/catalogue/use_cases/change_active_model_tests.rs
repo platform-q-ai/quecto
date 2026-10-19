@@ -10,7 +10,10 @@ use crate::application::catalogue::ports::{
     DefaultScope, EffortRuntime, EffortVocabularySource, LoadedCatalogueInputs, RecordedDefaults,
     RuntimeSnapshotSource,
 };
-use crate::application::catalogue::{CatalogueSource, CredentialStatusPort, SourceEntries};
+use crate::application::catalogue::{
+    ports::catalogue_source::{CatalogueSource, SourceEntries},
+    ports::credential_status::CredentialStatusPort,
+};
 use crate::application::providers::ports::RouteCheck;
 use crate::domain::catalogue::entities::entry::{
     CatalogueEntry, ModelDescriptor, ProviderDescriptor,
