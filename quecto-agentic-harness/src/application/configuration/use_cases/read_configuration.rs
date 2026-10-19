@@ -14,9 +14,9 @@ use serde_json::Value;
 use crate::application::configuration::dto::{
     ConfigReadError, ConfigReadRequest, ConfigReadScope, ConfigReadout,
 };
-use crate::application::configuration::overlay_policy::{get_path, key_segments};
 use crate::application::configuration::ports::ConfigDocumentStore;
-use crate::application::configuration::redaction::redact_secret_leaves;
+use crate::application::configuration::services::overlay_policy::{get_path, key_segments};
+use crate::application::configuration::services::redaction::redact_secret_leaves;
 use crate::application::configuration::use_cases::ResolveEffectiveConfig;
 
 pub struct ReadConfiguration {
