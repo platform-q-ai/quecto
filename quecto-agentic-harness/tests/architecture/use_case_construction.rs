@@ -14,6 +14,8 @@
 //! - a use case (or alias) may be named only as a handle — in a type
 //!   position — never followed by `::new(`, `::default(`, `::from(`, a
 //!   struct literal, or made constructible through `impl From<…> for` it;
+//!   the parse-based scan also refuses a unit struct named as a value
+//!   (`NegotiateAuthority.execute(…)`, #1910);
 //! - the legacy use cases that live outside `use_cases/` folders are an
 //!   exact, non-growing baseline ([`LEGACY_CONSTRUCTIONS`]) tracked by #1666.
 //!
@@ -782,6 +784,25 @@ impl AstConstructions<'_> {
         }
     }
 
+    /// The inventory name a value path builds by naming the type itself: a
+    /// unit struct `Name` used as a value (`Name.execute(…)`), or a tuple
+    /// struct's constructor `Name(…)`, bare, `Self`, or module-qualified
+    /// (`use_cases::Name`). Only a module (lower-case) parent qualifies, so
+    /// an enum variant spelled like a use case (`Event::Name`) is spared.
+    fn value_owner(&self, qself: Option<&syn::QSelf>, path: &syn::Path) -> Option<String> {
+        if qself.is_some() {
+            return None;
+        }
+        let segments: Vec<String> = path.segments.iter().map(|s| s.ident.to_string()).collect();
+        match segments.as_slice() {
+            [only] => self.segment_name(only),
+            [.., parent, last] if parent.starts_with(|c: char| c.is_ascii_lowercase()) => {
+                self.resolve(last)
+            }
+            _ => None,
+        }
+    }
+
     fn record(&mut self, what: String) {
         if !self.found.contains(&what) {
             self.found.push(what);
@@ -889,6 +910,11 @@ impl<'ast> syn::visit::Visit<'ast> for AstConstructions<'_> {
     fn visit_expr_path(&mut self, expr: &'ast syn::ExprPath) {
         if let Some(name) = self.constructor_owner(expr.qself.as_ref(), &expr.path) {
             self.record(format!("`{}` constructs {name}", path_string(&expr.path)));
+        } else if let Some(name) = self.value_owner(expr.qself.as_ref(), &expr.path) {
+            self.record(format!(
+                "`{}` builds a {name} value",
+                path_string(&expr.path)
+            ));
         }
         syn::visit::visit_expr_path(self, expr);
     }

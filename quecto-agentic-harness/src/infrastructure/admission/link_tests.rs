@@ -1,10 +1,11 @@
 use super::*;
 use crate::application::admission::ports::inference_attempt::AttemptAdmission;
+use crate::composition::admission::start_authority;
 use crate::domain::admission::value_objects::inference_admission::{
     AdmissionConfig, Feedback, GroupId, GroupPolicy, WorkloadClass,
 };
 use crate::infrastructure::admission::{
-    AdminConnection, AuthorityConnection, AuthorityDirectory, AuthorityServer, ClientError,
+    AdminConnection, AuthorityConnection, AuthorityDirectory, ClientError,
 };
 use crate::infrastructure::providers::routing::provider_runtime_admission::AdmissionRuntimeProposal;
 use std::collections::BTreeMap;
@@ -107,10 +108,9 @@ fn a_root_link_reconnects_and_is_admitted_after_the_broker_restarts() {
     let rt = runtime();
     let handle = rt.handle().clone();
     rt.block_on(async move {
-        let server =
-            AuthorityServer::start(AuthorityDirectory::open(&dir_path).unwrap(), proposal())
-                .await
-                .unwrap();
+        let server = start_authority(AuthorityDirectory::open(&dir_path).unwrap(), proposal())
+            .await
+            .unwrap();
         let link = root_link(bound_root(&dir_path).await, &dir_path, handle.clone());
         assert_eq!(link.health(), LinkHealth::Connected);
         let first = link.connection();
@@ -127,10 +127,9 @@ fn a_root_link_reconnects_and_is_admitted_after_the_broker_restarts() {
         assert_eq!(link.health(), LinkHealth::Reconnecting);
         // The loss is announced to the watcher (from the I/O runtime).
         wait_until(|| changes.load(Ordering::SeqCst) >= 1).await;
-        let server =
-            AuthorityServer::start(AuthorityDirectory::open(&dir_path).unwrap(), proposal())
-                .await
-                .unwrap();
+        let server = start_authority(AuthorityDirectory::open(&dir_path).unwrap(), proposal())
+            .await
+            .unwrap();
 
         // The next attempt reconnects, re-registers with the fresh owner
         // token and is admitted on the new connection (M5e): the authority
@@ -158,10 +157,9 @@ fn a_root_link_re_registers_after_an_authority_reset() {
     let rt = runtime();
     let handle = rt.handle().clone();
     rt.block_on(async move {
-        let server =
-            AuthorityServer::start(AuthorityDirectory::open(&dir_path).unwrap(), proposal())
-                .await
-                .unwrap();
+        let server = start_authority(AuthorityDirectory::open(&dir_path).unwrap(), proposal())
+            .await
+            .unwrap();
         let link = root_link(bound_root(&dir_path).await, &dir_path, handle.clone());
         let permit = gate(&link).acquire().await.unwrap();
         permit.finish(Feedback::Success);
@@ -196,10 +194,9 @@ fn a_child_link_fails_closed_after_a_reset_and_after_a_loss() {
     let dir_path = temp.path().join("authority");
     let rt = runtime();
     rt.block_on(async move {
-        let server =
-            AuthorityServer::start(AuthorityDirectory::open(&dir_path).unwrap(), proposal())
-                .await
-                .unwrap();
+        let server = start_authority(AuthorityDirectory::open(&dir_path).unwrap(), proposal())
+            .await
+            .unwrap();
         let link = AuthorityLink::child(bound_root(&dir_path).await);
         assert!(gate(&link).acquire().await.is_ok());
 
@@ -234,10 +231,9 @@ fn a_root_link_becomes_unavailable_when_reconnection_is_exhausted() {
     let rt = runtime();
     let handle = rt.handle().clone();
     rt.block_on(async move {
-        let server =
-            AuthorityServer::start(AuthorityDirectory::open(&dir_path).unwrap(), proposal())
-                .await
-                .unwrap();
+        let server = start_authority(AuthorityDirectory::open(&dir_path).unwrap(), proposal())
+            .await
+            .unwrap();
         let link = root_link(bound_root(&dir_path).await, &dir_path, handle.clone());
         server.shutdown().await;
         wait_until(|| !link.connected()).await;
@@ -247,10 +243,9 @@ fn a_root_link_becomes_unavailable_when_reconnection_is_exhausted() {
         assert!(error.to_string().contains("admission"), "{error}");
         assert_eq!(link.health(), LinkHealth::Unavailable);
         // A broker that comes back is still found on the next attempt.
-        let server =
-            AuthorityServer::start(AuthorityDirectory::open(&dir_path).unwrap(), proposal())
-                .await
-                .unwrap();
+        let server = start_authority(AuthorityDirectory::open(&dir_path).unwrap(), proposal())
+            .await
+            .unwrap();
         assert!(gate(&link).acquire().await.is_ok());
         assert_eq!(link.health(), LinkHealth::Connected);
         server.shutdown().await;
@@ -264,10 +259,9 @@ fn attempts_queued_behind_an_exhausted_reconnection_fail_fast() {
     let rt = runtime();
     let handle = rt.handle().clone();
     rt.block_on(async move {
-        let server =
-            AuthorityServer::start(AuthorityDirectory::open(&dir_path).unwrap(), proposal())
-                .await
-                .unwrap();
+        let server = start_authority(AuthorityDirectory::open(&dir_path).unwrap(), proposal())
+            .await
+            .unwrap();
         let link = root_link(bound_root(&dir_path).await, &dir_path, handle.clone());
         // Two tries with a fixed 200 ms (+ up to 50% jitter) between them:
         // one full backoff is a single sleep of 200-300 ms, since the last
@@ -309,10 +303,9 @@ fn attempts_queued_behind_an_exhausted_reconnection_fail_fast() {
         assert_eq!(link.health(), LinkHealth::Unavailable);
 
         // A fresh attempt after the exhaustion still retries the broker.
-        let server =
-            AuthorityServer::start(AuthorityDirectory::open(&dir_path).unwrap(), proposal())
-                .await
-                .unwrap();
+        let server = start_authority(AuthorityDirectory::open(&dir_path).unwrap(), proposal())
+            .await
+            .unwrap();
         assert!(gate(&link).acquire().await.is_ok());
         assert_eq!(link.health(), LinkHealth::Connected);
         server.shutdown().await;
@@ -326,16 +319,15 @@ fn a_reconnection_against_a_changed_policy_fails_closed_with_restart_required() 
     let rt = runtime();
     let handle = rt.handle().clone();
     rt.block_on(async move {
-        let server =
-            AuthorityServer::start(AuthorityDirectory::open(&dir_path).unwrap(), proposal())
-                .await
-                .unwrap();
+        let server = start_authority(AuthorityDirectory::open(&dir_path).unwrap(), proposal())
+            .await
+            .unwrap();
         let link = root_link(bound_root(&dir_path).await, &dir_path, handle.clone());
         server.shutdown().await;
         wait_until(|| !link.connected()).await;
         // The broker comes back with a different policy: silently rebinding
         // would run the session under budgets it never composed against.
-        let server = AuthorityServer::start(
+        let server = start_authority(
             AuthorityDirectory::open(&dir_path).unwrap(),
             proposal_with_capacity(7),
         )

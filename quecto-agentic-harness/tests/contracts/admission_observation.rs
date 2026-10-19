@@ -5,6 +5,7 @@ use quecto::application::{
     admission::ports::inference_attempt::AttemptAdmission,
     admission::ports::inference_observation::AdmissionObservation,
 };
+use quecto::composition::admission::start_authority;
 use quecto::domain::admission::value_objects::inference_admission::{
     AdmissionActivity, AdmissionConfig, AdmissionPhase, CooldownState, Feedback, GroupId,
     GroupPolicy, ThrottleFeedback, WorkloadClass,
@@ -104,7 +105,7 @@ async fn view_when_authority(
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn waiting_admitted_released_and_cooldown_are_observable_with_freshness() {
     let temp = tempfile::tempdir().unwrap();
-    let server = AuthorityServer::start(
+    let server = start_authority(
         AuthorityDirectory::open(&temp.path().join("authority")).unwrap(),
         proposal(),
     )
@@ -224,7 +225,7 @@ async fn waiting_admitted_released_and_cooldown_are_observable_with_freshness() 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn refusals_and_cancellations_are_observed_per_group_with_reasons() {
     let temp = tempfile::tempdir().unwrap();
-    let server = AuthorityServer::start(
+    let server = start_authority(
         AuthorityDirectory::open(&temp.path().join("authority")).unwrap(),
         proposal(),
     )

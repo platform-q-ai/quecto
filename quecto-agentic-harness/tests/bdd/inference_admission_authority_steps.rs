@@ -6,6 +6,7 @@ use quecto::application::{
     admission::ports::inference_attempt::AttemptPermit,
     admission::services::inference_authority::Credential,
 };
+use quecto::composition::admission::start_authority;
 use quecto::domain::admission::value_objects::inference_admission::{
     Feedback, GroupId, GroupPolicy, WorkloadClass,
 };
@@ -83,10 +84,7 @@ fn start(world: &mut QuectoWorld, capacity: usize, queue_timeout_ms: u64) {
     let temp = tempfile::tempdir().unwrap();
     let dir = AuthorityDirectory::open(&temp.path().join("authority")).unwrap();
     let server = runtime
-        .block_on(AuthorityServer::start(
-            dir,
-            proposal(capacity, queue_timeout_ms),
-        ))
+        .block_on(start_authority(dir, proposal(capacity, queue_timeout_ms)))
         .unwrap();
     s.runtime = Some(runtime);
     s.temp = Some(temp);
@@ -644,7 +642,7 @@ fn when_stop_and_corrupt(world: &mut QuectoWorld) {
     .unwrap();
     s.server = Some(
         rt(s)
-            .block_on(AuthorityServer::start(dir, proposal(2, 300)))
+            .block_on(start_authority(dir, proposal(2, 300)))
             .unwrap(),
     );
 }
@@ -664,7 +662,7 @@ fn when_ledger_removed(world: &mut QuectoWorld) {
     let dir = AuthorityDirectory::open(&s.temp.as_ref().unwrap().path().join("authority")).unwrap();
     std::fs::remove_file(dir.journal_path()).unwrap();
     o.missing_error = Some(
-        match rt(s).block_on(AuthorityServer::start(dir, proposal(2, 300))) {
+        match rt(s).block_on(start_authority(dir, proposal(2, 300))) {
             Err(ServerError::Journal(message)) => message,
             Err(other) => panic!("unexpected {other}"),
             Ok(_) => panic!("empty ledger accepted silently"),
@@ -685,7 +683,7 @@ fn then_restart_refused(world: &mut QuectoWorld) {
         ))
         .unwrap();
     assert!(dir.journal_path().exists(), "fresh ledger persisted");
-    let busy = rt(s).block_on(AuthorityServer::start(dir, proposal(2, 300)));
+    let busy = rt(s).block_on(start_authority(dir, proposal(2, 300)));
     assert!(matches!(busy, Err(ServerError::Busy(_))), "singleton");
     if let Err(error) = busy {
         assert!(error.to_string().contains("another"));

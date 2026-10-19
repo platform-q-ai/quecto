@@ -2,6 +2,7 @@
 //! journal, framed protocol, client capability lifetime and recovery.
 #![cfg(unix)]
 
+use quecto::composition::admission::start_authority;
 use std::collections::BTreeMap;
 use std::os::unix::fs::PermissionsExt;
 use std::sync::Arc;
@@ -167,7 +168,7 @@ fn file_journal_is_durable_round_trip_and_fails_closed_on_corruption() {
 #[tokio::test]
 async fn hello_publishes_the_effective_policy_and_grants_release_in_order() {
     let temp = tempfile::tempdir().unwrap();
-    let server = AuthorityServer::start(
+    let server = start_authority(
         AuthorityDirectory::open(&temp.path().join("authority")).unwrap(),
         proposal(1, 5_000),
     )
@@ -212,7 +213,7 @@ async fn hello_publishes_the_effective_policy_and_grants_release_in_order() {
 #[tokio::test]
 async fn dropping_a_queued_acquire_cancels_it_before_dispatch() {
     let temp = tempfile::tempdir().unwrap();
-    let server = AuthorityServer::start(
+    let server = start_authority(
         AuthorityDirectory::open(&temp.path().join("authority")).unwrap(),
         proposal(1, 60_000),
     )
@@ -255,7 +256,7 @@ async fn dropping_a_queued_acquire_cancels_it_before_dispatch() {
 #[tokio::test]
 async fn connection_loss_quarantines_until_the_same_capability_reconciles() {
     let temp = tempfile::tempdir().unwrap();
-    let server = AuthorityServer::start(
+    let server = start_authority(
         AuthorityDirectory::open(&temp.path().join("authority")).unwrap(),
         proposal(2, 300),
     )
@@ -311,7 +312,7 @@ async fn connection_loss_quarantines_until_the_same_capability_reconciles() {
 async fn reset_revokes_capabilities_and_restart_orphans_outstanding_work() {
     let temp = tempfile::tempdir().unwrap();
     let path = temp.path().join("authority");
-    let server = AuthorityServer::start(AuthorityDirectory::open(&path).unwrap(), proposal(2, 300))
+    let server = start_authority(AuthorityDirectory::open(&path).unwrap(), proposal(2, 300))
         .await
         .unwrap();
     let a = root(&server).await;
@@ -322,10 +323,9 @@ async fn reset_revokes_capabilities_and_restart_orphans_outstanding_work() {
     let epoch = a.hello().epoch;
     server.shutdown().await;
     std::mem::forget(permit);
-    let restarted =
-        AuthorityServer::start(AuthorityDirectory::open(&path).unwrap(), proposal(2, 300))
-            .await
-            .unwrap();
+    let restarted = start_authority(AuthorityDirectory::open(&path).unwrap(), proposal(2, 300))
+        .await
+        .unwrap();
     let admin = AdminConnection::connect(&restarted.directory().admin_socket())
         .await
         .unwrap();
@@ -361,7 +361,7 @@ async fn reset_revokes_capabilities_and_restart_orphans_outstanding_work() {
 async fn journal_failure_denies_grants_instead_of_bypassing() {
     let temp = tempfile::tempdir().unwrap();
     let path = temp.path().join("authority");
-    let server = AuthorityServer::start(AuthorityDirectory::open(&path).unwrap(), proposal(2, 200))
+    let server = start_authority(AuthorityDirectory::open(&path).unwrap(), proposal(2, 200))
         .await
         .unwrap();
     let a = root(&server).await;
@@ -386,7 +386,7 @@ async fn journal_failure_denies_grants_instead_of_bypassing() {
 #[tokio::test]
 async fn protocol_rejects_unsupported_hello_unbound_operations_and_child_admin() {
     let temp = tempfile::tempdir().unwrap();
-    let server = AuthorityServer::start(
+    let server = start_authority(
         AuthorityDirectory::open(&temp.path().join("authority")).unwrap(),
         proposal(1, 300),
     )
@@ -435,7 +435,7 @@ fn write_probe_config(
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn interleaved_grants_and_completions_never_desynchronize_the_connection() {
     let temp = tempfile::tempdir().unwrap();
-    let server = AuthorityServer::start(
+    let server = start_authority(
         AuthorityDirectory::open(&temp.path().join("authority")).unwrap(),
         write_probe_config(&proposal(4, 20_000), 4),
     )
@@ -477,7 +477,7 @@ async fn interleaved_grants_and_completions_never_desynchronize_the_connection()
 #[tokio::test]
 async fn cancel_after_grant_releases_the_slot_as_a_failed_attempt() {
     let temp = tempfile::tempdir().unwrap();
-    let server = AuthorityServer::start(
+    let server = start_authority(
         AuthorityDirectory::open(&temp.path().join("authority")).unwrap(),
         proposal(1, 20_000),
     )
@@ -512,7 +512,7 @@ async fn cancel_after_grant_releases_the_slot_as_a_failed_attempt() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn concurrent_acquires_on_one_scope_are_never_rejected_as_replay() {
     let temp = tempfile::tempdir().unwrap();
-    let server = AuthorityServer::start(
+    let server = start_authority(
         AuthorityDirectory::open(&temp.path().join("authority")).unwrap(),
         write_probe_config(&proposal(32, 20_000), 32),
     )
@@ -543,7 +543,7 @@ async fn concurrent_acquires_on_one_scope_are_never_rejected_as_replay() {
 async fn root_registration_requires_the_owner_token_outside_the_client_directory() {
     let temp = tempfile::tempdir().unwrap();
     let dir = AuthorityDirectory::open(&temp.path().join("authority")).unwrap();
-    let server = AuthorityServer::start(dir.clone(), proposal(1, 300))
+    let server = start_authority(dir.clone(), proposal(1, 300))
         .await
         .unwrap();
     let token_path = dir.root_token_path();
@@ -573,7 +573,7 @@ async fn root_registration_requires_the_owner_token_outside_the_client_directory
 async fn missing_ledger_after_prior_operation_fails_closed() {
     let temp = tempfile::tempdir().unwrap();
     let dir = AuthorityDirectory::open(&temp.path().join("authority")).unwrap();
-    let server = AuthorityServer::start(dir.clone(), proposal(1, 300))
+    let server = start_authority(dir.clone(), proposal(1, 300))
         .await
         .unwrap();
     assert!(
@@ -582,7 +582,7 @@ async fn missing_ledger_after_prior_operation_fails_closed() {
     );
     server.shutdown().await;
     std::fs::remove_file(dir.journal_path()).unwrap();
-    let refused = match AuthorityServer::start(dir.clone(), proposal(1, 300)).await {
+    let refused = match start_authority(dir.clone(), proposal(1, 300)).await {
         Err(ServerError::Journal(message)) => message,
         Err(other) => panic!("unexpected refusal {other}"),
         Ok(_) => panic!("a vanished ledger must not start an empty budget"),
@@ -600,7 +600,7 @@ async fn missing_ledger_after_prior_operation_fails_closed() {
 #[tokio::test]
 async fn rebinding_a_capability_supersedes_the_previous_session() {
     let temp = tempfile::tempdir().unwrap();
-    let server = AuthorityServer::start(
+    let server = start_authority(
         AuthorityDirectory::open(&temp.path().join("authority")).unwrap(),
         proposal(1, 60_000),
     )
@@ -637,7 +637,7 @@ async fn rebinding_a_capability_supersedes_the_previous_session() {
 async fn journal_outage_holds_queued_work_and_reports_the_ledger_not_cancellation() {
     let temp = tempfile::tempdir().unwrap();
     let path = temp.path().join("authority");
-    let server = AuthorityServer::start(
+    let server = start_authority(
         AuthorityDirectory::open(&path).unwrap(),
         proposal(2, 20_000),
     )
@@ -726,7 +726,7 @@ async fn remote_permit_reports_feedback_and_observes_the_attempt_deadline() {
     for g in policy.policy.groups.values_mut() {
         g.attempt_timeout_ms = 200;
     }
-    let server = AuthorityServer::start(
+    let server = start_authority(
         AuthorityDirectory::open(&temp.path().join("authority")).unwrap(),
         policy,
     )
@@ -794,7 +794,7 @@ async fn remote_permit_reports_feedback_and_observes_the_attempt_deadline() {
 #[tokio::test]
 async fn parent_retires_an_unlaunched_child() {
     let temp = tempfile::tempdir().unwrap();
-    let server = AuthorityServer::start(
+    let server = start_authority(
         AuthorityDirectory::open(&temp.path().join("authority")).unwrap(),
         proposal(1, 300),
     )
@@ -824,10 +824,10 @@ async fn parent_retires_an_unlaunched_child() {
 async fn start_refusals_are_explicit() {
     let temp = tempfile::tempdir().unwrap();
     let dir = AuthorityDirectory::open(&temp.path().join("authority")).unwrap();
-    let server = AuthorityServer::start(dir.clone(), proposal(1, 300))
+    let server = start_authority(dir.clone(), proposal(1, 300))
         .await
         .unwrap();
-    let busy = AuthorityServer::start(dir.clone(), proposal(1, 300)).await;
+    let busy = start_authority(dir.clone(), proposal(1, 300)).await;
     match busy {
         Err(ServerError::Busy(message)) => assert!(message.contains("another"), "{message}"),
         Err(other) => panic!("unexpected {other}"),
@@ -843,7 +843,7 @@ async fn start_refusals_are_explicit() {
             .insert(g.clone(), huge.policy.groups[&group()].clone());
         huge.policy.aliases.insert(format!("alias-{i:04}"), g);
     }
-    match AuthorityServer::start(dir.clone(), huge).await {
+    match start_authority(dir.clone(), huge).await {
         Err(ServerError::Policy(message)) => assert!(message.contains("too large"), "{message}"),
         other => panic!("unexpected {other:?}"),
     }
@@ -859,7 +859,7 @@ async fn start_refusals_are_explicit() {
     let unreadable = FileJournal::load(&dir).unwrap_err();
     assert!(format!("{unreadable:?}").contains("read ledger"));
     std::fs::remove_dir(dir.journal_path()).unwrap();
-    match AuthorityServer::start(dir.clone(), proposal(1, 300)).await {
+    match start_authority(dir.clone(), proposal(1, 300)).await {
         Err(ServerError::Journal(message)) => assert!(message.contains("missing"), "{message}"),
         other => panic!("unexpected {other:?}"),
     }
@@ -870,7 +870,7 @@ async fn start_refusals_are_explicit() {
 async fn client_refusals_name_their_cause() {
     let temp = tempfile::tempdir().unwrap();
     let dir = AuthorityDirectory::open(&temp.path().join("authority")).unwrap();
-    let server = AuthorityServer::start(dir.clone(), proposal(1, 300))
+    let server = start_authority(dir.clone(), proposal(1, 300))
         .await
         .unwrap();
     assert!(format!("{server:?}").contains("AuthorityServer"));
@@ -928,12 +928,12 @@ async fn start_time_preconditions_map_to_named_refusals() {
     let dir = AuthorityDirectory::open(&temp.path().join("authority")).unwrap();
     let mut invalid = proposal(1, 300);
     invalid.policy.groups.get_mut(&group()).unwrap().reserve = 1;
-    match AuthorityServer::start(dir.clone(), invalid).await {
+    match start_authority(dir.clone(), invalid).await {
         Err(ServerError::Policy(message)) => assert!(message.contains("invalid"), "{message}"),
         other => panic!("unexpected {other:?}"),
     }
     std::fs::write(dir.journal_path(), b"{corrupt").unwrap();
-    match AuthorityServer::start(dir.clone(), proposal(1, 300)).await {
+    match start_authority(dir.clone(), proposal(1, 300)).await {
         Err(ServerError::Journal(message)) => assert!(message.contains("corrupt"), "{message}"),
         other => panic!("unexpected {other:?}"),
     }
@@ -942,7 +942,7 @@ async fn start_time_preconditions_map_to_named_refusals() {
         br#"{"format":1,"epoch":1,"outstanding":[{"group":"gone","scope":1,"sequence":1}],"groups":{}}"#,
     )
     .unwrap();
-    match AuthorityServer::start(dir.clone(), proposal(1, 300)).await {
+    match start_authority(dir.clone(), proposal(1, 300)).await {
         Err(ServerError::Journal(message)) => {
             assert!(message.contains("incompatible"), "{message}")
         }
@@ -974,7 +974,7 @@ async fn start_time_preconditions_map_to_named_refusals() {
 #[tokio::test]
 async fn closing_without_uncertain_work_retires_the_scope() {
     let temp = tempfile::tempdir().unwrap();
-    let server = AuthorityServer::start(
+    let server = start_authority(
         AuthorityDirectory::open(&temp.path().join("authority")).unwrap(),
         proposal(2, 60_000),
     )
@@ -1026,7 +1026,7 @@ async fn closing_without_uncertain_work_retires_the_scope() {
 #[tokio::test]
 async fn a_session_cannot_bind_a_second_capability() {
     let temp = tempfile::tempdir().unwrap();
-    let server = AuthorityServer::start(
+    let server = start_authority(
         AuthorityDirectory::open(&temp.path().join("authority")).unwrap(),
         proposal(1, 300),
     )
@@ -1052,7 +1052,7 @@ async fn a_replayed_queued_acquire_keeps_the_first_waiter() {
     use tokio::io::BufReader;
     let temp = tempfile::tempdir().unwrap();
     let dir = AuthorityDirectory::open(&temp.path().join("authority")).unwrap();
-    let server = AuthorityServer::start(dir.clone(), proposal(1, 60_000))
+    let server = start_authority(dir.clone(), proposal(1, 60_000))
         .await
         .unwrap();
     let holder = root(&server).await;

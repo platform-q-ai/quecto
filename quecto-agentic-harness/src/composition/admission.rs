@@ -10,8 +10,11 @@ use crate::application::admission::use_cases::{
     InspectAuthority, InstallAuthorityService, NegotiateAuthority, ResetAuthority,
     UninstallAuthorityService,
 };
-use crate::infrastructure::admission::SocketAuthorityAdmin;
+use crate::infrastructure::admission::{
+    AuthorityDirectory, AuthorityServer, ServerError, SocketAuthorityAdmin,
+};
 use crate::infrastructure::processes::local::SystemdUserServiceManager;
+use crate::infrastructure::providers::routing::provider_runtime_admission::AdmissionRuntimeProposal;
 use crate::interface::cli::admission_handles::AdmissionHandles;
 
 pub fn build_admission_handles() -> AdmissionHandles {
@@ -32,4 +35,14 @@ pub fn build_admission_handles() -> AdmissionHandles {
         uninstall: Arc::new(UninstallAuthorityService::new(manager)),
         negotiate: Arc::new(NegotiateAuthority::new()),
     }
+}
+
+/// Start an authority over `dir` as composition composes it: every test
+/// that runs a broker starts it here, so what the authority is built from is
+/// decided in one place (#1910).
+pub async fn start_authority(
+    dir: AuthorityDirectory,
+    proposal: AdmissionRuntimeProposal,
+) -> Result<AuthorityServer, ServerError> {
+    AuthorityServer::start(dir, proposal).await
 }

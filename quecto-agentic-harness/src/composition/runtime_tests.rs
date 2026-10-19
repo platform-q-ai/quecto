@@ -135,7 +135,7 @@ fn only_a_child_binding_inherits_at_composition() {
         AdmissionConfig, GroupId, GroupPolicy,
     };
     use crate::infrastructure::admission::{
-        AuthorityDirectory, AuthorityServer, Negotiation, negotiate, write_admission_context,
+        AuthorityDirectory, Negotiation, negotiate, write_admission_context,
     };
     use crate::infrastructure::providers::routing::provider_runtime_admission::AdmissionRuntimeProposal;
     let rt = tokio::runtime::Builder::new_multi_thread()
@@ -168,7 +168,7 @@ fn only_a_child_binding_inherits_at_composition() {
         bindings: std::collections::BTreeMap::from([("openai".into(), "a".into())]),
     };
     let server = rt
-        .block_on(AuthorityServer::start(
+        .block_on(crate::composition::admission::start_authority(
             AuthorityDirectory::open(&directory).unwrap(),
             proposal,
         ))
