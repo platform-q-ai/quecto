@@ -18,7 +18,9 @@ use super::model_registry::{
     resolve_registry_value,
 };
 use crate::application::catalogue::{
-    CatalogueSnapshotStore, CatalogueSource, CredentialStatusPort, SkippedRecord, SourceEntries,
+    ports::catalogue_source::{CatalogueSource, SkippedRecord, SourceEntries},
+    ports::credential_status::CredentialStatusPort,
+    services::snapshot_store::CatalogueSnapshotStore,
 };
 use crate::domain::catalogue::entities::entry::{
     CatalogueEntry, ModelDescriptor, ProviderDescriptor,

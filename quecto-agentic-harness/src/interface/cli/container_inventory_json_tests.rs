@@ -5,7 +5,7 @@
 
 use super::tests::{run, script};
 use super::{EXIT_NOT_CREATED_BY, EXIT_NOTHING_TO_KILL, LsJsonEnvironment, ls_json};
-use crate::application::environments::ports::EnvironmentRegistryStore;
+use crate::application::environments::ports::registry::EnvironmentRegistryStore;
 use crate::domain::environments::entities::environment_registry::{
     EnvironmentOrigin, EnvironmentRecord, EnvironmentStatus,
 };

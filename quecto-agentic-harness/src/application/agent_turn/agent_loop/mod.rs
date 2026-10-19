@@ -55,14 +55,14 @@ mod agent_usage;
 pub mod durable_prefix;
 mod request_observation;
 pub mod tool_panic_scope;
+use crate::domain::inference::services::terminal_guidance::Output;
 use agent_loop_errors::{
-    append_feedback, append_malformed_feedback, enhance_provider_error,
-    is_context_or_output_limit_error, output_limit_feedback, provider_failure_audit_event,
-    record_feedback,
+    append_feedback, append_malformed_feedback, output_limit_feedback,
+    provider_failure_audit_event, record_feedback, tool_call_cut_off_feedback,
 };
 use agent_loop_spill::ToolMessageArgs;
 use agent_loop_turn::{
-    Output, ProviderFailureTransition, TurnState, classify_provider_failure,
+    ProviderFailureTransition, TurnState, classify_provider_failure,
     next_state_after_provider_response, state_for_provider_failure_transition,
 };
 use agent_loop_turn_flow::AfterResponse;

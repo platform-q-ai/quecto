@@ -1,5 +1,5 @@
 use super::*;
-use crate::application::environments::ports::EnvironmentRegistryStore;
+use crate::application::environments::ports::registry::EnvironmentRegistryStore;
 use crate::domain::environments::entities::environment_registry::EnvironmentOrigin;
 
 fn record(reference: &str, status: EnvironmentStatus) -> EnvironmentRecord {
@@ -166,7 +166,7 @@ fn the_store_names_its_document_under_the_base_dir() {
 #[test]
 fn a_joiners_write_on_a_restored_record_never_reverts_the_creators_status() {
     use crate::application::environments::dto::{EnvironmentLiveness, StateOnDisk};
-    use crate::application::environments::ports::EnvironmentProcess;
+    use crate::application::environments::ports::process::EnvironmentProcess;
     use crate::application::environments::use_cases::RestoreRegistry;
     use std::sync::Arc;
 

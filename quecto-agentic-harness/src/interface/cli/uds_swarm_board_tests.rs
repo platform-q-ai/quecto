@@ -2,7 +2,7 @@ use super::{AbortOnDrop, BoardHints, Seen, SwarmBoards, answer, changes, spawn_c
 use crate::application::environments::dto::{
     BoardSighting, HostedBoardRevision, SwarmBoardSnapshot,
 };
-use crate::application::environments::ports::{HostedSwarmBoard, PortFuture};
+use crate::application::environments::ports::{PortFuture, hosted_swarm::HostedSwarmBoard};
 use crate::application::environments::use_cases::ReadSwarmBoard;
 use crate::domain::environments::entities::environment_registry::{
     EnvironmentOrigin, EnvironmentRecord, EnvironmentRegistry, EnvironmentStatus,

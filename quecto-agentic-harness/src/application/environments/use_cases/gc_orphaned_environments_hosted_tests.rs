@@ -10,9 +10,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use super::super::dto::{EnvironmentLiveness, EnvironmentStateDir, GcRemoval, GcRequest};
-use super::super::ports::HostedSwarmRunInspection;
 use super::gc_orphaned_environments::CREATE_GRACE_SECS;
 use super::gc_orphaned_environments_tests::{Rig, container, dir, record};
+use crate::application::environments::ports::hosted_swarm::HostedSwarmRunInspection;
 use crate::domain::environments::entities::environment_registry::GONE_AT_RESTORE;
 use crate::domain::environments::entities::environment_registry::{
     EnvironmentRecord, EnvironmentStatus,

@@ -208,12 +208,14 @@ impl ProtocolObserver {
             };
             let (failed, completed) = match self.vendor {
                 Vendor::OpenAi => (is_error_chunk(self.vendor, &value), false),
+                // A reply cut off at its output limit completes (#2593).
                 Vendor::Codex => (
-                    matches!(
+                    (matches!(
                         value["type"].as_str(),
                         Some("response.failed" | "response.incomplete" | "error")
-                    ) || is_error_chunk(self.vendor, &value),
-                    value["type"].as_str() == Some("response.completed"),
+                    ) && !super::super::attempt_profile::ends_at_output_limit(&value))
+                        || is_error_chunk(self.vendor, &value),
+                    super::super::attempt_profile::finishes_reply(&value),
                 ),
                 Vendor::Anthropic => unreachable!("Anthropic dispatch handled above"),
             };

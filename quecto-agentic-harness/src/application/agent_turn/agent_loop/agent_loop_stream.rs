@@ -8,14 +8,36 @@ use crate::domain::shared::error::DomainError;
 pub(super) struct StreamProviderError {
     pub(super) error: DomainError,
     pub(super) emitted_event: bool,
+    pub(super) source: FailureSource,
+}
+
+/// Where a failed request's error came from (#2459 review): only a
+/// provider's failure is explained with provider guidance; the request
+/// admission gate's refusal says what to do itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum FailureSource {
+    /// A provider attempt (or the provider decorators around it) failed.
+    Provider,
+    /// The request admission gate refused the request before any send.
+    RequestAdmission,
 }
 
 impl StreamProviderError {
-    /// A failure before any output was shown.
+    /// A provider failure before any output was shown.
     pub(super) fn before_output(error: DomainError) -> Self {
         Self {
             error,
             emitted_event: false,
+            source: FailureSource::Provider,
+        }
+    }
+
+    /// The request admission gate refused the request.
+    pub(super) fn refused_by_admission(error: DomainError) -> Self {
+        Self {
+            error,
+            emitted_event: false,
+            source: FailureSource::RequestAdmission,
         }
     }
 }

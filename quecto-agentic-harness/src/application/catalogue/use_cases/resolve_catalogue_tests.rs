@@ -5,14 +5,16 @@
 use std::sync::Mutex;
 
 use super::*;
-use crate::domain::catalogue::entities::entry::{ModelDescriptor, ProviderDescriptor};
-use crate::domain::catalogue::value_objects::availability::{
-    AvailabilityStatus, UnavailableReason,
+use crate::application::catalogue::ports::catalogue_source::SourceEntries;
+use crate::domain::catalogue::entities::entry::{
+    CatalogueEntry, ModelDescriptor, ProviderDescriptor,
 };
+use crate::domain::catalogue::value_objects::availability::{Availability, UnavailableReason};
 use crate::domain::catalogue::value_objects::identity::{
-    AuthIdentity, ModelId, ModelRef, ProviderId,
+    AuthIdentity, ModelId, ModelRef, ProviderId, TransportKind,
 };
 use crate::domain::catalogue::value_objects::model_facts::{ModelCapabilities, ModelCost};
+use crate::domain::catalogue::value_objects::precedence::SourceLayer;
 
 const FAKE_SECRET: &str = "sk-secret-123";
 
@@ -253,28 +255,6 @@ fn resolve_derives_availability_from_credential_status() {
     assert!(anthropic.model.availability.is_runnable());
 }
 
-#[test]
-fn derive_availability_composes_adapter_and_credential_status() {
-    let runnable = derive_availability(TransportKind::OpenAiCompletions, true, true);
-    assert!(runnable.is_runnable());
-
-    let no_credential = derive_availability(TransportKind::OpenAiCompletions, true, false);
-    assert_eq!(no_credential.status(), AvailabilityStatus::Available);
-    assert_eq!(
-        no_credential.reasons(),
-        &[UnavailableReason::MissingCredential]
-    );
-
-    let no_adapter = derive_availability(TransportKind::OpenAiCompletions, false, true);
-    assert!(!no_adapter.is_runnable());
-    assert!(
-        no_adapter
-            .reasons()
-            .iter()
-            .any(|reason| matches!(reason, UnavailableReason::UnsupportedTransport { .. }))
-    );
-}
-
 /// Documents the `CredentialStatusPort` contract: the port answers yes/no
 /// only, so `resolve_and_publish` never holds credential material and the
 /// snapshot cannot carry it. Today the rendered-snapshot assertion cannot fail
@@ -440,5 +420,5 @@ fn a_failed_source_keeps_its_last_good_layer_without_freezing_other_updates() {
     assert!(snapshot.generation() > 1, "a new generation was published");
 }
 
-#[path = "catalogue_refusal_tests.rs"]
+#[path = "resolve_catalogue_refusal_tests.rs"]
 mod refusal_tests;

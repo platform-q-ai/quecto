@@ -544,3 +544,93 @@ fn http_402_is_billing() {
         );
     }
 }
+
+/// #2531: Envoy's router 507 local reply for a request body past its retry
+/// buffer (any provider behind Envoy; Codex sent it) is retryable `Server`.
+/// Any other 507 stays `Unknown`.
+#[test]
+fn envoy_507_upstream_retry_buffer_limit_is_retryable_server() {
+    let err = DomainError::Provider(
+        "HTTP 507 from Codex: exceeded request buffer limit while retrying upstream".to_string(),
+    );
+    let class = classify_provider_error(&err);
+    assert_eq!(class, ProviderErrorClass::Server);
+    assert!(class.is_retryable());
+    assert_eq!(provider_http_status(&err), Some(507));
+    for other in [
+        "HTTP 507 from Codex: insufficient storage",
+        "HTTP 500 from Codex: exceeded request buffer limit while retrying upstream x",
+    ] {
+        let class = classify_provider_error(&DomainError::Provider(other.into()));
+        let expected = if other.starts_with("HTTP 507") {
+            ProviderErrorClass::Unknown
+        } else {
+            ProviderErrorClass::Server
+        };
+        assert_eq!(class, expected, "{other}");
+    }
+}
+
+#[test]
+fn context_limit_phrases_are_recognised_and_unrelated_ones_are_not() {
+    for yes in [
+        "maximum context length exceeded for this model token",
+        "the context length is too long, too many tokens",
+        "context window exceeded: too many tokens",
+        "requested 5000 tokens but limit reached",
+        "max_tokens is too large for this context",
+        "max output tokens exceeds context",
+    ] {
+        assert!(is_context_or_output_limit_error(yes), "{yes}");
+    }
+    for no in [
+        "authentication failed",
+        "rate limited, try again",
+        "",
+        "invalid token provided",
+    ] {
+        assert!(!is_context_or_output_limit_error(no), "{no}");
+    }
+}
+
+/// #2531 review: the phrase is Envoy's 507 local reply; on any other status
+/// it is no retry-buffer failure and keeps that status's class.
+#[test]
+fn the_retry_buffer_phrase_on_another_status_keeps_that_status_class() {
+    let phrase = "exceeded request buffer limit while retrying upstream";
+    for (status, class) in [
+        (400, ProviderErrorClass::Client),
+        (401, ProviderErrorClass::Auth),
+        (404, ProviderErrorClass::Client),
+    ] {
+        let err = DomainError::Provider(format!("HTTP {status} from Codex: {phrase}"));
+        assert_eq!(classify_provider_error(&err), class, "{status}");
+    }
+}
+
+#[test]
+fn admission_gate_errors_are_recognised_by_their_prefix_alone() {
+    for message in [
+        "admission: admission transport failure: connection refused",
+        "admission: admission refused: capability revoked",
+        "admission: admission authority connection closed",
+    ] {
+        assert!(
+            is_admission_gate_error(&DomainError::Provider(message.into())),
+            "{message}"
+        );
+    }
+    for message in [
+        "HTTP 503 overloaded",
+        "connection refused",
+        "the admission was fine",
+    ] {
+        assert!(
+            !is_admission_gate_error(&DomainError::Provider(message.into())),
+            "{message}"
+        );
+    }
+    assert!(!is_admission_gate_error(&DomainError::Tool(
+        "admission: x".into()
+    )));
+}

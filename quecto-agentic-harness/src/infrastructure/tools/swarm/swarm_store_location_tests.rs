@@ -395,7 +395,7 @@ fn sandbox_record(
 /// Records the scripts the finalizer runs.
 struct Scripts(std::sync::Mutex<Vec<&'static str>>);
 
-impl crate::application::environments::ports::EnvironmentProcessCommands for Scripts {
+impl crate::application::environments::ports::process::EnvironmentProcessCommands for Scripts {
     fn run_retained_inspect<'a>(
         &'a self,
         _: &'a str,
@@ -441,7 +441,7 @@ impl crate::application::environments::ports::EnvironmentProcessCommands for Scr
 /// end nor a harness shutdown destroys the live swarm's box.
 #[test]
 fn a_live_swarm_whose_layout_changed_is_never_taken_for_a_plain_container() {
-    use crate::application::environments::ports::HostedSwarmRunInspection;
+    use crate::application::environments::ports::hosted_swarm::HostedSwarmRunInspection;
     use crate::application::environments::use_cases::FinalizeEnvironmentMember;
     use crate::domain::environments::entities::environment_registry::{
         EnvironmentRegistry, EnvironmentStatus,

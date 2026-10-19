@@ -47,9 +47,9 @@ use crate::domain::environments::entities::environment_registry::{
 
 use super::super::dto::EnvironmentLiveness;
 
-use super::super::ports::{
-    EnvironmentMemberShutdown, EnvironmentProcessCommands, HostedSwarmRunObservation,
-    MemberShutdownReport,
+use crate::application::environments::ports::{
+    hosted_swarm::HostedSwarmRunObservation, process::EnvironmentMemberShutdown,
+    process::EnvironmentProcessCommands, process::MemberShutdownReport,
 };
 use crate::domain::environments::services::environment_retention::SwarmRunObservation;
 

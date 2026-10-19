@@ -603,27 +603,6 @@ const CONTRACTS_OUTSIDE_PORTS: &[(&str, &[&str])] = &[
     ("sessions::conversation_ledger", &["LedgerAdvance"]),
     ("subagents::standard_script", &["StandardScriptVerdict"]),
     (
-        "catalogue",
-        &[
-            "CatalogueSnapshotStore",
-            "CatalogueSource",
-            "CatalogueSourceError",
-            "CredentialStatusPort",
-            "ResolvedCatalogue",
-            "SkippedRecord",
-            "SourceEntries",
-        ],
-    ),
-    (
-        "admission::services::inference_admission",
-        &[
-            "AdmissionClient",
-            "AdmissionDispatcher",
-            "AdmissionRecovery",
-            "AdmissionRegistry",
-        ],
-    ),
-    (
         "admission::services::inference_authority",
         &[
             "AdmissionAuthority",
@@ -631,6 +610,10 @@ const CONTRACTS_OUTSIDE_PORTS: &[(&str, &[&str])] = &[
             "AuthorityStatus",
             "Credential",
         ],
+    ),
+    (
+        "catalogue::services::snapshot_store",
+        &["CatalogueSnapshotStore"],
     ),
     (
         "provider_runtime",
@@ -973,7 +956,7 @@ fn port_items(
 
 #[test]
 fn ports_guard_is_an_allowlist() {
-    let file = "src/application/environments/ports.rs";
+    let file = "src/application/environments/ports/mod.rs";
     for source in [
         "pub use super::use_cases::FinalizeEnvironmentMember as X;",
         "pub(crate) use super::use_cases::FinalizeEnvironmentMember as X;",
@@ -1459,50 +1442,108 @@ const SWARM_BOARD_DTOS: &[&str] = &[
     "TaskPage",
 ];
 
+/// The contracts the deleted `application::ports` facade re-exported
+/// (#2367), named at their owners: exactly the ones infrastructure
+/// implements or holds, keyed by module path under `application`, until
+/// their capabilities give them a home under `ports/` (admission #1910,
+/// launch #1880). The catalogue's snapshot store is the capability's shared
+/// state (`services/`, #2578), held by the provider adapters' refusal sink.
+/// Every entry is declared in its module, and every non-`dto` entry is also
+/// a `CONTRACTS_OUTSIDE_PORTS` contract
+/// (`facade_contract_paths_are_listed_contracts`).
+const FACADE_CONTRACT_PATHS: &[(&str, &[&str])] = &[
+    (
+        "catalogue::services::snapshot_store",
+        &["CatalogueSnapshotStore"],
+    ),
+    (
+        "provider_runtime",
+        &["ProviderRuntimeFactory", "RuntimeSnapshotStore"],
+    ),
+    (
+        "provider_runtime::dto",
+        &["AdmissionBindingDiagnostic", "ProviderRuntimeOutcome"],
+    ),
+    (
+        "admission::services::inference_authority",
+        &[
+            "AdmissionAuthority",
+            "AuthorityError",
+            "AuthorityStatus",
+            "Credential",
+        ],
+    ),
+    ("subagent_launch", &["LaunchFuture", "SubagentLaunchPorts"]),
+];
+
+fn facade_contract_path(parts: &[&str]) -> bool {
+    match parts {
+        ["crate", "application", owner @ .., name] => {
+            let owner = owner.join("::");
+            FACADE_CONTRACT_PATHS
+                .iter()
+                .any(|(module, names)| *module == owner && names.contains(name))
+        }
+        _ => false,
+    }
+}
+
+/// Whether `src/application/<module>.rs` (or `<module>/mod.rs`) declares a
+/// public struct, enum, trait or type alias named `name`.
+fn application_module_declares(module: &str, name: &str) -> bool {
+    let base = format!("src/application/{}", module.replace("::", "/"));
+    [format!("{base}.rs"), format!("{base}/mod.rs")]
+        .iter()
+        .filter_map(|path| fs::read_to_string(path).ok())
+        .any(|source| {
+            source.lines().any(|line| {
+                let line = line.trim_start();
+                ["pub struct ", "pub enum ", "pub trait ", "pub type "]
+                    .iter()
+                    .filter_map(|keyword| line.strip_prefix(keyword))
+                    .any(|rest| {
+                        rest.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+                            .next()
+                            == Some(name)
+                    })
+            })
+        })
+}
+
+/// A stale owner-path entry fails here (#2367 review): each entry is
+/// declared in its module (`dto` entries included), and each non-`dto` entry
+/// names a contract `CONTRACTS_OUTSIDE_PORTS` lists for the same module; a
+/// `dto` entry sits in a `dto` module, which the ports surface admits by
+/// rule.
+#[test]
+fn facade_contract_paths_are_listed_contracts() {
+    for (module, names) in FACADE_CONTRACT_PATHS {
+        for name in *names {
+            let file = module.replace("::", "/");
+            assert!(
+                application_module_declares(module, name),
+                "{module}::{name} is allowed for infrastructure but neither src/application/{file}.rs nor src/application/{file}/mod.rs declares it"
+            );
+            let listed = match module.rsplit("::").next() {
+                Some("dto") => true,
+                _ => CONTRACTS_OUTSIDE_PORTS
+                    .iter()
+                    .any(|(owner, contracts)| owner == module && contracts.contains(name)),
+            };
+            assert!(
+                listed,
+                "{module}::{name} is allowed for infrastructure but is no listed contract"
+            );
+        }
+    }
+}
+
 fn application_path_allowed(path: &str) -> bool {
     let parts: Vec<_> = path.split("::").collect();
+    if facade_contract_path(&parts) {
+        return true;
+    }
     match parts.as_slice() {
-        // The contracts the deleted `application::ports` facade re-exported
-        // (#2367), named at their owners: exactly the ones infrastructure
-        // implements or holds, until their capabilities give them a home
-        // under `ports/` (catalogue L20 #2578, admission #1910, launch #1880).
-        [
-            "crate",
-            "application",
-            "catalogue",
-            "CatalogueSnapshotStore"
-            | "CatalogueSource"
-            | "CredentialStatusPort"
-            | "SkippedRecord"
-            | "SourceEntries",
-        ]
-        | [
-            "crate",
-            "application",
-            "provider_runtime",
-            "ProviderRuntimeFactory" | "RuntimeSnapshotStore",
-        ]
-        | [
-            "crate",
-            "application",
-            "provider_runtime",
-            "dto",
-            "AdmissionBindingDiagnostic" | "ProviderRuntimeOutcome",
-        ]
-        | [
-            "crate",
-            "application",
-            "admission",
-            "services",
-            "inference_authority",
-            "AdmissionAuthority" | "AuthorityError" | "AuthorityStatus" | "Credential",
-        ]
-        | [
-            "crate",
-            "application",
-            "subagent_launch",
-            "LaunchFuture" | "SubagentLaunchPorts",
-        ] => true,
         // A tool call's own work carries its panic scope (#2192, ADR-0029):
         // only `call_work`, which joins what it spawns (`carried_work_is_joined`),
         // and catches a panic of work whose call answers it itself (#2517;
@@ -1737,6 +1778,7 @@ fn application_path_allowed(path: &str) -> bool {
             "application",
             "admission",
             "dto",
+            "authority",
             "AuthorityReport" | "AuthorityGroupReport" | "ResetReport"
             | "AuthorityAdminError",
             ..,
@@ -4946,6 +4988,22 @@ fn sessions_interface_only_parses_maps_and_presents() {
 }
 
 /// `pub trait` names declared in a source file, in declaration order.
+/// How many times `source` declares a trait named exactly `name`, whatever
+/// its visibility: `trait {name}` followed by a non-identifier character, so
+/// `trait {name}Ext` does not count.
+fn trait_declarations(source: &str, name: &str) -> usize {
+    let needle = format!("trait {name}");
+    source
+        .match_indices(&needle)
+        .filter(|(at, _)| {
+            source[at + needle.len()..]
+                .chars()
+                .next()
+                .is_none_or(|next| !(next.is_alphanumeric() || next == '_'))
+        })
+        .count()
+}
+
 fn declared_pub_traits(path: &str) -> Vec<String> {
     let source = fs::read_to_string(path).unwrap_or_else(|e| panic!("read {path}: {e}"));
     source
@@ -4958,6 +5016,17 @@ fn declared_pub_traits(path: &str) -> Vec<String> {
                 .to_string()
         })
         .collect()
+}
+
+/// Ports belong to the capability whose use case requires them; the shared
+/// application ports facade is gone (#2367) and must not come back.
+#[test]
+fn application_has_no_shared_ports_facade() {
+    assert!(
+        !Path::new("src/application/ports.rs").exists()
+            && !Path::new("src/application/ports").exists(),
+        "application/ports is a shared ports facade; ports are capability-local"
+    );
 }
 
 #[test]
@@ -4977,13 +5046,6 @@ fn subagent_teardown_ports_are_capability_local() {
         actual, expected,
         "application/subagents/ports.rs must declare exactly TEARDOWN_PORTS and \
          SUBAGENT_INSPECTION_PORTS"
-    );
-    // Ports belong to the capability whose use case requires them; the
-    // shared application facade is gone (#2367) and must not come back.
-    assert!(
-        !Path::new("src/application/ports.rs").exists()
-            && !Path::new("src/application/ports").exists(),
-        "application/ports is a shared ports facade; ports are capability-local"
     );
     // Only this capability declares them: no duplicate port definitions.
     let mut files = Vec::new();
@@ -6160,7 +6222,7 @@ fn environments_application_depends_only_inward() {
     }
     for dep in [
         "crate::domain::environments::entities::environment_registry::EnvironmentRegistry",
-        "crate::application::environments::ports::EnvironmentMemberShutdown",
+        "crate::application::environments::ports::process::EnvironmentMemberShutdown",
         "serde_json::Value",
         "std::sync::Arc",
     ] {
@@ -6549,33 +6611,69 @@ fn domain_holds_no_environment_use_case_or_effect_port() {
     }
 }
 
+/// The files of the environments capability's `ports/` folder (#2367).
+const ENVIRONMENT_PORT_FILES: &[&str] = &[
+    "mod.rs",
+    "container.rs",
+    "hosted_swarm.rs",
+    "process.rs",
+    "registry.rs",
+];
+
 #[test]
 fn environment_ports_are_capability_local_and_contracted() {
-    let declared = declared_pub_traits("src/application/environments/ports.rs");
+    // Every file under `ports/` is read, and the folder holds exactly
+    // `ENVIRONMENT_PORT_FILES`: a new port file (or a second declaration of a
+    // port) cannot escape the check (#2367 review).
+    let mut port_files = Vec::new();
+    collect_rs_files(
+        Path::new("src/application/environments/ports"),
+        &mut port_files,
+    );
+    let mut on_disk: Vec<String> = port_files
+        .iter()
+        .map(|file| file.split_once(":\n").unwrap().0.to_string())
+        .collect();
+    let mut listed: Vec<String> = ENVIRONMENT_PORT_FILES
+        .iter()
+        .map(|file| format!("src/application/environments/ports/{file}"))
+        .collect();
+    on_disk.sort();
+    listed.sort();
+    assert_eq!(
+        on_disk, listed,
+        "application/environments/ports/ must hold exactly ENVIRONMENT_PORT_FILES"
+    );
+    let mut actual: Vec<String> = on_disk
+        .iter()
+        .flat_map(|path| declared_pub_traits(path))
+        .collect();
     let mut expected: Vec<String> = ENVIRONMENT_PORTS.iter().map(|p| p.to_string()).collect();
-    let mut actual = declared.clone();
     expected.sort();
     actual.sort();
     assert_eq!(
         actual, expected,
-        "application/environments/ports.rs must declare exactly ENVIRONMENT_PORTS"
+        "application/environments/ports/ must declare exactly ENVIRONMENT_PORTS"
     );
     let use_cases =
         declared_pub_traits("src/application/environments/use_cases/kill_environment.rs");
     assert!(use_cases.is_empty(), "use cases declare no ports");
+    // Each port is declared exactly once in the whole crate, and that once is
+    // under `ports/`. Sibling files in the folder could otherwise each hold a
+    // private `trait {port}` without a compile error (#2367 review round 2).
     let mut files = Vec::new();
     collect_rs_files(Path::new("src"), &mut files);
-    for file in &files {
-        let (path, source) = file.split_once(":\n").unwrap();
-        if path == "src/application/environments/ports.rs" {
-            continue;
-        }
-        for port in ENVIRONMENT_PORTS {
-            assert!(
-                !source.contains(&format!("trait {port}")),
-                "{path} redeclares environment port {port}"
-            );
-        }
+    for port in ENVIRONMENT_PORTS {
+        let declarations: Vec<&str> = files
+            .iter()
+            .filter_map(|file| file.split_once(":\n"))
+            .flat_map(|(path, source)| std::iter::repeat_n(path, trait_declarations(source, port)))
+            .collect();
+        assert!(
+            declarations.len() == 1
+                && declarations[0].starts_with("src/application/environments/ports/"),
+            "environment port {port} must be declared exactly once, under ports/; found {declarations:?}"
+        );
     }
     let contracts = active_contract_modules();
     for port in ENVIRONMENT_PORTS {

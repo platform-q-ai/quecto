@@ -6,6 +6,7 @@ pub mod change_reasoning_effort;
 pub mod list_models;
 pub mod refresh_catalogue_sources;
 pub mod reload_runtime_configuration;
+pub mod resolve_catalogue;
 
 pub use change_active_model::ChangeActiveModel;
 pub use change_reasoning_effort::ChangeReasoningEffort;

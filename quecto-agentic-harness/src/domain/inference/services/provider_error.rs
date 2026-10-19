@@ -187,6 +187,17 @@ pub fn classify_provider_error(err: &DomainError) -> ProviderErrorClass {
         if class == ProviderErrorClass::Auth && is_transient_chat_endpoint_denial(&lowered) {
             return ProviderErrorClass::Server;
         }
+        // #2531: Envoy's router answers this 507 itself (a local reply,
+        // `RequestPayloadExceededRetryBufferLimit`) when an upstream attempt
+        // failed, Envoy was waiting to retry it, and the request body grew
+        // past its retry buffer, so it abandoned its own retry. No reply
+        // came; the upstream failure was one the proxy judged retryable,
+        // and our resend is a whole fresh request: retryable `Server`. Any
+        // provider behind Envoy can answer it (Codex did). Narrow to the
+        // phrase, like the xAI denial above: any other 507 stays `Unknown`.
+        if status == 507 && is_upstream_retry_buffer_limit(&lowered) {
+            return ProviderErrorClass::Server;
+        }
         return class;
     }
 
@@ -397,6 +408,34 @@ fn json_field_is(lowered: &str, field: &str, value: &str) -> bool {
 /// (already lowercased) to avoid catching genuine permission failures.
 fn is_transient_chat_endpoint_denial(lowered: &str) -> bool {
     lowered.contains("access to the chat endpoint is denied")
+}
+
+/// Recognise Envoy's local-reply body "exceeded request buffer limit while
+/// retrying upstream" (#2531), already lowercased.
+fn is_upstream_retry_buffer_limit(lowered: &str) -> bool {
+    lowered.contains("exceeded request buffer limit while retrying upstream")
+}
+
+/// Whether `err` is the inference-admission gate's own error (`admission: `,
+/// [`classify_admission_error`]): it says what to do itself, so it gets no
+/// provider guidance (#2459 review).
+pub fn is_admission_gate_error(err: &DomainError) -> bool {
+    matches!(err, DomainError::Provider(msg) if classify_admission_error(msg).is_some())
+}
+
+/// Whether a provider error says the prompt plus requested output exceeds
+/// a model limit: never a malformed request to repair, and its guidance is
+/// to shrink the request.
+pub fn is_context_or_output_limit_error(message: &str) -> bool {
+    let lowered = message.to_ascii_lowercase();
+    (lowered.contains("maximum context length")
+        || lowered.contains("context length")
+        || lowered.contains("context window")
+        || lowered.contains("too many tokens")
+        || lowered.contains("max_tokens")
+        || lowered.contains("max output")
+        || lowered.contains("requested") && lowered.contains("tokens"))
+        && (lowered.contains("token") || lowered.contains("context"))
 }
 
 /// Errors raised by the inference-admission gate (#2024 S3) before any

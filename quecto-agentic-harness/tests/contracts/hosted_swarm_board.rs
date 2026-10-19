@@ -5,7 +5,7 @@
 //! board's revision, which a write moves, naming its run.
 use std::sync::Arc;
 
-use quecto::application::environments::ports::HostedSwarmBoard;
+use quecto::application::environments::ports::hosted_swarm::HostedSwarmBoard;
 use quecto::domain::environments::entities::environment_registry::{
     EnvironmentOrigin, EnvironmentRecord, EnvironmentStatus, mint_environment_uuid,
 };

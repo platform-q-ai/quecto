@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use super::*;
 use crate::application::environments::ports::{
-    EnvironmentMemberShutdown, MemberShutdownReport, MemberShutdownResult, PortFuture,
-    SettledMember,
+    PortFuture, process::EnvironmentMemberShutdown, process::MemberShutdownReport,
+    process::MemberShutdownResult, process::SettledMember,
 };
 use crate::application::environments::use_cases::{
     KillEnvironment, ListEnvironmentsQuery, ReadSwarmBoard,
@@ -425,12 +425,15 @@ fn get_containers_carries_the_registry_read_error_as_a_diagnostic() {
     assert!(!kill.content.contains("unknown"), "{}", kill.content);
 }
 
-struct FixedRoster(crate::application::environments::ports::ContainerConfigRosterReport);
+struct FixedRoster(crate::application::environments::ports::container::ContainerConfigRosterReport);
 
-impl crate::application::environments::ports::ContainerConfigRoster for FixedRoster {
+impl crate::application::environments::ports::container::ContainerConfigRoster for FixedRoster {
     fn roster(
         &self,
-    ) -> Result<crate::application::environments::ports::ContainerConfigRosterReport, String> {
+    ) -> Result<
+        crate::application::environments::ports::container::ContainerConfigRosterReport,
+        String,
+    > {
         Ok(self.0.clone())
     }
 
@@ -442,7 +445,7 @@ impl crate::application::environments::ports::ContainerConfigRoster for FixedRos
 #[test]
 fn get_container_configs_encodes_the_inventory_and_needs_wiring() {
     use crate::application::environments::dto::{ContainerConfigEntry, ContainerConfigLayer};
-    use crate::application::environments::ports::ContainerConfigRosterReport;
+    use crate::application::environments::ports::container::ContainerConfigRosterReport;
     use crate::application::environments::use_cases::ListContainerConfigs;
 
     let args = serde_json::json!({"agent_id":"*","command":"get_container_configs"});

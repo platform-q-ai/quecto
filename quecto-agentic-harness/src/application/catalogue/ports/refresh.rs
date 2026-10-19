@@ -6,8 +6,8 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use crate::application::catalogue::CatalogueSource;
 use crate::application::catalogue::dto::RefreshBounds;
+use crate::application::catalogue::ports::catalogue_source::CatalogueSource;
 
 /// Per-run refresh context: bounds plus a cooperative cancellation flag.
 #[derive(Debug, Clone, Default)]

@@ -1,5 +1,5 @@
 use super::SocketAuthorityAdmin;
-use crate::application::admission::dto::AuthorityAdminError;
+use crate::application::admission::dto::authority::AuthorityAdminError;
 use crate::application::admission::ports::AuthorityAdmin;
 
 #[test]

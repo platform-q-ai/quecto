@@ -291,6 +291,19 @@ impl SseAccumulator {
                     }
                 }
             }
+            // #2593: a reply cut off at the output limit finishes with what
+            // it got; any other incomplete reply is a stream failure, which
+            // the handlers end the stream with before it gets here.
+            Some("response.incomplete")
+                if super::super::transport::attempt_profile::ends_at_output_limit(event) =>
+            {
+                self.usage = event["response"]["usage"]
+                    .as_object()
+                    .map(crate::infrastructure::providers::openai::usage::parse_codex_usage);
+                if self.stop_reason.is_none() {
+                    self.stop_reason = Some(StopReason::MaxTokens);
+                }
+            }
             _ => {}
         }
         Ok(())

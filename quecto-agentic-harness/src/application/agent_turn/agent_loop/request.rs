@@ -1,6 +1,37 @@
 use super::*;
-use crate::application::agent_turn::agent_loop::agent_loop_stream::ends_turn_empty;
+use crate::application::agent_turn::agent_loop::agent_loop_stream::{
+    FailureSource, ends_turn_empty,
+};
 use crate::application::providers::ports::ChatRequest;
+use crate::domain::inference::services::terminal_guidance::{
+    AttemptFacts, Output, Response, explain_terminal_failure,
+};
+
+/// What a failed request did, from its trace (#2459): the attempts made,
+/// whether output streamed, and whether any attempt got a response — an
+/// HTTP status recorded, or output, which only a response carries.
+fn attempt_facts(
+    trace: &crate::domain::inference::events::request_observation::RequestTrace,
+    emitted_event: bool,
+) -> AttemptFacts {
+    let output = Output::from_emitted(emitted_event);
+    let diagnostics = trace.attempt_diagnostics();
+    let answered = diagnostics.iter().any(|d| d.wire_status.is_some());
+    // "Not received" is proven only when every attempt left a record.
+    let every_attempt_recorded = diagnostics.len() >= (trace.attempts() as usize).max(1);
+    let response = match (output, answered, every_attempt_recorded) {
+        (Output::Shown, _, _) | (Output::NotShown, true, _) => Response::Received,
+        (Output::NotShown, false, true) => Response::NotReceived,
+        (Output::NotShown, false, false) => Response::Unknown,
+    };
+    // An OAuth refresh resends the request once (#2459 review): that is
+    // no transient retry, so it is not counted as one.
+    AttemptFacts {
+        attempts: trace.attempts().saturating_sub(trace.oauth_retries()),
+        output,
+        response,
+    }
+}
 
 impl AgentLoopImpl {
     /// Send a chat request using incremental streaming.
@@ -46,6 +77,7 @@ impl AgentLoopImpl {
                             Err(StreamProviderError {
                                 error: DomainError::Provider(empty_stream_error_message(&response)),
                                 emitted_event,
+                                source: FailureSource::Provider,
                             })
                         }
                     };
@@ -54,6 +86,7 @@ impl AgentLoopImpl {
                     return Err(StreamProviderError {
                         error: DomainError::Provider(e),
                         emitted_event,
+                        source: FailureSource::Provider,
                     });
                 }
                 // Tool call streaming events are handled by the provider's
@@ -68,6 +101,7 @@ impl AgentLoopImpl {
         Err(StreamProviderError {
             error: DomainError::Provider("streaming channel closed without completion".to_string()),
             emitted_event,
+            source: FailureSource::Provider,
         })
     }
 
@@ -130,9 +164,9 @@ impl AgentLoopImpl {
         .await;
         // Whether the failed reply had shown output travels beside the
         // error, which is observed and accounted as before (#2155).
-        let (result, emitted_event) = match outcome {
-            Ok(response) => (Ok(response), false),
-            Err(failure) => (Err(failure.error), failure.emitted_event),
+        let (result, emitted_event, source) = match outcome {
+            Ok(response) => (Ok(response), false, FailureSource::Provider),
+            Err(failure) => (Err(failure.error), failure.emitted_event, failure.source),
         };
         {
             let mut unreported = self
@@ -171,10 +205,19 @@ impl AgentLoopImpl {
             .map_err(|error| StreamProviderError {
                 error,
                 emitted_event,
+                source: FailureSource::Provider,
             })?;
+        // A provider failure's guidance says what the request did (#2459):
+        // its attempts, whether output streamed, and whether any attempt
+        // was answered. The admission gate's refusal speaks for itself.
+        let facts = attempt_facts(&observation.trace(), emitted_event);
         result.map_err(|error| StreamProviderError {
-            error,
+            error: match source {
+                FailureSource::Provider => explain_terminal_failure(error, facts),
+                FailureSource::RequestAdmission => error,
+            },
             emitted_event,
+            source,
         })
     }
 
@@ -187,7 +230,7 @@ impl AgentLoopImpl {
             admission
                 .check(crate::domain::inference::value_objects::provider::RequestAttempt::First)
                 .await
-                .map_err(StreamProviderError::before_output)?;
+                .map_err(StreamProviderError::refused_by_admission)?;
         }
         // Transient-error retry is owned by the `RetryingProvider` decorator, so
         // the non-streaming path makes a single call and passes the error
@@ -196,9 +239,11 @@ impl AgentLoopImpl {
             if let Some(trace) = &request.trace {
                 trace.start();
             }
-            return self.provider.chat(request).await.map_err(|error| {
-                StreamProviderError::before_output(enhance_provider_error(error))
-            });
+            return self
+                .provider
+                .chat(request)
+                .await
+                .map_err(StreamProviderError::before_output);
         }
 
         // Streaming initiation *is* retried here: the decorator forwards
@@ -214,7 +259,7 @@ impl AgentLoopImpl {
                     admission
                         .check(crate::domain::inference::value_objects::provider::RequestAttempt::Reattempt)
                         .await
-                        .map_err(StreamProviderError::before_output)?;
+                        .map_err(StreamProviderError::refused_by_admission)?;
                 }
             }
             if let Some(trace) = &request.trace {
@@ -230,8 +275,9 @@ impl AgentLoopImpl {
                     // Replaying after emitted content would corrupt output;
                     // the turn is told output was shown (#2155).
                     return Err(StreamProviderError {
-                        error: enhance_provider_error(stream_error.error),
+                        error: stream_error.error,
                         emitted_event: true,
+                        source: FailureSource::Provider,
                     });
                 }
                 Err(stream_error) => Err(stream_error.error),
@@ -249,9 +295,7 @@ impl AgentLoopImpl {
                         || !class.is_retryable()
                         || !capped.allows_another(&class)
                     {
-                        return Err(StreamProviderError::before_output(enhance_provider_error(
-                            err,
-                        )));
+                        return Err(StreamProviderError::before_output(err));
                     }
                     tracing::warn!(
                         target: "provider_retry",
@@ -269,9 +313,7 @@ impl AgentLoopImpl {
                             std::time::Duration::from_secs(30),
                         )
                     else {
-                        return Err(StreamProviderError::before_output(enhance_provider_error(
-                            err,
-                        )));
+                        return Err(StreamProviderError::before_output(err));
                     };
                     tokio::time::sleep(delay).await;
                 }
@@ -283,3 +325,8 @@ impl AgentLoopImpl {
         )))
     }
 }
+
+// #2459, #2531: truthful terminal guidance; the Codex 507 is retried.
+#[cfg(test)]
+#[path = "agent_loop_2459_tests.rs"]
+mod terminal_guidance_tests;

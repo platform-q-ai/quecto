@@ -5,7 +5,6 @@
 
 use std::time::Duration;
 
-use crate::application::catalogue::CatalogueSnapshotStore;
 use crate::domain::catalogue::value_objects::identity::ModelRef;
 
 pub trait ModelRefusalSink: Send + Sync + std::fmt::Debug {
@@ -16,14 +15,4 @@ pub trait ModelRefusalSink: Send + Sync + std::fmt::Debug {
     /// Release the refusal of `reference`: the provider served it. True
     /// when one was held.
     fn clear_refusal(&self, reference: &ModelRef) -> bool;
-}
-
-impl ModelRefusalSink for CatalogueSnapshotStore {
-    fn record_refusal(&self, reference: &ModelRef, reason: &str, held_for: Duration) -> bool {
-        CatalogueSnapshotStore::record_refusal(self, reference, reason, held_for)
-    }
-
-    fn clear_refusal(&self, reference: &ModelRef) -> bool {
-        CatalogueSnapshotStore::clear_refusal(self, reference)
-    }
 }

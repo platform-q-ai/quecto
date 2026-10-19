@@ -13,7 +13,8 @@ use std::path::PathBuf;
 
 use super::CliContext;
 use crate::application::admission::dto::{
-    AuthorityAdminError, InstallServiceRequest, ServiceAction, ServiceReport,
+    authority::AuthorityAdminError, service::InstallServiceRequest, service::ServiceAction,
+    service::ServiceReport,
 };
 use crate::infrastructure::admission::{AuthorityDirectory, AuthorityServer, ServerError};
 use crate::infrastructure::config::Config;
@@ -423,7 +424,9 @@ fn describe_action(action: &ServiceAction) -> String {
     }
 }
 
-fn status_json(report: &crate::application::admission::dto::AuthorityReport) -> serde_json::Value {
+fn status_json(
+    report: &crate::application::admission::dto::authority::AuthorityReport,
+) -> serde_json::Value {
     let groups: serde_json::Map<String, serde_json::Value> = report
         .groups
         .iter()

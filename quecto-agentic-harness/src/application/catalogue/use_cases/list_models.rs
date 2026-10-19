@@ -14,7 +14,10 @@ use crate::application::catalogue::dto::{
     ListedModel, ListingDiagnostic, ModelCatalogueListing, ModelListingOutcome,
 };
 use crate::application::catalogue::ports::CatalogueInputsLoader;
-use crate::application::catalogue::{CatalogueSnapshotStore, ResolveCatalogueUseCase};
+use crate::application::catalogue::{
+    services::snapshot_store::CatalogueSnapshotStore,
+    use_cases::resolve_catalogue::ResolveCatalogueUseCase,
+};
 
 pub struct ListModels {
     inputs: Arc<dyn CatalogueInputsLoader>,

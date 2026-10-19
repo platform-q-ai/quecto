@@ -1,92 +1,8 @@
 use super::*;
 
-// =======================================================================
-// #931: classified, actionable terminal errors (enhance_provider_error)
-// =======================================================================
-//
-// Acceptance criterion 3: after retries are exhausted (or for a
-// non-retryable error) the returned error names the class and a
-// remediation, not a raw provider string. Today `enhance_provider_error`
-// only augments context/output-limit errors, so these assertions FAIL.
-
-fn enhanced(message: &str) -> String {
-    match enhance_provider_error(DomainError::Provider(message.to_string())) {
-        DomainError::Provider(m) => m,
-        other => panic!("expected Provider error, got {:?}", other),
-    }
-}
-
-#[test]
-fn test_enhance_rate_limit_error_adds_classified_guidance() {
-    let input = "provider error (429): rate limit exceeded";
-    let out = enhanced(input);
-    // Discriminating: the appended guidance — not the raw input — must add the
-    // class name and remediation. "throttled" never appears in the raw string.
-    assert!(
-        out.len() > input.len(),
-        "enhancement must append guidance: {out}"
-    );
-    let lowered = out.to_ascii_lowercase();
-    assert!(
-        lowered.contains("throttled"),
-        "appended guidance should name the rate-limit class: {out}"
-    );
-    assert!(
-        lowered.contains("retry") || lowered.contains("later") || lowered.contains("frequency"),
-        "terminal rate-limit error should include actionable remediation: {out}"
-    );
-}
-
-#[test]
-fn test_enhance_server_overload_error_adds_classified_guidance() {
-    let input =
-        "HTTP 529 from Anthropic: {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\"}}";
-    let out = enhanced(input);
-    assert!(
-        out.len() > input.len(),
-        "enhancement must append guidance: {out}"
-    );
-    let lowered = out.to_ascii_lowercase();
-    assert!(
-        lowered.contains("server/overload"),
-        "appended guidance should name the server/overload class: {out}"
-    );
-    assert!(
-        lowered.contains("retried") && lowered.contains("retry later"),
-        "terminal server error should include actionable remediation: {out}"
-    );
-}
-
-#[test]
-fn test_enhance_network_error_adds_classified_guidance() {
-    let input = "connection reset by peer";
-    let out = enhanced(input);
-    assert!(
-        out.len() > input.len(),
-        "enhancement must append guidance: {out}"
-    );
-    let lowered = out.to_ascii_lowercase();
-    assert!(
-        lowered.contains("connectivity"),
-        "appended guidance should name the network remediation: {out}"
-    );
-    assert!(
-        lowered.contains("retry") && lowered.contains("could not reach"),
-        "terminal network error should include actionable remediation: {out}"
-    );
-}
-
-#[test]
-fn test_enhance_client_error_is_passed_through_without_retry_advice() {
-    // A 4xx is the model's fault (e.g. malformed request); it must be passed
-    // through verbatim — no class guidance, no "retry later" dressing.
-    let input = "provider error (400): invalid_request_error";
-    let out = enhanced(input);
-    assert_eq!(
-        out, input,
-        "client 4xx must be passed through unchanged (no enhancement): {out}"
-    );
-}
+// #931's classified guidance itself is the domain's
+// (`domain::inference::services::terminal_guidance`); the tests below pin
+// what the loop does with a terminal failure.
 
 // =======================================================================
 // #931: a model-malformed tool call is always addressable, never fatal
@@ -254,41 +170,4 @@ async fn test_terminal_server_error_fails_the_turn_after_retries() {
         lowered.contains("server") || lowered.contains("overload"),
         "terminal error should name the server/overload class: {err}"
     );
-}
-
-#[test]
-fn synthetic_empty_stream_guidance_does_not_claim_http_failure_or_overload() {
-    let message = "stream completed without assistant output: synthetic=empty_stream";
-    let out = enhance_provider_error(DomainError::Provider(message.into())).to_string();
-    assert!(out.contains("synthetic classification"));
-    assert!(out.contains("no HTTP failure or overload is established"));
-    assert!(!out.contains("provider is overloaded"));
-    assert!(!out.contains("HTTP 503"));
-}
-
-/// #2435: a model refused for the account says the catalogue now holds it
-/// unavailable and how to move on.
-#[test]
-fn a_model_refused_for_the_account_says_it_will_not_be_offered_again() {
-    let out = enhanced(
-        r#"HTTP 400 from Codex: {"detail":"The 'mini' model is not supported when using Codex with a ChatGPT account."}"#,
-    );
-    assert!(
-        out.ends_with(
-            "Model unavailable: the provider refused this model for the account or auth mode in \
-             use. While a refusal is held (providers.model_refusal_ttl_secs, an hour by default; \
-             0 holds none) the model is not offered, until the provider serves it again; choose \
-             another model (list_models, then set_model)."
-        ),
-        "{out}"
-    );
-}
-
-/// #2435 review round 1: the refusal guidance is appended once.
-#[test]
-fn the_refusal_guidance_is_appended_once() {
-    let once = enhanced(
-        r#"HTTP 400 from Codex: {"detail":"The 'mini' model is not supported when using Codex with a ChatGPT account."}"#,
-    );
-    assert_eq!(enhanced(&once), once);
 }

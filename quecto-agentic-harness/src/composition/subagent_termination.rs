@@ -14,7 +14,7 @@
 //! agent-control tools invoke.
 use std::sync::Arc;
 
-use crate::application::environments::ports::EnvironmentMemberShutdown;
+use crate::application::environments::ports::process::EnvironmentMemberShutdown;
 use crate::application::subagents::use_cases::{
     KillDelegatedAgent, KillDelegatedAgentPorts, OwnerConclusionPorts, SettleDelegatedChild,
     SettleDelegatedChildPorts, TerminateDelegatedAgent,

@@ -25,7 +25,10 @@ use crate::application::catalogue::ports::{
     RuntimeSnapshotSource,
 };
 use crate::application::catalogue::use_cases::ChangeReasoningEffort;
-use crate::application::catalogue::{CatalogueSnapshotStore, ResolveCatalogueUseCase};
+use crate::application::catalogue::{
+    services::snapshot_store::CatalogueSnapshotStore,
+    use_cases::resolve_catalogue::ResolveCatalogueUseCase,
+};
 use crate::application::provider_runtime::{SelectionError, select_in_runtime};
 use crate::domain::catalogue::entities::entry::CatalogueEntry;
 use crate::domain::catalogue::entities::snapshot::CatalogueSnapshot;

@@ -266,12 +266,12 @@ const RETIRED_DOMAIN_PORTS: &[(&str, &str, &str)] = &[
     (
         "src/domain/sessions/entities/session.rs",
         "trait SessionStore",
-        "src/application/sessions/ports.rs",
+        "src/application/sessions/ports/mod.rs",
     ),
     (
         "src/domain/sessions/entities/session.rs",
         "trait ContextSpillStore",
-        "src/application/sessions/ports.rs",
+        "src/application/sessions/ports/mod.rs",
     ),
     (
         "src/domain/inference/value_objects/provider.rs",
@@ -437,8 +437,9 @@ fn domain_is_pure_and_the_legacy_baseline_does_not_grow() {
 }
 
 /// Ports are capability-local: every `pub trait` of the teardown
-/// capabilities lives in that capability's `ports.rs`, and every one of
-/// them is proven by a contract suite in `tests/contracts/`.
+/// capabilities lives in that capability's `ports.rs` or `ports/` folder
+/// (#2367), and every one of them is proven by a contract suite in
+/// `tests/contracts/`.
 #[test]
 fn teardown_ports_are_capability_local_and_contracted() {
     let contracts = fs::read_to_string("tests/contracts.rs").expect("tests/contracts.rs");
@@ -464,8 +465,9 @@ fn teardown_ports_are_capability_local_and_contracted() {
                 continue;
             }
             assert!(
-                path.ends_with(&format!("src/application/{capability}/ports.rs")),
-                "{path} declares ports {traits:?} outside the capability's ports.rs"
+                path.ends_with(&format!("src/application/{capability}/ports.rs"))
+                    || path.contains(&format!("src/application/{capability}/ports/")),
+                "{path} declares ports {traits:?} outside the capability's ports"
             );
             for port in traits {
                 let module = to_snake_case(&port);

@@ -5,11 +5,11 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use super::super::dto::{EnvironmentLiveness, StateOnDisk};
-use super::super::ports::EnvironmentRegistryStore;
 use super::restore_registry_tests::{
     failing_store_with, no_hosted, process_with_disk, record, store_with,
 };
 use super::{NO_ENVIRONMENT_DIR, RestoreRegistry, STATE_GONE_CONTAINER_RUNNING};
+use crate::application::environments::ports::registry::EnvironmentRegistryStore;
 use crate::domain::environments::entities::environment_registry::{
     EnvironmentRecord, EnvironmentStatus,
 };

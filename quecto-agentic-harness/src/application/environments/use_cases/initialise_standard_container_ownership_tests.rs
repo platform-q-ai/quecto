@@ -4,7 +4,7 @@
 use std::path::{Path, PathBuf};
 
 use super::rig_tests::*;
-use crate::application::environments::ports::ContainerConfigRosterReport;
+use crate::application::environments::ports::container::ContainerConfigRosterReport;
 
 const CONTAINERFILE: &str = "/p/.quecto/containers/standard/Containerfile";
 const CREATE: &str = "/p/.quecto/containers/standard/scripts/create.sh";

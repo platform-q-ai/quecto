@@ -6,13 +6,15 @@ use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 use std::time::Duration;
 
-use quecto::application::admission::ports::inference_attempt::{AttemptAdmission, AttemptPermit};
-use quecto::application::admission::services::inference_admission::AdmissionService;
-use quecto::application::admission::services::inference_admission::{
+use quecto::application::admission::ports::inference_admission::{
     AdmissionClient, AdmissionDispatcher, AdmissionRegistry,
 };
+use quecto::application::admission::ports::inference_attempt::{AttemptAdmission, AttemptPermit};
+use quecto::application::admission::services::inference_admission::AdmissionService;
 use quecto::application::catalogue::{
-    CatalogueSnapshotStore, CatalogueSource, CredentialStatusPort, SourceEntries,
+    ports::catalogue_source::{CatalogueSource, SourceEntries},
+    ports::credential_status::CredentialStatusPort,
+    services::snapshot_store::CatalogueSnapshotStore,
 };
 use quecto::application::provider_runtime::{
     ComposeProviderRuntimeUseCase, CompositionPorts, ProviderRuntimeFactory, RuntimeSnapshotStore,

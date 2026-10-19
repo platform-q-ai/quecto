@@ -263,7 +263,7 @@ fn a_dry_run_install_and_uninstall_plan_without_touching_the_service() {
 
 #[test]
 fn every_service_action_has_a_line_and_the_unit_config_path_is_absolute() {
-    use crate::application::admission::dto::{ServiceAction, ServiceReport};
+    use crate::application::admission::dto::{service::ServiceAction, service::ServiceReport};
     let path = std::path::PathBuf::from("/u/quecto.service");
     let report = ServiceReport {
         directory: "/d".into(),
