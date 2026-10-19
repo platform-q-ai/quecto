@@ -5,7 +5,7 @@
 use std::collections::BTreeMap;
 
 use crate::domain::admission::value_objects::inference_admission::{
-    AdmissionError, GroupId, GroupSnapshot, ScopeId,
+    AdmissionError, GroupId, GroupSnapshot, RequestId, RequestState, ScopeId,
 };
 
 /// Scope identity plus the opaque secret proving the caller was issued it.
@@ -37,4 +37,23 @@ pub struct AuthorityStatus {
     /// Scopes holding a live capability (roots and descendants).
     pub live_scopes: usize,
     pub groups: BTreeMap<GroupId, GroupSnapshot>,
+}
+
+/// What one settling turn of the running authority decided (#1910): the
+/// broker answers waiters, notifies owners and schedules its next turn from
+/// it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Settlement {
+    /// A failure that closed dispatch (the journal); an admission refusal is
+    /// routine and is not reported.
+    pub dispatch_failure: Option<AuthorityError>,
+    /// Every waiting request that is no longer queued, with its answer.
+    pub answers: Vec<(RequestId, Result<RequestState, AuthorityError>)>,
+    /// Active attempts whose owners must stop their transport.
+    pub cancellation_due: Vec<RequestId>,
+    /// When the policy next needs a turn, on the authority's clock.
+    pub next_wake: Result<Option<u64>, AuthorityError>,
+    /// Whether the journal accepted its last write; while it has not, held
+    /// work proceeds only after a successful probe.
+    pub journal_healthy: bool,
 }

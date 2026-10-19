@@ -2,17 +2,19 @@
 //! the durability use cases persist the ledger before any grant is visible
 //! and before a completion is acknowledged, and fail closed when durability
 //! fails.
+use quecto::application::admission::dto::broker::Settlement;
 use quecto::application::admission::dto::broker::{AuthorityError, Credential};
 use quecto::application::admission::ports::inference_authority_ports::{
     AdmissionJournal, AdmissionSecretSource, JournalError, SharedJournal,
 };
 use quecto::application::admission::services::inference_authority::AdmissionAuthority;
 use quecto::application::admission::use_cases::{
-    AdvanceAuthorityEpoch, CheckpointLedger, CompleteAdmission, DispatchAdmissions,
+    AdvanceAuthorityEpoch, BindScope, CheckpointLedger, CompleteAdmission, DisconnectScope,
+    DispatchAdmissions, SettleAuthority,
 };
 use quecto::domain::admission::value_objects::inference_admission::{
-    AdmissionConfig, AdmissionError, AdmissionLedger, Feedback, GroupId, GroupPolicy, RequestId,
-    RequestState, TerminalOutcome, WorkloadClass,
+    AbandonReport, AdmissionConfig, AdmissionError, AdmissionLedger, Feedback, GroupId,
+    GroupPolicy, RequestId, RequestState, ScopeId, TerminalOutcome, WorkloadClass,
 };
 use std::collections::BTreeMap;
 use std::ops::{Deref, DerefMut};
@@ -78,17 +80,42 @@ fn group() -> GroupId {
     GroupId::new("g").unwrap()
 }
 
-/// The authority driven through the durability use cases, as the broker's
-/// actor drives it; plain authority operations pass straight through.
+/// The authority driven through its use cases, as the broker's actor drives
+/// it; plain authority operations pass straight through.
 struct Authority {
     authority: AdmissionAuthority<Counter>,
     dispatch: DispatchAdmissions,
     completion: CompleteAdmission,
     advance_epoch: AdvanceAuthorityEpoch,
     checkpoint: CheckpointLedger,
+    settlement: SettleAuthority,
+    binding: BindScope,
+    disconnection: DisconnectScope,
 }
 
 impl Authority {
+    fn settle(&mut self, waiting: &[RequestId], now: u64) -> Settlement {
+        self.settlement.execute(&mut self.authority, waiting, now)
+    }
+
+    fn cancellation_due(&mut self, now: u64) -> Vec<RequestId> {
+        self.settle(&[], now).cancellation_due
+    }
+
+    fn bind(
+        &mut self,
+        credential: &Credential,
+        supersedes: bool,
+        now: u64,
+    ) -> Result<u64, AuthorityError> {
+        self.binding
+            .execute(&mut self.authority, credential, supersedes, now)
+    }
+
+    fn disconnect(&mut self, scope: ScopeId, now: u64) -> Result<AbandonReport, AuthorityError> {
+        self.disconnection.execute(&mut self.authority, scope, now)
+    }
+
     fn pump(&mut self, now: u64) -> Result<Vec<RequestId>, AuthorityError> {
         self.dispatch.execute(&mut self.authority, now)
     }
@@ -134,7 +161,10 @@ fn authority() -> (Authority, FakeJournal) {
         dispatch: DispatchAdmissions::new(shared.clone()),
         completion: CompleteAdmission::new(shared.clone()),
         advance_epoch: AdvanceAuthorityEpoch::new(shared.clone()),
-        checkpoint: CheckpointLedger::new(shared),
+        checkpoint: CheckpointLedger::new(shared.clone()),
+        settlement: SettleAuthority::new(DispatchAdmissions::new(shared)),
+        binding: BindScope::new(),
+        disconnection: DisconnectScope::new(),
     };
     (authority, journal)
 }
@@ -340,17 +370,17 @@ fn cancellation_due_lists_only_active_attempts_that_must_stop() {
     let root = a.register_root(WorkloadClass::Interactive, 0).unwrap();
     a.acquire(&root, 1, "g", 0).unwrap();
     a.pump(0).unwrap();
-    assert_eq!(a.cancellation_due(1).unwrap(), vec![]);
+    assert_eq!(a.cancellation_due(1), vec![]);
     a.cancel(&root, 1, 2).unwrap();
     assert_eq!(
-        a.cancellation_due(2).unwrap(),
+        a.cancellation_due(2),
         vec![RequestId {
             scope: root.scope,
             sequence: 1
         }]
     );
     a.complete(&root, 1, Feedback::Failure, 3).unwrap();
-    assert_eq!(a.cancellation_due(3).unwrap(), vec![]);
+    assert_eq!(a.cancellation_due(3), vec![]);
 }
 
 #[test]
@@ -466,3 +496,7 @@ fn journal_errors_convert_to_the_authority_error() {
     let converted: AuthorityError = JournalError::Unavailable("disk".into()).into();
     assert_eq!(converted, AuthorityError::JournalUnavailable);
 }
+
+/// The running authority's session policy, over this file's harness.
+#[path = "admission_session.rs"]
+mod session;

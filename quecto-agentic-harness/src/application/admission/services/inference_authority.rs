@@ -5,10 +5,11 @@
 //! after the release is durable. Failure of either path fails closed.
 //!
 //! The durability sequences (dispatch, completion, epoch reset, checkpoint)
-//! are the admission use cases' (#1910): they hold the journal port and drive
-//! the raw operations here, which are visible only inside the capability. The
-//! authority is the single owner of the journal-health flag; only those use
-//! cases set it.
+//! and the running broker's session policy (settling a turn, binding and
+//! disconnecting a connection's scope) are the admission use cases' (#1910):
+//! they hold the journal port and drive the raw operations here, which are
+//! visible only inside the capability. The authority is the single owner of
+//! the journal-health flag; only those use cases set it.
 use std::collections::BTreeMap;
 
 use crate::application::admission::dto::broker::{AuthorityError, AuthorityStatus, Credential};
@@ -110,7 +111,7 @@ impl<S: AdmissionSecretSource> AdmissionAuthority<S> {
         Credential { scope, token }
     }
 
-    pub fn journal_healthy(&self) -> bool {
+    pub(in crate::application::admission) fn journal_healthy(&self) -> bool {
         self.journal_healthy
     }
 
@@ -153,7 +154,10 @@ impl<S: AdmissionSecretSource> AdmissionAuthority<S> {
 
     /// Prove a capability without acting on it; returns the scope's acquire
     /// high-water mark so a reconnecting client continues its sequence.
-    pub fn verify(&self, credential: &Credential) -> Result<u64, AuthorityError> {
+    pub(in crate::application::admission) fn verify(
+        &self,
+        credential: &Credential,
+    ) -> Result<u64, AuthorityError> {
         self.authenticate(credential)?;
         Ok(self.service.high_water(credential.scope)?)
     }
@@ -278,7 +282,10 @@ impl<S: AdmissionSecretSource> AdmissionAuthority<S> {
 
     /// Owner-side release of a scope with no unverified work (its session
     /// closed cleanly). Refused as `Busy` while any attempt is still active.
-    pub fn release(&mut self, scope: ScopeId) -> Result<(), AuthorityError> {
+    pub(in crate::application::admission) fn release(
+        &mut self,
+        scope: ScopeId,
+    ) -> Result<(), AuthorityError> {
         self.service.retire(scope)?;
         self.issued.remove(&scope);
         Ok(())
@@ -305,7 +312,7 @@ impl<S: AdmissionSecretSource> AdmissionAuthority<S> {
 
     /// Transport loss without retirement: the capability stays valid so the
     /// same client can reconnect and verify its outstanding work.
-    pub fn disconnect(
+    pub(in crate::application::admission) fn disconnect(
         &mut self,
         scope: ScopeId,
         now: u64,
@@ -314,7 +321,10 @@ impl<S: AdmissionSecretSource> AdmissionAuthority<S> {
     }
 
     /// Active attempts whose owners must terminate their local transport.
-    pub fn cancellation_due(&mut self, now: u64) -> Result<Vec<RequestId>, AuthorityError> {
+    pub(in crate::application::admission) fn cancellation_due(
+        &mut self,
+        now: u64,
+    ) -> Result<Vec<RequestId>, AuthorityError> {
         let mut due = Vec::new();
         let ledger = self.service.ledger(now)?;
         for attempt in ledger.outstanding {
@@ -339,7 +349,10 @@ impl<S: AdmissionSecretSource> AdmissionAuthority<S> {
         Ok(due)
     }
 
-    pub fn next_wake(&mut self, now: u64) -> Result<Option<u64>, AuthorityError> {
+    pub(in crate::application::admission) fn next_wake(
+        &mut self,
+        now: u64,
+    ) -> Result<Option<u64>, AuthorityError> {
         Ok(self.service.next_wake(now)?)
     }
 
