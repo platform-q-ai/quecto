@@ -124,6 +124,7 @@ const USE_CASES: &[&str] = &[
     "RecallContext",
     "RecordMemberLaunch",
     "RecordRequestUsage",
+    "RecoverInferenceFailure",
     "RecoverTask",
     "RecoverMessage",
     "RefreshCatalogueSources",

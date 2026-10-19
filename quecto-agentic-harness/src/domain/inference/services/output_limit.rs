@@ -9,6 +9,7 @@
 //! [`RESPONSES_OUTPUT_LIMIT_REASONS`]. A cut-off reply is never a provider
 //! error: the agent turn decides what follows it.
 use crate::domain::conversation::value_objects::message::{LlmResponse, StopReason, ToolArguments};
+use crate::domain::inference::services::provider_error::EMPTY_STREAM;
 
 /// The Responses API `incomplete_details.reason` values that mean the
 /// reply was cut off at its output limit. An allowlist: any other reason
@@ -50,6 +51,39 @@ pub fn cut_off_tool_call(response: &LlmResponse) -> Option<CutOffCall<'_>> {
             id: call.id.as_str(),
             tool: call.name.as_str(),
         })
+}
+
+/// A reply that hit the output limit with nothing visible: no text and no
+/// tool call, only reasoning (#2124). It is no answer, never a final one.
+/// Some providers also report a full context window as `max_tokens`; a reply
+/// that used under half of its output budget did not hit the output limit.
+/// A zero count means the provider did not report one: judged as unknown.
+pub fn is_cut_off_without_answer(response: &LlmResponse, max_tokens: u32) -> bool {
+    let used_the_budget = response.usage.as_ref().is_none_or(|usage| {
+        usage.completion_tokens == 0
+            || u64::from(usage.completion_tokens) * 2 >= u64::from(max_tokens)
+    });
+    response.stop_reason == Some(StopReason::MaxTokens)
+        && response
+            .content
+            .as_deref()
+            .unwrap_or_default()
+            .trim()
+            .is_empty()
+        && response.tool_calls.is_empty()
+        && used_the_budget
+}
+
+/// The error of a completed reply with no output: the output limit when
+/// it stopped there, else the synthetic empty stream (retried as
+/// [`EMPTY_STREAM`]).
+pub fn empty_stream_error_message(response: &LlmResponse) -> String {
+    match response.stop_reason {
+        Some(StopReason::MaxTokens) => {
+            "stream completed without assistant output: stop_reason=max_tokens".to_string()
+        }
+        _ => EMPTY_STREAM.to_string(),
+    }
 }
 
 #[cfg(test)]
