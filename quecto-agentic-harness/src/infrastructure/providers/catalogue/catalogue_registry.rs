@@ -18,8 +18,8 @@ use super::model_registry::{
     resolve_registry_value,
 };
 use crate::application::catalogue::{
-    ports::catalogue_source::CatalogueSource, ports::catalogue_source::SkippedRecord,
-    ports::catalogue_source::SourceEntries, ports::credential_status::CredentialStatusPort,
+    ports::catalogue_source::{CatalogueSource, SkippedRecord, SourceEntries},
+    ports::credential_status::CredentialStatusPort,
     services::snapshot_store::CatalogueSnapshotStore,
 };
 use crate::domain::catalogue::entities::entry::{

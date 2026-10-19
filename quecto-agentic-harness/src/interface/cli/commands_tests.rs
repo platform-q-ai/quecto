@@ -284,7 +284,7 @@ fn test_status_invalid_config_fails() {
 #[test]
 fn status_reports_only_published_runtime_admission_warnings() {
     use crate::application::catalogue::{
-        ports::catalogue_source::CatalogueSource, ports::catalogue_source::SourceEntries,
+        ports::catalogue_source::{CatalogueSource, SourceEntries},
         ports::credential_status::CredentialStatusPort,
         services::snapshot_store::CatalogueSnapshotStore,
     };

@@ -6,13 +6,12 @@ use std::sync::Mutex;
 
 use super::*;
 use crate::application::catalogue::ports::catalogue_source::SourceEntries;
-use crate::domain::catalogue::entities::entry::CatalogueEntry;
-use crate::domain::catalogue::entities::entry::{ModelDescriptor, ProviderDescriptor};
-use crate::domain::catalogue::value_objects::availability::Availability;
-use crate::domain::catalogue::value_objects::availability::UnavailableReason;
-use crate::domain::catalogue::value_objects::identity::TransportKind;
+use crate::domain::catalogue::entities::entry::{
+    CatalogueEntry, ModelDescriptor, ProviderDescriptor,
+};
+use crate::domain::catalogue::value_objects::availability::{Availability, UnavailableReason};
 use crate::domain::catalogue::value_objects::identity::{
-    AuthIdentity, ModelId, ModelRef, ProviderId,
+    AuthIdentity, ModelId, ModelRef, ProviderId, TransportKind,
 };
 use crate::domain::catalogue::value_objects::model_facts::{ModelCapabilities, ModelCost};
 use crate::domain::catalogue::value_objects::precedence::SourceLayer;

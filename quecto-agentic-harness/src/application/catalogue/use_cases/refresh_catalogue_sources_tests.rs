@@ -8,7 +8,7 @@ use std::time::Duration;
 use super::*;
 use crate::application::catalogue::ports::NoopRedaction;
 use crate::application::catalogue::{
-    ports::catalogue_source::CatalogueSource, ports::catalogue_source::SourceEntries,
+    ports::catalogue_source::{CatalogueSource, SourceEntries},
     ports::credential_status::CredentialStatusPort,
 };
 

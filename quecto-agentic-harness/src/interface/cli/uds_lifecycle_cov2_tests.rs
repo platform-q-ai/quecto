@@ -329,7 +329,7 @@ async fn single_client_socket_override_serves_get_state() {
 // store through lifecycle, dispatch and (for multi-client) the accept push.
 fn publish_admission_slots(base: &std::path::Path, slots: &[&str]) {
     use crate::application::catalogue::{
-        ports::catalogue_source::CatalogueSource, ports::catalogue_source::SourceEntries,
+        ports::catalogue_source::{CatalogueSource, SourceEntries},
         ports::credential_status::CredentialStatusPort,
     };
     use crate::application::provider_runtime::{

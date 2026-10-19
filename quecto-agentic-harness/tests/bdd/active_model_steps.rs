@@ -12,7 +12,7 @@ use quecto::application::catalogue::ports::{
 };
 use quecto::application::catalogue::use_cases::{ChangeActiveModel, ChangeReasoningEffort};
 use quecto::application::catalogue::{
-    ports::catalogue_source::CatalogueSource, ports::catalogue_source::SourceEntries,
+    ports::catalogue_source::{CatalogueSource, SourceEntries},
     ports::credential_status::CredentialStatusPort,
     services::snapshot_store::CatalogueSnapshotStore,
 };

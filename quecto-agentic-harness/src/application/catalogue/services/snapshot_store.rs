@@ -140,3 +140,7 @@ impl ModelRefusalSink for CatalogueSnapshotStore {
         CatalogueSnapshotStore::clear_refusal(self, reference)
     }
 }
+
+#[cfg(test)]
+#[path = "snapshot_store_tests.rs"]
+mod tests;

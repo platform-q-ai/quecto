@@ -11,7 +11,7 @@ use crate::application::catalogue::ports::{
     RuntimeSnapshotSource,
 };
 use crate::application::catalogue::{
-    ports::catalogue_source::CatalogueSource, ports::catalogue_source::SourceEntries,
+    ports::catalogue_source::{CatalogueSource, SourceEntries},
     ports::credential_status::CredentialStatusPort,
 };
 use crate::application::providers::ports::RouteCheck;
