@@ -9,6 +9,15 @@ use super::CliContext;
 use crate::application::auth::dto::{LoginError, Removal, RemoveError};
 use crate::domain::auth::provider::LoginProvider;
 
+/// How `auth` output names a provider: "OpenAI", "Anthropic", "xAI".
+pub(super) fn brand(provider: LoginProvider) -> &'static str {
+    match provider {
+        LoginProvider::OpenAi => "OpenAI",
+        LoginProvider::Anthropic => "Anthropic",
+        LoginProvider::Xai => "xAI",
+    }
+}
+
 /// The login allowlist as a refusal lists it: "openai, anthropic, xai".
 fn known_providers() -> String {
     LoginProvider::ALL.map(LoginProvider::id).join(", ")

@@ -2,9 +2,8 @@
 //! another tool stored, through the `ImportExternalCredentials` use case,
 //! and reports each one as it always has.
 
-use super::Output;
+use super::{Output, brand};
 use crate::application::auth::dto::{ImportError, ImportReport, RefreshFailure};
-use crate::domain::auth::provider::LoginProvider;
 use crate::interface::cli::CliContext;
 
 /// Import credentials from an external auth.json file.
@@ -78,15 +77,6 @@ fn refusal(error: &ImportError) -> String {
         ImportError::Malformed(reason) => {
             format!("auth login: failed to parse auth.json: {reason}\n")
         }
-    }
-}
-
-/// How the import names a provider.
-fn brand(provider: LoginProvider) -> &'static str {
-    match provider {
-        LoginProvider::OpenAi => "OpenAI",
-        LoginProvider::Anthropic => "Anthropic",
-        LoginProvider::Xai => "xAI",
     }
 }
 

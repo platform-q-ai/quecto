@@ -54,13 +54,6 @@ pub fn oauth_expires_at_absolute(expires_at: i64) -> i64 {
     expires_at.saturating_sub(OAUTH_EXPIRY_MARGIN_SECS)
 }
 
-/// Whether an imported token expiring at `expires_at` (Unix seconds) is
-/// refreshed before it is stored: it has expired at `now` and a refresh
-/// token is at hand. Otherwise it is stored as it stands.
-pub fn import_refresh_due(now: i64, expires_at: i64, has_refresh_token: bool) -> bool {
-    has_refresh_token && now >= expires_at
-}
-
 /// A stored credential for a provider.
 ///
 /// `Debug` is manually implemented to redact the token field, preventing

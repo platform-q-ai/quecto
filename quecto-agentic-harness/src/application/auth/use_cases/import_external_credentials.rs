@@ -11,8 +11,9 @@ use crate::application::auth::ports::{
     ExternalCredentialsError, TokenExchange, TokenExchangeError,
 };
 use crate::domain::auth::credential::{
-    AuthMethod, Credential, import_refresh_due, oauth_expires_at, oauth_expires_at_absolute,
+    AuthMethod, Credential, oauth_expires_at, oauth_expires_at_absolute,
 };
+use crate::domain::auth::import::{import_refresh_due, importable, refresh_token};
 
 pub struct ImportExternalCredentials {
     source: Arc<dyn ExternalCredentialSource>,
@@ -36,9 +37,9 @@ impl ImportExternalCredentials {
         }
     }
 
-    /// Import every external credential that carries an access token, in
-    /// the source's order. An expired one with a refresh token is
-    /// refreshed first; a failed refresh ends the import there (what was
+    /// Import every importable external credential, in the source's order.
+    /// One that would be stored expired, with a refresh token, is refreshed
+    /// first; a failed refresh ends the import there (what was
     /// stored stays stored). A failed store is reported and the import
     /// goes on.
     pub fn execute(&self) -> Result<ImportReport, ImportError> {
@@ -53,17 +54,13 @@ impl ImportExternalCredentials {
             entries: Vec::new(),
             aborted: None,
         };
-        // An entry without an access token is no credential to import.
         for found in external
             .into_iter()
-            .filter(|found| !found.access_token.is_empty())
+            .filter(|found| importable(&found.access_token))
         {
             let provider = found.provider;
-            let refreshed = import_refresh_due(
-                self.clock.now_unix_secs(),
-                found.expires_at,
-                !found.refresh_token.is_empty(),
-            );
+            let stated = as_stated(&found);
+            let refreshed = import_refresh_due(&stated, self.clock.now_unix_secs());
             let credential = match refreshed {
                 true => match self.refreshed(found) {
                     Ok(credential) => credential,
@@ -72,7 +69,7 @@ impl ImportExternalCredentials {
                         return Ok(report);
                     }
                 },
-                false => as_stated(found),
+                false => stated,
             };
             debug_assert_eq!(credential.provider, provider.id());
             let stored = self.store.store(credential).map_err(|error| error.0);
@@ -86,7 +83,7 @@ impl ImportExternalCredentials {
     }
 
     /// `found`'s credential after a refresh, which keeps its refresh token
-    /// when the provider issues none.
+    /// when the provider issues none (or an empty one).
     fn refreshed(&self, found: ExternalCredential) -> Result<Credential, RefreshFailure> {
         let issued = self
             .exchange
@@ -96,7 +93,10 @@ impl ImportExternalCredentials {
                 TokenExchangeError::Unavailable(reason) => RefreshFailure::Unavailable(reason),
                 TokenExchangeError::InsideAsyncRuntime => RefreshFailure::InsideAsyncRuntime,
             })?;
-        let refresh_token = issued.refresh_token.unwrap_or(found.refresh_token);
+        let kept = issued
+            .refresh_token
+            .and_then(refresh_token)
+            .unwrap_or(found.refresh_token);
         Ok(Credential {
             provider: found.provider.id().to_string(),
             token: issued.access_token,
@@ -105,21 +105,22 @@ impl ImportExternalCredentials {
                 self.clock.now_unix_secs(),
                 issued.expires_in,
             )),
-            refresh_token: Some(refresh_token).filter(|token| !token.is_empty()),
+            refresh_token: refresh_token(kept),
             account_id: issued.account_id,
         })
     }
 }
 
-/// `found`'s credential as the external store states it.
-fn as_stated(found: ExternalCredential) -> Credential {
+/// `found`'s credential as the external store states it, as it would be
+/// stored: its expiry less the margin.
+fn as_stated(found: &ExternalCredential) -> Credential {
     Credential {
         provider: found.provider.id().to_string(),
-        token: found.access_token,
+        token: found.access_token.clone(),
         method: AuthMethod::OAuth,
         expires_at: Some(oauth_expires_at_absolute(found.expires_at)),
-        refresh_token: Some(found.refresh_token).filter(|token| !token.is_empty()),
-        account_id: found.account_id,
+        refresh_token: refresh_token(found.refresh_token.clone()),
+        account_id: found.account_id.clone(),
     }
 }
 

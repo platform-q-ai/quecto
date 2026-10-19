@@ -220,7 +220,7 @@ fn a_failed_refresh_ends_the_import_keeping_what_was_stored() {
     let fakes = Arc::new(Fakes {
         refresh: Err(TokenExchangeError::Rejected("(400)".to_string())),
         ..Fakes::holding(vec![
-            external(LoginProvider::Anthropic, "fake-a", "fake-ra", NOW + 10),
+            external(LoginProvider::Anthropic, "fake-a", "fake-ra", NOW + 7_200),
             external(LoginProvider::OpenAi, "fake-o", "fake-ro", NOW - 1),
         ])
     });
@@ -270,8 +270,8 @@ fn a_failed_store_is_reported_and_the_import_goes_on() {
     let fakes = Arc::new(Fakes {
         refuse_store_for: Some("anthropic"),
         ..Fakes::holding(vec![
-            external(LoginProvider::Anthropic, "fake-a", "", NOW + 10),
-            external(LoginProvider::OpenAi, "fake-o", "", NOW + 10),
+            external(LoginProvider::Anthropic, "fake-a", "", NOW + 7_200),
+            external(LoginProvider::OpenAi, "fake-o", "", NOW + 7_200),
         ])
     });
     let report = import(&fakes).execute().unwrap();
@@ -324,4 +324,52 @@ fn nothing_external_is_an_empty_report() {
     let report = import(&fakes).execute().unwrap();
     assert_eq!(report.imported(), 0);
     assert_eq!(report.aborted, None);
+}
+
+#[test]
+fn a_refresh_that_issues_an_empty_refresh_token_keeps_the_old_one() {
+    let fakes = Arc::new(Fakes {
+        refresh: Ok(issued(Some(""))),
+        ..Fakes::holding(vec![external(
+            LoginProvider::OpenAi,
+            "fake-old",
+            "fake-refresh",
+            0,
+        )])
+    });
+    import(&fakes).execute().unwrap();
+    assert_eq!(
+        fakes.stored.lock().unwrap()[0].refresh_token.as_deref(),
+        Some("fake-refresh")
+    );
+}
+
+#[test]
+fn a_token_inside_its_margin_is_refreshed_not_stored_expired() {
+    // 100 s left on the server would be stored 200 s in the past.
+    let fakes = Arc::new(Fakes::holding(vec![external(
+        LoginProvider::Anthropic,
+        "fake-old",
+        "fake-refresh",
+        NOW + 100,
+    )]));
+    let report = import(&fakes).execute().unwrap();
+    assert!(report.entries[0].refreshed);
+    assert_eq!(
+        fakes.stored.lock().unwrap()[0].token,
+        "fake-refreshed-access"
+    );
+}
+
+#[test]
+fn a_token_with_the_margin_left_is_stored_as_stated() {
+    let fakes = Arc::new(Fakes::holding(vec![external(
+        LoginProvider::Anthropic,
+        "fake-old",
+        "fake-refresh",
+        NOW + 301,
+    )]));
+    let report = import(&fakes).execute().unwrap();
+    assert!(!report.entries[0].refreshed);
+    assert_eq!(fakes.stored.lock().unwrap()[0].expires_at, Some(NOW + 1));
 }

@@ -47,10 +47,10 @@ fn the_oauth_entries_come_in_import_order_with_seconds_and_accounts() {
     assert_eq!(found[1].provider, LoginProvider::OpenAi);
     assert_eq!(found[1].expires_at, 7_000);
     assert_eq!(found[1].account_id.as_deref(), Some("acct-fake"));
-    assert!(
-        !format!("{found:?}").contains("fake-ra"),
-        "secrets stay out of Debug"
-    );
+    let shown = format!("{found:?}");
+    for secret in ["fake-a", "fake-ra", "fake-ro", jwt.as_str()] {
+        assert!(!shown.contains(secret), "{secret} reached Debug: {shown}");
+    }
     assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), before);
 }
 
