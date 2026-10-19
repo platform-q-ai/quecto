@@ -161,6 +161,8 @@ mod external_agent_launcher;
 mod external_agent_process;
 #[path = "contracts/external_agent_telemetry.rs"]
 mod external_agent_telemetry;
+#[path = "contracts/external_credential_source.rs"]
+mod external_credential_source;
 #[path = "contracts/fleet_settlement.rs"]
 mod fleet_settlement;
 #[path = "contracts/fold_back_recorder.rs"]

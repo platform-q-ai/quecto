@@ -73,3 +73,21 @@ fn debug_shows_an_absent_refresh_token_as_none() {
     plain.refresh_token = None;
     assert!(format!("{plain:?}").contains("refresh_token: None"));
 }
+
+#[test]
+fn an_absolute_expiry_keeps_the_same_margin() {
+    assert_eq!(oauth_expires_at_absolute(10_000), 10_000 - 300);
+    assert_eq!(
+        oauth_expires_at_absolute(10_000),
+        oauth_expires_at(10_000 - 3_600, 3_600)
+    );
+    assert_eq!(oauth_expires_at_absolute(i64::MIN), i64::MIN);
+}
+
+#[test]
+fn an_imported_token_is_refreshed_once_expired_and_only_with_a_refresh_token() {
+    assert!(import_refresh_due(1_000, 1_000, true));
+    assert!(import_refresh_due(1_001, 1_000, true));
+    assert!(!import_refresh_due(999, 1_000, true));
+    assert!(!import_refresh_due(5_000, 1_000, false));
+}

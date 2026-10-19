@@ -5,6 +5,7 @@
 //! nested-runtime panic that would occur if the mock shared the CLI runtime).
 
 use super::*;
+use crate::infrastructure::auth::credential_store::CredentialStore;
 use crate::interface::cli::run_with_output;
 
 fn args(s: &str) -> Vec<String> {

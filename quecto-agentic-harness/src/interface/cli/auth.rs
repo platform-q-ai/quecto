@@ -1,7 +1,6 @@
-#[path = "auth_import.rs"]
-pub(crate) mod auth_import;
 mod browser;
 mod handles;
+mod import;
 mod status;
 pub use handles::{AuthEnvironment, AuthHandles, AuthHandlesBuilder};
 pub(super) use status::{credential_entry, shown_name, shown_text};
@@ -9,7 +8,6 @@ pub(super) use status::{credential_entry, shown_name, shown_text};
 use super::CliContext;
 use crate::application::auth::dto::{LoginError, Removal, RemoveError};
 use crate::domain::auth::provider::LoginProvider;
-use crate::infrastructure::auth::credential_store::CredentialStore;
 
 /// The login allowlist as a refusal lists it: "openai, anthropic, xai".
 fn known_providers() -> String {
@@ -111,7 +109,7 @@ fn cmd_auth_login(
     let mut out = Output { stdout, stderr };
 
     if import_external {
-        return cmd_auth_import_external(ctx, &mut out);
+        return import::cmd_auth_import_external(ctx, &mut out);
     }
 
     if let Some(token_val) = token {
@@ -266,51 +264,6 @@ pub(crate) fn flush_stdout(ctx: &CliContext, out: &mut Output<'_>) {
 /// would stall a command stream. Standalone callbacks do not require stdin.
 pub(super) fn skip_browser_callback(ctx: &CliContext) -> bool {
     ctx.stdin_data.is_some() || (ctx.is_repl && ctx.stdin_is_tty == Some(false))
-}
-
-/// Import credentials from an external auth.json file.
-fn cmd_auth_import_external(ctx: &CliContext, out: &mut Output<'_>) -> i32 {
-    let auth_json = match auth_import::load_external_auth_json(out.stderr) {
-        Some(v) => v,
-        None => return 1,
-    };
-
-    let store = CredentialStore::new(ctx.base_dir());
-    let rt = match crate::infrastructure::processes::tokio_runtime::build_tokio_runtime() {
-        Ok(rt) => rt,
-        Err(e) => {
-            out.stderr
-                .push_str(&format!("auth login: failed to create runtime: {}\n", e));
-            return 1;
-        }
-    };
-
-    let mut imported = 0;
-
-    match auth_import::import_anthropic(&auth_json, &store, &rt, out) {
-        Some(n) => imported += n,
-        None => return 1,
-    }
-
-    let openai_params = auth_import::OpenAiImportParams {
-        store: &store,
-        rt: &rt,
-        oauth_base_url: None,
-    };
-    match auth_import::import_openai(&auth_json, &openai_params, out) {
-        Some(n) => imported += n,
-        None => return 1,
-    }
-
-    if imported == 0 {
-        out.stderr
-            .push_str("auth login: no OAuth credentials found in auth.json\n");
-        return 1;
-    }
-
-    out.stdout
-        .push_str(&format!("Imported {} credential(s)\n", imported));
-    0
 }
 
 /// Device code login flow for headless environments.
