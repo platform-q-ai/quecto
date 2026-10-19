@@ -606,12 +606,7 @@ const CONTRACTS_OUTSIDE_PORTS: &[(&str, &[&str])] = &[
     ("subagents::standard_script", &["StandardScriptVerdict"]),
     (
         "admission::services::inference_authority",
-        &[
-            "AdmissionAuthority",
-            "AuthorityError",
-            "AuthorityStatus",
-            "Credential",
-        ],
+        &["AdmissionAuthority"],
     ),
     (
         "catalogue::services::snapshot_store",
@@ -1468,12 +1463,7 @@ const FACADE_CONTRACT_PATHS: &[(&str, &[&str])] = &[
     ),
     (
         "admission::services::inference_authority",
-        &[
-            "AdmissionAuthority",
-            "AuthorityError",
-            "AuthorityStatus",
-            "Credential",
-        ],
+        &["AdmissionAuthority"],
     ),
     ("subagent_launch", &["LaunchFuture", "SubagentLaunchPorts"]),
 ];
@@ -1784,6 +1774,17 @@ fn application_path_allowed(path: &str) -> bool {
             "AuthorityReport" | "AuthorityGroupReport" | "ResetReport"
             | "AuthorityAdminError",
             ..,
+        ] => true,
+        // The running authority's own values (#1910): the capability a
+        // client presents, the authority's refusal and its operator status,
+        // carried over the broker's socket and links.
+        [
+            "crate",
+            "application",
+            "admission",
+            "dto",
+            "broker",
+            "Credential" | "AuthorityError" | "AuthorityStatus",
         ] => true,
         // The claude process adapter (#2286) implements the external-agent
         // capability's process ports in their own launch and exit
