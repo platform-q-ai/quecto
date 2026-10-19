@@ -78,6 +78,7 @@ const USE_CASES: &[&str] = &[
     "HarnessShutdownTransaction",
     "InitialiseStandardContainer",
     "InspectAuthStatus",
+    "InspectEffectiveConfiguration",
     "InspectAuthority",
     "InspectEndedChild",
     "InstallAuthorityService",

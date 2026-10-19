@@ -8,9 +8,9 @@
 //! the resolve use case directly.
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-use crate::application::configuration::ports::ConfigValidator;
+use crate::application::configuration::ports::{ConfigValidator, RunSettings, RunSettingsSource};
 use crate::infrastructure::config::{Config, ConfigError};
 
 impl Config {
@@ -171,6 +171,33 @@ pub fn realize_inherited_child_config(
         .and_then(|config| config.with_env_overrides(env_overrides))
         .map(|config| config.with_admission_base_dir(base_dir))
         .map_err(|error| error.to_string())
+}
+
+/// The run settings an effective document yields (#1843): the
+/// configuration capability's `RunSettingsSource` over the `Config`
+/// schema, so `quecto status` reports what a run would use without the
+/// interface or application reading `Config` itself.
+/// Realizes a document as a run in `base_dir` would, without `QUECTO_*`
+/// overrides: `status` reports the files, not this process's environment.
+#[derive(Debug, Clone)]
+pub struct ConfigRunSettings {
+    base_dir: PathBuf,
+}
+
+impl ConfigRunSettings {
+    pub fn for_base_dir(base_dir: impl Into<PathBuf>) -> Self {
+        Self {
+            base_dir: base_dir.into(),
+        }
+    }
+}
+
+impl RunSettingsSource for ConfigRunSettings {
+    fn settings(&self, document: serde_json::Value) -> Result<RunSettings, String> {
+        // Red: no settings are realized yet.
+        let _ = (&self.base_dir, document, realize_config);
+        Err("not realized yet".to_string())
+    }
 }
 
 #[cfg(test)]
