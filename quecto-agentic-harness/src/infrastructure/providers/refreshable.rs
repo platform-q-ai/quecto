@@ -24,19 +24,7 @@ use crate::domain::inference::services::provider_error::{
 };
 use crate::domain::shared::error::DomainError;
 use crate::infrastructure::auth::credential_store::CredentialStore;
-
-/// Async function that refreshes an OAuth token.
-///
-/// Takes the credential store and provider name, returns the new access token.
-/// Responsible for persisting the refreshed credential in the store.
-pub type RefreshFn = Arc<
-    dyn Fn(
-            Arc<CredentialStore>,
-            &str,
-        ) -> Pin<Box<dyn Future<Output = Result<String, DomainError>> + Send>>
-        + Send
-        + Sync,
->;
+use crate::infrastructure::auth::refresh_wiring::RefreshFn;
 
 /// Factory function that rebuilds a provider with a new API key.
 pub type ProviderFactory = Arc<dyn Fn(&str) -> Arc<dyn LlmProvider> + Send + Sync>;

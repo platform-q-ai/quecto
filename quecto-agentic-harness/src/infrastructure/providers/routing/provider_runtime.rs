@@ -13,7 +13,8 @@ use std::sync::Arc;
 use crate::application::ports::{
     AdmissionBindingDiagnostic, ProviderRuntimeFactory, ProviderRuntimeOutcome,
 };
-use crate::infrastructure::providers::refreshable::{ProviderFactory, RefreshFn};
+use crate::infrastructure::auth::refresh_wiring::RefreshFn;
+use crate::infrastructure::providers::refreshable::ProviderFactory;
 
 use crate::application::providers::ports::LlmProvider;
 use crate::infrastructure::auth::credential_store::CredentialStore;
@@ -494,7 +495,7 @@ fn build_registry_provider(
     model: &crate::infrastructure::providers::catalogue::model_registry::ModelRecord,
     _base_dir: &std::path::Path,
     store: &Arc<CredentialStore>,
-    refresh_fn: &crate::infrastructure::providers::refreshable::RefreshFn,
+    refresh_fn: &RefreshFn,
     http_client: &reqwest::Client,
 ) -> Result<Option<Arc<dyn LlmProvider>>, String> {
     build_registry_provider_with_admission(model, _base_dir, store, refresh_fn, http_client, None)
@@ -504,7 +505,7 @@ fn build_registry_provider_with_admission(
     model: &crate::infrastructure::providers::catalogue::model_registry::ModelRecord,
     _base_dir: &std::path::Path,
     store: &Arc<CredentialStore>,
-    refresh_fn: &crate::infrastructure::providers::refreshable::RefreshFn,
+    refresh_fn: &RefreshFn,
     http_client: &reqwest::Client,
     admission: Option<&AdmissionRuntimeContext>,
 ) -> Result<Option<Arc<dyn LlmProvider>>, String> {
