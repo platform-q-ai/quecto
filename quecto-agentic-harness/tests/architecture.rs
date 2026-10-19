@@ -1203,8 +1203,10 @@ const TEST_SUPPORT_APPLICATION_PATHS: &[(&str, &str)] = &[(
 )];
 
 /// Per-file exceptions for the admission authority server (#1910): it runs
-/// the authority the admission capability owns and holds the durability use
-/// cases composition builds and passes in (`AuthorityUseCases`). No other
+/// the authority the admission capability owns, holds the use cases
+/// composition builds and passes in (`AuthorityUseCases`), starts through the
+/// restore use case's own start and refusal values, and its actor compares
+/// capability tokens with the authority's own constant-time check. No other
 /// infrastructure file may name them.
 const AUTHORITY_SERVER_APPLICATION_PATHS: &[(&str, &str)] = &[
     (
@@ -1221,7 +1223,19 @@ const AUTHORITY_SERVER_APPLICATION_PATHS: &[(&str, &str)] = &[
     ),
     (
         "src/infrastructure/admission/server.rs",
-        "crate::application::admission::use_cases::CheckpointLedger",
+        "crate::application::admission::use_cases::RestoreAuthority",
+    ),
+    (
+        "src/infrastructure/admission/server.rs",
+        "crate::application::admission::dto::broker::AuthorityStart",
+    ),
+    (
+        "src/infrastructure/admission/server.rs",
+        "crate::application::admission::dto::broker::RestoreError",
+    ),
+    (
+        "src/infrastructure/admission/server_actor.rs",
+        "crate::application::admission::services::inference_authority::constant_time_eq",
     ),
     (
         "src/infrastructure/admission/server.rs",
@@ -4035,14 +4049,17 @@ fn only_the_authority_server_names_the_durability_use_cases() {
     );
     let elsewhere = "src/infrastructure/admission/link.rs";
     let service = "crate::application::admission::services::inference_authority::";
-    let authority = format!("{service}AdmissionAuthority");
+    let (authority, token) = (
+        format!("{service}AdmissionAuthority"),
+        format!("{service}constant_time_eq"),
+    );
     let use_case = |name: &str| format!("crate::application::admission::use_cases::{name}");
     let durable = [
         "AdvanceAuthorityEpoch",
         "BindScope",
-        "CheckpointLedger",
         "CompleteAdmission",
         "DisconnectScope",
+        "RestoreAuthority",
         "SettleAuthority",
     ]
     .map(use_case);
@@ -4059,7 +4076,15 @@ fn only_the_authority_server_names_the_durability_use_cases() {
             "the actor holds no use case of its own: {path}"
         );
     }
-    assert!(!refused(actor, &authority));
+    for start in ["AuthorityStart", "RestoreError"] {
+        let path = format!("crate::application::admission::dto::broker::{start}");
+        assert!(
+            !refused(server, &path) && refused(elsewhere, &path),
+            "{path}"
+        );
+    }
+    assert!(!refused(actor, &authority) && !refused(actor, &token));
+    assert!(refused(server, &token) && refused(elsewhere, &token));
     // Dispatch is settling's own step, and any other admission use case
     // stays refused, even in the server.
     assert!(refused(server, &use_case("DispatchAdmissions")));
@@ -4077,6 +4102,7 @@ fn only_the_authority_server_names_the_durability_use_cases() {
 #[test]
 fn the_authority_surface_is_an_exhaustive_allowlist() {
     const PUBLIC: &[&str] = &[
+        "constant_time_eq",
         "new",
         "restore",
         "register_root",
@@ -4186,7 +4212,7 @@ fn the_admission_use_cases_own_the_journal_and_the_authority_does_not() {
         "dispatch_admissions",
         "complete_admission",
         "advance_authority_epoch",
-        "checkpoint_ledger",
+        "restore_authority",
     ] {
         let path = format!("src/application/admission/use_cases/{use_case}.rs");
         assert!(
@@ -4235,6 +4261,32 @@ fn the_authority_actor_settles_binds_and_disconnects_through_use_cases() {
     );
     assert!(bind.contains("self.use_cases.bind.execute(&mutself.authority,"));
     assert!(!bind.contains("self.authority."), "{bind}");
+}
+
+/// The journal has one owner (#1910 review): the restore use case reads the
+/// ledger through the journal port and decides whether a missing one is
+/// refused, and the server neither reads the journal nor builds the
+/// authority itself. The actor checks tokens with the authority's own
+/// constant-time comparison rather than a copy.
+#[test]
+fn the_authority_server_neither_reads_the_journal_nor_builds_the_authority() {
+    let server = production_source("src/infrastructure/admission/server.rs");
+    for needle in ["FileJournal", "AdmissionAuthority::", ".checkpoint"] {
+        assert!(!server.contains(needle), "server.rs names `{needle}`");
+    }
+    let compact: String = server.split_whitespace().collect();
+    assert!(
+        compact.contains("use_cases.restore.execute("),
+        "the server restores through its use case"
+    );
+    let actor = production_source("src/infrastructure/admission/server_actor.rs");
+    assert!(!actor.contains("fn constant_time_eq("), "one token check");
+    let journal = production_source("src/application/admission/ports/inference_authority_ports.rs");
+    assert!(
+        journal
+            .contains("    fn load(&mut self) -> Result<Option<AdmissionLedger>, JournalError>;"),
+        "the journal port reads the ledger"
+    );
 }
 
 #[test]
