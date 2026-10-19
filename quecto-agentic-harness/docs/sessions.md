@@ -238,8 +238,7 @@ request the injected use case and present the response; they sequence nothing.
 
 ### Ports
 
-Declared only under `src/application/sessions/ports.rs` and
-`src/application/sessions/ports/`, each with a contract suite under
+Declared only under `src/application/sessions/ports/`, each with a contract suite under
 `tests/contracts/` that runs against the real adapter:
 
 | Port | Adapter (production) | What it supplies |

@@ -12,7 +12,9 @@
 //! resolve to a directory, is a context present) and performs the resulting
 //! plan through infrastructure.
 
-use crate::application::admission::dto::{NegotiationInputs, NegotiationPlan};
+use crate::application::admission::dto::{
+    negotiation::NegotiationInputs, negotiation::NegotiationPlan,
+};
 
 #[derive(Debug, Default)]
 pub struct NegotiateAuthority;

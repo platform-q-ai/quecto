@@ -96,7 +96,7 @@ impl AgentLoopImpl {
         messages: &mut Vec<Message>,
         current_turn: u32,
         response: LlmResponse,
-        run_ledger: &mut Vec<Message>,
+        (run_ledger, cut_off): (&mut Vec<Message>, Option<&str>),
     ) {
         let mut assistant =
             Message::assistant(response.content.unwrap_or_default(), response.tool_calls);
@@ -152,7 +152,8 @@ impl AgentLoopImpl {
                 .enumerate()
                 .map(|(idx, tc)| async move {
                     let started = std::time::Instant::now();
-                    let outcome = self.execute_single_tool_call(current_turn, tc).await;
+                    let cut = Some(tc.id.as_str()) == cut_off;
+                    let outcome = self.execute_single_tool_call(current_turn, tc, cut).await;
                     (idx, outcome, started.elapsed())
                 })
                 .collect();
@@ -186,7 +187,8 @@ impl AgentLoopImpl {
                     let tc = &messages[assistant_index].tool_calls[idx];
                     self.audit_tool_call(current_turn, tc).await;
                     let started = std::time::Instant::now();
-                    let outcome = self.execute_single_tool_call(current_turn, tc).await;
+                    let cut = Some(tc.id.as_str()) == cut_off;
+                    let outcome = self.execute_single_tool_call(current_turn, tc, cut).await;
                     let elapsed = started.elapsed();
                     let finished = FinishedCall {
                         idx,
@@ -310,10 +312,13 @@ impl AgentLoopImpl {
         }
     }
 
+    /// Run one call; `cut_off` marks the call the output limit cut off
+    /// (#2593), answered as invalid whatever its argument text.
     async fn execute_single_tool_call(
         &self,
         current_turn: u32,
         tc: &ToolCall,
+        cut_off: bool,
     ) -> (
         String,
         Vec<crate::domain::tool_policy::value_objects::tool::ImageBlock>,
@@ -342,7 +347,13 @@ impl AgentLoopImpl {
             delivery_metadata: None,
             is_error: true,
         };
-        let tool_result = match tc.argument_shape() {
+        let shape = match cut_off {
+            true => crate::domain::conversation::value_objects::message::ToolArguments::Invalid(
+                &tc.arguments,
+            ),
+            false => tc.argument_shape(),
+        };
+        let tool_result = match shape {
             // A disabled tool is reported as disabled, never as "resend it".
             crate::domain::conversation::value_objects::message::ToolArguments::Invalid(_)
                 if disabled_by_runtime_policy =>

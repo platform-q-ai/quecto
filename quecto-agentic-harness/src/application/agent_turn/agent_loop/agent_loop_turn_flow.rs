@@ -1,9 +1,14 @@
 use super::*;
 use crate::application::providers::ports::ChatRequest;
 use crate::domain::conversation::services::reply_requirement::ReplyRequirement;
+use crate::domain::inference::services::output_limit::cut_off_tool_call;
 
 /// Retries for a reply cut off at the output limit with nothing visible.
 pub(super) const MAX_CUT_OFF_RETRIES: u32 = 1;
+
+/// Consecutive replies cut off inside a tool call that are corrected with
+/// feedback (#2593); past them the call is answered as invalid (#2123).
+pub(super) const MAX_TOOL_CALL_CUT_OFF_RETRIES: u32 = 2;
 
 /// What the loop does after a provider response or failure.
 pub(super) enum AfterResponse {
@@ -229,6 +234,38 @@ impl AgentLoopImpl {
         }
     }
 
+    /// A reply the output limit cut off partway through a tool call's
+    /// arguments (#2593): the reply is neither run nor recorded; the model
+    /// is told the call was cut off and how to split it, and asked again
+    /// with room to answer. The caller checks the budget first.
+    pub(super) fn after_cut_off_tool_call(
+        &self,
+        messages: &mut Vec<Message>,
+        response: &LlmResponse,
+        current_turn: u32,
+        (retries, appended_messages): (&mut u32, &mut Vec<Message>),
+    ) -> AfterResponse {
+        let cut = cut_off_tool_call(response).expect("only a cut-off call is corrected");
+        assert!(
+            *retries < MAX_TOOL_CALL_CUT_OFF_RETRIES,
+            "the caller checks the correction budget"
+        );
+        *retries += 1;
+        tracing::warn!(
+            target: "provider_retry",
+            attempt = *retries,
+            max = MAX_TOOL_CALL_CUT_OFF_RETRIES,
+            tool = cut.tool,
+            "reply hit the output limit inside a tool call — asking again with smaller calls"
+        );
+        let feedback = tool_call_cut_off_feedback(cut.tool);
+        append_feedback(messages, feedback, current_turn);
+        record_feedback(messages, appended_messages);
+        self.output_boost
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        AfterResponse::Retry
+    }
+
     pub(super) async fn recover_malformed_response(
         &self,
         messages: &mut Vec<Message>,
@@ -417,3 +454,7 @@ impl AgentLoopImpl {
 #[cfg(test)]
 #[path = "agent_loop_cached_tokens_tests.rs"]
 mod cached_tokens_tests;
+// #2593: a reply cut off at the output limit inside a tool call.
+#[cfg(test)]
+#[path = "agent_loop_2593_tests.rs"]
+mod tool_call_cut_off_tests;

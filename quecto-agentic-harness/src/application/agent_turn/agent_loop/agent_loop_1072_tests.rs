@@ -367,7 +367,7 @@ async fn tool_execution_records_its_appends_in_the_run_ledger_at_append_time() {
             &mut messages,
             1,
             tool_call_response("bulk", "{}"),
-            &mut ledger,
+            (&mut ledger, None),
         )
         .await;
 

@@ -703,7 +703,7 @@ async fn direct_execution_honors_runtime_profile_scope() {
                 &mut messages,
                 1,
                 tool_call_response("alpha", "{}"),
-                &mut run_ledger,
+                (&mut run_ledger, None),
             )
             .await;
         let tool_result = messages.last().expect("tool result message");

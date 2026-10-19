@@ -189,6 +189,8 @@ mod main_worktree_locator;
 mod metered_call;
 #[path = "common/mock_claude.rs"]
 mod mock_claude;
+#[path = "contracts/output_limit_signal.rs"]
+mod output_limit_signal;
 #[path = "contracts/overlay_trust_store.rs"]
 mod overlay_trust_store;
 #[path = "contracts/project_board_git_store.rs"]
