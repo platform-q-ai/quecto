@@ -5,7 +5,9 @@ use quecto::application::agent_turn::agent_loop::AgentLoopImpl;
 use quecto::application::agent_turn::ports::AgentLoop;
 use quecto::application::providers::ports::{ChatRequest, LlmProvider};
 use quecto::application::sessions::ports::{ContextSpillStore, SessionStore};
-use quecto::application::subagent::{SubagentConfig, SubagentContext, validate_agent_id};
+use quecto::application::subagents::subagent::{
+    SubagentConfig, SubagentContext, validate_agent_id,
+};
 use quecto::application::tools::ports::Tool;
 use quecto::domain::agents::value_objects::agent::{AgentInfo, AgentResult};
 use quecto::domain::auth::credential::{AuthMethod, Credential};

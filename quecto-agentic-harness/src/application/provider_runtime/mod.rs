@@ -255,5 +255,5 @@ pub fn select_in_snapshot(
 }
 
 #[cfg(test)]
-#[path = "provider_runtime_tests.rs"]
+#[path = "mod_tests.rs"]
 mod tests;

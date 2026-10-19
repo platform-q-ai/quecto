@@ -13,18 +13,22 @@ pub use super::catalogue::{
     CatalogueSnapshotStore, CatalogueSource, CatalogueSourceError, CredentialStatusPort,
     ResolvedCatalogue, SkippedRecord, SourceEntries,
 };
-pub use super::inference_admission::{
-    AdmissionClient, AdmissionDispatcher, AdmissionRecovery, AdmissionRegistry,
-};
-pub use super::inference_attempt::{AttemptAcquisition, AttemptAdmission, AttemptPermit};
-pub use super::inference_authority::{
-    AdmissionAuthority, AuthorityError, AuthorityStatus, Credential,
-};
-pub use super::inference_authority_ports::{AdmissionJournal, AdmissionSecretSource, JournalError};
-pub use super::inference_observation::AdmissionObservation;
 pub use super::provider_runtime::dto::{AdmissionBindingDiagnostic, ProviderRuntimeOutcome};
 pub use super::provider_runtime::{ProviderRuntimeFactory, RuntimeSnapshotStore};
-pub use super::subagent_launch::{LaunchFuture, SubagentLaunchPorts};
+pub use crate::application::admission::ports::inference_attempt::{
+    AttemptAcquisition, AttemptAdmission, AttemptPermit,
+};
+pub use crate::application::admission::ports::inference_authority_ports::{
+    AdmissionJournal, AdmissionSecretSource, JournalError,
+};
+pub use crate::application::admission::ports::inference_observation::AdmissionObservation;
+pub use crate::application::admission::services::inference_admission::{
+    AdmissionClient, AdmissionDispatcher, AdmissionRecovery, AdmissionRegistry,
+};
+pub use crate::application::admission::services::inference_authority::{
+    AdmissionAuthority, AuthorityError, AuthorityStatus, Credential,
+};
+pub use crate::application::subagent_launch::{LaunchFuture, SubagentLaunchPorts};
 
 #[cfg(any(test, feature = "test-support"))]
 pub use super::swarm::LifecycleService as SwarmTestLifecycle;

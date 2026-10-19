@@ -16,7 +16,9 @@ use crate::domain::agents::value_objects::agent::{AgentResult, ProgressCallback}
 use crate::domain::conversation::services::reply_requirement::ReplyRequirement;
 use crate::domain::conversation::services::watermark::Watermark;
 use crate::domain::conversation::value_objects::message::{LlmResponse, Message, ToolCall};
-use crate::domain::inference::events::request_observation;
+use crate::domain::inference::events::request_observation::{
+    InputBaseline, RequestDiagnostics, RequestObservation,
+};
 use crate::domain::inference::services::provider_error::classify_provider_error;
 use crate::domain::inference::value_objects::provider::{EffortLevel, StreamEvent};
 use crate::domain::sessions::entities::session_identity::SessionIdentity;
@@ -27,7 +29,6 @@ use agent_loop_stream::{
     StreamProviderError, TurnEnd, empty_stream_error_message, is_cut_off_without_answer,
     is_empty_streamed_response,
 };
-use request_observation::{InputBaseline, RequestDiagnostics, RequestObservation};
 use std::{pin::Pin, sync::Arc};
 use tool::{ToolDefinition, ToolPolicyReconciliation, ToolPolicyRequest, ToolProfileContext};
 pub type ToolPolicyPersistence =
@@ -52,6 +53,7 @@ mod agent_loop_turn_flow;
 mod agent_loop_uds_tools;
 mod agent_usage;
 pub mod durable_prefix;
+mod request_observation;
 pub mod tool_panic_scope;
 use agent_loop_errors::{
     append_feedback, append_malformed_feedback, enhance_provider_error,
@@ -110,8 +112,7 @@ pub struct AgentLoopImpl {
     /// This agent's own provider requests so far, for `get_state` (#2436).
     request_tally: Arc<crate::domain::inference::events::request_completion::RequestTally>,
     /// Requests that ended in flight, awaiting their audit record (#2210).
-    interrupted_requests:
-        std::sync::Mutex<Vec<crate::application::request_observation::InterruptedRequest>>,
+    interrupted_requests: std::sync::Mutex<Vec<request_observation::InterruptedRequest>>,
     request_admission: Option<Arc<dyn crate::application::providers::ports::RequestAdmission>>,
     request_accounting: Option<Arc<dyn crate::application::providers::ports::RequestAccounting>>,
     tool_admission: Option<Arc<dyn crate::application::tools::ports::ToolExecutionAdmission>>,

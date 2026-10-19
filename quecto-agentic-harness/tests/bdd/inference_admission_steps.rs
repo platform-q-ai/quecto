@@ -1,6 +1,6 @@
 //! Phase-local admission scenarios: no provider/runtime wiring.
 use super::*;
-use quecto::application::inference_admission::AdmissionService;
+use quecto::application::admission::services::inference_admission::AdmissionService;
 use quecto::application::ports::{AdmissionClient, AdmissionDispatcher, AdmissionRegistry};
 use quecto::domain::admission::value_objects::inference_admission::{
     AdmissionConfig, Feedback, GroupId, GroupPolicy, RequestId, RequestState, ScopeId,

@@ -2,8 +2,8 @@
 use quecto::application::agent_turn::ports::AgentLoop;
 use quecto::{
     application::{
+        admission::ports::inference_attempt::{AttemptAdmission, AttemptPermit},
         agent_turn::agent_loop::{AgentLoopConfig, AgentLoopImpl},
-        inference_attempt::{AttemptAdmission, AttemptPermit},
     },
     domain::{
         admission::value_objects::inference_admission::{Feedback, ThrottleFeedback},

@@ -20,7 +20,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use quecto::application::inference_attempt::{AttemptAdmission, AttemptPermit};
+use quecto::application::admission::ports::inference_attempt::{AttemptAdmission, AttemptPermit};
 use quecto::application::providers::ports::{ChatRequest, LlmProvider};
 use quecto::domain::admission::value_objects::inference_admission::{Feedback, ThrottleFeedback};
 use quecto::domain::inference::value_objects::provider::StreamEvent;
