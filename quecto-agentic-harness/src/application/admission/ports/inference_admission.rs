@@ -15,7 +15,8 @@ pub trait AdmissionRegistry {
 }
 
 /// Callers must supply their authenticated scope, never a caller-selected identity.
-/// The future IPC adapter binds this input to a capability before invoking the port.
+/// The authority (`services::inference_authority`) checks the caller's `Credential`
+/// and passes the bound scope on; a caller never chooses its own scope.
 pub trait AdmissionClient {
     /// Apply receipt feedback once, retaining transport occupancy until completion.
     fn report_feedback(

@@ -1,7 +1,8 @@
 //! Capability-local ports of the admission operation capability (#2024 S3).
 //! Infrastructure implements them; the use cases never open a socket, run a
-//! process or touch a filesystem themselves. Connection and reconnect stay
-//! behind the existing admission client port in `infrastructure/admission`.
+//! process or touch a filesystem themselves. An agent's connection to the
+//! broker and its reconnects stay in the protocol client in
+//! `infrastructure/admission/client.rs`, behind `inference_attempt::AttemptAdmission`.
 //!
 //! The runtime authority's ports sit beside them: the admission service's
 //! registry, client, dispatcher and recovery ports (`inference_admission`),
