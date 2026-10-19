@@ -293,7 +293,7 @@ fn raw_aliases_in(code: &[(usize, String)]) -> BTreeMap<String, String> {
 /// an alias declared in one file and used in another (a `pub(crate) use
 /// … as Hidden;` re-export) resolves wherever it is spelled. Fail-closed:
 /// every alias of the crate counts in every file, whatever its scope.
-fn crate_raw_aliases() -> &'static BTreeMap<String, String> {
+pub(super) fn crate_raw_aliases() -> &'static BTreeMap<String, String> {
     use std::sync::OnceLock;
     static ALIASES: OnceLock<BTreeMap<String, String>> = OnceLock::new();
     ALIASES.get_or_init(|| {
@@ -830,7 +830,7 @@ impl AstConstructions<'_> {
 }
 
 /// An identifier as the compiler resolves it: `r#Name` is `Name`.
-fn ident_name(ident: &syn::Ident) -> String {
+pub(super) fn ident_name(ident: &syn::Ident) -> String {
     use syn::ext::IdentExt;
     ident.unraw().to_string()
 }
@@ -854,7 +854,7 @@ fn path_string(path: &syn::Path) -> String {
 
 /// Every rename (`… as Y`, any visibility, grouped or not, multiline or
 /// not) and `type Y = …::X` alias of a parsed file, alias → target.
-fn syn_aliases_of(file: &syn::File) -> BTreeMap<String, String> {
+pub(super) fn syn_aliases_of(file: &syn::File) -> BTreeMap<String, String> {
     use syn::visit::Visit;
     struct Aliases(BTreeMap<String, String>);
     impl<'ast> Visit<'ast> for Aliases {

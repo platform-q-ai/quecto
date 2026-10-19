@@ -19,6 +19,8 @@ mod auth_credential_authority;
 mod auth_infrastructure_edges;
 #[path = "architecture/auth_runtime_builder.rs"]
 mod auth_runtime_builder;
+#[path = "architecture/authority_starts.rs"]
+mod authority_starts;
 #[path = "architecture/bdd_lanes.rs"]
 mod bdd_lanes;
 /// Production-token and relative-path scanning shared by the layer rules
@@ -3978,30 +3980,6 @@ fn only_swarm_test_support_names_the_lifecycle_service() {
             source
         ),
         Vec::<String>::new()
-    );
-}
-
-/// Every authority server, in production or under test, is started the way
-/// composition composes it (#1910, #2622 review): tests through
-/// `composition::admission`'s start functions, the broker through its run
-/// path. No other file, test files included, starts one directly.
-#[test]
-fn only_composition_and_the_broker_start_an_authority_server() {
-    let needle = concat!("AuthorityServer", "::start");
-    let mut files = Vec::new();
-    teardown_authority::walk(Path::new("src"), &mut files);
-    teardown_authority::walk(Path::new("tests"), &mut files);
-    let starters: BTreeSet<String> = files
-        .into_iter()
-        .filter(|file| fs::read_to_string(file).unwrap().contains(needle))
-        .collect();
-    assert_eq!(
-        starters,
-        BTreeSet::from([
-            "src/composition/admission.rs".to_string(),
-            "src/interface/cli/admission_broker.rs".to_string(),
-        ]),
-        "an authority server is started only through composition or the broker's run path"
     );
 }
 
