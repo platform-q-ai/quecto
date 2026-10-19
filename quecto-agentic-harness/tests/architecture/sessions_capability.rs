@@ -78,7 +78,7 @@ const CANONICAL_FILES: &[&str] = &[
     "src/infrastructure/workspace/git_scope_discovery.rs",
     "src/infrastructure/workspace/filesystem_scope.rs",
     "src/application/sessions/mod.rs",
-    "src/application/sessions/ports.rs",
+    "src/application/sessions/ports/mod.rs",
     "src/application/sessions/dto/mod.rs",
     "src/application/sessions/use_cases/mod.rs",
     "src/application/sessions/use_cases/list_sessions.rs",
@@ -251,11 +251,10 @@ const SESSION_PORTS: &[(&str, &str)] = &[
     ),
 ];
 
-/// Where the capability's ports may be declared: the ports file and the
-/// files under its `ports/` directory (D5 #1972).
+/// Where the capability's ports may be declared: the files under its
+/// `ports/` directory (D5 #1972; `ports.rs` became `ports/mod.rs`, #2367).
 fn is_ports_file(path: &str) -> bool {
-    path == "src/application/sessions/ports.rs"
-        || path.starts_with("src/application/sessions/ports/")
+    path.starts_with("src/application/sessions/ports/")
 }
 
 /// Where each sessions graph node may be constructed (R5, R7a): exactly one
@@ -635,7 +634,7 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     // D7 #1976 declares and re-exports the transition ports module (was
     // 135 before D7); D9 #1978 adds the ephemeral scrub to the retention
     // port (was 142 before D9).
-    ("src/application/sessions/ports.rs", 149),
+    ("src/application/sessions/ports/mod.rs", 149),
     ("src/application/sessions/ports/export.rs", 30),
     // D6 #1975 adds the accounting-reset port beside the save observations
     // (was 29 before D6).
@@ -1832,7 +1831,7 @@ fn owner_line_ceilings_are_non_empty_and_respected() {
 const RETENTION_PORT_HOLDERS: &[&str] = &[
     "src/application/sessions/active_session.rs",
     "src/application/sessions/conversation_ledger.rs",
-    "src/application/sessions/ports.rs",
+    "src/application/sessions/ports/mod.rs",
     "src/application/sessions/use_cases/clear_conversation.rs",
     "src/application/sessions/use_cases/export_session_report.rs",
     "src/application/sessions/use_cases/recall_context.rs",
@@ -1896,7 +1895,7 @@ fn retained_context_has_exactly_one_owner_per_role() {
     // by exactly the listed files.
     assert_eq!(
         production_files_calling("pub trait ContextSpillStore"),
-        set(&["src/application/sessions/ports.rs"])
+        set(&["src/application/sessions/ports/mod.rs"])
     );
     assert!(!RETENTION_PORT_HOLDERS.is_empty());
     assert_eq!(
