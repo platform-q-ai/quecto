@@ -24,6 +24,7 @@ use crate::domain::inference::value_objects::provider::{EffortLevel, StreamEvent
 use crate::domain::shared::error::DomainError;
 use claude_code::{CLAUDE_CODE_VERSION, sanitize_surrogates, to_claude_code_name};
 
+mod anthropic_input;
 pub(super) mod anthropic_sse;
 mod anthropic_user_msg;
 pub(in crate::infrastructure::providers) mod anthropic_wire;
@@ -248,28 +249,43 @@ impl AnthropicProvider {
         }
     }
 
+    /// Mark the conversation's cache breakpoints (#2410): the last user
+    /// message, which writes this request's whole conversation, and the
+    /// message the request before ended at — the one just before the last
+    /// assistant reply — which that request wrote and this one reads back
+    /// exactly. With the system prompt's marker(s) that is at most four
+    /// breakpoints, the API's limit. Without the second, a reply that adds
+    /// more blocks than the cache looks back over (20) from the new last
+    /// marker, such as a wide batch of tool calls and their results, would
+    /// read nothing of the conversation from the cache.
     fn apply_cache_control_to_last_user_message(api_messages: &mut [serde_json::Value]) {
-        let last_user_idx = api_messages
+        let is = |message: &serde_json::Value, role: &str| message["role"].as_str() == Some(role);
+        let last_user = api_messages.iter().rposition(|m| is(m, "user"));
+        let previous_end = api_messages
             .iter()
-            .rposition(|m| m["role"].as_str() == Some("user"));
+            .rposition(|m| is(m, "assistant"))
+            .and_then(|reply| reply.checked_sub(1))
+            .filter(|&end| is(&api_messages[end], "user") && Some(end) != last_user);
+        for idx in [previous_end, last_user].into_iter().flatten() {
+            Self::mark_cache_breakpoint(&mut api_messages[idx]);
+        }
+    }
 
-        if let Some(idx) = last_user_idx {
-            let msg = &mut api_messages[idx];
-            let content = msg
-                .get_mut("content")
-                .expect("user message must have content");
-
-            if content.is_string() {
-                let text = content.as_str().unwrap_or("").to_string();
-                *content = serde_json::json!([{
-                    "type": "text",
-                    "text": text,
-                    "cache_control": { "type": "ephemeral" }
-                }]);
-            } else if let Some(blocks) = content.as_array_mut() {
-                if let Some(last_block) = blocks.last_mut() {
-                    last_block["cache_control"] = serde_json::json!({"type": "ephemeral"});
-                }
+    /// Mark the last block of the user message `msg` as a cache breakpoint.
+    fn mark_cache_breakpoint(msg: &mut serde_json::Value) {
+        let content = msg
+            .get_mut("content")
+            .expect("user message must have content");
+        if content.is_string() {
+            let text = content.as_str().unwrap_or("").to_string();
+            *content = serde_json::json!([{
+                "type": "text",
+                "text": text,
+                "cache_control": { "type": "ephemeral" }
+            }]);
+        } else if let Some(blocks) = content.as_array_mut() {
+            if let Some(last_block) = blocks.last_mut() {
+                last_block["cache_control"] = serde_json::json!({"type": "ephemeral"});
             }
         }
     }
@@ -377,6 +393,116 @@ impl AnthropicProvider {
 // LlmProvider trait impl
 // ---------------------------------------------------------------------------
 
+/// Where and how one request is sent: its URL and model, its cancel flag
+/// and its trace.
+struct Outgoing<'a> {
+    url: &'a str,
+    model: &'a str,
+    cancel: Option<&'a crate::domain::inference::value_objects::cancel_flag::CancelFlag>,
+    trace:
+        Option<std::sync::Arc<crate::domain::inference::events::request_observation::RequestTrace>>,
+}
+
+impl AnthropicProvider {
+    /// Send a whole (non-streaming) request once.
+    async fn chat_once(
+        &self,
+        outgoing: Outgoing<'_>,
+        body: &serde_json::Value,
+        tools_snapshot: &[crate::domain::tool_policy::value_objects::tool::ToolDefinition],
+    ) -> Result<LlmResponse, DomainError> {
+        let Outgoing {
+            url,
+            model,
+            cancel,
+            trace,
+        } = outgoing;
+        let is_oauth = self.is_oauth;
+        let model = model.to_string();
+        let request_builder = self.client.post(url).json(body);
+        let request_builder = self.apply_headers(request_builder, &model);
+
+        if let Some(gate) = &self.attempt_admission {
+            return crate::infrastructure::providers::transport::attempt_transport::text(
+                gate,
+                trace.clone(),
+                cancel,
+                request_builder,
+                Profile::new(&ANTHROPIC_WIRE, Surface::Chat, self.stream_idle),
+                |text| {
+                    let json = serde_json::from_str(text).map_err(|e| {
+                        DomainError::Provider(format!("failed to parse response JSON: {e}"))
+                    })?;
+                    let mut parsed = Self::parse_response(&json, is_oauth, tools_snapshot)?;
+                    usage_accounting::attach_cost(&mut parsed, &model);
+                    Ok(parsed)
+                },
+            )
+            .await;
+        }
+        let (status, retry_after, response_text) = self.read_whole(request_builder).await?;
+
+        if status != 200 {
+            return Err(DomainError::Provider(format!(
+                "HTTP {} from Anthropic: {}{}",
+                status, response_text, retry_after
+            )));
+        }
+
+        let response_json: serde_json::Value = serde_json::from_str(&response_text)
+            .map_err(|e| DomainError::Provider(format!("failed to parse response JSON: {}", e)))?;
+
+        let mut resp = Self::parse_response(&response_json, is_oauth, tools_snapshot)?;
+        usage_accounting::attach_cost(&mut resp, &model);
+        Ok(resp)
+    }
+
+    /// Send a streamed request once and assemble its reply.
+    async fn stream_once(
+        &self,
+        outgoing: Outgoing<'_>,
+        body: serde_json::Value,
+        tools_snapshot: Option<
+            Vec<crate::domain::tool_policy::value_objects::tool::ToolDefinition>,
+        >,
+    ) -> Result<LlmResponse, DomainError> {
+        let Outgoing {
+            url,
+            model,
+            cancel,
+            trace,
+        } = outgoing;
+        if let Some(gate) = &self.attempt_admission {
+            let builder = self.apply_headers(self.client.post(url).json(&body), model);
+            return crate::infrastructure::providers::transport::attempt_transport::assembled(
+                gate,
+                trace.clone(),
+                cancel,
+                builder,
+                Profile::new(&ANTHROPIC_WIRE, Surface::Assembled, self.stream_idle),
+                |raw| {
+                    let mut parsed = Self::parse_sse_reply(raw, tools_snapshot)
+                        .map_err(|cut| cut.account(trace.as_deref(), model))?;
+                    usage_accounting::attach_cost(&mut parsed, model);
+                    Ok(parsed)
+                },
+            )
+            .await;
+        }
+        let mut resp = self
+            .stream_chat_with_body(anthropic_sse::StreamParams {
+                body,
+                url,
+                model,
+                tool_defs: tools_snapshot,
+                trace,
+            })
+            .await?;
+        usage_accounting::attach_cost(&mut resp, model);
+        Ok(resp)
+    }
+}
+
 impl LlmProvider for AnthropicProvider {
     fn route_order(&self) -> Vec<String> {
         vec![self.name().to_string()]
@@ -401,49 +527,26 @@ impl LlmProvider for AnthropicProvider {
         let url = format!("{}/v1/messages", self.api_base);
         let cancel = request.cancel_flag.clone();
         let trace = request.trace.clone();
+        let measured = anthropic_input::begin(&request, &url, &body);
 
         Box::pin(async move {
             if cancel.as_ref().is_some_and(|f| f.is_cancelled()) {
                 return Err(DomainError::Provider("request cancelled".into()));
             }
-            let request_builder = self.client.post(&url).json(&body);
-            let request_builder = self.apply_headers(request_builder, &model);
-
-            if let Some(gate) = &self.attempt_admission {
-                return crate::infrastructure::providers::transport::attempt_transport::text(
-                    gate,
-                    trace.clone(),
-                    cancel.as_ref(),
-                    request_builder,
-                    Profile::new(&ANTHROPIC_WIRE, Surface::Chat, self.stream_idle),
-                    |text| {
-                        let json = serde_json::from_str(text).map_err(|e| {
-                            DomainError::Provider(format!("failed to parse response JSON: {e}"))
-                        })?;
-                        let mut parsed = Self::parse_response(&json, is_oauth, &tools_snapshot)?;
-                        usage_accounting::attach_cost(&mut parsed, &model);
-                        Ok(parsed)
+            let result = self
+                .chat_once(
+                    Outgoing {
+                        url: &url,
+                        model: &model,
+                        cancel: cancel.as_ref(),
+                        trace,
                     },
+                    &body,
+                    &tools_snapshot,
                 )
                 .await;
-            }
-            let (status, retry_after, response_text) = self.read_whole(request_builder).await?;
-
-            if status != 200 {
-                return Err(DomainError::Provider(format!(
-                    "HTTP {} from Anthropic: {}{}",
-                    status, response_text, retry_after
-                )));
-            }
-
-            let response_json: serde_json::Value =
-                serde_json::from_str(&response_text).map_err(|e| {
-                    DomainError::Provider(format!("failed to parse response JSON: {}", e))
-                })?;
-
-            let mut resp = Self::parse_response(&response_json, is_oauth, &tools_snapshot)?;
-            usage_accounting::attach_cost(&mut resp, &model);
-            Ok(resp)
+            anthropic_input::accept(measured, result.is_ok());
+            result
         })
     }
 
@@ -465,39 +568,26 @@ impl LlmProvider for AnthropicProvider {
         let url = format!("{}/v1/messages", self.api_base);
         let cancel = request.cancel_flag.clone();
         let trace = request.trace.clone();
+        let measured = anthropic_input::begin(&request, &url, &body);
 
         Box::pin(async move {
             if cancel.as_ref().is_some_and(|f| f.is_cancelled()) {
                 return Err(DomainError::Provider("request cancelled".into()));
             }
-            if let Some(gate) = &self.attempt_admission {
-                let builder = self.apply_headers(self.client.post(&url).json(&body), &model);
-                return crate::infrastructure::providers::transport::attempt_transport::assembled(
-                    gate,
-                    trace.clone(),
-                    cancel.as_ref(),
-                    builder,
-                    Profile::new(&ANTHROPIC_WIRE, Surface::Assembled, self.stream_idle),
-                    |raw| {
-                        let mut parsed = Self::parse_sse_reply(raw, tools_snapshot)
-                            .map_err(|cut| cut.account(trace.as_deref(), &model))?;
-                        usage_accounting::attach_cost(&mut parsed, &model);
-                        Ok(parsed)
+            let result = self
+                .stream_once(
+                    Outgoing {
+                        url: &url,
+                        model: &model,
+                        cancel: cancel.as_ref(),
+                        trace,
                     },
+                    body,
+                    tools_snapshot,
                 )
                 .await;
-            }
-            let mut resp = self
-                .stream_chat_with_body(anthropic_sse::StreamParams {
-                    body,
-                    url: &url,
-                    model: &model,
-                    tool_defs: tools_snapshot,
-                    trace,
-                })
-                .await?;
-            usage_accounting::attach_cost(&mut resp, &model);
-            Ok(resp)
+            anthropic_input::accept(measured, result.is_ok());
+            result
         })
     }
 
@@ -519,6 +609,7 @@ impl LlmProvider for AnthropicProvider {
         let url = format!("{}/v1/messages", self.api_base);
         let cancel = request.cancel_flag.clone();
         let trace = request.trace.clone();
+        let measured = anthropic_input::begin(&request, &url, &body);
 
         // Derived Clone carries every field (crucially `router_name`) into the
         // spawned streaming task. The previous code reconstructed the struct
@@ -536,33 +627,41 @@ impl LlmProvider for AnthropicProvider {
             }
             queue_before_spawn(provider.attempt_admission.as_ref(), trace.as_ref());
             tokio::spawn(async move {
-                if let Some(gate) = &provider.attempt_admission {
-                    let builder =
-                        provider.apply_headers(provider.client.post(&url).json(&body), &model);
-                    crate::infrastructure::providers::transport::attempt_transport::stream(
-                        gate,
-                        (trace.clone(), cancel.as_ref()),
-                        builder,
-                        Profile::new(&ANTHROPIC_WIRE, Surface::Incremental, provider.stream_idle),
-                        tx,
-                        anthropic_sse::AnthropicSseHandler::with_model(tools_snapshot, &model)
-                            .with_trace(trace.clone()),
-                    )
-                    .await;
-                    return;
-                }
-                provider
-                    .stream_chat_incremental_with_body(anthropic_sse::IncrementalStreamParams {
-                        base: anthropic_sse::StreamParams {
-                            body,
-                            url: &url,
-                            model: &model,
-                            tool_defs: tools_snapshot,
-                            trace,
-                        },
-                        tx,
-                    })
-                    .await;
+                let (tx, forward) = anthropic_input::forward_accepting(tx, measured);
+                let produce = async move {
+                    if let Some(gate) = &provider.attempt_admission {
+                        let builder =
+                            provider.apply_headers(provider.client.post(&url).json(&body), &model);
+                        crate::infrastructure::providers::transport::attempt_transport::stream(
+                            gate,
+                            (trace.clone(), cancel.as_ref()),
+                            builder,
+                            Profile::new(
+                                &ANTHROPIC_WIRE,
+                                Surface::Incremental,
+                                provider.stream_idle,
+                            ),
+                            tx,
+                            anthropic_sse::AnthropicSseHandler::with_model(tools_snapshot, &model)
+                                .with_trace(trace.clone()),
+                        )
+                        .await;
+                        return;
+                    }
+                    provider
+                        .stream_chat_incremental_with_body(anthropic_sse::IncrementalStreamParams {
+                            base: anthropic_sse::StreamParams {
+                                body,
+                                url: &url,
+                                model: &model,
+                                tool_defs: tools_snapshot,
+                                trace,
+                            },
+                            tx,
+                        })
+                        .await;
+                };
+                tokio::join!(produce, forward);
             });
 
             rx
@@ -594,12 +693,11 @@ mod issue_1338_tests;
 mod watermark_tests;
 
 #[cfg(test)]
-#[path = "anthropic_observation_tests.rs"]
-mod observation_tests;
-
-#[cfg(test)]
 #[path = "anthropic_cache_tests.rs"]
 mod cache_tests;
+#[cfg(test)]
+#[path = "anthropic_observation_tests.rs"]
+mod observation_tests;
 
 #[cfg(test)]
 #[path = "anthropic_input_prefix_tests.rs"]
