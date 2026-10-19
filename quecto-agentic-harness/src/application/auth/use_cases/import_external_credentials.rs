@@ -122,7 +122,7 @@ fn as_stated(found: &ExternalCredential) -> Credential {
         provider: found.provider.id().to_string(),
         token: found.access_token.clone(),
         method: AuthMethod::OAuth,
-        expires_at: Some(oauth_expires_at_absolute(found.expires_at)),
+        expires_at: Some(oauth_expires_at_absolute(found.stated_expiry_secs)),
         refresh_token: refresh_token(found.refresh_token.clone()),
         account_id: found.account_id.clone(),
     }

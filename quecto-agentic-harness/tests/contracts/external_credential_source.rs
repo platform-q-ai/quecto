@@ -42,10 +42,10 @@ fn the_oauth_entries_come_in_import_order_with_seconds_and_accounts() {
     assert_eq!(found[0].provider, LoginProvider::Anthropic);
     assert_eq!(found[0].access_token, "fake-a");
     assert_eq!(found[0].refresh_token, "fake-ra");
-    assert_eq!(found[0].expires_at, 5);
+    assert_eq!(found[0].stated_expiry_secs, 5);
     assert_eq!(found[0].account_id, None);
     assert_eq!(found[1].provider, LoginProvider::OpenAi);
-    assert_eq!(found[1].expires_at, 7_000);
+    assert_eq!(found[1].stated_expiry_secs, 7_000);
     assert_eq!(found[1].account_id.as_deref(), Some("acct-fake"));
     let shown = format!("{found:?}");
     for secret in ["fake-a", "fake-ra", "fake-ro", jwt.as_str()] {
@@ -72,7 +72,7 @@ fn missing_fields_read_as_empty_and_unstated_expiry_as_zero() {
     assert_eq!(found.len(), 1);
     assert_eq!(found[0].access_token, "");
     assert_eq!(found[0].refresh_token, "");
-    assert_eq!(found[0].expires_at, 0);
+    assert_eq!(found[0].stated_expiry_secs, 0);
     assert_eq!(found[0].account_id, None);
 }
 

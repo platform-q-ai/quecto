@@ -39,13 +39,13 @@ fn external(
     provider: LoginProvider,
     access: &str,
     refresh: &str,
-    expires_at: i64,
+    stated_expiry_secs: i64,
 ) -> ExternalCredential {
     ExternalCredential {
         provider,
         access_token: access.to_string(),
         refresh_token: refresh.to_string(),
-        expires_at,
+        stated_expiry_secs,
         account_id: (provider == LoginProvider::OpenAi).then(|| "acct-stated".to_string()),
     }
 }

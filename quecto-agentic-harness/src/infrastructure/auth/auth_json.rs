@@ -81,7 +81,7 @@ fn oauth_entry(file: &serde_json::Value, provider: LoginProvider) -> Option<Exte
     Some(ExternalCredential {
         provider,
         refresh_token: text("refresh"),
-        expires_at: entry
+        stated_expiry_secs: entry
             .get("expires")
             .and_then(|value| value.as_i64())
             .unwrap_or(0)

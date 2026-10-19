@@ -21,11 +21,6 @@ const MAY_READ_EXPIRY: &[&str] = &[
     "src/domain/auth/credential.rs",
     // The boundary mapping of the domain credential to its file record.
     "src/infrastructure/auth/credential_store.rs",
-    // The external credential's own redacting `Debug` (#1840).
-    "src/application/auth/ports/external_credentials.rs",
-    // The import rule's input: the external credential's stated expiry,
-    // turned into the stored one by `oauth_expires_at_absolute` (#1840).
-    "src/application/auth/use_cases/import_external_credentials.rs",
 ];
 
 /// The two readers of credential presence, and the domain rule each asks.

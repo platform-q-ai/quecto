@@ -11,8 +11,10 @@ pub struct ExternalCredential {
     pub access_token: String,
     /// Empty when the store holds none.
     pub refresh_token: String,
-    /// The token's server-side expiry, Unix seconds (0 when unstated).
-    pub expires_at: i64,
+    /// The token's server-side expiry as the store states it, Unix seconds
+    /// (0 when unstated). Not a credential's `expires_at`: the import turns
+    /// it into one, less the margin.
+    pub stated_expiry_secs: i64,
     /// The account the access token names, when its provider names one
     /// (OpenAI's `chatgpt_account_id`).
     pub account_id: Option<String>,
@@ -24,7 +26,7 @@ impl std::fmt::Debug for ExternalCredential {
             .field("provider", &self.provider)
             .field("access_token", &"[REDACTED]")
             .field("refresh_token", &"[REDACTED]")
-            .field("expires_at", &self.expires_at)
+            .field("stated_expiry_secs", &self.stated_expiry_secs)
             .field("account_id", &self.account_id)
             .finish()
     }
