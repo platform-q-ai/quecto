@@ -43,12 +43,6 @@ mod admission_group_fallback_contracts;
 #[path = "../tests/contracts/admission_registry.rs"]
 mod admission_registry_contracts;
 #[cfg(test)]
-#[path = "../tests/contracts/admission_typed_feedback_cases.rs"]
-mod admission_typed_feedback_cases_contracts;
-#[cfg(test)]
-#[path = "../tests/contracts/admission_typed_feedback.rs"]
-mod admission_typed_feedback_contracts;
-#[cfg(test)]
 #[path = "../tests/contracts/attempt_admission.rs"]
 mod attempt_admission_contracts;
 #[cfg(test)]

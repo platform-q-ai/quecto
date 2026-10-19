@@ -18,17 +18,30 @@ mod sanitization_tests {
     #[test]
     fn typed_fields_never_copy_unknown_values_or_messages() {
         let mut d = AttemptDiagnostics::default();
+        let wire = &crate::infrastructure::providers::transport::wire_dialect::TEST_WIRE;
         typed(
             &mut d,
-            &serde_json::json!({"error":{"code":"SECRET","message":"SECRET"}, "response":{"incomplete_details":{"reason":"SECRET"}}}),
+            wire,
+            &serde_json::json!({"error":{"code":"SECRET","message":"SECRET"}, "stopped":"SECRET"}),
         );
         assert_eq!(d.error_code, None);
         assert_eq!(d.incomplete_reason, None);
         typed(
             &mut d,
-            &serde_json::json!({"error":{"code":"rate_limit_exceeded"}}),
+            wire,
+            &serde_json::json!({"error":{"code":"throttled"}, "stopped":"max_output_tokens"}),
         );
         assert_eq!(d.error_code, Some(ErrorCode::RateLimitExceeded));
+        assert_eq!(d.incomplete_reason, Some(IncompleteReason::MaxOutputTokens));
+        // The last name the wire knows is the one recorded; one it does
+        // not know changes nothing.
+        typed(
+            &mut d,
+            wire,
+            &serde_json::json!({"error":{"type":"busy","code":"made_up"}}),
+        );
+        assert_eq!(d.error_code, Some(ErrorCode::Overloaded));
+        assert_eq!(d.incomplete_reason, Some(IncompleteReason::MaxOutputTokens));
     }
 }
 #[cfg(test)]
@@ -89,7 +102,10 @@ mod transport_tests {
             b"data: {\"type\":\"output\",\"text\":\"SECRET\"}\n",
             &receipt,
         );
-        observer.push(b"data: {\"type\":\"end\",\"response\":{\"incomplete_details\":{\"reason\":\"max_output_tokens\"}}}\n", &receipt);
+        observer.push(
+            b"data: {\"type\":\"end\",\"stopped\":\"max_output_tokens\"}\n",
+            &receipt,
+        );
         observer.push(
             &vec![
                 b'x';

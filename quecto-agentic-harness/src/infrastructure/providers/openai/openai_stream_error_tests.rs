@@ -344,7 +344,8 @@ fn every_billing_name_is_billing_everywhere() {
             assert_eq!(chunk_status(value.clone()), 402, "{value}");
             assert!(!super::is_throttle_chunk(&value), "{value}");
             assert!(
-                !crate::infrastructure::providers::transport::admission_feedback::is_typed_throttle(
+                !crate::infrastructure::providers::transport::wire_dialect::WireDialect::is_throttle(
+                    &super::super::openai_wire::OPENAI_WIRE,
                     &value
                 ),
                 "{value}"

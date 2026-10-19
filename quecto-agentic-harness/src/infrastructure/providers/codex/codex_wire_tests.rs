@@ -338,3 +338,170 @@ fn codex_reasoning_text_stays_unknown_until_handled() {
         assert_eq!(CODEX_WIRE.event_kind("", &event), "(unknown)");
     }
 }
+
+/// #1679 P2 AC5, #2609 review: a Responses payload is a throttle by its
+/// typed fields alone — an `error` event's own fields, its `error` object,
+/// a failed response's `response.error` — and a billing name anywhere in
+/// them takes precedence. Moved from `transport/` (and the contract suite)
+/// with this wire's error names; an Anthropic or chat-only name is none of
+/// this wire's.
+#[test]
+fn a_responses_throttle_is_read_from_its_typed_fields_only() {
+    for (value, throttle) in [
+        (
+            json!({"type": "error", "code": "rate_limit_exceeded", "message": "Request failed"}),
+            true,
+        ),
+        (
+            json!({"type": "error", "error": {"code": "rate_limit_exceeded"}}),
+            true,
+        ),
+        (
+            json!({"type": "response.failed", "response": {"error": {"code": "rate_limit_exceeded"}}}),
+            true,
+        ),
+        (
+            json!({"type": "error", "code": "rate_limit_exceeded", "message": "insufficient_quota"}),
+            true,
+        ),
+        // The root of a payload that is no `error` event is not read.
+        (
+            json!({"code": "insufficient_quota", "error": {"type": "rate_limit_exceeded"}}),
+            true,
+        ),
+        // A billing name anywhere takes precedence.
+        (
+            json!({"type": "error", "code": "insufficient_quota", "error": {"type": "rate_limit_exceeded"}}),
+            false,
+        ),
+        (
+            json!({"type": "error", "code": "billing_hard_limit_reached", "response": {"error": {"type": "rate_limit_exceeded"}}}),
+            false,
+        ),
+        (
+            json!({"type": "error", "code": "rate_limit_exceeded", "error": {"code": "insufficient_quota"}}),
+            false,
+        ),
+        (
+            json!({"type": "error", "code": "rate_limit_exceeded", "response": {"error": {"code": "billing_hard_limit_reached"}}}),
+            false,
+        ),
+        (
+            json!({"type": "error", "code": "rate_limit_exceeded", "error": {"type": "usage_limit_reached"}}),
+            false,
+        ),
+        (
+            json!({"response": {"error": {"type": "rate_limit_exceeded", "code": "billing_hard_limit_reached"}}}),
+            false,
+        ),
+        // No typed throttle field.
+        (json!({"code": "rate_limit_exceeded"}), false),
+        (
+            json!({"type": "response.output_text.delta", "code": "rate_limit_exceeded"}),
+            false,
+        ),
+        (
+            json!({"type": "response.output_text.delta", "delta": "rate_limit_exceeded"}),
+            false,
+        ),
+        (json!({"type": "rate_limit_exceeded"}), false),
+        (
+            json!({"type": "error", "message": "429 rate_limit_exceeded overloaded_error"}),
+            false,
+        ),
+        (
+            json!({"type": "error", "code": "invalid_request_error", "message": "rate_limit_exceeded"}),
+            false,
+        ),
+        (json!({"error": {"type": "invalid_request_error"}}), false),
+        (json!(null), false),
+        // Declared narrowing: another wire's throttle names.
+        (
+            json!({"type": "error", "error": {"type": "rate_limit_error"}}),
+            false,
+        ),
+        (json!({"error": {"type": "overloaded_error"}}), false),
+    ] {
+        assert_eq!(CODEX_WIRE.is_throttle(&value), throttle, "{value}");
+    }
+}
+
+/// An HTTP error body naming a billing error or a request this wire
+/// refuses is terminal; a throttle or a server error is not.
+#[test]
+fn a_responses_error_body_is_terminal_by_its_typed_fields() {
+    for (value, terminal) in [
+        (json!({"error": {"code": "insufficient_quota"}}), true),
+        (json!({"error": {"type": "invalid_request_error"}}), true),
+        (json!({"error": {"code": "invalid_api_key"}}), true),
+        (
+            json!({"response": {"error": {"code": "usage_limit_reached"}}}),
+            true,
+        ),
+        (json!({"error": {"code": "rate_limit_exceeded"}}), false),
+        (json!({"error": {"code": "server_error"}}), false),
+        (json!({"error": {"message": "invalid_api_key"}}), false),
+        // Declared narrowing: another wire's refusal names.
+        (json!({"error": {"type": "authentication_error"}}), false),
+        (json!({"error": {"type": "permission_error"}}), false),
+    ] {
+        assert_eq!(CODEX_WIRE.is_terminal_error(&value), terminal, "{value}");
+    }
+}
+
+/// The Responses error names and incomplete reasons an attempt records.
+#[test]
+fn a_responses_error_records_its_code_and_incomplete_reason() {
+    use crate::domain::inference::value_objects::attempt_diagnostics::{
+        ErrorCode, IncompleteReason,
+    };
+    for (name, code) in [
+        ("rate_limit_exceeded", ErrorCode::RateLimitExceeded),
+        ("server_error", ErrorCode::ServerError),
+        ("insufficient_quota", ErrorCode::InsufficientQuota),
+        ("usage_limit_reached", ErrorCode::UsageLimitReached),
+        ("invalid_request_error", ErrorCode::InvalidRequestError),
+        ("invalid_api_key", ErrorCode::InvalidApiKey),
+    ] {
+        assert_eq!(
+            CODEX_WIRE.error_name(name).map(|known| known.code),
+            Some(code),
+            "{name}"
+        );
+    }
+    for name in [
+        "rate_limit_error",
+        "overloaded_error",
+        "authentication_error",
+        "SECRET",
+    ] {
+        assert!(CODEX_WIRE.error_name(name).is_none(), "{name}");
+    }
+    let incomplete = |reason: &str| {
+        CODEX_WIRE
+            .incomplete_reason(&json!({"response": {"incomplete_details": {"reason": reason}}}))
+    };
+    assert_eq!(
+        incomplete("max_output_tokens"),
+        Some(IncompleteReason::MaxOutputTokens)
+    );
+    assert_eq!(
+        incomplete("content_filter"),
+        Some(IncompleteReason::ContentFilter)
+    );
+    assert_eq!(incomplete("SECRET"), None);
+    // An `error` event's own code is recorded (#2609 review: read where
+    // the throttle check reads it).
+    let line = r#"data: {"type":"error","code":"server_error","message":"SECRET"}"#;
+    let profile = crate::infrastructure::providers::transport::attempt_profile::Profile::new(
+        &CODEX_WIRE,
+        Surface::Incremental,
+        Default::default(),
+    );
+    let seen = crate::infrastructure::providers::transport::attempt_transport::observed(
+        profile,
+        &[line],
+        None,
+    );
+    assert_eq!(seen.diagnostics.error_code, Some(ErrorCode::ServerError));
+}
