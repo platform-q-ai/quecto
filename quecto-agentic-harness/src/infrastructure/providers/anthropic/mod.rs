@@ -596,3 +596,11 @@ mod watermark_tests;
 #[cfg(test)]
 #[path = "anthropic_observation_tests.rs"]
 mod observation_tests;
+
+#[cfg(test)]
+#[path = "anthropic_cache_tests.rs"]
+mod cache_tests;
+
+#[cfg(test)]
+#[path = "anthropic_input_prefix_tests.rs"]
+mod input_prefix_tests;
