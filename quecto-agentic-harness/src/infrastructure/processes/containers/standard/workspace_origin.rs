@@ -11,7 +11,7 @@
 use std::path::Path;
 use std::process::{Command, Stdio};
 
-use crate::application::environments::ports::WorkspaceOrigin;
+use crate::application::environments::ports::container::WorkspaceOrigin;
 
 #[derive(Debug, Default, Clone, Copy)]
 pub struct GitWorkspaceOrigin;

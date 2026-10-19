@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 use super::restore_registry_tests::{FakeHosted, process, record, store_with};
 use super::{RELABELLED_BY_OLDER_BUILD, RestoreRegistry, unfinished_run_reason};
 use crate::application::environments::dto::EnvironmentLiveness;
-use crate::application::environments::ports::EnvironmentRegistryStore;
+use crate::application::environments::ports::registry::EnvironmentRegistryStore;
 use crate::domain::environments::entities::environment_registry::EnvironmentStatus;
 use crate::domain::environments::entities::environment_registry::GONE_AT_RESTORE;
 use crate::domain::environments::services::environment_retention::{

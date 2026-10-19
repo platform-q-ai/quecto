@@ -12,7 +12,9 @@ use std::sync::Arc;
 use crate::application::environments::dto::{
     ContainerRuntimeDiagnosis, ContainerRuntimeTarget, DiagnoseContainerRuntimeError,
 };
-use crate::application::environments::ports::{ContainerConfigLookup, ContainerRuntimePreflight};
+use crate::application::environments::ports::{
+    container::ContainerConfigLookup, container::ContainerRuntimePreflight,
+};
 
 pub struct DiagnoseContainerRuntime {
     lookup: Arc<dyn ContainerConfigLookup>,

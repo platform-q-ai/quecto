@@ -6,7 +6,7 @@
 //! adapter's own unit suite, which can reach the store's test entry points.)
 use std::sync::Arc;
 
-use quecto::application::environments::ports::HostedSwarmRunObservation;
+use quecto::application::environments::ports::hosted_swarm::HostedSwarmRunObservation;
 use quecto::domain::environments::entities::environment_registry::{
     EnvironmentRecord, EnvironmentStatus, mint_environment_uuid,
 };

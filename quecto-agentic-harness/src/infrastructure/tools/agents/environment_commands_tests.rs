@@ -1,5 +1,5 @@
 //! Script adapters of the environments capability's ports (#1939).
-use crate::application::environments::ports::EnvironmentProcessCommands;
+use crate::application::environments::ports::process::EnvironmentProcessCommands;
 use crate::infrastructure::test_support::executable::write_executable;
 
 #[test]
@@ -177,7 +177,7 @@ async fn retained_argv_of_an_altered_standard_script_is_refused_before_it_runs()
 /// the record ends `cleanup-failed` with the reason, never a parked harness.
 #[tokio::test]
 async fn a_hung_kill_script_is_killed_at_the_bound_and_reported() {
-    use crate::application::environments::ports::EnvironmentProcessCommands;
+    use crate::application::environments::ports::process::EnvironmentProcessCommands;
     let started = std::time::Instant::now();
     let error = super::ScriptEnvironmentCommands::default()
         .with_kill_bound(std::time::Duration::from_millis(200))
@@ -215,7 +215,7 @@ fn a_cleanup_is_bounded_generously_and_apart_from_the_kill() {
 #[test]
 fn a_stopped_ref_is_removed_only_on_the_runtimes_own_word() {
     use crate::application::environments::ports::{
-        EnvironmentMemberShutdown, MemberShutdownReport, PortFuture,
+        PortFuture, process::EnvironmentMemberShutdown, process::MemberShutdownReport,
     };
     use crate::application::environments::use_cases::KillEnvironment;
     use crate::domain::environments::entities::environment_registry::{

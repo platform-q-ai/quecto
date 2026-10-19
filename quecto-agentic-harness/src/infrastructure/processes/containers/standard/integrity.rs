@@ -20,7 +20,7 @@
 use std::path::Path;
 
 use crate::application::environments::dto::{AssetState, STANDARD_CONTAINER_DIR};
-use crate::application::environments::ports::ContainerAssetStore;
+use crate::application::environments::ports::container::ContainerAssetStore;
 use crate::application::subagents::dto::StandardScriptVerdict;
 use crate::application::subagents::ports::ContainerScriptIntegrity;
 
@@ -167,7 +167,7 @@ pub(crate) mod test_support {
     use std::path::{Path, PathBuf};
 
     use crate::application::environments::dto::STANDARD_CONTAINER_DIR;
-    use crate::application::environments::ports::ContainerAssetStore;
+    use crate::application::environments::ports::container::ContainerAssetStore;
     use crate::infrastructure::processes::containers::standard::assets::EmbeddedStandardAssets;
 
     /// Every asset written under `<project>/.quecto/containers/standard`;

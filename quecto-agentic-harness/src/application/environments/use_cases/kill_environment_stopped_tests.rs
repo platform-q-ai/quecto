@@ -8,8 +8,8 @@ use std::sync::{Arc, Mutex};
 
 use crate::application::environments::dto::EnvironmentLiveness;
 use crate::application::environments::ports::{
-    EnvironmentMemberShutdown, EnvironmentProcessCommands, HostedSwarmRunObservation,
-    MemberShutdownReport, PortFuture,
+    PortFuture, hosted_swarm::HostedSwarmRunObservation, process::EnvironmentMemberShutdown,
+    process::EnvironmentProcessCommands, process::MemberShutdownReport,
 };
 use crate::application::environments::use_cases::{KillEnvironment, KillEnvironmentError};
 use crate::domain::environments::entities::environment_registry::{

@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use super::{EmbeddedScriptIntegrity, split_at_bundle};
-use crate::application::environments::ports::ContainerAssetStore;
+use crate::application::environments::ports::container::ContainerAssetStore;
 use crate::application::subagents::dto::StandardScriptVerdict;
 use crate::application::subagents::ports::ContainerScriptIntegrity;
 use crate::infrastructure::processes::containers::standard::assets::EmbeddedStandardAssets;

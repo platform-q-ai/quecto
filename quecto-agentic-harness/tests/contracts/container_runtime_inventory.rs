@@ -16,7 +16,7 @@ use std::sync::Arc;
 use quecto::application::environments::dto::{
     DiagnosableContainerConfig, EnvironmentStateDir, RuntimeContainer,
 };
-use quecto::application::environments::ports::ContainerRuntimeInventory;
+use quecto::application::environments::ports::container::ContainerRuntimeInventory;
 use quecto::composition::environments::build_container_runtime_inventory;
 
 fn port() -> Arc<dyn ContainerRuntimeInventory> {

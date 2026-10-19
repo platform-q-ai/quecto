@@ -5,9 +5,9 @@
 use std::sync::Arc;
 
 use super::super::dto::{CorrectionOutcome, EnvironmentLiveness, OvertakenAudience, RestoreMode};
-use super::super::ports::EnvironmentRegistryStore;
 use super::RestoreRegistry;
 use super::restore_registry_tests::{FakeStore, no_hosted, process, record, store_with};
+use crate::application::environments::ports::registry::EnvironmentRegistryStore;
 use crate::domain::environments::entities::environment_registry::{
     EnvironmentRecord, EnvironmentStatus,
 };

@@ -8,7 +8,7 @@
 use std::path::Path;
 
 use crate::application::environments::dto::{EnvironmentLiveness, StateOnDisk};
-use crate::application::environments::ports::EnvironmentProcess;
+use crate::application::environments::ports::process::EnvironmentProcess;
 use crate::domain::environments::entities::environment_registry::EnvironmentRecord;
 
 use super::retained_scripts::{INSPECT_TIMEOUT, run_cleanup_sync, run_inspect_sync_bounded};

@@ -9,7 +9,7 @@ use serde_json::{Value, json};
 use super::tests::{environment, repository};
 use super::*;
 use crate::application::environments::dto::SwarmBoardSnapshot;
-use crate::application::environments::ports::EndedSwarmBoards;
+use crate::application::environments::ports::hosted_swarm::EndedSwarmBoards;
 use crate::application::project_board::ports::{
     CoordinatorLaunch, CoordinatorRequest, LaunchRefused, LaunchedCoordinator,
 };

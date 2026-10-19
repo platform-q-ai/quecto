@@ -4,7 +4,9 @@
 use std::sync::{Arc, Mutex};
 
 use super::DelegatedMemberShutdown;
-use crate::application::environments::ports::{EnvironmentMemberShutdown, MemberShutdownResult};
+use crate::application::environments::ports::{
+    process::EnvironmentMemberShutdown, process::MemberShutdownResult,
+};
 use crate::application::subagents::ports::{
     ChildRoutingError, Compensated, CompensationObservation, ConclusionBudget,
     DelegatedAgentRegistry, DirectChildRouting, OwnedChildTermination, PortFuture, ProtocolAttempt,

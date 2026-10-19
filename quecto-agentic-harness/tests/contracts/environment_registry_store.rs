@@ -13,7 +13,7 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use quecto::application::environments::ports::EnvironmentRegistryStore;
+use quecto::application::environments::ports::registry::EnvironmentRegistryStore;
 use quecto::composition::environments::{
     build_environment_registry_store, build_environment_registry_store_at,
 };

@@ -6,7 +6,7 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use quecto::application::environments::ports::WorkspaceOrigin;
+use quecto::application::environments::ports::container::WorkspaceOrigin;
 use quecto::composition::standard_container::build_workspace_origin;
 
 fn port() -> Arc<dyn WorkspaceOrigin> {

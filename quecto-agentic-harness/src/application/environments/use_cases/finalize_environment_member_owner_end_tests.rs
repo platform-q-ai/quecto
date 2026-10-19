@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 
 use super::finalize_environment_member_tests::{ScriptCall, block_on, committed_env};
 use crate::application::environments::ports::{
-    EnvironmentProcessCommands, HostedSwarmRunObservation, PortFuture,
+    PortFuture, hosted_swarm::HostedSwarmRunObservation, process::EnvironmentProcessCommands,
 };
 use crate::application::environments::use_cases::FinalizeEnvironmentMember;
 use crate::domain::environments::entities::environment_registry::{

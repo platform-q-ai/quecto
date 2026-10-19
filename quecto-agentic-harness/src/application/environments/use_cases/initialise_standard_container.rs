@@ -26,7 +26,8 @@ use crate::application::environments::dto::{
     StandardContainerReport, StandardContainerRequest, StandardEntryOutcome, standard_image_for,
 };
 use crate::application::environments::ports::{
-    ContainerAssetStore, ContainerConfigPersistence, ContainerConfigRoster, WorkspaceOrigin,
+    container::ContainerAssetStore, container::ContainerConfigPersistence,
+    container::ContainerConfigRoster, container::WorkspaceOrigin,
 };
 
 /// The relative script paths the entry's argv names, as the catalogue

@@ -7,7 +7,8 @@ use std::time::Duration;
 
 use super::*;
 use crate::application::environments::ports::{
-    EnvironmentMemberShutdown, EnvironmentProcessCommands, MemberShutdownReport, PortFuture,
+    PortFuture, process::EnvironmentMemberShutdown, process::EnvironmentProcessCommands,
+    process::MemberShutdownReport,
 };
 use crate::application::environments::use_cases::{KillEnvironment, ListEnvironmentsQuery};
 use crate::domain::environments::entities::environment_registry::EnvironmentRegistry;

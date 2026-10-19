@@ -113,7 +113,7 @@ composed handle (a launcher composed without one refuses new containers).
 Agents can discover container configs (#2024 S4c). The environments
 capability's `application/environments/use_cases/list_container_configs.rs`
 lists the effective set of the launching agent's checkout through its
-`ContainerConfigRoster` port (`application/environments/ports.rs`), each
+`ContainerConfigRoster` port (`application/environments/ports/container.rs`), each
 entry with the layer that declared it and its repository; the query owns
 the rules (the `container: true` default first — the repo-bound
 `standard` whatever the labels say, #2035; no default while the

@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::application::environments::dto::EnvironmentLiveness;
 use crate::application::environments::ports::{
-    EnvironmentProcessCommands, HostedSwarmRunInspection, PortFuture,
+    PortFuture, hosted_swarm::HostedSwarmRunInspection, process::EnvironmentProcessCommands,
 };
 use crate::application::environments::use_cases::FinalizeEnvironmentMember;
 use crate::domain::environments::entities::environment_registry::{
