@@ -118,7 +118,7 @@ impl crate::application::swarm::ports::SessionOpLog for RecordedOps {
 /// loss record leaves one `_lose_coordinator` swarm_op.
 #[test]
 fn a_host_side_loss_is_recorded_in_the_process_boards_event_log() {
-    use crate::application::environments::ports::HostedSwarmRunObservation;
+    use crate::application::environments::ports::hosted_swarm::HostedSwarmRunObservation;
     use crate::infrastructure::tools::swarm::swarm_bridge::{SwarmContext, process_start};
     let dir = tempfile::tempdir().unwrap();
     let workspace = dir.path().join("workspace");

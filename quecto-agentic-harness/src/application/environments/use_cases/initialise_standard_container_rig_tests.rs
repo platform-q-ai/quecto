@@ -12,8 +12,9 @@ use crate::application::environments::dto::{
     StandardContainerRequest,
 };
 use crate::application::environments::ports::{
-    ContainerAssetStore, ContainerConfigPersistence, ContainerConfigRoster,
-    ContainerConfigRosterReport, WorkspaceOrigin,
+    container::ContainerAssetStore, container::ContainerConfigPersistence,
+    container::ContainerConfigRoster, container::ContainerConfigRosterReport,
+    container::WorkspaceOrigin,
 };
 
 /// An in-memory bundle: the "disk" is a map of path → bytes.

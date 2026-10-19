@@ -8,8 +8,9 @@ use crate::application::environments::dto::{
     PreflightCheck, StandardDefault,
 };
 use crate::application::environments::ports::{
-    ContainerAssetStore, ContainerConfigLookup, ContainerConfigRoster, ContainerConfigRosterReport,
-    ContainerRuntimePreflight,
+    container::ContainerAssetStore, container::ContainerConfigLookup,
+    container::ContainerConfigRoster, container::ContainerConfigRosterReport,
+    container::ContainerRuntimePreflight,
 };
 
 /// Asset `a{i}` is observed as the i-th state. `a0` stands for the

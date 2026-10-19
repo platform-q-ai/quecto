@@ -12,7 +12,7 @@ use tempfile::TempDir;
 
 use quecto::application::configuration::dto::{ConfigLayers, ConfigSelection, OverlayTrustRequest};
 use quecto::application::environments::dto::ContainerRuntimeTarget;
-use quecto::application::environments::ports::ContainerConfigLookup;
+use quecto::application::environments::ports::container::ContainerConfigLookup;
 use quecto::composition::environments::build_container_config_lookup;
 
 fn entry(default: bool, marker: &str) -> serde_json::Value {

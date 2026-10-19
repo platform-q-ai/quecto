@@ -5,7 +5,9 @@ use crate::application::environments::dto::{
     CheckStatus, ContainerRuntimeTarget, DiagnosableContainerConfig, DiagnoseContainerRuntimeError,
     PreflightCheck,
 };
-use crate::application::environments::ports::{ContainerConfigLookup, ContainerRuntimePreflight};
+use crate::application::environments::ports::{
+    container::ContainerConfigLookup, container::ContainerRuntimePreflight,
+};
 
 struct FixedLookup(Result<DiagnosableContainerConfig, String>);
 

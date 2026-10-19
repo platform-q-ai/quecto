@@ -9,7 +9,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::application::environments::dto::{ContainerConfigEntry, ContainerConfigLayer};
-use crate::application::environments::ports::{ContainerConfigRoster, ContainerConfigRosterReport};
+use crate::application::environments::ports::{
+    container::ContainerConfigRoster, container::ContainerConfigRosterReport,
+};
 use crate::application::subagents::dto::ContainerConfigSource;
 use crate::application::subagents::ports::EffectiveContainerConfigs;
 

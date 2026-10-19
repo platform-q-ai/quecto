@@ -16,9 +16,10 @@ use std::sync::{Arc, OnceLock};
 use crate::application::configuration::dto::ConfigSelection;
 use crate::application::environments::dto::{OvertakenAudience, RestoreMode, RestoredRegistry};
 use crate::application::environments::ports::{
-    ContainerConfigLookup, ContainerRuntimeInventory, ContainerRuntimePreflight,
-    EnvironmentMemberShutdown, EnvironmentProcess, EnvironmentRegistryStore, MemberShutdownReport,
-    PortFuture, UnsettledMember,
+    PortFuture, container::ContainerConfigLookup, container::ContainerRuntimeInventory,
+    container::ContainerRuntimePreflight, process::EnvironmentMemberShutdown,
+    process::EnvironmentProcess, process::MemberShutdownReport, process::UnsettledMember,
+    registry::EnvironmentRegistryStore,
 };
 use crate::application::environments::use_cases::{
     DiagnoseContainerRuntime, FinalizeEnvironmentMember, GcOrphanedEnvironments, KillEnvironment,

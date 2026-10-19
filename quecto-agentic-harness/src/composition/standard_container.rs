@@ -22,7 +22,7 @@ use crate::application::configuration::dto::{
 };
 use crate::application::configuration::use_cases::{PatchConfiguration, ResolveEffectiveConfig};
 use crate::application::environments::dto::{ContainerConfigDocument, PersistedContainerConfig};
-use crate::application::environments::ports::ContainerConfigPersistence;
+use crate::application::environments::ports::container::ContainerConfigPersistence;
 use crate::application::environments::use_cases::{ContainerStatus, InitialiseStandardContainer};
 use crate::infrastructure::processes::containers::standard::assets::EmbeddedStandardAssets;
 use crate::infrastructure::processes::containers::standard::workspace_origin::GitWorkspaceOrigin;
@@ -276,13 +276,13 @@ pub fn build_container_config_persistence(
 
 /// The asset store port adapter alone, for the contract suite.
 pub fn build_container_asset_store()
--> Arc<dyn crate::application::environments::ports::ContainerAssetStore> {
+-> Arc<dyn crate::application::environments::ports::container::ContainerAssetStore> {
     Arc::new(EmbeddedStandardAssets)
 }
 
 /// The origin port adapter alone, for the contract suite.
-pub fn build_workspace_origin() -> Arc<dyn crate::application::environments::ports::WorkspaceOrigin>
-{
+pub fn build_workspace_origin()
+-> Arc<dyn crate::application::environments::ports::container::WorkspaceOrigin> {
     Arc::new(GitWorkspaceOrigin)
 }
 

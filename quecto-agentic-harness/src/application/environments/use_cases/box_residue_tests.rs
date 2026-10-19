@@ -5,7 +5,7 @@ use super::{
     NO_ENVIRONMENT_DIR, Residue, ResidueProbe, SLOW_INSPECT_MILLIS, STATE_GONE_CONTAINER_RUNNING,
 };
 use crate::application::environments::dto::{EnvironmentLiveness, StateOnDisk};
-use crate::application::environments::ports::EnvironmentProcess;
+use crate::application::environments::ports::process::EnvironmentProcess;
 use crate::application::environments::use_cases::restore_registry_tests::record;
 use crate::domain::environments::entities::environment_registry::{
     EnvironmentRecord, EnvironmentStatus,

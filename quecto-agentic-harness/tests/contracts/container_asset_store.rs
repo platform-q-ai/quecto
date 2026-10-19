@@ -11,7 +11,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use quecto::application::environments::dto::{AssetOutcome, AssetState};
-use quecto::application::environments::ports::ContainerAssetStore;
+use quecto::application::environments::ports::container::ContainerAssetStore;
 use quecto::composition::standard_container::build_container_asset_store;
 
 fn port() -> Arc<dyn ContainerAssetStore> {

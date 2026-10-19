@@ -466,7 +466,8 @@ mod kept_under_label {
         EnvironmentLiveness, HostedBoardRevision, SwarmBoardSnapshot,
     };
     use crate::application::environments::ports::{
-        EnvironmentProcessCommands, HostedSwarmBoard, HostedSwarmRunObservation, PortFuture,
+        PortFuture, hosted_swarm::HostedSwarmBoard, hosted_swarm::HostedSwarmRunObservation,
+        process::EnvironmentProcessCommands,
     };
     use crate::application::environments::use_cases::FinalizeEnvironmentMember;
     use crate::domain::environments::entities::environment_registry::{
