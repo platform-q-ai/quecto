@@ -200,18 +200,38 @@ fn an_expired_credential_without_a_refresh_token_is_stored_as_stated() {
 }
 
 #[test]
-fn an_entry_without_an_access_token_is_skipped() {
+fn an_entry_with_only_a_refresh_token_is_refreshed_and_imported() {
+    // As before #1840: the refresh token gets the access token the entry
+    // lacks, whatever expiry the entry states.
     for provider in [LoginProvider::Anthropic, LoginProvider::OpenAi] {
         let fakes = Arc::new(Fakes::holding(vec![external(
             provider,
             "",
             "fake-refresh",
-            0,
+            NOW + 86_400,
         )]));
+        let report = import(&fakes).execute().unwrap();
+        assert_eq!(report.imported(), 1, "{provider:?}");
+        assert!(report.entries[0].refreshed, "{provider:?}");
+        assert_eq!(
+            *fakes.refreshed.lock().unwrap(),
+            [(provider, "fake-refresh".to_string())]
+        );
+        let stored = &fakes.stored.lock().unwrap()[0];
+        assert_eq!(stored.token, "fake-refreshed-access");
+        assert_eq!(stored.provider, provider.id());
+    }
+}
+
+#[test]
+fn an_entry_with_neither_token_is_skipped() {
+    for provider in [LoginProvider::Anthropic, LoginProvider::OpenAi] {
+        let fakes = Arc::new(Fakes::holding(vec![external(provider, "", "", 0)]));
         let report = import(&fakes).execute().unwrap();
         assert!(report.entries.is_empty(), "{provider:?}");
         assert_eq!(report.imported(), 0);
         assert!(fakes.refreshed.lock().unwrap().is_empty());
+        assert!(fakes.stored.lock().unwrap().is_empty());
     }
 }
 

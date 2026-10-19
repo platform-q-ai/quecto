@@ -63,3 +63,12 @@ fn a_token_inside_its_margin_is_refreshed_rather_than_stored_expired() {
     assert!(as_stored.is_expired_at(now));
     assert!(import_refresh_due(&as_stored, now));
 }
+
+#[test]
+fn a_credential_without_an_access_token_is_refreshed_whatever_its_expiry() {
+    let mut lacking = stated(Some(10_000), Some("fake-refresh"));
+    lacking.token = String::new();
+    assert!(import_refresh_due(&lacking, 0));
+    lacking.refresh_token = None;
+    assert!(!import_refresh_due(&lacking, 0), "nothing to refresh with");
+}
