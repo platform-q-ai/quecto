@@ -8,7 +8,7 @@
 //! collapse that changes no message identity.
 
 use super::*;
-use quecto::application::agent_loop::AgentLoopConfig;
+use quecto::application::agent_turn::agent_loop::AgentLoopConfig;
 
 fn push_history_turns(world: &mut QuectoWorld, count: usize, content: &str) {
     let start = world

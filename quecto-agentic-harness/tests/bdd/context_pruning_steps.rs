@@ -1366,7 +1366,7 @@ use quecto::application::agent_turn::context::context_pruning::messages as msg_p
 /// removed: the loop itself must spill the turn-1 assistant reply (and the
 /// in-flight prompt) into the world's spill store.
 fn complete_text_only_prompt(world: &mut QuectoWorld, reply: &str) {
-    use quecto::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
+    use quecto::application::agent_turn::agent_loop::{AgentLoopConfig, AgentLoopImpl};
     use quecto::application::agent_turn::ports::AgentLoop;
 
     let store = world.context_spill_store.as_ref().unwrap().clone();
@@ -1683,7 +1683,7 @@ impl quecto::application::audit::ports::AuditSink for RecordingAuditSink {
 
 #[when("the agent completes a prompt exceeding the budget")]
 fn when_agent_completes_over_budget_prompt(world: &mut QuectoWorld) {
-    use quecto::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
+    use quecto::application::agent_turn::agent_loop::{AgentLoopConfig, AgentLoopImpl};
     use quecto::application::agent_turn::ports::AgentLoop;
 
     let max_context_tokens = world
@@ -1767,25 +1767,27 @@ fn given_model_unknown_window(world: &mut QuectoWorld) {
 #[when("the agent derives its effective context budget")]
 fn when_agent_derives_effective_budget(world: &mut QuectoWorld) {
     let provider = Arc::new(MockLlmProvider::new());
-    let agent = AgentLoopImpl::new(quecto::application::agent_loop::AgentLoopConfig {
-        provider,
-        tool_registry: Box::new(ToolRegistryImpl::new()),
-        model: "test-model".to_string(),
-        max_tokens: 1024,
-        temperature: 0.7,
-        retention: None,
-        session_key: String::new(),
-        max_context_tokens: world.context_budget_config.expect("config budget set"),
-        progress_callback: None,
-        streaming: false,
-        effort: None,
-        audit_log: None,
-        pin_recent_turns: 2,
-        context_marks: Default::default(),
-        model_context_window: world.context_model_window.expect("window declared"),
-        tool_profile_context:
-            quecto::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent,
-    });
+    let agent = AgentLoopImpl::new(
+        quecto::application::agent_turn::agent_loop::AgentLoopConfig {
+            provider,
+            tool_registry: Box::new(ToolRegistryImpl::new()),
+            model: "test-model".to_string(),
+            max_tokens: 1024,
+            temperature: 0.7,
+            retention: None,
+            session_key: String::new(),
+            max_context_tokens: world.context_budget_config.expect("config budget set"),
+            progress_callback: None,
+            streaming: false,
+            effort: None,
+            audit_log: None,
+            pin_recent_turns: 2,
+            context_marks: Default::default(),
+            model_context_window: world.context_model_window.expect("window declared"),
+            tool_profile_context:
+                quecto::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent,
+        },
+    );
     world.context_effective_budget = Some(agent.effective_max_context_tokens());
 }
 
@@ -1825,7 +1827,7 @@ fn run_prompt_through_loop(
     world: &mut QuectoWorld,
     responses: Vec<quecto::domain::conversation::value_objects::message::LlmResponse>,
 ) {
-    use quecto::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
+    use quecto::application::agent_turn::agent_loop::{AgentLoopConfig, AgentLoopImpl};
     use quecto::application::agent_turn::ports::AgentLoop;
 
     let store = world.context_spill_store.as_ref().unwrap().clone();

@@ -1,5 +1,5 @@
 //! Fake-provider end-to-end run through the real agent loop and swarm tool.
-use quecto::application::agent_loop::AgentLoopImpl;
+use quecto::application::agent_turn::agent_loop::AgentLoopImpl;
 use quecto::application::agent_turn::ports::AgentLoop;
 use quecto::domain::conversation::value_objects::message::{LlmResponse, Message, ToolCall};
 use quecto::infrastructure::security::sandbox::Sandbox;
@@ -607,8 +607,8 @@ fn text_response(content: &str) -> LlmResponse {
 fn test_config(
     provider: Arc<MockProvider>,
     tool_registry: Box<ToolRegistryImpl>,
-) -> quecto::application::agent_loop::AgentLoopConfig {
-    quecto::application::agent_loop::AgentLoopConfig {
+) -> quecto::application::agent_turn::agent_loop::AgentLoopConfig {
+    quecto::application::agent_turn::agent_loop::AgentLoopConfig {
         provider,
         tool_registry,
         model: "test-model".into(),

@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use super::ExtensionRegistry;
-use crate::application::agent_loop::AgentLoopImpl;
+use crate::application::agent_turn::agent_loop::AgentLoopImpl;
 use crate::domain::agents::entities::configured_extensions::{AgentExtensions, AgentRole};
 use crate::infrastructure::config::Config;
 use crate::infrastructure::config::extensions::ExtensionConfig;

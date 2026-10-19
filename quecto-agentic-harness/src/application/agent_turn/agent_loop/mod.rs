@@ -1,14 +1,11 @@
-#[path = "agent_turn/request.rs"]
 mod request;
-#[path = "agent_turn/run_loop.rs"]
 mod run_loop;
-use super::durable_prefix::DurablePrefixLatch;
-use crate::application::agent_loop_policy::ToolPolicyState;
-use crate::application::agent_loop_stream;
+use crate::application::agent_turn::agent_loop::agent_loop_policy::ToolPolicyState;
+pub use crate::application::agent_turn::agent_loop::agent_usage::UsageTotals;
+use crate::application::agent_turn::agent_loop::durable_prefix::DurablePrefixLatch;
 use crate::application::agent_turn::context::context_pruning;
 use crate::application::agent_turn::context::{ContextManager, ContextManagerConfig};
 use crate::application::agent_turn::ports::AgentLoop;
-pub use crate::application::agent_usage::UsageTotals;
 use crate::application::audit::ports::AuditSink;
 use crate::application::providers::ports::LlmProvider;
 use crate::application::tools::ports::{
@@ -35,31 +32,27 @@ use std::{pin::Pin, sync::Arc};
 use tool::{ToolDefinition, ToolPolicyReconciliation, ToolPolicyRequest, ToolProfileContext};
 pub type ToolPolicyPersistence =
     Arc<dyn Fn(&ToolPolicyReconciliation) -> Result<(), String> + Send + Sync>;
-#[path = "agent_loop_clamp.rs"]
 mod agent_loop_clamp;
-#[path = "agent_loop_effort.rs"]
 mod agent_loop_effort;
-#[path = "agent_loop_errors.rs"]
 mod agent_loop_errors;
-#[path = "agent_loop_gauge.rs"]
 mod agent_loop_gauge;
-#[path = "agent_loop_preview.rs"]
+mod agent_loop_lifecycle_compat;
+mod agent_loop_policy;
 pub(crate) mod agent_loop_preview;
-#[path = "agent_loop_pruning.rs"]
 mod agent_loop_pruning;
-#[path = "agent_loop_reload.rs"]
 mod agent_loop_reload;
 mod agent_loop_session;
-#[path = "agent_loop_spill.rs"]
 mod agent_loop_spill;
-#[path = "agent_loop_tool_exec.rs"]
+mod agent_loop_stream;
+#[cfg(any(test, feature = "test-support"))]
+pub mod agent_loop_test_support;
 mod agent_loop_tool_exec;
-#[path = "agent_loop_turn.rs"]
 mod agent_loop_turn;
-#[path = "agent_loop_turn_flow.rs"]
 mod agent_loop_turn_flow;
-#[path = "agent_loop_uds_tools.rs"]
 mod agent_loop_uds_tools;
+mod agent_usage;
+pub mod durable_prefix;
+pub mod tool_panic_scope;
 use agent_loop_errors::{
     append_feedback, append_malformed_feedback, enhance_provider_error,
     is_context_or_output_limit_error, output_limit_feedback, provider_failure_audit_event,
@@ -117,7 +110,8 @@ pub struct AgentLoopImpl {
     /// This agent's own provider requests so far, for `get_state` (#2436).
     request_tally: Arc<crate::domain::inference::events::request_completion::RequestTally>,
     /// Requests that ended in flight, awaiting their audit record (#2210).
-    interrupted_requests: std::sync::Mutex<Vec<super::request_observation::InterruptedRequest>>,
+    interrupted_requests:
+        std::sync::Mutex<Vec<crate::application::request_observation::InterruptedRequest>>,
     request_admission: Option<Arc<dyn crate::application::providers::ports::RequestAdmission>>,
     request_accounting: Option<Arc<dyn crate::application::providers::ports::RequestAccounting>>,
     tool_admission: Option<Arc<dyn crate::application::tools::ports::ToolExecutionAdmission>>,

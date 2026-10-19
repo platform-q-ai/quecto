@@ -1,4 +1,4 @@
-use super::agent_loop::AgentLoopImpl;
+use crate::application::agent_turn::agent_loop::AgentLoopImpl;
 use crate::domain::agents::value_objects::agent::AgentProgressEvent;
 use crate::domain::tool_policy::services::tool_policy::inherited_child_policy_from_catalogue;
 use crate::domain::tool_policy::value_objects::tool::{
@@ -12,7 +12,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::atomic::Ordering;
 
 #[derive(Debug, Default, Clone)]
-pub(super) struct ToolPolicyState {
+pub(in crate::application::agent_turn) struct ToolPolicyState {
     pub(super) disabled_tools: HashSet<String>,
     pub(super) enabled_tools: HashSet<String>,
     pub(super) scopes: HashMap<String, ProfileAvailabilityScope>,
@@ -251,7 +251,7 @@ impl AgentLoopImpl {
 
     pub fn set_tool_policy_persistence(
         &mut self,
-        persistence: Option<super::agent_loop::ToolPolicyPersistence>,
+        persistence: Option<crate::application::agent_turn::agent_loop::ToolPolicyPersistence>,
     ) {
         self.tool_policy_persistence = persistence;
     }

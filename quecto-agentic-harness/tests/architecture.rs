@@ -1466,6 +1466,8 @@ fn application_path_allowed(path: &str) -> bool {
         [
             "crate",
             "application",
+            "agent_turn",
+            "agent_loop",
             "tool_panic_scope",
             "carry" | "carry_future" | "catch_in_call_site" | "HandledPanic",
         ] => true,

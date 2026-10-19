@@ -1,6 +1,6 @@
 use super::*;
-use crate::application::agent_loop::UsageTotals;
-use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
+use crate::application::agent_turn::agent_loop::UsageTotals;
+use crate::application::agent_turn::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::application::tools::ports::Tool;
 use crate::domain::conversation::value_objects::message::{Message, ToolCall};
 use crate::domain::tool_policy::value_objects::tool::{ToolDefinition, ToolResult};

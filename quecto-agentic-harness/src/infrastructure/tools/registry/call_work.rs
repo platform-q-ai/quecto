@@ -20,7 +20,9 @@ use std::future::Future;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
-use crate::application::tool_panic_scope::{HandledPanic, carry, carry_future, catch_in_call_site};
+use crate::application::agent_turn::agent_loop::tool_panic_scope::{
+    HandledPanic, carry, carry_future, catch_in_call_site,
+};
 
 /// A carried task's handle. Awaiting it yields the task's value, or the
 /// `JoinError` of a task that was cancelled; a task that panicked resumes

@@ -480,7 +480,9 @@ fn a_disagreeing_answer_is_recorded_then_caught_in_debug_builds() {
         "only a debug build asserts"
     );
     if let Err(payload) = finished {
-        let message = crate::application::tool_panic_scope::payload_message(payload.as_ref());
+        let message = crate::application::agent_turn::agent_loop::tool_panic_scope::payload_message(
+            payload.as_ref(),
+        );
         assert!(message.contains("disagrees with its note"), "{message}");
         assert!(!message.contains("Secret Title"), "{message}");
     }

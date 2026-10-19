@@ -426,7 +426,7 @@ async fn the_emergency_ladder_runs_in_a_loop_built_with_no_mode_set() {
 /// request goes over the ceiling and no ladder runs.
 #[tokio::test]
 async fn a_floor_over_the_budget_is_recorded_unmet_without_the_ladder() {
-    use crate::application::agent_loop::tests::{
+    use crate::application::agent_turn::agent_loop::tests::{
         MockProvider, MockRegistry, MockTool, test_config,
     };
     let mut registry = MockRegistry::new();
@@ -439,8 +439,8 @@ async fn a_floor_over_the_budget_is_recorded_unmet_without_the_ladder() {
         .map(crate::domain::tool_policy::value_objects::tool::ToolDefinition::estimated_tokens)
         .sum();
     let sink = Arc::new(CapturingAuditSink::default());
-    let agent = crate::application::agent_loop::AgentLoopImpl::new(
-        crate::application::agent_loop::AgentLoopConfig {
+    let agent = crate::application::agent_turn::agent_loop::AgentLoopImpl::new(
+        crate::application::agent_turn::agent_loop::AgentLoopConfig {
             max_context_tokens: tools * 10 / 8,
             audit_log: Some(sink.clone() as Arc<dyn AuditSink>),
             ..test_config(Arc::new(MockProvider::new(vec![])), Box::new(registry))

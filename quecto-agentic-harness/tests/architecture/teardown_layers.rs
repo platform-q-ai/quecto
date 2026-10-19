@@ -206,7 +206,7 @@ const RETIRED_DOMAIN_PORTS: &[(&str, &str, &str)] = &[
     (
         "src/domain/agents/value_objects/agent.rs",
         "trait AgentLoop",
-        "src/application/agent_turn/ports.rs",
+        "src/application/agent_turn/ports/mod.rs",
     ),
     (
         "src/domain/audit/mod.rs",

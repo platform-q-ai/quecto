@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 
 use super::super::fixture_tests::Fixture;
 use super::super::{dispatch_command, handle_resume_session};
-use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
+use crate::application::agent_turn::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::application::providers::ports::{ChatRequest, LlmProvider};
 use crate::application::sessions::ports::SessionStore;
 use crate::domain::conversation::value_objects::message::{

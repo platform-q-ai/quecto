@@ -4,7 +4,7 @@
 //! tracker, which keeps no copy, resets its usage and bumps its visible
 //! generation exactly when the key changed; nothing else of the tracker
 //! moves. The `sessionKey` a presenter reports is the active session's.
-use quecto::application::agent_loop::UsageTotals;
+use quecto::application::agent_turn::agent_loop::UsageTotals;
 use quecto::application::sessions::ports::SessionKeyPropagation;
 use quecto::domain::sessions::entities::session_identity::SessionIdentity;
 use quecto::interface::cli::uds_session_switch_runtime::LoopSessionSwitchRuntime;

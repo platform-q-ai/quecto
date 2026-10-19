@@ -1,5 +1,5 @@
 use super::is_context_or_output_limit_error;
-use crate::application::agent_loop_stream::ends_turn_empty;
+use crate::application::agent_turn::agent_loop::agent_loop_stream::ends_turn_empty;
 use crate::domain::conversation::services::reply_requirement::ReplyRequirement;
 use crate::domain::conversation::value_objects::message::LlmResponse;
 use crate::domain::inference::services::provider_error::{

@@ -9,7 +9,7 @@ use std::sync::Arc;
 use base64::Engine;
 
 use super::super::tests::{MockProvider, MockRegistry, text_response, tool_call_response};
-use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
+use crate::application::agent_turn::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::application::sessions::ports::ContextSpillStore;
 use crate::application::tools::ports::Tool;
 use crate::domain::conversation::value_objects::message::{Message, Role, UserImageBlock};

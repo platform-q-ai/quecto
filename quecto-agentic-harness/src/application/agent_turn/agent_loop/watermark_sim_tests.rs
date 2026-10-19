@@ -9,8 +9,8 @@
 //! cache-rate table.)
 
 use super::ctx_mgmt_tests::MemSpillStore;
-use crate::application::agent_loop::tests::MockRegistry;
-use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
+use crate::application::agent_turn::agent_loop::tests::MockRegistry;
+use crate::application::agent_turn::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::application::providers::ports::{ChatRequest, LlmProvider};
 use crate::application::tools::ports::Tool;
 use crate::domain::conversation::services::turn_origin::prompt;

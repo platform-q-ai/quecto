@@ -173,7 +173,7 @@ impl crate::application::providers::ports::LlmProvider for Hanging {
 /// flight; the cancelled request still reaches the socket.
 #[tokio::test]
 async fn an_aborted_turn_puts_a_cancelled_request_on_the_socket() {
-    use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
+    use crate::application::agent_turn::agent_loop::{AgentLoopConfig, AgentLoopImpl};
     use crate::interface::cli::uds_cancel::{PromptOutcome, PromptRun, run_agent_message};
     let asked = std::sync::Arc::new(tokio::sync::Notify::new());
     let mut agent = AgentLoopImpl::new(AgentLoopConfig {

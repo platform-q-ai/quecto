@@ -71,7 +71,7 @@ pub(super) fn make_completed_feature_workflow() -> WorkflowStateHandle {
 /// workflow agent is: its auto-continue nudges go out only while the model
 /// is shown that tool (#2226).
 fn show_workflow_tool(
-    agent: &mut crate::application::agent_loop::AgentLoopImpl,
+    agent: &mut crate::application::agent_turn::agent_loop::AgentLoopImpl,
     workflow: &WorkflowStateHandle,
 ) {
     use crate::infrastructure::tools::native::workflow_tool::{WORKFLOW_TOOL_NAME, WorkflowTool};
@@ -84,9 +84,9 @@ fn show_workflow_tool(
 /// provider so scripted providers slot in without copying the literal.
 pub(super) fn make_dispatch_test_agent(
     provider: std::sync::Arc<dyn crate::application::providers::ports::LlmProvider>,
-) -> crate::application::agent_loop::AgentLoopImpl {
-    crate::application::agent_loop::AgentLoopImpl::new(
-        crate::application::agent_loop::AgentLoopConfig {
+) -> crate::application::agent_turn::agent_loop::AgentLoopImpl {
+    crate::application::agent_turn::agent_loop::AgentLoopImpl::new(
+        crate::application::agent_turn::agent_loop::AgentLoopConfig {
             provider,
             tool_registry: Box::new(
                 crate::infrastructure::tools::registry::ToolRegistryImpl::new(),
@@ -118,8 +118,10 @@ pub(super) struct DispatchTestEnv {
     pub(super) tmp: tempfile::TempDir,
     /// The dirty latch shared between the agent and the save transaction;
     /// a swapped agent adopts it (`set_agent`).
-    latch: std::sync::Arc<crate::application::durable_prefix::DurablePrefixLatch>,
-    pub(super) agent: crate::application::agent_loop::AgentLoopImpl,
+    latch: std::sync::Arc<
+        crate::application::agent_turn::agent_loop::durable_prefix::DurablePrefixLatch,
+    >,
+    pub(super) agent: crate::application::agent_turn::agent_loop::AgentLoopImpl,
     pub(super) messages: Vec<crate::domain::conversation::value_objects::message::Message>,
     pub(super) session: AgentSession,
     pub(super) session_key: String,
@@ -195,7 +197,10 @@ impl DispatchTestEnv {
 
     /// Replace the agent; it adopts the env's shared dirty latch so the
     /// save transaction still drains what its pruning latched.
-    pub(super) fn set_agent(&mut self, mut agent: crate::application::agent_loop::AgentLoopImpl) {
+    pub(super) fn set_agent(
+        &mut self,
+        mut agent: crate::application::agent_turn::agent_loop::AgentLoopImpl,
+    ) {
         agent.adopt_durable_prefix_latch(self.latch.clone());
         show_workflow_tool(&mut agent, &self.workflow);
         self.agent = agent;

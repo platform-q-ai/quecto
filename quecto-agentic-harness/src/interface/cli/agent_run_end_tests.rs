@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 
 use super::integration_tests::{make_test_agent, test_flags};
 use super::{AgentFlags, AgentOutput, run_agent_session};
-use crate::application::agent_loop::AgentLoopImpl;
+use crate::application::agent_turn::agent_loop::AgentLoopImpl;
 use crate::domain::environments::entities::environment_registry::{
     EnvironmentOrigin, EnvironmentRecord, EnvironmentRegistry, EnvironmentStatus,
     mint_environment_uuid,
@@ -176,25 +176,27 @@ fn agent_at(dir: &std::path::Path, api_base: &str) -> AgentLoopImpl {
         sandbox,
         Default::default(),
     );
-    AgentLoopImpl::new(crate::application::agent_loop::AgentLoopConfig {
-        provider,
-        tool_registry: Box::new(registry),
-        model: "test-model".to_string(),
-        max_tokens: 100,
-        temperature: 0.0,
-        retention: None,
-        session_key: String::new(),
-        max_context_tokens: 190_000,
-        progress_callback: None,
-        streaming: false,
-        effort: None,
-        audit_log: None,
-        pin_recent_turns: 2,
-        context_marks: Default::default(),
-        model_context_window: None,
-        tool_profile_context:
-            crate::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent,
-    })
+    AgentLoopImpl::new(
+        crate::application::agent_turn::agent_loop::AgentLoopConfig {
+            provider,
+            tool_registry: Box::new(registry),
+            model: "test-model".to_string(),
+            max_tokens: 100,
+            temperature: 0.0,
+            retention: None,
+            session_key: String::new(),
+            max_context_tokens: 190_000,
+            progress_callback: None,
+            streaming: false,
+            effort: None,
+            audit_log: None,
+            pin_recent_turns: 2,
+            context_marks: Default::default(),
+            model_context_window: None,
+            tool_profile_context:
+                crate::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent,
+        },
+    )
 }
 
 /// A provider that accepts the connection and never answers, so the run

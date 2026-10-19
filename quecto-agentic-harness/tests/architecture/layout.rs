@@ -76,7 +76,7 @@ const WIKI: &str =
 #[rustfmt::skip] // One readable source-policy row per path.
 const BUDGETS: &[FlatBudget<'_>] = &[
     FlatBudget { path: "domain", expected: 1 },
-    FlatBudget { path: "application", expected: 32 },
+    FlatBudget { path: "application", expected: 11 },
     FlatBudget { path: "interface", expected: 6 },
     FlatBudget { path: "infrastructure", expected: 1 },
     FlatBudget { path: "composition", expected: 24 },
@@ -93,6 +93,7 @@ const MIGRATED: &[Capability<'_>] = &[
     Capability("domain/tool_policy", &["value_objects", "services"]),
     Capability("domain/catalogue", &["entities", "value_objects", "services"]),
     Capability("domain/swarm", &["entities", "value_objects", "services", "events"]),
+    Capability("application/agent_turn", &["agent_loop", "context", "ports", "use_cases"]),
     Capability("domain/audit", &[]),
     Capability("domain/sessions", &["entities", "value_objects", "services"]),
     Capability("domain/inference", &["value_objects", "services", "events"]),
@@ -110,12 +111,12 @@ type Placement<'a> = (&'a str, &'a [&'a str]);
 #[rustfmt::skip]
 const PLACEMENTS: &[Placement<'_>] = &[
     ("domain", &["auth", "conversation", "admission", "environments", "catalogue", "tool_policy", "sessions", "agents", "audit", "inference", "commander", "identity", "shared", "external_agent", "swarm", "workflow", "project_board", "search"]),
-    ("application", &["admission", "agent_turn", "audit", "auth", "catalogue", "configuration", "environments", "extensions", "external_agent", "provider_runtime", "providers", "search", "sessions", "subagents", "swarm", "tools", "workflow", "agent_commander", "shared", "agent_loop", "project_board"]),
+    ("application", &["admission", "agent_turn", "audit", "auth", "catalogue", "configuration", "environments", "extensions", "external_agent", "provider_runtime", "providers", "search", "sessions", "subagents", "swarm", "tools", "workflow", "agent_commander", "shared", "project_board"]),
     ("interface", &["cli", "repl", "tools", "uds"]),
     ("infrastructure", &["admission", "auth", "config", "extensions", "external_agents", "http", "persistence", "processes", "providers", "search", "security", "tools", "workspace", "judgment", "observability", "time", "test_support"]),
     ("composition", &["bootstrap", "runtime", "logging", "shutdown"]),
  ];
-const TRANSITIONAL: &[(&str, &str)] = &[("application", "agent_loop")];
+const TRANSITIONAL: &[(&str, &str)] = &[];
 enum Kind {
     File,
     Directory,
@@ -168,6 +169,7 @@ fn checked_directory(root: &Path, relative: &str) -> io::Result<std::path::PathB
 struct Inspector<'a, F> {
     root: &'a Path,
     scanner: &'a F,
+    transitional: &'a [(&'a str, &'a str)],
     failures: Vec<Violation>,
 }
 impl<F: Fn(&Path) -> io::Result<Vec<Entry>>> Inspector<'_, F> {
@@ -234,7 +236,7 @@ impl<F: Fn(&Path) -> io::Result<Vec<Entry>>> Inspector<'_, F> {
     fn placements(&mut self, rows: &[Placement<'_>]) {
         for layer in LAYERS {
             if let Some(entries) = self.inspect(layer) {
-                for (_, name) in TRANSITIONAL.iter().filter(|(owner, name)| {
+                for (_, name) in self.transitional.iter().filter(|(owner, name)| {
                     owner == layer
                         && rows
                             .iter()
@@ -278,6 +280,18 @@ fn validate_all(
     rows: Option<&[Placement<'_>]>,
     scanner: &impl Fn(&Path) -> io::Result<Vec<Entry>>,
 ) -> Vec<Violation> {
+    validate_with(root, budgets, migrated, rows, TRANSITIONAL, scanner)
+}
+// The transitional rows are a parameter so fixtures can exercise a stale row
+// after the checked-in policy retires its last one.
+fn validate_with(
+    root: &Path,
+    budgets: &[FlatBudget<'_>],
+    migrated: &[Capability<'_>],
+    rows: Option<&[Placement<'_>]>,
+    transitional: &[(&str, &str)],
+    scanner: &impl Fn(&Path) -> io::Result<Vec<Entry>>,
+) -> Vec<Violation> {
     let root = match std::fs::canonicalize(root).and_then(|root| {
         real_directory(&root)?;
         Ok(root)
@@ -293,6 +307,7 @@ fn validate_all(
     let mut inspector = Inspector {
         root: &root,
         scanner,
+        transitional,
         failures: Vec::new(),
     };
     inspector.layout(budgets, migrated);

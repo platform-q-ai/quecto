@@ -217,12 +217,12 @@ fn carried_work_is_joined() {
 /// sanctioned.
 const SANCTIONED_CATCHES: &[(&str, &str, &str)] = &[
     (
-        "src/application/tool_panic_scope.rs",
+        "src/application/agent_turn/agent_loop/tool_panic_scope.rs",
         "catch_forgetting",
         "the sanctioned catch itself, behind catch_in_call and catch_in_call_site",
     ),
     (
-        "src/application/agent_loop_tool_exec.rs",
+        "src/application/agent_turn/agent_loop/agent_loop_tool_exec.rs",
         "execute_contained",
         "the containment every tool call runs in",
     ),

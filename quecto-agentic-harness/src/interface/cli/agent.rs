@@ -1,5 +1,5 @@
 use super::CliContext;
-use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
+use crate::application::agent_turn::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::application::configuration::dto::ConfigSelection;
 use crate::domain::external_agent::backend::MemberBackend;
 use crate::infrastructure::config::Config;

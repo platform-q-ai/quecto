@@ -7,7 +7,7 @@ use super::{
     ForwardGetMessage, dispatch_command, forward_subagent_get_message,
     forward_subagent_get_messages,
 };
-use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
+use crate::application::agent_turn::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::domain::conversation::value_objects::message::Message;
 use crate::infrastructure::persistence::file::sessions::session_store::FileSessionStore;
 use crate::infrastructure::tools::agents::subagent_registry::{

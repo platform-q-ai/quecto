@@ -3,7 +3,7 @@
 //! shared latch, so exactly one observer consumes each latched change.
 use std::sync::Arc;
 
-use quecto::application::durable_prefix::DurablePrefixLatch;
+use quecto::application::agent_turn::agent_loop::durable_prefix::DurablePrefixLatch;
 use quecto::application::sessions::ports::DurablePrefixObservation;
 
 fn under_test() -> (Arc<DurablePrefixLatch>, Arc<dyn DurablePrefixObservation>) {

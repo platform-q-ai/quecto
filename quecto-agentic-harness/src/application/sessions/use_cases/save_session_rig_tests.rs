@@ -7,7 +7,7 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
 use super::SaveSession;
-use crate::application::durable_prefix::DurablePrefixLatch;
+use crate::application::agent_turn::agent_loop::durable_prefix::DurablePrefixLatch;
 use crate::application::sessions::active_session::{ActiveSessionHandle, ActiveSessionState};
 use crate::application::sessions::dto::SessionListQuery;
 use crate::application::sessions::ports::{

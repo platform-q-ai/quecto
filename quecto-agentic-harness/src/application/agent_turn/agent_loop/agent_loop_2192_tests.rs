@@ -94,13 +94,13 @@ impl Tool for PanickingTool {
                     unreachable!("the carried panic resumes in the call")
                 }
                 Crash::MarkedUnwind => {
-                    assert!(!crate::application::tool_panic_scope::begin_contained_unwind());
+                    assert!(!crate::application::agent_turn::agent_loop::tool_panic_scope::begin_contained_unwind());
                     panic!("let unwind by the hook")
                 }
                 Crash::SwallowedAfterRecord => {
-                    crate::application::tool_panic_scope::current()
+                    crate::application::agent_turn::agent_loop::tool_panic_scope::current()
                         .expect("a tool runs inside its call's scope")
-                        .record_panic(crate::application::tool_panic_scope::PanicSite {
+                        .record_panic(crate::application::agent_turn::agent_loop::tool_panic_scope::PanicSite {
                             message: "swallowed".into(),
                             location: Some("src/grep.rs:1:1".into()),
                         });
@@ -112,13 +112,16 @@ impl Tool for PanickingTool {
                     })
                 }
                 Crash::RecordedByHook => {
-                    let scope = crate::application::tool_panic_scope::current()
-                        .expect("a tool runs inside its call's scope");
+                    let scope =
+                        crate::application::agent_turn::agent_loop::tool_panic_scope::current()
+                            .expect("a tool runs inside its call's scope");
                     assert_eq!(scope.tool(), "edit_boom");
-                    scope.record_panic(crate::application::tool_panic_scope::PanicSite {
-                        message: "what the hook saw".into(),
-                        location: Some("src/edit.rs:10:5".into()),
-                    });
+                    scope.record_panic(
+                        crate::application::agent_turn::agent_loop::tool_panic_scope::PanicSite {
+                            message: "what the hook saw".into(),
+                            location: Some("src/edit.rs:10:5".into()),
+                        },
+                    );
                     panic!("the payload")
                 }
                 Crash::SecretMessage => {
@@ -447,10 +450,10 @@ async fn the_containment_that_caught_a_panic_ends_its_unwind() {
     let run = run(Crash::MarkedUnwind, &["edit_boom"], &[]).await;
     assert_eq!(run.results.len(), 1);
     assert!(
-        !crate::application::tool_panic_scope::begin_contained_unwind(),
+        !crate::application::agent_turn::agent_loop::tool_panic_scope::begin_contained_unwind(),
         "no unwind is left in progress on this thread"
     );
-    crate::application::tool_panic_scope::end_contained_unwind();
+    crate::application::agent_turn::agent_loop::tool_panic_scope::end_contained_unwind();
 }
 
 /// #2192 review (PRRT_kwDORUxnPM6mf9Bb): a panic's message reaches the

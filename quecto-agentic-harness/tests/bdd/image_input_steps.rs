@@ -84,25 +84,27 @@ fn switch_model(world: &mut QuectoWorld, model: &str) {
 #[given(expr = "an agent recording its requests runs on {string}")]
 fn given_recording_agent(world: &mut QuectoWorld, model: String) {
     let recorder = Arc::new(RequestRecorder::default());
-    let agent = AgentLoopImpl::new(quecto::application::agent_loop::AgentLoopConfig {
-        provider: recorder.clone(),
-        tool_registry: Box::new(ToolRegistryImpl::new()),
-        model: model.clone(),
-        max_tokens: 1024,
-        temperature: 0.7,
-        retention: None,
-        session_key: String::new(),
-        max_context_tokens: 190_000,
-        progress_callback: None,
-        streaming: false,
-        effort: None,
-        audit_log: None,
-        pin_recent_turns: 2,
-        context_marks: Default::default(),
-        model_context_window: None,
-        tool_profile_context:
-            quecto::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent,
-    });
+    let agent = AgentLoopImpl::new(
+        quecto::application::agent_turn::agent_loop::AgentLoopConfig {
+            provider: recorder.clone(),
+            tool_registry: Box::new(ToolRegistryImpl::new()),
+            model: model.clone(),
+            max_tokens: 1024,
+            temperature: 0.7,
+            retention: None,
+            session_key: String::new(),
+            max_context_tokens: 190_000,
+            progress_callback: None,
+            streaming: false,
+            effort: None,
+            audit_log: None,
+            pin_recent_turns: 2,
+            context_marks: Default::default(),
+            model_context_window: None,
+            tool_profile_context:
+                quecto::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent,
+        },
+    );
     world.image_input.agent = Some(agent);
     world.image_input.recorder = Some(recorder);
     // The startup model's limits come from the same use case (#1847).

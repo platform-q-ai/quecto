@@ -60,7 +60,7 @@ async fn persist_replays_full_history_when_prefix_flagged_dirty() {
 // an id snapshot, an Error/Cancelled outcome dropping the flag, or
 // `drain_and_run_pending` discarding the drained run's outcome.
 
-use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
+use crate::application::agent_turn::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::application::providers::ports::{ChatRequest, LlmProvider};
 use crate::domain::conversation::value_objects::message::LlmResponse;
 use crate::domain::shared::error::DomainError;

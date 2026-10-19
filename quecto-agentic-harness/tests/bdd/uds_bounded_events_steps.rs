@@ -1509,7 +1509,7 @@ fn drive_mc_start_and_connect(world: &mut QuectoWorld, clients: &[u32]) {
 }
 
 fn spawn_mc_agent_live(world: &mut QuectoWorld, base: &std::path::Path) {
-    use quecto::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
+    use quecto::application::agent_turn::agent_loop::{AgentLoopConfig, AgentLoopImpl};
     use quecto::composition::runtime::build_agent_provider;
     use quecto::domain::sessions::entities::session::Session;
     use quecto::infrastructure::config::Config;

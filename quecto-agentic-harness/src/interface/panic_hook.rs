@@ -29,7 +29,9 @@
 use std::panic::PanicHookInfo;
 use std::sync::Once;
 
-use crate::application::tool_panic_scope::{self, PanicSite, Recording, ToolScope};
+use crate::application::agent_turn::agent_loop::tool_panic_scope::{
+    self, PanicSite, Recording, ToolScope,
+};
 use crate::domain::agents::value_objects::crash_record::{CrashRecord, PanicReport};
 use crate::infrastructure::persistence::file::crash_record;
 

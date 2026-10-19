@@ -80,8 +80,8 @@ async fn fixture_with_recall(replies: &[Option<&'static str>]) -> Fixture {
         .append(&SessionIdentity::from_persisted_key("cli:test"), &entry)
         .await
         .unwrap();
-    let agent = crate::application::agent_loop::AgentLoopImpl::new(
-        crate::application::agent_loop::AgentLoopConfig {
+    let agent = crate::application::agent_turn::agent_loop::AgentLoopImpl::new(
+        crate::application::agent_turn::agent_loop::AgentLoopConfig {
             provider: Arc::new(Scripted(Mutex::new(replies.iter().copied().collect()))),
             tool_registry: Box::new(
                 crate::infrastructure::tools::registry::ToolRegistryImpl::new(),

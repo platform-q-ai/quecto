@@ -30,7 +30,7 @@ fn only_store_contention_keeps_a_diagnostic_pending() {
 async fn poisoned_accounting_locks_are_recovered() {
     use crate::application::providers::ports::RequestAccounting;
     use crate::domain::inference::events::request_observation::RequestObservation;
-    let (agent, _) = crate::application::agent_loop::tests::make_agent(vec![], vec![]);
+    let (agent, _) = crate::application::agent_turn::agent_loop::tests::make_agent(vec![], vec![]);
     #[derive(Default)]
     struct Ok_;
     impl RequestAccounting for Ok_ {

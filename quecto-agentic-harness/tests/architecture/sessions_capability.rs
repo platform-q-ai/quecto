@@ -162,7 +162,7 @@ const CANONICAL_FILES: &[&str] = &[
     "src/application/sessions/active_session.rs",
     "src/application/sessions/conversation_ledger.rs",
     "src/application/sessions/history_paging.rs",
-    "src/application/durable_prefix.rs",
+    "src/application/agent_turn/agent_loop/durable_prefix.rs",
     "src/infrastructure/persistence/file/sessions/session_snapshot_sources.rs",
     "src/infrastructure/persistence/file/sessions/fresh_session_identity.rs",
     "src/infrastructure/tools/agents/delegated_roster.rs",
@@ -611,7 +611,10 @@ const EVENT_LOG_ADAPTERS: &[&str] = &[
 // controller.rs 36→42 (the typed scoped result). Every pin is the delivered
 // size, retains the 750-line cap and remains decrease-only.
 const LINE_CEILINGS: &[(&str, usize)] = &[
-    ("src/application/durable_prefix.rs", 42),
+    (
+        "src/application/agent_turn/agent_loop/durable_prefix.rs",
+        42,
+    ),
     // D7 #1976 folds the interface reset composition into `switch_to`
     // (was 277 before D7); D8 #1977 notes the switch is the transactions' alone
     // (was 287 before D8).
@@ -795,13 +798,19 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     // dials and superseded snapshots, #2348's size-aware collapse and its
     // swarm switch were removed with the old rules, #2414.)
     ("src/application/agent_turn/context/context_plan.rs", 25),
-    ("src/application/agent_loop_spill.rs", 56),
+    (
+        "src/application/agent_turn/agent_loop/agent_loop_spill.rs",
+        56,
+    ),
     // #2212: the gauge wrappers moved to their own module (749 → 703);
     // #2414: the old rules' dials left the constructor (→ 682);
     // #2421: the request builder moved to `agent_loop_turn_flow.rs` (→ 657);
     // #2434: the final reply's builder moved beside its caller there (→ 630).
-    ("src/application/agent_loop.rs", 451),
-    ("src/application/agent_loop_gauge.rs", 61),
+    ("src/application/agent_turn/agent_loop/mod.rs", 451),
+    (
+        "src/application/agent_turn/agent_loop/agent_loop_gauge.rs",
+        61,
+    ),
     // D3 #1973, D4 #1974, D5 #1972, D6 #1975, D7 #1976 and D8 #1977 each
     // add use cases to this graph; the ceiling follows their merge (was 113
     // before D8); D10 #1979 drops the raw-key conversion (was 119).
@@ -1012,7 +1021,10 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     ("src/interface/cli/uds_session.rs", 628),
     ("src/interface/cli/uds_query.rs", 232),
     ("src/interface/cli/uds_workflow_nudge.rs", 109),
-    ("src/application/agent_loop/agent_loop_session.rs", 22),
+    (
+        "src/application/agent_turn/agent_loop/agent_loop_session.rs",
+        22,
+    ),
     ("src/interface/cli/uds_turn_accounting.rs", 40),
     // D8 #1977 adds the workflow restore (was 93 before D8).
     // #1848: the adapter holds the change-reasoning-effort use case and
@@ -1171,7 +1183,7 @@ fn re_export_needle_sees_every_visibility() {
     }
     for line in [
         "use crate::application::sessions::use_cases::ListSessions;",
-        "pub use crate::application::agent_loop::UsageTotals;",
+        "pub use crate::application::agent_turn::agent_loop::UsageTotals;",
         "pub(crate) use uds_session_message_range::recovered_content_json;",
     ] {
         assert!(!re_exports_sessions(line), "{line}");
@@ -1608,7 +1620,8 @@ fn fresh_session_is_requested_only_by_the_dispatch_handler() {
     );
     // The typed identity is the agent loop's only session-key input.
     let loop_session =
-        std::fs::read_to_string("src/application/agent_loop/agent_loop_session.rs").unwrap();
+        std::fs::read_to_string("src/application/agent_turn/agent_loop/agent_loop_session.rs")
+            .unwrap();
     assert!(loop_session.contains("pub fn set_session_key(&mut self, identity: SessionIdentity)"));
     // Retired without a facade.
     assert!(!Path::new("src/interface/cli/agent_session_identity.rs").exists());
@@ -1835,7 +1848,7 @@ const RETENTION_PORT_HOLDERS: &[&str] = &[
 /// retain and consume the narrow writer/reader handles. Exact and
 /// non-empty; they never name the port or call a store method.
 const PRUNING_POLICY_OWNERS: &[&str] = &[
-    "src/application/agent_loop.rs",
+    "src/application/agent_turn/agent_loop/mod.rs",
     "src/application/agent_turn/context/mod.rs",
     "src/application/agent_turn/context/context_pruning.rs",
     "src/application/agent_turn/context/context_pruning_messages.rs",
@@ -1846,7 +1859,7 @@ const PRUNING_POLICY_OWNERS: &[&str] = &[
 /// each spelled by exactly one policy file; sessions allocates no id.
 const SPILL_ID_ALLOCATORS: &[(&str, &str)] = &[
     (
-        "src/application/agent_loop_tool_exec.rs",
+        "src/application/agent_turn/agent_loop/agent_loop_tool_exec.rs",
         "format!(\"turn{}:{}:{}\", current_turn, tc.name, idx)",
     ),
     (

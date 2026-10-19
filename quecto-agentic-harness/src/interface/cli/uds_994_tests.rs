@@ -11,7 +11,7 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicU32;
 
 use super::{ClientCommand, ClientMessage, DispatchCtx, handle_client_msg};
-use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
+use crate::application::agent_turn::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::domain::conversation::value_objects::message::Message;
 use crate::interface::cli::uds_cancel::{CancelHandle, CancelSlot};
 use crate::interface::cli::uds_ext_protocol::new_client_tool_registry;

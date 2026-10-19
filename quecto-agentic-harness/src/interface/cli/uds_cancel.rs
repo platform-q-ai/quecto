@@ -7,7 +7,7 @@
 use crate::domain::conversation::services::conversation_view::user_visible_messages;
 use std::sync::Arc;
 
-use crate::application::agent_loop::AgentLoopImpl;
+use crate::application::agent_turn::agent_loop::AgentLoopImpl;
 use crate::application::agent_turn::ports::AgentLoop;
 use crate::domain::agents::value_objects::agent::AgentProgressEvent;
 use crate::domain::conversation::value_objects::message::Message;

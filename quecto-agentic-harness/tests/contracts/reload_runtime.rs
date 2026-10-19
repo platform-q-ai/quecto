@@ -56,7 +56,7 @@ async fn the_swapped_provider_answers_the_next_request() {
 #[test]
 fn the_persisted_baseline_replaces_the_previous_one_and_clears_live_overlays() {
     let mut rt = runtime("cli:reload-contract");
-    let entry = |rt: &quecto::application::agent_loop::AgentLoopImpl| {
+    let entry = |rt: &quecto::application::agent_turn::agent_loop::AgentLoopImpl| {
         rt.tool_catalogue_entries()
             .into_iter()
             .find(|entry| entry.name == "key_observer")

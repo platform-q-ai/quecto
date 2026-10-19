@@ -4,7 +4,7 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use crate::application::agent_loop::AgentLoopImpl;
+use crate::application::agent_turn::agent_loop::AgentLoopImpl;
 use crate::application::audit::ports::AuditSink;
 use crate::infrastructure::observability::audit_log::AuditLog;
 use crate::interface::cli::board::BoardToolRecordingBuilder;

@@ -32,6 +32,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use super::board_change::{checked_writer, commit, owned, task_on};
 use super::{ChangeBoardTask, FoldBackRun, board_view};
+use crate::application::agent_turn::agent_loop::tool_panic_scope::catch_in_call_site;
 use crate::application::project_board::dto::{
     BoardOp, FoldBackFacts, FoldedBack, ProjectBoardError, Restored, RunAfterUndo, TaskStart,
 };
@@ -45,7 +46,6 @@ use crate::application::project_board::swarm_brief::{
     BriefRefusal, MAX_BRIEF_BYTES, SwarmBrief, brief_of, render,
 };
 use crate::application::project_board::telemetry::{OpFacts, counted};
-use crate::application::tool_panic_scope::catch_in_call_site;
 use crate::domain::project_board::entities::claim::Identity;
 use crate::domain::project_board::services::plans::as_accepted;
 use crate::domain::project_board::services::starts::{Started, start};

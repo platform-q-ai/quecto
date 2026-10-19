@@ -13,7 +13,8 @@ async fn the_handles_share_one_state_between_the_handle_and_the_read_use_cases()
         ephemeral: false,
         system_prompt: String::new(),
         spill_store: None,
-        durable_prefix: crate::application::durable_prefix::DurablePrefixLatch::shared(),
+        durable_prefix:
+            crate::application::agent_turn::agent_loop::durable_prefix::DurablePrefixLatch::shared(),
         workflow_state: None,
         subagent_registry: None,
     });

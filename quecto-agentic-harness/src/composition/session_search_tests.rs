@@ -14,7 +14,8 @@ fn inputs(base: &std::path::Path, identity: SessionIdentity) -> SessionLoopInput
         ephemeral: false,
         system_prompt: String::new(),
         spill_store: None,
-        durable_prefix: crate::application::durable_prefix::DurablePrefixLatch::shared(),
+        durable_prefix:
+            crate::application::agent_turn::agent_loop::durable_prefix::DurablePrefixLatch::shared(),
         workflow_state: None,
         subagent_registry: None,
     }

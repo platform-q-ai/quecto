@@ -5,7 +5,7 @@
 //! bound engine's run and `restore_workflow` replaces it with a saved run
 //! the same way; and the accounting reset it inherits still zeroes usage,
 //! drops the pending queue and reports the visible count.
-use quecto::application::agent_loop::UsageTotals;
+use quecto::application::agent_turn::agent_loop::UsageTotals;
 use quecto::application::sessions::ports::SessionSwitchRuntime;
 use quecto::application::sessions::ports::session_runtime::TurnAccountingReset;
 use quecto::domain::inference::value_objects::provider::EffortLevel;

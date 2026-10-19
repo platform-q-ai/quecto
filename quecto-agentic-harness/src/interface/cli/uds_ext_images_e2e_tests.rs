@@ -8,7 +8,7 @@ use quecto_image::samples::{encode, png};
 use serde_json::{Value, json};
 
 use super::*;
-use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
+use crate::application::agent_turn::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::application::agent_turn::ports::AgentLoop;
 use crate::application::catalogue::dto::ModelLimits;
 use crate::application::catalogue::ports::ModelRuntime;

@@ -1,9 +1,9 @@
 use super::*;
+use crate::application::agent_turn::agent_loop::tool_panic_scope::{ToolScope, scoped};
 use crate::application::project_board::operations::NoPullRequestHost;
 use crate::application::project_board::operations::query_listings::{QueryListings, assembled};
 use crate::application::project_board::ports::ProjectBoardStore;
 use crate::application::project_board::use_cases::QueryBoard;
-use crate::application::tool_panic_scope::{ToolScope, scoped};
 use crate::domain::project_board::value_objects::telemetry::OpOutcome;
 use crate::domain::project_board::value_objects::vocabulary::{TaskKind, TaskStatus};
 use crate::infrastructure::test_support::memory_board_store::MemoryBoardStore;
@@ -115,7 +115,9 @@ async fn a_panic_in_board_work_fails_the_call() {
     .catch_unwind()
     .await;
     let payload = call.expect_err("the panic resumed in the call");
-    let message = crate::application::tool_panic_scope::payload_message(payload.as_ref());
+    let message = crate::application::agent_turn::agent_loop::tool_panic_scope::payload_message(
+        payload.as_ref(),
+    );
     assert!(message.ends_with("board boom"), "{message}");
     // Review round 1: the call is recorded as it unwinds, as `internal`.
     let recorded: Vec<(&str, Option<&str>)> = records

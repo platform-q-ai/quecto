@@ -132,25 +132,27 @@ fn when_agent_builds_request_for_model(world: &mut QuectoWorld) {
         stop_reason: None,
         thinking_blocks: vec![],
     });
-    let mut agent = AgentLoopImpl::new(quecto::application::agent_loop::AgentLoopConfig {
-        provider: provider.clone() as Arc<dyn LlmProvider>,
-        tool_registry: Box::new(ToolRegistryImpl::new()),
-        model: "fireworks/qwen3p7-plus".to_string(),
-        max_tokens: configured,
-        temperature: 0.7,
-        retention: None,
-        session_key: String::new(),
-        max_context_tokens: 190_000,
-        progress_callback: None,
-        streaming: false,
-        effort: None,
-        audit_log: None,
-        pin_recent_turns: 2,
-        context_marks: Default::default(),
-        model_context_window: None,
-        tool_profile_context:
-            quecto::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent,
-    })
+    let mut agent = AgentLoopImpl::new(
+        quecto::application::agent_turn::agent_loop::AgentLoopConfig {
+            provider: provider.clone() as Arc<dyn LlmProvider>,
+            tool_registry: Box::new(ToolRegistryImpl::new()),
+            model: "fireworks/qwen3p7-plus".to_string(),
+            max_tokens: configured,
+            temperature: 0.7,
+            retention: None,
+            session_key: String::new(),
+            max_context_tokens: 190_000,
+            progress_callback: None,
+            streaming: false,
+            effort: None,
+            audit_log: None,
+            pin_recent_turns: 2,
+            context_marks: Default::default(),
+            model_context_window: None,
+            tool_profile_context:
+                quecto::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent,
+        },
+    )
     .with_model_max_tokens(Some(cap));
     let mut messages = vec![Message::user("hi")];
     tokio::runtime::Runtime::new()

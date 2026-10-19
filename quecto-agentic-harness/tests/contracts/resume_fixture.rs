@@ -3,7 +3,7 @@
 //! cross-process-style claims — composed by the production composition
 //! function. Every refusal leaves the active session, the source files and
 //! the target's claim as they were.
-use quecto::application::durable_prefix::DurablePrefixLatch;
+use quecto::application::agent_turn::agent_loop::durable_prefix::DurablePrefixLatch;
 use quecto::application::sessions::dto::{
     ResumeDecision, ResumeOutcome, ResumeRequest, ResumeSavedSessionError,
 };

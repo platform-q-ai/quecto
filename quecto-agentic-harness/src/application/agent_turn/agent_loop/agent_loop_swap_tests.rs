@@ -81,7 +81,7 @@ fn test_swap_registry_info_reflects_new_count() {
 
 // ─── Pure helper coverage: provider-error classification + builders ───────────
 
-use crate::application::agent_usage::UsageTotals;
+use crate::application::agent_turn::agent_loop::agent_usage::UsageTotals;
 use crate::domain::conversation::value_objects::message::{LlmResponse, Message, ToolCall};
 use crate::domain::shared::error::DomainError;
 

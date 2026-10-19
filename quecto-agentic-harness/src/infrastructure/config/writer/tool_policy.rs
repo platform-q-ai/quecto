@@ -13,7 +13,7 @@ use crate::domain::tool_policy::value_objects::tool::{
 };
 use crate::infrastructure::config::{Config, ToolPolicyEntryConfig};
 
-/// The loop's persistence hook shape (`application::agent_loop::ToolPolicyPersistence`).
+/// The loop's persistence hook shape (`application::agent_turn::agent_loop::ToolPolicyPersistence`).
 pub type ToolPolicyPersistenceFn =
     Arc<dyn Fn(&ToolPolicyReconciliation) -> Result<(), String> + Send + Sync>;
 

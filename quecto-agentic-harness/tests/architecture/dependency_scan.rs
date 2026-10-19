@@ -591,8 +591,8 @@ fn module_paths_follow_the_module_tree() {
     assert!(module_path("src/lib.rs").is_empty());
     // A `#[path]` child is named by the module that declares it.
     assert_eq!(
-        module_path("src/application/agent_loop_turn_flow.rs"),
-        ["application", "agent_loop", "agent_loop_turn_flow"]
+        module_path("src/application/agent_turn/agent_loop/agent_loop_accounting.rs"),
+        ["application", "agent_turn", "agent_loop", "accounting"]
     );
     assert_eq!(
         normalize(Path::new("src/a/../b/./c.rs")),

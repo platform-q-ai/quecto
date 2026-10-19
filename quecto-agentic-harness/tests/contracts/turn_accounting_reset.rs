@@ -3,7 +3,7 @@
 //! transcript (usage counters, context-size reading), drops the prompts
 //! queued against it, and reports the visible count the transaction
 //! computed — nothing else of the runtime moves.
-use quecto::application::agent_loop::UsageTotals;
+use quecto::application::agent_turn::agent_loop::UsageTotals;
 use std::sync::{Arc, Mutex};
 
 use quecto::application::sessions::ports::session_runtime::TurnAccountingReset;
