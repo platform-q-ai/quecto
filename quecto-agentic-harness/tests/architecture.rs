@@ -4054,13 +4054,36 @@ fn only_the_authority_server_names_the_durability_use_cases() {
     assert!(refused(server, &use_case("ResetAuthority")));
 }
 
-/// The authority's raw operations (#1910) bypass durability on their own, so
-/// they stay visible only inside the admission capability, where the use
-/// cases sequence them with the journal. Each is declared once, restricted.
+/// The authority's surface is an exhaustive allowlist (#1910 review): every
+/// `fn` of `inference_authority.rs` outside a trait impl is either one of the
+/// public operations below, one of the raw operations visible only inside the
+/// admission capability (which bypass durability or session policy on their
+/// own, so only the use cases sequence them), or private. A new public
+/// wrapper around a raw operation fails here.
 #[test]
-fn the_authority_raw_operations_stay_inside_the_admission_capability() {
-    let authority = production_source("src/application/admission/services/inference_authority.rs");
-    for name in [
+fn the_authority_surface_is_an_exhaustive_allowlist() {
+    const PUBLIC: &[&str] = &[
+        "new",
+        "restore",
+        "journal_healthy",
+        "register_root",
+        "register_child",
+        "verify",
+        "observe",
+        "lineage",
+        "acquire",
+        "cancel",
+        "feedback",
+        "status",
+        "retire",
+        "release",
+        "retire_child",
+        "disconnect",
+        "cancellation_due",
+        "next_wake",
+        "inspect",
+    ];
+    const CAPABILITY: &[&str] = &[
         "record_journal",
         "ledger",
         "select_grants",
@@ -4068,17 +4091,60 @@ fn the_authority_raw_operations_stay_inside_the_admission_capability() {
         "complete_unpersisted",
         "successor_ledger",
         "adopt_successor",
-    ] {
-        assert_eq!(
-            authority.matches(&format!(" fn {name}(")).count(),
-            1,
-            "`{name}` is declared once"
-        );
-        assert!(
-            authority.contains(&format!("pub(in crate::application::admission) fn {name}(")),
-            "`{name}` stays visible only inside the admission capability"
-        );
+    ];
+    let source = production_source("src/application/admission/services/inference_authority.rs");
+    let file = syn::parse_file(&source).expect("the authority parses");
+    let mut functions: Vec<(String, &syn::Visibility)> = Vec::new();
+    for item in &file.items {
+        match item {
+            syn::Item::Fn(function) => {
+                functions.push((function.sig.ident.to_string(), &function.vis))
+            }
+            syn::Item::Impl(block) if block.trait_.is_none() => {
+                for inner in &block.items {
+                    if let syn::ImplItem::Fn(function) = inner {
+                        functions.push((function.sig.ident.to_string(), &function.vis));
+                    }
+                }
+            }
+            _ => {}
+        }
     }
+    let (mut public, mut capability, mut other) = (BTreeSet::new(), BTreeSet::new(), Vec::new());
+    for (name, visibility) in functions {
+        match visibility {
+            syn::Visibility::Public(_) => {
+                public.insert(name);
+            }
+            syn::Visibility::Inherited => {}
+            syn::Visibility::Restricted(restricted)
+                if restricted.in_token.is_some()
+                    && restricted
+                        .path
+                        .segments
+                        .iter()
+                        .map(|segment| segment.ident.to_string())
+                        .collect::<Vec<_>>()
+                        == ["crate", "application", "admission"] =>
+            {
+                capability.insert(name);
+            }
+            restricted => other.push(format!("{name}: {}", restricted.to_token_stream())),
+        }
+    }
+    assert!(other.is_empty(), "no other visibility: {other:?}");
+    let expected =
+        |names: &[&str]| -> BTreeSet<String> { names.iter().map(|n| n.to_string()).collect() };
+    assert_eq!(
+        public,
+        expected(PUBLIC),
+        "the authority's public operations"
+    );
+    assert_eq!(
+        capability,
+        expected(CAPABILITY),
+        "the operations only the admission use cases call"
+    );
 }
 
 /// Durability belongs to the admission use cases (#1910): the authority
