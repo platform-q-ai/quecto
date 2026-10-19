@@ -20,7 +20,7 @@ pub(super) async fn drain_and_run_pending(ctx: &mut DispatchCtx<'_>) {
         if ctx.turn_control.is_steer_pending() {
             return;
         }
-        let pending = if ctx.session.automatic_turns_allowed {
+        let pending = if ctx.session.automatic_turns_allowed() {
             crate::interface::cli::uds_session::coalesce_pending(ctx.session.drain_pending())
         } else {
             // #1712: a suspended member still obeys explicit instructions
@@ -38,7 +38,7 @@ pub(super) async fn drain_and_run_pending(ctx: &mut DispatchCtx<'_>) {
         while let Some(pending_msg) = remaining.next() {
             let explicit = is_explicit(&pending_msg);
             if ctx.turn_control.is_steer_pending()
-                || (!ctx.session.automatic_turns_allowed && !explicit)
+                || (!ctx.session.automatic_turns_allowed() && !explicit)
             {
                 ctx.session
                     .restore_pending(std::iter::once(pending_msg).chain(remaining));
@@ -55,6 +55,7 @@ pub(super) async fn drain_and_run_pending(ctx: &mut DispatchCtx<'_>) {
                     ctx.turn_control
                         .observe_control_generation(receipt.generation);
                     ctx.session
+                        .automatic_turns()
                         .observe_control_generation(Some(receipt.generation));
                 }
                 let explicit = matches!(
@@ -97,8 +98,10 @@ pub(super) async fn drain_and_run_pending(ctx: &mut DispatchCtx<'_>) {
             // #1712: only an explicit instruction the run admits re-arms a
             // suspended member; a paused run or a failed probe keeps both the
             // suspension and the instruction.
-            if !ctx.session.automatic_turns_allowed {
-                ctx.session.resume_automatic_turns();
+            if !ctx.session.automatic_turns_allowed() {
+                ctx.session.automatic_turns().rearm(
+                    crate::domain::inference::services::turn_suspension::Instruction::FollowUp,
+                );
             }
             let correlation = match &pending_msg {
                 crate::interface::cli::uds_session::PendingMessage::Control {
@@ -121,7 +124,7 @@ pub(super) async fn drain_and_run_pending(ctx: &mut DispatchCtx<'_>) {
             }
             // A failure during this drain stops the batch: the rest is
             // retained, never retried against a failing provider.
-            if !ctx.session.automatic_turns_allowed {
+            if !ctx.session.automatic_turns_allowed() {
                 ctx.session.restore_pending(remaining);
                 return;
             }

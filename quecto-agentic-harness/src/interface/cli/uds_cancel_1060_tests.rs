@@ -362,7 +362,7 @@ async fn run_turn(
             crate::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent,
     });
     let mut messages: Vec<Message> = vec![];
-    let mut session = AgentSession::new("stub".into());
+    let mut session = AgentSession::new("stub".into(), crate::application::agent_turn::use_cases::resume_after_provider_failure::ResumeAfterProviderFailure::new());
     let (_cancel_tx, cancel_rx) = tokio::sync::oneshot::channel();
     let mut notification_rx = None;
     let subagent_registry = None;
@@ -419,7 +419,7 @@ async fn run_streaming_turn(deltas: Vec<&str>, response: &str, prompt: &str) -> 
             crate::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent,
     });
     let mut messages: Vec<Message> = vec![];
-    let mut session = AgentSession::new("stub".into());
+    let mut session = AgentSession::new("stub".into(), crate::application::agent_turn::use_cases::resume_after_provider_failure::ResumeAfterProviderFailure::new());
     let (_cancel_tx, cancel_rx) = tokio::sync::oneshot::channel();
     let mut notification_rx = None;
     let subagent_registry = None;

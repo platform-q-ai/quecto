@@ -571,10 +571,10 @@ fn cmd_agent_uds(ctx: &CliContext, mut flags: AgentFlags, stderr: &mut String) -
         return 1;
     };
 
-    // The interface never constructs a session store (#1970): the loop is
-    // composed over the builder `main` handed in.
-    let Some(sessions) = ctx.sessions else {
-        stderr.push_str("agent: sessions capability not composed\n");
+    // The interface never constructs a session store (#1970) or a session's
+    // automatic turns (#1909): the loop is composed over `main`'s builders.
+    let (Some(sessions), Some(automatic_turns)) = (ctx.sessions, ctx.automatic_turns) else {
+        stderr.push_str("agent: sessions or agent-turn capability not composed\n");
         return 1;
     };
 
@@ -685,6 +685,7 @@ fn cmd_agent_uds(ctx: &CliContext, mut flags: AgentFlags, stderr: &mut String) -
         broadcast_tx,
         parent_control,
         teardown_graph: ctx.teardown_graph,
+        automatic_turns,
         environment_control: build.environment_control,
         extensions: build.extensions,
     });

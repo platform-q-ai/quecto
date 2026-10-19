@@ -60,6 +60,7 @@ pub struct UdsLoopArgs<'a> {
     /// Composition's teardown handles builder; `None` runs the loop without
     /// the teardown edge (unit rigs) and is refused for a launched child.
     pub teardown_graph: Option<super::TeardownHandlesBuilder>,
+    pub automatic_turns: super::AutomaticTurnsBuilder, // #1909: composition's builder
     pub extensions: crate::domain::agents::entities::configured_extensions::AgentExtensions, // #2446
 }
 pub fn run_uds_loop(args: UdsLoopArgs<'_>) -> i32 {
@@ -101,8 +102,10 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
         broadcast_tx,
         parent_control,
         teardown_graph,
+        automatic_turns,
         extensions,
     } = args;
+
     let session_key = identity.runtime_key().to_string(); // presenters, owner uuid
     let sessions = sessions(SessionLoopInputs {
         base_dir: base_dir.to_path_buf(),
@@ -136,6 +139,7 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
         single_client_loop(
             SingleClientArgs {
                 agent,
+                automatic_turns,
                 workspace,
                 messages,
                 model,
@@ -165,6 +169,7 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
         super::uds_multi::multi_client_loop(
             MultiClientArgs {
                 agent,
+                automatic_turns,
                 workspace,
                 messages,
                 model,

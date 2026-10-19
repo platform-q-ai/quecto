@@ -196,7 +196,7 @@ async fn an_aborted_turn_puts_a_cancelled_request_on_the_socket() {
             crate::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent,
     });
     let mut messages = Vec::new();
-    let mut session = crate::interface::cli::uds_session::AgentSession::new("stub".into());
+    let mut session = crate::interface::cli::uds_session::AgentSession::new("stub".into(), crate::application::agent_turn::use_cases::resume_after_provider_failure::ResumeAfterProviderFailure::new());
     let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel();
     tokio::spawn(async move {
         asked.notified().await;

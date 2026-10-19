@@ -248,7 +248,7 @@ fn then_provider_usage_drives_gauge_and_totals(world: &mut QuectoWorld) {
 
 #[given("multiple LLM calls return input, output, cache, and cost usage")]
 fn given_multiple_llm_calls(world: &mut QuectoWorld) {
-    let mut session = AgentSession::new("test-model".to_string());
+    let mut session = AgentSession::new("test-model".to_string(), quecto::application::agent_turn::use_cases::resume_after_provider_failure::ResumeAfterProviderFailure::new());
     // Two turns' worth of provider usage accumulate into the session totals.
     session.record_usage("cli:test", UsageTotals::billed(1_200, 340, 500, 20, 4_200));
     session.record_usage("cli:test", UsageTotals::billed(800, 160, 300, 10, 1_800));

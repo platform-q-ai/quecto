@@ -4,14 +4,15 @@ use super::*;
 
 #[tokio::test]
 async fn a_stale_abort_drain_dates_a_failed_explicit_turn() {
-    use crate::interface::cli::uds_session::SuspensionCause;
+    use crate::domain::inference::services::turn_suspension::SuspensionCause;
     let mut env = Env::new(
         super::dispatch_test_env::make_workflow(),
         std::sync::Arc::new(FailingProvider),
     );
     let mut ctx = env.ctx();
     ctx.session
-        .suspend_automatic_turns(SuspensionCause::ProviderFailure, Some(4));
+        .automatic_turns()
+        .suspend(SuspensionCause::ProviderFailure, Some(4));
     super::pending::queue_prompt(&mut ctx, Some("f3"), "follow_up", "carry on".into(), false).await;
     // Every status probe sees a later control generation (6, 16, 26, ...):
     // the prompt's own arming probe, the drain's admission probe, the
@@ -37,12 +38,18 @@ async fn a_stale_abort_drain_dates_a_failed_explicit_turn() {
         Some(crate::interface::cli::protocol::ControlStatus::Failed),
         "the follow-up drained on the stale-abort path and failed"
     );
-    assert!(!ctx.session.automatic_turns_allowed);
+    assert!(!ctx.session.automatic_turns_allowed());
     assert!(
-        !ctx.session.resume_after_control_change(26),
+        !ctx.session
+            .automatic_turns()
+            .resume_after_control_change(26),
         "dated after the failed drained turn (36), not at a generation seen before or during it"
     );
-    assert!(ctx.session.resume_after_control_change(37));
+    assert!(
+        ctx.session
+            .automatic_turns()
+            .resume_after_control_change(37)
+    );
 }
 
 /// A control port whose generation rises by ten on every probe.

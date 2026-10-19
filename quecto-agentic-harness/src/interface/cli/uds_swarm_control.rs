@@ -275,17 +275,24 @@ pub(super) async fn handle_wake(ctx: &mut super::uds::DispatchCtx<'_>, generatio
     };
     // #1721: while suspended, learn the control generation without claiming
     // wake events; a pause/resume since the provider failure re-arms us.
-    if !ctx.session.automatic_turns_allowed {
-        match control.apply(RunControlAction::Status).await {
-            Ok(receipt) => {
-                ctx.turn_control
-                    .observe_control_generation(receipt.generation);
-                if ctx.session.resume_after_control_change(receipt.generation) {
+    if !ctx.session.automatic_turns_allowed() {
+        use crate::application::agent_turn::use_cases::resume_after_provider_failure::SuspendedProbe;
+        match ctx
+            .session
+            .automatic_turns()
+            .probe_while_suspended(&*control)
+            .await
+        {
+            Ok(probe) => {
+                let (SuspendedProbe::Rearmed { generation: seen }
+                | SuspendedProbe::StillSuspended { generation: seen }) = probe;
+                ctx.turn_control.observe_control_generation(seen);
+                if let SuspendedProbe::Rearmed { generation: seen } = probe {
                     let event = AgentEvent::ok(
                         None,
                         SWARM_WAKE,
                         Some(serde_json::json!({
-                            "status": "resumed", "generation": receipt.generation,
+                            "status": "resumed", "generation": seen,
                             "reason": "automatic turns re-armed by a swarm resume after a provider failure"
                         })),
                     );
@@ -311,7 +318,7 @@ pub(super) async fn handle_wake(ctx: &mut super::uds::DispatchCtx<'_>, generatio
                 return false;
             }
         }
-        if !ctx.session.automatic_turns_allowed {
+        if !ctx.session.automatic_turns_allowed() {
             return false;
         }
     }
@@ -320,11 +327,12 @@ pub(super) async fn handle_wake(ctx: &mut super::uds::DispatchCtx<'_>, generatio
             ctx.turn_control
                 .observe_control_generation(receipt.generation);
             ctx.session
+                .automatic_turns()
                 .observe_control_generation(Some(receipt.generation));
             // A re-armed member owes the run a turn to continue its
             // interrupted work, whether or not this wake targets it.
             let runnable = matches!(receipt.status, RunStatus::Setup | RunStatus::Running);
-            let resume_turn = runnable && ctx.session.take_pending_resume_turn();
+            let resume_turn = runnable && ctx.session.automatic_turns().take_owed_turn();
             if resume_turn {
                 super::uds::handle_prompt(
                     ctx,
@@ -362,10 +370,9 @@ pub(super) async fn handle_wake(ctx: &mut super::uds::DispatchCtx<'_>, generatio
             }
             // A durable rejection stops automatic turns until a human prompt.
             StoreFailure::Durable => {
-                ctx.session.suspend_automatic_turns(
-                    super::uds_session::SuspensionCause::StoreRejection,
-                    None,
-                );
+                ctx.session
+                    .automatic_turns()
+                    .suspend_after_store_rejection();
                 let event = AgentEvent::err(
                     None,
                     SWARM_WAKE,
@@ -404,20 +411,14 @@ pub(super) fn seed_control_generation(turn_control: &super::uds_cancel::TurnCont
 /// suspension not yet dated this way, so a later idle drain cannot re-date
 /// an older suspension past a resume it should honour.
 pub(super) async fn date_provider_suspension(ctx: &mut super::uds::DispatchCtx<'_>) {
-    use crate::domain::swarm::value_objects::run_control::RunControlAction;
-    if !ctx.session.needs_provider_dating() {
-        return;
-    }
-    let Some(control) = ctx.turn_control.swarm_control.clone() else {
-        return;
-    };
-    if let Ok(receipt) = control.apply(RunControlAction::Status).await {
-        ctx.turn_control
-            .observe_control_generation(receipt.generation);
-        ctx.session.suspend_automatic_turns(
-            super::uds_session::SuspensionCause::ProviderFailure,
-            Some(receipt.generation),
-        );
+    let control = ctx.turn_control.swarm_control.clone();
+    let dated = ctx
+        .session
+        .automatic_turns()
+        .date_suspension(control.as_deref())
+        .await;
+    if let Some(generation) = dated {
+        ctx.turn_control.observe_control_generation(generation);
     }
 }
 

@@ -431,7 +431,7 @@ async fn dispatch_register_tools_adds_extension_and_forwards_real_tool_execute()
     let tmp = tempfile::TempDir::new().unwrap();
     let mut agent = cov_agent();
     let mut messages = Vec::new();
-    let mut session = super::super::uds_session::AgentSession::new("stub".into());
+    let mut session = super::super::uds_session::AgentSession::new("stub".into(), crate::application::agent_turn::use_cases::resume_after_provider_failure::ResumeAfterProviderFailure::new());
     let session_key = "cli:test".to_string();
     let mut writer = tokio::io::sink();
     let registry = new_client_tool_registry();
@@ -531,7 +531,7 @@ async fn dispatch_register_tools_rejects_later_denied_tool_without_unloading_exi
     );
     agent.register_uds_tool_for_owner(existing_tool, "uds:client:123".into());
     let mut messages = Vec::new();
-    let mut session = super::super::uds_session::AgentSession::new("stub".into());
+    let mut session = super::super::uds_session::AgentSession::new("stub".into(), crate::application::agent_turn::use_cases::resume_after_provider_failure::ResumeAfterProviderFailure::new());
     let session_key = "cli:test".to_string();
     let mut writer = tokio::io::sink();
     let client_registry = new_client_tool_registry();

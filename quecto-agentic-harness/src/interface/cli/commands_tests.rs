@@ -31,6 +31,7 @@ fn test_status_shows_summary() {
     let ctx = CliContext {
         base_dir: Some(tmp.path().to_path_buf()),
         sessions: Some(crate::composition::sessions::build_session_handles),
+        automatic_turns: Some(crate::composition::bootstrap::agent_turn::build_automatic_turns),
         retention: Some(crate::composition::sessions::build_retention_handles),
         configuration: Some(crate::composition::configuration::build_configuration_handles),
         admission: Some(crate::composition::admission::build_admission_handles),
@@ -80,6 +81,7 @@ fn test_status_respects_global_config_flag() {
     let ctx = CliContext {
         base_dir: Some(base.path().to_path_buf()),
         sessions: Some(crate::composition::sessions::build_session_handles),
+        automatic_turns: Some(crate::composition::bootstrap::agent_turn::build_automatic_turns),
         retention: Some(crate::composition::sessions::build_retention_handles),
         configuration: Some(crate::composition::configuration::build_configuration_handles),
         admission: Some(crate::composition::admission::build_admission_handles),
@@ -130,6 +132,7 @@ fn test_status_no_config_uses_defaults() {
     let ctx = CliContext {
         base_dir: Some(tmp.path().to_path_buf()),
         sessions: Some(crate::composition::sessions::build_session_handles),
+        automatic_turns: Some(crate::composition::bootstrap::agent_turn::build_automatic_turns),
         retention: Some(crate::composition::sessions::build_retention_handles),
         configuration: Some(crate::composition::configuration::build_configuration_handles),
         admission: Some(crate::composition::admission::build_admission_handles),
@@ -161,6 +164,7 @@ fn test_status_redacts_api_keys() {
     let ctx = CliContext {
         base_dir: Some(tmp.path().to_path_buf()),
         sessions: Some(crate::composition::sessions::build_session_handles),
+        automatic_turns: Some(crate::composition::bootstrap::agent_turn::build_automatic_turns),
         retention: Some(crate::composition::sessions::build_retention_handles),
         configuration: Some(crate::composition::configuration::build_configuration_handles),
         admission: Some(crate::composition::admission::build_admission_handles),
@@ -193,6 +197,7 @@ fn test_status_both_providers_configured() {
     let ctx = CliContext {
         base_dir: Some(tmp.path().to_path_buf()),
         sessions: Some(crate::composition::sessions::build_session_handles),
+        automatic_turns: Some(crate::composition::bootstrap::agent_turn::build_automatic_turns),
         retention: Some(crate::composition::sessions::build_retention_handles),
         configuration: Some(crate::composition::configuration::build_configuration_handles),
         admission: Some(crate::composition::admission::build_admission_handles),
@@ -219,6 +224,7 @@ fn test_status_explicit_missing_config_fails() {
     let ctx = CliContext {
         base_dir: Some(tmp.path().to_path_buf()),
         sessions: Some(crate::composition::sessions::build_session_handles),
+        automatic_turns: Some(crate::composition::bootstrap::agent_turn::build_automatic_turns),
         retention: Some(crate::composition::sessions::build_retention_handles),
         configuration: Some(crate::composition::configuration::build_configuration_handles),
         admission: Some(crate::composition::admission::build_admission_handles),
@@ -259,6 +265,7 @@ fn test_status_invalid_config_fails() {
     let ctx = CliContext {
         base_dir: Some(tmp.path().to_path_buf()),
         sessions: Some(crate::composition::sessions::build_session_handles),
+        automatic_turns: Some(crate::composition::bootstrap::agent_turn::build_automatic_turns),
         retention: Some(crate::composition::sessions::build_retention_handles),
         configuration: Some(crate::composition::configuration::build_configuration_handles),
         admission: Some(crate::composition::admission::build_admission_handles),
