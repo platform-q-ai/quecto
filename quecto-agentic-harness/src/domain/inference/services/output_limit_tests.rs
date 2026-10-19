@@ -106,3 +106,27 @@ fn only_allowlisted_responses_reasons_are_the_output_limit() {
         assert!(!is_responses_output_limit(reason), "{reason:?}");
     }
 }
+
+/// Review round 3 of #2598: only a reply's last call can be cut off by
+/// the limit; an earlier broken call is an ordinary malformed call
+/// (#2123), and the cut-off one is the last.
+#[test]
+fn only_the_last_call_can_be_cut_off() {
+    let response = reply(
+        Some(StopReason::MaxTokens),
+        &[("bash", "[1,2]"), ("write", "")],
+    );
+    assert_eq!(
+        cut_off_tool_call(&response).map(|cut| cut.tool),
+        Some("write")
+    );
+    let earlier_only = reply(
+        Some(StopReason::MaxTokens),
+        &[("bash", "[1,2]"), ("read", r#"{"path":"a"}"#)],
+    );
+    assert_eq!(
+        cut_off_tool_call(&earlier_only),
+        None,
+        "the last call is whole"
+    );
+}

@@ -29,30 +29,24 @@ pub struct CutOffCall<'a> {
     pub tool: &'a str,
 }
 
-/// The first tool call of `response` the output limit cut off: the reply
-/// stopped at the output limit and the call's argument text is not a
-/// whole JSON object, or the call is the reply's last and got no argument
-/// text at all (the limit stopped it before any, or the adapter reported
-/// a call its provider marks incomplete with none). A call whose arguments
-/// are whole is a call, limit or not; invalid arguments without the limit
-/// are a malformed call (#2123), not a cut-off one.
+/// The tool call of `response` the output limit cut off. The limit stops
+/// a reply at its end, so only the reply's last call can be cut off: the
+/// reply stopped at the output limit and that call's argument text is not
+/// a whole JSON object, or there is none at all (the limit stopped it
+/// before any, or the adapter reported a call its provider marks
+/// incomplete with none). A call whose arguments are whole is a call,
+/// limit or not; an earlier broken call, or one without the limit, is a
+/// malformed call (#2123), not a cut-off one.
 pub fn cut_off_tool_call(response: &LlmResponse) -> Option<CutOffCall<'_>> {
     let at_the_limit = response.stop_reason == Some(StopReason::MaxTokens);
-    let last = response.tool_calls.len().checked_sub(1);
     at_the_limit
-        .then(|| {
-            response
-                .tool_calls
-                .iter()
-                .enumerate()
-                .find(|(index, call)| match call.argument_shape() {
-                    ToolArguments::Invalid(_) => true,
-                    ToolArguments::Empty => Some(*index) == last,
-                    ToolArguments::Object(_) => false,
-                })
-        })
+        .then(|| response.tool_calls.last())
         .flatten()
-        .map(|(_, call)| CutOffCall {
+        .filter(|call| match call.argument_shape() {
+            ToolArguments::Invalid(_) | ToolArguments::Empty => true,
+            ToolArguments::Object(_) => false,
+        })
+        .map(|call| CutOffCall {
             id: call.id.as_str(),
             tool: call.name.as_str(),
         })

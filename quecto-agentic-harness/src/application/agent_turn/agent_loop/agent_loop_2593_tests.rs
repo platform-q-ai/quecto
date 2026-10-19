@@ -304,3 +304,123 @@ async fn past_the_budget_a_call_cut_off_with_no_arguments_never_runs() {
     assert_eq!(answers.len(), 1, "{answers:?}");
     assert!(answers[0].contains("not a JSON object"), "{answers:?}");
 }
+
+/// A read-only tool that may overlap with others and records its runs.
+#[derive(Debug)]
+struct RecordingRead {
+    ran: Arc<Mutex<Vec<String>>>,
+}
+
+impl Tool for RecordingRead {
+    fn definition(&self) -> ToolDefinition {
+        ToolDefinition {
+            name: "read".into(),
+            description: "records its arguments".into(),
+            parameters_schema: r#"{"type":"object"}"#.into(),
+        }
+    }
+    fn execute(
+        &self,
+        arguments: &str,
+    ) -> Pin<Box<dyn std::future::Future<Output = Result<ToolResult, DomainError>> + Send + '_>>
+    {
+        self.ran.lock().unwrap().push(arguments.to_string());
+        Box::pin(async {
+            Ok(ToolResult {
+                content: "read".into(),
+                is_error: false,
+                image_blocks: vec![],
+                delivery_metadata: None,
+            })
+        })
+    }
+}
+
+fn reply_of(calls: &[(&str, &str, &str)]) -> LlmResponse {
+    let mut response = cut_off_write();
+    response.tool_calls = calls
+        .iter()
+        .map(|(id, name, arguments)| ToolCall {
+            id: (*id).into(),
+            name: (*name).into(),
+            arguments: (*arguments).into(),
+        })
+        .collect();
+    response
+}
+
+/// Review round 3 of #2598: an earlier malformed call does not hide the
+/// last, cut-off one: the correction names the cut-off tool, and past the
+/// budget the cut-off call is answered as invalid, never run as `{}`.
+#[tokio::test]
+async fn an_earlier_malformed_call_does_not_hide_the_cut_off_last_call() {
+    let reads = Arc::new(Mutex::new(Vec::new()));
+    let mut registry = MockRegistry::new();
+    let writes = Arc::new(Mutex::new(Vec::new()));
+    registry.register(Arc::new(RecordingWrite {
+        ran: writes.clone(),
+    }));
+    registry.register(Arc::new(RecordingRead { ran: reads.clone() }));
+    let reply = || Ok(reply_of(&[("c1", "read", "[1,2]"), ("c2", "write", "")]));
+    let provider = Arc::new(MockProvider::new_results(vec![
+        reply(),
+        reply(),
+        reply(),
+        Ok(text_response("done")),
+    ]));
+    let mut agent = AgentLoopImpl::new(AgentLoopConfig {
+        max_tokens: 8192,
+        ..test_config(provider, Box::new(registry))
+    });
+    let mut messages = vec![Message::user("read then write")];
+    agent.run_loop(&mut messages).await.unwrap();
+    assert_eq!(cut_off_feedback(&messages).len(), 2, "`write` named twice");
+    assert!(
+        writes.lock().unwrap().is_empty(),
+        "the cut-off write never runs"
+    );
+    assert!(
+        reads.lock().unwrap().is_empty(),
+        "the malformed read never runs"
+    );
+}
+
+/// Review round 3 of #2598: on the overlapping path too, past the budget
+/// the cut-off last call is answered as invalid while whole calls run.
+#[tokio::test]
+async fn past_the_budget_overlapping_calls_run_whole_and_answer_the_cut_off_one() {
+    let reads = Arc::new(Mutex::new(Vec::new()));
+    let mut registry = MockRegistry::new();
+    registry.register(Arc::new(RecordingRead { ran: reads.clone() }));
+    registry.overlapping.push("read".into());
+    let reply = || {
+        Ok(reply_of(&[
+            ("r1", "read", r#"{"path":"a"}"#),
+            ("r2", "read", ""),
+        ]))
+    };
+    let provider = Arc::new(MockProvider::new_results(vec![
+        reply(),
+        reply(),
+        reply(),
+        Ok(text_response("done")),
+    ]));
+    let mut agent = AgentLoopImpl::new(AgentLoopConfig {
+        max_tokens: 8192,
+        ..test_config(provider, Box::new(registry))
+    });
+    let mut messages = vec![Message::user("read twice")];
+    agent.run_loop(&mut messages).await.unwrap();
+    assert_eq!(
+        reads.lock().unwrap().as_slice(),
+        [r#"{"path":"a"}"#],
+        "the whole call runs; the cut-off one never runs as `{{}}`"
+    );
+    let answers: Vec<&str> = messages
+        .iter()
+        .filter(|m| m.role == Role::Tool)
+        .map(|m| m.content.as_str())
+        .collect();
+    assert_eq!(answers.len(), 2, "{answers:?}");
+    assert!(answers[1].contains("not a JSON object"), "{answers:?}");
+}
