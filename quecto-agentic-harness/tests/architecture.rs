@@ -961,7 +961,7 @@ fn port_items(
 
 #[test]
 fn ports_guard_is_an_allowlist() {
-    let file = "src/application/environments/ports.rs";
+    let file = "src/application/environments/ports/mod.rs";
     for source in [
         "pub use super::use_cases::FinalizeEnvironmentMember as X;",
         "pub(crate) use super::use_cases::FinalizeEnvironmentMember as X;",
@@ -6148,7 +6148,7 @@ fn environments_application_depends_only_inward() {
     }
     for dep in [
         "crate::domain::environments::entities::environment_registry::EnvironmentRegistry",
-        "crate::application::environments::ports::EnvironmentMemberShutdown",
+        "crate::application::environments::ports::process::EnvironmentMemberShutdown",
         "serde_json::Value",
         "std::sync::Arc",
     ] {
@@ -6537,16 +6537,49 @@ fn domain_holds_no_environment_use_case_or_effect_port() {
     }
 }
 
+/// The files of the environments capability's `ports/` folder (#2367).
+const ENVIRONMENT_PORT_FILES: &[&str] = &[
+    "mod.rs",
+    "container.rs",
+    "hosted_swarm.rs",
+    "process.rs",
+    "registry.rs",
+];
+
 #[test]
 fn environment_ports_are_capability_local_and_contracted() {
-    let declared = declared_pub_traits("src/application/environments/ports.rs");
+    // Every file under `ports/` is read, and the folder holds exactly
+    // `ENVIRONMENT_PORT_FILES`: a new port file (or a second declaration of a
+    // port) cannot escape the check (#2367 review).
+    let mut port_files = Vec::new();
+    collect_rs_files(
+        Path::new("src/application/environments/ports"),
+        &mut port_files,
+    );
+    let mut on_disk: Vec<String> = port_files
+        .iter()
+        .map(|file| file.split_once(":\n").unwrap().0.to_string())
+        .collect();
+    let mut listed: Vec<String> = ENVIRONMENT_PORT_FILES
+        .iter()
+        .map(|file| format!("src/application/environments/ports/{file}"))
+        .collect();
+    on_disk.sort();
+    listed.sort();
+    assert_eq!(
+        on_disk, listed,
+        "application/environments/ports/ must hold exactly ENVIRONMENT_PORT_FILES"
+    );
+    let mut actual: Vec<String> = on_disk
+        .iter()
+        .flat_map(|path| declared_pub_traits(path))
+        .collect();
     let mut expected: Vec<String> = ENVIRONMENT_PORTS.iter().map(|p| p.to_string()).collect();
-    let mut actual = declared.clone();
     expected.sort();
     actual.sort();
     assert_eq!(
         actual, expected,
-        "application/environments/ports.rs must declare exactly ENVIRONMENT_PORTS"
+        "application/environments/ports/ must declare exactly ENVIRONMENT_PORTS"
     );
     let use_cases =
         declared_pub_traits("src/application/environments/use_cases/kill_environment.rs");
@@ -6555,7 +6588,7 @@ fn environment_ports_are_capability_local_and_contracted() {
     collect_rs_files(Path::new("src"), &mut files);
     for file in &files {
         let (path, source) = file.split_once(":\n").unwrap();
-        if path == "src/application/environments/ports.rs" {
+        if path.starts_with("src/application/environments/ports/") {
             continue;
         }
         for port in ENVIRONMENT_PORTS {
