@@ -42,6 +42,14 @@ mod sanitization_tests {
         );
         assert_eq!(d.error_code, Some(ErrorCode::Overloaded));
         assert_eq!(d.incomplete_reason, Some(IncompleteReason::MaxOutputTokens));
+        // An object naming two known errors records its `type`'s (#2620
+        // review: as before the move).
+        typed(
+            &mut d,
+            wire,
+            &serde_json::json!({"error":{"type":"refused","code":"throttled"}}),
+        );
+        assert_eq!(d.error_code, Some(ErrorCode::InvalidRequestError));
     }
 }
 #[cfg(test)]

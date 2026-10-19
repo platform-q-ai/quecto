@@ -55,9 +55,13 @@ static RESPONSES: Vocabulary = Vocabulary {
     ],
 };
 
-/// The error types and codes the Responses wire names (#2609 review).
-static RESPONSES_ERRORS: [ErrorName; 6] = [
+/// The error types and codes the Responses wire names (#2609 review),
+/// with the throttles the official Codex client reads as a rate limit
+/// (`slow_down`) and as overloaded (`server_is_overloaded`; #2620 review).
+static RESPONSES_ERRORS: [ErrorName; 8] = [
     ErrorName::throttle("rate_limit_exceeded", ErrorCode::RateLimitExceeded),
+    ErrorName::throttle("slow_down", ErrorCode::RateLimitExceeded),
+    ErrorName::throttle("server_is_overloaded", ErrorCode::Overloaded),
     ErrorName::plain("server_error", ErrorCode::ServerError),
     ErrorName::plain("insufficient_quota", ErrorCode::InsufficientQuota),
     ErrorName::plain("usage_limit_reached", ErrorCode::UsageLimitReached),

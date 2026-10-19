@@ -415,6 +415,12 @@ fn a_responses_throttle_is_read_from_its_typed_fields_only() {
         ),
         (json!({"error": {"type": "invalid_request_error"}}), false),
         (json!(null), false),
+        // Declared addition (#2620 review): the official client's throttles.
+        (json!({"type": "error", "code": "slow_down"}), true),
+        (
+            json!({"response": {"error": {"code": "server_is_overloaded"}}}),
+            true,
+        ),
         // Declared narrowing: another wire's throttle names.
         (
             json!({"type": "error", "error": {"type": "rate_limit_error"}}),
@@ -441,6 +447,10 @@ fn a_responses_error_body_is_terminal_by_its_typed_fields() {
         (json!({"error": {"code": "rate_limit_exceeded"}}), false),
         (json!({"error": {"code": "server_error"}}), false),
         (json!({"error": {"message": "invalid_api_key"}}), false),
+        // Declared (#2620 review): an `error` event's own fields are read
+        // here too, as for a throttle.
+        (json!({"type": "error", "code": "invalid_api_key"}), true),
+        (json!({"type": "error", "code": "slow_down"}), false),
         // Declared narrowing: another wire's refusal names.
         (json!({"error": {"type": "authentication_error"}}), false),
         (json!({"error": {"type": "permission_error"}}), false),
@@ -457,6 +467,8 @@ fn a_responses_error_records_its_code_and_incomplete_reason() {
     };
     for (name, code) in [
         ("rate_limit_exceeded", ErrorCode::RateLimitExceeded),
+        ("slow_down", ErrorCode::RateLimitExceeded),
+        ("server_is_overloaded", ErrorCode::Overloaded),
         ("server_error", ErrorCode::ServerError),
         ("insufficient_quota", ErrorCode::InsufficientQuota),
         ("usage_limit_reached", ErrorCode::UsageLimitReached),
@@ -504,4 +516,21 @@ fn a_responses_error_records_its_code_and_incomplete_reason() {
         None,
     );
     assert_eq!(seen.diagnostics.error_code, Some(ErrorCode::ServerError));
+    // An object naming two known errors records its `type`'s, as before
+    // the move (#2620 review).
+    let both = r#"data: {"type":"error","error":{"type":"invalid_request_error","code":"invalid_api_key"}}"#;
+    let profile = crate::infrastructure::providers::transport::attempt_profile::Profile::new(
+        &CODEX_WIRE,
+        Surface::Incremental,
+        Default::default(),
+    );
+    let seen = crate::infrastructure::providers::transport::attempt_transport::observed(
+        profile,
+        &[both],
+        None,
+    );
+    assert_eq!(
+        seen.diagnostics.error_code,
+        Some(ErrorCode::InvalidRequestError)
+    );
 }

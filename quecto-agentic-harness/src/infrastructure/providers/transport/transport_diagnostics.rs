@@ -47,12 +47,13 @@ pub(super) fn headers<'a>(values: impl IntoIterator<Item = (&'a str, &'a str)>) 
         .collect()
 }
 /// Record what the typed error fields of `value`, a payload of `wire`, say:
-/// the last error name of `wire` its error objects carry, and why its reply
+/// the last error name of `wire` its error objects carry — an object's
+/// `type` over its `code`, as before (#2620 review) — and why its reply
 /// stopped short. Only names the wire knows are kept, never values or
 /// messages (#2609 review: each wire reads its own shapes).
 pub(super) fn typed(d: &mut AttemptDiagnostics, wire: &dyn WireDialect, value: &serde_json::Value) {
     for error in wire.error_objects(value) {
-        for field in ["type", "code"] {
+        for field in ["code", "type"] {
             if let Some(known) = error[field].as_str().and_then(|name| wire.error_name(name)) {
                 d.error_code = Some(known.code);
             }

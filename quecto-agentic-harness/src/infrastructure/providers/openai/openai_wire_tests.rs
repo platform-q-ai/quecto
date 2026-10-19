@@ -383,6 +383,22 @@ fn a_chat_error_records_its_code() {
         );
     }
     assert!(OPENAI_WIRE.error_name("SECRET").is_none());
+    // OpenAI's 401 names two known errors: its `type`'s is recorded, as
+    // before the move (#2620 review).
+    let profile = crate::infrastructure::providers::transport::attempt_profile::Profile::new(
+        &OPENAI_WIRE,
+        Surface::Incremental,
+        Default::default(),
+    );
+    let seen = crate::infrastructure::providers::transport::attempt_transport::observed(
+        profile,
+        &[r#"data: {"error":{"type":"invalid_request_error","code":"invalid_api_key"}}"#],
+        None,
+    );
+    assert_eq!(
+        seen.diagnostics.error_code,
+        Some(ErrorCode::InvalidRequestError)
+    );
     let value = json!({"response": {"incomplete_details": {"reason": "max_output_tokens"}}});
     assert_eq!(OPENAI_WIRE.incomplete_reason(&value), None);
 }

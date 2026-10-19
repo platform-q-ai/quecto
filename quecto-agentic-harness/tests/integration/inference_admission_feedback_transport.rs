@@ -155,14 +155,16 @@ macro_rules! sse_case {
         }
     };
 }
-// Each wire's typed throttle by its own name (#2609 review): the Responses
-// wire's `rate_limit_exceeded`, the Messages wire's `overloaded_error`.
+// Each wire's typed throttle by its own name and field (#2609, #2620
+// review): the Responses wire's `code: rate_limit_exceeded` (its `type` is
+// the limit's kind, as OpenAI sends it), the Messages wire's `type:
+// overloaded_error`.
 sse_case!(
     responses_typed_throttle_before_text,
     Responses,
     false,
-    "rate_limit_exceeded",
-    None,
+    "requests",
+    Some("rate_limit_exceeded"),
     "opaque fixture",
     true
 );
@@ -170,8 +172,8 @@ sse_case!(
     responses_typed_throttle_after_text,
     Responses,
     true,
-    "rate_limit_exceeded",
-    None,
+    "requests",
+    Some("rate_limit_exceeded"),
     "opaque fixture",
     true
 );
@@ -179,8 +181,8 @@ sse_case!(
     oauth_typed_throttle_before_text,
     OAuth,
     false,
-    "rate_limit_exceeded",
-    None,
+    "requests",
+    Some("rate_limit_exceeded"),
     "opaque fixture",
     true
 );
@@ -188,8 +190,8 @@ sse_case!(
     oauth_typed_throttle_after_text,
     OAuth,
     true,
-    "rate_limit_exceeded",
-    None,
+    "requests",
+    Some("rate_limit_exceeded"),
     "opaque fixture",
     true
 );

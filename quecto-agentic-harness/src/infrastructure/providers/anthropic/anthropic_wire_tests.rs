@@ -301,6 +301,13 @@ fn a_messages_throttle_is_read_from_its_error_object_only() {
         (json!({"error": {"type": "invalid_request_error"}}), false),
         (json!({"type": "rate_limit_error"}), false),
         (json!(null), false),
+        // The root of an `error` event is not read (#2620 review): neither
+        // its throttle nor its billing name counts.
+        (json!({"type": "error", "code": "overloaded_error"}), false),
+        (
+            json!({"type": "error", "code": "billing_error", "error": {"type": "overloaded_error"}}),
+            true,
+        ),
         // Declared narrowing: another wire's shapes and names.
         (
             json!({"type": "error", "code": "rate_limit_exceeded"}),
@@ -387,4 +394,30 @@ fn a_messages_error_records_its_code() {
     }
     let value = json!({"response": {"incomplete_details": {"reason": "max_output_tokens"}}});
     assert_eq!(ANTHROPIC_WIRE.incomplete_reason(&value), None);
+    let observe = |data: &str| {
+        let profile = crate::infrastructure::providers::transport::attempt_profile::Profile::new(
+            &ANTHROPIC_WIRE,
+            Surface::Incremental,
+            Default::default(),
+        );
+        crate::infrastructure::providers::transport::attempt_transport::observed(
+            profile,
+            &["event: error", data],
+            None,
+        )
+        .diagnostics
+        .error_code
+    };
+    // An object naming two known errors records its `type`'s, as before
+    // the move; a root code is not read (#2620 review).
+    assert_eq!(
+        observe(
+            r#"data: {"type":"error","error":{"type":"overloaded_error","code":"rate_limit_error"}}"#
+        ),
+        Some(ErrorCode::Overloaded)
+    );
+    assert_eq!(
+        observe(r#"data: {"type":"error","code":"overloaded_error"}"#),
+        None
+    );
 }

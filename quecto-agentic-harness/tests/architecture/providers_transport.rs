@@ -608,6 +608,44 @@ fn every_way_out_of_the_folder_is_refused() {
     assert!(escapes(&mounted, Path::new("transport"), &in_folder).is_empty());
 }
 
+/// The error names the wires declare (`ErrorName::throttle("…", …)` and its
+/// siblings in each `*_wire.rs`), read from their sources.
+fn wire_error_names() -> Vec<String> {
+    #[derive(Default)]
+    struct Names(Vec<String>);
+    impl<'ast> Visit<'ast> for Names {
+        fn visit_expr_call(&mut self, call: &'ast syn::ExprCall) {
+            let declared = matches!(
+                &*call.func,
+                syn::Expr::Path(path)
+                    if path.path.segments.len() == 2
+                        && path.path.segments[0].ident == "ErrorName"
+            );
+            if let (
+                true,
+                Some(syn::Expr::Lit(syn::ExprLit {
+                    lit: syn::Lit::Str(name),
+                    ..
+                })),
+            ) = (declared, call.args.first())
+            {
+                self.0.push(name.value());
+            }
+            syn::visit::visit_expr_call(self, call);
+        }
+    }
+    let mut names = Names::default();
+    for wire in [
+        "src/infrastructure/providers/codex/codex_wire.rs",
+        "src/infrastructure/providers/anthropic/anthropic_wire.rs",
+        "src/infrastructure/providers/openai/openai_wire.rs",
+    ] {
+        let source = std::fs::read_to_string(wire).expect("read a wire");
+        names.visit_file(&syn::parse_file(&source).expect("a wire parses"));
+    }
+    names.0
+}
+
 /// Every literal of `stream`, decoded.
 fn literals(stream: TokenStream, found: &mut Vec<String>) {
     for token in stream {
@@ -617,6 +655,42 @@ fn literals(stream: TokenStream, found: &mut Vec<String>) {
             TokenTree::Ident(_) | TokenTree::Punct(_) => {}
         }
     }
+}
+
+/// #2620 review: a wire's error vocabulary lives beside its dialect. No
+/// production module of `transport/` spells any wire's error name, so none
+/// slides back into the shared readers.
+#[test]
+fn transport_spells_no_wire_error_name() {
+    let names = wire_error_names();
+    for expected in ["rate_limit_exceeded", "overloaded_error", "invalid_api_key"] {
+        assert!(
+            names.iter().any(|name| name == expected),
+            "{expected} in {names:?}"
+        );
+    }
+    let found: Vec<String> = dependency_scan::mounted_under(&MODULE)
+        .iter()
+        .filter(|(_, _, test)| !test)
+        .flat_map(|(file, _, _)| {
+            let source = std::fs::read_to_string(file).expect("read a source");
+            let mut spelled = Vec::new();
+            literals(
+                syn::parse_file(&source)
+                    .expect("a source parses")
+                    .to_token_stream(),
+                &mut spelled,
+            );
+            spelled
+                .into_iter()
+                .filter(|literal| names.contains(literal))
+                .map(move |literal| format!("{}: {literal:?}", file.display()))
+        })
+        .collect();
+    assert!(
+        found.is_empty(),
+        "a wire's error name in transport/: {found:#?}"
+    );
 }
 
 /// The event names the wires declare: every string in each wire's
