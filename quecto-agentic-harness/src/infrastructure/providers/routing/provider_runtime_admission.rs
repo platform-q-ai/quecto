@@ -6,9 +6,9 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use super::provider_runtime::{AgentRuntimeInputs, compose_agent_provider_inner_outcome};
-use crate::application::ports::AttemptAdmission;
-use crate::application::ports::ProviderRuntimeFactory;
-use crate::application::ports::ProviderRuntimeOutcome;
+use crate::application::admission::ports::inference_attempt::AttemptAdmission;
+use crate::application::provider_runtime::ProviderRuntimeFactory;
+use crate::application::provider_runtime::dto::ProviderRuntimeOutcome;
 use crate::application::providers::ports::LlmProvider;
 use crate::domain::admission::value_objects::inference_admission::{AdmissionConfig, GroupPolicy};
 use crate::infrastructure::config::Config;

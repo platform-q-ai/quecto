@@ -28,7 +28,9 @@ pub struct AdmissionStateProbe {
 
 impl AdmissionStateProbe {
     pub fn new(
-        source: std::sync::Arc<dyn crate::application::ports::AdmissionObservation>,
+        source: std::sync::Arc<
+            dyn crate::application::admission::ports::inference_observation::AdmissionObservation,
+        >,
     ) -> Self {
         let mut execution = uds_execution_state::ExecutionState::default();
         execution.set_admission_source(source);

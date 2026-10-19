@@ -5,8 +5,9 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Instant, SystemTime};
 
-use crate::application::ports::{
-    AdmissionObservation, AttemptAcquisition, AttemptAdmission, AttemptPermit,
+use crate::application::{
+    admission::ports::inference_attempt::{AttemptAcquisition, AttemptAdmission, AttemptPermit},
+    admission::ports::inference_observation::AdmissionObservation,
 };
 use crate::domain::admission::value_objects::inference_admission::{
     AdmissionActivity, AdmissionPhase, AttemptObservation, CooldownState, Feedback, GroupActivity,

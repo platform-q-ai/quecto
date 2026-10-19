@@ -7,7 +7,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::sync::Arc;
 use std::time::Duration;
 
-use quecto::application::ports::AdmissionJournal;
+use quecto::application::admission::ports::inference_authority_ports::AdmissionJournal;
 use quecto::domain::admission::value_objects::inference_admission::*;
 use quecto::infrastructure::admission::{
     AdminConnection, AuthorityConnection, AuthorityDirectory, AuthorityServer, ClientError,

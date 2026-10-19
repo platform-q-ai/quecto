@@ -28,7 +28,10 @@ impl AgentSession {
         self.bump_visible_generation();
     }
 
-    pub fn observe_runtime(&mut self, store: crate::application::ports::RuntimeSnapshotStore) {
+    pub fn observe_runtime(
+        &mut self,
+        store: crate::application::provider_runtime::RuntimeSnapshotStore,
+    ) {
         self.runtime_store = Some(store);
         self.refresh_admission_warnings();
     }

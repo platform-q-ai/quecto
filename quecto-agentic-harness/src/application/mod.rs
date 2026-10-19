@@ -6,7 +6,6 @@ pub mod configuration;
 pub mod environments;
 pub mod extensions;
 pub mod external_agent;
-pub mod ports;
 pub mod project_board;
 pub mod provider_runtime;
 pub mod providers;

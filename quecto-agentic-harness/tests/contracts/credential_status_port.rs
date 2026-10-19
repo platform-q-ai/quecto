@@ -2,7 +2,7 @@
 //! port answers availability as a boolean only — credential material never
 //! crosses it.
 
-use quecto::application::ports::CredentialStatusPort;
+use quecto::application::catalogue::CredentialStatusPort;
 use quecto::domain::catalogue::entities::entry::{
     CatalogueEntry, ModelDescriptor, ProviderDescriptor,
 };

@@ -1,7 +1,7 @@
 use super::uds_admission_projection::{
     AdmissionSnapshot, AuthorityView, project, waiting_progress,
 };
-use crate::application::ports::AdmissionObservation;
+use crate::application::admission::ports::inference_observation::AdmissionObservation;
 use crate::domain::admission::value_objects::inference_admission::AdmissionActivity;
 use crate::domain::agents::value_objects::agent::AgentProgressEvent;
 use crate::domain::inference::events::request_completion::{AgentRequestCounters, RequestTally};

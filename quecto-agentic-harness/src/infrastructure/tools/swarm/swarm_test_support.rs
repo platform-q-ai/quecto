@@ -7,7 +7,7 @@ use std::{path::PathBuf, sync::Arc};
 pub fn tool(workspace: Arc<PathBuf>, board: super::swarm_bridge::SwarmBoard) -> SwarmTool {
     let context = SwarmContext {
         board,
-        lifecycle: std::sync::Arc::new(crate::application::ports::SwarmTestLifecycle),
+        lifecycle: std::sync::Arc::new(crate::application::swarm::LifecycleService),
         checkout: workspace.as_ref().clone(),
         member: "coordinator".into(),
     };
