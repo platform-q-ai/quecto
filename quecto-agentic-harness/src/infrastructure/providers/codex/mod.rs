@@ -511,6 +511,7 @@ impl CodexProvider {
             handler,
             attempt,
             idle,
+            &CODEX_WIRE,
         )
         .await;
     }
@@ -526,6 +527,7 @@ impl CodexProvider {
             &tx,
             &mut handler,
             Default::default(),
+            &CODEX_WIRE,
         )
         .await;
     }

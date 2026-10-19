@@ -389,12 +389,15 @@ impl AnthropicProvider {
 
         let full = match &attempt {
             Some(attempt) => attempt.read_sse(response, profile).await?,
-            None => idle.sse_text(response).await.map_err(|e| match e {
-                BodyError::Idle(silent) => DomainError::Provider(silent.to_string()),
-                BodyError::Read(e) => {
-                    DomainError::Provider(format!("failed to read stream: {}", e))
-                }
-            })?,
+            None => idle
+                .sse_text(response, &ANTHROPIC_WIRE)
+                .await
+                .map_err(|e| match e {
+                    BodyError::Idle(silent) => DomainError::Provider(silent.to_string()),
+                    BodyError::Read(e) => {
+                        DomainError::Provider(format!("failed to read stream: {}", e))
+                    }
+                })?,
         };
         let parsed = Self::parse_sse_reply(&full, params.tool_defs)
             .map_err(|cut| cut.account(trace.as_deref(), params.model));
@@ -569,6 +572,7 @@ impl AnthropicProvider {
             handler,
             attempt,
             idle,
+            &ANTHROPIC_WIRE,
         )
         .await;
     }

@@ -512,7 +512,15 @@ pub(in crate::infrastructure::providers) async fn stream<H: SseHandler>(
         let (local_tx, rx) = tokio::sync::mpsc::channel(1);
         let pump = async {
             let idle = profile.idle;
-            diagnostic_sse::pump_sse(&receipt, &mut response, &local_tx, &mut handler, idle).await;
+            diagnostic_sse::pump_sse(
+                &receipt,
+                &mut response,
+                &local_tx,
+                &mut handler,
+                idle,
+                profile.dialect,
+            )
+            .await;
             drop(local_tx);
         };
         let (_, terminal) = tokio::join!(pump, forward(rx, &output, &receipt));

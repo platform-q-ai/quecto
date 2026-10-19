@@ -135,3 +135,163 @@ fn an_openai_reply_ended_early_is_empty_or_cut_short() {
     assert_eq!(ended_early(false, cut_short), EMPTY_STREAM);
     assert_eq!(ended_early(true, cut_short), cut_short);
 }
+
+/// #2597: the chat wire knows only its own chunks: another wire's typed
+/// event is unknown and ends nothing, and another wire's shapes generate
+/// nothing.
+#[test]
+fn openai_knows_no_other_wires_events() {
+    for name in ["ping", "message_stop", "response.completed", "error"] {
+        let event = json!({"type": name});
+        assert!(!OPENAI_WIRE.known_event(name, &event), "{name}");
+        assert_eq!(OPENAI_WIRE.terminal_event(name, &event), None, "{name}");
+    }
+    for event in [
+        json!({"type": "content_block_delta", "delta": {"text": "t", "thinking": "h"}}),
+        json!({"type": "content_block_start", "content_block": {"type": "tool_use"}}),
+        json!({"type": "response.output_text.delta", "delta": "t"}),
+        json!({"type": "response.output_item.added", "item": {"type": "function_call"}}),
+    ] {
+        assert_eq!(
+            OPENAI_WIRE.generated(&event),
+            Generated::default(),
+            "{event}"
+        );
+    }
+    let chunk = json!({"choices": []});
+    assert!(OPENAI_WIRE.known_event("", &chunk));
+}
+
+/// What a chat chunk's first choice shows the model generated (#2151).
+#[test]
+fn an_openai_chunk_shows_text_tool_calls_and_reasoning() {
+    let only = |text, tool_call, thinking| Generated {
+        text,
+        tool_call,
+        thinking,
+    };
+    let chunk = |delta: serde_json::Value| json!({"choices": [{"index": 0, "delta": delta}]});
+    for (event, generated) in [
+        (chunk(json!({"content": "a"})), only(true, false, false)),
+        (chunk(json!({"content": ""})), only(false, false, false)),
+        (chunk(json!({"reasoning": "a"})), only(false, false, true)),
+        (
+            chunk(json!({"reasoning_content": "a"})),
+            only(false, false, true),
+        ),
+        (
+            chunk(json!({"tool_calls": [{"index": 0}]})),
+            only(false, true, false),
+        ),
+        (chunk(json!({"tool_calls": []})), only(false, false, false)),
+        (chunk(json!({"refusal": "no"})), only(false, false, false)),
+    ] {
+        assert_eq!(OPENAI_WIRE.generated(&event), generated, "{event}");
+    }
+}
+
+/// An error chunk (#2155, #2236) is this wire's only terminal event.
+#[test]
+fn an_openai_error_chunk_records_an_error() {
+    use crate::domain::inference::value_objects::attempt_diagnostics::TerminalEvent;
+    let chunk = json!({"error": {"message": "boom"}});
+    assert_eq!(
+        OPENAI_WIRE.terminal_event("", &chunk),
+        Some(TerminalEvent::Error)
+    );
+    let content = json!({"choices": [{"index": 0, "delta": {"content": "a"}}]});
+    assert_eq!(OPENAI_WIRE.terminal_event("", &content), None);
+}
+
+/// #2433: which chat chunks carry output (moved from `transport/` with the
+/// progress vocabulary, #2597).
+#[test]
+fn chat_chunks_carry_output_by_what_they_hold() {
+    let carries = |data: &str| {
+        crate::infrastructure::providers::transport::sse_progress::carries_output(
+            &OPENAI_WIRE,
+            data,
+        )
+    };
+    let chunk = |delta: &str, finish: &str| {
+        format!(r#"{{"choices":[{{"index":0,"delta":{delta},"finish_reason":{finish}}}]}}"#)
+    };
+    for (delta, finish) in [
+        (r#"{"content":"a"}"#, "null"),
+        (r#"{"reasoning_content":"hm"}"#, "null"),
+        (r#"{"reasoning":"hm"}"#, "null"),
+        (r#"{"refusal":"no"}"#, "null"),
+        (
+            r#"{"tool_calls":[{"index":0,"function":{"name":"f"}}]}"#,
+            "null",
+        ),
+        (
+            r#"{"tool_calls":[{"index":0,"function":{"arguments":"{"}}]}"#,
+            "null",
+        ),
+        ("{}", r#""stop""#),
+    ] {
+        assert!(carries(&chunk(delta, finish)), "{delta} {finish}");
+    }
+    assert!(carries("[DONE]"));
+    for (delta, finish) in [
+        (r#"{"content":""}"#, "null"),
+        (r#"{"role":"assistant"}"#, "null"),
+        (r#"{"tool_calls":[]}"#, "null"),
+        (r#"{"tool_calls":[{"index":0}]}"#, "null"),
+        (
+            r#"{"tool_calls":[{"index":0,"function":{"name":"","arguments":""}}]}"#,
+            "null",
+        ),
+        ("{}", "null"),
+    ] {
+        assert!(!carries(&chunk(delta, finish)), "{delta} {finish}");
+    }
+    for data in [
+        r#"{"choices":[]}"#,
+        r#"{"error":{"message":"boom"}}"#,
+        "{not json",
+        // Another wire's output is none of this wire's (#2597).
+        r#"{"type":"response.output_text.delta","delta":"a"}"#,
+        r#"{"type":"response.completed","response":{}}"#,
+        r#"{"type":"error","message":"x"}"#,
+        r#"{"type":"content_block_delta","delta":{"type":"text_delta","text":"a"}}"#,
+        r#"{"type":"message_stop"}"#,
+    ] {
+        assert!(!carries(data), "{data}");
+    }
+}
+
+/// #2433 review round 3 (N1): a chat chunk too long to read whole is output
+/// when it carries content or a tool call, though a `"type"` comes later
+/// inside its choices.
+#[test]
+fn a_long_chat_chunk_is_output_by_what_its_choices_carry() {
+    let long = |start: &[u8]| {
+        crate::infrastructure::providers::transport::sse_progress::long_event_carries_output(
+            &OPENAI_WIRE,
+            start,
+        )
+    };
+    let call = format!(
+        r#"{{"choices":[{{"index":0,"delta":{{"tool_calls":[{{"index":0,"id":"c","type":"function","function":{{"name":"f","arguments":"{}"#,
+        "x".repeat(70 * 1024)
+    );
+    assert!(long(&call.as_bytes()[..64 * 1024]));
+    assert!(long(br#"{"choices":[{"index":0,"delta":{"content":"xx"#));
+    assert!(long(
+        br#"{"choices":[{"index":0,"delta":{"reasoning_content":"xx"#
+    ));
+    let padded = r#"{"choices":[{"index":0,"delta":{"role":"assistant","padding":"xxx"#;
+    assert!(!long(padded.as_bytes()));
+    assert!(!long(br#"{"padding":"xx"#));
+    assert!(!long(b""));
+    // Another wire's long event is none of this wire's (#2597).
+    assert!(!long(
+        br#"{"type":"response.output_text.delta","delta":"xxxx"#
+    ));
+    assert!(!long(
+        br#"{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"xx"#
+    ));
+    assert!(!long(br#"{"type":"x","content":"xx","choices":[{"xx"#));
+}

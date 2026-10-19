@@ -210,6 +210,7 @@ pub(in crate::infrastructure::providers) async fn pump_observed<H: SseHandler>(
     inner: H,
     attempt: Option<PassiveAttempt>,
     idle: super::super::stream_idle::StreamIdle,
+    wire: &'static dyn WireDialect,
 ) {
     match attempt {
         Some(attempt) => {
@@ -218,11 +219,11 @@ pub(in crate::infrastructure::providers) async fn pump_observed<H: SseHandler>(
                 inner,
                 attempt: Some(attempt),
             };
-            super::diagnostic_sse::pump_sse(&receipt, response, tx, &mut handler, idle).await;
+            super::diagnostic_sse::pump_sse(&receipt, response, tx, &mut handler, idle, wire).await;
         }
         None => {
             let mut inner = inner;
-            super::super::sse_common::pump_sse(response, tx, &mut inner, idle).await;
+            super::super::sse_common::pump_sse(response, tx, &mut inner, idle, wire).await;
         }
     }
 }

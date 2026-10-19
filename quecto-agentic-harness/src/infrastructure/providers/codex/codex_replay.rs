@@ -211,12 +211,15 @@ impl CodexProvider {
         }
         let raw = match &attempt {
             Some(attempt) => attempt.read_sse(resp, profile).await?,
-            None => idle.sse_text(resp).await.map_err(|e| match e {
-                BodyError::Idle(silent) => DomainError::Provider(silent.to_string()),
-                BodyError::Read(e) => {
-                    DomainError::Provider(format!("failed to read response: {e}"))
-                }
-            })?,
+            None => idle
+                .sse_text(resp, &CODEX_WIRE)
+                .await
+                .map_err(|e| match e {
+                    BodyError::Idle(silent) => DomainError::Provider(silent.to_string()),
+                    BodyError::Read(e) => {
+                        DomainError::Provider(format!("failed to read response: {e}"))
+                    }
+                })?,
         };
         let parsed = Self::parse_sse_reply(&raw)
             .map_err(|cut| cut.account(call.trace.as_deref(), &call.model));
