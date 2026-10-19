@@ -1,23 +1,40 @@
-//! Provider refresh wiring (#1849 PR 1, moved out of `interface::shared`):
-//! the [`RefreshFn`] that rotates an expired OAuth credential through the
-//! kernel's OAuth endpoints and the [`ProviderFactory`] that rebuilds a
-//! concrete provider around the fresh token. Both are handed to the runtime
-//! composition; neither is constructed by the interface.
-//!
-//! [`RefreshFn`]: crate::infrastructure::providers::refreshable::RefreshFn
-//! [`ProviderFactory`]: crate::infrastructure::providers::refreshable::ProviderFactory
+//! OAuth refresh wiring (#1849 PR 1; folded into `infrastructure::auth` by
+//! #1839): the [`RefreshFn`] that rotates an expired OAuth credential
+//! through the kernel's OAuth endpoints, persists it, and pushes the
+//! refreshed store to the runtime manager. Handed to the runtime
+//! composition; the provider it serves is rebuilt by
+//! `infrastructure::providers::provider_factory`. Dependencies run one
+//! way: the providers' refresh decorator names this module, never the
+//! reverse.
 
+use std::future::Future;
+use std::pin::Pin;
+use std::sync::Arc;
+
+use crate::domain::shared::error::DomainError;
+use crate::infrastructure::auth::credential_store::CredentialStore;
 use crate::infrastructure::auth::token_refresh::persist_refreshed_token;
 
-/// Build a [`RefreshFn`] for use with [`RefreshableProvider`].
+/// Async function that refreshes an OAuth token.
 ///
-/// [`RefreshableProvider`]: crate::infrastructure::providers::refreshable::RefreshableProvider
+/// Takes the credential store and provider name, returns the new access token.
+/// Responsible for persisting the refreshed credential in the store.
+pub type RefreshFn = Arc<
+    dyn Fn(
+            Arc<CredentialStore>,
+            &str,
+        ) -> Pin<Box<dyn Future<Output = Result<String, DomainError>> + Send>>
+        + Send
+        + Sync,
+>;
+
+/// Build a [`RefreshFn`] for the providers' refresh decorator
+/// (`RefreshableProvider`).
 ///
 /// The returned function reads the stored refresh token, calls the appropriate
 /// OAuth refresh endpoint, persists the new credential, and returns the new
 /// access token.
-pub fn make_oauth_refresh_fn() -> crate::infrastructure::providers::refreshable::RefreshFn {
-    use std::sync::Arc;
+pub fn make_oauth_refresh_fn() -> RefreshFn {
     Arc::new(|store, provider_name| {
         let provider_name = provider_name.to_string();
         let store = store.clone();
@@ -150,107 +167,6 @@ async fn push_credentials(
         request = request.bearer_auth(token);
     }
     request.send().await
-}
-
-/// Build a [`ProviderFactory`] that re-creates a provider with a new API key.
-///
-/// The factory knows the provider name and API base URL, and creates the
-/// correct provider type (Codex for OpenAI OAuth, standard otherwise).
-pub fn make_provider_factory(
-    provider_name: &str,
-    api_base: Option<String>,
-    http_client: reqwest::Client,
-) -> crate::infrastructure::providers::refreshable::ProviderFactory {
-    make_bounded_provider_factory(provider_name, api_base, Default::default(), http_client)
-}
-
-/// [`make_provider_factory`] for a provider configured with its own stream
-/// idle bounds (#2433 review), which every rebuilt provider keeps.
-pub fn make_bounded_provider_factory(
-    provider_name: &str,
-    api_base: Option<String>,
-    stream_idle: crate::infrastructure::providers::stream_idle::StreamIdle,
-    http_client: reqwest::Client,
-) -> crate::infrastructure::providers::refreshable::ProviderFactory {
-    use crate::infrastructure::providers;
-    use std::sync::Arc;
-
-    let name = provider_name.to_string();
-    let base = api_base;
-    let binding = move || providers::ProviderBinding {
-        admission: None,
-        stream_idle,
-    };
-    Arc::new(
-        move |new_token: &str| -> Arc<dyn crate::application::providers::ports::LlmProvider> {
-            if name == "openai" {
-                let account_id =
-                    crate::infrastructure::auth::oauth::extract_openai_account_id(new_token);
-                if let Some(acct) = account_id {
-                    // `base` was already validated when the original provider
-                    // was constructed; an invalid base cannot appear here, but
-                    // degrade to the hardwired ChatGPT backend rather than
-                    // panic inside the refresh path.
-                    match providers::create_codex_provider_with_client_and_admission(
-                        new_token.to_string(),
-                        acct.clone(),
-                        base.clone(),
-                        http_client.clone(),
-                        binding(),
-                    ) {
-                        Ok(p) => return p,
-                        Err(e) => {
-                            tracing::error!(
-                                error = %e,
-                                "invalid openai api_base at token refresh; using default backend"
-                            );
-                            return providers::create_codex_provider_with_client_and_admission(
-                                new_token.to_string(),
-                                acct,
-                                None,
-                                http_client.clone(),
-                                binding(),
-                            )
-                            .expect("default Codex backend is always valid");
-                        }
-                    }
-                }
-            }
-            match providers::create_provider_with_client_and_admission(
-                &name,
-                new_token.to_string(),
-                base.clone(),
-                http_client.clone(),
-                binding(),
-            ) {
-                Ok(p) => p,
-                Err(e) => {
-                    tracing::error!(
-                        provider = name.as_str(),
-                        error = %e,
-                        "failed to rebuild provider after token refresh"
-                    );
-                    // Return a provider that will fail — better than panicking
-                    providers::create_provider_with_client_and_admission(
-                        &name,
-                        new_token.to_string(),
-                        None,
-                        http_client.clone(),
-                        binding(),
-                    )
-                    .unwrap_or_else(|_| {
-                        Arc::new(
-                            crate::infrastructure::providers::openai::OpenAiProvider::new(
-                                new_token.to_string(),
-                                None,
-                            )
-                            .with_stream_idle(stream_idle),
-                        )
-                    })
-                }
-            }
-        },
-    )
 }
 
 #[cfg(test)]
