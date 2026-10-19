@@ -1,9 +1,9 @@
 //! AdmissionRecovery contract (#1679 P3 AC1/AC6): abandonment, quarantine,
 //! withdrawal, dispatch wake, durable ledger and operator epoch reset.
-use quecto::application::admission::services::inference_admission::AdmissionService;
-use quecto::application::admission::services::inference_admission::{
+use quecto::application::admission::ports::inference_admission::{
     AdmissionClient, AdmissionDispatcher, AdmissionRecovery, AdmissionRegistry,
 };
+use quecto::application::admission::services::inference_admission::AdmissionService;
 use quecto::domain::admission::value_objects::inference_admission::{
     AdmissionConfig, AdmissionError, Feedback, GroupId, GroupPolicy, RequestId, RequestState,
     ScopeId, TerminalOutcome, WorkloadClass,
