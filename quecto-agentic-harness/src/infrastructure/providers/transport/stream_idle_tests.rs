@@ -7,6 +7,7 @@ use crate::domain::inference::services::provider_error::{
 };
 use crate::domain::inference::value_objects::provider::StreamEvent;
 use crate::domain::shared::error::DomainError;
+use crate::infrastructure::providers::transport::wire_dialect::TEST_WIRE;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 /// The bound for a stream that goes silent: short, as only its expiry is
@@ -341,6 +342,7 @@ async fn the_shared_pump_ends_a_silent_stream_with_the_idle_error() {
         &tx,
         &mut handler,
         idle,
+        &TEST_WIRE,
     ))
     .await;
     drop(tx);
@@ -363,7 +365,7 @@ async fn the_shared_pump_reads_a_slow_stream_past_the_bound() {
     let (tx, mut rx) = tokio::sync::mpsc::channel(4);
     let mut handler = Lines::default();
     let idle = StreamIdle::new(bound);
-    super::super::sse_common::pump_sse(&mut response, &tx, &mut handler, idle).await;
+    super::super::sse_common::pump_sse(&mut response, &tx, &mut handler, idle, &TEST_WIRE).await;
     assert_eq!(handler.0, ["data: one"; 16]);
     assert!(matches!(rx.recv().await, Some(StreamEvent::TextDelta(e)) if e == "eof"));
     assert!(started.elapsed() > bound, "the total is not bounded");
@@ -400,8 +402,8 @@ async fn within_after(idle: &mut EventIdle, chunks: &[&str]) -> bool {
 async fn an_sse_bound_restarts_at_events_only() {
     let bound = StreamIdle::new(GAP * 3);
     // Keep-alives alone: comments, blank lines, other fields, empty chunks.
-    let keep_alives = [": keepalive\n", "\n", "", "event: ping\n", "\r\n", ": x"];
-    assert!(!within_after(&mut EventIdle::events(bound), &keep_alives).await);
+    let keep_alives = [": keepalive\n", "\n", "", "event: tick\n", "\r\n", ": x"];
+    assert!(!within_after(&mut EventIdle::events(bound, &TEST_WIRE), &keep_alives).await);
     // Each event restarts it, split across reads or not.
     let events = [
         "data: 1\n\n",
@@ -413,13 +415,13 @@ async fn an_sse_bound_restarts_at_events_only() {
         ": keepalive\n",
         ": keepalive\n",
     ];
-    assert!(within_after(&mut EventIdle::events(bound), &events).await);
+    assert!(within_after(&mut EventIdle::events(bound, &TEST_WIRE), &events).await);
     // `data` must open the line: inside a comment it is no event.
     let inside = [": data: 1\n", " data: 2\n", "\n", "x"];
-    assert!(!within_after(&mut EventIdle::events(bound), &inside).await);
+    assert!(!within_after(&mut EventIdle::events(bound, &TEST_WIRE), &inside).await);
     // A long event line still arriving is progress.
     let long = ["data: {", "\"a\":", "1", "}", "\n"];
-    assert!(within_after(&mut EventIdle::events(bound), &long).await);
+    assert!(within_after(&mut EventIdle::events(bound, &TEST_WIRE), &long).await);
     // Any other body: every read restarts it.
     assert!(within_after(&mut EventIdle::reads(bound), &keep_alives).await);
 }
@@ -427,7 +429,7 @@ async fn an_sse_bound_restarts_at_events_only() {
 /// The whole bound passes from the last event however the reads go on.
 #[tokio::test(start_paused = true)]
 async fn an_sse_bound_runs_from_the_last_event() {
-    let mut idle = EventIdle::events(StreamIdle::new(GAP * 3));
+    let mut idle = EventIdle::events(StreamIdle::new(GAP * 3), &TEST_WIRE);
     let started = tokio::time::Instant::now();
     assert!(within_after(&mut idle, &["data: 1\n", ": a\n", ": b\n"]).await);
     let pending = idle.next(std::future::pending::<Result<Option<&str>, ()>>());
@@ -443,7 +445,7 @@ async fn an_sse_bound_runs_from_the_last_event() {
 async fn a_whole_sse_body_that_only_keeps_alive_is_idle() {
     let url = servers::keeping_alive("data: one\n\n").await;
     let response = reqwest::Client::new().get(url).send().await.unwrap();
-    let read = bounded(StreamIdle::new(SILENT).sse_text(response)).await;
+    let read = bounded(StreamIdle::new(SILENT).sse_text(response, &TEST_WIRE)).await;
     assert!(
         matches!(read, Err(BodyError::Idle(idle)) if idle == Idle::no_event(SILENT)),
         "{read:?}"
@@ -456,7 +458,7 @@ async fn a_whole_sse_body_that_keeps_sending_events_is_read_past_the_bound() {
     let url = servers::trickling(&events).await;
     let started = std::time::Instant::now();
     let response = reqwest::Client::new().get(url).send().await.unwrap();
-    let read = bounded(StreamIdle::new(LIVE).sse_text(response)).await;
+    let read = bounded(StreamIdle::new(LIVE).sse_text(response, &TEST_WIRE)).await;
     assert_eq!(read.unwrap(), events.concat());
     assert!(started.elapsed() > LIVE, "the total is not bounded");
 }
@@ -473,7 +475,10 @@ async fn the_idle_errors_say_what_was_missing() {
     let never = || std::future::pending::<Result<Option<&str>, ()>>();
     let send = bound.within(never()).await.unwrap_err();
     assert_eq!(send.to_string(), nothing, "the send");
-    let sse = EventIdle::events(bound).next(never()).await.unwrap_err();
+    let sse = EventIdle::events(bound, &TEST_WIRE)
+        .next(never())
+        .await
+        .unwrap_err();
     assert_eq!(sse.to_string(), no_event, "an SSE body");
     let body = EventIdle::reads(bound).next(never()).await.unwrap_err();
     assert_eq!(body.to_string(), nothing, "an error body");
@@ -491,7 +496,7 @@ async fn the_idle_bound_and_the_parsers_agree_on_events() {
         " data: x",
         "\tdata: x",
         ": data: x",
-        "event: ping",
+        "event: tick",
         "id: 1",
         "",
         "dat",
@@ -500,7 +505,7 @@ async fn the_idle_bound_and_the_parsers_agree_on_events() {
         "data :x",
     ];
     for line in lines {
-        let mut idle = EventIdle::events(StreamIdle::new(GAP));
+        let mut idle = EventIdle::events(StreamIdle::new(GAP), &TEST_WIRE);
         tokio::time::sleep(GAP / 2).await;
         let read = idle
             .next(async { Ok::<_, ()>(Some(format!("{line}\n"))) })

@@ -451,7 +451,7 @@ fn arbitrary_root_code_without_error_envelope_is_not_throttle() {
 #[test]
 fn success_event_root_code_is_not_throttle() {
     assert!(!is_typed_throttle(&serde_json::json!({
-        "type": "response.output_text.delta", "code": "rate_limit_exceeded"
+        "type": "output", "code": "rate_limit_exceeded"
     })));
 }
 

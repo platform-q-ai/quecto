@@ -1,6 +1,7 @@
 //! #2597: what the attempt observer makes of the Responses (Codex) wire, pinned
 //! before attempt observation moved out of `transport/` into per-vendor
-//! strategies: every case must read exactly as it did.
+//! strategies: every case must read exactly as it did, but for the one row
+//! marked a declared change (#2597, M1: each wire knows only its own events).
 use crate::domain::inference::value_objects::attempt_diagnostics::Termination;
 use crate::infrastructure::providers::transport::attempt_profile::{Profile, Surface};
 use crate::infrastructure::providers::transport::attempt_transport::{observation, observed};
@@ -96,8 +97,11 @@ const CASES: &[(&str, &[&str], &str)] = &[
             r#"data: {"choices":[{"delta":{"content":"c"}}]}"#,
             r#"data: {"type":"message_stop"}"#,
         ],
-        r#"terminal=[false, false, false, false] failure=false hinted=false first_token=true
-{"attempt_number":0,"started_unix_ms":0,"finished_unix_ms":0,"elapsed_ms":0,"wire_status":null,"headers":[],"stop_reason":null,"terminal_event":"MessageStop","error_code":null,"incomplete_reason":null,"event_count":4,"generated_text":true,"generated_tool_call":false,"generated_thinking":false,"output_bytes":0,"oversized_lines":0,"parse_errors":0,"unknown_events":1,"event_types":{"(unknown)":1,"message_start":1,"message_stop":1,"ping":1},"termination":"Completed"}"#,
+        // Declared change (#2597, M1): the Responses wire knows only its own
+        // events, so another wire's events are unknown, generate nothing and
+        // end nothing.
+        r#"terminal=[false, false, false, false] failure=false hinted=false first_token=false
+{"attempt_number":0,"started_unix_ms":0,"finished_unix_ms":0,"elapsed_ms":0,"wire_status":null,"headers":[],"stop_reason":null,"terminal_event":null,"error_code":null,"incomplete_reason":null,"event_count":4,"generated_text":false,"generated_tool_call":false,"generated_thinking":false,"output_bytes":0,"oversized_lines":0,"parse_errors":0,"unknown_events":4,"event_types":{"(unknown)":4},"termination":"Dropped"}"#,
     ),
     (
         "malformed_and_event_lines",

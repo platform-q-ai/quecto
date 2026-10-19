@@ -162,15 +162,16 @@ pub trait SseHandler: Send {
 /// Lines are right-trimmed only (`\n`, `\r`), not fully trimmed, per the
 /// SSE specification. Providers that previously used `.trim()` are unaffected
 /// in practice since well-formed SSE servers do not emit leading whitespace.
-pub async fn pump_sse<H: SseHandler>(
+pub(in crate::infrastructure::providers) async fn pump_sse<H: SseHandler>(
     response: &mut reqwest::Response,
     tx: &tokio::sync::mpsc::Sender<StreamEvent>,
     handler: &mut H,
     idle: super::stream_idle::StreamIdle,
+    wire: &'static dyn super::wire_dialect::WireDialect,
 ) {
     let mut carry: Vec<u8> = Vec::new();
     // Bounded from the body's last event, not its last bytes (#2433).
-    let mut idle = super::stream_idle::EventIdle::events(idle);
+    let mut idle = super::stream_idle::EventIdle::events(idle, wire);
 
     loop {
         let bytes = match idle.next(response.chunk()).await {
@@ -302,7 +303,14 @@ mod pump_tests {
             done_on: None,
         };
 
-        pump_sse(&mut response, &tx, &mut handler, Default::default()).await;
+        pump_sse(
+            &mut response,
+            &tx,
+            &mut handler,
+            Default::default(),
+            &crate::infrastructure::providers::transport::wire_dialect::TEST_WIRE,
+        )
+        .await;
 
         assert_eq!(
             *lines.lock().unwrap(),
@@ -327,7 +335,14 @@ mod pump_tests {
             done_on: Some("stop".into()),
         };
 
-        pump_sse(&mut response, &tx, &mut handler, Default::default()).await;
+        pump_sse(
+            &mut response,
+            &tx,
+            &mut handler,
+            Default::default(),
+            &crate::infrastructure::providers::transport::wire_dialect::TEST_WIRE,
+        )
+        .await;
 
         assert_eq!(
             *lines.lock().unwrap(),
@@ -350,7 +365,14 @@ mod pump_tests {
         let (tx, mut rx) = tokio::sync::mpsc::channel(1);
         let mut handler = RecordingHandler::default();
 
-        pump_sse(&mut response, &tx, &mut handler, Default::default()).await;
+        pump_sse(
+            &mut response,
+            &tx,
+            &mut handler,
+            Default::default(),
+            &crate::infrastructure::providers::transport::wire_dialect::TEST_WIRE,
+        )
+        .await;
 
         assert!(
             matches!(rx.recv().await, Some(StreamEvent::Error(message)) if message.contains("exceeds"))
@@ -375,7 +397,14 @@ mod pump_tests {
             done_on: None,
         };
 
-        pump_sse(&mut response, &tx, &mut handler, Default::default()).await;
+        pump_sse(
+            &mut response,
+            &tx,
+            &mut handler,
+            Default::default(),
+            &crate::infrastructure::providers::transport::wire_dialect::TEST_WIRE,
+        )
+        .await;
 
         assert_eq!(lines.lock().unwrap().len(), 3);
         assert!(matches!(rx.recv().await, Some(StreamEvent::TextDelta(eof)) if eof == "eof"));
@@ -394,7 +423,14 @@ mod pump_tests {
             done_on: None,
         };
 
-        pump_sse(&mut response, &tx, &mut handler, Default::default()).await;
+        pump_sse(
+            &mut response,
+            &tx,
+            &mut handler,
+            Default::default(),
+            &crate::infrastructure::providers::transport::wire_dialect::TEST_WIRE,
+        )
+        .await;
 
         assert_eq!(*lines.lock().unwrap(), vec!["ok".to_string()]);
         assert!(
@@ -420,7 +456,14 @@ mod pump_tests {
             done_on: None,
         };
 
-        pump_sse(&mut response, &tx, &mut handler, Default::default()).await;
+        pump_sse(
+            &mut response,
+            &tx,
+            &mut handler,
+            Default::default(),
+            &crate::infrastructure::providers::transport::wire_dialect::TEST_WIRE,
+        )
+        .await;
 
         assert_eq!(*lines.lock().unwrap(), vec!["ok".to_string()]);
         assert!(matches!(rx.recv().await, Some(StreamEvent::TextDelta(text)) if text == "eof"));
@@ -483,7 +526,14 @@ mod pump_w5_cov_tests {
             lines: lines.clone(),
         };
 
-        pump_sse(&mut response, &tx, &mut handler, Default::default()).await;
+        pump_sse(
+            &mut response,
+            &tx,
+            &mut handler,
+            Default::default(),
+            &crate::infrastructure::providers::transport::wire_dialect::TEST_WIRE,
+        )
+        .await;
 
         assert_eq!(
             *lines.lock().expect("lines mutex is not poisoned"),

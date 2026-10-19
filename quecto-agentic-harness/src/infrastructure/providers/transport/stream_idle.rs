@@ -25,6 +25,8 @@
 use std::future::Future;
 use std::time::Duration;
 
+use super::wire_dialect::WireDialect;
+
 use crate::domain::inference::services::provider_error::{
     REPLY_TIMEOUT, STREAM_IDLE_TIMEOUT, STREAM_PROGRESS_TIMEOUT,
 };
@@ -249,10 +251,14 @@ impl StreamIdle {
         read_whole(response, EventIdle::reads(self)).await
     }
 
-    /// Read a whole SSE body as text, bounded from its last event
+    /// Read a whole SSE body of `wire` as text, bounded from its last event
     /// ([`EventIdle`], #2433): a body that only keeps alive is idle.
-    pub async fn sse_text(self, response: reqwest::Response) -> Result<String, BodyError> {
-        read_whole(response, EventIdle::events(self)).await
+    pub(in crate::infrastructure::providers) async fn sse_text(
+        self,
+        response: reqwest::Response,
+        wire: &'static dyn WireDialect,
+    ) -> Result<String, BodyError> {
+        read_whole(response, EventIdle::events(self, wire)).await
     }
 }
 
@@ -323,6 +329,8 @@ struct Progress {
     /// Whether that line ran past the cap: then the type its kept start
     /// names decides whether it carried output.
     long: bool,
+    /// The wire whose events say whether they carried output (#2597).
+    wire: &'static dyn WireDialect,
 }
 
 /// The longest event data the progress bound reads to classify: past it,
@@ -342,9 +350,13 @@ enum Line {
 }
 
 impl EventIdle {
-    /// The bound of an SSE body starting now: restarted by its events.
-    pub fn events(bound: StreamIdle) -> Self {
-        Self::starting(bound, Some(Line::Opening(0)))
+    /// The bound of an SSE body of `wire` starting now: restarted by its
+    /// events, and its progress bound by those `wire` says carry output.
+    pub(in crate::infrastructure::providers) fn events(
+        bound: StreamIdle,
+        wire: &'static dyn WireDialect,
+    ) -> Self {
+        Self::starting(bound, Some((Line::Opening(0), wire)))
     }
 
     /// The bound of any other body starting now: restarted by every read.
@@ -352,9 +364,10 @@ impl EventIdle {
         Self::starting(bound, None)
     }
 
-    fn starting(bound: StreamIdle, line: Option<Line>) -> Self {
+    fn starting(bound: StreamIdle, sse: Option<(Line, &'static dyn WireDialect)>) -> Self {
         let now = tokio::time::Instant::now();
-        let progress = line.map(|_| Progress {
+        let line = sse.map(|(line, _)| line);
+        let progress = sse.map(|(_, wire)| Progress {
             bound: bound.progress,
             deadline: now + bound.progress,
             since: now,
@@ -362,6 +375,7 @@ impl EventIdle {
             last_event: None,
             data: Vec::new(),
             long: false,
+            wire,
         });
         Self {
             bound: bound.idle,
@@ -482,10 +496,10 @@ impl Progress {
             (Line::Event, Line::Event) => self.long = true,
             (Line::Event, _) => {
                 let output = match self.long {
-                    true => super::sse_progress::long_event_carries_output(&self.data),
+                    true => super::sse_progress::long_event_carries_output(self.wire, &self.data),
                     false => {
                         let data = String::from_utf8_lossy(&self.data);
-                        super::sse_progress::carries_output(data.trim_end())
+                        super::sse_progress::carries_output(self.wire, data.trim_end())
                     }
                 };
                 self.data.clear();

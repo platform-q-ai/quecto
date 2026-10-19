@@ -1,18 +1,20 @@
 //! #2433: a reply that keeps sending events but no output is abandoned at
 //! the stream progress bound; one whose model keeps reasoning is not. The
-//! reported stall was ~11 recognised Responses events a second for 15
-//! minutes with no output. A paused clock stands in for the minutes.
+//! reported stall was ~11 recognised events a second for 15 minutes with no
+//! output. A paused clock stands in for the minutes; the events are the
+//! test wire's (#2597: which events of a vendor's wire carry output is
+//! that vendor's dialect's, tested beside it).
 use super::*;
 use crate::domain::inference::services::provider_error::{
     ProviderErrorClass, classify_provider_error,
 };
 use crate::domain::shared::error::DomainError;
+use crate::infrastructure::providers::transport::wire_dialect::TEST_WIRE;
 
-/// An event of the Responses wire that carries no output.
-const NO_OUTPUT: &str = "data: {\"type\":\"response.in_progress\",\"response\":{}}\n\n";
-/// A reasoning summary delta: output, though not visible text.
-const REASONING: &str =
-    "data: {\"type\":\"response.reasoning_summary_text.delta\",\"delta\":\"thinking\"}\n\n";
+/// An event that carries no output.
+const NO_OUTPUT: &str = "data: {\"type\":\"working\",\"progress\":{}}\n\n";
+/// An event that carries output: reasoning, say, though not visible text.
+const REASONING: &str = "data: {\"type\":\"output\",\"text\":\"thinking\"}\n\n";
 /// The progress bound when none is configured.
 const PROGRESS: Duration = Duration::from_secs(300);
 
@@ -50,7 +52,7 @@ async fn feed(
 #[tokio::test(start_paused = true)]
 async fn events_without_output_end_at_the_progress_bound_as_a_stall() {
     // An idle bound far past the progress bound: only progress can end it.
-    let mut idle = EventIdle::events(StreamIdle::new(Duration::from_secs(1800)));
+    let mut idle = EventIdle::events(StreamIdle::new(Duration::from_secs(1800)), &TEST_WIRE);
     let ended = feed(&mut idle, None, Duration::from_secs(600)).await;
     let (at, stalled) = ended.expect("a reply with no output was abandoned");
     assert_eq!(at, PROGRESS, "at the progress bound from the body's start");
@@ -70,7 +72,7 @@ async fn events_without_output_end_at_the_progress_bound_as_a_stall() {
 
 #[tokio::test(start_paused = true)]
 async fn a_reasoning_delta_every_thirty_seconds_keeps_a_reply_going_for_ten_minutes() {
-    let mut idle = EventIdle::events(StreamIdle::default());
+    let mut idle = EventIdle::events(StreamIdle::default(), &TEST_WIRE);
     let every = Some(Duration::from_secs(30));
     let ended = feed(&mut idle, every, Duration::from_secs(600)).await;
     assert!(ended.is_none(), "{ended:?}");
@@ -102,14 +104,15 @@ async fn every(
     None
 }
 
-const PING: &str = "event: ping\ndata: {\"type\":\"ping\"}\n\n";
+/// A keep-alive event a reply sends while it thinks, carrying no output.
+const PING: &str = "event: tick\ndata: {\"type\":\"working\"}\n\n";
 
 /// #2433 review round 3 (L1, L2): pings are events, so they restart the
 /// idle bound, and 200 of them would take 50 minutes; the backstop ends a
 /// ping-only think at three times the progress limit, 900 s, not 3000 s.
 #[tokio::test(start_paused = true)]
 async fn pings_every_fifteen_seconds_are_cut_by_the_backstop_at_fifteen_minutes() {
-    let mut idle = EventIdle::events(StreamIdle::default());
+    let mut idle = EventIdle::events(StreamIdle::default(), &TEST_WIRE);
     let ended = every(
         &mut idle,
         Duration::from_secs(15),
@@ -127,7 +130,7 @@ async fn pings_every_fifteen_seconds_are_cut_by_the_backstop_at_fifteen_minutes(
 /// tripping the idle bound or the event count — is cut by the backstop.
 #[tokio::test(start_paused = true)]
 async fn an_event_every_299_seconds_is_cut_by_the_backstop() {
-    let mut idle = EventIdle::events(StreamIdle::default());
+    let mut idle = EventIdle::events(StreamIdle::default(), &TEST_WIRE);
     let ended = every(
         &mut idle,
         Duration::from_secs(299),
@@ -152,7 +155,7 @@ async fn an_event_every_299_seconds_is_cut_by_the_backstop() {
 /// cuts it then, named as the progress limit.
 #[tokio::test(start_paused = true)]
 async fn half_an_event_a_second_is_cut_by_the_count_at_400_seconds() {
-    let mut idle = EventIdle::events(StreamIdle::default());
+    let mut idle = EventIdle::events(StreamIdle::default(), &TEST_WIRE);
     let ended = every(
         &mut idle,
         Duration::from_secs(2),
@@ -171,7 +174,7 @@ async fn half_an_event_a_second_is_cut_by_the_count_at_400_seconds() {
 async fn silence_is_still_the_idle_bounds() {
     let idle_limit = Duration::from_secs(1800);
     for first in [REASONING, NO_OUTPUT] {
-        let mut idle = EventIdle::events(StreamIdle::new(idle_limit));
+        let mut idle = EventIdle::events(StreamIdle::new(idle_limit), &TEST_WIRE);
         let started = tokio::time::Instant::now();
         read_after(&mut idle, Duration::ZERO, first).await.unwrap();
         let silent = idle.next(std::future::pending::<Result<Option<&str>, ()>>());
@@ -184,16 +187,16 @@ async fn silence_is_still_the_idle_bounds() {
     }
 }
 
-/// #2433 review H2: a Codex think silent after its opening events is the
-/// idle bound's alone: with the idle limit raised to 1800 s, a 600 s
-/// silence is not cut.
+/// #2433 review H2: a think silent after its opening events is the idle
+/// bound's alone: with the idle limit raised to 1800 s, a 600 s silence is
+/// not cut.
 #[tokio::test(start_paused = true)]
 async fn a_silent_think_after_the_opening_events_is_governed_by_idle_only() {
-    let mut idle = EventIdle::events(StreamIdle::new(Duration::from_secs(1800)));
+    let mut idle = EventIdle::events(StreamIdle::new(Duration::from_secs(1800)), &TEST_WIRE);
     for opening in [
-        "data: {\"type\":\"response.created\",\"response\":{}}\n\n",
-        "data: {\"type\":\"response.in_progress\",\"response\":{}}\n\n",
-        "data: {\"type\":\"response.output_item.added\",\"item\":{\"type\":\"reasoning\",\"summary\":[]}}\n\n",
+        "data: {\"type\":\"working\",\"progress\":{}}\n\n",
+        "data: {\"type\":\"working\",\"progress\":{\"step\":1}}\n\n",
+        "data: {\"type\":\"working\",\"item\":{\"type\":\"reasoning\",\"summary\":[]}}\n\n",
     ] {
         read_after(&mut idle, Duration::from_millis(50), opening)
             .await
@@ -208,7 +211,7 @@ async fn a_silent_think_after_the_opening_events_is_governed_by_idle_only() {
 #[tokio::test(start_paused = true)]
 async fn output_then_silence_ends_as_idle_at_the_idle_bound() {
     let bounds = StreamIdle::new(Duration::from_secs(300)).with_progress(Duration::from_secs(60));
-    let mut idle = EventIdle::events(bounds);
+    let mut idle = EventIdle::events(bounds, &TEST_WIRE);
     let started = tokio::time::Instant::now();
     read_after(&mut idle, Duration::ZERO, REASONING)
         .await
@@ -227,16 +230,15 @@ fn long_event(kind: &str, field: &str, bytes: usize) -> &'static str {
 }
 
 /// #2433 review M4: an event too long to read whole is output only when
-/// the type its start names is a delta or a finished part: a 70 KiB
-/// `response.in_progress` ten times a second is cut by progress; a 70 KiB
-/// text delta is not.
+/// its wire says its start names output: a 70 KiB event of no output ten
+/// times a second is cut by progress; a 70 KiB output event is not.
 #[tokio::test(start_paused = true)]
 async fn a_long_event_is_output_only_by_its_type() {
     let progress = Duration::from_secs(60);
     let bounds = StreamIdle::new(Duration::from_secs(1800)).with_progress(progress);
     let tick = Duration::from_millis(100);
-    let in_progress = long_event("response.in_progress", "padding", 70 * 1024);
-    let mut idle = EventIdle::events(bounds);
+    let in_progress = long_event("working", "padding", 70 * 1024);
+    let mut idle = EventIdle::events(bounds, &TEST_WIRE);
     let started = tokio::time::Instant::now();
     let ended = loop {
         if let Err(stalled) = read_after(&mut idle, tick, in_progress).await {
@@ -246,8 +248,8 @@ async fn a_long_event_is_output_only_by_its_type() {
     };
     assert_eq!(started.elapsed(), progress);
     assert_eq!(ended, Idle::no_output(progress));
-    let delta = long_event("response.output_text.delta", "delta", 70 * 1024);
-    let mut idle = EventIdle::events(bounds);
+    let delta = long_event("output", "text", 70 * 1024);
+    let mut idle = EventIdle::events(bounds, &TEST_WIRE);
     for _ in 0..(progress.as_secs() * 15) {
         read_after(&mut idle, tick, delta).await.unwrap();
     }
