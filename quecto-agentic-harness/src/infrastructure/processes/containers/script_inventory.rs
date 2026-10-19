@@ -12,7 +12,7 @@ use std::time::Duration;
 use crate::application::environments::dto::{
     DiagnosableContainerConfig, EnvironmentLiveness, EnvironmentStateDir, RuntimeContainer,
 };
-use crate::application::environments::ports::ContainerRuntimeInventory;
+use crate::application::environments::ports::container::ContainerRuntimeInventory;
 
 use super::environment_process::liveness_from_inspect_status;
 use super::retained_scripts::{

@@ -14,7 +14,7 @@
 use crate::domain::environments::entities::environment_registry::EnvironmentRecord;
 
 use super::super::dto::{EnvironmentLiveness, StateOnDisk};
-use super::super::ports::EnvironmentProcess;
+use crate::application::environments::ports::process::EnvironmentProcess;
 
 /// How long, in milliseconds, one restore or collection spends inspecting
 /// stopped records (one inspect started within it may run to its bound).

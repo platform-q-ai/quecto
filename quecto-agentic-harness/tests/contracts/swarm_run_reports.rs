@@ -8,7 +8,7 @@
 use std::sync::Arc;
 
 use quecto::application::environments::dto::SwarmBoardSnapshot;
-use quecto::application::environments::ports::EndedSwarmBoards;
+use quecto::application::environments::ports::hosted_swarm::EndedSwarmBoards;
 use quecto::application::project_board::dto::{SwarmEnd, SwarmItemState};
 use quecto::application::project_board::ports::SwarmRunReports;
 use quecto::domain::project_board::value_objects::slug::Slug;

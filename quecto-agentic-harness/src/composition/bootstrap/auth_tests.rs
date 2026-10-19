@@ -49,3 +49,20 @@ fn the_status_reads_the_base_directorys_credentials() {
         crate::domain::auth::credential::CredentialState::Active
     );
 }
+
+#[test]
+fn the_logout_removes_from_the_base_directorys_credentials() {
+    let base = tempfile::TempDir::new().unwrap();
+    let handles = build_auth_handles(&environment(base.path()));
+    handles.token_login.execute("openai", "fake-token").unwrap();
+    assert_eq!(
+        handles.logout.execute("openai"),
+        Ok(crate::application::auth::dto::Removal::Removed)
+    );
+    assert!(
+        CredentialStore::new(base.path())
+            .get("openai")
+            .unwrap()
+            .is_none()
+    );
+}

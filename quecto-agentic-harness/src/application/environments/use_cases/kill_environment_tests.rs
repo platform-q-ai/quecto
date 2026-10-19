@@ -6,8 +6,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use crate::application::environments::ports::{
-    EnvironmentMemberShutdown, EnvironmentProcessCommands, MemberShutdownReport,
-    MemberShutdownResult, PortFuture, SettledMember, UnsettledMember,
+    PortFuture, process::EnvironmentMemberShutdown, process::EnvironmentProcessCommands,
+    process::MemberShutdownReport, process::MemberShutdownResult, process::SettledMember,
+    process::UnsettledMember,
 };
 use crate::application::environments::use_cases::{KillEnvironment, KillEnvironmentError};
 use crate::domain::environments::entities::environment_registry::{

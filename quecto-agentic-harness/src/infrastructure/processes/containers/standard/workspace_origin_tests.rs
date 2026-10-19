@@ -1,5 +1,5 @@
 use super::GitWorkspaceOrigin;
-use crate::application::environments::ports::WorkspaceOrigin;
+use crate::application::environments::ports::container::WorkspaceOrigin;
 
 fn git(dir: &std::path::Path, args: &[&str]) {
     let status = std::process::Command::new("git")

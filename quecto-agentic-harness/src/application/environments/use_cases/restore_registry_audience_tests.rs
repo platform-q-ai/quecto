@@ -6,12 +6,12 @@
 use std::sync::{Arc, Mutex};
 
 use super::super::dto::{EnvironmentLiveness, OvertakenAudience, RestoreMode, RestoredRegistry};
-use super::super::ports::EnvironmentProcess;
 use super::restore_registry_tests::{
     FakeHosted, FakeStore, failing_store_with, process, process_with_disk, record, store_with,
 };
 use super::{RestoreRegistry, unfinished_run_reason};
 use crate::application::environments::dto::StateOnDisk;
+use crate::application::environments::ports::process::EnvironmentProcess;
 use crate::domain::environments::entities::environment_registry::{
     EnvironmentStatus, GONE_AT_RESTORE,
 };

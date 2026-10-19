@@ -7,10 +7,10 @@
 use crate::application::environments::dto::{
     EnvironmentLiveness, HostedBoardRevision, SwarmBoardSnapshot,
 };
-use crate::application::environments::ports::EnvironmentProcess;
+use crate::application::environments::ports::process::EnvironmentProcess;
 use crate::application::environments::ports::{
-    EnvironmentProcessCommands, HostedSwarmBoard, HostedSwarmRunInspection,
-    HostedSwarmRunObservation, PortFuture,
+    PortFuture, hosted_swarm::HostedSwarmBoard, hosted_swarm::HostedSwarmRunInspection,
+    hosted_swarm::HostedSwarmRunObservation, process::EnvironmentProcessCommands,
 };
 use crate::domain::environments::entities::environment_registry::EnvironmentRecord;
 use crate::domain::environments::services::environment_retention::{

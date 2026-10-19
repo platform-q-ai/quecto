@@ -71,14 +71,6 @@ Feature: Authentication
     When I remove the credential for "openai"
     Then the credential for "openai" should not exist
 
-  Scenario: Remove all credentials
-    Given a credential store
-    And a stored credential for "openai" with method "token"
-    And a stored credential for "anthropic" with method "token"
-    When I remove all credentials
-    Then the credential for "openai" should not exist
-    And the credential for "anthropic" should not exist
-
   # --- CLI auth commands ---
 
   Scenario: CLI auth login stores a pasted token for OpenAI

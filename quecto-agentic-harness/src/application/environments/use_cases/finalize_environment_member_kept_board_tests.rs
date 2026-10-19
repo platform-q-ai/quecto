@@ -10,7 +10,9 @@ use super::finalize_environment_member_retention_tests::{
 };
 use super::finalize_environment_member_tests::{block_on, committed_env};
 use crate::application::environments::dto::{HostedBoardRevision, SwarmBoardSnapshot};
-use crate::application::environments::ports::{EndedSwarmBoards, HostedSwarmBoard, PortFuture};
+use crate::application::environments::ports::{
+    PortFuture, hosted_swarm::EndedSwarmBoards, hosted_swarm::HostedSwarmBoard,
+};
 use crate::domain::environments::entities::environment_registry::{
     EnvironmentRecord, EnvironmentRegistry,
 };

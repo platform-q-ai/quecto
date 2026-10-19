@@ -1,9 +1,14 @@
-//! Contract for the auth capability's `CredentialStorePort` (#1839, #1842)
+//! Contract for the auth capability's `CredentialStorePort` (#1839, #1841,
+//! #1842)
 //! over `credentials.json`: a store makes the credential its provider's one
 //! credential, leaves every other provider's untouched, keeps the file's
 //! format and owner-only mode, and refuses — changing nothing — when the
 //! file cannot be read; a listing returns every stored credential whole,
-//! writes nothing, and refuses an unreadable file.
+//! writes nothing, and refuses an unreadable file; a removal takes its
+//! provider's credential alone, says whether there was one, waits for the
+//! cross-process credentials lock (#1460) so no concurrent write is lost,
+//! keeps the file owner-only, and refuses — changing nothing — when the
+//! file cannot be read.
 use std::sync::Arc;
 
 use tempfile::TempDir;
@@ -210,4 +215,175 @@ fn an_unreadable_store_cannot_be_listed() {
         refused.0.contains("failed to parse credentials"),
         "{refused}"
     );
+}
+
+#[test]
+fn a_removal_takes_its_providers_credential_alone() {
+    let base = TempDir::new().unwrap();
+    let store = under_test(&base);
+    store.store(oauth("openai", "fake-o")).unwrap();
+    store.store(oauth("anthropic", "fake-a")).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(
+            base.path().join("credentials.json"),
+            std::fs::Permissions::from_mode(0o644),
+        )
+        .unwrap();
+    }
+    assert!(store.remove("openai").unwrap());
+    let left = store.list().unwrap();
+    assert_eq!(left.len(), 1);
+    let kept = &left[0];
+    assert_eq!(kept.provider, "anthropic");
+    assert_eq!(kept.token, "fake-a");
+    assert_eq!(kept.method, AuthMethod::OAuth);
+    assert_eq!(kept.expires_at, Some(1_700_000_000));
+    assert_eq!(
+        kept.refresh_token.as_deref(),
+        Some("fake-refresh-anthropic")
+    );
+    assert_eq!(kept.account_id.as_deref(), Some("acct-fake"));
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(base.path().join("credentials.json"))
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(
+            mode & 0o777,
+            0o600,
+            "a removal rewrites the file owner-only"
+        );
+    }
+    assert!(!store.remove("openai").unwrap(), "nothing left to remove");
+}
+
+#[test]
+fn removing_from_an_empty_store_removes_nothing_and_leaves_an_empty_store() {
+    let base = TempDir::new().unwrap();
+    assert!(!under_test(&base).remove("openai").unwrap());
+    // What the port documents a not-stored removal writes: an empty store
+    // (and its lock file) where there was none.
+    assert_eq!(
+        std::fs::read_to_string(base.path().join("credentials.json")).unwrap(),
+        "{\n  \"credentials\": {}\n}"
+    );
+    assert!(base.path().join("credentials.json.lock").exists());
+}
+
+#[test]
+fn a_removal_waits_for_the_credentials_lock() {
+    let base = TempDir::new().unwrap();
+    let store = under_test(&base);
+    store.store(token("openai", "fake-o")).unwrap();
+    // Another process's load-mutate-store cycle holds the lock.
+    let held = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(base.path().join("credentials.json.lock"))
+        .unwrap();
+    held.lock().unwrap();
+    let (done, removed) = std::sync::mpsc::channel();
+    let remover = {
+        let store = Arc::clone(&store);
+        std::thread::spawn(move || done.send(store.remove("openai")).unwrap())
+    };
+    assert!(
+        removed
+            .recv_timeout(std::time::Duration::from_millis(300))
+            .is_err(),
+        "a removal must wait for the lock another locker holds"
+    );
+    // While the lock is held the file is untouched.
+    assert_eq!(
+        CredentialStore::new(base.path())
+            .get("openai")
+            .unwrap()
+            .map(|credential| credential.token),
+        Some("fake-o".to_string())
+    );
+    // The holder's own write, as a concurrent refresh would make it: the
+    // removal must read the store only once it holds the lock, so this
+    // write survives it.
+    std::fs::write(
+        base.path().join("credentials.json"),
+        serde_json::json!({"credentials": {
+            "openai": {"provider": "openai", "token": "fake-o", "method": "token", "expires_at": null},
+            "anthropic": {"provider": "anthropic", "token": "fake-rotated", "method": "oauth", "expires_at": null, "refresh_token": "fake-refresh-rotated"},
+        }})
+        .to_string(),
+    )
+    .unwrap();
+    held.unlock().unwrap();
+    drop(held);
+    assert_eq!(removed.recv().unwrap(), Ok(true));
+    remover.join().unwrap();
+    let left = store.list().unwrap();
+    assert_eq!(left.len(), 1, "the holder's write survives: {left:?}");
+    assert_eq!(left[0].provider, "anthropic");
+    assert_eq!(left[0].token, "fake-rotated");
+    assert_eq!(
+        left[0].refresh_token.as_deref(),
+        Some("fake-refresh-rotated")
+    );
+}
+
+#[test]
+fn concurrent_stores_and_a_removal_lose_nothing() {
+    let base = TempDir::new().unwrap();
+    let store = under_test(&base);
+    store.store(token("victim", "fake-v")).unwrap();
+    // All nine start together, so their cycles overlap.
+    let start = Arc::new(std::sync::Barrier::new(9));
+    let writers: Vec<_> = (0..8)
+        .map(|n| {
+            let store = Arc::clone(&store);
+            let start = Arc::clone(&start);
+            std::thread::spawn(move || {
+                start.wait();
+                store.store(token(&format!("p{n}"), "fake-p")).unwrap()
+            })
+        })
+        .chain(std::iter::once({
+            let store = Arc::clone(&store);
+            let start = Arc::clone(&start);
+            std::thread::spawn(move || {
+                start.wait();
+                assert!(store.remove("victim").unwrap())
+            })
+        }))
+        .collect();
+    for writer in writers {
+        writer.join().unwrap();
+    }
+    let mut providers: Vec<_> = store
+        .list()
+        .unwrap()
+        .into_iter()
+        .map(|credential| credential.provider)
+        .collect();
+    providers.sort();
+    assert_eq!(
+        providers,
+        (0..8).map(|n| format!("p{n}")).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn an_unreadable_store_refuses_a_removal_and_changes_nothing() {
+    let base = TempDir::new().unwrap();
+    let path = base.path().join("credentials.json");
+    std::fs::write(&path, "{ not json ").unwrap();
+    let refused = under_test(&base)
+        .remove("openai")
+        .expect_err("a corrupt store refuses");
+    assert!(
+        refused.0.contains("failed to parse credentials"),
+        "{refused}"
+    );
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "{ not json ");
 }

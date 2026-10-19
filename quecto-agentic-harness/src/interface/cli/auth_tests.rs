@@ -97,6 +97,7 @@ fn test_auth_logout_removes_credential() {
     let tmp = tempfile::TempDir::new().unwrap();
     let ctx = CliContext {
         base_dir: Some(tmp.path().to_path_buf()),
+        auth: Some(crate::composition::bootstrap::auth::build_auth_handles),
         ..Default::default()
     };
     // First store a credential
@@ -114,7 +115,7 @@ fn test_auth_logout_removes_credential() {
 
     let out = run_with_output(args("auth logout --provider openai"), &ctx);
     assert_eq!(out.exit_code, 0);
-    assert!(out.stdout.contains("removed"));
+    assert_eq!(out.stdout, "Credential removed for openai\n");
     assert!(!store.exists("openai").unwrap());
 }
 
@@ -123,11 +124,21 @@ fn test_auth_logout_nonexistent_is_noop() {
     let tmp = tempfile::TempDir::new().unwrap();
     let ctx = CliContext {
         base_dir: Some(tmp.path().to_path_buf()),
+        auth: Some(crate::composition::bootstrap::auth::build_auth_handles),
         ..Default::default()
     };
     let out = run_with_output(args("auth logout --provider openai"), &ctx);
     assert_eq!(out.exit_code, 0);
-    assert!(out.stdout.contains("no credential"));
+    assert_eq!(out.stdout, "no credential found for openai\n");
+    let uncomposed = run_with_output(
+        args("auth logout --provider openai"),
+        &CliContext { auth: None, ..ctx },
+    );
+    assert_eq!(uncomposed.exit_code, 1);
+    assert_eq!(
+        uncomposed.stderr,
+        "auth logout: auth capability not composed\n"
+    );
 }
 
 #[test]

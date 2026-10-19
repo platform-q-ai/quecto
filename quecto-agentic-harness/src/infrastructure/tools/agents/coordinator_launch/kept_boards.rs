@@ -23,7 +23,7 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
 use crate::application::environments::dto::SwarmBoardSnapshot;
-use crate::application::environments::ports::EndedSwarmBoards;
+use crate::application::environments::ports::hosted_swarm::EndedSwarmBoards;
 use crate::application::project_board::dto::SwarmRunView;
 use crate::application::project_board::ports::SwarmRunReports;
 use crate::domain::project_board::value_objects::slug::Slug;

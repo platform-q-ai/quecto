@@ -3,7 +3,7 @@
 //! quecto process overtook is reported whoever created the environment.
 
 use super::tests::{run, script};
-use crate::application::environments::ports::EnvironmentRegistryStore;
+use crate::application::environments::ports::registry::EnvironmentRegistryStore;
 use crate::domain::environments::entities::environment_registry::{
     EnvironmentOrigin, EnvironmentRecord, EnvironmentStatus,
 };

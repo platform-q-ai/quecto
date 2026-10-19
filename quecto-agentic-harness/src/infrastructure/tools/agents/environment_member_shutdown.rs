@@ -10,8 +10,8 @@
 use std::sync::Arc;
 
 use crate::application::environments::ports::{
-    EnvironmentMemberShutdown, MemberShutdownReport, MemberShutdownResult, PortFuture,
-    SettledMember, UnsettledMember,
+    PortFuture, process::EnvironmentMemberShutdown, process::MemberShutdownReport,
+    process::MemberShutdownResult, process::SettledMember, process::UnsettledMember,
 };
 use crate::application::subagents::dto::FleetChildResult;
 use crate::application::subagents::ports::{DelegatedAgentRegistry, ResolutionError};

@@ -6,7 +6,7 @@ mod status;
 pub use handles::{AuthEnvironment, AuthHandles, AuthHandlesBuilder};
 
 use super::CliContext;
-use crate::application::auth::dto::LoginError;
+use crate::application::auth::dto::{LoginError, Removal, RemoveError};
 use crate::domain::auth::provider::LoginProvider;
 use crate::infrastructure::auth::credential_store::CredentialStore;
 
@@ -39,14 +39,13 @@ pub(crate) fn cmd_auth_with_reader(
     stderr: &mut String,
     reader: &mut dyn std::io::BufRead,
 ) -> i32 {
-    let base = ctx.base_dir();
     if args.is_empty() {
         stderr.push_str("auth: missing subcommand (login, logout, status)\n");
         return 1;
     }
     match args[0].as_str() {
         "login" => cmd_auth_login(ctx, &args[1..], stdout, stderr, reader),
-        "logout" => cmd_auth_logout(&base, &args[1..], stdout, stderr),
+        "logout" => cmd_auth_logout(ctx, &args[1..], stdout, stderr),
         "status" => status::cmd_auth_status(ctx, stdout, stderr),
         other => {
             stderr.push_str(&format!("auth: unknown subcommand '{}'\n", other));
@@ -343,7 +342,7 @@ fn cmd_auth_login_device_code(ctx: &CliContext, provider: &str, out: &mut Output
 }
 
 fn cmd_auth_logout(
-    base: &std::path::Path,
+    ctx: &CliContext,
     args: &[String],
     stdout: &mut String,
     stderr: &mut String,
@@ -377,20 +376,22 @@ fn cmd_auth_logout(
         return 1;
     };
 
-    let store = CredentialStore::new(base);
-    match store.remove(&provider) {
-        Ok(true) => {
+    let Some(handles) = handles::logout_handles(ctx, stderr) else {
+        return 1;
+    };
+    match handles.logout.execute(&provider) {
+        Ok(Removal::Removed) => {
             stdout.push_str(&format!("Credential removed for {}\n", provider));
             0
         }
-        Ok(false) => {
+        Ok(Removal::NotStored) => {
             stdout.push_str(&format!("no credential found for {}\n", provider));
             0
         }
-        Err(e) => {
+        Err(RemoveError::Store(why)) => {
             stderr.push_str(&format!(
                 "auth logout: failed to remove credential: {}\n",
-                e
+                why
             ));
             1
         }

@@ -9,7 +9,7 @@ use crate::application::configuration::dto::{ConfigLayers, ConfigSelection};
 use crate::application::environments::dto::{
     AssetState, ContainerConfigDocument, STANDARD_CONTAINER_DIR, StandardContainerRequest,
 };
-use crate::application::environments::ports::ContainerConfigPersistence;
+use crate::application::environments::ports::container::ContainerConfigPersistence;
 
 struct Rig {
     _dir: tempfile::TempDir,

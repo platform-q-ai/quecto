@@ -12,7 +12,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use crate::application::environments::dto::{BoardSighting, SwarmBoardRefusal, SwarmBoardSnapshot};
-use crate::application::environments::ports::HostedSwarmBoard;
+use crate::application::environments::ports::hosted_swarm::HostedSwarmBoard;
 use crate::domain::environments::entities::environment_registry::{
     EnvironmentLookupError, EnvironmentRecord, EnvironmentRegistry, EnvironmentStatus,
     EnvironmentTarget, ref_number,

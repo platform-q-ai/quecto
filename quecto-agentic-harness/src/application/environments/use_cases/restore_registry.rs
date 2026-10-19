@@ -55,8 +55,11 @@ use super::super::dto::{
     CorrectionOutcome, EnvironmentLiveness, ForgottenEnvironment, OvertakenAudience, RestoreMode,
     RestoredRegistry,
 };
-use super::super::ports::{EnvironmentProcess, EnvironmentRegistryStore, HostedSwarmRunInspection};
 use super::box_residue::{Residue, ResidueProbe};
+use crate::application::environments::ports::{
+    hosted_swarm::HostedSwarmRunInspection, process::EnvironmentProcess,
+    registry::EnvironmentRegistryStore,
+};
 
 #[derive(Clone)]
 pub struct RestoreRegistry {

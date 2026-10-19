@@ -111,7 +111,7 @@ pub fn build_agent_container_config_handles(
 pub fn build_container_config_roster(
     base_dir: &Path,
     launching_agent: Option<ConfigSelection>,
-) -> Arc<dyn crate::application::environments::ports::ContainerConfigRoster> {
+) -> Arc<dyn crate::application::environments::ports::container::ContainerConfigRoster> {
     Arc::new(EffectiveConfigRoster::new(
         build_effective_container_configs(base_dir, launching_agent.clone()),
         roster_revision_probe(base_dir, launching_agent),

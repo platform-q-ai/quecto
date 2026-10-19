@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 use super::{EmbeddedScriptIntegrity, RefreshingScriptIntegrity, refuse_altered_script};
 use crate::application::environments::dto::AssetState;
-use crate::application::environments::ports::ContainerAssetStore;
+use crate::application::environments::ports::container::ContainerAssetStore;
 use crate::application::subagents::dto::StandardScriptVerdict;
 use crate::application::subagents::ports::ContainerScriptIntegrity;
 use crate::infrastructure::processes::containers::standard::assets::{
@@ -190,8 +190,8 @@ fn status_refreshes_an_outdated_script_and_reports_version_6() {
         ContainerRuntimeTarget, DiagnosableContainerConfig, PreflightCheck,
     };
     use crate::application::environments::ports::{
-        ContainerConfigLookup, ContainerConfigRoster, ContainerConfigRosterReport,
-        ContainerRuntimePreflight,
+        container::ContainerConfigLookup, container::ContainerConfigRoster,
+        container::ContainerConfigRosterReport, container::ContainerRuntimePreflight,
     };
     use crate::application::environments::use_cases::ContainerStatus;
     struct NoRoster;

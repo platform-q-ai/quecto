@@ -20,7 +20,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crate::application::environments::dto::CorrectionOutcome;
-use crate::application::environments::ports::EnvironmentRegistryStore;
+use crate::application::environments::ports::registry::EnvironmentRegistryStore;
 use crate::domain::environments::entities::environment_registry::{
     EnvironmentOrigin, EnvironmentRecord, EnvironmentStatus, merge_metadata, ref_number,
 };

@@ -6,7 +6,8 @@
 use std::sync::Arc;
 
 use crate::application::auth::use_cases::{
-    InspectAuthStatus, LogInWithOAuth, LogInWithToken, StartDeviceCodeLogin,
+    InspectAuthStatus, LogInWithOAuth, LogInWithToken, RemoveStoredCredentials,
+    StartDeviceCodeLogin,
 };
 use crate::interface::cli::CliContext;
 
@@ -34,6 +35,8 @@ pub struct AuthHandles {
     pub device_code_login: Arc<StartDeviceCodeLogin>,
     /// `auth login [--provider P]`: the browser OAuth login.
     pub oauth_login: Arc<LogInWithOAuth>,
+    /// `auth logout --provider P`.
+    pub logout: Arc<RemoveStoredCredentials>,
     /// `auth status`.
     pub status: Arc<InspectAuthStatus>,
 }
@@ -42,6 +45,11 @@ pub struct AuthHandles {
 /// `auth login`'s refusal is written to `stderr` and there are none.
 pub(super) fn login_handles(ctx: &CliContext, stderr: &mut String) -> Option<AuthHandles> {
     composed(ctx, "auth login", stderr)
+}
+
+/// [`login_handles`] for `auth logout`.
+pub(super) fn logout_handles(ctx: &CliContext, stderr: &mut String) -> Option<AuthHandles> {
+    composed(ctx, "auth logout", stderr)
 }
 
 /// [`login_handles`] for `auth status`.
