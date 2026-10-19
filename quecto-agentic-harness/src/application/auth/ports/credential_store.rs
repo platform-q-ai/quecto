@@ -26,7 +26,10 @@ pub trait CredentialStorePort: Send + Sync {
     fn list(&self) -> Result<Vec<Credential>, CredentialStoreError>;
 
     /// Remove `provider`'s stored credential, leaving every other
-    /// provider's untouched; whether there was one. On `Err` the store is
-    /// as it was.
+    /// provider's untouched; whether there was one. Like a store, it is one
+    /// read-modify-write under the cross-process credentials lock, so a
+    /// concurrent write (a refresh's rotated token) is never lost. When
+    /// nothing was stored it still writes: an empty store (with its lock
+    /// file) where there was none. On `Err` the store is as it was.
     fn remove(&self, provider: &str) -> Result<bool, CredentialStoreError>;
 }
