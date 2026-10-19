@@ -607,10 +607,6 @@ const CONTRACTS_OUTSIDE_PORTS: &[(&str, &[&str])] = &[
     ("sessions::conversation_ledger", &["LedgerAdvance"]),
     ("subagents::standard_script", &["StandardScriptVerdict"]),
     (
-        "admission::services::inference_authority",
-        &["AdmissionAuthority"],
-    ),
-    (
         "catalogue::services::snapshot_store",
         &["CatalogueSnapshotStore"],
     ),
@@ -1206,6 +1202,50 @@ const TEST_SUPPORT_APPLICATION_PATHS: &[(&str, &str)] = &[(
     "crate::application::swarm::LifecycleService",
 )];
 
+/// Per-file exceptions for the admission authority server (#1910): it runs
+/// the authority the admission capability owns, holds the durability use
+/// cases composition builds and passes in (`AuthorityUseCases`), and its
+/// actor compares capability tokens with the authority's own constant-time
+/// check. No other infrastructure file may name them.
+const AUTHORITY_SERVER_APPLICATION_PATHS: &[(&str, &str)] = &[
+    (
+        "src/infrastructure/admission/server.rs",
+        "crate::application::admission::services::inference_authority::AdmissionAuthority",
+    ),
+    (
+        "src/infrastructure/admission/server_actor.rs",
+        "crate::application::admission::services::inference_authority::AdmissionAuthority",
+    ),
+    (
+        "src/infrastructure/admission/server.rs",
+        "crate::application::admission::use_cases::AdvanceAuthorityEpoch",
+    ),
+    (
+        "src/infrastructure/admission/server.rs",
+        "crate::application::admission::use_cases::CheckpointLedger",
+    ),
+    (
+        "src/infrastructure/admission/server.rs",
+        "crate::application::admission::use_cases::CompleteAdmission",
+    ),
+    (
+        "src/infrastructure/admission/server.rs",
+        "crate::application::admission::use_cases::DispatchAdmissions",
+    ),
+    (
+        "src/infrastructure/admission/server_actor.rs",
+        "crate::application::admission::services::inference_authority::constant_time_eq",
+    ),
+];
+
+/// `file` may name `path` through one of the per-file exceptions.
+fn application_path_allowed_in(file: &str, path: &str) -> bool {
+    TEST_SUPPORT_APPLICATION_PATHS
+        .iter()
+        .chain(AUTHORITY_SERVER_APPLICATION_PATHS)
+        .any(|&(owner, allowed)| owner == file && allowed == path)
+}
+
 /// The crate paths `file` names that the infrastructure → application rule
 /// refuses, relative paths resolved; a file that does not parse is refused.
 fn refused_application_paths(file: &str, content: &str) -> Vec<String> {
@@ -1213,7 +1253,7 @@ fn refused_application_paths(file: &str, content: &str) -> Vec<String> {
         Some(paths) => paths
             .into_iter()
             .filter(|path| !application_path_allowed(path))
-            .filter(|path| !TEST_SUPPORT_APPLICATION_PATHS.contains(&(file, path.as_str())))
+            .filter(|path| !application_path_allowed_in(file, path))
             .collect(),
         None => vec!["<does not parse>".to_string()],
     }
@@ -1444,9 +1484,11 @@ const SWARM_BOARD_DTOS: &[&str] = &[
 /// The contracts the deleted `application::ports` facade re-exported
 /// (#2367), named at their owners: exactly the ones infrastructure
 /// implements or holds, keyed by module path under `application`, until
-/// their capabilities give them a home under `ports/` (admission #1910,
-/// launch #1880). The catalogue's snapshot store is the capability's shared
-/// state (`services/`, #2578), held by the provider adapters' refusal sink.
+/// their capabilities give them a home under `ports/` (launch #1880;
+/// admission's left in #1910, its authority now named only by the server
+/// files, `AUTHORITY_SERVER_APPLICATION_PATHS`). The catalogue's snapshot
+/// store is the capability's shared state (`services/`, #2578), held by the
+/// provider adapters' refusal sink.
 /// Every entry is declared in its module, and every non-`dto` entry is also
 /// a `CONTRACTS_OUTSIDE_PORTS` contract
 /// (`facade_contract_paths_are_listed_contracts`).
@@ -1462,10 +1504,6 @@ const FACADE_CONTRACT_PATHS: &[(&str, &[&str])] = &[
     (
         "provider_runtime::dto",
         &["AdmissionBindingDiagnostic", "ProviderRuntimeOutcome"],
-    ),
-    (
-        "admission::services::inference_authority",
-        &["AdmissionAuthority"],
     ),
     ("subagent_launch", &["LaunchFuture", "SubagentLaunchPorts"]),
 ];
@@ -3981,6 +4019,100 @@ fn only_swarm_test_support_names_the_lifecycle_service() {
         ),
         Vec::<String>::new()
     );
+}
+
+/// The authority, its durability use cases and its token check are named
+/// only by the two server files (#1910): the same paths anywhere else in
+/// infrastructure are refused, and each file has only its own allowance.
+#[test]
+fn only_the_authority_server_names_the_durability_use_cases() {
+    let use_cases = "use crate::application::admission::use_cases::{\n    AdvanceAuthorityEpoch, CheckpointLedger, CompleteAdmission, DispatchAdmissions,\n};";
+    let token_check =
+        "use crate::application::admission::services::inference_authority::constant_time_eq;";
+    let all_use_cases = [
+        "crate::application::admission::use_cases::AdvanceAuthorityEpoch",
+        "crate::application::admission::use_cases::CheckpointLedger",
+        "crate::application::admission::use_cases::CompleteAdmission",
+        "crate::application::admission::use_cases::DispatchAdmissions",
+    ];
+    let server = "src/infrastructure/admission/server.rs";
+    let actor = "src/infrastructure/admission/server_actor.rs";
+    let elsewhere = "src/infrastructure/admission/link.rs";
+    assert_eq!(
+        refused_application_paths(server, use_cases),
+        Vec::<String>::new()
+    );
+    assert_eq!(
+        refused_application_paths(actor, token_check),
+        Vec::<String>::new()
+    );
+    assert_eq!(
+        refused_application_paths(elsewhere, use_cases),
+        all_use_cases
+    );
+    assert_eq!(refused_application_paths(actor, use_cases), all_use_cases);
+    assert_eq!(
+        refused_application_paths(server, token_check),
+        ["crate::application::admission::services::inference_authority::constant_time_eq"]
+    );
+    // The authority itself is the two server files' alone.
+    let authority =
+        "use crate::application::admission::services::inference_authority::AdmissionAuthority;";
+    assert_eq!(
+        refused_application_paths(server, authority),
+        Vec::<String>::new()
+    );
+    assert_eq!(
+        refused_application_paths(actor, authority),
+        Vec::<String>::new()
+    );
+    assert_eq!(
+        refused_application_paths(elsewhere, authority),
+        ["crate::application::admission::services::inference_authority::AdmissionAuthority"]
+    );
+    // Any other admission use case stays refused, even in the server.
+    assert_eq!(
+        refused_application_paths(
+            server,
+            "use crate::application::admission::use_cases::ResetAuthority;"
+        ),
+        ["crate::application::admission::use_cases::ResetAuthority"]
+    );
+}
+
+/// Durability belongs to the admission use cases (#1910): the authority
+/// names only the secret source and the journal's error from its ports
+/// (never the journal itself), and each durability use case holds the one
+/// shared journal composition builds.
+#[test]
+fn the_admission_use_cases_own_the_journal_and_the_authority_does_not() {
+    let authority = "src/application/admission/services/inference_authority.rs";
+    let ports = "crate::application::admission::ports::inference_authority_ports::";
+    let named: BTreeSet<String> = dependency_paths_at(authority, &production_source(authority))
+        .expect("the authority parses")
+        .into_iter()
+        .filter_map(|path| path.strip_prefix(ports).map(str::to_string))
+        .collect();
+    assert_eq!(
+        named,
+        BTreeSet::from([
+            "AdmissionSecretSource".to_string(),
+            "JournalError".to_string()
+        ]),
+        "the authority names only these authority ports"
+    );
+    for use_case in [
+        "dispatch_admissions",
+        "complete_admission",
+        "advance_authority_epoch",
+        "checkpoint_ledger",
+    ] {
+        let path = format!("src/application/admission/use_cases/{use_case}.rs");
+        assert!(
+            production_source(&path).contains("    journal: SharedJournal,\n"),
+            "{path} holds the shared journal"
+        );
+    }
 }
 
 #[test]

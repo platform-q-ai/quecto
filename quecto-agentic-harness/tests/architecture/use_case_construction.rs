@@ -40,6 +40,7 @@ const USE_CASES: &[&str] = &[
     "AcknowledgeMessage",
     "ActivateMember",
     "AdmitMember",
+    "AdvanceAuthorityEpoch",
     "AmendRunContract",
     "BlockTask",
     "BootstrapMember",
@@ -48,11 +49,13 @@ const USE_CASES: &[&str] = &[
     "ChangeActiveModel",
     "ChangeBoardTask",
     "ChangeReasoningEffort",
+    "CheckpointLedger",
     "ClaimNotifications",
     "ClaimTask",
     "ClearConversation",
     "ClearSetAside",
     "CloseRun",
+    "CompleteAdmission",
     "CompleteMergedTask",
     "CompleteRun",
     "ConfirmMemberDead",
@@ -65,6 +68,7 @@ const USE_CASES: &[&str] = &[
     "DepartingChildren",
     "DiagnoseContainerRuntime",
     "DiscardPlan",
+    "DispatchAdmissions",
     "DriveExternalAgentSession",
     "EditPlan",
     "EndRun",
@@ -471,7 +475,8 @@ fn composition_is_the_only_layer_that_constructs_use_cases() {
         in_composition >= 10,
         "composition builds the graph ({in_composition} constructions seen)"
     );
-    // The teardown, lifecycle and environment graphs each have a home.
+    // The teardown, lifecycle, environment and authority graphs each have
+    // a home.
     for (file, builder) in [
         (
             "src/composition/subagent_teardown.rs",
@@ -492,6 +497,11 @@ fn composition_is_the_only_layer_that_constructs_use_cases() {
         (
             "src/composition/environments.rs",
             "pub fn build_member_finalizer",
+        ),
+        // The authority server's durability use cases (#1910).
+        (
+            "src/composition/admission.rs",
+            "pub fn build_authority_use_cases",
         ),
     ] {
         assert!(
