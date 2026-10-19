@@ -354,9 +354,10 @@ typed `OverlayDocument::Refused` carries the one overlay policy — no
 symbolic link below the working directory — as a reason the report,
 `config trust` and `config set` print), gates the overlay through the `OverlayTrustStore`
 port (untrusted: reported in the `ConfigSources` layer report, not applied),
-refuses the global-only sections (`providers`, `admission` — the rule lives in
-the use case), validates each layer and the merge through the `ConfigValidator`
-port, and merges by the pure section-wise policy in `overlay_policy.rs`.
+refuses the global-only sections (`providers`, `admission`, `extensions` — the
+rule is `GLOBAL_ONLY_KEYS` in `services/overlay_policy.rs`), validates each layer
+and the merge through the `ConfigValidator` port, and merges by the pure
+section-wise policy in `services/overlay_policy.rs`.
 `use_cases/patch_configuration.rs` is the safe writer: a dotted-path patch of
 the JSON document (never of the `Config` struct, so unknown keys and order
 survive), global-only keys and whatever the store refuses (a symbolic link
@@ -367,7 +368,7 @@ overlay, an untrusted overlay never patched, the result validated before a byte 
 — the whole cycle under the writer port's exclusive hold (`DocumentLock`), the
 write through the `ConfigDocumentWriter` port, and trust recorded for the
 bytes the writer returned. `use_cases/read_configuration.rs` (secret-shaped
-leaves redacted unless revealed; `redaction.rs`) and
+leaves redacted unless revealed; `services/redaction.rs`) and
 `use_cases/trust_config_overlay.rs` serve `quecto config get` and
 `quecto config trust`.
 

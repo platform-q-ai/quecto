@@ -23,13 +23,13 @@ use crate::application::configuration::dto::{
     ConfigLayer, ConfigSelection, ConfigSources, EffectiveConfig, EffectiveConfigError,
     OverlayOrigin, OverlayReport, OverlayState,
 };
-use crate::application::configuration::overlay_policy::{
-    global_only_key, looks_like_config, merge_overlay,
-};
 use crate::application::configuration::ports::{
     ConfigDocumentStore, ConfigValidator, OverlayDocument, OverlayTrust, OverlayTrustStore,
 };
-use crate::application::configuration::removed_keys::without_removed_keys;
+use crate::application::configuration::services::overlay_policy::{
+    global_only_key, looks_like_config, merge_overlay,
+};
+use crate::application::configuration::services::removed_keys::without_removed_keys;
 
 /// How a resolution checks the documents: a child's admission rules, and
 /// whether keys #2414 removed are let through (a patch that only takes

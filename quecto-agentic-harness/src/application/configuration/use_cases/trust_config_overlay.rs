@@ -11,10 +11,10 @@ use serde_json::Value;
 
 use crate::application::configuration::dto::removed_keys::{RemovedKeysIn, Repair};
 use crate::application::configuration::dto::{OverlayTrustError, OverlayTrustRequest};
-use crate::application::configuration::overlay_policy::global_only_key;
 use crate::application::configuration::ports::{
     ConfigDocumentStore, ConfigValidator, OverlayApproval, OverlayDocument, OverlayTrustStore,
 };
+use crate::application::configuration::services::overlay_policy::global_only_key;
 
 pub struct TrustConfigOverlay {
     store: Arc<dyn ConfigDocumentStore>,
