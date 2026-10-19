@@ -4,6 +4,7 @@
 //! up the paste prompt.
 use std::io::{Read, Write};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use crate::application::auth::ports::{
@@ -133,27 +134,42 @@ fn call(port: u16, path: &str) -> Option<String> {
     }
 }
 
+/// Numbers each attempt's callback path.
+static NEXT: AtomicU64 = AtomicU64::new(0);
+
 fn login_args() -> Vec<String> {
     ["login", "--provider", "xai"].map(String::from).to_vec()
 }
 
 #[test]
 fn a_callback_carrying_the_state_stores_the_credential_without_a_paste_prompt() {
-    // A free port can be taken by another test's server between its
-    // release and the listener's bind. Only a run whose listener could not
-    // bind, or timed out without the call reaching it, is repeated.
+    // A free port can be handed to another test too. Only a run whose
+    // listener could not bind, or timed out without the call reaching it,
+    // is repeated.
     let mut last = None;
     let mut outcome = None;
     for _attempt in 0..3 {
         let base = tempfile::TempDir::new().unwrap();
         let port = free_port();
+        // Its own callback path: a concurrent test's listener on a reused
+        // port answers it "404 Not found" and never takes it.
+        let nonce = format!(
+            "t{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        );
         let ctx = CliContext {
             base_dir: Some(base.path().to_path_buf()),
-            oauth_base_url: Some(format!("http://127.0.0.1:{port}")),
+            oauth_base_url: Some(format!("http://127.0.0.1:{port}/{nonce}")),
             auth: Some(callback_rig),
             ..Default::default()
         };
-        let caller = std::thread::spawn(move || call(port, "/callback?code=fake&state=fake-state"));
+        let caller = std::thread::spawn(move || {
+            call(
+                port,
+                &format!("/{nonce}/callback?code=fake&state=fake-state"),
+            )
+        });
         let (mut stdout, mut stderr) = (String::new(), String::new());
         let code = cmd_auth_with_reader(
             &ctx,
