@@ -190,9 +190,11 @@ fn claim_facts_count_from_its_start_to_its_expiry() {
         "expires now"
     );
     assert_eq!(facts("Bob", "11:00:01"), fact(7201, -1, false), "lapsed");
+    // #2662: a stamp may run up to a second ahead of the wall clock, so a
+    // clock behind the claim's start finds it held for no time, never less.
     assert_eq!(
         facts("Bob", "08:59:00"),
-        fact(-60, 7260, false),
+        fact(0, 7260, false),
         "a clock behind"
     );
     let shouting = Identity {

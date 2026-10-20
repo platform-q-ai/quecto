@@ -40,3 +40,39 @@ fn a_discard_pinned_to_an_older_read_or_a_plan_from_ahead_is_refused() {
         })
     );
 }
+
+/// #2662: a plan's change never stamps before its task's last change,
+/// so stamps never run backwards on one task: a proposal, an edit and a
+/// discard from a clock that reads before the task's `updated` (a second
+/// past the wall clock after quick changes) are stamped no earlier.
+#[test]
+fn a_plans_change_never_stamps_before_its_tasks_last_change() {
+    let task = crate::domain::project_board::services::fixtures_tests::last_written(
+        task(Ready),
+        &at("10:00:01"),
+    );
+    let draft = plan(2, PlanState::Draft);
+    let bob = person("Bob");
+    let now = when(&at("10:00:00"));
+    let content = PlanContent {
+        approach: "Build it.".into(),
+        ..PlanContent::default()
+    };
+    let versions = [plan(1, PlanState::Accepted), draft.clone()];
+    let proposed = propose(&task, &versions, content.clone(), &bob, &now.now).unwrap();
+    let edited = edit_draft(&task, &draft, content, None, &bob, &now).unwrap();
+    let discarded = discard(&task, &draft, None, &bob, &now).unwrap();
+    for (change, plan) in [
+        ("propose", &proposed),
+        ("edit", &edited),
+        ("discard", &discarded),
+    ] {
+        assert!(
+            plan.fields().updated >= task.fields().updated,
+            "{change}: {:?} before the task's {:?}",
+            plan.fields().updated,
+            task.fields().updated
+        );
+    }
+    assert_eq!(proposed.fields().created, at("10:00:01"));
+}
