@@ -34,7 +34,10 @@ pub(super) fn begin(request: &ChatRequest<'_>, url: &str, body: &Value) -> Optio
 /// The sender a stream's events are sent to, and the task that forwards
 /// them to `tx`: the first event that is not an error shows the send
 /// accepted (#2398), so the measured body becomes the session's baseline
-/// then. Without a measured body, `tx` itself.
+/// then. Without a measured body, `tx` itself. The relay ends once the
+/// caller has gone, dropping its receiver, so the transport sees the caller
+/// gone and withdraws an attempt still waiting for admission (#2436, #2628
+/// review).
 pub(super) fn forward_accepting(
     tx: tokio::sync::mpsc::Sender<StreamEvent>,
     measured: Option<PendingInput>,
@@ -48,7 +51,14 @@ pub(super) fn forward_accepting(
     let (inner, mut events) = tokio::sync::mpsc::channel(64);
     let forward = async move {
         let mut measured = Some(measured);
-        while let Some(event) = events.recv().await {
+        loop {
+            let event = tokio::select! {
+                event = events.recv() => event,
+                () = tx.closed() => None,
+            };
+            let Some(event) = event else {
+                break;
+            };
             let accepted = !matches!(event, StreamEvent::Error(_));
             accept(measured.take_if(|_| accepted), accepted);
             if tx.send(event).await.is_err() {
@@ -86,7 +96,14 @@ pub(super) fn measured(session: &str, endpoint: &str, body: &Value) -> MeasuredI
         session,
         endpoint,
         body["model"].as_str().unwrap_or_default(),
-        &[&system, &body["tools"]],
+        // What the request asks of the model's thinking and its output
+        // selects the cache too (#2628 review).
+        &[
+            &system,
+            &body["tools"],
+            &body["thinking"],
+            &body["output_config"],
+        ],
         items,
     )
 }
