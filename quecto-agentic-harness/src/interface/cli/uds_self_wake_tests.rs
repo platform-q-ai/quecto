@@ -310,6 +310,73 @@ async fn a_stale_self_wake_with_nothing_to_hand_over_reports_none() {
     );
 }
 
+/// A running run at a control generation the test moves; a wake claims no
+/// generation.
+struct Moving(std::sync::atomic::AtomicU64);
+
+impl SwarmRunControl for Moving {
+    fn coordinator_board(
+        &self,
+    ) -> crate::application::swarm::ports::lifecycle::CoordinatorBoardFuture<'_> {
+        Box::pin(async { Ok(None) })
+    }
+    fn nudge_watch(&self) {}
+    fn apply(
+        &self,
+        _: RunControlAction,
+    ) -> crate::application::subagent_launch::LaunchFuture<
+        '_,
+        Result<RunControlReceipt, crate::domain::shared::error::DomainError>,
+    > {
+        let generation = self.0.load(Ordering::SeqCst);
+        Box::pin(async move {
+            Ok(RunControlReceipt {
+                generation,
+                ..running(false)
+            })
+        })
+    }
+}
+
+/// #2626 review round 6 (#2531): an outside or resume wake that joins a
+/// pending self-wake on a full channel makes it an outside wake: after a
+/// newer (terminal) suspension it is not dropped as stale, so its probe
+/// sees the resume and re-arms the member.
+#[tokio::test(start_paused = true)]
+async fn a_resume_joining_a_pending_self_wake_re_arms_a_newer_suspension() {
+    let mut env = Env::with_unselected_workflow();
+    let run = Arc::new(Moving(std::sync::atomic::AtomicU64::new(3)));
+    let (mut ctx, _waker, mut wakes) = suspended_over(&mut env, run.clone());
+    let older = ctx.session.automatic_turns().suspension_epoch();
+    assert!(
+        ctx.turn_control
+            .schedule_self_wake(std::time::Duration::ZERO, older)
+    );
+    let generation = self_wake_within(&mut wakes, RECOVERABLE_SELF_WAKE_DELAY)
+        .await
+        .expect("the self-wake message is pending");
+    // A newer, terminal suspension, dated at generation 3.
+    ctx.session.automatic_turns().suspend_after_failure(
+        &crate::domain::shared::error::DomainError::Provider(
+            "provider error (401): invalid credentials".into(),
+        ),
+    );
+    date_provider_suspension(&mut ctx).await;
+    // The run is resumed (generation 7) and the resume's own wake joins
+    // the pending message on a full channel.
+    run.0.store(7, Ordering::SeqCst);
+    assert!(ctx.turn_control.join_pending_swarm_wake(7));
+    handle_wake(&mut ctx, generation).await;
+    assert!(
+        ctx.session.automatic_turns_allowed(),
+        "re-armed by the resume"
+    );
+    assert_eq!(
+        user_prompts(&ctx),
+        [crate::interface::cli::uds_swarm_control::RESUMED_WAKE]
+    );
+}
+
 /// A paused run takes no turn: its wake leaves a recoverable failure
 /// suspended, spending none of the bound, and says nothing re-armed.
 #[tokio::test]

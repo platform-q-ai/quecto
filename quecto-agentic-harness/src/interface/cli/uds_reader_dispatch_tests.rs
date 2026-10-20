@@ -631,8 +631,9 @@ async fn a_resume_self_wake_refused_on_a_full_channel_keeps_a_deferred_wake() {
 }
 
 /// #2626 review round 5: on a full channel a wake rides a pending wake
-/// message (its generation folds in, the message's source is kept) and is
-/// refused when none is pending, without ever occupying the slot.
+/// message (its generation folds in, and the message is then an outside
+/// wake, round 6) and is refused when none is pending, without ever
+/// occupying the slot.
 #[tokio::test]
 async fn a_full_channel_wake_rides_a_pending_message_or_leaves_the_slot_empty() {
     let turn_control = watched_turn_control();

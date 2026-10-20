@@ -108,15 +108,17 @@ impl TurnControl {
     /// Fold `generation` into a pending wake message, if one is pending:
     /// returns whether it did. An empty slot is left empty, so a wake the
     /// full channel cannot carry never occupies (or later clears) the slot
-    /// (#2626 review round 5).
+    /// (#2626 review round 5). The joiner is an outside or resume wake, so
+    /// the message is no longer a self-wake alone: its tag is cleared, as
+    /// `queue_swarm_wake` clears it (#2626 review round 6).
     pub fn join_pending_swarm_wake(&self, generation: u64) -> bool {
         let mut pending = self
             .pending_swarm_wake
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         match *pending {
-            Some((seen, source)) => {
-                *pending = Some((seen.max(generation), source));
+            Some((seen, _)) => {
+                *pending = Some((seen.max(generation), None));
                 true
             }
             None => false,
