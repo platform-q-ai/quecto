@@ -792,8 +792,18 @@ interrupted work. Resuming an already running run repeats the fan-out with
 the unchanged generation: nobody re-arms or gains a turn from it, so it is
 safe but costs one wake round trip per member. Members a resume could not
 reach are listed as `wake_warnings` on the receipt. Neither a prompt nor a steer
-is needed after a resume. A durable store rejection is not re-armed this
-way; it waits for an explicit instruction. Any explicit instruction (prompt,
+is needed after a resume. A swarm wake also re-arms a member suspended by a
+recoverable provider failure (a rate limit, a server or network failure, an
+empty or stalled stream, Envoy's 507 retry-buffer reply) whose retries ran out
+(#2531). The member then runs one turn to continue its interrupted work. If no
+wake comes, the member wakes itself 30 seconds after the failed turn, and again
+30 seconds after a wake a locked store held back. A wake while the run is
+paused re-arms nothing. Without a swarm, its next automatic note re-arms it.
+This happens at most twice before a turn succeeds. A terminal provider failure
+still needs an instruction or a resume. Each wake re-arm is reported as a
+`swarm_wake` `resumed` event with its reason. A durable store rejection is not
+re-armed this way; it waits for an explicit instruction. Any explicit
+instruction (prompt,
 follow_up or steer) re-arms a suspended member once the run admits it (a
 paused run keeps it queued): a parent's fast-acked prompt to an idle member is
 queued as a follow-up and executes rather than waiting behind the suspension

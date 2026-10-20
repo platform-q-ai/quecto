@@ -46,7 +46,9 @@ pub type CancelHandle = std::sync::Arc<std::sync::Mutex<CancelSlot>>;
 /// - `pending_steers` counts admitted redirects: the auto-continue nudge yields
 ///   so the steered instruction is obeyed next instead of being overridden.
 pub struct TurnControl {
-    pending_swarm_wake: std::sync::Mutex<Option<u64>>,
+    /// The pending wake's generation, and the suspension epoch when only a
+    /// self-wake sent it (#2531, #2626 review).
+    pending_swarm_wake: std::sync::Mutex<Option<(u64, Option<u64>)>>,
     /// A wake the dispatch loop could not apply; folded into the next take (0 = none).
     deferred_swarm_wake: std::sync::atomic::AtomicU64,
     pub(crate) swarm_control:
@@ -73,6 +75,11 @@ pub struct TurnControl {
     /// Launched as its swarm's coordinator (#2461): only then is the board
     /// read at idle boundaries for the parent (#2467).
     pub(crate) launched_coordinator: bool,
+    /// The dispatch loop's command channel, held weakly so it never keeps
+    /// the loop alive: a recoverable failure's self-wake (#2531).
+    self_waker: std::sync::OnceLock<tokio::sync::mpsc::WeakSender<super::uds_multi::ClientMessage>>,
+    /// A self-wake is scheduled and has not fired yet (#2531).
+    self_wake_scheduled: std::sync::atomic::AtomicBool,
 }
 
 #[path = "uds_turn_generation.rs"]
@@ -423,6 +430,7 @@ pub(crate) async fn run_agent_message(args: PromptRun<'_, '_>) -> PromptOutcome 
             PromptOutcome::Cancelled
         }
         Some(Ok(agent_result)) => {
+            agent_session.automatic_turns().turn_succeeded();
             agent_session.set_context_tokens(agent_result.context_tokens);
             // Tool events are forwarded in real-time via forward_progress_event
             // — emitting them again here would duplicate events with conflicting
@@ -500,7 +508,7 @@ pub(crate) async fn run_agent_message(args: PromptRun<'_, '_>) -> PromptOutcome 
                 interrupted::restamp_ledger(&mut *session.write().await, messages);
             }
             // Dated by the dispatch loop once it knows the control generation.
-            agent_session.automatic_turns().suspend_after_failure();
+            agent_session.automatic_turns().suspend_after_failure(&e);
             sink.emit(&AgentEvent::err(None, "agent_error", format!("{e}")))
                 .await;
             PromptOutcome::Error
