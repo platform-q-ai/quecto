@@ -4,7 +4,7 @@
 #![cfg(unix)]
 
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
@@ -131,13 +131,9 @@ fn write_config(dir: &Path, provider_base: &str, admission: Option<(usize, u64)>
     path
 }
 
-struct Proc(Child);
-impl Drop for Proc {
-    fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
-    }
-}
+#[path = "inference_admission_processes_guard.rs"]
+mod guard;
+use guard::{Proc, dies_with_the_test};
 
 fn quecto(dir: &Path, args: &[&str]) -> Command {
     let mut command = Command::new(quecto_binary());
@@ -149,6 +145,7 @@ fn quecto(dir: &Path, args: &[&str]) -> Command {
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    dies_with_the_test(&mut command);
     std::fs::create_dir_all(dir.join("run")).unwrap();
     command
 }
@@ -177,10 +174,10 @@ fn start_broker(dir: &Path, config: &Path) -> Proc {
         );
         std::thread::sleep(Duration::from_millis(20));
     }
-    Proc(child)
+    Proc::new(child)
 }
 
-fn root_agent(dir: &Path, config: &Path, extra: &[&str]) -> Child {
+fn root_agent(dir: &Path, config: &Path, extra: &[&str]) -> Proc {
     let mut args = vec![
         "--config",
         config.to_str().unwrap(),
@@ -190,11 +187,11 @@ fn root_agent(dir: &Path, config: &Path, extra: &[&str]) -> Child {
         "--no-session",
     ];
     args.extend_from_slice(extra);
-    quecto(dir, &args).spawn().expect("spawn agent")
+    Proc::new(quecto(dir, &args).spawn().expect("spawn agent"))
 }
 
-fn finish(child: Child) -> (bool, String, String) {
-    let output = child.wait_with_output().unwrap();
+fn finish(child: Proc) -> (bool, String, String) {
+    let output = child.into_inner().wait_with_output().unwrap();
     (
         output.status.success(),
         String::from_utf8_lossy(&output.stdout).to_string(),
@@ -208,7 +205,7 @@ async fn independent_root_processes_share_the_configured_bound() {
     let provider = fake_provider(Duration::from_millis(600)).await;
     let config = write_config(temp.path(), &provider.base, Some((2, 20_000)));
     let _broker = start_broker(temp.path(), &config);
-    let roots: Vec<Child> = (0..3)
+    let roots: Vec<Proc> = (0..3)
         .map(|_| root_agent(temp.path(), &config, &[]))
         .collect();
     let results: Vec<_> =
@@ -249,7 +246,7 @@ async fn without_admission_the_fake_provider_observes_the_unbounded_burst() {
     let temp = tempfile::tempdir().unwrap();
     let provider = fake_provider(Duration::from_millis(600)).await;
     let config = write_config(temp.path(), &provider.base, None);
-    let roots: Vec<Child> = (0..3)
+    let roots: Vec<Proc> = (0..3)
         .map(|_| root_agent(temp.path(), &config, &[]))
         .collect();
     let results: Vec<_> =
@@ -354,30 +351,32 @@ async fn descendant_context_waits_behind_its_root_and_a_forged_context_fails_clo
     // Readiness negotiates admission: a UDS child with a forged capability
     // exits before its control socket ever accepts.
     let socket = temp.path().join("run").join("forged.sock");
-    let mut uds = quecto(
-        temp.path(),
-        &[
-            "--config",
-            config.to_str().unwrap(),
-            "agent",
-            "--mode",
-            "uds",
-            "--no-session",
-            "--socket",
-            socket.to_str().unwrap(),
-            "--admission-context",
-            forged.to_str().unwrap(),
-        ],
-    )
-    .spawn()
-    .unwrap();
+    let mut uds = Proc::new(
+        quecto(
+            temp.path(),
+            &[
+                "--config",
+                config.to_str().unwrap(),
+                "agent",
+                "--mode",
+                "uds",
+                "--no-session",
+                "--socket",
+                socket.to_str().unwrap(),
+                "--admission-context",
+                forged.to_str().unwrap(),
+            ],
+        )
+        .spawn()
+        .unwrap(),
+    );
     let deadline = Instant::now() + LIMIT;
     loop {
         assert!(
             std::os::unix::net::UnixStream::connect(&socket).is_err(),
             "forged child must not announce readiness"
         );
-        if let Some(status) = uds.try_wait().unwrap() {
+        if let Some(status) = uds.child().try_wait().unwrap() {
             assert!(!status.success(), "forged UDS child exits non-zero");
             break;
         }
@@ -466,25 +465,27 @@ async fn sigkilled_authority_restarts_with_orphans_and_does_not_kill_clients() {
     let config = write_config(temp.path(), &provider.base, Some((2, 2_000)));
     let broker = start_broker(temp.path(), &config);
     let socket = temp.path().join("run").join("root.sock");
-    let mut uds_root = quecto(
-        temp.path(),
-        &[
-            "--config",
-            config.to_str().unwrap(),
-            "agent",
-            "--mode",
-            "uds",
-            "--no-session",
-            "--socket",
-            socket.to_str().unwrap(),
-        ],
-    )
-    .spawn()
-    .unwrap();
+    let mut uds_root = Proc::new(
+        quecto(
+            temp.path(),
+            &[
+                "--config",
+                config.to_str().unwrap(),
+                "agent",
+                "--mode",
+                "uds",
+                "--no-session",
+                "--socket",
+                socket.to_str().unwrap(),
+            ],
+        )
+        .spawn()
+        .unwrap(),
+    );
     let deadline = Instant::now() + LIMIT;
     while !socket.exists() {
         assert!(
-            uds_root.try_wait().unwrap().is_none(),
+            uds_root.child().try_wait().unwrap().is_none(),
             "uds root exited early"
         );
         assert!(Instant::now() < deadline, "uds root never became ready");
@@ -499,7 +500,7 @@ async fn sigkilled_authority_restarts_with_orphans_and_does_not_kill_clients() {
         );
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
-    let broker_pid = broker.0.id();
+    let broker_pid = broker.id();
     assert!(
         Command::new("kill")
             .args(["-KILL", &broker_pid.to_string()])
@@ -510,7 +511,7 @@ async fn sigkilled_authority_restarts_with_orphans_and_does_not_kill_clients() {
     drop(broker);
     tokio::time::sleep(Duration::from_millis(300)).await;
     assert!(
-        uds_root.try_wait().unwrap().is_none(),
+        uds_root.child().try_wait().unwrap().is_none(),
         "authority death must not kill unrelated sessions"
     );
     let _restarted = start_broker(temp.path(), &config);
@@ -537,8 +538,7 @@ async fn sigkilled_authority_restarts_with_orphans_and_does_not_kill_clients() {
         "outstanding attempt is orphaned, not forgotten"
     );
     assert_eq!(status["groups"]["g"]["active"], 1);
-    let _ = uds_root.kill();
-    let _ = uds_root.wait();
+    drop(uds_root);
     let _ = tokio::task::spawn_blocking(move || finish(holder)).await;
 }
 
@@ -549,17 +549,19 @@ async fn sigterm_stops_the_authority_cleanly() {
     let temp = tempfile::tempdir().unwrap();
     let provider = fake_provider(Duration::from_millis(10)).await;
     let config = write_config(temp.path(), &provider.base, Some((2, 2_000)));
-    let mut broker = quecto(
-        temp.path(),
-        &[
-            "--config",
-            config.to_str().unwrap(),
-            "admission-broker",
-            "run",
-        ],
-    )
-    .spawn()
-    .expect("spawn broker");
+    let mut broker = Proc::new(
+        quecto(
+            temp.path(),
+            &[
+                "--config",
+                config.to_str().unwrap(),
+                "admission-broker",
+                "run",
+            ],
+        )
+        .spawn()
+        .expect("spawn broker"),
+    );
     let socket = temp
         .path()
         .join("authority")
@@ -567,7 +569,10 @@ async fn sigterm_stops_the_authority_cleanly() {
         .join("admission.sock");
     let deadline = Instant::now() + LIMIT;
     while std::os::unix::net::UnixStream::connect(&socket).is_err() {
-        assert!(broker.try_wait().unwrap().is_none(), "broker exited early");
+        assert!(
+            broker.child().try_wait().unwrap().is_none(),
+            "broker exited early"
+        );
         assert!(Instant::now() < deadline, "authority never accepted");
         std::thread::sleep(Duration::from_millis(20));
     }
@@ -579,6 +584,7 @@ async fn sigterm_stops_the_authority_cleanly() {
             .unwrap()
             .success()
     );
+    let broker = broker.into_inner();
     let output = tokio::task::spawn_blocking(move || broker.wait_with_output().unwrap())
         .await
         .unwrap();
@@ -619,7 +625,7 @@ async fn burst_versus_admitted_fake_workload_is_measured() {
         let config = write_config(temp, &provider.base, admission);
         let _broker = admission.map(|_| start_broker(temp, &config));
         let started = Instant::now();
-        let roots: Vec<Child> = (0..ROOTS).map(|_| root_agent(temp, &config, &[])).collect();
+        let roots: Vec<Proc> = (0..ROOTS).map(|_| root_agent(temp, &config, &[])).collect();
         let results: Vec<_> =
             tokio::task::spawn_blocking(move || roots.into_iter().map(finish).collect::<Vec<_>>())
                 .await
