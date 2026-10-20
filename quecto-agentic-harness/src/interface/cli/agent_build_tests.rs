@@ -440,8 +440,7 @@ fn composed_admission_startup_child_root_and_disabled() {
                 AdmissionConfig, GroupId, GroupPolicy,
             };
             use crate::infrastructure::admission::{
-                AuthorityDirectory, AuthorityServer, Negotiation, negotiate,
-                write_admission_context,
+                AuthorityDirectory, Negotiation, negotiate, write_admission_context,
             };
             use crate::infrastructure::providers::routing::provider_runtime_admission::AdmissionRuntimeProposal;
             let group = GroupId::new("g").unwrap();
@@ -473,7 +472,7 @@ fn composed_admission_startup_child_root_and_disabled() {
                 .unwrap();
             let directory = temp.path().join("broker");
             let server = rt
-                .block_on(AuthorityServer::start(
+                .block_on(crate::composition::admission::start_authority(
                     AuthorityDirectory::open(&directory).unwrap(),
                     proposal,
                 ))

@@ -30,6 +30,7 @@ impl AdmissionPolicy {
                     report.cancelled += 1;
                 }
                 RequestState::Active { .. } => {
+                    report.active += 1;
                     let group = self.groups.get_mut(&group).expect("configured group");
                     if group.uncertain.insert(id) {
                         report.uncertain += 1;

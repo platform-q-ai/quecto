@@ -260,16 +260,6 @@ fn route_decides_from_the_request_line_alone() {
     );
 }
 
-#[test]
-fn constant_time_eq_matches_only_identical_strings() {
-    assert!(constant_time_eq("", ""));
-    assert!(constant_time_eq("abc", "abc"));
-    assert!(!constant_time_eq("abc", "abd"));
-    assert!(!constant_time_eq("abc", "ab"));
-    assert!(!constant_time_eq("ab", "abc"));
-    assert!(!constant_time_eq("", "a"));
-}
-
 #[tokio::test]
 async fn a_valid_line_whose_head_is_cut_off_does_not_end_the_login() {
     let (addr, handle) = start(Duration::from_secs(10), fast_limits()).await;

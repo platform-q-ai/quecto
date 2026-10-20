@@ -1,4 +1,5 @@
-//! Exchanging an authorization code for tokens (#1839).
+//! Exchanging an authorization code, or a refresh token, for tokens
+//! (#1839, #1840).
 
 use crate::domain::auth::provider::LoginProvider;
 
@@ -47,5 +48,14 @@ pub trait TokenExchange: Send + Sync {
         provider: LoginProvider,
         code: &str,
         verifier: &str,
+    ) -> Result<IssuedToken, TokenExchangeError>;
+
+    /// Exchange `refresh_token` for `provider`'s fresh tokens. A response
+    /// without a refresh token means "keep using this one" (RFC 6749
+    /// §5.1). Blocking, as [`TokenExchange::exchange_code`].
+    fn refresh(
+        &self,
+        provider: LoginProvider,
+        refresh_token: &str,
     ) -> Result<IssuedToken, TokenExchangeError>;
 }

@@ -6,8 +6,8 @@
 use std::sync::Arc;
 
 use crate::application::auth::use_cases::{
-    InspectAuthStatus, LogInWithOAuth, LogInWithToken, RemoveStoredCredentials,
-    StartDeviceCodeLogin,
+    ImportExternalCredentials, InspectAuthStatus, LogInWithOAuth, LogInWithToken,
+    RemoveStoredCredentials, StartDeviceCodeLogin,
 };
 use crate::interface::cli::CliContext;
 
@@ -33,6 +33,8 @@ pub struct AuthHandles {
     pub token_login: Arc<LogInWithToken>,
     /// `auth login --provider P --device-code`.
     pub device_code_login: Arc<StartDeviceCodeLogin>,
+    /// `auth login --import-external`.
+    pub import: Arc<ImportExternalCredentials>,
     /// `auth login [--provider P]`: the browser OAuth login.
     pub oauth_login: Arc<LogInWithOAuth>,
     /// `auth logout --provider P`.

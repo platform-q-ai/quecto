@@ -295,3 +295,110 @@ fn a_long_chat_chunk_is_output_by_what_its_choices_carry() {
     ));
     assert!(!long(br#"{"type":"x","content":"xx","choices":[{"xx"#));
 }
+
+/// #1679 P2 AC5, #2609 review: a chat payload is a throttle by its `error`
+/// object's typed fields alone, a billing name taking precedence. The chat
+/// wire is the OpenAI-compatible one, so it keeps the compatible vendors'
+/// names (OpenRouter relays an upstream's `overloaded_error`); only where
+/// it reads them narrows. Moved from `transport/` and the contract suite.
+#[test]
+fn a_chat_throttle_is_read_from_its_error_object_only() {
+    for (value, throttle) in [
+        (json!({"error": {"type": "rate_limit_error"}}), true),
+        (json!({"error": {"type": "overloaded_error"}}), true),
+        (json!({"error": {"code": "rate_limit_exceeded"}}), true),
+        (
+            json!({"error": {"type": "rate_limit_error", "code": "insufficient_quota"}}),
+            false,
+        ),
+        (
+            json!({"error": {"type": "overloaded_error", "code": "billing_hard_limit_reached"}}),
+            false,
+        ),
+        (
+            json!({"error": {"message": "429 rate_limit_error overloaded_error"}}),
+            false,
+        ),
+        (json!({"error": {"type": "authentication_error"}}), false),
+        (json!({"error": {"type": "invalid_request_error"}}), false),
+        (json!({"error": {"code": 429}}), false),
+        (json!(null), false),
+        // Declared narrowing: the Responses shapes.
+        (
+            json!({"type": "error", "code": "rate_limit_exceeded"}),
+            false,
+        ),
+        (
+            json!({"response": {"error": {"code": "rate_limit_exceeded"}}}),
+            false,
+        ),
+    ] {
+        assert_eq!(OPENAI_WIRE.is_throttle(&value), throttle, "{value}");
+    }
+}
+
+/// An HTTP error body naming a billing error or a refused request is
+/// terminal; a throttle or a server error is not.
+#[test]
+fn a_chat_error_body_is_terminal_by_its_typed_fields() {
+    for (value, terminal) in [
+        (json!({"error": {"code": "insufficient_quota"}}), true),
+        (json!({"error": {"code": "invalid_api_key"}}), true),
+        (json!({"error": {"type": "authentication_error"}}), true),
+        (json!({"error": {"type": "permission_error"}}), true),
+        (json!({"error": {"type": "invalid_request_error"}}), true),
+        (json!({"error": {"code": "rate_limit_exceeded"}}), false),
+        (json!({"error": {"code": "server_error"}}), false),
+        // Declared narrowing: a Responses-nested error.
+        (
+            json!({"response": {"error": {"code": "invalid_api_key"}}}),
+            false,
+        ),
+    ] {
+        assert_eq!(OPENAI_WIRE.is_terminal_error(&value), terminal, "{value}");
+    }
+}
+
+/// The chat wire's error names an attempt records: every name the
+/// compatible vendors send.
+#[test]
+fn a_chat_error_records_its_code() {
+    use crate::domain::inference::value_objects::attempt_diagnostics::ErrorCode;
+    for (name, code) in [
+        ("rate_limit_exceeded", ErrorCode::RateLimitExceeded),
+        ("rate_limit_error", ErrorCode::RateLimitExceeded),
+        ("overloaded_error", ErrorCode::Overloaded),
+        ("server_error", ErrorCode::ServerError),
+        ("insufficient_quota", ErrorCode::InsufficientQuota),
+        ("usage_limit_reached", ErrorCode::UsageLimitReached),
+        ("authentication_error", ErrorCode::AuthenticationError),
+        ("permission_error", ErrorCode::PermissionError),
+        ("invalid_request_error", ErrorCode::InvalidRequestError),
+        ("invalid_api_key", ErrorCode::InvalidApiKey),
+    ] {
+        assert_eq!(
+            OPENAI_WIRE.error_name(name).map(|known| known.code()),
+            Some(code),
+            "{name}"
+        );
+    }
+    assert!(OPENAI_WIRE.error_name("SECRET").is_none());
+    // OpenAI's 401 names two known errors: its `type`'s is recorded, as
+    // before the move (#2620 review).
+    let profile = crate::infrastructure::providers::transport::attempt_profile::Profile::new(
+        &OPENAI_WIRE,
+        Surface::Incremental,
+        Default::default(),
+    );
+    let seen = crate::infrastructure::providers::transport::attempt_transport::observed(
+        profile,
+        &[r#"data: {"error":{"type":"invalid_request_error","code":"invalid_api_key"}}"#],
+        None,
+    );
+    assert_eq!(
+        seen.diagnostics.error_code,
+        Some(ErrorCode::InvalidRequestError)
+    );
+    let value = json!({"response": {"incomplete_details": {"reason": "max_output_tokens"}}});
+    assert_eq!(OPENAI_WIRE.incomplete_reason(&value), None);
+}

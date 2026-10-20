@@ -163,7 +163,11 @@ pub struct GroupSnapshot {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct AbandonReport {
     pub cancelled: usize,
+    /// Active attempts this abandon newly marked uncertain.
     pub uncertain: usize,
+    /// Active attempts the scope still holds, whether newly or already
+    /// uncertain: zero means it holds no work and may be released.
+    pub active: usize,
 }
 
 /// One possibly outstanding remote attempt. Scope is the serial only: the

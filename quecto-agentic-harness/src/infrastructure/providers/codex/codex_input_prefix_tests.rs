@@ -10,6 +10,9 @@ use crate::domain::inference::events::request_observation::{
 use crate::domain::inference::value_objects::token_estimate::{
     estimate_opaque_tokens, estimate_tokens,
 };
+use crate::infrastructure::providers::transport::input_prefix::{
+    MeasuredInput, PendingInput, commit, compare, kept,
+};
 use serde_json::{Value, json};
 
 fn user(text: &str) -> Value {
@@ -56,7 +59,7 @@ fn head(instructions: &str) -> usize {
 
 /// Compare a request of `input` in `session` with `baseline` and accept it.
 fn observe(baseline: &InputBaseline, session: &str, input: &[Value]) -> InputPrefixParts {
-    let measured = MeasuredInput::of(session, ENDPOINT, &body("sys", input));
+    let measured = super::measured(session, ENDPOINT, &body("sys", input));
     let observed = compare(baseline, &measured).expect("consistent").parts();
     commit(baseline, measured);
     observed
@@ -213,7 +216,7 @@ fn a_truncated_input_records_its_first_missing_index_without_a_kind() {
 fn measured(instructions: &str, model: &str, endpoint: &str, input: &[Value]) -> MeasuredInput {
     let mut sent = body(instructions, input);
     sent["model"] = json!(model);
-    MeasuredInput::of("s", endpoint, &sent)
+    super::measured("s", endpoint, &sent)
 }
 
 /// Changed instructions, model or endpoint leave no unchanged prefix of the
@@ -342,7 +345,7 @@ fn an_image_url_typed_off_the_allowlist_costs_the_ceiling() {
 fn only_an_accepted_request_becomes_the_baseline() {
     let baseline = InputBaseline::default();
     observe(&baseline, "s", &[user("a")]);
-    let edited = MeasuredInput::of("s", ENDPOINT, &body("sys", &[user("EDITED")]));
+    let edited = super::measured("s", ENDPOINT, &body("sys", &[user("EDITED")]));
     let compared = compare(&baseline, &edited).expect("consistent").parts();
     assert_eq!(compared.first_changed_item, Some(0));
     let observed = observe(&baseline, "s", &[user("a"), user("b")]);
@@ -355,8 +358,11 @@ fn only_an_accepted_request_becomes_the_baseline() {
 #[test]
 fn another_body_of_a_request_keeps_its_session_and_endpoint() {
     let baseline = InputBaseline::default();
-    let replaying = MeasuredInput::of("s", ENDPOINT, &body("sys", &[user("a"), reasoning("r")]));
-    commit(&baseline, replaying.for_body(&body("sys", &[user("a")])));
+    let replaying = super::measured("s", ENDPOINT, &body("sys", &[user("a"), reasoning("r")]));
+    commit(
+        &baseline,
+        remeasured(&replaying, &body("sys", &[user("a")])),
+    );
     let observed = observe(&baseline, "s", &[user("a"), user("b")]);
     assert_eq!(observed.previous_items, Some(1));
     assert_eq!(observed.first_changed_item, None);
@@ -384,12 +390,12 @@ fn another_sessions_baseline_is_not_compared() {
 fn a_pending_input_compares_with_the_baseline_its_trace_carries() {
     let sent = body("sys", &[user("a")]);
     let untraced = RequestTrace::default();
-    assert!(PendingInput::begin(&untraced, "s", ENDPOINT, &sent).is_none());
+    assert!(PendingInput::begin(&untraced, super::measured("s", ENDPOINT, &sent)).is_none());
     assert_eq!(untraced.input_prefix(), None);
     let baseline = InputBaseline::default();
     let first = RequestTrace::default();
     first.attach_input_baseline(baseline.clone());
-    PendingInput::begin(&first, "s", ENDPOINT, &sent)
+    PendingInput::begin(&first, super::measured("s", ENDPOINT, &sent))
         .expect("a baseline")
         .accept();
     assert_eq!(
@@ -399,7 +405,8 @@ fn a_pending_input_compares_with_the_baseline_its_trace_carries() {
     let second = RequestTrace::default();
     second.attach_input_baseline(baseline);
     let appended = body("sys", &[user("a"), user("b")]);
-    let pending = PendingInput::begin(&second, "s", ENDPOINT, &appended).expect("a baseline");
+    let pending = PendingInput::begin(&second, super::measured("s", ENDPOINT, &appended))
+        .expect("a baseline");
     let parts = second.input_prefix().expect("recorded").parts();
     assert_eq!(
         (parts.previous_items, parts.first_changed_item),
@@ -436,12 +443,12 @@ fn nothing_kept_or_recorded_carries_content() {
         call(SECRET),
         output(SECRET, SECRET),
     ];
-    let measured = MeasuredInput::of(&session, ENDPOINT, &body(SECRET, &input));
+    let measured = super::measured(&session, ENDPOINT, &body(SECRET, &input));
     let observed = compare(&baseline, &measured).expect("consistent");
     assert_eq!(observed.parts().first_changed_item, Some(0));
     let measured_text = format!("{measured:?} {observed:?} {baseline:?}");
     commit(&baseline, measured);
-    let kept = baseline.read(|kept: Option<&AcceptedInput>| format!("{:?}", kept.expect("kept")));
+    let kept = kept(&baseline).expect("kept");
     let recorded = serde_json::to_string(&observed).unwrap();
     for text in [measured_text, kept, recorded] {
         for fragment in ["sk-proj", "hunter2", "SECRET", "9d1f", "cli:"] {

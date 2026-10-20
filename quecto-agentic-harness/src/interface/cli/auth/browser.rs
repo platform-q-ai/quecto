@@ -2,7 +2,7 @@
 //! waits for the callback or reads a pasted code, and presents the
 //! outcome. What is trusted and stored is the `LogInWithOAuth` use case's.
 
-use super::{Output, flush_stdout, login_refusal, read_line, skip_browser_callback};
+use super::{Output, brand, flush_stdout, login_refusal, read_line, skip_browser_callback};
 use crate::application::auth::dto::{
     AuthorizationReturn, CallbackFailure, LoginError, OAuthLoginAttempt,
 };
@@ -108,22 +108,23 @@ fn authorization_prompt(attempt: &OAuthLoginAttempt) -> String {
              After authorizing, you'll be redirected to a page with a URL containing\n\
              an authorization code. Copy the FULL URL or code and paste it below.\n\n\
              Paste the authorization code:\n",
-            brand(attempt.provider())
+            prompt_name(attempt.provider())
         ),
         (provider, AuthorizationReturn::Loopback { waiting_on }) => format!(
             "Open this URL in your browser to authenticate with {}:\n\n{url}\n\n\
              Waiting for browser callback on {waiting_on} ...\n\
              (If the browser doesn't open, copy the URL above and paste it manually)\n",
-            brand(provider)
+            prompt_name(provider)
         ),
     }
 }
 
-fn brand(provider: LoginProvider) -> &'static str {
+/// How the browser prompt names `provider`: its brand, and for xAI the
+/// subscriptions its login serves.
+fn prompt_name(provider: LoginProvider) -> String {
     match provider {
-        LoginProvider::OpenAi => "OpenAI",
-        LoginProvider::Anthropic => "Anthropic",
-        LoginProvider::Xai => "xAI (SuperGrok / X Premium+)",
+        LoginProvider::Xai => format!("{} (SuperGrok / X Premium+)", brand(provider)),
+        LoginProvider::OpenAi | LoginProvider::Anthropic => brand(provider).to_string(),
     }
 }
 

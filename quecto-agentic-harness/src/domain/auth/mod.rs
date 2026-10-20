@@ -6,5 +6,6 @@
 //! Flat until a role holds two files (wiki rule 10).
 
 pub mod credential;
+pub mod import;
 pub mod pasted_code;
 pub mod provider;

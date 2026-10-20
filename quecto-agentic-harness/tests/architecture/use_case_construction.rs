@@ -21,9 +21,11 @@
 //! the path on one and `::new(` on the next, a struct literal at the start
 //! of a line (indistinguishable from a pattern), spaced `::` or `Self::new`
 //! inside an `impl UseCase`. The parse-based scan at the end of this file
-//! (D10 #1979) closes those on the syntax tree; a constructor reached
-//! through a macro invocation's tokens stays the one documented evasion of
-//! both scans.
+//! (D10 #1979) closes those on the syntax tree, and also refuses a unit
+//! struct named as a value (#1910). Two evasions of both scans remain,
+//! documented: a constructor reached through a macro invocation's tokens,
+//! and a construction whose type is only inferred
+//! (`let uc: UseCase = Default::default();`), which no path names.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -38,7 +40,9 @@ const USE_CASES: &[&str] = &[
     "AcknowledgeMessage",
     "ActivateMember",
     "AdmitMember",
+    "AdvanceAuthorityEpoch",
     "AmendRunContract",
+    "BindScope",
     "BlockTask",
     "BootstrapMember",
     "BootstrapProjectBoard",
@@ -51,6 +55,7 @@ const USE_CASES: &[&str] = &[
     "ClearConversation",
     "ClearSetAside",
     "CloseRun",
+    "CompleteAdmission",
     "CompleteMergedTask",
     "CompleteRun",
     "ConfirmMemberDead",
@@ -63,6 +68,8 @@ const USE_CASES: &[&str] = &[
     "DepartingChildren",
     "DiagnoseContainerRuntime",
     "DiscardPlan",
+    "DisconnectScope",
+    "DispatchAdmissions",
     "DriveExternalAgentSession",
     "EditPlan",
     "EndRun",
@@ -77,6 +84,7 @@ const USE_CASES: &[&str] = &[
     "GcOrphanedEnvironments",
     "HarnessShutdownTransaction",
     "InitialiseStandardContainer",
+    "ImportExternalCredentials",
     "InspectAuthStatus",
     "InspectEffectiveConfiguration",
     "InspectAuthority",
@@ -136,6 +144,7 @@ const USE_CASES: &[&str] = &[
     "ReloadRuntimeConfiguration",
     "ReserveFiles",
     "ResetAuthority",
+    "RestoreAuthority",
     "ResolveCatalogueUseCase",
     "ResolveEffectiveConfig",
     "RestoreRegistry",
@@ -154,6 +163,7 @@ const USE_CASES: &[&str] = &[
     "SelectContainerConfig",
     "SendMessage",
     "SetTaskDependencies",
+    "SettleAuthority",
     "SettleDelegatedChild",
     "SettleDelegatedChildPorts",
     "StartBoardTask",
@@ -291,7 +301,7 @@ fn raw_aliases_in(code: &[(usize, String)]) -> BTreeMap<String, String> {
 /// an alias declared in one file and used in another (a `pub(crate) use
 /// … as Hidden;` re-export) resolves wherever it is spelled. Fail-closed:
 /// every alias of the crate counts in every file, whatever its scope.
-fn crate_raw_aliases() -> &'static BTreeMap<String, String> {
+pub(super) fn crate_raw_aliases() -> &'static BTreeMap<String, String> {
     use std::sync::OnceLock;
     static ALIASES: OnceLock<BTreeMap<String, String>> = OnceLock::new();
     ALIASES.get_or_init(|| {
@@ -469,7 +479,8 @@ fn composition_is_the_only_layer_that_constructs_use_cases() {
         in_composition >= 10,
         "composition builds the graph ({in_composition} constructions seen)"
     );
-    // The teardown, lifecycle and environment graphs each have a home.
+    // The teardown, lifecycle, environment and authority graphs each have
+    // a home.
     for (file, builder) in [
         (
             "src/composition/subagent_teardown.rs",
@@ -490,6 +501,11 @@ fn composition_is_the_only_layer_that_constructs_use_cases() {
         (
             "src/composition/environments.rs",
             "pub fn build_member_finalizer",
+        ),
+        // The authority server's durability use cases (#1910).
+        (
+            "src/composition/admission.rs",
+            "pub fn build_authority_use_cases",
         ),
     ] {
         assert!(
@@ -743,6 +759,19 @@ impl AstConstructions<'_> {
         None
     }
 
+    /// What `ident` names once every alias is followed (itself when it is no
+    /// alias).
+    fn alias_target(&self, ident: &str) -> String {
+        let mut current = ident.to_string();
+        for _ in 0..=self.aliases.len() {
+            match self.aliases.get(&current) {
+                Some(target) if *target != current => current = target.clone(),
+                _ => break,
+            }
+        }
+        current
+    }
+
     /// `Self` stands for the enclosing impl's type; anything else for itself.
     fn segment_name(&self, ident: &str) -> Option<String> {
         if ident == "Self" {
@@ -758,7 +787,7 @@ impl AstConstructions<'_> {
             syn::Type::Group(ty) => self.type_name(&ty.elem),
             syn::Type::Path(ty) => match &ty.qself {
                 Some(qself) => self.type_name(&qself.ty),
-                None => self.segment_name(&ty.path.segments.last()?.ident.to_string()),
+                None => self.segment_name(&ident_name(&ty.path.segments.last()?.ident)),
             },
             _ => None,
         }
@@ -768,7 +797,7 @@ impl AstConstructions<'_> {
     /// `Name::new`, `alias::default`, `Self::new`, `<Name>::from`,
     /// `<Name as Trait>::new`.
     fn constructor_owner(&self, qself: Option<&syn::QSelf>, path: &syn::Path) -> Option<String> {
-        let segments: Vec<String> = path.segments.iter().map(|s| s.ident.to_string()).collect();
+        let segments: Vec<String> = path.segments.iter().map(|s| ident_name(&s.ident)).collect();
         let last = segments.last()?;
         if !CONSTRUCTORS.contains(&last.as_str()) {
             return None;
@@ -782,11 +811,42 @@ impl AstConstructions<'_> {
         }
     }
 
+    /// The inventory name a value path builds by naming the type itself: a
+    /// unit struct `Name` used as a value (`Name.execute(…)`), or a tuple
+    /// struct's constructor `Name(…)`, bare, `Self`, or module-qualified
+    /// (`use_cases::Name`). Only a module (lower-case) parent qualifies, so
+    /// an enum variant spelled like a use case (`Event::Name`) is spared; the
+    /// parent is judged by what it aliases, so `use … ::use_cases as Probe;`
+    /// cannot pass `Probe::Name` off as a variant.
+    fn value_owner(&self, qself: Option<&syn::QSelf>, path: &syn::Path) -> Option<String> {
+        if qself.is_some() {
+            return None;
+        }
+        let segments: Vec<String> = path.segments.iter().map(|s| ident_name(&s.ident)).collect();
+        match segments.as_slice() {
+            [only] => self.segment_name(only),
+            [.., parent, last]
+                if self
+                    .alias_target(parent)
+                    .starts_with(|c: char| c.is_ascii_lowercase()) =>
+            {
+                self.resolve(last)
+            }
+            _ => None,
+        }
+    }
+
     fn record(&mut self, what: String) {
         if !self.found.contains(&what) {
             self.found.push(what);
         }
     }
+}
+
+/// An identifier as the compiler resolves it: `r#Name` is `Name`.
+pub(super) fn ident_name(ident: &syn::Ident) -> String {
+    use syn::ext::IdentExt;
+    ident.unraw().to_string()
 }
 
 fn is_cfg_test(attrs: &[syn::Attribute]) -> bool {
@@ -801,7 +861,7 @@ fn is_cfg_test(attrs: &[syn::Attribute]) -> bool {
 fn path_string(path: &syn::Path) -> String {
     path.segments
         .iter()
-        .map(|s| s.ident.to_string())
+        .map(|s| ident_name(&s.ident))
         .collect::<Vec<_>>()
         .join("::")
 }
@@ -814,14 +874,14 @@ fn syn_aliases_of(file: &syn::File) -> BTreeMap<String, String> {
     impl<'ast> Visit<'ast> for Aliases {
         fn visit_use_rename(&mut self, item: &'ast syn::UseRename) {
             self.0
-                .insert(item.rename.to_string(), item.ident.to_string());
+                .insert(ident_name(&item.rename), ident_name(&item.ident));
         }
         fn visit_item_type(&mut self, item: &'ast syn::ItemType) {
             if let syn::Type::Path(ty) = &*item.ty
                 && let Some(last) = ty.path.segments.last()
             {
                 self.0
-                    .insert(item.ident.to_string(), last.ident.to_string());
+                    .insert(ident_name(&item.ident), ident_name(&last.ident));
             }
             syn::visit::visit_item_type(self, item);
         }
@@ -868,14 +928,14 @@ impl<'ast> syn::visit::Visit<'ast> for AstConstructions<'_> {
 
     fn visit_item_impl(&mut self, item: &'ast syn::ItemImpl) {
         let self_ty = match &*item.self_ty {
-            syn::Type::Path(ty) => ty.path.segments.last().map(|s| s.ident.to_string()),
+            syn::Type::Path(ty) => ty.path.segments.last().map(|s| ident_name(&s.ident)),
             _ => None,
         };
         if let Some((_, trait_path, _)) = &item.trait_
             && trait_path
                 .segments
                 .last()
-                .is_some_and(|s| s.ident == "From")
+                .is_some_and(|s| ident_name(&s.ident) == "From")
             && let Some(name) = self_ty.as_deref().and_then(|ty| self.resolve(ty))
         {
             self.record(format!("`impl From<…> for {name}`"));
@@ -889,6 +949,11 @@ impl<'ast> syn::visit::Visit<'ast> for AstConstructions<'_> {
     fn visit_expr_path(&mut self, expr: &'ast syn::ExprPath) {
         if let Some(name) = self.constructor_owner(expr.qself.as_ref(), &expr.path) {
             self.record(format!("`{}` constructs {name}", path_string(&expr.path)));
+        } else if let Some(name) = self.value_owner(expr.qself.as_ref(), &expr.path) {
+            self.record(format!(
+                "`{}` builds a {name} value",
+                path_string(&expr.path)
+            ));
         }
         syn::visit::visit_expr_path(self, expr);
     }
@@ -900,7 +965,7 @@ impl<'ast> syn::visit::Visit<'ast> for AstConstructions<'_> {
                 .path
                 .segments
                 .last()
-                .and_then(|s| self.segment_name(&s.ident.to_string())),
+                .and_then(|s| self.segment_name(&ident_name(&s.ident))),
         };
         if let Some(name) = owner {
             self.record(format!(
@@ -969,7 +1034,7 @@ fn only_composition_and_the_application_construct_use_cases_on_the_syntax_tree()
 /// documents is caught, and handle positions are spared.
 #[test]
 fn ast_construction_scan_catches_multiline_self_qualified_and_aliased_constructions() {
-    let names: BTreeSet<String> = ["ListSessions", "KillEnvironment"]
+    let names: BTreeSet<String> = ["ListSessions", "KillEnvironment", "NegotiateAuthority"]
         .into_iter()
         .map(str::to_string)
         .collect();
@@ -987,6 +1052,18 @@ fn ast_construction_scan_catches_multiline_self_qualified_and_aliased_constructi
         "fn f() -> ListSessions {\n    ListSessions {\n        store,\n    }\n}",
         "struct Parts;\nimpl From<Parts> for ListSessions { fn from(p: Parts) -> Self { todo() } }",
         "fn f() { let k = Arc::new(\n    KillEnvironment::new(\n        a,\n    ),\n); }",
+        // #1910: a unit-struct use case is built by naming it as a value.
+        "fn f() { let plan = NegotiateAuthority.execute(inputs); }",
+        "fn f() { let uc = Arc::new(NegotiateAuthority); }",
+        "fn f() { let uc = crate::application::admission::use_cases::NegotiateAuthority; }",
+        "impl NegotiateAuthority { fn alt() -> Self { Self } }",
+        "fn f() { let uc = ListSessions(store); }",
+        // An alias cannot pass a module off as an enum (#2622 review).
+        "use crate::application::admission::use_cases as UseCasesProbe;\nfn f() { let uc = UseCasesProbe::NegotiateAuthority; }",
+        // A raw identifier is the identifier (#2622 review).
+        "fn f() { let uc = r#NegotiateAuthority; }",
+        "fn f() { let x = r#ListSessions::new(store); }",
+        "use crate::application::sessions::use_cases::r#ListSessions as Q;\nfn f() { let x = Q::new(store); }",
     ];
     for source in caught {
         assert!(
@@ -1005,6 +1082,10 @@ fn ast_construction_scan_catches_multiline_self_qualified_and_aliased_constructi
         "#[cfg(test)]\nmod tests { fn rig() { let x = ListSessions::new(store); } }",
         "impl Thing { #[cfg(test)] fn rig() { ListSessions::new(store); } }",
         "fn f() { let x = Other::new(ListSessions::name()); }",
+        "fn f() -> Event { Event::NegotiateAuthority }",
+        "use crate::domain::Event as E;\nfn f() -> E { E::NegotiateAuthority }",
+        "fn f(uc: &NegotiateAuthority) { uc.execute(inputs); }",
+        "fn f() { let x = <NegotiateAuthority as Probe>::NAME; }",
     ];
     for source in spared {
         let found = ast_constructions(source, &names);
