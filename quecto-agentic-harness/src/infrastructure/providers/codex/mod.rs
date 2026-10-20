@@ -602,9 +602,9 @@ impl LlmProvider for CodexProvider {
 }
 
 mod codex_input;
+mod codex_input_prefix;
 mod codex_replay;
 pub(in crate::infrastructure::providers) mod codex_wire;
-mod input_prefix;
 /// FNV-1a 32-bit: fast, dependency-free, deterministic.
 fn fnv1a(text: &str) -> u32 {
     let mut hash: u32 = 0x811c_9dc5;
