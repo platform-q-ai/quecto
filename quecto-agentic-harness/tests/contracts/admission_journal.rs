@@ -2,15 +2,15 @@
 //! the durability use cases persist the ledger before any grant is visible
 //! and before a completion is acknowledged, and fail closed when durability
 //! fails.
-use quecto::application::admission::dto::broker::Settlement;
 use quecto::application::admission::dto::broker::{AuthorityError, Credential};
+use quecto::application::admission::dto::broker::{AuthorityStart, RestoreError, Settlement};
 use quecto::application::admission::ports::inference_authority_ports::{
     AdmissionJournal, AdmissionSecretSource, JournalError, SharedJournal,
 };
 use quecto::application::admission::services::inference_authority::AdmissionAuthority;
 use quecto::application::admission::use_cases::{
-    AdvanceAuthorityEpoch, BindScope, CheckpointLedger, CompleteAdmission, DisconnectScope,
-    DispatchAdmissions, SettleAuthority,
+    AdvanceAuthorityEpoch, BindScope, CompleteAdmission, DisconnectScope, DispatchAdmissions,
+    RestoreAuthority, SettleAuthority,
 };
 use quecto::domain::admission::value_objects::inference_admission::{
     AbandonReport, AdmissionConfig, AdmissionError, AdmissionLedger, Feedback, GroupId,
@@ -24,6 +24,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 struct JournalLog {
     writes: Vec<AdmissionLedger>,
     fail: bool,
+    unreadable: bool,
 }
 
 #[derive(Clone, Default)]
@@ -43,6 +44,14 @@ impl AdmissionJournal for FakeJournal {
         }
         log.writes.push(ledger.clone());
         Ok(())
+    }
+
+    fn load(&mut self) -> Result<Option<AdmissionLedger>, JournalError> {
+        let log = self.log();
+        if log.unreadable {
+            return Err(JournalError::Unavailable("corrupt ledger".into()));
+        }
+        Ok(log.writes.last().cloned())
     }
 }
 
@@ -87,7 +96,6 @@ struct Authority {
     dispatch: DispatchAdmissions,
     completion: CompleteAdmission,
     advance_epoch: AdvanceAuthorityEpoch,
-    checkpoint: CheckpointLedger,
     settlement: SettleAuthority,
     binding: BindScope,
     disconnection: DisconnectScope,
@@ -136,10 +144,6 @@ impl Authority {
     fn reset(&mut self, now: u64) -> Result<u64, AuthorityError> {
         self.advance_epoch.execute(&mut self.authority, now)
     }
-
-    fn checkpoint(&mut self, now: u64) -> Result<(), AuthorityError> {
-        self.checkpoint.execute(&mut self.authority, now)
-    }
 }
 
 impl Deref for Authority {
@@ -163,7 +167,6 @@ fn authority() -> (Authority, FakeJournal) {
         dispatch: DispatchAdmissions::new(shared.clone()),
         completion: CompleteAdmission::new(shared.clone()),
         advance_epoch: AdvanceAuthorityEpoch::new(shared.clone()),
-        checkpoint: CheckpointLedger::new(shared.clone()),
         settlement: SettleAuthority::new(DispatchAdmissions::new(shared)),
         binding: BindScope::new(),
         disconnection: DisconnectScope::new(),
@@ -445,28 +448,100 @@ fn unhealthy_journal_is_probed_before_dispatch_so_queued_work_is_held() {
     );
 }
 
+fn start(previously_operated: bool, accept_missing_ledger: bool) -> AuthorityStart {
+    AuthorityStart {
+        policy: config(),
+        previously_operated,
+        accept_missing_ledger,
+    }
+}
+
+fn restore_over(
+    journal: &FakeJournal,
+    start: AuthorityStart,
+) -> Result<AdmissionAuthority<Counter>, RestoreError> {
+    let shared: SharedJournal = Arc::new(Mutex::new(journal.clone()));
+    RestoreAuthority::new(shared).execute(start, Counter(0), 0)
+}
+
 #[test]
-fn a_checkpoint_persists_the_current_ledger_and_tracks_journal_health() {
+fn a_fresh_journal_starts_a_durable_first_epoch() {
+    let journal = FakeJournal::default();
+    let mut authority = restore_over(&journal, start(false, false)).unwrap();
+    assert_eq!(authority.inspect(0).epoch, 1);
+    assert!(authority.inspect(0).journal_healthy);
+    assert_eq!(
+        journal.log().writes.len(),
+        1,
+        "the initial ledger is durable"
+    );
+    assert_eq!(journal.log().writes[0].epoch, 1);
+}
+
+#[test]
+fn a_journaled_ledger_is_restored_and_checkpointed() {
     let (mut a, journal) = authority();
     let root = a.register_root(WorkloadClass::Interactive, 0).unwrap();
     a.acquire(&root, 1, "g", 0).unwrap();
-    a.checkpoint(0).unwrap();
-    assert_eq!(journal.log().writes.len(), 1, "one durable checkpoint");
-    assert_eq!(journal.log().writes[0].epoch, 7);
+    a.pump(0).unwrap();
+    let written = journal.log().writes.len();
+    let mut restored = restore_over(&journal, start(true, false)).unwrap();
+    assert_eq!(restored.inspect(0).epoch, 7, "the journaled epoch");
+    assert_eq!(
+        restored.inspect(0).groups[&group()].uncertain,
+        1,
+        "the outstanding attempt is unverified after a restart"
+    );
+    assert_eq!(journal.log().writes.len(), written + 1, "checkpointed");
+}
+
+#[test]
+fn a_ledger_missing_after_prior_operation_is_refused_unless_accepted() {
+    let journal = FakeJournal::default();
+    assert_eq!(
+        restore_over(&journal, start(true, false)).err(),
+        Some(RestoreError::MissingLedger)
+    );
+    assert!(journal.log().writes.is_empty(), "nothing is written");
+    let mut accepted = restore_over(&journal, start(true, true)).unwrap();
+    assert_eq!(
+        accepted.inspect(0).epoch,
+        1,
+        "the operator accepted an empty ledger"
+    );
+    assert_eq!(journal.log().writes.len(), 1);
+}
+
+#[test]
+fn an_unreadable_incompatible_or_undurable_journal_refuses_to_start() {
+    let journal = FakeJournal::default();
+    journal.log().unreadable = true;
+    assert!(matches!(
+        restore_over(&journal, start(false, false)),
+        Err(RestoreError::Unreadable(reason)) if reason.contains("corrupt")
+    ));
+    journal.log().unreadable = false;
     journal.log().fail = true;
     assert_eq!(
-        a.checkpoint(1).err(),
-        Some(AuthorityError::JournalUnavailable)
-    );
-    assert!(
-        !a.inspect(1).journal_healthy,
-        "a failed checkpoint is recorded"
+        restore_over(&journal, start(false, false)).err(),
+        Some(RestoreError::NotDurable(AuthorityError::JournalUnavailable))
     );
     journal.log().fail = false;
-    a.checkpoint(2).unwrap();
+    let (mut a, held) = authority();
+    let root = a.register_root(WorkloadClass::Interactive, 0).unwrap();
+    a.acquire(&root, 1, "g", 0).unwrap();
+    a.pump(0).unwrap();
+    let mut renamed = start(true, false);
+    let policy = renamed.policy.groups.remove(&group()).unwrap();
+    let other = GroupId::new("other").unwrap();
+    renamed.policy.groups.insert(other.clone(), policy);
+    renamed.policy.aliases = BTreeMap::from([("g".into(), other)]);
     assert!(
-        a.inspect(2).journal_healthy,
-        "a durable write restores health"
+        matches!(
+            restore_over(&held, renamed),
+            Err(RestoreError::Incompatible(_))
+        ),
+        "a ledger naming a group the policy no longer has"
     );
 }
 
@@ -485,9 +560,8 @@ fn a_poisoned_journal_lock_still_takes_durable_writes() {
     .join();
     assert!(poisoned.is_err(), "the holder panicked");
     assert!(shared.is_poisoned());
-    let mut authority = AdmissionAuthority::new(7, config(), Counter(0)).unwrap();
-    CheckpointLedger::new(shared)
-        .execute(&mut authority, 0)
+    let mut authority = RestoreAuthority::new(shared)
+        .execute(start(false, false), Counter(0), 0)
         .unwrap();
     assert_eq!(journal.log().writes.len(), 1, "the write went through");
     assert!(authority.inspect(0).journal_healthy);

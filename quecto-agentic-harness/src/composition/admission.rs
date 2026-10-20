@@ -8,9 +8,9 @@ use std::sync::{Arc, Mutex};
 
 use crate::application::admission::ports::inference_authority_ports::SharedJournal;
 use crate::application::admission::use_cases::{
-    AdvanceAuthorityEpoch, BindScope, CheckpointLedger, CompleteAdmission, DisconnectScope,
-    DispatchAdmissions, InspectAuthority, InstallAuthorityService, NegotiateAuthority,
-    ResetAuthority, SettleAuthority, UninstallAuthorityService,
+    AdvanceAuthorityEpoch, BindScope, CompleteAdmission, DisconnectScope, DispatchAdmissions,
+    InspectAuthority, InstallAuthorityService, NegotiateAuthority, ResetAuthority,
+    RestoreAuthority, SettleAuthority, UninstallAuthorityService,
 };
 use crate::infrastructure::admission::{
     AuthorityDirectory, AuthorityUseCases, FileJournal, SocketAuthorityAdmin,
@@ -50,10 +50,10 @@ pub fn build_admission_handles() -> AdmissionHandles {
 pub fn build_authority_use_cases(dir: &AuthorityDirectory) -> AuthorityUseCases {
     let journal: SharedJournal = Arc::new(Mutex::new(FileJournal::new(dir)));
     AuthorityUseCases {
+        restore: RestoreAuthority::new(journal.clone()),
         settle: SettleAuthority::new(DispatchAdmissions::new(journal.clone())),
         complete: CompleteAdmission::new(journal.clone()),
-        advance_epoch: AdvanceAuthorityEpoch::new(journal.clone()),
-        checkpoint: CheckpointLedger::new(journal),
+        advance_epoch: AdvanceAuthorityEpoch::new(journal),
         bind: BindScope::new(),
         disconnect: DisconnectScope::new(),
     }

@@ -325,6 +325,7 @@ fn then_fresh_root_granted(world: &mut QuectoWorld) {
 
 // ---- Operations scenarios ---------------------------------------------------
 
+use quecto::application::admission::ports::inference_authority_ports::AdmissionJournal as _;
 use quecto::infrastructure::admission::{FileJournal, ServerError};
 use quecto::infrastructure::admission::{
     Negotiation, ProcessAdmission, negotiate, read_admission_context, write_admission_context,
@@ -625,13 +626,13 @@ fn when_stop_and_corrupt(world: &mut QuectoWorld) {
     let dir = server.directory().clone();
     rt(s).block_on(server.shutdown());
     std::fs::write(dir.journal_path(), b"{broken").unwrap();
-    o.corrupt_error = Some(format!("{:?}", FileJournal::load(&dir).unwrap_err()));
+    o.corrupt_error = Some(format!("{:?}", FileJournal::new(&dir).load().unwrap_err()));
     std::fs::write(
         dir.journal_path(),
         br#"{"format":9,"epoch":1,"outstanding":[],"groups":{}}"#,
     )
     .unwrap();
-    let unsupported = format!("{:?}", FileJournal::load(&dir).unwrap_err());
+    let unsupported = format!("{:?}", FileJournal::new(&dir).load().unwrap_err());
     assert!(unsupported.contains("format"), "{unsupported}");
     // A valid ledger restarts normally; the shutdown above persisted one.
     std::fs::write(

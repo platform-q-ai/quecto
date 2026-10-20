@@ -123,8 +123,8 @@ impl FileJournal {
 
     /// `None` only when no ledger file exists. Any unreadable or corrupt file is
     /// an error: an authority must never restart with an empty ledger by accident.
-    pub fn load(dir: &AuthorityDirectory) -> Result<Option<AdmissionLedger>, JournalError> {
-        match fs::read(dir.journal_path()) {
+    fn read(path: &std::path::Path) -> Result<Option<AdmissionLedger>, JournalError> {
+        match fs::read(path) {
             Ok(bytes) => decode(&bytes).map(Some),
             Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
             Err(e) => Err(JournalError::Unavailable(format!("read ledger: {e}"))),
@@ -158,5 +158,9 @@ impl AdmissionJournal for FileJournal {
     fn persist(&mut self, ledger: &AdmissionLedger) -> Result<(), JournalError> {
         self.write_durably(&encode(ledger))
             .map_err(|e| JournalError::Unavailable(format!("persist ledger: {e}")))
+    }
+
+    fn load(&mut self) -> Result<Option<AdmissionLedger>, JournalError> {
+        Self::read(&self.path)
     }
 }

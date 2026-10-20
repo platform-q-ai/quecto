@@ -11,14 +11,13 @@ use tokio::sync::{mpsc, watch};
 use tokio::task::JoinHandle;
 
 use super::directory::{AuthorityDirectory, SingletonLock};
-use super::journal::FileJournal;
 use super::protocol::*;
 use super::secret::RandomSecretSource;
 use super::server_actor::Actor;
 use super::session;
-use crate::application::admission::services::inference_authority::AdmissionAuthority;
+use crate::application::admission::dto::broker::{AuthorityStart, RestoreError};
 use crate::application::admission::use_cases::{
-    AdvanceAuthorityEpoch, BindScope, CheckpointLedger, CompleteAdmission, DisconnectScope,
+    AdvanceAuthorityEpoch, BindScope, CompleteAdmission, DisconnectScope, RestoreAuthority,
     SettleAuthority,
 };
 use crate::infrastructure::providers::routing::provider_runtime_admission::AdmissionRuntimeProposal;
@@ -30,10 +29,10 @@ pub(super) use super::server_actor::Command;
 /// sequences and the session policy. The actor invokes them and never
 /// constructs one.
 pub struct AuthorityUseCases {
+    pub restore: RestoreAuthority,
     pub settle: SettleAuthority,
     pub complete: CompleteAdmission,
     pub advance_epoch: AdvanceAuthorityEpoch,
-    pub checkpoint: CheckpointLedger,
     pub bind: BindScope,
     pub disconnect: DisconnectScope,
 }
@@ -66,6 +65,14 @@ pub(super) struct Clock {
 }
 
 impl Clock {
+    /// A clock that starts now, for the actor's own tests.
+    #[cfg(test)]
+    pub(super) fn starting_now() -> Self {
+        Self {
+            start: Instant::now(),
+        }
+    }
+
     pub(super) fn now_ms(&self) -> u64 {
         u64::try_from(self.start.elapsed().as_millis()).unwrap_or(u64::MAX)
     }
@@ -194,30 +201,16 @@ impl AuthorityServer {
         let clock = Clock {
             start: Instant::now(),
         };
-        let ledger = FileJournal::load(&dir).map_err(|e| ServerError::Journal(format!("{e:?}")))?;
-        if ledger.is_none() && previously_operated && !accept_missing_ledger {
-            return Err(ServerError::Journal(format!(
-                "ledger {} is missing after prior operation; outstanding remote work cannot be accounted. Restore it or run with --accept-missing-ledger to start an empty ledger",
-                dir.journal_path().display()
-            )));
-        }
-        let mut authority = match ledger {
-            Some(ledger) => AdmissionAuthority::restore(
-                proposal.policy.clone(),
-                &ledger,
-                RandomSecretSource,
-                clock.now_ms(),
-            ),
-            None => AdmissionAuthority::new(1, proposal.policy.clone(), RandomSecretSource),
-        }
-        .map_err(|e| ServerError::Journal(format!("ledger incompatible with policy: {e:?}")))?;
         let use_cases = build_use_cases(&dir);
-        // A ledger exists from the first start onward, so "missing" is never
-        // ambiguous again.
-        use_cases
-            .checkpoint
-            .execute(&mut authority, clock.now_ms())
-            .map_err(|e| ServerError::Journal(format!("initial ledger not durable: {e:?}")))?;
+        let start = AuthorityStart {
+            policy: proposal.policy.clone(),
+            previously_operated,
+            accept_missing_ledger,
+        };
+        let authority = use_cases
+            .restore
+            .execute(start, RandomSecretSource, clock.now_ms())
+            .map_err(|error| restore_refusal(&dir, error))?;
         let owner_token = write_owner_token(&dir)?;
         let client_listener = bind_private(&dir.client_socket())?;
         let admin_listener = bind_private(&dir.admin_socket())?;
@@ -316,4 +309,18 @@ async fn accept_loop(
             }
         }
     }
+}
+
+/// The operator-facing refusal for an authority that could not start from
+/// its journal; the directory names the ledger the operator must restore.
+fn restore_refusal(dir: &AuthorityDirectory, error: RestoreError) -> ServerError {
+    ServerError::Journal(match error {
+        RestoreError::Unreadable(reason) => reason,
+        RestoreError::MissingLedger => format!(
+            "ledger {} is missing after prior operation; outstanding remote work cannot be accounted. Restore it or run with --accept-missing-ledger to start an empty ledger",
+            dir.journal_path().display()
+        ),
+        RestoreError::Incompatible(error) => format!("ledger incompatible with policy: {error:?}"),
+        RestoreError::NotDurable(error) => format!("initial ledger not durable: {error:?}"),
+    })
 }

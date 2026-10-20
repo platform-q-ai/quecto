@@ -24,6 +24,7 @@ use crate::application::admission::services::inference_authority::AdmissionAutho
 use crate::domain::admission::value_objects::inference_admission::{
     RequestId, RequestState, ScopeId, TerminalOutcome,
 };
+use crate::domain::shared::secret_compare::constant_time_eq;
 
 pub(super) enum Command {
     Open {
@@ -495,11 +496,6 @@ fn grant_or_terminal(state: RequestState, now: u64) -> Body {
     }
 }
 
-fn constant_time_eq(a: &str, b: &str) -> bool {
-    let (a, b) = (a.as_bytes(), b.as_bytes());
-    let mut diff = a.len() ^ b.len();
-    for (x, y) in a.iter().zip(b.iter()) {
-        diff |= usize::from(x ^ y);
-    }
-    diff == 0
-}
+#[cfg(test)]
+#[path = "server_actor_tests.rs"]
+mod tests;

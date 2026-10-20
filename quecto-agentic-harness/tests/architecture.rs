@@ -1203,8 +1203,10 @@ const TEST_SUPPORT_APPLICATION_PATHS: &[(&str, &str)] = &[(
 )];
 
 /// Per-file exceptions for the admission authority server (#1910): it runs
-/// the authority the admission capability owns and holds the durability use
-/// cases composition builds and passes in (`AuthorityUseCases`). No other
+/// the authority the admission capability owns, holds the use cases
+/// composition builds and passes in (`AuthorityUseCases`), starts through the
+/// restore use case's own start and refusal values, and its actor compares
+/// capability tokens with the authority's own constant-time check. No other
 /// infrastructure file may name them.
 const AUTHORITY_SERVER_APPLICATION_PATHS: &[(&str, &str)] = &[
     (
@@ -1221,7 +1223,15 @@ const AUTHORITY_SERVER_APPLICATION_PATHS: &[(&str, &str)] = &[
     ),
     (
         "src/infrastructure/admission/server.rs",
-        "crate::application::admission::use_cases::CheckpointLedger",
+        "crate::application::admission::use_cases::RestoreAuthority",
+    ),
+    (
+        "src/infrastructure/admission/server.rs",
+        "crate::application::admission::dto::broker::AuthorityStart",
+    ),
+    (
+        "src/infrastructure/admission/server.rs",
+        "crate::application::admission::dto::broker::RestoreError",
     ),
     (
         "src/infrastructure/admission/server.rs",
@@ -4040,9 +4050,9 @@ fn only_the_authority_server_names_the_durability_use_cases() {
     let durable = [
         "AdvanceAuthorityEpoch",
         "BindScope",
-        "CheckpointLedger",
         "CompleteAdmission",
         "DisconnectScope",
+        "RestoreAuthority",
         "SettleAuthority",
     ]
     .map(use_case);
@@ -4057,6 +4067,13 @@ fn only_the_authority_server_names_the_durability_use_cases() {
         assert!(
             refused(actor, path),
             "the actor holds no use case of its own: {path}"
+        );
+    }
+    for start in ["AuthorityStart", "RestoreError"] {
+        let path = format!("crate::application::admission::dto::broker::{start}");
+        assert!(
+            !refused(server, &path) && refused(elsewhere, &path),
+            "{path}"
         );
     }
     assert!(!refused(actor, &authority));
@@ -4186,7 +4203,7 @@ fn the_admission_use_cases_own_the_journal_and_the_authority_does_not() {
         "dispatch_admissions",
         "complete_admission",
         "advance_authority_epoch",
-        "checkpoint_ledger",
+        "restore_authority",
     ] {
         let path = format!("src/application/admission/use_cases/{use_case}.rs");
         assert!(
@@ -4235,6 +4252,115 @@ fn the_authority_actor_settles_binds_and_disconnects_through_use_cases() {
     );
     assert!(bind.contains("self.use_cases.bind.execute(&mutself.authority,"));
     assert!(!bind.contains("self.authority."), "{bind}");
+}
+
+/// Whether `source` holds a constant-time comparison: one named so, or the
+/// shape of one on the syntax tree, an OR (`|` or `|=`) with an XOR in an
+/// operand, however the loop, the fold or the names are spelled (#2627
+/// review).
+fn constant_time_comparison_in(source: &str) -> bool {
+    use syn::visit::Visit;
+    #[derive(Default)]
+    struct XorIn(bool);
+    impl<'ast> Visit<'ast> for XorIn {
+        fn visit_expr_binary(&mut self, expr: &'ast syn::ExprBinary) {
+            if matches!(expr.op, syn::BinOp::BitXor(_) | syn::BinOp::BitXorAssign(_)) {
+                self.0 = true;
+            }
+            syn::visit::visit_expr_binary(self, expr);
+        }
+    }
+    fn holds_xor(expr: &syn::Expr) -> bool {
+        let mut found = XorIn::default();
+        found.visit_expr(expr);
+        found.0
+    }
+    #[derive(Default)]
+    struct Folded(bool);
+    impl<'ast> Visit<'ast> for Folded {
+        fn visit_expr_binary(&mut self, expr: &'ast syn::ExprBinary) {
+            if matches!(expr.op, syn::BinOp::BitOr(_) | syn::BinOp::BitOrAssign(_))
+                && (holds_xor(&expr.left) || holds_xor(&expr.right))
+            {
+                self.0 = true;
+            }
+            syn::visit::visit_expr_binary(self, expr);
+        }
+    }
+    if source.contains("fn constant_time_eq(") {
+        return true;
+    }
+    let Ok(file) = syn::parse_file(source) else {
+        // Fail closed: a file the scan cannot read is judged by its text.
+        return source.contains('^');
+    };
+    let mut folded = Folded::default();
+    folded.visit_file(&file);
+    folded.0
+}
+
+#[test]
+fn a_constant_time_comparison_is_recognised_by_its_shape() {
+    for source in [
+        "fn constant_time_eq(a: &str, b: &str) -> bool { true }",
+        "fn matches(a: &[u8], b: &[u8]) -> bool { let mut d = 0u8; for (x, y) in a.iter().zip(b) { d |= x ^ y; } d == 0 }",
+        "fn same(a: &[u8], b: &[u8]) -> bool { let mut d = 0; for (x, y) in a.iter().zip(b) { d |= usize::from(x ^ y); } d == 0 }",
+        // Review (#2627 round 3): a fold, renamed loop variables, an index
+        // loop and `std::iter::zip`.
+        "fn f(a: &[u8], b: &[u8]) -> bool { a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0 }",
+        "fn f(a: &[u8], b: &[u8]) -> bool { let mut acc = 0; for (left, right) in a.iter().zip(b) { acc |= left ^ right; } acc == 0 }",
+        "fn f(a: &[u8], b: &[u8]) -> bool { let mut acc = 0; for i in 0..a.len() { acc |= a[i] ^ b[i]; } acc == 0 }",
+        "fn f(a: &[u8], b: &[u8]) -> bool { let mut acc = 0; for (x, y) in std::iter::zip(a, b) { acc = acc | (x ^ y); } acc == 0 }",
+    ] {
+        assert!(constant_time_comparison_in(source), "{source}");
+    }
+    for source in [
+        "fn f(a: u8) -> u8 { a ^ 1 }",
+        "fn f(a: u8, b: u8) -> u8 { a | b }",
+    ] {
+        assert!(!constant_time_comparison_in(source), "{source}");
+    }
+}
+
+/// The journal has one owner (#1910 review): the restore use case reads the
+/// ledger through the journal port and decides whether a missing one is
+/// refused, and the server neither reads the journal nor builds the
+/// authority itself. The actor checks tokens with the authority's own
+/// constant-time comparison rather than a copy.
+#[test]
+fn the_authority_server_neither_reads_the_journal_nor_builds_the_authority() {
+    let server = production_source("src/infrastructure/admission/server.rs");
+    for file in [
+        "src/infrastructure/admission/server.rs",
+        "src/infrastructure/admission/server_actor.rs",
+    ] {
+        let source = production_source(file);
+        for needle in ["FileJournal", "AdmissionAuthority::", ".checkpoint"] {
+            assert!(!source.contains(needle), "{file} names `{needle}`");
+        }
+    }
+    let compact: String = server.split_whitespace().collect();
+    assert!(
+        compact.contains("use_cases.restore.execute("),
+        "the server restores through its use case"
+    );
+    // One constant-time comparison, in the domain's shared primitives, used
+    // by every secret check.
+    let mut files = Vec::new();
+    teardown_authority::walk(Path::new("src"), &mut files);
+    // A comparison is recognised by its name or by its shape: an XOR folded
+    // into an accumulator over zipped bytes.
+    let owners: Vec<String> = files
+        .into_iter()
+        .filter(|file| constant_time_comparison_in(&fs::read_to_string(file).unwrap()))
+        .collect();
+    assert_eq!(owners, ["src/domain/shared/secret_compare.rs"], "one owner");
+    let journal = production_source("src/application/admission/ports/inference_authority_ports.rs");
+    assert!(
+        journal
+            .contains("    fn load(&mut self) -> Result<Option<AdmissionLedger>, JournalError>;"),
+        "the journal port reads the ledger"
+    );
 }
 
 #[test]
