@@ -1,10 +1,10 @@
 //! `quecto help` and `quecto version` text.
 
-pub(super) fn version_text(out: &mut String) {
+pub(in crate::interface::cli) fn version_text(out: &mut String) {
     out.push_str(&format!("quecto {}\n", env!("CARGO_PKG_VERSION")));
 }
 
-pub(super) fn help_text(out: &mut String) {
+pub(in crate::interface::cli) fn help_text(out: &mut String) {
     out.push_str(&format!(
         "quecto - Personal AI Assistant v{}\n",
         env!("CARGO_PKG_VERSION")
