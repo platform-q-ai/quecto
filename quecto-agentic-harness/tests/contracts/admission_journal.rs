@@ -576,3 +576,101 @@ fn journal_errors_convert_to_the_authority_error() {
 /// The running authority's session policy, over this file's harness.
 #[path = "admission_session.rs"]
 mod session;
+
+/// The margin past an attempt's deadline after which its uncertain lease
+/// clears by itself (#2664).
+const MARGIN_MS: u64 = 60_000;
+
+/// #2664: a wait that expires behind an uncertain lease is not answered as a
+/// bare queue timeout: the answer names the lease that held it.
+#[test]
+fn a_wait_that_expires_behind_an_uncertain_lease_says_so() {
+    let (mut a, _) = authority();
+    let lost = a.register_root(WorkloadClass::Interactive, 0).unwrap();
+    let waiting = a.register_root(WorkloadClass::Interactive, 0).unwrap();
+    a.acquire(&lost, 1, "g", 0).unwrap();
+    a.pump(0).unwrap();
+    a.disconnect(lost.scope, 1).unwrap();
+    a.acquire(&waiting, 1, "g", 10).unwrap();
+    let id = RequestId {
+        scope: waiting.scope,
+        sequence: 1,
+    };
+    let answers = a.settle(&[id], 1_010).answers;
+    assert_eq!(answers.len(), 1, "the expired wait is answered");
+    assert_ne!(
+        answers[0],
+        (id, Ok(RequestState::Terminal(TerminalOutcome::TimedOut))),
+        "not a bare timeout"
+    );
+}
+
+/// #2664: a plain queue timeout, with no uncertain lease, is unchanged.
+#[test]
+fn a_wait_that_expires_without_an_uncertain_lease_is_a_plain_timeout() {
+    let (mut a, _) = authority();
+    let busy = a.register_root(WorkloadClass::Interactive, 0).unwrap();
+    let waiting = a.register_root(WorkloadClass::Interactive, 0).unwrap();
+    a.acquire(&busy, 1, "g", 0).unwrap();
+    a.pump(0).unwrap();
+    a.acquire(&waiting, 1, "g", 10).unwrap();
+    let id = RequestId {
+        scope: waiting.scope,
+        sequence: 1,
+    };
+    assert_eq!(
+        a.settle(&[id], 1_010).answers,
+        vec![(id, Ok(RequestState::Terminal(TerminalOutcome::TimedOut)))]
+    );
+}
+
+/// #2664: once a lost client's lease clears, its scope holds nothing and no
+/// connection, so it is released like a scope that disconnected idle: the
+/// group dispatches again and the scope slot is not leaked.
+#[test]
+fn a_lost_scope_is_released_once_its_lease_clears() {
+    let (mut a, _) = authority();
+    let lost = a.register_root(WorkloadClass::Interactive, 0).unwrap();
+    let other = a.register_root(WorkloadClass::Interactive, 0).unwrap();
+    a.acquire(&lost, 1, "g", 0).unwrap();
+    a.pump(0).unwrap();
+    a.disconnect(lost.scope, 1).unwrap();
+    assert_eq!(
+        a.inspect(1).live_scopes,
+        2,
+        "the lost scope is kept for now"
+    );
+    let release = 5_000 + MARGIN_MS;
+    a.acquire(&other, 1, "g", release).unwrap();
+    let settled = a.settle(&[], release);
+    assert_eq!(settled.dispatch_failure, None);
+    assert_eq!(a.inspect(release).groups[&group()].uncertain, 0);
+    assert_eq!(a.inspect(release).groups[&group()].active, 1, "granted");
+    assert_eq!(
+        a.inspect(release).live_scopes,
+        1,
+        "the lost scope is released"
+    );
+    assert_eq!(
+        a.acquire(&lost, 2, "g", release).err(),
+        Some(AuthorityError::Unauthorized),
+        "its capability went with it"
+    );
+}
+
+/// #2664: a scope whose owner rebound its capability is live, so its lease
+/// clearing does not release it.
+#[test]
+fn a_rebound_scope_is_kept_when_its_lease_clears() {
+    let (mut a, _) = authority();
+    let root = a.register_root(WorkloadClass::Interactive, 0).unwrap();
+    a.acquire(&root, 1, "g", 0).unwrap();
+    a.pump(0).unwrap();
+    a.disconnect(root.scope, 1).unwrap();
+    assert_eq!(a.bind(&root, false, 2).unwrap(), 2, "rebound");
+    let release = 5_000 + MARGIN_MS;
+    a.settle(&[], release);
+    assert_eq!(a.inspect(release).live_scopes, 1, "the rebound scope stays");
+    a.acquire(&root, 2, "g", release).unwrap();
+    assert_eq!(a.pump(release).unwrap().len(), 1, "and keeps working");
+}

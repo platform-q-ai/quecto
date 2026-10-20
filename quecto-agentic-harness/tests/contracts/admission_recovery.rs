@@ -335,3 +335,97 @@ fn scope_limit_counts_live_scopes_and_serials_are_never_recycled() {
     assert!(c.serial > b.serial, "serial identity is never reused");
     assert_eq!(s.high_water(a), Err(AdmissionError::UnknownScope));
 }
+
+/// The margin past an attempt's deadline after which its uncertain lease
+/// clears by itself (#2664).
+const MARGIN_MS: u64 = 60_000;
+
+/// #2664: one lost client must not wedge its group until an operator reset.
+/// Root one's attempt was granted at 0 with a 5 000 ms attempt deadline, so
+/// its uncertain lease clears at the deadline plus the margin.
+#[test]
+fn an_uncertain_lease_clears_itself_once_its_deadline_and_margin_pass() {
+    let (mut s, one, two) = seeded();
+    s.abandon(one, 2).unwrap();
+    let release = 5_000 + MARGIN_MS;
+    s.enqueue(two, 2, "a", release - 1).unwrap();
+    assert_eq!(
+        s.next(&group("a"), release - 1),
+        Err(AdmissionError::Quarantined),
+        "the lease holds the group until its bound"
+    );
+    assert_eq!(
+        s.next(&group("a"), release).unwrap(),
+        Some(RequestId {
+            scope: two,
+            sequence: 2
+        }),
+        "the group grants again once the lease has cleared"
+    );
+    let a = s.snapshot(&group("a"), release).unwrap();
+    assert_eq!(
+        (a.active, a.uncertain),
+        (1, 0),
+        "only the new grant is held"
+    );
+}
+
+/// #2664: the dispatcher wakes when an uncertain lease clears, so queued work
+/// is granted then rather than at its own queue deadline.
+#[test]
+fn next_wake_includes_the_instant_an_uncertain_lease_clears() {
+    let (mut s, one, two) = seeded();
+    s.abandon(one, 2).unwrap();
+    let release = 5_000 + MARGIN_MS;
+    s.enqueue(two, 2, "a", release - 500).unwrap();
+    assert_eq!(s.next_wake(release - 500).unwrap(), Some(release));
+}
+
+/// #2664: a late completion of a lease that already cleared is acknowledged
+/// and frees nothing a second time.
+#[test]
+fn a_late_completion_of_a_cleared_lease_frees_nothing_twice() {
+    let (mut s, one, two) = seeded();
+    s.abandon(one, 2).unwrap();
+    let release = 5_000 + MARGIN_MS;
+    s.enqueue(two, 2, "a", release).unwrap();
+    s.next(&group("a"), release).unwrap().unwrap();
+    assert_eq!(
+        s.complete(one, 1, Feedback::Success, release + 1),
+        Ok(RequestState::Terminal(TerminalOutcome::Cancelled)),
+        "the cleared lease answers its terminal state"
+    );
+    assert_eq!(
+        s.snapshot(&group("a"), release + 1).unwrap().active,
+        1,
+        "the other root's grant still holds its slot"
+    );
+}
+
+/// #2664: an attempt orphaned by an authority restart is bounded as well: it
+/// clears no later than the attempt deadline plus the margin, measured from
+/// the restart, and keeps the group quarantined before then.
+#[test]
+fn a_restored_orphan_clears_itself_within_its_bound() {
+    let (mut s, _one, _two) = seeded();
+    let ledger = s.ledger(1).unwrap();
+    let mut restored = AdmissionService::restore(config(), &ledger, 1_000).unwrap();
+    let root = restored.register_root(WorkloadClass::Interactive).unwrap();
+    restored.enqueue(root, 1, "a", 1_001).unwrap();
+    assert_eq!(
+        restored.next(&group("a"), 1_001),
+        Err(AdmissionError::Quarantined)
+    );
+    let bound = 1_000 + 5_000 + MARGIN_MS;
+    restored.enqueue(root, 2, "a", bound).unwrap();
+    assert!(
+        restored.next(&group("a"), bound).unwrap().is_some(),
+        "the orphan has cleared by its bound"
+    );
+    assert_eq!(restored.snapshot(&group("a"), bound).unwrap().uncertain, 0);
+    assert_eq!(
+        restored.ledger(bound).unwrap().outstanding.len(),
+        1,
+        "only the new grant is outstanding"
+    );
+}
