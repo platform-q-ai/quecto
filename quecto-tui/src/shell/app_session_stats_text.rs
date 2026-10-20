@@ -14,14 +14,20 @@ pub(super) fn session_stats_text(stats: &session_payloads::SessionStats) -> Stri
     if let Some(ratio) = stats.cache_hit_ratio {
         text.push_str(&format!(" | Cache hit: {:.1}%", ratio * 100.0));
     }
-    if stats.cost_micro_usd > 0 {
-        text.push_str(&format!(
-            " | Cost: ${:.6}",
-            stats.cost_micro_usd as f64 / 1_000_000.0
-        ));
+    // #1855: usage the harness could not price is unknown, never $0.
+    let cost = stats.cost_micro_usd as f64 / 1_000_000.0;
+    match (stats.cost_micro_usd > 0, stats.unpriced_requests > 0) {
+        (true, false) => text.push_str(&format!(" | Cost: ${cost:.6}")),
+        (true, true) => text.push_str(&format!(" | Cost: ${cost:.6} + unpriced")),
+        (false, true) => text.push_str(" | Cost: unpriced"),
+        (false, false) => {}
     }
     if let Some((used, max)) = stats.context_usage {
         text.push_str(&format!(" | Context: {used}/{max}"));
     }
     text
 }
+
+#[cfg(test)]
+#[path = "app_session_stats_text_tests.rs"]
+mod tests;

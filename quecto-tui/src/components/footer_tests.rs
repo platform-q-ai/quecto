@@ -88,6 +88,32 @@ fn footer_hides_zero_cost() {
     assert!(!joined.contains("cost"), "zero cost label hidden: {joined}");
 }
 
+/// #1855: usage the harness could not price shows as unpriced, never $0.
+#[test]
+fn footer_shows_unpriced_usage_as_unpriced() {
+    let stats = |cost_micro_usd: u64, unpriced_requests: u64| {
+        crate::protocol::session_payloads::parse_session_stats(&serde_json::json!({
+            "costMicroUsd": if cost_micro_usd == 0 { serde_json::Value::Null } else { cost_micro_usd.into() },
+            "unpricedRequests": unpriced_requests,
+        }))
+    };
+    let mut f = Footer::new();
+    f.update_context_usage(120_000, 200_000);
+    f.apply_session_stats(&stats(0, 2));
+    let joined = f.render(120).join("\n");
+    assert!(joined.contains("cost unpriced"), "{joined}");
+    assert!(!joined.contains('$'), "never $0: {joined}");
+    f.apply_session_stats(&stats(42_100, 1));
+    let joined = f.render(120).join("\n");
+    assert!(joined.contains("cost $0.042100 + unpriced"), "{joined}");
+    f.apply_session_stats(&stats(42_100, 0));
+    let joined = f.render(120).join("\n");
+    assert!(
+        joined.contains("cost $0.042100") && !joined.contains("unpriced"),
+        "{joined}"
+    );
+}
+
 #[test]
 fn footer_hides_cost_when_none() {
     let mut f = Footer::new();

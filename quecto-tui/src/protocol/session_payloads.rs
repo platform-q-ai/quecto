@@ -16,6 +16,9 @@ pub struct SessionStats {
     pub total_tokens: u64,
     pub cost_micro_usd: u64,
     pub cost: f64,
+    /// Replies the harness could not price (#1855): their cost is unknown,
+    /// never shown as zero.
+    pub unpriced_requests: u64,
     pub cache_hit_ratio: Option<f64>,
     pub context_usage: Option<(u64, usize)>,
 }
@@ -149,6 +152,7 @@ pub fn parse_session_stats(data: &serde_json::Value) -> SessionStats {
         total_tokens: token_field(data, "total"),
         cost_micro_usd,
         cost: cost_micro_usd as f64 / 1_000_000.0,
+        unpriced_requests: optional_usize_field(data, "unpricedRequests").unwrap_or(0) as u64,
         cache_hit_ratio: data.get("cacheHitRatio").and_then(|v| v.as_f64()),
         context_usage: context_tokens.zip(max_context_tokens),
     }

@@ -15,6 +15,8 @@ pub struct Footer {
     context_used: Option<u64>,
     /// Cumulative session cost in USD. `None` until the first stats report.
     session_cost: Option<f64>,
+    /// Some of the session's usage could not be priced (#1855).
+    session_cost_unpriced: bool,
     session_cache_read: u64,
     session_cache_write: u64,
     session_cache_hit_ratio: Option<f64>,
@@ -51,6 +53,7 @@ impl Footer {
             context_window: 0,
             context_used: None,
             session_cost: None,
+            session_cost_unpriced: false,
             session_cache_read: 0,
             session_cache_write: 0,
             session_cache_hit_ratio: None,
@@ -139,6 +142,7 @@ impl Footer {
         self.context_used = None;
         if percent.is_none() && window == 0 {
             self.session_cost = None;
+            self.session_cost_unpriced = false;
             self.session_cache_read = 0;
             self.session_cache_write = 0;
             self.session_cache_hit_ratio = None;
@@ -216,6 +220,7 @@ impl Footer {
             self.update_context_usage(used, window);
         }
         self.set_cost((stats.cost > 0.0).then_some(stats.cost));
+        self.session_cost_unpriced = stats.unpriced_requests > 0;
         self.session_cache_read = stats.cache_read_tokens;
         self.session_cache_write = stats.cache_write_tokens;
         self.session_cache_hit_ratio = stats.cache_hit_ratio;
@@ -258,8 +263,12 @@ impl Component for Footer {
         if let Some(ratio) = self.session_cache_hit_ratio {
             left_parts.push(format!("hit {:.1}%", ratio * 100.0));
         }
-        if let Some(cost) = self.session_cost {
-            left_parts.push(format!("cost ${cost:.6}"));
+        // #1855: usage the harness could not price is unknown, never $0.
+        match (self.session_cost, self.session_cost_unpriced) {
+            (Some(cost), false) => left_parts.push(format!("cost ${cost:.6}")),
+            (Some(cost), true) => left_parts.push(format!("cost ${cost:.6} + unpriced")),
+            (None, true) => left_parts.push("cost unpriced".to_string()),
+            (None, false) => {}
         }
         let left = left_parts.join(" · ");
         // Prefix the model with a streaming indicator while a response is
