@@ -610,8 +610,13 @@ pub struct SessionStats {
     pub tokens: TokenStats,
     #[serde(skip_serializing, default)]
     pub cost: f64,
+    /// What the session's usage cost, `null` when it billed usage none of
+    /// which was priced (#1855): unpriced is never zero. Always present.
     #[serde(default)]
-    pub cost_micro_usd: u64,
+    pub cost_micro_usd: Option<u64>,
+    /// Replies that billed tokens with no price to cost them at (#1855).
+    #[serde(default)]
+    pub unpriced_requests: u64,
     #[serde(default)]
     pub cache_hit_ratio: Option<f64>,
     /// User-facing context occupancy: provider-reported prompt tokens when

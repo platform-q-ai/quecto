@@ -49,7 +49,7 @@ pub(super) fn composed_ctx(base_dir: &std::path::Path) -> CliContext {
     CliContext {
         base_dir: Some(base_dir.to_path_buf()),
         sessions: Some(crate::composition::sessions::build_session_handles),
-        automatic_turns: Some(crate::composition::bootstrap::agent_turn::build_automatic_turns),
+        turn_session: Some(crate::composition::bootstrap::agent_turn::build_turn_session),
         retention: Some(crate::composition::sessions::build_retention_handles),
         configuration: Some(crate::composition::configuration::build_configuration_handles),
         admission: Some(crate::composition::admission::build_admission_handles),

@@ -15,7 +15,6 @@ use crate::domain::conversation::value_objects::message::{
 use crate::domain::inference::value_objects::provider::StreamEvent;
 use crate::domain::shared::error::DomainError;
 use crate::domain::tool_policy::value_objects::tool::{ToolDefinition, ToolResult};
-use crate::interface::cli::uds_session::AgentSession;
 
 /// Streams each scripted reply as its `Done` event, one per request.
 #[derive(Debug)]
@@ -159,7 +158,7 @@ async fn run_limited(
     })
     .with_max_tool_iterations(max_tool_iterations);
     let mut messages: Vec<Message> = vec![];
-    let mut session = AgentSession::new("stub".into(), crate::application::agent_turn::use_cases::resume_after_provider_failure::ResumeAfterProviderFailure::new());
+    let mut session = crate::composition::bootstrap::agent_turn::build_turn_session("stub".into());
     let (_cancel_tx, cancel_rx) = tokio::sync::oneshot::channel();
     let mut notification_rx = None;
     let subagent_registry = None;

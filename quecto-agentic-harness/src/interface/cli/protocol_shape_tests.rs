@@ -109,8 +109,9 @@ fn response_error_matches_spec() {
 }
 #[test]
 fn get_state_data_matches_spec_shape() {
-    let state = crate::interface::cli::uds_session::AgentSession::new("claude-sonnet-5".into(), crate::application::agent_turn::use_cases::resume_after_provider_failure::ResumeAfterProviderFailure::new())
-        .state_snapshot("cli:my-session", 12, None, 200_000, None);
+    let state =
+        crate::composition::bootstrap::agent_turn::build_turn_session("claude-sonnet-5".into())
+            .state_snapshot("cli:my-session", 12, None, 200_000, None);
     let j = round_trip(&state);
     assert_eq!(j["model"], "claude-sonnet-5");
     assert_eq!(j["isStreaming"], false); // camelCase
@@ -137,7 +138,8 @@ fn make_test_stats() -> SessionStats {
             total: 60000,
         },
         cost: 0.45,
-        cost_micro_usd: 450_000,
+        cost_micro_usd: Some(450_000),
+        unpriced_requests: 0,
         cache_hit_ratio: Some(40_000.0 / 95_000.0),
         context_tokens: 12_345,
         max_context_tokens: 200_000,

@@ -15,7 +15,7 @@ use crate::application::agent_turn::agent_loop::{AgentLoopConfig, AgentLoopImpl}
 use crate::domain::conversation::value_objects::message::Message;
 use crate::interface::cli::uds_cancel::{CancelHandle, CancelSlot};
 use crate::interface::cli::uds_ext_protocol::new_client_tool_registry;
-use crate::interface::cli::uds_session::{AgentSession, compute_session_stats};
+use crate::interface::cli::uds_session::{AgentSession, history_session_stats};
 
 fn make_agent() -> AgentLoopImpl {
     AgentLoopImpl::new(AgentLoopConfig {
@@ -59,7 +59,9 @@ impl Fixture {
             Self {
                 agent: make_agent(),
                 messages: Vec::new(),
-                session: AgentSession::new("stub".into(), crate::application::agent_turn::use_cases::resume_after_provider_failure::ResumeAfterProviderFailure::new()),
+                session: crate::composition::bootstrap::agent_turn::build_turn_session(
+                    "stub".into(),
+                ),
                 session_key: "cli:test".to_string(),
                 _tmp: tmp,
                 writer: tokio::io::sink(),
@@ -71,7 +73,7 @@ impl Fixture {
     }
 
     fn ctx(&mut self) -> DispatchCtx<'_> {
-        let initial_stats = compute_session_stats(&self.session_key, &self.messages);
+        let initial_stats = history_session_stats(&self.session_key, &self.messages);
         let save_session =
             crate::interface::cli::uds::dispatch_session_roster_tests::save_handle_for(
                 &self.session_key,
@@ -402,7 +404,7 @@ async fn run_stub_turn_event_types_with_sink(
 
     let mut agent = make_agent();
     let mut messages = Vec::new();
-    let mut session = AgentSession::new("stub".into(), crate::application::agent_turn::use_cases::resume_after_provider_failure::ResumeAfterProviderFailure::new());
+    let mut session = crate::composition::bootstrap::agent_turn::build_turn_session("stub".into());
     let (_cancel_tx, cancel_rx) = tokio::sync::oneshot::channel();
     let mut notification_rx = None;
     let subagent_registry = None;

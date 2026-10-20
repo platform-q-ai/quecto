@@ -17,7 +17,6 @@ use crate::domain::inference::value_objects::provider::StreamEvent;
 use crate::domain::shared::error::DomainError;
 use crate::domain::tool_policy::value_objects::tool::{ToolDefinition, ToolResult};
 use crate::interface::cli::protocol::EVENT_LINE_CAP_BYTES;
-use crate::interface::cli::uds_session::AgentSession;
 
 #[derive(Debug)]
 pub(super) struct ScriptedProvider {
@@ -362,7 +361,7 @@ async fn run_turn(
             crate::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent,
     });
     let mut messages: Vec<Message> = vec![];
-    let mut session = AgentSession::new("stub".into(), crate::application::agent_turn::use_cases::resume_after_provider_failure::ResumeAfterProviderFailure::new());
+    let mut session = crate::composition::bootstrap::agent_turn::build_turn_session("stub".into());
     let (_cancel_tx, cancel_rx) = tokio::sync::oneshot::channel();
     let mut notification_rx = None;
     let subagent_registry = None;
@@ -419,7 +418,7 @@ async fn run_streaming_turn(deltas: Vec<&str>, response: &str, prompt: &str) -> 
             crate::domain::tool_policy::value_objects::tool::ToolProfileContext::Parent,
     });
     let mut messages: Vec<Message> = vec![];
-    let mut session = AgentSession::new("stub".into(), crate::application::agent_turn::use_cases::resume_after_provider_failure::ResumeAfterProviderFailure::new());
+    let mut session = crate::composition::bootstrap::agent_turn::build_turn_session("stub".into());
     let (_cancel_tx, cancel_rx) = tokio::sync::oneshot::channel();
     let mut notification_rx = None;
     let subagent_registry = None;

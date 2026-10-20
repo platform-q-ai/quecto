@@ -35,12 +35,12 @@ async fn dispatch_register_tools_rejects_disabled_core_shadow() {
 
     let mut agent = cov_agent_with_registry(registry);
     let mut messages = Vec::new();
-    let mut session = super::super::uds_session::AgentSession::new("stub".into(), crate::application::agent_turn::use_cases::resume_after_provider_failure::ResumeAfterProviderFailure::new());
+    let mut session = crate::composition::bootstrap::agent_turn::build_turn_session("stub".into());
     let session_key = "cli:test".to_string();
     let mut writer = tokio::io::sink();
     let client_registry = new_client_tool_registry();
     let state = session.state_snapshot("cli:test", 0, None, 0, None);
-    let initial_stats = super::super::uds_session::compute_session_stats(&session_key, &messages);
+    let initial_stats = super::super::uds_session::history_session_stats(&session_key, &messages);
     let tools = [tool_reg("bash")];
     let save_session =
         crate::interface::cli::uds::dispatch_session_roster_tests::save_handle_for(&session_key);
@@ -104,12 +104,12 @@ async fn dispatch_register_tools_preflights_registry_rejection_before_client_sta
     registry.remove("blocked_ext");
     let mut agent = cov_agent_with_registry(registry);
     let mut messages = Vec::new();
-    let mut session = super::super::uds_session::AgentSession::new("stub".into(), crate::application::agent_turn::use_cases::resume_after_provider_failure::ResumeAfterProviderFailure::new());
+    let mut session = crate::composition::bootstrap::agent_turn::build_turn_session("stub".into());
     let session_key = "cli:test".to_string();
     let mut writer = tokio::io::sink();
     let client_registry = new_client_tool_registry();
     let state = session.state_snapshot("cli:test", 0, None, 0, None);
-    let initial_stats = super::super::uds_session::compute_session_stats(&session_key, &messages);
+    let initial_stats = super::super::uds_session::history_session_stats(&session_key, &messages);
     let tools = [tool_reg("blocked_ext")];
     let save_session =
         crate::interface::cli::uds::dispatch_session_roster_tests::save_handle_for(&session_key);
@@ -172,12 +172,12 @@ async fn dispatch_register_tools_accepts_stable_id_for_policy_mutation() {
     let registry = crate::infrastructure::tools::registry::ToolRegistryImpl::new();
     let mut agent = cov_agent_with_registry(registry);
     let mut messages = Vec::new();
-    let mut session = super::super::uds_session::AgentSession::new("stub".into(), crate::application::agent_turn::use_cases::resume_after_provider_failure::ResumeAfterProviderFailure::new());
+    let mut session = crate::composition::bootstrap::agent_turn::build_turn_session("stub".into());
     let session_key = "cli:test".to_string();
     let mut writer = tokio::io::sink();
     let client_registry = new_client_tool_registry();
     let state = session.state_snapshot("cli:test", 0, None, 0, None);
-    let initial_stats = super::super::uds_session::compute_session_stats(&session_key, &messages);
+    let initial_stats = super::super::uds_session::history_session_stats(&session_key, &messages);
     let mut tool = tool_reg("weather");
     tool.stable_id = Some("com.example.weather.v1".into());
     let tools = [tool];

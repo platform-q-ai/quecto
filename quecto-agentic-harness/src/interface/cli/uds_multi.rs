@@ -18,7 +18,6 @@ use super::uds::{
 };
 use super::uds_cancel::{CancelHandle, CancelSlot};
 pub(super) use super::uds_multi_accept::{AcceptLoopArgs, spawn_accept_loop};
-use super::uds_session::AgentSession;
 pub(crate) use super::uds_snapshots::StateSnapshot;
 #[cfg(test)]
 pub(crate) use super::uds_snapshots::{
@@ -87,7 +86,7 @@ pub(super) struct MultiClientArgs<'a> {
     /// Composition's teardown handles builder; without it the loop runs with
     /// no teardown edge (unit rigs only).
     pub teardown_graph: Option<super::TeardownHandlesBuilder>,
-    pub automatic_turns: super::AutomaticTurnsBuilder,
+    pub turn_session: super::TurnSessionBuilder,
     /// The environment control slot (#2070): an owner exit ends retained boxes through it.
     pub environment_control: Option<EnvironmentControlSlot>,
     pub extensions: super::uds_extensions::Extensions, // #2446: see `clients`
@@ -174,7 +173,7 @@ pub(super) async fn multi_client_loop(
         broadcast_tx: pre_broadcast_tx,
         parent_control,
         teardown_graph,
-        automatic_turns,
+        turn_session,
         environment_control,
         extensions,
     } = args;
@@ -193,7 +192,7 @@ pub(super) async fn multi_client_loop(
         .await
         .publish(&messages);
 
-    let mut agent_session = AgentSession::new(model, automatic_turns());
+    let mut agent_session = turn_session(model);
     agent_session.set_admission_warnings(&admission_slots);
     agent_session.set_startup_warnings(&catalogue.startup_warnings);
     agent_session.observe_runtime(catalogue.runtime_store.clone());
@@ -209,13 +208,11 @@ pub(super) async fn multi_client_loop(
     let execution_state: super::uds_execution_state::ExecutionStateHandle =
         std::sync::Arc::new(std::sync::Mutex::new(Default::default()));
     let session_stats_snapshot = std::sync::Arc::new(tokio::sync::RwLock::new(
-        super::uds_session::compute_session_stats_with_usage(
+        super::uds_session::present_session_stats(agent_session.usage_report(
             &session_key,
             &messages,
-            agent_session.usage_snapshot(),
-            agent_session.context_tokens(),
             agent.max_context_tokens(),
-        ),
+        )),
     ));
     let tool_entries = agent.tool_catalogue_entries().into_iter();
     let tool_catalogue_snapshot = std::sync::Arc::new(tokio::sync::RwLock::new(

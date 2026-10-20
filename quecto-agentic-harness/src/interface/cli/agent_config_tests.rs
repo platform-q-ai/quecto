@@ -248,7 +248,7 @@ fn test_agent_config_flag_loads_custom_path() {
         base_dir: Some(tmp.path().into()),
         config_path: Some(cfg.clone()),
         sessions: Some(crate::composition::sessions::build_session_handles),
-        automatic_turns: Some(crate::composition::bootstrap::agent_turn::build_automatic_turns),
+        turn_session: Some(crate::composition::bootstrap::agent_turn::build_turn_session),
         retention: Some(crate::composition::sessions::build_retention_handles),
         configuration: Some(crate::composition::configuration::build_configuration_handles),
         admission: Some(crate::composition::admission::build_admission_handles),
@@ -285,7 +285,7 @@ fn test_agent_config_flag_missing_value() {
     let ctx = CliContext {
         base_dir: Some(tmp.path().into()),
         sessions: Some(crate::composition::sessions::build_session_handles),
-        automatic_turns: Some(crate::composition::bootstrap::agent_turn::build_automatic_turns),
+        turn_session: Some(crate::composition::bootstrap::agent_turn::build_turn_session),
         retention: Some(crate::composition::sessions::build_retention_handles),
         configuration: Some(crate::composition::configuration::build_configuration_handles),
         admission: Some(crate::composition::admission::build_admission_handles),
@@ -313,7 +313,7 @@ fn test_agent_config_flag_nonexistent_path() {
     let ctx = CliContext {
         base_dir: Some(tmp.path().into()),
         sessions: Some(crate::composition::sessions::build_session_handles),
-        automatic_turns: Some(crate::composition::bootstrap::agent_turn::build_automatic_turns),
+        turn_session: Some(crate::composition::bootstrap::agent_turn::build_turn_session),
         retention: Some(crate::composition::sessions::build_retention_handles),
         configuration: Some(crate::composition::configuration::build_configuration_handles),
         admission: Some(crate::composition::admission::build_admission_handles),

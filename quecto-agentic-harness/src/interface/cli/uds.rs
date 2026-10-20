@@ -7,9 +7,7 @@ use super::uds_cancel::{
 };
 use super::uds_session::AgentSession;
 #[cfg(test)]
-use super::uds_session::{
-    compute_session_stats, compute_session_stats_with_usage, messages_page_json,
-};
+use super::uds_session::{history_session_stats, messages_page_json, present_session_stats};
 #[cfg(test)]
 use super::uds_socket::bind_secure_socket;
 use super::uds_workflow_nudge::{

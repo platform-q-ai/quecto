@@ -39,7 +39,7 @@ fn test_composition() -> CliComposition {
         teardown_graph: crate::composition::subagent_teardown::build_teardown_graph,
         kill_tool: crate::composition::subagent_termination::install_termination_owners,
         sessions: crate::composition::sessions::build_session_handles,
-        automatic_turns: crate::composition::bootstrap::agent_turn::build_automatic_turns,
+        turn_session: crate::composition::bootstrap::agent_turn::build_turn_session,
         retention: crate::composition::sessions::build_retention_handles,
         fresh_session_identity: crate::composition::sessions::build_fresh_session_identity,
         configuration: crate::composition::configuration::build_configuration_handles,

@@ -701,13 +701,7 @@ async fn session_stats_expose_request_diagnostics_after_failed_prompt() {
         },
     )
     .await;
-    let stats = super::compute_session_stats_with_usage(
-        "test",
-        ctx.messages,
-        ctx.session.usage_snapshot(),
-        0,
-        0,
-    );
+    let stats = super::present_session_stats(ctx.session.usage_report("test", ctx.messages, 0));
     let data = serde_json::to_value(stats).unwrap();
     assert_eq!(data["requestDiagnostics"]["logical_requests"], 1);
     assert_eq!(data["requestDiagnostics"]["recent"][0]["outcome"], "failed");

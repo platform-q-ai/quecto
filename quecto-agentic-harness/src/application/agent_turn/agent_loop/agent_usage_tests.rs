@@ -237,6 +237,7 @@ fn usage_totals_record_saturates_counters() {
         cost_micro_usd: u64::MAX,
         output_tokens: u32::MAX,
         context_input_tokens: 0,
+        unpriced_requests: u64::MAX,
     };
     totals.record(&UsageInfo {
         prompt_tokens: 1,
@@ -259,4 +260,31 @@ fn usage_totals_record_saturates_counters() {
     assert_eq!(totals.cache_read_tokens, u64::MAX);
     assert_eq!(totals.cache_write_tokens, u64::MAX);
     assert_eq!(totals.cost_micro_usd, u64::MAX);
+}
+
+/// #1855: a reply that billed tokens with no price is counted as unpriced,
+/// never as costing zero; a reply that billed nothing is neither.
+#[test]
+fn a_billed_reply_with_no_price_is_counted_unpriced() {
+    let mut totals = UsageTotals::default();
+    let usage = |prompt: u32, cost: Option<u64>| UsageInfo {
+        prompt_tokens: prompt,
+        completion_tokens: 0,
+        cache_read_tokens: None,
+        cache_write_tokens: None,
+        context_tokens: None,
+        cost: cost.map(|total| CostInfo {
+            input_cost_micro_usd: total,
+            output_cost_micro_usd: 0,
+            cache_read_cost_micro_usd: 0,
+            cache_write_cost_micro_usd: 0,
+            total_cost_micro_usd: total,
+        }),
+    };
+    totals.record(&usage(10, None));
+    totals.record(&usage(0, None));
+    totals.record(&usage(10, Some(0)));
+    totals.record(&usage(10, Some(7)));
+    assert_eq!(totals.unpriced_requests, 1);
+    assert_eq!(totals.cost_micro_usd, 7);
 }

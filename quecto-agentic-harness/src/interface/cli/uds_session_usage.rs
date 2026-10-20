@@ -1,74 +1,47 @@
-//! Session usage and statistics presenters (`get_session_stats`, the
-//! normalized usage log #1567): token, cost and context-occupancy
-//! accounting of the [`AgentSession`] tracker and the stats wire shape.
-//! Owner role: stats. Child module of `uds_session`; the `sessionKey` it
-//! presents is handed in by the caller from the active session's identity;
-//! it holds no session persistence.
+//! The `get_session_stats` presenter (#1855): the inspect-session-usage use
+//! case's report in the stats wire shape, with the process's runtime
+//! identity. Child module of `uds_session`; it computes nothing.
 use super::*;
+use crate::application::agent_turn::dto::session_usage::SessionUsageReport;
 
-#[derive(Debug, Clone, Default)]
-pub struct SessionUsage {
-    pub request_diagnostics:
-        crate::domain::inference::events::request_observation::RequestDiagnostics,
-    pub tokens: TokenStats,
-    pub cost_micro_usd: u64,
-}
-impl SessionUsage {
-    pub fn cost_usd(&self) -> f64 {
-        self.cost_micro_usd as f64 / 1_000_000.0
-    }
-
-    pub fn cache_hit_ratio(&self) -> Option<f64> {
-        crate::domain::inference::services::usage_accounting::cache_hit_ratio(
-            self.tokens.input,
-            self.tokens.cache_read,
-            self.tokens.cache_write,
-        )
-    }
-}
-
-/// Compute session statistics from the current message history.
-pub fn compute_session_stats(session_key: &str, messages: &[Message]) -> SessionStats {
-    compute_session_stats_with_usage(session_key, messages, SessionUsage::default(), 0, 0)
-}
-/// Compute session statistics with cumulative provider usage collected by the UDS session.
-/// `max_context_tokens` is the active model's context-window ceiling (0 = unknown).
-pub fn compute_session_stats_with_usage(
-    session_key: &str,
-    messages: &[Message],
-    usage: SessionUsage,
-    context_tokens: usize,
-    max_context_tokens: usize,
-) -> SessionStats {
-    let mut user_messages = 0usize;
-    let mut assistant_messages = 0usize;
-    let mut tool_calls_count = 0usize;
-    let mut tool_results_count = 0usize;
-    for msg in messages {
-        match msg.role {
-            Role::User => user_messages += 1,
-            Role::Assistant => {
-                assistant_messages += 1;
-                tool_calls_count += msg.tool_calls.len();
-            }
-            Role::Tool => tool_results_count += 1,
-            Role::System => {}
-        }
-    }
+/// The stats wire shape of a session usage `report`.
+pub fn present_session_stats(report: SessionUsageReport) -> SessionStats {
+    let SessionUsageReport {
+        session_key,
+        messages,
+        usage,
+        cost_micro_usd,
+        cost_usd,
+        cache_hit_ratio,
+        context_tokens,
+        max_context_tokens,
+    } = report;
     SessionStats {
         runtime: Some(crate::infrastructure::processes::runtime_identity::current()),
-        request_diagnostics: usage.request_diagnostics.clone(),
-        session_key: session_key.to_owned(),
-        user_messages,
-        assistant_messages,
-        tool_calls: tool_calls_count,
-        tool_results: tool_results_count,
-        total_messages: messages.len(),
-        cost: usage.cost_usd(),
-        cost_micro_usd: usage.cost_micro_usd,
-        cache_hit_ratio: usage.cache_hit_ratio(),
-        tokens: usage.tokens,
+        request_diagnostics: usage.request_diagnostics,
+        session_key,
+        user_messages: messages.user,
+        assistant_messages: messages.assistant,
+        tool_calls: messages.tool_calls,
+        tool_results: messages.tool_results,
+        total_messages: messages.total,
+        tokens: TokenStats {
+            input: usage.tokens.input,
+            output: usage.tokens.output,
+            cache_read: usage.tokens.cache_read,
+            cache_write: usage.tokens.cache_write,
+            total: usage.tokens.total,
+        },
+        cost: cost_usd,
+        cost_micro_usd,
+        unpriced_requests: usage.unpriced_requests,
+        cache_hit_ratio,
         context_tokens,
         max_context_tokens,
     }
+}
+
+/// The stats of a session that has used nothing yet: its history only.
+pub fn history_session_stats(session_key: &str, messages: &[Message]) -> SessionStats {
+    present_session_stats(InspectSessionUsage::history_report(session_key, messages))
 }

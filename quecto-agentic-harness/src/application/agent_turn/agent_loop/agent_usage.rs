@@ -9,6 +9,9 @@ pub struct UsageTotals {
     pub cache_read_tokens: u64,
     pub cache_write_tokens: u64,
     pub cost_micro_usd: u64,
+    /// Replies that billed tokens with no price to cost them at (#1855):
+    /// their usage counts, but their cost is unknown, never zero.
+    pub unpriced_requests: u64,
 }
 
 impl UsageTotals {
@@ -46,10 +49,18 @@ impl UsageTotals {
         self.cache_write_tokens = self
             .cache_write_tokens
             .saturating_add(usage.cache_write_tokens.unwrap_or(0) as u64);
-        if let Some(cost) = &usage.cost {
-            self.cost_micro_usd = self
-                .cost_micro_usd
-                .saturating_add(cost.total_cost_micro_usd);
+        let billed = usage.prompt_tokens > 0
+            || usage.completion_tokens > 0
+            || usage.cache_read_tokens.is_some_and(|tokens| tokens > 0)
+            || usage.cache_write_tokens.is_some_and(|tokens| tokens > 0);
+        match (&usage.cost, billed) {
+            (Some(cost), _) => {
+                self.cost_micro_usd = self
+                    .cost_micro_usd
+                    .saturating_add(cost.total_cost_micro_usd);
+            }
+            (None, true) => self.unpriced_requests = self.unpriced_requests.saturating_add(1),
+            (None, false) => {}
         }
     }
 }
