@@ -5,10 +5,10 @@
 use super::super::dispatch_test_env::DispatchTestEnv as Env;
 use crate::application::sessions::ports::SessionStore;
 use crate::domain::sessions::entities::session_identity::SessionIdentity;
-use crate::interface::cli::protocol::WorkflowIdleReason;
 use crate::interface::cli::uds_workflow_nudge::{
     workflow_idle_reason, workflow_nudge_message, workflow_progress_fingerprint,
 };
+use crate::interface::uds::wire::protocol::WorkflowIdleReason;
 
 fn poison(env: &Env) {
     let workflow = env.workflow.clone();

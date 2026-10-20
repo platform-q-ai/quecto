@@ -341,7 +341,7 @@ fn install_busy_state_snapshot_entry(
             let snapshot_shape = snapshot_shape.clone();
             std::thread::spawn(move || {
                 use std::io::Write;
-                let mut state = quecto::interface::cli::protocol::SessionState {
+                let mut state = quecto::interface::uds::wire::protocol::SessionState {
                     admission_warnings: vec![],
                     startup_warnings: Vec::new(),
                     control_receipts: vec![],
@@ -365,7 +365,7 @@ fn install_busy_state_snapshot_entry(
                 execution.progress.state = "active".into();
                 execution.progress.reason = "busy".into();
                 let mut snapshot =
-                    serde_json::to_value(quecto::interface::cli::protocol::AgentEvent::ok(
+                    serde_json::to_value(quecto::interface::uds::wire::protocol::AgentEvent::ok(
                         None,
                         "get_state",
                         Some(state.slim_projection()),

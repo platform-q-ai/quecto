@@ -13,7 +13,6 @@ use crate::infrastructure::persistence::file::sessions::session_store::FileSessi
 use crate::infrastructure::tools::agents::subagent_registry::{
     SubagentEntry, SubagentRegistry, new_registry,
 };
-use crate::interface::cli::protocol::AgentCommand;
 use crate::interface::cli::uds::DispatchCtx;
 use crate::interface::cli::uds::dispatch_session_roster_tests::{
     catalogue_handles, list_handle, read_handles_over, rewrite_handles_for, save_handle_for,
@@ -22,6 +21,7 @@ use crate::interface::cli::uds::dispatch_session_roster_tests::{
 use crate::interface::cli::uds_cancel::CancelSlot;
 use crate::interface::cli::uds_ext_protocol::new_client_tool_registry;
 use crate::interface::cli::uds_session::AgentSession;
+use crate::interface::uds::wire::protocol::AgentCommand;
 
 pub(super) struct Fx {
     agent: AgentLoopImpl,
@@ -79,7 +79,7 @@ impl Fx {
         let rewrite = rewrite_handles_for(&self.session_key);
         DispatchCtx {
             execution_state: std::sync::Arc::new(std::sync::Mutex::new(Default::default())),
-            wire_mode: crate::interface::cli::uds_wire::ConnectionWireMode::legacy(),
+            wire_mode: crate::interface::uds::framing::uds_wire::ConnectionWireMode::legacy(),
             agent: &mut self.agent,
             messages: &mut self.messages,
             sessions: read_handles_over(self.store.clone(), &self.session_key, None, &[]),

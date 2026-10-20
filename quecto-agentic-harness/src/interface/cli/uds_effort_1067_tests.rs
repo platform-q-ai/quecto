@@ -4,9 +4,9 @@
 use super::*;
 use crate::application::agent_turn::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::domain::inference::value_objects::provider::EffortLevel;
-use crate::interface::cli::protocol::AgentCommand;
 use crate::interface::cli::uds::dispatch_session_roster_tests::list_handle;
 use crate::interface::cli::uds_ext_protocol::new_client_tool_registry;
+use crate::interface::uds::wire::protocol::AgentCommand;
 
 // ── protocol parsing ─────────────────────────────────────────────────────
 
@@ -114,7 +114,7 @@ impl EffortFx {
             _ext_registry: None,
             client_tool_registry: new_client_tool_registry(),
             current_client_id: 0,
-            wire_mode: crate::interface::cli::uds_wire::ConnectionWireMode::legacy(),
+            wire_mode: crate::interface::uds::framing::uds_wire::ConnectionWireMode::legacy(),
             subagent_registry: None,
             notification_rx: None,
             workflow_state: None,

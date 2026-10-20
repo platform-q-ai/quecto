@@ -540,10 +540,10 @@ fn then_tui_rejects_unknown_slash_commands(world: &mut QuectoWorld) {
 fn read_uds_protocol_sources() -> String {
     // Command variants live in protocol_commands.rs; protocol.rs re-exports them.
     // Architecture BDD must accept either location after the line-count split.
-    let protocol =
-        std::fs::read_to_string("src/interface/cli/protocol.rs").expect("read UDS protocol source");
+    let protocol = std::fs::read_to_string("src/interface/uds/wire/protocol.rs")
+        .expect("read UDS protocol source");
     let commands =
-        std::fs::read_to_string("src/interface/cli/protocol_commands.rs").unwrap_or_default();
+        std::fs::read_to_string("src/interface/uds/wire/protocol_commands.rs").unwrap_or_default();
     format!("{protocol}\n{commands}")
 }
 

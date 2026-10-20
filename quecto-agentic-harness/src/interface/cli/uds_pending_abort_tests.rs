@@ -42,7 +42,7 @@ async fn a_stale_abort_drain_dates_a_failed_explicit_turn() {
     .await;
     assert_eq!(
         ctx.session.control_receipt_status("f3"),
-        Some(crate::interface::cli::protocol::ControlStatus::Failed),
+        Some(crate::interface::uds::wire::protocol::ControlStatus::Failed),
         "the follow-up drained on the stale-abort path and failed"
     );
     assert!(!ctx.session.automatic_turns_allowed());

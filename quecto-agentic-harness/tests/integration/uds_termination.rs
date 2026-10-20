@@ -1,6 +1,6 @@
 //! A UDS harness must exit cleanly on SIGTERM instead of dying on the
 //! signal's default action. The clean path is what tears down container
-//! environments (see `src/interface/cli/uds_shutdown.rs`); a process killed
+//! environments (see `src/interface/uds/framing/uds_shutdown.rs`); a process killed
 //! by the signal itself has run none of it.
 use std::os::unix::process::ExitStatusExt;
 use std::path::PathBuf;

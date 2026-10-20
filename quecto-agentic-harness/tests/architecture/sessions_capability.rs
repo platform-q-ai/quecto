@@ -100,7 +100,7 @@ const CANONICAL_FILES: &[&str] = &[
     "src/application/sessions/dto/resume_refusal_code.rs",
     "src/application/sessions/dto/resume_target.rs",
     "src/domain/sessions/services/stable_digest.rs",
-    "src/interface/cli/uds_safe_display.rs",
+    "src/interface/uds/wire/uds_safe_display.rs",
     "src/application/sessions/use_cases/resume_saved_session_decision.rs",
     "src/interface/uds/sessions/resume_session_controller.rs",
     "src/interface/cli/uds_dispatch_resume.rs",
@@ -132,8 +132,8 @@ const CANONICAL_FILES: &[&str] = &[
     // #2045: the shell command that opens quecto in a session's folder.
     "src/domain/sessions/value_objects/session_open_command.rs",
     "src/domain/sessions/value_objects/session_query_refusal.rs",
-    "src/interface/cli/protocol_search_rescue.rs",
-    "src/interface/cli/uds_freshness_json.rs",
+    "src/interface/uds/wire/protocol_search_rescue.rs",
+    "src/interface/uds/wire/uds_freshness_json.rs",
     "src/application/sessions/use_cases/read_history.rs",
     "src/application/sessions/use_cases/recover_message.rs",
     "src/application/sessions/use_cases/export_session_report.rs",
@@ -538,8 +538,8 @@ const SAVE_REQUESTERS: &[&str] = &[
     "src/interface/cli/controllers/agent/run_session_save.rs",
     "src/interface/cli/uds.rs",
     "src/interface/cli/uds_dispatch.rs",
-    "src/interface/cli/uds_multi.rs",
-    "src/interface/cli/uds_single_client.rs",
+    "src/interface/uds/framing/uds_multi.rs",
+    "src/interface/uds/framing/uds_single_client.rs",
 ];
 
 /// The trigger each persistence site requests: explicit, post-turn and
@@ -552,11 +552,11 @@ const SAVE_TRIGGER_SITES: &[(&str, &str)] = &[
     ("src/interface/cli/uds.rs", "SaveTrigger::Routine"),
     ("src/interface/cli/uds.rs", ".save_with_pending_prompt("),
     (
-        "src/interface/cli/uds_single_client.rs",
+        "src/interface/uds/framing/uds_single_client.rs",
         "SaveTrigger::OrdinaryExit",
     ),
     (
-        "src/interface/cli/uds_multi.rs",
+        "src/interface/uds/framing/uds_multi.rs",
         "SaveTrigger::OrdinaryExit",
     ),
     (
@@ -988,8 +988,8 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
         "src/domain/sessions/value_objects/session_query_refusal.rs",
         31,
     ),
-    ("src/interface/cli/protocol_search_rescue.rs", 51),
-    ("src/interface/cli/uds_freshness_json.rs", 33),
+    ("src/interface/uds/wire/protocol_search_rescue.rs", 51),
+    ("src/interface/uds/wire/uds_freshness_json.rs", 33),
     ("src/composition/session_search.rs", 23),
     ("src/interface/cli/uds_dispatch_search.rs", 80),
     ("src/interface/cli/uds_discovery_handles.rs", 44),
@@ -997,7 +997,7 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
         "src/interface/uds/sessions/search_session_metadata_controller.rs",
         39,
     ),
-    ("src/interface/cli/uds_safe_display.rs", 24),
+    ("src/interface/uds/wire/uds_safe_display.rs", 24),
     // #1848 reasoning-effort injection plus #2009 scoped session dispatch.
     // #2011: the resume answers are the resume presenter's (259 → 246).
     ("src/interface/cli/uds_dispatch_session.rs", 243),
@@ -1009,9 +1009,9 @@ const LINE_CEILINGS: &[(&str, usize)] = &[
     // #1909 hands both loops composition's automatic-turns builder (the
     // resume-after-a-provider-failure use case; was 193 and 127).
     ("src/interface/cli/uds_lifecycle.rs", 197),
-    ("src/interface/cli/uds_single_client.rs", 129),
+    ("src/interface/uds/framing/uds_single_client.rs", 129),
     // #2446 moved the client-disconnect bookkeeping to `uds_multi/clients.rs`.
-    ("src/interface/cli/uds_multi.rs", 599),
+    ("src/interface/uds/framing/uds_multi.rs", 599),
     // Same merge of D3/D4/D5/D6/D7 handles (was 111 before D7); D10 #1979
     // types the loop's identity and reads the key from the active session
     // (was 125).
@@ -1570,15 +1570,22 @@ fn fresh_session_is_requested_only_by_the_dispatch_handler() {
         ]),
         "the startup open is requested by exactly the two startup paths"
     );
-    for needle in [".claim(&", ".release(&", "store.load(&"] {
+    // The whole interface is scanned, wherever a layout slice moved a file;
+    // the one `.release(&` is the subagent teardown edge releasing its own
+    // shutdown-preparation token, not a session store.
+    for (needle, expected) in [
+        (".claim(&", set(&[])),
+        (
+            ".release(&",
+            set(&["src/interface/uds/subagent_teardown/controller.rs"]),
+        ),
+        ("store.load(&", set(&[])),
+    ] {
         let sites: BTreeSet<String> = production_files_calling(needle)
             .into_iter()
-            .filter(|path| path.starts_with("src/interface/cli/"))
+            .filter(|path| path.starts_with("src/interface/"))
             .collect();
-        assert!(
-            sites.is_empty(),
-            "{needle} survives in the interface's cli tree: {sites:?}"
-        );
+        assert_eq!(sites, expected, "{needle} survives in the interface");
     }
     assert!(
         production_files_calling(".reset_roster(")

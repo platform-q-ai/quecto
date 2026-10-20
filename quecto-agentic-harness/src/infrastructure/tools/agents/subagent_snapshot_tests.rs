@@ -146,7 +146,7 @@ fn older_unchanged_get_state_snapshot_finalizes_to_caller_cursor() {
     );
 }
 
-fn production_state() -> crate::interface::cli::protocol::SessionState {
+fn production_state() -> crate::interface::uds::wire::protocol::SessionState {
     serde_json::from_value(serde_json::json!({
         "model": "mock", "generation": 7, "isStreaming": true,
         "sessionKey": "session", "messageCount": 0,
@@ -155,8 +155,10 @@ fn production_state() -> crate::interface::cli::protocol::SessionState {
     .unwrap()
 }
 
-fn production_response(state: &crate::interface::cli::protocol::SessionState) -> serde_json::Value {
-    serde_json::to_value(crate::interface::cli::protocol::AgentEvent::ok(
+fn production_response(
+    state: &crate::interface::uds::wire::protocol::SessionState,
+) -> serde_json::Value {
+    serde_json::to_value(crate::interface::uds::wire::protocol::AgentEvent::ok(
         None,
         "get_state",
         Some(state.slim_projection()),

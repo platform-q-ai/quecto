@@ -33,7 +33,7 @@ async fn emit_tool_catalogue_changed(
         let mut snapshot = ctx.tool_catalogue_snapshot.write().await;
         *snapshot = after.clone();
     }
-    let ev = crate::interface::cli::protocol::AgentEvent::ToolCatalogueChanged {
+    let ev = crate::interface::uds::wire::protocol::AgentEvent::ToolCatalogueChanged {
         changed_tools,
         before,
         after,
@@ -324,7 +324,7 @@ pub(crate) async fn handle_one_request(
         }
     }
 
-    let ev = crate::interface::cli::protocol::AgentEvent::ExecuteTool {
+    let ev = crate::interface::uds::wire::protocol::AgentEvent::ExecuteTool {
         tool_call_id: tool_call_id.clone(),
         tool_name: tool_name.to_string(),
         arguments,

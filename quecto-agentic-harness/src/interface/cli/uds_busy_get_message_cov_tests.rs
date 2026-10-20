@@ -33,3 +33,27 @@ fn parse_get_message_ignores_non_numeric_ranges() {
     assert_eq!(parsed.offset, None);
     assert_eq!(parsed.limit, None);
 }
+
+#[test]
+fn issue_1060_busy_reader_parses_only_un_targeted_get_message() {
+    // Un-targeted lookup: the busy reader services it from the master snapshot.
+    assert_eq!(
+        parse(r#"{"type":"get_message","id":"r1","messageId":"m1"}"#),
+        Some(ParsedGetMessage {
+            request_id: Some("r1".into()),
+            message_id: "m1".into(),
+            tool_call_id: None,
+            offset: None,
+            thinking_offset: None,
+            limit: None
+        })
+    );
+    // An agent-targeted lookup MUST fall through (None) so dispatch forwards it
+    // to the child. The wire key is snake_case `agent_id` (Command::GetMessage
+    // has no rename) — asserting against the real key guards the #1060 casing
+    // bug where the master wrongly served child ids from its own snapshot.
+    assert_eq!(
+        parse(r#"{"type":"get_message","id":"r1","messageId":"m1","agent_id":"child"}"#),
+        None
+    );
+}

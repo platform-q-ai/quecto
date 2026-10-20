@@ -15,7 +15,7 @@ use crate::application::subagents::dto::{
 use crate::application::subagents::use_cases::TerminateAllDelegatedAgents;
 use crate::domain::agents::services::subagent_teardown::ShutdownReason;
 
-use super::protocol::AgentEvent;
+use crate::interface::uds::wire::protocol::AgentEvent;
 
 const COMMAND: &str = "delete_all_subagents";
 

@@ -1,4 +1,4 @@
-use super::protocol::SessionState;
+use crate::interface::uds::wire::protocol::SessionState;
 
 pub(crate) fn slim_workflow(value: &serde_json::Value) -> Option<serde_json::Value> {
     let active_template = value

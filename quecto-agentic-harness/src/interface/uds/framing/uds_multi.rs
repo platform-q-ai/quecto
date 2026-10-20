@@ -12,19 +12,19 @@ use crate::domain::conversation::value_objects::message::Message;
 use crate::infrastructure::tools::agents::agent_cmd_containers::EnvironmentControlSlot;
 use crate::infrastructure::tools::agents::owner_exit::OwnerExitFlag;
 
-use super::protocol::AgentEvent;
-use super::uds::{
+use super::super::wire::protocol::{self, AgentEvent};
+pub(in crate::interface) use super::uds_multi_accept::{AcceptLoopArgs, spawn_accept_loop};
+use crate::interface::cli;
+use crate::interface::cli::uds::{
     DispatchCtx, LineResult, emit_event_to_broadcast_or_writer, inject_system_prompt, parse_line,
 };
-use super::uds_cancel::{CancelHandle, CancelSlot};
-pub(super) use super::uds_multi_accept::{AcceptLoopArgs, spawn_accept_loop};
-use super::uds_session::AgentSession;
-pub(crate) use super::uds_snapshots::StateSnapshot;
+use crate::interface::cli::uds_cancel::{CancelHandle, CancelSlot};
+pub(crate) use crate::interface::cli::uds_snapshots::StateSnapshot;
 #[cfg(test)]
-pub(crate) use super::uds_snapshots::{
+pub(crate) use crate::interface::cli::uds_snapshots::{
     build_get_messages_line, build_get_state_line, build_get_subagents_line,
 };
-use super::uds_snapshots::{
+use crate::interface::cli::uds_snapshots::{
     refresh_conversation_snapshot, refresh_session_stats_snapshot, refresh_state_snapshot,
     refresh_tool_catalogue_snapshot,
 };
@@ -36,7 +36,7 @@ pub(super) const MAX_CLIENTS: u32 = 64;
 
 /// Broadcast channel capacity for UDS event delivery.
 /// Shared between the early-creation path (workflow) and the default path.
-pub(super) const BROADCAST_CHANNEL_CAPACITY: usize = 256;
+pub(in crate::interface) const BROADCAST_CHANNEL_CAPACITY: usize = 256;
 
 /// Atomic counter for assigning unique client IDs (#352).
 pub(super) static NEXT_CLIENT_ID: std::sync::atomic::AtomicU64 =
@@ -48,7 +48,7 @@ pub(crate) use busy::{BusyFlag, BusyGuard};
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-pub(super) struct MultiClientArgs<'a> {
+pub(in crate::interface) struct MultiClientArgs<'a> {
     pub agent: AgentLoopImpl,
     pub workspace: &'a std::path::Path,
     pub messages: Vec<Message>,
@@ -83,23 +83,23 @@ pub(super) struct MultiClientArgs<'a> {
     pub broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
     /// The launch-bound parent control binding this harness was started
     /// with (#1935); `None` for a top-level harness that can never be bound.
-    pub parent_control: Option<super::uds_parent_control::ParentControlLaunch>,
+    pub parent_control: Option<cli::uds_parent_control::ParentControlLaunch>,
     /// Composition's teardown handles builder; without it the loop runs with
     /// no teardown edge (unit rigs only).
-    pub teardown_graph: Option<super::TeardownHandlesBuilder>,
-    pub automatic_turns: super::AutomaticTurnsBuilder,
+    pub teardown_graph: Option<cli::TeardownHandlesBuilder>,
+    pub automatic_turns: cli::AutomaticTurnsBuilder,
     /// The environment control slot (#2070): an owner exit ends retained boxes through it.
     pub environment_control: Option<EnvironmentControlSlot>,
-    pub extensions: super::uds_extensions::Extensions, // #2446: see `clients`
+    pub extensions: cli::uds_extensions::Extensions, // #2446: see `clients`
 }
 
 /// A command line from a client.
 pub(crate) struct ClientCommand {
-    pub(super) line: String,
+    pub(in crate::interface) line: String,
     /// Unique client identifier for per-client tool routing (#352).
-    pub(super) client_id: u64,
+    pub(in crate::interface) client_id: u64,
     /// Images the reader admitted for this message command (#2422).
-    pub(super) admitted: Option<super::uds::AdmittedImages>,
+    pub(in crate::interface) admitted: Option<cli::uds::AdmittedImages>,
 }
 
 /// Sentinel: a client disconnected.
@@ -117,7 +117,7 @@ pub(crate) enum ClientMessage {
     Disconnected(ClientDisconnected),
     /// A control the reader refused itself (#2422): dispatch records its
     /// `Rejected` receipt, as it does for one it refuses.
-    RejectedControl(super::uds_control_forward::RefusedControl),
+    RejectedControl(cli::uds_control_forward::RefusedControl),
 }
 
 /// RAII guard that decrements `live_clients` on drop (normal exit or panic).
@@ -150,11 +150,11 @@ impl Drop for ClientGuard {
 
 // ─── Accept loop + dispatch ───────────────────────────────────────────────────
 
-pub(super) async fn multi_client_loop(
+pub(in crate::interface) async fn multi_client_loop(
     args: MultiClientArgs<'_>,
     listener: tokio::net::UnixListener,
-    sessions: &super::uds_session_handles::SessionHandles,
-    catalogue: &super::controllers::catalogue_handles::CatalogueHandles,
+    sessions: &cli::uds_session_handles::SessionHandles,
+    catalogue: &cli::controllers::catalogue_handles::CatalogueHandles,
 ) -> i32 {
     let MultiClientArgs {
         mut agent,
@@ -193,7 +193,7 @@ pub(super) async fn multi_client_loop(
         .await
         .publish(&messages);
 
-    let mut agent_session = AgentSession::new(model, automatic_turns());
+    let mut agent_session = cli::uds_session::AgentSession::new(model, automatic_turns());
     agent_session.set_admission_warnings(&admission_slots);
     agent_session.set_startup_warnings(&catalogue.startup_warnings);
     agent_session.observe_runtime(catalogue.runtime_store.clone());
@@ -206,10 +206,10 @@ pub(super) async fn multi_client_loop(
     );
     let state_snapshot: StateSnapshot =
         std::sync::Arc::new(tokio::sync::RwLock::new(initial_state));
-    let execution_state: super::uds_execution_state::ExecutionStateHandle =
+    let execution_state: cli::uds_execution_state::ExecutionStateHandle =
         std::sync::Arc::new(std::sync::Mutex::new(Default::default()));
     let session_stats_snapshot = std::sync::Arc::new(tokio::sync::RwLock::new(
-        super::uds_session::compute_session_stats_with_usage(
+        cli::uds_session::compute_session_stats_with_usage(
             &session_key,
             &messages,
             agent_session.usage_snapshot(),
@@ -235,7 +235,7 @@ pub(super) async fn multi_client_loop(
     // #1679 P4: admission activity rides on `get_state` (revision folded into
     // the public cursor) and is pushed as `admission_state_changed`.
     if let Some(process) = crate::infrastructure::admission::process::current() {
-        super::uds_admission_projection::attach_process_admission(
+        cli::uds_admission_projection::attach_process_admission(
             &execution_state,
             &process,
             &broadcast_tx,
@@ -244,7 +244,7 @@ pub(super) async fn multi_client_loop(
     let (cmd_tx, cmd_rx) = tokio::sync::mpsc::channel::<ClientMessage>(256);
     let (disconnect_tx, disconnect_rx) = tokio::sync::mpsc::unbounded_channel();
     let cancel_handle: CancelHandle = std::sync::Arc::new(std::sync::Mutex::new(CancelSlot::Idle));
-    super::controllers::swarm_composition::bind_suspension(
+    cli::controllers::swarm_composition::bind_suspension(
         &cancel_handle,
         crate::interface::tool_runtime::swarm_context(),
     );
@@ -255,10 +255,10 @@ pub(super) async fn multi_client_loop(
     let coordinator = parent_control
         .as_ref()
         .is_some_and(|launch| launch.coordinator);
-    let turn_control = super::uds_swarm_control::process_turn_control(coordinator);
+    let turn_control = cli::uds_swarm_control::process_turn_control(coordinator);
     let live_clients = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
 
-    let client_tool_registry = super::uds_ext_protocol::new_client_tool_registry();
+    let client_tool_registry = cli::uds_ext_protocol::new_client_tool_registry();
 
     // Subagent teardown handles (#1935, #1938): composition's builder wires
     // the application use cases to this loop's cancel slot, exit
@@ -273,10 +273,10 @@ pub(super) async fn multi_client_loop(
     // The board view's own handle (#2478): the boards the environment
     // control carries, once composition has installed it.
     let swarm_boards = environment_control.clone().map(|slot| {
-        super::uds_swarm_board::SwarmBoards::new(move || slot.get().map(|control| control.boards))
+        cli::uds_swarm_board::SwarmBoards::new(move || slot.get().map(|control| control.boards))
     });
     let teardown = teardown_graph.map(|build| {
-        build(super::uds_teardown_handles::TeardownLoopInputs {
+        build(cli::uds_teardown_handles::TeardownLoopInputs {
             owner: crate::domain::identity::ids::AgentUuid::new(if session_key.is_empty() {
                 "harness".to_string()
             } else {
@@ -308,7 +308,7 @@ pub(super) async fn multi_client_loop(
     let fleet_teardown = teardown.as_ref().map(|graph| graph.fleet.clone());
     let connections = teardown.as_ref().map(|graph| graph.connections.clone());
     if let (Some(connections), Some(deadline)) = (connections.clone(), bind_deadline) {
-        super::uds_parent_control::arm_bind_deadline(connections, deadline);
+        cli::uds_parent_control::arm_bind_deadline(connections, deadline);
     }
 
     let accept_task = spawn_accept_loop(AcceptLoopArgs {
@@ -400,8 +400,8 @@ pub(super) async fn multi_client_loop(
         tracing::warn!("failed to persist session on exit: {err}");
     }
 
-    super::controllers::launch_rollback_wait::await_launch_rollbacks(
-        super::controllers::launch_rollback_wait::LAUNCH_ROLLBACK_LIMIT,
+    cli::controllers::launch_rollback_wait::await_launch_rollbacks(
+        cli::controllers::launch_rollback_wait::LAUNCH_ROLLBACK_LIMIT,
     )
     .await;
     0
@@ -413,7 +413,7 @@ struct DispatchLoopArgs {
     disconnect_rx: tokio::sync::mpsc::UnboundedReceiver<ClientDisconnected>,
     lifetime: crate::domain::agents::value_objects::harness_lifetime::HarnessLifetime,
     shutdown: super::uds_shutdown::ShutdownRequest,
-    extensions: super::uds_extensions::Extensions,
+    extensions: cli::uds_extensions::Extensions,
 }
 
 /// Process commands from all clients until no clients remain or a fatal error.
@@ -485,7 +485,7 @@ async fn run_dispatch_loop(
                     }
                 }
                 // Broadcast state_changed event to all UDS clients (#524).
-                let list = super::protocol::build_live_subagent_info_list(&ctx.subagent_registry);
+                let list = protocol::build_live_subagent_info_list(&ctx.subagent_registry);
                 let ev = AgentEvent::SubagentStateChanged { subagents: list };
                 emit_event_to_broadcast_or_writer(ctx, &ev).await;
                 // Auto-await (#816): this branch runs only while the parent is IDLE
@@ -496,7 +496,7 @@ async fn run_dispatch_loop(
                 // DISPLAY of the note until the parent is idle, so acting here never
                 // splits an in-flight response.
                 if should_deliver {
-                    super::uds::drain_pending_and_nudge(ctx).await;
+                    cli::uds::drain_pending_and_nudge(ctx).await;
                 }
             }
         }
@@ -526,7 +526,7 @@ async fn handle_client_msg(
 ) -> bool {
     match client_msg {
         ClientMessage::SwarmWake { generation } => {
-            super::uds_swarm_control::handle_wake(ctx, generation).await
+            cli::uds_swarm_control::handle_wake(ctx, generation).await
         }
         ClientMessage::Command(cmd) => {
             ctx.current_client_id = cmd.client_id;
@@ -541,7 +541,7 @@ async fn handle_client_msg(
                     emit_event_to_broadcast_or_writer(ctx, &ev).await;
                 }
                 LineResult::Command(parsed) => {
-                    if super::uds::dispatch_parsed(parsed, cmd.admitted, ctx).await {
+                    if cli::uds::dispatch_parsed(parsed, cmd.admitted, ctx).await {
                         return true;
                     }
                 }
@@ -549,7 +549,7 @@ async fn handle_client_msg(
             false
         }
         ClientMessage::RejectedControl(refused) => {
-            super::uds::record_rejected(ctx, &refused.id, &refused.command).await;
+            cli::uds::record_rejected(ctx, &refused.id, &refused.command).await;
             false
         }
         ClientMessage::Disconnected(disc) => {
@@ -576,9 +576,6 @@ mod cov2_tests;
 #[cfg(test)]
 #[path = "uds_multi_cov_tests.rs"]
 mod cov_tests;
-#[cfg(test)]
-#[path = "uds_multi_interception_tests.rs"]
-mod interception_tests;
 #[cfg(test)]
 #[path = "uds_multi_926_wake_tests.rs"]
 mod issue_926_wake_tests;

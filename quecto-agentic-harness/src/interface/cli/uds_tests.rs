@@ -5,9 +5,9 @@ use super::*;
 /// This file is compiled as `mod tests` inside `uds.rs`, so `super` = `uds`.
 /// Session-layer types (`AgentSession`, `compute_session_stats`, etc.) are
 /// re-exported from `uds` via `uds_session`.  Protocol types are imported from
-/// `cli::protocol`.
+/// `interface::uds::wire::protocol`.
 use crate::application::agent_turn::agent_loop::UsageTotals;
-use crate::interface::cli::protocol::*;
+use crate::interface::uds::wire::protocol::*;
 
 // ─── AgentSession unit tests ───────────────────────────────────────────────────
 

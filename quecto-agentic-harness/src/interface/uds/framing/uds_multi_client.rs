@@ -9,14 +9,14 @@
 //! connection — the only disconnect that runs the common shutdown.
 use std::sync::Arc;
 
-use super::super::uds::MAX_FRAME_PAYLOAD_BYTES;
-use super::super::uds_cancel::CancelHandle;
-use super::super::uds_parent_control::{
+use super::{ClientGuard, ClientMessage};
+use crate::interface::cli::uds::MAX_FRAME_PAYLOAD_BYTES;
+use crate::interface::cli::uds_cancel::CancelHandle;
+use crate::interface::cli::uds_parent_control::{
     ConnectionRole, ConnectionTeardown, Intercept, LineContext,
 };
-use super::super::uds_session_handles::SessionReadHandles;
-use super::super::uds_teardown_adapters::SharedWriter;
-use super::{ClientGuard, ClientMessage};
+use crate::interface::cli::uds_session_handles::SessionReadHandles;
+use crate::interface::cli::uds_teardown_adapters::SharedWriter;
 
 /// Arguments for [`handle_client`].
 pub(crate) struct ClientHandlerArgs {
@@ -31,11 +31,11 @@ pub(crate) struct ClientHandlerArgs {
     pub(crate) cmd_tx: tokio::sync::mpsc::Sender<ClientMessage>,
     pub(crate) cancel_handle: CancelHandle,
     /// Shared abort/steer control flags (#895/#896).
-    pub(crate) turn_control: super::super::uds_cancel::TurnControlHandle,
+    pub(crate) turn_control: crate::interface::cli::uds_cancel::TurnControlHandle,
     /// Unique client identifier (#352).
     pub(crate) client_id: u64,
     /// For in-reader handling of `tool_result` — see handle_client.
-    pub(crate) client_tool_registry: super::super::uds_ext_protocol::ClientToolRegistry,
+    pub(crate) client_tool_registry: crate::interface::cli::uds_ext_protocol::ClientToolRegistry,
     /// The active session and its read use cases (#1971): published as
     /// messages are appended during a turn, so read-only history and
     /// recovery lookups bypass the blocked dispatcher.
@@ -49,7 +49,7 @@ pub(crate) struct ClientHandlerArgs {
     pub(crate) teardown: Option<Arc<ConnectionTeardown>>,
     /// The board view's handle (#2478): `get_swarm_board` is answered off
     /// this reader.
-    pub(crate) swarm_boards: Option<super::super::uds_swarm_board::SwarmBoards>,
+    pub(crate) swarm_boards: Option<crate::interface::cli::uds_swarm_board::SwarmBoards>,
     /// RAII guard — decrements `live_clients` and sends `Disconnected` on drop.
     pub(crate) _guard: ClientGuard,
 }
@@ -135,7 +135,7 @@ pub(crate) async fn handle_client(args: ClientHandlerArgs) {
     // speaking neither framing is an explicit version mismatch and the
     // connection closes — never a silent misparse or a hang.
     let mut role = ConnectionRole::default();
-    let board_requests = super::super::uds_swarm_board::board_requests();
+    let board_requests = crate::interface::cli::uds_swarm_board::board_requests();
     loop {
         let line = match read_line(&mut reader, &wire_mode, client_id).await {
             Read::Line(line) => line,
@@ -153,7 +153,7 @@ pub(crate) async fn handle_client(args: ClientHandlerArgs) {
             Read::Closed => break,
         };
         if let Some(teardown) = teardown.as_deref() {
-            let intercept = super::super::uds_parent_control::intercept_line(
+            let intercept = crate::interface::cli::uds_parent_control::intercept_line(
                 LineContext {
                     teardown,
                     role: &mut role,
@@ -175,9 +175,9 @@ pub(crate) async fn handle_client(args: ClientHandlerArgs) {
                 &line,
             );
         }
-        if super::super::uds_swarm_board::intercept(
+        if crate::interface::cli::uds_swarm_board::intercept(
             &line,
-            super::super::uds_swarm_board::BoardViewCtx {
+            crate::interface::cli::uds_swarm_board::BoardViewCtx {
                 boards: swarm_boards.as_ref(),
                 clients: &client_tool_registry,
                 subagents: &subagent_registry,
@@ -187,8 +187,8 @@ pub(crate) async fn handle_client(args: ClientHandlerArgs) {
         ) {
             continue;
         }
-        if !super::super::uds_reader_dispatch::dispatch(
-            super::super::uds_reader_dispatch::ReaderDispatchCtx {
+        if !crate::interface::cli::uds_reader_dispatch::dispatch(
+            crate::interface::cli::uds_reader_dispatch::ReaderDispatchCtx {
                 line,
                 session: &session,
                 registry: &client_tool_registry,
@@ -215,7 +215,8 @@ pub(crate) async fn handle_client(args: ClientHandlerArgs) {
     if let Some(teardown) = teardown.as_deref() {
         teardown.owner_exit.withdraw(client_id);
         if let Some(outcome) =
-            super::super::uds_parent_control::connection_closed(teardown, &role, client_id).await
+            crate::interface::cli::uds_parent_control::connection_closed(teardown, &role, client_id)
+                .await
         {
             tracing::info!(client_id, ?outcome, "parent-loss shutdown finished");
         }
@@ -238,14 +239,15 @@ enum Read {
 /// oldest pending extension call at once (it may have been that call's
 /// result) and send the client a `protocol_error` saying so.
 async fn reject_oversized(
-    registry: &super::super::uds_ext_protocol::ClientToolRegistry,
+    registry: &crate::interface::cli::uds_ext_protocol::ClientToolRegistry,
     client_id: u64,
     (writer, mode): (&SharedWriter, &super::super::uds_wire::ConnectionWireMode),
     over_cap: (String, usize),
 ) {
-    let error = super::super::uds_ext_protocol::reject_oversized(registry, client_id, over_cap);
+    let error =
+        crate::interface::cli::uds_ext_protocol::reject_oversized(registry, client_id, over_cap);
     tracing::warn!(client_id, "dropping over-cap message from client: {error}");
-    let event = super::super::protocol::AgentEvent::err(None, "protocol_error", error);
+    let event = super::super::super::wire::protocol::AgentEvent::err(None, "protocol_error", error);
     let _ = write_line(writer, &format!("{}\n", event.to_json_line()), mode).await;
 }
 

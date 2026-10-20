@@ -33,7 +33,7 @@ use std::time::{Duration, Instant};
 
 /// Authoritative protocol page size, imported so this suite cannot drift from
 /// the protocol constant. Asserted behaviourally below, never sent on the wire.
-use quecto::interface::cli::protocol::HISTORY_PAGE_SIZE as PAGE;
+use quecto::interface::uds::wire::protocol::HISTORY_PAGE_SIZE as PAGE;
 pub(super) const PAGED_SESSION: &str = "paged-history";
 const STUB_SESSION: &str = "paged-stub";
 /// The seeded reply: long enough that its recall stub is cheaper than it,

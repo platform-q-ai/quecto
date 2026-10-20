@@ -234,7 +234,7 @@ impl DispatchTestEnv {
             .state_snapshot(&self.session_key, 0, None, 0, None);
         DispatchCtx {
             execution_state: std::sync::Arc::new(std::sync::Mutex::new(Default::default())),
-            wire_mode: crate::interface::cli::uds_wire::ConnectionWireMode::legacy(),
+            wire_mode: crate::interface::uds::framing::uds_wire::ConnectionWireMode::legacy(),
             agent: &mut self.agent,
             messages: &mut self.messages,
             sessions: self.sessions.read_handles(),

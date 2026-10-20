@@ -8,7 +8,7 @@ use crate::application::sessions::dto::{
     QueryGeneration, SearchLimit, SearchSessionMetadataRequest,
 };
 use crate::domain::sessions::services::session_metadata_search::QueryRefusal;
-use crate::interface::cli::protocol::SessionListScopeCommand;
+use crate::interface::uds::wire::protocol::SessionListScopeCommand;
 
 /// The wire fields of one search, as the protocol decoded them.
 pub(in crate::interface::cli) struct SearchFields {

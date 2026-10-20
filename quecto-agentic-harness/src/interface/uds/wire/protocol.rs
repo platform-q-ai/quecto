@@ -170,7 +170,7 @@ pub enum AgentEvent {
     /// the full bounded admission view (clients do a simple replace). Never a
     /// lifecycle state; `get_state` folds the same revision into `generation`.
     AdmissionStateChanged {
-        admission: super::uds_admission_projection::AdmissionSnapshot,
+        admission: crate::interface::cli::uds_admission_projection::AdmissionSnapshot,
     },
     /// One provider request of this agent ended (#2436): every attempt,
     /// retries included, whatever its provider. A token count the provider
@@ -579,7 +579,7 @@ pub struct SessionState {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub workflow: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub execution: Option<super::uds_execution_state::ExecutionSnapshot>,
+    pub execution: Option<crate::interface::cli::uds_execution_state::ExecutionSnapshot>,
     #[serde(default)]
     pub sync: u8,
 }
@@ -587,7 +587,7 @@ pub struct SessionState {
 impl SessionState {
     /// Canonical bounded inspection projection shared by live and connect replies.
     pub fn slim_projection(&self) -> serde_json::Value {
-        super::uds_state_projection::slim_state_projection(self)
+        crate::interface::cli::uds_state_projection::slim_state_projection(self)
     }
 }
 

@@ -23,7 +23,7 @@
 use crate::application::subagents::use_cases::TerminateAllDelegatedAgents;
 use crate::infrastructure::tools::agents::subagent_compact_roster::build_compact_subagent_roster;
 
-use super::protocol::AgentEvent;
+use crate::interface::uds::wire::protocol::AgentEvent;
 
 type SubagentRegistry = crate::infrastructure::tools::agents::subagent_registry::SubagentRegistry;
 
@@ -112,7 +112,9 @@ pub(super) async fn intercept(ctx: BusySubagentCtx<'_>) -> bool {
         // this agent's own turn. Busy or idle, targeted reads share the
         // forwarder cap below; past it a reader is told to retry.
         Some("get_report" | "get_state" | "get_message") if value.get("agent_id").is_some() => {
-            let Ok(command) = serde_json::from_str::<super::protocol::AgentCommand>(line) else {
+            let Ok(command) =
+                serde_json::from_str::<crate::interface::uds::wire::protocol::AgentCommand>(line)
+            else {
                 return false;
             };
             let Some(agent_id) = value["agent_id"].as_str().map(str::to_owned) else {
@@ -124,7 +126,7 @@ pub(super) async fn intercept(ctx: BusySubagentCtx<'_>) -> bool {
             // fan out unlimited in-flight descendant queries.
             static FORWARDERS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(8);
             let Ok(permit) = FORWARDERS.try_acquire() else {
-                let event = super::protocol::AgentEvent::err(
+                let event = crate::interface::uds::wire::protocol::AgentEvent::err(
                     id.as_deref(),
                     &command_type,
                     "descendant query capacity exhausted; retry after in-flight queries return",
@@ -231,7 +233,10 @@ pub(super) async fn forward_child_command(
         .await
     {
         Ok(line) => {
-            match super::uds::uds_forward_response::parse_forwarded_response(&line, &command_type) {
+            match crate::interface::uds::wire::uds_forward_response::parse_forwarded_response(
+                &line,
+                &command_type,
+            ) {
                 Ok(data) => AgentEvent::ok(id, &command_type, Some(data)),
                 Err(error) => AgentEvent::err(id, &command_type, error),
             }

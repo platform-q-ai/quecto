@@ -1,4 +1,4 @@
-use super::super::uds_tool_intercept::try_intercept_tool_result;
+use super::try_intercept_tool_result;
 
 #[test]
 fn intercepts_vanilla_tool_result() {
@@ -60,7 +60,7 @@ fn does_not_intercept_line_that_only_mentions_the_literal_in_a_string() {
 /// `AgentCommand` parse does.
 #[test]
 fn the_intercept_reads_a_tool_result_as_the_canonical_parse_does() {
-    use crate::interface::cli::protocol::AgentCommand;
+    use crate::interface::uds::wire::protocol::AgentCommand;
     let lines = [
         r#"{"type":"tool_result","toolCallId":"a","content":"x"}"#,
         r#"{"type":"tool_result","toolCallId":"b","content":"","isError":true,"imageBlocks":null}"#,

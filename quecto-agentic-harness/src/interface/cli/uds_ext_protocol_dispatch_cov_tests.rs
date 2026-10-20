@@ -49,7 +49,7 @@ async fn dispatch_register_tools_rejects_disabled_core_shadow() {
     );
     let mut ctx = super::super::uds::DispatchCtx {
         execution_state: std::sync::Arc::new(std::sync::Mutex::new(Default::default())),
-        wire_mode: super::super::uds_wire::ConnectionWireMode::legacy(),
+        wire_mode: crate::interface::uds::framing::uds_wire::ConnectionWireMode::legacy(),
         agent: &mut agent,
         messages: &mut messages,
         sessions: crate::interface::cli::uds::dispatch_session_roster_tests::read_handles_for(
@@ -118,7 +118,7 @@ async fn dispatch_register_tools_preflights_registry_rejection_before_client_sta
     );
     let mut ctx = super::super::uds::DispatchCtx {
         execution_state: std::sync::Arc::new(std::sync::Mutex::new(Default::default())),
-        wire_mode: super::super::uds_wire::ConnectionWireMode::legacy(),
+        wire_mode: crate::interface::uds::framing::uds_wire::ConnectionWireMode::legacy(),
         agent: &mut agent,
         messages: &mut messages,
         sessions: crate::interface::cli::uds::dispatch_session_roster_tests::read_handles_for(
@@ -188,7 +188,7 @@ async fn dispatch_register_tools_accepts_stable_id_for_policy_mutation() {
     );
     let mut ctx = super::super::uds::DispatchCtx {
         execution_state: std::sync::Arc::new(std::sync::Mutex::new(Default::default())),
-        wire_mode: super::super::uds_wire::ConnectionWireMode::legacy(),
+        wire_mode: crate::interface::uds::framing::uds_wire::ConnectionWireMode::legacy(),
         agent: &mut agent,
         messages: &mut messages,
         sessions: crate::interface::cli::uds::dispatch_session_roster_tests::read_handles_for(

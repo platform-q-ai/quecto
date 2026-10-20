@@ -447,7 +447,7 @@ async fn dispatch_register_tools_adds_extension_and_forwards_real_tool_execute()
     );
     let mut ctx = super::super::uds::DispatchCtx {
         execution_state: std::sync::Arc::new(std::sync::Mutex::new(Default::default())),
-        wire_mode: super::super::uds_wire::ConnectionWireMode::legacy(),
+        wire_mode: crate::interface::uds::framing::uds_wire::ConnectionWireMode::legacy(),
         agent: &mut agent,
         messages: &mut messages,
         sessions: crate::interface::cli::uds::dispatch_session_roster_tests::read_handles_for(
@@ -545,7 +545,7 @@ async fn dispatch_register_tools_rejects_later_denied_tool_without_unloading_exi
     );
     let mut ctx = super::super::uds::DispatchCtx {
         execution_state: std::sync::Arc::new(std::sync::Mutex::new(Default::default())),
-        wire_mode: super::super::uds_wire::ConnectionWireMode::legacy(),
+        wire_mode: crate::interface::uds::framing::uds_wire::ConnectionWireMode::legacy(),
         agent: &mut agent,
         messages: &mut messages,
         sessions: crate::interface::cli::uds::dispatch_session_roster_tests::read_handles_for(

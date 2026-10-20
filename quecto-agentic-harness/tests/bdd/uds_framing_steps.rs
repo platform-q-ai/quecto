@@ -9,7 +9,7 @@
 
 use super::*;
 
-use quecto::interface::cli::uds_wire::PROTOCOL_ANNOUNCE_PREFIX;
+use quecto::interface::uds::framing::uds_wire::PROTOCOL_ANNOUNCE_PREFIX;
 use quecto_line_io::PROTOCOL_FRAME_CAP_BYTES;
 
 /// Which wire framing the scripted UDS client speaks (#1059).

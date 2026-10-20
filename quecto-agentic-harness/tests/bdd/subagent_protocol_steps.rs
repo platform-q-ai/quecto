@@ -2,7 +2,7 @@ use super::*;
 use quecto::infrastructure::tools::agents::subagent_registry::{
     SubagentEntry, SubagentStatus, new_registry,
 };
-use quecto::interface::cli::protocol::{
+use quecto::interface::uds::wire::protocol::{
     AgentCommand, AgentEvent, SubagentInfo, build_subagent_info_list,
 };
 

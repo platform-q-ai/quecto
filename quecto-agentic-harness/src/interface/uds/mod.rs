@@ -2,6 +2,8 @@
 //! presenters. Parses, maps, invokes one use case, presents. No policy.
 
 pub mod catalogue;
+pub mod framing;
 pub mod parent_control;
 pub mod sessions;
 pub mod subagent_teardown;
+pub mod wire;

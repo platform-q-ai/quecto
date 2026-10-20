@@ -2,35 +2,35 @@
 //! the same dispatch loop as the multi-client server, minus the accept
 //! loop and broadcast. Split out of `uds_lifecycle` (#1845).
 
-use super::uds::{DispatchCtx, run_command_loop};
-use super::uds_cancel::{CancelSlot, TurnControl};
-use super::uds_session::AgentSession;
-use super::uds_session_handles::SessionHandles;
-use super::{uds_extensions::ExtRegistry, uds_lifecycle::inject_system_prompt};
 use crate::application::agent_turn::agent_loop::AgentLoopImpl;
 use crate::application::sessions::dto::SaveTrigger;
 use crate::domain::conversation::value_objects::message::Message;
+use crate::interface::cli::uds::{DispatchCtx, run_command_loop};
+use crate::interface::cli::uds_cancel::{CancelSlot, TurnControl};
+use crate::interface::cli::uds_session::{AgentSession, compute_session_stats};
+use crate::interface::cli::uds_session_handles::SessionHandles;
+use crate::interface::cli::{uds_ext_protocol, uds_extensions::ExtRegistry, uds_lifecycle};
 
-pub(super) struct SingleClientArgs<'a> {
-    pub(super) agent: AgentLoopImpl,
-    pub(super) automatic_turns: super::AutomaticTurnsBuilder,
-    pub(super) workspace: &'a std::path::Path,
-    pub(super) messages: Vec<Message>,
-    pub(super) model: String,
-    pub(super) admission_slots: Vec<String>,
-    pub(super) session_key: String,
-    pub(super) system_prompt: String,
-    pub(super) ext_registry: Option<ExtRegistry>,
-    pub(super) subagent_registry:
+pub(in crate::interface) struct SingleClientArgs<'a> {
+    pub(in crate::interface) agent: AgentLoopImpl,
+    pub(in crate::interface) automatic_turns: crate::interface::cli::AutomaticTurnsBuilder,
+    pub(in crate::interface) workspace: &'a std::path::Path,
+    pub(in crate::interface) messages: Vec<Message>,
+    pub(in crate::interface) model: String,
+    pub(in crate::interface) admission_slots: Vec<String>,
+    pub(in crate::interface) session_key: String,
+    pub(in crate::interface) system_prompt: String,
+    pub(in crate::interface) ext_registry: Option<ExtRegistry>,
+    pub(in crate::interface) subagent_registry:
         Option<crate::infrastructure::tools::agents::subagent_registry::SubagentRegistry>,
-    pub(super) workflow_state: Option<crate::interface::shared::WorkflowStateHandle>,
+    pub(in crate::interface) workflow_state: Option<crate::interface::shared::WorkflowStateHandle>,
 }
 
-pub(super) async fn single_client_loop(
+pub(in crate::interface) async fn single_client_loop(
     args: SingleClientArgs<'_>,
     std_stream: std::os::unix::net::UnixStream,
     sessions: &SessionHandles,
-    catalogue: &super::controllers::catalogue_handles::CatalogueHandles,
+    catalogue: &crate::interface::cli::controllers::catalogue_handles::CatalogueHandles,
 ) -> i32 {
     let SingleClientArgs {
         mut agent,
@@ -54,13 +54,13 @@ pub(super) async fn single_client_loop(
     let mut writer: Box<dyn tokio::io::AsyncWrite + Send + Unpin> = Box::new(w);
 
     let wire_mode = super::uds_wire::ConnectionWireMode::legacy();
-    let workspace_event = super::protocol::AgentEvent::Workspace {
+    let workspace_event = super::super::wire::protocol::AgentEvent::Workspace {
         path: workspace.display().to_string(),
     };
     let line = workspace_event.to_json_line() + "\n";
     let _ = super::uds_wire::write_event_line(&mut writer, &line, &wire_mode).await;
 
-    inject_system_prompt(&mut messages, &system_prompt);
+    uds_lifecycle::inject_system_prompt(&mut messages, &system_prompt);
 
     let mut agent_session = AgentSession::new(model, automatic_turns());
     agent_session.set_admission_warnings(&admission_slots);
@@ -69,7 +69,7 @@ pub(super) async fn single_client_loop(
     let effort = catalogue.effort_view(agent.effort(), agent_session.model());
     let initial_state =
         agent_session.state_snapshot(&session_key, 0, None, agent.max_context_tokens(), effort);
-    let initial_stats = super::uds_session::compute_session_stats(&session_key, &messages);
+    let initial_stats = compute_session_stats(&session_key, &messages);
     let session_reads = sessions.read_handles();
     let _ = session_reads
         .active_session
@@ -96,7 +96,7 @@ pub(super) async fn single_client_loop(
             turn_control: std::sync::Arc::<TurnControl>::default(),
             broadcast_tx: None,
             _ext_registry: ext_registry,
-            client_tool_registry: super::uds_ext_protocol::new_client_tool_registry(),
+            client_tool_registry: uds_ext_protocol::new_client_tool_registry(),
             current_client_id: 0,
             subagent_registry: subagent_registry.clone(),
             notification_rx: None,
@@ -121,8 +121,8 @@ pub(super) async fn single_client_loop(
     {
         tracing::warn!("failed to persist session on exit: {err}");
     }
-    super::controllers::launch_rollback_wait::await_launch_rollbacks(
-        super::controllers::launch_rollback_wait::LAUNCH_ROLLBACK_LIMIT,
+    crate::interface::cli::controllers::launch_rollback_wait::await_launch_rollbacks(
+        crate::interface::cli::controllers::launch_rollback_wait::LAUNCH_ROLLBACK_LIMIT,
     )
     .await;
     0

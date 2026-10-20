@@ -2,7 +2,7 @@ use crate::application::sessions::ports::SessionStore;
 use crate::domain::conversation::value_objects::message::Message;
 use crate::domain::sessions::entities::session::Session;
 use crate::infrastructure::tools::agents::subagent_registry::new_registry;
-use crate::interface::cli::protocol::AgentCommand;
+use crate::interface::uds::wire::protocol::AgentCommand;
 
 use super::fixture_tests::Fixture;
 

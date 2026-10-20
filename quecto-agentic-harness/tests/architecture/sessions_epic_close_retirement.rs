@@ -79,6 +79,10 @@ const DISPOSITION: &[(&str, &str)] = &[
     ("src/interface/cli/uds_session_usage.rs", "stats"),
 ];
 
+/// The subagent teardown edge's controller, whose shutdown-preparation token
+/// release is the interface's one keyed `.release(&` (not a session store).
+const TEARDOWN_CONTROLLER: &str = "src/interface/uds/subagent_teardown/controller.rs";
+
 /// Files retired by the epic; none may reappear.
 const RETIRED_PATHS: &[&str] = &[
     "src/interface/cli/agent_session_identity.rs",
@@ -368,19 +372,28 @@ fn interface_session_modules_parse_map_and_present_only() {
     }
     let interface: Vec<String> = production_files()
         .into_iter()
-        .filter(|p| {
-            p.starts_with("src/interface/cli/") || p.starts_with("src/interface/uds/sessions/")
-        })
+        .filter(|p| p.starts_with("src/interface/"))
         .collect();
-    let reaches: Vec<String> = interface
+    // The whole interface is scanned, wherever a layout slice moved a file.
+    // The one keyed `.release(&` it holds is the subagent teardown edge
+    // releasing its own shutdown-preparation token, not a session store:
+    // pinned exactly, so it can neither move nor multiply unseen.
+    let (teardown, reaches): (Vec<_>, Vec<_>) = interface
         .iter()
         .flat_map(|path| {
             production_code(path)
                 .into_iter()
                 .filter(|(_, line)| reaches_a_persistence_method(line))
-                .map(move |(n, line)| format!("{path}:{n}: {}", line.trim()))
+                .map(move |(n, line)| (path.clone(), format!("{path}:{n}: {}", line.trim())))
         })
-        .collect();
+        .partition(|(path, line)| {
+            path == TEARDOWN_CONTROLLER && line.ends_with(": self.prepare.release(&token)")
+        });
+    assert_eq!(
+        teardown.len(),
+        1,
+        "the teardown edge's one token release: {teardown:#?}"
+    );
     assert!(
         reaches.is_empty(),
         "interface reaches a persistence method directly: {reaches:#?}"

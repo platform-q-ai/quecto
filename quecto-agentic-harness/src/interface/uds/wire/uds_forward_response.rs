@@ -1,5 +1,5 @@
 /// Validate and unwrap a forwarded child's command response.
-pub(in crate::interface::cli) fn parse_forwarded_response(
+pub(in crate::interface) fn parse_forwarded_response(
     line: &str,
     command: &str,
 ) -> Result<serde_json::Value, String> {
@@ -21,12 +21,16 @@ pub(in crate::interface::cli) fn parse_forwarded_response(
 }
 
 /// Validate and unwrap a forwarded child's `get_message` response.
-pub(super) fn parse_forwarded_get_message(line: &str) -> Result<serde_json::Value, String> {
+pub(in crate::interface) fn parse_forwarded_get_message(
+    line: &str,
+) -> Result<serde_json::Value, String> {
     parse_forwarded_response(line, "get_message")
 }
 
 /// Validate and unwrap a forwarded child's `get_messages` response.
-pub(super) fn parse_forwarded_get_messages(line: &str) -> Result<serde_json::Value, String> {
+pub(in crate::interface) fn parse_forwarded_get_messages(
+    line: &str,
+) -> Result<serde_json::Value, String> {
     parse_forwarded_response(line, "get_messages")
 }
 

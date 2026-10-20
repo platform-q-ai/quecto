@@ -278,7 +278,7 @@ async fn real_multi_client_loop_unregisters_client_extension_on_disconnect() {
     let (broadcast_tx, mut rx) = tokio::sync::broadcast::channel::<String>(16);
     let (cmd_tx, cmd_rx) = tokio::sync::mpsc::channel::<ClientMessage>(8);
     let live = Arc::new(std::sync::atomic::AtomicU32::new(1));
-    let registry = super::super::uds_ext_protocol::new_client_tool_registry();
+    let registry = crate::interface::cli::uds_ext_protocol::new_client_tool_registry();
     let mut agent = make_agent();
     agent.register_uds_tool_for_owner(Arc::new(TinyExtensionTool), "uds:client:55".into());
     registry
@@ -296,7 +296,7 @@ async fn real_multi_client_loop_unregisters_client_extension_on_disconnect() {
         .unwrap();
     drop(cmd_tx);
 
-    let mut session = super::super::uds_session::AgentSession::new("stub".into(), crate::application::agent_turn::use_cases::resume_after_provider_failure::ResumeAfterProviderFailure::new());
+    let mut session = crate::interface::cli::uds_session::AgentSession::new("stub".into(), crate::application::agent_turn::use_cases::resume_after_provider_failure::ResumeAfterProviderFailure::new());
     let mut messages = vec![Message::user("seed")];
     let session_key = "cli:cov".to_string();
     let mut writer = tokio::io::sink();
@@ -305,7 +305,7 @@ async fn real_multi_client_loop_unregisters_client_extension_on_disconnect() {
     let rewrite = crate::interface::cli::uds::dispatch_session_roster_tests::rewrite_handles_for(
         &session_key,
     );
-    let mut ctx = super::super::uds::DispatchCtx {
+    let mut ctx = crate::interface::cli::uds::DispatchCtx {
         execution_state: std::sync::Arc::new(std::sync::Mutex::new(Default::default())),
         wire_mode: super::super::uds_wire::ConnectionWireMode::legacy(),
         agent: &mut agent,
@@ -319,7 +319,7 @@ async fn real_multi_client_loop_unregisters_client_extension_on_disconnect() {
             session.state_snapshot("cli:test", 0, None, 0, None),
         )),
         session_stats_snapshot: Arc::new(tokio::sync::RwLock::new(
-            super::super::uds_session::compute_session_stats("cli:cov", &[]),
+            crate::interface::cli::uds_session::compute_session_stats("cli:cov", &[]),
         )),
         tool_catalogue_snapshot: Arc::new(tokio::sync::RwLock::new(Vec::new())),
         busy: Arc::new(std::sync::atomic::AtomicBool::new(false)),
@@ -327,7 +327,7 @@ async fn real_multi_client_loop_unregisters_client_extension_on_disconnect() {
         stdout: Some(&mut writer),
         system_prompt: "",
         cancel_handle: Arc::new(std::sync::Mutex::new(
-            super::super::uds_cancel::CancelSlot::Idle,
+            crate::interface::cli::uds_cancel::CancelSlot::Idle,
         )),
         turn_control: Arc::default(),
         broadcast_tx: Some(broadcast_tx.clone()),

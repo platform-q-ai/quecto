@@ -73,7 +73,7 @@ struct Rig {
     cancel: CancelHandle,
     notify: Arc<tokio::sync::Notify>,
     busy: super::super::uds_multi::BusyFlag,
-    graph: super::super::uds_teardown_handles::TeardownHandles,
+    graph: crate::interface::cli::uds_teardown_handles::TeardownHandles,
 }
 
 /// The composed graph over a registry holding one script-managed member

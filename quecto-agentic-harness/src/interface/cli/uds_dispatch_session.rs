@@ -11,9 +11,9 @@ use super::{AgentEvent, DispatchCtx, emit_event_to_broadcast_or_writer, emit_led
 use crate::application::sessions::dto::ResumeOutcome;
 use crate::application::sessions::ports::FleetSettlement;
 use crate::infrastructure::tools::agents::subagent_cascade;
-use crate::interface::cli::protocol::HISTORY_PAGE_SIZE;
 use crate::interface::uds::sessions::resume_session_controller::ResumeFields;
 use crate::interface::uds::sessions::rewind_conversation_controller::RewindFields;
+use crate::interface::uds::wire::protocol::HISTORY_PAGE_SIZE;
 #[path = "uds_dispatch_resume.rs"]
 mod uds_dispatch_resume;
 
@@ -227,7 +227,7 @@ pub(super) async fn handle_list_sessions(
     ctx: &mut DispatchCtx<'_>,
     id: Option<&str>,
     type_name: &str,
-    scope: crate::interface::cli::protocol::SessionListScopeCommand,
+    scope: crate::interface::uds::wire::protocol::SessionListScopeCommand,
 ) {
     let requested = crate::application::sessions::dto::SessionListScope::from(scope);
     let event = match ctx.discovery.list(requested).await {

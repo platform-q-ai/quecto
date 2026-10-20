@@ -5,7 +5,7 @@ use crate::application::sessions::ports::SessionStore;
 use crate::domain::conversation::value_objects::message::Message;
 use crate::domain::sessions::entities::session::Session;
 use crate::domain::sessions::entities::session_identity::SessionIdentity;
-use crate::interface::cli::protocol::AgentCommand;
+use crate::interface::uds::wire::protocol::AgentCommand;
 
 /// Dispatch one wire line and return the answer with the same `id`.
 async fn answer(fx: &mut Fixture, line: serde_json::Value) -> serde_json::Value {

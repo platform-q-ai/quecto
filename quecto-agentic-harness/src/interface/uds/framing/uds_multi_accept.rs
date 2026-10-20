@@ -1,48 +1,51 @@
-use super::uds_cancel::CancelHandle;
 use super::uds_multi::{
     BusyFlag, ClientGuard, ClientHandlerArgs, ClientMessage, StateSnapshot, handle_client,
 };
-use super::uds_session_handles::SessionReadHandles;
+use crate::interface::cli::uds_cancel::CancelHandle;
+use crate::interface::cli::uds_session_handles::SessionReadHandles;
 
 use super::uds_multi::{MAX_CLIENTS, NEXT_CLIENT_ID};
+use crate::interface::cli;
 
 /// Arguments for [`spawn_accept_loop`].
-pub(super) struct AcceptLoopArgs {
-    pub(super) listener: tokio::net::UnixListener,
-    pub(super) broadcast_tx: tokio::sync::broadcast::Sender<String>,
-    pub(super) cmd_tx: tokio::sync::mpsc::Sender<ClientMessage>,
-    pub(super) disconnect_tx:
+pub(in crate::interface) struct AcceptLoopArgs {
+    pub(in crate::interface) listener: tokio::net::UnixListener,
+    pub(in crate::interface) broadcast_tx: tokio::sync::broadcast::Sender<String>,
+    pub(in crate::interface) cmd_tx: tokio::sync::mpsc::Sender<ClientMessage>,
+    pub(in crate::interface) disconnect_tx:
         tokio::sync::mpsc::UnboundedSender<super::uds_multi::ClientDisconnected>,
-    pub(super) cancel_handle: CancelHandle,
-    pub(super) turn_control: super::uds_cancel::TurnControlHandle,
-    pub(super) live_clients: std::sync::Arc<std::sync::atomic::AtomicU32>,
-    pub(super) client_tool_registry: super::uds_ext_protocol::ClientToolRegistry,
-    pub(super) session: SessionReadHandles,
-    pub(super) state_snapshot: StateSnapshot,
-    pub(super) runtime_store: crate::application::provider_runtime::RuntimeSnapshotStore,
-    pub(super) execution_state: super::uds_execution_state::ExecutionStateHandle,
-    pub(super) session_stats_snapshot: super::uds_snapshots::SessionStatsSnapshot,
-    pub(super) tool_catalogue_snapshot: super::uds_extensions::ToolCatalogueSnapshot,
-    pub(super) busy: BusyFlag,
-    pub(super) subagent_registry:
+    pub(in crate::interface) cancel_handle: CancelHandle,
+    pub(in crate::interface) turn_control: cli::uds_cancel::TurnControlHandle,
+    pub(in crate::interface) live_clients: std::sync::Arc<std::sync::atomic::AtomicU32>,
+    pub(in crate::interface) client_tool_registry: cli::uds_ext_protocol::ClientToolRegistry,
+    pub(in crate::interface) session: SessionReadHandles,
+    pub(in crate::interface) state_snapshot: StateSnapshot,
+    pub(in crate::interface) runtime_store:
+        crate::application::provider_runtime::RuntimeSnapshotStore,
+    pub(in crate::interface) execution_state: cli::uds_execution_state::ExecutionStateHandle,
+    pub(in crate::interface) session_stats_snapshot: cli::uds_snapshots::SessionStatsSnapshot,
+    pub(in crate::interface) tool_catalogue_snapshot: cli::uds_extensions::ToolCatalogueSnapshot,
+    pub(in crate::interface) busy: BusyFlag,
+    pub(in crate::interface) subagent_registry:
         Option<crate::infrastructure::tools::agents::subagent_registry::SubagentRegistry>,
     /// Live workflow engine (#914): read mid-turn so a busy `get_state` reports
     /// current step progress, not the turn-boundary frozen snapshot.
-    pub(super) workflow_state: Option<crate::interface::shared::WorkflowStateHandle>,
-    pub(super) workspace_path: std::path::PathBuf,
+    pub(in crate::interface) workflow_state: Option<crate::interface::shared::WorkflowStateHandle>,
+    pub(in crate::interface) workspace_path: std::path::PathBuf,
     /// Launch-bound parent control / teardown edge shared by every
     /// connection (#1935).
-    pub(super) teardown: Option<std::sync::Arc<super::uds_parent_control::ConnectionTeardown>>,
+    pub(in crate::interface) teardown:
+        Option<std::sync::Arc<cli::uds_parent_control::ConnectionTeardown>>,
     /// This agent's configured extensions, whose connections are claimed
     /// at accept (#2446).
-    pub(super) extensions: super::uds_extensions::Extensions,
+    pub(in crate::interface) extensions: cli::uds_extensions::Extensions,
     /// The board view's handle (#2478): every connection's
     /// `get_swarm_board`, and the `swarm_board_changed` poll.
-    pub(super) swarm_boards: Option<super::uds_swarm_board::SwarmBoards>,
+    pub(in crate::interface) swarm_boards: Option<cli::uds_swarm_board::SwarmBoards>,
 }
 
 /// Spawn the accept loop that listens for new client connections.
-pub(super) fn spawn_accept_loop(args: AcceptLoopArgs) -> tokio::task::JoinHandle<()> {
+pub(in crate::interface) fn spawn_accept_loop(args: AcceptLoopArgs) -> tokio::task::JoinHandle<()> {
     let AcceptLoopArgs {
         listener,
         broadcast_tx,
@@ -69,16 +72,16 @@ pub(super) fn spawn_accept_loop(args: AcceptLoopArgs) -> tokio::task::JoinHandle
     tokio::spawn(async move {
         // The board view's change hints (#2478) live as long as the loop;
         // what they have seen is told to each new connection.
-        let board_hints = super::uds_swarm_board::BoardHints::default();
+        let board_hints = cli::uds_swarm_board::BoardHints::default();
         let hints = swarm_boards.clone().map(|boards| {
-            super::uds_swarm_board::spawn_change_hints(
+            cli::uds_swarm_board::spawn_change_hints(
                 boards,
                 board_hints.clone(),
                 broadcast_tx.clone(),
                 live_clients.clone(),
             )
         });
-        let _hints = super::uds_swarm_board::AbortOnDrop(hints);
+        let _hints = cli::uds_swarm_board::AbortOnDrop(hints);
         loop {
             match listener.accept().await {
                 Ok((mut stream, _addr)) => {
@@ -101,12 +104,12 @@ pub(super) fn spawn_accept_loop(args: AcceptLoopArgs) -> tokio::task::JoinHandle
                         client_id,
                     };
                     let (targeted_tx, targeted_rx) = tokio::sync::mpsc::channel::<String>(64);
-                    super::uds_ext_protocol::register_client_writer(
+                    cli::uds_ext_protocol::register_client_writer(
                         &client_tool_registry,
                         client_id,
                         targeted_tx.clone(),
                     );
-                    super::uds_extensions::claim_connection(
+                    cli::uds_extensions::claim_connection(
                         &extensions,
                         &stream,
                         &client_tool_registry,
@@ -116,7 +119,7 @@ pub(super) fn spawn_accept_loop(args: AcceptLoopArgs) -> tokio::task::JoinHandle
                     // Subscribed with what the board hints have seen,
                     // under one lock (#2488 round 2 M2).
                     let (broadcast_rx, board_lines) = board_hints.subscribe(&broadcast_tx);
-                    let workspace_line = super::protocol::AgentEvent::Workspace {
+                    let workspace_line = super::super::wire::protocol::AgentEvent::Workspace {
                         path: workspace_path.display().to_string(),
                     }
                     .to_json_line()
@@ -140,8 +143,8 @@ pub(super) fn spawn_accept_loop(args: AcceptLoopArgs) -> tokio::task::JoinHandle
                         // current point-in-time projection on connect so callers
                         // never depend on the serialized command loop replying.
                         let mut live = state_snapshot.read().await.clone();
-                        super::uds_admission_warnings::overlay_current(&mut live, &runtime_store);
-                        let state_line = super::uds_snapshots::build_connect_get_state_line(
+                        cli::uds_admission_warnings::overlay_current(&mut live, &runtime_store);
+                        let state_line = cli::uds_snapshots::build_connect_get_state_line(
                             &live,
                             &workflow_state,
                             &execution_state,
@@ -152,8 +155,8 @@ pub(super) fn spawn_accept_loop(args: AcceptLoopArgs) -> tokio::task::JoinHandle
                             continue;
                         }
                         if is_busy {
-                            let snapshot_lines = super::uds_snapshots::busy_connect_snapshot_lines(
-                                super::uds_snapshots::BusySnapshotSources {
+                            let snapshot_lines = cli::uds_snapshots::busy_connect_snapshot_lines(
+                                cli::uds_snapshots::BusySnapshotSources {
                                     state: &state_snapshot,
                                     session: &session,
                                     session_stats: &session_stats_snapshot,

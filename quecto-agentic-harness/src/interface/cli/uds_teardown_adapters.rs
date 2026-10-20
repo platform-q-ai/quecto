@@ -30,8 +30,8 @@ use crate::interface::uds::subagent_teardown::presenter::{AckWriteError, AckWrit
 use crate::interface::uds::subagent_teardown::wire::TeardownResponse;
 
 use super::uds_cancel::{CancelHandle, TurnControlHandle, fire_cancel};
-use super::uds_multi::BusyFlag;
-use super::uds_wire::ConnectionWireMode;
+use crate::interface::uds::framing::uds_multi::BusyFlag;
+use crate::interface::uds::framing::uds_wire::ConnectionWireMode;
 
 /// Cancels the in-flight turn the way the reader task does for `abort`:
 /// record the operator intent, then fire the cancel slot.
@@ -281,9 +281,13 @@ impl AckWriter for ConnectionAckWriter {
             use tokio::io::AsyncWriteExt;
             let line = response.to_line();
             let mut writer = self.writer.lock().await;
-            super::uds_wire::write_event_line(&mut *writer, &line, &self.mode)
-                .await
-                .map_err(|e| AckWriteError(e.to_string()))?;
+            crate::interface::uds::framing::uds_wire::write_event_line(
+                &mut *writer,
+                &line,
+                &self.mode,
+            )
+            .await
+            .map_err(|e| AckWriteError(e.to_string()))?;
             writer
                 .flush()
                 .await

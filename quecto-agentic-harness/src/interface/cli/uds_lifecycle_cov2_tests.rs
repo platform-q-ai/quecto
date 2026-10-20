@@ -4,7 +4,7 @@ use crate::application::providers::ports::{ChatRequest, LlmProvider};
 use crate::domain::conversation::value_objects::message::LlmResponse;
 use crate::domain::shared::error::DomainError;
 use crate::infrastructure::tools::registry::ToolRegistryImpl;
-use crate::interface::cli::uds_single_client::{SingleClientArgs, single_client_loop};
+use crate::interface::uds::framing::uds_single_client::{SingleClientArgs, single_client_loop};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;

@@ -4,6 +4,7 @@
 use super::uds::DispatchCtx;
 use crate::domain::conversation::services::turn_origin::{instruction, progress_nudge};
 use crate::domain::conversation::value_objects::message::Message;
+use crate::interface::uds::wire::protocol::WorkflowIdleReason;
 
 /// A nudge to inject at an idle boundary, tagged with the automation path
 /// that produced it: the auto-continue path participates in the no-progress
@@ -95,8 +96,7 @@ pub(super) fn workflow_progress_fingerprint(ctx: &DispatchCtx<'_>) -> Option<Str
 /// `Exhausted` when the drain gave up (no-progress tolerance, nudge cap,
 /// nothing runnable) with it unfinished, the only stall-worthy outcome. A
 /// poisoned engine is read as it was left (#2192).
-pub(super) fn workflow_idle_reason(ctx: &DispatchCtx<'_>) -> super::protocol::WorkflowIdleReason {
-    use super::protocol::WorkflowIdleReason;
+pub(super) fn workflow_idle_reason(ctx: &DispatchCtx<'_>) -> WorkflowIdleReason {
     use crate::domain::workflow::WorkflowMode;
     let Some(ws) = ctx.workflow_state.as_ref() else {
         return WorkflowIdleReason::Completed;

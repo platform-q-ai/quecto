@@ -5,15 +5,15 @@
 
 #[path = "uds_safe_display.rs"]
 mod uds_safe_display;
-pub(in crate::interface::cli) use uds_safe_display::safe_display;
+pub(in crate::interface) use uds_safe_display::safe_display;
 
 /// The diagnostics an answer names in full; the rest are counted.
-pub(in crate::interface::cli) const MAX_DIAGNOSTICS: usize = 20;
+pub(super) const MAX_DIAGNOSTICS: usize = 20;
 
 /// `body` with `diagnostics` (the first [`MAX_DIAGNOSTICS`] lines, then one
 /// `… and N more` line when any were left out), `diagnosticsTotal` (every
 /// line there was) and `rebuilt`.
-pub(in crate::interface::cli) fn freshened(
+pub(in crate::interface) fn freshened(
     mut body: serde_json::Value,
     diagnostics: &[String],
     rebuilt: bool,

@@ -398,7 +398,8 @@ async fn restore_creates_no_operational_row_and_probes_nothing() {
             .is_empty()
     );
     assert!(
-        crate::interface::cli::protocol::build_live_subagent_info_list(&Some(registry)).is_empty()
+        crate::interface::uds::wire::protocol::build_live_subagent_info_list(&Some(registry))
+            .is_empty()
     );
 }
 

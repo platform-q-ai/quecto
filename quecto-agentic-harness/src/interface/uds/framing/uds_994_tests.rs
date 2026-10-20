@@ -82,7 +82,7 @@ impl Fixture {
             );
         DispatchCtx {
             execution_state: std::sync::Arc::new(std::sync::Mutex::new(Default::default())),
-            wire_mode: crate::interface::cli::uds_wire::ConnectionWireMode::legacy(),
+            wire_mode: crate::interface::uds::framing::uds_wire::ConnectionWireMode::legacy(),
             agent: &mut self.agent,
             messages: &mut self.messages,
             sessions: crate::interface::cli::uds::dispatch_session_roster_tests::read_handles_for(
@@ -233,9 +233,9 @@ fn message_to_json_matches_golden_wire_shape_for_all_roles() {
 #[test]
 fn get_messages_snapshot_line_matches_agent_event_envelope() {
     use crate::domain::conversation::value_objects::message::ToolCall;
-    use crate::interface::cli::protocol::AgentEvent;
     use crate::interface::cli::uds_session::message_to_json;
     use crate::interface::cli::uds_snapshots::build_get_messages_line;
+    use crate::interface::uds::wire::protocol::AgentEvent;
 
     let messages = vec![
         Message::user("hello"),
@@ -323,8 +323,10 @@ fn paged_get_messages_snapshot_line_never_marks_content_trimmed() {
 
 #[tokio::test]
 async fn event_sink_variants_emit_identical_json_for_same_events() {
-    use crate::interface::cli::protocol::{AgentEvent, ToolResultContent, TurnMessage, TurnUsage};
     use crate::interface::cli::uds_cancel::EventSink;
+    use crate::interface::uds::wire::protocol::{
+        AgentEvent, ToolResultContent, TurnMessage, TurnUsage,
+    };
 
     let events = vec![
         AgentEvent::AgentStart,
@@ -475,33 +477,5 @@ async fn stub_provider_turn_has_same_event_sequence_through_each_sink() {
             "turn_end",
             "agent_end"
         ]
-    );
-}
-
-#[test]
-fn issue_1060_busy_reader_parses_only_un_targeted_get_message() {
-    // Un-targeted lookup: the busy reader services it from the master snapshot.
-    assert_eq!(
-        super::super::uds_busy_get_message::parse(
-            r#"{"type":"get_message","id":"r1","messageId":"m1"}"#
-        ),
-        Some(super::super::uds_busy_get_message::ParsedGetMessage {
-            request_id: Some("r1".into()),
-            message_id: "m1".into(),
-            tool_call_id: None,
-            offset: None,
-            thinking_offset: None,
-            limit: None
-        })
-    );
-    // An agent-targeted lookup MUST fall through (None) so dispatch forwards it
-    // to the child. The wire key is snake_case `agent_id` (Command::GetMessage
-    // has no rename) — asserting against the real key guards the #1060 casing
-    // bug where the master wrongly served child ids from its own snapshot.
-    assert_eq!(
-        super::super::uds_busy_get_message::parse(
-            r#"{"type":"get_message","id":"r1","messageId":"m1","agent_id":"child"}"#
-        ),
-        None
     );
 }

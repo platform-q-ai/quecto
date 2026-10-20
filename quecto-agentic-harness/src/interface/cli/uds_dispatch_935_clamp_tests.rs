@@ -5,12 +5,12 @@
 
 use super::dispatch_command;
 use crate::application::agent_turn::agent_loop::{AgentLoopConfig, AgentLoopImpl};
-use crate::interface::cli::protocol::AgentCommand;
 use crate::interface::cli::uds::DispatchCtx;
 use crate::interface::cli::uds::dispatch_session_roster_tests::list_handle;
 use crate::interface::cli::uds_cancel::CancelSlot;
 use crate::interface::cli::uds_ext_protocol::new_client_tool_registry;
 use crate::interface::cli::uds_session::AgentSession;
+use crate::interface::uds::wire::protocol::AgentCommand;
 
 #[tokio::test]
 async fn dispatch_set_model_re_clamps_effective_max_tokens() {
@@ -72,7 +72,7 @@ async fn dispatch_set_model_re_clamps_effective_max_tokens() {
             );
         let mut ctx = DispatchCtx {
             execution_state: std::sync::Arc::new(std::sync::Mutex::new(Default::default())),
-            wire_mode: crate::interface::cli::uds_wire::ConnectionWireMode::legacy(),
+            wire_mode: crate::interface::uds::framing::uds_wire::ConnectionWireMode::legacy(),
             agent: &mut agent,
             messages: &mut messages,
             sessions: crate::interface::cli::uds::dispatch_session_roster_tests::read_handles_for(

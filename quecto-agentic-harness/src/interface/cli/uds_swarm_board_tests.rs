@@ -127,7 +127,7 @@ pub(super) fn view(read: Arc<ReadSwarmBoard>) -> SwarmBoards {
     SwarmBoards::new(move || Some(read.clone()))
 }
 
-fn wire(event: crate::interface::cli::protocol::AgentEvent) -> Value {
+fn wire(event: crate::interface::uds::wire::protocol::AgentEvent) -> Value {
     serde_json::from_str(&event.to_json_line()).unwrap()
 }
 

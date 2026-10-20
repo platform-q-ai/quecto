@@ -1,6 +1,6 @@
 use super::{LONG_REQUEST_ID_REGRESSION_LEN, message_to_json_range_for_response};
 use crate::domain::conversation::value_objects::message::{Message, ToolCall};
-use crate::interface::cli::protocol::AgentEvent;
+use crate::interface::uds::wire::protocol::AgentEvent;
 
 /// #1103 review: range fitting must include the actual response id, not a fixed
 /// envelope reserve. A long id should still produce a success frame under the

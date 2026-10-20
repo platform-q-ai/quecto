@@ -3,7 +3,7 @@
 
 /// Untrusted persisted metadata is bounded and cannot inject terminal controls
 /// or invisibly reorder or hide text.
-pub(in crate::interface::cli) fn safe_display(raw: &str) -> String {
+pub(in crate::interface) fn safe_display(raw: &str) -> String {
     let shown = raw.chars().take(4096);
     let safe = shown.map(|ch| if unsafe_display(ch) { '\u{fffd}' } else { ch });
     safe.collect()

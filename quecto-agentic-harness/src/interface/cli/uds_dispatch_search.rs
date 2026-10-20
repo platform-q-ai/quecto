@@ -9,7 +9,7 @@ use crate::application::sessions::dto::{
     SearchSessionMetadataRequest, SearchSessionMetadataResult,
 };
 use crate::domain::sessions::services::session_metadata_search::MetadataQuery;
-use crate::interface::cli::protocol::SessionListScopeCommand;
+use crate::interface::uds::wire::protocol::SessionListScopeCommand;
 
 pub(super) async fn handle(
     ctx: &mut DispatchCtx<'_>,

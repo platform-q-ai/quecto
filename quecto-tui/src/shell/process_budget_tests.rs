@@ -124,7 +124,7 @@ fn mirrored_constants_match_the_harness_sources() {
         )),
         HARNESS_LAUNCH_ROLLBACK_LIMIT
     );
-    let shutdown = harness_source("interface/cli/uds_shutdown.rs");
+    let shutdown = harness_source("interface/uds/framing/uds_shutdown.rs");
     assert_eq!(
         Duration::from_secs(secs_after(&shutdown, "pub const FORCE_EXIT_AFTER")),
         HARNESS_FORCE_EXIT_AFTER

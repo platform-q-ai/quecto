@@ -15,25 +15,25 @@
 //! - a peer speaking neither framing is an explicit version mismatch
 //!   ([`Violation::ProtocolError`] then EOF — never a hang).
 
-use super::uds::MAX_FRAME_PAYLOAD_BYTES;
-use super::uds::{is_abort_command, steer_images};
-use super::uds_cancel::{CancelHandle, TurnControlHandle, fire_cancel};
 use super::uds_wire::ConnectionWireMode;
+use crate::interface::cli::uds::MAX_FRAME_PAYLOAD_BYTES;
+use crate::interface::cli::uds::{is_abort_command, steer_images};
+use crate::interface::cli::uds_cancel::{CancelHandle, TurnControlHandle, fire_cancel};
 use quecto_line_io::{FrameError, Incoming, WireMode};
 use tokio::io::BufReader;
 use tokio::sync::mpsc;
 
 /// A message delivered from the reader task to the command loop.
-pub(super) enum ReaderMessage {
+pub(in crate::interface) enum ReaderMessage {
     /// A complete message within the byte cap, with the images the reader
     /// admitted for a steer (#2422), run by dispatch without decoding again.
-    Message(String, Option<super::uds::AdmittedImages>),
+    Message(String, Option<crate::interface::cli::uds::AdmittedImages>),
     /// A protocol violation to surface to the client as an error event.
     Violation(Violation),
 }
 
 /// A protocol violation the reader met.
-pub(super) enum Violation {
+pub(in crate::interface) enum Violation {
     /// A version mismatch (the reader closes right after).
     ProtocolError(String),
     /// An over-cap frame/line, dropped unread (recoverable — more messages
@@ -45,26 +45,28 @@ pub(super) enum Violation {
 /// `protocol_error` response. A message over the cap may have been an
 /// extension's result (#2423 review M2), so the client's oldest pending
 /// call fails now, not at its timeout.
-pub(super) async fn report_protocol_error(
-    ctx: &mut super::uds::DispatchCtx<'_>,
+pub(in crate::interface) async fn report_protocol_error(
+    ctx: &mut crate::interface::cli::uds::DispatchCtx<'_>,
     violation: Violation,
 ) {
     let message = match violation {
         Violation::ProtocolError(message) => message,
-        Violation::Oversized(over_cap) => super::uds_ext_protocol::reject_oversized(
-            &ctx.client_tool_registry,
-            ctx.current_client_id,
-            over_cap,
-        ),
+        Violation::Oversized(over_cap) => {
+            crate::interface::cli::uds_ext_protocol::reject_oversized(
+                &ctx.client_tool_registry,
+                ctx.current_client_id,
+                over_cap,
+            )
+        }
     };
     tracing::warn!("UDS protocol error: {message}");
-    let event = super::protocol::AgentEvent::err(None, "protocol_error", message);
-    super::uds::emit_event_to_broadcast_or_writer(ctx, &event).await;
+    let event = super::super::wire::protocol::AgentEvent::err(None, "protocol_error", message);
+    crate::interface::cli::uds::emit_event_to_broadcast_or_writer(ctx, &event).await;
 }
 
 /// Spawn the bounded reader task. Returns its [`JoinHandle`] (for abort on
 /// loop exit) and the receiving end of the channel.
-pub(super) fn spawn_reader_task(
+pub(in crate::interface) fn spawn_reader_task(
     reader: Box<dyn tokio::io::AsyncRead + Send + Unpin>,
     cancel_for_reader: CancelHandle,
     control_for_reader: TurnControlHandle,

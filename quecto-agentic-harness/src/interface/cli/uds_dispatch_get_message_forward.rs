@@ -60,10 +60,14 @@ pub(super) async fn forward_subagent_get_message(
     match send_subagent_uds_command_with_timeout(socket_path, &cmd, INSPECTOR_RESPONSE_TIMEOUT)
         .await
     {
-        Ok(line) => match super::uds_forward_response::parse_forwarded_get_message(&line) {
-            Ok(data) => AgentEvent::ok(id, tn, Some(data)),
-            Err(error) => AgentEvent::err(id, tn, error),
-        },
+        Ok(line) => {
+            match crate::interface::uds::wire::uds_forward_response::parse_forwarded_get_message(
+                &line,
+            ) {
+                Ok(data) => AgentEvent::ok(id, tn, Some(data)),
+                Err(error) => AgentEvent::err(id, tn, error),
+            }
+        }
         Err(e) => AgentEvent::err(id, tn, e.to_string()),
     }
 }

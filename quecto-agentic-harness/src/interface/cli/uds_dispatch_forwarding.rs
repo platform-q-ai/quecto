@@ -184,10 +184,14 @@ pub(super) async fn forward_subagent_snapshot(
     )
     .await
     {
-        Ok(line) => match super::uds_forward_response::parse_forwarded_response(&line, tn) {
-            Ok(data) => AgentEvent::ok(id_ref, tn, Some(data)),
-            Err(error) => AgentEvent::err(id_ref, tn, error),
-        },
+        Ok(line) => {
+            match crate::interface::uds::wire::uds_forward_response::parse_forwarded_response(
+                &line, tn,
+            ) {
+                Ok(data) => AgentEvent::ok(id_ref, tn, Some(data)),
+                Err(error) => AgentEvent::err(id_ref, tn, error),
+            }
+        }
         Err(e) => AgentEvent::err(id_ref, tn, e.to_string()),
     }
 }
@@ -342,10 +346,14 @@ pub(super) async fn forward_subagent_get_messages(
         .await
     {
         // Preserve child failures instead of rewriting them as parent success.
-        Ok(line) => match super::uds_forward_response::parse_forwarded_get_messages(&line) {
-            Ok(data) => AgentEvent::ok(id_ref, tn, Some(data)),
-            Err(error) => AgentEvent::err(id_ref, tn, error),
-        },
+        Ok(line) => {
+            match crate::interface::uds::wire::uds_forward_response::parse_forwarded_get_messages(
+                &line,
+            ) {
+                Ok(data) => AgentEvent::ok(id_ref, tn, Some(data)),
+                Err(error) => AgentEvent::err(id_ref, tn, error),
+            }
+        }
         Err(e) => AgentEvent::err(id_ref, tn, e.to_string()),
     }
 }

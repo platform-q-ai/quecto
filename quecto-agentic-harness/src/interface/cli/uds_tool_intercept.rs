@@ -1,4 +1,4 @@
-use crate::interface::cli::protocol;
+use crate::interface::uds::wire::protocol;
 
 /// Parsed representation of a client-sent `tool_result` command, ready
 /// for `handle_tool_result` to consume.
@@ -7,7 +7,7 @@ pub(super) struct ParsedToolResult {
     pub(super) content: String,
     pub(super) is_error: bool,
     /// The `imageBlocks` field as sent (#2423), admitted on delivery.
-    pub(super) image_blocks: Option<super::protocol::WireImageBlocks>,
+    pub(super) image_blocks: Option<protocol::WireImageBlocks>,
 }
 
 /// Intercept a raw client line that carries a `tool_result` so it can
@@ -66,3 +66,8 @@ struct ToolResultLine {
 #[cfg(test)]
 #[path = "uds_tool_intercept_tests.rs"]
 mod tests;
+// The reader-side interception tests (#994) once beside the multi-client
+// loop; they exercise only this parser, so they stay its siblings.
+#[cfg(test)]
+#[path = "uds_multi_interception_tests.rs"]
+mod multi_interception_tests;

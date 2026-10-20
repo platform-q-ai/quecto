@@ -9,7 +9,7 @@ use crate::domain::conversation::value_objects::message::{
     LlmResponse, Message, Role, UserImageBlock,
 };
 use crate::domain::shared::error::DomainError;
-use crate::interface::cli::protocol::{AgentCommand, ImagePayload, StreamingBehavior};
+use crate::interface::uds::wire::protocol::{AgentCommand, ImagePayload, StreamingBehavior};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
@@ -285,7 +285,7 @@ async fn every_refusal_refuses_the_whole_command_with_its_exact_message() {
             assert_eq!(refused["command"], kind);
             assert_eq!(
                 env.session.control_receipt_status(&format!("{kind}-1")),
-                Some(crate::interface::cli::protocol::ControlStatus::Rejected),
+                Some(crate::interface::uds::wire::protocol::ControlStatus::Rejected),
                 "{kind}: a refusal leaves its receipt"
             );
             assert!(provider.seen.lock().unwrap().is_empty(), "{kind} ran");
@@ -411,7 +411,7 @@ async fn a_control_the_reader_refused_records_its_rejected_receipt() {
     }
     assert_eq!(
         env.session.control_receipt_status("fwd-1"),
-        Some(crate::interface::cli::protocol::ControlStatus::Rejected)
+        Some(crate::interface::uds::wire::protocol::ControlStatus::Rejected)
     );
 }
 

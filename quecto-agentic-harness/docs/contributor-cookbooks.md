@@ -82,18 +82,18 @@ that owns the command.
 
 **Production files usually involved:**
 
-- `src/interface/cli/protocol.rs` for `AgentCommand` and `AgentEvent` shapes.
+- `src/interface/uds/wire/protocol.rs` for `AgentCommand` and `AgentEvent` shapes.
 - `src/interface/cli/uds_dispatch.rs` and focused dispatch modules such as
   `uds_dispatch_query.rs`, `uds_dispatch_session.rs`, `uds_dispatch_runtime.rs`,
   `uds_dispatch_forwarding.rs`, or `uds_dispatch_sync_forward.rs`.
-- `src/interface/cli/protocol.rs`, `uds_session.rs`, and `uds_snapshots.rs`
+- `src/interface/uds/wire/protocol.rs`, `uds_session.rs`, and `uds_snapshots.rs`
   when response or snapshot JSON changes.
 - `src/infrastructure/tools/agents/agent_cmd.rs` when the spawned-agent tool exposes
   the command.
 
 **Tests to add/update:**
 
-- Protocol shape tests in `src/interface/cli/protocol*_tests.rs`.
+- Protocol shape tests in `src/interface/uds/wire/protocol*_tests.rs`.
 - Dispatcher family tests next to the touched module.
 - Regression tests for correlation ids, bounded responses, and child-targeted
   forwarding when relevant.
@@ -163,8 +163,8 @@ serialization for UDS-visible events.
 
 - `src/domain/agents/value_objects/agent.rs` for `AgentProgressEvent` changes.
 - `src/application/agent_turn/agent_loop/agent_loop*.rs` where progress is emitted.
-- `src/interface/cli/uds_cancel.rs`, `uds_snapshots.rs`, or `protocol.rs` for
-  UDS event conversion.
+- `src/interface/cli/uds_cancel.rs`, `uds_snapshots.rs`, or
+  `src/interface/uds/wire/protocol.rs` for UDS event conversion.
 - `src/infrastructure/observability/logging.rs` or audit-specific modules for persistent audit
   behaviour.
 

@@ -30,9 +30,9 @@ use crate::interface::uds::subagent_teardown::wire::{
     SHUTDOWN_COMMAND, TERMINATE_DELEGATED_AGENT_COMMAND,
 };
 
-use super::uds_multi::BusyFlag;
 use super::uds_teardown_adapters::{ConnectionAckWriter, SharedWriter};
-use super::uds_wire::ConnectionWireMode;
+use crate::interface::uds::framing::uds_multi::BusyFlag;
+use crate::interface::uds::framing::uds_wire::ConnectionWireMode;
 
 /// Default time a launched harness waits for its parent to bind before it
 /// presumes the launcher gone (#1935 review: a parent that dies between
@@ -212,9 +212,12 @@ async fn bind(ctx: &mut LineContext<'_>, presentation: &BindParentControlWire) -
             // The ACK is informational for the listening parent; a failed
             // write surfaces as EOF on its side like any other write error.
             let mut writer = ctx.writer.lock().await;
-            if let Err(error) =
-                super::uds_wire::write_event_line(&mut *writer, &bound_ack_line(), ctx.wire_mode)
-                    .await
+            if let Err(error) = crate::interface::uds::framing::uds_wire::write_event_line(
+                &mut *writer,
+                &bound_ack_line(),
+                ctx.wire_mode,
+            )
+            .await
             {
                 tracing::debug!(client_id = ctx.client_id, %error, "parent control ack not delivered");
             }

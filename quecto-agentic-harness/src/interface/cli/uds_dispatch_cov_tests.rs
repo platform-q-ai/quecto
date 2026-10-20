@@ -17,7 +17,7 @@ use crate::domain::conversation::value_objects::message::Message;
 use crate::domain::sessions::entities::session::{Session, SpillEntry, SpillIndex};
 use crate::domain::tool_policy::value_objects::tool::{ToolDefinition, ToolResult};
 use crate::infrastructure::persistence::file::sessions::session_store::FileSessionStore;
-use crate::interface::cli::protocol::{AgentCommand, ToolRegistration};
+use crate::interface::uds::wire::protocol::{AgentCommand, ToolRegistration};
 use std::sync::Arc;
 #[derive(Debug, Default)]
 pub(super) struct RecordingSpillStore {

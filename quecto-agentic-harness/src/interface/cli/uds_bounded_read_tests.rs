@@ -75,7 +75,7 @@ async fn oversized_line_reports_parse_error_but_does_not_block_the_next_valid_co
     );
     let mut ctx = DispatchCtx {
         execution_state: std::sync::Arc::new(std::sync::Mutex::new(Default::default())),
-        wire_mode: crate::interface::cli::uds_wire::ConnectionWireMode::legacy(),
+        wire_mode: crate::interface::uds::framing::uds_wire::ConnectionWireMode::legacy(),
         agent: &mut agent,
         messages: &mut messages,
         sessions: crate::interface::cli::uds::dispatch_session_roster_tests::read_handles_for(

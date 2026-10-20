@@ -7,13 +7,13 @@
 //! `messages` mutably for the whole turn (`agent.process(messages)`).
 
 use crate::domain::conversation::value_objects::message::Message;
-use crate::interface::cli::protocol::SessionState;
 use crate::interface::cli::uds::dispatch_session_roster_tests::ephemeral_read_handles;
 use crate::interface::cli::uds_execution_state::{ExecutionSnapshot, ProgressSummary, ToolSummary};
-use crate::interface::cli::uds_multi::{
+use crate::interface::cli::uds_session::HISTORY_PAGE_SIZE;
+use crate::interface::uds::framing::uds_multi::{
     BusyFlag, BusyGuard, build_get_messages_line, build_get_state_line,
 };
-use crate::interface::cli::uds_session::HISTORY_PAGE_SIZE;
+use crate::interface::uds::wire::protocol::SessionState;
 
 /// The connect-time `get_messages` line for `messages` as the newest page
 /// of the published transcript.
@@ -290,7 +290,7 @@ fn build_get_subagents_line_serializes_registry_view() {
     use crate::infrastructure::tools::agents::subagent_registry::{
         SubagentEntry, SubagentRegistry, SubagentStatus,
     };
-    use crate::interface::cli::uds_multi::build_get_subagents_line;
+    use crate::interface::uds::framing::uds_multi::build_get_subagents_line;
 
     let mut entry = SubagentEntry::new("/tmp/gc.sock".into(), 4321);
     entry.status = SubagentStatus::Running;
@@ -324,7 +324,7 @@ fn build_get_subagents_line_serializes_registry_view() {
 /// #842 snapshot markers on get_messages/get_state.
 #[test]
 fn build_get_subagents_line_marks_snapshot() {
-    use crate::interface::cli::uds_multi::build_get_subagents_line;
+    use crate::interface::uds::framing::uds_multi::build_get_subagents_line;
 
     let line = build_get_subagents_line(&None);
     let v: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
@@ -340,7 +340,7 @@ fn build_get_subagents_line_marks_snapshot() {
 /// list (matching `build_subagent_info_list`'s contract), not an error.
 #[test]
 fn build_get_subagents_line_empty_when_no_registry() {
-    use crate::interface::cli::uds_multi::build_get_subagents_line;
+    use crate::interface::uds::framing::uds_multi::build_get_subagents_line;
 
     let line = build_get_subagents_line(&None);
     let v: serde_json::Value = serde_json::from_str(line.trim()).unwrap();

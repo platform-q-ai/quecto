@@ -9,7 +9,7 @@ use super::{DispatchCtx, run_drained_message};
 mod workflow_poison_tests;
 
 pub(super) async fn drain_and_run_pending(ctx: &mut DispatchCtx<'_>) {
-    let _busy = crate::interface::cli::uds_multi::BusyGuard::new(&ctx.busy); // #828
+    let _busy = crate::interface::uds::framing::uds_multi::BusyGuard::new(&ctx.busy); // #828
     loop {
         // Coalesce a burst of buffered sub-agent completion notes into ONE
         // informational note at the idle flush (#894) — K separate notes would
@@ -105,7 +105,7 @@ pub(super) async fn drain_and_run_pending(ctx: &mut DispatchCtx<'_>) {
                 ctx.session.record_control(
                     Some(id),
                     command,
-                    super::super::protocol::ControlStatus::Started,
+                    crate::interface::uds::wire::protocol::ControlStatus::Started,
                 );
             }
             let outcome = run_drained_message(ctx, pending_msg.into_message(ctx.messages)).await;
@@ -186,9 +186,9 @@ pub(super) async fn queue_prompt(
         id,
         type_name,
         if retained {
-            super::super::protocol::ControlStatus::Queued
+            crate::interface::uds::wire::protocol::ControlStatus::Queued
         } else {
-            super::super::protocol::ControlStatus::Rejected
+            crate::interface::uds::wire::protocol::ControlStatus::Rejected
         },
     );
     let event = if retained {

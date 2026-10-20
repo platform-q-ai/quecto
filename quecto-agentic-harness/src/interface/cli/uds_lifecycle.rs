@@ -1,6 +1,4 @@
-use super::uds_multi::MultiClientArgs;
 use super::uds_session_handles::SessionLoopInputs;
-use super::uds_single_client::{SingleClientArgs, single_client_loop};
 use crate::application::agent_turn::agent_loop::AgentLoopImpl;
 pub(crate) use crate::domain::conversation::services::conversation_view::inject_system_prompt;
 #[cfg(test)]
@@ -8,6 +6,8 @@ pub(crate) use crate::domain::conversation::services::conversation_view::remove_
 #[cfg(test)]
 use crate::domain::conversation::value_objects::message::Role;
 use crate::infrastructure::tools::agents::agent_cmd_containers::EnvironmentControlSlot;
+use crate::interface::uds::framing::uds_single_client::{SingleClientArgs, single_client_loop};
+use crate::interface::uds::framing::{uds_multi, uds_wire};
 #[cfg(test)]
 #[path = "uds_lifecycle_cov2_tests.rs"]
 mod cov2_tests;
@@ -76,7 +76,7 @@ pub fn run_uds_loop(args: UdsLoopArgs<'_>) -> i32 {
     rt.shutdown_timeout(std::time::Duration::from_secs(5));
     code
 }
-use super::uds_socket::{SocketGuard, bind_secure_socket};
+use crate::interface::uds::framing::uds_socket::{SocketGuard, bind_secure_socket};
 async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
     let UdsLoopArgs {
         agent,
@@ -163,10 +163,10 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
                 return 1;
             }
         };
-        eprint!("{}", super::uds_wire::socket_announcement(&socket_path));
+        eprint!("{}", uds_wire::socket_announcement(&socket_path));
         let guard = SocketGuard(socket_path);
-        super::uds_multi::multi_client_loop(
-            MultiClientArgs {
+        uds_multi::multi_client_loop(
+            uds_multi::MultiClientArgs {
                 agent,
                 automatic_turns,
                 workspace,

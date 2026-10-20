@@ -5,7 +5,7 @@ use super::fixture_tests::{
 use crate::domain::conversation::value_objects::message::Message;
 use crate::domain::identity::ids::AgentUuid;
 use crate::infrastructure::tools::agents::subagent_registry::{SubagentEntry, new_registry};
-use crate::interface::cli::protocol::AgentCommand;
+use crate::interface::uds::wire::protocol::AgentCommand;
 
 #[test]
 fn killing_exit_empty_restore_cycles_stay_empty_but_new_live_registration_appears() {

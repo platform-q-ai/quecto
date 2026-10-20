@@ -11,8 +11,8 @@ use crate::application::agent_turn::agent_loop::AgentLoopImpl;
 use crate::application::agent_turn::ports::AgentLoop;
 use crate::domain::agents::value_objects::agent::AgentProgressEvent;
 use crate::domain::conversation::value_objects::message::Message;
-use crate::interface::cli::protocol::{AgentEvent, TurnMessage, TurnUsage};
 use crate::interface::cli::uds_session::AgentSession;
+use crate::interface::uds::wire::protocol::{AgentEvent, TurnMessage, TurnUsage};
 
 /// State of the cancellation slot for the current (or next) agent run.
 pub enum CancelSlot {
@@ -161,7 +161,7 @@ pub(crate) enum EventSink<'a> {
     /// the connection's negotiated framing (#1059).
     Writer(
         &'a mut (dyn tokio::io::AsyncWrite + Send + Unpin),
-        super::uds_wire::ConnectionWireMode,
+        crate::interface::uds::framing::uds_wire::ConnectionWireMode,
     ),
     /// Fan JSON messages out to every connected client (multi-client server).
     /// Lines stay newline-terminated on this channel; each client's writer
@@ -174,14 +174,17 @@ impl<'a> EventSink<'a> {
     /// (non-negotiating test paths that assert on raw writer bytes).
     #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn writer(w: &'a mut (dyn tokio::io::AsyncWrite + Send + Unpin)) -> Self {
-        Self::writer_with_mode(w, super::uds_wire::ConnectionWireMode::legacy())
+        Self::writer_with_mode(
+            w,
+            crate::interface::uds::framing::uds_wire::ConnectionWireMode::legacy(),
+        )
     }
 
     /// Build a writer sink that replies in a UDS connection's negotiated
     /// framing (#1059).
     pub(crate) fn writer_with_mode(
         w: &'a mut (dyn tokio::io::AsyncWrite + Send + Unpin),
-        mode: super::uds_wire::ConnectionWireMode,
+        mode: crate::interface::uds::framing::uds_wire::ConnectionWireMode,
     ) -> Self {
         EventSink::Writer(w, mode)
     }
@@ -199,10 +202,10 @@ impl<'a> EventSink<'a> {
     /// that must inspect the serialized length themselves (e.g. the response
     /// frame-limit guard) use this to avoid serializing twice.
     pub(crate) async fn emit_serialized(&mut self, mut line: String) {
-        if line.len() > super::protocol::EVENT_LINE_JSON_BUDGET {
+        if line.len() > crate::interface::uds::wire::protocol::EVENT_LINE_JSON_BUDGET {
             tracing::warn!(
                 len = line.len(),
-                cap = super::protocol::EVENT_LINE_CAP_BYTES,
+                cap = crate::interface::uds::wire::protocol::EVENT_LINE_CAP_BYTES,
                 "dropping oversized outbound event"
             );
             return;
@@ -210,7 +213,10 @@ impl<'a> EventSink<'a> {
         line.push('\n');
         match self {
             EventSink::Writer(w, mode) => {
-                let _ = super::uds_wire::write_event_line(&mut **w, &line, mode).await;
+                let _ = crate::interface::uds::framing::uds_wire::write_event_line(
+                    &mut **w, &line, mode,
+                )
+                .await;
             }
             EventSink::Broadcast(tx) => {
                 let _ = tx.send(line);
@@ -655,7 +661,8 @@ pub(in crate::interface::cli) fn forward_notification_broadcast(
         let _ = broadcast_tx.send(line);
     }
     // Build survivor-only subagent info list for the authoritative live state-changed event.
-    let list = crate::interface::cli::protocol::build_live_subagent_info_list(subagent_registry);
+    let list =
+        crate::interface::uds::wire::protocol::build_live_subagent_info_list(subagent_registry);
     let ev = AgentEvent::SubagentStateChanged { subagents: list };
     let mut line = ev.to_json_line();
     line.push('\n');

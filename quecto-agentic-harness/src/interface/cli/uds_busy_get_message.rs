@@ -1,6 +1,6 @@
-use super::protocol::AgentEvent;
 use super::uds_session_handles::SessionReadHandles;
 use crate::interface::uds::sessions::recover_message_controller::GetMessageFields;
+use crate::interface::uds::wire::protocol::AgentEvent;
 
 pub(super) struct BusyCommandCtx<'a> {
     pub line: &'a str,

@@ -8,9 +8,10 @@ use crate::domain::agents::entities::configured_extensions::AgentExtensions;
 use crate::infrastructure::processes::configured_extensions::{ConfiguredExtensions, plan};
 use crate::infrastructure::processes::owned_child_supervisor::OwnedChildSupervisor;
 
-pub(super) type ToolCatalogueSnapshot = std::sync::Arc<tokio::sync::RwLock<Vec<serde_json::Value>>>;
+pub(in crate::interface) type ToolCatalogueSnapshot =
+    std::sync::Arc<tokio::sync::RwLock<Vec<serde_json::Value>>>;
 
-pub(super) type ExtRegistry = std::sync::Arc<
+pub(in crate::interface) type ExtRegistry = std::sync::Arc<
     std::sync::Mutex<crate::infrastructure::extensions::registry::ExtensionRegistry>,
 >;
 
@@ -30,7 +31,7 @@ pub(super) fn launch(extensions: &AgentExtensions, socket: &Path, base_dir: &Pat
 
 /// At accept: record client `client_id` as the extension its peer process
 /// belongs to, if it is one.
-pub(super) fn claim_connection(
+pub(in crate::interface) fn claim_connection(
     extensions: &Extensions,
     stream: &tokio::net::UnixStream,
     registry: &super::uds_ext_protocol::ClientToolRegistry,
@@ -81,7 +82,7 @@ pub(super) async fn claim_late(
 }
 
 /// The configured extension client `client_id` is, by name.
-pub(super) fn extension_of(
+pub(in crate::interface) fn extension_of(
     registry: &super::uds_ext_protocol::ClientToolRegistry,
     client_id: u64,
 ) -> Option<String> {
@@ -109,7 +110,9 @@ pub(super) fn tools_registered(
 
 /// How many connected clients are configured extensions: the agent owns
 /// them, so they never keep it alive past its last real client.
-pub(super) fn extension_clients(registry: &super::uds_ext_protocol::ClientToolRegistry) -> u32 {
+pub(in crate::interface) fn extension_clients(
+    registry: &super::uds_ext_protocol::ClientToolRegistry,
+) -> u32 {
     let clients = registry.lock().unwrap_or_else(|e| e.into_inner());
     let owned = clients
         .values()

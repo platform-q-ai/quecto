@@ -1,7 +1,9 @@
 use crate::domain::conversation::services::visible_thinking::VisibleThinkingPageBlock;
 use crate::domain::conversation::value_objects::message::ThinkingBlock;
 
-pub(super) fn visible_thinking_blocks_json(blocks: &[ThinkingBlock]) -> serde_json::Value {
+pub(in crate::interface) fn visible_thinking_blocks_json(
+    blocks: &[ThinkingBlock],
+) -> serde_json::Value {
     serde_json::Value::Array(
         blocks
             .iter()
@@ -34,7 +36,7 @@ pub(super) fn visible_thinking_page_block_json(
     }
 }
 
-pub(super) fn visible_thinking_page_json(
+pub(in crate::interface) fn visible_thinking_page_json(
     blocks: Vec<VisibleThinkingPageBlock>,
 ) -> serde_json::Value {
     serde_json::Value::Array(

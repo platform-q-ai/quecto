@@ -101,7 +101,7 @@ fn a_panicking_rebuild_worker_reports_failure_when_forced_and_retains_last_good_
 #[test]
 fn only_a_listing_polls_before_its_reply() {
     let command = |json: &str| {
-        serde_json::from_str::<crate::interface::cli::protocol::AgentCommand>(json)
+        serde_json::from_str::<crate::interface::uds::wire::protocol::AgentCommand>(json)
             .expect("a protocol command")
     };
     assert!(polls_before_reply(&command(

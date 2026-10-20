@@ -81,7 +81,7 @@ pub fn reap_stale_sockets(dir: &std::path::Path, max_age: std::time::Duration) {
 }
 
 /// RAII guard that removes a socket file on drop.
-pub(super) struct SocketGuard(pub std::path::PathBuf);
+pub(in crate::interface) struct SocketGuard(pub std::path::PathBuf);
 
 impl Drop for SocketGuard {
     fn drop(&mut self) {
@@ -90,7 +90,7 @@ impl Drop for SocketGuard {
 }
 
 /// Bind a Unix socket with mode 0600 (owner-only access).
-pub(super) fn bind_secure_socket(
+pub(in crate::interface) fn bind_secure_socket(
     path: &std::path::Path,
 ) -> std::io::Result<tokio::net::UnixListener> {
     use std::os::unix::fs::PermissionsExt;

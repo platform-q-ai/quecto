@@ -224,7 +224,7 @@ fn slim_get_state_carries_admission_and_since_sees_transitions() {
     let source = Arc::new(ScriptedObservation::default());
     let mut execution = ExecutionState::default();
     execution.set_admission_source(source.clone());
-    let mut session = super::protocol::SessionState {
+    let mut session = crate::interface::uds::wire::protocol::SessionState {
         admission_warnings: Vec::new(),
         startup_warnings: Vec::new(),
         model: "m".into(),
@@ -260,7 +260,7 @@ fn slim_get_state_carries_admission_and_since_sees_transitions() {
     assert_eq!(changed["admission"]["longestWaitSeconds"], 5);
     assert_eq!(changed["progress"]["state"], "waiting");
     // Without an admission source the field is absent altogether.
-    let plain = slim_state_projection(&super::protocol::SessionState {
+    let plain = slim_state_projection(&crate::interface::uds::wire::protocol::SessionState {
         execution: Some(ExecutionState::default().snapshot()),
         ..session.clone()
     });

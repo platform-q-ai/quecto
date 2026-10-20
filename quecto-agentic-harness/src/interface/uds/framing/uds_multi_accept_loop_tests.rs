@@ -15,8 +15,8 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use crate::domain::conversation::value_objects::message::Message;
 use crate::infrastructure::tools::agents::subagent_registry::{SubagentEntry, SubagentStatus};
-use crate::interface::cli::protocol::SessionState;
 use crate::interface::cli::uds_cancel::CancelSlot;
+use crate::interface::uds::wire::protocol::SessionState;
 
 /// Build `AcceptLoopArgs` wired to a listener at `socket_path`, with the given
 /// busy flag and subagent registry. Returns the args plus the broadcast/cmd

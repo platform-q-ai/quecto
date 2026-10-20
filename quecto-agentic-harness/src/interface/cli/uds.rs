@@ -1,4 +1,3 @@
-use super::protocol::{AgentCommand, AgentEvent, StreamingBehavior};
 #[cfg(test)]
 use super::uds_cancel::CancelSlot;
 use super::uds_cancel::{
@@ -10,8 +9,6 @@ use super::uds_session::AgentSession;
 use super::uds_session::{
     compute_session_stats, compute_session_stats_with_usage, messages_page_json,
 };
-#[cfg(test)]
-use super::uds_socket::bind_secure_socket;
 use super::uds_workflow_nudge::{
     has_active_workflow_descendant, workflow_nudge_message, workflow_progress_fingerprint,
 };
@@ -21,6 +18,10 @@ use crate::application::subagents::use_cases::TerminateAllDelegatedAgents;
 use crate::domain::conversation::value_objects::message::Message;
 use crate::infrastructure::tools::agents::{subagent_identity, subagent_registry};
 use crate::interface::cli::uds_discovery_handles::SessionDiscoveryHandles;
+#[cfg(test)]
+use crate::interface::uds::framing::uds_socket::bind_secure_socket;
+use crate::interface::uds::framing::{uds_multi, uds_reader, uds_wire};
+use crate::interface::uds::wire::protocol::{self, AgentCommand, AgentEvent, StreamingBehavior};
 use futures::FutureExt;
 type ExtRegistry = std::sync::Arc<
     std::sync::Mutex<crate::infrastructure::extensions::registry::ExtensionRegistry>,
@@ -32,22 +33,24 @@ pub use super::uds_lifecycle::{UdsLoopArgs, run_uds_loop};
 // `pub` (not `pub(crate)`) solely so the out-of-crate BDD suite can drive the
 // real reaper; hidden because it is not a supported library API.
 #[doc(hidden)]
-pub use super::uds_socket::reap_stale_sockets;
-pub(super) const MAX_FRAME_PAYLOAD_BYTES: usize = quecto_line_io::PROTOCOL_LINE_CAP_BYTES;
+pub use crate::interface::uds::framing::uds_socket::reap_stale_sockets;
+pub(in crate::interface) const MAX_FRAME_PAYLOAD_BYTES: usize =
+    quecto_line_io::PROTOCOL_LINE_CAP_BYTES;
 #[cfg(test)]
 pub(super) fn is_cancel_command(trimmed: &str) -> bool {
     is_abort_command(trimmed) || is_steer_command(trimmed)
 }
 /// Reader-side classification so the eager cancel and the abort/steer control
 /// flag are set together, before the command is dispatched (#895/#896).
-pub(super) fn is_abort_command(trimmed: &str) -> bool {
+pub(in crate::interface) fn is_abort_command(trimmed: &str) -> bool {
     command_type_is(trimmed, "abort")
 }
 
+pub(super) use prompt_admission::admit_images;
 #[cfg(test)]
 pub(super) use prompt_admission::is_steer_command;
-pub(super) use prompt_admission::{AdmittedImages, admit_images, dispatch_parsed};
-pub(super) use prompt_admission::{record_rejected, steer_images};
+pub(in crate::interface) use prompt_admission::{AdmittedImages, dispatch_parsed};
+pub(in crate::interface) use prompt_admission::{record_rejected, steer_images};
 
 fn command_type_is(trimmed: &str, expected: &str) -> bool {
     serde_json::from_str::<serde_json::Value>(trimmed)
@@ -57,27 +60,27 @@ fn command_type_is(trimmed: &str, expected: &str) -> bool {
         == Some(expected)
 }
 
-pub(super) enum LineResult {
+pub(in crate::interface) enum LineResult {
     Command(AgentCommand),
     ParseError(String),
 }
 
-pub(super) fn parse_line(line: &str) -> LineResult {
+pub(in crate::interface) fn parse_line(line: &str) -> LineResult {
     let line = line.trim();
     if line.is_empty() {
         return LineResult::ParseError(String::new());
     }
-    match super::protocol::parse_command_line(line) {
+    match protocol::parse_command_line(line) {
         Ok(c) => LineResult::Command(c),
         Err(e) => LineResult::ParseError(e),
     }
 }
 
-pub(super) async fn run_command_loop(
+pub(in crate::interface) async fn run_command_loop(
     reader: Box<dyn tokio::io::AsyncRead + Send + Unpin>,
     ctx: &mut DispatchCtx<'_>,
 ) {
-    use super::uds_reader::{ReaderMessage, spawn_reader_task};
+    use crate::interface::uds::framing::uds_reader::{ReaderMessage, spawn_reader_task};
 
     let cancel_for_reader = std::sync::Arc::clone(&ctx.cancel_handle);
     let control_for_reader = std::sync::Arc::clone(&ctx.turn_control);
@@ -93,7 +96,7 @@ pub(super) async fn run_command_loop(
         let raw = match rx.recv().await {
             Some(Some(ReaderMessage::Message(l, admitted))) => (l, admitted),
             Some(Some(ReaderMessage::Violation(violation))) => {
-                super::uds_reader::report_protocol_error(ctx, violation).await;
+                uds_reader::report_protocol_error(ctx, violation).await;
                 continue;
             }
             _ => break,
@@ -118,17 +121,17 @@ pub(super) async fn run_command_loop(
 }
 
 pub(crate) struct DispatchCtx<'a> {
-    pub wire_mode: super::uds_wire::ConnectionWireMode,
+    pub wire_mode: uds_wire::ConnectionWireMode,
     pub agent: &'a mut AgentLoopImpl,
     pub messages: &'a mut Vec<Message>,
     /// The active session and its read use cases (#1971): the one
     /// conversation read model every transport serves from.
     pub sessions: super::uds_session_handles::SessionReadHandles,
-    pub state_snapshot: super::uds_multi::StateSnapshot, // #837
+    pub state_snapshot: uds_multi::StateSnapshot, // #837
     pub execution_state: super::uds_execution_state::ExecutionStateHandle,
     pub session_stats_snapshot: super::uds_snapshots::SessionStatsSnapshot, // #880
     pub tool_catalogue_snapshot: super::uds_extensions::ToolCatalogueSnapshot, // #880
-    pub busy: super::uds_multi::BusyFlag,                                   // #828
+    pub busy: uds_multi::BusyFlag,                                          // #828
     pub session: &'a mut AgentSession,
     /// Direct writer for the single-client / test path. `None` on the
     /// multi-client server, which streams via `broadcast_tx` instead — so the
@@ -181,7 +184,7 @@ impl<'a> DispatchCtx<'a> {
 fn make_event_sink<'s>(
     broadcast_tx: &Option<tokio::sync::broadcast::Sender<String>>,
     stdout: &'s mut Option<&mut (dyn tokio::io::AsyncWrite + Send + Unpin)>,
-    wire_mode: &super::uds_wire::ConnectionWireMode,
+    wire_mode: &uds_wire::ConnectionWireMode,
 ) -> EventSink<'s> {
     if let Some(tx) = broadcast_tx {
         EventSink::Broadcast(tx.clone())
@@ -195,7 +198,7 @@ fn make_event_sink<'s>(
     }
 }
 
-pub(super) async fn emit_event_to_broadcast_or_writer(
+pub(in crate::interface) async fn emit_event_to_broadcast_or_writer(
     ctx: &mut DispatchCtx<'_>,
     event: &AgentEvent,
 ) {
@@ -231,7 +234,7 @@ pub(super) async fn emit_response_or_frame_limit_error_with_message(
     // Serialize exactly once: the length check reuses the same line the sink
     // delivers (multi-MiB pages are not serialized twice).
     let line = event.to_json_line();
-    if line.len() > super::protocol::EVENT_LINE_JSON_BUDGET {
+    if line.len() > protocol::EVENT_LINE_JSON_BUDGET {
         // "Request a smaller page" is only actionable for paged commands;
         // a single-message lookup has no smaller unit to retry with.
         let advice = if !oversized_message.is_empty() {
@@ -262,8 +265,6 @@ mod uds_dispatch_runtime;
 pub(crate) mod uds_dispatch_session;
 #[path = "uds_dispatch_sync_forward.rs"]
 mod uds_dispatch_sync_forward;
-#[path = "uds_forward_response.rs"]
-pub(super) mod uds_forward_response;
 pub(crate) use uds_dispatch::dispatch_command;
 #[cfg(test)]
 use uds_dispatch_query::session_summary_to_json;
@@ -328,7 +329,7 @@ pub(super) async fn handle_prompt(ctx: &mut DispatchCtx<'_>, cmd: PromptCommand)
         ctx.session.record_control(
             id.as_deref(),
             &type_name,
-            super::protocol::ControlStatus::Cancelled,
+            protocol::ControlStatus::Cancelled,
         );
         emit_pre_cancelled(ctx).await; // Stale abort (#483).
         drain_and_run_pending(ctx).await;
@@ -343,11 +344,8 @@ pub(super) async fn handle_prompt(ctx: &mut DispatchCtx<'_>, cmd: PromptCommand)
     // the durable (system-stripped) length. Never overwrite it with live
     // len+1: live messages may include an injected system prompt, which skews
     // clean-delta appends and freezes load()/resume history (#1322).
-    ctx.session.record_control(
-        id.as_deref(),
-        &type_name,
-        super::protocol::ControlStatus::Started,
-    );
+    ctx.session
+        .record_control(id.as_deref(), &type_name, protocol::ControlStatus::Started);
     let outcome = run_prompt_dispatch(ctx, message, cancel_rx).await;
     ctx.session
         .record_control(id.as_deref(), &type_name, control_status(&outcome));
@@ -387,7 +385,7 @@ pub(super) use turn_test_hooks::{
 };
 
 /// Drain pending messages, then inject core workflow nudges while progress is advancing (#562).
-pub(super) async fn drain_pending_and_nudge(ctx: &mut DispatchCtx<'_>) {
+pub(in crate::interface) async fn drain_pending_and_nudge(ctx: &mut DispatchCtx<'_>) {
     drain_pending_and_nudge_turns(ctx).await;
     // #1721: whichever turn failed (prompt, drained or nudged), date its
     // provider-failure suspension by the generation current after it.
@@ -422,7 +420,7 @@ async fn drain_pending_and_nudge_turns(ctx: &mut DispatchCtx<'_>) {
         emit_event_to_broadcast_or_writer(
             ctx,
             &AgentEvent::WorkflowIdle {
-                reason: Some(super::protocol::WorkflowIdleReason::ExplicitAbort),
+                reason: Some(protocol::WorkflowIdleReason::ExplicitAbort),
             },
         )
         .await;
@@ -457,7 +455,7 @@ async fn drain_pending_and_nudge_turns(ctx: &mut DispatchCtx<'_>) {
             emit_event_to_broadcast_or_writer(
                 ctx,
                 &AgentEvent::WorkflowIdle {
-                    reason: Some(super::protocol::WorkflowIdleReason::ExplicitAbort),
+                    reason: Some(protocol::WorkflowIdleReason::ExplicitAbort),
                 },
             )
             .await;
@@ -494,7 +492,7 @@ async fn drain_pending_and_nudge_turns(ctx: &mut DispatchCtx<'_>) {
         // to the nudge — it must not reset the no-progress streak or pick
         // the nudge wording.
         {
-            let _busy = super::uds_multi::BusyGuard::new(&ctx.busy); // #828
+            let _busy = uds_multi::BusyGuard::new(&ctx.busy); // #828
             run_drained_message_guarded(
                 ctx,
                 nudge.into_message(no_progress_turns > 0),
@@ -534,7 +532,7 @@ async fn run_prompt_dispatch(
     message: Message,
     cancel_rx: tokio::sync::oneshot::Receiver<()>,
 ) -> PromptOutcome {
-    let _busy = super::uds_multi::BusyGuard::new(&ctx.busy); // #828: gates connect-time snapshot
+    let _busy = uds_multi::BusyGuard::new(&ctx.busy); // #828: gates connect-time snapshot
     let mut sink = make_event_sink(&ctx.broadcast_tx, &mut ctx.stdout, &ctx.wire_mode);
     run_agent_message(PromptRun {
         agent: ctx.agent,
@@ -560,7 +558,7 @@ use pending::drain_and_run_pending;
 /// disarm, refresh busy snapshots. A stale abort (#483) skips the run without
 /// dropping the message's siblings — Fired is consumed, the next arm succeeds.
 /// Callers own the busy flag (#828); this helper does not touch it, because
-/// [`BusyGuard`](super::uds_multi::BusyGuard) is a plain set/clear flag and
+/// [`BusyGuard`](crate::interface::uds::framing::uds_multi::BusyGuard) is a plain set/clear flag and
 /// nesting one per message would clear it while an outer scope is still busy.
 #[derive(Clone, Copy)]
 enum TurnAdmissionGuard {

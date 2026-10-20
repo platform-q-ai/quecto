@@ -1,6 +1,6 @@
-use super::super::protocol::AgentEvent;
 use super::DispatchCtx;
 use crate::domain::identity::ids::{AgentId, CommandId};
+use crate::interface::uds::wire::protocol::AgentEvent;
 
 pub(super) async fn forward_subagent_sync(
     ctx: &DispatchCtx<'_>,
@@ -39,10 +39,14 @@ pub(super) async fn forward_subagent_sync(
     match send_subagent_uds_command_with_timeout(socket_path, &cmd, INSPECTOR_RESPONSE_TIMEOUT)
         .await
     {
-        Ok(line) => match super::uds_forward_response::parse_forwarded_response(&line, "sync") {
-            Ok(data) => AgentEvent::ok(id_ref, tn, Some(data)),
-            Err(error) => AgentEvent::err(id_ref, tn, error),
-        },
+        Ok(line) => {
+            match crate::interface::uds::wire::uds_forward_response::parse_forwarded_response(
+                &line, "sync",
+            ) {
+                Ok(data) => AgentEvent::ok(id_ref, tn, Some(data)),
+                Err(error) => AgentEvent::err(id_ref, tn, error),
+            }
+        }
         Err(e) => AgentEvent::err(id_ref, tn, e.to_string()),
     }
 }

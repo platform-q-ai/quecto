@@ -1,6 +1,6 @@
 use super::uds_cancel::EventSink;
 use crate::domain::agents::value_objects::agent::AgentProgressEvent;
-use crate::interface::cli::protocol::{AgentEvent, ToolResultContent};
+use crate::interface::uds::wire::protocol::{AgentEvent, ToolResultContent};
 
 pub(crate) async fn forward_event(ev: AgentProgressEvent, sink: &mut EventSink<'_>) {
     match ev {
