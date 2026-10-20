@@ -93,8 +93,12 @@ async fn a_failure_is_dated_after_it_and_only_a_later_resume_re_arms() {
         }
     );
     assert!(turns.allowed());
-    assert!(turns.take_owed_turn(), "the resume owes the run a turn");
-    assert!(!turns.take_owed_turn(), "once");
+    assert_eq!(
+        turns.take_owed_turn(),
+        Some(OwedTurn::AfterResume),
+        "the resume owes the run a turn"
+    );
+    assert_eq!(turns.take_owed_turn(), None, "once");
 }
 
 #[tokio::test]
@@ -133,8 +137,9 @@ async fn a_store_rejection_waits_for_an_instruction() {
         None,
     );
     assert!(turns.allowed());
-    assert!(
-        !turns.take_owed_turn(),
+    assert_eq!(
+        turns.take_owed_turn(),
+        None,
         "an instruction owes no resume turn"
     );
 }
@@ -171,7 +176,8 @@ fn a_turn_starts_as_its_work() {
 }
 
 /// #2531: a recoverable failure (an Envoy 507 whose retries ran out) is
-/// re-armed by the next wake, without a resume and without an owed turn.
+/// re-armed by the next wake, without a resume, and owes the run a turn to
+/// continue the interrupted work; until then it asks to wake itself.
 #[tokio::test]
 async fn the_next_wake_re_arms_a_recoverable_failure() {
     let run = Run::at(4);
@@ -180,6 +186,7 @@ async fn the_next_wake_re_arms_a_recoverable_failure() {
         "HTTP 507 from Codex: exceeded request buffer limit while retrying upstream".into(),
     ));
     assert_eq!(turns.date_suspension(Some(&run)).await, Some(4));
+    assert!(turns.needs_self_wake(), "no one else may wake it");
     assert_eq!(
         turns.probe_while_suspended(&run).await.unwrap(),
         SuspendedProbe {
@@ -188,5 +195,11 @@ async fn the_next_wake_re_arms_a_recoverable_failure() {
         }
     );
     assert!(turns.allowed());
-    assert!(!turns.take_owed_turn(), "the wake's own work is the turn");
+    assert!(!turns.needs_self_wake());
+    assert_eq!(
+        turns.take_owed_turn(),
+        Some(OwedTurn::AfterRecoverableFailure),
+        "the run is owed a turn to continue"
+    );
+    assert_eq!(turns.take_owed_turn(), None, "once");
 }

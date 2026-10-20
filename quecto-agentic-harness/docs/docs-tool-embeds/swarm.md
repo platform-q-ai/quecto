@@ -368,7 +368,11 @@ container until the user authorizes teardown.
 Paused instructions remain queued; resume restores admission and the deadline.
 A resume also wakes every live member, and a member whose automatic turns were
 suspended by a provider failure re-arms on it and continues its work without a
-prompt or steer. Do not pause a run because one member failed: resume the run
+prompt or steer. A failure the provider may recover from (a rate limit, a
+server or network failure, a stalled stream) does not strand a member: its next
+wake, or its own wake 30 seconds later, re-arms it to continue its work, at
+most twice before a turn succeeds; after that it waits like any other provider
+failure. Do not pause a run because one member failed: resume the run
 and, only if the member is still stuck, steer it. For a member that holds a
 claim it will not finish, no process is prescribed: an explicit `agent_cmd`
 `steer`/`follow_up` re-arms a provider-suspended member (#1712), `agent_cmd`

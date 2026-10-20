@@ -73,6 +73,11 @@ pub struct TurnControl {
     /// Launched as its swarm's coordinator (#2461): only then is the board
     /// read at idle boundaries for the parent (#2467).
     pub(crate) launched_coordinator: bool,
+    /// The dispatch loop's command channel, held weakly so it never keeps
+    /// the loop alive: a recoverable failure's self-wake (#2531).
+    self_waker: std::sync::OnceLock<tokio::sync::mpsc::WeakSender<super::uds_multi::ClientMessage>>,
+    /// A self-wake is scheduled and has not fired yet (#2531).
+    self_wake_scheduled: std::sync::atomic::AtomicBool,
 }
 
 #[path = "uds_turn_generation.rs"]

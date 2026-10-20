@@ -266,7 +266,7 @@ async fn a_resume_wake_re_arms_a_provider_suspended_member() {
         crate::interface::cli::uds_swarm_control::RESUMED_WAKE
     );
     assert!(
-        !ctx.session.automatic_turns().take_owed_turn(),
+        ctx.session.automatic_turns().take_owed_turn().is_none(),
         "the owed turn was consumed"
     );
     abort_tests::suspend_rejected_at(&mut ctx, 7);

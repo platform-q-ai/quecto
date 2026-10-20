@@ -9,7 +9,7 @@
 //! adapter owns that port for the process and passes it in.
 use crate::application::swarm::ports::lifecycle::SwarmRunControl;
 use crate::domain::inference::services::turn_suspension::{
-    AutomaticTurns, SuspendedProbe, SuspensionCause, Work,
+    AutomaticTurns, OwedTurn, SuspendedProbe, SuspensionCause, Work,
 };
 use crate::domain::shared::error::DomainError;
 use crate::domain::swarm::value_objects::run_control::RunControlAction;
@@ -64,7 +64,8 @@ impl ResumeAfterProviderFailure {
     }
 
     /// Whether `work` may start a turn now (the domain decides: an
-    /// instruction always, automatic work only while automatic turns run).
+    /// instruction always, automatic work while automatic turns run or to
+    /// re-arm a recoverable failure).
     pub fn admits(&self, work: Work) -> bool {
         self.turns.admits(work)
     }
@@ -77,9 +78,18 @@ impl ResumeAfterProviderFailure {
         self.observe_control_generation(generation);
     }
 
-    /// Consume the turn a resume owed the run (true once per re-arm).
-    pub fn take_owed_turn(&mut self) -> bool {
-        self.turns.take_pending_resume_turn()
+    /// Consume the turn a wake's re-arm owed the run (once per re-arm),
+    /// and why it is owed.
+    pub fn take_owed_turn(&mut self) -> Option<OwedTurn> {
+        self.turns.take_owed_turn()
+    }
+
+    /// Whether the session should wake itself after
+    /// [`crate::domain::inference::services::turn_suspension::RECOVERABLE_SELF_WAKE_DELAY`]
+    /// (#2531): a recoverable failure suspended it, and no one else may
+    /// wake it.
+    pub fn needs_self_wake(&self) -> bool {
+        self.turns.needs_self_wake()
     }
 
     /// Date a provider-failure suspension at the control generation current
@@ -98,9 +108,8 @@ impl ResumeAfterProviderFailure {
 
     /// A suspended session got a wake: learn the run's control generation
     /// without claiming the wake. A resume since the provider failure
-    /// re-arms automatic turns and owes the run a turn; a recoverable
-    /// failure is re-armed by the wake itself (#2531); otherwise a wake
-    /// alone never re-arms.
+    /// re-arms automatic turns and owes the run a turn; so does a wake after
+    /// a recoverable failure (#2531); otherwise a wake alone never re-arms.
     pub async fn probe_while_suspended(
         &mut self,
         control: &dyn SwarmRunControl,

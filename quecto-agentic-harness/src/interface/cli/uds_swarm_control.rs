@@ -12,6 +12,10 @@ pub(super) const SWARM_WAKE: &str = "swarm_wake";
 /// task-item words (#2478 slice B, owner-approved 2026-10-12).
 pub(super) const RESUMED_WAKE: &str = "The swarm was resumed after a provider failure interrupted your turn. Continue your interrupted work: inspect summary using your last event_cursor, read and acknowledge relevant durable inbox messages, work only on actionable task items and yield when none remain.";
 
+/// The wake a member re-armed after a recoverable provider failure reads
+/// (#2531): it continues the work the failure interrupted.
+pub(super) const RECOVERED_WAKE: &str = "A provider failure interrupted your turn. Continue your interrupted work: inspect summary using your last event_cursor, read and acknowledge relevant durable inbox messages, work only on actionable task items and yield when none remain.";
+
 /// Why a suspended member's automatic turns came back (#1721, #2531).
 const REARMED_BY_RESUME: &str =
     "automatic turns re-armed by a swarm resume after a provider failure";
@@ -341,22 +345,29 @@ pub(super) async fn handle_wake(ctx: &mut super::uds::DispatchCtx<'_>, generatio
                 .observe_control_generation(Some(receipt.generation));
             // A re-armed member owes the run a turn to continue its
             // interrupted work, whether or not this wake targets it.
+            use crate::domain::inference::services::turn_suspension::OwedTurn;
             let runnable = matches!(receipt.status, RunStatus::Setup | RunStatus::Running);
-            let resume_turn = runnable && ctx.session.automatic_turns().take_owed_turn();
-            if resume_turn {
+            let owed_turn = match runnable {
+                true => ctx.session.automatic_turns().take_owed_turn(),
+                false => None,
+            };
+            if let Some(owed_turn) = owed_turn {
                 super::uds::handle_prompt(
                     ctx,
                     super::uds::PromptCommand {
                         id: None,
                         type_name: SWARM_WAKE.into(),
-                        message: RESUMED_WAKE.into(),
+                        message: match owed_turn {
+                            OwedTurn::AfterResume => RESUMED_WAKE.into(),
+                            OwedTurn::AfterRecoverableFailure => RECOVERED_WAKE.into(),
+                        },
                         streaming_behavior: None,
                         work: crate::domain::inference::services::turn_suspension::Work::Automatic,
                     },
                 )
                 .await;
             } else if receipt.wake_allowed {
-                // The change wake is the member's turn: a turn a resume
+                // The change wake is the member's turn: a turn a re-arm
                 // owed it (a run paused again since) is done by this one.
                 ctx.session.automatic_turns().take_owed_turn();
                 super::uds::handle_prompt(
@@ -434,6 +445,14 @@ pub(super) async fn date_provider_suspension(ctx: &mut super::uds::DispatchCtx<'
         .await;
     if let Some(generation) = dated {
         ctx.turn_control.observe_control_generation(generation);
+    }
+    // #2531: a swarm member a recoverable failure suspended wakes itself
+    // once after a delay, so the last active member (or a coordinator no
+    // member wakes) still continues; the wake re-arms it within the bound.
+    if ctx.session.automatic_turns().needs_self_wake() && ctx.turn_control.swarm_control.is_some() {
+        ctx.turn_control.schedule_self_wake(
+            crate::domain::inference::services::turn_suspension::RECOVERABLE_SELF_WAKE_DELAY,
+        );
     }
 }
 

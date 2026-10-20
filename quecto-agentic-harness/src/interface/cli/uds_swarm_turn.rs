@@ -108,6 +108,61 @@ impl TurnControl {
         self.deferred_swarm_wake
             .fetch_max(generation, std::sync::atomic::Ordering::SeqCst);
     }
+
+    /// Bind the dispatch loop's command channel for self-wakes (#2531),
+    /// weakly so it never keeps the loop alive; the first binding stands.
+    pub(crate) fn bind_self_waker(
+        &self,
+        waker: tokio::sync::mpsc::WeakSender<crate::interface::cli::uds_multi::ClientMessage>,
+    ) {
+        let _ = self.self_waker.set(waker);
+    }
+
+    /// Wake this process after `delay` (#2531) at the latest control
+    /// generation it has seen: a wake at or below the run's wake cursor
+    /// claims nothing, but a suspended member's probe still runs. One is
+    /// scheduled at a time; returns whether this call scheduled it. Without
+    /// a bound channel, or once the loop or the process is ending, nothing
+    /// is sent.
+    pub(crate) fn schedule_self_wake(self: &Arc<Self>, delay: std::time::Duration) -> bool {
+        let Some(waker) = self.self_waker.get().cloned() else {
+            return false;
+        };
+        let scheduled = self.self_wake_scheduled.compare_exchange(
+            false,
+            true,
+            std::sync::atomic::Ordering::SeqCst,
+            std::sync::atomic::Ordering::SeqCst,
+        );
+        match scheduled {
+            Ok(_) => {}
+            Err(_) => return false,
+        }
+        let control = Arc::clone(self);
+        tokio::spawn(async move {
+            tokio::time::sleep(delay).await;
+            control
+                .self_wake_scheduled
+                .store(false, std::sync::atomic::Ordering::SeqCst);
+            let live = match control.is_shutting_down() {
+                false => waker.upgrade(),
+                true => None,
+            };
+            let Some(sender) = live else {
+                return;
+            };
+            let generation = control.control_generation().unwrap_or(0);
+            if control.queue_swarm_wake(generation) {
+                let message =
+                    crate::interface::cli::uds_multi::ClientMessage::SwarmWake { generation };
+                if sender.send(message).await.is_err() {
+                    // The loop ended while sending: release the slot.
+                    control.take_swarm_wake(0);
+                }
+            }
+        });
+        true
+    }
 }
 
 #[cfg(test)]

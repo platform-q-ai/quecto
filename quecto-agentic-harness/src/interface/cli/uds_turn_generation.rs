@@ -17,6 +17,8 @@ impl Default for TurnControl {
             coordinator_reported: std::sync::atomic::AtomicBool::new(false),
             client_prompts: std::sync::atomic::AtomicU32::new(0),
             launched_coordinator: false,
+            self_waker: std::sync::OnceLock::new(),
+            self_wake_scheduled: std::sync::atomic::AtomicBool::new(false),
         }
     }
 }
