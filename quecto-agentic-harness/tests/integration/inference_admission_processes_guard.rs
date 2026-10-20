@@ -37,11 +37,20 @@ impl Proc {
     }
 }
 
+/// How long a dropped `Proc` waits for its killed child to be reaped: a
+/// bound, so a child that somehow outlives its kill fails the test that
+/// checks it rather than hanging the run (the parent-death signal ends it
+/// when the test thread does).
+const REAP_BOUND: Duration = Duration::from_secs(5);
+
 impl Drop for Proc {
     fn drop(&mut self) {
         if let Some(mut child) = self.0.take() {
             let _ = child.kill();
-            let _ = child.wait();
+            let deadline = Instant::now() + REAP_BOUND;
+            while matches!(child.try_wait(), Ok(None)) && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(10));
+            }
         }
     }
 }
@@ -53,8 +62,11 @@ impl Drop for Proc {
 pub(super) fn dies_with_the_test(command: &mut Command) {
     use std::os::unix::process::CommandExt;
     let parent = libc::pid_t::try_from(std::process::id()).expect("a process id fits pid_t");
-    // The closure runs in the forked child before exec.
-    // SAFETY: there, arm_in_child's contract holds.
+    // The closure runs in the forked child after fork and before exec, the
+    // one place arm_in_child may run: it calls only async-signal-safe
+    // functions (prctl, getppid, _exit), allocates nothing and touches no
+    // memory of the parent; `parent` is a plain integer copied in.
+    // SAFETY: that is exactly arm_in_child's contract.
     unsafe {
         command.pre_exec(move || arm_in_child(parent, DeathSignal::Terminate));
     }
@@ -92,13 +104,22 @@ fn a_quecto_child_dies_with_the_thread_that_spawned_it() {
     });
     let mut child = Proc::new(child);
     let deadline = Instant::now() + super::LIMIT;
-    while child.child().try_wait().unwrap().is_none() {
+    let status = loop {
+        if let Some(status) = child.child().try_wait().unwrap() {
+            break status;
+        }
         assert!(
             Instant::now() < deadline,
             "the orphaned UDS root kept running"
         );
         std::thread::sleep(Duration::from_millis(20));
-    }
+    };
+    use std::os::unix::process::ExitStatusExt;
+    assert_eq!(
+        status.signal(),
+        Some(libc::SIGTERM),
+        "the root ended by the parent-death signal, not on its own: {status:?}"
+    );
 }
 
 /// Dropping a `Proc` kills and reaps its child at once: no process is left
@@ -107,12 +128,13 @@ fn a_quecto_child_dies_with_the_thread_that_spawned_it() {
 fn dropping_a_proc_leaves_no_process() {
     let mut command = Command::new("sleep");
     command.arg("30");
+    dies_with_the_test(&mut command);
     let child = Proc::new(command.spawn().expect("spawn sleep"));
     let pid = libc::pid_t::try_from(child.id()).expect("a process id fits pid_t");
     let started = Instant::now();
     drop(child);
     assert!(
-        started.elapsed() < Duration::from_secs(5),
+        started.elapsed() < REAP_BOUND,
         "the drop waited out the child"
     );
     // SAFETY: signal 0 only checks that the pid exists; nothing is sent.
