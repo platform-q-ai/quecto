@@ -4254,6 +4254,28 @@ fn the_authority_actor_settles_binds_and_disconnects_through_use_cases() {
     assert!(!bind.contains("self.authority."), "{bind}");
 }
 
+/// Whether `source` holds a constant-time comparison: one named so, or the
+/// shape of one, an XOR folded into an accumulator (`acc |= x ^ y`,
+/// `acc |= usize::from(x ^ y)`).
+fn constant_time_comparison_in(source: &str) -> bool {
+    let compact: String = source.split_whitespace().collect();
+    source.contains("fn constant_time_eq(")
+        || (compact.contains("|=") && (compact.contains("|=x^y") || compact.contains("^y)")))
+            && compact.contains(".zip(")
+}
+
+#[test]
+fn a_constant_time_comparison_is_recognised_by_its_shape() {
+    for source in [
+        "fn constant_time_eq(a: &str, b: &str) -> bool { true }",
+        "fn matches(a: &[u8], b: &[u8]) -> bool { let mut d = 0u8; for (x, y) in a.iter().zip(b) { d |= x ^ y; } d == 0 }",
+        "fn same(a: &[u8], b: &[u8]) -> bool { let mut d = 0; for (x, y) in a.iter().zip(b) { d |= usize::from(x ^ y); } d == 0 }",
+    ] {
+        assert!(constant_time_comparison_in(source), "{source}");
+    }
+    assert!(!constant_time_comparison_in("fn f(a: u8) -> u8 { a ^ 1 }"));
+}
+
 /// The journal has one owner (#1910 review): the restore use case reads the
 /// ledger through the journal port and decides whether a missing one is
 /// refused, and the server neither reads the journal nor builds the
@@ -4280,13 +4302,11 @@ fn the_authority_server_neither_reads_the_journal_nor_builds_the_authority() {
     // by every secret check.
     let mut files = Vec::new();
     teardown_authority::walk(Path::new("src"), &mut files);
+    // A comparison is recognised by its name or by its shape: an XOR folded
+    // into an accumulator over zipped bytes.
     let owners: Vec<String> = files
         .into_iter()
-        .filter(|file| {
-            fs::read_to_string(file)
-                .unwrap()
-                .contains("fn constant_time_eq(")
-        })
+        .filter(|file| constant_time_comparison_in(&fs::read_to_string(file).unwrap()))
         .collect();
     assert_eq!(owners, ["src/domain/shared/secret_compare.rs"], "one owner");
     let journal = production_source("src/application/admission/ports/inference_authority_ports.rs");
