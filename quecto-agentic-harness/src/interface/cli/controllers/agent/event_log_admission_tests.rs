@@ -11,7 +11,9 @@ use crate::infrastructure::config::persistence::PersistentOverlayTrustStore;
 use crate::infrastructure::observability::audit_log::AuditLog;
 use crate::infrastructure::tools::swarm::swarm_bridge::SwarmContext;
 use crate::interface::cli::CliContext;
-use crate::interface::cli::agent::{AgentFlags, build_agent_from_config_in, swarm_runtime};
+use crate::interface::cli::controllers::agent::{
+    AgentFlags, build_agent_from_config_in, swarm_runtime,
+};
 
 const PROVIDERS: &str = r#""providers":{"fireworks":{"api_key":"k"}}"#;
 const ON: &str = r#""telemetry":{"event_log":{"enabled":true}}"#;

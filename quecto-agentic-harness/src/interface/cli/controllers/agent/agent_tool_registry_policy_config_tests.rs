@@ -15,7 +15,7 @@ use crate::infrastructure::config::Config;
 use crate::interface::cli::config_loading::load_selected_config;
 use crate::interface::cli::{CliContext, run_with_output};
 
-const RUNBOOK: &str = include_str!("../../../../docs/docs-tool-embeds/config.md");
+const RUNBOOK: &str = include_str!("../../../../../docs/docs-tool-embeds/config.md");
 
 /// A hermetic `quecto` invocation: its base directory and working directory.
 struct Rig {

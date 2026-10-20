@@ -132,7 +132,7 @@ impl RunEnd {
     pub(crate) fn after(
         self,
         rt: &tokio::runtime::Runtime,
-        out: &mut super::agent::AgentOutput<'_>,
+        out: &mut super::controllers::agent::AgentOutput<'_>,
         code: i32,
     ) -> i32 {
         if self.live_output {

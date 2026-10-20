@@ -2,8 +2,8 @@
 //! claude-code` here after admission; the runner holds composition's
 //! handles only.
 
-use super::super::agent::{cmd_agent, parse_agent_flags};
 use super::*;
+use crate::interface::cli::controllers::agent::{cmd_agent, parse_agent_flags};
 
 fn argv(parts: &[&str]) -> Vec<String> {
     parts.iter().map(|s| s.to_string()).collect()

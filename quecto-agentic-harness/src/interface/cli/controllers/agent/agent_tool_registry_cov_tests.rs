@@ -1,6 +1,6 @@
 use super::*;
 use crate::infrastructure::tools::swarm::swarm_bridge::Participation;
-use crate::interface::cli::agent::flag_parse::AgentFlags;
+use crate::interface::cli::controllers::agent::flag_parse::AgentFlags;
 
 pub(super) fn flags() -> AgentFlags {
     AgentFlags {

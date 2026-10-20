@@ -1,4 +1,3 @@
-use super::CliContext;
 use crate::application::agent_turn::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::application::configuration::dto::ConfigSelection;
 use crate::domain::external_agent::backend::MemberBackend;
@@ -6,6 +5,7 @@ use crate::infrastructure::config::Config;
 use crate::infrastructure::extensions::registry::ExtensionRegistry;
 use crate::infrastructure::tools::agents::harness_lifecycle::SharedHarnessLifecycle;
 use crate::infrastructure::tools::agents::subagent_registry::{NotificationRx, SubagentRegistry};
+use crate::interface::cli::CliContext;
 use std::sync::Arc;
 /// Max byte length for `--socket` paths (the portable macOS/Linux limit).
 const MAX_SOCKET_PATH_BYTES: usize = 104;
@@ -16,7 +16,7 @@ pub(crate) struct AgentOutput<'a> {
 mod agent_deadline;
 #[path = "agent/build_result.rs"]
 mod build_result;
-pub(super) mod event_log;
+pub(in crate::interface::cli) mod event_log;
 #[path = "agent/loaded_config.rs"]
 mod loaded_config;
 pub(crate) use build_result::AgentBuildResult;
@@ -246,7 +246,9 @@ pub(crate) fn cmd_agent(
     if flags.uds_mode {
         return match flags.backend.unwrap_or_default() {
             MemberBackend::Quecto => cmd_agent_uds(ctx, flags, stderr),
-            MemberBackend::ClaudeCode => super::claude_member::run(ctx, &flags, stderr),
+            MemberBackend::ClaudeCode => {
+                crate::interface::cli::claude_member::run(ctx, &flags, stderr)
+            }
         };
     }
 
@@ -321,7 +323,7 @@ pub(crate) fn build_agent_from_config(
     stderr: &mut String,
     broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
 ) -> Option<AgentBuildResult> {
-    let env_overrides = super::config_loading::quecto_env_overrides();
+    let env_overrides = crate::interface::cli::config_loading::quecto_env_overrides();
     build_agent_from_config_in(
         base_dir,
         selection,
@@ -360,7 +362,7 @@ pub(crate) fn build_agent_from_config_in(
         debug_assert!(false, "a configuration loaded only through the capability");
         return None;
     };
-    for line in super::config_loading::layer_diagnostics(&loaded.sources) {
+    for line in crate::interface::cli::config_loading::layer_diagnostics(&loaded.sources) {
         stderr.push_str(&line);
         stderr.push('\n');
     }
@@ -511,7 +513,7 @@ pub(crate) fn build_agent_from_config_in(
             .unwrap_or(config.agents.defaults.max_tool_iterations),
     )
     .with_model_limits(limits);
-    let mut agent = super::swarm_composition::wire_member(
+    let mut agent = crate::interface::cli::swarm_composition::wire_member(
         agent,
         &flags.swarm_participation,
         &config.agents.defaults,

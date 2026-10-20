@@ -53,7 +53,7 @@ pub(crate) struct AgentFlags {
     /// Test-only effective cwd override supplied by CliContext.
     pub(crate) cwd_override: Option<std::path::PathBuf>,
     /// Opaque constructor injected by the executable bootstrap.
-    pub(crate) web_fetch_tool_factory: Option<super::super::WebFetchToolFactory>,
+    pub(crate) web_fetch_tool_factory: Option<crate::interface::cli::WebFetchToolFactory>,
     /// Composition's `agent_cmd kill` owner builder (#1936), from CliContext.
     pub(crate) kill_tool: Option<crate::interface::cli::KillToolBuilder>,
     /// Composition's project board builder (#2477), from CliContext: the
@@ -106,7 +106,7 @@ pub(crate) struct AgentFlags {
 impl AgentFlags {
     /// Adopt what the CLI context carries from the outer layers: the
     /// effective cwd and composition's graph builders.
-    pub(crate) fn adopt_context(&mut self, ctx: &super::super::CliContext) {
+    pub(crate) fn adopt_context(&mut self, ctx: &crate::interface::cli::CliContext) {
         self.cwd_override = ctx.cwd.clone();
         self.web_fetch_tool_factory = ctx.web_fetch_tool_factory;
         self.kill_tool = ctx.kill_tool;

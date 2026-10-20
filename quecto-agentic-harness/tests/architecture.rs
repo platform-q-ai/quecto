@@ -5058,7 +5058,7 @@ fn find_composition_delegation_allowed(file: &str, source: &str) -> bool {
                 ),
                 ["crate", "composition", "web_fetch", "build"] => matches!(
                     file,
-                    "src/interface/cli/agent/agent_tool_registry.rs"
+                    "src/interface/cli/controllers/agent/agent_tool_registry.rs"
                         | "src/interface/find_runtime_tests.rs"
                         | "src/interface/shared_cov_tests.rs"
                         | "src/interface/tool_runtime_catalogue_tests.rs"
@@ -5880,7 +5880,13 @@ fn subagent_interface_modules_never_import_composition() {
     for path in SUBAGENT_PROCESS_MODULES
         .iter()
         .filter(|path| path.starts_with("src/interface/"))
-        .chain(["src/interface/cli/agent.rs", "src/interface/cli/mod.rs"].iter())
+        .chain(
+            [
+                "src/interface/cli/controllers/agent.rs",
+                "src/interface/cli/mod.rs",
+            ]
+            .iter(),
+        )
     {
         let source = production_source(path);
         assert!(
@@ -6098,7 +6104,7 @@ fn parent_control_capability_never_travels_on_argv_or_env() {
         touched >= 2,
         "the launch ports and the args builder must be scanned"
     );
-    let flags = production_source("src/interface/cli/agent/flag_parse.rs");
+    let flags = production_source("src/interface/cli/controllers/agent/flag_parse.rs");
     assert!(flags.contains("parent_control: Option<std::path::PathBuf>"));
     // The material is exposed only where it is written out of band and
     // where the bound connection presents it.
