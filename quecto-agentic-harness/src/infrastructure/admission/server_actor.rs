@@ -421,11 +421,11 @@ impl Actor {
     fn settle(&mut self) -> Instant {
         let now = self.clock.now_ms();
         let waiting: Vec<RequestId> = self.waiters.keys().copied().collect();
-        let settlement = self
+        let mut settlement = self
             .use_cases
             .settle
             .execute(&mut self.authority, &waiting, now);
-        match settlement.dispatch_failure {
+        match settlement.dispatch_failure.take() {
             None => {
                 if self.last_dispatch_failure.take().is_some() {
                     tracing::info!("admission dispatch recovered");
@@ -439,7 +439,7 @@ impl Actor {
                 }
             }
         }
-        for (id, answer) in settlement.answers {
+        for (id, answer) in std::mem::take(&mut settlement.answers) {
             let body = match answer {
                 Ok(state) => grant_or_terminal(state, now),
                 Err(e) => error_body(&e),
@@ -448,7 +448,7 @@ impl Actor {
                 let _ = waiter.send(body);
             }
         }
-        let due = settlement.cancellation_due;
+        let due = std::mem::take(&mut settlement.cancellation_due);
         for id in &due {
             if self.notified.insert(*id) {
                 if let Some(state) = self.bound.get(&id.scope).and_then(|s| self.sessions.get(s)) {
@@ -462,7 +462,9 @@ impl Actor {
             }
         }
         self.notified.retain(|id| due.contains(id));
-        match settlement.wake_at {
+        // Armed now, after the turn: a slow write cannot leave the next
+        // probe already due.
+        match settlement.wake_at(self.clock.now_ms()) {
             Some(ms) => self.clock.instant_at(ms),
             None => far_future(),
         }

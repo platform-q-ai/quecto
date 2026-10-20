@@ -2,7 +2,7 @@
 //! connection binding its scope, and a connection ending. The broker's actor
 //! invokes these use cases and keeps only its transport bookkeeping.
 use super::{authority, group, wrong};
-use quecto::application::admission::dto::broker::{AuthorityError, Credential};
+use quecto::application::admission::dto::broker::{AuthorityError, Credential, Settlement};
 use quecto::domain::admission::value_objects::inference_admission::{
     AdmissionError, Feedback, RequestId, RequestState, TerminalOutcome, WorkloadClass,
 };
@@ -31,7 +31,7 @@ fn settling_answers_grants_and_leaves_queued_waiters_unanswered() {
         "{answer:?}"
     );
     assert!(
-        settlement.wake_at.is_some(),
+        settlement.wake_at(0).is_some(),
         "the queued waiter's deadline wakes the authority"
     );
 }
@@ -174,7 +174,7 @@ fn a_plain_or_forged_bind_disconnects_nothing() {
 #[test]
 fn an_idle_authority_sleeps_until_work_arrives() {
     let (mut a, _) = authority();
-    assert_eq!(a.settle(&[], 0).wake_at, None);
+    assert_eq!(a.settle(&[], 0).wake_at(0), None);
 }
 
 #[test]
@@ -186,9 +186,9 @@ fn a_journal_outage_is_probed_at_a_bounded_cadence() {
     let settlement = a.settle(&[], 10);
     assert!(!settlement.journal_healthy);
     assert!(
-        settlement.wake_at.is_some_and(|at| at <= 10 + 250),
+        settlement.wake_at(10).is_some_and(|at| at <= 10 + 250),
         "probe within the interval, not at the queue deadline: {:?}",
-        settlement.wake_at
+        settlement.wake_at(10)
     );
 }
 
@@ -248,5 +248,52 @@ fn a_superseding_bind_whose_disconnect_fails_is_refused() {
         a.bind(&root, false, 1).unwrap(),
         3,
         "a plain bind reads no clock"
+    );
+}
+
+fn settlement(next_wake: Result<Option<u64>, AuthorityError>, journal_healthy: bool) -> Settlement {
+    Settlement {
+        dispatch_failure: None,
+        answers: Vec::new(),
+        cancellation_due: Vec::new(),
+        next_wake,
+        journal_healthy,
+    }
+}
+
+/// Review MED (#2625 round 2): the next turn is measured from when the
+/// broker arms its timer, and the retry and probe intervals are pinned.
+#[test]
+fn the_next_turn_is_measured_from_arming() {
+    let armed = 1_000;
+    assert_eq!(settlement(Ok(None), true).wake_at(armed), None, "idle");
+    assert_eq!(
+        settlement(Ok(Some(5_000)), true).wake_at(armed),
+        Some(5_000)
+    );
+    assert_eq!(
+        settlement(Err(AuthorityError::JournalUnavailable), true).wake_at(armed),
+        Some(armed + 50),
+        "a policy that cannot say retries 50 ms after arming"
+    );
+    assert_eq!(
+        settlement(Ok(None), false).wake_at(armed),
+        Some(armed + 250),
+        "an outage probes 250 ms after arming"
+    );
+    assert_eq!(
+        settlement(Ok(Some(armed + 10)), false).wake_at(armed),
+        Some(armed + 10),
+        "an earlier policy wake wins"
+    );
+    assert_eq!(
+        settlement(Ok(Some(armed + 10_000)), false).wake_at(armed),
+        Some(armed + 250),
+        "a later one is clamped to the probe"
+    );
+    assert_eq!(
+        settlement(Err(AuthorityError::JournalUnavailable), false).wake_at(armed),
+        Some(armed + 50),
+        "the retry is sooner than the probe"
     );
 }
