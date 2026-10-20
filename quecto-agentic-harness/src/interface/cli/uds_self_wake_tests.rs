@@ -377,6 +377,47 @@ async fn a_resume_joining_a_pending_self_wake_re_arms_a_newer_suspension() {
     );
 }
 
+/// #2626 verify round 7 (#2531), the mirror of round 6: a self-wake that
+/// joins a pending outside wake leaves it an outside wake, never stamping
+/// its own epoch on it. After a newer (terminal) suspension the wake is not
+/// dropped as stale, so its probe sees the resume and re-arms the member.
+#[tokio::test(start_paused = true)]
+async fn a_self_wake_joining_a_pending_outside_wake_keeps_it_an_outside_wake() {
+    let mut env = Env::with_unselected_workflow();
+    let run = Arc::new(Moving(std::sync::atomic::AtomicU64::new(3)));
+    let (mut ctx, _waker, mut wakes) = suspended_over(&mut env, run.clone());
+    let older = ctx.session.automatic_turns().suspension_epoch();
+    // An outside wake is pending; the older self-wake fires and joins it
+    // (it sends no message of its own).
+    assert!(ctx.turn_control.queue_swarm_wake(3));
+    assert!(
+        ctx.turn_control
+            .schedule_self_wake(std::time::Duration::ZERO, older)
+    );
+    assert_eq!(
+        self_wake_within(&mut wakes, RECOVERABLE_SELF_WAKE_DELAY).await,
+        None,
+        "it joined the pending message"
+    );
+    // A newer, terminal suspension dated at 3; then the run is resumed.
+    ctx.session.automatic_turns().suspend_after_failure(
+        &crate::domain::shared::error::DomainError::Provider(
+            "provider error (401): invalid credentials".into(),
+        ),
+    );
+    date_provider_suspension(&mut ctx).await;
+    run.0.store(7, Ordering::SeqCst);
+    handle_wake(&mut ctx, 3).await;
+    assert!(
+        ctx.session.automatic_turns_allowed(),
+        "re-armed by the resume"
+    );
+    assert_eq!(
+        user_prompts(&ctx),
+        [crate::interface::cli::uds_swarm_control::RESUMED_WAKE]
+    );
+}
+
 /// A paused run takes no turn: its wake leaves a recoverable failure
 /// suspended, spending none of the bound, and says nothing re-armed.
 #[tokio::test]
