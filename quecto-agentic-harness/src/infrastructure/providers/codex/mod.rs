@@ -416,18 +416,15 @@ impl CodexProvider {
         }
         // The class its code (or, with none, its type) names, which the
         // domain classifies by (Refs #2531).
-        let code = error["code"].as_str().or_else(|| top["code"].as_str());
         let rendered = parts.join(": ");
-        Some(
-            match codex_wire::failure_class(code, error["type"].as_str()) {
-                Some(class) => {
-                    crate::domain::inference::services::provider_error::classed_stream_failure(
-                        &class, &rendered,
-                    )
-                }
-                None => rendered,
-            },
-        )
+        Some(match codex_wire::failure_class(event) {
+            Some(class) => {
+                crate::domain::inference::services::provider_error::classed_stream_failure(
+                    &class, &rendered,
+                )
+            }
+            None => rendered,
+        })
     }
 
     /// Sanitize a session key for use as `prompt_cache_key`.

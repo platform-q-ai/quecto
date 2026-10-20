@@ -927,8 +927,10 @@ fn code_literals(stream: TokenStream, found: &mut Vec<String>) {
 /// The literals `transport/` shares with the wires' dialects, each because
 /// it names nothing of one wire: the empty string, the `type` field every
 /// typed payload carries (bare, and quoted as a long event's start spells
-/// it), and the `response` a failed read's message names.
-const SHARED_LITERALS: &[&str] = &["", "type", "\"type\"", "response"];
+/// it), the `code` field every wire's error objects carry beside their
+/// `type` (the shared readers read both), and the `response` a failed
+/// read's message names.
+const SHARED_LITERALS: &[&str] = &["", "type", "\"type\"", "code", "response"];
 
 /// #2609 review round 2 (completed here, once the error vocabulary has
 /// moved): no production module of `transport/` spells a literal any

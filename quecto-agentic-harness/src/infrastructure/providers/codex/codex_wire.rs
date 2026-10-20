@@ -204,16 +204,42 @@ impl WireDialect for CodexWire {
     }
 }
 
-/// The class a Responses failure's error fields name (Refs #2531), so the
-/// domain classifies its rendering: a billing name (the domain's list) in
-/// any field first; then its `code`, as the official client reads it — a
-/// `code` this wire does not know names nothing, whatever the `type` says
-/// (#2620 review); only a failure with no `code` is named by its `type`.
+/// The retry class a Responses stream failure `event` names (Refs #2531),
+/// read from its error objects ([`WireDialect::error_objects`]), so the
+/// domain classifies its rendering.
+///
+/// A Responses failure is read three ways, each for its own reader:
+/// - the **recorded code** (`transport_diagnostics::typed`): the attempt's
+///   diagnostics keep the name this wire knows, an object's `type` over its
+///   `code`, as they always have;
+/// - the **retry class** (here): its `code`, as the official client reads
+///   it — a `code` this wire does not know names nothing, whatever the
+///   `type` says, and only a failure with no `code` is classed by its
+///   `type`;
+/// - the **admission throttle** ([`WireDialect::is_throttle`]): any field
+///   naming a throttle, unless one names a billing error.
+///
+/// Only "code before type" follows the official client, which reads the
+/// code alone and retries a code it does not know. Reading a billing name
+/// in any field first, and the class each name maps to, are quecto's
+/// conservative choices (#2620 review): a billing failure is never retried
+/// whichever field names it, and an unknown code is no retry.
 pub(in crate::infrastructure::providers) fn failure_class(
-    code: Option<&str>,
-    kind: Option<&str>,
+    event: &Value,
 ) -> Option<ProviderErrorClass> {
     use crate::domain::inference::services::provider_error::is_billing_error_name;
+    let objects = CODEX_WIRE.error_objects(event);
+    // The innermost object first: an `error` object's fields before an
+    // `error` event's own; the event's own `type` is the event's, not an
+    // error name.
+    let field = |name: &str| {
+        objects
+            .iter()
+            .rev()
+            .filter(|object| name == "code" || !std::ptr::eq(**object, event))
+            .find_map(|object| object[name].as_str())
+    };
+    let (code, kind) = (field("code"), field("type"));
     if [code, kind]
         .into_iter()
         .flatten()

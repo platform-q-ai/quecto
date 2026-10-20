@@ -319,6 +319,16 @@ fn a_typed_stream_failure_renders_the_status_its_name_stands_for() {
             json!({"type": "response.failed", "response": {"error": {"code": "server_is_overloaded"}}}),
             ProviderErrorClass::Server,
         ),
+        // A billing name in any field is billing, whatever the other says
+        // (#2620 review round 4: quecto's conservative choice).
+        (
+            json!({"type": "error", "error": {"type": "insufficient_quota", "code": "rate_limit_exceeded"}}),
+            ProviderErrorClass::Billing,
+        ),
+        (
+            json!({"type": "response.failed", "response": {"error": {"type": "billing_error", "code": "server_error"}}}),
+            ProviderErrorClass::Billing,
+        ),
         // The code wins; an unknown code names nothing (#2620 review B2).
         (
             json!({"type": "error", "error": {"type": "server_error", "code": "context_length_exceeded"}}),
