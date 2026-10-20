@@ -1,7 +1,9 @@
 use std::sync::{Arc, Mutex};
 
 use super::*;
-use crate::application::auth::ports::{AuthClock, CredentialStoreError, CredentialStorePort};
+use crate::application::auth::ports::{
+    AuthClock, CredentialStoreError, CredentialStoreFailure, CredentialStorePort,
+};
 use crate::domain::auth::credential::{AuthMethod, Credential, CredentialState};
 
 const NOW: i64 = 5_000;
@@ -103,16 +105,24 @@ fn a_credential_for_any_provider_name_is_reported() {
 }
 
 #[test]
-fn an_unreadable_store_is_reported_in_its_words() {
-    let (_, use_case) = inspect(Err(CredentialStoreError(
-        "config error: failed to parse credentials: oops".to_string(),
-    )));
-    assert_eq!(
-        use_case.execute(),
-        Err(AuthStatusError::Unreadable(
-            "config error: failed to parse credentials: oops".to_string()
-        ))
-    );
+fn an_unreadable_store_is_reported_by_kind_and_in_its_words() {
+    for failure in [
+        CredentialStoreFailure::Malformed,
+        CredentialStoreFailure::PermissionDenied,
+        CredentialStoreFailure::Unavailable,
+    ] {
+        let (_, use_case) = inspect(Err(CredentialStoreError::new(
+            failure,
+            "config error: the store's words",
+        )));
+        assert_eq!(
+            use_case.execute(),
+            Err(AuthStatusError::Unreadable {
+                failure,
+                reason: "config error: the store's words".to_string()
+            })
+        );
+    }
 }
 
 #[test]

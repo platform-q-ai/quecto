@@ -6,6 +6,7 @@
 use std::sync::Arc;
 
 use crate::application::auth::dto::AuthStatusError;
+use crate::application::auth::ports::CredentialStoreFailure;
 use crate::application::auth::use_cases::InspectAuthStatus;
 use crate::application::configuration::ports::{
     StoredCredential, StoredCredentialPresence, StoredCredentialsUnavailable,
@@ -35,20 +36,18 @@ impl StoredCredentialPresence for AuthStatusPresence {
                     })
                     .collect()
             })
-            .map_err(|AuthStatusError::Unreadable(reason)| unavailable(&reason))
+            .map_err(|AuthStatusError::Unreadable { failure, .. }| unavailable(failure))
     }
 }
 
-/// The kind of failure the store's `reason` names. Only the kind crosses
-/// into the configuration capability: the reason itself may describe a
-/// hand-edited file (#2617).
-fn unavailable(reason: &str) -> StoredCredentialsUnavailable {
-    if reason.contains("failed to parse credentials") {
-        StoredCredentialsUnavailable::Malformed
-    } else if reason.to_ascii_lowercase().contains("permission denied") {
-        StoredCredentialsUnavailable::PermissionDenied
-    } else {
-        StoredCredentialsUnavailable::Unreadable
+/// The store's failure, as the configuration capability names it. Only the
+/// kind, typed where the store failed, crosses: the store's words may
+/// describe a hand-edited file (#2617), and are never parsed (#2619 review).
+fn unavailable(failure: CredentialStoreFailure) -> StoredCredentialsUnavailable {
+    match failure {
+        CredentialStoreFailure::Malformed => StoredCredentialsUnavailable::Malformed,
+        CredentialStoreFailure::PermissionDenied => StoredCredentialsUnavailable::PermissionDenied,
+        CredentialStoreFailure::Unavailable => StoredCredentialsUnavailable::Unreadable,
     }
 }
 

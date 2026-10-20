@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 use tempfile::TempDir;
 
-use quecto::application::auth::ports::CredentialStorePort;
+use quecto::application::auth::ports::{CredentialStoreFailure, CredentialStorePort};
 use quecto::domain::auth::credential::{AuthMethod, Credential};
 use quecto::infrastructure::auth::credential_store::CredentialStore;
 
@@ -170,10 +170,14 @@ fn an_unreadable_store_refuses_and_changes_nothing() {
         .store(token("openai", "fake-t"))
         .expect_err("a corrupt store refuses");
     assert!(
-        refused.0.contains("failed to parse credentials"),
+        refused.reason.contains("failed to parse credentials"),
         "{refused}"
     );
-    assert!(!refused.0.contains("fake-t"), "never quotes the secret");
+    assert_eq!(refused.failure, CredentialStoreFailure::Malformed);
+    assert!(
+        !refused.reason.contains("fake-t"),
+        "never quotes the secret"
+    );
     assert_eq!(std::fs::read_to_string(&path).unwrap(), "{ not json ");
 }
 
@@ -212,9 +216,10 @@ fn an_unreadable_store_cannot_be_listed() {
         .list()
         .expect_err("a corrupt store refuses");
     assert!(
-        refused.0.contains("failed to parse credentials"),
+        refused.reason.contains("failed to parse credentials"),
         "{refused}"
     );
+    assert_eq!(refused.failure, CredentialStoreFailure::Malformed);
 }
 
 #[test]
@@ -382,8 +387,9 @@ fn an_unreadable_store_refuses_a_removal_and_changes_nothing() {
         .remove("openai")
         .expect_err("a corrupt store refuses");
     assert!(
-        refused.0.contains("failed to parse credentials"),
+        refused.reason.contains("failed to parse credentials"),
         "{refused}"
     );
+    assert_eq!(refused.failure, CredentialStoreFailure::Malformed);
     assert_eq!(std::fs::read_to_string(&path).unwrap(), "{ not json ");
 }

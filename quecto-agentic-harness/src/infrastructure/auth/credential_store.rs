@@ -5,9 +5,51 @@ use std::path::{Path, PathBuf};
 
 use crate::domain::shared::error::DomainError;
 
-use crate::application::auth::ports::{CredentialStoreError, CredentialStorePort};
+use crate::application::auth::ports::{
+    CredentialStoreError, CredentialStoreFailure, CredentialStorePort,
+};
 use crate::domain::auth::credential::{AuthMethod, Credential};
 use crate::infrastructure::persistence::file::json_failure;
+
+/// A store failure, typed where it happened (#2619 review): its kind, and
+/// its words as the store has always given them.
+#[derive(Debug)]
+struct StoreFailure {
+    kind: CredentialStoreFailure,
+    text: String,
+}
+
+impl StoreFailure {
+    /// An I/O failure `doing` something: permission denied, or any other.
+    fn io(doing: &str, error: &std::io::Error) -> Self {
+        let kind = match error.kind() {
+            std::io::ErrorKind::PermissionDenied => CredentialStoreFailure::PermissionDenied,
+            _other => CredentialStoreFailure::Unavailable,
+        };
+        Self {
+            kind,
+            text: format!("{doing}: {error}"),
+        }
+    }
+
+    fn unavailable(text: impl Into<String>) -> Self {
+        Self {
+            kind: CredentialStoreFailure::Unavailable,
+            text: text.into(),
+        }
+    }
+
+    fn into_domain(self) -> DomainError {
+        DomainError::Config(self.text)
+    }
+
+    fn into_port(self) -> CredentialStoreError {
+        CredentialStoreError {
+            failure: self.kind,
+            reason: DomainError::Config(self.text).to_string(),
+        }
+    }
+}
 
 /// How the store spells a credential's method on disk.
 #[derive(Clone, Copy, serde::Serialize, serde::Deserialize)]
@@ -131,13 +173,19 @@ impl CredentialStore {
     /// Correct for CLI (no stale state); for long-running processes, call once
     /// at startup and pass the snapshot to resolution functions.
     pub fn load_snapshot(&self) -> Result<HashMap<String, Credential>, DomainError> {
+        self.snapshot().map_err(StoreFailure::into_domain)
+    }
+
+    fn snapshot(&self) -> Result<HashMap<String, Credential>, StoreFailure> {
         if !self.path.exists() {
             return Ok(HashMap::new());
         }
         let data = std::fs::read_to_string(&self.path)
-            .map_err(|e| DomainError::Config(format!("failed to read credentials: {}", e)))?;
-        let file: CredentialsFile = json_failure::from_str(&data)
-            .map_err(|why| DomainError::Config(format!("failed to parse credentials: {why}")))?;
+            .map_err(|e| StoreFailure::io("failed to read credentials", &e))?;
+        let file: CredentialsFile = json_failure::from_str(&data).map_err(|why| StoreFailure {
+            kind: CredentialStoreFailure::Malformed,
+            text: format!("failed to parse credentials: {why}"),
+        })?;
         Ok(file
             .credentials
             .into_iter()
@@ -166,11 +214,10 @@ impl CredentialStore {
     // 1.89 is the real toolchain floor — clippy.toml's declared 1.85 predates
     // the #1460 locking work and awaits a coordinated MSRV bump.
     #[expect(clippy::incompatible_msrv)]
-    fn lock_exclusive(&self) -> Result<CredentialLock, DomainError> {
+    fn lock_exclusive(&self) -> Result<CredentialLock, StoreFailure> {
         if let Some(parent) = self.path.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| {
-                DomainError::Config(format!("failed to create credentials dir: {}", e))
-            })?;
+            std::fs::create_dir_all(parent)
+                .map_err(|e| StoreFailure::io("failed to create credentials dir", &e))?;
         }
         // Mode 0600 like credentials.json itself: a world-readable lock file
         // would let any co-resident user take the exclusive lock and wedge
@@ -191,9 +238,8 @@ impl CredentialStore {
             .truncate(false)
             .write(true)
             .open(self.lock_path());
-        let file = file.map_err(|e| {
-            DomainError::Config(format!("failed to open credentials lock file: {}", e))
-        })?;
+        let file =
+            file.map_err(|e| StoreFailure::io("failed to open credentials lock file", &e))?;
         // Affirmative CLOEXEC: an exec'd child must not inherit this fd.
         // `std::fs::File` is CLOEXEC today, but the invariant is ours — set it
         // rather than assuming the std open flags. CLOEXEC does not cover the
@@ -205,15 +251,15 @@ impl CredentialStore {
             // SAFETY: fd is a live File raw fd; F_GETFD only reads FD_* flags.
             let flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
             if flags < 0 {
-                return Err(DomainError::Config(
-                    "failed to read credentials lock fd flags".to_string(),
+                return Err(StoreFailure::unavailable(
+                    "failed to read credentials lock fd flags",
                 ));
             }
             // SAFETY: fd is a live File raw fd; F_SETFD only sets FD_CLOEXEC on FD_* flags.
             let rc = unsafe { libc::fcntl(fd, libc::F_SETFD, flags | libc::FD_CLOEXEC) };
             if rc != 0 {
-                return Err(DomainError::Config(
-                    "failed to set FD_CLOEXEC on credentials lock fd".to_string(),
+                return Err(StoreFailure::unavailable(
+                    "failed to set FD_CLOEXEC on credentials lock fd",
                 ));
             }
             debug_assert_eq!(
@@ -224,7 +270,7 @@ impl CredentialStore {
             );
         }
         file.lock()
-            .map_err(|e| DomainError::Config(format!("failed to lock credentials file: {}", e)))?;
+            .map_err(|e| StoreFailure::io("failed to lock credentials file", &e))?;
         Ok(CredentialLock { _file: file })
     }
 
@@ -232,11 +278,10 @@ impl CredentialStore {
     ///
     /// On Unix, writes the same-directory replacement file with mode 0o600 before
     /// atomically renaming it into place, avoiding write-then-chmod exposure.
-    fn save_all(&self, credentials: &HashMap<String, Credential>) -> Result<(), DomainError> {
+    fn save_all(&self, credentials: &HashMap<String, Credential>) -> Result<(), StoreFailure> {
         if let Some(parent) = self.path.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| {
-                DomainError::Config(format!("failed to create credentials dir: {}", e))
-            })?;
+            std::fs::create_dir_all(parent)
+                .map_err(|e| StoreFailure::io("failed to create credentials dir", &e))?;
         }
         let file = CredentialsFile {
             credentials: credentials
@@ -246,8 +291,9 @@ impl CredentialStore {
                 })
                 .collect(),
         };
-        let json = serde_json::to_string_pretty(&file)
-            .map_err(|e| DomainError::Config(format!("failed to serialize credentials: {}", e)))?;
+        let json = serde_json::to_string_pretty(&file).map_err(|e| {
+            StoreFailure::unavailable(format!("failed to serialize credentials: {e}"))
+        })?;
 
         // Write a same-directory temporary file, then rename it over the target.
         // The previous credentials file remains intact until the replacement is
@@ -262,7 +308,7 @@ impl CredentialStore {
             json.as_bytes(),
             mode,
         )
-        .map_err(|e| DomainError::Config(format!("failed to write credentials: {}", e)))?;
+        .map_err(|e| StoreFailure::io("failed to write credentials", &e))?;
 
         Ok(())
     }
@@ -273,8 +319,13 @@ impl CredentialStore {
     /// credentials lock (#1460): N agent processes refreshing tokens
     /// concurrently serialize here instead of losing each other's writes.
     pub fn store(&self, credential: Credential) -> Result<(), DomainError> {
+        self.store_entry(credential)
+            .map_err(StoreFailure::into_domain)
+    }
+
+    fn store_entry(&self, credential: Credential) -> Result<(), StoreFailure> {
         let _lock = self.lock_exclusive()?;
-        let mut all = self.load_snapshot()?;
+        let mut all = self.snapshot()?;
         all.insert(credential.provider.clone(), credential);
         self.save_all(&all)
     }
@@ -294,7 +345,7 @@ impl CredentialStore {
         credential: Credential,
         refreshed_from: &str,
     ) -> Result<Credential, DomainError> {
-        let _lock = self.lock_exclusive()?;
+        let _lock = self.lock_exclusive().map_err(StoreFailure::into_domain)?;
         let mut all = self.load_snapshot()?;
         if let Some(existing) = all.get(&credential.provider)
             && existing.refresh_token.as_deref() != Some(refreshed_from)
@@ -303,7 +354,7 @@ impl CredentialStore {
             return Ok(existing.clone());
         }
         all.insert(credential.provider.clone(), credential.clone());
-        self.save_all(&all)?;
+        self.save_all(&all).map_err(StoreFailure::into_domain)?;
         Ok(credential)
     }
 
@@ -322,8 +373,13 @@ impl CredentialStore {
     /// Remove a credential for a specific provider.
     /// Returns `true` if a credential was actually removed, `false` if none existed.
     pub fn remove(&self, provider: &str) -> Result<bool, DomainError> {
+        self.remove_entry(provider)
+            .map_err(StoreFailure::into_domain)
+    }
+
+    fn remove_entry(&self, provider: &str) -> Result<bool, StoreFailure> {
         let _lock = self.lock_exclusive()?;
-        let mut all = self.load_snapshot()?;
+        let mut all = self.snapshot()?;
         let removed = all.remove(provider).is_some();
         self.save_all(&all)?;
         Ok(removed)
@@ -339,17 +395,18 @@ impl CredentialStore {
 /// The application's credential store over `credentials.json`.
 impl CredentialStorePort for CredentialStore {
     fn store(&self, credential: Credential) -> Result<(), CredentialStoreError> {
-        CredentialStore::store(self, credential)
-            .map_err(|error| CredentialStoreError(error.to_string()))
+        self.store_entry(credential)
+            .map_err(StoreFailure::into_port)
     }
 
     fn list(&self) -> Result<Vec<Credential>, CredentialStoreError> {
-        CredentialStore::list(self).map_err(|error| CredentialStoreError(error.to_string()))
+        self.snapshot()
+            .map(|all| all.into_values().collect())
+            .map_err(StoreFailure::into_port)
     }
 
     fn remove(&self, provider: &str) -> Result<bool, CredentialStoreError> {
-        CredentialStore::remove(self, provider)
-            .map_err(|error| CredentialStoreError(error.to_string()))
+        self.remove_entry(provider).map_err(StoreFailure::into_port)
     }
 }
 
