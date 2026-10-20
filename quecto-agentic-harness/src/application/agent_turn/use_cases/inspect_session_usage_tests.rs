@@ -107,8 +107,21 @@ fn diagnostics_are_merged_and_a_clear_drops_everything() {
     usage.record_request_diagnostics(diagnostics.clone());
     usage.record_request_diagnostics(diagnostics);
     assert_eq!(usage.usage().request_diagnostics.logical_requests, 6);
+    usage.record_turn(
+        "k",
+        UsageTotals {
+            unpriced_attempts: 1,
+            priced_attempts: 1,
+            ..turn(10, 2, 0, 0, 0)
+        },
+        0,
+    );
     usage.clear();
     assert_eq!(usage.usage(), &SessionUsage::default());
+    // #2635 review: the unpriced and priced counts go with a clear.
+    assert_eq!(usage.usage().unpriced_attempts, 0);
+    assert_eq!(usage.usage().priced_attempts, 0);
+    assert_eq!(usage.usage().known_cost_micro_usd(), Some(0));
 }
 
 /// #1855 review L1: a session whose billed usage was never priced reports

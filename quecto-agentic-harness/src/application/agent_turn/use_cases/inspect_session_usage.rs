@@ -53,6 +53,8 @@ impl InspectSessionUsage {
             turn.cache_write_tokens,
             turn.cost_micro_usd,
             turn.unpriced_attempts,
+            // A priced zero-token reply is logged too (#2635 review).
+            turn.priced_attempts,
         ];
         if billed.iter().any(|amount| *amount > 0) {
             let usage = &self.usage;

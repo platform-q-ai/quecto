@@ -15,6 +15,10 @@ pub struct SessionStats {
     pub cache_write_tokens: u64,
     pub total_tokens: u64,
     pub cost_micro_usd: u64,
+    /// The cost when it is known: `None` when the harness reported
+    /// `costMicroUsd: null` (none of the usage was priced, #1855). A known
+    /// $0 (a declared-free model) is `Some(0)`.
+    pub known_cost_micro_usd: Option<u64>,
     pub cost: f64,
     /// Replies the harness could not price (#1855): their cost is unknown,
     /// never shown as zero.
@@ -119,21 +123,27 @@ fn legacy_cost_to_micro_usd(dollars: f64) -> u64 {
     }
 }
 
-fn cost_micro_usd(data: &serde_json::Value) -> u64 {
+/// The known cost: `costMicroUsd` when it is a number, `None` when it is
+/// `null` (or malformed); a payload without it falls back to the legacy
+/// float `cost`.
+fn cost_micro_usd(data: &serde_json::Value) -> Option<u64> {
     if let Some(value) = data.get("costMicroUsd") {
-        value.as_u64().unwrap_or(0)
+        value.as_u64()
     } else {
-        data.get("cost")
-            .and_then(|v| v.as_f64())
-            .map(legacy_cost_to_micro_usd)
-            .unwrap_or(0)
+        Some(
+            data.get("cost")
+                .and_then(|v| v.as_f64())
+                .map(legacy_cost_to_micro_usd)
+                .unwrap_or(0),
+        )
     }
 }
 
 pub fn parse_session_stats(data: &serde_json::Value) -> SessionStats {
     let context_tokens = data.get("contextTokens").and_then(|v| v.as_u64());
     let max_context_tokens = optional_usize_field(data, "maxContextTokens");
-    let cost_micro_usd = cost_micro_usd(data);
+    let known_cost_micro_usd = cost_micro_usd(data);
+    let cost_micro_usd = known_cost_micro_usd.unwrap_or(0);
 
     SessionStats {
         session_key: data
@@ -151,6 +161,7 @@ pub fn parse_session_stats(data: &serde_json::Value) -> SessionStats {
         cache_write_tokens: token_field(data, "cacheWrite"),
         total_tokens: token_field(data, "total"),
         cost_micro_usd,
+        known_cost_micro_usd,
         cost: cost_micro_usd as f64 / 1_000_000.0,
         unpriced_attempts: optional_usize_field(data, "unpricedAttempts").unwrap_or(0) as u64,
         cache_hit_ratio: data.get("cacheHitRatio").and_then(|v| v.as_f64()),

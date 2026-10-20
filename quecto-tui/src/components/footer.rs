@@ -219,8 +219,16 @@ impl Footer {
         if let Some((used, window)) = stats.context_usage {
             self.update_context_usage(used, window);
         }
-        self.set_cost((stats.cost > 0.0).then_some(stats.cost));
-        self.session_cost_unpriced = stats.unpriced_attempts > 0;
+        // #1855: a known cost is shown when it is above $0, or beside
+        // unpriced usage (a declared-free model's $0 + unpriced); an
+        // unknown one is only "unpriced".
+        let unpriced = stats.unpriced_attempts > 0;
+        self.session_cost = match (stats.known_cost_micro_usd, unpriced) {
+            (Some(micro), true) => Some(micro as f64 / 1_000_000.0),
+            (Some(micro), false) if micro > 0 => Some(micro as f64 / 1_000_000.0),
+            (Some(_), false) | (None, _) => None,
+        };
+        self.session_cost_unpriced = unpriced;
         self.session_cache_read = stats.cache_read_tokens;
         self.session_cache_write = stats.cache_write_tokens;
         self.session_cache_hit_ratio = stats.cache_hit_ratio;

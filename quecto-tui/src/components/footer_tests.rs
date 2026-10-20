@@ -114,6 +114,18 @@ fn footer_shows_unpriced_usage_as_unpriced() {
     );
 }
 
+/// #2635 review: a known $0 beside unpriced usage shows "$0 + unpriced".
+#[test]
+fn a_known_zero_cost_beside_unpriced_usage_is_shown() {
+    let mut f = Footer::new();
+    f.update_context_usage(120_000, 200_000);
+    f.apply_session_stats(&crate::protocol::session_payloads::parse_session_stats(
+        &serde_json::json!({"costMicroUsd": 0, "unpricedAttempts": 1}),
+    ));
+    let joined = f.render(120).join("\n");
+    assert!(joined.contains("cost $0.000000 + unpriced"), "{joined}");
+}
+
 /// #2635 review L3: a context reset clears the unpriced mark with the cost.
 #[test]
 fn a_context_reset_clears_the_unpriced_mark() {

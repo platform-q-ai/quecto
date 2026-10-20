@@ -129,3 +129,31 @@ fn unpriced_usage_is_logged_as_unpriced_never_zero() {
     assert_eq!(fields["costPriced"], false);
     assert_eq!(fields["unpricedAttempts"], 2);
 }
+
+/// #2635 review: a priced reply that billed no tokens (a $0 price) is still
+/// logged.
+#[test]
+fn a_priced_zero_token_reply_is_logged() {
+    let logs = CapturedLog::default();
+    let sink = logs.0.clone();
+    let subscriber = tracing_subscriber::fmt()
+        .json()
+        .with_writer(logs)
+        .with_ansi(false)
+        .finish();
+    tracing::subscriber::with_default(subscriber, || {
+        let mut session = crate::composition::bootstrap::agent_turn::build_turn_session("m".into());
+        session.record_usage(
+            "cli:test",
+            crate::application::agent_turn::agent_loop::UsageTotals {
+                priced_attempts: 1,
+                ..Default::default()
+            },
+        );
+    });
+    let output = sink.lock().unwrap().clone();
+    assert!(
+        output.contains("normalized session usage recorded"),
+        "{output}"
+    );
+}

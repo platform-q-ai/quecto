@@ -403,3 +403,20 @@ fn parse_session_stats_reads_unpriced_attempts() {
     assert_eq!((stats.cost_micro_usd, stats.unpriced_attempts), (0, 3));
     assert_eq!(parse_session_stats(&json!({})).unpriced_attempts, 0);
 }
+
+/// #2635 review: null and 0 are told apart.
+#[test]
+fn parse_session_stats_keeps_null_and_zero_apart() {
+    assert_eq!(
+        parse_session_stats(&json!({"costMicroUsd": null})).known_cost_micro_usd,
+        None
+    );
+    assert_eq!(
+        parse_session_stats(&json!({"costMicroUsd": 0})).known_cost_micro_usd,
+        Some(0)
+    );
+    assert_eq!(
+        parse_session_stats(&json!({"cost": 0.000005})).known_cost_micro_usd,
+        Some(5)
+    );
+}

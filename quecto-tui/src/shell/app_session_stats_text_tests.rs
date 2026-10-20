@@ -15,3 +15,14 @@ fn unpriced_usage_reads_as_unpriced() {
     let free = text(serde_json::json!({"costMicroUsd": 0, "unpricedAttempts": 0}));
     assert!(!free.contains("Cost"), "{free}");
 }
+
+/// #2635 review: a known $0 (a declared-free model) beside unpriced usage
+/// shows as "$0.000000 + unpriced", never as wholly unpriced.
+#[test]
+fn a_known_zero_cost_beside_unpriced_usage_is_shown() {
+    let stats = session_payloads::parse_session_stats(
+        &serde_json::json!({"costMicroUsd": 0, "unpricedAttempts": 1}),
+    );
+    let text = session_stats_text(&stats);
+    assert!(text.contains("Cost: $0.000000 + unpriced"), "{text}");
+}

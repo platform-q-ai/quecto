@@ -14,18 +14,23 @@ pub(super) fn session_stats_text(stats: &session_payloads::SessionStats) -> Stri
     if let Some(ratio) = stats.cache_hit_ratio {
         text.push_str(&format!(" | Cache hit: {:.1}%", ratio * 100.0));
     }
-    // #1855: usage the harness could not price is unknown, never $0.
-    let cost = stats.cost_micro_usd as f64 / 1_000_000.0;
-    match (stats.cost_micro_usd > 0, stats.unpriced_attempts > 0) {
-        (true, false) => text.push_str(&format!(" | Cost: ${cost:.6}")),
-        (true, true) => text.push_str(&format!(" | Cost: ${cost:.6} + unpriced")),
-        (false, true) => text.push_str(" | Cost: unpriced"),
-        (false, false) => {}
+    // #1855: usage the harness could not price is unknown, never $0; a
+    // known $0 (a declared-free model) beside unpriced usage is shown.
+    match (stats.known_cost_micro_usd, stats.unpriced_attempts > 0) {
+        (Some(micro), true) => text.push_str(&format!(" | Cost: ${} + unpriced", usd(micro))),
+        (Some(micro), false) if micro > 0 => text.push_str(&format!(" | Cost: ${}", usd(micro))),
+        (None, true) => text.push_str(" | Cost: unpriced"),
+        (Some(_), false) | (None, false) => {}
     }
     if let Some((used, max)) = stats.context_usage {
         text.push_str(&format!(" | Context: {used}/{max}"));
     }
     text
+}
+
+/// Micro-USD as dollars to six places.
+fn usd(micro: u64) -> String {
+    format!("{:.6}", micro as f64 / 1_000_000.0)
 }
 
 #[cfg(test)]
