@@ -170,18 +170,11 @@ pub fn answer_with(
             "the project board capability is not composed",
         );
     };
-    let environment = ProjectBoardEnvironment {
-        repo: site.repo.clone(),
-        remote: site.remote.clone(),
-        access: match parsed.writes() {
-            true => Access::Write,
-            false => Access::Read,
-        },
-        vars: std::env::vars_os().collect(),
-        cancelled,
-        launcher: site.launcher.clone(),
-        swarm_session: site.swarm_session.clone(),
+    let access = match parsed.writes() {
+        true => Access::Write,
+        false => Access::Read,
     };
+    let environment = environment_of(site, access, cancelled);
     match call.built(|| build(&environment)) {
         // The one entry point every front end's request goes through.
         Ok(handles) => run_recorded_with(&handles.operations, text, summaries, call),
@@ -191,5 +184,43 @@ pub fn answer_with(
         Err(BuildError::Unavailable(why)) => {
             call.refuse_as_front_end(op.as_deref(), FrontEndRefusal::StoreUnavailable, &why)
         }
+    }
+}
+
+/// What composition is given to build `site`'s board for `access`.
+fn environment_of(
+    site: &BoardSite,
+    access: Access,
+    cancelled: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+) -> ProjectBoardEnvironment {
+    ProjectBoardEnvironment {
+        repo: site.repo.clone(),
+        remote: site.remote.clone(),
+        access,
+        vars: std::env::vars_os().collect(),
+        cancelled,
+        launcher: site.launcher.clone(),
+        swarm_session: site.swarm_session.clone(),
+    }
+}
+
+/// The ends `site`'s session owes as it ends (#2655): each run its starts
+/// launched that the board still shows open. None when the board is not
+/// composed; why, when it cannot be read.
+///
+/// # Errors
+/// The board could not be built or read: what it said.
+pub fn left_runs(
+    site: &BoardSite,
+) -> Result<Vec<crate::application::project_board::dto::RunEnd>, String> {
+    let Some(build) = site.build else {
+        return Ok(vec![]);
+    };
+    match build(&environment_of(site, Access::Read, None)) {
+        Ok(handles) => handles
+            .operations
+            .left_runs()
+            .map_err(|error| error.to_string()),
+        Err(BuildError::NoCommitter(why) | BuildError::Unavailable(why)) => Err(why),
     }
 }

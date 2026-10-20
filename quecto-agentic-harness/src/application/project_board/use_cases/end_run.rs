@@ -29,7 +29,9 @@
 //! `lost`
 //! it is ended by whoever the domain lets ([`end_lost`]: the holder of a
 //! live claim, or anyone when nobody claims the task; one who finds the
-//! claim expired takes the task over first). With `expected_updated`, the
+//! claim expired takes the task over first), recording what is known of
+//! it as a held end does: its swarm's kept board, or every item as todo
+//! (#2657). With `expected_updated`, the
 //! task must still be as the caller read it. Only the run is written: the
 //! task is left for its holder to move. Blocking: a lost write pauses the
 //! calling thread before it is tried again.
@@ -187,18 +189,13 @@ impl EndRun {
                     None => LivenessCheck::NotChecked,
                 };
                 // A board recorded need not be kept: the run has ended.
-                let report = match (&report, &self.reports, request.outcome) {
-                    (
-                        Some(_),
-                        Some(reports),
-                        RunEndOutcome::Succeeded | RunEndOutcome::Stopped | RunEndOutcome::Failed,
-                    ) => {
+                // A loss records the kept board too (#2657).
+                let report = match (&report, &self.reports) {
+                    (Some(_), Some(reports)) => {
                         reports.recorded(id, number);
                         RunReport::Kept
                     }
-                    (_, _, RunEndOutcome::Lost) | (None, _, _) | (_, None, _) => {
-                        RunReport::Unreported
-                    }
+                    (None, _) | (_, None) => RunReport::Unreported,
                 };
                 Ok(EndedRun {
                     run: run.clone(),
@@ -265,8 +262,11 @@ impl EndRun {
                         0
                     }
                 };
-                let held = |end: HeldEnd, swarm: SwarmEnd| {
-                    let reported = match report {
+                // What is known of the run: its swarm's board as kept, or
+                // every item as a swarm that reported nothing (#2657: a
+                // loss records it too).
+                let reported = |swarm: SwarmEnd| {
+                    match report {
                         // What the swarm's board showed as it ended.
                         Some(view) => Reported {
                             items: run_items(plan, view, &*self.cells, evidence).items,
@@ -291,22 +291,23 @@ impl EndRun {
                                 unpushed: 0,
                             }
                         }
-                    };
-                    end_held(task, (run, plan), end, reported, actor, &when.now)
+                    }
+                };
+                let held = |end: HeldEnd, swarm: SwarmEnd| {
+                    end_held(task, (run, plan), end, reported(swarm), actor, &when.now)
                 };
                 let ended = match request.outcome {
                     RunEndOutcome::Succeeded => held(HeldEnd::Succeeded, SwarmEnd::Succeeded)?,
                     RunEndOutcome::Stopped => held(HeldEnd::Stopped, SwarmEnd::Cancelled)?,
                     RunEndOutcome::Failed => held(HeldEnd::Failed, SwarmEnd::Failed)?,
-                    RunEndOutcome::Lost => {
-                        let nothing = Reported {
-                            items: vec![],
-                            cost: None,
-                            report: SwarmReport::NoneKept,
-                            unpushed: 0,
-                        };
-                        end_lost(task, (run, plan), nothing, actor, &when.now)?
-                    }
+                    // Nobody accounts for it: as a swarm that was lost.
+                    RunEndOutcome::Lost => end_lost(
+                        task,
+                        (run, plan),
+                        reported(SwarmEnd::Failed),
+                        actor,
+                        &when.now,
+                    )?,
                 };
                 Ok(vec![BoardArtifact::Run(ended)])
             },

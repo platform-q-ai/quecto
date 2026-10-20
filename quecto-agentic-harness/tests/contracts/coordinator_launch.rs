@@ -22,7 +22,7 @@ use quecto::infrastructure::tools::registry::ToolRegistryImpl;
 /// A `spawn` (or, named so, `agent_cmd`) that answers `content` (an
 /// error when `failing`) with `metadata`, and keeps the arguments of each
 /// call.
-struct Spawn {
+pub(super) struct Spawn {
     name: &'static str,
     content: String,
     failing: bool,
@@ -54,11 +54,11 @@ impl Tool for Spawn {
     }
 }
 
-fn spawn(content: &str, failing: bool) -> Arc<Spawn> {
+pub(super) fn spawn(content: &str, failing: bool) -> Arc<Spawn> {
     spawned_with(content, failing, None)
 }
 
-fn spawned_with(content: &str, failing: bool, metadata: Option<&str>) -> Arc<Spawn> {
+pub(super) fn spawned_with(content: &str, failing: bool, metadata: Option<&str>) -> Arc<Spawn> {
     Arc::new(Spawn {
         name: "spawn",
         content: content.into(),
@@ -69,7 +69,7 @@ fn spawned_with(content: &str, failing: bool, metadata: Option<&str>) -> Arc<Spa
 }
 
 /// What spawn's structured answer says of a child it launched.
-fn launched_child(environment_ref: Option<&str>) -> String {
+pub(super) fn launched_child(environment_ref: Option<&str>) -> String {
     serde_json::json!({"spawned": {"uuid": "0b5e", "environment_ref": environment_ref}}).to_string()
 }
 
@@ -85,7 +85,10 @@ fn agent_cmd() -> Arc<Spawn> {
 
 /// A launcher over `spawn`, its permit watched by a registry holding it
 /// and judged by its policy (`allowed`: left enabled, or disabled).
-fn launcher(spawn: Arc<Spawn>, allowed: bool) -> (SpawnCoordinatorLauncher, ToolRegistryImpl) {
+pub(super) fn launcher(
+    spawn: Arc<Spawn>,
+    allowed: bool,
+) -> (SpawnCoordinatorLauncher, ToolRegistryImpl) {
     launcher_stopping_with(spawn, agent_cmd(), allowed)
 }
 
@@ -138,7 +141,7 @@ fn request() -> CoordinatorRequest {
 
 /// `launcher` asked to launch, from a blocking thread of a runtime, as a
 /// board call runs.
-async fn launched(
+pub(super) async fn launched(
     launcher: Arc<SpawnCoordinatorLauncher>,
 ) -> Result<LaunchedCoordinator, LaunchRefused> {
     tokio::task::spawn_blocking(move || launcher.launch(&request(), &AtomicBool::new(false)))
@@ -146,7 +149,7 @@ async fn launched(
         .unwrap()
 }
 
-const RUNNING: &str = "Subagent 'board-demo-hello-run-1' is running (uuid=0b5e) \
+pub(super) const RUNNING: &str = "Subagent 'board-demo-hello-run-1' is running (uuid=0b5e) \
      environment_ref=C4 container_config=standard workspace=/w. Use agent_cmd to interact.";
 
 #[tokio::test(flavor = "multi_thread")]
@@ -234,30 +237,6 @@ async fn spawns_refusal_or_an_answer_naming_no_container_is_a_refusal() {
     assert_eq!(
         kill,
         serde_json::json!({"agent_id": "0b5e", "command": "kill"})
-    );
-}
-
-/// #2655: the launcher names the runs its launches started, so a
-/// session's end can end those it leaves open; a launch refused started
-/// nothing.
-#[tokio::test(flavor = "multi_thread")]
-async fn the_runs_a_launcher_started_are_the_ones_it_launched() {
-    use quecto::application::project_board::ports::StartedRuns;
-    let spawned = spawned_with(RUNNING, false, Some(&launched_child(Some("C4"))));
-    let (launching, _registry) = launcher(spawned, true);
-    let launching = Arc::new(launching);
-    assert!(launching.started().is_empty(), "nothing launched yet");
-    assert!(launched(Arc::clone(&launching)).await.is_ok());
-    assert_eq!(
-        launching.started(),
-        [(Slug::parse("demo-hello").unwrap(), 1)]
-    );
-    let (refusing, _registry) = launcher(spawn("no container runtime", true), true);
-    let refusing = Arc::new(refusing);
-    assert!(launched(Arc::clone(&refusing)).await.is_err());
-    assert!(
-        refusing.started().is_empty(),
-        "a refused launch started none"
     );
 }
 

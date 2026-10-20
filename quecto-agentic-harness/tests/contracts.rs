@@ -329,6 +329,8 @@ mod shutdown_clock;
 mod shutdown_run_spawner;
 #[path = "contracts/shutdown_session_persistence.rs"]
 mod shutdown_session_persistence;
+#[path = "contracts/started_runs.rs"]
+mod started_runs;
 #[path = "contracts/subagent_lifecycle_repository.rs"]
 mod subagent_lifecycle_repository;
 #[path = "contracts/teardown_compensation.rs"]

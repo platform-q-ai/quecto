@@ -477,8 +477,32 @@ that branch and its head. A stop, a failure or a loss is never judged by it.
 
 As `lost`, the run is ended by the holder of a live claim, or by anyone when the
 task has no claim; whoever finds the claim expired takes the task over with
-`take_over` first, and then ends the run as its holder. `expected_updated` is
-optional: when given, the task must still be as it was read (`stale`).
+`take_over` first, and then ends the run as its holder. A lost run records what
+is known of it, as a stop does (#2657): its task items, owners, evidence and
+cost from its swarm's kept board, or, with none kept, each task item as todo
+and its cost unknown. (A run ended as lost by the completion that makes its
+task done records none.) `expected_updated` is optional: when given, the task
+must still be as it was read (`stale`).
+
+### A session that ends with its run open
+
+A one-shot `quecto agent -m` session that started a task, and whose reply ends
+while the run is still open, does not leave it `running` with no swarm behind
+it (#2655). Once the run ends in an orderly way (the model finished, or
+`--max-time` stopped it) and its children have settled, every run the
+session's own starts launched that the board still shows open is ended as
+`stopped`: its swarm stopped with the session that ran it, which can account
+for it, so it is not `lost`. Each end goes through the same path as an
+`end_run` from the agent tool, with its rules (the holder's live claim) and its
+liveness check (a coordinator still running keeps the run open), and its
+`board_op` record names the client `session_end`. The session says on stderr
+what became of each: "board: run <n> of task <task> was still open as this
+session ended: ended it as stopped", or, when the end was refused, "…, and
+ending it as stopped was refused (<code>): end it with end_run". A run another
+session launched, or one the board shows ended, is left alone; the task stays
+as it is, held until its claim lapses or its holder moves it. A run that
+failed (a provider error), a crash, a signal, and a harness the TUI or the
+socket protocol runs end none: such a run is still ended by hand.
 
 Never end a run whose swarm is still running. An `end_run` from the agent tool
 is refused (`run_live`, with its `task`, `run` and the running coordinator's
@@ -491,8 +515,8 @@ checked against running swarms: if the run's coordinator still runs, stop it".
 Only the run is written; the task stays as it is, for its holder to move on
 (back to `ready`, say). A run that has ended is refused (`run_ended`), as is
 one the task does not have (`no_such_run`). The answer gives the `run`, as
-`show` gives a run in full, `liveness`, and, for a run its holder ended with no
-swarm board kept, `items_recorded`: "items recorded as todo: no swarm report".
+`show` gives a run in full, `liveness`, and, for a run ended with no swarm board
+kept (as lost too), `items_recorded`: "items recorded as todo: no swarm report".
 A run recorded from its swarm's board carries no `items_recorded`: its items
 show where each stood. `quecto board end-run` takes the same fields.
 
@@ -579,7 +603,7 @@ an older quecto ignores it.
 | `turn` | Always `null`: a board call is filed under no agent turn |
 | `op` | The op the request named: `bootstrap`, `list`, `list_ready`, `list_takeable`, `show`, `create`, `update_draft`, `move`, `renew`, `take_over`, `link_pr`, `unlink_pr`, `complete`, `clear_set_aside`, `propose_plan`, `edit_plan`, `accept_plan`, `discard_plan`, `end_run`, `start`; `unknown` for a request that names none, or none the board has. A request the agent tool does not take (`bootstrap`) records its op, refused, and a `quecto board` line refused as it is read records the op it named before the refusal |
 | `front_end` | `tool` (the agent `board` tool) or `cli` (`quecto board`) |
-| `client` | For the tool `agent`, for the CLI `cli`, or, for either, as `QUECTO_BOARD_CLIENT` names it: `pocket_relay` or `other` |
+| `client` | For the tool `agent`, for the CLI `cli`, or, for either, as `QUECTO_BOARD_CLIENT` names it: `pocket_relay` or `other`; `session_end` for an `end_run` the harness makes as a session ends with a run it started still open |
 | `access` | `read` or `write`: what the op does, even when it was refused before it was read |
 | `outcome` | `ok` or `refused` |
 | `code`, `rule` | For a refusal, the answer's error code (`invalid_request`, `rule`, `not_found`, `stale`, `contended`, `clock_ahead`, ...) and, for `rule`, the rule's code (`not_holder`, `claim_expired`, `not_allowed`, ...). `internal` is no answer's code: an agent tool call whose work ended without an answer (it panicked) is recorded as it unwinds, refused as `internal`. A `quecto board` panic aborts the process and writes no record |

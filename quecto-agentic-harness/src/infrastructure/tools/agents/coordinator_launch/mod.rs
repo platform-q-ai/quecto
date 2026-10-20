@@ -66,6 +66,8 @@ pub struct SpawnCoordinatorLauncher {
     subagents: SubagentRegistry,
     timeout: Duration,
     kill_timeout: Duration,
+    /// The runs this launcher's launches started, oldest first (#2655).
+    started: std::sync::Mutex<Vec<(Slug, u32)>>,
 }
 
 impl SpawnCoordinatorLauncher {
@@ -82,6 +84,7 @@ impl SpawnCoordinatorLauncher {
             subagents,
             timeout: LAUNCH_TIMEOUT,
             kill_timeout: KILL_TIMEOUT,
+            started: std::sync::Mutex::default(),
         }
     }
 
@@ -234,7 +237,18 @@ impl CoordinatorLaunch for SpawnCoordinatorLauncher {
         });
         match waited {
             Waited::Answered(Ok(result)) => match result.is_error {
-                false => self.running(&runtime, result, cancelled),
+                false => {
+                    let launched = self.running(&runtime, result, cancelled);
+                    // Only a coordinator running in its container started
+                    // the run: a refusal stopped what it launched.
+                    if launched.is_ok() {
+                        self.started
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .push((request.task.clone(), request.run));
+                    }
+                    launched
+                }
                 true => Err(LaunchRefused::because(result.content)),
             },
             Waited::Answered(Err(error)) => Err(LaunchRefused::because(error.to_string())),
@@ -262,7 +276,10 @@ impl RunLiveness for SpawnCoordinatorLauncher {
 
 impl StartedRuns for SpawnCoordinatorLauncher {
     fn started(&self) -> Vec<(Slug, u32)> {
-        vec![]
+        self.started
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 }
 

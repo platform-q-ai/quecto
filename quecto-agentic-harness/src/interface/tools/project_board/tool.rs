@@ -130,9 +130,46 @@ impl BoardTool {
 
 impl BoardTool {
     /// Ends the runs this session's starts left open, as its session ends
-    /// (#2655): one line each, saying how it went.
+    /// (#2655): each through the path a model's `end_run` takes, recorded
+    /// as the session's end (`client: session_end`); one line each, saying
+    /// how it went. Blocking: the board's git holds the calling thread.
     pub fn end_left_runs(&self) -> Vec<String> {
-        vec![]
+        let ends = match site::left_runs(&self.site) {
+            Ok(ends) => ends,
+            Err(why) => {
+                return vec![format!(
+                    "board: the runs this session started could not be read as it ended \
+                     ({why}): end any still open with end_run"
+                )];
+            }
+        };
+        ends.iter().map(|end| self.end_left(end)).collect()
+    }
+
+    /// Ends `end`'s run as it says, recorded as the session's end.
+    fn end_left(&self, end: &crate::application::project_board::dto::RunEnd) -> String {
+        let (task, run, outcome) = (end.task.as_str(), end.run, end.outcome.as_str());
+        let request = json!({"op": "end_run", "task": task, "run": run, "outcome": outcome});
+        let arrival = self
+            .recordings
+            .current()
+            .map(|recording| (recording, Instant::now()));
+        let mut call = BoardCall::arrived(arrival, FrontEnd::Tool, Client::SessionEnd);
+        let answer = site::answer(&self.site, &request.to_string(), None, &mut call);
+        call.finish(&answer, false);
+        let opened =
+            format!("board: run {run} of task {task} was still open as this session ended");
+        match answer.get("ok") == Some(&Value::Bool(true)) {
+            true => {
+                format!("{opened}: ended it as {outcome}")
+            }
+            false => {
+                let code = answer["error"]["code"].as_str().unwrap_or("refused");
+                format!(
+                    "{opened}, and ending it as {outcome} was refused ({code}): end it with end_run"
+                )
+            }
+        }
     }
 }
 
