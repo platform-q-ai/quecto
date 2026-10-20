@@ -242,6 +242,21 @@ pub(crate) async fn refuse_long_line(tx: &tokio::sync::mpsc::Sender<StreamEvent>
         .await;
 }
 
+/// The next event a relay forwards, or `None` once either its source or
+/// its caller has gone (#2436, #2628 review): a send's transport stops when
+/// its receiver is dropped, so a relay whose caller has dropped its own
+/// receiver returns, dropping the source's, and never leaves the send
+/// waiting behind it.
+pub(in crate::infrastructure::providers) async fn next_event(
+    events: &mut tokio::sync::mpsc::Receiver<StreamEvent>,
+    tx: &tokio::sync::mpsc::Sender<StreamEvent>,
+) -> Option<StreamEvent> {
+    tokio::select! {
+        event = events.recv() => event,
+        () = tx.closed() => None,
+    }
+}
+
 #[cfg(test)]
 #[path = "sse_common_tests.rs"]
 mod tests;
