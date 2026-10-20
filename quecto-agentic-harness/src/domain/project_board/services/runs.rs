@@ -180,6 +180,11 @@ pub struct Reported {
     pub items: Vec<RunItem>,
     pub cost: Option<u64>,
     pub report: SwarmReport,
+    /// How many of the revisions its task items' evidence names the
+    /// board's remote does not hold, on a branch or tag there (#2666):
+    /// work that never left the swarm's container. Only a success is
+    /// judged by it, so an end of any other kind gives 0.
+    pub unpushed: usize,
 }
 
 /// The open run of `task` ended by `actor`, the holder of a live claim
@@ -212,6 +217,7 @@ pub fn end_held(
         items,
         cost,
         report,
+        unpushed: _,
     } = reported;
     // Folded first, so a run that has ended, or items the plan does not
     // have, answer as such before the items are judged.

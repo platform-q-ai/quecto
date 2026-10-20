@@ -39,8 +39,8 @@ use crate::application::project_board::dto::{
 use crate::application::project_board::dto::{SwarmEnd, SwarmRunView};
 use crate::application::project_board::fold_back::{Evidence, cost_of, run_items};
 use crate::application::project_board::ports::{
-    BoardArtifact, BoardClock, BoardStoreError, BoardTextCells, ProjectBoardStore, RunLiveness,
-    SwarmRunReports,
+    BoardArtifact, BoardClock, BoardStoreError, BoardTextCells, ProjectBoardStore, RemoteRevisions,
+    RunLiveness, SwarmRunReports,
 };
 use crate::application::project_board::telemetry::OpFacts;
 use crate::domain::project_board::entities::claim::Identity;
@@ -71,6 +71,7 @@ impl EndRun {
         store: Arc<dyn ProjectBoardStore>,
         clock: Arc<dyn BoardClock>,
         cells: Arc<dyn BoardTextCells>,
+        _revisions: Arc<dyn RemoteRevisions>,
         liveness: Option<Arc<dyn RunLiveness>>,
         reports: Option<Arc<dyn SwarmRunReports>>,
     ) -> Result<Self, ProjectBoardError> {
@@ -246,6 +247,7 @@ impl EndRun {
                             items: run_items(plan, view, &*self.cells, evidence).items,
                             cost: Some(cost_of(view)),
                             report: SwarmReport::Kept,
+                            unpushed: 0,
                         },
                         // Nothing reported: every item as a fold-back maps
                         // a swarm that reported nothing (a start's undo's
@@ -261,6 +263,7 @@ impl EndRun {
                                     .items,
                                 cost: None,
                                 report: SwarmReport::NoneKept,
+                                unpushed: 0,
                             }
                         }
                     };

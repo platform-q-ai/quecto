@@ -133,6 +133,7 @@ pub fn assembled_reporting(
             Arc::clone(&store),
             Arc::clone(&clock),
             Arc::new(MarkdownTextCells),
+            crate::application::project_board::use_cases::fixtures_tests::Remote::holding_all(),
             liveness,
             reports,
         )?,

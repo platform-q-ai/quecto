@@ -474,6 +474,7 @@ fn rule_schema(rule: &BoardRuleError) -> Option<&SchemaError> {
         | R::NoSuchChange(..)
         | R::NoSuchRun(..)
         | R::ItemsNotDone { .. }
+        | R::NotPushed { .. }
         | R::ChangeAhead { .. }
         | R::DiscussionClosed(..)
         | R::DiscussionLinked { .. }

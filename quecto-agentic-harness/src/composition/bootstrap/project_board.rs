@@ -20,7 +20,7 @@ use std::time::SystemTime;
 use crate::application::project_board::operations::{BoardOperationParts, NoPullRequestHost};
 use crate::application::project_board::ports::{
     BoardClock, BoardStoreError, CoordinatorLaunch, ProjectBoardStore, PullRequestStates,
-    PullRequestStatesError, RunLiveness, SwarmRunReports,
+    PullRequestStatesError, RemoteRevisions, RunLiveness, SwarmRunReports,
 };
 use crate::application::project_board::telemetry::{BoardRecording, RecordingSwitch};
 use crate::application::project_board::use_cases::{
@@ -113,6 +113,7 @@ fn build_with_warnings(
         Arc::clone(&store) as _,
     ));
     let prs = pull_request_states(&url, &environment.vars);
+    let revisions: Arc<dyn RemoteRevisions> = Arc::clone(&store) as _;
     let store: Arc<dyn ProjectBoardStore> = store;
     let built = |error: crate::application::project_board::dto::ProjectBoardError| {
         unavailable(error.to_string())
@@ -136,6 +137,9 @@ fn build_with_warnings(
             Arc::clone(&store),
             Arc::clone(&clock),
             Arc::new(MarkdownTextCells),
+            // A success is judged by the revisions the board's own remote
+            // holds (#2666).
+            Arc::clone(&revisions),
             environment
                 .launcher
                 .clone()

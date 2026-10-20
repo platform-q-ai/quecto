@@ -628,6 +628,8 @@ mod committer;
 mod fetch_state;
 #[path = "store_fetch.rs"]
 mod fetching;
+#[path = "store_reach.rs"]
+mod reach;
 #[path = "store_write.rs"]
 mod writing;
 

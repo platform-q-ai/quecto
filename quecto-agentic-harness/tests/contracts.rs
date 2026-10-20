@@ -199,6 +199,8 @@ mod project_board_kinds;
 mod project_board_op_log;
 #[path = "contracts/project_board_store.rs"]
 mod project_board_store;
+#[path = "contracts/remote_revisions.rs"]
+mod remote_revisions;
 
 #[path = "contracts/provider_runtime_factory.rs"]
 mod provider_runtime_factory;
