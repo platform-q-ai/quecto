@@ -311,25 +311,28 @@ fn a_watermark_cut_misses_once_then_reads_again() {
 }
 
 /// #2628 review: a turn that adds more than 20 positions that do not
-/// collapse — here a reply and then a prompt carrying 24 images — outruns
-/// the look-back from the new last marker, so only the second breakpoint,
-/// at the message the request before ended at, reads the conversation back.
+/// collapse — here a reply, then three queued steers each carrying the
+/// eight images a prompt may (1 + 3 x 9 = 28 positions) — outruns the
+/// look-back from the new last marker, so only the second breakpoint, at
+/// the message the request before ended at, reads the conversation back.
 #[test]
 fn a_turn_of_more_than_twenty_positions_reads_back_through_the_second_breakpoint() {
     use crate::domain::conversation::value_objects::message::UserImageBlock;
     let mut messages = vec![Message::system("sys"), Message::user("go")];
     let mut steps = vec![messages.clone()];
     messages.push(Message::assistant("look at these", vec![]));
-    let mut shots = Message::user("what changed?");
-    for at in 0..24 {
-        shots
-            .user_image_blocks
-            .push(UserImageBlock::unchecked_for_tests(
-                quecto_image::ImageMime::Png,
-                format!("image{at}"),
-            ));
+    for steer in 0..3 {
+        let mut shots = Message::user(format!("and these, set {steer}"));
+        for at in 0..8 {
+            shots
+                .user_image_blocks
+                .push(UserImageBlock::unchecked_for_tests(
+                    quecto_image::ImageMime::Png,
+                    format!("image{steer}-{at}"),
+                ));
+        }
+        messages.push(shots);
     }
-    messages.push(shots);
     steps.push(messages.clone());
     assert_each_request_reads_the_last(&steps, false);
 }

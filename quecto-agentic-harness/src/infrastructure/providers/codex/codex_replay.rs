@@ -18,6 +18,7 @@ use crate::domain::shared::error::DomainError;
 use crate::infrastructure::providers::transport::attempt_profile::{Profile, Surface};
 use crate::infrastructure::providers::transport::attempt_transport::PassiveAttempt;
 use crate::infrastructure::providers::transport::input_prefix::PendingInput;
+use crate::infrastructure::providers::transport::sse_common::next_event;
 use crate::infrastructure::providers::transport::stream_idle::BodyError;
 
 /// Everything one request's sends share.
@@ -297,19 +298,6 @@ impl CodexProvider {
             }
             None => self.pump_codex_sse(call, body, tx, handler).await,
         }
-    }
-}
-
-/// The next event of a send, or `None` once the caller has gone: a send's
-/// transport stops when its receiver is dropped, so a caller that drops its
-/// own must not leave the send blocked behind this relay.
-async fn next_event(
-    events: &mut tokio::sync::mpsc::Receiver<StreamEvent>,
-    tx: &tokio::sync::mpsc::Sender<StreamEvent>,
-) -> Option<StreamEvent> {
-    tokio::select! {
-        event = events.recv() => event,
-        () = tx.closed() => None,
     }
 }
 

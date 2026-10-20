@@ -19,6 +19,7 @@ use crate::domain::inference::value_objects::token_estimate::{
 use crate::infrastructure::providers::transport::input_prefix::{
     InputItem, MeasuredInput, PendingInput, digest, serialized,
 };
+use crate::infrastructure::providers::transport::sse_common::next_event;
 use serde_json::Value;
 
 /// The request's input measured against its session's baseline, for the
@@ -51,15 +52,18 @@ pub(super) fn forward_accepting(
     let (inner, mut events) = tokio::sync::mpsc::channel(64);
     let forward = async move {
         let mut measured = Some(measured);
-        loop {
-            let event = tokio::select! {
-                event = events.recv() => event,
-                () = tx.closed() => None,
+        while let Some(event) = next_event(&mut events, &tx).await {
+            // Output, or the reply's end, shows the send accepted; an error
+            // does not (as `codex_replay::forward` reads it).
+            let accepted = match &event {
+                StreamEvent::TextDelta(_)
+                | StreamEvent::ThinkingDelta(_)
+                | StreamEvent::ToolCallStart { .. }
+                | StreamEvent::ToolCallDelta(_)
+                | StreamEvent::ToolCallEnd { .. }
+                | StreamEvent::Done(_) => true,
+                StreamEvent::Error(_) => false,
             };
-            let Some(event) = event else {
-                break;
-            };
-            let accepted = !matches!(event, StreamEvent::Error(_));
             accept(measured.take_if(|_| accepted), accepted);
             if tx.send(event).await.is_err() {
                 break;
