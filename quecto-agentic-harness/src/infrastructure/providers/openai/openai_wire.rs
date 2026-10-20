@@ -8,13 +8,31 @@ use std::borrow::Cow;
 use serde_json::Value;
 
 use super::openai_stream_error::{is_stream_error_chunk, is_throttle_chunk};
-use crate::infrastructure::providers::transport::admission_feedback::is_typed_throttle;
+use crate::domain::inference::value_objects::attempt_diagnostics::ErrorCode;
 use crate::infrastructure::providers::transport::attempt_events::Vocabulary;
 use crate::infrastructure::providers::transport::attempt_profile::Surface;
 use crate::infrastructure::providers::transport::sse_progress::filled;
 use crate::infrastructure::providers::transport::wire_dialect::{
-    Ending, Generated, WireDialect, text_len,
+    Ending, ErrorName, Generated, WireDialect, text_len,
 };
+
+/// The error types and codes the OpenAI-compatible chat wire names (#2609
+/// review): OpenAI's and those of the compatible vendors that serve it
+/// (OpenRouter relays an upstream's, such as an overloaded Claude's), as
+/// the chunk renderer ([`super::openai_stream_error`]) knows them. Read
+/// only from a chunk's or a body's `error` object.
+static CHAT_ERRORS: [ErrorName; 10] = [
+    ErrorName::throttle("rate_limit_exceeded", ErrorCode::RateLimitExceeded),
+    ErrorName::throttle("rate_limit_error", ErrorCode::RateLimitExceeded),
+    ErrorName::throttle("overloaded_error", ErrorCode::Overloaded),
+    ErrorName::plain("server_error", ErrorCode::ServerError),
+    ErrorName::plain("insufficient_quota", ErrorCode::InsufficientQuota),
+    ErrorName::plain("usage_limit_reached", ErrorCode::UsageLimitReached),
+    ErrorName::terminal("authentication_error", ErrorCode::AuthenticationError),
+    ErrorName::terminal("permission_error", ErrorCode::PermissionError),
+    ErrorName::terminal("invalid_request_error", ErrorCode::InvalidRequestError),
+    ErrorName::terminal("invalid_api_key", ErrorCode::InvalidApiKey),
+];
 
 /// The chat wire names no events: a chunk is known by its choices, and an
 /// error chunk is its only terminal event.
@@ -53,6 +71,13 @@ impl WireDialect for OpenAiWire {
     }
     fn vocabulary(&self) -> &'static Vocabulary {
         &CHAT
+    }
+    fn error_names(&self) -> &'static [ErrorName] {
+        &CHAT_ERRORS
+    }
+    /// A chunk's or a body's `error` object.
+    fn error_objects<'a>(&self, value: &'a Value) -> Vec<&'a Value> {
+        value.get("error").into_iter().collect()
     }
     fn event_kind(&self, _named: &str, value: &Value) -> &'static str {
         chat_kind(value)
@@ -105,7 +130,7 @@ impl WireDialect for OpenAiWire {
             // A numeric 429/529 chunk throttles too (#2155 review).
             Some(value) if is_stream_error_chunk(value) => Ending::Failed {
                 feedback: Cow::Borrowed(value),
-                throttle: is_typed_throttle(value) || is_throttle_chunk(value),
+                throttle: self.is_throttle(value) || is_throttle_chunk(value),
                 record: None,
             },
             _ => Ending::Open,

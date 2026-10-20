@@ -21,10 +21,6 @@ mod admission_recovery;
 mod admission_registry;
 #[path = "contracts/admission_secret_source.rs"]
 mod admission_secret_source;
-#[path = "contracts/admission_typed_feedback.rs"]
-mod admission_typed_feedback;
-#[path = "contracts/admission_typed_feedback_cases.rs"]
-mod admission_typed_feedback_cases;
 #[path = "contracts/agent_loop.rs"]
 mod agent_loop;
 #[path = "contracts/attempt_admission.rs"]

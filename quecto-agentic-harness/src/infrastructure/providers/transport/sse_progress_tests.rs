@@ -6,7 +6,7 @@
 use super::{carries_output, first_type, long_event_carries_output};
 use crate::infrastructure::providers::transport::attempt_events::Vocabulary;
 use crate::infrastructure::providers::transport::wire_dialect::{
-    Ending, Generated, TEST_WIRE, WireDialect,
+    Ending, ErrorName, Generated, TEST_WIRE, WireDialect,
 };
 use serde_json::Value;
 
@@ -25,6 +25,12 @@ impl WireDialect for NoDone {
     }
     fn vocabulary(&self) -> &'static Vocabulary {
         TEST_WIRE.vocabulary()
+    }
+    fn error_names(&self) -> &'static [ErrorName] {
+        TEST_WIRE.error_names()
+    }
+    fn error_objects<'a>(&self, value: &'a Value) -> Vec<&'a Value> {
+        TEST_WIRE.error_objects(value)
     }
     fn generated(&self, value: &Value) -> Generated {
         TEST_WIRE.generated(value)

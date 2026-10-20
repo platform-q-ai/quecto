@@ -35,7 +35,7 @@ async fn dispatch_register_tools_rejects_disabled_core_shadow() {
 
     let mut agent = cov_agent_with_registry(registry);
     let mut messages = Vec::new();
-    let mut session = super::super::uds_session::AgentSession::new("stub".into());
+    let mut session = super::super::uds_session::AgentSession::new("stub".into(), crate::application::agent_turn::use_cases::resume_after_provider_failure::ResumeAfterProviderFailure::new());
     let session_key = "cli:test".to_string();
     let mut writer = tokio::io::sink();
     let client_registry = new_client_tool_registry();
@@ -104,7 +104,7 @@ async fn dispatch_register_tools_preflights_registry_rejection_before_client_sta
     registry.remove("blocked_ext");
     let mut agent = cov_agent_with_registry(registry);
     let mut messages = Vec::new();
-    let mut session = super::super::uds_session::AgentSession::new("stub".into());
+    let mut session = super::super::uds_session::AgentSession::new("stub".into(), crate::application::agent_turn::use_cases::resume_after_provider_failure::ResumeAfterProviderFailure::new());
     let session_key = "cli:test".to_string();
     let mut writer = tokio::io::sink();
     let client_registry = new_client_tool_registry();
@@ -172,7 +172,7 @@ async fn dispatch_register_tools_accepts_stable_id_for_policy_mutation() {
     let registry = crate::infrastructure::tools::registry::ToolRegistryImpl::new();
     let mut agent = cov_agent_with_registry(registry);
     let mut messages = Vec::new();
-    let mut session = super::super::uds_session::AgentSession::new("stub".into());
+    let mut session = super::super::uds_session::AgentSession::new("stub".into(), crate::application::agent_turn::use_cases::resume_after_provider_failure::ResumeAfterProviderFailure::new());
     let session_key = "cli:test".to_string();
     let mut writer = tokio::io::sink();
     let client_registry = new_client_tool_registry();

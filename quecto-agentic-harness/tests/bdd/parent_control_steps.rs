@@ -444,6 +444,7 @@ fn launch_harness(world: &mut QuectoWorld, bind_deadline: BindDeadline) {
                 coordinator: false,
             }),
             teardown_graph: Some(build_teardown_graph),
+            automatic_turns: quecto::composition::bootstrap::agent_turn::build_automatic_turns,
             environment_control: None,
         })
     });

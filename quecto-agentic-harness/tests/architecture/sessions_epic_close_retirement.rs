@@ -76,7 +76,6 @@ const DISPOSITION: &[(&str, &str)] = &[
     ("src/interface/cli/uds_cancel_history.rs", "cancellation"),
     ("src/interface/cli/uds_session_controls.rs", "control"),
     ("src/interface/cli/uds_session_notify.rs", "notification"),
-    ("src/interface/cli/uds_session_suspension.rs", "suspension"),
     ("src/interface/cli/uds_session_usage.rs", "stats"),
 ];
 

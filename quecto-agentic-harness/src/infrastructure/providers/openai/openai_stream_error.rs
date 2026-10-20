@@ -126,7 +126,8 @@ fn stream_error_status(value: &serde_json::Value) -> u16 {
     if let Some(status) = named(CLIENT_ERRORS) {
         return status;
     }
-    if crate::infrastructure::providers::transport::admission_feedback::is_typed_throttle(value) {
+    use crate::infrastructure::providers::transport::wire_dialect::WireDialect;
+    if super::openai_wire::OPENAI_WIRE.is_throttle(value) {
         return if fields.contains(&Some("overloaded_error")) {
             529
         } else {

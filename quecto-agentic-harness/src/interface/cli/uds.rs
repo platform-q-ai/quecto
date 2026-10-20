@@ -275,6 +275,8 @@ pub(super) struct PromptCommand {
     pub(super) type_name: String,
     pub(super) message: super::uds_session::PromptBody,
     pub(super) streaming_behavior: Option<StreamingBehavior>,
+    /// The work the turn is: a client's instruction, or a swarm wake (#1909).
+    pub(super) work: crate::domain::inference::services::turn_suspension::Work,
 }
 
 /// Persist the user prompt about to run so it survives an ungraceful exit
@@ -295,6 +297,7 @@ pub(super) async fn handle_prompt(ctx: &mut DispatchCtx<'_>, cmd: PromptCommand)
         type_name,
         message,
         streaming_behavior,
+        work,
     } = cmd;
     if ctx.session.is_streaming() {
         prompt_admission::handle_busy_prompt(
@@ -307,24 +310,20 @@ pub(super) async fn handle_prompt(ctx: &mut DispatchCtx<'_>, cmd: PromptCommand)
         .await;
         return false;
     }
-    if ctx.turn_control.is_steer_pending()
-        && !matches!(streaming_behavior, Some(StreamingBehavior::Steer))
-    {
-        pending::queue_prompt(ctx, id.as_deref(), &type_name, message, false).await;
+    if ctx.turn_control.is_steer_pending() && !work.is_steer() {
+        // Queued behind the steer as the work it is (#1909).
+        pending::queue_prompt(ctx, id.as_deref(), &type_name, message, work).await;
         return false;
     }
-    ctx.session.resume_automatic_turns();
-    // #1721: a failure during this turn is dated at the generation known now.
-    ctx.session
-        .observe_control_generation(ctx.turn_control.control_generation());
+    // #1909: the turn starts as the work it is (a prompt or steer re-arms
+    // automatic turns); a failure in it is dated at the generation now (#1721).
+    let steer = work.is_steer();
+    let generation = ctx.turn_control.control_generation();
+    ctx.session.automatic_turns().start_turn(work, generation);
     // Reload runtime configuration (#1849): the pull-based poll before every
     // prompt (ADR-0002), rebuilt off the runtime; a failure keeps last-good.
     super::uds_dispatch_reload::poll_reload(ctx).await;
-    let cancel_rx = arm_prompt_cancel(
-        ctx,
-        matches!(streaming_behavior, Some(StreamingBehavior::Steer)),
-    )
-    .await;
+    let cancel_rx = arm_prompt_cancel(ctx, steer).await;
     let Some(cancel_rx) = cancel_rx else {
         ctx.session.record_control(
             id.as_deref(),
@@ -431,7 +430,7 @@ async fn drain_pending_and_nudge_turns(ctx: &mut DispatchCtx<'_>) {
     }
 
     drain_and_run_pending(ctx).await;
-    if !ctx.session.automatic_turns_allowed {
+    if !ctx.session.automatic_turns_allowed() {
         return;
     }
 
@@ -443,7 +442,7 @@ async fn drain_pending_and_nudge_turns(ctx: &mut DispatchCtx<'_>) {
 
     let mut no_progress_turns = 0usize;
     for _ in 0..MAX_WORKFLOW_NUDGES {
-        if !ctx.session.automatic_turns_allowed {
+        if !ctx.session.automatic_turns_allowed() {
             break;
         }
         // #930: an abort that lands WHILE this auto-continue loop is mid-flight is

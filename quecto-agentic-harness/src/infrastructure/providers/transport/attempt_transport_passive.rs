@@ -42,7 +42,8 @@ impl PassiveAttempt {
     /// could not be read, which ends the attempt as a read error, as it does
     /// through admission.
     pub(in crate::infrastructure::providers) fn http_error(&self, status: u16, body: Option<&str>) {
-        self.receipt.http_error(status, body.unwrap_or_default());
+        self.receipt
+            .http_error(self.observer.dialect(), status, body.unwrap_or_default());
         self.receipt.termination(match body {
             Some(_) => Termination::HttpError,
             None => Termination::ReadError,
@@ -69,7 +70,7 @@ impl PassiveAttempt {
             Ok(body) => self.http_error(status, Some(body)),
             Err(BodyError::Read(_)) => self.http_error(status, None),
             Err(BodyError::Idle(_)) => {
-                self.receipt.http_error(status, "");
+                self.receipt.http_error(self.observer.dialect(), status, "");
                 self.receipt.termination(Termination::Idle);
             }
         }

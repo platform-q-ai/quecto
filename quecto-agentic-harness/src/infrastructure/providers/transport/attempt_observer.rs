@@ -99,7 +99,7 @@ impl ProtocolObserver {
             let mut state = receipt.0.lock().unwrap();
             match serde_json::from_str::<serde_json::Value>(data) {
                 Ok(value) => {
-                    diagnostics::typed(&mut state.diagnostics, &value);
+                    diagnostics::typed(&mut state.diagnostics, self.dialect, &value);
                     let generated = self.dialect.generated(&value);
                     state.diagnostics.generated_text |= generated.text;
                     state.diagnostics.generated_tool_call |= generated.tool_call;
@@ -167,7 +167,7 @@ impl ProtocolObserver {
             }
         }
         if let Some((feedback, throttle)) = failure {
-            receipt.typed_as(&feedback, throttle);
+            receipt.typed_as(self.dialect, &feedback, throttle);
             receipt.fail();
         }
         self.terminal = true;

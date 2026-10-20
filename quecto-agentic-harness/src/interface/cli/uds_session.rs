@@ -23,16 +23,9 @@ pub struct AgentSession {
     extensions: super::uds_extensions::Extensions, // #2446: warnings, generation
     runtime_store: Option<crate::application::provider_runtime::RuntimeSnapshotStore>,
     streaming: bool,
-    pub(crate) automatic_turns_allowed: bool,
-    /// Why automatic turns are off and at which swarm control generation
-    /// (#1721): a later resume re-arms provider-failure suspensions.
-    suspension: Option<TurnSuspension>,
-    /// Latest swarm control generation this session has seen (control
-    /// receipts, the startup probe); dates a suspension when it happens.
-    last_control_generation: Option<u64>,
-    /// A resume re-armed this session: it owes the run one turn to continue
-    /// its interrupted work, taken by the next runnable wake.
-    pending_resume_turn: bool,
+    /// Whether automatic turns run, why not, and what re-arms them
+    /// (#1721, #1909): the agent-turn use case composition built.
+    automatic_turns: ResumeAfterProviderFailure,
     generation: u64,
     /// Cumulative provider-reported usage for this in-memory UDS session.
     usage: SessionUsage,
@@ -53,9 +46,7 @@ pub struct AgentSession {
 }
 #[path = "uds_session_admission.rs"]
 mod admission_warnings;
-#[path = "uds_session_suspension.rs"]
-mod suspension;
-pub use suspension::{SuspensionCause, TurnSuspension};
+use crate::application::agent_turn::use_cases::resume_after_provider_failure::ResumeAfterProviderFailure;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PendingMessage {
@@ -227,7 +218,7 @@ fn escape_text(value: &str) -> String {
         .replace('>', "&gt;")
 }
 impl AgentSession {
-    pub fn new(model: String) -> Self {
+    pub fn new(model: String, automatic_turns: ResumeAfterProviderFailure) -> Self {
         Self {
             model,
             admission_warnings: Vec::new(),
@@ -235,10 +226,7 @@ impl AgentSession {
             extensions: None,
             runtime_store: None,
             streaming: false,
-            automatic_turns_allowed: true,
-            suspension: None,
-            last_control_generation: None,
-            pending_resume_turn: false,
+            automatic_turns,
             generation: 1,
             usage: SessionUsage::default(),
             context_tokens: 0,
@@ -252,6 +240,14 @@ impl AgentSession {
     }
     pub fn model(&self) -> &str {
         &self.model
+    }
+    /// Whether automatic turns (wakes, queued notes, nudges) may run.
+    pub(crate) fn automatic_turns_allowed(&self) -> bool {
+        self.automatic_turns.allowed()
+    }
+    /// The session's automatic turns, which the dispatch controllers drive.
+    pub(crate) fn automatic_turns(&mut self) -> &mut ResumeAfterProviderFailure {
+        &mut self.automatic_turns
     }
     pub fn is_streaming(&self) -> bool {
         self.streaming
@@ -468,7 +464,7 @@ impl AgentSession {
             workflow,
             execution: None,
             sync: 1,
-            automatic_turns_suspended: !self.automatic_turns_allowed,
+            automatic_turns_suspended: !self.automatic_turns.allowed(),
             repeated_failure_notifications: self.repeated_failure_notifications,
         }
     }
@@ -612,7 +608,3 @@ mod uds_session_1060_tests;
 
 #[path = "uds_session_controls.rs"]
 mod controls;
-
-#[cfg(test)]
-#[path = "uds_session_suspension_tests.rs"]
-mod suspension_tests;

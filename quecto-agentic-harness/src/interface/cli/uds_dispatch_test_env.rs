@@ -165,7 +165,10 @@ impl DispatchTestEnv {
             latch,
             agent,
             messages: Vec::new(),
-            session: AgentSession::new("stub".into()),
+            session: AgentSession::new(
+                "stub".into(),
+                super::dispatch_session_roster_tests::automatic_turns(),
+            ),
             session_key: "cli:test".to_string(),
             store,
             sessions,

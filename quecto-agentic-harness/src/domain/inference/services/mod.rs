@@ -4,6 +4,7 @@ pub mod output_limit;
 pub mod provider_error;
 pub mod provider_retry;
 pub mod terminal_guidance;
+pub mod turn_suspension;
 pub mod usage_accounting;
 
 #[cfg(test)]

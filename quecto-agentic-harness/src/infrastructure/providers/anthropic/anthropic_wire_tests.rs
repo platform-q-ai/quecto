@@ -269,3 +269,155 @@ fn a_long_anthropic_event_is_output_by_the_type_its_start_names() {
         assert!(!long(start), "{start}");
     }
 }
+
+/// #1679 P2 AC5, #2609 review: a Messages payload is a throttle by its
+/// `error` object's typed fields alone, a billing name taking precedence.
+/// Moved from `transport/` (and the contract suite) with this wire's error
+/// names; a Responses-only name or shape is none of this wire's.
+#[test]
+fn a_messages_throttle_is_read_from_its_error_object_only() {
+    for (value, throttle) in [
+        (
+            json!({"type": "error", "error": {"type": "rate_limit_error"}}),
+            true,
+        ),
+        (
+            json!({"type": "error", "error": {"type": "overloaded_error", "message": "x"}}),
+            true,
+        ),
+        (
+            json!({"error": {"type": "rate_limit_error", "code": "insufficient_quota"}}),
+            false,
+        ),
+        (
+            json!({"error": {"type": "overloaded_error", "code": "billing_error"}}),
+            false,
+        ),
+        (
+            json!({"error": {"message": "429 rate_limit_error overloaded_error"}}),
+            false,
+        ),
+        (json!({"error": {"type": "authentication_error"}}), false),
+        (json!({"error": {"type": "invalid_request_error"}}), false),
+        (json!({"type": "rate_limit_error"}), false),
+        (json!(null), false),
+        // The root of an `error` event is not read (#2620 review): neither
+        // its throttle nor its billing name counts.
+        (json!({"type": "error", "code": "overloaded_error"}), false),
+        (
+            json!({"type": "error", "code": "billing_error", "error": {"type": "overloaded_error"}}),
+            true,
+        ),
+        // Declared narrowing: another wire's shapes and names.
+        (
+            json!({"type": "error", "code": "rate_limit_exceeded"}),
+            false,
+        ),
+        (json!({"error": {"code": "rate_limit_exceeded"}}), false),
+        (
+            json!({"response": {"error": {"type": "overloaded_error"}}}),
+            false,
+        ),
+    ] {
+        assert_eq!(ANTHROPIC_WIRE.is_throttle(&value), throttle, "{value}");
+    }
+}
+
+/// An HTTP error body naming a billing error or a request this wire
+/// refuses is terminal; a throttle is not.
+#[test]
+fn a_messages_error_body_is_terminal_by_its_typed_fields() {
+    for (value, terminal) in [
+        (
+            json!({"type": "error", "error": {"type": "authentication_error"}}),
+            true,
+        ),
+        (
+            json!({"type": "error", "error": {"type": "permission_error"}}),
+            true,
+        ),
+        (
+            json!({"type": "error", "error": {"type": "invalid_request_error"}}),
+            true,
+        ),
+        (
+            json!({"type": "error", "error": {"type": "billing_error"}}),
+            true,
+        ),
+        (
+            json!({"type": "error", "error": {"type": "overloaded_error"}}),
+            false,
+        ),
+        (
+            json!({"type": "error", "error": {"type": "api_error"}}),
+            false,
+        ),
+        // Declared narrowing: another wire's refusal names and shapes.
+        (json!({"error": {"code": "invalid_api_key"}}), false),
+        (
+            json!({"response": {"error": {"type": "invalid_request_error"}}}),
+            false,
+        ),
+    ] {
+        assert_eq!(
+            ANTHROPIC_WIRE.is_terminal_error(&value),
+            terminal,
+            "{value}"
+        );
+    }
+}
+
+/// The Messages error names an attempt records.
+#[test]
+fn a_messages_error_records_its_code() {
+    use crate::domain::inference::value_objects::attempt_diagnostics::ErrorCode;
+    for (name, code) in [
+        ("rate_limit_error", ErrorCode::RateLimitExceeded),
+        ("overloaded_error", ErrorCode::Overloaded),
+        ("authentication_error", ErrorCode::AuthenticationError),
+        ("permission_error", ErrorCode::PermissionError),
+        ("invalid_request_error", ErrorCode::InvalidRequestError),
+    ] {
+        assert_eq!(
+            ANTHROPIC_WIRE.error_name(name).map(|known| known.code()),
+            Some(code),
+            "{name}"
+        );
+    }
+    for name in [
+        "rate_limit_exceeded",
+        "server_error",
+        "invalid_api_key",
+        "usage_limit_reached",
+    ] {
+        assert!(ANTHROPIC_WIRE.error_name(name).is_none(), "{name}");
+    }
+    let value = json!({"response": {"incomplete_details": {"reason": "max_output_tokens"}}});
+    assert_eq!(ANTHROPIC_WIRE.incomplete_reason(&value), None);
+    let observe = |data: &str| {
+        let profile = crate::infrastructure::providers::transport::attempt_profile::Profile::new(
+            &ANTHROPIC_WIRE,
+            Surface::Incremental,
+            Default::default(),
+        );
+        crate::infrastructure::providers::transport::attempt_transport::observed(
+            profile,
+            &["event: error", data],
+            None,
+        )
+        .diagnostics
+        .error_code
+    };
+    // An object naming two known errors records its `type`'s, as before
+    // the move; a root code is not read (#2620 review).
+    assert_eq!(
+        observe(
+            r#"data: {"type":"error","error":{"type":"overloaded_error","code":"rate_limit_error"}}"#
+        ),
+        Some(ErrorCode::Overloaded)
+    );
+    assert_eq!(
+        observe(r#"data: {"type":"error","code":"overloaded_error"}"#),
+        None
+    );
+}

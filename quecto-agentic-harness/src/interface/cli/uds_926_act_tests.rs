@@ -55,7 +55,7 @@ impl ActEnv {
                 },
             ),
             messages: Vec::new(),
-            session: AgentSession::new("stub".into()),
+            session: AgentSession::new("stub".into(), crate::application::agent_turn::use_cases::resume_after_provider_failure::ResumeAfterProviderFailure::new()),
             session_key: "cli:test".to_string(),
             writer: tokio::io::sink(),
         }

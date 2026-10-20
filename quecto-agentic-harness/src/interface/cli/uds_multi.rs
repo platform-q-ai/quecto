@@ -87,6 +87,7 @@ pub(super) struct MultiClientArgs<'a> {
     /// Composition's teardown handles builder; without it the loop runs with
     /// no teardown edge (unit rigs only).
     pub teardown_graph: Option<super::TeardownHandlesBuilder>,
+    pub automatic_turns: super::AutomaticTurnsBuilder,
     /// The environment control slot (#2070): an owner exit ends retained boxes through it.
     pub environment_control: Option<EnvironmentControlSlot>,
     pub extensions: super::uds_extensions::Extensions, // #2446: see `clients`
@@ -173,6 +174,7 @@ pub(super) async fn multi_client_loop(
         broadcast_tx: pre_broadcast_tx,
         parent_control,
         teardown_graph,
+        automatic_turns,
         environment_control,
         extensions,
     } = args;
@@ -191,7 +193,7 @@ pub(super) async fn multi_client_loop(
         .await
         .publish(&messages);
 
-    let mut agent_session = AgentSession::new(model);
+    let mut agent_session = AgentSession::new(model, automatic_turns());
     agent_session.set_admission_warnings(&admission_slots);
     agent_session.set_startup_warnings(&catalogue.startup_warnings);
     agent_session.observe_runtime(catalogue.runtime_store.clone());

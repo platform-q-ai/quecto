@@ -15,6 +15,7 @@ fn args(s: &str) -> Vec<String> {
 fn default_ctx() -> CliContext {
     CliContext {
         sessions: Some(crate::composition::sessions::build_session_handles),
+        automatic_turns: Some(crate::composition::bootstrap::agent_turn::build_automatic_turns),
         retention: Some(crate::composition::sessions::build_retention_handles),
         configuration: Some(crate::composition::configuration::build_configuration_handles),
         admission: Some(crate::composition::admission::build_admission_handles),

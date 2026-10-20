@@ -144,6 +144,7 @@ const USE_CASES: &[&str] = &[
     "ResumeRunExternally",
     "RevalidateTask",
     "RevokeTask",
+    "ResumeAfterProviderFailure",
     "ResumeSavedSession",
     "RetainContext",
     "RewindConversation",

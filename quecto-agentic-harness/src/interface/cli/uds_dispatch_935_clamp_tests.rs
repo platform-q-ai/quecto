@@ -48,7 +48,7 @@ async fn dispatch_set_model_re_clamps_effective_max_tokens() {
     assert_eq!(agent.effective_max_tokens(), 100);
 
     let mut messages = Vec::new();
-    let mut session = AgentSession::new("stub".into());
+    let mut session = AgentSession::new("stub".into(), crate::application::agent_turn::use_cases::resume_after_provider_failure::ResumeAfterProviderFailure::new());
     let session_key = "cli:test".to_string();
     let mut writer = tokio::io::sink();
     let initial_stats =
