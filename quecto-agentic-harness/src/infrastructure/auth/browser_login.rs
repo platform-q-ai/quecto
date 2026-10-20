@@ -1,6 +1,7 @@
-//! Browser OAuth login over the providers' endpoints (#1839): the
+//! Browser OAuth login over the providers' endpoints (#1839, #1840): the
 //! application's `BrowserAuthorization`, `AuthorizationCallback` and
-//! `TokenExchange` for OpenAI, Anthropic and xAI. Each network call runs
+//! `TokenExchange` (code exchange and refresh) for OpenAI, Anthropic and
+//! xAI. Each network call runs
 //! on the harness's own runtime builder (#1718: a thread-exhausted process
 //! gets an error, not an abort), so the CLI's per-command call needs no
 //! ambient runtime.
@@ -14,7 +15,8 @@ use crate::domain::auth::provider::LoginProvider;
 use crate::infrastructure::auth::oauth::{
     OAuthEndpoints, build_anthropic_auth_url, build_openai_auth_url, build_xai_auth_url,
     exchange_anthropic_code, exchange_openai_code, exchange_xai_code, extract_openai_account_id,
-    generate_pkce, generate_state, parse_loopback_redirect, wait_for_oauth_callback_at,
+    generate_pkce, generate_state, parse_loopback_redirect, refresh_anthropic_token,
+    refresh_openai_token, refresh_xai_token, wait_for_oauth_callback_at,
 };
 use crate::infrastructure::processes::tokio_runtime::build_tokio_runtime;
 
@@ -194,9 +196,7 @@ impl TokenExchange for OAuthBrowserLogin {
         code: &str,
         verifier: &str,
     ) -> Result<IssuedToken, TokenExchangeError> {
-        let config = self.endpoints.config_for(provider).ok_or_else(|| {
-            TokenExchangeError::Rejected(format!("no OAuth configuration for {}", provider.id()))
-        })?;
+        let config = self.config(provider)?;
         let runtime = self.runtime()?;
         let response = runtime
             .block_on(async {
@@ -209,17 +209,58 @@ impl TokenExchange for OAuthBrowserLogin {
                 }
             })
             .map_err(|error| TokenExchangeError::Rejected(error.to_string()))?;
-        // Only OpenAI's token names the account its requests are routed to.
-        let account_id = match provider {
-            LoginProvider::OpenAi => extract_openai_account_id(&response.access_token),
-            LoginProvider::Anthropic | LoginProvider::Xai => None,
-        };
-        Ok(IssuedToken {
-            access_token: response.access_token,
-            refresh_token: response.refresh_token,
-            expires_in: response.expires_in,
-            account_id,
+        Ok(issued(provider, response))
+    }
+
+    fn refresh(
+        &self,
+        provider: LoginProvider,
+        refresh_token: &str,
+    ) -> Result<IssuedToken, TokenExchangeError> {
+        let config = self.config(provider)?;
+        let runtime = self.runtime()?;
+        let response = runtime
+            .block_on(async {
+                match provider {
+                    LoginProvider::OpenAi => refresh_openai_token(&config, refresh_token).await,
+                    LoginProvider::Anthropic => {
+                        refresh_anthropic_token(&config, refresh_token).await
+                    }
+                    LoginProvider::Xai => refresh_xai_token(&config, refresh_token).await,
+                }
+            })
+            .map_err(|error| TokenExchangeError::Rejected(error.to_string()))?;
+        Ok(issued(provider, response))
+    }
+}
+
+impl OAuthBrowserLogin {
+    fn config(
+        &self,
+        provider: LoginProvider,
+    ) -> Result<crate::infrastructure::auth::oauth::OAuthConfig, TokenExchangeError> {
+        self.endpoints.config_for(provider).ok_or_else(|| {
+            TokenExchangeError::Rejected(format!("no OAuth configuration for {}", provider.id()))
         })
+    }
+}
+
+/// The tokens `response` carries, with the account the access token names
+/// when its provider names one: only OpenAI's token names the account its
+/// requests are routed to.
+fn issued(
+    provider: LoginProvider,
+    response: crate::infrastructure::auth::oauth::OAuthTokenResponse,
+) -> IssuedToken {
+    let account_id = match provider {
+        LoginProvider::OpenAi => extract_openai_account_id(&response.access_token),
+        LoginProvider::Anthropic | LoginProvider::Xai => None,
+    };
+    IssuedToken {
+        access_token: response.access_token,
+        refresh_token: response.refresh_token,
+        expires_in: response.expires_in,
+        account_id,
     }
 }
 

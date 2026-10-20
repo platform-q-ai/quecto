@@ -8,13 +8,16 @@ use std::borrow::Cow;
 
 use serde_json::Value;
 
-use crate::domain::inference::value_objects::attempt_diagnostics::TerminalEvent;
+use crate::domain::inference::services::provider_error::ProviderErrorClass;
+
+use crate::domain::inference::value_objects::attempt_diagnostics::{
+    ErrorCode, IncompleteReason, TerminalEvent,
+};
 use crate::infrastructure::providers::openai::openai_stream_error::is_stream_error_chunk;
-use crate::infrastructure::providers::transport::admission_feedback::is_typed_throttle;
 use crate::infrastructure::providers::transport::attempt_events::Vocabulary;
 use crate::infrastructure::providers::transport::sse_progress::{filled, first_type};
 use crate::infrastructure::providers::transport::wire_dialect::{
-    Ending, Generated, WireDialect, text_len,
+    Ending, ErrorName, Generated, WireDialect, text_len,
 };
 
 /// The Responses (Codex) wire.
@@ -53,6 +56,22 @@ static RESPONSES: Vocabulary = Vocabulary {
         ("error", TerminalEvent::Error),
     ],
 };
+
+/// The error types and codes the Responses wire names (#2609 review),
+/// with the throttles the official Codex client reads as a rate limit
+/// (`slow_down`) and as overloaded (`server_is_overloaded`; #2620 review).
+static RESPONSES_ERRORS: [ErrorName; 9] = [
+    ErrorName::throttle("rate_limit_exceeded", ErrorCode::RateLimitExceeded),
+    ErrorName::throttle("slow_down", ErrorCode::RateLimitExceeded),
+    ErrorName::throttle("server_is_overloaded", ErrorCode::Overloaded),
+    ErrorName::plain("server_error", ErrorCode::ServerError),
+    // An overloaded backend's type (Refs #2531).
+    ErrorName::plain("service_unavailable_error", ErrorCode::ServerError),
+    ErrorName::plain("insufficient_quota", ErrorCode::InsufficientQuota),
+    ErrorName::plain("usage_limit_reached", ErrorCode::UsageLimitReached),
+    ErrorName::terminal("invalid_request_error", ErrorCode::InvalidRequestError),
+    ErrorName::terminal("invalid_api_key", ErrorCode::InvalidApiKey),
+];
 
 /// The reasoning summary deltas: generated thinking (#2151).
 const REASONING_DELTAS: &[&str] = &[
@@ -108,6 +127,26 @@ impl WireDialect for CodexWire {
     fn is_error_chunk(&self, value: &Value) -> bool {
         is_untyped_error_chunk(value)
     }
+    fn error_names(&self) -> &'static [ErrorName] {
+        &RESPONSES_ERRORS
+    }
+    /// An `error` event's own fields (`{"type":"error","code":…}`), its
+    /// `error` object, and a failed response's `response.error`.
+    fn error_objects<'a>(&self, value: &'a Value) -> Vec<&'a Value> {
+        let event = (value["type"] == "error").then_some(value);
+        [event, value.get("error"), value["response"].get("error")]
+            .into_iter()
+            .flatten()
+            .collect()
+    }
+    /// A `response.incomplete`'s `incomplete_details.reason`.
+    fn incomplete_reason(&self, value: &Value) -> Option<IncompleteReason> {
+        match value["response"]["incomplete_details"]["reason"].as_str() {
+            Some("max_output_tokens") => Some(IncompleteReason::MaxOutputTokens),
+            Some("content_filter") => Some(IncompleteReason::ContentFilter),
+            _ => None,
+        }
+    }
     /// A Responses event carries output when it ends the reply, or holds a
     /// generated `delta` string (text, tool-call arguments, refusal,
     /// reasoning or reasoning summary), or a finished part with content: a
@@ -156,13 +195,72 @@ impl WireDialect for CodexWire {
         {
             Ending::Failed {
                 feedback: Cow::Borrowed(value),
-                throttle: is_typed_throttle(value),
+                throttle: self.is_throttle(value),
                 record: None,
             }
         } else {
             Ending::Open
         }
     }
+}
+
+/// The retry class a Responses stream failure `event` names (Refs #2531),
+/// read from its error objects ([`WireDialect::error_objects`]), so the
+/// domain classifies its rendering.
+///
+/// A Responses failure is read three ways, each for its own reader:
+/// - the **recorded code** (`transport_diagnostics::typed`): the attempt's
+///   diagnostics keep the name this wire knows, an object's `type` over its
+///   `code`, as they always have;
+/// - the **retry class** (here): its `code`, as the official client reads
+///   it — a `code` this wire does not know names nothing, whatever the
+///   `type` says, and only a failure with no `code` is classed by its
+///   `type`;
+/// - the **admission throttle** ([`WireDialect::is_throttle`]): any field
+///   naming a throttle, unless one names a billing error.
+///
+/// Only "code before type" follows the official client, which reads the
+/// code alone and retries a code it does not know. Reading a billing name
+/// in any field first, and the class each name maps to, are quecto's
+/// conservative choices (#2620 review): a billing failure is never retried
+/// whichever field names it, and an unknown code is no retry.
+pub(in crate::infrastructure::providers) fn failure_class(
+    event: &Value,
+) -> Option<ProviderErrorClass> {
+    use crate::domain::inference::services::provider_error::is_billing_error_name;
+    let objects = CODEX_WIRE.error_objects(event);
+    // The innermost object first: an `error` object's fields before an
+    // `error` event's own; the event's own `type` is the event's, not an
+    // error name.
+    let field = |name: &str| {
+        objects
+            .iter()
+            .rev()
+            .filter(|object| name == "code" || !std::ptr::eq(**object, event))
+            .find_map(|object| object[name].as_str())
+    };
+    let (code, kind) = (field("code"), field("type"));
+    if [code, kind]
+        .into_iter()
+        .flatten()
+        .any(is_billing_error_name)
+    {
+        return Some(ProviderErrorClass::Billing);
+    }
+    let named = match (code, kind) {
+        (Some(code), _) => CODEX_WIRE.error_name(code),
+        (None, Some(kind)) => CODEX_WIRE.error_name(kind),
+        (None, None) => None,
+    };
+    named.map(|known| match known.code() {
+        ErrorCode::RateLimitExceeded => ProviderErrorClass::RateLimit,
+        ErrorCode::Overloaded | ErrorCode::ServerError => ProviderErrorClass::Server,
+        ErrorCode::InsufficientQuota | ErrorCode::UsageLimitReached => ProviderErrorClass::Billing,
+        ErrorCode::AuthenticationError | ErrorCode::InvalidApiKey | ErrorCode::PermissionError => {
+            ProviderErrorClass::Auth
+        }
+        ErrorCode::InvalidRequestError => ProviderErrorClass::Client,
+    })
 }
 
 /// Whether a Responses event ends its reply at the output limit (#2593):

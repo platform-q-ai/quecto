@@ -123,6 +123,47 @@ pub const REPLY_TIMEOUT: &str = "reply timeout: ";
 /// How the error of a reply stopped at its output cap begins (#2210).
 pub const OUTPUT_CAP_EXCEEDED: &str = "output cap exceeded: ";
 
+/// The prefix of a provider's mid-stream failure whose wire named its class
+/// (Refs #2531, #2620 review): the class is read from it, and no HTTP
+/// status is claimed for a reply that arrived as HTTP 200.
+const STREAM_FAILURE: &str = "provider stream failure (";
+
+/// The classes a wire may name a stream failure by, each with the words
+/// its rendering carries.
+const STREAM_FAILURE_CLASSES: [(ProviderErrorClass, &str); 5] = [
+    (ProviderErrorClass::RateLimit, "rate limit"),
+    (ProviderErrorClass::Server, "server error"),
+    (ProviderErrorClass::Billing, "billing"),
+    (ProviderErrorClass::Auth, "authentication"),
+    (ProviderErrorClass::Client, "client error"),
+];
+
+/// A provider's mid-stream failure, `detail`, of the class its wire named:
+/// `provider stream failure (<class>): <detail>`, which
+/// [`classify_provider_error`] reads back. A class a wire cannot name
+/// leaves `detail` as it is.
+pub fn classed_stream_failure(class: &ProviderErrorClass, detail: &str) -> String {
+    match STREAM_FAILURE_CLASSES
+        .iter()
+        .find(|(named, _)| named == class)
+    {
+        Some((_, words)) => format!("{STREAM_FAILURE}{words}): {detail}"),
+        None => detail.to_string(),
+    }
+}
+
+/// The class a [`classed_stream_failure`] rendering names, if `msg` is one.
+fn stream_failure_class(msg: &str) -> Option<ProviderErrorClass> {
+    let rest = msg.strip_prefix(STREAM_FAILURE)?;
+    STREAM_FAILURE_CLASSES
+        .iter()
+        .find(|(_, words)| {
+            rest.strip_prefix(words)
+                .is_some_and(|after| after.starts_with("): "))
+        })
+        .map(|(class, _)| class.clone())
+}
+
 /// The error of a reply that ended with no output at all: an empty stream,
 /// retried as [`ProviderErrorClass::EmptyStream`]. The agent loop sends it
 /// for a completed reply with nothing in it, and a provider for a body that
@@ -148,6 +189,10 @@ pub fn classify_provider_error(err: &DomainError) -> ProviderErrorClass {
 
     if msg.starts_with(OUTPUT_CAP_EXCEEDED) {
         return ProviderErrorClass::OutputCapped;
+    }
+
+    if let Some(class) = stream_failure_class(msg) {
+        return class;
     }
 
     if let Some(class) = classify_admission_error(msg) {
@@ -363,6 +408,11 @@ pub const BILLING_ERROR_NAMES: &[&str] = &[
     "billing_hard_limit_reached",
     "usage_limit_reached",
     "billing_error",
+    // The quota errors the official Codex client reads as such (codex-rs
+    // `responses_error.rs`; #2620 review).
+    "credit_balance_exhausted",
+    "organization_spend_limit_exceeded",
+    "project_spend_limit_exceeded",
 ];
 
 /// Whether `name`, an error's `type` or `code`, is a billing error.

@@ -414,7 +414,17 @@ impl CodexProvider {
         {
             parts.push(message.to_string());
         }
-        Some(parts.join(": "))
+        // The class its code (or, with none, its type) names, which the
+        // domain classifies by (Refs #2531).
+        let rendered = parts.join(": ");
+        Some(match codex_wire::failure_class(event) {
+            Some(class) => {
+                crate::domain::inference::services::provider_error::classed_stream_failure(
+                    &class, &rendered,
+                )
+            }
+            None => rendered,
+        })
     }
 
     /// Sanitize a session key for use as `prompt_cache_key`.
@@ -592,9 +602,9 @@ impl LlmProvider for CodexProvider {
 }
 
 mod codex_input;
+mod codex_input_prefix;
 mod codex_replay;
 pub(in crate::infrastructure::providers) mod codex_wire;
-mod input_prefix;
 /// FNV-1a 32-bit: fast, dependency-free, deterministic.
 fn fnv1a(text: &str) -> u32 {
     let mut hash: u32 = 0x811c_9dc5;
